@@ -8,6 +8,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/embedding"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerreplay/store"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/lookuptable"
@@ -32,6 +33,27 @@ func createModelSelectorRegistry(cfg *config.RouterConfig, replayReader store.Re
 	}
 
 	registry := selectionFactory.CreateAll()
+	if arcSelector, readinessFailure := createRaylineARCSelector(cfg); arcSelector != nil {
+		registry.Register(selection.MethodRaylineARC, arcSelector)
+		metrics.SetRaylineARCComponentReady(readinessFailure == "")
+		fields := map[string]interface{}{
+			"ready": readinessFailure == "",
+		}
+		if readinessFailure != "" {
+			fields["failure_class"] = readinessFailure
+			logging.ComponentErrorEvent(
+				"extproc",
+				"rayline_arc_component_readiness",
+				fields,
+			)
+		} else {
+			logging.ComponentEvent(
+				"extproc",
+				"rayline_arc_component_readiness",
+				fields,
+			)
+		}
+	}
 	selection.GlobalRegistry = registry
 
 	// Collect algorithm methods actually configured in decisions

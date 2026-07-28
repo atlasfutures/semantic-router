@@ -128,6 +128,30 @@ func (runtime *Runtime) WorkerIDs() []string {
 	return ids
 }
 
+func (runtime *Runtime) ArtifactID() string {
+	return runtime.manifest.ArtifactID
+}
+
+func (runtime *Runtime) EncoderRevision() string {
+	return runtime.manifest.Encoder.Revision
+}
+
+type EncoderContract struct {
+	Model         string
+	Revision      string
+	Dimension     int
+	Serialization string
+}
+
+func (runtime *Runtime) EncoderContract() EncoderContract {
+	return EncoderContract{
+		Model:         runtime.manifest.Encoder.Model,
+		Revision:      runtime.manifest.Encoder.Revision,
+		Dimension:     runtime.manifest.Encoder.Dimension,
+		Serialization: runtime.manifest.Encoder.Serialization,
+	}
+}
+
 func (runtime *Runtime) HeadParity() HeadParityReport {
 	return runtime.headParity
 }

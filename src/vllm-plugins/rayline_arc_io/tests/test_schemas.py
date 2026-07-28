@@ -2,7 +2,8 @@
 
 import pytest
 from pydantic import ValidationError
-from rayline_arc_io.schemas import ArcPoolingRequest
+from rayline_arc_io.constants import EOS_TOKEN_ID
+from rayline_arc_io.schemas import ArcPoolingRequest, ArcPoolingResponse
 
 
 def valid_request() -> dict:
@@ -50,3 +51,24 @@ def test_request_rejects_unknown_fields() -> None:
     invalid["model"] = "untrusted"
     with pytest.raises(ValidationError):
         ArcPoolingRequest.model_validate(invalid)
+
+
+def test_response_exposes_the_full_readiness_contract() -> None:
+    response = ArcPoolingResponse(
+        embedding=[0.0] * 1024,
+        serialized_tokens=16,
+        full_history_tokens=16,
+        truncated_tokens=0,
+        cached_prefix_tokens=0,
+        serializer_version="mtrouter-token-blocks-v2",
+        model="Qwen/Qwen3.5-0.8B",
+        model_revision="model-revision",
+        tokenizer_revision="tokenizer-revision",
+        tokenizer_sha256="a" * 64,
+        eos_token_id=EOS_TOKEN_ID,
+        engine_build_id="vllm@immutable-build",
+        io_plugin_version="rayline-arc-io@0.1.0",
+        pooling_capabilities=["all_plugin_mean"],
+    )
+    assert response.tokenizer_sha256 == "a" * 64
+    assert response.eos_token_id == EOS_TOKEN_ID

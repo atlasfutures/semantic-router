@@ -1,0 +1,498 @@
+/*
+Copyright 2025 vLLM Semantic Router.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package raylinearc
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"math"
+	"net"
+	"net/http"
+	"net/url"
+	"slices"
+	"strings"
+	"time"
+)
+
+const (
+	encoderRequestSchema = "rayline.arc.pooling-request.v1"
+	encoderServingRung   = "A"
+	encoderDimension     = 1024
+	maxEncoderResponse   = 256 * 1024
+
+	// EncoderTokenizerSHA256 is a public file-integrity fingerprint, not a credential.
+	EncoderTokenizerSHA256 = "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42" // #nosec G101
+	EncoderEOSTokenID      = 248046
+)
+
+type EncoderFailureClass string
+
+const (
+	EncoderFailureRequest   EncoderFailureClass = "request"
+	EncoderFailureTransport EncoderFailureClass = "transport"
+	EncoderFailureTimeout   EncoderFailureClass = "timeout"
+	EncoderFailureStatus    EncoderFailureClass = "status"
+	EncoderFailureDecode    EncoderFailureClass = "decode"
+	EncoderFailureContract  EncoderFailureClass = "contract"
+)
+
+// EncoderFailure is deliberately bounded: it reports a stable class and stage
+// but never includes request text, episode identity, response bodies, or keys.
+type EncoderFailure struct {
+	Class EncoderFailureClass
+	Stage string
+}
+
+func (failure *EncoderFailure) Error() string {
+	if failure == nil {
+		return "ARC encoder failed"
+	}
+	return fmt.Sprintf(
+		"ARC encoder failed (class=%s, stage=%s)",
+		failure.Class,
+		failure.Stage,
+	)
+}
+
+type EncoderClientConfig struct {
+	BaseURL               string
+	Model                 string
+	ModelRevision         string
+	TokenizerRevision     string
+	TokenizerSHA256       string
+	EOSTokenID            int
+	ExpectedBuildID       string
+	ExpectedPluginVersion string
+	SerializerVersion     string
+	RequiredCapabilities  []string
+	ConnectTimeout        time.Duration
+	TotalTimeout          time.Duration
+	MaxRetries            int
+}
+
+type EncoderResult struct {
+	Embedding           []float32
+	SerializedTokens    int
+	FullHistoryTokens   int
+	TruncatedTokens     int
+	CachedPrefixTokens  int
+	ModelRevision       string
+	EngineBuildID       string
+	IOPluginVersion     string
+	PoolingCapabilities []string
+}
+
+type EncoderClient struct {
+	config     EncoderClientConfig
+	endpoint   string
+	httpClient *http.Client
+}
+
+type encoderWireRequest struct {
+	Task string             `json:"task"`
+	Data encoderRequestData `json:"data"`
+}
+
+type encoderRequestData struct {
+	SchemaVersion string `json:"schema_version"`
+	Serializer    string `json:"serializer_version"`
+	ServingRung   string `json:"serving_rung"`
+	EpisodeIDHash string `json:"episode_id_hash"`
+	Turns         []Turn `json:"turns"`
+}
+
+type encoderWireResponse struct {
+	Data encoderResponseData `json:"data"`
+}
+
+type encoderResponseData struct {
+	Embedding           []float64 `json:"embedding"`
+	SerializedTokens    int       `json:"serialized_tokens"`
+	FullHistoryTokens   int       `json:"full_history_tokens"`
+	TruncatedTokens     int       `json:"truncated_tokens"`
+	CachedPrefixTokens  int       `json:"cached_prefix_tokens"`
+	SerializerVersion   string    `json:"serializer_version"`
+	Model               string    `json:"model"`
+	ModelRevision       string    `json:"model_revision"`
+	TokenizerRevision   string    `json:"tokenizer_revision"`
+	TokenizerSHA256     string    `json:"tokenizer_sha256"`
+	EOSTokenID          int       `json:"eos_token_id"`
+	EngineBuildID       string    `json:"engine_build_id"`
+	IOPluginVersion     string    `json:"io_plugin_version"`
+	PoolingCapabilities []string  `json:"pooling_capabilities"`
+}
+
+func NewEncoderClient(config EncoderClientConfig) (*EncoderClient, error) {
+	dialer := &net.Dialer{Timeout: config.ConnectTimeout}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = dialer.DialContext
+	return newEncoderClient(config, &http.Client{Transport: transport})
+}
+
+func newEncoderClient(
+	config EncoderClientConfig,
+	httpClient *http.Client,
+) (*EncoderClient, error) {
+	endpoint, err := encoderEndpoint(config.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateEncoderClientConfig(config, httpClient); err != nil {
+		return nil, err
+	}
+	config.RequiredCapabilities = append(
+		[]string(nil),
+		config.RequiredCapabilities...,
+	)
+	return &EncoderClient{
+		config:     config,
+		endpoint:   endpoint,
+		httpClient: httpClient,
+	}, nil
+}
+
+func validateEncoderClientConfig(
+	config EncoderClientConfig,
+	httpClient *http.Client,
+) error {
+	if config.ConnectTimeout <= 0 || config.TotalTimeout <= 0 ||
+		config.ConnectTimeout > config.TotalTimeout {
+		return errors.New("invalid ARC encoder timeout configuration")
+	}
+	if config.MaxRetries < 0 || config.MaxRetries > 3 {
+		return errors.New("invalid ARC encoder retry configuration")
+	}
+	if httpClient == nil {
+		return errors.New("ARC encoder HTTP client is required")
+	}
+	if encoderReadinessContractIncomplete(config) {
+		return errors.New("ARC encoder readiness contract is incomplete")
+	}
+	return nil
+}
+
+func encoderReadinessContractIncomplete(config EncoderClientConfig) bool {
+	return config.SerializerVersion == "" ||
+		config.Model == "" ||
+		config.ModelRevision == "" ||
+		config.TokenizerRevision == "" ||
+		config.TokenizerSHA256 == "" ||
+		config.ExpectedBuildID == "" ||
+		config.ExpectedPluginVersion == "" ||
+		len(config.RequiredCapabilities) == 0
+}
+
+func encoderEndpoint(baseURL string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", errors.New("invalid ARC encoder base URL")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/pooling"
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String(), nil
+}
+
+func HashEpisodeID(raw string) string {
+	digest := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(digest[:])
+}
+
+func (client *EncoderClient) Encode(
+	parent context.Context,
+	episodeIDHash string,
+	turns []Turn,
+) (*EncoderResult, error) {
+	payload, err := client.buildPayload(episodeIDHash, turns)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(parent, client.config.TotalTimeout)
+	defer cancel()
+	response, err := client.doWithRetries(ctx, payload)
+	if err != nil {
+		return nil, err
+	}
+	return client.consumeResponse(response)
+}
+
+func (client *EncoderClient) buildPayload(
+	episodeIDHash string,
+	turns []Turn,
+) ([]byte, error) {
+	if client == nil {
+		return nil, encoderFailure(EncoderFailureRequest, "client")
+	}
+	if !validEpisodeIDHash(episodeIDHash) {
+		return nil, encoderFailure(EncoderFailureRequest, "episode_hash")
+	}
+	if len(turns) == 0 {
+		return nil, encoderFailure(EncoderFailureRequest, "turns")
+	}
+	payload, err := json.Marshal(encoderWireRequest{
+		Task: "plugin",
+		Data: encoderRequestData{
+			SchemaVersion: encoderRequestSchema,
+			Serializer:    client.config.SerializerVersion,
+			ServingRung:   encoderServingRung,
+			EpisodeIDHash: episodeIDHash,
+			Turns:         turns,
+		},
+	})
+	if err != nil {
+		return nil, encoderFailure(EncoderFailureRequest, "encode")
+	}
+	return payload, nil
+}
+
+func validEpisodeIDHash(value string) bool {
+	if len(value) != sha256.Size*2 ||
+		value != strings.ToLower(value) {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func (client *EncoderClient) doWithRetries(
+	ctx context.Context,
+	payload []byte,
+) (*http.Response, error) {
+	for attempt := 0; ; attempt++ {
+		response, err := client.doAttempt(ctx, payload)
+		if err == nil {
+			return response, nil
+		}
+		failure, retry := requestAttemptFailure(
+			ctx,
+			response,
+			err,
+			attempt < client.config.MaxRetries,
+		)
+		if !retry {
+			return nil, failure
+		}
+	}
+}
+
+func (client *EncoderClient) doAttempt(
+	ctx context.Context,
+	payload []byte,
+) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		client.endpoint,
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		return nil, encoderFailure(EncoderFailureRequest, "construct")
+	}
+	request.Header.Set("content-type", "application/json")
+	return client.httpClient.Do(request)
+}
+
+func requestAttemptFailure(
+	ctx context.Context,
+	response *http.Response,
+	err error,
+	canRetry bool,
+) (*EncoderFailure, bool) {
+	var bounded *EncoderFailure
+	if errors.As(err, &bounded) {
+		return bounded, false
+	}
+	if response != nil {
+		closeEncoderResponse(response)
+		return encoderFailure(EncoderFailureTransport, "response_error"), false
+	}
+	if ctx.Err() != nil {
+		return encoderFailure(EncoderFailureTimeout, "request"), false
+	}
+	if canRetry {
+		return nil, true
+	}
+	return encoderFailure(EncoderFailureTransport, "pre_response"), false
+}
+
+func closeEncoderResponse(response *http.Response) {
+	if response.Body != nil {
+		_ = response.Body.Close()
+	}
+}
+
+// Probe exercises the exact plugin path and full metadata contract. The input
+// is fixed public canary content and the caller-provided correlation is hashed.
+func (client *EncoderClient) Probe(
+	ctx context.Context,
+	correlation string,
+) error {
+	_, err := client.Encode(
+		ctx,
+		HashEpisodeID(correlation),
+		[]Turn{{Role: "user", Text: "Rayline ARC readiness probe"}},
+	)
+	return err
+}
+
+func (client *EncoderClient) consumeResponse(
+	response *http.Response,
+) (*EncoderResult, error) {
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK ||
+		response.StatusCode >= http.StatusMultipleChoices {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		return nil, encoderFailure(EncoderFailureStatus, "http_status")
+	}
+	limited := io.LimitReader(response.Body, maxEncoderResponse+1)
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, encoderFailure(EncoderFailureDecode, "read")
+	}
+	if len(body) > maxEncoderResponse {
+		return nil, encoderFailure(EncoderFailureDecode, "response_limit")
+	}
+	var wire encoderWireResponse
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&wire); err != nil {
+		return nil, encoderFailure(EncoderFailureDecode, "json")
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return nil, encoderFailure(EncoderFailureDecode, "json_trailing")
+	}
+	return client.validateResponse(&wire.Data)
+}
+
+func ensureJSONEOF(decoder *json.Decoder) error {
+	var extra any
+	err := decoder.Decode(&extra)
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	return errors.New("unexpected trailing JSON")
+}
+
+func (client *EncoderClient) validateResponse(
+	data *encoderResponseData,
+) (*EncoderResult, error) {
+	embedding, err := validatedEmbedding(data.Embedding)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateEncoderTokenCounts(data); err != nil {
+		return nil, err
+	}
+	if err := client.validateEncoderMetadata(data); err != nil {
+		return nil, err
+	}
+	return &EncoderResult{
+		Embedding:           embedding,
+		SerializedTokens:    data.SerializedTokens,
+		FullHistoryTokens:   data.FullHistoryTokens,
+		TruncatedTokens:     data.TruncatedTokens,
+		CachedPrefixTokens:  data.CachedPrefixTokens,
+		ModelRevision:       data.ModelRevision,
+		EngineBuildID:       data.EngineBuildID,
+		IOPluginVersion:     data.IOPluginVersion,
+		PoolingCapabilities: append([]string(nil), data.PoolingCapabilities...),
+	}, nil
+}
+
+func validatedEmbedding(values []float64) ([]float32, error) {
+	if len(values) != encoderDimension {
+		return nil, encoderFailure(EncoderFailureContract, "embedding_dimension")
+	}
+	embedding := make([]float32, len(values))
+	for index, value := range values {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil, encoderFailure(EncoderFailureContract, "embedding_finite")
+		}
+		embedding[index] = float32(value)
+		if math.IsInf(float64(embedding[index]), 0) {
+			return nil, encoderFailure(EncoderFailureContract, "embedding_float32")
+		}
+	}
+	return embedding, nil
+}
+
+func validateEncoderTokenCounts(data *encoderResponseData) error {
+	if data.SerializedTokens <= 0 ||
+		data.FullHistoryTokens <= 0 ||
+		data.TruncatedTokens < 0 ||
+		data.CachedPrefixTokens < 0 ||
+		data.SerializedTokens+data.TruncatedTokens != data.FullHistoryTokens {
+		return encoderFailure(EncoderFailureContract, "token_counts")
+	}
+	return nil
+}
+
+func (client *EncoderClient) validateEncoderMetadata(
+	data *encoderResponseData,
+) error {
+	checks := []struct {
+		valid bool
+		stage string
+	}{
+		{data.SerializerVersion == client.config.SerializerVersion, "serializer"},
+		{data.Model == client.config.Model, "model"},
+		{data.ModelRevision == client.config.ModelRevision, "model_revision"},
+		{data.TokenizerRevision == client.config.TokenizerRevision, "tokenizer_revision"},
+		{data.TokenizerSHA256 == client.config.TokenizerSHA256, "tokenizer_sha256"},
+		{data.EOSTokenID == client.config.EOSTokenID, "eos_token_id"},
+		{data.EngineBuildID == client.config.ExpectedBuildID, "engine_build"},
+		{data.IOPluginVersion == client.config.ExpectedPluginVersion, "io_plugin"},
+		{
+			equalCapabilities(
+				data.PoolingCapabilities,
+				client.config.RequiredCapabilities,
+			),
+			"capabilities",
+		},
+	}
+	for _, check := range checks {
+		if !check.valid {
+			return encoderFailure(EncoderFailureContract, check.stage)
+		}
+	}
+	return nil
+}
+
+func equalCapabilities(actual []string, expected []string) bool {
+	if len(actual) != len(expected) {
+		return false
+	}
+	actualCopy := append([]string(nil), actual...)
+	expectedCopy := append([]string(nil), expected...)
+	slices.Sort(actualCopy)
+	slices.Sort(expectedCopy)
+	return slices.Equal(actualCopy, expectedCopy)
+}
+
+func encoderFailure(
+	class EncoderFailureClass,
+	stage string,
+) *EncoderFailure {
+	return &EncoderFailure{Class: class, Stage: stage}
+}

@@ -44,7 +44,7 @@ func TestRouterLearningProtectionKeepsCurrentModelAcrossDecisionCandidates(t *te
 	ctx.VSRSelectedDecision = &config.Decision{Name: "simple-followup"}
 	ctx.VSRConversationFacts = classification.ConversationFacts{LastMessageToolResult: true}
 
-	selected, method := router.selectModelFromCandidates(&selection.SelectionContext{
+	selected, method, _ := router.selectModelFromCandidates(&selection.SelectionContext{
 		SessionID:       "session-a",
 		DecisionName:    "simple-followup",
 		CandidateModels: []config.ModelRef{{Model: "cheap"}},
@@ -94,7 +94,7 @@ func TestRouterLearningProtectionReleasesOnNewConversationScope(t *testing.T) {
 	ctx := routerLearningRequestContext("session-a", "conversation-b")
 	ctx.VSRSelectedDecision = &config.Decision{Name: "simple-new-run"}
 
-	selected, _ := router.selectModelFromCandidates(&selection.SelectionContext{
+	selected, _, _ := router.selectModelFromCandidates(&selection.SelectionContext{
 		SessionID:       "session-a",
 		DecisionName:    "simple-new-run",
 		CandidateModels: []config.ModelRef{{Model: "cheap"}},
@@ -128,7 +128,7 @@ func TestRouterLearningProtectionSessionScopeProtectsAcrossConversations(t *test
 	ctx := routerLearningRequestContext("session-a", "conversation-b")
 	ctx.VSRSelectedDecision = &config.Decision{Name: "simple-new-run"}
 
-	selected, _ := router.selectModelFromCandidates(&selection.SelectionContext{
+	selected, _, _ := router.selectModelFromCandidates(&selection.SelectionContext{
 		SessionID:       "session-a",
 		DecisionName:    "simple-new-run",
 		CandidateModels: []config.ModelRef{{Model: "cheap"}},
@@ -238,7 +238,7 @@ func TestRouterLearningDecisionScopeOverrideProtectsAcrossConversations(t *testi
 		Name: "session-sticky",
 	}
 
-	selected, _ := router.selectModelFromCandidates(&selection.SelectionContext{
+	selected, _, _ := router.selectModelFromCandidates(&selection.SelectionContext{
 		SessionID:       "session-a",
 		DecisionName:    "session-sticky",
 		CandidateModels: []config.ModelRef{{Model: "cheap"}},
@@ -278,7 +278,7 @@ func TestRouterLearningProtectionObserveRecordsWithoutChangingModel(t *testing.T
 	}
 	ctx.VSRConversationFacts = classification.ConversationFacts{LastMessageToolResult: true}
 
-	selected, _ := router.selectModelFromCandidates(&selection.SelectionContext{
+	selected, _, _ := router.selectModelFromCandidates(&selection.SelectionContext{
 		SessionID:       "session-a",
 		DecisionName:    "observe-route",
 		CandidateModels: []config.ModelRef{{Model: "cheap"}},
@@ -366,7 +366,7 @@ func TestRouterLearningProtectionMissingIdentityNoOps(t *testing.T) {
 	}
 	ctx.VSRSelectedDecision = &config.Decision{Name: "simple"}
 
-	selected, _ := router.selectModelFromCandidates(&selection.SelectionContext{
+	selected, _, _ := router.selectModelFromCandidates(&selection.SelectionContext{
 		SessionID:       "session-a",
 		DecisionName:    "simple",
 		CandidateModels: []config.ModelRef{{Model: "cheap"}},
@@ -406,7 +406,7 @@ func TestRouterLearningProtectionBypassLeavesBaseDecisionFinal(t *testing.T) {
 	}
 	ctx.VSRConversationFacts = classification.ConversationFacts{LastMessageToolResult: true}
 
-	selected, _ := router.selectModelFromCandidates(&selection.SelectionContext{
+	selected, _, _ := router.selectModelFromCandidates(&selection.SelectionContext{
 		SessionID:       "session-a",
 		DecisionName:    "privacy",
 		CandidateModels: []config.ModelRef{{Model: "cheap"}},

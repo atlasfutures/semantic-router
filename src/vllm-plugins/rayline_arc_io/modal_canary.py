@@ -33,6 +33,9 @@ import modal
 APP_NAME = "rayline-arc-rung-a-canary-dev"
 MODEL_ID = "Qwen/Qwen3.5-0.8B"
 MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
+TOKENIZER_REVISION = MODEL_REVISION
+TOKENIZER_SHA256 = "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42"
+EOS_TOKEN_ID = 248046
 VLLM_COMMIT = "98e91a9600eb75b2de14ef27f13b10088d1a1279"
 VLLM_VERSION = "0.26.1rc1.dev36+g98e91a960"
 VLLM_WHEEL_INDEX = f"https://wheels.vllm.ai/{VLLM_COMMIT}/cu130"
@@ -326,7 +329,12 @@ def _validate_response(raw: dict[str, Any]) -> tuple[list[float], dict[str, Any]
     ):
         raise ValueError("vLLM plugin returned an invalid embedding")
     expected = {
+        "serializer_version": SERIALIZER_VERSION,
+        "model": MODEL_ID,
         "model_revision": MODEL_REVISION,
+        "tokenizer_revision": TOKENIZER_REVISION,
+        "tokenizer_sha256": TOKENIZER_SHA256,
+        "eos_token_id": EOS_TOKEN_ID,
         "engine_build_id": ENGINE_BUILD_ID,
         "io_plugin_version": PLUGIN_VERSION,
         "pooling_capabilities": ["all_plugin_mean"],

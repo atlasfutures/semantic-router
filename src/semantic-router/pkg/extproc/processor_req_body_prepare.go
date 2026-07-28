@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"errors"
 	"fmt"
 
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -109,6 +110,12 @@ func (r *OpenAIRouter) runRequestPreRoutingStages(
 		ctx,
 	)
 	if authzErr != nil {
+		if response, handled := r.decisionEvaluationErrorResponse(
+			authzErr,
+			ctx,
+		); handled {
+			return requestDecisionState{}, response
+		}
 		logging.Errorf("[Request Body] Authz evaluation failed: %v", authzErr)
 		return requestDecisionState{}, r.createErrorResponse(403, authzErr.Error())
 	}
@@ -138,6 +145,33 @@ func (r *OpenAIRouter) runRequestPreRoutingStages(
 		reasoningDecision: reasoningDecision,
 		selectedModel:     selectedModel,
 	}, nil
+}
+
+func (r *OpenAIRouter) decisionEvaluationErrorResponse(
+	err error,
+	ctx *RequestContext,
+) (*ext_proc.ProcessingResponse, bool) {
+	var selectionFailure *modelSelectionFailure
+	if !errors.As(err, &selectionFailure) {
+		return nil, false
+	}
+	requestID := ""
+	if ctx != nil {
+		requestID = ctx.RequestID
+	}
+	logging.ComponentErrorEvent(
+		"extproc",
+		"rayline_arc_selection_failed",
+		map[string]interface{}{
+			"request_id":    requestID,
+			"failure_class": selectionFailure.class,
+		},
+	)
+	metrics.RecordRaylineARCFailure(selectionFailure.class)
+	return r.createErrorResponse(
+		503,
+		"Rayline ARC routing unavailable",
+	), true
 }
 
 func (r *OpenAIRouter) applyRateLimitAndCacheChecks(

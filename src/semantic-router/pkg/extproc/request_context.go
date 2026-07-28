@@ -13,6 +13,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/projectiontrace"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/ratelimit"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerreplay"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 )
 
 // EnhancedHallucinationSpan represents a hallucinated span with NLI explanation.
@@ -155,6 +156,7 @@ type RequestContext struct {
 	VSRCacheSimilarity             float32                                     // Similarity score from last cache lookup (0 = no lookup performed)
 	VSRInjectedSystemPrompt        bool                                        // Whether a system prompt was injected into the request
 	VSRSelectedDecision            *config.Decision                            // The decision object selected by DecisionEngine (for plugins)
+	VSRRaylineARC                  *selection.RaylineARCTrace                  // Privacy-safe ARC selection trace; never prompt or embedding data.
 
 	// ResponsePath records how the final response was produced, surfaced as the
 	// v0.4 keystone x-vsr-response-path header (one of the headers.ResponsePath*

@@ -59,7 +59,12 @@ class ArcPoolingResponse(BaseModel):
     full_history_tokens: Annotated[int, Field(gt=0)]
     truncated_tokens: Annotated[int, Field(ge=0)]
     cached_prefix_tokens: Annotated[int, Field(ge=0)]
+    serializer_version: str
+    model: str
     model_revision: str
+    tokenizer_revision: str
+    tokenizer_sha256: str
+    eos_token_id: Annotated[int, Field(ge=0)]
     engine_build_id: str
     io_plugin_version: str
     pooling_capabilities: list[str]
