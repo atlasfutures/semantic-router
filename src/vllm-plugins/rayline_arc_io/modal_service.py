@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""Protected Modal deployment for the frozen Rayline ARC Rung A encoder.
+"""Protected Modal deployment for the frozen Rayline ARC Rung B encoder.
 
-Deploy explicitly after the Rung A CUDA gate passes:
+Deploy explicitly after the Rung B CUDA gate passes:
 
     modal deploy modal_service.py
 
@@ -22,21 +22,34 @@ import modal
 APP_NAME = "rayline-arc-encoder"
 MODEL_ID = "Qwen/Qwen3.5-0.8B"
 MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
-VLLM_COMMIT = "98e91a9600eb75b2de14ef27f13b10088d1a1279"
+VLLM_BASE_WHEEL_COMMIT = "98e91a9600eb75b2de14ef27f13b10088d1a1279"
+VLLM_COMMIT = "8faf2388c2fab4e86ca37778e74665ac23b3eba4"
 VLLM_VERSION = "0.26.1rc1.dev36+g98e91a960"
-VLLM_WHEEL_INDEX = f"https://wheels.vllm.ai/{VLLM_COMMIT}/cu130"
+VLLM_WHEEL_INDEX = f"https://wheels.vllm.ai/{VLLM_BASE_WHEEL_COMMIT}/cu130"
+VLLM_REPOSITORY = "https://github.com/davidvgilmore/vllm.git"
+VLLM_BRANCH = "rayline/pl-0039-causal-mean"
 ENGINE_BUILD_ID = f"vllm@{VLLM_COMMIT}"
 MAX_SERIALIZED_TOKENS = 262_144
+CHUNK_SCHEDULE_TOKENS = 8_192
 PORT = 8000
 
 _THIS_DIR = Path(__file__).resolve().parent
 _REMOTE_PLUGIN_DIR = "/opt/rayline_arc_io"
 _POOLER_CONFIG = {
-    "task": "token_embed",
-    "tok_pooling_type": "ALL",
-    "use_activation": False,
+    "task": "embed",
+    "pooling_type": "MEAN",
+    "use_activation": True,
     "enable_chunked_processing": False,
 }
+_RUNTIME_FILES = (
+    "vllm/config/model.py",
+    "vllm/model_executor/layers/pooler/seqwise/heads.py",
+    "vllm/model_executor/layers/pooler/seqwise/methods.py",
+    "vllm/model_executor/layers/pooler/seqwise/poolers.py",
+    "vllm/v1/core/sched/scheduler.py",
+    "vllm/v1/pool/metadata.py",
+    "vllm/v1/worker/gpu_input_batch.py",
+)
 
 image = (
     modal.Image.from_registry(
@@ -64,13 +77,30 @@ image = (
     )
 )
 
+_runtime_copy_commands = " && ".join(
+    command
+    for path in _RUNTIME_FILES
+    for command in (
+        (f"cp /opt/vllm-rung-b/{path} /usr/local/lib/python3.12/site-packages/{path}"),
+        (
+            f"cmp -s /opt/vllm-rung-b/{path} "
+            f"/usr/local/lib/python3.12/site-packages/{path}"
+        ),
+    )
+)
+image = image.apt_install("git").run_commands(
+    f"git clone --depth 1 --branch {VLLM_BRANCH} {VLLM_REPOSITORY} /opt/vllm-rung-b",
+    f'test "$(git -C /opt/vllm-rung-b rev-parse HEAD)" = "{VLLM_COMMIT}"',
+    _runtime_copy_commands,
+)
+
 app = modal.App(APP_NAME)
 hf_cache = modal.Volume.from_name("rayline-hf-cache", create_if_missing=True)
 vllm_cache = modal.Volume.from_name("rayline-vllm-cache", create_if_missing=True)
 
 
 def server_command() -> list[str]:
-    """Return the immutable production Rung A vLLM command."""
+    """Return the immutable production Rung B vLLM command."""
     return [
         "vllm",
         "serve",
@@ -92,7 +122,7 @@ def server_command() -> list[str]:
         "--max-model-len",
         str(MAX_SERIALIZED_TOKENS),
         "--max-num-batched-tokens",
-        str(MAX_SERIALIZED_TOKENS),
+        str(CHUNK_SCHEDULE_TOKENS),
         "--max-num-seqs",
         "1",
         "--enable-chunked-prefill",

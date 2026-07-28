@@ -92,8 +92,9 @@ routing:
             expected_build_id: ${RAYLINE_ARC_VLLM_BUILD_ID}
             expected_io_plugin_version: rayline-arc-io@0.1.0
             serializer_version: mtrouter-token-blocks-v2
+            serving_rung: B
             required_pooling_capabilities:
-              - all_plugin_mean
+              - chunked_causal_mean
             modal_key_env: RAYLINE_ARC_MODAL_KEY
             modal_secret_env: RAYLINE_ARC_MODAL_SECRET
             connect_timeout_seconds: 5
@@ -117,9 +118,10 @@ routing:
 not a per-attempt timeout. Freeze the production value from the maximum-context
 GPU canary; do not assume the example is an adequate production threshold.
 
-`required_pooling_capabilities` starts with `all_plugin_mean` for the uncached
-bootstrap. Add `chunked_causal_mean` only after that vLLM capability is present
-and tested. `prefix_cached_mean` is a separately gated optimization.
+`serving_rung: B` selects vLLM's in-engine causal MEAN path and requires
+`chunked_causal_mean`. Rung A's `all_plugin_mean` remains a diagnostic
+bootstrap and is not the production maximum-context serving shape.
+`prefix_cached_mean` is a separately gated optimization.
 
 Modal proxy authentication is configured by environment-variable name, never
 by embedding credentials in YAML. Configure `modal_key_env` and
@@ -141,7 +143,7 @@ from an existing `rayline-arc-runtime` Secret. Before deployment:
 3. Create a private values overlay containing every artifact-declared logical
    arm in exact manifest order. Its provider model, provider slug, thinking
    mode, and four cache-aware prices must match the manifest exactly.
-4. Deploy the protected Rung A encoder from
+4. Deploy the protected Rung B encoder from
    `src/vllm-plugins/rayline_arc_io/modal_service.py` only after its CUDA
    correctness gate passes.
 

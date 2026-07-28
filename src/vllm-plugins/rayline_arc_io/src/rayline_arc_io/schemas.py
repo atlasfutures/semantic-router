@@ -28,7 +28,7 @@ class ArcPoolingRequest(BaseModel):
 
     schema_version: Literal["rayline.arc.pooling-request.v1"] = REQUEST_SCHEMA_VERSION
     serializer_version: Literal["mtrouter-token-blocks-v2"]
-    serving_rung: Literal["A"]
+    serving_rung: Literal["A", "B"]
     episode_id_hash: EpisodeIDHash
     turns: Annotated[list[ArcTurn], Field(min_length=1, max_length=MAX_TURNS)]
 

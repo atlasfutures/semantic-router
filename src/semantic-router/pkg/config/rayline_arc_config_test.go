@@ -87,6 +87,20 @@ func TestValidateRaylineARCAlgorithmConfigRejectsInvalidContracts(t *testing.T) 
 			wantErr: "unsupported capability",
 		},
 		{
+			name: "unknown serving rung",
+			mutate: func(decision *Decision) {
+				decision.Algorithm.RaylineARC.Encoder.ServingRung = "C"
+			},
+			wantErr: "serving_rung must be",
+		},
+		{
+			name: "serving rung capability mismatch",
+			mutate: func(decision *Decision) {
+				decision.Algorithm.RaylineARC.Encoder.ServingRung = RaylineARCServingRungB
+			},
+			wantErr: "requires pooling capability",
+		},
+		{
 			name: "connect exceeds total timeout",
 			mutate: func(decision *Decision) {
 				decision.Algorithm.RaylineARC.Encoder.ConnectTimeoutSeconds = 181
@@ -191,6 +205,7 @@ func validRaylineARCDecision() Decision {
 					ExpectedBuildID:       "vllm@public-synthetic-build",
 					ExpectedPluginVersion: "rayline-arc-io@0.1.0",
 					SerializerVersion:     RaylineARCSerializerVersion,
+					ServingRung:           RaylineARCServingRungA,
 					RequiredCapabilities:  []string{RaylineARCCapabilityPluginMean},
 					ModalKeyEnv:           "RAYLINE_ARC_MODAL_KEY",
 					ModalSecretEnv:        "RAYLINE_ARC_MODAL_SECRET",

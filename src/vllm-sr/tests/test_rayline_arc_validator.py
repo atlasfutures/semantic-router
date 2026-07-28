@@ -67,6 +67,7 @@ def _valid_decision():
                     "expected_build_id": "vllm@public-synthetic-build",
                     "expected_io_plugin_version": "rayline-arc-io@0.1.0",
                     "serializer_version": "mtrouter-token-blocks-v2",
+                    "serving_rung": "A",
                     "required_pooling_capabilities": ["all_plugin_mean"],
                     "modal_key_env": "RAYLINE_ARC_MODAL_KEY",
                     "modal_secret_env": "RAYLINE_ARC_MODAL_SECRET",

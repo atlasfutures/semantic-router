@@ -1,14 +1,16 @@
 # Rayline ARC vLLM IO Processor
 
 This installable plugin owns the frozen `mtrouter-token-blocks-v2` serializer
-and the Rung A FP32 masked-mean/L2 pooling adapter for PL-0039. vLLM owns all
-Qwen inference and token-hidden-state production; the plugin does not contain
-or load the Rayline policy head.
+and the Rung A/B pooling adapters for PL-0039. vLLM owns all Qwen inference
+and Rung B's FP32 causal mean; the plugin does not contain or load the Rayline
+policy head.
 
 The plugin is deliberately fail closed. It accepts only the pinned
 `Qwen/Qwen3.5-0.8B` model and tokenizer revision, BF16, a 262,144-token context,
-`token_embed`/`ALL` pooling without activation, and Rung A with automatic
-prefix caching disabled. Startup also proves the real EOS and a pinned
+and automatic prefix caching disabled. Rung A accepts `token_embed`/`ALL`
+without activation for diagnostics. Production Rung B accepts only
+`embed`/causal `MEAN` with activation and returns one normalized vector rather
+than transporting the token-hidden-state matrix. Startup also proves the real EOS and a pinned
 literal-special-token probe. Every tokenizer call sets
 `split_special_tokens=true`; relying on a backend tokenizer attribute is not
 equivalent through the Transformers wrapper.
@@ -25,7 +27,7 @@ The serving process must set an immutable build identifier:
 export RAYLINE_ARC_ENGINE_BUILD_ID=vllm@<image-or-source-revision>
 ```
 
-The protected Modal Rung A deployment is defined in `modal_service.py`. Deploy
+The protected Modal Rung B deployment is defined in `modal_service.py`. Deploy
 it only after the CUDA correctness gate passes:
 
 ```bash
@@ -45,7 +47,7 @@ plugin envelope and wraps the strict ARC response as `data`:
   "data": {
     "schema_version": "rayline.arc.pooling-request.v1",
     "serializer_version": "mtrouter-token-blocks-v2",
-    "serving_rung": "A",
+    "serving_rung": "B",
     "episode_id_hash": "<64-lowercase-hex>",
     "turns": [{"role": "user", "text": "public synthetic input"}]
   }

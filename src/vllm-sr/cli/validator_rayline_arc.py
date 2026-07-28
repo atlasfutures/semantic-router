@@ -165,6 +165,18 @@ def _validate_encoder(name, encoder) -> list[ValidationError]:
                 field=f"{prefix}.required_pooling_capabilities",
             )
         )
+    required_rung_capability = {
+        "A": "all_plugin_mean",
+        "B": "chunked_causal_mean",
+    }[encoder.serving_rung]
+    if required_rung_capability not in capabilities:
+        errors.append(
+            ValidationError(
+                f"serving_rung {encoder.serving_rung!r} requires "
+                f"{required_rung_capability!r}",
+                field=f"{prefix}.required_pooling_capabilities",
+            )
+        )
     has_modal_key = bool(encoder.modal_key_env)
     has_modal_secret = bool(encoder.modal_secret_env)
     if has_modal_key != has_modal_secret:

@@ -95,6 +95,7 @@ class _Renderer:
 def _config(**overrides):
     pooler = SimpleNamespace(
         task="token_embed",
+        seq_pooling_type=None,
         tok_pooling_type="ALL",
         use_activation=False,
         enable_chunked_processing=False,
@@ -117,11 +118,23 @@ def _config(**overrides):
     return config
 
 
-def _request_data():
+def _rung_b_config():
+    config = _config()
+    config.model_config.pooler_config = SimpleNamespace(
+        task="embed",
+        seq_pooling_type="MEAN",
+        tok_pooling_type=None,
+        use_activation=True,
+        enable_chunked_processing=False,
+    )
+    return config
+
+
+def _request_data(serving_rung="A"):
     return {
         "schema_version": "rayline.arc.pooling-request.v1",
         "serializer_version": "mtrouter-token-blocks-v2",
-        "serving_rung": "A",
+        "serving_rung": serving_rung,
         "episode_id_hash": "b" * 64,
         "turns": [{"role": "user", "text": "hello"}],
     }
@@ -157,7 +170,7 @@ def test_adapter_serializes_and_returns_normalized_contract() -> None:
     states = torch.zeros((token_count, 1024), dtype=torch.bfloat16)
     states[:, 3] = 2
     output = SimpleNamespace(
-        request_id="request-1",
+        request_id="request-1-0",
         prompt_token_ids=prompt.prompt_token_ids,
         num_cached_tokens=0,
         finished=True,
@@ -174,6 +187,63 @@ def test_adapter_serializes_and_returns_normalized_contract() -> None:
     assert response.cached_prefix_tokens == 0
     assert response.engine_build_id == "vllm@test-build-1206891"
     assert response.pooling_capabilities == ["all_plugin_mean"]
+
+
+def test_rung_b_adapter_returns_in_engine_causal_mean() -> None:
+    processor = RaylineArcIOProcessor(_rung_b_config(), _Renderer())
+    request = processor.parse_data(_request_data("B"))
+    prompt = processor.pre_process(request, request_id="request-b")
+    params = processor.merge_pooling_params(_PoolingParams())
+
+    assert params.task == "embed"
+    assert params.use_activation is True
+    assert params.dimensions is None
+    assert params.skip_reading_prefix_cache is True
+
+    embedding = torch.zeros(1024)
+    embedding[7] = 1
+    output = SimpleNamespace(
+        request_id="request-b-0",
+        prompt_token_ids=prompt.prompt_token_ids,
+        num_cached_tokens=0,
+        finished=True,
+        outputs=SimpleNamespace(data=embedding),
+    )
+
+    response = processor.post_process([output], request_id="request-b")
+
+    assert response.embedding[7] == 1
+    assert response.pooling_capabilities == ["chunked_causal_mean"]
+
+
+def test_adapter_rejects_request_for_inactive_rung() -> None:
+    processor = RaylineArcIOProcessor(_rung_b_config(), _Renderer())
+    request = processor.parse_data(_request_data("A"))
+    with pytest.raises(ValueError, match="does not match deployed Rung B"):
+        processor.pre_process(request, request_id="request-rung-mismatch")
+
+
+@pytest.mark.parametrize(
+    "embedding",
+    [
+        torch.ones(1023),
+        torch.full((1024,), float("nan")),
+        torch.ones(1024),
+    ],
+)
+def test_rung_b_adapter_rejects_invalid_embedding(embedding) -> None:
+    processor = RaylineArcIOProcessor(_rung_b_config(), _Renderer())
+    request = processor.parse_data(_request_data("B"))
+    prompt = processor.pre_process(request, request_id="request-invalid-b")
+    output = SimpleNamespace(
+        request_id="request-invalid-b-0",
+        prompt_token_ids=prompt.prompt_token_ids,
+        num_cached_tokens=0,
+        finished=True,
+        outputs=SimpleNamespace(data=embedding),
+    )
+    with pytest.raises(ValueError, match="Rung B"):
+        processor.post_process([output], request_id="request-invalid-b")
 
 
 @pytest.mark.parametrize(
@@ -210,14 +280,29 @@ def test_adapter_rejects_cached_rung_a_output() -> None:
     request = processor.parse_data(_request_data())
     prompt = processor.pre_process(request, request_id="request-2")
     output = SimpleNamespace(
-        request_id="request-2",
+        request_id="request-2-0",
         prompt_token_ids=prompt.prompt_token_ids,
         num_cached_tokens=1,
         finished=True,
         outputs=SimpleNamespace(data=torch.ones((len(prompt.prompt_token_ids), 1024))),
     )
-    with pytest.raises(ValueError, match="forbids cached prefix"):
+    with pytest.raises(ValueError, match="forbid cached prefix"):
         processor.post_process([output], request_id="request-2")
+
+
+def test_adapter_rejects_unindexed_engine_request_id() -> None:
+    processor = RaylineArcIOProcessor(_config(), _Renderer())
+    request = processor.parse_data(_request_data())
+    prompt = processor.pre_process(request, request_id="request-3")
+    output = SimpleNamespace(
+        request_id="request-3",
+        prompt_token_ids=prompt.prompt_token_ids,
+        num_cached_tokens=0,
+        finished=True,
+        outputs=SimpleNamespace(data=torch.ones((len(prompt.prompt_token_ids), 1024))),
+    )
+    with pytest.raises(ValueError, match=r"expected 'request-3-0'"):
+        processor.post_process([output], request_id="request-3")
 
 
 def test_adapter_requires_immutable_engine_build_id(monkeypatch) -> None:

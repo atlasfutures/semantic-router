@@ -14,6 +14,8 @@ const (
 	RaylineARCEncoderModel          = "Qwen/Qwen3.5-0.8B"
 	RaylineARCEncoderModelRevision  = "2fc06364715b967f1860aea9cf38778875588b17"
 	RaylineARCSerializerVersion     = "mtrouter-token-blocks-v2"
+	RaylineARCServingRungA          = "A"
+	RaylineARCServingRungB          = "B"
 	RaylineARCBackendRedis          = "redis"
 	RaylineARCBackendMemory         = "memory"
 	RaylineARCCapabilityPluginMean  = "all_plugin_mean"
@@ -47,6 +49,7 @@ type RaylineARCEncoderConfig struct {
 	ExpectedBuildID       string   `yaml:"expected_build_id"`
 	ExpectedPluginVersion string   `yaml:"expected_io_plugin_version"`
 	SerializerVersion     string   `yaml:"serializer_version"`
+	ServingRung           string   `yaml:"serving_rung"`
 	RequiredCapabilities  []string `yaml:"required_pooling_capabilities"`
 	ModalKeyEnv           string   `yaml:"modal_key_env,omitempty"`
 	ModalSecretEnv        string   `yaml:"modal_secret_env,omitempty"`
@@ -129,7 +132,42 @@ func validateRaylineARCEncoderConfig(cfg RaylineARCEncoderConfig) error {
 	if err := validateRaylineARCCapabilities(cfg.RequiredCapabilities); err != nil {
 		return err
 	}
+	if err := validateRaylineARCServingRung(
+		cfg.ServingRung,
+		cfg.RequiredCapabilities,
+	); err != nil {
+		return err
+	}
 	return validateRaylineARCEncoderTimeouts(cfg)
+}
+
+func validateRaylineARCServingRung(
+	servingRung string,
+	capabilities []string,
+) error {
+	requiredCapability := ""
+	switch servingRung {
+	case RaylineARCServingRungA:
+		requiredCapability = RaylineARCCapabilityPluginMean
+	case RaylineARCServingRungB:
+		requiredCapability = RaylineARCCapabilityChunkedMean
+	default:
+		return fmt.Errorf(
+			"serving_rung must be %q or %q",
+			RaylineARCServingRungA,
+			RaylineARCServingRungB,
+		)
+	}
+	for _, capability := range capabilities {
+		if capability == requiredCapability {
+			return nil
+		}
+	}
+	return fmt.Errorf(
+		"serving_rung %q requires pooling capability %q",
+		servingRung,
+		requiredCapability,
+	)
 }
 
 func validateRaylineARCModalAuth(cfg RaylineARCEncoderConfig) error {

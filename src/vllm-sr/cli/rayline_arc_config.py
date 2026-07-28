@@ -26,6 +26,7 @@ class RaylineARCEncoderConfig(BaseModel):
     expected_build_id: str
     expected_io_plugin_version: str
     serializer_version: str
+    serving_rung: Literal["A", "B"]
     required_pooling_capabilities: list[RaylineARCPoolingCapability] = Field(
         min_length=1,
         max_length=8,

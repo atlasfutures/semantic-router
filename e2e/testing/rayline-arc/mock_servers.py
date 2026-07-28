@@ -127,6 +127,8 @@ class EncoderHandler(QuietHandler):
             body = self.read_json()
             data = body["data"]
             episode_hash = data["episode_id_hash"]
+            if data["serving_rung"] != "B":
+                raise ValueError("unexpected serving rung")
             turns = data["turns"]
             text = "\n".join(str(turn.get("text", "")) for turn in turns)
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
@@ -160,7 +162,7 @@ class EncoderHandler(QuietHandler):
                         "eos_token_id": 248046,
                         "engine_build_id": ENGINE_BUILD_ID,
                         "io_plugin_version": PLUGIN_VERSION,
-                        "pooling_capabilities": ["all_plugin_mean"],
+                        "pooling_capabilities": ["chunked_causal_mean"],
                     }
                 },
             )

@@ -324,6 +324,7 @@ func validEncoderClientConfig(baseURL string) EncoderClientConfig {
 		ExpectedBuildID:       "vllm@immutable-build",
 		ExpectedPluginVersion: "rayline-arc-io@0.1.0",
 		SerializerVersion:     SerializationName,
+		ServingRung:           "A",
 		RequiredCapabilities:  []string{"all_plugin_mean"},
 		ConnectTimeout:        time.Second,
 		TotalTimeout:          time.Second,

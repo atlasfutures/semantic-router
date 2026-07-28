@@ -20,6 +20,9 @@ def test_request_is_strict_and_explicit() -> None:
     request = ArcPoolingRequest.model_validate(valid_request())
     assert request.serving_rung == "A"
     assert request.turns[0].text == "hello"
+    rung_b = valid_request()
+    rung_b["serving_rung"] = "B"
+    assert ArcPoolingRequest.model_validate(rung_b).serving_rung == "B"
 
     for field in ("serializer_version", "serving_rung", "episode_id_hash"):
         invalid = valid_request()
@@ -32,7 +35,7 @@ def test_request_is_strict_and_explicit() -> None:
     ("field", "value"),
     [
         ("episode_id_hash", "A" * 64),
-        ("serving_rung", "B"),
+        ("serving_rung", "C"),
         ("serializer_version", "other"),
         ("turns", []),
         ("turns", [{"role": "tool", "text": "no"}]),

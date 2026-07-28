@@ -378,6 +378,7 @@ func raylineARCEncoderClientConfig(
 		ExpectedBuildID:       arcConfig.Encoder.ExpectedBuildID,
 		ExpectedPluginVersion: arcConfig.Encoder.ExpectedPluginVersion,
 		SerializerVersion:     arcConfig.Encoder.SerializerVersion,
+		ServingRung:           arcConfig.Encoder.ServingRung,
 		RequiredCapabilities: append(
 			[]string(nil),
 			arcConfig.Encoder.RequiredCapabilities...,

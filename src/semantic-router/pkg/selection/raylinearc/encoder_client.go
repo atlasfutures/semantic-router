@@ -36,7 +36,8 @@ import (
 
 const (
 	encoderRequestSchema = "rayline.arc.pooling-request.v1"
-	encoderServingRung   = "A"
+	encoderServingRungA  = "A"
+	encoderServingRungB  = "B"
 	encoderDimension     = 1024
 	maxEncoderResponse   = 256 * 1024
 
@@ -84,6 +85,7 @@ type EncoderClientConfig struct {
 	ExpectedBuildID       string
 	ExpectedPluginVersion string
 	SerializerVersion     string
+	ServingRung           string
 	RequiredCapabilities  []string
 	ModalKey              string
 	ModalSecret           string
@@ -193,6 +195,10 @@ func validateEncoderClientConfig(
 	if encoderReadinessContractIncomplete(config) {
 		return errors.New("ARC encoder readiness contract is incomplete")
 	}
+	if config.ServingRung != encoderServingRungA &&
+		config.ServingRung != encoderServingRungB {
+		return errors.New("ARC encoder serving rung must be A or B")
+	}
 	return nil
 }
 
@@ -204,6 +210,7 @@ func encoderReadinessContractIncomplete(config EncoderClientConfig) bool {
 		config.TokenizerSHA256 == "" ||
 		config.ExpectedBuildID == "" ||
 		config.ExpectedPluginVersion == "" ||
+		config.ServingRung == "" ||
 		len(config.RequiredCapabilities) == 0
 }
 
@@ -260,7 +267,7 @@ func (client *EncoderClient) buildPayload(
 		Data: encoderRequestData{
 			SchemaVersion: encoderRequestSchema,
 			Serializer:    client.config.SerializerVersion,
-			ServingRung:   encoderServingRung,
+			ServingRung:   client.config.ServingRung,
 			EpisodeIDHash: episodeIDHash,
 			Turns:         turns,
 		},
