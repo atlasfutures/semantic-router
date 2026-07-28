@@ -100,17 +100,12 @@ func (r *OpenAIRouter) selectModelFromCandidates(selCtx *selection.SelectionCont
 			err,
 		)
 	}
-
-	if len(selCtx.CandidateModels) == 1 {
+	if len(selCtx.CandidateModels) == 1 && !failClosedSelection(algorithm) {
 		selected, method := r.selectSingleCandidateModel(selCtx, defaultCandidateModelRef, ctx)
 		return selected, method, nil
 	}
-
 	method := r.getSelectionMethod(algorithm)
-
 	selector := r.selectorForDecisionMethod(method, algorithm)
-
-	// Use the configured default candidate if no selector is available.
 	if selector == nil {
 		return r.handleSelectionFallback(
 			algorithm,
@@ -125,11 +120,7 @@ func (r *OpenAIRouter) selectModelFromCandidates(selCtx *selection.SelectionCont
 		)
 	}
 
-	// Perform selection
-	selectionContext := context.Background()
-	if ctx != nil && ctx.TraceContext != nil {
-		selectionContext = ctx.TraceContext
-	}
+	selectionContext := modelSelectionContext(ctx)
 	result, err := selector.Select(selectionContext, selCtx)
 	if err != nil {
 		return r.handleSelectionFallback(
@@ -172,6 +163,15 @@ func (r *OpenAIRouter) selectModelFromCandidates(selCtx *selection.SelectionCont
 			result.SelectedModel,
 		)
 	}
+	if err := bindRaylineARCDispatchContract(
+		selector,
+		algorithm,
+		result,
+		selectedModelRef,
+		ctx,
+	); err != nil {
+		return nil, "", err
+	}
 	return r.completeModelSelection(
 		selCtx,
 		algorithm,
@@ -180,6 +180,38 @@ func (r *OpenAIRouter) selectModelFromCandidates(selCtx *selection.SelectionCont
 		result,
 		selectedModelRef,
 	)
+}
+
+func modelSelectionContext(ctx *RequestContext) context.Context {
+	if ctx != nil && ctx.TraceContext != nil {
+		return ctx.TraceContext
+	}
+	return context.Background()
+}
+
+func bindRaylineARCDispatchContract(
+	selector selection.Selector,
+	algorithm *config.AlgorithmConfig,
+	result *selection.SelectionResult,
+	selectedModelRef *config.ModelRef,
+	ctx *RequestContext,
+) error {
+	if !failClosedSelection(algorithm) {
+		return nil
+	}
+	dispatchProvider, ok := selector.(raylineARCWorkerProvider)
+	if !ok || result.RaylineARC == nil {
+		return selectionFailureForAlgorithm(algorithm, "dispatch_contract")
+	}
+	worker, found := dispatchProvider.Worker(result.RaylineARC.SelectedArm)
+	if !found || worker.ID != selectedModelRef.Model {
+		return selectionFailureForAlgorithm(algorithm, "dispatch_contract")
+	}
+	if ctx == nil {
+		return selectionFailureForAlgorithm(algorithm, "dispatch_context")
+	}
+	ctx.RaylineARCDispatch = &worker
+	return nil
 }
 
 func (r *OpenAIRouter) completeModelSelection(

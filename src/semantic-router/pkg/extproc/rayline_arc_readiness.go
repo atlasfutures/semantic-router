@@ -19,8 +19,11 @@ package extproc
 import (
 	"context"
 	"errors"
+	"math"
+	"net/url"
 	"os"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -65,17 +68,13 @@ func createRaylineARCSelector(
 	if err != nil {
 		return unavailable("artifact")
 	}
-	if runtime.ArtifactID() != arcConfig.ArtifactRevision {
-		return unavailable("artifact_revision")
-	}
-	if !raylineARCEncoderContractMatches(runtime, arcConfig) {
-		return unavailable("artifact_encoder_contract")
-	}
-	workerIDs := runtime.WorkerIDs()
-	for index := range decisions {
-		if !raylineARCCandidatesMatch(decisions[index].ModelRefs, workerIDs) {
-			return unavailable("artifact_arm_mapping")
-		}
+	if failureClass := raylineARCLoadedContractFailure(
+		cfg,
+		runtime,
+		arcConfig,
+		decisions,
+	); failureClass != "" {
+		return unavailable(failureClass)
 	}
 	encoder, err := raylinearc.NewEncoderClient(
 		raylineARCEncoderClientConfig(arcConfig),
@@ -100,6 +99,176 @@ func createRaylineARCSelector(
 		encoder,
 		arcConfig.ArtifactRevision,
 	), episodeStore, closeStore, ""
+}
+
+func raylineARCLoadedContractFailure(
+	cfg *config.RouterConfig,
+	runtime *raylinearc.Runtime,
+	arcConfig *config.RaylineARCAlgorithmConfig,
+	decisions []*config.Decision,
+) string {
+	if runtime.ArtifactID() != arcConfig.ArtifactRevision {
+		return "artifact_revision"
+	}
+	if !raylineARCEncoderContractMatches(runtime, arcConfig) {
+		return "artifact_encoder_contract"
+	}
+	workerIDs := runtime.WorkerIDs()
+	for index := range decisions {
+		if !raylineARCCandidatesMatch(decisions[index].ModelRefs, workerIDs) {
+			return "artifact_arm_mapping"
+		}
+	}
+	if !raylineARCDispatchContractMatches(cfg, runtime, decisions) {
+		return "artifact_dispatch_contract"
+	}
+	return ""
+}
+
+func raylineARCDispatchContractMatches(
+	cfg *config.RouterConfig,
+	runtime *raylinearc.Runtime,
+	decisions []*config.Decision,
+) bool {
+	if cfg == nil || runtime == nil {
+		return false
+	}
+	workers := make([]raylinearc.WorkerManifest, len(runtime.WorkerIDs()))
+	for index := range workers {
+		worker, ok := runtime.Worker(index)
+		if !ok {
+			return false
+		}
+		workers[index] = worker
+	}
+	return raylineARCDispatchContractsMatch(cfg, workers, decisions)
+}
+
+func raylineARCDispatchContractsMatch(
+	cfg *config.RouterConfig,
+	workers []raylinearc.WorkerManifest,
+	decisions []*config.Decision,
+) bool {
+	if cfg == nil || len(workers) == 0 || len(decisions) == 0 {
+		return false
+	}
+	thinkingByWorker, ok := raylineARCThinkingModes(decisions)
+	if !ok {
+		return false
+	}
+	for index := range workers {
+		if !raylineARCWorkerDispatchMatches(
+			cfg,
+			&workers[index],
+			thinkingByWorker,
+		) {
+			return false
+		}
+	}
+	return true
+}
+
+func raylineARCThinkingModes(
+	decisions []*config.Decision,
+) (map[string]bool, bool) {
+	thinkingByWorker := make(map[string]bool)
+	for _, decision := range decisions {
+		for _, modelRef := range decision.ModelRefs {
+			useReasoning := modelRef.UseReasoning != nil &&
+				*modelRef.UseReasoning
+			if previous, exists := thinkingByWorker[modelRef.Model]; exists &&
+				previous != useReasoning {
+				return nil, false
+			}
+			thinkingByWorker[modelRef.Model] = useReasoning
+		}
+	}
+	return thinkingByWorker, true
+}
+
+func raylineARCWorkerDispatchMatches(
+	cfg *config.RouterConfig,
+	worker *raylinearc.WorkerManifest,
+	thinkingByWorker map[string]bool,
+) bool {
+	thinking, exists := thinkingByWorker[worker.ID]
+	if !exists ||
+		thinking != (worker.ThinkingMode == "on") ||
+		cfg.GetModelAPIFormat(worker.ID) != config.APIFormatOpenAI ||
+		!raylineARCPriceIdentityMatches(cfg, worker) {
+		return false
+	}
+	endpoints := cfg.GetEndpointsForModel(worker.ID)
+	if len(endpoints) == 0 {
+		return false
+	}
+	for endpointIndex := range endpoints {
+		if !raylineARCEndpointIdentityMatches(
+			cfg,
+			worker.ID,
+			worker.Model,
+			&endpoints[endpointIndex],
+		) {
+			return false
+		}
+	}
+	return true
+}
+
+func raylineARCEndpointIdentityMatches(
+	cfg *config.RouterConfig,
+	logicalModel string,
+	providerModel string,
+	endpoint *config.VLLMEndpoint,
+) bool {
+	if endpoint == nil || endpoint.Type != "openai" ||
+		cfg.ResolveExternalModelID(logicalModel, endpoint.Name) != providerModel {
+		return false
+	}
+	profile, err := cfg.GetProviderProfileForEndpoint(endpoint.Name)
+	if err != nil || profile == nil || profile.Type != "openai" {
+		return false
+	}
+	parsed, err := url.Parse(profile.BaseURL)
+	return err == nil &&
+		strings.EqualFold(parsed.Hostname(), "openrouter.ai") &&
+		parsed.Scheme == "https"
+}
+
+func raylineARCPriceIdentityMatches(
+	cfg *config.RouterConfig,
+	worker *raylinearc.WorkerManifest,
+) bool {
+	pricing, ok := cfg.GetFullModelPricing(worker.ID)
+	if !ok || pricing.Currency != "USD" || pricing.CacheWritePer1M == nil {
+		return false
+	}
+	const tokenScale = 1_000_000
+	return raylineARCPriceEqual(
+		pricing.PromptPer1M,
+		worker.EstimatedInputCostPerToken*tokenScale,
+	) &&
+		raylineARCPriceEqual(
+			pricing.CachedInputPer1M,
+			worker.EstimatedCacheReadCostPerToken*tokenScale,
+		) &&
+		raylineARCPriceEqual(
+			*pricing.CacheWritePer1M,
+			worker.EstimatedCacheWriteCostPerToken*tokenScale,
+		) &&
+		raylineARCPriceEqual(
+			pricing.CompletionPer1M,
+			worker.EstimatedOutputCostPerToken*tokenScale,
+		)
+}
+
+func raylineARCPriceEqual(configured, artifact float64) bool {
+	if math.IsNaN(configured) || math.IsInf(configured, 0) ||
+		math.IsNaN(artifact) || math.IsInf(artifact, 0) {
+		return false
+	}
+	tolerance := math.Max(1e-12, math.Abs(artifact)*1e-9)
+	return math.Abs(configured-artifact) <= tolerance
 }
 
 func createRaylineARCEpisodeStore(

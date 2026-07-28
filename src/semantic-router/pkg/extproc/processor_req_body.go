@@ -195,6 +195,9 @@ func (r *OpenAIRouter) handleAutoModelRouting(openAIRequest *openai.ChatCompleti
 	})
 
 	matchedModel := selectedModel
+	if ctx.RaylineARCDispatch != nil {
+		reasoningDecision.UseReasoning = ctx.RaylineARCDispatch.ThinkingMode == "on"
+	}
 
 	if matchedModel == originalModel || matchedModel == "" {
 		// No model change needed
@@ -229,14 +232,28 @@ func (r *OpenAIRouter) handleAutoModelRouting(openAIRequest *openai.ChatCompleti
 		return nil, fmt.Errorf("auto routing provider profile: %w", profileErr)
 	}
 
-	modifiedBody, err := r.modifyRequestBodyForAutoRouting(
-		openAIRequest,
-		upstreamModel,
-		decisionName,
-		reasoningDecision.UseReasoning,
-		profile,
-		ctx,
-	)
+	var modifiedBody []byte
+	var err error
+	if ctx.RaylineARCDispatch != nil {
+		modifiedBody, err = r.modifyRequestBodyForRaylineARC(
+			openAIRequest,
+			decisionName,
+			profile,
+			ctx,
+		)
+		if err != nil {
+			return r.raylineARCDispatchFailureResponse(ctx), nil
+		}
+	} else {
+		modifiedBody, err = r.modifyRequestBodyForAutoRouting(
+			openAIRequest,
+			upstreamModel,
+			decisionName,
+			reasoningDecision.UseReasoning,
+			profile,
+			ctx,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -265,6 +282,25 @@ func (r *OpenAIRouter) handleAutoModelRouting(openAIRequest *openai.ChatCompleti
 	r.recordRoutingLatency(ctx)
 
 	return response, nil
+}
+
+func (r *OpenAIRouter) raylineARCDispatchFailureResponse(
+	ctx *RequestContext,
+) *ext_proc.ProcessingResponse {
+	logging.ComponentErrorEvent(
+		"extproc",
+		"rayline_arc_dispatch_failed",
+		map[string]interface{}{
+			"request_id":    ctx.RequestID,
+			"failure_class": "request_shape",
+		},
+	)
+	metrics.RecordRaylineARCFailure("dispatch_request_shape")
+	r.finalizeRaylineARCAbort(ctx, "dispatch_request_shape")
+	return r.createErrorResponse(
+		http.StatusServiceUnavailable,
+		"Rayline ARC routing unavailable",
+	)
 }
 
 // handleSpecifiedModelRouting handles routing for explicitly specified models

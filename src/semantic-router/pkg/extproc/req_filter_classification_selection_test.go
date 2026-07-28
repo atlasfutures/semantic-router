@@ -144,6 +144,65 @@ func TestSelectModelFromCandidatesFailsClosedForRaylineARCWithoutSessionMutation
 	}
 }
 
+func TestSelectModelFromCandidatesBindsPrivateARCDispatchContract(t *testing.T) {
+	state, err := raylinearc.NewEpisodeState(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scorer := &fakeARCScorer{
+		workerIDs: []string{"worker-a", "worker-b"},
+		decision: raylinearc.Decision{
+			SelectedArm:     1,
+			SelectedWorker:  "worker-b",
+			RawScores:       []float32{0.1, 0.9},
+			AdjustedScores:  []float32{0.1, 0.9},
+			SwitchCostUSD:   []float64{0, 0},
+			CacheMissTokens: []int{0, 0},
+		},
+	}
+	encoder := &fakeARCEncoder{
+		result: &raylinearc.EncoderResult{
+			Embedding:         make([]float32, 1024),
+			SerializedTokens:  10,
+			FullHistoryTokens: 10,
+			ModelRevision:     config.RaylineARCEncoderModelRevision,
+		},
+	}
+	registry := selection.NewRegistry()
+	registry.Register(
+		selection.MethodRaylineARC,
+		newRaylineARCSelector(scorer, encoder, "revision"),
+	)
+	router := &OpenAIRouter{ModelSelector: registry}
+	requestContext := &RequestContext{}
+	selected, method, err := router.selectModelFromCandidates(
+		validARCSelectionContext(state),
+		&config.AlgorithmConfig{
+			Type:    config.RaylineARCAlgorithmType,
+			OnError: "fail_closed",
+		},
+		requestContext,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected == nil || selected.Model != "worker-b" ||
+		method != string(selection.MethodRaylineARC) {
+		t.Fatalf("selection = %#v, method = %q", selected, method)
+	}
+	if requestContext.RaylineARCDispatch == nil ||
+		requestContext.RaylineARCDispatch.ID != "worker-b" ||
+		requestContext.RaylineARCDispatch.Model != "provider/worker-b" {
+		t.Fatalf(
+			"dispatch contract = %#v",
+			requestContext.RaylineARCDispatch,
+		)
+	}
+	if requestContext.VSRRaylineARC == nil {
+		t.Fatal("privacy-safe ARC trace was not retained")
+	}
+}
+
 func TestBuildSelectionContextHashesARCIdentityAndNormalizesOriginalBody(t *testing.T) {
 	rawEpisodeID := "private-episode"
 	algorithm := &config.AlgorithmConfig{

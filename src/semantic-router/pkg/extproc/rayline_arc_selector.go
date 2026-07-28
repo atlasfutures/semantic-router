@@ -46,6 +46,10 @@ type raylineARCScorer interface {
 	) (raylinearc.Decision, error)
 }
 
+type raylineARCWorkerProvider interface {
+	Worker(int) (raylinearc.WorkerManifest, bool)
+}
+
 type runtimeARCScorer struct {
 	runtime *raylinearc.Runtime
 	policy  *raylinearc.Policy
@@ -61,6 +65,12 @@ func (scorer *runtimeARCScorer) ArtifactID() string {
 
 func (scorer *runtimeARCScorer) EncoderRevision() string {
 	return scorer.runtime.EncoderRevision()
+}
+
+func (scorer *runtimeARCScorer) Worker(
+	index int,
+) (raylinearc.WorkerManifest, bool) {
+	return scorer.runtime.Worker(index)
 }
 
 func (scorer *runtimeARCScorer) Select(
@@ -106,6 +116,19 @@ func newRaylineARCSelector(
 		artifactRevision: artifactRevision,
 		now:              time.Now,
 	}
+}
+
+func (selector *raylineARCSelector) Worker(
+	index int,
+) (raylinearc.WorkerManifest, bool) {
+	if selector == nil || selector.scorer == nil {
+		return raylinearc.WorkerManifest{}, false
+	}
+	provider, ok := selector.scorer.(raylineARCWorkerProvider)
+	if !ok {
+		return raylinearc.WorkerManifest{}, false
+	}
+	return provider.Worker(index)
 }
 
 func (selector *raylineARCSelector) Select(

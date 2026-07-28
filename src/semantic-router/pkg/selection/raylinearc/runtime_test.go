@@ -80,6 +80,92 @@ func TestLoadRuntimeAndHeadParity(t *testing.T) {
 	}
 }
 
+func TestRuntimeWorkerReturnsDeepClone(t *testing.T) {
+	runtime, err := LoadRuntime(writeSyntheticRuntime(t, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, ok := runtime.Worker(0)
+	if !ok {
+		t.Fatal("worker 0 is unavailable")
+	}
+	first.CapabilityTags[0] = "mutated"
+	first.OpenRouterProviderOrder[0] = "mutated"
+	first.ExtraBody[0] = '['
+	*first.MaxCompletionTokens = 1
+	*first.Temperature = 2
+	*first.AttemptDeadlineSeconds = 1
+
+	second, ok := runtime.Worker(0)
+	if !ok {
+		t.Fatal("worker 0 is unavailable after clone mutation")
+	}
+	if second.CapabilityTags[0] == "mutated" ||
+		second.OpenRouterProviderOrder[0] == "mutated" ||
+		second.ExtraBody[0] == '[' ||
+		*second.MaxCompletionTokens == 1 ||
+		*second.Temperature == 2 ||
+		*second.AttemptDeadlineSeconds == 1 {
+		t.Fatal("runtime worker contract exposed mutable artifact state")
+	}
+	if _, ok := runtime.Worker(-1); ok {
+		t.Fatal("negative worker index succeeded")
+	}
+}
+
+func TestManifestRejectsInvalidWorkerDispatchContract(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*WorkerManifest)
+	}{
+		{"provider order", func(worker *WorkerManifest) {
+			worker.OpenRouterProviderOrder = []string{"other"}
+		}},
+		{"fallbacks", func(worker *WorkerManifest) {
+			worker.OpenRouterAllowFallbacks = true
+		}},
+		{"parameters", func(worker *WorkerManifest) {
+			worker.OpenRouterRequireParameters = false
+		}},
+		{"thinking mode", func(worker *WorkerManifest) {
+			worker.ThinkingMode = "medium"
+		}},
+		{"thinking budget", func(worker *WorkerManifest) {
+			worker.ReasoningBudgetTokens = 1
+		}},
+		{"reasoning body", func(worker *WorkerManifest) {
+			worker.ExtraBody = json.RawMessage(
+				`{"reasoning":{"enabled":true,"max_tokens":1}}`,
+			)
+		}},
+		{"reserved extra body", func(worker *WorkerManifest) {
+			worker.ExtraBody = json.RawMessage(
+				`{"model":"override","reasoning":{"enabled":false}}`,
+			)
+		}},
+		{"completion bounds", func(worker *WorkerManifest) {
+			*worker.MaxCompletionTokens = 1
+			worker.MinimumCompletionTokens = 2
+		}},
+		{"temperature", func(worker *WorkerManifest) {
+			value := math.Inf(1)
+			worker.Temperature = &value
+		}},
+		{"retry", func(worker *WorkerManifest) {
+			worker.OpenRouterRetryCapSeconds = 1
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			manifest := syntheticManifest()
+			test.mutate(&manifest.Workers[0])
+			if err := manifest.validate(); err == nil {
+				t.Fatal("invalid dispatch contract was accepted")
+			}
+		})
+	}
+}
+
 func TestRuntimeArtifactFromEnvironment(t *testing.T) {
 	runtimeDir := os.Getenv("RAYLINE_ARC_TEST_RUNTIME_DIR")
 	if runtimeDir == "" {
@@ -451,6 +537,9 @@ func syntheticWorker(
 	inputCost float64,
 	cacheReadCost float64,
 ) WorkerManifest {
+	maxCompletionTokens := uint64(65_536)
+	temperature := 0.1
+	attemptDeadlineSeconds := 180.0
 	return WorkerManifest{
 		ID:                              id,
 		Model:                           "synthetic/" + id,
@@ -467,10 +556,15 @@ func syntheticWorker(
 		OpenRouterRequireParameters:     true,
 		OpenRouterPricingSource:         "synthetic",
 		ThinkingMode:                    "off",
-		ExtraBody:                       json.RawMessage(`{}`),
-		OpenRouterMaxRetries:            3,
-		OpenRouterRetryBaseSeconds:      2,
-		OpenRouterRetryCapSeconds:       30,
+		ExtraBody: json.RawMessage(
+			`{"reasoning":{"enabled":false}}`,
+		),
+		MaxCompletionTokens:        &maxCompletionTokens,
+		Temperature:                &temperature,
+		OpenRouterMaxRetries:       3,
+		OpenRouterRetryBaseSeconds: 2,
+		OpenRouterRetryCapSeconds:  30,
+		AttemptDeadlineSeconds:     &attemptDeadlineSeconds,
 	}
 }
 

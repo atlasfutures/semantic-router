@@ -339,6 +339,9 @@ func validateWorker(
 	if err := validateWorkerCosts(worker); err != nil {
 		return err
 	}
+	if err := validateWorkerDispatch(worker); err != nil {
+		return err
+	}
 	if len(worker.CapabilityTags) == 0 {
 		return fmt.Errorf("worker %q capability tags are required", worker.ID)
 	}
@@ -362,6 +365,202 @@ func validateWorkerCosts(worker *WorkerManifest) error {
 		}
 	}
 	return nil
+}
+
+func validateWorkerDispatch(worker *WorkerManifest) error {
+	checks := []func(*WorkerManifest) error{
+		validateWorkerProviderContract,
+		validateWorkerExecutionContract,
+		validateWorkerRetryContract,
+		validateWorkerExtraBody,
+	}
+	for _, check := range checks {
+		if err := check(worker); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateWorkerProviderContract(worker *WorkerManifest) error {
+	required := map[string]string{
+		"api_key_env":             worker.APIKeyEnv,
+		"provider slug":           worker.OpenRouterProviderSlug,
+		"provider name":           worker.OpenRouterProviderName,
+		"provider pricing source": worker.OpenRouterPricingSource,
+	}
+	for label, value := range required {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("worker %q %s is required", worker.ID, label)
+		}
+	}
+	if len(worker.OpenRouterProviderOrder) != 1 ||
+		worker.OpenRouterProviderOrder[0] != worker.OpenRouterProviderSlug {
+		return fmt.Errorf(
+			"worker %q provider order must contain only its provider slug",
+			worker.ID,
+		)
+	}
+	if worker.OpenRouterAllowFallbacks {
+		return fmt.Errorf("worker %q must disable provider fallbacks", worker.ID)
+	}
+	if !worker.OpenRouterRequireParameters {
+		return fmt.Errorf("worker %q must require provider parameters", worker.ID)
+	}
+	return nil
+}
+
+func validateWorkerExecutionContract(worker *WorkerManifest) error {
+	if err := validateWorkerThinkingContract(worker); err != nil {
+		return err
+	}
+	return validateWorkerGenerationLimits(worker)
+}
+
+func validateWorkerThinkingContract(worker *WorkerManifest) error {
+	if worker.ThinkingMode != "on" && worker.ThinkingMode != "off" {
+		return fmt.Errorf("worker %q thinking mode must be on or off", worker.ID)
+	}
+	if worker.ThinkingMode == "on" && worker.ReasoningBudgetTokens == 0 {
+		return fmt.Errorf("worker %q thinking-on budget must be positive", worker.ID)
+	}
+	if worker.ThinkingMode == "off" && worker.ReasoningBudgetTokens != 0 {
+		return fmt.Errorf("worker %q thinking-off budget must be zero", worker.ID)
+	}
+	return nil
+}
+
+func validateWorkerGenerationLimits(worker *WorkerManifest) error {
+	if worker.MaxCompletionTokens != nil &&
+		*worker.MaxCompletionTokens < worker.MinimumCompletionTokens {
+		return fmt.Errorf("worker %q completion limits are incompatible", worker.ID)
+	}
+	if worker.Temperature != nil &&
+		(math.IsNaN(*worker.Temperature) ||
+			math.IsInf(*worker.Temperature, 0) ||
+			*worker.Temperature < 0 ||
+			*worker.Temperature > 2) {
+		return fmt.Errorf("worker %q temperature is invalid", worker.ID)
+	}
+	return nil
+}
+
+func validateWorkerRetryContract(worker *WorkerManifest) error {
+	if worker.OpenRouterMaxRetries == 0 ||
+		!finitePositive64(worker.OpenRouterRetryBaseSeconds) ||
+		!finitePositive64(worker.OpenRouterRetryCapSeconds) ||
+		worker.OpenRouterRetryCapSeconds < worker.OpenRouterRetryBaseSeconds {
+		return fmt.Errorf("worker %q retry contract is invalid", worker.ID)
+	}
+	if worker.AttemptDeadlineSeconds != nil &&
+		!finitePositive64(*worker.AttemptDeadlineSeconds) {
+		return fmt.Errorf("worker %q attempt deadline is invalid", worker.ID)
+	}
+	return nil
+}
+
+func validateWorkerExtraBody(worker *WorkerManifest) error {
+	var extra map[string]json.RawMessage
+	if err := decodeStrictJSON(worker.ExtraBody, &extra); err != nil {
+		return fmt.Errorf("worker %q extra_body must be a strict object", worker.ID)
+	}
+	for _, reserved := range []string{
+		"model",
+		"provider",
+		"messages",
+		"tools",
+		"max_completion_tokens",
+		"temperature",
+	} {
+		if _, exists := extra[reserved]; exists {
+			return fmt.Errorf(
+				"worker %q extra_body cannot override %s",
+				worker.ID,
+				reserved,
+			)
+		}
+	}
+	if err := validateWorkerReasoningBody(worker, extra); err != nil {
+		return err
+	}
+	if err := validateWorkerReasoningEffort(worker, extra); err != nil {
+		return err
+	}
+	return validateWorkerExtraMaxTokens(worker, extra)
+}
+
+func validateWorkerReasoningBody(
+	worker *WorkerManifest,
+	extra map[string]json.RawMessage,
+) error {
+	rawReasoning, exists := extra["reasoning"]
+	if !exists {
+		return fmt.Errorf("worker %q reasoning contract is required", worker.ID)
+	}
+	var reasoning struct {
+		Enabled   bool   `json:"enabled"`
+		MaxTokens uint64 `json:"max_tokens,omitempty"`
+		Effort    string `json:"effort,omitempty"`
+	}
+	if err := decodeStrictJSON(rawReasoning, &reasoning); err != nil {
+		return fmt.Errorf("worker %q reasoning contract is invalid", worker.ID)
+	}
+	if worker.ThinkingMode == "on" {
+		if !reasoning.Enabled ||
+			reasoning.MaxTokens != worker.ReasoningBudgetTokens ||
+			reasoning.Effort == "none" {
+			return fmt.Errorf(
+				"worker %q thinking-on reasoning contract does not match its budget",
+				worker.ID,
+			)
+		}
+	} else if reasoning.Enabled || reasoning.MaxTokens != 0 ||
+		(reasoning.Effort != "" && reasoning.Effort != "none") {
+		return fmt.Errorf(
+			"worker %q thinking-off reasoning contract must be disabled",
+			worker.ID,
+		)
+	}
+	return nil
+}
+
+func validateWorkerReasoningEffort(
+	worker *WorkerManifest,
+	extra map[string]json.RawMessage,
+) error {
+	if rawEffort, exists := extra["reasoning_effort"]; exists {
+		var effort string
+		if err := json.Unmarshal(rawEffort, &effort); err != nil ||
+			(worker.ThinkingMode == "off" && effort != "none") ||
+			(worker.ThinkingMode == "on" && effort == "none") {
+			return fmt.Errorf(
+				"worker %q reasoning_effort conflicts with thinking mode",
+				worker.ID,
+			)
+		}
+	}
+	return nil
+}
+
+func validateWorkerExtraMaxTokens(
+	worker *WorkerManifest,
+	extra map[string]json.RawMessage,
+) error {
+	if rawMaxTokens, exists := extra["max_tokens"]; exists {
+		var maxTokens uint64
+		if err := json.Unmarshal(rawMaxTokens, &maxTokens); err != nil ||
+			maxTokens == 0 {
+			return fmt.Errorf(
+				"worker %q extra_body max_tokens is invalid",
+				worker.ID,
+			)
+		}
+	}
+	return nil
+}
+
+func finitePositive64(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value > 0
 }
 
 func (manifest *Manifest) validatePolicy() error {

@@ -14,6 +14,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/ratelimit"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerreplay"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // EnhancedHallucinationSpan represents a hallucinated span with NLI explanation.
@@ -157,6 +158,7 @@ type RequestContext struct {
 	VSRInjectedSystemPrompt        bool                                        // Whether a system prompt was injected into the request
 	VSRSelectedDecision            *config.Decision                            // The decision object selected by DecisionEngine (for plugins)
 	VSRRaylineARC                  *selection.RaylineARCTrace                  // Privacy-safe ARC selection trace; never prompt or embedding data.
+	RaylineARCDispatch             *raylinearc.WorkerManifest                  // Private artifact-owned upstream contract; never emit in traces.
 	RaylineARCTransaction          *raylineARCEpisodeTransaction               // Fenced ARC state lease; finalized exactly once.
 
 	// ResponsePath records how the final response was produced, surfaced as the

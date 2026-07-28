@@ -255,6 +255,18 @@ func (scorer *fakeARCScorer) EncoderRevision() string {
 	return config.RaylineARCEncoderModelRevision
 }
 
+func (scorer *fakeARCScorer) Worker(
+	index int,
+) (raylinearc.WorkerManifest, bool) {
+	if index < 0 || index >= len(scorer.workerIDs) {
+		return raylinearc.WorkerManifest{}, false
+	}
+	return raylinearc.WorkerManifest{
+		ID:    scorer.workerIDs[index],
+		Model: "provider/" + scorer.workerIDs[index],
+	}, true
+}
+
 func (scorer *fakeARCScorer) Select(
 	_ []float32,
 	_ *raylinearc.EpisodeState,

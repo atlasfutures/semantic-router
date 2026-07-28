@@ -17,6 +17,7 @@ limitations under the License.
 package raylinearc
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -126,6 +127,36 @@ func (runtime *Runtime) WorkerIDs() []string {
 		ids[index] = runtime.manifest.Workers[index].ID
 	}
 	return ids
+}
+
+func (runtime *Runtime) Worker(index int) (WorkerManifest, bool) {
+	if runtime == nil || runtime.manifest == nil ||
+		index < 0 || index >= len(runtime.manifest.Workers) {
+		return WorkerManifest{}, false
+	}
+	return cloneWorkerManifest(runtime.manifest.Workers[index]), true
+}
+
+func cloneWorkerManifest(worker WorkerManifest) WorkerManifest {
+	worker.CapabilityTags = append([]string(nil), worker.CapabilityTags...)
+	worker.OpenRouterProviderOrder = append(
+		[]string(nil),
+		worker.OpenRouterProviderOrder...,
+	)
+	worker.ExtraBody = append(json.RawMessage(nil), worker.ExtraBody...)
+	if worker.MaxCompletionTokens != nil {
+		value := *worker.MaxCompletionTokens
+		worker.MaxCompletionTokens = &value
+	}
+	if worker.Temperature != nil {
+		value := *worker.Temperature
+		worker.Temperature = &value
+	}
+	if worker.AttemptDeadlineSeconds != nil {
+		value := *worker.AttemptDeadlineSeconds
+		worker.AttemptDeadlineSeconds = &value
+	}
+	return worker
 }
 
 func (runtime *Runtime) ArtifactID() string {
