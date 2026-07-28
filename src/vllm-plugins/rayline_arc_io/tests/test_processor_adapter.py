@@ -69,19 +69,16 @@ processor_module = importlib.import_module("rayline_arc_io.processor")
 RaylineArcIOProcessor = processor_module.RaylineArcIOProcessor
 
 
-class _Backend:
-    encode_special_tokens = False
-
-
 class _Tokenizer:
     eos_token = EOS_TOKEN
     eos_token_id = EOS_TOKEN_ID
 
     def __init__(self):
-        self.backend_tokenizer = _Backend()
+        self.split_special_tokens = False
 
-    def encode(self, text, *, add_special_tokens):
+    def encode(self, text, *, add_special_tokens, split_special_tokens):
         assert add_special_tokens is False
+        assert split_special_tokens is True
         if text == TOKENIZER_PROBE_TEXT:
             return list(TOKENIZER_PROBE_IDS)
         return [ord(character) for character in text]
@@ -144,7 +141,9 @@ def pinned_runtime(monkeypatch, tmp_path):
 
 
 def test_adapter_serializes_and_returns_normalized_contract() -> None:
-    processor = RaylineArcIOProcessor(_config(), _Renderer())
+    tokenizer = _Tokenizer()
+    processor = RaylineArcIOProcessor(_config(), _Renderer(tokenizer))
+    assert tokenizer.split_special_tokens is True
     request = processor.parse_data(_request_data())
     prompt = processor.pre_process(request, request_id="request-1")
     params = processor.merge_pooling_params(_PoolingParams())

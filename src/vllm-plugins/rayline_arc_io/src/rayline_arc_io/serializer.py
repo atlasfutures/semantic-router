@@ -17,7 +17,13 @@ from .schemas import ArcTurn
 
 
 class Tokenizer(Protocol):
-    def encode(self, text: str, *, add_special_tokens: bool) -> list[int]: ...
+    def encode(
+        self,
+        text: str,
+        *,
+        add_special_tokens: bool,
+        split_special_tokens: bool,
+    ) -> list[int]: ...
 
 
 @dataclass(frozen=True)
@@ -74,7 +80,11 @@ class TokenBlockSerializer:
         self._min_recent_tokens = min_recent_tokens
 
     def _encode(self, text: str) -> tuple[int, ...]:
-        token_ids = self._tokenizer.encode(text, add_special_tokens=False)
+        token_ids = self._tokenizer.encode(
+            text,
+            add_special_tokens=False,
+            split_special_tokens=True,
+        )
         if not isinstance(token_ids, list) or any(
             not isinstance(token_id, int) or isinstance(token_id, bool) or token_id < 0
             for token_id in token_ids

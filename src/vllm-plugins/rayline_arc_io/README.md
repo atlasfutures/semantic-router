@@ -9,7 +9,9 @@ The plugin is deliberately fail closed. It accepts only the pinned
 `Qwen/Qwen3.5-0.8B` model and tokenizer revision, BF16, a 262,144-token context,
 `token_embed`/`ALL` pooling without activation, and Rung A with automatic
 prefix caching disabled. Startup also proves the real EOS and a pinned
-literal-special-token probe.
+literal-special-token probe. Every tokenizer call sets
+`split_special_tokens=true`; relying on a backend tokenizer attribute is not
+equivalent through the Transformers wrapper.
 
 Install it into the same environment as vLLM:
 

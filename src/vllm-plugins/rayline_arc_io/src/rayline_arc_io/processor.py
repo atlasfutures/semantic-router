@@ -151,17 +151,20 @@ class RaylineArcIOProcessor(IOProcessor[ArcPoolingRequest, ArcPoolingResponse]):
                 f"expected {EOS_TOKEN!r}/{EOS_TOKEN_ID}"
             )
 
-        backend = getattr(tokenizer, "backend_tokenizer", None)
-        if backend is None or not hasattr(backend, "encode_special_tokens"):
+        if not hasattr(tokenizer, "split_special_tokens"):
             raise ValueError(
-                "Rayline ARC requires a fast tokenizer with encode_special_tokens"
+                "Rayline ARC requires a tokenizer with split_special_tokens"
             )
-        backend.encode_special_tokens = True
-        if backend.encode_special_tokens is not True:
+        tokenizer.split_special_tokens = True
+        if tokenizer.split_special_tokens is not True:
             raise ValueError("failed to disable special-token parsing for ARC content")
 
         RaylineArcIOProcessor._verify_tokenizer_file(tokenizer)
-        probe_ids = tokenizer.encode(TOKENIZER_PROBE_TEXT, add_special_tokens=False)
+        probe_ids = tokenizer.encode(
+            TOKENIZER_PROBE_TEXT,
+            add_special_tokens=False,
+            split_special_tokens=True,
+        )
         if tuple(probe_ids) != TOKENIZER_PROBE_IDS:
             raise ValueError(
                 f"Rayline ARC tokenizer behavioral fingerprint mismatch: got {tuple(probe_ids)!r}"

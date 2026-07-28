@@ -1140,6 +1140,34 @@ Pre-run declaration:
   requires diagnosis and a new explicit ceiling; the same unchanged failing
   command will not be run a third time.
 
+Attempt 1 evidence and diagnosis:
+
+- The exact command stopped before its first request because the startup
+  fingerprint rejected literal `<|im_end|>` parsing. The pinned raw
+  `tokenizer.json` and EOS were correct; Transformers 5.12.1 and 5.14.1 both
+  require the wrapper-level `split_special_tokens=true` argument/property.
+  Mutating `backend_tokenizer.encode_special_tokens` does not change wrapper
+  encoding.
+- The fail-closed probe observed special-token parsing instead of weakening
+  the contract. The serializer and startup probe now pass
+  `split_special_tokens=true` explicitly, and the adapter asserts the wrapper
+  property. CPU checks with the real pinned tokenizer pass the behavioral
+  probe and all five public token-block goldens under both relevant
+  Transformers versions.
+- The Modal billing report records `$0.21286057` H100, `$0.02768578` CPU, and
+  `$0.02775674` memory: `$0.26830309` exact total. No provider spend occurred,
+  no request ran, and `modal app list` confirmed no canary app remained.
+
+Attempt 2 declaration:
+
+- The original T6 cumulative ceiling remains `$3.00`. Attempt 2 is limited to
+  one H100/8-core/64-GiB invocation and 33 minutes with a `$2.70` per-run
+  ceiling. Its timeout-bound estimate is `$2.66`; together with Attempt 1, the
+  cumulative timeout-bound total is `$2.93`.
+- The command and synthetic/private-data boundaries are unchanged; the code is
+  changed to correct wrapper-level literal-special tokenization. This is the
+  second and final authorized paid invocation for this command family.
+
 ## Operating Rules
 
 - Re-read this plan's checkbox/evidence state at the start of every loop; work

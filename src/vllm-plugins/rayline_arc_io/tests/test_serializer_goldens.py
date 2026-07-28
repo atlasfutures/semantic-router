@@ -25,8 +25,15 @@ class GoldenTokenizer:
     def __init__(self, encodings: dict[str, list[int]]) -> None:
         self.encodings = encodings
 
-    def encode(self, text: str, *, add_special_tokens: bool) -> list[int]:
+    def encode(
+        self,
+        text: str,
+        *,
+        add_special_tokens: bool,
+        split_special_tokens: bool,
+    ) -> list[int]:
         assert add_special_tokens is False
+        assert split_special_tokens is True
         return self.encodings[text]
 
 
