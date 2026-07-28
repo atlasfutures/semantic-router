@@ -55,24 +55,63 @@ type tensorRange struct {
 }
 
 func decodeSafeTensors(data []byte, expected []string) (map[string]tensor, error) {
+	rawEntries, headerEnd, dataBytes, err := decodeSafeTensorHeader(data)
+	if err != nil {
+		return nil, err
+	}
+	expectedSet, err := expectedTensorNames(expected)
+	if err != nil {
+		return nil, err
+	}
+	descriptors, ranges, err := decodeTensorTable(
+		rawEntries,
+		expectedSet,
+		dataBytes,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateTensorRanges(ranges, dataBytes); err != nil {
+		return nil, err
+	}
+	return materializeTensors(data, headerEnd, descriptors)
+}
+
+func decodeSafeTensorHeader(
+	data []byte,
+) (map[string]json.RawMessage, uint64, uint64, error) {
 	if len(data) < 8 {
-		return nil, errors.New("SafeTensors file is shorter than its length prefix")
+		return nil, 0, 0, errors.New(
+			"SafeTensors file is shorter than its length prefix",
+		)
 	}
 	headerLength := binary.LittleEndian.Uint64(data[:8])
 	if headerLength == 0 || headerLength > maxSafeTensorHeader {
-		return nil, fmt.Errorf("invalid SafeTensors header length %d", headerLength)
+		return nil, 0, 0, fmt.Errorf(
+			"invalid SafeTensors header length %d",
+			headerLength,
+		)
 	}
 	// A slice length is nonnegative and therefore losslessly representable as
 	// uint64 on every supported Go platform.
 	dataLength := uint64(len(data)) //nolint:gosec
 	if headerLength > dataLength-8 {
-		return nil, errors.New("SafeTensors header extends beyond the file")
+		return nil, 0, 0, errors.New(
+			"SafeTensors header extends beyond the file",
+		)
 	}
 	headerEnd := uint64(8) + headerLength
 	rawEntries, err := decodeHeaderObject(data[8:headerEnd])
 	if err != nil {
-		return nil, fmt.Errorf("decode SafeTensors header: %w", err)
+		return nil, 0, 0, fmt.Errorf(
+			"decode SafeTensors header: %w",
+			err,
+		)
 	}
+	return rawEntries, headerEnd, dataLength - headerEnd, nil
+}
+
+func expectedTensorNames(expected []string) (map[string]struct{}, error) {
 	expectedSet := make(map[string]struct{}, len(expected))
 	for _, name := range expected {
 		if name == "" || name == "__metadata__" {
@@ -83,62 +122,128 @@ func decodeSafeTensors(data []byte, expected []string) (map[string]tensor, error
 		}
 		expectedSet[name] = struct{}{}
 	}
+	return expectedSet, nil
+}
 
-	descriptors := make(map[string]decodedTensorDescriptor, len(expected))
-	ranges := make([]tensorRange, 0, len(expected))
+func decodeTensorTable(
+	rawEntries map[string]json.RawMessage,
+	expectedSet map[string]struct{},
+	dataBytes uint64,
+) (
+	map[string]decodedTensorDescriptor,
+	[]tensorRange,
+	error,
+) {
+	descriptors := make(
+		map[string]decodedTensorDescriptor,
+		len(expectedSet),
+	)
+	ranges := make([]tensorRange, 0, len(expectedSet))
 	for name, raw := range rawEntries {
 		if name == "__metadata__" {
-			var metadata map[string]string
-			if err := json.Unmarshal(raw, &metadata); err != nil {
-				return nil, fmt.Errorf("invalid SafeTensors metadata: %w", err)
+			if err := validateSafeTensorMetadata(raw); err != nil {
+				return nil, nil, fmt.Errorf(
+					"invalid SafeTensors metadata: %w",
+					err,
+				)
 			}
 			continue
 		}
 		if _, ok := expectedSet[name]; !ok {
-			return nil, fmt.Errorf("unexpected tensor %q", name)
+			return nil, nil, fmt.Errorf("unexpected tensor %q", name)
 		}
-		var descriptor tensorDescriptor
-		if err := decodeStrictJSON(raw, &descriptor); err != nil {
-			return nil, fmt.Errorf("tensor %q descriptor: %w", name, err)
-		}
-		if descriptor.DType != "F32" {
-			return nil, fmt.Errorf(
-				"tensor %q dtype must be F32, got %q",
-				name,
-				descriptor.DType,
-			)
-		}
-		if len(descriptor.Shape) == 0 {
-			return nil, fmt.Errorf("tensor %q must have at least one dimension", name)
-		}
-		if len(descriptor.DataOffsets) != 2 {
-			return nil, fmt.Errorf("tensor %q must have two data offsets", name)
-		}
-		start, end := descriptor.DataOffsets[0], descriptor.DataOffsets[1]
-		if start > end {
-			return nil, fmt.Errorf("tensor %q data offsets are reversed", name)
-		}
-		elements, shape, err := checkedElementCount(descriptor.Shape)
+		descriptor, dataRange, err := decodeTensorDescriptor(
+			name,
+			raw,
+			dataBytes,
+		)
 		if err != nil {
-			return nil, fmt.Errorf("tensor %q shape: %w", name, err)
+			return nil, nil, err
 		}
-		if elements > math.MaxUint64/4 || end-start != elements*4 {
-			return nil, fmt.Errorf("tensor %q byte length does not match its shape", name)
-		}
-		if end > uint64(len(data))-headerEnd {
-			return nil, fmt.Errorf("tensor %q data extends beyond the file", name)
-		}
-		descriptors[name] = decodedTensorDescriptor{
-			shape:       shape,
-			dataOffsets: descriptor.DataOffsets,
-		}
-		ranges = append(ranges, tensorRange{name: name, start: start, end: end})
+		descriptors[name] = descriptor
+		ranges = append(ranges, dataRange)
 	}
 	for name := range expectedSet {
 		if _, ok := descriptors[name]; !ok {
-			return nil, fmt.Errorf("missing required tensor %q", name)
+			return nil, nil, fmt.Errorf("missing required tensor %q", name)
 		}
 	}
+	return descriptors, ranges, nil
+}
+
+func validateSafeTensorMetadata(raw json.RawMessage) error {
+	var metadata map[string]string
+	return json.Unmarshal(raw, &metadata)
+}
+
+func decodeTensorDescriptor(
+	name string,
+	raw json.RawMessage,
+	dataBytes uint64,
+) (decodedTensorDescriptor, tensorRange, error) {
+	var descriptor tensorDescriptor
+	if err := decodeStrictJSON(raw, &descriptor); err != nil {
+		return decodedTensorDescriptor{}, tensorRange{}, fmt.Errorf(
+			"tensor %q descriptor: %w",
+			name,
+			err,
+		)
+	}
+	if descriptor.DType != "F32" {
+		return decodedTensorDescriptor{}, tensorRange{}, fmt.Errorf(
+			"tensor %q dtype must be F32, got %q",
+			name,
+			descriptor.DType,
+		)
+	}
+	if len(descriptor.Shape) == 0 {
+		return decodedTensorDescriptor{}, tensorRange{}, fmt.Errorf(
+			"tensor %q must have at least one dimension",
+			name,
+		)
+	}
+	if len(descriptor.DataOffsets) != 2 {
+		return decodedTensorDescriptor{}, tensorRange{}, fmt.Errorf(
+			"tensor %q must have two data offsets",
+			name,
+		)
+	}
+	start, end := descriptor.DataOffsets[0], descriptor.DataOffsets[1]
+	if start > end {
+		return decodedTensorDescriptor{}, tensorRange{}, fmt.Errorf(
+			"tensor %q data offsets are reversed",
+			name,
+		)
+	}
+	elements, shape, err := checkedElementCount(descriptor.Shape)
+	if err != nil {
+		return decodedTensorDescriptor{}, tensorRange{}, fmt.Errorf(
+			"tensor %q shape: %w",
+			name,
+			err,
+		)
+	}
+	if elements > math.MaxUint64/4 || end-start != elements*4 {
+		return decodedTensorDescriptor{}, tensorRange{}, fmt.Errorf(
+			"tensor %q byte length does not match its shape",
+			name,
+		)
+	}
+	if end > dataBytes {
+		return decodedTensorDescriptor{}, tensorRange{}, fmt.Errorf(
+			"tensor %q data extends beyond the file",
+			name,
+		)
+	}
+	return decodedTensorDescriptor{
+			shape:       shape,
+			dataOffsets: descriptor.DataOffsets,
+		},
+		tensorRange{name: name, start: start, end: end},
+		nil
+}
+
+func validateTensorRanges(ranges []tensorRange, dataBytes uint64) error {
 	sort.Slice(ranges, func(left, right int) bool {
 		if ranges[left].start == ranges[right].start {
 			return ranges[left].end < ranges[right].end
@@ -146,29 +251,36 @@ func decodeSafeTensors(data []byte, expected []string) (map[string]tensor, error
 		return ranges[left].start < ranges[right].start
 	})
 	if len(ranges) == 0 || ranges[0].start != 0 {
-		return nil, errors.New("SafeTensors data must start at offset zero")
+		return errors.New("SafeTensors data must start at offset zero")
 	}
 	for index := 1; index < len(ranges); index++ {
 		if ranges[index].start < ranges[index-1].end {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"tensor %q overlaps tensor %q",
 				ranges[index].name,
 				ranges[index-1].name,
 			)
 		}
 		if ranges[index].start != ranges[index-1].end {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"gap before tensor %q is not allowed",
 				ranges[index].name,
 			)
 		}
 	}
-	if ranges[len(ranges)-1].end != uint64(len(data))-headerEnd {
-		return nil, errors.New(
+	if ranges[len(ranges)-1].end != dataBytes {
+		return errors.New(
 			"SafeTensors data has unclaimed trailing bytes",
 		)
 	}
+	return nil
+}
 
+func materializeTensors(
+	data []byte,
+	headerEnd uint64,
+	descriptors map[string]decodedTensorDescriptor,
+) (map[string]tensor, error) {
 	tensors := make(map[string]tensor, len(descriptors))
 	for name, descriptor := range descriptors {
 		start := headerEnd + descriptor.dataOffsets[0]

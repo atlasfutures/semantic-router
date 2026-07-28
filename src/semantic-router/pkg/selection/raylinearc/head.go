@@ -98,36 +98,58 @@ func (head *Head) Scores(
 	}
 	scores := make([]float32, len(head.armEmbeddings))
 	for index, candidate := range head.armEmbeddings {
-		input := make([]float32, 0, head.architecture.JointInputDimension)
-		input = append(input, normalized...)
-		input = append(input, candidate...)
-		input = append(input, previous...)
-		if previousArm != nil && *previousArm == index {
-			input = append(input, 1)
-		} else {
-			input = append(input, 0)
-		}
-		input = append(
-			input,
-			float32(math.Log1p(float64(float32(turnIndex)))),
+		score, err := head.scoreCandidate(
+			normalized,
+			candidate,
+			previous,
+			previousArm,
+			index,
+			turnIndex,
 		)
-		hidden, err := head.linear("q_network.backbone.0", input)
 		if err != nil {
 			return nil, err
 		}
-		relu(hidden)
-		hidden, err = head.linear("q_network.backbone.3", hidden)
-		if err != nil {
-			return nil, err
-		}
-		relu(hidden)
-		output, err := head.linear("q_network.head", hidden)
-		if err != nil {
-			return nil, err
-		}
-		scores[index] = output[0]
+		scores[index] = score
 	}
 	return scores, nil
+}
+
+func (head *Head) scoreCandidate(
+	history []float32,
+	candidate []float32,
+	previous []float32,
+	previousArm *int,
+	candidateArm int,
+	turnIndex uint64,
+) (float32, error) {
+	input := make([]float32, 0, head.architecture.JointInputDimension)
+	input = append(input, history...)
+	input = append(input, candidate...)
+	input = append(input, previous...)
+	sameArm := float32(0)
+	if previousArm != nil && *previousArm == candidateArm {
+		sameArm = 1
+	}
+	input = append(input, sameArm)
+	input = append(
+		input,
+		float32(math.Log1p(float64(float32(turnIndex)))),
+	)
+	hidden, err := head.linear("q_network.backbone.0", input)
+	if err != nil {
+		return 0, err
+	}
+	relu(hidden)
+	hidden, err = head.linear("q_network.backbone.3", hidden)
+	if err != nil {
+		return 0, err
+	}
+	relu(hidden)
+	output, err := head.linear("q_network.head", hidden)
+	if err != nil {
+		return 0, err
+	}
+	return output[0], nil
 }
 
 func (head *Head) validateShapes(workerCount int) error {

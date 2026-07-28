@@ -141,33 +141,9 @@ func verifyHeadGolden(
 	manifest *Manifest,
 	head *Head,
 ) (HeadParityReport, error) {
-	var golden headGolden
-	if err := decodeStrictJSON(data, &golden); err != nil {
-		return HeadParityReport{}, fmt.Errorf("parse ARC head golden: %w", err)
-	}
-	if golden.SchemaVersion != HeadGoldenSchema {
-		return HeadParityReport{}, fmt.Errorf(
-			"unsupported head golden schema %q",
-			golden.SchemaVersion,
-		)
-	}
-	if golden.CheckpointSHA256 != manifest.Source.Checkpoint.SHA256 {
-		return HeadParityReport{}, errors.New(
-			"head golden checkpoint hash does not match the manifest",
-		)
-	}
-	if !equalStrings(golden.Pool, manifest.Architecture.Pool) {
-		return HeadParityReport{}, errors.New(
-			"head golden pool order does not match the manifest",
-		)
-	}
-	if len(golden.Cases) == 0 {
-		return HeadParityReport{}, errors.New("head golden has no cases")
-	}
-	if !finitePositive32(golden.ScoreTolerance) {
-		return HeadParityReport{}, errors.New(
-			"head golden score tolerance must be finite and positive",
-		)
+	golden, err := decodeHeadGolden(data, manifest)
+	if err != nil {
+		return HeadParityReport{}, err
 	}
 	tolerance := min(
 		golden.ScoreTolerance,
@@ -175,26 +151,11 @@ func verifyHeadGolden(
 	)
 	var maxDrift float32
 	matches := 0
-	seenIDs := make(map[string]struct{}, len(golden.Cases))
 	for index := range golden.Cases {
-		testCase := &golden.Cases[index]
-		if testCase.ID == "" {
-			return HeadParityReport{}, fmt.Errorf(
-				"head golden case %d has no id",
-				index,
-			)
-		}
-		if _, duplicate := seenIDs[testCase.ID]; duplicate {
-			return HeadParityReport{}, fmt.Errorf(
-				"head golden case %d has duplicate id %q",
-				index,
-				testCase.ID,
-			)
-		}
-		seenIDs[testCase.ID] = struct{}{}
-		previous, err := goldenPreviousArm(
-			testCase.PreviousModelIndex,
+		drift, matchesExpected, err := evaluateHeadGoldenCase(
+			&golden.Cases[index],
 			len(manifest.Workers),
+			head,
 		)
 		if err != nil {
 			return HeadParityReport{}, fmt.Errorf(
@@ -203,50 +164,8 @@ func verifyHeadGolden(
 				err,
 			)
 		}
-		if len(testCase.Scores) != len(manifest.Workers) {
-			return HeadParityReport{}, fmt.Errorf(
-				"head golden case %d score count does not match worker count",
-				index,
-			)
-		}
-		if testCase.SelectedIndex < 0 ||
-			testCase.SelectedIndex >= len(manifest.Workers) {
-			return HeadParityReport{}, fmt.Errorf(
-				"head golden case %d selected index is out of range",
-				index,
-			)
-		}
-		expectedSelection, ok := ArgmaxFirst(testCase.Scores)
-		if !ok || expectedSelection != testCase.SelectedIndex {
-			return HeadParityReport{}, fmt.Errorf(
-				"head golden case %d selected index disagrees with its scores",
-				index,
-			)
-		}
-		actual, err := head.Scores(
-			testCase.Embedding,
-			previous,
-			testCase.RouteCallIndex,
-		)
-		if err != nil {
-			return HeadParityReport{}, fmt.Errorf(
-				"head golden case %d: %w",
-				index,
-				err,
-			)
-		}
-		for scoreIndex, expected := range testCase.Scores {
-			if float32IsNaNOrInf(expected) {
-				return HeadParityReport{}, fmt.Errorf(
-					"head golden case %d contains a non-finite score",
-					index,
-				)
-			}
-			drift := abs32(actual[scoreIndex] - expected)
-			maxDrift = max(maxDrift, drift)
-		}
-		selected, ok := ArgmaxFirst(actual)
-		if ok && selected == testCase.SelectedIndex {
+		maxDrift = max(maxDrift, drift)
+		if matchesExpected {
 			matches++
 		}
 	}
@@ -269,6 +188,110 @@ func verifyHeadGolden(
 		)
 	}
 	return report, nil
+}
+
+func decodeHeadGolden(
+	data []byte,
+	manifest *Manifest,
+) (*headGolden, error) {
+	var golden headGolden
+	if err := decodeStrictJSON(data, &golden); err != nil {
+		return nil, fmt.Errorf("parse ARC head golden: %w", err)
+	}
+	if golden.SchemaVersion != HeadGoldenSchema {
+		return nil, fmt.Errorf(
+			"unsupported head golden schema %q",
+			golden.SchemaVersion,
+		)
+	}
+	if golden.CheckpointSHA256 != manifest.Source.Checkpoint.SHA256 {
+		return nil, errors.New(
+			"head golden checkpoint hash does not match the manifest",
+		)
+	}
+	if !equalStrings(golden.Pool, manifest.Architecture.Pool) {
+		return nil, errors.New(
+			"head golden pool order does not match the manifest",
+		)
+	}
+	if len(golden.Cases) == 0 {
+		return nil, errors.New("head golden has no cases")
+	}
+	if !finitePositive32(golden.ScoreTolerance) {
+		return nil, errors.New(
+			"head golden score tolerance must be finite and positive",
+		)
+	}
+	if err := validateHeadGoldenCaseIDs(golden.Cases); err != nil {
+		return nil, err
+	}
+	return &golden, nil
+}
+
+func validateHeadGoldenCaseIDs(cases []headGoldenCase) error {
+	seen := make(map[string]struct{}, len(cases))
+	for index := range cases {
+		id := cases[index].ID
+		if id == "" {
+			return fmt.Errorf("head golden case %d has no id", index)
+		}
+		if _, duplicate := seen[id]; duplicate {
+			return fmt.Errorf(
+				"head golden case %d has duplicate id %q",
+				index,
+				id,
+			)
+		}
+		seen[id] = struct{}{}
+	}
+	return nil
+}
+
+func evaluateHeadGoldenCase(
+	testCase *headGoldenCase,
+	workerCount int,
+	head *Head,
+) (float32, bool, error) {
+	previous, err := goldenPreviousArm(
+		testCase.PreviousModelIndex,
+		workerCount,
+	)
+	if err != nil {
+		return 0, false, err
+	}
+	if len(testCase.Scores) != workerCount {
+		return 0, false, errors.New(
+			"score count does not match worker count",
+		)
+	}
+	if testCase.SelectedIndex < 0 ||
+		testCase.SelectedIndex >= workerCount {
+		return 0, false, errors.New("selected index is out of range")
+	}
+	expectedSelection, ok := ArgmaxFirst(testCase.Scores)
+	if !ok || expectedSelection != testCase.SelectedIndex {
+		return 0, false, errors.New(
+			"selected index disagrees with its scores",
+		)
+	}
+	actual, err := head.Scores(
+		testCase.Embedding,
+		previous,
+		testCase.RouteCallIndex,
+	)
+	if err != nil {
+		return 0, false, err
+	}
+	maxDrift := float32(0)
+	for scoreIndex, expected := range testCase.Scores {
+		if float32IsNaNOrInf(expected) {
+			return 0, false, errors.New("contains a non-finite score")
+		}
+		drift := abs32(actual[scoreIndex] - expected)
+		maxDrift = max(maxDrift, drift)
+	}
+	selected, ok := ArgmaxFirst(actual)
+	return maxDrift, ok && selected == testCase.SelectedIndex, nil
 }
 
 func goldenPreviousArm(value int64, workerCount int) (*int, error) {
