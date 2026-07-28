@@ -13,11 +13,16 @@ import hashlib
 import importlib
 import json
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
 import modal
+
+_REMOTE_PLUGIN_DIR = "/opt/rayline_arc_io"
+if Path(_REMOTE_PLUGIN_DIR).is_dir():
+    sys.path.insert(0, _REMOTE_PLUGIN_DIR)
 
 rt = importlib.import_module("modal_canary_runtime")
 numeric_helpers = importlib.import_module("modal_canary_numeric")
@@ -26,7 +31,6 @@ enforce_rung_b_numeric_budgets = numeric_helpers.enforce_rung_b_numeric_budgets
 summarize_numeric = numeric_helpers.summarize_numeric
 
 _THIS_DIR = Path(__file__).resolve().parent
-_REMOTE_PLUGIN_DIR = "/opt/rayline_arc_io"
 
 image = (
     modal.Image.from_registry(
