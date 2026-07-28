@@ -783,7 +783,7 @@ evaluation or a frozen holdout as part of implementation validation.
 - [x] T8 Run the Rung C phase gate. If opened, implement prefix-block FP32 sums,
       hybrid cache lifecycle, APC support, and CUDA tests; if closed, record the
       owner, evidence, and quantitative reopening trigger.
-- [ ] T9 Add ARC encoder client, selector adapter, strict error propagation,
+- [x] T9 Add ARC encoder client, selector adapter, strict error propagation,
       build/plugin/capability readiness, privacy-safe telemetry, and Router
       Learning bypass.
 - [ ] T10 Add memory and Redis episode transactions plus terminal-path tests.
@@ -797,8 +797,9 @@ evaluation or a frozen holdout as part of implementation validation.
 
 ## Next Action
 
-T9: add the ARC encoder client and selector adapter with strict readiness,
-error, privacy, and Router Learning bypass contracts. T6 is paused after its
+T10: add bounded memory and Redis episode transactions with fencing,
+2xx-header-only commit, and exhaustive terminal-path tests. Extend aggregate
+readiness to include the configured episode store. T6 remains paused after its
 two-attempt paid-failure limit; resume it only after explicit authorization for
 the changed bounded-error diagnostic/completion invocation.
 
@@ -1293,6 +1294,64 @@ Repository evidence:
 - No source or artifact was generated or modified, no holdout identity was
   inspected, and no private contents were copied into public source.
 - Hardware: local Apple Silicon CPU. Paid/Modal/provider cost: `$0.00`.
+
+### Loop 9 — T9 ARC encoder selector and readiness (2026-07-28)
+
+Status: complete. T6 remains paused; no Modal invocation occurred.
+
+Implementation:
+
+- Added a dedicated vLLM `/pooling` client with one total deadline, bounded
+  connect/retry/response limits, strict JSON decoding, exact 1024-dimensional
+  finite-F32 output, and exact model/revision/tokenizer/EOS/build/plugin/
+  serializer/capability checks. Only pre-response transport failures retry;
+  status and contract failures do not.
+- The client sends normalized turns plus a SHA256 episode correlation, never a
+  raw episode ID. Its errors expose only bounded class/stage values and never
+  request text, response bodies, embeddings, IDs, or credentials. Startup
+  readiness exercises the exact plugin path with a fixed public canary.
+- Added the ARC selector adapter with exact artifact-arm/candidate ordering,
+  encoder-to-F32-head-to-artifact-policy execution, immutable selected-arm
+  mapping, strict fail-closed propagation, and no default-arm fallback.
+  Existing selection algorithms retain their fallback behavior.
+- Readiness now requires one consistent ARC config, verified artifact/head,
+  exact artifact revision and encoder manifest contract, exact arm mapping,
+  and a successful pinned encoder probe. Missing or drifting dependencies
+  register ARC unavailable rather than silently selecting another algorithm.
+  Episode-store readiness is intentionally deferred to T10.
+- Added privacy-safe structured traces and bounded Prometheus metrics for
+  failure class, encoder latency, token counts, selected-arm cost/cache miss,
+  and component readiness. Router Learning feedback/session mutation is
+  bypassed for ARC. The vLLM plugin response now returns the metadata needed
+  for the end-to-end readiness contract.
+
+Repository evidence:
+
+- Semantic Router task commit:
+  `5c8b93a6950f3e429dfba2feb0bb800495b1f9d6` (signed off).
+- Focused Go tests passed:
+  `go test ./pkg/extproc ./pkg/selection/raylinearc
+  ./pkg/observability/metrics -count=1`.
+  Plugin checks passed:
+  `uv run --extra test pytest -q` (`24 passed`) and
+  `uv run --extra test ruff check .`.
+- `make go-lint`, `make agent-lint CHANGED_FILES="<20 files>"`,
+  `make test-semantic-router`, and
+  `make agent-ci-gate CHANGED_FILES="<20 files>"` passed on the committed
+  source; the final CI gate exited `0`.
+- `make agent-report ENV=cpu CHANGED_FILES="<20 files>"` classified the change
+  as `routing-policy-change`. `make agent-dev ENV=cpu` built the arm64 images;
+  `make agent-serve-local ENV=cpu` and `make agent-smoke-local` passed.
+  `vllm-sr stop` removed the stack and network; no related process or
+  container remained.
+- No live Qwen request or real artifact/encoder readiness success is claimed:
+  unit mocks verify the startup integration, while the absent reference
+  artifact remains not-ready. The pinned live path remains part of T6/T12.
+- Elapsed loop duration: about 44 minutes from the Loop 8 evidence commit to
+  the cohesive task commit.
+- Hardware: local Apple Silicon, arm64 CPU/Docker; no CUDA/GPU execution.
+- Paid/Modal/provider cost: `$0.00`; cumulative T6 spend remains
+  `$0.48357001`.
 
 ## Operating Rules
 
