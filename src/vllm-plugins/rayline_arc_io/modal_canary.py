@@ -44,10 +44,10 @@ MAX_SERIALIZED_TOKENS = 262_144
 EMBEDDING_DIMENSION = 1024
 
 GPU_TYPE = "H100"
-FUNCTION_TIMEOUT_SECONDS = 33 * 60
+FUNCTION_TIMEOUT_SECONDS = 31 * 60
 CPU_CORES = 8.0
 MEMORY_MIB = 65_536
-COST_CEILING_USD = 2.70
+COST_CEILING_USD = 2.51
 PRICING_SNAPSHOT_DATE = "2026-07-28"
 H100_USD_PER_SECOND = 0.001097
 CPU_CORE_USD_PER_SECOND = 0.0000131
@@ -57,6 +57,7 @@ STARTUP_TIMEOUT_SECONDS = 10 * 60
 SHUTDOWN_TIMEOUT_SECONDS = 60
 POLL_SECONDS = 1.0
 HTTP_OK = 200
+MAX_HTTP_ERROR_BYTES = 4096
 GPU_QUERY_FIELD_COUNT = 4
 NORM_TOLERANCE = 1e-5
 FULL_SCHEDULE_TOKENS = MAX_SERIALIZED_TOKENS
@@ -145,8 +146,16 @@ def _post_json(
         headers={"content-type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        return json.loads(response.read())
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        body = error.read(MAX_HTTP_ERROR_BYTES).decode(errors="replace")
+        error.close()
+        redacted_body = body.replace(PRIVACY_MARKER, "<redacted>")
+        raise RuntimeError(
+            f"vLLM /pooling returned HTTP {error.code}: {redacted_body}"
+        ) from None
 
 
 def _server_command(port: int, schedule_tokens: int) -> list[str]:

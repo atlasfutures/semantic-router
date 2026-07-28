@@ -797,11 +797,10 @@ evaluation or a frozen holdout as part of implementation validation.
 
 ## Next Action
 
-T6: run the pinned Qwen3.5 Rung A canary on Modal Linux CUDA for short,
-multi-chunk, and maximum-contract inputs. Predeclare the GPU/time/cost ceiling,
-stop the app after the run, record exact hardware/build/cost evidence, and
-freeze the observed timeout and within-path numeric budgets without spending
-the holdout.
+T7: implement request-scoped FP32 causal-MEAN accumulation in the vLLM lane,
+with full/chunked, mixed-completion, cleanup, and non-MEAN unit tests. T6 is
+paused after its two-attempt paid-failure limit; resume it only after explicit
+authorization for the changed bounded-error diagnostic/completion invocation.
 
 ## Loop Evidence
 
@@ -1167,6 +1166,29 @@ Attempt 2 declaration:
 - The command and synthetic/private-data boundaries are unchanged; the code is
   changed to correct wrapper-level literal-special tokenization. This is the
   second and final authorized paid invocation for this command family.
+
+Attempt 2 result and paused gate:
+
+- Corrected startup passed the exact tokenizer probe and initialized the pinned
+  Qwen model. The first short synthetic `/pooling` request then returned HTTP
+  400 before any matrix result. The client surfaced an additional local
+  `SerializationError` because `urllib.error.HTTPError` retains an unpicklable
+  response stream, so this attempt did not retain the bounded server response
+  body.
+- A CPU reproduction with the real pinned tokenizer passed the strict request,
+  startup contract, and online `pre_process` path. The remaining failure is
+  therefore at or after the vLLM online engine boundary, not schema parsing or
+  frozen serialization. The canary now closes the HTTP stream and raises a
+  serializable, 4-KiB-bounded response-body error with the prompt canary
+  redacted.
+- Attempt 2 exact billing was `$0.17555520` H100, `$0.01693599` CPU, and
+  `$0.02277573` memory: `$0.21526692`. Cumulative T6 spend is `$0.48357001`,
+  provider spend remains `$0`, and no canary app remains running.
+- T6 remains unchecked and is paused under the two-attempt rule. Smallest
+  required action: authorize one changed H100 diagnostic/completion invocation
+  after review of the bounded-error patch. It must use at most 31 minutes and
+  `$2.51`, keeping worst-case cumulative spend below the original `$3.00`
+  ceiling. The same unchanged command will not be run again.
 
 ## Operating Rules
 
