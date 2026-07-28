@@ -779,7 +779,7 @@ evaluation or a frozen holdout as part of implementation validation.
       Rung A `token_embed`/ALL plugin-side FP32 mean.
 - [ ] T6 Establish Rung A full/multi-chunk/max-context Qwen3.5 correctness on
       Modal; freeze timeout and within-path numeric budgets from the canary.
-- [ ] T7 Implement vLLM chunked causal mean state and unit tests.
+- [x] T7 Implement vLLM chunked causal mean state and unit tests.
 - [ ] T8 Run the Rung C phase gate. If opened, implement prefix-block FP32 sums,
       hybrid cache lifecycle, APC support, and CUDA tests; if closed, record the
       owner, evidence, and quantitative reopening trigger.
@@ -797,10 +797,11 @@ evaluation or a frozen holdout as part of implementation validation.
 
 ## Next Action
 
-T7: implement request-scoped FP32 causal-MEAN accumulation in the vLLM lane,
-with full/chunked, mixed-completion, cleanup, and non-MEAN unit tests. T6 is
-paused after its two-attempt paid-failure limit; resume it only after explicit
-authorization for the changed bounded-error diagnostic/completion invocation.
+T8: run the Rung C phase gate from recorded evidence. If it remains closed,
+record the owner and quantitative reopening trigger before advancing to T9.
+T6 is paused after its two-attempt paid-failure limit; resume it only after
+explicit authorization for the changed bounded-error diagnostic/completion
+invocation.
 
 ## Loop Evidence
 
@@ -1189,6 +1190,53 @@ Attempt 2 result and paused gate:
   after review of the bounded-error patch. It must use at most 31 minutes and
   `$2.51`, keeping worst-case cumulative spend below the original `$3.00`
   ceiling. The same unchanged command will not be run again.
+
+### Loop 7 — T7 vLLM chunked causal mean (2026-07-28)
+
+Status: complete.
+
+Implementation:
+
+- Extended request-scoped `PoolingStates` with an FP32 sum and token count.
+  `MeanPool` now splits the scheduled batch slice per request, performs
+  bounded FP32 reductions, retains unfinished state, returns `None` for
+  unfinished requests, and returns a mean only after the exact prompt token
+  count has accumulated.
+- Completion and input-batch request removal both clear the accumulator.
+  Mismatched state fails closed. Sequence embedding/classification heads now
+  preserve unfinished `None` entries while retaining the existing batched
+  tensor path when all requests finish together.
+- Corrected chunked-prefill capability reporting: causal MEAN is supported for
+  decoder and hybrid pooling models now that running state exists; CLS, STEP,
+  bidirectional, and encoder-decoder exclusions remain.
+- Tests cover single-shot versus two- and three-chunk FP16 inputs, FP32 state,
+  mixed finished/unfinished batches, completion cleanup, abort cleanup, head
+  processing, and unchanged LAST-pooling state.
+- Live duplicate recheck found #40804 unchanged at
+  `b42df0395f6bc2d947ec739be61879d9687abb86`, #48214 unchanged at
+  `521cbfd8cba1fe464ee6c34fef32ddf77816ea55`, and #48791 at
+  `ab83b9d48531bbd869a0252a694f4a10aa131382`. #48791 enables Model Runner V2
+  sequence pooling but does not add causal-MEAN running state. No duplicate
+  issue or PR was found.
+
+Repository evidence:
+
+- vLLM task commit:
+  `f9c3662d9ecb75172a44e24081f60782be7f8caf` (signed off and AI-attributed),
+  pushed to `davidvgilmore/vllm:rayline/pl-0039-causal-mean`. No upstream PR
+  was opened.
+- A uv-managed Python 3.12 `.venv` was created in the vLLM checkout. The
+  focused command passed `95` tests with `14` upstream deprecation warnings:
+  `.venv/bin/python -m pytest -q
+  tests/model_executor/layers/test_pooler_methods.py
+  tests/model_executor/layers/test_pooler_heads.py
+  tests/test_config.py::test_chunked_prefill_pooling_method_support
+  tests/v1/worker/test_gpu_input_batch.py::test_pooling_request_removal_cleans_accumulator`.
+- Staged `pre-commit run` passed Ruff check/format, typos, mypy, SPDX, lazy
+  imports, forbidden imports, configuration validation, and every other
+  applicable hook. `git diff --check` also passed.
+- Hardware: local Apple Silicon CPU; no CUDA/GPU execution.
+- Paid/Modal and provider cost: `$0.00`.
 
 ## Operating Rules
 
