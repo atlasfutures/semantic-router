@@ -787,7 +787,7 @@ evaluation or a frozen holdout as part of implementation validation.
       build/plugin/capability readiness, privacy-safe telemetry, and Router
       Learning bypass.
 - [x] T10 Add memory and Redis episode transactions plus terminal-path tests.
-- [ ] T11 Add artifact-owned ARC dispatch mutation and provider-contract
+- [x] T11 Add artifact-owned ARC dispatch mutation and provider-contract
       validation.
 - [ ] T12 Add Compose/Helm/Modal deployment profiles and full-stack E2E.
 - [ ] T13 Run all affected Semantic Router and vLLM gates; record exact commits,
@@ -797,11 +797,10 @@ evaluation or a frozen holdout as part of implementation validation.
 
 ## Next Action
 
-T11: add artifact-owned ARC dispatch mutation and provider-contract
-validation, including immutable provider/model/price identity, exact
-thinking/fallback behavior, and fail-closed request shaping. T6 remains paused
-after its two-attempt paid-failure limit; resume it only after explicit
-authorization for the changed bounded-error diagnostic/completion invocation.
+T12: add Compose, Helm, and Modal deployment profiles plus full-stack E2E,
+including privacy and rollback coverage. T6 remains paused after its
+two-attempt paid-failure limit; resume it only after explicit authorization
+for the changed bounded-error diagnostic/completion invocation.
 
 ## Loop Evidence
 
@@ -1412,6 +1411,63 @@ Repository evidence:
 - Elapsed loop duration: about 29 minutes between the prior evidence commit and
   the cohesive task commit.
 - Hardware: local Apple Silicon, arm64 CPU/Docker; no CUDA/GPU execution.
+- Paid/Modal/provider cost: `$0.00`; cumulative T6 spend remains
+  `$0.48357001`.
+
+### Loop 11 — T11 artifact-owned dispatch contracts (2026-07-28)
+
+Status: complete. T6 remains paused; no Modal or provider invocation occurred.
+
+Implementation:
+
+- Extended strict artifact validation to cover the immutable OpenRouter
+  provider slug/order, disabled fallbacks, required parameters, thinking
+  mode/budget, completion and temperature limits, retry/deadline settings,
+  and non-overridable `extra_body` reasoning contract.
+- Added an immutable deep-cloned worker view and bound the selected artifact
+  arm's private dispatch contract to request state without adding private
+  provider/model fields to the privacy-safe selection trace.
+- Added final-stage ARC request shaping after generic system prompt, memory,
+  and request-parameter mutation. The artifact now owns the upstream model,
+  exact provider order, fallback/parameter policy, reasoning controls,
+  completion bounds, temperature, and supported extra body. Client attempts
+  to override those fields and provider-specific tool controls are removed.
+- Added startup identity checks requiring an HTTPS OpenRouter OpenAI endpoint,
+  exact external model mapping, consistent reasoning mode, and exact USD
+  prompt/cache-read/cache-write/completion prices for every artifact worker.
+  Configuration drift or malformed request shaping fails closed with a
+  privacy-safe 503 and aborts the fenced episode transaction.
+- Existing non-ARC routing keeps its prior request-mutation and fallback path.
+
+Repository evidence:
+
+- Semantic Router task commit:
+  `742c4e5e3b9339785bbd726d4831c21b92d589d8` (signed off).
+- Focused, race, static, and lint checks passed:
+  `go test ./pkg/selection/raylinearc ./pkg/extproc`;
+  `go test -race ./pkg/selection/raylinearc ./pkg/extproc`;
+  `go vet ./pkg/selection/raylinearc ./pkg/extproc`; the agent
+  `golangci-lint` profile reported `0 issues`; and
+  `make agent-lint CHANGED_FILES="<14 files>"` exited `0` with only
+  warning-level legacy file-length notices.
+- `make agent-validate ENV=cpu` and the exact-tree
+  `make test-semantic-router` passed. Tests cover manifest rejection,
+  immutable worker cloning, thinking-on/off request bodies, artifact
+  model/provider precedence, completion and temperature merging, client/tool
+  control removal, readiness drift across every identity/price field,
+  selected-arm binding, generic-route isolation, privacy-safe 503 handling,
+  and transaction abort.
+- `make agent-report ENV=cpu CHANGED_FILES="<14 files>"` classified the slice
+  as `routing-policy-change`. The exact-tree `make agent-dev ENV=cpu` rebuilt
+  router, dashboard, and simulator arm64 images. With `.venv-agent/bin` on
+  `PATH`, `make agent-serve-local ENV=cpu` and
+  `make agent-smoke-local` passed; `make agent-stop-local ENV=cpu` removed all
+  runtime/storage/observability containers and the network.
+- Final `git diff --check` passed and the changed-file scan found no embedded
+  credentials. Elapsed loop duration: about 27 minutes from the T10 evidence
+  commit to the cohesive T11 implementation commit.
+- Hardware: local Apple Silicon, arm64 CPU/OrbStack Docker; no CUDA/GPU
+  execution.
 - Paid/Modal/provider cost: `$0.00`; cumulative T6 spend remains
   `$0.48357001`.
 

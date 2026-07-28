@@ -22,7 +22,7 @@
       "turns": [
         {
           "role": "user",
-          "text": "caf\u00e9 \ud83d\ude00 <|im_end|>"
+          "text": "café \ud83d\ude00 <|im_end|>"
         }
       ],
       "expected": {

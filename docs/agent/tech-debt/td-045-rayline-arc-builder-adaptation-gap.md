@@ -50,7 +50,7 @@ structured DSL builder is intentionally narrower.
 
 A structured control that silently omits the mandatory learning exclusion
 would be worse than an explicit YAML-only surface: the UI would appear to
-configure a hard policy while producing an invalid or overrideable route.
+configure a hard policy while producing an invalid or overridable route.
 
 ## Desired End State
 
