@@ -56,6 +56,24 @@ func loadManifest(runtimeDir string) (*Manifest, error) {
 }
 
 func (manifest *Manifest) validate() error {
+	checks := []func() error{
+		manifest.validateEnvelope,
+		manifest.validateSource,
+		manifest.validateEncoder,
+		manifest.validateArchitecture,
+		manifest.validateWorkers,
+		manifest.validatePolicy,
+		manifest.validatePricingAndGolden,
+	}
+	for _, check := range checks {
+		if err := check(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (manifest *Manifest) validateEnvelope() error {
 	if manifest.SchemaVersion != ManifestSchema {
 		return fmt.Errorf(
 			"unsupported schema %q; expected %q",
@@ -82,6 +100,10 @@ func (manifest *Manifest) validate() error {
 	); err != nil {
 		return err
 	}
+	return nil
+}
+
+func (manifest *Manifest) validateSource() error {
 	if err := validateSHA256(manifest.Source.Checkpoint.SHA256); err != nil {
 		return fmt.Errorf("source checkpoint: %w", err)
 	}
@@ -99,18 +121,10 @@ func (manifest *Manifest) validate() error {
 			return fmt.Errorf("source %s: %w", label, err)
 		}
 	}
-	if err := manifest.validateEncoder(); err != nil {
-		return err
-	}
-	if err := manifest.validateArchitecture(); err != nil {
-		return err
-	}
-	if err := manifest.validateWorkers(); err != nil {
-		return err
-	}
-	if err := manifest.validatePolicy(); err != nil {
-		return err
-	}
+	return nil
+}
+
+func (manifest *Manifest) validatePricingAndGolden() error {
 	if manifest.PricingSnapshot.MutableLivePricesAffectDecisions {
 		return errors.New("mutable live prices must not affect ARC decisions")
 	}
@@ -143,13 +157,49 @@ func (manifest *Manifest) validate() error {
 
 func (manifest *Manifest) validateEncoder() error {
 	encoder := &manifest.Encoder
+	checks := []func() error{
+		func() error {
+			return validateEncoderIdentity(
+				encoder,
+				manifest.Architecture.HistoryDimension,
+			)
+		},
+		func() error {
+			return validateEncoderLimits(encoder)
+		},
+		func() error {
+			return validateEncoderExecution(encoder)
+		},
+		func() error {
+			return validateEncoderGolden(encoder)
+		},
+		func() error {
+			return validateEncoderNative(encoder)
+		},
+	}
+	for _, check := range checks {
+		if err := check(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateEncoderIdentity(
+	encoder *EncoderManifest,
+	historyDimension int,
+) error {
 	if strings.TrimSpace(encoder.Model) == "" ||
 		strings.TrimSpace(encoder.Revision) == "" {
 		return errors.New("encoder model and revision are required")
 	}
-	if encoder.Dimension <= 0 || encoder.Dimension != manifest.Architecture.HistoryDimension {
+	if encoder.Dimension <= 0 || encoder.Dimension != historyDimension {
 		return errors.New("encoder dimension must equal architecture history dimension")
 	}
+	return nil
+}
+
+func validateEncoderLimits(encoder *EncoderManifest) error {
 	if encoder.MaxTokens <= 0 ||
 		encoder.MinRecentTurns < 0 ||
 		encoder.MinRecentTokens < 0 ||
@@ -161,6 +211,10 @@ func (manifest *Manifest) validateEncoder() error {
 		encoder.KVIdleTTLSeconds <= 0 {
 		return errors.New("encoder token limits are invalid")
 	}
+	return nil
+}
+
+func validateEncoderExecution(encoder *EncoderManifest) error {
 	if encoder.Serialization != SerializationName {
 		return fmt.Errorf(
 			"encoder serialization must be %q, got %q",
@@ -175,6 +229,10 @@ func (manifest *Manifest) validateEncoder() error {
 		strings.TrimSpace(encoder.DType) == "" {
 		return errors.New("encoder attention implementation and dtype are required")
 	}
+	return nil
+}
+
+func validateEncoderGolden(encoder *EncoderManifest) error {
 	if encoder.Golden != nil {
 		if err := validateFileManifest(
 			encoder.Golden.File,
@@ -184,6 +242,10 @@ func (manifest *Manifest) validateEncoder() error {
 			return err
 		}
 	}
+	return nil
+}
+
+func validateEncoderNative(encoder *EncoderManifest) error {
 	if len(bytes.TrimSpace(encoder.Native)) == 0 ||
 		bytes.Equal(bytes.TrimSpace(encoder.Native), []byte("null")) {
 		return errors.New("encoder native contract is required")
@@ -240,34 +302,63 @@ func (manifest *Manifest) validateWorkers() error {
 	seen := make(map[string]struct{}, len(manifest.Workers))
 	for index := range manifest.Workers {
 		worker := &manifest.Workers[index]
-		if strings.TrimSpace(worker.ID) == "" || strings.TrimSpace(worker.Model) == "" {
-			return fmt.Errorf("worker %d must have id and model", index)
+		if err := validateWorker(
+			worker,
+			index,
+			manifest.Architecture.Pool[index],
+			seen,
+		); err != nil {
+			return err
 		}
-		if _, exists := seen[worker.ID]; exists {
-			return fmt.Errorf("duplicate worker id %q", worker.ID)
-		}
-		seen[worker.ID] = struct{}{}
-		if manifest.Architecture.Pool[index] != worker.ID {
+	}
+	return nil
+}
+
+func validateWorker(
+	worker *WorkerManifest,
+	index int,
+	poolID string,
+	seen map[string]struct{},
+) error {
+	if strings.TrimSpace(worker.ID) == "" ||
+		strings.TrimSpace(worker.Model) == "" {
+		return fmt.Errorf("worker %d must have id and model", index)
+	}
+	if _, exists := seen[worker.ID]; exists {
+		return fmt.Errorf("duplicate worker id %q", worker.ID)
+	}
+	seen[worker.ID] = struct{}{}
+	if poolID != worker.ID {
+		return fmt.Errorf(
+			"pool[%d] %q does not match worker id %q",
+			index,
+			poolID,
+			worker.ID,
+		)
+	}
+	if err := validateWorkerCosts(worker); err != nil {
+		return err
+	}
+	if len(worker.CapabilityTags) == 0 {
+		return fmt.Errorf("worker %q capability tags are required", worker.ID)
+	}
+	return nil
+}
+
+func validateWorkerCosts(worker *WorkerManifest) error {
+	for label, value := range map[string]float64{
+		"input":       worker.EstimatedInputCostPerToken,
+		"cache_read":  worker.EstimatedCacheReadCostPerToken,
+		"cache_write": worker.EstimatedCacheWriteCostPerToken,
+		"output":      worker.EstimatedOutputCostPerToken,
+		"latency":     worker.LatencyMS,
+	} {
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
 			return fmt.Errorf(
-				"pool[%d] %q does not match worker id %q",
-				index,
-				manifest.Architecture.Pool[index],
+				"worker %q %s price is invalid",
 				worker.ID,
+				label,
 			)
-		}
-		for label, value := range map[string]float64{
-			"input":       worker.EstimatedInputCostPerToken,
-			"cache_read":  worker.EstimatedCacheReadCostPerToken,
-			"cache_write": worker.EstimatedCacheWriteCostPerToken,
-			"output":      worker.EstimatedOutputCostPerToken,
-			"latency":     worker.LatencyMS,
-		} {
-			if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
-				return fmt.Errorf("worker %q %s price is invalid", worker.ID, label)
-			}
-		}
-		if len(worker.CapabilityTags) == 0 {
-			return fmt.Errorf("worker %q capability tags are required", worker.ID)
 		}
 	}
 	return nil

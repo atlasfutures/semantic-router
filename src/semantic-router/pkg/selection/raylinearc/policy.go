@@ -98,6 +98,13 @@ type Policy struct {
 	contract PolicyManifest
 }
 
+type policyAdjustment struct {
+	scores            []float32
+	switchCost        []float64
+	cacheMissTokens   []int
+	upgradeExemptions []bool
+}
+
 func newPolicy(manifest *Manifest) *Policy {
 	workers := append([]WorkerManifest(nil), manifest.Workers...)
 	return &Policy{
@@ -112,115 +119,178 @@ func (policy *Policy) Select(
 	inputTokens int,
 	now time.Time,
 ) (Decision, error) {
-	if policy == nil {
-		return Decision{}, errors.New("ARC policy is required")
+	if err := policy.validateSelectionInputs(
+		rawScores,
+		state,
+		inputTokens,
+		now,
+	); err != nil {
+		return Decision{}, err
 	}
-	if len(rawScores) == 0 || len(rawScores) != len(policy.workers) {
-		return Decision{}, errors.New(
-			"ARC score count does not match worker count",
-		)
-	}
-	if state == nil {
-		return Decision{}, errors.New("episode state is required")
-	}
-	if len(state.Warmth) != len(policy.workers) {
-		return Decision{}, errors.New(
-			"episode warmth count does not match worker count",
-		)
-	}
-	if state.PreviousArm != nil &&
-		(*state.PreviousArm < 0 || *state.PreviousArm >= len(policy.workers)) {
-		return Decision{}, errors.New("previous arm is out of range")
-	}
-	if inputTokens < 0 {
-		return Decision{}, errors.New("input token count must be nonnegative")
-	}
-	if now.IsZero() {
-		return Decision{}, errors.New("selection time is required")
-	}
-	for index, warmth := range state.Warmth {
-		if warmth == nil {
-			continue
-		}
-		if warmth.LastUsed.IsZero() || warmth.LastInputTokens < 0 {
-			return Decision{}, fmt.Errorf(
-				"worker %d warmth is invalid",
-				index,
-			)
-		}
-	}
-
-	adjusted := append([]float32(nil), rawScores...)
-	switchCost := make([]float64, len(rawScores))
-	cacheMissTokens := make([]int, len(rawScores))
-	coldUpgradeExemptions := make([]bool, len(rawScores))
-	for _, value := range rawScores {
-		if float32IsNaNOrInf(value) {
-			return Decision{}, errors.New(
-				"ARC scores contain a non-finite value",
-			)
-		}
-	}
-
-	if state.PreviousArm != nil {
-		previous := *state.PreviousArm
-		previousRate := policy.workers[previous].EstimatedInputCostPerToken
-		for index := range policy.workers {
-			if index == previous {
-				continue
-			}
-			worker := &policy.workers[index]
-			exempt := policy.contract.ColdSwitchUpgradeExempt &&
-				worker.EstimatedInputCostPerToken > previousRate
-			coldUpgradeExemptions[index] = exempt
-			if exempt {
-				continue
-			}
-			missTokens, cost := switchCostForWorker(
-				worker,
-				state.Warmth[index],
-				inputTokens,
-				now,
-			)
-			cacheMissTokens[index] = missTokens
-			switchCost[index] = cost
-			adjusted[index] -= float32(
-				float64(policy.contract.ColdSwitchMarginPerUSD) * cost,
-			)
-		}
-	}
-
-	tentative, ok := ArgmaxFirst(adjusted)
+	adjustment := policy.adjustScores(
+		rawScores,
+		state,
+		inputTokens,
+		now,
+	)
+	tentative, ok := ArgmaxFirst(adjustment.scores)
 	if !ok {
 		return Decision{}, errors.New("ARC policy has no candidate arm")
 	}
-	selected := tentative
-	stayed := false
-	stayUpgradeExempted := false
-	if state.PreviousArm != nil && tentative != *state.PreviousArm {
-		previous := *state.PreviousArm
-		stayUpgradeExempted = policy.contract.StayMarginUpgradeExempt &&
-			policy.workers[tentative].EstimatedInputCostPerToken >
-				policy.workers[previous].EstimatedInputCostPerToken
-		if !stayUpgradeExempted &&
-			adjusted[tentative]-adjusted[previous] <=
-				policy.contract.PreviousWorkerStayMargin {
-			selected = previous
-			stayed = true
-		}
-	}
-
+	selected, stayed, stayUpgradeExempted := policy.applyStayMargin(
+		tentative,
+		adjustment.scores,
+		state.PreviousArm,
+	)
 	return Decision{
 		SelectedArm:                 selected,
 		SelectedWorker:              policy.workers[selected].ID,
 		RawScores:                   append([]float32(nil), rawScores...),
-		AdjustedScores:              adjusted,
-		SwitchCostUSD:               switchCost,
-		CacheMissTokens:             cacheMissTokens,
+		AdjustedScores:              adjustment.scores,
+		SwitchCostUSD:               adjustment.switchCost,
+		CacheMissTokens:             adjustment.cacheMissTokens,
 		Stayed:                      stayed,
-		ColdSwitchUpgradeExemptions: coldUpgradeExemptions,
+		ColdSwitchUpgradeExemptions: adjustment.upgradeExemptions,
 		StayUpgradeExempted:         stayUpgradeExempted,
 	}, nil
+}
+
+func (policy *Policy) validateSelectionInputs(
+	rawScores []float32,
+	state *EpisodeState,
+	inputTokens int,
+	now time.Time,
+) error {
+	if err := validateSelectionRequest(
+		policy,
+		rawScores,
+		inputTokens,
+		now,
+	); err != nil {
+		return err
+	}
+	return validateEpisodeState(state, len(policy.workers))
+}
+
+func validateSelectionRequest(
+	policy *Policy,
+	rawScores []float32,
+	inputTokens int,
+	now time.Time,
+) error {
+	if policy == nil {
+		return errors.New("ARC policy is required")
+	}
+	if len(rawScores) == 0 || len(rawScores) != len(policy.workers) {
+		return errors.New(
+			"ARC score count does not match worker count",
+		)
+	}
+	if inputTokens < 0 {
+		return errors.New("input token count must be nonnegative")
+	}
+	if now.IsZero() {
+		return errors.New("selection time is required")
+	}
+	for _, value := range rawScores {
+		if float32IsNaNOrInf(value) {
+			return errors.New(
+				"ARC scores contain a non-finite value",
+			)
+		}
+	}
+	return nil
+}
+
+func validateEpisodeState(state *EpisodeState, workerCount int) error {
+	if state == nil {
+		return errors.New("episode state is required")
+	}
+	if len(state.Warmth) != workerCount {
+		return errors.New(
+			"episode warmth count does not match worker count",
+		)
+	}
+	if state.PreviousArm != nil &&
+		(*state.PreviousArm < 0 || *state.PreviousArm >= workerCount) {
+		return errors.New("previous arm is out of range")
+	}
+	return validateWarmth(state.Warmth)
+}
+
+func validateWarmth(warmth []*WorkerWarmth) error {
+	for index, value := range warmth {
+		if value == nil {
+			continue
+		}
+		if value.LastUsed.IsZero() || value.LastInputTokens < 0 {
+			return fmt.Errorf("worker %d warmth is invalid", index)
+		}
+	}
+	return nil
+}
+
+func (policy *Policy) adjustScores(
+	rawScores []float32,
+	state *EpisodeState,
+	inputTokens int,
+	now time.Time,
+) policyAdjustment {
+	result := policyAdjustment{
+		scores:            append([]float32(nil), rawScores...),
+		switchCost:        make([]float64, len(rawScores)),
+		cacheMissTokens:   make([]int, len(rawScores)),
+		upgradeExemptions: make([]bool, len(rawScores)),
+	}
+	if state.PreviousArm == nil {
+		return result
+	}
+	previous := *state.PreviousArm
+	previousRate := policy.workers[previous].EstimatedInputCostPerToken
+	for index := range policy.workers {
+		if index == previous {
+			continue
+		}
+		worker := &policy.workers[index]
+		exempt := policy.contract.ColdSwitchUpgradeExempt &&
+			worker.EstimatedInputCostPerToken > previousRate
+		result.upgradeExemptions[index] = exempt
+		if exempt {
+			continue
+		}
+		missTokens, cost := switchCostForWorker(
+			worker,
+			state.Warmth[index],
+			inputTokens,
+			now,
+		)
+		result.cacheMissTokens[index] = missTokens
+		result.switchCost[index] = cost
+		result.scores[index] -= float32(
+			float64(policy.contract.ColdSwitchMarginPerUSD) * cost,
+		)
+	}
+	return result
+}
+
+func (policy *Policy) applyStayMargin(
+	tentative int,
+	adjustedScores []float32,
+	previousArm *int,
+) (int, bool, bool) {
+	if previousArm == nil || tentative == *previousArm {
+		return tentative, false, false
+	}
+	previous := *previousArm
+	upgradeExempted := policy.contract.StayMarginUpgradeExempt &&
+		policy.workers[tentative].EstimatedInputCostPerToken >
+			policy.workers[previous].EstimatedInputCostPerToken
+	if upgradeExempted ||
+		adjustedScores[tentative]-adjustedScores[previous] >
+			policy.contract.PreviousWorkerStayMargin {
+		return tentative, false, upgradeExempted
+	}
+	return previous, true, false
 }
 
 func switchCostForWorker(
