@@ -773,7 +773,7 @@ evaluation or a frozen holdout as part of implementation validation.
 - [x] T3 Add typed `rayline_arc` config, validation, catalogs, fragment,
       canonical/reference surfaces, experimental tier, engine/capability pins,
       and Router Learning exclusion.
-- [ ] T4 Add the specified protocol-to-turn normalization and cross-protocol
+- [x] T4 Add the specified protocol-to-turn normalization and cross-protocol
       Rayline golden fixtures, including drop/coercion/tokenization traps.
 - [ ] T5 Package the ARC vLLM IO Processor plugin, exact token serializer, and
       Rung A `token_embed`/ALL plugin-side FP32 mean.
@@ -797,11 +797,11 @@ evaluation or a frozen holdout as part of implementation validation.
 
 ## Next Action
 
-T4: add the exact protocol-to-turn normalization contract and cross-protocol
-public fixtures, including Rayline drop rules, tool rendering/coercion,
-malformed-field failure, Unicode, EOS, turn numbering, and truncation
-boundaries. The human publication action recorded in Loop 1 remains
-non-blocking.
+T5: package the installable ARC vLLM IO Processor plugin, consume the pinned
+token-block fixture through the exact serializer, and implement Rung A
+`token_embed`/`ALL` plugin-side FP32 masked mean plus L2 normalization. Keep
+all model inference inside vLLM. The human publication action recorded in
+Loop 1 remains non-blocking.
 
 ## Loop Evidence
 
@@ -992,6 +992,61 @@ Repository evidence:
   observability, Redis, and Postgres container plus the network.
 - Elapsed loop duration: about 28 minutes from the prior evidence commit to the
   cohesive task commit.
+- Hardware: local Apple Silicon, arm64 CPU/Docker; no CUDA/GPU execution.
+- Paid/Modal cost: `$0.00`; cost ceiling consumed: `$0.00`.
+
+### Loop 4 — T4 protocol turns and token-block goldens (2026-07-28)
+
+Status: complete. No vLLM source changed.
+
+Implementation:
+
+- Added one strict `NormalizeTurns` boundary for Anthropic Messages, OpenAI
+  Chat Completions, and OpenAI Responses. Equivalent tool flows normalize to
+  identical ordered user/assistant turns; system/developer input and known
+  rich/thinking blocks are dropped.
+- Ported Rayline's tool rendering exactly: stable wire order, tool-ID/name
+  resolution, sorted JSON object keys, spaced compact separators, ASCII
+  escaping with surrogate pairs, Python-style scalar coercion, error markers,
+  and protocol-specific text/result joining. Missing or malformed fields,
+  duplicate/unresolved tool IDs, malformed JSON arguments, and unknown item
+  types fail with typed codes rather than silently selecting a fallback.
+- Added public cross-protocol success/failure goldens covering multiple tools,
+  image/thinking drops, Unicode, canonical JSON, scalar coercion, result
+  errors, malformed arguments, and unresolved IDs.
+- Added serializer-facing goldens from Rayline commit
+  `9187b0ad7c504934a627486bc8bf67ac2e251e6f` and the public pinned
+  `Qwen/Qwen3.5-0.8B` tokenizer revision. They pin the tokenizer SHA256, EOS
+  `248046`, literal-special parsing disabled, separate header/content token
+  IDs, task/context construction, turn numbering, empty-task behavior, task
+  prefix truncation, recent-turn tail truncation, and 0/1-token EOS
+  boundaries. T5 must consume these fixtures in the production Python plugin.
+- Live recheck before implementation: vLLM #40804 remained open at
+  `b42df0395f6bc2d947ec739be61879d9687abb86`; #48214 remained open at
+  `521cbfd8cba1fe464ee6c34fef32ddf77816ea55`. Neither supplied causal MEAN.
+
+Repository evidence:
+
+- Semantic Router task commit:
+  `9a46d7c6a29b91350f975419baf6ef5e82f14ba2` (signed off).
+- vLLM lane remained clean and fork-synchronized at
+  `98e91a9600eb75b2de14ef27f13b10088d1a1279`.
+- Commands passed:
+  `go test ./pkg/selection/raylinearc -count=1`;
+  `go test -race ./pkg/selection/raylinearc -count=1`;
+  `go vet ./pkg/selection/raylinearc`;
+  `make agent-report ENV=cpu CHANGED_FILES="<9 files>"`;
+  `make agent-lint CHANGED_FILES="<9 files>"`;
+  `make test-semantic-router`;
+  and `make agent-ci-gate CHANGED_FILES="<9 files>"`, including
+  `make agent-validate`. The first lint run found only new-code shadow and
+  complexity findings; helpers were decomposed and the exact gate passed.
+- `make agent-dev ENV=cpu` rebuilt the arm64 router, dashboard, and simulator
+  images. `make agent-serve-local ENV=cpu` and `make agent-smoke-local`
+  passed with `.venv-agent/bin` on `PATH`; `vllm-sr stop` removed every
+  runtime, observability, Redis, and Postgres container plus the network.
+- Elapsed loop duration: about 27 minutes between the prior evidence commit
+  and the cohesive task commit.
 - Hardware: local Apple Silicon, arm64 CPU/Docker; no CUDA/GPU execution.
 - Paid/Modal cost: `$0.00`; cost ceiling consumed: `$0.00`.
 
