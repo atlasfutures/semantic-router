@@ -70,6 +70,15 @@ func (r *OpenAIRouter) handleRequestBodyDispatch(v *ext_proc.ProcessingRequest_R
 func (r *OpenAIRouter) Process(stream ext_proc.ExternalProcessor_ProcessServer) (retErr error) {
 	logging.Debugf("Processing at stage [init]")
 
+	return r.processWithContext(stream, &RequestContext{
+		Headers: make(map[string]string),
+	})
+}
+
+func (r *OpenAIRouter) processWithContext(
+	stream ext_proc.ExternalProcessor_ProcessServer,
+	ctx *RequestContext,
+) (retErr error) {
 	// Recover from any panic (including OOM kills surfaced as runtime panics from
 	// CGO inference calls) so a single bad request cannot take down the gRPC server.
 	defer func() {
@@ -77,12 +86,8 @@ func (r *OpenAIRouter) Process(stream ext_proc.ExternalProcessor_ProcessServer) 
 			logging.Errorf("Process: recovered panic: %v\n%s", rec, debug.Stack())
 			retErr = status.Errorf(codes.Internal, "internal error: %v", rec)
 		}
+		r.finalizeRaylineARCAbort(ctx, "process_terminal")
 	}()
-
-	// Initialize request context
-	ctx := &RequestContext{
-		Headers: make(map[string]string),
-	}
 
 	for {
 		req, err := stream.Recv()

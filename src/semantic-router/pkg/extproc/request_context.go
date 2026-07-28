@@ -157,6 +157,7 @@ type RequestContext struct {
 	VSRInjectedSystemPrompt        bool                                        // Whether a system prompt was injected into the request
 	VSRSelectedDecision            *config.Decision                            // The decision object selected by DecisionEngine (for plugins)
 	VSRRaylineARC                  *selection.RaylineARCTrace                  // Privacy-safe ARC selection trace; never prompt or embedding data.
+	RaylineARCTransaction          *raylineARCEpisodeTransaction               // Fenced ARC state lease; finalized exactly once.
 
 	// ResponsePath records how the final response was produced, surfaced as the
 	// v0.4 keystone x-vsr-response-path header (one of the headers.ResponsePath*

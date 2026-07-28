@@ -12,9 +12,19 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerreplay/store"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/lookuptable"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
-func createModelSelectorRegistry(cfg *config.RouterConfig, replayReader store.Reader) (*selection.Registry, lookuptable.LookupTableStorage, func()) {
+func createModelSelectorRegistry(
+	cfg *config.RouterConfig,
+	replayReader store.Reader,
+) (
+	*selection.Registry,
+	lookuptable.LookupTableStorage,
+	func(),
+	raylinearc.EpisodeStore,
+	func() error,
+) {
 	modelSelectionCfg := buildModelSelectionConfig(cfg)
 	backendModels := cfg.BackendModels
 	selectionFactory := selection.NewFactory(modelSelectionCfg)
@@ -33,9 +43,14 @@ func createModelSelectorRegistry(cfg *config.RouterConfig, replayReader store.Re
 	}
 
 	registry := selectionFactory.CreateAll()
-	if arcSelector, readinessFailure := createRaylineARCSelector(cfg); arcSelector != nil {
+	arcSelector, episodeStore, closeEpisodeStore, readinessFailure := createRaylineARCSelector(cfg)
+	if arcSelector != nil {
 		registry.Register(selection.MethodRaylineARC, arcSelector)
 		metrics.SetRaylineARCComponentReady(readinessFailure == "")
+		metrics.SetRaylineARCNamedComponentReady(
+			"episode_store",
+			readinessFailure == "" && episodeStore != nil,
+		)
 		fields := map[string]interface{}{
 			"ready": readinessFailure == "",
 		}
@@ -66,7 +81,7 @@ func createModelSelectorRegistry(cfg *config.RouterConfig, replayReader store.Re
 	logging.ComponentEvent("extproc", "model_selection_registry_initialized", map[string]interface{}{
 		"mode": "per_decision_algorithm_config",
 	})
-	return registry, lt, cancel
+	return registry, lt, cancel, episodeStore, closeEpisodeStore
 }
 
 func resolveSelectionEmbeddingFunc(cfg *config.RouterConfig) func(string) ([]float32, error) {

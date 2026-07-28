@@ -11,7 +11,6 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	routermetrics "github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/sessiontelemetry"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/utils/entropy"
 )
@@ -194,6 +193,13 @@ func (r *OpenAIRouter) completeModelSelection(
 	if failClosedSelection(algorithm) {
 		if ctx != nil {
 			ctx.VSRRaylineARC = result.RaylineARC
+			if ctx.RaylineARCTransaction != nil &&
+				result.RaylineARC != nil {
+				ctx.RaylineARCTransaction.markSelection(
+					result.RaylineARC.SelectedArm,
+					result.RaylineARC.SerializedTokens,
+				)
+			}
 		}
 		observeRaylineARCSelection(ctx, result.RaylineARC)
 		selection.RecordSelection(
@@ -464,54 +470,12 @@ func (r *OpenAIRouter) buildSelectionContext(
 		ConversationHistory:        conversationHistory,
 		CacheAffinityCtx:           r.buildCacheAffinityContext(reqCtx, modelRefs),
 	}
-	selCtx.RaylineARC = buildRaylineARCSelectionContext(algorithm, reqCtx)
+	selCtx.RaylineARC = r.buildRaylineARCSelectionContext(
+		algorithm,
+		reqCtx,
+		len(modelRefs),
+	)
 	return selCtx
-}
-
-func buildRaylineARCSelectionContext(
-	algorithm *config.AlgorithmConfig,
-	reqCtx *RequestContext,
-) *selection.RaylineARCSelectionContext {
-	if algorithm == nil ||
-		algorithm.Type != config.RaylineARCAlgorithmType ||
-		algorithm.RaylineARC == nil {
-		return nil
-	}
-	result := &selection.RaylineARCSelectionContext{}
-	if reqCtx == nil {
-		result.PreparationFailure = "missing_request"
-		return result
-	}
-	rawEpisodeID := strings.TrimSpace(
-		reqCtx.Headers[algorithm.RaylineARC.Episode.IDHeader],
-	)
-	if rawEpisodeID == "" {
-		result.PreparationFailure = "missing_episode_id"
-		return result
-	}
-	result.EpisodeIDHash = raylinearc.HashEpisodeID(rawEpisodeID)
-	protocol := raylinearc.ProtocolOpenAIChat
-	switch {
-	case reqCtx.ResponseAPICtx != nil &&
-		reqCtx.ResponseAPICtx.IsResponseAPIRequest:
-		protocol = raylinearc.ProtocolOpenAIResponses
-	case reqCtx.ClientProtocol == config.ClientProtocolAnthropic:
-		protocol = raylinearc.ProtocolAnthropicMessages
-	}
-	turns, err := raylinearc.NormalizeTurns(
-		protocol,
-		reqCtx.OriginalRequestBody,
-	)
-	if err != nil {
-		code := raylinearc.TurnNormalizationErrorCode(err)
-		if code == "" {
-			code = "invalid_turns"
-		}
-		result.PreparationFailure = "turns_" + code
-		return result
-	}
-	result.Turns = turns
-	return result
 }
 
 func (r *OpenAIRouter) buildAgenticSessionContext(

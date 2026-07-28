@@ -18,6 +18,8 @@ package extproc
 
 import (
 	"context"
+	"errors"
+	"os"
 	"reflect"
 	"time"
 
@@ -28,18 +30,28 @@ import (
 
 func createRaylineARCSelector(
 	cfg *config.RouterConfig,
-) (selection.Selector, string) {
+) (
+	selection.Selector,
+	raylinearc.EpisodeStore,
+	func() error,
+	string,
+) {
 	decisions := configuredRaylineARCDecisions(cfg)
 	if len(decisions) == 0 {
-		return nil, ""
+		return nil, nil, nil, ""
 	}
 	arcConfig := decisions[0].Algorithm.RaylineARC
-	unavailable := func(class string) (selection.Selector, string) {
+	unavailable := func(class string) (
+		selection.Selector,
+		raylinearc.EpisodeStore,
+		func() error,
+		string,
+	) {
 		return newRaylineARCSelector(
 			nil,
 			nil,
 			arcConfig.ArtifactRevision,
-		), class
+		), nil, nil, class
 	}
 	for index := 1; index < len(decisions); index++ {
 		if !reflect.DeepEqual(
@@ -71,17 +83,103 @@ func createRaylineARCSelector(
 	if err != nil {
 		return unavailable("encoder_config")
 	}
-	if err := encoder.Probe(
+	if probeErr := encoder.Probe(
 		context.Background(),
 		"semantic-router-startup-readiness",
-	); err != nil {
+	); probeErr != nil {
 		return unavailable("encoder_probe")
+	}
+	episodeStore, closeStore, err := createRaylineARCEpisodeStore(
+		arcConfig.Episode,
+	)
+	if err != nil {
+		return unavailable("episode_store")
 	}
 	return newRaylineARCSelector(
 		&runtimeARCScorer{runtime: runtime, policy: runtime.Policy()},
 		encoder,
 		arcConfig.ArtifactRevision,
-	), ""
+	), episodeStore, closeStore, ""
+}
+
+func createRaylineARCEpisodeStore(
+	episodeConfig config.RaylineARCEpisodeConfig,
+) (raylinearc.EpisodeStore, func() error, error) {
+	var store raylinearc.EpisodeStore
+	var closeStore func() error
+	switch episodeConfig.Backend {
+	case config.RaylineARCBackendMemory:
+		memoryStore, err := raylinearc.NewMemoryEpisodeStore(
+			raylinearc.MemoryEpisodeStoreConfig{
+				MaxEpisodes: episodeConfig.MaxInMemoryEpisodes,
+				IdleTTL: time.Duration(
+					episodeConfig.IdleTTLSeconds,
+				) * time.Second,
+			},
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+		store = memoryStore
+	case config.RaylineARCBackendRedis:
+		password, err := raylineARCRedisPassword(episodeConfig.Redis)
+		if err != nil {
+			return nil, nil, err
+		}
+		redisStore, err := raylinearc.NewRedisEpisodeStore(
+			raylinearc.RedisEpisodeStoreConfig{
+				Address:   episodeConfig.Redis.Address,
+				DB:        episodeConfig.Redis.DB,
+				Password:  password,
+				UseTLS:    episodeConfig.Redis.UseTLS,
+				PoolSize:  episodeConfig.Redis.PoolSize,
+				KeyPrefix: episodeConfig.KeyPrefix,
+				LeaseTTL: time.Duration(
+					episodeConfig.LeaseTTLSeconds,
+				) * time.Second,
+				IdleTTL: time.Duration(
+					episodeConfig.IdleTTLSeconds,
+				) * time.Second,
+			},
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+		store = redisStore
+		closeStore = redisStore.Close
+	default:
+		return nil, nil, errors.New("unsupported ARC episode backend")
+	}
+	readinessContext, cancel := context.WithTimeout(
+		context.Background(),
+		raylineARCDurationMin(
+			time.Duration(episodeConfig.AcquireTimeoutSeconds)*time.Second,
+			5*time.Second,
+		),
+	)
+	defer cancel()
+	if err := store.(raylinearc.EpisodeStoreReadiness).Ready(
+		readinessContext,
+	); err != nil {
+		if closeStore != nil {
+			_ = closeStore()
+		}
+		return nil, nil, err
+	}
+	return store, closeStore, nil
+}
+
+func raylineARCRedisPassword(
+	redisConfig config.RaylineARCRedisConfig,
+) (string, error) {
+	if redisConfig.PasswordEnv == "" {
+		return "", nil
+	}
+	value, ok := os.LookupEnv(redisConfig.PasswordEnv)
+	if !ok {
+		return "", errors.New("ARC Redis password environment is unset")
+	}
+	return value, nil
 }
 
 func raylineARCEncoderClientConfig(

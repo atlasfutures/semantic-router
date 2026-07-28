@@ -127,16 +127,19 @@ func (r *OpenAIRouter) runRequestPreRoutingStages(
 		ctx.InflightToken = 0
 		r.startRouterReplay(ctx, originalModel, selectedModel, decisionName)
 		r.updateRouterReplayStatus(ctx, 200, false)
+		r.finalizeRaylineARCAbort(ctx, "immediate_response")
 		return requestDecisionState{}, resp
 	}
 	if resp := r.applyRateLimitAndCacheChecks(ctx, selectedModel, decisionName); resp != nil {
 		inflight.End(selectedModel, ctx.InflightToken)
 		ctx.InflightToken = 0
+		r.finalizeRaylineARCAbort(ctx, "immediate_response")
 		return requestDecisionState{}, resp
 	}
 	if ragErr := r.executeRAGPlugin(ctx, decisionName); ragErr != nil {
 		inflight.End(selectedModel, ctx.InflightToken)
 		ctx.InflightToken = 0
+		r.finalizeRaylineARCAbort(ctx, "handler_error")
 		return requestDecisionState{}, r.createErrorResponse(503, fmt.Sprintf("RAG retrieval failed: %v", ragErr))
 	}
 
@@ -168,6 +171,7 @@ func (r *OpenAIRouter) decisionEvaluationErrorResponse(
 		},
 	)
 	metrics.RecordRaylineARCFailure(selectionFailure.class)
+	r.finalizeRaylineARCAbort(ctx, "selection_failure")
 	return r.createErrorResponse(
 		503,
 		"Rayline ARC routing unavailable",

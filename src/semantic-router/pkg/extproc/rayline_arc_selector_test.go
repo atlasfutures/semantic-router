@@ -176,13 +176,16 @@ func TestCreateRaylineARCSelectorKeepsComponentNotReadyOnArtifactFailure(t *test
 			},
 		},
 	}
-	selector, failureClass := createRaylineARCSelector(cfg)
+	selector, episodeStore, closeStore, failureClass := createRaylineARCSelector(cfg)
 	if selector == nil || failureClass != "artifact" {
 		t.Fatalf(
 			"selector=%#v failure_class=%q, want unavailable artifact selector",
 			selector,
 			failureClass,
 		)
+	}
+	if episodeStore != nil || closeStore != nil {
+		t.Fatal("unready selector retained an episode store")
 	}
 	if _, err := selector.Select(
 		context.Background(),

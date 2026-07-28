@@ -20,6 +20,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/lookuptable"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/services"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/tools"
 	httputil "github.com/vllm-project/semantic-router/src/semantic-router/pkg/utils/http"
@@ -41,11 +42,13 @@ type OpenAIRouter struct {
 	ReplayStoreShared     bool
 	// ModelSelector is the registry of advanced model selection algorithms
 	// initialized from config.IntelligentRouting.ModelSelection.
-	ModelSelector   *selection.Registry
-	LookupTable     lookuptable.LookupTable
-	ReplayRecorders map[string]*routerreplay.Recorder
-	MemoryStore     memory.Store
-	MemoryExtractor *memory.MemoryExtractor
+	ModelSelector               *selection.Registry
+	LookupTable                 lookuptable.LookupTable
+	ReplayRecorders             map[string]*routerreplay.Recorder
+	MemoryStore                 memory.Store
+	MemoryExtractor             *memory.MemoryExtractor
+	RaylineARCEpisodeStore      raylinearc.EpisodeStore
+	raylineARCEpisodeStoreClose func() error
 
 	// CredentialResolver resolves per-user LLM API keys from multiple sources
 	// (ext_authz injected headers -> static config fallback).
@@ -72,6 +75,9 @@ func (r *OpenAIRouter) Close() error {
 	}
 	if r.lookupTableCancel != nil {
 		r.lookupTableCancel()
+	}
+	if r.raylineARCEpisodeStoreClose != nil {
+		return r.raylineARCEpisodeStoreClose()
 	}
 	return nil
 }

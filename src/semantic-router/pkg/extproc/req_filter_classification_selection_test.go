@@ -150,11 +150,36 @@ func TestBuildSelectionContextHashesARCIdentityAndNormalizesOriginalBody(t *test
 		Type: config.RaylineARCAlgorithmType,
 		RaylineARC: &config.RaylineARCAlgorithmConfig{
 			Episode: config.RaylineARCEpisodeConfig{
-				IDHeader: "x-rayline-episode-id",
+				IDHeader:              "x-rayline-episode-id",
+				AcquireTimeoutSeconds: 1,
+				LeaseTTLSeconds:       60,
 			},
 		},
 	}
-	router := &OpenAIRouter{Config: &config.RouterConfig{}}
+	episodeStore, err := raylinearc.NewMemoryEpisodeStore(
+		raylinearc.MemoryEpisodeStoreConfig{
+			MaxEpisodes: 4,
+			IdleTTL:     time.Minute,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := &OpenAIRouter{
+		Config:                 &config.RouterConfig{},
+		RaylineARCEpisodeStore: episodeStore,
+	}
+	requestContext := &RequestContext{
+		Headers: map[string]string{
+			"x-rayline-episode-id": rawEpisodeID,
+		},
+		OriginalRequestBody: []byte(
+			`{"model":"auto","messages":[{"role":"user","content":"hello"}]}`,
+		),
+	}
+	t.Cleanup(func() {
+		router.finalizeRaylineARCAbort(requestContext, "test_cleanup")
+	})
 	selCtx := router.buildSelectionContext(
 		[]config.ModelRef{{Model: "a"}, {Model: "b"}},
 		"arc",
@@ -162,14 +187,7 @@ func TestBuildSelectionContextHashesARCIdentityAndNormalizesOriginalBody(t *test
 		algorithm,
 		"",
 		nil,
-		&RequestContext{
-			Headers: map[string]string{
-				"x-rayline-episode-id": rawEpisodeID,
-			},
-			OriginalRequestBody: []byte(
-				`{"model":"auto","messages":[{"role":"user","content":"hello"}]}`,
-			),
-		},
+		requestContext,
 	)
 	if selCtx.RaylineARC == nil {
 		t.Fatal("missing ARC selection context")

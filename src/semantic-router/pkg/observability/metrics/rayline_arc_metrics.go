@@ -67,6 +67,13 @@ var (
 		},
 		[]string{"component"},
 	)
+	RaylineARCEpisodeTransactions = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_rayline_arc_episode_transactions_total",
+			Help: "Rayline ARC episode transaction outcomes and bounded failure classes.",
+		},
+		[]string{"outcome", "failure_class"},
+	)
 )
 
 func RecordRaylineARCFailure(class string) {
@@ -96,9 +103,26 @@ func RecordRaylineARCSelection(
 }
 
 func SetRaylineARCComponentReady(ready bool) {
+	SetRaylineARCNamedComponentReady("artifact_head_encoder", ready)
+}
+
+func SetRaylineARCNamedComponentReady(
+	component string,
+	ready bool,
+) {
 	value := 0.0
 	if ready {
 		value = 1
 	}
-	RaylineARCComponentReady.WithLabelValues("artifact_head_encoder").Set(value)
+	RaylineARCComponentReady.WithLabelValues(component).Set(value)
+}
+
+func RecordRaylineARCEpisodeTransaction(
+	outcome string,
+	failureClass string,
+) {
+	RaylineARCEpisodeTransactions.WithLabelValues(
+		outcome,
+		failureClass,
+	).Inc()
 }
