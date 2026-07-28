@@ -166,6 +166,13 @@ config:
             use_reasoning: true
         adaptations:
           mode: bypass
+        plugins:
+          # Router Replay defaults to enabled in canonical configs; ARC
+          # episode requests must never be persisted, and validation
+          # enforces this.
+          - type: router_replay
+            configuration:
+              enabled: false
         algorithm:
           type: rayline_arc
           on_error: fail_closed

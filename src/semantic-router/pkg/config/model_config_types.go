@@ -290,6 +290,10 @@ type VLLMEndpoint struct {
 	ProviderProfileName string `yaml:"provider_profile,omitempty"`
 	Model               string `yaml:"model,omitempty"`
 	Protocol            string `yaml:"protocol,omitempty"`
+	// APIKeyEnvName records which environment variable supplied APIKey so
+	// artifact-pinned credential identity can be verified at readiness. It is
+	// runtime-only metadata and is never serialized.
+	APIKeyEnvName string `yaml:"-" json:"-"`
 }
 
 type ProviderProfile struct {

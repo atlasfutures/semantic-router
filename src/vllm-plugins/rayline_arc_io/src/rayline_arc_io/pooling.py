@@ -6,7 +6,7 @@ from typing import Any
 
 import torch
 
-from .constants import EMBEDDING_DIMENSION, TOKEN_EMBEDDING_RANK
+from .constants import EMBEDDING_DIMENSION, NORMALIZATION_EPSILON, TOKEN_EMBEDDING_RANK
 
 
 def fp32_masked_mean_l2(
@@ -35,8 +35,14 @@ def fp32_masked_mean_l2(
         raise ValueError("vLLM token embeddings contain non-finite values")
     mean = fp32_states.sum(dim=0, dtype=torch.float32) / expected_tokens
     norm = torch.linalg.vector_norm(mean, ord=2, dtype=torch.float32)
-    if not bool(torch.isfinite(norm).item()) or float(norm.item()) <= 0.0:
-        raise ValueError("vLLM token embedding mean has zero or non-finite norm")
+    # Reject sub-epsilon norms outright so Rung A matches Rung B, where
+    # F.normalize's 1e-12 epsilon floor leaves such vectors subunit and the
+    # normalization check then fails them.
+    if (
+        not bool(torch.isfinite(norm).item())
+        or float(norm.item()) < NORMALIZATION_EPSILON
+    ):
+        raise ValueError("vLLM token embedding mean has degenerate or non-finite norm")
 
     embedding = mean / norm
     if not bool(torch.isfinite(embedding).all().item()):

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from cli.algorithms import AlgorithmConfig, ModelRef
 from cli.rayline_arc_config import RaylineARCAlgorithmConfig
-from cli.validator_rayline_arc import _validate_rayline_arc_decision
+from cli.validator_rayline_arc import _valid_host_port, _validate_rayline_arc_decision
 
 
 def test_valid_rayline_arc_decision():
@@ -96,3 +96,18 @@ def _valid_decision():
             ModelRef(model="public-arm-b"),
         ],
     )
+
+
+def test_redis_address_table_matches_go_validator():
+    table = {
+        "redis:6379": True,
+        "[::1]:6379": True,
+        "redis:notaport": False,
+        "redis:0": False,
+        "redis:70000": False,
+        "::1:6379": False,
+        ":6379": False,
+        "redis": False,
+    }
+    for address, expected in table.items():
+        assert _valid_host_port(address) is expected, address

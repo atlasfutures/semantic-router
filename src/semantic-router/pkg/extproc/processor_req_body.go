@@ -199,10 +199,13 @@ func (r *OpenAIRouter) handleAutoModelRouting(openAIRequest *openai.ChatCompleti
 		reasoningDecision.UseReasoning = ctx.RaylineARCDispatch.ThinkingMode == "on"
 	}
 
-	if matchedModel == originalModel || matchedModel == "" {
-		// No model change needed
-		ctx.RequestModel = originalModel
-		return response, nil
+	if shortcut, done := r.autoRoutingShortcutResponse(
+		ctx,
+		originalModel,
+		matchedModel,
+		response,
+	); done {
+		return shortcut, nil
 	}
 
 	// Record routing decision with tracing
@@ -217,20 +220,14 @@ func (r *OpenAIRouter) handleAutoModelRouting(openAIRequest *openai.ChatCompleti
 
 	// Resolve backend metadata for provider-specific request shaping. This is
 	// not an endpoint routing decision; Envoy owns endpoint load balancing.
-	backendAddress, backendName, backendErr := r.resolveBackendForModel(ctx, matchedModel)
-	if backendErr != nil {
-		return nil, fmt.Errorf("auto routing: %w", backendErr)
+	backendAddress, backendName, profile, failureResponse, resolveErr := r.resolveAutoRoutingTarget(ctx, matchedModel)
+	if failureResponse != nil || resolveErr != nil {
+		return failureResponse, resolveErr
 	}
 
 	// Resolve model name alias to the real model name expected by the backend
 	// e.g., "qwen14b-rack1" -> "Qwen/Qwen2.5-14B-Instruct"
 	upstreamModel := r.resolveModelNameForBackend(matchedModel, backendName)
-
-	// Modify request body with resolved model name, reasoning mode, and system prompt
-	profile, profileErr := r.Config.GetProviderProfileForEndpoint(backendName)
-	if profileErr != nil {
-		return nil, fmt.Errorf("auto routing provider profile: %w", profileErr)
-	}
 
 	var modifiedBody []byte
 	var err error
@@ -282,6 +279,57 @@ func (r *OpenAIRouter) handleAutoModelRouting(openAIRequest *openai.ChatCompleti
 	r.recordRoutingLatency(ctx)
 
 	return response, nil
+}
+
+// autoRoutingShortcutResponse decides whether routing can stop before body
+// mutation. The no-change shortcut must never skip an armed ARC dispatch: the
+// artifact-owned body mutation and credential injection are mandatory even
+// when the selected arm happens to equal the requested model name.
+func (r *OpenAIRouter) autoRoutingShortcutResponse(
+	ctx *RequestContext,
+	originalModel string,
+	matchedModel string,
+	response *ext_proc.ProcessingResponse,
+) (*ext_proc.ProcessingResponse, bool) {
+	if ctx.RaylineARCDispatch != nil {
+		if matchedModel == "" {
+			return r.raylineARCDispatchFailureResponse(ctx), true
+		}
+		return nil, false
+	}
+	if matchedModel == originalModel || matchedModel == "" {
+		// No model change needed
+		ctx.RequestModel = originalModel
+		return response, true
+	}
+	return nil, false
+}
+
+// resolveAutoRoutingTarget resolves the backend and provider profile for the
+// matched model. An armed ARC dispatch fails closed with the ARC 503 instead
+// of surfacing a transport-level routing error.
+func (r *OpenAIRouter) resolveAutoRoutingTarget(
+	ctx *RequestContext,
+	matchedModel string,
+) (string, string, *config.ProviderProfile, *ext_proc.ProcessingResponse, error) {
+	backendAddress, backendName, backendErr := r.resolveBackendForModel(ctx, matchedModel)
+	if backendErr != nil {
+		if ctx.RaylineARCDispatch != nil {
+			return "", "", nil, r.raylineARCDispatchFailureResponse(ctx), nil
+		}
+		return "", "", nil, nil, fmt.Errorf("auto routing: %w", backendErr)
+	}
+	profile, profileErr := r.Config.GetProviderProfileForEndpoint(backendName)
+	if profileErr != nil {
+		if ctx.RaylineARCDispatch != nil {
+			return "", "", nil, r.raylineARCDispatchFailureResponse(ctx), nil
+		}
+		return "", "", nil, nil, fmt.Errorf(
+			"auto routing provider profile: %w",
+			profileErr,
+		)
+	}
+	return backendAddress, backendName, profile, nil, nil
 }
 
 func (r *OpenAIRouter) raylineARCDispatchFailureResponse(

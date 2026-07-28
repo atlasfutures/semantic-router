@@ -35,7 +35,11 @@ if redis.call("SET", KEYS[1], ARGV[1], "NX", "PX", ARGV[2]) then
   local fence = redis.call("INCR", KEYS[2])
   redis.call("PEXPIRE", KEYS[2], ARGV[3])
   local state = redis.call("GET", KEYS[3])
-  if not state then state = "" end
+  if not state then
+    state = ""
+  else
+    redis.call("PEXPIRE", KEYS[3], ARGV[3])
+  end
   return {fence, state}
 end
 return {0, ""}
@@ -66,6 +70,10 @@ if tonumber(redis.call("GET", KEYS[2]) or "-1") ~= tonumber(ARGV[2]) then
   return 0
 end
 redis.call("PEXPIRE", KEYS[1], ARGV[3])
+redis.call("PEXPIRE", KEYS[2], ARGV[4])
+if redis.call("EXISTS", KEYS[3]) == 1 then
+  redis.call("PEXPIRE", KEYS[3], ARGV[4])
+end
 return 1
 `)
 )
@@ -214,13 +222,17 @@ func (store *RedisEpisodeStore) Renew(
 	lease Lease,
 ) error {
 	keys := store.keys(lease.episodeIDHash)
+	// Renewal is episode activity: extend the lease, and keep the fence and
+	// any committed state alive for the idle window, matching the memory
+	// backend's idle semantics.
 	result, err := redisRenewScript.Run(
 		ctx,
 		store.client,
-		keys[:2],
+		keys,
 		lease.ownerToken,
 		lease.version,
 		store.leaseTTL.Milliseconds(),
+		store.idleTTL.Milliseconds(),
 	).Int()
 	if err != nil {
 		return boundedRedisEpisodeError("renew", err)

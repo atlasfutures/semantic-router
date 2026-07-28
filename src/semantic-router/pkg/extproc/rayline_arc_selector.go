@@ -18,6 +18,8 @@ package extproc
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -269,8 +271,11 @@ func (selector *raylineARCSelector) selectionResult(
 		Reasoning:     "artifact-owned ARC policy",
 		AllScores:     allScores,
 		RaylineARC: &selection.RaylineARCTrace{
-			ArtifactID:          selector.scorer.ArtifactID(),
-			ArtifactRevision:    selector.artifactRevision,
+			// The artifact ID and revision are deployment-private pins (the
+			// Helm profile sources the revision from a Secret); expose only
+			// stable hashes so telemetry can detect drift without leaking.
+			ArtifactID:          hashedARCIdentity(selector.scorer.ArtifactID()),
+			ArtifactRevision:    hashedARCIdentity(selector.artifactRevision),
 			EncoderRevision:     selector.scorer.EncoderRevision(),
 			EpisodeIDHash:       arcContext.EpisodeIDHash,
 			SelectedArm:         decision.SelectedArm,
@@ -297,6 +302,11 @@ func cloneInt(value *int) *int {
 	}
 	cloned := *value
 	return &cloned
+}
+
+func hashedARCIdentity(value string) string {
+	digest := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(digest[:8])
 }
 
 func arcSelectionFailure(class string) *raylineARCSelectionFailure {

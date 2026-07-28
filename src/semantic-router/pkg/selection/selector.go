@@ -219,6 +219,8 @@ type RaylineARCSelectionContext struct {
 }
 
 type RaylineARCTrace struct {
+	// ArtifactID and ArtifactRevision hold SHA256-derived hashes of the
+	// deployment-private artifact identity, never the raw pins.
 	ArtifactID          string
 	ArtifactRevision    string
 	EncoderRevision     string

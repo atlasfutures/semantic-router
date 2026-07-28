@@ -207,8 +207,7 @@ func raylineARCWorkerDispatchMatches(
 	for endpointIndex := range endpoints {
 		if !raylineARCEndpointIdentityMatches(
 			cfg,
-			worker.ID,
-			worker.Model,
+			worker,
 			&endpoints[endpointIndex],
 		) {
 			return false
@@ -219,12 +218,14 @@ func raylineARCWorkerDispatchMatches(
 
 func raylineARCEndpointIdentityMatches(
 	cfg *config.RouterConfig,
-	logicalModel string,
-	providerModel string,
+	worker *raylinearc.WorkerManifest,
 	endpoint *config.VLLMEndpoint,
 ) bool {
 	if endpoint == nil || endpoint.Type != "openai" ||
-		cfg.ResolveExternalModelID(logicalModel, endpoint.Name) != providerModel {
+		cfg.ResolveExternalModelID(worker.ID, endpoint.Name) != worker.Model {
+		return false
+	}
+	if !raylineARCEndpointCredentialMatches(worker, endpoint) {
 		return false
 	}
 	profile, err := cfg.GetProviderProfileForEndpoint(endpoint.Name)
@@ -235,6 +236,20 @@ func raylineARCEndpointIdentityMatches(
 	return err == nil &&
 		strings.EqualFold(parsed.Hostname(), "openrouter.ai") &&
 		parsed.Scheme == "https"
+}
+
+// raylineARCEndpointCredentialMatches enforces the artifact-owned credential
+// identity: the endpoint key must come from exactly the environment variable
+// the worker manifest declares, and that credential must be present. This
+// keeps a wrong-tenant or absent key from passing readiness and letting a
+// caller-supplied Authorization header reach the provider.
+func raylineARCEndpointCredentialMatches(
+	worker *raylinearc.WorkerManifest,
+	endpoint *config.VLLMEndpoint,
+) bool {
+	return worker.APIKeyEnv != "" &&
+		endpoint.APIKeyEnvName == worker.APIKeyEnv &&
+		endpoint.APIKey != ""
 }
 
 func raylineARCPriceIdentityMatches(

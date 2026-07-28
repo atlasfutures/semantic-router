@@ -50,7 +50,7 @@ def test_modal_service_freezes_rung_b_vllm_contract() -> None:
     for expected in (
         'MODEL_ID = "Qwen/Qwen3.5-0.8B"',
         'MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"',
-        'VLLM_COMMIT = "8faf2388c2fab4e86ca37778e74665ac23b3eba4"',
+        'VLLM_COMMIT = "4c4c79bb36ade59e3bc4cc7043411e30f17e5edb"',
         "CHUNK_SCHEDULE_TOKENS = 8_192",
         '"task": "embed"',
         '"pooling_type": "MEAN"',
@@ -62,5 +62,9 @@ def test_modal_service_freezes_rung_b_vllm_contract() -> None:
         '"--no-enable-prefix-caching",',
         '"--no-enable-log-requests",',
         "vllm/v1/core/sched/scheduler.py",
+        "vllm/v1/worker/gpu_model_runner.py",
+        "@sha256:",
+        "RAYLINE_ARC_PLUGIN_SOURCE_DIGEST",
+        "fetch --depth 1 origin",
     ):
         assert expected in source

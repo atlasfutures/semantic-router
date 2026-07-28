@@ -185,6 +185,28 @@ func TestEncoderClientRejectsContractDrift(t *testing.T) {
 	}
 }
 
+func TestEncoderClientRejectsUnknownPluginResponseFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		_ *http.Request,
+	) {
+		writeEncoderResponse(t, writer, func(data map[string]any) {
+			data["unexpected"] = "field"
+		})
+	}))
+	defer server.Close()
+	client, err := NewEncoderClient(validEncoderClientConfig(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Encode(
+		context.Background(),
+		strings.Repeat("a", 64),
+		[]Turn{{Role: "user", Text: "hello"}},
+	)
+	assertEncoderFailureClass(t, err, EncoderFailureDecode)
+}
+
 func TestEncoderClientDoesNotRetryAfterHTTPResponse(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(
@@ -360,7 +382,14 @@ func writeEncoderResponse(
 		mutate(data)
 	}
 	writer.Header().Set("content-type", "application/json")
-	if err := json.NewEncoder(writer).Encode(map[string]any{"data": data}); err != nil {
+	// Mirror the exact vLLM IOProcessorResponse envelope, including the
+	// engine-owned request_id and created_at fields.
+	envelope := map[string]any{
+		"request_id": "pool-3c4d5e6f",
+		"created_at": 1753600000,
+		"data":       data,
+	}
+	if err := json.NewEncoder(writer).Encode(envelope); err != nil {
 		t.Fatal(err)
 	}
 }

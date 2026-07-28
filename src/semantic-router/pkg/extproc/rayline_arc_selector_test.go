@@ -92,6 +92,21 @@ func assertRaylineARCSelectionResult(
 		result.RaylineARC.EpisodeIDHash != strings.Repeat("a", 64) {
 		t.Fatalf("missing ARC trace: %#v", result.RaylineARC)
 	}
+	// The trace must carry deployment-private artifact identity only as
+	// fixed-width hashes, never the raw pin values.
+	for _, hashed := range []string{
+		result.RaylineARC.ArtifactID,
+		result.RaylineARC.ArtifactRevision,
+	} {
+		if len(hashed) != 16 ||
+			strings.Contains(hashed, "artifact") ||
+			strings.ToLower(hashed) != hashed {
+			t.Fatalf("ARC trace leaked raw artifact identity: %#v", result.RaylineARC)
+		}
+	}
+	if result.RaylineARC.ArtifactRevision == result.RaylineARC.ArtifactID {
+		t.Fatalf("distinct identities hashed to one value: %#v", result.RaylineARC)
+	}
 }
 
 func assertRaylineARCStateUnchanged(

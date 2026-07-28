@@ -40,11 +40,43 @@ class _PoolingParams:
         self.skip_reading_prefix_cache = None
 
 
+class _ForkPoolingStates:
+    """Models the fork's PoolingStates causal-MEAN accumulator surface."""
+
+    def __init__(self):
+        self.mean_pool_sum = None
+        self.mean_pool_count = 0
+
+
+class _ForkMeanPool:
+    def _forward_accumulate(self):
+        raise NotImplementedError
+
+
+class _ForkScheduler:
+    def schedule(self):
+        # Mirrors the fork's exact-max pooling change: the attestation reads
+        # this method's source for the reservation marker.
+        sampled_token_reservation = 0
+        return sampled_token_reservation
+
+
 def _install_vllm_stubs() -> None:
     modules = {
         "vllm": ModuleType("vllm"),
         "vllm.config": ModuleType("vllm.config"),
         "vllm.inputs": ModuleType("vllm.inputs"),
+        "vllm.model_executor": ModuleType("vllm.model_executor"),
+        "vllm.model_executor.layers": ModuleType("vllm.model_executor.layers"),
+        "vllm.model_executor.layers.pooler": ModuleType(
+            "vllm.model_executor.layers.pooler"
+        ),
+        "vllm.model_executor.layers.pooler.seqwise": ModuleType(
+            "vllm.model_executor.layers.pooler.seqwise"
+        ),
+        "vllm.model_executor.layers.pooler.seqwise.methods": ModuleType(
+            "vllm.model_executor.layers.pooler.seqwise.methods"
+        ),
         "vllm.outputs": ModuleType("vllm.outputs"),
         "vllm.plugins": ModuleType("vllm.plugins"),
         "vllm.plugins.io_processors": ModuleType("vllm.plugins.io_processors"),
@@ -53,20 +85,34 @@ def _install_vllm_stubs() -> None:
         ),
         "vllm.pooling_params": ModuleType("vllm.pooling_params"),
         "vllm.renderers": ModuleType("vllm.renderers"),
+        "vllm.v1": ModuleType("vllm.v1"),
+        "vllm.v1.core": ModuleType("vllm.v1.core"),
+        "vllm.v1.core.sched": ModuleType("vllm.v1.core.sched"),
+        "vllm.v1.core.sched.scheduler": ModuleType("vllm.v1.core.sched.scheduler"),
+        "vllm.v1.pool": ModuleType("vllm.v1.pool"),
+        "vllm.v1.pool.metadata": ModuleType("vllm.v1.pool.metadata"),
     }
     modules["vllm.config"].VllmConfig = object
     modules["vllm.inputs"].PromptType = object
     modules["vllm.inputs"].TokensPrompt = _TokensPrompt
+    modules["vllm.model_executor.layers.pooler.seqwise.methods"].MeanPool = (
+        _ForkMeanPool
+    )
     modules["vllm.outputs"].PoolingRequestOutput = object
     modules["vllm.plugins.io_processors.interface"].IOProcessor = _IOProcessor
     modules["vllm.pooling_params"].PoolingParams = _PoolingParams
     modules["vllm.renderers"].BaseRenderer = object
+    modules["vllm.v1.core.sched.scheduler"].Scheduler = _ForkScheduler
+    modules["vllm.v1.pool.metadata"].PoolingStates = _ForkPoolingStates
     sys.modules.update(modules)
 
 
 _install_vllm_stubs()
 processor_module = importlib.import_module("rayline_arc_io.processor")
 RaylineArcIOProcessor = processor_module.RaylineArcIOProcessor
+installed_source_digest = importlib.import_module(
+    "rayline_arc_io.integrity"
+).installed_source_digest
 
 
 class _Tokenizer:
@@ -143,6 +189,10 @@ def _request_data(serving_rung="A"):
 @pytest.fixture(autouse=True)
 def pinned_runtime(monkeypatch, tmp_path):
     monkeypatch.setenv("RAYLINE_ARC_ENGINE_BUILD_ID", "vllm@test-build-1206891")
+    monkeypatch.setenv(
+        "RAYLINE_ARC_PLUGIN_SOURCE_DIGEST",
+        installed_source_digest(),
+    )
     tokenizer_file = tmp_path / "tokenizer.json"
     tokenizer_file.write_bytes(b"public synthetic tokenizer fixture")
     monkeypatch.setattr(_Tokenizer, "name_or_path", str(tmp_path), raising=False)
@@ -309,3 +359,66 @@ def test_adapter_requires_immutable_engine_build_id(monkeypatch) -> None:
     monkeypatch.setenv("RAYLINE_ARC_ENGINE_BUILD_ID", "latest")
     with pytest.raises(ValueError, match="ENGINE_BUILD_ID"):
         RaylineArcIOProcessor(_config(), _Renderer())
+
+
+def test_adapter_requires_matching_plugin_source_digest(monkeypatch) -> None:
+    monkeypatch.setenv("RAYLINE_ARC_PLUGIN_SOURCE_DIGEST", "c" * 64)
+    with pytest.raises(ValueError, match="plugin source does not match"):
+        RaylineArcIOProcessor(_config(), _Renderer())
+
+
+def test_adapter_requires_wellformed_plugin_source_digest(monkeypatch) -> None:
+    monkeypatch.delenv("RAYLINE_ARC_PLUGIN_SOURCE_DIGEST")
+    with pytest.raises(ValueError, match="PLUGIN_SOURCE_DIGEST"):
+        RaylineArcIOProcessor(_config(), _Renderer())
+
+
+def test_adapter_attests_fork_pooling_state(monkeypatch) -> None:
+    metadata = sys.modules["vllm.v1.pool.metadata"]
+
+    class _StockPoolingStates:
+        pass
+
+    monkeypatch.setattr(metadata, "PoolingStates", _StockPoolingStates)
+    with pytest.raises(ValueError, match="causal-MEAN accumulator"):
+        RaylineArcIOProcessor(_config(), _Renderer())
+
+
+def test_adapter_attests_fork_scheduler_reservation(monkeypatch) -> None:
+    scheduler = sys.modules["vllm.v1.core.sched.scheduler"]
+
+    class _StockScheduler:
+        def schedule(self):
+            return None
+
+    monkeypatch.setattr(scheduler, "Scheduler", _StockScheduler)
+    with pytest.raises(ValueError, match="exact-max pooling reservation"):
+        RaylineArcIOProcessor(_config(), _Renderer())
+
+
+def test_parse_data_errors_never_echo_turn_content() -> None:
+    processor = RaylineArcIOProcessor(_config(), _Renderer())
+    oversized = _request_data()
+    oversized["turns"] = [
+        {"role": "user", "text": "CANARY-PROMPT " + "y" * (16 * 1024 * 1024)}
+    ]
+    invalid_role = _request_data()
+    invalid_role["turns"] = [{"role": "CANARY-ROLE", "text": "CANARY-PROMPT"}]
+
+    for payload in (oversized, invalid_role):
+        with pytest.raises(ValueError) as excinfo:
+            processor.parse_data(payload)
+        message = str(excinfo.value)
+        assert "CANARY" not in message
+        assert "invalid Rayline ARC request" in message
+
+
+def test_pending_cache_evicts_oldest_when_full(monkeypatch) -> None:
+    processor = RaylineArcIOProcessor(_config(), _Renderer())
+    monkeypatch.setattr(processor_module, "_MAX_PENDING_REQUESTS", 2)
+    request = processor.parse_data(_request_data())
+    processor.pre_process(request, request_id="req-a")
+    processor.pre_process(request, request_id="req-b")
+    processor.pre_process(request, request_id="req-c")
+    with processor._pending_lock:
+        assert list(processor._pending) == ["req-b", "req-c"]

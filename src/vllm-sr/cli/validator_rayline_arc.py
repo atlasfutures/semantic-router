@@ -285,7 +285,15 @@ def _valid_host_port(value: str | None) -> bool:
     if not value or ":" not in value:
         return False
     host, port = value.rsplit(":", 1)
-    return bool(host) and port.isdigit() and 0 < int(port) <= _MAX_NETWORK_PORT
+    if not host or not port.isascii() or not port.isdigit():
+        return False
+    if not 0 < int(port) <= _MAX_NETWORK_PORT:
+        return False
+    if host.startswith("[") and host.endswith("]"):
+        return len(host) > len("[]")
+    # Bare hosts must not contain ":"; IPv6 literals require brackets so the
+    # Go and Python validators accept exactly the same addresses.
+    return ":" not in host
 
 
 def _byte_length(value: str) -> int:

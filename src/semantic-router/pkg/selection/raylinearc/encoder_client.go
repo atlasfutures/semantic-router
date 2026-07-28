@@ -125,8 +125,13 @@ type encoderRequestData struct {
 	Turns         []Turn `json:"turns"`
 }
 
+// encoderWireResponse is the exact envelope the pinned vLLM engine emits for
+// IO-processor pooling responses: plugin-owned payload under "data" plus the
+// engine-owned "request_id" and "created_at" correlation fields.
 type encoderWireResponse struct {
-	Data encoderResponseData `json:"data"`
+	RequestID string              `json:"request_id"`
+	CreatedAt int64               `json:"created_at"`
+	Data      encoderResponseData `json:"data"`
 }
 
 type encoderResponseData struct {

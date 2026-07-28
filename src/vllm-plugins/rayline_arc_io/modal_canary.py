@@ -24,6 +24,18 @@ _REMOTE_PLUGIN_DIR = "/opt/rayline_arc_io"
 if Path(_REMOTE_PLUGIN_DIR).is_dir():
     sys.path.insert(0, _REMOTE_PLUGIN_DIR)
 
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+
+
+def _plugin_source_digest() -> str:
+    integrity = importlib.import_module("rayline_arc_io.integrity")
+    return integrity.compute_source_digest(
+        Path(__file__).resolve().parent / "src" / "rayline_arc_io"
+    )
+
+
+PLUGIN_SOURCE_DIGEST = _plugin_source_digest()
+
 rt = importlib.import_module("modal_canary_runtime")
 numeric_helpers = importlib.import_module("modal_canary_numeric")
 RUNG_B_NUMERIC_BUDGETS = numeric_helpers.RUNG_B_NUMERIC_BUDGETS
@@ -34,7 +46,8 @@ _THIS_DIR = Path(__file__).resolve().parent
 
 image = (
     modal.Image.from_registry(
-        "nvidia/cuda:13.0.1-devel-ubuntu22.04",
+        "nvidia/cuda:13.0.1-devel-ubuntu22.04"
+        "@sha256:93a8d207db5aaa6384f834a6bf70d417433f709e61b57a91e7cc99c16172f49c",
         add_python="3.12",
     )
     .entrypoint([])
@@ -54,6 +67,7 @@ image = (
             "VLLM_CACHE_ROOT": "/root/.cache/vllm",
             "VLLM_LOGGING_LEVEL": "WARNING",
             "RAYLINE_ARC_ENGINE_BUILD_ID": rt.ENGINE_BUILD_ID,
+            "RAYLINE_ARC_PLUGIN_SOURCE_DIGEST": PLUGIN_SOURCE_DIGEST,
         }
     )
 )
@@ -141,7 +155,9 @@ def _verify_rung_b_overlay() -> dict[str, str]:
 
 @app.function(
     gpu=rt.GPU_TYPE,
-    image=image,
+    # Every canary runs the overlaid fork engine: the plugin's startup
+    # attestation rejects the stock base wheel by design.
+    image=rung_b_image,
     volumes={
         "/root/.cache/huggingface": hf_cache,
         "/root/.cache/vllm": vllm_cache,

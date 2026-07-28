@@ -15,15 +15,26 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import modal
 
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+
+from rayline_arc_io.integrity import compute_source_digest
+
 APP_NAME = "rayline-arc-encoder"
 MODEL_ID = "Qwen/Qwen3.5-0.8B"
 MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
+# Digest-pinned so rebuilding this deployment later cannot silently resolve a
+# different CUDA base while keeping the same engine/plugin identity.
+CUDA_BASE_IMAGE = (
+    "nvidia/cuda:13.0.1-devel-ubuntu22.04"
+    "@sha256:93a8d207db5aaa6384f834a6bf70d417433f709e61b57a91e7cc99c16172f49c"
+)
 VLLM_BASE_WHEEL_COMMIT = "98e91a9600eb75b2de14ef27f13b10088d1a1279"
-VLLM_COMMIT = "8faf2388c2fab4e86ca37778e74665ac23b3eba4"
+VLLM_COMMIT = "4c4c79bb36ade59e3bc4cc7043411e30f17e5edb"
 VLLM_VERSION = "0.26.1rc1.dev36+g98e91a960"
 VLLM_WHEEL_INDEX = f"https://wheels.vllm.ai/{VLLM_BASE_WHEEL_COMMIT}/cu130"
 VLLM_REPOSITORY = "https://github.com/davidvgilmore/vllm.git"
@@ -35,6 +46,10 @@ PORT = 8000
 
 _THIS_DIR = Path(__file__).resolve().parent
 _REMOTE_PLUGIN_DIR = "/opt/rayline_arc_io"
+# Bind the deployed plugin identity to the exact shipped source: the plugin
+# recomputes this digest over its installed files at startup and fails closed
+# on mismatch.
+PLUGIN_SOURCE_DIGEST = compute_source_digest(_THIS_DIR / "src" / "rayline_arc_io")
 _POOLER_CONFIG = {
     "task": "embed",
     "pooling_type": "MEAN",
@@ -49,11 +64,12 @@ _RUNTIME_FILES = (
     "vllm/v1/core/sched/scheduler.py",
     "vllm/v1/pool/metadata.py",
     "vllm/v1/worker/gpu_input_batch.py",
+    "vllm/v1/worker/gpu_model_runner.py",
 )
 
 image = (
     modal.Image.from_registry(
-        "nvidia/cuda:13.0.1-devel-ubuntu22.04",
+        CUDA_BASE_IMAGE,
         add_python="3.12",
     )
     .entrypoint([])
@@ -73,6 +89,7 @@ image = (
             "VLLM_CACHE_ROOT": "/root/.cache/vllm",
             "VLLM_LOGGING_LEVEL": "WARNING",
             "RAYLINE_ARC_ENGINE_BUILD_ID": ENGINE_BUILD_ID,
+            "RAYLINE_ARC_PLUGIN_SOURCE_DIGEST": PLUGIN_SOURCE_DIGEST,
         }
     )
 )
@@ -88,9 +105,19 @@ _runtime_copy_commands = " && ".join(
         ),
     )
 )
+_expected_runtime_diff = "\\n".join(_RUNTIME_FILES)
 image = image.apt_install("git").run_commands(
     f"git clone --depth 1 --branch {VLLM_BRANCH} {VLLM_REPOSITORY} /opt/vllm-rung-b",
     f'test "$(git -C /opt/vllm-rung-b rev-parse HEAD)" = "{VLLM_COMMIT}"',
+    # The overlay list must cover exactly the branch's runtime diff; a fork
+    # commit that changes an uncopied file must fail the build, not deploy a
+    # silently divergent engine.
+    f"git -C /opt/vllm-rung-b fetch --depth 1 origin {VLLM_BASE_WHEEL_COMMIT}",
+    (
+        'test "$(git -C /opt/vllm-rung-b diff --name-only '
+        "FETCH_HEAD..HEAD -- 'vllm/')\" = \"$(printf '"
+        f"{_expected_runtime_diff}')\""
+    ),
     _runtime_copy_commands,
 )
 

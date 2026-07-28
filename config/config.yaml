@@ -636,6 +636,13 @@ routing:
           use_reasoning: true
       adaptations:
         mode: bypass
+      plugins:
+        # ARC episode requests must never be persisted by Router Replay; the
+        # validator rejects rayline_arc decisions whose effective replay
+        # configuration is enabled.
+        - type: router_replay
+          configuration:
+            enabled: false
       algorithm:
         type: rayline_arc
         on_error: fail_closed

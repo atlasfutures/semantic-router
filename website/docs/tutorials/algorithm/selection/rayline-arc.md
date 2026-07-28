@@ -49,8 +49,13 @@ ARC is deliberately stricter than other selectors:
   candidate.
 - `adaptations.mode` must be `bypass`; Router Learning cannot replace the ARC
   decision.
-- `modelRefs` must be unique and remain in artifact arm order. Startup rejects
-  any mismatch with the mounted manifest.
+- `modelRefs` must be unique, remain in artifact arm order, and must not
+  collide with an auto-routing alias. Startup rejects any mismatch with the
+  mounted manifest, including a configured endpoint whose credential does not
+  come from exactly the worker's declared `api_key_env`.
+- Router Replay must be disabled for ARC decisions (a decision-level
+  `router_replay` plugin with `enabled: false` when replay is globally on);
+  episode requests are never persisted.
 - The encoder model and revision are frozen. The vLLM build, IO plugin,
   serializer, and required serving capabilities are pinned and checked by
   readiness.
@@ -121,7 +126,8 @@ GPU canary; do not assume the example is an adequate production threshold.
 `serving_rung: B` selects vLLM's in-engine causal MEAN path and requires
 `chunked_causal_mean`. Rung A's `all_plugin_mean` remains a diagnostic
 bootstrap and is not the production maximum-context serving shape.
-`prefix_cached_mean` is a separately gated optimization.
+Prefix-cached MEAN is a separately gated optimization whose capability name
+becomes configurable only if that phase gate opens.
 
 Modal proxy authentication is configured by environment-variable name, never
 by embedding credentials in YAML. Configure `modal_key_env` and

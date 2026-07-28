@@ -25,7 +25,7 @@ func validateDecisionModelContracts(cfg *RouterConfig) error {
 		if err := validateDecisionAlgorithmConfig(decision.Name, decision.ModelRefs, decision.Algorithm); err != nil {
 			return err
 		}
-		if err := validateRaylineARCDecisionContract(decision); err != nil {
+		if err := validateRaylineARCDecisionContract(cfg, decision); err != nil {
 			return err
 		}
 		if err := validateDecisionWorkflowModelRefs(decision); err != nil {

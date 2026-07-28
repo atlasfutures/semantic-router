@@ -13,7 +13,7 @@ func TestValidateRaylineARCDecisionContract(t *testing.T) {
 	if err := validateDecisionAlgorithmConfig(decision.Name, decision.ModelRefs, decision.Algorithm); err != nil {
 		t.Fatalf("validateDecisionAlgorithmConfig() error = %v", err)
 	}
-	if err := validateRaylineARCDecisionContract(decision); err != nil {
+	if err := validateRaylineARCDecisionContract(&RouterConfig{}, decision); err != nil {
 		t.Fatalf("validateRaylineARCDecisionContract() error = %v", err)
 	}
 }
@@ -170,15 +170,79 @@ func TestValidateRaylineARCDecisionRejectsLearningAndCandidateDrift(t *testing.T
 			},
 			wantErr: "requires unique modelRefs",
 		},
+		{
+			name: "auto alias candidate",
+			mutate: func(decision *Decision) {
+				decision.ModelRefs[1].Model = "auto"
+			},
+			wantErr: "collides with an auto-routing alias",
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			decision := validRaylineARCDecision()
 			test.mutate(&decision)
-			err := validateRaylineARCDecisionContract(decision)
+			err := validateRaylineARCDecisionContract(&RouterConfig{}, decision)
 			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 				t.Fatalf("error = %v, want substring %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateRaylineARCDecisionRejectsEnabledRouterReplay(t *testing.T) {
+	decision := validRaylineARCDecision()
+	cfg := &RouterConfig{}
+	cfg.RouterReplay.Enabled = true
+	cfg.Decisions = []Decision{decision}
+
+	err := validateRaylineARCDecisionContract(cfg, decision)
+	if err == nil || !strings.Contains(err.Error(), "router_replay disabled") {
+		t.Fatalf("error = %v, want router_replay rejection", err)
+	}
+
+	cfg.Decisions[0].Plugins = []DecisionPlugin{
+		{
+			Type: DecisionPluginRouterReplay,
+			Configuration: MustStructuredPayload(
+				map[string]interface{}{"enabled": false},
+			),
+		},
+	}
+	if err := validateRaylineARCDecisionContract(cfg, cfg.Decisions[0]); err != nil {
+		t.Fatalf("decision-level replay disable was rejected: %v", err)
+	}
+}
+
+func TestValidateRaylineARCRedisAddressPorts(t *testing.T) {
+	tests := []struct {
+		address string
+		valid   bool
+	}{
+		{"redis:6379", true},
+		{"[::1]:6379", true},
+		{"redis:notaport", false},
+		{"redis:0", false},
+		{"redis:70000", false},
+		{"::1:6379", false},
+		{":6379", false},
+		{"redis", false},
+	}
+	for _, test := range tests {
+		t.Run(test.address, func(t *testing.T) {
+			decision := validRaylineARCDecision()
+			decision.Algorithm.RaylineARC.Episode.Redis.Address = test.address
+			err := validateDecisionAlgorithmConfig(
+				decision.Name,
+				decision.ModelRefs,
+				decision.Algorithm,
+			)
+			if test.valid && err != nil {
+				t.Fatalf("address %q rejected: %v", test.address, err)
+			}
+			if !test.valid && err == nil {
+				t.Fatalf("address %q accepted", test.address)
 			}
 		})
 	}

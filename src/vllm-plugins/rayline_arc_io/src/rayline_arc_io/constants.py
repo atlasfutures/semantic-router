@@ -11,6 +11,9 @@ EOS_TOKEN = "<|im_end|>"
 EOS_TOKEN_ID = 248046
 EMBEDDING_DIMENSION = 1024
 TOKEN_EMBEDDING_RANK = 2
+# Matches torch.nn.functional.normalize's default epsilon, which the Rung B
+# in-engine head uses; means below this norm are degenerate on both rungs.
+NORMALIZATION_EPSILON = 1e-12
 MAX_SERIALIZED_TOKENS = 262_144
 MIN_SERIALIZED_TOKENS = 16
 MIN_RECENT_TURNS = 1

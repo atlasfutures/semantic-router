@@ -6,24 +6,28 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
 const (
-	RaylineARCAlgorithmType         = "rayline_arc"
-	RaylineARCEncoderModel          = "Qwen/Qwen3.5-0.8B"
-	RaylineARCEncoderModelRevision  = "2fc06364715b967f1860aea9cf38778875588b17"
-	RaylineARCSerializerVersion     = "mtrouter-token-blocks-v2"
-	RaylineARCServingRungA          = "A"
-	RaylineARCServingRungB          = "B"
-	RaylineARCBackendRedis          = "redis"
-	RaylineARCBackendMemory         = "memory"
-	RaylineARCCapabilityPluginMean  = "all_plugin_mean"
+	RaylineARCAlgorithmType        = "rayline_arc"
+	RaylineARCEncoderModel         = "Qwen/Qwen3.5-0.8B"
+	RaylineARCEncoderModelRevision = "2fc06364715b967f1860aea9cf38778875588b17"
+	RaylineARCSerializerVersion    = "mtrouter-token-blocks-v2"
+	RaylineARCServingRungA         = "A"
+	RaylineARCServingRungB         = "B"
+	RaylineARCBackendRedis         = "redis"
+	RaylineARCBackendMemory        = "memory"
+	RaylineARCCapabilityPluginMean = "all_plugin_mean"
+	// RaylineARCCapabilityChunkedMean is the only Rung B capability the
+	// pinned plugin can report; prefix-cached MEAN stays unconfigurable
+	// until the Rung C phase gate opens.
 	RaylineARCCapabilityChunkedMean = "chunked_causal_mean"
-	RaylineARCCapabilityCachedMean  = "prefix_cached_mean"
 	maxRaylineARCEncoderRetries     = 3
 	maxRaylineARCConfigStringLength = 512
 	maxRaylineARCRequiredCapability = 8
+	maxNetworkPort                  = 65535
 )
 
 var (
@@ -249,7 +253,6 @@ func validateRaylineARCCapabilities(capabilities []string) error {
 	allowed := map[string]bool{
 		RaylineARCCapabilityPluginMean:  true,
 		RaylineARCCapabilityChunkedMean: true,
-		RaylineARCCapabilityCachedMean:  true,
 	}
 	seen := make(map[string]bool, len(capabilities))
 	for _, capability := range capabilities {
@@ -305,8 +308,13 @@ func validateRaylineARCMemoryConfig(cfg RaylineARCEpisodeConfig) error {
 }
 
 func validateRaylineARCRedisConfig(cfg RaylineARCRedisConfig) error {
-	if _, _, err := net.SplitHostPort(strings.TrimSpace(cfg.Address)); err != nil {
+	host, port, err := net.SplitHostPort(strings.TrimSpace(cfg.Address))
+	if err != nil || host == "" {
 		return fmt.Errorf("redis.address must be a host:port pair")
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > maxNetworkPort {
+		return fmt.Errorf("redis.address port must be between 1 and %d", maxNetworkPort)
 	}
 	if cfg.DB < 0 {
 		return fmt.Errorf("redis.db cannot be negative")
@@ -320,7 +328,7 @@ func validateRaylineARCRedisConfig(cfg RaylineARCRedisConfig) error {
 	return nil
 }
 
-func validateRaylineARCDecisionContract(decision Decision) error {
+func validateRaylineARCDecisionContract(cfg *RouterConfig, decision Decision) error {
 	if decision.Algorithm == nil || strings.TrimSpace(decision.Algorithm.Type) != RaylineARCAlgorithmType {
 		return nil
 	}
@@ -341,6 +349,21 @@ func validateRaylineARCDecisionContract(decision Decision) error {
 			return fmt.Errorf("decision '%s': algorithm.type=%s requires unique modelRefs in artifact order", decision.Name, RaylineARCAlgorithmType)
 		}
 		seen[modelRef.Model] = true
+		if cfg != nil && cfg.IsAutoModelName(modelRef.Model) {
+			return fmt.Errorf(
+				"decision '%s': algorithm.type=%s modelRef %q collides with an auto-routing alias, which would bypass artifact-owned dispatch",
+				decision.Name,
+				RaylineARCAlgorithmType,
+				modelRef.Model,
+			)
+		}
+	}
+	if replay := cfg.EffectiveRouterReplayConfigForDecision(decision.Name); replay != nil && replay.Enabled {
+		return fmt.Errorf(
+			"decision '%s': algorithm.type=%s requires router_replay disabled for this decision; episode requests must not be persisted",
+			decision.Name,
+			RaylineARCAlgorithmType,
+		)
 	}
 	return nil
 }

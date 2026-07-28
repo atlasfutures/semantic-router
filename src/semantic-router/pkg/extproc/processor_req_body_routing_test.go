@@ -245,3 +245,51 @@ func TestHandleAutoModelRoutingFailsClosedOnARCDispatchMutation(t *testing.T) {
 	}
 	assertARCEpisodeNotAdvanced(t, store, episode)
 }
+
+func TestHandleAutoModelRoutingNeverShortcutsArmedARCDispatch(t *testing.T) {
+	router := &OpenAIRouter{Config: &config.RouterConfig{}}
+	worker := raylinearc.WorkerManifest{ID: "auto", Model: "provider/model"}
+	ctx := &RequestContext{
+		Headers:            map[string]string{},
+		TraceContext:       context.Background(),
+		RaylineARCDispatch: &worker,
+	}
+	openAIRequest := &openai.ChatCompletionNewParams{
+		Model: "auto",
+		Messages: []openai.ChatCompletionMessageParamUnion{
+			openai.UserMessage("hello"),
+		},
+	}
+	baseResponse := &ext_proc.ProcessingResponse{
+		Response: &ext_proc.ProcessingResponse_RequestBody{
+			RequestBody: &ext_proc.BodyResponse{
+				Response: &ext_proc.CommonResponse{
+					Status: ext_proc.CommonResponse_CONTINUE,
+				},
+			},
+		},
+	}
+
+	// The selected arm equals the requested model name, which previously took
+	// the no-change shortcut and forwarded the client body without the
+	// artifact-owned dispatch mutation.
+	response, err := router.handleAutoModelRouting(
+		openAIRequest,
+		"auto",
+		"",
+		entropy.ReasoningDecision{},
+		"auto",
+		ctx,
+		baseResponse,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response == baseResponse {
+		t.Fatal("armed ARC dispatch took the no-change shortcut")
+	}
+	immediate := response.GetImmediateResponse()
+	if immediate == nil || int(immediate.GetStatus().GetCode()) != 503 {
+		t.Fatalf("expected fail-closed 503, got %#v", response)
+	}
+}

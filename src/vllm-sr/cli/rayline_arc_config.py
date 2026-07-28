@@ -8,10 +8,12 @@ RAYLINE_ARC_ENCODER_MODEL = "Qwen/Qwen3.5-0.8B"
 RAYLINE_ARC_ENCODER_MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
 RAYLINE_ARC_SERIALIZER_VERSION = "mtrouter-token-blocks-v2"
 
+# prefix-cached MEAN is intentionally absent until the Rung C phase gate
+# opens; the pinned plugin cannot report it, so accepting it here would only
+# defer the failure to readiness.
 RaylineARCPoolingCapability = Literal[
     "all_plugin_mean",
     "chunked_causal_mean",
-    "prefix_cached_mean",
 ]
 
 

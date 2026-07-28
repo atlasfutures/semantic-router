@@ -332,8 +332,8 @@ func observeRaylineARCSelection(
 	)
 	logging.ComponentEvent("extproc", "rayline_arc_selection", map[string]interface{}{
 		"request_id":             ctx.RequestID,
-		"artifact_id":            trace.ArtifactID,
-		"artifact_revision":      trace.ArtifactRevision,
+		"artifact_id_hash":       trace.ArtifactID,
+		"artifact_revision_hash": trace.ArtifactRevision,
 		"encoder_revision":       trace.EncoderRevision,
 		"episode_id_hash":        trace.EpisodeIDHash,
 		"selected_arm":           trace.SelectedArm,

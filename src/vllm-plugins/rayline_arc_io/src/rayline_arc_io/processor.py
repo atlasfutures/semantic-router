@@ -4,6 +4,7 @@
 
 import hashlib
 import importlib
+import inspect
 import os
 import re
 import threading
@@ -39,6 +40,7 @@ from .constants import (
     TOKENIZER_REVISION,
     TOKENIZER_SHA256,
 )
+from .integrity import installed_source_digest
 from .pooling import fp32_masked_mean_l2
 from .schemas import ArcPoolingRequest, ArcPoolingResponse
 from .serializer import TokenBlockSerializer, TokenizationResult
@@ -48,6 +50,12 @@ _PENDING_TTL_SECONDS = 30 * 60
 _MAX_PENDING_REQUESTS = 4096
 _HASH_CHUNK_BYTES = 1024 * 1024
 _NORMALIZED_EMBEDDING_TOLERANCE = 1e-4
+
+
+def _bounded_error_loc(loc: tuple[Any, ...]) -> str:
+    if not loc:
+        return "request"
+    return ".".join(str(part) for part in loc)
 
 
 @dataclass(frozen=True)
@@ -87,12 +95,65 @@ class RaylineArcIOProcessor(IOProcessor[ArcPoolingRequest, ArcPoolingResponse]):
             failures.append(
                 "RAYLINE_ARC_ENGINE_BUILD_ID must match 'vllm@<immutable-build-id>'"
             )
+        failures.extend(RaylineArcIOProcessor._fork_runtime_failures())
+        failures.extend(RaylineArcIOProcessor._source_digest_failures())
         if failures:
             raise ValueError(
                 "invalid Rayline ARC vLLM configuration: " + "; ".join(failures)
             )
         assert serving_rung is not None
         return engine_build_id, serving_rung
+
+    @staticmethod
+    def _fork_runtime_failures() -> list[str]:
+        """Attest the running engine carries the pinned fork's pooling and
+        scheduling behavior instead of trusting the build-ID environment
+        assertion alone."""
+        failures: list[str] = []
+        try:
+            metadata = importlib.import_module("vllm.v1.pool.metadata")
+            states = metadata.PoolingStates()
+            if not (
+                hasattr(states, "mean_pool_sum") and hasattr(states, "mean_pool_count")
+            ):
+                failures.append(
+                    "vLLM PoolingStates lacks the causal-MEAN accumulator state"
+                )
+        except (ImportError, AttributeError, TypeError):
+            failures.append("vLLM PoolingStates is unavailable for fork attestation")
+        try:
+            methods = importlib.import_module(
+                "vllm.model_executor.layers.pooler.seqwise.methods"
+            )
+            if not hasattr(methods.MeanPool, "_forward_accumulate"):
+                failures.append("vLLM MeanPool lacks chunked causal-MEAN accumulation")
+        except (ImportError, AttributeError):
+            failures.append("vLLM MeanPool is unavailable for fork attestation")
+        try:
+            scheduler = importlib.import_module("vllm.v1.core.sched.scheduler")
+            source = inspect.getsource(scheduler.Scheduler.schedule)
+            if "sampled_token_reservation" not in source:
+                failures.append(
+                    "vLLM scheduler lacks the exact-max pooling reservation"
+                )
+        except (ImportError, AttributeError, OSError, TypeError):
+            failures.append("vLLM scheduler is unavailable for fork attestation")
+        return failures
+
+    @staticmethod
+    def _source_digest_failures() -> list[str]:
+        expected = os.environ.get("RAYLINE_ARC_PLUGIN_SOURCE_DIGEST", "")
+        if not re.fullmatch(r"[0-9a-f]{64}", expected):
+            return [
+                "RAYLINE_ARC_PLUGIN_SOURCE_DIGEST must hold the deployed "
+                "plugin source SHA256"
+            ]
+        if installed_source_digest() != expected:
+            return [
+                "installed Rayline ARC plugin source does not match "
+                "RAYLINE_ARC_PLUGIN_SOURCE_DIGEST"
+            ]
+        return []
 
     @staticmethod
     def _model_config_failures(model: Any) -> list[str]:
@@ -253,7 +314,19 @@ class RaylineArcIOProcessor(IOProcessor[ArcPoolingRequest, ArcPoolingResponse]):
         try:
             return ArcPoolingRequest.model_validate(data)
         except ValidationError as error:
-            raise ValueError(f"invalid Rayline ARC request: {error}") from error
+            # Report only field locations and error types: rendered Pydantic
+            # errors echo request payload fragments, which must never reach
+            # error responses or server logs. The cause is dropped for the
+            # same reason.
+            details = "; ".join(
+                sorted(
+                    {
+                        f"{_bounded_error_loc(item['loc'])}: {item['type']}"
+                        for item in error.errors(include_url=False, include_input=False)
+                    }
+                )
+            )
+            raise ValueError(f"invalid Rayline ARC request: {details}") from None
 
     def merge_pooling_params(
         self,
@@ -298,8 +371,12 @@ class RaylineArcIOProcessor(IOProcessor[ArcPoolingRequest, ArcPoolingResponse]):
             self._expire_pending_locked(now)
             if request_id in self._pending:
                 raise ValueError(f"duplicate Rayline ARC request_id {request_id!r}")
-            if len(self._pending) >= _MAX_PENDING_REQUESTS:
-                raise RuntimeError("Rayline ARC pending-request cache is full")
+            while len(self._pending) >= _MAX_PENDING_REQUESTS:
+                # Requests abandoned by engine-side failures never reach
+                # post_process; evicting the oldest keeps the cache bounded
+                # without failing healthy traffic. An evicted in-flight
+                # request still fails closed at its own post_process.
+                self._pending.popitem(last=False)
             self._pending[request_id] = _PendingRequest(tokenization, now)
         return TokensPrompt(prompt_token_ids=list(tokenization.input_ids))
 
@@ -312,6 +389,7 @@ class RaylineArcIOProcessor(IOProcessor[ArcPoolingRequest, ArcPoolingResponse]):
         if not request_id:
             raise ValueError("Rayline ARC online responses require a vLLM request_id")
         with self._pending_lock:
+            self._expire_pending_locked(time.monotonic())
             pending = self._pending.pop(request_id, None)
         if pending is None:
             raise ValueError(

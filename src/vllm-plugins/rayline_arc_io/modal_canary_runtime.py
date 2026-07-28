@@ -30,7 +30,7 @@ TOKENIZER_REVISION = MODEL_REVISION
 TOKENIZER_SHA256 = "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42"
 EOS_TOKEN_ID = 248046
 VLLM_COMMIT = "98e91a9600eb75b2de14ef27f13b10088d1a1279"
-VLLM_RUNG_B_COMMIT = "8faf2388c2fab4e86ca37778e74665ac23b3eba4"
+VLLM_RUNG_B_COMMIT = "4c4c79bb36ade59e3bc4cc7043411e30f17e5edb"
 VLLM_RUNG_B_BRANCH = "rayline/pl-0039-causal-mean"
 VLLM_RUNG_B_REPOSITORY = "https://github.com/davidvgilmore/vllm.git"
 VLLM_VERSION = "0.26.1rc1.dev36+g98e91a960"
@@ -82,6 +82,7 @@ RUNG_B_RUNTIME_FILES = (
     "vllm/v1/core/sched/scheduler.py",
     "vllm/v1/pool/metadata.py",
     "vllm/v1/worker/gpu_input_batch.py",
+    "vllm/v1/worker/gpu_model_runner.py",
 )
 RUNG_B_BOUNDARY_LENGTHS = (
     253_952,

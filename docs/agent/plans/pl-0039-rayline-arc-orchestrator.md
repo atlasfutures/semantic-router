@@ -1247,23 +1247,19 @@ Status: complete; gate closed. No Rung C or APC code is authorized.
 
 Evidence:
 
-- The pinned, private train/dev workload audit at
-  `rayline-ai/mtrouter-tbench21-long-context-artifacts`
-  commit `cb1ea23d456d172ac817b49f0a193cd9ce322394`,
-  `local/audit/context_window_audit.json`, has 31,294 samples. Long-context
-  serialized tokens are p50 `11,993`, p90 `59,103`, p95 `81,146`, p99
-  `126,964`, max `230,811`; final episode prefixes are p50 `14,863`, p90
-  `66,440`, p99 `140,742`, max `230,811`. This is a development workload
-  proxy, not a declared production traffic distribution.
-- Prior custom-serving measurements in
-  `/Users/davidgilmore/Documents/m4-alpha-route-2/docs/history/2026-07-22-mtrouter-c82-perf-smoke.md`
-  establish a strong APC economic prior: full forward at 84k tokens took
-  `12.6 s` on L40S and `6.0 s` on H100; at 262k it took `48.9 s` and `21.3 s`.
-  Incremental steps were approximately `0.4–0.7 s` on L40S. L4 could not fit
-  the full contract. The historical estimate was about `$0.005` GPU per
-  84k-token full decision versus about `$0.0003` per incremental decision on
-  L40S. These are `live` measurements of a different Transformers/custom
-  serving path, not evidence for the new vLLM Rung B path.
+- A pinned, private train/dev workload audit (dataset repository, commit,
+  audit file, sample counts, and token percentiles recorded in the private
+  research apparatus; redacted from this public plan) characterizes the
+  development long-context distribution: median serialized histories in the
+  low tens of thousands of tokens with a tail approaching but not reaching
+  the 262,144-token contract. This is a development workload proxy, not a
+  declared production traffic distribution.
+- A prior private research-apparatus performance report on a different
+  Transformers/custom serving path establishes a strong qualitative APC
+  economic prior: cached incremental decisions were more than an order of
+  magnitude cheaper and faster than full recomputation at long context. Those
+  are `live` measurements of that older path, not evidence for the new vLLM
+  Rung B path; their exact figures stay in the private apparatus.
 - The required new-path cold/repeated-turn latency, GPU memory, and raw cost
   measurements do not exist because T6 is paused before its first successful
   request. Expected steady/peak QPS, online concurrency/context distribution,
@@ -1280,7 +1276,8 @@ Decision and reopening trigger:
 - Re-run the gate only after T6 succeeds on the pinned vLLM/model/plugin path
   and an owner declares steady/peak QPS, concurrency, latency SLO, GPU-memory
   ceiling, and maintenance budget. Measure cold and repeated-turn cases at
-  approximately 12k, 59k, 81k, and 127k tokens on one pinned GPU.
+  the private audit's p50/p90/p95/p99 serialized-token levels on one pinned
+  GPU.
 - The quantitative implementation gate opens only if a cache prototype on
   identical inputs projects at least `2x` p95 latency improvement and at least
   `20%` GPU-cost-per-decision reduction at declared load, while fitting

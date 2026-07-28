@@ -28,10 +28,7 @@ func TestRaylineARCDispatchContractsRejectConfigurationDrift(t *testing.T) {
 	if !raylineARCDispatchContractsMatch(cfg, workers, decisions) {
 		t.Fatal("valid dispatch contract was rejected")
 	}
-	tests := []struct {
-		name   string
-		mutate func(*config.RouterConfig, []raylinearc.WorkerManifest, []*config.Decision)
-	}{
+	tests := []arcDispatchDriftCase{
 		{"provider model", func(
 			cfg *config.RouterConfig,
 			_ []raylinearc.WorkerManifest,
@@ -109,6 +106,53 @@ func TestRaylineARCDispatchContractsRejectConfigurationDrift(t *testing.T) {
 			cfg.ModelConfig["worker"] = params
 		}},
 	}
+	runARCDispatchDriftCases(t, tests)
+}
+
+// TestRaylineARCDispatchContractsRejectCredentialDrift proves the artifact's
+// credential identity is enforced: the endpoint key must come from exactly the
+// worker's declared environment variable and must be present.
+func TestRaylineARCDispatchContractsRejectCredentialDrift(t *testing.T) {
+	tests := []arcDispatchDriftCase{
+		{"credential env identity", func(
+			cfg *config.RouterConfig,
+			_ []raylinearc.WorkerManifest,
+			_ []*config.Decision,
+		) {
+			cfg.VLLMEndpoints[0].APIKeyEnvName = "OTHER_PROVIDER_KEY"
+		}},
+		{"credential missing", func(
+			cfg *config.RouterConfig,
+			_ []raylinearc.WorkerManifest,
+			_ []*config.Decision,
+		) {
+			cfg.VLLMEndpoints[0].APIKey = ""
+		}},
+		{"credential literal not env", func(
+			cfg *config.RouterConfig,
+			_ []raylinearc.WorkerManifest,
+			_ []*config.Decision,
+		) {
+			cfg.VLLMEndpoints[0].APIKeyEnvName = ""
+		}},
+		{"worker credential env unset", func(
+			_ *config.RouterConfig,
+			workers []raylinearc.WorkerManifest,
+			_ []*config.Decision,
+		) {
+			workers[0].APIKeyEnv = ""
+		}},
+	}
+	runARCDispatchDriftCases(t, tests)
+}
+
+type arcDispatchDriftCase struct {
+	name   string
+	mutate func(*config.RouterConfig, []raylinearc.WorkerManifest, []*config.Decision)
+}
+
+func runARCDispatchDriftCases(t *testing.T, tests []arcDispatchDriftCase) {
+	t.Helper()
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			cfg, workers, decisions := validARCDispatchReadinessFixture()
@@ -150,6 +194,8 @@ func validARCDispatchReadinessFixture() (
 					Name:                "openrouter-endpoint",
 					Type:                "openai",
 					ProviderProfileName: "openrouter",
+					APIKey:              "synthetic-provider-credential",
+					APIKeyEnvName:       "ARC_TEST_PROVIDER_KEY",
 				},
 			},
 			ProviderProfiles: map[string]config.ProviderProfile{
@@ -165,6 +211,7 @@ func validARCDispatchReadinessFixture() (
 			ID:                              "worker",
 			Model:                           "provider/model",
 			ThinkingMode:                    "on",
+			APIKeyEnv:                       "ARC_TEST_PROVIDER_KEY",
 			EstimatedInputCostPerToken:      0.000001,
 			EstimatedCacheReadCostPerToken:  0.000002,
 			EstimatedCacheWriteCostPerToken: 0.000003,

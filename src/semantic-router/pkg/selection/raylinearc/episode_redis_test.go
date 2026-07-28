@@ -194,3 +194,61 @@ func newTestRedisEpisodeStore(
 	}
 	return store
 }
+
+func TestRedisEpisodeStoreActivityRefreshesStateAndFenceTTLs(t *testing.T) {
+	address := os.Getenv("RAYLINE_ARC_TEST_REDIS_ADDR")
+	if address == "" {
+		t.Skip("RAYLINE_ARC_TEST_REDIS_ADDR is not set")
+	}
+	prefix := "test:rayline-arc:" +
+		HashEpisodeID(t.Name()+time.Now().String()) + ":"
+	idleTTL := 400 * time.Millisecond
+	store, err := NewRedisEpisodeStore(RedisEpisodeStoreConfig{
+		Address:   address,
+		KeyPrefix: prefix,
+		LeaseTTL:  200 * time.Millisecond,
+		IdleTTL:   idleTTL,
+	})
+	requireARCNoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	episode := HashEpisodeID("redis-ttl-episode")
+
+	lease, state, err := store.Prepare(context.Background(), episode, 2)
+	requireARCNoError(t, err)
+	requireARCNoError(t, state.Commit(1, 222, time.Now().UTC()))
+	requireARCNoError(t, store.Commit(
+		context.Background(),
+		lease,
+		lease.Version(),
+		state,
+	))
+
+	// Re-acquire before the idle deadline, then keep the transaction alive by
+	// renewing beyond the state's original expiry. Prepare and renewal are
+	// episode activity: the committed state and the fence must survive them.
+	second, persisted, err := store.Prepare(context.Background(), episode, 2)
+	requireARCNoError(t, err)
+	if persisted.PreviousArm == nil || *persisted.PreviousArm != 1 {
+		t.Fatalf("persisted state = %#v", persisted)
+	}
+	deadline := time.Now().Add(idleTTL + idleTTL/2)
+	for time.Now().Before(deadline) {
+		requireARCNoError(t, store.Renew(context.Background(), second))
+		time.Sleep(50 * time.Millisecond)
+	}
+	requireARCNoError(t, store.Abort(context.Background(), second))
+
+	third, resumed, err := store.Prepare(context.Background(), episode, 2)
+	requireARCNoError(t, err)
+	if resumed.PreviousArm == nil || *resumed.PreviousArm != 1 {
+		t.Fatalf("state expired during a renewed transaction: %#v", resumed)
+	}
+	if third.Version() <= second.Version() {
+		t.Fatalf(
+			"fence did not advance: %d <= %d",
+			third.Version(),
+			second.Version(),
+		)
+	}
+	requireARCNoError(t, store.Abort(context.Background(), third))
+}
