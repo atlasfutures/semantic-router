@@ -870,9 +870,16 @@ Repository evidence:
   `rayline/pl-0039-causal-mean`, based and pushed at
   `98e91a9600eb75b2de14ef27f13b10088d1a1279`.
 - Commands: `make agent-report ENV=cpu ...`; GitHub live PR/issue views and
-  duplicate searches; source inspection with `rg`/`sed`; final validation
-  commands and Semantic Router commit are recorded in the follow-up evidence
-  commit.
+  duplicate searches; source inspection with `rg`/`sed`;
+  `make agent-lint CHANGED_FILES="..."`; `make agent-validate`;
+  `make agent-ci-gate CHANGED_FILES="..."`. All gates passed, including
+  Markdown/YAML formatting, structural/security checks, and
+  `go test ./pkg/config/... -run TestReferenceConfig -count=1`.
+- Semantic Router task commit:
+  `ab89b1c28f894938d0261dd5b2c9e3a921b3baa0` (signed off), pushed to
+  `davidvgilmore/semantic-router:rayline/pl-0039`. A direct push to
+  `vllm-project/semantic-router` failed with HTTP 403; the authorized fork push
+  succeeded without opening a PR.
 - Hardware: local Apple development machine; no GPU/Modal work.
 - Paid/Modal cost: `$0.00`; cost ceiling consumed: `$0.00`.
 
