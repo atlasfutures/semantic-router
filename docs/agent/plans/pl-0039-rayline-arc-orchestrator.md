@@ -770,7 +770,7 @@ evaluation or a frozen holdout as part of implementation validation.
 - [x] T2 Add frozen artifact loader, SafeTensors reader, F32 head, policy, and
       CPU golden/parity tests using a schema-generic loader and public synthetic
       fixture.
-- [ ] T3 Add typed `rayline_arc` config, validation, catalogs, fragment,
+- [x] T3 Add typed `rayline_arc` config, validation, catalogs, fragment,
       canonical/reference surfaces, experimental tier, engine/capability pins,
       and Router Learning exclusion.
 - [ ] T4 Add the specified protocol-to-turn normalization and cross-protocol
@@ -797,10 +797,11 @@ evaluation or a frozen holdout as part of implementation validation.
 
 ## Next Action
 
-T3: add the typed `rayline_arc` configuration and all validation, catalog,
-fragment, canonical/reference, experimental-tier, engine/capability, and
-Router Learning exclusion surfaces. The human publication action recorded in
-Loop 1 remains non-blocking.
+T4: add the exact protocol-to-turn normalization contract and cross-protocol
+public fixtures, including Rayline drop rules, tool rendering/coercion,
+malformed-field failure, Unicode, EOS, turn numbering, and truncation
+boundaries. The human publication action recorded in Loop 1 remains
+non-blocking.
 
 ## Loop Evidence
 
@@ -936,6 +937,61 @@ Repository evidence:
   passed with `.venv-agent/bin` on `PATH`, after an initial harness-only
   `vllm-sr: command not found` invocation. `vllm-sr stop` removed the stack
   and network cleanly.
+- Hardware: local Apple Silicon, arm64 CPU/Docker; no CUDA/GPU execution.
+- Paid/Modal cost: `$0.00`; cost ceiling consumed: `$0.00`.
+
+### Loop 3 — T3 typed ARC configuration contract (2026-07-28)
+
+Status: complete. No vLLM source changed.
+
+Implementation:
+
+- Added the typed Go and Python `rayline_arc` artifact, encoder, episode, and
+  Redis configuration families. Validation requires immutable artifact/build/
+  plugin pins, the exact Qwen model revision and serializer, bounded HTTP
+  timeouts/retries, declared serving capabilities, secret-by-environment Redis
+  credentials, and bounded development-only memory mode.
+- Added strict decision contracts: `on_error=fail_closed`,
+  `adaptations.mode=bypass`, and at least two unique `modelRefs` in artifact
+  order. Exact manifest arm mapping remains a startup responsibility in T9.
+- Added the experimental routing-surface tier, selection method, canonical
+  reference config, public fragment, exhaustive coverage tests, CLI parity,
+  docs, and the algorithm catalog/tutorial.
+- The raw Dashboard config surface already preserves the typed block. The
+  structured Signal DSL builder cannot express mandatory decision
+  `adaptations`; TD045 records that intentional narrower surface and its
+  compile/decompile/UI exit criteria. The canonical debt doc was added to the
+  repository manifest.
+- Live recheck: vLLM #40804 remains open at
+  `b42df0395f6bc2d947ec739be61879d9687abb86`; #48214 remains open at
+  `521cbfd8cba1fe464ee6c34fef32ddf77816ea55`. Neither replaces the planned
+  causal-MEAN path.
+
+Repository evidence:
+
+- Semantic Router task commit:
+  `9b20dbbc53c6a8905ea23d1e1f8b3679ada38cd3` (signed off).
+- vLLM lane remained clean at
+  `98e91a9600eb75b2de14ef27f13b10088d1a1279`.
+- Commands passed:
+  `go test ./pkg/config/... ./pkg/selection/... -count=1`;
+  focused Python ARC/config tests (`39 passed`);
+  `make agent-report ENV=cpu CHANGED_FILES="<28 files>"`;
+  `make agent-lint CHANGED_FILES="<28 files>"`;
+  `make agent-validate`;
+  `make vllm-sr-test`;
+  `make test-semantic-router`;
+  `make vllm-sr-test-integration`;
+  and `make agent-ci-gate CHANGED_FILES="<28 files>"`.
+  The first changed-file lint found only three new cyclomatic-complexity
+  violations and Python formatting/magic-number findings; validators were
+  decomposed, constants added, and the exact gate passed on rerun.
+- `make agent-dev ENV=cpu` rebuilt current images.
+  `make agent-serve-local ENV=cpu` and `make agent-smoke-local` passed with
+  `.venv-agent/bin` on `PATH`; `vllm-sr stop` removed every runtime,
+  observability, Redis, and Postgres container plus the network.
+- Elapsed loop duration: about 28 minutes from the prior evidence commit to the
+  cohesive task commit.
 - Hardware: local Apple Silicon, arm64 CPU/Docker; no CUDA/GPU execution.
 - Paid/Modal cost: `$0.00`; cost ceiling consumed: `$0.00`.
 
