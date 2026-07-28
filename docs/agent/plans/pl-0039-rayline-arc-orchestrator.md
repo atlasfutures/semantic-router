@@ -786,7 +786,7 @@ evaluation or a frozen holdout as part of implementation validation.
 - [x] T9 Add ARC encoder client, selector adapter, strict error propagation,
       build/plugin/capability readiness, privacy-safe telemetry, and Router
       Learning bypass.
-- [ ] T10 Add memory and Redis episode transactions plus terminal-path tests.
+- [x] T10 Add memory and Redis episode transactions plus terminal-path tests.
 - [ ] T11 Add artifact-owned ARC dispatch mutation and provider-contract
       validation.
 - [ ] T12 Add Compose/Helm/Modal deployment profiles and full-stack E2E.
@@ -797,11 +797,11 @@ evaluation or a frozen holdout as part of implementation validation.
 
 ## Next Action
 
-T10: add bounded memory and Redis episode transactions with fencing,
-2xx-header-only commit, and exhaustive terminal-path tests. Extend aggregate
-readiness to include the configured episode store. T6 remains paused after its
-two-attempt paid-failure limit; resume it only after explicit authorization for
-the changed bounded-error diagnostic/completion invocation.
+T11: add artifact-owned ARC dispatch mutation and provider-contract
+validation, including immutable provider/model/price identity, exact
+thinking/fallback behavior, and fail-closed request shaping. T6 remains paused
+after its two-attempt paid-failure limit; resume it only after explicit
+authorization for the changed bounded-error diagnostic/completion invocation.
 
 ## Loop Evidence
 
@@ -1348,6 +1348,68 @@ Repository evidence:
   unit mocks verify the startup integration, while the absent reference
   artifact remains not-ready. The pinned live path remains part of T6/T12.
 - Elapsed loop duration: about 44 minutes from the Loop 8 evidence commit to
+  the cohesive task commit.
+- Hardware: local Apple Silicon, arm64 CPU/Docker; no CUDA/GPU execution.
+- Paid/Modal/provider cost: `$0.00`; cumulative T6 spend remains
+  `$0.48357001`.
+
+### Loop 10 — T10 fenced episode transactions (2026-07-28)
+
+Status: complete. T6 remains paused; no Modal or provider invocation occurred.
+
+Implementation:
+
+- Added a strict, bounded `rayline.arc.episode-state.v1` store contract with
+  opaque leases, monotonic fencing, versioned prepare/commit/abort, optional
+  renewal/readiness, SHA256 episode keys, finite timestamps, and a 64 KiB
+  state ceiling. Raw episode IDs never cross the store boundary.
+- Added a bounded in-memory backend with same-episode serialization,
+  cross-episode concurrency, capacity/LRU eviction, idle reaping, stale-lease
+  rejection, and idempotent release.
+- Added a TLS-capable Redis backend with atomic Lua acquire/state-read/fence
+  allocation, CAS commit/abort/renewal, bounded context-aware contention, TTL
+  takeover, restart persistence, secret-by-environment configuration, and
+  startup `PING` readiness.
+- Integrated one request-scoped transaction before ARC normalization and
+  inference. Leases renew while work is active; successful selection records
+  only the pending arm/tokens. The first upstream 2xx headers commit exactly
+  once before forwarding; non-2xx, EOF, stream error, cancellation, deadline,
+  panic, selection/normalization/RAG failure, rate limit, and cache
+  short-circuit abort synchronously. A post-2xx stream failure cannot undo the
+  committed state.
+- Added bounded transaction/readiness metrics and hashed session telemetry.
+  Episode-store readiness now participates in aggregate ARC readiness, and
+  router shutdown closes the configured backend.
+
+Repository evidence:
+
+- Semantic Router task commit:
+  `0476d76cfc54fb6d0fb6a61d9259a4535750b7ed` (signed off).
+- Focused checks passed:
+  `go test ./pkg/extproc ./pkg/selection/raylinearc
+  ./pkg/observability/metrics -count=1`;
+  `go test -race ./pkg/selection/raylinearc ./pkg/extproc
+  -run 'RaylineARC|EpisodeStore' -count=1`;
+  `go vet ./pkg/selection/raylinearc ./pkg/extproc`;
+  `make go-lint`; and `make agent-lint CHANGED_FILES="<20 files>"`.
+- Real `redis:7-alpine` integration passed persistence across clients,
+  contention, cross-episode concurrency, TTL takeover, stale-commit fencing,
+  idempotent abort, direct renewal, and automatic transaction renewal across
+  multiple lease TTLs. The ephemeral container was stopped and removed.
+- `make test-semantic-router`, `make agent-validate`, and
+  `make agent-ci-gate CHANGED_FILES="<20 files>"` passed; the final aggregate
+  gate exited `0`.
+- The first local image build exposed host-only Docker ENOSPC with 1.6 GiB
+  free. With user authorization, `docker builder prune --all --force`
+  reclaimed 45.74 GB of build cache without touching volumes. A cold
+  `make agent-dev ENV=cpu` then built the router, dashboard, and simulator
+  arm64 images successfully.
+- `make agent-serve-local ENV=cpu` and `make agent-smoke-local` passed with
+  `.venv-agent/bin` on `PATH`; the initial invocation without that path failed
+  before starting a container. `vllm-sr stop` removed every runtime,
+  observability, Redis, and Postgres container plus the network, and a final
+  container check was empty.
+- Elapsed loop duration: about 29 minutes between the prior evidence commit and
   the cohesive task commit.
 - Hardware: local Apple Silicon, arm64 CPU/Docker; no CUDA/GPU execution.
 - Paid/Modal/provider cost: `$0.00`; cumulative T6 spend remains
