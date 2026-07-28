@@ -52,6 +52,10 @@ func assertSupportedAlgorithmsInReferenceConfig(t testingT, decisions []interfac
 	assertMapCoversStructFields(t, mustMapAt(t, algorithmsByType["hybrid"], "hybrid"), reflect.TypeOf(HybridSelectionConfig{}), "routing.decisions[].algorithm.hybrid")
 	assertMapCoversStructFields(t, mustMapAt(t, algorithmsByType["latency_aware"], "latency_aware"), reflect.TypeOf(LatencyAwareAlgorithmConfig{}), "routing.decisions[].algorithm.latency_aware")
 	assertMapCoversStructFields(t, mustMapAt(t, algorithmsByType["multi_factor"], "multi_factor"), reflect.TypeOf(MultiFactorSelectionConfig{}), "routing.decisions[].algorithm.multi_factor")
+	assertMapCoversStructFields(t, mustMapAt(t, algorithmsByType["rayline_arc"], "rayline_arc"), reflect.TypeOf(RaylineARCAlgorithmConfig{}), "routing.decisions[].algorithm.rayline_arc")
+	assertMapCoversStructFields(t, mustMapAt(t, algorithmsByType["rayline_arc"], "rayline_arc", "encoder"), reflect.TypeOf(RaylineARCEncoderConfig{}), "routing.decisions[].algorithm.rayline_arc.encoder")
+	assertMapCoversStructFields(t, mustMapAt(t, algorithmsByType["rayline_arc"], "rayline_arc", "episode"), reflect.TypeOf(RaylineARCEpisodeConfig{}), "routing.decisions[].algorithm.rayline_arc.episode")
+	assertMapCoversStructFields(t, mustMapAt(t, algorithmsByType["rayline_arc"], "rayline_arc", "episode", "redis"), reflect.TypeOf(RaylineARCRedisConfig{}), "routing.decisions[].algorithm.rayline_arc.episode.redis")
 }
 
 func assertReferenceConfidenceAlgorithmCoverage(t testingT, algorithmsByType map[string]map[string]interface{}) {

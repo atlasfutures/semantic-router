@@ -67,6 +67,7 @@ The repo now keeps one tutorial page per algorithm.
 | **[SVM](./selection/svm)** | ML (Rust) | No (offline) | No | — | Decision boundary classification |
 | **[MLP](./selection/mlp)** | ML (GPU) | No (offline) | No | — | Non-linear neural network routing |
 | **[Latency Aware](./selection/latency-aware)** | Metrics | No | No | — | Fastest model selection by TPOT/TTFT |
+| **[Rayline ARC](./selection/rayline-arc)** | Artifact policy | No | No | — | Switch-aware, cache-cost-aware orchestration with vLLM encoder inference |
 
 ### Looper Algorithms (multi-model orchestration)
 
@@ -119,6 +120,7 @@ decision algorithm. See [Protection](../learning/protection). There is no
 - [Latency Aware](./selection/latency-aware)
 - [MLP](./selection/mlp)
 - [Multi Factor](./selection/multi-factor)
+- [Rayline ARC](./selection/rayline-arc)
 - [Router DC](./selection/router-dc)
 - [Static](./selection/static)
 - [SVM](./selection/svm)

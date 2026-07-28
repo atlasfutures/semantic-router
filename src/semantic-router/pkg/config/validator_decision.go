@@ -25,6 +25,9 @@ func validateDecisionModelContracts(cfg *RouterConfig) error {
 		if err := validateDecisionAlgorithmConfig(decision.Name, decision.ModelRefs, decision.Algorithm); err != nil {
 			return err
 		}
+		if err := validateRaylineARCDecisionContract(decision); err != nil {
+			return err
+		}
 		if err := validateDecisionWorkflowModelRefs(decision); err != nil {
 			return err
 		}
@@ -327,7 +330,7 @@ func validateMigratedLearningAlgorithm(decisionName string, normalizedType strin
 }
 
 func configuredAlgorithmBlocks(algorithm *AlgorithmConfig) []string {
-	configuredBlocks := make([]string, 0, 14)
+	configuredBlocks := make([]string, 0, 15)
 	addBlock := func(name string, configured bool) {
 		if configured {
 			configuredBlocks = append(configuredBlocks, name)
@@ -347,6 +350,7 @@ func configuredAlgorithmBlocks(algorithm *AlgorithmConfig) []string {
 	addBlock("gmtrouter", algorithm.GMTRouter != nil)
 	addBlock("latency_aware", algorithm.LatencyAware != nil)
 	addBlock("multi_factor", algorithm.MultiFactor != nil)
+	addBlock("rayline_arc", algorithm.RaylineARC != nil)
 	addBlock("session_aware", algorithm.SessionAware != nil)
 	return configuredBlocks
 }
@@ -363,6 +367,7 @@ func expectedAlgorithmBlock(normalizedType string) (string, bool) {
 		"hybrid":        "hybrid",
 		"latency_aware": "latency_aware",
 		"multi_factor":  "multi_factor",
+		"rayline_arc":   "rayline_arc",
 	}
 	expectedBlock, ok := expectedBlockByType[normalizedType]
 	return expectedBlock, ok
@@ -392,6 +397,18 @@ func validateSpecializedAlgorithmConfig(decisionName string, modelRefs []ModelRe
 		if err := ValidateWorkflowsAlgorithmConfig(algorithm.Workflows); err != nil {
 			return fmt.Errorf("decision '%s', algorithm.workflows: %w", decisionName, err)
 		}
+	case RaylineARCAlgorithmType:
+		return validateRaylineARCSpecializedAlgorithmConfig(decisionName, algorithm)
+	}
+	return nil
+}
+
+func validateRaylineARCSpecializedAlgorithmConfig(decisionName string, algorithm *AlgorithmConfig) error {
+	if algorithm.OnError != "fail_closed" {
+		return fmt.Errorf("decision '%s': algorithm.type=%s requires algorithm.on_error=fail_closed", decisionName, RaylineARCAlgorithmType)
+	}
+	if err := validateRaylineARCAlgorithmConfig(algorithm.RaylineARC); err != nil {
+		return fmt.Errorf("decision '%s', algorithm.rayline_arc: %w", decisionName, err)
 	}
 	return nil
 }

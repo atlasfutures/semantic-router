@@ -93,6 +93,10 @@ const (
 	// weighted score with optional SLO ceilings. Issue #37.
 	MethodMultiFactor SelectionMethod = "multi_factor"
 
+	// MethodRaylineARC uses the artifact-verified Rayline ARC orchestrator.
+	// The encoder is served by a dedicated vLLM pooling deployment.
+	MethodRaylineARC SelectionMethod = "rayline_arc"
+
 	// MethodSessionAware wraps a base selector with agentic session policy:
 	// it keeps tool loops and hot multi-turn continuations on the current model
 	// unless the switch benefit clears the explicit handoff and prefix-cache cost.

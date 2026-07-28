@@ -147,6 +147,7 @@ const sidebars: SidebarsConfig = {
                 'tutorials/algorithm/selection/latency-aware',
                 'tutorials/algorithm/selection/mlp',
                 'tutorials/algorithm/selection/multi-factor',
+                'tutorials/algorithm/selection/rayline-arc',
                 'tutorials/algorithm/selection/router-dc',
                 'tutorials/algorithm/selection/static',
                 'tutorials/algorithm/selection/svm',

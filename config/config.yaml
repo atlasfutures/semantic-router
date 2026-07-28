@@ -621,6 +621,55 @@ routing:
             keep_current_model: true
             prefer_prefix_retention: true
 
+    - name: rayline_arc_reference_route
+      description: Experimental artifact-verified ARC configuration using public placeholder arm bindings.
+      priority: 195
+      rules:
+        operator: AND
+        conditions:
+          - type: domain
+            name: business
+      modelRefs:
+        - model: qwen3-8b
+          use_reasoning: false
+        - model: qwen3-32b
+          use_reasoning: true
+      adaptations:
+        mode: bypass
+      algorithm:
+        type: rayline_arc
+        on_error: fail_closed
+        rayline_arc:
+          artifact_dir: /var/lib/vllm-sr/rayline-arc
+          artifact_revision: public-synthetic-v1
+          encoder:
+            base_url: http://rayline-arc-encoder:8000
+            model: Qwen/Qwen3.5-0.8B
+            model_revision: 2fc06364715b967f1860aea9cf38778875588b17
+            expected_build_id: vllm@public-synthetic-build
+            expected_io_plugin_version: rayline-arc-io@0.1.0
+            serializer_version: mtrouter-token-blocks-v2
+            required_pooling_capabilities:
+              - all_plugin_mean
+            connect_timeout_seconds: 5
+            total_timeout_seconds: 180
+            max_retries: 1
+          episode:
+            id_header: x-rayline-episode-id
+            backend: redis
+            key_prefix: "vsr:rayline-arc:"
+            acquire_timeout_seconds: 30
+            lease_ttl_seconds: 60
+            idle_ttl_seconds: 900
+            max_in_memory_episodes: 1024
+            development_mode: false
+            redis:
+              address: redis:6379
+              db: 0
+              password_env: RAYLINE_ARC_REDIS_PASSWORD
+              use_tls: false
+              pool_size: 16
+
     - name: legal_confidence_route
       description: Confidence-routed legal and factual traffic.
       priority: 190

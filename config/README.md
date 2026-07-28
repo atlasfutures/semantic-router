@@ -18,6 +18,7 @@ Inside canonical `config.yaml`:
 - `routing.projections.partitions` is the canonical runtime home for exclusive domain or embedding partitions; DSL authoring uses `PROJECTION partition`
 - `routing.projections.scores` and `routing.projections.mappings` let maintained configs turn learned and heuristic signals into named routing bands that decisions can reference with `type: projection`
 - `routing.decisions[].candidateIterations` carries bounded DSL `FOR ... IN` metadata for candidate-model authoring; it is declarative selection policy input, not a general scripting runtime
+- `routing.decisions[].algorithm.type: rayline_arc` is an experimental, fail-closed artifact orchestrator. It requires an immutable mounted artifact revision, pinned vLLM encoder build/plugin/capabilities, a bounded Redis episode store (or explicit development-only memory mode), and `routing.decisions[].adaptations.mode: bypass` so Router Learning cannot override its selection.
 - `routing.decisions[].emits[]` carries typed side-effect directives from DSL `EMIT` blocks; the current supported kind is `retention`, where `drop: true` skips response-side semantic-cache writes and the remaining fields stay structured/auditable for follow-up runtime consumers such as turn-aware cache TTL, current-model affinity, prefix/KV-cache warmth, and session transition telemetry
 - request-shape detectors such as `routing.signals.structure` stay in the signal layer as typed named facts; numeric thresholds live inside the detector config instead of turning decisions into a free-form expression language
 - `routing.signals.embeddings[].query_modality` declares which modality of incoming request payload the embedding rule's query is computed from. Defaults to `"text"`; `"image"` and `"audio"` require `global.model_catalog.embeddings.semantic.embedding_config.model_type=multimodal` so the query and candidate embeddings land in the same shared space. See `website/docs/tutorials/signal/learned/embedding.md` for the worked multimodal example.
@@ -52,7 +53,7 @@ Candidate iteration fragments must stay bounded to `decision.candidates` or an e
 `config/algorithm/` is organized by routing policy:
 
 - `looper/`: multi-model execution policies such as `confidence`, `ratings`, `remom`, and `fusion`
-- `selection/`: request-time candidate-selection policies such as `router_dc`, `automix`, `hybrid`, `multi_factor`, and `latency_aware`
+- `selection/`: request-time candidate-selection policies such as `router_dc`, `automix`, `hybrid`, `multi_factor`, `latency_aware`, and experimental `rayline_arc`
 
 Each supported algorithm now has its own tutorial page under `website/docs/tutorials/algorithm/`.
 

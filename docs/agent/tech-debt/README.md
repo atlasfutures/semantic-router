@@ -70,6 +70,10 @@ Every debt entry should include:
 
 - [TD044 Flow Tool State Durability Follow-Up](td-044-flow-tool-state-durability-gap.md)
 
+### PL0039 Rayline ARC Orchestrator
+
+- [TD045 ARC Structured Builder Awaits Decision Adaptation Syntax](td-045-rayline-arc-builder-adaptation-gap.md)
+
 ## Retired Debt Policy
 
 Retired TD files are removed from this directory. Keep the ID in commit history
