@@ -25,9 +25,19 @@ The serving process must set an immutable build identifier:
 export RAYLINE_ARC_ENGINE_BUILD_ID=vllm@<image-or-source-revision>
 ```
 
-The deployment command and readiness contract are added by the later PL-0039
-deployment task. vLLM's `/pooling` API carries the strict ARC request inside
-its standard plugin envelope and wraps the strict ARC response as `data`:
+The protected Modal Rung A deployment is defined in `modal_service.py`. Deploy
+it only after the CUDA correctness gate passes:
+
+```bash
+modal deploy src/vllm-plugins/rayline_arc_io/modal_service.py
+```
+
+The endpoint requires Modal proxy authentication. Configure Semantic Router
+with environment-variable names for the corresponding `Modal-Key` and
+`Modal-Secret`; never put their values in router YAML.
+
+vLLM's `/pooling` API carries the strict ARC request inside its standard
+plugin envelope and wraps the strict ARC response as `data`:
 
 ```json
 {

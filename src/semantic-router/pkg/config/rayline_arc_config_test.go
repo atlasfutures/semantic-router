@@ -31,6 +31,10 @@ func TestRaylineARCConfigCanonicalRoundTripKeepsOnlyCredentialReference(t *testi
 	if !strings.Contains(content, "password_env: RAYLINE_ARC_REDIS_PASSWORD") {
 		t.Fatalf("serialized ARC config omitted password_env reference:\n%s", content)
 	}
+	if !strings.Contains(content, "modal_key_env: RAYLINE_ARC_MODAL_KEY") ||
+		!strings.Contains(content, "modal_secret_env: RAYLINE_ARC_MODAL_SECRET") {
+		t.Fatalf("serialized ARC config omitted Modal credential references:\n%s", content)
+	}
 
 	var decoded AlgorithmConfig
 	if err := yaml.UnmarshalStrict(encoded, &decoded); err != nil {
@@ -88,6 +92,13 @@ func TestValidateRaylineARCAlgorithmConfigRejectsInvalidContracts(t *testing.T) 
 				decision.Algorithm.RaylineARC.Encoder.ConnectTimeoutSeconds = 181
 			},
 			wantErr: "cannot exceed total_timeout_seconds",
+		},
+		{
+			name: "unpaired Modal proxy credential",
+			mutate: func(decision *Decision) {
+				decision.Algorithm.RaylineARC.Encoder.ModalSecretEnv = ""
+			},
+			wantErr: "must be configured together",
 		},
 		{
 			name: "memory outside development",
@@ -181,6 +192,8 @@ func validRaylineARCDecision() Decision {
 					ExpectedPluginVersion: "rayline-arc-io@0.1.0",
 					SerializerVersion:     RaylineARCSerializerVersion,
 					RequiredCapabilities:  []string{RaylineARCCapabilityPluginMean},
+					ModalKeyEnv:           "RAYLINE_ARC_MODAL_KEY",
+					ModalSecretEnv:        "RAYLINE_ARC_MODAL_SECRET",
 					ConnectTimeoutSeconds: 5,
 					TotalTimeoutSeconds:   180,
 					MaxRetries:            1,

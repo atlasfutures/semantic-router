@@ -244,6 +244,42 @@ func TestEncoderClientRetriesOnlyPreResponseTransportFailure(t *testing.T) {
 	}
 }
 
+func TestEncoderClientSendsPairedModalProxyCredentials(t *testing.T) {
+	modalKey := t.Name() + "-key"
+	modalCredential := t.Name() + "-credential"
+	server := httptest.NewServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		request *http.Request,
+	) {
+		if request.Header.Get("Modal-Key") != modalKey ||
+			request.Header.Get("Modal-Secret") != modalCredential {
+			t.Fatal("Modal proxy credentials were not attached")
+		}
+		writeEncoderResponse(t, writer, nil)
+	}))
+	defer server.Close()
+	cfg := validEncoderClientConfig(server.URL)
+	cfg.ModalKey = modalKey
+	cfg.ModalSecret = modalCredential
+	client, err := NewEncoderClient(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Encode(
+		context.Background(),
+		strings.Repeat("a", 64),
+		[]Turn{{Role: "user", Text: "hello"}},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg.ModalSecret = ""
+	if _, err := NewEncoderClient(cfg); err == nil ||
+		strings.Contains(err.Error(), modalKey) {
+		t.Fatalf("unpaired credential error = %v", err)
+	}
+}
+
 func TestEncoderClientHonorsOneTotalRequestBudget(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(
 		_ http.ResponseWriter,

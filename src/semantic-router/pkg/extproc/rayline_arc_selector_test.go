@@ -195,6 +195,25 @@ func TestCreateRaylineARCSelectorKeepsComponentNotReadyOnArtifactFailure(t *test
 	}
 }
 
+func TestRaylineARCOptionalSecretFailsClosedWithoutDisclosingReference(t *testing.T) {
+	envName := "RAYLINE_ARC_TEST_MISSING_MODAL_CREDENTIAL"
+	secretValue := t.Name() + "-secret"
+
+	if _, err := raylineARCOptionalSecret(envName); err == nil ||
+		strings.Contains(err.Error(), envName) {
+		t.Fatalf("missing credential error = %v", err)
+	}
+
+	t.Setenv(envName, secretValue)
+	value, err := raylineARCOptionalSecret(envName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value != secretValue {
+		t.Fatal("credential environment was not resolved")
+	}
+}
+
 func validARCSelectionContext(
 	state *raylinearc.EpisodeState,
 ) *selection.SelectionContext {

@@ -48,6 +48,8 @@ type RaylineARCEncoderConfig struct {
 	ExpectedPluginVersion string   `yaml:"expected_io_plugin_version"`
 	SerializerVersion     string   `yaml:"serializer_version"`
 	RequiredCapabilities  []string `yaml:"required_pooling_capabilities"`
+	ModalKeyEnv           string   `yaml:"modal_key_env,omitempty"`
+	ModalSecretEnv        string   `yaml:"modal_secret_env,omitempty"`
 	ConnectTimeoutSeconds int      `yaml:"connect_timeout_seconds"`
 	TotalTimeoutSeconds   int      `yaml:"total_timeout_seconds"`
 	MaxRetries            int      `yaml:"max_retries"`
@@ -121,10 +123,33 @@ func validateRaylineARCEncoderConfig(cfg RaylineARCEncoderConfig) error {
 	if cfg.SerializerVersion != RaylineARCSerializerVersion {
 		return fmt.Errorf("serializer_version must be %q", RaylineARCSerializerVersion)
 	}
+	if err := validateRaylineARCModalAuth(cfg); err != nil {
+		return err
+	}
 	if err := validateRaylineARCCapabilities(cfg.RequiredCapabilities); err != nil {
 		return err
 	}
 	return validateRaylineARCEncoderTimeouts(cfg)
+}
+
+func validateRaylineARCModalAuth(cfg RaylineARCEncoderConfig) error {
+	hasKey := cfg.ModalKeyEnv != ""
+	hasSecret := cfg.ModalSecretEnv != ""
+	if hasKey != hasSecret {
+		return fmt.Errorf(
+			"modal_key_env and modal_secret_env must be configured together",
+		)
+	}
+	if !hasKey {
+		return nil
+	}
+	if !raylineARCEnvNamePattern.MatchString(cfg.ModalKeyEnv) ||
+		!raylineARCEnvNamePattern.MatchString(cfg.ModalSecretEnv) {
+		return fmt.Errorf(
+			"modal proxy credential fields must name valid environment variables",
+		)
+	}
+	return nil
 }
 
 func validateRaylineARCEncoderPins(cfg RaylineARCEncoderConfig) error {

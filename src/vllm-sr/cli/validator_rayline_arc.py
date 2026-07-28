@@ -165,6 +165,25 @@ def _validate_encoder(name, encoder) -> list[ValidationError]:
                 field=f"{prefix}.required_pooling_capabilities",
             )
         )
+    has_modal_key = bool(encoder.modal_key_env)
+    has_modal_secret = bool(encoder.modal_secret_env)
+    if has_modal_key != has_modal_secret:
+        errors.append(
+            ValidationError(
+                "modal_key_env and modal_secret_env must be configured together",
+                field=f"{prefix}.modal_key_env",
+            )
+        )
+    elif has_modal_key and (
+        not _ENV_NAME.fullmatch(encoder.modal_key_env)
+        or not _ENV_NAME.fullmatch(encoder.modal_secret_env)
+    ):
+        errors.append(
+            ValidationError(
+                "Modal proxy credential fields must name valid environment variables",
+                field=f"{prefix}.modal_key_env",
+            )
+        )
     if encoder.connect_timeout_seconds > encoder.total_timeout_seconds:
         errors.append(
             ValidationError(

@@ -30,6 +30,8 @@ class RaylineARCEncoderConfig(BaseModel):
         min_length=1,
         max_length=8,
     )
+    modal_key_env: str | None = None
+    modal_secret_env: str | None = None
     connect_timeout_seconds: int = Field(gt=0)
     total_timeout_seconds: int = Field(gt=0)
     max_retries: int = Field(ge=0, le=3)

@@ -85,6 +85,8 @@ type EncoderClientConfig struct {
 	ExpectedPluginVersion string
 	SerializerVersion     string
 	RequiredCapabilities  []string
+	ModalKey              string
+	ModalSecret           string
 	ConnectTimeout        time.Duration
 	TotalTimeout          time.Duration
 	MaxRetries            int
@@ -184,6 +186,9 @@ func validateEncoderClientConfig(
 	}
 	if httpClient == nil {
 		return errors.New("ARC encoder HTTP client is required")
+	}
+	if (config.ModalKey == "") != (config.ModalSecret == "") {
+		return errors.New("ARC encoder Modal credentials must be paired")
 	}
 	if encoderReadinessContractIncomplete(config) {
 		return errors.New("ARC encoder readiness contract is incomplete")
@@ -310,6 +315,10 @@ func (client *EncoderClient) doAttempt(
 		return nil, encoderFailure(EncoderFailureRequest, "construct")
 	}
 	request.Header.Set("content-type", "application/json")
+	if client.config.ModalKey != "" {
+		request.Header.Set("Modal-Key", client.config.ModalKey)
+		request.Header.Set("Modal-Secret", client.config.ModalSecret)
+	}
 	return client.httpClient.Do(request)
 }
 

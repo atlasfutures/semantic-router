@@ -185,6 +185,8 @@ class TestRaylineARCAlgorithmConfig:
                 expected_io_plugin_version="rayline-arc-io@0.1.0",
                 serializer_version="mtrouter-token-blocks-v2",
                 required_pooling_capabilities=["all_plugin_mean"],
+                modal_key_env="RAYLINE_ARC_MODAL_KEY",
+                modal_secret_env="RAYLINE_ARC_MODAL_SECRET",
                 connect_timeout_seconds=5,
                 total_timeout_seconds=180,
                 max_retries=1,
@@ -205,6 +207,8 @@ class TestRaylineARCAlgorithmConfig:
         )
 
         assert config.encoder.required_pooling_capabilities == ["all_plugin_mean"]
+        assert config.encoder.modal_key_env == "RAYLINE_ARC_MODAL_KEY"
+        assert config.encoder.modal_secret_env == "RAYLINE_ARC_MODAL_SECRET"
         assert config.episode.redis.password_env == "RAYLINE_ARC_REDIS_PASSWORD"
 
     def test_retry_bound(self):

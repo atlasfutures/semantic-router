@@ -76,9 +76,11 @@ func createRaylineARCSelector(
 	); failureClass != "" {
 		return unavailable(failureClass)
 	}
-	encoder, err := raylinearc.NewEncoderClient(
-		raylineARCEncoderClientConfig(arcConfig),
-	)
+	encoderConfig, err := raylineARCEncoderClientConfig(arcConfig)
+	if err != nil {
+		return unavailable("encoder_auth")
+	}
+	encoder, err := raylinearc.NewEncoderClient(encoderConfig)
 	if err != nil {
 		return unavailable("encoder_config")
 	}
@@ -353,7 +355,19 @@ func raylineARCRedisPassword(
 
 func raylineARCEncoderClientConfig(
 	arcConfig *config.RaylineARCAlgorithmConfig,
-) raylinearc.EncoderClientConfig {
+) (raylinearc.EncoderClientConfig, error) {
+	modalKey, err := raylineARCOptionalSecret(
+		arcConfig.Encoder.ModalKeyEnv,
+	)
+	if err != nil {
+		return raylinearc.EncoderClientConfig{}, err
+	}
+	modalSecret, err := raylineARCOptionalSecret(
+		arcConfig.Encoder.ModalSecretEnv,
+	)
+	if err != nil {
+		return raylinearc.EncoderClientConfig{}, err
+	}
 	return raylinearc.EncoderClientConfig{
 		BaseURL:               arcConfig.Encoder.BaseURL,
 		Model:                 arcConfig.Encoder.Model,
@@ -368,6 +382,8 @@ func raylineARCEncoderClientConfig(
 			[]string(nil),
 			arcConfig.Encoder.RequiredCapabilities...,
 		),
+		ModalKey:    modalKey,
+		ModalSecret: modalSecret,
 		ConnectTimeout: time.Duration(
 			arcConfig.Encoder.ConnectTimeoutSeconds,
 		) * time.Second,
@@ -375,7 +391,18 @@ func raylineARCEncoderClientConfig(
 			arcConfig.Encoder.TotalTimeoutSeconds,
 		) * time.Second,
 		MaxRetries: arcConfig.Encoder.MaxRetries,
+	}, nil
+}
+
+func raylineARCOptionalSecret(name string) (string, error) {
+	if name == "" {
+		return "", nil
 	}
+	value, ok := os.LookupEnv(name)
+	if !ok || value == "" {
+		return "", errors.New("ARC encoder credential environment is unset")
+	}
+	return value, nil
 }
 
 func configuredRaylineARCDecisions(

@@ -1,0 +1,57 @@
+name: Integration Test [Rayline ARC]
+
+on:
+  workflow_dispatch:
+
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+    paths:
+      - 'deploy/compose/rayline-arc/**'
+      - 'e2e/testing/rayline-arc/**'
+      - 'src/semantic-router/pkg/config/rayline_arc_config.go'
+      - 'src/semantic-router/pkg/extproc/*rayline_arc*'
+      - 'src/semantic-router/pkg/selection/raylinearc/**'
+      - 'src/vllm-plugins/rayline_arc_io/**'
+      - 'tools/make/e2e.mk'
+      - 'tools/agent/e2e-profile-map.yaml'
+      - '.github/workflows/integration-test-rayline-arc.yml'
+
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/compose/rayline-arc/**'
+      - 'e2e/testing/rayline-arc/**'
+      - 'src/semantic-router/pkg/config/rayline_arc_config.go'
+      - 'src/semantic-router/pkg/extproc/*rayline_arc*'
+      - 'src/semantic-router/pkg/selection/raylinearc/**'
+      - 'src/vllm-plugins/rayline_arc_io/**'
+      - 'tools/make/e2e.mk'
+      - 'tools/agent/e2e-profile-map.yaml'
+      - '.github/workflows/integration-test-rayline-arc.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rayline-arc:
+    name: Hermetic full-stack acceptance
+    if: github.repository == 'vllm-project/semantic-router' && !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Run Rayline ARC integration suite
+        run: make rayline-arc-test-integration
+
+      - name: Show bounded container status on failure
+        if: failure()
+        run: docker compose --project-name rayline-arc-e2e --file deploy/compose/rayline-arc/compose.yaml ps
+
+      - name: Clean up
+        if: always()
+        run: docker compose --project-name rayline-arc-e2e --file deploy/compose/rayline-arc/compose.yaml down --volumes --remove-orphans

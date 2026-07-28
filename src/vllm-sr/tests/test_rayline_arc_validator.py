@@ -42,6 +42,15 @@ def test_rayline_arc_rejects_mutable_pins_duplicate_capabilities_and_memory():
     assert any("development_mode=true" in message for message in messages)
 
 
+def test_rayline_arc_requires_paired_modal_proxy_environment_names():
+    decision = _valid_decision()
+    decision.algorithm.rayline_arc.encoder.modal_secret_env = None
+
+    errors = _validate_rayline_arc_decision(decision)
+
+    assert any("must be configured together" in error.message for error in errors)
+
+
 def _valid_decision():
     return SimpleNamespace(
         name="arc-route",
@@ -59,6 +68,8 @@ def _valid_decision():
                     "expected_io_plugin_version": "rayline-arc-io@0.1.0",
                     "serializer_version": "mtrouter-token-blocks-v2",
                     "required_pooling_capabilities": ["all_plugin_mean"],
+                    "modal_key_env": "RAYLINE_ARC_MODAL_KEY",
+                    "modal_secret_env": "RAYLINE_ARC_MODAL_SECRET",
                     "connect_timeout_seconds": 5,
                     "total_timeout_seconds": 180,
                     "max_retries": 1,

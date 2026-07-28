@@ -13,6 +13,8 @@ algorithm:
       serializer_version: mtrouter-token-blocks-v2
       required_pooling_capabilities:
         - all_plugin_mean
+      modal_key_env: RAYLINE_ARC_MODAL_KEY
+      modal_secret_env: RAYLINE_ARC_MODAL_SECRET
       connect_timeout_seconds: 5
       total_timeout_seconds: 180
       max_retries: 1
