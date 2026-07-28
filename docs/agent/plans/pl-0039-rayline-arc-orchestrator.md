@@ -767,7 +767,7 @@ evaluation or a frozen holdout as part of implementation validation.
       package, including the hybrid chunked-support contradiction and the
       relationship to #40804/#48214; record any pending human publication
       action without blocking independent tasks.
-- [ ] T2 Add frozen artifact loader, SafeTensors reader, F32 head, policy, and
+- [x] T2 Add frozen artifact loader, SafeTensors reader, F32 head, policy, and
       CPU golden/parity tests using a schema-generic loader and public synthetic
       fixture.
 - [ ] T3 Add typed `rayline_arc` config, validation, catalogs, fragment,
@@ -797,10 +797,10 @@ evaluation or a frozen holdout as part of implementation validation.
 
 ## Next Action
 
-T2: implement the schema-generic artifact loader, bounded SafeTensors reader,
-F32 head and policy behind `pkg/selection/raylinearc`, using only a synthetic
-public fixture. The human publication action recorded in Loop 1 remains
-non-blocking.
+T3: add the typed `rayline_arc` configuration and all validation, catalog,
+fragment, canonical/reference, experimental-tier, engine/capability, and
+Router Learning exclusion surfaces. The human publication action recorded in
+Loop 1 remains non-blocking.
 
 ## Loop Evidence
 
@@ -881,6 +881,62 @@ Repository evidence:
   `vllm-project/semantic-router` failed with HTTP 403; the authorized fork push
   succeeded without opening a PR.
 - Hardware: local Apple development machine; no GPU/Modal work.
+- Paid/Modal cost: `$0.00`; cost ceiling consumed: `$0.00`.
+
+### Loop 2 — T2 artifact runtime, F32 head, and policy (2026-07-28)
+
+Status: complete. No vLLM source changed.
+
+Implementation:
+
+- Added `pkg/selection/raylinearc` with a strict
+  `rayline.mtrouter-runtime.v3` manifest loader, source/encoder/architecture/
+  policy validation, immutable-price enforcement, lexical and evaluated
+  symlink containment, bounded reads, and SHA256 verification over the bytes
+  that are parsed.
+- Added a bounded F32 SafeTensors reader that rejects malformed headers,
+  duplicate/unexpected/missing tensors, non-F32 data, invalid or overflowing
+  shapes, non-finite values, overlaps, gaps, and trailing bytes.
+- Added the schema-generic ARC arm encoder, residual projection, layer
+  normalization, and Q network. Startup goldens require selected-arm parity
+  and manifest-declared score tolerance. The reference uses Rust
+  `f32::mul_add`; Go uses scalar `math.FMA` in `float64` followed by an F32
+  cast, so tolerance—not bit identity—is the portable contract.
+- Added the exact cache-aware policy: stable first-index ordering, warmth
+  decay boundaries, rounded decayed-prefix cost, cold-switch penalty and
+  upgrade exemption, stay-margin equality and upgrade exemption, and
+  commit-only state mutation.
+- Added public synthetic fixture generation plus malformed-artifact, numeric,
+  head, policy, state, and exact-tie tests. A separately mounted immutable
+  runtime also passed the generic compatibility test; its private location,
+  pins, arms, and contents were not copied into this repository or evidence.
+
+Repository evidence:
+
+- Semantic Router commits, all signed off:
+  `5112689156f444c4846a0e33a8edec570706a9ab`,
+  `c6310ed872d36da210ac97909e8f65c12560c772`,
+  `3982a8538d1a459d603a8a59926655694d4744cc`, and
+  `42517f50362a088d32e544191079990e4212ba9a`.
+- vLLM lane remained clean at
+  `98e91a9600eb75b2de14ef27f13b10088d1a1279`.
+- Commands passed:
+  `go test ./pkg/selection/raylinearc -count=1`;
+  `go test -race ./pkg/selection/raylinearc -count=1`;
+  `go vet ./pkg/selection/raylinearc`;
+  the opt-in mounted-runtime compatibility test;
+  `make agent-lint CHANGED_FILES="<eight ARC Go files>"`;
+  `make agent-validate`;
+  `make test-semantic-router`;
+  and `make agent-ci-gate CHANGED_FILES="<eight ARC Go files>"`.
+- `make agent-report` classified the exact change as
+  `routing-policy-change` over `routing_policy, algorithm_selection` and
+  required the local CPU stack. `make agent-dev ENV=cpu` built the arm64
+  images. `make agent-serve-local ENV=cpu` and `make agent-smoke-local`
+  passed with `.venv-agent/bin` on `PATH`, after an initial harness-only
+  `vllm-sr: command not found` invocation. `vllm-sr stop` removed the stack
+  and network cleanly.
+- Hardware: local Apple Silicon, arm64 CPU/Docker; no CUDA/GPU execution.
 - Paid/Modal cost: `$0.00`; cost ceiling consumed: `$0.00`.
 
 ## Operating Rules
