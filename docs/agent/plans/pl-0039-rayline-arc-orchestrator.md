@@ -775,7 +775,7 @@ evaluation or a frozen holdout as part of implementation validation.
       and Router Learning exclusion.
 - [x] T4 Add the specified protocol-to-turn normalization and cross-protocol
       Rayline golden fixtures, including drop/coercion/tokenization traps.
-- [ ] T5 Package the ARC vLLM IO Processor plugin, exact token serializer, and
+- [x] T5 Package the ARC vLLM IO Processor plugin, exact token serializer, and
       Rung A `token_embed`/ALL plugin-side FP32 mean.
 - [ ] T6 Establish Rung A full/multi-chunk/max-context Qwen3.5 correctness on
       Modal; freeze timeout and within-path numeric budgets from the canary.
@@ -797,11 +797,11 @@ evaluation or a frozen holdout as part of implementation validation.
 
 ## Next Action
 
-T5: package the installable ARC vLLM IO Processor plugin, consume the pinned
-token-block fixture through the exact serializer, and implement Rung A
-`token_embed`/`ALL` plugin-side FP32 masked mean plus L2 normalization. Keep
-all model inference inside vLLM. The human publication action recorded in
-Loop 1 remains non-blocking.
+T6: run the pinned Qwen3.5 Rung A canary on Modal Linux CUDA for short,
+multi-chunk, and maximum-contract inputs. Predeclare the GPU/time/cost ceiling,
+stop the app after the run, record exact hardware/build/cost evidence, and
+freeze the observed timeout and within-path numeric budgets without spending
+the holdout.
 
 ## Loop Evidence
 
@@ -1047,6 +1047,68 @@ Repository evidence:
   runtime, observability, Redis, and Postgres container plus the network.
 - Elapsed loop duration: about 27 minutes between the prior evidence commit
   and the cohesive task commit.
+- Hardware: local Apple Silicon, arm64 CPU/Docker; no CUDA/GPU execution.
+- Paid/Modal cost: `$0.00`; cost ceiling consumed: `$0.00`.
+
+### Loop 5 — T5 Rung A vLLM IO Processor plugin (2026-07-28)
+
+Status: complete. The plugin uses vLLM for all Qwen inference; no vLLM core
+source changed.
+
+Implementation:
+
+- Added the installable `rayline-arc-io` Python package and
+  `vllm.io_processor_plugins` entry point. Its strict Pydantic request/response
+  schemas require an explicit Rung A, serializer version, bounded structured
+  turns, a hashed correlation ID, exact revision/build metadata, and a finite
+  1024-dimensional result.
+- Ported the frozen Rayline `mtrouter-token-blocks-v2` serializer exactly and
+  consumed the public Go golden fixture hermetically. The fixture's diagnostic
+  long-task token list was corrected by one repeated token after verification
+  with the exact pinned tokenizer; the already-correct production input and
+  expected token totals did not change.
+- Added fail-closed startup checks for the exact model/tokenizer revisions,
+  raw `tokenizer.json` SHA256, real EOS, behavioral Unicode/literal-special
+  fingerprint, BF16 dtype, 262,144-token context, 1024 output width, immutable
+  engine build ID, `token_embed`/`ALL`, activation disabled, and APC disabled.
+- Added Rung A FP32 token-hidden-state sum/count and L2 normalization. The
+  adapter requires unchanged prompt IDs, a finished correlated vLLM output,
+  zero cached tokens, and a bounded TTL pending map that retains tokenization
+  metadata but no raw turns.
+- Live recheck found #40804 still open at
+  `b42df0395f6bc2d947ec739be61879d9687abb86` and #48214 still open at
+  `521cbfd8cba1fe464ee6c34fef32ddf77816ea55`; neither changes the Rung A/B
+  boundary.
+
+Repository evidence:
+
+- Semantic Router task commit:
+  `e12c09fe0c7bf245157fb0a351f195c4c4ca74eb` (signed off), pushed to
+  `davidvgilmore/semantic-router:rayline/pl-0039`.
+- The vLLM lane remained clean and fork-synchronized at
+  `98e91a9600eb75b2de14ef27f13b10088d1a1279`.
+- Package commands passed:
+  `uv run --extra test pytest -q` (`23 passed`);
+  `uv run --extra test ruff check .`;
+  `uv run --extra test ruff format --check .`;
+  `uv build --out-dir /tmp/rayline-arc-io-build.5gjhM6`; and wheel metadata
+  inspection, which found
+  `rayline_arc_io = rayline_arc_io:register_io_processor`.
+- Focused Go commands passed:
+  `go test ./pkg/selection/raylinearc -count=1`;
+  `go test -race ./pkg/selection/raylinearc -count=1`; and
+  `go vet ./pkg/selection/raylinearc`.
+- `make agent-report ENV=cpu CHANGED_FILES="<14 files>"` classified the exact
+  surface as `routing-policy-change, router-core`.
+  `make agent-feature-gate ENV=cpu CHANGED_FILES="<14 files>"` passed the
+  required full Semantic Router tests, rebuilt and served the CPU stack, and
+  passed the local smoke test before removing the stack. After final
+  tokenizer-integrity and privacy hardening,
+  `make agent-ci-gate CHANGED_FILES="<14 files>"` passed again on the exact
+  final surface. Package-specific tests cover the otherwise out-of-tree Python
+  plugin subtree.
+- Elapsed loop duration: about 31 minutes from the Loop 4 evidence commit to
+  the cohesive task commit.
 - Hardware: local Apple Silicon, arm64 CPU/Docker; no CUDA/GPU execution.
 - Paid/Modal cost: `$0.00`; cost ceiling consumed: `$0.00`.
 
