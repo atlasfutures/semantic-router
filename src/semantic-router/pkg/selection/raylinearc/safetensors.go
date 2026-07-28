@@ -43,6 +43,11 @@ type tensorDescriptor struct {
 	DataOffsets []uint64 `json:"data_offsets"`
 }
 
+type decodedTensorDescriptor struct {
+	shape       []int
+	dataOffsets []uint64
+}
+
 type tensorRange struct {
 	name  string
 	start uint64
@@ -57,7 +62,10 @@ func decodeSafeTensors(data []byte, expected []string) (map[string]tensor, error
 	if headerLength == 0 || headerLength > maxSafeTensorHeader {
 		return nil, fmt.Errorf("invalid SafeTensors header length %d", headerLength)
 	}
-	if headerLength > uint64(len(data)-8) {
+	// A slice length is nonnegative and therefore losslessly representable as
+	// uint64 on every supported Go platform.
+	dataLength := uint64(len(data)) //nolint:gosec
+	if headerLength > dataLength-8 {
 		return nil, errors.New("SafeTensors header extends beyond the file")
 	}
 	headerEnd := uint64(8) + headerLength
@@ -76,7 +84,7 @@ func decodeSafeTensors(data []byte, expected []string) (map[string]tensor, error
 		expectedSet[name] = struct{}{}
 	}
 
-	descriptors := make(map[string]tensorDescriptor, len(expected))
+	descriptors := make(map[string]decodedTensorDescriptor, len(expected))
 	ranges := make([]tensorRange, 0, len(expected))
 	for name, raw := range rawEntries {
 		if name == "__metadata__" {
@@ -120,11 +128,10 @@ func decodeSafeTensors(data []byte, expected []string) (map[string]tensor, error
 		if end > uint64(len(data))-headerEnd {
 			return nil, fmt.Errorf("tensor %q data extends beyond the file", name)
 		}
-		descriptor.Shape = make([]uint64, len(shape))
-		for index, dimension := range shape {
-			descriptor.Shape[index] = uint64(dimension)
+		descriptors[name] = decodedTensorDescriptor{
+			shape:       shape,
+			dataOffsets: descriptor.DataOffsets,
 		}
-		descriptors[name] = descriptor
 		ranges = append(ranges, tensorRange{name: name, start: start, end: end})
 	}
 	for name := range expectedSet {
@@ -164,8 +171,8 @@ func decodeSafeTensors(data []byte, expected []string) (map[string]tensor, error
 
 	tensors := make(map[string]tensor, len(descriptors))
 	for name, descriptor := range descriptors {
-		start := headerEnd + descriptor.DataOffsets[0]
-		end := headerEnd + descriptor.DataOffsets[1]
+		start := headerEnd + descriptor.dataOffsets[0]
+		end := headerEnd + descriptor.dataOffsets[1]
 		raw := data[start:end]
 		values := make([]float32, len(raw)/4)
 		for index := range values {
@@ -176,11 +183,10 @@ func decodeSafeTensors(data []byte, expected []string) (map[string]tensor, error
 			}
 			values[index] = value
 		}
-		shape := make([]int, len(descriptor.Shape))
-		for index, dimension := range descriptor.Shape {
-			shape[index] = int(dimension)
+		tensors[name] = tensor{
+			shape:  append([]int(nil), descriptor.shape...),
+			values: values,
 		}
-		tensors[name] = tensor{shape: shape, values: values}
 	}
 	return tensors, nil
 }
@@ -240,7 +246,8 @@ func checkedElementCount(dimensions []uint64) (uint64, []int, error) {
 			return 0, nil, errors.New("element count overflows uint64")
 		}
 		count *= dimension
-		shape[index] = int(dimension)
+		// The platform-range guard above makes this conversion lossless.
+		shape[index] = int(dimension) //nolint:gosec
 	}
 	return count, shape, nil
 }

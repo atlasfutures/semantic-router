@@ -340,11 +340,12 @@ func writeSyntheticRuntime(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(
+	err = os.WriteFile(
 		filepath.Join(runtimeDir, manifest.Golden.Head.File),
 		goldenBytes,
 		0o600,
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
 	manifest.Golden.Head.SHA256 = sha256Hex(goldenBytes)

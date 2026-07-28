@@ -207,7 +207,9 @@ func (head *Head) armEmbedding(index int) ([]float32, error) {
 	if err != nil {
 		return nil, err
 	}
-	input := append(metaEmbedding, residual...)
+	input := make([]float32, 0, len(metaEmbedding)+len(residual))
+	input = append(input, metaEmbedding...)
+	input = append(input, residual...)
 	output, err := head.linear("model_encoder.output_proj.0", input)
 	if err != nil {
 		return nil, err

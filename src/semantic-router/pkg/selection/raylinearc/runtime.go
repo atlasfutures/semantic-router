@@ -75,19 +75,26 @@ func LoadRuntime(runtimeDir string) (*Runtime, error) {
 		return nil, fmt.Errorf("verify ARC head golden: %w", err)
 	}
 	if manifest.Encoder.Golden != nil {
-		encoderGoldenPath, err := artifactPath(
+		encoderGoldenPath, pathErr := artifactPath(
 			runtimeDir,
 			manifest.Encoder.Golden.File,
 		)
-		if err != nil {
-			return nil, fmt.Errorf("resolve ARC encoder golden: %w", err)
+		if pathErr != nil {
+			return nil, fmt.Errorf(
+				"resolve ARC encoder golden: %w",
+				pathErr,
+			)
 		}
-		if _, err := readVerifiedFile(
+		_, verifyErr := readVerifiedFile(
 			encoderGoldenPath,
 			manifest.Encoder.Golden.SHA256,
 			maxGoldenBytes,
-		); err != nil {
-			return nil, fmt.Errorf("verify ARC encoder golden: %w", err)
+		)
+		if verifyErr != nil {
+			return nil, fmt.Errorf(
+				"verify ARC encoder golden: %w",
+				verifyErr,
+			)
 		}
 	}
 	head, err := loadHead(weights, manifest)
