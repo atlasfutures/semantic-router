@@ -1112,6 +1112,34 @@ Repository evidence:
 - Hardware: local Apple Silicon, arm64 CPU/Docker; no CUDA/GPU execution.
 - Paid/Modal cost: `$0.00`; cost ceiling consumed: `$0.00`.
 
+### Loop 6 — T6 Rung A Modal CUDA canary (2026-07-28)
+
+Status: in progress.
+
+Pre-run declaration:
+
+- One ephemeral `rayline-arc-rung-a-canary-dev` batch invocation may use one
+  H100, 8 physical CPU cores, and 64 GiB for at most 35 minutes. At the
+  2026-07-28 `https://modal.com/pricing` rates, the timeout-bound GPU/CPU/memory
+  estimate is `$2.82`; the hard run ceiling is `$3.00`.
+- The job makes no provider calls, uses synthetic public prompts only, returns
+  no embeddings or prompts, disables APC and vLLM request logging, binds both
+  servers to loopback, and terminates them before returning. No holdout,
+  private artifact, or private model/provider arm is mounted.
+- The exact vLLM wheel is
+  `98e91a9600eb75b2de14ef27f13b10088d1a1279` from its immutable vLLM wheel
+  index. The single-schedule reference uses a 262,144-token scheduler budget;
+  the chunked path uses 8,192 tokens. Both run the pinned Qwen revision and
+  exact Rung A plugin.
+- Authorized command:
+  `uv run --extra modal modal run
+  /Users/davidgilmore/Documents/vllm-semantic-router/src/vllm-plugins/rayline_arc_io/modal_canary.py
+  --run-id rayline-arc-rung-a-20260728 --output
+  /tmp/rayline-arc-rung-a-20260728.json`.
+- This declaration authorizes one paid invocation only. A second invocation
+  requires diagnosis and a new explicit ceiling; the same unchanged failing
+  command will not be run a third time.
+
 ## Operating Rules
 
 - Re-read this plan's checkbox/evidence state at the start of every loop; work
