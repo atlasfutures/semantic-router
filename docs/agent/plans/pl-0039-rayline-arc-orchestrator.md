@@ -780,7 +780,7 @@ evaluation or a frozen holdout as part of implementation validation.
 - [ ] T6 Establish Rung A full/multi-chunk/max-context Qwen3.5 correctness on
       Modal; freeze timeout and within-path numeric budgets from the canary.
 - [x] T7 Implement vLLM chunked causal mean state and unit tests.
-- [ ] T8 Run the Rung C phase gate. If opened, implement prefix-block FP32 sums,
+- [x] T8 Run the Rung C phase gate. If opened, implement prefix-block FP32 sums,
       hybrid cache lifecycle, APC support, and CUDA tests; if closed, record the
       owner, evidence, and quantitative reopening trigger.
 - [ ] T9 Add ARC encoder client, selector adapter, strict error propagation,
@@ -797,11 +797,10 @@ evaluation or a frozen holdout as part of implementation validation.
 
 ## Next Action
 
-T8: run the Rung C phase gate from recorded evidence. If it remains closed,
-record the owner and quantitative reopening trigger before advancing to T9.
-T6 is paused after its two-attempt paid-failure limit; resume it only after
-explicit authorization for the changed bounded-error diagnostic/completion
-invocation.
+T9: add the ARC encoder client and selector adapter with strict readiness,
+error, privacy, and Router Learning bypass contracts. T6 is paused after its
+two-attempt paid-failure limit; resume it only after explicit authorization for
+the changed bounded-error diagnostic/completion invocation.
 
 ## Loop Evidence
 
@@ -1237,6 +1236,63 @@ Repository evidence:
   applicable hook. `git diff --check` also passed.
 - Hardware: local Apple Silicon CPU; no CUDA/GPU execution.
 - Paid/Modal and provider cost: `$0.00`.
+
+### Loop 8 — T8 Rung C phase gate (2026-07-28)
+
+Status: complete; gate closed. No Rung C or APC code is authorized.
+
+Evidence:
+
+- The pinned, private train/dev workload audit at
+  `rayline-ai/mtrouter-tbench21-long-context-artifacts`
+  commit `cb1ea23d456d172ac817b49f0a193cd9ce322394`,
+  `local/audit/context_window_audit.json`, has 31,294 samples. Long-context
+  serialized tokens are p50 `11,993`, p90 `59,103`, p95 `81,146`, p99
+  `126,964`, max `230,811`; final episode prefixes are p50 `14,863`, p90
+  `66,440`, p99 `140,742`, max `230,811`. This is a development workload
+  proxy, not a declared production traffic distribution.
+- Prior custom-serving measurements in
+  `/Users/davidgilmore/Documents/m4-alpha-route-2/docs/history/2026-07-22-mtrouter-c82-perf-smoke.md`
+  establish a strong APC economic prior: full forward at 84k tokens took
+  `12.6 s` on L40S and `6.0 s` on H100; at 262k it took `48.9 s` and `21.3 s`.
+  Incremental steps were approximately `0.4–0.7 s` on L40S. L4 could not fit
+  the full contract. The historical estimate was about `$0.005` GPU per
+  84k-token full decision versus about `$0.0003` per incremental decision on
+  L40S. These are `live` measurements of a different Transformers/custom
+  serving path, not evidence for the new vLLM Rung B path.
+- The required new-path cold/repeated-turn latency, GPU memory, and raw cost
+  measurements do not exist because T6 is paused before its first successful
+  request. Expected steady/peak QPS, online concurrency/context distribution,
+  router latency SLO, and an implementation/maintenance allocation are also
+  undeclared. No vLLM maintainer owns the unfiled RFC.
+
+Decision and reopening trigger:
+
+- Human phase owner: `davidvgilmore`. Upstream vLLM maintainer: unassigned
+  pending human publication/triage of the prepared RFC. Until the owner
+  allocates it, the Rung C implementation/maintenance budget is `0` engineer
+  days and `$0`; Rungs A/B and the experimental Semantic Router exit remain
+  independent.
+- Re-run the gate only after T6 succeeds on the pinned vLLM/model/plugin path
+  and an owner declares steady/peak QPS, concurrency, latency SLO, GPU-memory
+  ceiling, and maintenance budget. Measure cold and repeated-turn cases at
+  approximately 12k, 59k, 81k, and 127k tokens on one pinned GPU.
+- The quantitative implementation gate opens only if a cache prototype on
+  identical inputs projects at least `2x` p95 latency improvement and at least
+  `20%` GPU-cost-per-decision reduction at declared load, while fitting
+  declared concurrent episode residency with at least `20%` GPU-memory
+  headroom; or if uncached Rung B fails the declared latency/memory ceiling.
+  Otherwise keep APC deferred. Any opened design still requires separate
+  hybrid-group lifecycle review and CUDA evidence before support is advertised.
+
+Repository evidence:
+
+- Read-only commands: pinned Hugging Face dataset file listing/download with
+  `uv run --frozen --extra hf hf ...`; `jq`; and focused `rg`/`sed` over the
+  plan, research registry, and historical reports.
+- No source or artifact was generated or modified, no holdout identity was
+  inspected, and no private contents were copied into public source.
+- Hardware: local Apple Silicon CPU. Paid/Modal/provider cost: `$0.00`.
 
 ## Operating Rules
 
