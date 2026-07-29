@@ -103,12 +103,9 @@ func validateDecisionNamesAcrossRecipes(recipes []RoutingRecipe) error {
 }
 
 // mergeRecipeRegistries builds the global signal and projection registries
-// from every recipe's profile. Single-recipe configs pass through untouched so
-// single-profile behavior cannot change.
+// from every recipe's profile. Merging a single recipe is the identity, so the
+// single-profile case takes the same path as the multi-profile one.
 func mergeRecipeRegistries(recipes []RoutingRecipe) (Signals, Projections, error) {
-	if len(recipes) == 1 {
-		return recipes[0].Signals, recipes[0].Projections, nil
-	}
 	signals, err := mergeRecipeSignals(recipes)
 	if err != nil {
 		return Signals{}, Projections{}, err
