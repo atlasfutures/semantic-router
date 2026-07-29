@@ -31,7 +31,7 @@ func (c *Classifier) evaluateDecisionInternal(signals *SignalResults, trace bool
 	// A nil candidate set means "no per-request recipe scope", which is the
 	// default profile's decisions; extproc passes an explicit set once an
 	// entrypoint selects a recipe.
-	decisions := c.Config.DefaultDecisions
+	decisions := c.Config.DefaultDecisions()
 	if candidates != nil {
 		decisions = candidates
 	}

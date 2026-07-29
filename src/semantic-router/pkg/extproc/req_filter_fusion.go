@@ -71,7 +71,7 @@ func (r *OpenAIRouter) decisionCandidatesForRequestModel(modelName string) []con
 	// decisionCandidatesForRequest scopes candidates to the recipe.
 	candidates := make([]config.Decision, 0)
 	if r.Config.IsReMoMModelName(modelName) {
-		for _, decision := range r.Config.DefaultDecisions {
+		for _, decision := range r.Config.DefaultDecisions() {
 			if isReMoMDecision(&decision) {
 				candidates = append(candidates, decision)
 			}
@@ -79,7 +79,7 @@ func (r *OpenAIRouter) decisionCandidatesForRequestModel(modelName string) []con
 		return candidates
 	}
 	if r.Config.IsFusionModelName(modelName) {
-		for _, decision := range r.Config.DefaultDecisions {
+		for _, decision := range r.Config.DefaultDecisions() {
 			if isFusionDecision(&decision) {
 				candidates = append(candidates, decision)
 			}
@@ -87,7 +87,7 @@ func (r *OpenAIRouter) decisionCandidatesForRequestModel(modelName string) []con
 		return candidates
 	}
 	if r.Config.IsFlowModelName(modelName) {
-		for _, decision := range r.Config.DefaultDecisions {
+		for _, decision := range r.Config.DefaultDecisions() {
 			if isFlowDecision(&decision) {
 				candidates = append(candidates, decision)
 			}
@@ -105,7 +105,7 @@ func (r *OpenAIRouter) defaultLooperDecisionByAlgorithm(algorithmType string) *c
 	// Default-profile only, for the same reason as
 	// decisionCandidatesForRequestModel: this is the fallback for a request
 	// that arrived on a global algorithm slug, not through an entrypoint.
-	decisions := r.Config.DefaultDecisions
+	decisions := r.Config.DefaultDecisions()
 	for i := range decisions {
 		decision := &decisions[i]
 		if decision.Algorithm == nil || decision.Algorithm.Type != algorithmType {

@@ -145,11 +145,12 @@ func (c *RouterConfig) GetCategoryDescriptions() []string {
 
 // GetModelForDecisionIndex returns the best LLM model name for the decision at the given index
 func (c *RouterConfig) GetModelForDecisionIndex(index int) string {
-	if index < 0 || index >= len(c.DefaultDecisions) {
+	decisions := c.DefaultDecisions()
+	if index < 0 || index >= len(decisions) {
 		return c.DefaultModel
 	}
 
-	decision := c.DefaultDecisions[index]
+	decision := decisions[index]
 	if len(decision.ModelRefs) > 0 {
 		return decision.ModelRefs[0].Model
 	}
@@ -459,26 +460,16 @@ func (c *RouterConfig) GetDecisionByNameFold(name string) *Decision {
 	return c.findDecisionBy(func(candidate string) bool { return strings.EqualFold(candidate, name) })
 }
 
-// findDecisionBy walks the default profile and then every named recipe without
-// materializing a merged slice, so the request-path lookups stay allocation
-// free. The returned pointer always addresses the config itself, never a
-// temporary copy. Decision names are globally unique across recipes (validated
-// at load), so the first match is the only match.
+// findDecisionBy walks every recipe without materializing a merged slice, so
+// the request-path lookups stay allocation free. The returned pointer always
+// addresses the config itself, never a temporary copy. Decision names are
+// globally unique across recipes (validated at load), so the first match is
+// the only match.
 func (c *RouterConfig) findDecisionBy(match func(string) bool) *Decision {
 	if c == nil {
 		return nil
 	}
-	for i := range c.DefaultDecisions {
-		if match(c.DefaultDecisions[i].Name) {
-			return &c.DefaultDecisions[i]
-		}
-	}
-	// Non-default recipe decisions live only on their recipe; the default
-	// recipe mirrors the DefaultDecisions field scanned above.
 	for i := range c.Recipes {
-		if c.Recipes[i].Name == DefaultRecipeName {
-			continue
-		}
 		for j := range c.Recipes[i].Decisions {
 			if match(c.Recipes[i].Decisions[j].Name) {
 				return &c.Recipes[i].Decisions[j]

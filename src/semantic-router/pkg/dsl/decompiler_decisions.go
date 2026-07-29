@@ -170,7 +170,7 @@ func decompileComposerObj(node *config.RuleCombination) string {
 // named recipes yet (pl-0038 T10 tracks the round trip), so a config carrying
 // recipes cannot be decompiled without loss.
 func (d *decompiler) decompileDecisions() {
-	for _, dec := range d.cfg.DefaultDecisions {
+	for _, dec := range d.cfg.DefaultDecisions() {
 		d.decompileDecision(dec)
 	}
 }

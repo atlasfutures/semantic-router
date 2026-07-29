@@ -30,7 +30,56 @@ func EmitYAMLFromConfig(cfg *config.RouterConfig) ([]byte, error) {
 		canonical := config.CanonicalConfigFromRouterConfig(cfg)
 		return yaml.Marshal(canonical)
 	}
-	return yaml.Marshal(cfg)
+	return marshalFlatConfigYAML(cfg)
+}
+
+// marshalFlatConfigYAML marshals the flat RouterConfig view used by the legacy
+// emitters. Decisions live on the default recipe rather than on a flat config
+// field, so they are re-injected under the top-level `decisions:` key, in the
+// slot the flat field used to occupy: directly after the routing profile's
+// signal and projection keys.
+func marshalFlatConfigYAML(cfg *config.RouterConfig) ([]byte, error) {
+	var doc yaml.Node
+	if err := doc.Encode(cfg); err != nil {
+		return nil, err
+	}
+	decisions := cfg.DefaultDecisions()
+	if len(decisions) == 0 || doc.Kind != yaml.MappingNode {
+		return yaml.Marshal(&doc)
+	}
+
+	var value yaml.Node
+	if err := value.Encode(decisions); err != nil {
+		return nil, err
+	}
+	key := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "decisions"}
+	at := flatDecisionsInsertIndex(&doc, cfg)
+	doc.Content = append(doc.Content[:at],
+		append([]*yaml.Node{key, &value}, doc.Content[at:]...)...)
+	return yaml.Marshal(&doc)
+}
+
+// flatDecisionsInsertIndex returns the position in the flat mapping where the
+// `decisions:` key belongs: right after the last key emitted by the routing
+// profile's signals and projections, which are the fields declared ahead of it
+// in config.IntelligentRouting.
+func flatDecisionsInsertIndex(doc *yaml.Node, cfg *config.RouterConfig) int {
+	var probe yaml.Node
+	if err := probe.Encode(cfg.Signals); err != nil || probe.Kind != yaml.MappingNode {
+		return len(doc.Content)
+	}
+	preceding := map[string]bool{"projections": true}
+	for i := 0; i+1 < len(probe.Content); i += 2 {
+		preceding[probe.Content[i].Value] = true
+	}
+
+	at := len(doc.Content)
+	for i := 0; i+1 < len(doc.Content); i += 2 {
+		if preceding[doc.Content[i].Value] {
+			at = i + 2
+		}
+	}
+	return at
 }
 
 // EmitUserYAML emits YAML in the user-friendly nested format (signals/providers)
@@ -42,7 +91,7 @@ func EmitUserYAML(cfg *config.RouterConfig) ([]byte, error) {
 		return yaml.Marshal(canonical)
 	}
 	// First marshal to flat YAML, then restructure via map manipulation.
-	flatBytes, err := yaml.Marshal(cfg)
+	flatBytes, err := marshalFlatConfigYAML(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -371,7 +420,7 @@ func toString(v interface{}) string {
 // EmitUserYAMLOrdered emits YAML in user-friendly format with a controlled key order
 // matching the canonical config.yaml layout.
 func EmitUserYAMLOrdered(cfg *config.RouterConfig) ([]byte, error) {
-	flatBytes, err := yaml.Marshal(cfg)
+	flatBytes, err := marshalFlatConfigYAML(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -517,7 +566,7 @@ func EmitCRD(cfg *config.RouterConfig, name, namespace string) ([]byte, error) {
 //   - Signal rules not in ConfigSpec are included as extra keys for completeness
 func buildCRDConfigSpec(cfg *config.RouterConfig) map[string]interface{} {
 	// Marshal the full RouterConfig to a flat map first
-	flatBytes, _ := yaml.Marshal(cfg)
+	flatBytes, _ := marshalFlatConfigYAML(cfg)
 	var flat map[string]interface{}
 	_ = yaml.Unmarshal(flatBytes, &flat)
 

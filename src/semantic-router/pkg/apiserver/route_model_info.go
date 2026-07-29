@@ -4,6 +4,8 @@ package apiserver
 
 import (
 	"net/http"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 )
 
 func (s *ClassificationAPIServer) handleModelsInfo(w http.ResponseWriter, _ *http.Request) {
@@ -38,8 +40,23 @@ func (s *ClassificationAPIServer) handleClassifierInfo(w http.ResponseWriter, r 
 
 	s.writeJSONResponse(w, http.StatusOK, map[string]interface{}{
 		"status": "config_loaded",
-		"config": s.maybeRedactConfigView(r, jsonCompatibleValue(cfg)),
+		"config": s.maybeRedactConfigView(r, classifierConfigView(cfg)),
 	})
+}
+
+// classifierConfigView renders the router config the way /info/classifier
+// publishes it. RouterConfig no longer stores decisions inline — config.Recipes
+// owns them — but the top-level `Decisions` key is a published wire contract
+// (the runtime-config end-to-end testcase decodes it), so the view keeps
+// emitting the default recipe's decisions under that key.
+func classifierConfigView(cfg *config.RouterConfig) interface{} {
+	normalized := jsonCompatibleValue(cfg)
+	view, ok := normalized.(map[string]interface{})
+	if !ok {
+		return normalized
+	}
+	view["Decisions"] = jsonCompatibleValue(cfg.DefaultDecisions())
+	return view
 }
 
 type classifierModelAvailability struct {

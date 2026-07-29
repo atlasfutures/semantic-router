@@ -3,9 +3,29 @@ package dsl
 import "github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 
 func (c *Compiler) compileRoutes() {
-	for _, r := range c.prog.Routes {
-		c.config.DefaultDecisions = append(c.config.DefaultDecisions, c.compileRoute(r))
+	if len(c.prog.Routes) == 0 {
+		return
 	}
+	recipe := c.defaultRecipe()
+	for _, r := range c.prog.Routes {
+		recipe.Decisions = append(recipe.Decisions, c.compileRoute(r))
+	}
+	// A DSL source describes one routing profile, so the signals and
+	// projections compiled earlier belong to the default recipe as well;
+	// RoutingProfileSignals reads them back from there on export.
+	recipe.Signals = c.config.Signals
+	recipe.Projections = c.config.Projections
+}
+
+// defaultRecipe returns the compiled config's default routing profile,
+// creating it on first use. Recipes own decisions, so routes compile into the
+// default recipe instead of a flat config field.
+func (c *Compiler) defaultRecipe() *config.RoutingRecipe {
+	if recipe := c.config.DefaultRecipe(); recipe != nil {
+		return recipe
+	}
+	c.config.Recipes = append(c.config.Recipes, config.RoutingRecipe{Name: config.DefaultRecipeName})
+	return c.config.DefaultRecipe()
 }
 
 func (c *Compiler) compileRoute(r *RouteDecl) config.Decision {

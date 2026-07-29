@@ -10,13 +10,12 @@ import (
 // `routing:` block. Additional named profiles come from `recipes:`.
 const DefaultRecipeName = "default"
 
-// RoutingRecipe is one normalized routing profile. The recipe named
-// DefaultRecipeName always mirrors the flat Decisions field on RouterConfig,
-// so existing single-profile read sites and recipe-aware read sites observe
-// the same default behavior. The flat Signals and Projections fields instead
-// hold the global registry: the union of every recipe's profile, so one
-// classifier evaluates any recipe's rules (issue #2331 keeps the signal
-// registry global).
+// RoutingRecipe is one normalized routing profile and the only place decisions
+// live: the recipe named DefaultRecipeName owns the top-level `routing:`
+// profile, named recipes own theirs. The flat Signals and Projections fields on
+// RouterConfig instead hold the global registry: the union of every recipe's
+// profile, so one classifier evaluates any recipe's rules (issue #2331 keeps
+// the signal registry global).
 type RoutingRecipe struct {
 	Name        string
 	Description string
@@ -46,14 +45,28 @@ func (c *RouterConfig) RecipeByName(name string) (*RoutingRecipe, bool) {
 	return nil, false
 }
 
-// DefaultRecipe returns the recipe backing the flat routing fields, or nil
-// for configs built without the canonical loader (for example DSL fragments).
+// DefaultRecipe returns the profile normalized from the top-level `routing:`
+// block, or nil for configs built without one.
 func (c *RouterConfig) DefaultRecipe() *RoutingRecipe {
 	recipe, ok := c.RecipeByName(DefaultRecipeName)
 	if !ok {
 		return nil
 	}
 	return recipe
+}
+
+// DefaultDecisions returns the default profile's decisions, for the read sites
+// whose scope really is that profile (entrypoint-less request paths, canonical
+// export of the top-level routing block). Callers that reason about routing as
+// a whole want AllRoutingDecisions or GetDecisionByName instead.
+func (c *RouterConfig) DefaultDecisions() []Decision {
+	if c == nil {
+		return nil
+	}
+	if recipe := c.DefaultRecipe(); recipe != nil {
+		return recipe.Decisions
+	}
+	return nil
 }
 
 // RecipeForRequestModel resolves a request model name through the entrypoint
@@ -95,21 +108,18 @@ func (c *RouterConfig) EntrypointRecipeDescription(recipeName string) string {
 
 // AllRoutingDecisions returns the decisions of every routing profile, for
 // callers that reason about routing as a whole (signal usage analysis,
-// contract validation). Configs built without the canonical loader carry no
-// recipes; their flat decisions are the only profile.
+// contract validation). The result is always a fresh slice, never an alias of
+// a recipe's own decisions, so callers cannot mutate config state by accident.
 func (c *RouterConfig) AllRoutingDecisions() []Decision {
 	if c == nil {
 		return nil
 	}
-	if len(c.Recipes) == 0 {
-		return c.DefaultDecisions
-	}
-	if len(c.Recipes) == 1 {
-		return c.Recipes[0].Decisions
-	}
 	total := 0
 	for i := range c.Recipes {
 		total += len(c.Recipes[i].Decisions)
+	}
+	if total == 0 {
+		return nil
 	}
 	all := make([]Decision, 0, total)
 	for i := range c.Recipes {
@@ -119,15 +129,10 @@ func (c *RouterConfig) AllRoutingDecisions() []Decision {
 }
 
 // HasRoutingDecisions reports whether any routing profile declares decisions,
-// without the per-request allocation of AllRoutingDecisions. The flat gate
-// `len(c.Decisions) == 0` is wrong for recipes-only configs, where every
-// decision lives in a non-default recipe.
+// without the per-request allocation of AllRoutingDecisions.
 func (c *RouterConfig) HasRoutingDecisions() bool {
 	if c == nil {
 		return false
-	}
-	if len(c.DefaultDecisions) > 0 {
-		return true
 	}
 	for i := range c.Recipes {
 		if len(c.Recipes[i].Decisions) > 0 {

@@ -158,7 +158,7 @@ func (c *RouterConfig) HasFlowDecision() bool {
 		return false
 	}
 	// Default profile only — see HasFusionDecision for the rationale.
-	for _, decision := range c.DefaultDecisions {
+	for _, decision := range c.DefaultDecisions() {
 		if decision.Algorithm != nil && decision.Algorithm.Type == "workflows" {
 			return true
 		}

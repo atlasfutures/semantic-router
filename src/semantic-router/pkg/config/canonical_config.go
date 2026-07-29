@@ -108,10 +108,18 @@ func normalizeCanonicalConfig(canonical *CanonicalConfig) (*RouterConfig, error)
 
 func applyCanonicalRoutingState(cfg *RouterConfig, canonical *CanonicalConfig) {
 	cfg.Listeners = append([]Listener(nil), canonical.Listeners...)
-	cfg.DefaultDecisions = copyDecisions(canonical.Routing.Decisions)
-	ensureModelRefDefaults(cfg.DefaultDecisions)
-	cfg.Signals = normalizeSignals(canonical.Routing.Signals, cfg.DefaultDecisions)
+	decisions := copyDecisions(canonical.Routing.Decisions)
+	ensureModelRefDefaults(decisions)
+	cfg.Signals = normalizeSignals(canonical.Routing.Signals, decisions)
 	cfg.Projections = normalizeProjections(canonical.Routing.Projections)
+	// The top-level routing block is the default recipe; applyCanonicalRecipeState
+	// drops it again when `recipes:` declares the default profile explicitly.
+	cfg.Recipes = []RoutingRecipe{{
+		Name:        DefaultRecipeName,
+		Signals:     cfg.Signals,
+		Projections: cfg.Projections,
+		Decisions:   decisions,
+	}}
 	cfg.ModelConfig = make(map[string]ModelParams)
 
 	for _, model := range canonicalRoutingModels(canonical.Routing) {

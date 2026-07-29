@@ -177,7 +177,7 @@ func appendEvaluatedRulesFromConfig(result *TestQueryResult, configPath string) 
 	}
 
 	matchedSignalNames := buildMatchedSignalNameSet(result.MatchedSignals)
-	for _, decision := range parsedConfig.IntelligentRouting.DefaultDecisions {
+	for _, decision := range parsedConfig.DefaultDecisions() {
 		if result.MatchedDecision != "" && decision.Name == result.MatchedDecision {
 			continue
 		}

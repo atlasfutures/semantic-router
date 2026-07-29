@@ -24,7 +24,8 @@ type CanonicalRecipe struct {
 
 // applyCanonicalRecipeState validates and normalizes `recipes` and
 // `entrypoints` into RouterConfig. It runs after applyCanonicalRoutingState,
-// so the flat routing fields already hold the top-level routing profile.
+// so cfg.Recipes already holds the default recipe built from the top-level
+// routing profile.
 func applyCanonicalRecipeState(cfg *RouterConfig, canonical *CanonicalConfig) error {
 	if err := validateCanonicalRecipes(canonical); err != nil {
 		return err
@@ -43,18 +44,12 @@ func applyCanonicalRecipeState(cfg *RouterConfig, canonical *CanonicalConfig) er
 		})
 	}
 
-	if explicitDefault := findRecipe(recipes, DefaultRecipeName); explicitDefault != nil {
-		// Recipes-only layout: bridge the explicit default recipe into the
-		// flat decisions so existing single-profile read sites keep working.
-		cfg.DefaultDecisions = explicitDefault.Decisions
-	} else {
-		// The top-level routing profile is the default recipe.
-		recipes = append([]RoutingRecipe{{
-			Name:        DefaultRecipeName,
-			Signals:     cfg.Signals,
-			Projections: cfg.Projections,
-			Decisions:   cfg.DefaultDecisions,
-		}}, recipes...)
+	// A recipes-only layout declares the default profile itself; otherwise the
+	// default recipe built from the top-level routing block leads the list.
+	if findRecipe(recipes, DefaultRecipeName) == nil {
+		if topLevel := cfg.DefaultRecipe(); topLevel != nil {
+			recipes = append([]RoutingRecipe{*topLevel}, recipes...)
+		}
 	}
 	cfg.Recipes = recipes
 

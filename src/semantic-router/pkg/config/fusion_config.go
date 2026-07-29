@@ -161,7 +161,7 @@ func (c *RouterConfig) HasFusionDecision() bool {
 	// /v1/models advertises the Fusion slug. The slug can only select the
 	// default profile's decisions, so advertising it based on a recipe's
 	// decision would promise a route the router then refuses.
-	for _, decision := range c.DefaultDecisions {
+	for _, decision := range c.DefaultDecisions() {
 		if decision.Algorithm != nil && decision.Algorithm.Type == "fusion" {
 			return true
 		}

@@ -53,7 +53,7 @@ func CanonicalRoutingFromRouterConfig(cfg *RouterConfig) CanonicalRouting {
 		ModelCards:  routingModelsFromRouterConfig(cfg),
 		Signals:     canonicalSignalsFromSignals(cfg.RoutingProfileSignals()),
 		Projections: canonicalProjectionsFromProjections(cfg.RoutingProfileProjections()),
-		Decisions:   copyDecisions(cfg.DefaultDecisions),
+		Decisions:   copyDecisions(cfg.DefaultDecisions()),
 	}
 }
 

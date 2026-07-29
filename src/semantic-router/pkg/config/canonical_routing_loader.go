@@ -28,10 +28,17 @@ func ParseRoutingYAMLBytes(data []byte) (*RouterConfig, error) {
 	}
 
 	cfg := DefaultGlobalConfig()
-	cfg.DefaultDecisions = copyDecisions(doc.Routing.Decisions)
-	ensureModelRefDefaults(cfg.DefaultDecisions)
-	cfg.Signals = normalizeSignals(doc.Routing.Signals, cfg.DefaultDecisions)
+	decisions := copyDecisions(doc.Routing.Decisions)
+	ensureModelRefDefaults(decisions)
+	cfg.Signals = normalizeSignals(doc.Routing.Signals, decisions)
 	cfg.Projections = normalizeProjections(doc.Routing.Projections)
+	// A routing fragment carries exactly one profile: the default recipe.
+	cfg.Recipes = []RoutingRecipe{{
+		Name:        DefaultRecipeName,
+		Signals:     cfg.Signals,
+		Projections: cfg.Projections,
+		Decisions:   decisions,
+	}}
 	cfg.ModelConfig = make(map[string]ModelParams)
 
 	for _, model := range canonicalRoutingModels(doc.Routing) {
