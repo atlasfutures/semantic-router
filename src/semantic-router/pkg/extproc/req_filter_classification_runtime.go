@@ -32,6 +32,7 @@ func (r *OpenAIRouter) evaluateSignalsForDecision(
 	nonUserMessages []string,
 	ctx *RequestContext,
 	candidates []config.Decision,
+	scoped bool,
 ) (*classification.SignalResults, error) {
 	signalStart := time.Now()
 	signalCtx, signalSpan := tracing.StartSpan(ctx.TraceContext, tracing.SpanSignalEvaluation)
@@ -39,9 +40,10 @@ func (r *OpenAIRouter) evaluateSignalsForDecision(
 	// Authz enforcement is scoped to the decisions this request can actually
 	// select; the signal registry stays global for evaluation. Without the
 	// scope, one recipe with an authz condition would reject every request
-	// from profiles that never asked for identity enforcement.
+	// from profiles that never asked for identity enforcement. An unscoped
+	// request can only select the default profile, so that is its scope.
 	authzScope := candidates
-	if authzScope == nil {
+	if !scoped {
 		authzScope = r.Config.DefaultDecisions()
 	}
 
@@ -141,6 +143,7 @@ func (r *OpenAIRouter) runDecisionEngine(
 	ctx *RequestContext,
 	signals *classification.SignalResults,
 	candidates []config.Decision,
+	scoped bool,
 ) (*decision.DecisionResult, string) {
 	// llm_decision_evaluation_latency_seconds and llm_decision_match_total are
 	// emitted by decision.DecisionEngine.EvaluateDecisionsWithSignals; do not
@@ -149,8 +152,10 @@ func (r *OpenAIRouter) runDecisionEngine(
 
 	var result *decision.DecisionResult
 	var err error
-	if candidates != nil {
+	if scoped {
 		if len(candidates) == 0 {
+			// A scoped request evaluates its own candidates only: with none,
+			// it must not fall back to the default profile's decisions.
 			tracing.EndDecisionSpan(decisionSpan, 0.0, []string{}, r.Config.Strategy)
 			ctx.TraceContext = decisionCtx
 			return nil, r.defaultModelForUnmatchedDecision(originalModel)

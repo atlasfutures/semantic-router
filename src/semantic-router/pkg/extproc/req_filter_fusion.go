@@ -60,9 +60,12 @@ func isFusionDecision(decision *config.Decision) bool {
 	return decision != nil && decision.Algorithm != nil && decision.Algorithm.Type == "fusion"
 }
 
-func (r *OpenAIRouter) decisionCandidatesForRequestModel(modelName string) []config.Decision {
+// decisionCandidatesForRequestModel scopes decision evaluation for the
+// algorithm virtual slugs. The second result reports whether the model name is
+// such a slug, i.e. whether the returned candidates are a scope at all.
+func (r *OpenAIRouter) decisionCandidatesForRequestModel(modelName string) ([]config.Decision, bool) {
 	if r == nil || r.Config == nil {
-		return nil
+		return nil, false
 	}
 	// Algorithm virtual slugs are a default-profile surface: they select
 	// decisions without going through the entrypoint table, so they must not
@@ -76,7 +79,7 @@ func (r *OpenAIRouter) decisionCandidatesForRequestModel(modelName string) []con
 				candidates = append(candidates, decision)
 			}
 		}
-		return candidates
+		return candidates, true
 	}
 	if r.Config.IsFusionModelName(modelName) {
 		for _, decision := range r.Config.DefaultDecisions() {
@@ -84,7 +87,7 @@ func (r *OpenAIRouter) decisionCandidatesForRequestModel(modelName string) []con
 				candidates = append(candidates, decision)
 			}
 		}
-		return candidates
+		return candidates, true
 	}
 	if r.Config.IsFlowModelName(modelName) {
 		for _, decision := range r.Config.DefaultDecisions() {
@@ -92,9 +95,9 @@ func (r *OpenAIRouter) decisionCandidatesForRequestModel(modelName string) []con
 				candidates = append(candidates, decision)
 			}
 		}
-		return candidates
+		return candidates, true
 	}
-	return nil
+	return nil, false
 }
 
 func (r *OpenAIRouter) defaultLooperDecisionByAlgorithm(algorithmType string) *config.Decision {

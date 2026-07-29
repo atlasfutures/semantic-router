@@ -37,19 +37,16 @@ func (r *OpenAIRouter) requestModelActsAsAuto(modelName string) bool {
 }
 
 // decisionCandidatesForRequest scopes decision evaluation to the recipe the
-// entrypoint table selected for this request. Requests outside the entrypoint
-// table — and entrypoint aliases of the default recipe — keep the existing
-// candidate behavior: algorithm virtual slugs filter by algorithm type and
-// every other name evaluates the default recipe's decisions.
-func (r *OpenAIRouter) decisionCandidatesForRequest(originalModel string, ctx *RequestContext) []config.Decision {
+// entrypoint table selected for this request. The second result reports whether
+// the request is scoped at all: a scoped request evaluates exactly the returned
+// candidates, even when there are none, while an unscoped one falls back to the
+// default profile. Requests outside the entrypoint table — and entrypoint
+// aliases of the default recipe — keep the existing candidate behavior:
+// algorithm virtual slugs filter by algorithm type and every other name
+// evaluates the default recipe's decisions.
+func (r *OpenAIRouter) decisionCandidatesForRequest(originalModel string, ctx *RequestContext) ([]config.Decision, bool) {
 	if ctx != nil && ctx.EntrypointRecipe != nil && ctx.EntrypointRecipe.Name != config.DefaultRecipeName {
-		if ctx.EntrypointRecipe.Decisions == nil {
-			// A recipe with no decisions still scopes evaluation: an empty,
-			// non-nil slice keeps runDecisionEngine from falling back to the
-			// default profile's decisions.
-			return []config.Decision{}
-		}
-		return ctx.EntrypointRecipe.Decisions
+		return ctx.EntrypointRecipe.Decisions, true
 	}
 	return r.decisionCandidatesForRequestModel(originalModel)
 }

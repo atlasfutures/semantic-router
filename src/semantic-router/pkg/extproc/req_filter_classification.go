@@ -31,8 +31,8 @@ func (r *OpenAIRouter) performDecisionEvaluation(originalModel string, history s
 		return "", 0.0, entropy.ReasoningDecision{}, "", nil
 	}
 
-	// Check if decisions are configured in any routing profile; the flat
-	// Decisions field only carries the default recipe's.
+	// Check if decisions are configured in any routing profile: an
+	// entrypoint request may only be served by a non-default recipe.
 	if !r.Config.HasRoutingDecisions() {
 		if r.requestModelActsAsAuto(originalModel) {
 			logging.Warnf("No decisions configured, using default model")
@@ -47,13 +47,13 @@ func (r *OpenAIRouter) performDecisionEvaluation(originalModel string, history s
 		return "", 0.0, entropy.ReasoningDecision{}, "", nil
 	}
 
-	candidates := r.decisionCandidatesForRequest(originalModel, ctx)
-	signals, authzErr := r.evaluateSignalsForDecision(originalModel, signalInput, history.nonUserMessages, ctx, candidates)
+	candidates, scoped := r.decisionCandidatesForRequest(originalModel, ctx)
+	signals, authzErr := r.evaluateSignalsForDecision(originalModel, signalInput, history.nonUserMessages, ctx, candidates, scoped)
 	if authzErr != nil {
 		return "", 0, entropy.ReasoningDecision{}, "", authzErr
 	}
 
-	result, defaultModel := r.runDecisionEngine(originalModel, ctx, signals, candidates)
+	result, defaultModel := r.runDecisionEngine(originalModel, ctx, signals, candidates, scoped)
 	if result == nil {
 		return "", 0.0, entropy.ReasoningDecision{}, defaultModel, nil
 	}
