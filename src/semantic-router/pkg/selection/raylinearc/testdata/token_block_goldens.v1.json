@@ -1,7 +1,7 @@
 {
   "schema_version": "rayline.arc.token-blocks.v1",
   "provenance": {
-    "rayline_commit": "9187b0ad7c504934a627486bc8bf67ac2e251e6f",
+    "serializer_source_tag": "serializer-src-01b692ca14003693",
     "serializer": "mtrouter-token-blocks-v2",
     "model": "Qwen/Qwen3.5-0.8B",
     "model_revision": "2fc06364715b967f1860aea9cf38778875588b17",

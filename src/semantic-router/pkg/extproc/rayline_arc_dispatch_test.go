@@ -18,7 +18,11 @@ package extproc
 
 import (
 	"encoding/json"
+	"slices"
+	"strings"
 	"testing"
+
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -282,5 +286,63 @@ func TestRaylineARCCredentialFailsClosedWhenMissing(t *testing.T) {
 	if response == nil ||
 		int(response.GetImmediateResponse().GetStatus().GetCode()) != 503 {
 		t.Fatalf("expected fail-closed 503, got %#v", response)
+	}
+}
+
+// TestRaylineARCCredentialSurvivesLaterHeaderMutations proves profile extra
+// headers and decision mutations cannot add a second Authorization value or
+// delete the artifact-owned one. Envoy's default append action would
+// otherwise combine them into a multi-valued header.
+func TestRaylineARCCredentialSurvivesLaterHeaderMutations(t *testing.T) {
+	ctx := &RequestContext{
+		Headers:              map[string]string{},
+		RaylineARCDispatch:   &raylinearc.WorkerManifest{ID: "worker"},
+		RaylineARCAuthHeader: "Authorization",
+	}
+	state := &routeHeaderState{
+		setHeaders: []*core.HeaderValueOption{
+			{
+				Header: &core.HeaderValue{
+					Key:      "Authorization",
+					RawValue: []byte("Bearer artifact-owned-key"),
+				},
+				AppendAction: core.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+			},
+			{Header: &core.HeaderValue{Key: "x-keep", RawValue: []byte("yes")}},
+			{
+				Header: &core.HeaderValue{
+					Key:      "authorization",
+					RawValue: []byte("Bearer profile-extra-header"),
+				},
+			},
+			{
+				Header: &core.HeaderValue{
+					Key:      "Authorization",
+					RawValue: []byte("Bearer decision-mutation"),
+				},
+			},
+		},
+		removeHeaders: []string{"authorization", "x-drop"},
+	}
+
+	enforceRaylineARCCredentialHeader(state, ctx)
+
+	authValues := []string{}
+	for _, option := range state.setHeaders {
+		if strings.EqualFold(option.GetHeader().GetKey(), "Authorization") {
+			authValues = append(authValues, string(option.GetHeader().GetRawValue()))
+		}
+	}
+	if len(authValues) != 1 || authValues[0] != "Bearer artifact-owned-key" {
+		t.Fatalf("auth header values = %#v", authValues)
+	}
+	if len(state.setHeaders) != 2 {
+		t.Fatalf("unrelated headers were dropped: %#v", state.setHeaders)
+	}
+	if slices.Contains(state.removeHeaders, "authorization") {
+		t.Fatalf("artifact credential could be deleted: %#v", state.removeHeaders)
+	}
+	if !slices.Contains(state.removeHeaders, "x-drop") {
+		t.Fatalf("unrelated deletion was dropped: %#v", state.removeHeaders)
 	}
 }

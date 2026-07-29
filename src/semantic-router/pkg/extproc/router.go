@@ -3,6 +3,7 @@ package extproc
 import (
 	"encoding/json"
 	"sync"
+	"time"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -49,6 +50,11 @@ type OpenAIRouter struct {
 	MemoryExtractor             *memory.MemoryExtractor
 	RaylineARCEpisodeStore      raylinearc.EpisodeStore
 	raylineARCEpisodeStoreClose func() error
+	// raylineARCInflight counts episode transactions still holding a lease on
+	// this router. A hot reload swaps routers and closes the old one, but
+	// in-flight streams keep using it, so the episode store must not close
+	// until those leases reach a terminal commit or abort.
+	raylineARCInflight sync.WaitGroup
 
 	// CredentialResolver resolves per-user LLM API keys from multiple sources
 	// (ext_authz injected headers -> static config fallback).
@@ -77,10 +83,36 @@ func (r *OpenAIRouter) Close() error {
 		r.lookupTableCancel()
 	}
 	if r.raylineARCEpisodeStoreClose != nil {
+		r.waitForRaylineARCDrain()
 		return r.raylineARCEpisodeStoreClose()
 	}
 	return nil
 }
+
+// waitForRaylineARCDrain blocks until every in-flight ARC episode transaction
+// has finalized, bounded so a stuck upstream cannot block reload forever.
+func (r *OpenAIRouter) waitForRaylineARCDrain() {
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		r.raylineARCInflight.Wait()
+	}()
+	select {
+	case <-drained:
+	case <-time.After(raylineARCDrainTimeout):
+		logging.ComponentWarnEvent(
+			"extproc",
+			"rayline_arc_drain_timeout",
+			map[string]interface{}{
+				"timeout_seconds": raylineARCDrainTimeout.Seconds(),
+			},
+		)
+	}
+}
+
+// raylineARCDrainTimeout bounds reload on the encoder budget plus the
+// terminal-finalization allowance, so a hung upstream cannot stall it.
+const raylineARCDrainTimeout = 30 * time.Second
 
 // Ensure OpenAIRouter implements the ext_proc calls.
 var _ ext_proc.ExternalProcessorServer = (*OpenAIRouter)(nil)

@@ -103,6 +103,9 @@ func (r *OpenAIRouter) prepareRaylineARCTransaction(
 	if err != nil {
 		return nil, boundedARCPrepareFailure(err)
 	}
+	// Hold the router open until this transaction finalizes so a concurrent
+	// hot reload cannot close the episode store under an active lease.
+	r.raylineARCInflight.Add(1)
 	reqCtx.RaylineARCTransaction = newRaylineARCEpisodeTransaction(
 		r.RaylineARCEpisodeStore,
 		lease,
@@ -111,6 +114,7 @@ func (r *OpenAIRouter) prepareRaylineARCTransaction(
 		time.Duration(
 			arcConfig.Episode.LeaseTTLSeconds,
 		)*time.Second,
+		r.raylineARCInflight.Done,
 	)
 	return state, ""
 }

@@ -183,6 +183,7 @@ func TestRaylineARCTransactionRenewsRedisLease(t *testing.T) {
 			state,
 			episode,
 			90*time.Millisecond,
+			nil,
 		),
 	}
 	requestContext.RaylineARCTransaction.markSelection(0, 77)
@@ -244,6 +245,7 @@ func newTestARCEpisodeTransaction(
 			state,
 			episode,
 			time.Minute,
+			nil,
 		),
 	}
 	return &OpenAIRouter{}, requestContext, store, episode
@@ -283,5 +285,44 @@ func arcResponseHeaders(
 				},
 			},
 		},
+	}
+}
+
+// TestRouterCloseWaitsForInflightARCTransactions proves a hot reload cannot
+// close the episode store while a prepared lease is still awaiting its
+// terminal commit or abort.
+func TestRouterCloseWaitsForInflightARCTransactions(t *testing.T) {
+	closed := make(chan struct{})
+	router := &OpenAIRouter{
+		raylineARCEpisodeStoreClose: func() error {
+			close(closed)
+			return nil
+		},
+	}
+	router.raylineARCInflight.Add(1)
+
+	returned := make(chan struct{})
+	go func() {
+		defer close(returned)
+		_ = router.Close()
+	}()
+
+	select {
+	case <-closed:
+		t.Fatal("episode store closed while a transaction was in flight")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	router.raylineARCInflight.Done()
+
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return after the transaction finalized")
+	}
+	select {
+	case <-closed:
+	default:
+		t.Fatal("episode store was never closed")
 	}
 }

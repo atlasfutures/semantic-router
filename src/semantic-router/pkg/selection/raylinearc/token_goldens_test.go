@@ -25,7 +25,7 @@ import (
 
 const (
 	arcFixtureSchema     = "rayline.arc.token-blocks.v1"
-	raylineSourceCommit  = "9187b0ad7c504934a627486bc8bf67ac2e251e6f"
+	serializerSourceTag  = "serializer-src-01b692ca14003693"
 	qwenModelRevision    = "2fc06364715b967f1860aea9cf38778875588b17"
 	qwenVocabularyDigest = "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42"
 	qwenEOSID            = 248046
@@ -39,15 +39,15 @@ type tokenGoldenFixture struct {
 }
 
 type tokenGoldenProvenance struct {
-	RaylineCommit      string `json:"rayline_commit"`
-	Serializer         string `json:"serializer"`
-	Model              string `json:"model"`
-	ModelRevision      string `json:"model_revision"`
-	TokenizerSHA256    string `json:"tokenizer_sha256"`
-	EOSToken           string `json:"eos_token"`
-	EOSTokenID         int    `json:"eos_token_id"`
-	AddSpecialTokens   bool   `json:"add_special_tokens"`
-	ParseSpecialTokens bool   `json:"parse_special_tokens"`
+	SerializerSourceTag string `json:"serializer_source_tag"`
+	Serializer          string `json:"serializer"`
+	Model               string `json:"model"`
+	ModelRevision       string `json:"model_revision"`
+	TokenizerSHA256     string `json:"tokenizer_sha256"`
+	EOSToken            string `json:"eos_token"`
+	EOSTokenID          int    `json:"eos_token_id"`
+	AddSpecialTokens    bool   `json:"add_special_tokens"`
+	ParseSpecialTokens  bool   `json:"parse_special_tokens"`
 }
 
 type tokenGoldenCase struct {
@@ -97,7 +97,7 @@ func TestTokenBlockGoldenContract(t *testing.T) {
 
 func assertTokenGoldenProvenance(t *testing.T, provenance tokenGoldenProvenance) {
 	t.Helper()
-	if provenance.RaylineCommit != raylineSourceCommit ||
+	if provenance.SerializerSourceTag != serializerSourceTag ||
 		provenance.ModelRevision != qwenModelRevision ||
 		provenance.TokenizerSHA256 != qwenVocabularyDigest ||
 		provenance.Serializer != "mtrouter-token-blocks-v2" ||

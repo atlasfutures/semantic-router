@@ -34,11 +34,20 @@ def validate_rayline_arc_decisions(config) -> list[ValidationError]:
 
 
 def _effective_auto_model_names(config) -> set[str]:
-    """Mirror the router's EffectiveAutoModelNames resolution."""
+    """Mirror the router's EffectiveAutoModelNames resolution exactly.
+
+    Go normalizes by trimming and dropping empties, and falls back to the
+    defaults when normalization leaves nothing, so a whitespace-only entry
+    must not silently produce an empty alias set here.
+    """
     router = (getattr(config, "global_", None) or {}).get("router") or {}
-    explicit = router.get("auto_model_names")
+    explicit = {
+        str(name).strip()
+        for name in (router.get("auto_model_names") or [])
+        if str(name).strip()
+    }
     if explicit:
-        return {str(name).strip() for name in explicit if str(name).strip()}
+        return explicit
     configured = str(router.get("auto_model_name") or "").strip()
     return {"vllm-sr/auto", "auto", configured or "MoM"}
 
@@ -53,15 +62,22 @@ def _validate_rayline_arc_auto_aliases(config, decision) -> list[ValidationError
             field=f"decisions.{decision.name}.modelRefs",
         )
         for model in decision.modelRefs
-        if model.model in auto_names
+        if str(model.model).strip() in auto_names
     ]
 
 
 def _validate_rayline_arc_replay(config, decision) -> list[ValidationError]:
     """Router Replay defaults to enabled, so ARC decisions must disable it."""
     services = (getattr(config, "global_", None) or {}).get("services") or {}
-    replay = services.get("router_replay")
-    globally_enabled = True if replay is None else bool(replay.get("enabled", True))
+    if "router_replay" not in services:
+        # Absent: canonical defaults enable replay.
+        globally_enabled = True
+    else:
+        replay = services["router_replay"]
+        # Explicit YAML null zeroes the Go struct, leaving Enabled false.
+        globally_enabled = (
+            False if replay is None else bool(replay.get("enabled", True))
+        )
 
     for plugin in decision.plugins or []:
         if getattr(plugin, "type", None) != "router_replay":

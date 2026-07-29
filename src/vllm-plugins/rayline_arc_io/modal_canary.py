@@ -193,7 +193,8 @@ def canary(run_id: str) -> dict[str, Any]:
     return {
         "schema_version": "rayline.arc.rung-a-modal-canary.v1",
         "run_id": run_id,
-        "vllm_commit": rt.VLLM_COMMIT,
+        "vllm_commit": rt.VLLM_RUNG_B_COMMIT,
+        "vllm_base_wheel_commit": rt.VLLM_COMMIT,
         "vllm_version": rt.VLLM_VERSION,
         "model": rt.MODEL_ID,
         "model_revision": rt.MODEL_REVISION,

@@ -4,7 +4,13 @@ from types import SimpleNamespace
 
 from cli.algorithms import AlgorithmConfig, ModelRef
 from cli.rayline_arc_config import RaylineARCAlgorithmConfig
-from cli.validator_rayline_arc import _valid_host_port, _validate_rayline_arc_decision
+from cli.validator_rayline_arc import (
+    _effective_auto_model_names,
+    _valid_host_port,
+    _validate_rayline_arc_auto_aliases,
+    _validate_rayline_arc_decision,
+    _validate_rayline_arc_replay,
+)
 
 
 def test_valid_rayline_arc_decision():
@@ -111,3 +117,48 @@ def test_redis_address_table_matches_go_validator():
     }
     for address, expected in table.items():
         assert _valid_host_port(address) is expected, address
+
+
+def _config_with(global_block, model_names=("worker-a", "worker-b"), plugins=None):
+    decision = SimpleNamespace(
+        name="arc",
+        algorithm=SimpleNamespace(type="rayline_arc"),
+        modelRefs=[SimpleNamespace(model=name) for name in model_names],
+        plugins=plugins or [],
+    )
+    return SimpleNamespace(decisions=[decision], global_=global_block)
+
+
+def test_auto_alias_normalization_matches_go():
+    table = [
+        ({}, {"vllm-sr/auto", "auto", "MoM"}),
+        ({"router": {"auto_model_names": ["   "]}}, {"vllm-sr/auto", "auto", "MoM"}),
+        ({"router": {"auto_model_name": "  "}}, {"vllm-sr/auto", "auto", "MoM"}),
+        ({"router": {"auto_model_name": "Router"}}, {"vllm-sr/auto", "auto", "Router"}),
+        ({"router": {"auto_model_names": [" pick ", "pick"]}}, {"pick"}),
+    ]
+    for global_block, expected in table:
+        assert _effective_auto_model_names(_config_with(global_block)) == expected
+
+
+def test_auto_alias_collision_trims_candidate():
+    config = _config_with({}, model_names=(" auto ", "worker-b"))
+    errors = _validate_rayline_arc_auto_aliases(config, config.decisions[0])
+    assert len(errors) == 1
+    assert "collides with an auto-routing alias" in str(errors[0])
+
+    clean = _config_with({}, model_names=("worker-a", "worker-b"))
+    assert _validate_rayline_arc_auto_aliases(clean, clean.decisions[0]) == []
+
+
+def test_router_replay_null_matches_go_loader():
+    # Absent key: canonical defaults enable replay, so ARC must be rejected.
+    absent = _config_with({})
+    assert _validate_rayline_arc_replay(absent, absent.decisions[0])
+
+    # Explicit YAML null zeroes the Go struct (Enabled=false): accepted.
+    explicit_null = _config_with({"services": {"router_replay": None}})
+    assert _validate_rayline_arc_replay(explicit_null, explicit_null.decisions[0]) == []
+
+    disabled = _config_with({"services": {"router_replay": {"enabled": False}}})
+    assert _validate_rayline_arc_replay(disabled, disabled.decisions[0]) == []

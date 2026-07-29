@@ -45,6 +45,9 @@ type raylineARCEpisodeTransaction struct {
 	renewCancel      context.CancelFunc
 	renewDone        chan struct{}
 	leaseLost        atomic.Bool
+	// onFinalize releases this transaction's hold on the owning router so a
+	// hot reload cannot close the episode store underneath an active lease.
+	onFinalize func()
 }
 
 func newRaylineARCEpisodeTransaction(
@@ -53,6 +56,7 @@ func newRaylineARCEpisodeTransaction(
 	state *raylinearc.EpisodeState,
 	episodeIDHash string,
 	leaseTTL time.Duration,
+	onFinalize func(),
 ) *raylineARCEpisodeTransaction {
 	transaction := &raylineARCEpisodeTransaction{
 		store:         store,
@@ -61,9 +65,17 @@ func newRaylineARCEpisodeTransaction(
 		episodeIDHash: episodeIDHash,
 		leaseTTL:      leaseTTL,
 		selectedArm:   -1,
+		onFinalize:    onFinalize,
 	}
 	transaction.startRenewal()
 	return transaction
+}
+
+func (transaction *raylineARCEpisodeTransaction) releaseHold() {
+	if transaction.onFinalize != nil {
+		transaction.onFinalize()
+		transaction.onFinalize = nil
+	}
 }
 
 func (transaction *raylineARCEpisodeTransaction) markSelection(
@@ -86,6 +98,7 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 		return nil
 	}
 	transaction.finalizeOnce.Do(func() {
+		defer transaction.releaseHold()
 		transaction.stopRenewal()
 		if !transaction.selectionReady || transaction.leaseLost.Load() {
 			transaction.finalizeErr = ErrRaylineARCEpisodeLeaseLost
@@ -127,6 +140,7 @@ func (transaction *raylineARCEpisodeTransaction) abort(
 		return nil
 	}
 	transaction.finalizeOnce.Do(func() {
+		defer transaction.releaseHold()
 		transaction.stopRenewal()
 		transaction.finalizeErr = transaction.store.Abort(
 			ctx,

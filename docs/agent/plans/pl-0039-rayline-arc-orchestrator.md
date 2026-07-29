@@ -1018,8 +1018,9 @@ Implementation:
 - Added public cross-protocol success/failure goldens covering multiple tools,
   image/thinking drops, Unicode, canonical JSON, scalar coercion, result
   errors, malformed arguments, and unresolved IDs.
-- Added serializer-facing goldens from Rayline commit
-  `9187b0ad7c504934a627486bc8bf67ac2e251e6f` and the public pinned
+- Added serializer-facing goldens from the frozen private Rayline
+  serializer (identified in public fixtures by a non-reversible source tag)
+  and the public pinned
   `Qwen/Qwen3.5-0.8B` tokenizer revision. They pin the tokenizer SHA256, EOS
   `248046`, literal-special parsing disabled, separate header/content token
   IDs, task/context construction, turn numbering, empty-task behavior, task
