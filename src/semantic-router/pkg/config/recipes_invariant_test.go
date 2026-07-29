@@ -163,3 +163,49 @@ providers:
 		t.Fatal("expected HasRoutingDecisions to see the recipes-only decisions")
 	}
 }
+
+func TestAllRoutingDecisionsReturnsAFreshSlice(t *testing.T) {
+	cfg, err := ParseYAMLBytes([]byte(invariantTwoRecipeYAML))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	all := cfg.AllRoutingDecisions()
+	if len(all) != 2 {
+		t.Fatalf("expected both profiles' decisions, got %+v", all)
+	}
+
+	if &all[0] == &cfg.Recipes[0].Decisions[0] {
+		t.Fatal("AllRoutingDecisions aliased a recipe's own decision slice")
+	}
+
+	all[0].Name = "mutated_by_caller"
+
+	if got := cfg.DefaultDecisions(); len(got) != 1 || got[0].Name != "default_route" {
+		t.Fatalf("mutating the returned slice changed the default recipe: %+v", got)
+	}
+	if again := cfg.AllRoutingDecisions(); len(again) != 2 || again[0].Name != "default_route" {
+		t.Fatalf("mutating the returned slice changed config state: %+v", again)
+	}
+}
+
+func TestDefaultDecisionsIsNilWithoutADefaultRecipe(t *testing.T) {
+	var nilCfg *RouterConfig
+	if decisions := nilCfg.DefaultDecisions(); decisions != nil {
+		t.Fatalf("expected nil decisions from a nil config, got %+v", decisions)
+	}
+
+	// A config whose only profile is a named recipe has no default profile,
+	// so the default-scoped accessor must stay empty instead of borrowing the
+	// named recipe's decisions.
+	cfg := &RouterConfig{Recipes: []RoutingRecipe{{
+		Name:      "privacy",
+		Decisions: []Decision{{Name: "privacy_route"}},
+	}}}
+	if decisions := cfg.DefaultDecisions(); decisions != nil {
+		t.Fatalf("expected nil decisions without a default recipe, got %+v", decisions)
+	}
+	if !cfg.HasRoutingDecisions() {
+		t.Fatal("expected the named recipe's decisions to count as routing decisions")
+	}
+}
