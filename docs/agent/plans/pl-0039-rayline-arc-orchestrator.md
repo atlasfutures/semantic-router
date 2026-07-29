@@ -1617,6 +1617,123 @@ Cost and rollback:
   fenced episodes abort on encoder/readiness failure; Redis state remains
   bounded by its configured TTL.
 
+### Loop 14 — Post-acceptance adversarial review (2026-07-28)
+
+Status: complete for the recorded rounds; three findings remain open and are
+listed below with evidence. The feature's behavioral acceptance criteria still
+hold on the final commits.
+
+Method: five fresh Codex CLI rounds (codex-cli 0.145.0, gpt-5.6-sol, xhigh),
+each round running three independent reviews — the full vLLM branch diff, the
+full Semantic Router branch diff, and a cross-repository protocol/identity/
+numerical/deployment pass. Each round reviewed the complete merge-base diff of
+the *new* HEADs, not a re-check of prior findings. Every finding was
+re-verified against the code before any edit; one was rejected with a
+reproduction.
+
+Result: 45 validated findings fixed. Every round found at least one defect
+that an earlier round's own fix introduced or left incomplete downstream —
+the strongest argument for repeating fresh passes rather than stopping at the
+first clean-looking round.
+
+Final commits:
+
+- vLLM `davidvgilmore/vllm:rayline/pl-0039-causal-mean` at `162bcefe1`
+  (6 commits): batch-eviction no longer erases live MEAN accumulators
+  (preemption-resume does); GritLM declares `encoder_only` so the generic
+  causal-MEAN rule cannot admit its chunk-unaware pooler; heads always
+  receive `[batch, hidden]`; MEAN skips prefix reads while preserving
+  KV-connector initialization; one segmented FP32 reduction per step with
+  batch-independent op counts (profiled 1/1/1 at batches 8/64/256).
+- Semantic Router `davidvgilmore/semantic-router:rayline/pl-0039` at
+  `4afa3361` (12 commits): the Go client accepts the real
+  `IOProcessorResponse` envelope and requires its engine-owned fields; the
+  artifact credential is authoritative at dispatch and survives every later
+  mutation layer; ARC decisions cannot collide with auto aliases or enable
+  Router Replay; Redis prepare/renewal refresh fence and state TTLs;
+  renewal cancellation no longer aborts a valid 2xx commit; reload drains
+  in-flight episode holds acquired atomically against a closing flag; the
+  tool path cannot erase or misframe the artifact-owned body; deployment
+  pins the CUDA base and router image by digest and fails the build if the
+  vLLM overlay list drifts; the plugin attests fork runtime behavior and its
+  own source digest; private pins, prompts, and content fingerprints are out
+  of logs, traces, errors, and public fixtures.
+
+Rejected finding: a reviewer reported that a partially finished causal-MEAN
+batch with heterogeneous matryoshka dimensions and uniform activation would
+raise a type error. Running the exact case
+(`[finished(dim=4), None, finished(dim=8)]`, activation enabled) returns
+`[(4,) norm=1.0, None, (8,) norm=1.0]`: `PoolerNormalize` accepts list input,
+so the premise does not hold. Coverage was added anyway.
+
+Partially rejected: a reviewer asked to remove exact hardware, GPU-memory,
+drift, and cost measurements from this ledger as private data. The private
+serializer commit it also flagged was a real leak and is redacted. The
+measurements are acceptance results over public synthetic inputs containing
+no artifact, provider, or holdout data, and this repository's evidence rules
+require recording exact commits, hardware, results, and costs; removing them
+would make the ledger unfalsifiable.
+
+Open findings (validated, not yet fixed):
+
+1. The reload drain cutoff is a hard-coded 30 seconds while the shipped
+   encoder budget is 180 seconds, so a request still inside the encoder
+   during a reload can lose its Redis client. Every stream on an ARC-capable
+   router also delays reload up to that bound. Needs a deliberate policy
+   decision (derive the bound from the configured encoder budget, or scope
+   the hold to ARC requests only).
+2. Renewal-detected lease loss is consumed only at commit, so a fenced-out
+   decision can still shape a body and call the provider before commit
+   discovers the loss. Fail-closed-before-dispatch requires consuming
+   `leaseLost` at selection time.
+3. Artifact worker IDs reach generic selection metrics labels, routing
+   events, and traces, while the Helm profile sources those IDs from
+   Secrets. ARC observability should use the arm index or a constant label.
+
+GPU evidence: five Rung B H100 acceptance runs across the loop, each on the
+exact then-current vLLM commit, every frozen budget passing with selected-arm
+parity `1.0`. Representative final values: normalized max-abs `0.008703`
+(limit `0.0105`), L2 `0.073566` (`0.089`), cosine `0.002706` (`0.00325`);
+score max-abs `0.001424` (`0.00175`); top-two-gap drift `0.000670` (`0.005`);
+peak GPU memory 77,451-77,453 MiB on `NVIDIA H100 80GB HBM3`. Values track
+the pre-review acceptance to ~1e-6, confirming the pooling restructuring is
+numerically inert on the single-sequence ARC path. No canary app remained deployed.
+
+Cost ledger (Modal pricing-snapshot estimates from each run's frozen
+2026-07-28 rates; the Modal billing dashboard remains authoritative):
+
+| Run | vLLM commit | Estimated |
+| --- | --- | --- |
+| `rayline-arc-rung-b-postreview-20260728` | `4c4c79bb3` | `$0.34659` |
+| `rayline-arc-rung-b-plugin-postreview-20260728` | `4c4c79bb3` | `$0.13841` |
+| `rayline-arc-rung-b-round3-20260728` | `918a2d159` | `$0.29392` |
+| `rayline-arc-rung-b-round4-20260728` | `3786ca6f6` | `$0.27888` |
+| `rayline-arc-rung-b-final-20260728` | `162bcefe1` | `$0.27879` |
+| **This loop** | | **`$1.33660`** |
+
+Cumulative PL-0039 spend is `$8.79323` (`$7.45663402` from loops 1-13 plus
+this loop), inside the user's approximately `$50` authorization. Each run was
+predeclared against a `$3.00` loop ceiling and re-run only when a commit
+changed overlaid pooling or scheduling code; the GritLM-only commit
+`143fa9c79` was verified inert by an empty diff over the overlaid runtime
+files and deliberately not re-run.
+
+Gates on the final commits: vLLM focused pooling/config/scheduler suite
+(267 passed) and `pre-commit run` clean; Semantic Router `make agent-lint`,
+`make agent-validate`, `make agent-ci-gate`, `make test-semantic-router`
+(281 passed), `go test -race` over ARC/episode/encoder paths, live
+`redis:7-alpine` fencing and TTL tests, `make rayline-arc-test-integration`
+(all phases), `make vllm-sr-test-integration`, `make memory-test-integration`,
+`make helm-ci-validate`, `make helm-safety-validate`,
+`make agent-docs-ci-gate`, plugin pytest/Ruff (38 passed), CLI suite
+(44 passed), and CPU `agent-dev`/`serve`/`smoke`/`stop`.
+
+Hardware: local Apple Silicon arm64 with OrbStack Docker for CPU gates;
+Modal H100 for acceptance. Two integration batteries aborted on host disk
+exhaustion; `uv cache prune` (52.6 GiB), `docker builder prune` (17.1 GB),
+and `docker image prune` (110.6 GB) reclaimed space with no volumes or user
+data removed, and the suites were re-run to completion.
+
 ## Operating Rules
 
 - Re-read this plan's checkbox/evidence state at the start of every loop; work
