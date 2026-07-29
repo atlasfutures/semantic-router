@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-// The normalized state carries one intentional redundancy: DefaultDecisions
-// mirrors the default recipe's decisions so single-profile read sites keep
-// working. These tests pin that redundancy — and the deliberate asymmetry of
-// the neighbouring Signals/Projections fields, which hold the GLOBAL registry
+// Recipes are the single source of truth for decisions: DefaultDecisions() is
+// a derived accessor for the default recipe's decisions, never a second copy.
+// These tests pin that derivation — and the deliberate asymmetry of the
+// neighbouring Signals/Projections fields, which hold the GLOBAL registry
 // rather than the default profile's rules.
 
 const invariantTwoRecipeYAML = `
@@ -73,14 +73,14 @@ func TestDefaultDecisionsMirrorTheDefaultRecipe(t *testing.T) {
 	if defaultRecipe == nil {
 		t.Fatal("expected a default recipe")
 	}
-	if !reflect.DeepEqual(cfg.DefaultDecisions, defaultRecipe.Decisions) {
+	if !reflect.DeepEqual(cfg.DefaultDecisions(), defaultRecipe.Decisions) {
 		t.Fatalf("DefaultDecisions drifted from the default recipe:\n flat: %+v\n recipe: %+v",
-			cfg.DefaultDecisions, defaultRecipe.Decisions)
+			cfg.DefaultDecisions(), defaultRecipe.Decisions)
 	}
 
 	// DefaultDecisions is default-only; AllRoutingDecisions spans every recipe.
-	if len(cfg.DefaultDecisions) != 1 || cfg.DefaultDecisions[0].Name != "default_route" {
-		t.Fatalf("expected only the default recipe's decision in the flat field, got %+v", cfg.DefaultDecisions)
+	if len(cfg.DefaultDecisions()) != 1 || cfg.DefaultDecisions()[0].Name != "default_route" {
+		t.Fatalf("expected only the default recipe's decision in the flat field, got %+v", cfg.DefaultDecisions())
 	}
 	all := cfg.AllRoutingDecisions()
 	if len(all) != 2 {
@@ -155,9 +155,9 @@ providers:
 	if defaultRecipe == nil {
 		t.Fatal("expected the explicit default recipe to normalize")
 	}
-	if !reflect.DeepEqual(cfg.DefaultDecisions, defaultRecipe.Decisions) {
+	if !reflect.DeepEqual(cfg.DefaultDecisions(), defaultRecipe.Decisions) {
 		t.Fatalf("recipes-only layout left the flat field out of sync:\n flat: %+v\n recipe: %+v",
-			cfg.DefaultDecisions, defaultRecipe.Decisions)
+			cfg.DefaultDecisions(), defaultRecipe.Decisions)
 	}
 	if !cfg.HasRoutingDecisions() {
 		t.Fatal("expected HasRoutingDecisions to see the recipes-only decisions")

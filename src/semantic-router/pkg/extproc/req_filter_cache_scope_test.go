@@ -12,14 +12,12 @@ func TestHandleCaching_SkipsGlobalCacheWhenDecisionsConfiguredButNoDecisionMatch
 	mockCache := &mockStreamingCache{}
 	cfg := &config.RouterConfig{
 		SemanticCache: config.SemanticCache{Enabled: true},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name:      "default-route",
-					ModelRefs: []config.ModelRef{{Model: "test"}},
-				},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name:      "default-route",
+				ModelRefs: []config.ModelRef{{Model: "test"}},
 			},
-		},
+		}}},
 	}
 	router := &OpenAIRouter{Cache: mockCache, Config: cfg}
 	ctx := &RequestContext{

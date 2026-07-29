@@ -3,7 +3,6 @@ package config
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"gopkg.in/yaml.v3"
 )
 
 var _ = Describe("ModalityDetectionConfig", func() {
@@ -501,7 +500,7 @@ decisions:
 		cfgYAML := buildConfigYAML(`          modality_detection:
             method: classifier`)
 		cfg := &RouterConfig{}
-		err := yaml.Unmarshal([]byte(cfgYAML), cfg)
+		err := unmarshalFlatRouterConfigForTest([]byte(cfgYAML), cfg)
 		Expect(err).NotTo(HaveOccurred())
 
 		err = validateConfigStructure(cfg)
@@ -513,7 +512,7 @@ decisions:
 		cfgYAML := buildConfigYAML(`          modality_detection:
             method: keyword`)
 		cfg := &RouterConfig{}
-		err := yaml.Unmarshal([]byte(cfgYAML), cfg)
+		err := unmarshalFlatRouterConfigForTest([]byte(cfgYAML), cfg)
 		Expect(err).NotTo(HaveOccurred())
 
 		err = validateConfigStructure(cfg)
@@ -525,7 +524,7 @@ decisions:
 		cfgYAML := buildConfigYAML(`          modality_detection:
             method: regex`)
 		cfg := &RouterConfig{}
-		err := yaml.Unmarshal([]byte(cfgYAML), cfg)
+		err := unmarshalFlatRouterConfigForTest([]byte(cfgYAML), cfg)
 		Expect(err).NotTo(HaveOccurred())
 
 		err = validateConfigStructure(cfg)
@@ -540,7 +539,7 @@ decisions:
               - "generate an image"
               - "draw a picture"`)
 		cfg := &RouterConfig{}
-		err := yaml.Unmarshal([]byte(cfgYAML), cfg)
+		err := unmarshalFlatRouterConfigForTest([]byte(cfgYAML), cfg)
 		Expect(err).NotTo(HaveOccurred())
 
 		err = validateConfigStructure(cfg)
@@ -554,7 +553,7 @@ decisions:
             classifier:
               model_path: ./models/mmbert32k-modality-router-merged`)
 		cfg := &RouterConfig{}
-		err := yaml.Unmarshal([]byte(cfgYAML), cfg)
+		err := unmarshalFlatRouterConfigForTest([]byte(cfgYAML), cfg)
 		Expect(err).NotTo(HaveOccurred())
 
 		err = validateConfigStructure(cfg)
@@ -573,7 +572,7 @@ decisions:
             confidence_threshold: 0.7
             lower_threshold_ratio: 0.7`)
 		cfg := &RouterConfig{}
-		err := yaml.Unmarshal([]byte(cfgYAML), cfg)
+		err := unmarshalFlatRouterConfigForTest([]byte(cfgYAML), cfg)
 		Expect(err).NotTo(HaveOccurred())
 
 		err = validateConfigStructure(cfg)
@@ -587,7 +586,7 @@ decisions:
               - "generate an image"
             confidence_threshold: 0.7`)
 		cfg := &RouterConfig{}
-		err := yaml.Unmarshal([]byte(cfgYAML), cfg)
+		err := unmarshalFlatRouterConfigForTest([]byte(cfgYAML), cfg)
 		Expect(err).NotTo(HaveOccurred())
 
 		err = validateConfigStructure(cfg)

@@ -50,12 +50,12 @@ func TestNewLegacyClassifierFromConfigRequiresUsedCoreSignalMappings(t *testing.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := newLegacyClassifierMappingGateConfig(t)
-			cfg.DefaultDecisions = []config.Decision{{
+			setDefaultRecipeDecisionsForTest(cfg, []config.Decision{{
 				Name: "guarded-route",
 				Rules: config.RuleNode{Operator: "OR", Conditions: []config.RuleNode{
 					tt.rule,
 				}},
-			}}
+			}})
 
 			classifier, err := NewLegacyClassifierFromConfig(cfg)
 			require.Nil(t, classifier)
@@ -86,11 +86,9 @@ func newLegacyClassifierMappingGateConfig(t *testing.T) *config.RouterConfig {
 				JailbreakMappingPath: filepath.Join(missingRoot, "jailbreak_type_mapping.json"),
 			},
 		},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{{
-				Name:  "default-route",
-				Rules: config.RuleNode{Operator: "AND", Conditions: []config.RuleNode{}},
-			}},
-		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{{
+			Name:  "default-route",
+			Rules: config.RuleNode{Operator: "AND", Conditions: []config.RuleNode{}},
+		}}}},
 	}
 }

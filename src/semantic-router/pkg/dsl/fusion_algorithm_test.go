@@ -31,7 +31,7 @@ ROUTE fusion_reasoning {
 	if len(errs) > 0 {
 		t.Fatalf("compile errors: %v", errs)
 	}
-	fusion := cfg.DefaultDecisions[0].Algorithm.Fusion
+	fusion := cfg.DefaultDecisions()[0].Algorithm.Fusion
 	assertFusionAlgorithmConfig(t, fusion)
 }
 
@@ -40,35 +40,33 @@ func TestDecompileFusionAlgorithmRoundTrip(t *testing.T) {
 	includeResponses := true
 	temperature := 0.2
 	cfg := &config.RouterConfig{
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name:     "fusion-reasoning",
-					Priority: 10,
-					ModelRefs: []config.ModelRef{
-						{Model: "judge-model"},
-						{Model: "panel-a"},
-						{Model: "panel-b"},
-					},
-					Algorithm: &config.AlgorithmConfig{
-						Type: "fusion",
-						Fusion: &config.FusionAlgorithmConfig{
-							Model:                        "judge-model",
-							AnalysisModels:               []string{"panel-a", "panel-b"},
-							MaxConcurrent:                2,
-							MaxCompletionTokens:          1024,
-							RoundTimeoutSeconds:          90,
-							MinSuccessfulResponses:       1,
-							Temperature:                  &temperature,
-							IncludeAnalysis:              &includeAnalysis,
-							IncludeIntermediateResponses: &includeResponses,
-							OnError:                      "skip",
-							JudgePromptVersion:           "fusion-v1",
-						},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name:     "fusion-reasoning",
+				Priority: 10,
+				ModelRefs: []config.ModelRef{
+					{Model: "judge-model"},
+					{Model: "panel-a"},
+					{Model: "panel-b"},
+				},
+				Algorithm: &config.AlgorithmConfig{
+					Type: "fusion",
+					Fusion: &config.FusionAlgorithmConfig{
+						Model:                        "judge-model",
+						AnalysisModels:               []string{"panel-a", "panel-b"},
+						MaxConcurrent:                2,
+						MaxCompletionTokens:          1024,
+						RoundTimeoutSeconds:          90,
+						MinSuccessfulResponses:       1,
+						Temperature:                  &temperature,
+						IncludeAnalysis:              &includeAnalysis,
+						IncludeIntermediateResponses: &includeResponses,
+						OnError:                      "skip",
+						JudgePromptVersion:           "fusion-v1",
 					},
 				},
 			},
-		},
+		}}},
 	}
 
 	dslText, err := DecompileRouting(cfg)
@@ -91,7 +89,7 @@ func TestDecompileFusionAlgorithmRoundTrip(t *testing.T) {
 	if len(errs) > 0 {
 		t.Fatalf("round-trip compile errors: %v\n%s", errs, dslText)
 	}
-	assertFusionAlgorithmConfig(t, roundTripped.DefaultDecisions[0].Algorithm.Fusion)
+	assertFusionAlgorithmConfig(t, roundTripped.DefaultDecisions()[0].Algorithm.Fusion)
 }
 
 func assertFusionAlgorithmConfig(t *testing.T, fusion *config.FusionAlgorithmConfig) {

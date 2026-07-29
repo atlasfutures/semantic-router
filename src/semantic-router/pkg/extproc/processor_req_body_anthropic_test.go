@@ -11,11 +11,9 @@ import (
 func TestHandleAnthropicRoutingStartsRouterReplay(t *testing.T) {
 	cfg := &config.RouterConfig{
 		RouterReplay: config.RouterReplayConfig{Enabled: true, StoreBackend: "memory"},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{Name: "simple-queries", ModelRefs: []config.ModelRef{{Model: "claude-sonnet-4.6"}}},
-			},
-		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{Name: "simple-queries", ModelRefs: []config.ModelRef{{Model: "claude-sonnet-4.6"}}},
+		}}},
 	}
 	recorders := initializeReplayRecorders(cfg)
 	router := &OpenAIRouter{

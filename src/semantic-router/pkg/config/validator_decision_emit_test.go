@@ -16,7 +16,7 @@ func TestValidateDecisionEmitContracts(t *testing.T) {
 	}{
 		{
 			name: "valid retention directive",
-			cfg: &RouterConfig{IntelligentRouting: IntelligentRouting{DefaultDecisions: []Decision{{
+			cfg: &RouterConfig{Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
 				Name: "r",
 				Emits: []EmitDirective{{
 					Kind: emitDirectiveKindRetention,
@@ -27,49 +27,49 @@ func TestValidateDecisionEmitContracts(t *testing.T) {
 						PreferPrefixRetention: retentionTestBool(true),
 					},
 				}},
-			}}}},
+			}}}}},
 		},
 		{
 			name: "unsupported kind",
-			cfg: &RouterConfig{IntelligentRouting: IntelligentRouting{DefaultDecisions: []Decision{{
+			cfg: &RouterConfig{Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
 				Name:  "r",
 				Emits: []EmitDirective{{Kind: "bogus"}},
-			}}}},
+			}}}}},
 			wantErr: "unsupported EMIT kind",
 		},
 		{
 			name: "duplicate retention",
-			cfg: &RouterConfig{IntelligentRouting: IntelligentRouting{DefaultDecisions: []Decision{{
+			cfg: &RouterConfig{Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
 				Name: "r",
 				Emits: []EmitDirective{
 					{Kind: emitDirectiveKindRetention, Retention: &RetentionDirective{Drop: retentionTestBool(false)}},
 					{Kind: emitDirectiveKindRetention, Retention: &RetentionDirective{TTLTurns: retentionTestInt(1)}},
 				},
-			}}}},
+			}}}}},
 			wantErr: "duplicate EMIT kind",
 		},
 		{
 			name: "missing retention payload",
-			cfg: &RouterConfig{IntelligentRouting: IntelligentRouting{DefaultDecisions: []Decision{{
+			cfg: &RouterConfig{Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
 				Name:  "r",
 				Emits: []EmitDirective{{Kind: emitDirectiveKindRetention}},
-			}}}},
+			}}}}},
 			wantErr: "retention payload is required",
 		},
 		{
 			name: "negative ttl",
-			cfg: &RouterConfig{IntelligentRouting: IntelligentRouting{DefaultDecisions: []Decision{{
+			cfg: &RouterConfig{Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
 				Name: "r",
 				Emits: []EmitDirective{{
 					Kind:      emitDirectiveKindRetention,
 					Retention: &RetentionDirective{TTLTurns: retentionTestInt(-1)},
 				}},
-			}}}},
+			}}}}},
 			wantErr: "ttl_turns must be >= 0",
 		},
 		{
 			name: "drop ttl conflict",
-			cfg: &RouterConfig{IntelligentRouting: IntelligentRouting{DefaultDecisions: []Decision{{
+			cfg: &RouterConfig{Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
 				Name: "r",
 				Emits: []EmitDirective{{
 					Kind: emitDirectiveKindRetention,
@@ -78,7 +78,7 @@ func TestValidateDecisionEmitContracts(t *testing.T) {
 						TTLTurns: retentionTestInt(3),
 					},
 				}},
-			}}}},
+			}}}}},
 			wantErr: "drop=true conflicts with ttl_turns",
 		},
 	}

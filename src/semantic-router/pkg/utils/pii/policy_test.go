@@ -1,6 +1,7 @@
 package pii
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -10,15 +11,6 @@ import (
 func makeSignalBasedPIIConfig(decisionName, piiSignalName string, piiTypesAllowed []string) *config.RouterConfig {
 	return &config.RouterConfig{
 		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name: decisionName,
-					Rules: config.RuleCombination{
-						Type: "pii",
-						Name: piiSignalName,
-					},
-				},
-			},
 			Signals: config.Signals{
 				PIIRules: []config.PIIRule{
 					{
@@ -29,6 +21,23 @@ func makeSignalBasedPIIConfig(decisionName, piiSignalName string, piiTypesAllowe
 				},
 			},
 		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Signals: config.Signals{
+			PIIRules: []config.PIIRule{
+				{
+					Name:            piiSignalName,
+					Threshold:       0.5,
+					PIITypesAllowed: piiTypesAllowed,
+				},
+			},
+		}, Decisions: []config.Decision{
+			{
+				Name: decisionName,
+				Rules: config.RuleCombination{
+					Type: "pii",
+					Name: piiSignalName,
+				},
+			},
+		}}},
 	}
 }
 
@@ -52,9 +61,7 @@ func TestIsPIIEnabled(t *testing.T) {
 			decisionName: "nonexistent",
 			setupConfig: func() *config.RouterConfig {
 				return &config.RouterConfig{
-					IntelligentRouting: config.IntelligentRouting{
-						DefaultDecisions: []config.Decision{},
-					},
+					Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{}}},
 				}
 			},
 			expected: false,
@@ -73,17 +80,15 @@ func TestIsPIIEnabled(t *testing.T) {
 			setupConfig: func() *config.RouterConfig {
 				// Decision exists but has no PII signal reference in rules
 				return &config.RouterConfig{
-					IntelligentRouting: config.IntelligentRouting{
-						DefaultDecisions: []config.Decision{
-							{
+					Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+						{
+							Name: "general",
+							Rules: config.RuleCombination{
+								Type: "domain",
 								Name: "general",
-								Rules: config.RuleCombination{
-									Type: "domain",
-									Name: "general",
-								},
 							},
 						},
-					},
+					}}},
 				}
 			},
 			expected: false,
@@ -118,17 +123,15 @@ func TestCheckPolicy(t *testing.T) {
 			setupConfig: func() *config.RouterConfig {
 				// No PII signal reference → PII disabled
 				return &config.RouterConfig{
-					IntelligentRouting: config.IntelligentRouting{
-						DefaultDecisions: []config.Decision{
-							{
+					Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+						{
+							Name: "general",
+							Rules: config.RuleCombination{
+								Type: "domain",
 								Name: "general",
-								Rules: config.RuleCombination{
-									Type: "domain",
-									Name: "general",
-								},
 							},
 						},
-					},
+					}}},
 				}
 			},
 			expectAllowed: true,
@@ -193,22 +196,19 @@ func TestCheckPolicy(t *testing.T) {
 				t.Errorf("CheckPolicy() denied = %v, want %v", denied, tt.expectDenied)
 			}
 
-			// Check if denied types match
-			if tt.expectDenied != nil {
-				for _, expectedDenied := range tt.expectDenied {
-					found := false
-					for _, d := range denied {
-						if d == expectedDenied {
-							found = true
-							break
-						}
-					}
-					if !found {
-						t.Errorf("Expected denied PII type %s not found in result", expectedDenied)
-					}
-				}
-			}
+			assertDeniedPIITypes(t, denied, tt.expectDenied)
 		})
+	}
+}
+
+// assertDeniedPIITypes reports any expected denied PII type missing from the
+// checker's result.
+func assertDeniedPIITypes(t *testing.T, denied, expected []string) {
+	t.Helper()
+	for _, expectedDenied := range expected {
+		if !slices.Contains(denied, expectedDenied) {
+			t.Errorf("Expected denied PII type %s not found in result", expectedDenied)
+		}
 	}
 }
 
@@ -356,13 +356,11 @@ func TestExtractAllContent(t *testing.T) {
 
 func TestNewPolicyChecker(t *testing.T) {
 	cfg := &config.RouterConfig{
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name: "test-decision",
-				},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name: "test-decision",
 			},
-		},
+		}}},
 	}
 
 	checker := NewPolicyChecker(cfg)
@@ -375,16 +373,14 @@ func TestNewPolicyChecker(t *testing.T) {
 		t.Error("PolicyChecker.Config is nil")
 	}
 
-	if len(checker.Config.DefaultDecisions) != 1 {
-		t.Errorf("Expected 1 decision, got %d", len(checker.Config.DefaultDecisions))
+	if len(checker.Config.DefaultDecisions()) != 1 {
+		t.Errorf("Expected 1 decision, got %d", len(checker.Config.DefaultDecisions()))
 	}
 }
 
 func TestCheckPolicy_NilDecision(t *testing.T) {
 	cfg := &config.RouterConfig{
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{},
-		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{}}},
 	}
 
 	checker := NewPolicyChecker(cfg)

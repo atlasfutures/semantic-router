@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 )
 
 var testModelWeightCandidates = []string{
@@ -51,4 +53,21 @@ func skipSpecIfModelArtifactsMissing(label string, modelPath string) {
 		return
 	}
 	Skip(fmt.Sprintf("%s artifacts not available at %s (missing model weights)", label, modelPath))
+}
+
+// setDefaultRecipeDecisionsForTest points the default routing profile at the
+// given decisions. Decisions live on config.Recipes, so tests that used to
+// assign a flat field go through the default recipe instead; the rest of the
+// recipe (its signal and projection profile) is preserved.
+func setDefaultRecipeDecisionsForTest(cfg *config.RouterConfig, decisions []config.Decision) {
+	if recipe := cfg.DefaultRecipe(); recipe != nil {
+		recipe.Decisions = decisions
+		return
+	}
+	cfg.Recipes = append(cfg.Recipes, config.RoutingRecipe{
+		Name:        config.DefaultRecipeName,
+		Signals:     cfg.Signals,
+		Projections: cfg.Projections,
+		Decisions:   decisions,
+	})
 }

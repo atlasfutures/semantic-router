@@ -20,19 +20,19 @@ func TestEvaluateDecisionWithEngineForDecisionsRestrictsCandidates(t *testing.T)
 		Config: &config.RouterConfig{
 			IntelligentRouting: config.IntelligentRouting{
 				Strategy: "priority",
-				DefaultDecisions: []config.Decision{
-					{
-						Name:     "static-business",
-						Priority: 100,
-						Rules: config.RuleCombination{
-							Type: config.SignalTypeDomain,
-							Name: "business",
-						},
-						Algorithm: &config.AlgorithmConfig{Type: "static"},
-					},
-					fusionDecision,
-				},
 			},
+			Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+				{
+					Name:     "static-business",
+					Priority: 100,
+					Rules: config.RuleCombination{
+						Type: config.SignalTypeDomain,
+						Name: "business",
+					},
+					Algorithm: &config.AlgorithmConfig{Type: "static"},
+				},
+				fusionDecision,
+			}}},
 		},
 	}
 	signals := &SignalResults{MatchedDomainRules: []string{"business"}}

@@ -30,13 +30,13 @@ func TestHandleConfigPutReplacesExistingConfig(t *testing.T) {
 	configPath := filepath.Join(tempDir, "config.yaml")
 
 	baseCfg := minimalDeployTestConfig("old_route")
-	baseCfg.Projections.Partitions = []config.ProjectionPartition{{
+	setDeployTestProjectionPartitions(baseCfg, []config.ProjectionPartition{{
 		Name:        "legacy_partition",
 		Semantics:   "softmax_exclusive",
 		Temperature: 0.1,
 		Members:     []string{"math"},
 		Default:     "math",
-	}}
+	}})
 	baseYAML := mustMarshalCanonicalConfigYAML(t, baseCfg)
 	if err := os.WriteFile(configPath, baseYAML, 0o644); err != nil {
 		t.Fatalf("write base config: %v", err)
@@ -92,19 +92,30 @@ func TestHandleConfigPatchRejectsInvalidRemoteEmbeddingProvider(t *testing.T) {
 	}
 }
 
+// setDeployTestProjectionPartitions declares the partitions on both the global
+// projection registry and the default recipe. Canonical export reads the
+// default recipe's routing profile, while the flat registry stays the union
+// across recipes.
+func setDeployTestProjectionPartitions(cfg *config.RouterConfig, partitions []config.ProjectionPartition) {
+	cfg.Projections.Partitions = partitions
+	if recipe := cfg.DefaultRecipe(); recipe != nil {
+		recipe.Projections.Partitions = partitions
+	}
+}
+
 func writeDeployTestBaseConfig(t *testing.T) string {
 	t.Helper()
 
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.yaml")
 	baseCfg := minimalDeployTestConfig("old_route")
-	baseCfg.Projections.Partitions = []config.ProjectionPartition{{
+	setDeployTestProjectionPartitions(baseCfg, []config.ProjectionPartition{{
 		Name:        "legacy_partition",
 		Semantics:   "softmax_exclusive",
 		Temperature: 0.1,
 		Members:     []string{"math"},
 		Default:     "math",
-	}}
+	}})
 	baseYAML := mustMarshalCanonicalConfigYAML(t, baseCfg)
 	if err := os.WriteFile(configPath, baseYAML, 0o644); err != nil {
 		t.Fatalf("write base config: %v", err)
@@ -222,22 +233,26 @@ func minimalDeployTestConfig(decisionName string) *config.RouterConfig {
 					CategoryMetadata: config.CategoryMetadata{Name: "math"},
 				}},
 			},
-			DefaultDecisions: []config.Decision{{
-				Name:     decisionName,
-				Priority: 100,
-				Tier:     1,
-				Rules: config.RuleCombination{
-					Operator: "AND",
-					Conditions: []config.RuleNode{{
-						Type: "domain",
-						Name: "math",
-					}},
-				},
-				ModelRefs: []config.ModelRef{{
-					Model: "qwen-test",
-				}},
-			}},
 		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Signals: config.Signals{
+			Categories: []config.Category{{
+				CategoryMetadata: config.CategoryMetadata{Name: "math"},
+			}},
+		}, Decisions: []config.Decision{{
+			Name:     decisionName,
+			Priority: 100,
+			Tier:     1,
+			Rules: config.RuleCombination{
+				Operator: "AND",
+				Conditions: []config.RuleNode{{
+					Type: "domain",
+					Name: "math",
+				}},
+			},
+			ModelRefs: []config.ModelRef{{
+				Model: "qwen-test",
+			}},
+		}}}},
 	}
 }
 

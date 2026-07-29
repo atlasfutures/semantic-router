@@ -11,9 +11,7 @@ import (
 func signalSkipClassifier(decisions ...config.Decision) *classification.Classifier {
 	return &classification.Classifier{
 		Config: &config.RouterConfig{
-			IntelligentRouting: config.IntelligentRouting{
-				DefaultDecisions: decisions,
-			},
+			Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: decisions}},
 		},
 	}
 }

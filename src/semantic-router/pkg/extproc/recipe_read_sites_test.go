@@ -198,7 +198,7 @@ providers:
 		t.Fatalf("the algorithm slug must not resolve an entrypoint, got %+v", ctx.EntrypointRecipe)
 	}
 
-	if candidates := router.decisionCandidatesForRequest(slug, ctx); len(candidates) != 0 {
+	if candidates, _ := router.decisionCandidatesForRequest(slug, ctx); len(candidates) != 0 {
 		t.Fatalf("the privacy recipe's decision leaked into the %s slug: %+v", slug, candidates)
 	}
 	if decision := router.defaultLooperDecisionByAlgorithm("fusion"); decision != nil {

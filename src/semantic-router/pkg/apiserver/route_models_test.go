@@ -133,32 +133,30 @@ func openAIModelsEntrypointTestConfig() *config.RouterConfig {
 func openAIModelsLooperTestConfig() *config.RouterConfig {
 	return &config.RouterConfig{
 		Looper: config.LooperConfig{Endpoint: "http://looper"},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name:      "remom-route",
-					ModelRefs: []config.ModelRef{{Model: "worker-a"}},
-					Algorithm: &config.AlgorithmConfig{
-						Type:  "remom",
-						ReMoM: &config.ReMoMAlgorithmConfig{BreadthSchedule: []int{1}},
-					},
-				},
-				{
-					Name:      "fusion-route",
-					ModelRefs: []config.ModelRef{{Model: "worker-a"}},
-					Algorithm: &config.AlgorithmConfig{
-						Type: "fusion",
-					},
-				},
-				{
-					Name:      "flow-route",
-					ModelRefs: []config.ModelRef{{Model: "worker-a"}},
-					Algorithm: &config.AlgorithmConfig{
-						Type: "workflows",
-					},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name:      "remom-route",
+				ModelRefs: []config.ModelRef{{Model: "worker-a"}},
+				Algorithm: &config.AlgorithmConfig{
+					Type:  "remom",
+					ReMoM: &config.ReMoMAlgorithmConfig{BreadthSchedule: []int{1}},
 				},
 			},
-		},
+			{
+				Name:      "fusion-route",
+				ModelRefs: []config.ModelRef{{Model: "worker-a"}},
+				Algorithm: &config.AlgorithmConfig{
+					Type: "fusion",
+				},
+			},
+			{
+				Name:      "flow-route",
+				ModelRefs: []config.ModelRef{{Model: "worker-a"}},
+				Algorithm: &config.AlgorithmConfig{
+					Type: "workflows",
+				},
+			},
+		}}},
 	}
 }
 

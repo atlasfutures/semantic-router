@@ -81,9 +81,7 @@ func TestAllRoutingDecisionsFallsBackToFlatDecisions(t *testing.T) {
 	// Configs built without the canonical loader (DSL fragments, hand-built
 	// test configs) carry no recipes; the flat decisions are the only profile.
 	cfg := &RouterConfig{
-		IntelligentRouting: IntelligentRouting{
-			DefaultDecisions: []Decision{{Name: "flat_route"}},
-		},
+		Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{Name: "flat_route"}}}},
 	}
 
 	decisions := cfg.AllRoutingDecisions()

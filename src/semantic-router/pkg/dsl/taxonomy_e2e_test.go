@@ -9,6 +9,38 @@ import (
 )
 
 func taxonomyConfigFixture(t *testing.T) *config.RouterConfig {
+	// The default recipe carries the routing profile; the flat
+	// Signals/Projections fields mirror it as the global registry.
+	signals := config.Signals{
+		KBRules: []config.KBSignalRule{
+			{
+				Name: "privacy_policy",
+				KB:   "privacy_kb",
+				Target: config.KBSignalTarget{
+					Kind:  config.KBTargetKindGroup,
+					Value: "privacy_policy",
+				},
+				Match: config.KBMatchBest,
+			},
+		},
+	}
+	projections := config.Projections{
+		Scores: []config.ProjectionScore{
+			{
+				Name:   "privacy_contrastive_score",
+				Method: "weighted_sum",
+				Inputs: []config.ProjectionScoreInput{
+					{
+						Type:        config.ProjectionInputKBMetric,
+						KB:          "privacy_kb",
+						Metric:      "private_vs_public",
+						Weight:      1.0,
+						ValueSource: "score",
+					},
+				},
+			},
+		},
+	}
 	return &config.RouterConfig{
 		KnowledgeBases: []config.KnowledgeBaseConfig{
 			{
@@ -33,56 +65,28 @@ func taxonomyConfigFixture(t *testing.T) *config.RouterConfig {
 			},
 		},
 		IntelligentRouting: config.IntelligentRouting{
-			Signals: config.Signals{
-				KBRules: []config.KBSignalRule{
-					{
-						Name: "privacy_policy",
-						KB:   "privacy_kb",
-						Target: config.KBSignalTarget{
-							Kind:  config.KBTargetKindGroup,
-							Value: "privacy_policy",
-						},
-						Match: config.KBMatchBest,
-					},
-				},
-			},
-			Projections: config.Projections{
-				Scores: []config.ProjectionScore{
-					{
-						Name:   "privacy_contrastive_score",
-						Method: "weighted_sum",
-						Inputs: []config.ProjectionScoreInput{
-							{
-								Type:        config.ProjectionInputKBMetric,
-								KB:          "privacy_kb",
-								Metric:      "private_vs_public",
-								Weight:      1.0,
-								ValueSource: "score",
-							},
-						},
-					},
-				},
-			},
-			DefaultDecisions: []config.Decision{
-				{
-					Name:     "local_privacy_policy",
-					Priority: 250,
-					Rules: config.RuleCombination{
-						Operator: "AND",
-						Conditions: []config.RuleCondition{
-							{Type: "kb", Name: "privacy_policy"},
-						},
-					},
-					ModelRefs: []config.ModelRef{{Model: "local/private-qwen"}},
-					Plugins: []config.DecisionPlugin{
-						mustKBDecisionPlugin(t, config.DecisionPluginTools, config.ToolsPluginConfig{
-							Enabled: true,
-							Mode:    config.ToolsPluginModePassthrough,
-						}),
-					},
-				},
-			},
+			Signals:     signals,
+			Projections: projections,
 		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Signals: signals, Projections: projections, Decisions: []config.Decision{
+			{
+				Name:     "local_privacy_policy",
+				Priority: 250,
+				Rules: config.RuleCombination{
+					Operator: "AND",
+					Conditions: []config.RuleCondition{
+						{Type: "kb", Name: "privacy_policy"},
+					},
+				},
+				ModelRefs: []config.ModelRef{{Model: "local/private-qwen"}},
+				Plugins: []config.DecisionPlugin{
+					mustKBDecisionPlugin(t, config.DecisionPluginTools, config.ToolsPluginConfig{
+						Enabled: true,
+						Mode:    config.ToolsPluginModePassthrough,
+					}),
+				},
+			},
+		}}},
 	}
 }
 

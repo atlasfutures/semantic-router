@@ -248,26 +248,24 @@ func TestResolveDirectFusionDecisionAllowsRequestOnlyPluginPanel(t *testing.T) {
 func TestResolveDirectFusionDecisionFallsBackToConfiguredDecisionByPriority(t *testing.T) {
 	router := &OpenAIRouter{
 		Config: &config.RouterConfig{
-			IntelligentRouting: config.IntelligentRouting{
-				DefaultDecisions: []config.Decision{
-					{
-						Name:     "low-priority-fusion",
-						Priority: 10,
-						ModelRefs: []config.ModelRef{
-							{Model: "panel-a"},
-						},
-						Algorithm: &config.AlgorithmConfig{Type: "fusion"},
+			Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+				{
+					Name:     "low-priority-fusion",
+					Priority: 10,
+					ModelRefs: []config.ModelRef{
+						{Model: "panel-a"},
 					},
-					{
-						Name:     "high-priority-fusion",
-						Priority: 20,
-						ModelRefs: []config.ModelRef{
-							{Model: "panel-b"},
-						},
-						Algorithm: &config.AlgorithmConfig{Type: "fusion"},
-					},
+					Algorithm: &config.AlgorithmConfig{Type: "fusion"},
 				},
-			},
+				{
+					Name:     "high-priority-fusion",
+					Priority: 20,
+					ModelRefs: []config.ModelRef{
+						{Model: "panel-b"},
+					},
+					Algorithm: &config.AlgorithmConfig{Type: "fusion"},
+				},
+			}}},
 		},
 	}
 
@@ -283,32 +281,33 @@ func TestResolveDirectFusionDecisionFallsBackToConfiguredDecisionByPriority(t *t
 func TestDecisionCandidatesForFusionModelOnlyIncludesFusionDecisions(t *testing.T) {
 	router := &OpenAIRouter{
 		Config: &config.RouterConfig{
-			IntelligentRouting: config.IntelligentRouting{
-				DefaultDecisions: []config.Decision{
-					{
-						Name:      "static-route",
-						Algorithm: &config.AlgorithmConfig{Type: "static"},
-					},
-					{
-						Name:      "fusion-route",
-						Algorithm: &config.AlgorithmConfig{Type: "fusion"},
-					},
-					{
-						Name:      "remom-route",
-						Algorithm: &config.AlgorithmConfig{Type: "remom"},
-					},
-					{
-						Name:      "flow-route",
-						Algorithm: &config.AlgorithmConfig{Type: "workflows"},
-					},
+			Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+				{
+					Name:      "static-route",
+					Algorithm: &config.AlgorithmConfig{Type: "static"},
 				},
-			},
+				{
+					Name:      "fusion-route",
+					Algorithm: &config.AlgorithmConfig{Type: "fusion"},
+				},
+				{
+					Name:      "remom-route",
+					Algorithm: &config.AlgorithmConfig{Type: "remom"},
+				},
+				{
+					Name:      "flow-route",
+					Algorithm: &config.AlgorithmConfig{Type: "workflows"},
+				},
+			}}},
 		},
 	}
 
-	assert.Nil(t, router.decisionCandidatesForRequestModel("vllm-sr/auto"))
+	autoCandidates, autoScoped := router.decisionCandidatesForRequestModel("vllm-sr/auto")
+	assert.Nil(t, autoCandidates)
+	assert.False(t, autoScoped, "the auto model is not an algorithm slug, so it scopes nothing")
 
-	candidates := router.decisionCandidatesForRequestModel("vllm-sr/fusion")
+	candidates, scoped := router.decisionCandidatesForRequestModel("vllm-sr/fusion")
+	require.True(t, scoped)
 	require.Len(t, candidates, 1)
 	assert.Equal(t, "fusion-route", candidates[0].Name)
 }
@@ -316,30 +315,29 @@ func TestDecisionCandidatesForFusionModelOnlyIncludesFusionDecisions(t *testing.
 func TestDecisionCandidatesForReMoMModelOnlyIncludesReMoMDecisions(t *testing.T) {
 	router := &OpenAIRouter{
 		Config: &config.RouterConfig{
-			IntelligentRouting: config.IntelligentRouting{
-				DefaultDecisions: []config.Decision{
-					{
-						Name:      "static-route",
-						Algorithm: &config.AlgorithmConfig{Type: "static"},
-					},
-					{
-						Name:      "fusion-route",
-						Algorithm: &config.AlgorithmConfig{Type: "fusion"},
-					},
-					{
-						Name:      "remom-route",
-						Algorithm: &config.AlgorithmConfig{Type: "remom"},
-					},
-					{
-						Name:      "flow-route",
-						Algorithm: &config.AlgorithmConfig{Type: "workflows"},
-					},
+			Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+				{
+					Name:      "static-route",
+					Algorithm: &config.AlgorithmConfig{Type: "static"},
 				},
-			},
+				{
+					Name:      "fusion-route",
+					Algorithm: &config.AlgorithmConfig{Type: "fusion"},
+				},
+				{
+					Name:      "remom-route",
+					Algorithm: &config.AlgorithmConfig{Type: "remom"},
+				},
+				{
+					Name:      "flow-route",
+					Algorithm: &config.AlgorithmConfig{Type: "workflows"},
+				},
+			}}},
 		},
 	}
 
-	candidates := router.decisionCandidatesForRequestModel("vllm-sr/remom")
+	candidates, scoped := router.decisionCandidatesForRequestModel("vllm-sr/remom")
+	require.True(t, scoped)
 	require.Len(t, candidates, 1)
 	assert.Equal(t, "remom-route", candidates[0].Name)
 }
@@ -347,30 +345,29 @@ func TestDecisionCandidatesForReMoMModelOnlyIncludesReMoMDecisions(t *testing.T)
 func TestDecisionCandidatesForFlowModelOnlyIncludesWorkflowDecisions(t *testing.T) {
 	router := &OpenAIRouter{
 		Config: &config.RouterConfig{
-			IntelligentRouting: config.IntelligentRouting{
-				DefaultDecisions: []config.Decision{
-					{
-						Name:      "static-route",
-						Algorithm: &config.AlgorithmConfig{Type: "static"},
-					},
-					{
-						Name:      "fusion-route",
-						Algorithm: &config.AlgorithmConfig{Type: "fusion"},
-					},
-					{
-						Name:      "remom-route",
-						Algorithm: &config.AlgorithmConfig{Type: "remom"},
-					},
-					{
-						Name:      "flow-route",
-						Algorithm: &config.AlgorithmConfig{Type: "workflows"},
-					},
+			Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+				{
+					Name:      "static-route",
+					Algorithm: &config.AlgorithmConfig{Type: "static"},
 				},
-			},
+				{
+					Name:      "fusion-route",
+					Algorithm: &config.AlgorithmConfig{Type: "fusion"},
+				},
+				{
+					Name:      "remom-route",
+					Algorithm: &config.AlgorithmConfig{Type: "remom"},
+				},
+				{
+					Name:      "flow-route",
+					Algorithm: &config.AlgorithmConfig{Type: "workflows"},
+				},
+			}}},
 		},
 	}
 
-	candidates := router.decisionCandidatesForRequestModel("vllm-sr/flow")
+	candidates, scoped := router.decisionCandidatesForRequestModel("vllm-sr/flow")
+	require.True(t, scoped)
 	require.Len(t, candidates, 1)
 	assert.Equal(t, "flow-route", candidates[0].Name)
 }
@@ -393,32 +390,30 @@ func TestResolveDirectReMoMDecisionRejectsNonReMoMMatchedDecision(t *testing.T) 
 func TestResolveDirectReMoMDecisionFallsBackToHighestPriorityReMoMDecision(t *testing.T) {
 	router := &OpenAIRouter{
 		Config: &config.RouterConfig{
-			IntelligentRouting: config.IntelligentRouting{
-				DefaultDecisions: []config.Decision{
-					{
-						Name:     "low-priority-remom",
-						Priority: 10,
-						ModelRefs: []config.ModelRef{
-							{Model: "panel-a"},
-						},
-						Algorithm: &config.AlgorithmConfig{
-							Type:  "remom",
-							ReMoM: &config.ReMoMAlgorithmConfig{BreadthSchedule: []int{1}},
-						},
+			Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+				{
+					Name:     "low-priority-remom",
+					Priority: 10,
+					ModelRefs: []config.ModelRef{
+						{Model: "panel-a"},
 					},
-					{
-						Name:     "high-priority-remom",
-						Priority: 20,
-						ModelRefs: []config.ModelRef{
-							{Model: "panel-b"},
-						},
-						Algorithm: &config.AlgorithmConfig{
-							Type:  "remom",
-							ReMoM: &config.ReMoMAlgorithmConfig{BreadthSchedule: []int{1}},
-						},
+					Algorithm: &config.AlgorithmConfig{
+						Type:  "remom",
+						ReMoM: &config.ReMoMAlgorithmConfig{BreadthSchedule: []int{1}},
 					},
 				},
-			},
+				{
+					Name:     "high-priority-remom",
+					Priority: 20,
+					ModelRefs: []config.ModelRef{
+						{Model: "panel-b"},
+					},
+					Algorithm: &config.AlgorithmConfig{
+						Type:  "remom",
+						ReMoM: &config.ReMoMAlgorithmConfig{BreadthSchedule: []int{1}},
+					},
+				},
+			}}},
 		},
 	}
 
@@ -449,26 +444,24 @@ func TestResolveDirectFlowDecisionRejectsNonFlowMatchedDecision(t *testing.T) {
 func TestResolveDirectFlowDecisionFallsBackToConfiguredDecisionByPriority(t *testing.T) {
 	router := &OpenAIRouter{
 		Config: &config.RouterConfig{
-			IntelligentRouting: config.IntelligentRouting{
-				DefaultDecisions: []config.Decision{
-					{
-						Name:     "low-priority-flow",
-						Priority: 10,
-						ModelRefs: []config.ModelRef{
-							{Model: "worker-a"},
-						},
-						Algorithm: &config.AlgorithmConfig{Type: "workflows"},
+			Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+				{
+					Name:     "low-priority-flow",
+					Priority: 10,
+					ModelRefs: []config.ModelRef{
+						{Model: "worker-a"},
 					},
-					{
-						Name:     "high-priority-flow",
-						Priority: 20,
-						ModelRefs: []config.ModelRef{
-							{Model: "worker-b"},
-						},
-						Algorithm: &config.AlgorithmConfig{Type: "workflows"},
-					},
+					Algorithm: &config.AlgorithmConfig{Type: "workflows"},
 				},
-			},
+				{
+					Name:     "high-priority-flow",
+					Priority: 20,
+					ModelRefs: []config.ModelRef{
+						{Model: "worker-b"},
+					},
+					Algorithm: &config.AlgorithmConfig{Type: "workflows"},
+				},
+			}}},
 		},
 	}
 
@@ -739,14 +732,12 @@ func TestHandleLooperInternalRequestWithPluginsResolvesProviderModelAlias(t *tes
 	router := &OpenAIRouter{
 		Cache: &spyCache{},
 		Config: &config.RouterConfig{
-			IntelligentRouting: config.IntelligentRouting{
-				DefaultDecisions: []config.Decision{
-					{
-						Name:      "fusion_alias",
-						ModelRefs: []config.ModelRef{{Model: "panel-a"}},
-					},
+			Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+				{
+					Name:      "fusion_alias",
+					ModelRefs: []config.ModelRef{{Model: "panel-a"}},
 				},
-			},
+			}}},
 			BackendModels: config.BackendModels{
 				ModelConfig: map[string]config.ModelParams{
 					"panel-a": {

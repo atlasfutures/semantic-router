@@ -96,19 +96,33 @@ func TestSignalGroupDefaultFallbackMatchesDomainRouteWhenNoGroupMemberFires(t *t
 						Default:     "other",
 					}},
 				},
-				DefaultDecisions: []config.Decision{
-					{
-						Name:     "other-route",
-						Priority: 100,
-						Rules: config.RuleCombination{
-							Operator: "AND",
-							Conditions: []config.RuleCondition{
-								{Type: config.SignalTypeDomain, Name: "other"},
-							},
+			},
+			Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Signals: config.Signals{
+				Categories: []config.Category{
+					{CategoryMetadata: config.CategoryMetadata{Name: "economics"}},
+					{CategoryMetadata: config.CategoryMetadata{Name: "health"}},
+					{CategoryMetadata: config.CategoryMetadata{Name: "other"}},
+				},
+			}, Projections: config.Projections{
+				Partitions: []config.ProjectionPartition{{
+					Name:        "finance-vs-health",
+					Semantics:   "softmax_exclusive",
+					Temperature: 0.1,
+					Members:     []string{"economics", "health", "other"},
+					Default:     "other",
+				}},
+			}, Decisions: []config.Decision{
+				{
+					Name:     "other-route",
+					Priority: 100,
+					Rules: config.RuleCombination{
+						Operator: "AND",
+						Conditions: []config.RuleCondition{
+							{Type: config.SignalTypeDomain, Name: "other"},
 						},
 					},
 				},
-			},
+			}}},
 		},
 	}
 
@@ -148,19 +162,33 @@ func TestSignalGroupDefaultFallbackMatchesEmbeddingRouteWhenNoGroupMemberFires(t
 						Default:     "cooking",
 					}},
 				},
-				DefaultDecisions: []config.Decision{
-					{
-						Name:     "cooking-route",
-						Priority: 100,
-						Rules: config.RuleCombination{
-							Operator: "AND",
-							Conditions: []config.RuleCondition{
-								{Type: config.SignalTypeEmbedding, Name: "cooking"},
-							},
+			},
+			Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Signals: config.Signals{
+				EmbeddingRules: []config.EmbeddingRule{
+					{Name: "ai"},
+					{Name: "programming"},
+					{Name: "cooking"},
+				},
+			}, Projections: config.Projections{
+				Partitions: []config.ProjectionPartition{{
+					Name:        "tech-topics",
+					Semantics:   "softmax_exclusive",
+					Temperature: 0.1,
+					Members:     []string{"ai", "programming", "cooking"},
+					Default:     "cooking",
+				}},
+			}, Decisions: []config.Decision{
+				{
+					Name:     "cooking-route",
+					Priority: 100,
+					Rules: config.RuleCombination{
+						Operator: "AND",
+						Conditions: []config.RuleCondition{
+							{Type: config.SignalTypeEmbedding, Name: "cooking"},
 						},
 					},
 				},
-			},
+			}}},
 		},
 	}
 
@@ -270,7 +298,7 @@ func TestAnalyzeSoftmaxSignalGroupCentroidsWarnsOnSimilarMembers(t *testing.T) {
 
 func buildGroupedDomainClassifier(mock *MockCategoryInference) *Classifier {
 	cfg := domainTestConfig()
-	cfg.DefaultDecisions = []config.Decision{
+	setDefaultRecipeDecisionsForTest(cfg, []config.Decision{
 		{
 			Name:     "health-route",
 			Priority: 200,
@@ -291,7 +319,7 @@ func buildGroupedDomainClassifier(mock *MockCategoryInference) *Classifier {
 				},
 			},
 		},
-	}
+	})
 	cfg.Projections.Partitions = []config.ProjectionPartition{
 		{
 			Name:        "finance-vs-health",
@@ -336,29 +364,39 @@ func buildGroupedEmbeddingClassifier(t *testing.T) *Classifier {
 						Default:     "cooking",
 					}},
 				},
-				DefaultDecisions: []config.Decision{
-					{
-						Name:     "programming-route",
-						Priority: 200,
-						Rules: config.RuleCombination{
-							Operator: "AND",
-							Conditions: []config.RuleCondition{
-								{Type: config.SignalTypeEmbedding, Name: "programming"},
-							},
-						},
-					},
-					{
-						Name:     "ai-route",
-						Priority: 100,
-						Rules: config.RuleCombination{
-							Operator: "AND",
-							Conditions: []config.RuleCondition{
-								{Type: config.SignalTypeEmbedding, Name: "ai"},
-							},
+			},
+			Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Signals: config.Signals{
+				EmbeddingRules: rules,
+			}, Projections: config.Projections{
+				Partitions: []config.ProjectionPartition{{
+					Name:        "tech-topics",
+					Semantics:   "softmax_exclusive",
+					Temperature: 0.1,
+					Members:     []string{"ai", "programming", "cooking"},
+					Default:     "cooking",
+				}},
+			}, Decisions: []config.Decision{
+				{
+					Name:     "programming-route",
+					Priority: 200,
+					Rules: config.RuleCombination{
+						Operator: "AND",
+						Conditions: []config.RuleCondition{
+							{Type: config.SignalTypeEmbedding, Name: "programming"},
 						},
 					},
 				},
-			},
+				{
+					Name:     "ai-route",
+					Priority: 100,
+					Rules: config.RuleCombination{
+						Operator: "AND",
+						Conditions: []config.RuleCondition{
+							{Type: config.SignalTypeEmbedding, Name: "ai"},
+						},
+					},
+				},
+			}}},
 		},
 		keywordEmbeddingClassifier: embeddingClassifier,
 	}

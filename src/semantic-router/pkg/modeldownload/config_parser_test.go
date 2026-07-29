@@ -139,18 +139,16 @@ func TestIsModelDirectory(t *testing.T) {
 
 func TestExtractModelPathsSkipsRootLevelModelFiles(t *testing.T) {
 	cfg := &config.RouterConfig{
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name: "default-route",
-					Algorithm: &config.AlgorithmConfig{
-						GMTRouter: &config.GMTRouterSelectionConfig{
-							ModelPath: "models/gmtrouter.pt",
-						},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name: "default-route",
+				Algorithm: &config.AlgorithmConfig{
+					GMTRouter: &config.GMTRouterSelectionConfig{
+						ModelPath: "models/gmtrouter.pt",
 					},
 				},
 			},
-		},
+		}}},
 	}
 
 	if got := ExtractModelPaths(cfg); slices.Contains(got, "models/gmtrouter.pt") {
@@ -203,12 +201,10 @@ func TestBuildModelSpecsIncludesConfigDerivedRequiredFiles(t *testing.T) {
 				},
 			},
 		},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{{
-				Name:  "domain-route",
-				Rules: config.RuleNode{Type: config.SignalTypeDomain, Name: "billing"},
-			}},
-		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{{
+			Name:  "domain-route",
+			Rules: config.RuleNode{Type: config.SignalTypeDomain, Name: "billing"},
+		}}}},
 	}
 
 	specs, err := BuildModelSpecs(cfg)
@@ -314,12 +310,10 @@ func TestBuildModelSpecsSkipsUnusedCoreClassifierModels(t *testing.T) {
 				JailbreakMappingPath: "models/mmbert32k-jailbreak-detector-merged/jailbreak_type_mapping.json",
 			},
 		},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{{
-				Name:  "default-route",
-				Rules: config.RuleNode{Operator: "AND", Conditions: []config.RuleNode{}},
-			}},
-		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{{
+			Name:  "default-route",
+			Rules: config.RuleNode{Operator: "AND", Conditions: []config.RuleNode{}},
+		}}}},
 	}
 
 	specs, err := BuildModelSpecs(cfg)
@@ -355,16 +349,14 @@ func TestBuildModelSpecsIncludesUsedCoreClassifierModels(t *testing.T) {
 				JailbreakMappingPath: "models/mmbert32k-jailbreak-detector-merged/jailbreak_type_mapping.json",
 			},
 		},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{{
-				Name: "guarded-route",
-				Rules: config.RuleNode{Operator: "OR", Conditions: []config.RuleNode{
-					{Type: config.SignalTypeDomain, Name: "billing"},
-					{Type: config.SignalTypePII, Name: "contains_pii"},
-					{Type: config.SignalTypeJailbreak, Name: "detector"},
-				}},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{{
+			Name: "guarded-route",
+			Rules: config.RuleNode{Operator: "OR", Conditions: []config.RuleNode{
+				{Type: config.SignalTypeDomain, Name: "billing"},
+				{Type: config.SignalTypePII, Name: "contains_pii"},
+				{Type: config.SignalTypeJailbreak, Name: "detector"},
 			}},
-		},
+		}}}},
 	}
 
 	specs, err := BuildModelSpecs(cfg)
@@ -409,11 +401,25 @@ func TestBuildModelSpecsIncludesCoreClassifierUsedViaProjection(t *testing.T) {
 					}},
 				}},
 			},
-			DefaultDecisions: []config.Decision{{
-				Name:  "guarded-route",
-				Rules: config.RuleNode{Type: config.SignalTypeProjection, Name: "high_risk"},
-			}},
 		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Projections: config.Projections{
+			Scores: []config.ProjectionScore{{
+				Name:   "risk_score",
+				Method: "weighted_sum",
+				Inputs: []config.ProjectionScoreInput{{Type: config.SignalTypeJailbreak, Name: "detector", Weight: 1.0}},
+			}},
+			Mappings: []config.ProjectionMapping{{
+				Name:   "risk_map",
+				Source: "risk_score",
+				Method: "threshold",
+				Outputs: []config.ProjectionMappingOutput{{
+					Name: "high_risk",
+				}},
+			}},
+		}, Decisions: []config.Decision{{
+			Name:  "guarded-route",
+			Rules: config.RuleNode{Type: config.SignalTypeProjection, Name: "high_risk"},
+		}}}},
 	}
 
 	specs, err := BuildModelSpecs(cfg)

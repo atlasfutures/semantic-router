@@ -9,17 +9,13 @@ import (
 
 func TestRouterConfigUsesRuntimeRegistryBeforeGlobal(t *testing.T) {
 	globalCfg := &config.RouterConfig{
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{{Name: "global-decision"}},
-		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{{Name: "global-decision"}}}},
 	}
 	restoreGlobalConfig := replaceExtProcGlobalConfigForTest(globalCfg)
 	defer restoreGlobalConfig()
 
 	runtimeCfg := &config.RouterConfig{
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{{Name: "runtime-decision"}},
-		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{{Name: "runtime-decision"}}}},
 	}
 	router := &OpenAIRouter{
 		RuntimeRegistry: routerruntime.NewRegistry(runtimeCfg),
@@ -38,9 +34,7 @@ func TestRouterConfigUsesRuntimeRegistryBeforeGlobal(t *testing.T) {
 
 func TestRouterConfigWithEmptyRuntimeRegistryDoesNotUseGlobal(t *testing.T) {
 	globalCfg := &config.RouterConfig{
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{{Name: "global-decision"}},
-		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{{Name: "global-decision"}}}},
 	}
 	restoreGlobalConfig := replaceExtProcGlobalConfigForTest(globalCfg)
 	defer restoreGlobalConfig()

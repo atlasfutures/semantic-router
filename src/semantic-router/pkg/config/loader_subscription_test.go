@@ -22,9 +22,7 @@ func TestSubscribeConfigUpdatesFanout(t *testing.T) {
 	defer subB.Close()
 
 	cfg := &RouterConfig{
-		IntelligentRouting: IntelligentRouting{
-			DefaultDecisions: []Decision{{Name: "support"}},
-		},
+		Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{Name: "support"}}}},
 	}
 
 	Replace(cfg)

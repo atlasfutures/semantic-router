@@ -117,25 +117,28 @@ func TestDecisionCandidatesForRequest(t *testing.T) {
 
 	ctx := &RequestContext{}
 	router.resolveEntrypointForRequest("vllm-sr/privacy", ctx)
-	candidates := router.decisionCandidatesForRequest("vllm-sr/privacy", ctx)
+	candidates, scoped := router.decisionCandidatesForRequest("vllm-sr/privacy", ctx)
+	if !scoped {
+		t.Fatal("a non-default entrypoint recipe must scope decision evaluation")
+	}
 	if len(candidates) != 1 || candidates[0].Name != "privacy_route" {
 		t.Fatalf("expected the privacy recipe's decisions as candidates, got %+v", candidates)
 	}
 
-	// An entrypoint alias of the default recipe keeps the engine-default
-	// candidate path (nil), which evaluates the flat default decisions.
+	// An entrypoint alias of the default recipe stays unscoped, so decision
+	// evaluation falls back to the default profile's decisions.
 	ctx = &RequestContext{}
 	router.resolveEntrypointForRequest("vllm-sr/default-alias", ctx)
 	if ctx.EntrypointRecipe == nil || ctx.EntrypointRecipe.Name != config.DefaultRecipeName {
 		t.Fatalf("expected the default recipe to be resolved, got %+v", ctx.EntrypointRecipe)
 	}
-	if candidates := router.decisionCandidatesForRequest("vllm-sr/default-alias", ctx); candidates != nil {
-		t.Fatalf("expected nil candidates for a default-recipe alias, got %+v", candidates)
+	if candidates, scoped := router.decisionCandidatesForRequest("vllm-sr/default-alias", ctx); candidates != nil || scoped {
+		t.Fatalf("expected unscoped nil candidates for a default-recipe alias, got %+v (scoped=%v)", candidates, scoped)
 	}
 
 	ctx = &RequestContext{}
-	if candidates := router.decisionCandidatesForRequest(config.DefaultVSRAutoModelName, ctx); candidates != nil {
-		t.Fatalf("expected nil candidates for the auto model, got %+v", candidates)
+	if candidates, scoped := router.decisionCandidatesForRequest(config.DefaultVSRAutoModelName, ctx); candidates != nil || scoped {
+		t.Fatalf("expected unscoped nil candidates for the auto model, got %+v (scoped=%v)", candidates, scoped)
 	}
 }
 
@@ -433,9 +436,9 @@ func TestDecisionlessRecipeStaysIsolatedFromDefaultDecisions(t *testing.T) {
 
 	ctx := &RequestContext{}
 	router.resolveEntrypointForRequest("vllm-sr/screening", ctx)
-	candidates := router.decisionCandidatesForRequest("vllm-sr/screening", ctx)
-	if candidates == nil {
-		t.Fatal("a decision-less recipe must scope candidates to an empty slice, not nil")
+	candidates, scoped := router.decisionCandidatesForRequest("vllm-sr/screening", ctx)
+	if !scoped {
+		t.Fatal("a decision-less recipe must still scope candidate evaluation")
 	}
 	if len(candidates) != 0 {
 		t.Fatalf("expected no candidates, got %+v", candidates)

@@ -80,6 +80,23 @@ func cloneRouterConfigForTest(cfg *config.RouterConfig) *config.RouterConfig {
 	return &clone
 }
 
+// setDefaultRecipeDecisionsForTest points the default routing profile at the
+// given decisions. Decisions live on config.Recipes, so tests that used to
+// assign a flat field go through the default recipe instead; the rest of the
+// recipe (its signal and projection profile) is preserved.
+func setDefaultRecipeDecisionsForTest(cfg *config.RouterConfig, decisions []config.Decision) {
+	if recipe := cfg.DefaultRecipe(); recipe != nil {
+		recipe.Decisions = decisions
+		return
+	}
+	cfg.Recipes = append(cfg.Recipes, config.RoutingRecipe{
+		Name:        config.DefaultRecipeName,
+		Signals:     cfg.Signals,
+		Projections: cfg.Projections,
+		Decisions:   decisions,
+	})
+}
+
 func loadTestCategoryMapping(cfg *config.RouterConfig) (*classification.CategoryMapping, error) {
 	if cfg == nil || cfg.CategoryMappingPath == "" {
 		return nil, nil

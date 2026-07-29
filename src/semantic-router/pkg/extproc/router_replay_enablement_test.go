@@ -10,20 +10,18 @@ import (
 func TestInitializeReplayRecordersUsesGlobalReplayDefault(t *testing.T) {
 	cfg := &config.RouterConfig{
 		RouterReplay: config.RouterReplayConfig{Enabled: true, StoreBackend: "memory"},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{Name: "inherits-global", ModelRefs: []config.ModelRef{{Model: "m"}}},
-				{
-					Name:      "opt-out",
-					ModelRefs: []config.ModelRef{{Model: "m"}},
-					Plugins: []config.DecisionPlugin{
-						{Type: config.DecisionPluginRouterReplay, Configuration: config.MustStructuredPayload(map[string]interface{}{
-							"enabled": false,
-						})},
-					},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{Name: "inherits-global", ModelRefs: []config.ModelRef{{Model: "m"}}},
+			{
+				Name:      "opt-out",
+				ModelRefs: []config.ModelRef{{Model: "m"}},
+				Plugins: []config.DecisionPlugin{
+					{Type: config.DecisionPluginRouterReplay, Configuration: config.MustStructuredPayload(map[string]interface{}{
+						"enabled": false,
+					})},
 				},
 			},
-		},
+		}}},
 	}
 
 	recorders := initializeReplayRecorders(cfg)
@@ -38,17 +36,15 @@ func TestInitializeReplayRecordersUsesGlobalReplayDefault(t *testing.T) {
 func TestApplyDecisionResultToContextUsesEffectiveRouterReplayConfig(t *testing.T) {
 	cfg := &config.RouterConfig{
 		RouterReplay: config.RouterReplayConfig{Enabled: true, StoreBackend: "memory"},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{Name: "inherits-global", ModelRefs: []config.ModelRef{{Model: "m"}}},
-			},
-		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{Name: "inherits-global", ModelRefs: []config.ModelRef{{Model: "m"}}},
+		}}},
 	}
 	router := &OpenAIRouter{Config: cfg}
 	ctx := &RequestContext{}
 
 	router.applyDecisionResultToContext(&decision.DecisionResult{
-		Decision: &cfg.DefaultDecisions[0],
+		Decision: &cfg.DefaultDecisions()[0],
 	}, ctx)
 
 	if ctx.RouterReplayPluginConfig == nil {

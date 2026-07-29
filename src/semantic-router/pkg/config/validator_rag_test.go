@@ -8,26 +8,24 @@ import (
 var _ = Describe("validateDecisionRAGAndMemoryPlugins", func() {
 	It("rejects invalid RAG plugin config on a decision", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{
-					{
-						Name: "bad-rag",
-						ModelRefs: []ModelRef{{
-							Model:                 "model-a",
-							ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-						}},
-						Plugins: []DecisionPlugin{
-							{
-								Type: "rag",
-								Configuration: MustStructuredPayload(map[string]interface{}{
-									"enabled": true,
-									"backend": "milvus",
-								}),
-							},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{
+				{
+					Name: "bad-rag",
+					ModelRefs: []ModelRef{{
+						Model:                 "model-a",
+						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
+					}},
+					Plugins: []DecisionPlugin{
+						{
+							Type: "rag",
+							Configuration: MustStructuredPayload(map[string]interface{}{
+								"enabled": true,
+								"backend": "milvus",
+							}),
 						},
 					},
 				},
-			},
+			}}},
 		}
 
 		err := validateConfigStructure(cfg)
@@ -37,29 +35,27 @@ var _ = Describe("validateDecisionRAGAndMemoryPlugins", func() {
 
 	It("accepts valid RAG plugin config on a decision", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{
-					{
-						Name: "good-rag",
-						ModelRefs: []ModelRef{{
-							Model:                 "model-a",
-							ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-						}},
-						Plugins: []DecisionPlugin{
-							{
-								Type: "rag",
-								Configuration: MustStructuredPayload(map[string]interface{}{
-									"enabled": true,
-									"backend": "milvus",
-									"backend_config": map[string]interface{}{
-										"collection": "my_docs",
-									},
-								}),
-							},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{
+				{
+					Name: "good-rag",
+					ModelRefs: []ModelRef{{
+						Model:                 "model-a",
+						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
+					}},
+					Plugins: []DecisionPlugin{
+						{
+							Type: "rag",
+							Configuration: MustStructuredPayload(map[string]interface{}{
+								"enabled": true,
+								"backend": "milvus",
+								"backend_config": map[string]interface{}{
+									"collection": "my_docs",
+								},
+							}),
 						},
 					},
 				},
-			},
+			}}},
 		}
 
 		err := validateConfigStructure(cfg)

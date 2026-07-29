@@ -104,9 +104,7 @@ func registerValidateConfigStructureCoreDispatchSpecs() {
 	It("skips everything in k8s mode", func() {
 		cfg := &RouterConfig{
 			ConfigSource: ConfigSourceKubernetes,
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{Name: "bad", ModelRefs: nil}},
-			},
+			Recipes:      []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{Name: "bad", ModelRefs: nil}}}},
 		}
 		Expect(validateConfigStructure(cfg)).To(Succeed())
 	})
@@ -114,15 +112,13 @@ func registerValidateConfigStructureCoreDispatchSpecs() {
 	It("validates shared family contracts after k8s CRD conversion", func() {
 		cfg := &RouterConfig{
 			ConfigSource: ConfigSourceKubernetes,
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "bad",
-					ModelRefs: []ModelRef{{
-						Model:                 "",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(false)},
-					}},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "bad",
+				ModelRefs: []ModelRef{{
+					Model:                 "",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(false)},
 				}},
-			},
+			}}}},
 		}
 
 		err := ValidateKubernetesConfigContracts(cfg)
@@ -145,15 +141,13 @@ func registerValidateConfigStructureCoreDispatchSpecs() {
 
 	It("accepts valid decision", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "ok",
-					ModelRefs: []ModelRef{{
-						Model:                 "model-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "ok",
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+			}}}},
 		}
 		Expect(validateConfigStructure(cfg)).To(Succeed())
 	})
@@ -167,76 +161,70 @@ func registerValidateConfigStructureOutputContractSpecs() {
 func registerValidateConfigStructureOutputContractAcceptSpecs() {
 	It("accepts typed choice output contract spec", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "choice",
-					ModelRefs: []ModelRef{{
-						Model:                 "model-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					OutputContractSpec: &OutputContractSpec{
-						Type: OutputContractTypeChoice,
-						ChoiceSet: &OutputContractChoiceSetSpec{
-							Values: []string{"A", "B", "C", "D"},
-						},
-						Render: &OutputContractRenderSpec{Mode: OutputContractRenderModeValue},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "choice",
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				OutputContractSpec: &OutputContractSpec{
+					Type: OutputContractTypeChoice,
+					ChoiceSet: &OutputContractChoiceSetSpec{
+						Values: []string{"A", "B", "C", "D"},
+					},
+					Render: &OutputContractRenderSpec{Mode: OutputContractRenderModeValue},
+				},
+			}}}},
 		}
 		Expect(validateConfigStructure(cfg)).To(Succeed())
 	})
 
 	It("accepts typed terminal action output contract spec", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "json-action",
-					ModelRefs: []ModelRef{{
-						Model:                 "model-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					OutputContractSpec: &OutputContractSpec{
-						Type: OutputContractTypeStructuredJSON,
-						JSONSchema: &OutputContractJSONSchemaSpec{
-							SchemaRef: OutputContractJSONTerminalActionV1,
-						},
-						Extract: &OutputContractExtractSpec{
-							Mode:    OutputContractExtractModeJSONObject,
-							Sources: []string{OutputContractExtractSourceContent, OutputContractExtractSourceCandidateResponses},
-						},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "json-action",
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				OutputContractSpec: &OutputContractSpec{
+					Type: OutputContractTypeStructuredJSON,
+					JSONSchema: &OutputContractJSONSchemaSpec{
+						SchemaRef: OutputContractJSONTerminalActionV1,
+					},
+					Extract: &OutputContractExtractSpec{
+						Mode:    OutputContractExtractModeJSONObject,
+						Sources: []string{OutputContractExtractSourceContent, OutputContractExtractSourceCandidateResponses},
+					},
+				},
+			}}}},
 		}
 		Expect(validateConfigStructure(cfg)).To(Succeed())
 	})
 
 	It("accepts typed reference selection output contract spec", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "reference-selection",
-					ModelRefs: []ModelRef{{
-						Model:                 "model-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					OutputContractSpec: &OutputContractSpec{
-						Type: OutputContractTypeReferenceSelect,
-						Reference: &OutputContractReferenceSpec{
-							Source:   OutputContractExtractSourceCandidateResponses,
-							IDFormat: OutputContractReferenceIDFormatIndex,
-						},
-						Extract: &OutputContractExtractSpec{
-							Mode:    OutputContractExtractModeExact,
-							Sources: []string{OutputContractExtractSourceContent},
-						},
-						Postprocess: []OutputContractPostprocess{{
-							Type: OutputContractPostprocessDereferenceSelectedReference,
-						}},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "reference-selection",
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				OutputContractSpec: &OutputContractSpec{
+					Type: OutputContractTypeReferenceSelect,
+					Reference: &OutputContractReferenceSpec{
+						Source:   OutputContractExtractSourceCandidateResponses,
+						IDFormat: OutputContractReferenceIDFormatIndex,
+					},
+					Extract: &OutputContractExtractSpec{
+						Mode:    OutputContractExtractModeExact,
+						Sources: []string{OutputContractExtractSourceContent},
+					},
+					Postprocess: []OutputContractPostprocess{{
+						Type: OutputContractPostprocessDereferenceSelectedReference,
+					}},
+				},
+			}}}},
 		}
 		Expect(validateConfigStructure(cfg)).To(Succeed())
 	})
@@ -245,20 +233,18 @@ func registerValidateConfigStructureOutputContractAcceptSpecs() {
 func registerValidateConfigStructureOutputContractRejectSpecs() {
 	It("rejects dereference postprocess without reference selection type", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "reference-postprocess",
-					ModelRefs: []ModelRef{{
-						Model:                 "model-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					OutputContractSpec: &OutputContractSpec{
-						Postprocess: []OutputContractPostprocess{{
-							Type: OutputContractPostprocessDereferenceSelectedReference,
-						}},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "reference-postprocess",
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				OutputContractSpec: &OutputContractSpec{
+					Postprocess: []OutputContractPostprocess{{
+						Type: OutputContractPostprocessDereferenceSelectedReference,
+					}},
+				},
+			}}}},
 		}
 		err := validateConfigStructure(cfg)
 		Expect(err).To(HaveOccurred())
@@ -267,16 +253,14 @@ func registerValidateConfigStructureOutputContractRejectSpecs() {
 
 	It("rejects typed choice output contract without choices", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "bad-choice",
-					ModelRefs: []ModelRef{{
-						Model:                 "model-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					OutputContractSpec: &OutputContractSpec{Type: OutputContractTypeChoice},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "bad-choice",
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				OutputContractSpec: &OutputContractSpec{Type: OutputContractTypeChoice},
+			}}}},
 		}
 		err := validateConfigStructure(cfg)
 		Expect(err).To(HaveOccurred())
@@ -285,22 +269,20 @@ func registerValidateConfigStructureOutputContractRejectSpecs() {
 
 	It("rejects json object extraction on choice output contract", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "bad-choice-extract",
-					ModelRefs: []ModelRef{{
-						Model:                 "model-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					OutputContractSpec: &OutputContractSpec{
-						Type: OutputContractTypeChoice,
-						ChoiceSet: &OutputContractChoiceSetSpec{
-							Values: []string{"A", "B", "C", "D"},
-						},
-						Extract: &OutputContractExtractSpec{Mode: OutputContractExtractModeJSONObject},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "bad-choice-extract",
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				OutputContractSpec: &OutputContractSpec{
+					Type: OutputContractTypeChoice,
+					ChoiceSet: &OutputContractChoiceSetSpec{
+						Values: []string{"A", "B", "C", "D"},
+					},
+					Extract: &OutputContractExtractSpec{Mode: OutputContractExtractModeJSONObject},
+				},
+			}}}},
 		}
 		err := validateConfigStructure(cfg)
 		Expect(err).To(HaveOccurred())
@@ -309,21 +291,19 @@ func registerValidateConfigStructureOutputContractRejectSpecs() {
 
 	It("rejects unsupported structured_json schema refs", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "bad-json",
-					ModelRefs: []ModelRef{{
-						Model:                 "model-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					OutputContractSpec: &OutputContractSpec{
-						Type: OutputContractTypeStructuredJSON,
-						JSONSchema: &OutputContractJSONSchemaSpec{
-							SchemaRef: "custom_v1",
-						},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "bad-json",
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				OutputContractSpec: &OutputContractSpec{
+					Type: OutputContractTypeStructuredJSON,
+					JSONSchema: &OutputContractJSONSchemaSpec{
+						SchemaRef: "custom_v1",
+					},
+				},
+			}}}},
 		}
 		err := validateConfigStructure(cfg)
 		Expect(err).To(HaveOccurred())
@@ -334,24 +314,20 @@ func registerValidateConfigStructureOutputContractRejectSpecs() {
 func registerValidateConfigStructureModelRefSpecs() {
 	It("accepts empty modelRefs", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{Name: "x", ModelRefs: []ModelRef{}}},
-			},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{Name: "x", ModelRefs: []ModelRef{}}}}},
 		}
 		Expect(validateConfigStructure(cfg)).To(Succeed())
 	})
 
 	It("rejects blank model name", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "x",
-					ModelRefs: []ModelRef{{
-						Model:                 "",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(false)},
-					}},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "x",
+				ModelRefs: []ModelRef{{
+					Model:                 "",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(false)},
 				}},
-			},
+			}}}},
 		}
 		err := validateConfigStructure(cfg)
 		Expect(err).To(HaveOccurred())
@@ -360,12 +336,10 @@ func registerValidateConfigStructureModelRefSpecs() {
 
 	It("rejects nil use_reasoning", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name:      "x",
-					ModelRefs: []ModelRef{{Model: "model-a"}},
-				}},
-			},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name:      "x",
+				ModelRefs: []ModelRef{{Model: "model-a"}},
+			}}}},
 		}
 		err := validateConfigStructure(cfg)
 		Expect(err).To(HaveOccurred())
@@ -376,16 +350,14 @@ func registerValidateConfigStructureModelRefSpecs() {
 func registerValidateConfigStructureLoRASpecs() {
 	It("validates lora ref in decision", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "x",
-					ModelRefs: []ModelRef{{
-						Model:                 "qwen3",
-						LoRAName:              "sql-expert",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "x",
+				ModelRefs: []ModelRef{{
+					Model:                 "qwen3",
+					LoRAName:              "sql-expert",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+			}}}},
 			BackendModels: BackendModels{
 				ModelConfig: map[string]ModelParams{
 					"qwen3": {LoRAs: []LoRAAdapter{{Name: "sql-expert"}}},
@@ -397,16 +369,14 @@ func registerValidateConfigStructureLoRASpecs() {
 
 	It("rejects bad lora ref", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "x",
-					ModelRefs: []ModelRef{{
-						Model:                 "qwen3",
-						LoRAName:              "nope",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "x",
+				ModelRefs: []ModelRef{{
+					Model:                 "qwen3",
+					LoRAName:              "nope",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+			}}}},
 			BackendModels: BackendModels{
 				ModelConfig: map[string]ModelParams{
 					"qwen3": {LoRAs: []LoRAAdapter{{Name: "sql-expert"}}},
@@ -431,18 +401,16 @@ func registerValidateConfigStructureAlgorithmSpecs() {
 func registerValidateConfigStructureAlgorithmSchemaSpecs() {
 	It("rejects latency_aware without algorithm.latency_aware", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "x",
-					ModelRefs: []ModelRef{{
-						Model:                 "model-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					Algorithm: &AlgorithmConfig{
-						Type: "latency_aware",
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "x",
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				Algorithm: &AlgorithmConfig{
+					Type: "latency_aware",
+				},
+			}}}},
 		}
 		err := validateConfigStructure(cfg)
 		Expect(err).To(HaveOccurred())
@@ -451,19 +419,17 @@ func registerValidateConfigStructureAlgorithmSchemaSpecs() {
 
 	It("accepts latency_aware-only configuration", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "new-latency-aware",
-					ModelRefs: []ModelRef{{
-						Model:                 "model-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					Algorithm: &AlgorithmConfig{
-						Type:         "latency_aware",
-						LatencyAware: &LatencyAwareAlgorithmConfig{TPOTPercentile: 20, TTFTPercentile: 20},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "new-latency-aware",
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				Algorithm: &AlgorithmConfig{
+					Type:         "latency_aware",
+					LatencyAware: &LatencyAwareAlgorithmConfig{TPOTPercentile: 20, TTFTPercentile: 20},
+				},
+			}}}},
 		}
 
 		Expect(validateConfigStructure(cfg)).To(Succeed())
@@ -471,20 +437,18 @@ func registerValidateConfigStructureAlgorithmSchemaSpecs() {
 
 	It("rejects multiple algorithm config blocks in one decision", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "mixed-algo-blocks",
-					ModelRefs: []ModelRef{{
-						Model:                 "model-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					Algorithm: &AlgorithmConfig{
-						Type:         "latency_aware",
-						LatencyAware: &LatencyAwareAlgorithmConfig{TPOTPercentile: 20},
-						AutoMix:      &AutoMixSelectionConfig{},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "mixed-algo-blocks",
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				Algorithm: &AlgorithmConfig{
+					Type:         "latency_aware",
+					LatencyAware: &LatencyAwareAlgorithmConfig{TPOTPercentile: 20},
+					AutoMix:      &AutoMixSelectionConfig{},
+				},
+			}}}},
 		}
 
 		err := validateConfigStructure(cfg)
@@ -524,24 +488,22 @@ func registerValidateConfigStructureReMoMRuntimeSpecs() {
 func registerValidateConfigStructureReMoMDecisionSpecs() {
 	It("accepts remom round_robin distribution", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "remom-round-robin",
-					ModelRefs: []ModelRef{{
-						Model:                 "model-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					Algorithm: &AlgorithmConfig{
-						Type: "remom",
-						ReMoM: &ReMoMAlgorithmConfig{
-							BreadthSchedule:    []int{3, 2},
-							ModelDistribution:  ReMoMDistributionRoundRobin,
-							CompactionStrategy: ReMoMCompactionLastNTokens,
-							OnError:            ReMoMOnErrorSkip,
-						},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "remom-round-robin",
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				Algorithm: &AlgorithmConfig{
+					Type: "remom",
+					ReMoM: &ReMoMAlgorithmConfig{
+						BreadthSchedule:    []int{3, 2},
+						ModelDistribution:  ReMoMDistributionRoundRobin,
+						CompactionStrategy: ReMoMCompactionLastNTokens,
+						OnError:            ReMoMOnErrorSkip,
+					},
+				},
+			}}}},
 		}
 
 		Expect(validateConfigStructure(cfg)).To(Succeed())
@@ -549,22 +511,20 @@ func registerValidateConfigStructureReMoMDecisionSpecs() {
 
 	It("rejects invalid remom model_distribution", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "remom-invalid-distribution",
-					ModelRefs: []ModelRef{{
-						Model:                 "model-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					Algorithm: &AlgorithmConfig{
-						Type: "remom",
-						ReMoM: &ReMoMAlgorithmConfig{
-							BreadthSchedule:   []int{3, 2},
-							ModelDistribution: "uniform",
-						},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "remom-invalid-distribution",
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				Algorithm: &AlgorithmConfig{
+					Type: "remom",
+					ReMoM: &ReMoMAlgorithmConfig{
+						BreadthSchedule:   []int{3, 2},
+						ModelDistribution: "uniform",
+					},
+				},
+			}}}},
 		}
 
 		err := validateConfigStructure(cfg)
@@ -574,23 +534,21 @@ func registerValidateConfigStructureReMoMDecisionSpecs() {
 
 	It("rejects invalid remom quorum and timeout controls", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "remom-invalid-timeout",
-					ModelRefs: []ModelRef{{
-						Model:                 "model-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					Algorithm: &AlgorithmConfig{
-						Type: "remom",
-						ReMoM: &ReMoMAlgorithmConfig{
-							BreadthSchedule:        []int{3},
-							RoundTimeoutSeconds:    -1,
-							MinSuccessfulResponses: 2,
-						},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "remom-invalid-timeout",
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				Algorithm: &AlgorithmConfig{
+					Type: "remom",
+					ReMoM: &ReMoMAlgorithmConfig{
+						BreadthSchedule:        []int{3},
+						RoundTimeoutSeconds:    -1,
+						MinSuccessfulResponses: 2,
+					},
+				},
+			}}}},
 		}
 
 		err := validateConfigStructure(cfg)
@@ -600,22 +558,20 @@ func registerValidateConfigStructureReMoMDecisionSpecs() {
 
 	It("rejects remom synthesis_model outside modelRefs", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "remom-invalid-synthesis-model",
-					ModelRefs: []ModelRef{{
-						Model:                 "model-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					Algorithm: &AlgorithmConfig{
-						Type: "remom",
-						ReMoM: &ReMoMAlgorithmConfig{
-							BreadthSchedule: []int{3},
-							SynthesisModel:  "model-b",
-						},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "remom-invalid-synthesis-model",
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				Algorithm: &AlgorithmConfig{
+					Type: "remom",
+					ReMoM: &ReMoMAlgorithmConfig{
+						BreadthSchedule: []int{3},
+						SynthesisModel:  "model-b",
+					},
+				},
+			}}}},
 		}
 
 		err := validateConfigStructure(cfg)
@@ -655,16 +611,14 @@ func registerValidateConfigStructureFusionSpecs() {
 
 	It("accepts fusion with decision modelRefs and no fusion block", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "fusion-with-model-refs",
-					ModelRefs: []ModelRef{{
-						Model:                 "model-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					Algorithm: &AlgorithmConfig{Type: "fusion"},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "fusion-with-model-refs",
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				Algorithm: &AlgorithmConfig{Type: "fusion"},
+			}}}},
 		}
 
 		Expect(validateConfigStructure(cfg)).To(Succeed())
@@ -672,21 +626,19 @@ func registerValidateConfigStructureFusionSpecs() {
 
 	It("rejects invalid decision fusion on_error", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "fusion-invalid-on-error",
-					ModelRefs: []ModelRef{{
-						Model:                 "model-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					Algorithm: &AlgorithmConfig{
-						Type: "fusion",
-						Fusion: &FusionAlgorithmConfig{
-							OnError: "ignore",
-						},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "fusion-invalid-on-error",
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				Algorithm: &AlgorithmConfig{
+					Type: "fusion",
+					Fusion: &FusionAlgorithmConfig{
+						OnError: "ignore",
+					},
+				},
+			}}}},
 		}
 
 		err := validateConfigStructure(cfg)
@@ -718,29 +670,27 @@ func registerValidateConfigStructureDynamicWorkflowsSpecs() {
 func registerValidateConfigStructureDynamicWorkflowPlannerSpecs() {
 	It("accepts dynamic workflows with planner model", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "dynamic-flow",
-					ModelRefs: []ModelRef{{
-						Model:                 "worker-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					Algorithm: &AlgorithmConfig{
-						Type: "workflows",
-						Workflows: &WorkflowsAlgorithmConfig{
-							Mode: WorkflowModeDynamic,
-							Planner: WorkflowPlannerConfig{
-								Model:               "qwen-coordinator",
-								MaxCompletionTokens: 1024,
-							},
-							MaxSteps:               4,
-							MaxParallel:            2,
-							RoundTimeoutSeconds:    90,
-							MinSuccessfulResponses: 1,
-						},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "dynamic-flow",
+				ModelRefs: []ModelRef{{
+					Model:                 "worker-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				Algorithm: &AlgorithmConfig{
+					Type: "workflows",
+					Workflows: &WorkflowsAlgorithmConfig{
+						Mode: WorkflowModeDynamic,
+						Planner: WorkflowPlannerConfig{
+							Model:               "qwen-coordinator",
+							MaxCompletionTokens: 1024,
+						},
+						MaxSteps:               4,
+						MaxParallel:            2,
+						RoundTimeoutSeconds:    90,
+						MinSuccessfulResponses: 1,
+					},
+				},
+			}}}},
 		}
 
 		Expect(validateConfigStructure(cfg)).To(Succeed())
@@ -748,25 +698,23 @@ func registerValidateConfigStructureDynamicWorkflowPlannerSpecs() {
 
 	It("rejects dynamic workflows with invalid planner max completion tokens", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "dynamic-flow",
-					ModelRefs: []ModelRef{{
-						Model:                 "worker-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					Algorithm: &AlgorithmConfig{
-						Type: "workflows",
-						Workflows: &WorkflowsAlgorithmConfig{
-							Mode: WorkflowModeDynamic,
-							Planner: WorkflowPlannerConfig{
-								Model:               "qwen-coordinator",
-								MaxCompletionTokens: -1,
-							},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "dynamic-flow",
+				ModelRefs: []ModelRef{{
+					Model:                 "worker-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
+				}},
+				Algorithm: &AlgorithmConfig{
+					Type: "workflows",
+					Workflows: &WorkflowsAlgorithmConfig{
+						Mode: WorkflowModeDynamic,
+						Planner: WorkflowPlannerConfig{
+							Model:               "qwen-coordinator",
+							MaxCompletionTokens: -1,
 						},
 					},
-				}},
-			},
+				},
+			}}}},
 		}
 
 		err := validateConfigStructure(cfg)
@@ -776,24 +724,22 @@ func registerValidateConfigStructureDynamicWorkflowPlannerSpecs() {
 
 	It("rejects dynamic workflows with invalid quorum controls", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "dynamic-flow-invalid-quorum",
-					ModelRefs: []ModelRef{{
-						Model:                 "worker-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					Algorithm: &AlgorithmConfig{
-						Type: "workflows",
-						Workflows: &WorkflowsAlgorithmConfig{
-							Mode:                   WorkflowModeDynamic,
-							Planner:                WorkflowPlannerConfig{Model: "qwen-coordinator"},
-							RoundTimeoutSeconds:    -1,
-							MinSuccessfulResponses: 1,
-						},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "dynamic-flow-invalid-quorum",
+				ModelRefs: []ModelRef{{
+					Model:                 "worker-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				Algorithm: &AlgorithmConfig{
+					Type: "workflows",
+					Workflows: &WorkflowsAlgorithmConfig{
+						Mode:                   WorkflowModeDynamic,
+						Planner:                WorkflowPlannerConfig{Model: "qwen-coordinator"},
+						RoundTimeoutSeconds:    -1,
+						MinSuccessfulResponses: 1,
+					},
+				},
+			}}}},
 		}
 
 		err := validateConfigStructure(cfg)
@@ -805,29 +751,27 @@ func registerValidateConfigStructureDynamicWorkflowPlannerSpecs() {
 func registerValidateConfigStructureDynamicWorkflowFinalSpecs() {
 	It("accepts dynamic workflows with configured final model", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "dynamic-flow-final",
-					ModelRefs: []ModelRef{
-						{
-							Model:                 "worker-a",
-							ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-						},
-						{
-							Model:                 "final-a",
-							ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-						},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "dynamic-flow-final",
+				ModelRefs: []ModelRef{
+					{
+						Model:                 "worker-a",
+						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 					},
-					Algorithm: &AlgorithmConfig{
-						Type: "workflows",
-						Workflows: &WorkflowsAlgorithmConfig{
-							Mode:    WorkflowModeDynamic,
-							Planner: WorkflowPlannerConfig{Model: "qwen-coordinator"},
-							Final:   WorkflowFinalConfig{Model: "final-a"},
-						},
+					{
+						Model:                 "final-a",
+						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 					},
-				}},
-			},
+				},
+				Algorithm: &AlgorithmConfig{
+					Type: "workflows",
+					Workflows: &WorkflowsAlgorithmConfig{
+						Mode:    WorkflowModeDynamic,
+						Planner: WorkflowPlannerConfig{Model: "qwen-coordinator"},
+						Final:   WorkflowFinalConfig{Model: "final-a"},
+					},
+				},
+			}}}},
 		}
 
 		Expect(validateConfigStructure(cfg)).To(Succeed())
@@ -835,23 +779,21 @@ func registerValidateConfigStructureDynamicWorkflowFinalSpecs() {
 
 	It("rejects dynamic workflow final model outside modelRefs", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "dynamic-flow-final-outside-modelrefs",
-					ModelRefs: []ModelRef{{
-						Model:                 "worker-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					Algorithm: &AlgorithmConfig{
-						Type: "workflows",
-						Workflows: &WorkflowsAlgorithmConfig{
-							Mode:    WorkflowModeDynamic,
-							Planner: WorkflowPlannerConfig{Model: "qwen-coordinator"},
-							Final:   WorkflowFinalConfig{Model: "final-a"},
-						},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "dynamic-flow-final-outside-modelrefs",
+				ModelRefs: []ModelRef{{
+					Model:                 "worker-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				Algorithm: &AlgorithmConfig{
+					Type: "workflows",
+					Workflows: &WorkflowsAlgorithmConfig{
+						Mode:    WorkflowModeDynamic,
+						Planner: WorkflowPlannerConfig{Model: "qwen-coordinator"},
+						Final:   WorkflowFinalConfig{Model: "final-a"},
+					},
+				},
+			}}}},
 		}
 
 		err := validateConfigStructure(cfg)
@@ -861,21 +803,19 @@ func registerValidateConfigStructureDynamicWorkflowFinalSpecs() {
 
 	It("rejects dynamic workflows without planner model", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "dynamic-flow-no-planner",
-					ModelRefs: []ModelRef{{
-						Model:                 "worker-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					Algorithm: &AlgorithmConfig{
-						Type: "workflows",
-						Workflows: &WorkflowsAlgorithmConfig{
-							Mode: WorkflowModeDynamic,
-						},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "dynamic-flow-no-planner",
+				ModelRefs: []ModelRef{{
+					Model:                 "worker-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				Algorithm: &AlgorithmConfig{
+					Type: "workflows",
+					Workflows: &WorkflowsAlgorithmConfig{
+						Mode: WorkflowModeDynamic,
+					},
+				},
+			}}}},
 		}
 
 		err := validateConfigStructure(cfg)
@@ -887,32 +827,30 @@ func registerValidateConfigStructureDynamicWorkflowFinalSpecs() {
 func registerValidateConfigStructureStaticWorkflowsSpecs() {
 	It("accepts static workflows with explicit roles", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "static-flow",
-					ModelRefs: []ModelRef{
-						{
-							Model:                 "worker-a",
-							ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-						},
-						{
-							Model:                 "worker-b",
-							ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-						},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "static-flow",
+				ModelRefs: []ModelRef{
+					{
+						Model:                 "worker-a",
+						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 					},
-					Algorithm: &AlgorithmConfig{
-						Type: "workflows",
-						Workflows: &WorkflowsAlgorithmConfig{
-							Mode: WorkflowModeStatic,
-							Roles: []WorkflowRoleConfig{
-								{Name: "thinker", Models: []string{"worker-a"}},
-								{Name: "verifier", Models: []string{"worker-b"}},
-							},
-							Final: WorkflowFinalConfig{Model: "worker-b"},
-						},
+					{
+						Model:                 "worker-b",
+						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 					},
-				}},
-			},
+				},
+				Algorithm: &AlgorithmConfig{
+					Type: "workflows",
+					Workflows: &WorkflowsAlgorithmConfig{
+						Mode: WorkflowModeStatic,
+						Roles: []WorkflowRoleConfig{
+							{Name: "thinker", Models: []string{"worker-a"}},
+							{Name: "verifier", Models: []string{"worker-b"}},
+						},
+						Final: WorkflowFinalConfig{Model: "worker-b"},
+					},
+				},
+			}}}},
 		}
 
 		Expect(validateConfigStructure(cfg)).To(Succeed())
@@ -920,19 +858,17 @@ func registerValidateConfigStructureStaticWorkflowsSpecs() {
 
 	It("rejects static workflows without roles", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "static-flow-no-roles",
-					ModelRefs: []ModelRef{{
-						Model:                 "worker-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					Algorithm: &AlgorithmConfig{
-						Type:      "workflows",
-						Workflows: &WorkflowsAlgorithmConfig{Mode: WorkflowModeStatic},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "static-flow-no-roles",
+				ModelRefs: []ModelRef{{
+					Model:                 "worker-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				Algorithm: &AlgorithmConfig{
+					Type:      "workflows",
+					Workflows: &WorkflowsAlgorithmConfig{Mode: WorkflowModeStatic},
+				},
+			}}}},
 		}
 
 		err := validateConfigStructure(cfg)
@@ -942,25 +878,23 @@ func registerValidateConfigStructureStaticWorkflowsSpecs() {
 
 	It("rejects static workflow role models outside modelRefs", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "static-flow-outside-modelrefs",
-					ModelRefs: []ModelRef{{
-						Model:                 "worker-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					Algorithm: &AlgorithmConfig{
-						Type: "workflows",
-						Workflows: &WorkflowsAlgorithmConfig{
-							Mode: WorkflowModeStatic,
-							Roles: []WorkflowRoleConfig{{
-								Name:   "worker",
-								Models: []string{"worker-b"},
-							}},
-						},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "static-flow-outside-modelrefs",
+				ModelRefs: []ModelRef{{
+					Model:                 "worker-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				Algorithm: &AlgorithmConfig{
+					Type: "workflows",
+					Workflows: &WorkflowsAlgorithmConfig{
+						Mode: WorkflowModeStatic,
+						Roles: []WorkflowRoleConfig{{
+							Name:   "worker",
+							Models: []string{"worker-b"},
+						}},
+					},
+				},
+			}}}},
 		}
 
 		err := validateConfigStructure(cfg)
@@ -972,19 +906,17 @@ func registerValidateConfigStructureStaticWorkflowsSpecs() {
 func registerValidateConfigStructureAlgorithmTypeMismatchSpecs() {
 	It("rejects algorithm type and config block mismatch", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "mismatched-algo-block",
-					ModelRefs: []ModelRef{{
-						Model:                 "model-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					Algorithm: &AlgorithmConfig{
-						Type:   "automix",
-						Hybrid: &HybridSelectionConfig{},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "mismatched-algo-block",
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				Algorithm: &AlgorithmConfig{
+					Type:   "automix",
+					Hybrid: &HybridSelectionConfig{},
+				},
+			}}}},
 		}
 
 		err := validateConfigStructure(cfg)
@@ -994,19 +926,17 @@ func registerValidateConfigStructureAlgorithmTypeMismatchSpecs() {
 
 	It("rejects unsupported algorithm block for static type", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
-					Name: "static-with-block",
-					ModelRefs: []ModelRef{{
-						Model:                 "model-a",
-						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-					}},
-					Algorithm: &AlgorithmConfig{
-						Type:    "static",
-						AutoMix: &AutoMixSelectionConfig{},
-					},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "static-with-block",
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 				}},
-			},
+				Algorithm: &AlgorithmConfig{
+					Type:    "static",
+					AutoMix: &AutoMixSelectionConfig{},
+				},
+			}}}},
 		}
 
 		err := validateConfigStructure(cfg)
@@ -1018,8 +948,31 @@ func registerValidateConfigStructureAlgorithmTypeMismatchSpecs() {
 func registerValidateConfigStructureLegacyLatencySpecs() {
 	It("rejects legacy latency conditions", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{{
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+				Name: "legacy-latency",
+				Rules: RuleCombination{
+					Operator: "AND",
+					Conditions: []RuleCondition{
+						{Type: "latency", Name: "low_latency"},
+					},
+				},
+				ModelRefs: []ModelRef{{
+					Model:                 "model-a",
+					ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
+				}},
+				Algorithm: &AlgorithmConfig{Type: "static"},
+			}}}},
+		}
+
+		err := validateConfigStructure(cfg)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("legacy latency config is no longer supported"))
+	})
+
+	It("rejects mixed latency condition and latency_aware configurations", func() {
+		cfg := &RouterConfig{
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{
+				{
 					Name: "legacy-latency",
 					Rules: RuleCombination{
 						Operator: "AND",
@@ -1032,46 +985,19 @@ func registerValidateConfigStructureLegacyLatencySpecs() {
 						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
 					}},
 					Algorithm: &AlgorithmConfig{Type: "static"},
-				}},
-			},
-		}
-
-		err := validateConfigStructure(cfg)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("legacy latency config is no longer supported"))
-	})
-
-	It("rejects mixed latency condition and latency_aware configurations", func() {
-		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{
-					{
-						Name: "legacy-latency",
-						Rules: RuleCombination{
-							Operator: "AND",
-							Conditions: []RuleCondition{
-								{Type: "latency", Name: "low_latency"},
-							},
-						},
-						ModelRefs: []ModelRef{{
-							Model:                 "model-a",
-							ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-						}},
-						Algorithm: &AlgorithmConfig{Type: "static"},
-					},
-					{
-						Name: "new-latency-aware",
-						ModelRefs: []ModelRef{{
-							Model:                 "model-b",
-							ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
-						}},
-						Algorithm: &AlgorithmConfig{
-							Type:         "latency_aware",
-							LatencyAware: &LatencyAwareAlgorithmConfig{TPOTPercentile: 20, TTFTPercentile: 20},
-						},
+				},
+				{
+					Name: "new-latency-aware",
+					ModelRefs: []ModelRef{{
+						Model:                 "model-b",
+						ModelReasoningControl: ModelReasoningControl{UseReasoning: boolPtr(true)},
+					}},
+					Algorithm: &AlgorithmConfig{
+						Type:         "latency_aware",
+						LatencyAware: &LatencyAwareAlgorithmConfig{TPOTPercentile: 20, TTFTPercentile: 20},
 					},
 				},
-			},
+			}}},
 		}
 
 		err := validateConfigStructure(cfg)

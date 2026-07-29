@@ -9,14 +9,10 @@ import (
 
 func TestClassificationServiceRefreshRuntimeConfigRefreshesClassifierConfig(t *testing.T) {
 	oldConfig := &config.RouterConfig{
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{{Name: "old_route"}},
-		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{{Name: "old_route"}}}},
 	}
 	newConfig := &config.RouterConfig{
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{{Name: "new_route"}},
-		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{{Name: "new_route"}}}},
 	}
 
 	service := &ClassificationService{
@@ -39,19 +35,13 @@ func TestClassificationServiceRefreshRuntimeConfigRefreshesClassifierConfig(t *t
 
 func TestClassificationServiceRefreshRuntimeConfigDoesNotReplaceGlobalConfig(t *testing.T) {
 	globalConfig := &config.RouterConfig{
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{{Name: "global_route"}},
-		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{{Name: "global_route"}}}},
 	}
 	oldConfig := &config.RouterConfig{
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{{Name: "old_route"}},
-		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{{Name: "old_route"}}}},
 	}
 	newConfig := &config.RouterConfig{
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{{Name: "new_route"}},
-		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{{Name: "new_route"}}}},
 	}
 
 	restoreGlobalConfig := replaceGlobalConfigForServiceTest(globalConfig)

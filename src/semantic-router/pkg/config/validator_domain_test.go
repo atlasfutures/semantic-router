@@ -58,14 +58,16 @@ func TestValidateDomainContractsAllowsAliasWithSupportedMMLUCategories(t *testin
 			Signals: Signals{
 				Categories: []Category{testDomainCategory("compact", "computer science")},
 			},
-			DefaultDecisions: []Decision{{
-				Name: "compact_route",
-				Rules: RuleNode{
-					Type: SignalTypeDomain,
-					Name: "compact",
-				},
-			}},
 		},
+		Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Signals: Signals{
+			Categories: []Category{testDomainCategory("compact", "computer science")},
+		}, Decisions: []Decision{{
+			Name: "compact_route",
+			Rules: RuleNode{
+				Type: SignalTypeDomain,
+				Name: "compact",
+			},
+		}}}},
 	}
 
 	if err := validateDomainContracts(cfg); err != nil {
@@ -117,14 +119,16 @@ func TestValidateDomainContractsRejectsUndeclaredDecisionDomain(t *testing.T) {
 			Signals: Signals{
 				Categories: []Category{testDomainCategory("math")},
 			},
-			DefaultDecisions: []Decision{{
-				Name: "science_route",
-				Rules: RuleNode{
-					Type: SignalTypeDomain,
-					Name: "science",
-				},
-			}},
 		},
+		Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Signals: Signals{
+			Categories: []Category{testDomainCategory("math")},
+		}, Decisions: []Decision{{
+			Name: "science_route",
+			Rules: RuleNode{
+				Type: SignalTypeDomain,
+				Name: "science",
+			},
+		}}}},
 	}
 
 	err := validateDomainContracts(cfg)

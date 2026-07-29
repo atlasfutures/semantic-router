@@ -181,24 +181,22 @@ func TestHandleClassifierInfoUsesResolvedRuntimeConfig(t *testing.T) {
 
 func TestHandleClassifierInfoNormalizesYAMLStylePluginConfig(t *testing.T) {
 	liveCfg := &config.RouterConfig{
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name: "health_decision",
-					Plugins: []config.DecisionPlugin{
-						{
-							Type: "system_prompt",
-							Configuration: config.MustStructuredPayload(map[interface{}]interface{}{
-								"enabled": true,
-								"nested": map[interface{}]interface{}{
-									"mode": "replace",
-								},
-							}),
-						},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name: "health_decision",
+				Plugins: []config.DecisionPlugin{
+					{
+						Type: "system_prompt",
+						Configuration: config.MustStructuredPayload(map[interface{}]interface{}{
+							"enabled": true,
+							"nested": map[interface{}]interface{}{
+								"mode": "replace",
+							},
+						}),
 					},
 				},
 			},
-		},
+		}}},
 	}
 
 	apiServer := &ClassificationAPIServer{
@@ -220,11 +218,15 @@ func TestHandleClassifierInfoNormalizesYAMLStylePluginConfig(t *testing.T) {
 
 	resp := decodeJSONObject(t, rr.Body.Bytes())
 	cfgPayload := requireJSONObject(t, resp, "config")
-	// The response key stays `Decisions` across the Go field rename: it is a
-	// published wire contract that e2e/testcases/apiserver_runtime_config_endpoints.go
-	// decodes.
+	// The response key stays `Decisions` even though RouterConfig no longer has
+	// such a field: it is a published wire contract that the runtime-config
+	// end-to-end testcase decodes, so the view re-injects the default recipe's
+	// decisions under it.
 	decisions := requireJSONArray(t, cfgPayload, "Decisions", 1)
 	decision := requireJSONObjectValue(t, decisions[0], "decision")
+	if decision["Name"] != "health_decision" {
+		t.Fatalf("expected the default recipe's decision under the Decisions key, got %#v", decision)
+	}
 	plugins := requireJSONArray(t, decision, "Plugins", 1)
 	plugin := requireJSONObjectValue(t, plugins[0], "plugin")
 	configuration := requireJSONObject(t, plugin, "configuration")

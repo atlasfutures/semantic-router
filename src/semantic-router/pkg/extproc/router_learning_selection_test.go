@@ -571,25 +571,23 @@ func TestRouterLearningCandidateSetsAreDeterministicAndEligible(t *testing.T) {
 				{Name: "endpoint-only", Model: "endpoint-only"},
 			},
 		},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name:      "simple",
-					Tier:      2,
-					ModelRefs: []config.ModelRef{{Model: "cheap"}, {Model: "missing"}},
-				},
-				{
-					Name:      "complex",
-					Tier:      2,
-					ModelRefs: []config.ModelRef{{Model: "frontier"}, {Model: "cheap"}},
-				},
-				{
-					Name:      "other",
-					Tier:      4,
-					ModelRefs: []config.ModelRef{{Model: "global-only"}},
-				},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name:      "simple",
+				Tier:      2,
+				ModelRefs: []config.ModelRef{{Model: "cheap"}, {Model: "missing"}},
 			},
-		},
+			{
+				Name:      "complex",
+				Tier:      2,
+				ModelRefs: []config.ModelRef{{Model: "frontier"}, {Model: "cheap"}},
+			},
+			{
+				Name:      "other",
+				Tier:      4,
+				ModelRefs: []config.ModelRef{{Model: "global-only"}},
+			},
+		}}},
 	}}
 	ctx := &RequestContext{VSRSelectedDecision: &config.Decision{Name: "simple", Tier: 2}}
 	selCtx := &selection.SelectionContext{
@@ -617,27 +615,25 @@ func TestRouterLearningAdaptationUsesDecisionCandidateSetOverride(t *testing.T) 
 				CandidateSet: config.RouterLearningCandidateSetDecision,
 			},
 		},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name:      "simple",
-					Tier:      2,
-					ModelRefs: []config.ModelRef{{Model: "cheap"}},
-					Adaptations: config.DecisionAdaptationsConfig{
-						Adaptation: &config.DecisionLearningAdaptationConfig{
-							CandidateSet: config.RouterLearningCandidateSetTier,
-						},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name:      "simple",
+				Tier:      2,
+				ModelRefs: []config.ModelRef{{Model: "cheap"}},
+				Adaptations: config.DecisionAdaptationsConfig{
+					Adaptation: &config.DecisionLearningAdaptationConfig{
+						CandidateSet: config.RouterLearningCandidateSetTier,
 					},
 				},
-				{
-					Name:      "complex",
-					Tier:      2,
-					ModelRefs: []config.ModelRef{{Model: "frontier"}},
-				},
 			},
-		},
+			{
+				Name:      "complex",
+				Tier:      2,
+				ModelRefs: []config.ModelRef{{Model: "frontier"}},
+			},
+		}}},
 	}}
-	ctx := &RequestContext{VSRSelectedDecision: &router.Config.DefaultDecisions[0]}
+	ctx := &RequestContext{VSRSelectedDecision: &router.Config.DefaultDecisions()[0]}
 	selCtx := &selection.SelectionContext{
 		DecisionName:    "simple",
 		CandidateModels: []config.ModelRef{{Model: "cheap"}},

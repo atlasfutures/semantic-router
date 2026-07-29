@@ -8,51 +8,45 @@ import (
 var _ = Describe("IsRAGEnabledForDecision", func() {
 	It("returns false for decision without RAG plugin", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{
-					{Name: "no-rag", ModelRefs: []ModelRef{{Model: "m"}}},
-				},
-			},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{
+				{Name: "no-rag", ModelRefs: []ModelRef{{Model: "m"}}},
+			}}},
 		}
 		Expect(cfg.IsRAGEnabledForDecision("no-rag")).To(BeFalse())
 	})
 
 	It("returns false when RAG plugin is explicitly disabled", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{
-					{
-						Name:      "rag-disabled",
-						ModelRefs: []ModelRef{{Model: "m"}},
-						Plugins: []DecisionPlugin{
-							{Type: "rag", Configuration: MustStructuredPayload(map[string]interface{}{
-								"enabled": false,
-								"backend": "milvus",
-							})},
-						},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{
+				{
+					Name:      "rag-disabled",
+					ModelRefs: []ModelRef{{Model: "m"}},
+					Plugins: []DecisionPlugin{
+						{Type: "rag", Configuration: MustStructuredPayload(map[string]interface{}{
+							"enabled": false,
+							"backend": "milvus",
+						})},
 					},
 				},
-			},
+			}}},
 		}
 		Expect(cfg.IsRAGEnabledForDecision("rag-disabled")).To(BeFalse())
 	})
 
 	It("returns true when RAG plugin is enabled", func() {
 		cfg := &RouterConfig{
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{
-					{
-						Name:      "rag-on",
-						ModelRefs: []ModelRef{{Model: "m"}},
-						Plugins: []DecisionPlugin{
-							{Type: "rag", Configuration: MustStructuredPayload(map[string]interface{}{
-								"enabled": true,
-								"backend": "milvus",
-							})},
-						},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{
+				{
+					Name:      "rag-on",
+					ModelRefs: []ModelRef{{Model: "m"}},
+					Plugins: []DecisionPlugin{
+						{Type: "rag", Configuration: MustStructuredPayload(map[string]interface{}{
+							"enabled": true,
+							"backend": "milvus",
+						})},
 					},
 				},
-			},
+			}}},
 		}
 		Expect(cfg.IsRAGEnabledForDecision("rag-on")).To(BeTrue())
 	})
@@ -67,11 +61,9 @@ var _ = Describe("IsMemoryEnabledForDecision", func() {
 	It("returns false when global memory is disabled and no per-decision config", func() {
 		cfg := &RouterConfig{
 			Memory: MemoryConfig{Enabled: false},
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{
-					{Name: "test", ModelRefs: []ModelRef{{Model: "m"}}},
-				},
-			},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{
+				{Name: "test", ModelRefs: []ModelRef{{Model: "m"}}},
+			}}},
 		}
 		Expect(cfg.IsMemoryEnabledForDecision("test")).To(BeFalse())
 	})
@@ -79,11 +71,9 @@ var _ = Describe("IsMemoryEnabledForDecision", func() {
 	It("returns true when global memory is enabled and no per-decision override", func() {
 		cfg := &RouterConfig{
 			Memory: MemoryConfig{Enabled: true},
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{
-					{Name: "test", ModelRefs: []ModelRef{{Model: "m"}}},
-				},
-			},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{
+				{Name: "test", ModelRefs: []ModelRef{{Model: "m"}}},
+			}}},
 		}
 		Expect(cfg.IsMemoryEnabledForDecision("test")).To(BeTrue())
 	})
@@ -108,11 +98,9 @@ var _ = Describe("HasPersonalizationPlugins", func() {
 	It("returns false when neither RAG nor memory is enabled", func() {
 		cfg := &RouterConfig{
 			Memory: MemoryConfig{Enabled: false},
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{
-					{Name: "plain", ModelRefs: []ModelRef{{Model: "m"}}},
-				},
-			},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{
+				{Name: "plain", ModelRefs: []ModelRef{{Model: "m"}}},
+			}}},
 		}
 		Expect(cfg.HasPersonalizationPlugins("plain")).To(BeFalse())
 	})
@@ -125,11 +113,9 @@ var _ = Describe("HasPersonalizationPlugins", func() {
 	It("returns true when only memory is enabled (global)", func() {
 		cfg := &RouterConfig{
 			Memory: MemoryConfig{Enabled: true},
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{
-					{Name: "mem-global", ModelRefs: []ModelRef{{Model: "m"}}},
-				},
-			},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{
+				{Name: "mem-global", ModelRefs: []ModelRef{{Model: "m"}}},
+			}}},
 		}
 		Expect(cfg.HasPersonalizationPlugins("mem-global")).To(BeTrue())
 	})
@@ -137,23 +123,21 @@ var _ = Describe("HasPersonalizationPlugins", func() {
 	It("returns true when both RAG and memory are enabled", func() {
 		cfg := &RouterConfig{
 			Memory: MemoryConfig{Enabled: true},
-			IntelligentRouting: IntelligentRouting{
-				DefaultDecisions: []Decision{
-					{
-						Name:      "both",
-						ModelRefs: []ModelRef{{Model: "m"}},
-						Plugins: []DecisionPlugin{
-							{Type: "rag", Configuration: MustStructuredPayload(map[string]interface{}{
-								"enabled": true,
-								"backend": "external_api",
-							})},
-							{Type: "memory", Configuration: MustStructuredPayload(map[string]interface{}{
-								"enabled": true,
-							})},
-						},
+			Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{
+				{
+					Name:      "both",
+					ModelRefs: []ModelRef{{Model: "m"}},
+					Plugins: []DecisionPlugin{
+						{Type: "rag", Configuration: MustStructuredPayload(map[string]interface{}{
+							"enabled": true,
+							"backend": "external_api",
+						})},
+						{Type: "memory", Configuration: MustStructuredPayload(map[string]interface{}{
+							"enabled": true,
+						})},
 					},
 				},
-			},
+			}}},
 		}
 		Expect(cfg.HasPersonalizationPlugins("both")).To(BeTrue())
 	})
@@ -164,20 +148,18 @@ var _ = Describe("EffectiveRouterReplayConfigForDecision", registerEffectiveRout
 func ragDecisionConfig(name string) *RouterConfig {
 	return &RouterConfig{
 		Memory: MemoryConfig{Enabled: false},
-		IntelligentRouting: IntelligentRouting{
-			DefaultDecisions: []Decision{
-				{
-					Name:      name,
-					ModelRefs: []ModelRef{{Model: "m"}},
-					Plugins: []DecisionPlugin{
-						{Type: "rag", Configuration: MustStructuredPayload(map[string]interface{}{
-							"enabled": true,
-							"backend": "milvus",
-						})},
-					},
+		Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{
+			{
+				Name:      name,
+				ModelRefs: []ModelRef{{Model: "m"}},
+				Plugins: []DecisionPlugin{
+					{Type: "rag", Configuration: MustStructuredPayload(map[string]interface{}{
+						"enabled": true,
+						"backend": "milvus",
+					})},
 				},
 			},
-		},
+		}}},
 	}
 }
 
@@ -188,19 +170,17 @@ func memoryDecisionConfig(globalEnabled, perDecisionEnabled bool) *RouterConfig 
 	}
 	return &RouterConfig{
 		Memory: MemoryConfig{Enabled: globalEnabled},
-		IntelligentRouting: IntelligentRouting{
-			DefaultDecisions: []Decision{
-				{
-					Name:      name,
-					ModelRefs: []ModelRef{{Model: "m"}},
-					Plugins: []DecisionPlugin{
-						{Type: "memory", Configuration: MustStructuredPayload(map[string]interface{}{
-							"enabled": perDecisionEnabled,
-						})},
-					},
+		Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{
+			{
+				Name:      name,
+				ModelRefs: []ModelRef{{Model: "m"}},
+				Plugins: []DecisionPlugin{
+					{Type: "memory", Configuration: MustStructuredPayload(map[string]interface{}{
+						"enabled": perDecisionEnabled,
+					})},
 				},
 			},
-		},
+		}}},
 	}
 }
 
@@ -233,13 +213,13 @@ func registerRouterReplayPluginOverrideSpecs() {
 		})
 		Expect(cfg.EffectiveRouterReplayConfigForDecision("opt-in")).To(BeNil())
 
-		cfg.DefaultDecisions[0].Plugins[0].Configuration = MustStructuredPayload(map[string]interface{}{
+		cfg.DefaultDecisions()[0].Plugins[0].Configuration = MustStructuredPayload(map[string]interface{}{
 			"enabled":               false,
 			"capture_response_body": false,
 		})
 		Expect(cfg.EffectiveRouterReplayConfigForDecision("opt-in")).To(BeNil())
 
-		cfg.DefaultDecisions[0].Plugins[0].Configuration = MustStructuredPayload(map[string]interface{}{
+		cfg.DefaultDecisions()[0].Plugins[0].Configuration = MustStructuredPayload(map[string]interface{}{
 			"enabled":               true,
 			"capture_response_body": false,
 		})
@@ -288,8 +268,6 @@ func routerReplayDecisionConfig(globalEnabled bool, name string, pluginConfig ma
 
 	return &RouterConfig{
 		RouterReplay: RouterReplayConfig{Enabled: globalEnabled},
-		IntelligentRouting: IntelligentRouting{
-			DefaultDecisions: []Decision{decision},
-		},
+		Recipes:      []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{decision}}},
 	}
 }

@@ -97,9 +97,38 @@ func copyLegacyBertThresholdForTest(legacyBert map[string]interface{}, embedding
 	}
 }
 
+// unmarshalFlatRouterConfigForTest decodes a flat legacy config document into a
+// RouterConfig. RouterConfig has no flat decisions field anymore — Recipes owns
+// them — so the top-level `decisions:` key is decoded separately and normalized
+// into the default recipe, the way the canonical loader normalizes the
+// top-level routing block.
+func unmarshalFlatRouterConfigForTest(data []byte, cfg *RouterConfig) error {
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return err
+	}
+
+	var flat struct {
+		Decisions []Decision `yaml:"decisions"`
+	}
+	if err := yaml.Unmarshal(data, &flat); err != nil {
+		return err
+	}
+	if len(flat.Decisions) == 0 {
+		return nil
+	}
+
+	cfg.Recipes = []RoutingRecipe{{
+		Name:        DefaultRecipeName,
+		Signals:     cfg.Signals,
+		Projections: cfg.Projections,
+		Decisions:   flat.Decisions,
+	}}
+	return nil
+}
+
 func parseLegacyRuntimeConfigForTest(data []byte) (*RouterConfig, error) {
 	cfg := &RouterConfig{}
-	if err := yaml.Unmarshal(data, cfg); err != nil {
+	if err := unmarshalFlatRouterConfigForTest(data, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
@@ -270,10 +299,10 @@ tools:
 				Expect(cfg.Categories[0].Name).To(Equal("general"))
 
 				// Verify decisions
-				Expect(cfg.DefaultDecisions).To(HaveLen(1))
-				Expect(cfg.DefaultDecisions[0].Name).To(Equal("general"))
-				Expect(cfg.DefaultDecisions[0].ModelRefs).To(HaveLen(1))
-				Expect(cfg.DefaultDecisions[0].ModelRefs[0].Model).To(Equal("model-a"))
+				Expect(cfg.DefaultDecisions()).To(HaveLen(1))
+				Expect(cfg.DefaultDecisions()[0].Name).To(Equal("general"))
+				Expect(cfg.DefaultDecisions()[0].ModelRefs).To(HaveLen(1))
+				Expect(cfg.DefaultDecisions()[0].ModelRefs[0].Model).To(Equal("model-a"))
 
 				// Verify default model
 				Expect(cfg.DefaultModel).To(Equal("model-b"))
@@ -2353,9 +2382,7 @@ default_model: "test-model"
 					SemanticCache: SemanticCache{
 						Enabled: true, // Global enabled, but should not affect decisions without plugin
 					},
-					IntelligentRouting: IntelligentRouting{
-						DefaultDecisions: []Decision{decision},
-					},
+					Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{decision}}},
 				}
 
 				// Per-decision scoping: no plugin = no semantic caching
@@ -2380,9 +2407,7 @@ default_model: "test-model"
 					SemanticCache: SemanticCache{
 						Enabled: true,
 					},
-					IntelligentRouting: IntelligentRouting{
-						DefaultDecisions: []Decision{decision},
-					},
+					Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{decision}}},
 				}
 
 				Expect(cfg.IsCacheEnabledForDecision("test")).To(BeFalse())
@@ -2406,9 +2431,7 @@ default_model: "test-model"
 					SemanticCache: SemanticCache{
 						Enabled: false, // Global disabled, but decision enables it
 					},
-					IntelligentRouting: IntelligentRouting{
-						DefaultDecisions: []Decision{decision},
-					},
+					Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{decision}}},
 				}
 
 				Expect(cfg.IsCacheEnabledForDecision("test")).To(BeTrue())
@@ -2446,9 +2469,7 @@ default_model: "test-model"
 						Enabled:             true,
 						SimilarityThreshold: &globalThreshold,
 					},
-					IntelligentRouting: IntelligentRouting{
-						DefaultDecisions: []Decision{decision},
-					},
+					Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{decision}}},
 				}
 
 				// Should use decision-level threshold, not global
@@ -2476,9 +2497,7 @@ default_model: "test-model"
 						Enabled:    true,
 						TTLSeconds: 3600, // Global TTL
 					},
-					IntelligentRouting: IntelligentRouting{
-						DefaultDecisions: []Decision{decision},
-					},
+					Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{decision}}},
 				}
 
 				// Should use decision-level TTL, not global

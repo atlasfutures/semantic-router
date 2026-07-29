@@ -31,9 +31,9 @@ func complexityDecisionConfig(declaredRules []string, conditionName string, nest
 
 	return &RouterConfig{
 		IntelligentRouting: IntelligentRouting{
-			Signals:          Signals{ComplexityRules: rules},
-			DefaultDecisions: []Decision{{Name: "route", Rules: root}},
+			Signals: Signals{ComplexityRules: rules},
 		},
+		Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Signals: Signals{ComplexityRules: rules}, Decisions: []Decision{{Name: "route", Rules: root}}}},
 	}
 }
 
@@ -138,14 +138,12 @@ func TestValidateComplexityContracts(t *testing.T) {
 // without any complexity conditions are unaffected.
 func TestValidateComplexityContracts_NoComplexityConditions(t *testing.T) {
 	cfg := &RouterConfig{
-		IntelligentRouting: IntelligentRouting{
-			DefaultDecisions: []Decision{{
-				Name: "route",
-				Rules: RuleNode{Operator: "AND", Conditions: []RuleNode{
-					{Type: SignalTypeDomain, Name: "business"},
-				}},
+		Recipes: []RoutingRecipe{{Name: DefaultRecipeName, Decisions: []Decision{{
+			Name: "route",
+			Rules: RuleNode{Operator: "AND", Conditions: []RuleNode{
+				{Type: SignalTypeDomain, Name: "business"},
 			}},
-		},
+		}}}},
 	}
 	if err := validateComplexityContracts(cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)

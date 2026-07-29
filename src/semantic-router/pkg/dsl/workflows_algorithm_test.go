@@ -34,10 +34,10 @@ ROUTE flow_code {
 	if len(errs) > 0 {
 		t.Fatalf("compile errors: %v", errs)
 	}
-	if len(cfg.DefaultDecisions) != 1 {
-		t.Fatalf("decisions = %d", len(cfg.DefaultDecisions))
+	if len(cfg.DefaultDecisions()) != 1 {
+		t.Fatalf("decisions = %d", len(cfg.DefaultDecisions()))
 	}
-	workflows := cfg.DefaultDecisions[0].Algorithm.Workflows
+	workflows := cfg.DefaultDecisions()[0].Algorithm.Workflows
 	assertWorkflowsDynamicConfig(t, workflows)
 }
 
@@ -56,7 +56,7 @@ ROUTE flow_code {
 	if len(errs) > 0 {
 		t.Fatalf("compile errors: %v", errs)
 	}
-	workflows := cfg.DefaultDecisions[0].Algorithm.Workflows
+	workflows := cfg.DefaultDecisions()[0].Algorithm.Workflows
 	if workflows == nil || workflows.Planner.Model != "qwen-coordinator" {
 		t.Fatalf("workflows planner = %#v", workflows)
 	}
@@ -84,7 +84,7 @@ ROUTE flow_static {
 	if len(errs) > 0 {
 		t.Fatalf("compile errors: %v", errs)
 	}
-	workflows := cfg.DefaultDecisions[0].Algorithm.Workflows
+	workflows := cfg.DefaultDecisions()[0].Algorithm.Workflows
 	if workflows == nil || len(workflows.Roles) != 3 {
 		t.Fatalf("workflows roles = %#v", workflows)
 	}
@@ -100,35 +100,33 @@ func TestDecompileWorkflowsDynamicAlgorithmRoundTrip(t *testing.T) {
 	includeTrace := true
 	temperature := 0.2
 	cfg := &config.RouterConfig{
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name:     "flow-code",
-					Priority: 10,
-					ModelRefs: []config.ModelRef{
-						{Model: "qwen-coordinator"},
-						{Model: "deepseek-worker"},
-						{Model: "claude-worker"},
-					},
-					Algorithm: &config.AlgorithmConfig{
-						Type: "workflows",
-						Workflows: &config.WorkflowsAlgorithmConfig{
-							Mode:                         "dynamic",
-							Template:                     "micro_agent",
-							Planner:                      config.WorkflowPlannerConfig{Model: "qwen-coordinator"},
-							MaxSteps:                     6,
-							MaxParallel:                  3,
-							MaxCompletionTokens:          1024,
-							RoundTimeoutSeconds:          90,
-							MinSuccessfulResponses:       2,
-							Temperature:                  &temperature,
-							IncludeIntermediateResponses: &includeTrace,
-							OnError:                      "fail",
-						},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name:     "flow-code",
+				Priority: 10,
+				ModelRefs: []config.ModelRef{
+					{Model: "qwen-coordinator"},
+					{Model: "deepseek-worker"},
+					{Model: "claude-worker"},
+				},
+				Algorithm: &config.AlgorithmConfig{
+					Type: "workflows",
+					Workflows: &config.WorkflowsAlgorithmConfig{
+						Mode:                         "dynamic",
+						Template:                     "micro_agent",
+						Planner:                      config.WorkflowPlannerConfig{Model: "qwen-coordinator"},
+						MaxSteps:                     6,
+						MaxParallel:                  3,
+						MaxCompletionTokens:          1024,
+						RoundTimeoutSeconds:          90,
+						MinSuccessfulResponses:       2,
+						Temperature:                  &temperature,
+						IncludeIntermediateResponses: &includeTrace,
+						OnError:                      "fail",
 					},
 				},
 			},
-		},
+		}}},
 	}
 
 	dslText, err := DecompileRouting(cfg)
@@ -153,38 +151,36 @@ func TestDecompileWorkflowsDynamicAlgorithmRoundTrip(t *testing.T) {
 	if len(errs) > 0 {
 		t.Fatalf("round-trip compile errors: %v\n%s", errs, dslText)
 	}
-	assertWorkflowsDynamicConfig(t, roundTripped.DefaultDecisions[0].Algorithm.Workflows)
+	assertWorkflowsDynamicConfig(t, roundTripped.DefaultDecisions()[0].Algorithm.Workflows)
 }
 
 func TestDecompileWorkflowsStaticRolesAlgorithmRoundTrip(t *testing.T) {
 	cfg := &config.RouterConfig{
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name:     "flow-static",
-					Priority: 10,
-					ModelRefs: []config.ModelRef{
-						{Model: "thinker-model"},
-						{Model: "worker-model"},
-						{Model: "verifier-model"},
-					},
-					Algorithm: &config.AlgorithmConfig{
-						Type: "workflows",
-						Workflows: &config.WorkflowsAlgorithmConfig{
-							Mode: "static",
-							Roles: []config.WorkflowRoleConfig{
-								{Name: "thinker", Models: []string{"thinker-model"}, Prompt: "plan"},
-								{Name: "worker", Models: []string{"worker-model"}, Prompt: "solve"},
-								{Name: "verifier", Models: []string{"verifier-model"}, Prompt: "check"},
-							},
-							Final:       config.WorkflowFinalConfig{Model: "verifier-model", Prompt: "merge"},
-							MaxSteps:    3,
-							MaxParallel: 1,
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name:     "flow-static",
+				Priority: 10,
+				ModelRefs: []config.ModelRef{
+					{Model: "thinker-model"},
+					{Model: "worker-model"},
+					{Model: "verifier-model"},
+				},
+				Algorithm: &config.AlgorithmConfig{
+					Type: "workflows",
+					Workflows: &config.WorkflowsAlgorithmConfig{
+						Mode: "static",
+						Roles: []config.WorkflowRoleConfig{
+							{Name: "thinker", Models: []string{"thinker-model"}, Prompt: "plan"},
+							{Name: "worker", Models: []string{"worker-model"}, Prompt: "solve"},
+							{Name: "verifier", Models: []string{"verifier-model"}, Prompt: "check"},
 						},
+						Final:       config.WorkflowFinalConfig{Model: "verifier-model", Prompt: "merge"},
+						MaxSteps:    3,
+						MaxParallel: 1,
 					},
 				},
 			},
-		},
+		}}},
 	}
 
 	dslText, err := DecompileRouting(cfg)
@@ -205,7 +201,7 @@ func TestDecompileWorkflowsStaticRolesAlgorithmRoundTrip(t *testing.T) {
 	if len(errs) > 0 {
 		t.Fatalf("round-trip compile errors: %v\n%s", errs, dslText)
 	}
-	roles := roundTripped.DefaultDecisions[0].Algorithm.Workflows.Roles
+	roles := roundTripped.DefaultDecisions()[0].Algorithm.Workflows.Roles
 	if len(roles) != 3 || roles[2].Name != "verifier" {
 		t.Fatalf("round-trip roles = %#v", roles)
 	}

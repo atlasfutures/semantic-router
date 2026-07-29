@@ -38,19 +38,17 @@ func domainTestConfig() *config.RouterConfig {
 				},
 			},
 		},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name: "test_domain_decision",
-					Rules: config.RuleCombination{
-						Operator: "AND",
-						Conditions: []config.RuleCondition{
-							{Type: config.SignalTypeDomain, Name: "economics"},
-						},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name: "test_domain_decision",
+				Rules: config.RuleCombination{
+					Operator: "AND",
+					Conditions: []config.RuleCondition{
+						{Type: config.SignalTypeDomain, Name: "economics"},
 					},
 				},
 			},
-		},
+		}}},
 	}
 }
 

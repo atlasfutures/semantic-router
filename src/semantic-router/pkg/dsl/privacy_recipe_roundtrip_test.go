@@ -48,7 +48,7 @@ func TestMaintainedPrivacyRecipeDSLRoundTrip(t *testing.T) {
 	}
 
 	hasToolsPlugin := false
-	for _, dec := range cfg.DefaultDecisions {
+	for _, dec := range cfg.DefaultDecisions() {
 		if dec.GetToolsConfig() != nil {
 			hasToolsPlugin = true
 			break
@@ -74,17 +74,17 @@ func TestMaintainedPrivacyRecipeDSLRoundTrip(t *testing.T) {
 		t.Errorf("round-trip kb rules: %d → %d",
 			len(cfg.KBRules), len(cfg2.KBRules))
 	}
-	if len(cfg2.DefaultDecisions) != len(cfg.DefaultDecisions) {
+	if len(cfg2.DefaultDecisions()) != len(cfg.DefaultDecisions()) {
 		t.Errorf("round-trip Decisions: %d → %d",
-			len(cfg.DefaultDecisions), len(cfg2.DefaultDecisions))
+			len(cfg.DefaultDecisions()), len(cfg2.DefaultDecisions()))
 	}
 
-	for i, dec := range cfg.DefaultDecisions {
-		if i >= len(cfg2.DefaultDecisions) {
+	for i, dec := range cfg.DefaultDecisions() {
+		if i >= len(cfg2.DefaultDecisions()) {
 			continue
 		}
 		left := dec.GetToolsConfig()
-		right := cfg2.DefaultDecisions[i].GetToolsConfig()
+		right := cfg2.DefaultDecisions()[i].GetToolsConfig()
 		switch {
 		case (left == nil) != (right == nil):
 			t.Errorf("round-trip decision %q tools plugin presence mismatch", dec.Name)

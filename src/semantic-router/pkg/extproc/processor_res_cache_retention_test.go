@@ -204,9 +204,7 @@ func TestUpdateResponseCacheSkipsRetentionDrop(t *testing.T) {
 		Cache: mockCache,
 		Config: &config.RouterConfig{
 			SemanticCache: config.SemanticCache{Enabled: true},
-			IntelligentRouting: config.IntelligentRouting{
-				DefaultDecisions: []config.Decision{retentionCacheDecision("cache-decision", true)},
-			},
+			Recipes:       []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{retentionCacheDecision("cache-decision", true)}}},
 		},
 	}
 	ctx := &RequestContext{
@@ -227,9 +225,7 @@ func TestUpdateResponseCacheWritesWhenRetentionDropFalse(t *testing.T) {
 		Cache: mockCache,
 		Config: &config.RouterConfig{
 			SemanticCache: config.SemanticCache{Enabled: true},
-			IntelligentRouting: config.IntelligentRouting{
-				DefaultDecisions: []config.Decision{retentionCacheDecision("cache-decision", true)},
-			},
+			Recipes:       []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{retentionCacheDecision("cache-decision", true)}}},
 		},
 	}
 	ctx := &RequestContext{
@@ -250,9 +246,7 @@ func TestCacheStreamingResponseSkipsRetentionDrop(t *testing.T) {
 		Cache: mockCache,
 		Config: &config.RouterConfig{
 			SemanticCache: config.SemanticCache{Enabled: true},
-			IntelligentRouting: config.IntelligentRouting{
-				DefaultDecisions: []config.Decision{retentionCacheDecision("cache-decision", true)},
-			},
+			Recipes:       []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{retentionCacheDecision("cache-decision", true)}}},
 		},
 	}
 	ctx := retentionStreamingContext("cache-decision")
@@ -272,9 +266,7 @@ func TestCacheStreamingResponseChecksScopeBeforeRetentionDrop(t *testing.T) {
 		Cache: mockCache,
 		Config: &config.RouterConfig{
 			SemanticCache: config.SemanticCache{Enabled: true},
-			IntelligentRouting: config.IntelligentRouting{
-				DefaultDecisions: []config.Decision{retentionCacheDecision("no-cache-decision", false)},
-			},
+			Recipes:       []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{retentionCacheDecision("no-cache-decision", false)}}},
 		},
 	}
 	ctx := retentionStreamingContext("no-cache-decision")
@@ -340,9 +332,7 @@ func TestUpdateResponseCacheAppliesRetentionTTL(t *testing.T) {
 		Cache: mockCache,
 		Config: &config.RouterConfig{
 			SemanticCache: config.SemanticCache{Enabled: true},
-			IntelligentRouting: config.IntelligentRouting{
-				DefaultDecisions: []config.Decision{retentionCacheDecision("cache-decision", true)},
-			},
+			Recipes:       []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{retentionCacheDecision("cache-decision", true)}}},
 		},
 	}
 	ctx := &RequestContext{
@@ -366,9 +356,7 @@ func TestCacheStreamingResponseAppliesRetentionTTL(t *testing.T) {
 		Cache: mockCache,
 		Config: &config.RouterConfig{
 			SemanticCache: config.SemanticCache{Enabled: true},
-			IntelligentRouting: config.IntelligentRouting{
-				DefaultDecisions: []config.Decision{retentionCacheDecision("cache-decision", true)},
-			},
+			Recipes:       []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{retentionCacheDecision("cache-decision", true)}}},
 		},
 	}
 	ctx := retentionStreamingContext("cache-decision")

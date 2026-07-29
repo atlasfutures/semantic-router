@@ -19,13 +19,13 @@ func TestHandleConfigGetReturnsFullRouterConfig(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.yaml")
 	cfg := minimalDeployTestConfig("math_route")
-	cfg.Projections.Partitions = []config.ProjectionPartition{{
+	setDeployTestProjectionPartitions(cfg, []config.ProjectionPartition{{
 		Name:        "subject_partition",
 		Semantics:   "softmax_exclusive",
 		Temperature: 0.1,
 		Members:     []string{"math"},
 		Default:     "math",
-	}}
+	}})
 	if err := os.WriteFile(configPath, mustMarshalCanonicalConfigYAML(t, cfg), 0o644); err != nil {
 		t.Fatalf("write router config: %v", err)
 	}
@@ -94,52 +94,66 @@ func TestHandleCombinedClassificationReturnsAllSubResponses(t *testing.T) {
 	}
 }
 
+// classificationMetricsTestConfig builds the metrics fixture: the default
+// recipe carries the routing profile, while the flat Signals/Projections
+// fields mirror it as the global registry the metrics endpoint reads.
+func classificationMetricsTestConfig() *config.RouterConfig {
+	signals := config.Signals{
+		Categories: []config.Category{{
+			CategoryMetadata: config.CategoryMetadata{Name: "math"},
+		}},
+		KeywordRules:   []config.KeywordRule{{Name: "urgent"}},
+		EmbeddingRules: []config.EmbeddingRule{{Name: "fast_qa_en"}},
+	}
+	projections := config.Projections{
+		Partitions: []config.ProjectionPartition{{
+			Name:        "subject_partition",
+			Semantics:   "softmax_exclusive",
+			Temperature: 0.1,
+			Members:     []string{"fast_qa_en", "fast_qa_default"},
+			Default:     "fast_qa_default",
+		}},
+		Scores: []config.ProjectionScore{{
+			Name:   "difficulty_score",
+			Method: "weighted_sum",
+			Inputs: []config.ProjectionScoreInput{{
+				Type:   config.SignalTypeKeyword,
+				Name:   "urgent",
+				Weight: 0.2,
+			}},
+		}},
+		Mappings: []config.ProjectionMapping{{
+			Name:   "difficulty_band",
+			Source: "difficulty_score",
+			Method: "threshold_bands",
+			Outputs: []config.ProjectionMappingOutput{{
+				Name: "balance_medium",
+				GTE:  floatPtr(0.2),
+			}},
+		}},
+	}
+	return &config.RouterConfig{
+		IntelligentRouting: config.IntelligentRouting{
+			Signals:     signals,
+			Projections: projections,
+		},
+		Recipes: []config.RoutingRecipe{{
+			Name:        config.DefaultRecipeName,
+			Signals:     signals,
+			Projections: projections,
+			Decisions: []config.Decision{{
+				Name:      "math_route",
+				ModelRefs: []config.ModelRef{{Model: "qwen-math"}},
+				Rules:     config.RuleCombination{Operator: "AND"},
+			}},
+		}},
+	}
+}
+
 func TestHandleClassificationMetricsReportsCounts(t *testing.T) {
 	apiServer := &ClassificationAPIServer{
 		classificationSvc: services.NewPlaceholderClassificationService(),
-		config: &config.RouterConfig{
-			IntelligentRouting: config.IntelligentRouting{
-				Signals: config.Signals{
-					Categories: []config.Category{{
-						CategoryMetadata: config.CategoryMetadata{Name: "math"},
-					}},
-					KeywordRules:   []config.KeywordRule{{Name: "urgent"}},
-					EmbeddingRules: []config.EmbeddingRule{{Name: "fast_qa_en"}},
-				},
-				Projections: config.Projections{
-					Partitions: []config.ProjectionPartition{{
-						Name:        "subject_partition",
-						Semantics:   "softmax_exclusive",
-						Temperature: 0.1,
-						Members:     []string{"fast_qa_en", "fast_qa_default"},
-						Default:     "fast_qa_default",
-					}},
-					Scores: []config.ProjectionScore{{
-						Name:   "difficulty_score",
-						Method: "weighted_sum",
-						Inputs: []config.ProjectionScoreInput{{
-							Type:   config.SignalTypeKeyword,
-							Name:   "urgent",
-							Weight: 0.2,
-						}},
-					}},
-					Mappings: []config.ProjectionMapping{{
-						Name:   "difficulty_band",
-						Source: "difficulty_score",
-						Method: "threshold_bands",
-						Outputs: []config.ProjectionMappingOutput{{
-							Name: "balance_medium",
-							GTE:  floatPtr(0.2),
-						}},
-					}},
-				},
-				DefaultDecisions: []config.Decision{{
-					Name:      "math_route",
-					ModelRefs: []config.ModelRef{{Model: "qwen-math"}},
-					Rules:     config.RuleCombination{Operator: "AND"},
-				}},
-			},
-		},
+		config:            classificationMetricsTestConfig(),
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics/classification", nil)

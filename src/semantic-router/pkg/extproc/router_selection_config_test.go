@@ -18,12 +18,10 @@ func TestBuildModelSelectionConfigUsesDecisionScopedLearningState(t *testing.T) 
 
 func learningStateRouterConfig() *config.RouterConfig {
 	return &config.RouterConfig{
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				rlDrivenLearningDecision(),
-				gmtRouterLearningDecision(),
-			},
-		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			rlDrivenLearningDecision(),
+			gmtRouterLearningDecision(),
+		}}},
 	}
 }
 
@@ -153,32 +151,30 @@ func TestBuildHybridSelectionConfigMergesDecisionOverrides(t *testing.T) {
 
 func TestBuildModelSelectionConfigUsesDecisionScopedMultiFactorConfig(t *testing.T) {
 	got := buildModelSelectionConfig(&config.RouterConfig{
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name: "weighted-latency-router",
-					Algorithm: &config.AlgorithmConfig{
-						Type: string(selection.MethodMultiFactor),
-						MultiFactor: &config.MultiFactorSelectionConfig{
-							Weights: &config.MultiFactorWeightsConfig{
-								Quality: 0.7,
-								Latency: 0.2,
-								Cost:    0.1,
-								Load:    0.0,
-							},
-							SLO: &config.MultiFactorSLOConfig{
-								MaxTPOTMs:    85,
-								MaxTTFTMs:    550,
-								MaxCostPer1M: 2.4,
-								MaxInflight:  32,
-							},
-							LatencyPercentile: 90,
-							OnNoCandidates:    "fail",
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name: "weighted-latency-router",
+				Algorithm: &config.AlgorithmConfig{
+					Type: string(selection.MethodMultiFactor),
+					MultiFactor: &config.MultiFactorSelectionConfig{
+						Weights: &config.MultiFactorWeightsConfig{
+							Quality: 0.7,
+							Latency: 0.2,
+							Cost:    0.1,
+							Load:    0.0,
 						},
+						SLO: &config.MultiFactorSLOConfig{
+							MaxTPOTMs:    85,
+							MaxTTFTMs:    550,
+							MaxCostPer1M: 2.4,
+							MaxInflight:  32,
+						},
+						LatencyPercentile: 90,
+						OnNoCandidates:    "fail",
 					},
 				},
 			},
-		},
+		}}},
 	})
 
 	if got.MultiFactor == nil {

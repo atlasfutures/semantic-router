@@ -50,9 +50,7 @@ func statusCacheRouter() (*mockStreamingCache, *OpenAIRouter) {
 		Cache: mockCache,
 		Config: &config.RouterConfig{
 			SemanticCache: config.SemanticCache{Enabled: true},
-			IntelligentRouting: config.IntelligentRouting{
-				DefaultDecisions: []config.Decision{retentionCacheDecision("cache-decision", true)},
-			},
+			Recipes:       []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{retentionCacheDecision("cache-decision", true)}}},
 		},
 	}
 	return mockCache, router

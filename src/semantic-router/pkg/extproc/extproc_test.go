@@ -3181,13 +3181,11 @@ func TestHandleModelsRequest(t *testing.T) {
 		Looper: config.LooperConfig{
 			Endpoint: "http://looper",
 		},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{{
-				Name:      "fusion-route",
-				ModelRefs: []config.ModelRef{{Model: "panel-a"}},
-				Algorithm: &config.AlgorithmConfig{Type: "fusion"},
-			}},
-		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{{
+			Name:      "fusion-route",
+			ModelRefs: []config.ModelRef{{Model: "panel-a"}},
+			Algorithm: &config.AlgorithmConfig{Type: "fusion"},
+		}}}},
 	}
 
 	cfgWithFusionAliases := &config.RouterConfig{
@@ -3197,42 +3195,36 @@ func TestHandleModelsRequest(t *testing.T) {
 				ModelNames: []string{"vllm-sr/fusion", "custom/fusion"},
 			},
 		},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{{
-				Name:      "fusion-route",
-				ModelRefs: []config.ModelRef{{Model: "panel-a"}},
-				Algorithm: &config.AlgorithmConfig{Type: "fusion"},
-			}},
-		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{{
+			Name:      "fusion-route",
+			ModelRefs: []config.ModelRef{{Model: "panel-a"}},
+			Algorithm: &config.AlgorithmConfig{Type: "fusion"},
+		}}}},
 	}
 
 	cfgWithReMoM := &config.RouterConfig{
 		Looper: config.LooperConfig{
 			Endpoint: "http://looper",
 		},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{{
-				Name:      "remom-route",
-				ModelRefs: []config.ModelRef{{Model: "worker-a"}},
-				Algorithm: &config.AlgorithmConfig{
-					Type:  "remom",
-					ReMoM: &config.ReMoMAlgorithmConfig{BreadthSchedule: []int{1}},
-				},
-			}},
-		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{{
+			Name:      "remom-route",
+			ModelRefs: []config.ModelRef{{Model: "worker-a"}},
+			Algorithm: &config.AlgorithmConfig{
+				Type:  "remom",
+				ReMoM: &config.ReMoMAlgorithmConfig{BreadthSchedule: []int{1}},
+			},
+		}}}},
 	}
 
 	cfgWithFlow := &config.RouterConfig{
 		Looper: config.LooperConfig{
 			Endpoint: "http://looper",
 		},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{{
-				Name:      "flow-route",
-				ModelRefs: []config.ModelRef{{Model: "worker-a"}},
-				Algorithm: &config.AlgorithmConfig{Type: "workflows"},
-			}},
-		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{{
+			Name:      "flow-route",
+			ModelRefs: []config.ModelRef{{Model: "worker-a"}},
+			Algorithm: &config.AlgorithmConfig{Type: "workflows"},
+		}}}},
 	}
 
 	tests := []struct {

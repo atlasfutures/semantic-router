@@ -89,14 +89,12 @@ func TestUpdateResponseCache_SkipsWhenDecisionCacheDisabled(t *testing.T) {
 	mockCache := &mockStreamingCache{}
 	cfg := &config.RouterConfig{
 		SemanticCache: config.SemanticCache{Enabled: true},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name:      "no-cache-decision",
-					ModelRefs: []config.ModelRef{{Model: "test"}},
-				},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name:      "no-cache-decision",
+				ModelRefs: []config.ModelRef{{Model: "test"}},
 			},
-		},
+		}}},
 	}
 	router := &OpenAIRouter{Cache: mockCache, Config: cfg}
 	ctx := &RequestContext{
@@ -112,20 +110,18 @@ func TestUpdateResponseCache_SkipsWhenDecisionCacheExplicitlyDisabled(t *testing
 	mockCache := &mockStreamingCache{}
 	cfg := &config.RouterConfig{
 		SemanticCache: config.SemanticCache{Enabled: true},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name:      "disabled-cache-decision",
-					ModelRefs: []config.ModelRef{{Model: "test"}},
-					Plugins: []config.DecisionPlugin{
-						{
-							Type:          "semantic-cache",
-							Configuration: config.MustStructuredPayload(map[string]interface{}{"enabled": false}),
-						},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name:      "disabled-cache-decision",
+				ModelRefs: []config.ModelRef{{Model: "test"}},
+				Plugins: []config.DecisionPlugin{
+					{
+						Type:          "semantic-cache",
+						Configuration: config.MustStructuredPayload(map[string]interface{}{"enabled": false}),
 					},
 				},
 			},
-		},
+		}}},
 	}
 	router := &OpenAIRouter{Cache: mockCache, Config: cfg}
 	ctx := &RequestContext{
@@ -141,20 +137,18 @@ func TestUpdateResponseCache_StoresWhenDecisionCacheEnabled(t *testing.T) {
 	mockCache := &mockStreamingCache{}
 	cfg := &config.RouterConfig{
 		SemanticCache: config.SemanticCache{Enabled: true},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name:      "cache-decision",
-					ModelRefs: []config.ModelRef{{Model: "test"}},
-					Plugins: []config.DecisionPlugin{
-						{
-							Type:          "semantic-cache",
-							Configuration: config.MustStructuredPayload(map[string]interface{}{"enabled": true}),
-						},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name:      "cache-decision",
+				ModelRefs: []config.ModelRef{{Model: "test"}},
+				Plugins: []config.DecisionPlugin{
+					{
+						Type:          "semantic-cache",
+						Configuration: config.MustStructuredPayload(map[string]interface{}{"enabled": true}),
 					},
 				},
 			},
-		},
+		}}},
 	}
 	router := &OpenAIRouter{Cache: mockCache, Config: cfg}
 	ctx := &RequestContext{
@@ -185,14 +179,12 @@ func TestUpdateResponseCache_SkipsWhenNoDecisionSelectedButDecisionsConfigured(t
 	mockCache := &mockStreamingCache{}
 	cfg := &config.RouterConfig{
 		SemanticCache: config.SemanticCache{Enabled: true},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name:      "default-route",
-					ModelRefs: []config.ModelRef{{Model: "test"}},
-				},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name:      "default-route",
+				ModelRefs: []config.ModelRef{{Model: "test"}},
 			},
-		},
+		}}},
 	}
 	router := &OpenAIRouter{Cache: mockCache, Config: cfg}
 	ctx := &RequestContext{
@@ -275,14 +267,12 @@ func TestCacheReconstructedStreamingResponse_SkipsWhenDecisionCacheDisabled(t *t
 	mockCache := &mockStreamingCache{}
 	cfg := &config.RouterConfig{
 		SemanticCache: config.SemanticCache{Enabled: true},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name:      "no-cache-decision",
-					ModelRefs: []config.ModelRef{{Model: "test"}},
-				},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name:      "no-cache-decision",
+				ModelRefs: []config.ModelRef{{Model: "test"}},
 			},
-		},
+		}}},
 	}
 	router := &OpenAIRouter{Cache: mockCache, Config: cfg}
 	ctx := &RequestContext{
@@ -302,20 +292,18 @@ func TestCacheReconstructedStreamingResponse_SkipsWhenDecisionCacheExplicitlyDis
 	mockCache := &mockStreamingCache{}
 	cfg := &config.RouterConfig{
 		SemanticCache: config.SemanticCache{Enabled: true},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name:      "disabled-cache-decision",
-					ModelRefs: []config.ModelRef{{Model: "test"}},
-					Plugins: []config.DecisionPlugin{
-						{
-							Type:          "semantic-cache",
-							Configuration: config.MustStructuredPayload(map[string]interface{}{"enabled": false}),
-						},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name:      "disabled-cache-decision",
+				ModelRefs: []config.ModelRef{{Model: "test"}},
+				Plugins: []config.DecisionPlugin{
+					{
+						Type:          "semantic-cache",
+						Configuration: config.MustStructuredPayload(map[string]interface{}{"enabled": false}),
 					},
 				},
 			},
-		},
+		}}},
 	}
 	router := &OpenAIRouter{Cache: mockCache, Config: cfg}
 	ctx := &RequestContext{
@@ -335,20 +323,18 @@ func TestCacheReconstructedStreamingResponse_StoresWhenDecisionCacheEnabled(t *t
 	mockCache := &mockStreamingCache{}
 	cfg := &config.RouterConfig{
 		SemanticCache: config.SemanticCache{Enabled: true},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name:      "cache-decision",
-					ModelRefs: []config.ModelRef{{Model: "test"}},
-					Plugins: []config.DecisionPlugin{
-						{
-							Type:          "semantic-cache",
-							Configuration: config.MustStructuredPayload(map[string]interface{}{"enabled": true}),
-						},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name:      "cache-decision",
+				ModelRefs: []config.ModelRef{{Model: "test"}},
+				Plugins: []config.DecisionPlugin{
+					{
+						Type:          "semantic-cache",
+						Configuration: config.MustStructuredPayload(map[string]interface{}{"enabled": true}),
 					},
 				},
 			},
-		},
+		}}},
 	}
 	router := &OpenAIRouter{Cache: mockCache, Config: cfg}
 	ctx := &RequestContext{

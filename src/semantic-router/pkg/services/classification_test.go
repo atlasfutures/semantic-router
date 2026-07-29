@@ -264,19 +264,31 @@ func TestBuildEvalResponse_ProjectionSignalsIncludedInUsedMatchedAndUnmatched(t 
 					},
 				},
 			},
-			DefaultDecisions: []config.Decision{
+		},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Projections: config.Projections{
+			Mappings: []config.ProjectionMapping{
 				{
-					Name: "reasoning_route",
-					Rules: config.RuleCombination{
-						Operator: "AND",
-						Conditions: []config.RuleNode{{
-							Type: "projection",
-							Name: "balance_reasoning",
-						}},
+					Name:   "difficulty_band",
+					Source: "difficulty_score",
+					Method: "threshold_bands",
+					Outputs: []config.ProjectionMappingOutput{
+						{Name: "balance_medium"},
+						{Name: "balance_reasoning"},
 					},
 				},
 			},
-		},
+		}, Decisions: []config.Decision{
+			{
+				Name: "reasoning_route",
+				Rules: config.RuleCombination{
+					Operator: "AND",
+					Conditions: []config.RuleNode{{
+						Type: "projection",
+						Name: "balance_reasoning",
+					}},
+				},
+			},
+		}}},
 	}
 	service := &ClassificationService{
 		classifier: &classification.Classifier{Config: routerConfig},
@@ -288,7 +300,7 @@ func TestBuildEvalResponse_ProjectionSignalsIncludedInUsedMatchedAndUnmatched(t 
 		SignalConfidences:      map[string]float64{"projection:balance_reasoning": 0.94},
 	}
 	decisionResult := &decision.DecisionResult{
-		Decision: &routerConfig.DefaultDecisions[0],
+		Decision: &routerConfig.DefaultDecisions()[0],
 	}
 
 	response := service.buildEvalResponse("reason carefully", signals, decisionResult)
@@ -349,35 +361,33 @@ func TestGetRecommendedModel_WithConfig(t *testing.T) {
 		BackendModels: config.BackendModels{
 			DefaultModel: "default-llm-model",
 		},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name: "math",
-					ModelRefs: []config.ModelRef{
-						{
-							Model: "phi4-math-expert",
-						},
-					},
-				},
-				{
-					Name: "science",
-					ModelRefs: []config.ModelRef{
-						{
-							Model:    "mistral-science-base",
-							LoRAName: "science-lora-adapter",
-						},
-					},
-				},
-				{
-					Name: "code",
-					ModelRefs: []config.ModelRef{
-						{
-							Model: "codellama-13b",
-						},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name: "math",
+				ModelRefs: []config.ModelRef{
+					{
+						Model: "phi4-math-expert",
 					},
 				},
 			},
-		},
+			{
+				Name: "science",
+				ModelRefs: []config.ModelRef{
+					{
+						Model:    "mistral-science-base",
+						LoRAName: "science-lora-adapter",
+					},
+				},
+			},
+			{
+				Name: "code",
+				ModelRefs: []config.ModelRef{
+					{
+						Model: "codellama-13b",
+					},
+				},
+			},
+		}}},
 	}
 
 	service := &ClassificationService{
@@ -474,16 +484,14 @@ func TestGetRecommendedModel_NoDecisionFound(t *testing.T) {
 		BackendModels: config.BackendModels{
 			DefaultModel: "default-llm-model",
 		},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name: "math",
-					ModelRefs: []config.ModelRef{
-						{Model: "phi4-math-expert"},
-					},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name: "math",
+				ModelRefs: []config.ModelRef{
+					{Model: "phi4-math-expert"},
 				},
 			},
-		},
+		}}},
 	}
 
 	service := &ClassificationService{
@@ -506,14 +514,12 @@ func TestGetRecommendedModel_EmptyModelRefs(t *testing.T) {
 		BackendModels: config.BackendModels{
 			DefaultModel: "default-llm-model",
 		},
-		IntelligentRouting: config.IntelligentRouting{
-			DefaultDecisions: []config.Decision{
-				{
-					Name:      "math",
-					ModelRefs: []config.ModelRef{}, // Empty ModelRefs
-				},
+		Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{
+			{
+				Name:      "math",
+				ModelRefs: []config.ModelRef{}, // Empty ModelRefs
 			},
-		},
+		}}},
 	}
 
 	service := &ClassificationService{

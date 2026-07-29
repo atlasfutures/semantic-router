@@ -170,12 +170,10 @@ func TestInitializeRuntimeSkipsUnusedCoreSignalClassifiers(t *testing.T) {
 					JailbreakMappingPath: "models/mmbert32k-jailbreak-detector-merged/jailbreak_type_mapping.json",
 				},
 			},
-			IntelligentRouting: config.IntelligentRouting{
-				DefaultDecisions: []config.Decision{{
-					Name:  "default",
-					Rules: config.RuleNode{Operator: "AND", Conditions: []config.RuleNode{}},
-				}},
-			},
+			Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{{
+				Name:  "default",
+				Rules: config.RuleNode{Operator: "AND", Conditions: []config.RuleNode{}},
+			}}}},
 		},
 		CategoryMapping:      &CategoryMapping{CategoryToIdx: map[string]int{"billing": 0, "support": 1}},
 		PIIMapping:           &PIIMapping{LabelToIdx: map[string]int{"EMAIL_ADDRESS": 0, "PHONE_NUMBER": 1}},
@@ -216,16 +214,14 @@ func TestInitializeRuntimeInitializesCoreSignalClassifiersWhenUsed(t *testing.T)
 					JailbreakMappingPath: "models/mmbert32k-jailbreak-detector-merged/jailbreak_type_mapping.json",
 				},
 			},
-			IntelligentRouting: config.IntelligentRouting{
-				DefaultDecisions: []config.Decision{{
-					Name: "guarded-route",
-					Rules: config.RuleNode{Operator: "OR", Conditions: []config.RuleNode{
-						{Type: config.SignalTypeDomain, Name: "billing"},
-						{Type: config.SignalTypePII, Name: "contains_pii"},
-						{Type: config.SignalTypeJailbreak, Name: "detector"},
-					}},
+			Recipes: []config.RoutingRecipe{{Name: config.DefaultRecipeName, Decisions: []config.Decision{{
+				Name: "guarded-route",
+				Rules: config.RuleNode{Operator: "OR", Conditions: []config.RuleNode{
+					{Type: config.SignalTypeDomain, Name: "billing"},
+					{Type: config.SignalTypePII, Name: "contains_pii"},
+					{Type: config.SignalTypeJailbreak, Name: "detector"},
 				}},
-			},
+			}}}},
 		},
 		CategoryMapping:      &CategoryMapping{CategoryToIdx: map[string]int{"billing": 0, "support": 1}},
 		PIIMapping:           &PIIMapping{LabelToIdx: map[string]int{"EMAIL_ADDRESS": 0, "PHONE_NUMBER": 1}},
