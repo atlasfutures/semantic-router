@@ -305,8 +305,10 @@ func TestRouterCloseWaitsForInflightARCTransactions(t *testing.T) {
 			return nil
 		},
 	}
-	// Mirror processWithContext: the stream registers its hold on entry.
-	router.raylineARCInflight.Add(1)
+	// Mirror RouterService.Process: the stream registers its hold on entry.
+	if !router.tryHoldRaylineARC() {
+		t.Fatal("hold refused on an open router")
+	}
 
 	returned := make(chan struct{})
 	go func() {
@@ -320,7 +322,7 @@ func TestRouterCloseWaitsForInflightARCTransactions(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	router.raylineARCInflight.Done()
+	router.releaseRaylineARCHold()
 
 	select {
 	case <-returned:
@@ -396,5 +398,31 @@ func TestCommitSucceedsWhileRenewalIsInFlight(t *testing.T) {
 	}
 	if resumed.PreviousArm == nil || *resumed.PreviousArm != 1 {
 		t.Fatalf("episode did not advance: %#v", resumed)
+	}
+}
+
+// TestHoldRefusedOnceCloseBegins proves a stream that captured a router which
+// has started closing is told to retry rather than using a closed store.
+func TestHoldRefusedOnceCloseBegins(t *testing.T) {
+	store, err := raylinearc.NewMemoryEpisodeStore(
+		raylinearc.MemoryEpisodeStoreConfig{MaxEpisodes: 2, IdleTTL: time.Minute},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := &OpenAIRouter{
+		RaylineARCEpisodeStore:      store,
+		raylineARCEpisodeStoreClose: func() error { return nil },
+	}
+	if !router.tryHoldRaylineARC() {
+		t.Fatal("hold refused before Close")
+	}
+	router.releaseRaylineARCHold()
+
+	if err := router.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if router.tryHoldRaylineARC() {
+		t.Fatal("hold granted on a closing router")
 	}
 }

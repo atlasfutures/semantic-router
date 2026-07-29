@@ -372,7 +372,8 @@ func TestToolMutationCannotEraseARCDispatch(t *testing.T) {
 		},
 	}
 
-	reapplyRaylineARCDispatch(response, ctx)
+	router := &OpenAIRouter{Config: &config.RouterConfig{}}
+	router.reapplyRaylineARCDispatch(response, ctx)
 
 	final := response.GetRequestBody().GetResponse().GetBodyMutation().GetBody()
 	var object map[string]any
@@ -416,7 +417,8 @@ func TestReapplyFailsClosedOnUnshapeableBody(t *testing.T) {
 		},
 	}
 
-	reapplyRaylineARCDispatch(response, ctx)
+	router := &OpenAIRouter{Config: &config.RouterConfig{}}
+	router.reapplyRaylineARCDispatch(response, ctx)
 
 	if body := response.GetRequestBody().GetResponse().
 		GetBodyMutation().GetBody(); len(body) != 0 {

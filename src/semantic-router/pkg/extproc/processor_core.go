@@ -79,17 +79,6 @@ func (r *OpenAIRouter) processWithContext(
 	stream ext_proc.ExternalProcessor_ProcessServer,
 	ctx *RequestContext,
 ) (retErr error) {
-	// Register this stream against the router it captured, before any ARC work
-	// can start. A hot reload swaps routers and then closes the old one; a
-	// stream that entered the old router must keep its episode store open
-	// until it terminates. Registering here (rather than at lease acquisition)
-	// also keeps every Add strictly before the reload's Wait, which
-	// sync.WaitGroup requires. Deferred first, so it releases last.
-	if r.RaylineARCEpisodeStore != nil {
-		r.raylineARCInflight.Add(1)
-		defer r.raylineARCInflight.Done()
-	}
-
 	// Recover from any panic (including OOM kills surfaced as runtime panics from
 	// CGO inference calls) so a single bad request cannot take down the gRPC server.
 	defer func() {

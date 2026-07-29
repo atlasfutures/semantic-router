@@ -3,6 +3,7 @@ package extproc
 import (
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -55,6 +56,7 @@ type OpenAIRouter struct {
 	// in-flight streams keep using it, so the episode store must not close
 	// until those leases reach a terminal commit or abort.
 	raylineARCInflight sync.WaitGroup
+	raylineARCClosing  atomic.Bool
 
 	// CredentialResolver resolves per-user LLM API keys from multiple sources
 	// (ext_authz injected headers -> static config fallback).
@@ -83,10 +85,41 @@ func (r *OpenAIRouter) Close() error {
 		r.lookupTableCancel()
 	}
 	if r.raylineARCEpisodeStoreClose != nil {
+		// Refuse new holds before draining, so a stream that captured this
+		// router but has not registered yet retries against the swapped-in
+		// router instead of using a closed store.
+		r.raylineARCClosing.Store(true)
 		r.waitForRaylineARCDrain()
 		return r.raylineARCEpisodeStoreClose()
 	}
 	return nil
+}
+
+// tryHoldRaylineARC registers a stream against this router's episode store.
+// It returns false once Close has begun, so the caller must re-resolve the
+// current router and try again.
+func (r *OpenAIRouter) tryHoldRaylineARC() bool {
+	if r == nil || r.RaylineARCEpisodeStore == nil {
+		return true
+	}
+	if r.raylineARCClosing.Load() {
+		return false
+	}
+	r.raylineARCInflight.Add(1)
+	if r.raylineARCClosing.Load() {
+		// Close began between the check and the registration; give the hold
+		// back so its drain cannot block on this stream.
+		r.raylineARCInflight.Done()
+		return false
+	}
+	return true
+}
+
+func (r *OpenAIRouter) releaseRaylineARCHold() {
+	if r == nil || r.RaylineARCEpisodeStore == nil {
+		return
+	}
+	r.raylineARCInflight.Done()
 }
 
 // waitForRaylineARCDrain blocks until every in-flight ARC episode transaction
