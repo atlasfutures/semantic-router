@@ -53,6 +53,7 @@ The detailed background is in [Unified Config Contract v0.3](../proposals/unifie
   - `global.router.auto_model_names` declares the request model aliases that enter full automatic routing. Defaults include `vllm-sr/auto`, `auto`, and `MoM`; `auto_model_name` remains the legacy single-name compatibility field.
   - `global.router.learning.adaptation` enables online model-choice learning after the base decision algorithm. `global.router.learning.protection` protects agentic continuity, cache, tool loops, and handoff cost. `decision.algorithm.type=session_aware|elo|rl_driven|gmtrouter|bandit|personalization` is removed; decisions can use normal base algorithms or omit `algorithm`. Per-decision `adaptations` is strictly validated and should be used only for `mode: apply|observe|bypass`, component modes, optional `adaptation.candidate_set`, and sparse `protection.stability_weight` / `protection.switch_margin` overrides.
   - experimental `decision.algorithm.type: rayline_arc` is fail closed and requires `adaptations.mode: bypass`. Its typed block pins the mounted artifact revision, dedicated vLLM pooling build/plugin/capabilities, request budget, and fenced episode backend; credentials are referenced by environment-variable name rather than serialized into canonical config.
+  - experimental `decision.algorithm.type: rayline_remote` is fail closed and requires `adaptations.mode: bypass` plus Router Replay disabled. Its typed block pins Pathfinder's bundle, authenticated endpoint, request and lease budgets, and the exact worker-to-model map; API and episode-HMAC secrets are referenced by environment-variable name.
   - `global.services` groups shared APIs and control-plane services such as `response_api`, `router_replay`, `observability`, `authz`, and `ratelimit`
   - `global.services.router_replay.enabled` acts as the default replay switch for every decision; route-local `router_replay.enabled: false` is the explicit opt-out
   - `global.stores` groups shared storage-backed services such as `semantic_cache`, `memory`, and `vector_store`
@@ -254,7 +255,7 @@ The repository now separates the exhaustive canonical reference config from reus
 - `config/plugin/`: reusable route-plugin snippets
 
 `config/decision/` is organized by boolean case shape: `single/`, `and/`, `or/`, `not/`, and `composite/`.
-`config/algorithm/` is organized by routing policy family: `looper/` and `selection/`; looper fragments include `confidence`, `ratings`, `remom`, and `fusion`, while `selection/rayline-arc.yaml` documents the experimental ARC pinning contract.
+`config/algorithm/` is organized by routing policy family: `looper/` and `selection/`; looper fragments include `confidence`, `ratings`, `remom`, and `fusion`, while `selection/rayline-arc.yaml` and `selection/rayline-remote.yaml` document the two distinct experimental Rayline contracts.
 `config/plugin/` is organized one plugin or reusable bundle per directory.
 The repository enforces this fragment catalog in `go test ./pkg/config/...`, so routing-surface changes must update the `config/` tree in the same change.
 

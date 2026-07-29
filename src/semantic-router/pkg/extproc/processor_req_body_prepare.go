@@ -128,19 +128,19 @@ func (r *OpenAIRouter) runRequestPreRoutingStages(
 		ctx.InflightToken = 0
 		r.startRouterReplay(ctx, originalModel, selectedModel, decisionName)
 		r.updateRouterReplayStatus(ctx, 200, false)
-		r.finalizeRaylineARCAbort(ctx, "immediate_response")
+		finalizeSelectionAbort(ctx, "immediate_response")
 		return requestDecisionState{}, resp
 	}
 	if resp := r.applyRateLimitAndCacheChecks(ctx, selectedModel, decisionName); resp != nil {
 		inflight.End(selectedModel, ctx.InflightToken)
 		ctx.InflightToken = 0
-		r.finalizeRaylineARCAbort(ctx, "immediate_response")
+		finalizeSelectionAbort(ctx, "immediate_response")
 		return requestDecisionState{}, resp
 	}
 	if ragErr := r.executeRAGPlugin(ctx, decisionName); ragErr != nil {
 		inflight.End(selectedModel, ctx.InflightToken)
 		ctx.InflightToken = 0
-		r.finalizeRaylineARCAbort(ctx, "handler_error")
+		finalizeSelectionAbort(ctx, "handler_error")
 		return requestDecisionState{}, r.createErrorResponse(503, fmt.Sprintf("RAG retrieval failed: %v", ragErr))
 	}
 
@@ -163,19 +163,32 @@ func (r *OpenAIRouter) decisionEvaluationErrorResponse(
 	if ctx != nil {
 		requestID = ctx.RequestID
 	}
+	algorithm := selectionFailure.algorithm
+	if algorithm == "" {
+		algorithm = configRaylineARC
+	}
 	logging.ComponentErrorEvent(
 		"extproc",
-		"rayline_arc_selection_failed",
+		algorithm+"_selection_failed",
 		map[string]interface{}{
 			"request_id":    requestID,
 			"failure_class": selectionFailure.class,
 		},
 	)
-	metrics.RecordRaylineARCFailure(selectionFailure.class)
-	r.finalizeRaylineARCAbort(ctx, "selection_failure")
+	message := "Rayline ARC routing unavailable"
+	if algorithm == configRaylineRemote {
+		metrics.RecordRaylineRemoteFailure(
+			"selection",
+			selectionFailure.class,
+		)
+		message = "Rayline remote routing unavailable"
+	} else {
+		metrics.RecordRaylineARCFailure(selectionFailure.class)
+	}
+	finalizeSelectionAbort(ctx, "selection_failure")
 	return r.createErrorResponse(
 		503,
-		"Rayline ARC routing unavailable",
+		message,
 	), true
 }
 

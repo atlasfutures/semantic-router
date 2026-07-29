@@ -166,6 +166,9 @@ type RequestContext struct {
 	RaylineARCDispatch             *raylinearc.WorkerManifest                  // Private artifact-owned upstream contract; never emit in traces.
 	RaylineARCAuthHeader           string                                      // Auth header carrying the artifact credential; kept single-valued.
 	RaylineARCTransaction          *raylineARCEpisodeTransaction               // Fenced ARC state lease; finalized exactly once.
+	SelectionTransaction           *selectionTransactionOwner                  // Shared authoritative selector lifecycle owner; at most one per request.
+	SelectionSettlement            selectionActualOutcome                      // Bounded actual outcome facts; unknown fields remain nil.
+	VSRRaylineRemote               *selection.RaylineRemoteTrace               // Bounded ordinal remote policy trace; never worker IDs or receipts.
 
 	// ResponsePath records how the final response was produced, surfaced as the
 	// v0.4 keystone x-vsr-response-path header (one of the headers.ResponsePath*

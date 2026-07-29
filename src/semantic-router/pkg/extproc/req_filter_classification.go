@@ -1,7 +1,6 @@
 package extproc
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"time"
@@ -70,11 +69,13 @@ func (r *OpenAIRouter) performDecisionEvaluation(originalModel string, history s
 }
 
 type modelSelectionFailure struct {
-	class string
+	algorithm string
+	class     string
 }
 
 func (failure *modelSelectionFailure) Error() string {
-	return "model selection failed (class=" + failure.class + ")"
+	return "model selection failed (algorithm=" + failure.algorithm +
+		",class=" + failure.class + ")"
 }
 
 // selectModelFromCandidates uses the configured selection algorithm to choose the best model
@@ -121,99 +122,14 @@ func (r *OpenAIRouter) selectModelFromCandidates(selCtx *selection.SelectionCont
 			method,
 		)
 	}
-
-	selectionContext := modelSelectionContext(ctx)
-	result, err := selector.Select(selectionContext, selCtx)
-	if err != nil {
-		return r.handleSelectionFallback(
-			algorithm,
-			raylineARCFailureClass(err),
-			string(method),
-			selCtx,
-			nil,
-			defaultCandidateModelRef,
-			ctx,
-			"[ModelSelection] Selection failed: %v, using default candidate",
-			err,
-		)
-	}
-	if err := selection.ValidateSelectionResult(selCtx, result); err != nil {
-		return r.handleSelectionFallback(
-			algorithm,
-			"invalid_result",
-			string(method),
-			selCtx,
-			result,
-			defaultCandidateModelRef,
-			ctx,
-			"[ModelSelection] Invalid selection result: %v, using default candidate",
-			err,
-		)
-	}
-
-	selectedModelRef := selectedModelRefFromResult(selCtx, result)
-	if selectedModelRef == nil {
-		return r.handleSelectionFallback(
-			algorithm,
-			"unknown_model",
-			string(method),
-			selCtx,
-			result,
-			defaultCandidateModelRef,
-			ctx,
-			"[ModelSelection] Selected model %s not found in candidates, using default candidate",
-			result.SelectedModel,
-		)
-	}
-	if err := bindRaylineARCDispatchContract(
-		selector,
-		algorithm,
-		result,
-		selectedModelRef,
-		ctx,
-	); err != nil {
-		return nil, "", err
-	}
-	return r.completeModelSelection(
+	return r.selectWithCandidateSelector(
 		selCtx,
 		algorithm,
 		ctx,
+		defaultCandidateModelRef,
 		method,
-		result,
-		selectedModelRef,
+		selector,
 	)
-}
-
-func modelSelectionContext(ctx *RequestContext) context.Context {
-	if ctx != nil && ctx.TraceContext != nil {
-		return ctx.TraceContext
-	}
-	return context.Background()
-}
-
-func bindRaylineARCDispatchContract(
-	selector selection.Selector,
-	algorithm *config.AlgorithmConfig,
-	result *selection.SelectionResult,
-	selectedModelRef *config.ModelRef,
-	ctx *RequestContext,
-) error {
-	if !failClosedSelection(algorithm) {
-		return nil
-	}
-	dispatchProvider, ok := selector.(raylineARCWorkerProvider)
-	if !ok || result.RaylineARC == nil {
-		return selectionFailureForAlgorithm(algorithm, "dispatch_contract")
-	}
-	worker, found := dispatchProvider.Worker(result.RaylineARC.SelectedArm)
-	if !found || worker.ID != selectedModelRef.Model {
-		return selectionFailureForAlgorithm(algorithm, "dispatch_contract")
-	}
-	if ctx == nil {
-		return selectionFailureForAlgorithm(algorithm, "dispatch_context")
-	}
-	ctx.RaylineARCDispatch = &worker
-	return nil
 }
 
 func (r *OpenAIRouter) completeModelSelection(
@@ -224,7 +140,7 @@ func (r *OpenAIRouter) completeModelSelection(
 	result *selection.SelectionResult,
 	selectedModelRef *config.ModelRef,
 ) (*config.ModelRef, string, error) {
-	if failClosedSelection(algorithm) {
+	if raylineARCSelection(algorithm) {
 		if ctx != nil {
 			ctx.VSRRaylineARC = result.RaylineARC
 			if ctx.RaylineARCTransaction != nil &&
@@ -239,6 +155,16 @@ func (r *OpenAIRouter) completeModelSelection(
 		// ARC owns bounded ordinal telemetry. The generic selection metric uses
 		// model IDs as Prometheus labels, which would export artifact arm
 		// identity and create artifact-controlled cardinality.
+		return selectedModelRef, string(method), nil
+	}
+	if raylineRemoteSelection(algorithm) {
+		if ctx != nil {
+			ctx.VSRRaylineRemote = result.RaylineRemote
+		}
+		observeRaylineRemoteSelection(ctx, result.RaylineRemote)
+		// Pathfinder is authoritative for this decision. Router Learning and
+		// generic label-bearing selection telemetry cannot post-select or
+		// export the remote worker identity.
 		return selectedModelRef, string(method), nil
 	}
 	recordSelCtx, result, selectedModelRef, learningApplied := r.applyRouterLearning(selCtx, result, selectedModelRef, ctx)
@@ -259,12 +185,17 @@ func (r *OpenAIRouter) handleSelectionFallback(
 	warning string,
 	arguments ...interface{},
 ) (*config.ModelRef, string, error) {
+	if raylineRemoteSelection(algorithm) {
+		abortPreparedRaylineRemote(selCtx)
+	}
 	if failure := selectionFailureForAlgorithm(
 		algorithm,
 		class,
 	); failure != nil {
 		if method == "" {
-			method = string(selection.MethodRaylineARC)
+			method = string(
+				selectionMethodForAuthoritativeAlgorithm(algorithm),
+			)
 		}
 		return nil, method, failure
 	}
@@ -274,9 +205,36 @@ func (r *OpenAIRouter) handleSelectionFallback(
 }
 
 func failClosedSelection(algorithm *config.AlgorithmConfig) bool {
+	return authoritativeSelectionKind(algorithm) != "" &&
+		algorithm.OnError == "fail_closed"
+}
+
+func raylineARCSelection(algorithm *config.AlgorithmConfig) bool {
 	return algorithm != nil &&
 		algorithm.Type == config.RaylineARCAlgorithmType &&
 		algorithm.OnError == "fail_closed"
+}
+
+func raylineRemoteSelection(algorithm *config.AlgorithmConfig) bool {
+	return algorithm != nil &&
+		algorithm.Type == config.RaylineRemoteAlgorithmType &&
+		algorithm.OnError == "fail_closed"
+}
+
+func authoritativeSelectionKind(
+	algorithm *config.AlgorithmConfig,
+) string {
+	if algorithm == nil {
+		return ""
+	}
+	switch algorithm.Type {
+	case config.RaylineARCAlgorithmType:
+		return configRaylineARC
+	case config.RaylineRemoteAlgorithmType:
+		return configRaylineRemote
+	default:
+		return ""
+	}
 }
 
 func selectionFailureForAlgorithm(
@@ -289,15 +247,39 @@ func selectionFailureForAlgorithm(
 	if class == "" {
 		class = "selection"
 	}
-	return &modelSelectionFailure{class: class}
+	return &modelSelectionFailure{
+		algorithm: authoritativeSelectionKind(algorithm),
+		class:     class,
+	}
 }
 
-func raylineARCFailureClass(err error) string {
-	var failure *raylineARCSelectionFailure
-	if errors.As(err, &failure) {
-		return failure.class
+func authoritativeSelectionFailureClass(
+	algorithm *config.AlgorithmConfig,
+	err error,
+) string {
+	if raylineRemoteSelection(algorithm) {
+		var failure *raylineRemoteSelectionFailure
+		if errors.As(err, &failure) {
+			return failure.class
+		}
+		return remoteFailureClass(err, "selector")
+	}
+	if raylineARCSelection(algorithm) {
+		var failure *raylineARCSelectionFailure
+		if errors.As(err, &failure) {
+			return failure.class
+		}
 	}
 	return "selector"
+}
+
+func selectionMethodForAuthoritativeAlgorithm(
+	algorithm *config.AlgorithmConfig,
+) selection.SelectionMethod {
+	if raylineRemoteSelection(algorithm) {
+		return selection.MethodRaylineRemote
+	}
+	return selection.MethodRaylineARC
 }
 
 func observeRaylineARCSelection(
@@ -504,6 +486,10 @@ func (r *OpenAIRouter) buildSelectionContext(
 		algorithm,
 		reqCtx,
 		len(modelRefs),
+	)
+	selCtx.RaylineRemote = buildRaylineRemoteSelectionContext(
+		algorithm,
+		reqCtx,
 	)
 	return selCtx
 }

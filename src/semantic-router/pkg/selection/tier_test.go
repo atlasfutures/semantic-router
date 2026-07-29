@@ -21,6 +21,9 @@ func TestRaylineARCMethodIsCatalogedExperimental(t *testing.T) {
 	if got := config.GetAlgorithmTier(string(MethodRaylineARC)); got != string(TierExperimental) {
 		t.Fatalf("Rayline ARC catalog tier = %q, want %q", got, TierExperimental)
 	}
+	if got := config.GetAlgorithmTier(string(MethodRaylineRemote)); got != string(TierExperimental) {
+		t.Fatalf("Rayline remote catalog tier = %q, want %q", got, TierExperimental)
+	}
 }
 
 func TestDependencyType_Constants(t *testing.T) {

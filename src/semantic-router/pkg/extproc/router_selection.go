@@ -69,6 +69,33 @@ func createModelSelectorRegistry(
 			)
 		}
 	}
+	remoteSelector, remoteReadinessFailure := createRaylineRemoteSelector(cfg)
+	if remoteSelector != nil {
+		registry.Register(
+			selection.MethodRaylineRemote,
+			remoteSelector,
+		)
+		metrics.SetRaylineRemoteReady(
+			remoteReadinessFailure == "",
+		)
+		fields := map[string]interface{}{
+			"ready": remoteReadinessFailure == "",
+		}
+		if remoteReadinessFailure != "" {
+			fields["failure_class"] = remoteReadinessFailure
+			logging.ComponentErrorEvent(
+				"extproc",
+				"rayline_remote_component_readiness",
+				fields,
+			)
+		} else {
+			logging.ComponentEvent(
+				"extproc",
+				"rayline_remote_component_readiness",
+				fields,
+			)
+		}
+	}
 	selection.GlobalRegistry = registry
 
 	// Collect algorithm methods actually configured in decisions
@@ -155,7 +182,7 @@ func collectConfiguredAlgorithmMethods(cfg *config.RouterConfig) []selection.Sel
 	seen := make(map[string]bool)
 	var methods []selection.SelectionMethod
 
-	for _, decision := range cfg.Decisions {
+	for _, decision := range cfg.AllRoutingDecisions() {
 		if decision.Algorithm == nil || decision.Algorithm.Type == "" {
 			continue
 		}

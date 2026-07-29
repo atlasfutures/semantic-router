@@ -275,14 +275,13 @@ func (r *OpenAIRouter) handleAutoModelRouting(openAIRequest *openai.ChatCompleti
 	// Handle tool selection
 	r.handleToolSelectionForRequest(openAIRequest, response, ctx)
 
-	// Renewal runs concurrently with body preparation. Recheck at the last
-	// point before the mutation is returned to Envoy so a lease already known
-	// to be lost cannot dispatch an upstream provider request.
-	if ctx.RaylineARCDispatch != nil &&
-		!raylineARCDispatchAllowed(ctx) {
-		return r.raylineARCDispatchFailureResponseFor(
+	// Recheck the authoritative selection transaction at the last point
+	// before the mutation is returned to Envoy. The remote adapter performs a
+	// synchronous renewal here; the ARC adapter consumes known lease loss.
+	if err := selectionDispatchAllowed(ctx); err != nil {
+		return r.selectionDispatchFailureResponseFor(
 			ctx,
-			"lease_lost",
+			boundedSelectionTransactionFailure(err),
 		), nil
 	}
 
@@ -302,9 +301,14 @@ func (r *OpenAIRouter) autoRoutingShortcutResponse(
 	matchedModel string,
 	response *ext_proc.ProcessingResponse,
 ) (*ext_proc.ProcessingResponse, bool) {
-	if ctx.RaylineARCDispatch != nil {
+	ensureSelectionTransactionBound(ctx)
+	if ctx.SelectionTransaction != nil ||
+		ctx.RaylineARCDispatch != nil {
 		if matchedModel == "" {
-			return r.raylineARCDispatchFailureResponse(ctx), true
+			return r.selectionDispatchFailureResponseFor(
+				ctx,
+				"missing_model",
+			), true
 		}
 		return nil, false
 	}
@@ -325,15 +329,21 @@ func (r *OpenAIRouter) resolveAutoRoutingTarget(
 ) (string, string, *config.ProviderProfile, *ext_proc.ProcessingResponse, error) {
 	backendAddress, backendName, backendErr := r.resolveBackendForModel(ctx, matchedModel)
 	if backendErr != nil {
-		if ctx.RaylineARCDispatch != nil {
-			return "", "", nil, r.raylineARCDispatchFailureResponse(ctx), nil
+		if ctx.SelectionTransaction != nil {
+			return "", "", nil, r.selectionDispatchFailureResponseFor(
+				ctx,
+				"dispatch_mapping",
+			), nil
 		}
 		return "", "", nil, nil, fmt.Errorf("auto routing: %w", backendErr)
 	}
 	profile, profileErr := r.Config.GetProviderProfileForEndpoint(backendName)
 	if profileErr != nil {
-		if ctx.RaylineARCDispatch != nil {
-			return "", "", nil, r.raylineARCDispatchFailureResponse(ctx), nil
+		if ctx.SelectionTransaction != nil {
+			return "", "", nil, r.selectionDispatchFailureResponseFor(
+				ctx,
+				"provider_profile",
+			), nil
 		}
 		return "", "", nil, nil, fmt.Errorf(
 			"auto routing provider profile: %w",
@@ -369,6 +379,44 @@ func (r *OpenAIRouter) raylineARCDispatchFailureResponseFor(
 	return r.createErrorResponse(
 		http.StatusServiceUnavailable,
 		"Rayline ARC routing unavailable",
+	)
+}
+
+func (r *OpenAIRouter) selectionDispatchFailureResponseFor(
+	ctx *RequestContext,
+	failureClass string,
+) *ext_proc.ProcessingResponse {
+	kind := configRaylineARC
+	requestID := ""
+	if ctx != nil {
+		requestID = ctx.RequestID
+		if ctx.SelectionTransaction != nil &&
+			ctx.SelectionTransaction.kind != "" {
+			kind = ctx.SelectionTransaction.kind
+		}
+	}
+	logging.ComponentErrorEvent(
+		"extproc",
+		kind+"_dispatch_failed",
+		map[string]interface{}{
+			"request_id":    requestID,
+			"failure_class": failureClass,
+		},
+	)
+	if kind == configRaylineRemote {
+		metrics.RecordRaylineRemoteFailure(
+			"dispatch",
+			failureClass,
+		)
+	} else {
+		metrics.RecordRaylineARCFailure(
+			"dispatch_" + failureClass,
+		)
+	}
+	finalizeSelectionAbort(ctx, "dispatch_"+failureClass)
+	return r.createErrorResponse(
+		http.StatusServiceUnavailable,
+		selectionUnavailableMessage(ctx),
 	)
 }
 

@@ -115,6 +115,7 @@ func (r *OpenAIRouter) prepareRaylineARCTransaction(
 		)*time.Second,
 		nil,
 	)
+	bindRaylineARCSelectionTransaction(reqCtx)
 	return state, ""
 }
 

@@ -86,7 +86,7 @@ func (r *OpenAIRouter) processWithContext(
 			logging.Errorf("Process: recovered panic: %v\n%s", rec, debug.Stack())
 			retErr = status.Errorf(codes.Internal, "internal error: %v", rec)
 		}
-		r.finalizeRaylineARCAbort(ctx, "process_terminal")
+		finalizeSelectionProcessTerminal(ctx)
 	}()
 
 	for {
@@ -104,6 +104,7 @@ func (r *OpenAIRouter) processWithContext(
 func (r *OpenAIRouter) handleProcessReceiveError(ctx *RequestContext, err error) error {
 	if ctx.IsStreamingResponse && !ctx.StreamingComplete {
 		ctx.StreamingAborted = true
+		ctx.SelectionSettlement.OutcomeClass = selectionTerminalOutcomeClass(err)
 		logging.Debugf("Streaming response aborted before completion, will not cache")
 	}
 	if ctx.InflightToken != 0 {
@@ -126,6 +127,17 @@ func (r *OpenAIRouter) handleProcessReceiveError(ctx *RequestContext, err error)
 
 	logging.Errorf("Error receiving request: %v", err)
 	return err
+}
+
+func selectionTerminalOutcomeClass(err error) string {
+	if errors.Is(err, context.Canceled) {
+		return "client_cancelled"
+	}
+	if rpcStatus, ok := status.FromError(err); ok &&
+		rpcStatus.Code() == codes.Canceled {
+		return "client_cancelled"
+	}
+	return "stream_error"
 }
 
 func handleProcessStatusError(ctx *RequestContext, err error) bool {

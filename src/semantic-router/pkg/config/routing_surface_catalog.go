@@ -71,6 +71,7 @@ var decisionAlgorithmCatalog = []AlgorithmCatalogEntry{
 	{Type: "mlp", Tier: "experimental"},
 	{Type: "multi_factor", Tier: "supported"},
 	{Type: RaylineARCAlgorithmType, Tier: "experimental"},
+	{Type: RaylineRemoteAlgorithmType, Tier: "experimental"},
 	{Type: "ratings", Tier: "supported"},
 	{Type: "remom", Tier: "supported"},
 	{Type: "router_dc", Tier: "supported"},

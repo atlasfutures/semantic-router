@@ -56,6 +56,8 @@ func assertSupportedAlgorithmsInReferenceConfig(t testingT, decisions []interfac
 	assertMapCoversStructFields(t, mustMapAt(t, algorithmsByType["rayline_arc"], "rayline_arc", "encoder"), reflect.TypeOf(RaylineARCEncoderConfig{}), "routing.decisions[].algorithm.rayline_arc.encoder")
 	assertMapCoversStructFields(t, mustMapAt(t, algorithmsByType["rayline_arc"], "rayline_arc", "episode"), reflect.TypeOf(RaylineARCEpisodeConfig{}), "routing.decisions[].algorithm.rayline_arc.episode")
 	assertMapCoversStructFields(t, mustMapAt(t, algorithmsByType["rayline_arc"], "rayline_arc", "episode", "redis"), reflect.TypeOf(RaylineARCRedisConfig{}), "routing.decisions[].algorithm.rayline_arc.episode.redis")
+	assertMapCoversStructFields(t, mustMapAt(t, algorithmsByType["rayline_remote"], "rayline_remote"), reflect.TypeOf(RaylineRemoteAlgorithmConfig{}), "routing.decisions[].algorithm.rayline_remote")
+	assertSliceUnionCoversStructFields(t, mustSliceAt(t, algorithmsByType["rayline_remote"], "rayline_remote", "workers"), reflect.TypeOf(RaylineRemoteWorkerConfig{}), "routing.decisions[].algorithm.rayline_remote.workers")
 }
 
 func assertReferenceConfidenceAlgorithmCoverage(t testingT, algorithmsByType map[string]map[string]interface{}) {

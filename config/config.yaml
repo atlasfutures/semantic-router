@@ -680,6 +680,45 @@ routing:
               use_tls: false
               pool_size: 16
 
+    - name: rayline_remote_reference_route
+      description: Experimental fail-closed remote Rayline policy with a pinned bundle and explicit worker map.
+      priority: 194
+      rules:
+        operator: AND
+        conditions:
+          - type: domain
+            name: business
+      modelRefs:
+        - model: qwen3-8b
+          use_reasoning: false
+        - model: qwen3-32b
+          use_reasoning: true
+      adaptations:
+        mode: bypass
+      plugins:
+        - type: router_replay
+          configuration:
+            enabled: false
+      algorithm:
+        type: rayline_remote
+        on_error: fail_closed
+        rayline_remote:
+          base_url: http://rayline-router:8000
+          bundle_version: public-synthetic-remote-v1
+          api_key_env: RAYLINE_API_KEY
+          episode_id_header: x-rayline-episode-id
+          episode_hmac_key_env: RAYLINE_EPISODE_HMAC_KEY
+          decision_id_header: x-rayline-route-id
+          connect_timeout_ms: 250
+          request_timeout_ms: 1000
+          lease_ttl_seconds: 30
+          max_retries: 1
+          workers:
+            - id: qwen3-8b-worker
+              model: qwen3-8b
+            - id: qwen3-32b-worker
+              model: qwen3-32b
+
     - name: legal_confidence_route
       description: Confidence-routed legal and factual traffic.
       priority: 190

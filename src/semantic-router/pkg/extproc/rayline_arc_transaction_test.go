@@ -135,14 +135,23 @@ func TestRaylineARCEpisodeCommitFailsAfterLeaseLoss(t *testing.T) {
 	router, requestContext, _, _ := newTestARCEpisodeTransaction(t)
 	requestContext.RaylineARCTransaction.markSelection(1, 123)
 	requestContext.RaylineARCTransaction.leaseLost.Store(true)
-	if _, err := router.handleResponseHeaders(
+	response, err := router.handleResponseHeaders(
 		arcResponseHeaders("200"),
 		requestContext,
-	); err == nil ||
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.GetImmediateResponse() == nil ||
+		int(response.GetImmediateResponse().GetStatus().GetCode()) != 503 ||
 		boundedARCEpisodeFailure(
 			requestContext.RaylineARCTransaction.finalizeErr,
 		) != "lease_lost" {
-		t.Fatalf("lease-loss commit error = %v", err)
+		t.Fatalf(
+			"lease-loss response=%#v finalize_error=%v",
+			response,
+			requestContext.RaylineARCTransaction.finalizeErr,
+		)
 	}
 }
 

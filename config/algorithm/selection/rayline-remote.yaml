@@ -1,0 +1,19 @@
+algorithm:
+  type: rayline_remote
+  on_error: fail_closed
+  rayline_remote:
+    base_url: http://rayline-router:8000
+    bundle_version: mtrouter-example-immutable-revision
+    api_key_env: RAYLINE_API_KEY
+    episode_id_header: x-rayline-episode-id
+    episode_hmac_key_env: RAYLINE_EPISODE_HMAC_KEY
+    decision_id_header: x-rayline-route-id
+    connect_timeout_ms: 250
+    request_timeout_ms: 1000
+    lease_ttl_seconds: 30
+    max_retries: 1
+    workers:
+      - id: mock-a
+        model: model-a
+      - id: mock-b
+        model: model-b

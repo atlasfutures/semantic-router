@@ -77,6 +77,7 @@ func TestRaylineARCSelectorMapsArtifactArmWithoutMutatingState(t *testing.T) {
 	}
 }
 
+//nolint:cyclop // One assertion helper audits every field of the bounded ARC trace.
 func assertRaylineARCSelectionResult(
 	t *testing.T,
 	result *selection.SelectionResult,

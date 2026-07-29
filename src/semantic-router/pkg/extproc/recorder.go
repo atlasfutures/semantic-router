@@ -126,7 +126,10 @@ func (r *OpenAIRouter) startRouterReplay(
 }
 
 func shouldStartRouterReplay(ctx *RequestContext) bool {
-	if ctx == nil || ctx.RouterReplayPluginConfig == nil || !ctx.RouterReplayPluginConfig.Enabled {
+	if ctx == nil ||
+		ctx.VSRRaylineRemote != nil ||
+		ctx.RouterReplayPluginConfig == nil ||
+		!ctx.RouterReplayPluginConfig.Enabled {
 		return false
 	}
 	return ctx.RouterReplayID == ""

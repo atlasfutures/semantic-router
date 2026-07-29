@@ -68,6 +68,7 @@ The repo now keeps one tutorial page per algorithm.
 | **[MLP](./selection/mlp)** | ML (GPU) | No (offline) | No | — | Non-linear neural network routing |
 | **[Latency Aware](./selection/latency-aware)** | Metrics | No | No | — | Fastest model selection by TPOT/TTFT |
 | **[Rayline ARC](./selection/rayline-arc)** | Artifact policy | No | No | — | Switch-aware, cache-cost-aware orchestration with vLLM encoder inference |
+| **[Rayline Remote](./selection/rayline-remote)** | Remote policy | No | No | — | Transactional episode-aware selection owned by Pathfinder |
 
 ### Looper Algorithms (multi-model orchestration)
 
@@ -121,6 +122,7 @@ decision algorithm. See [Protection](../learning/protection). There is no
 - [MLP](./selection/mlp)
 - [Multi Factor](./selection/multi-factor)
 - [Rayline ARC](./selection/rayline-arc)
+- [Rayline Remote](./selection/rayline-remote)
 - [Router DC](./selection/router-dc)
 - [Static](./selection/static)
 - [SVM](./selection/svm)

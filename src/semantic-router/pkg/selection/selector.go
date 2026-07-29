@@ -32,6 +32,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylineremote"
 )
 
 // SelectionMethod defines the type of model selection algorithm
@@ -98,6 +99,10 @@ const (
 	// MethodRaylineARC uses the artifact-verified Rayline ARC orchestrator.
 	// The encoder is served by a dedicated vLLM pooling deployment.
 	MethodRaylineARC SelectionMethod = "rayline_arc"
+
+	// MethodRaylineRemote delegates authoritative selection and episode state
+	// to a version-pinned Pathfinder Rayline service.
+	MethodRaylineRemote SelectionMethod = "rayline_remote"
 
 	// MethodSessionAware wraps a base selector with agentic session policy:
 	// it keeps tool loops and hot multi-turn continuations on the current model
@@ -208,6 +213,11 @@ type SelectionContext struct {
 	// RaylineARC carries only the structured, privacy-safe inputs required by
 	// the artifact-owned ARC selector. It is nil for every other algorithm.
 	RaylineARC *RaylineARCSelectionContext
+
+	// RaylineRemote carries the request-scoped inputs and opaque transaction
+	// returned by the Pathfinder-owned selector. The transaction's receipt has
+	// no public accessor and must never enter generic traces.
+	RaylineRemote *RaylineRemoteSelectionContext
 }
 
 type RaylineARCSelectionContext struct {
@@ -239,6 +249,21 @@ type RaylineARCTrace struct {
 	TruncatedTokens     int
 	CachedPrefixTokens  int
 	EncoderLatency      time.Duration
+}
+
+type RaylineRemoteSelectionContext struct {
+	DecisionID         string
+	RawEpisodeID       string
+	RequestBody        []byte
+	PreparationFailure string
+	Transaction        *raylineremote.Transaction
+}
+
+type RaylineRemoteTrace struct {
+	BundleHash       string
+	SelectedIndex    int
+	RouteCallIndex   int
+	SelectionLatency time.Duration
 }
 
 // SelectionResult contains the result of a model selection decision
@@ -273,6 +298,10 @@ type SelectionResult struct {
 
 	// RaylineARC records bounded, privacy-safe artifact policy diagnostics.
 	RaylineARC *RaylineARCTrace
+
+	// RaylineRemote records bounded ordinal diagnostics. It never contains a
+	// worker ID, prompt, episode identity, credential, or transaction receipt.
+	RaylineRemote *RaylineRemoteTrace
 }
 
 // Selector is the interface for model selection algorithms

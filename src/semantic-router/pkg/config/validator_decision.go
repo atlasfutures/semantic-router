@@ -28,6 +28,9 @@ func validateDecisionModelContracts(cfg *RouterConfig) error {
 		if err := validateRaylineARCDecisionContract(cfg, decision); err != nil {
 			return err
 		}
+		if err := validateRaylineRemoteDecisionContract(cfg, decision); err != nil {
+			return err
+		}
 		if err := validateDecisionWorkflowModelRefs(decision); err != nil {
 			return err
 		}
@@ -330,7 +333,7 @@ func validateMigratedLearningAlgorithm(decisionName string, normalizedType strin
 }
 
 func configuredAlgorithmBlocks(algorithm *AlgorithmConfig) []string {
-	configuredBlocks := make([]string, 0, 15)
+	configuredBlocks := make([]string, 0, 16)
 	addBlock := func(name string, configured bool) {
 		if configured {
 			configuredBlocks = append(configuredBlocks, name)
@@ -351,28 +354,31 @@ func configuredAlgorithmBlocks(algorithm *AlgorithmConfig) []string {
 	addBlock("latency_aware", algorithm.LatencyAware != nil)
 	addBlock("multi_factor", algorithm.MultiFactor != nil)
 	addBlock("rayline_arc", algorithm.RaylineARC != nil)
+	addBlock("rayline_remote", algorithm.RaylineRemote != nil)
 	addBlock("session_aware", algorithm.SessionAware != nil)
 	return configuredBlocks
 }
 
 func expectedAlgorithmBlock(normalizedType string) (string, bool) {
 	expectedBlockByType := map[string]string{
-		"confidence":    "confidence",
-		"ratings":       "ratings",
-		"remom":         "remom",
-		"fusion":        "fusion",
-		"workflows":     "workflows",
-		"router_dc":     "router_dc",
-		"automix":       "automix",
-		"hybrid":        "hybrid",
-		"latency_aware": "latency_aware",
-		"multi_factor":  "multi_factor",
-		"rayline_arc":   "rayline_arc",
+		"confidence":     "confidence",
+		"ratings":        "ratings",
+		"remom":          "remom",
+		"fusion":         "fusion",
+		"workflows":      "workflows",
+		"router_dc":      "router_dc",
+		"automix":        "automix",
+		"hybrid":         "hybrid",
+		"latency_aware":  "latency_aware",
+		"multi_factor":   "multi_factor",
+		"rayline_arc":    "rayline_arc",
+		"rayline_remote": "rayline_remote",
 	}
 	expectedBlock, ok := expectedBlockByType[normalizedType]
 	return expectedBlock, ok
 }
 
+//nolint:cyclop // This is the single flat dispatch table for specialized validators.
 func validateSpecializedAlgorithmConfig(decisionName string, modelRefs []ModelRef, normalizedType string, algorithm *AlgorithmConfig) error {
 	switch normalizedType {
 	case "latency_aware":
@@ -399,6 +405,12 @@ func validateSpecializedAlgorithmConfig(decisionName string, modelRefs []ModelRe
 		}
 	case RaylineARCAlgorithmType:
 		return validateRaylineARCSpecializedAlgorithmConfig(decisionName, algorithm)
+	case RaylineRemoteAlgorithmType:
+		return validateRaylineRemoteSpecializedAlgorithmConfig(
+			decisionName,
+			modelRefs,
+			algorithm,
+		)
 	}
 	return nil
 }

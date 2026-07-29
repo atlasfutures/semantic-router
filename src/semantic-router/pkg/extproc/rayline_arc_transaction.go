@@ -236,6 +236,10 @@ func (r *OpenAIRouter) finalizeRaylineARCAbort(
 	ctx *RequestContext,
 	class string,
 ) {
+	if ctx != nil && ctx.SelectionTransaction != nil {
+		finalizeSelectionAbort(ctx, class)
+		return
+	}
 	if ctx == nil || ctx.RaylineARCTransaction == nil {
 		return
 	}

@@ -14,17 +14,18 @@ import (
 )
 
 var selectionMethodByAlgorithmType = map[string]selection.SelectionMethod{
-	"router_dc":     selection.MethodRouterDC,
-	"automix":       selection.MethodAutoMix,
-	"hybrid":        selection.MethodHybrid,
-	"latency_aware": selection.MethodLatencyAware,
-	"static":        selection.MethodStatic,
-	"knn":           selection.MethodKNN,
-	"kmeans":        selection.MethodKMeans,
-	"svm":           selection.MethodSVM,
-	"multi_factor":  selection.MethodMultiFactor,
-	"mlp":           selection.MethodMLP,
-	"rayline_arc":   selection.MethodRaylineARC,
+	"router_dc":      selection.MethodRouterDC,
+	"automix":        selection.MethodAutoMix,
+	"hybrid":         selection.MethodHybrid,
+	"latency_aware":  selection.MethodLatencyAware,
+	"static":         selection.MethodStatic,
+	"knn":            selection.MethodKNN,
+	"kmeans":         selection.MethodKMeans,
+	"svm":            selection.MethodSVM,
+	"multi_factor":   selection.MethodMultiFactor,
+	"mlp":            selection.MethodMLP,
+	"rayline_arc":    selection.MethodRaylineARC,
+	"rayline_remote": selection.MethodRaylineRemote,
 }
 
 func (r *OpenAIRouter) evaluateSignalsForDecision(

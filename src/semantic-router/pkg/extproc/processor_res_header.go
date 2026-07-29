@@ -3,6 +3,7 @@ package extproc
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 )
@@ -22,11 +23,19 @@ func (r *OpenAIRouter) handleResponseHeaders(v *ext_proc.ProcessingRequest_Respo
 		// path can avoid caching non-2xx error bodies (cache poisoning).
 		ctx.UpstreamStatusCode = outcome.statusCode
 	}
-	if err := finalizeRaylineARCResponseHeaders(
+	if err := finalizeSelectionResponseHeaders(
 		ctx,
 		outcome.isSuccessful,
 	); err != nil {
-		return nil, err
+		recordSelectionLifecycleFailure(
+			ctx,
+			"response_headers",
+			err,
+		)
+		return r.createErrorResponse(
+			http.StatusServiceUnavailable,
+			selectionUnavailableMessage(ctx),
+		), nil
 	}
 	finishUpstreamResponseSpan(ctx, outcome)
 	maybeRecordResponseHeaderTTFT(ctx)
@@ -44,6 +53,13 @@ func finalizeRaylineARCResponseHeaders(
 	requestContext *RequestContext,
 	successful bool,
 ) error {
+	if requestContext != nil &&
+		requestContext.SelectionTransaction != nil {
+		return finalizeSelectionResponseHeaders(
+			requestContext,
+			successful,
+		)
+	}
 	if requestContext == nil ||
 		requestContext.RaylineARCTransaction == nil {
 		return nil
