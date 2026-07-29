@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -193,5 +194,93 @@ func TestApplyRaylineARCDispatchRejectsMalformedInput(t *testing.T) {
 	worker.ExtraBody = json.RawMessage(`[]`)
 	if _, err := applyRaylineARCDispatch([]byte(`{}`), worker); err == nil {
 		t.Fatal("malformed extra body was accepted")
+	}
+}
+
+// TestRaylineARCCredentialIgnoresCallerSuppliedKey proves an armed ARC
+// dispatch injects the artifact-owned credential and never a caller header.
+func TestRaylineARCCredentialIgnoresCallerSuppliedKey(t *testing.T) {
+	cfg := &config.RouterConfig{
+		BackendModels: config.BackendModels{
+			ModelConfig: map[string]config.ModelParams{
+				"worker": {PreferredEndpoints: []string{"openrouter-endpoint"}},
+			},
+			VLLMEndpoints: []config.VLLMEndpoint{
+				{
+					Name:          "openrouter-endpoint",
+					Type:          "openai",
+					Model:         "worker",
+					APIKey:        "artifact-owned-key",
+					APIKeyEnvName: "ARC_TEST_PROVIDER_KEY",
+				},
+			},
+		},
+	}
+	router := &OpenAIRouter{Config: cfg}
+	worker := raylinearc.WorkerManifest{
+		ID:        "worker",
+		Model:     "provider/model",
+		APIKeyEnv: "ARC_TEST_PROVIDER_KEY",
+	}
+	ctx := &RequestContext{
+		Headers:            map[string]string{"x-user-openai-key": "attacker-key"},
+		RaylineARCDispatch: &worker,
+	}
+	state := &routeHeaderState{}
+
+	if response := router.appendRaylineARCCredentialHeader(
+		state,
+		"worker",
+		"Authorization",
+		"Bearer",
+		ctx,
+	); response != nil {
+		t.Fatalf("artifact credential injection failed: %#v", response)
+	}
+
+	if len(state.setHeaders) != 1 {
+		t.Fatalf("expected one credential header, got %d", len(state.setHeaders))
+	}
+	value := string(state.setHeaders[0].GetHeader().GetRawValue())
+	if value != "Bearer artifact-owned-key" {
+		t.Fatalf("injected credential = %q", value)
+	}
+}
+
+// TestRaylineARCCredentialFailsClosedWhenMissing proves a missing artifact
+// credential returns the ARC 503 rather than forwarding the caller's header.
+func TestRaylineARCCredentialFailsClosedWhenMissing(t *testing.T) {
+	cfg := &config.RouterConfig{
+		BackendModels: config.BackendModels{
+			ModelConfig: map[string]config.ModelParams{
+				"worker": {PreferredEndpoints: []string{"openrouter-endpoint"}},
+			},
+			VLLMEndpoints: []config.VLLMEndpoint{
+				{
+					Name:          "openrouter-endpoint",
+					Type:          "openai",
+					Model:         "worker",
+					APIKeyEnvName: "OTHER_KEY",
+				},
+			},
+		},
+	}
+	router := &OpenAIRouter{Config: cfg}
+	worker := raylinearc.WorkerManifest{ID: "worker", APIKeyEnv: "ARC_TEST_PROVIDER_KEY"}
+	ctx := &RequestContext{
+		Headers:            map[string]string{"x-user-openai-key": "attacker-key"},
+		RaylineARCDispatch: &worker,
+	}
+
+	response := router.appendRaylineARCCredentialHeader(
+		&routeHeaderState{},
+		"worker",
+		"Authorization",
+		"Bearer",
+		ctx,
+	)
+	if response == nil ||
+		int(response.GetImmediateResponse().GetStatus().GetCode()) != 503 {
+		t.Fatalf("expected fail-closed 503, got %#v", response)
 	}
 }

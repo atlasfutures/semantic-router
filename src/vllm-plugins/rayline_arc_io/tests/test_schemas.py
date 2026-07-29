@@ -24,7 +24,12 @@ def test_request_is_strict_and_explicit() -> None:
     rung_b["serving_rung"] = "B"
     assert ArcPoolingRequest.model_validate(rung_b).serving_rung == "B"
 
-    for field in ("serializer_version", "serving_rung", "episode_id_hash"):
+    for field in (
+        "schema_version",
+        "serializer_version",
+        "serving_rung",
+        "episode_id_hash",
+    ):
         invalid = valid_request()
         del invalid[field]
         with pytest.raises(ValidationError):

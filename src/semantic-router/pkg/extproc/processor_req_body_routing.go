@@ -294,6 +294,19 @@ func (r *OpenAIRouter) appendCredentialHeaders(
 		return r.createErrorResponse(500, "Internal routing error. Contact your administrator.")
 	}
 
+	// An armed ARC dispatch owns its credential: readiness verified that this
+	// endpoint's key comes from exactly the artifact worker's api_key_env, so
+	// caller-supplied per-user key headers must not override it.
+	if ctx != nil && ctx.RaylineARCDispatch != nil {
+		return r.appendRaylineARCCredentialHeader(
+			state,
+			model,
+			authHeader,
+			authPrefix,
+			ctx,
+		)
+	}
+
 	accessKey, credErr := r.CredentialResolver.KeyForProvider(llmProvider, model, ctx.Headers)
 	if credErr != nil {
 		logging.ComponentErrorEvent("extproc", "credential_resolution_failed", map[string]interface{}{
@@ -328,6 +341,47 @@ func (r *OpenAIRouter) appendCredentialHeaders(
 		"provider":    llmProvider,
 		"model":       model,
 		"header_name": authHeader,
+	})
+	return nil
+}
+
+// appendRaylineARCCredentialHeader injects the artifact-owned provider
+// credential for an armed ARC dispatch, bypassing the resolver chain so no
+// caller header, fail-open default, or unrelated provider entry can substitute
+// a different key. A missing credential fails closed rather than forwarding
+// the caller's own Authorization header.
+func (r *OpenAIRouter) appendRaylineARCCredentialHeader(
+	state *routeHeaderState,
+	model string,
+	authHeader string,
+	authPrefix string,
+	ctx *RequestContext,
+) *ext_proc.ProcessingResponse {
+	accessKey := ""
+	for _, endpoint := range r.Config.GetEndpointsForModel(model) {
+		if endpoint.APIKeyEnvName == ctx.RaylineARCDispatch.APIKeyEnv {
+			accessKey = endpoint.APIKey
+			break
+		}
+	}
+	if accessKey == "" {
+		return r.raylineARCDispatchFailureResponse(ctx)
+	}
+	value := accessKey
+	if authPrefix != "" {
+		value = authPrefix + " " + accessKey
+	}
+	state.setHeaders = append(state.setHeaders, &core.HeaderValueOption{
+		Header: &core.HeaderValue{
+			Key:      authHeader,
+			RawValue: []byte(value),
+		},
+	})
+	logging.ComponentDebugEvent("extproc", "provider_auth_injected", map[string]interface{}{
+		"request_id":  ctx.RequestID,
+		"model":       model,
+		"header_name": authHeader,
+		"source":      "rayline_arc_artifact",
 	})
 	return nil
 }

@@ -350,6 +350,7 @@ func normalizeCanonicalProviderModels(models []CanonicalProviderModel) (map[stri
 				Model:         model.Name,
 				APIKey:        resolveBackendAPIKey(backendRef),
 				APIKeyEnvName: backendRef.APIKeyEnv,
+				APIKeyInline:  backendRef.APIKey != "",
 			}
 			if endpoint.Weight == 0 {
 				endpoint.Weight = 1

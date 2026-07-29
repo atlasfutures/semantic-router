@@ -108,16 +108,21 @@ _runtime_copy_commands = " && ".join(
 )
 _expected_runtime_diff = "\\n".join(_RUNTIME_FILES)
 image = image.apt_install("git").run_commands(
-    f"git clone --depth 1 --branch {VLLM_BRANCH} {VLLM_REPOSITORY} /opt/vllm-rung-b",
+    # Fetch the immutable commit rather than the branch tip so this pinned
+    # deployment stays rebuildable after the branch advances.
+    "git init /opt/vllm-rung-b",
+    f"git -C /opt/vllm-rung-b remote add origin {VLLM_REPOSITORY}",
+    f"git -C /opt/vllm-rung-b fetch --depth 1 origin {VLLM_COMMIT}",
+    "git -C /opt/vllm-rung-b checkout --detach FETCH_HEAD",
     f'test "$(git -C /opt/vllm-rung-b rev-parse HEAD)" = "{VLLM_COMMIT}"',
-    # The overlay list must cover exactly the branch's runtime diff; a fork
-    # commit that changes an uncopied file must fail the build, not deploy a
+    # The overlay list must cover exactly the fork's runtime diff; a commit
+    # that changes an uncopied file must fail the build, not deploy a
     # silently divergent engine.
     f"git -C /opt/vllm-rung-b fetch --depth 1 origin {VLLM_BASE_WHEEL_COMMIT}",
     (
         'test "$(git -C /opt/vllm-rung-b diff --name-only '
-        "FETCH_HEAD..HEAD -- 'vllm/')\" = \"$(printf '"
-        f"{_expected_runtime_diff}')\""
+        f"{VLLM_BASE_WHEEL_COMMIT}..{VLLM_COMMIT} -- 'vllm/')\" = "
+        f"\"$(printf '{_expected_runtime_diff}')\""
     ),
     _runtime_copy_commands,
 )

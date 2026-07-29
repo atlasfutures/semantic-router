@@ -10,7 +10,6 @@ from .constants import (
     EMBEDDING_DIMENSION,
     MAX_REQUEST_BYTES,
     MAX_TURNS,
-    REQUEST_SCHEMA_VERSION,
 )
 
 EpisodeIDHash = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
@@ -26,7 +25,9 @@ class ArcTurn(BaseModel):
 class ArcPoolingRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    schema_version: Literal["rayline.arc.pooling-request.v1"] = REQUEST_SCHEMA_VERSION
+    # Required, not defaulted: an unversioned client must be rejected rather
+    # than silently treated as the frozen v1 schema.
+    schema_version: Literal["rayline.arc.pooling-request.v1"]
     serializer_version: Literal["mtrouter-token-blocks-v2"]
     serving_rung: Literal["A", "B"]
     episode_id_hash: EpisodeIDHash

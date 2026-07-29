@@ -111,7 +111,10 @@ func TestHandleAutoModelRoutingAppliesArtifactOwnedARCDispatch(t *testing.T) {
 				{
 					Name:                "openrouter",
 					Type:                "openai",
+					Model:               "arc-worker",
 					ProviderProfileName: "openrouter",
+					APIKey:              "artifact-owned-key",
+					APIKeyEnvName:       "ARC_TEST_PROVIDER_KEY",
 				},
 			},
 			ProviderProfiles: map[string]config.ProviderProfile{
@@ -132,6 +135,7 @@ func TestHandleAutoModelRoutingAppliesArtifactOwnedARCDispatch(t *testing.T) {
 		RaylineARCDispatch: &raylinearc.WorkerManifest{
 			ID:                              "arc-worker",
 			Model:                           "artifact/provider-model",
+			APIKeyEnv:                       "ARC_TEST_PROVIDER_KEY",
 			OpenRouterProviderOrder:         []string{"artifact-provider"},
 			OpenRouterRequireParameters:     true,
 			ThinkingMode:                    "on",

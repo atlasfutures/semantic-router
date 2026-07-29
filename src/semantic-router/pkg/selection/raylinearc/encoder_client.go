@@ -403,6 +403,11 @@ func (client *EncoderClient) consumeResponse(
 	if err := ensureJSONEOF(decoder); err != nil {
 		return nil, encoderFailure(EncoderFailureDecode, "json_trailing")
 	}
+	// Online vLLM always stamps both envelope fields; requiring them keeps a
+	// nonconforming proxy or fake from satisfying readiness.
+	if wire.RequestID == "" || wire.CreatedAt <= 0 {
+		return nil, encoderFailure(EncoderFailureContract, "envelope")
+	}
 	return client.validateResponse(&wire.Data)
 }
 

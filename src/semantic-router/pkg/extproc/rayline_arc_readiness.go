@@ -247,9 +247,13 @@ func raylineARCEndpointCredentialMatches(
 	worker *raylinearc.WorkerManifest,
 	endpoint *config.VLLMEndpoint,
 ) bool {
+	// APIKeyInline records an inline api_key, which takes precedence over
+	// api_key_env during resolution: a backend declaring both would dispatch
+	// a credential whose provenance is not the artifact's.
 	return worker.APIKeyEnv != "" &&
 		endpoint.APIKeyEnvName == worker.APIKeyEnv &&
-		endpoint.APIKey != ""
+		endpoint.APIKey != "" &&
+		!endpoint.APIKeyInline
 }
 
 func raylineARCPriceIdentityMatches(

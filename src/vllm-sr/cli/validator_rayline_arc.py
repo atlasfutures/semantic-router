@@ -28,7 +28,60 @@ def validate_rayline_arc_decisions(config) -> list[ValidationError]:
         if decision.algorithm is None or decision.algorithm.type != "rayline_arc":
             continue
         errors.extend(_validate_rayline_arc_decision(decision))
+        errors.extend(_validate_rayline_arc_auto_aliases(config, decision))
+        errors.extend(_validate_rayline_arc_replay(config, decision))
     return errors
+
+
+def _effective_auto_model_names(config) -> set[str]:
+    """Mirror the router's EffectiveAutoModelNames resolution."""
+    router = (getattr(config, "global_", None) or {}).get("router") or {}
+    explicit = router.get("auto_model_names")
+    if explicit:
+        return {str(name).strip() for name in explicit if str(name).strip()}
+    configured = str(router.get("auto_model_name") or "").strip()
+    return {"vllm-sr/auto", "auto", configured or "MoM"}
+
+
+def _validate_rayline_arc_auto_aliases(config, decision) -> list[ValidationError]:
+    auto_names = _effective_auto_model_names(config)
+    return [
+        ValidationError(
+            f"decision '{decision.name}' algorithm.type=rayline_arc modelRef "
+            f"'{model.model}' collides with an auto-routing alias, which would "
+            "bypass artifact-owned dispatch",
+            field=f"decisions.{decision.name}.modelRefs",
+        )
+        for model in decision.modelRefs
+        if model.model in auto_names
+    ]
+
+
+def _validate_rayline_arc_replay(config, decision) -> list[ValidationError]:
+    """Router Replay defaults to enabled, so ARC decisions must disable it."""
+    services = (getattr(config, "global_", None) or {}).get("services") or {}
+    replay = services.get("router_replay")
+    globally_enabled = True if replay is None else bool(replay.get("enabled", True))
+
+    for plugin in decision.plugins or []:
+        if getattr(plugin, "type", None) != "router_replay":
+            continue
+        configuration = getattr(plugin, "configuration", None) or {}
+        if not bool(configuration.get("enabled", globally_enabled)):
+            return []
+        globally_enabled = True
+        break
+
+    if not globally_enabled:
+        return []
+    return [
+        ValidationError(
+            f"decision '{decision.name}' algorithm.type=rayline_arc requires "
+            "router_replay disabled for this decision; episode requests must "
+            "not be persisted",
+            field=f"decisions.{decision.name}.plugins",
+        )
+    ]
 
 
 def _validate_rayline_arc_decision(decision) -> list[ValidationError]:

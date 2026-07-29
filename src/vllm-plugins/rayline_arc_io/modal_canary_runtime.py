@@ -475,7 +475,10 @@ def _run_server_mode(
     log_path = Path(f"/tmp/rayline-arc-{mode}.log")
     if serving_rung == "A":
         command = _server_command(port, schedule_tokens)
-        engine_build_id = ENGINE_BUILD_ID
+        # Every canary image overlays the fork engine, so the plugin reports
+        # the fork build ID regardless of rung; validate against whatever the
+        # running container actually declares.
+        engine_build_id = os.environ.get("RAYLINE_ARC_ENGINE_BUILD_ID", ENGINE_BUILD_ID)
         pooling_capabilities = ["all_plugin_mean"]
     elif serving_rung == "B":
         command = [

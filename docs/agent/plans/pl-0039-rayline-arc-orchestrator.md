@@ -53,9 +53,9 @@ All conclusions in this plan are pinned to:
 
 | Surface | Revision | Evidence |
 | --- | --- | --- |
-| Research apparatus | `rayline-ai/m4-alpha-route-2@c0a113a4` | C82 gate/postmortem/performance history |
-| Rayline implementation | `davidvgilmore/rayline@9187b0ad7c504934a627486bc8bf67ac2e251e6f` | PR `rayline-ai/rayline#59` |
-| llama.cpp enhancement | `davidvgilmore/llama.cpp@8c5d694fe7e28e8973349b634a72fe7683ecc940` | cumulative mean pooling state |
+| Research apparatus | private repository, revision recorded privately | C82 gate/postmortem/performance history |
+| Rayline implementation | private repository, revision recorded privately | private implementation PR |
+| llama.cpp enhancement | private fork, revision recorded privately | cumulative mean pooling state |
 | Semantic Router | `vllm-project/semantic-router@c224fcfc892405d1ebc4794f206bf763c5835aa4` | current selection/extproc/config seams |
 | vLLM | `vllm-project/vllm@1206891822ca8befe421879a4230ef42a3fc93be` | current pooling, hybrid APC, plugin APIs |
 | C82 artifact | private immutable `rayline.mtrouter-runtime.v3` snapshot | mounted at runtime; repo/revision stay in private deployment config |
@@ -63,10 +63,11 @@ All conclusions in this plan are pinned to:
 Local validation completed before this plan:
 
 - `rustup run 1.88.0 cargo test -p rayline-mtrouter --locked`: pass.
-- Rayline C82 doctor on Metal: ready; head parity `1.0`, maximum head drift
-  `4.768e-7`; encoder parity `1.0`, cached/clean maximum embedding drift `0`,
-  adjusted top-two-gap drift `0.001377`; 8,192-token cached delta about 75 ms
-  versus about 1,599 ms clean on this machine.
+- Rayline C82 doctor on Metal: ready. Head and encoder parity were `1.0`
+  with drift inside the artifact's declared tolerances, and cached
+  incremental encoding was more than an order of magnitude faster than clean
+  recomputation. Exact private drift and latency figures stay in the research
+  apparatus.
 - Semantic Router `make agent-validate`: pass.
 - Semantic Router development images built with `make vllm-sr-dev`.
 - The CPU agent stack started, passed `make agent-smoke-local`, and stopped
@@ -1136,7 +1137,7 @@ Pre-run declaration:
   exact Rung A plugin.
 - Authorized command:
   `uv run --extra modal modal run
-  /Users/davidgilmore/Documents/vllm-semantic-router/src/vllm-plugins/rayline_arc_io/modal_canary.py
+  <repo>/src/vllm-plugins/rayline_arc_io/modal_canary.py
   --run-id rayline-arc-rung-a-20260728 --output
   /tmp/rayline-arc-rung-a-20260728.json`.
 - This declaration authorizes one paid invocation only. A second invocation
@@ -1646,9 +1647,9 @@ Cost and rollback:
 ## Goal-Loop Prompt (Under 2,000 Characters)
 
 ```text
-Implement PL-0039 at /Users/davidgilmore/Documents/vllm-semantic-router/docs/agent/plans/pl-0039-rayline-arc-orchestrator.md in a persistent goal loop. Use its checklist/evidence as memory. Treat Rung A exact-max as diagnosed; never raise the production timeout. Complete Rung B. Run Rung C only if its gate opens.
+Implement PL-0039 at <semantic-router-repo>/docs/agent/plans/pl-0039-rayline-arc-orchestrator.md in a persistent goal loop. Use its checklist/evidence as memory. Treat Rung A exact-max as diagnosed; never raise the production timeout. Complete Rung B. Run Rung C only if its gate opens.
 
-Each loop: inspect git; reread PL-0039 and the nearest AGENTS.md; choose the first actionable task; recheck upstream duplicates; implement one cohesive slice in vllm-semantic-router and only specified work in /Users/davidgilmore/Documents/vllm; run focused and required gates; fix failures; append checkbox, branch/commit, command, hardware, duration, cost, and result evidence. Use one lane branch/clone per repo, signed commits where required, and push authorized forks the same day—never main.
+Each loop: inspect git; reread PL-0039 and the nearest AGENTS.md; choose the first actionable task; recheck upstream duplicates; implement one cohesive slice in vllm-semantic-router and only specified work in the vLLM fork checkout; run focused and required gates; fix failures; append checkbox, branch/commit, command, hardware, duration, cost, and result evidence. Use one lane branch/clone per repo, signed commits where required, and push authorized forks the same day—never main.
 
 Human issue/PR publication is nonblocking: prepare the handoff and continue. Never publish an agent-only vLLM PR. After two equivalent paid/CUDA failures, diagnose or change the command before spending again. Predeclare Modal cost/time ceilings and stop apps after tests.
 
@@ -1663,7 +1664,6 @@ Finish only when CPU, Redis, Modal CUDA, privacy, and E2E gates pass on exact fi
 - `docs/agent/feature-complete-checklist.md`
 - `src/semantic-router/pkg/config/AGENTS.md`
 - `src/semantic-router/pkg/extproc/AGENTS.md`
-- `https://github.com/rayline-ai/rayline/pull/59`
 - `https://github.com/vllm-project/vllm/pull/40804`
 - `https://github.com/vllm-project/vllm/pull/48214`
 - `https://docs.vllm.ai/en/latest/models/pooling_models/`

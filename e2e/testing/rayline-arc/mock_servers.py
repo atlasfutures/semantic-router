@@ -38,7 +38,7 @@ def _validated_pooling_data(body: dict[str, Any]) -> dict[str, Any]:
     unexpected = set(data) - allowed
     if unexpected:
         raise ValueError(f"unexpected fields: {sorted(unexpected)}")
-    if data.get("schema_version", REQUEST_SCHEMA_VERSION) != REQUEST_SCHEMA_VERSION:
+    if data["schema_version"] != REQUEST_SCHEMA_VERSION:
         raise ValueError("unsupported schema_version")
     if data["serializer_version"] != SERIALIZER_VERSION:
         raise ValueError("unsupported serializer_version")

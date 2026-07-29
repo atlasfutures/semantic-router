@@ -394,6 +394,45 @@ func writeEncoderResponse(
 	}
 }
 
+// writeEncoderResponseEnvelope emits a valid payload whose engine-owned
+// envelope fields the caller can mutate.
+func writeEncoderResponseEnvelope(
+	t *testing.T,
+	writer http.ResponseWriter,
+	mutate func(map[string]any),
+) {
+	t.Helper()
+	embedding := make([]float64, 1024)
+	embedding[0] = 1
+	envelope := map[string]any{
+		"request_id": "pool-3c4d5e6f",
+		"created_at": 1753600000,
+		"data": map[string]any{
+			"embedding":            embedding,
+			"serialized_tokens":    16,
+			"full_history_tokens":  16,
+			"truncated_tokens":     0,
+			"cached_prefix_tokens": 0,
+			"serializer_version":   SerializationName,
+			"model":                "Qwen/Qwen3.5-0.8B",
+			"model_revision":       "2fc06364715b967f1860aea9cf38778875588b17",
+			"tokenizer_revision":   "2fc06364715b967f1860aea9cf38778875588b17",
+			"tokenizer_sha256":     "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+			"eos_token_id":         248046,
+			"engine_build_id":      "vllm@immutable-build",
+			"io_plugin_version":    "rayline-arc-io@0.1.0",
+			"pooling_capabilities": []string{"all_plugin_mean"},
+		},
+	}
+	if mutate != nil {
+		mutate(envelope)
+	}
+	writer.Header().Set("content-type", "application/json")
+	if err := json.NewEncoder(writer).Encode(envelope); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func assertEncoderFailureClass(
 	t *testing.T,
 	err error,
@@ -406,5 +445,46 @@ func assertEncoderFailureClass(
 	}
 	if failure.Class != want {
 		t.Fatalf("class = %q, want %q", failure.Class, want)
+	}
+}
+
+func TestEncoderClientRequiresEngineEnvelopeFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{"missing request id", func(envelope map[string]any) {
+			delete(envelope, "request_id")
+		}},
+		{"empty request id", func(envelope map[string]any) {
+			envelope["request_id"] = ""
+		}},
+		{"missing created at", func(envelope map[string]any) {
+			delete(envelope, "created_at")
+		}},
+		{"zero created at", func(envelope map[string]any) {
+			envelope["created_at"] = 0
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(
+				writer http.ResponseWriter,
+				_ *http.Request,
+			) {
+				writeEncoderResponseEnvelope(t, writer, test.mutate)
+			}))
+			defer server.Close()
+			client, err := NewEncoderClient(validEncoderClientConfig(server.URL))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.Encode(
+				context.Background(),
+				strings.Repeat("a", 64),
+				[]Turn{{Role: "user", Text: "hello"}},
+			)
+			assertEncoderFailureClass(t, err, EncoderFailureContract)
+		})
 	}
 }

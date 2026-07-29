@@ -90,9 +90,12 @@ _rung_b_copy_commands = " && ".join(
 rung_b_image = (
     image.apt_install("git")
     .run_commands(
-        "git clone --depth 1 "
-        f"--branch {rt.VLLM_RUNG_B_BRANCH} {rt.VLLM_RUNG_B_REPOSITORY} "
-        "/opt/vllm-rung-b",
+        # Fetch the immutable commit, not the branch tip, so a canary image
+        # stays reproducible after the branch advances.
+        "git init /opt/vllm-rung-b",
+        f"git -C /opt/vllm-rung-b remote add origin {rt.VLLM_RUNG_B_REPOSITORY}",
+        f"git -C /opt/vllm-rung-b fetch --depth 1 origin {rt.VLLM_RUNG_B_COMMIT}",
+        "git -C /opt/vllm-rung-b checkout --detach FETCH_HEAD",
         f'test "$(git -C /opt/vllm-rung-b rev-parse HEAD)" = "{rt.VLLM_RUNG_B_COMMIT}"',
         _rung_b_copy_commands,
     )
