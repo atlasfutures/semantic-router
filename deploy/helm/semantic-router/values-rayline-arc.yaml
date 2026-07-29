@@ -1,0 +1,252 @@
+# Rayline ARC production profile.
+#
+# This public profile deliberately contains placeholder arm identities and
+# prices. Supply a private values overlay whose arm order, provider model IDs,
+# provider slugs, thinking flags, and four prices exactly match the mounted
+# immutable runtime manifest. The router fails readiness on any mismatch.
+
+replicaCount: 2
+
+image:
+  pullPolicy: IfNotPresent
+  # Required for this profile: pin the router by immutable digest. The chart
+  # otherwise resolves the default mutable `latest` tag, which would let nodes
+  # run different images and would make a Helm rollback restore a moving
+  # target instead of the reviewed snapshot. Replace with the digest of the
+  # router image built from the deployed Semantic Router commit.
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+resources:
+  limits:
+    cpu: "4"
+    memory: 8Gi
+  requests:
+    cpu: "2"
+    memory: 4Gi
+
+# The ARC artifact is mounted from its own pre-populated, immutable claim.
+persistence:
+  enabled: false
+
+extraVolumes:
+  - name: rayline-arc-artifact
+    persistentVolumeClaim:
+      claimName: rayline-arc-artifact
+
+extraVolumeMounts:
+  - name: rayline-arc-artifact
+    mountPath: /var/lib/vllm-sr/rayline-arc
+    readOnly: true
+
+extraEnv:
+  - name: OPENROUTER_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: rayline-arc-runtime
+        key: openrouter-api-key
+  - name: RAYLINE_ARC_REDIS_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: rayline-arc-runtime
+        key: redis-password
+  - name: RAYLINE_ARC_MODAL_KEY
+    valueFrom:
+      secretKeyRef:
+        name: rayline-arc-runtime
+        key: modal-key
+  - name: RAYLINE_ARC_MODAL_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: rayline-arc-runtime
+        key: modal-secret
+  - name: RAYLINE_ARC_ARTIFACT_REVISION
+    valueFrom:
+      secretKeyRef:
+        name: rayline-arc-runtime
+        key: artifact-revision
+  - name: RAYLINE_ARC_VLLM_BUILD_ID
+    valueFrom:
+      secretKeyRef:
+        name: rayline-arc-runtime
+        key: vllm-build-id
+  - name: RAYLINE_ARC_ENCODER_BASE_URL
+    valueFrom:
+      secretKeyRef:
+        name: rayline-arc-runtime
+        key: encoder-base-url
+  - name: RAYLINE_ARC_REDIS_ADDRESS
+    valueFrom:
+      secretKeyRef:
+        name: rayline-arc-runtime
+        key: redis-address
+  - name: RAYLINE_ARC_WORKER_A_ID
+    valueFrom:
+      secretKeyRef:
+        name: rayline-arc-runtime
+        key: worker-a-id
+  - name: RAYLINE_ARC_WORKER_A_MODEL
+    valueFrom:
+      secretKeyRef:
+        name: rayline-arc-runtime
+        key: worker-a-model
+  - name: RAYLINE_ARC_WORKER_A_PROVIDER
+    valueFrom:
+      secretKeyRef:
+        name: rayline-arc-runtime
+        key: worker-a-provider
+  - name: RAYLINE_ARC_WORKER_B_ID
+    valueFrom:
+      secretKeyRef:
+        name: rayline-arc-runtime
+        key: worker-b-id
+  - name: RAYLINE_ARC_WORKER_B_MODEL
+    valueFrom:
+      secretKeyRef:
+        name: rayline-arc-runtime
+        key: worker-b-model
+  - name: RAYLINE_ARC_WORKER_B_PROVIDER
+    valueFrom:
+      secretKeyRef:
+        name: rayline-arc-runtime
+        key: worker-b-provider
+
+config:
+  providers:
+    defaults:
+      default_model: "${RAYLINE_ARC_WORKER_A_ID}"
+    models:
+      - name: "${RAYLINE_ARC_WORKER_A_ID}"
+        provider_model_id: "${RAYLINE_ARC_WORKER_A_MODEL}"
+        api_format: openai
+        # Replace all prices in the private overlay with the manifest values.
+        pricing:
+          currency: USD
+          prompt_per_1m: 1
+          cached_input_per_1m: 0.5
+          cache_write_per_1m: 1.5
+          completion_per_1m: 2
+        backend_refs:
+          - name: openrouter
+            endpoint: openrouter.ai:443
+            protocol: https
+            type: openai
+            base_url: https://openrouter.ai/api/v1
+            provider: openai
+            api_key_env: OPENROUTER_API_KEY
+      - name: "${RAYLINE_ARC_WORKER_B_ID}"
+        provider_model_id: "${RAYLINE_ARC_WORKER_B_MODEL}"
+        api_format: openai
+        # Replace all prices in the private overlay with the manifest values.
+        pricing:
+          currency: USD
+          prompt_per_1m: 2
+          cached_input_per_1m: 1
+          cache_write_per_1m: 2.5
+          completion_per_1m: 4
+        backend_refs:
+          - name: openrouter
+            endpoint: openrouter.ai:443
+            protocol: https
+            type: openai
+            base_url: https://openrouter.ai/api/v1
+            provider: openai
+            api_key_env: OPENROUTER_API_KEY
+
+  routing:
+    modelCards:
+      - name: "${RAYLINE_ARC_WORKER_A_ID}"
+        modality: text
+      - name: "${RAYLINE_ARC_WORKER_B_ID}"
+        modality: text
+    decisions:
+      - name: rayline-arc
+        description: Immutable C82 ARC orchestration policy
+        priority: 100
+        rules:
+          operator: AND
+          conditions: []
+        modelRefs:
+          - model: "${RAYLINE_ARC_WORKER_A_ID}"
+            use_reasoning: false
+          - model: "${RAYLINE_ARC_WORKER_B_ID}"
+            use_reasoning: true
+        adaptations:
+          mode: bypass
+        plugins:
+          # Router Replay defaults to enabled in canonical configs; ARC
+          # episode requests must never be persisted, and validation
+          # enforces this.
+          - type: router_replay
+            configuration:
+              enabled: false
+        algorithm:
+          type: rayline_arc
+          on_error: fail_closed
+          rayline_arc:
+            artifact_dir: /var/lib/vllm-sr/rayline-arc
+            artifact_revision: "${RAYLINE_ARC_ARTIFACT_REVISION}"
+            encoder:
+              base_url: "${RAYLINE_ARC_ENCODER_BASE_URL}"
+              model: Qwen/Qwen3.5-0.8B
+              model_revision: 2fc06364715b967f1860aea9cf38778875588b17
+              expected_build_id: "${RAYLINE_ARC_VLLM_BUILD_ID}"
+              expected_io_plugin_version: rayline-arc-io@0.1.0
+              serializer_version: mtrouter-token-blocks-v2
+              serving_rung: B
+              required_pooling_capabilities:
+                - chunked_causal_mean
+              modal_key_env: RAYLINE_ARC_MODAL_KEY
+              modal_secret_env: RAYLINE_ARC_MODAL_SECRET
+              connect_timeout_seconds: 5
+              total_timeout_seconds: 180
+              max_retries: 1
+            episode:
+              id_header: x-rayline-episode-id
+              backend: redis
+              key_prefix: "vsr:rayline-arc:"
+              acquire_timeout_seconds: 30
+              lease_ttl_seconds: 60
+              idle_ttl_seconds: 900
+              max_in_memory_episodes: 1024
+              redis:
+                address: "${RAYLINE_ARC_REDIS_ADDRESS}"
+                db: 0
+                password_env: RAYLINE_ARC_REDIS_PASSWORD
+                use_tls: true
+                pool_size: 32
+
+  global:
+    stores:
+      semantic_cache:
+        enabled: false
+    model_catalog:
+      embeddings:
+        semantic:
+          mmbert_model_path: ""
+          qwen3_model_path: ""
+          gemma_model_path: ""
+          bert_model_path: ""
+          multimodal_model_path: ""
+      modules:
+        prompt_guard:
+          enabled: false
+          model_ref: ""
+          model_id: ""
+          jailbreak_mapping_path: ""
+          use_mmbert_32k: false
+        classifier:
+          domain:
+            model_ref: ""
+            model_id: ""
+            category_mapping_path: ""
+            use_mmbert_32k: false
+          pii:
+            model_ref: ""
+            model_id: ""
+            pii_mapping_path: ""
+            use_mmbert_32k: false
+        feedback_detector:
+          enabled: false
+          model_ref: ""
+          model_id: ""
+          use_mmbert_32k: false

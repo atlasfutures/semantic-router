@@ -15,6 +15,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/lookuptable"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/services"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/tools"
 )
@@ -26,23 +27,25 @@ type classifierMappings struct {
 }
 
 type routerComponents struct {
-	cfg                  *config.RouterConfig
-	categoryDescriptions []string
-	classifier           *classification.Classifier
-	classificationSvc    *services.ClassificationService
-	semanticCache        cache.CacheBackend
-	toolsDatabase        *tools.ToolsDatabase
-	responseAPIFilter    *ResponseAPIFilter
-	replayRecorder       *routerreplay.Recorder
-	replayStoreShared    bool
-	replayRecorders      map[string]*routerreplay.Recorder
-	modelSelector        *selection.Registry
-	lookupTable          lookuptable.LookupTable
-	memoryStore          memory.Store
-	memoryExtractor      *memory.MemoryExtractor
-	credentialResolver   *authz.CredentialResolver
-	rateLimiter          *ratelimit.RateLimitResolver
-	lookupTableCancel    func()
+	cfg                         *config.RouterConfig
+	categoryDescriptions        []string
+	classifier                  *classification.Classifier
+	classificationSvc           *services.ClassificationService
+	semanticCache               cache.CacheBackend
+	toolsDatabase               *tools.ToolsDatabase
+	responseAPIFilter           *ResponseAPIFilter
+	replayRecorder              *routerreplay.Recorder
+	replayStoreShared           bool
+	replayRecorders             map[string]*routerreplay.Recorder
+	modelSelector               *selection.Registry
+	lookupTable                 lookuptable.LookupTable
+	memoryStore                 memory.Store
+	memoryExtractor             *memory.MemoryExtractor
+	raylineARCEpisodeStore      raylinearc.EpisodeStore
+	raylineARCEpisodeStoreClose func() error
+	credentialResolver          *authz.CredentialResolver
+	rateLimiter                 *ratelimit.RateLimitResolver
+	lookupTableCancel           func()
 }
 
 // NewOpenAIRouter creates a new OpenAI API router instance.
@@ -179,7 +182,7 @@ func buildRouterComponents(cfg *config.RouterConfig) (*routerComponents, error) 
 	if replayRecorder != nil {
 		replayReaderForLookup = replayRecorder.Reader()
 	}
-	modelSelector, lookupTable, lookupTableCancel := createModelSelectorRegistry(cfg, replayReaderForLookup)
+	modelSelector, lookupTable, lookupTableCancel, raylineARCEpisodeStore, raylineARCEpisodeStoreClose := createModelSelectorRegistry(cfg, replayReaderForLookup)
 	memoryStore, memoryExtractor := createMemoryRuntime(cfg)
 	credentialResolver := buildCredentialResolver(cfg)
 	rateLimiter := buildRateLimitResolver(cfg)
@@ -196,44 +199,48 @@ func buildRouterComponents(cfg *config.RouterConfig) (*routerComponents, error) 
 	}
 
 	return &routerComponents{
-		cfg:                  cfg,
-		categoryDescriptions: categoryDescriptions,
-		classifier:           classifier,
-		classificationSvc:    classificationSvc,
-		semanticCache:        semanticCache,
-		toolsDatabase:        toolsDatabase,
-		responseAPIFilter:    responseAPIFilter,
-		replayRecorder:       replayRecorder,
-		replayStoreShared:    replayStoreShared,
-		replayRecorders:      replayRecorders,
-		modelSelector:        modelSelector,
-		lookupTable:          lookupTable,
-		memoryStore:          memoryStore,
-		memoryExtractor:      memoryExtractor,
-		credentialResolver:   credentialResolver,
-		rateLimiter:          rateLimiter,
-		lookupTableCancel:    lookupTableCancel,
+		cfg:                         cfg,
+		categoryDescriptions:        categoryDescriptions,
+		classifier:                  classifier,
+		classificationSvc:           classificationSvc,
+		semanticCache:               semanticCache,
+		toolsDatabase:               toolsDatabase,
+		responseAPIFilter:           responseAPIFilter,
+		replayRecorder:              replayRecorder,
+		replayStoreShared:           replayStoreShared,
+		replayRecorders:             replayRecorders,
+		modelSelector:               modelSelector,
+		lookupTable:                 lookupTable,
+		memoryStore:                 memoryStore,
+		memoryExtractor:             memoryExtractor,
+		credentialResolver:          credentialResolver,
+		rateLimiter:                 rateLimiter,
+		lookupTableCancel:           lookupTableCancel,
+		raylineARCEpisodeStore:      raylineARCEpisodeStore,
+		raylineARCEpisodeStoreClose: raylineARCEpisodeStoreClose,
 	}, nil
 }
 
 func (components *routerComponents) buildRouter() *OpenAIRouter {
 	return &OpenAIRouter{
-		Config:                components.cfg,
-		CategoryDescriptions:  components.categoryDescriptions,
-		Classifier:            components.classifier,
-		ClassificationService: components.classificationSvc,
-		Cache:                 components.semanticCache,
-		ToolsDatabase:         components.toolsDatabase,
-		ResponseAPIFilter:     components.responseAPIFilter,
-		ReplayRecorder:        components.replayRecorder,
-		ReplayStoreShared:     components.replayStoreShared,
-		ModelSelector:         components.modelSelector,
-		LookupTable:           components.lookupTable,
-		ReplayRecorders:       components.replayRecorders,
-		MemoryStore:           components.memoryStore,
-		MemoryExtractor:       components.memoryExtractor,
-		CredentialResolver:    components.credentialResolver,
-		RateLimiter:           components.rateLimiter,
-		lookupTableCancel:     components.lookupTableCancel,
+		Config:                      components.cfg,
+		CategoryDescriptions:        components.categoryDescriptions,
+		Classifier:                  components.classifier,
+		ClassificationService:       components.classificationSvc,
+		Cache:                       components.semanticCache,
+		ToolsDatabase:               components.toolsDatabase,
+		ResponseAPIFilter:           components.responseAPIFilter,
+		ReplayRecorder:              components.replayRecorder,
+		ReplayStoreShared:           components.replayStoreShared,
+		ModelSelector:               components.modelSelector,
+		LookupTable:                 components.lookupTable,
+		ReplayRecorders:             components.replayRecorders,
+		MemoryStore:                 components.memoryStore,
+		MemoryExtractor:             components.memoryExtractor,
+		RaylineARCEpisodeStore:      components.raylineARCEpisodeStore,
+		CredentialResolver:          components.credentialResolver,
+		RateLimiter:                 components.rateLimiter,
+		lookupTableCancel:           components.lookupTableCancel,
+		raylineARCEpisodeStoreClose: components.raylineARCEpisodeStoreClose,
 	}
 }

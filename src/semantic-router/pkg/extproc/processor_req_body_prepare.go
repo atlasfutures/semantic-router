@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"errors"
 	"fmt"
 
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -110,6 +111,12 @@ func (r *OpenAIRouter) runRequestPreRoutingStages(
 		ctx,
 	)
 	if authzErr != nil {
+		if response, handled := r.decisionEvaluationErrorResponse(
+			authzErr,
+			ctx,
+		); handled {
+			return requestDecisionState{}, response
+		}
 		logging.Errorf("[Request Body] Authz evaluation failed: %v", authzErr)
 		return requestDecisionState{}, r.createErrorResponse(403, authzErr.Error())
 	}
@@ -121,16 +128,19 @@ func (r *OpenAIRouter) runRequestPreRoutingStages(
 		ctx.InflightToken = 0
 		r.startRouterReplay(ctx, originalModel, selectedModel, decisionName)
 		r.updateRouterReplayStatus(ctx, 200, false)
+		r.finalizeRaylineARCAbort(ctx, "immediate_response")
 		return requestDecisionState{}, resp
 	}
 	if resp := r.applyRateLimitAndCacheChecks(ctx, selectedModel, decisionName); resp != nil {
 		inflight.End(selectedModel, ctx.InflightToken)
 		ctx.InflightToken = 0
+		r.finalizeRaylineARCAbort(ctx, "immediate_response")
 		return requestDecisionState{}, resp
 	}
 	if ragErr := r.executeRAGPlugin(ctx, decisionName); ragErr != nil {
 		inflight.End(selectedModel, ctx.InflightToken)
 		ctx.InflightToken = 0
+		r.finalizeRaylineARCAbort(ctx, "handler_error")
 		return requestDecisionState{}, r.createErrorResponse(503, fmt.Sprintf("RAG retrieval failed: %v", ragErr))
 	}
 
@@ -139,6 +149,34 @@ func (r *OpenAIRouter) runRequestPreRoutingStages(
 		reasoningDecision: reasoningDecision,
 		selectedModel:     selectedModel,
 	}, nil
+}
+
+func (r *OpenAIRouter) decisionEvaluationErrorResponse(
+	err error,
+	ctx *RequestContext,
+) (*ext_proc.ProcessingResponse, bool) {
+	var selectionFailure *modelSelectionFailure
+	if !errors.As(err, &selectionFailure) {
+		return nil, false
+	}
+	requestID := ""
+	if ctx != nil {
+		requestID = ctx.RequestID
+	}
+	logging.ComponentErrorEvent(
+		"extproc",
+		"rayline_arc_selection_failed",
+		map[string]interface{}{
+			"request_id":    requestID,
+			"failure_class": selectionFailure.class,
+		},
+	)
+	metrics.RecordRaylineARCFailure(selectionFailure.class)
+	r.finalizeRaylineARCAbort(ctx, "selection_failure")
+	return r.createErrorResponse(
+		503,
+		"Rayline ARC routing unavailable",
+	), true
 }
 
 func (r *OpenAIRouter) applyRateLimitAndCacheChecks(

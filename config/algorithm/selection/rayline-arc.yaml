@@ -1,0 +1,35 @@
+algorithm:
+  type: rayline_arc
+  on_error: fail_closed
+  rayline_arc:
+    artifact_dir: /var/lib/vllm-sr/rayline-arc
+    artifact_revision: ${RAYLINE_ARC_ARTIFACT_REVISION}
+    encoder:
+      base_url: http://rayline-arc-encoder:8000
+      model: Qwen/Qwen3.5-0.8B
+      model_revision: 2fc06364715b967f1860aea9cf38778875588b17
+      expected_build_id: ${RAYLINE_ARC_VLLM_BUILD_ID}
+      expected_io_plugin_version: rayline-arc-io@0.1.0
+      serializer_version: mtrouter-token-blocks-v2
+      serving_rung: B
+      required_pooling_capabilities:
+        - chunked_causal_mean
+      modal_key_env: RAYLINE_ARC_MODAL_KEY
+      modal_secret_env: RAYLINE_ARC_MODAL_SECRET
+      connect_timeout_seconds: 5
+      total_timeout_seconds: 180
+      max_retries: 1
+    episode:
+      id_header: x-rayline-episode-id
+      backend: redis
+      key_prefix: "vsr:rayline-arc:"
+      acquire_timeout_seconds: 30
+      lease_ttl_seconds: 60
+      idle_ttl_seconds: 900
+      max_in_memory_episodes: 1024
+      redis:
+        address: redis:6379
+        db: 0
+        password_env: RAYLINE_ARC_REDIS_PASSWORD
+        use_tls: false
+        pool_size: 16

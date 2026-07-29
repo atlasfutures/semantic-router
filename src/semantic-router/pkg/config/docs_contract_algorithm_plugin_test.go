@@ -18,6 +18,7 @@ var algorithmTutorialBuckets = map[string]string{
 	"latency-aware": "selection",
 	"mlp":           "selection",
 	"multi-factor":  "selection",
+	"rayline-arc":   "selection",
 	"ratings":       "looper",
 	"remom":         "looper",
 	"router-dc":     "selection",

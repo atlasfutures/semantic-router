@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .rayline_arc_config import RaylineARCAlgorithmConfig
+
 
 class ModelRef(BaseModel):
     """Model reference in decision."""
@@ -367,6 +369,7 @@ class AlgorithmConfig(BaseModel):
        - "hybrid": Combine multiple selection methods
        - "knn", "kmeans", "svm", "mlp": Shared ML model-selection selectors
        - "multi_factor": Combine quality, latency, cost, and load
+       - "rayline_arc": Artifact-verified switch-aware ARC orchestrator
 
     Cross-request learning systems live under global.router.learning.adaptation
     and global.router.learning.protection.
@@ -377,7 +380,8 @@ class AlgorithmConfig(BaseModel):
     # Algorithm type: looper ("confidence", "ratings", "remom", "fusion",
     # "workflows") or
     # selection ("static", "router_dc", "automix", "hybrid", "knn",
-    #            "kmeans", "svm", "mlp", "multi_factor", "latency_aware")
+    #            "kmeans", "svm", "mlp", "multi_factor", "latency_aware",
+    #            "rayline_arc")
     type: Literal[
         "confidence",
         "ratings",
@@ -394,6 +398,7 @@ class AlgorithmConfig(BaseModel):
         "mlp",
         "multi_factor",
         "latency_aware",
+        "rayline_arc",
     ]
 
     # Looper algorithm configurations
@@ -409,5 +414,6 @@ class AlgorithmConfig(BaseModel):
     automix: AutoMixSelectionConfig | None = None
     hybrid: HybridSelectionConfig | None = None
     multi_factor: MultiFactorSelectionConfig | None = None
-    # Behavior on algorithm failure: "skip" or "fail"
+    rayline_arc: RaylineARCAlgorithmConfig | None = None
+    # Behavior on algorithm failure: "skip", "fail", or ARC-only "fail_closed"
     on_error: str | None = "skip"

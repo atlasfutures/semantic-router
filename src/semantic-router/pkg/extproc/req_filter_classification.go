@@ -2,12 +2,14 @@ package extproc
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/classification"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	routermetrics "github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/sessiontelemetry"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/utils/entropy"
@@ -58,13 +60,21 @@ func (r *OpenAIRouter) performDecisionEvaluation(originalModel string, history s
 		return "", 0.0, entropy.ReasoningDecision{}, defaultModel, nil
 	}
 
-	decisionName, evaluationConfidence, reasoningDecision, selectedModel = r.finalizeDecisionEvaluation(
+	decisionName, evaluationConfidence, reasoningDecision, selectedModel, authzErr = r.finalizeDecisionEvaluation(
 		result,
 		originalModel,
 		history.currentUserMessage,
 		ctx,
 	)
-	return decisionName, evaluationConfidence, reasoningDecision, selectedModel, nil
+	return decisionName, evaluationConfidence, reasoningDecision, selectedModel, authzErr
+}
+
+type modelSelectionFailure struct {
+	class string
+}
+
+func (failure *modelSelectionFailure) Error() string {
+	return "model selection failed (class=" + failure.class + ")"
 }
 
 // selectModelFromCandidates uses the configured selection algorithm to choose the best model
@@ -74,59 +84,275 @@ func (r *OpenAIRouter) performDecisionEvaluation(originalModel string, history s
 // The selCtx parameter carries the pre-built SelectionContext, including request-time
 // inputs such as query text, candidate models, and cache-affinity signals.
 // Returns the selected model and the method name used for logging.
-func (r *OpenAIRouter) selectModelFromCandidates(selCtx *selection.SelectionContext, algorithm *config.AlgorithmConfig, ctx *RequestContext) (*config.ModelRef, string) {
+func (r *OpenAIRouter) selectModelFromCandidates(selCtx *selection.SelectionContext, algorithm *config.AlgorithmConfig, ctx *RequestContext) (*config.ModelRef, string, error) {
 	defaultCandidateModelRef := firstValidCandidateModelRef(selCtx)
 	if defaultCandidateModelRef == nil {
-		return nil, ""
+		return nil, "", selectionFailureForAlgorithm(algorithm, "no_candidate")
 	}
 	if err := selection.ValidateSelectionContext(selCtx); err != nil {
-		logging.Warnf("[ModelSelection] Invalid selection context: %v, using default candidate", err)
-		recordAgenticSessionDecision(selCtx, nil, defaultCandidateModelRef, ctx)
-		return defaultCandidateModelRef, ""
+		return r.handleSelectionFallback(
+			algorithm,
+			"invalid_context",
+			"",
+			selCtx,
+			nil,
+			defaultCandidateModelRef,
+			ctx,
+			"[ModelSelection] Invalid selection context: %v, using default candidate",
+			err,
+		)
 	}
-
-	// If only one model, no need for selection algorithm
-	if len(selCtx.CandidateModels) == 1 {
-		return r.selectSingleCandidateModel(selCtx, defaultCandidateModelRef, ctx)
+	if len(selCtx.CandidateModels) == 1 && !failClosedSelection(algorithm) {
+		selected, method := r.selectSingleCandidateModel(selCtx, defaultCandidateModelRef, ctx)
+		return selected, method, nil
 	}
-
-	// Determine selection method: per-decision algorithm takes precedence over global config
 	method := r.getSelectionMethod(algorithm)
-
-	// Get selector from registry
 	selector := r.selectorForDecisionMethod(method, algorithm)
-
-	// Use the configured default candidate if no selector is available.
 	if selector == nil {
-		logging.Warnf("[ModelSelection] No selector available for method %s, using default candidate", method)
-		recordAgenticSessionDecision(selCtx, nil, defaultCandidateModelRef, ctx)
-		return defaultCandidateModelRef, string(method)
+		return r.handleSelectionFallback(
+			algorithm,
+			"missing_selector",
+			string(method),
+			selCtx,
+			nil,
+			defaultCandidateModelRef,
+			ctx,
+			"[ModelSelection] No selector available for method %s, using default candidate",
+			method,
+		)
 	}
 
-	// Perform selection
-	result, err := selector.Select(context.Background(), selCtx)
+	selectionContext := modelSelectionContext(ctx)
+	result, err := selector.Select(selectionContext, selCtx)
 	if err != nil {
-		logging.Warnf("[ModelSelection] Selection failed: %v, using default candidate", err)
-		recordAgenticSessionDecision(selCtx, nil, defaultCandidateModelRef, ctx)
-		return defaultCandidateModelRef, string(method)
+		return r.handleSelectionFallback(
+			algorithm,
+			raylineARCFailureClass(err),
+			string(method),
+			selCtx,
+			nil,
+			defaultCandidateModelRef,
+			ctx,
+			"[ModelSelection] Selection failed: %v, using default candidate",
+			err,
+		)
 	}
 	if err := selection.ValidateSelectionResult(selCtx, result); err != nil {
-		logging.Warnf("[ModelSelection] Invalid selection result: %v, using default candidate", err)
-		recordAgenticSessionDecision(selCtx, result, defaultCandidateModelRef, ctx)
-		return defaultCandidateModelRef, string(method)
+		return r.handleSelectionFallback(
+			algorithm,
+			"invalid_result",
+			string(method),
+			selCtx,
+			result,
+			defaultCandidateModelRef,
+			ctx,
+			"[ModelSelection] Invalid selection result: %v, using default candidate",
+			err,
+		)
 	}
 
 	selectedModelRef := selectedModelRefFromResult(selCtx, result)
 	if selectedModelRef == nil {
-		logging.Warnf("[ModelSelection] Selected model %s not found in candidates, using default candidate", result.SelectedModel)
-		recordAgenticSessionDecision(selCtx, result, defaultCandidateModelRef, ctx)
-		return defaultCandidateModelRef, string(method)
+		return r.handleSelectionFallback(
+			algorithm,
+			"unknown_model",
+			string(method),
+			selCtx,
+			result,
+			defaultCandidateModelRef,
+			ctx,
+			"[ModelSelection] Selected model %s not found in candidates, using default candidate",
+			result.SelectedModel,
+		)
+	}
+	if err := bindRaylineARCDispatchContract(
+		selector,
+		algorithm,
+		result,
+		selectedModelRef,
+		ctx,
+	); err != nil {
+		return nil, "", err
+	}
+	return r.completeModelSelection(
+		selCtx,
+		algorithm,
+		ctx,
+		method,
+		result,
+		selectedModelRef,
+	)
+}
+
+func modelSelectionContext(ctx *RequestContext) context.Context {
+	if ctx != nil && ctx.TraceContext != nil {
+		return ctx.TraceContext
+	}
+	return context.Background()
+}
+
+func bindRaylineARCDispatchContract(
+	selector selection.Selector,
+	algorithm *config.AlgorithmConfig,
+	result *selection.SelectionResult,
+	selectedModelRef *config.ModelRef,
+	ctx *RequestContext,
+) error {
+	if !failClosedSelection(algorithm) {
+		return nil
+	}
+	dispatchProvider, ok := selector.(raylineARCWorkerProvider)
+	if !ok || result.RaylineARC == nil {
+		return selectionFailureForAlgorithm(algorithm, "dispatch_contract")
+	}
+	worker, found := dispatchProvider.Worker(result.RaylineARC.SelectedArm)
+	if !found || worker.ID != selectedModelRef.Model {
+		return selectionFailureForAlgorithm(algorithm, "dispatch_contract")
+	}
+	if ctx == nil {
+		return selectionFailureForAlgorithm(algorithm, "dispatch_context")
+	}
+	ctx.RaylineARCDispatch = &worker
+	return nil
+}
+
+func (r *OpenAIRouter) completeModelSelection(
+	selCtx *selection.SelectionContext,
+	algorithm *config.AlgorithmConfig,
+	ctx *RequestContext,
+	method selection.SelectionMethod,
+	result *selection.SelectionResult,
+	selectedModelRef *config.ModelRef,
+) (*config.ModelRef, string, error) {
+	if failClosedSelection(algorithm) {
+		if ctx != nil {
+			ctx.VSRRaylineARC = result.RaylineARC
+			if ctx.RaylineARCTransaction != nil &&
+				result.RaylineARC != nil {
+				ctx.RaylineARCTransaction.markSelection(
+					result.RaylineARC.SelectedArm,
+					result.RaylineARC.SerializedTokens,
+				)
+			}
+		}
+		observeRaylineARCSelection(ctx, result.RaylineARC)
+		selection.RecordSelection(
+			string(method),
+			selCtx.DecisionName,
+			selectedModelRef.Model,
+			result.Tier,
+			result.Score,
+		)
+		return selectedModelRef, string(method), nil
 	}
 	recordSelCtx, result, selectedModelRef, learningApplied := r.applyRouterLearning(selCtx, result, selectedModelRef, ctx)
 	logSelectionResult(method, result, selectedModelRef, learningApplied)
 	selection.RecordSelection(string(method), selCtx.DecisionName, selectedModelRef.Model, result.Tier, result.Score)
 	recordAgenticSessionDecision(recordSelCtx, result, selectedModelRef, ctx)
-	return selectedModelRef, string(method)
+	return selectedModelRef, string(method), nil
+}
+
+func (r *OpenAIRouter) handleSelectionFallback(
+	algorithm *config.AlgorithmConfig,
+	class string,
+	method string,
+	selCtx *selection.SelectionContext,
+	result *selection.SelectionResult,
+	defaultCandidate *config.ModelRef,
+	ctx *RequestContext,
+	warning string,
+	arguments ...interface{},
+) (*config.ModelRef, string, error) {
+	if failure := selectionFailureForAlgorithm(
+		algorithm,
+		class,
+	); failure != nil {
+		if method == "" {
+			method = string(selection.MethodRaylineARC)
+		}
+		return nil, method, failure
+	}
+	logging.Warnf(warning, arguments...)
+	recordAgenticSessionDecision(selCtx, result, defaultCandidate, ctx)
+	return defaultCandidate, method, nil
+}
+
+func failClosedSelection(algorithm *config.AlgorithmConfig) bool {
+	return algorithm != nil &&
+		algorithm.Type == config.RaylineARCAlgorithmType &&
+		algorithm.OnError == "fail_closed"
+}
+
+func selectionFailureForAlgorithm(
+	algorithm *config.AlgorithmConfig,
+	class string,
+) error {
+	if !failClosedSelection(algorithm) {
+		return nil
+	}
+	if class == "" {
+		class = "selection"
+	}
+	return &modelSelectionFailure{class: class}
+}
+
+func raylineARCFailureClass(err error) string {
+	var failure *raylineARCSelectionFailure
+	if errors.As(err, &failure) {
+		return failure.class
+	}
+	return "selector"
+}
+
+func observeRaylineARCSelection(
+	ctx *RequestContext,
+	trace *selection.RaylineARCTrace,
+) {
+	if ctx == nil || trace == nil {
+		return
+	}
+	previousArm := -1
+	if trace.PreviousArm != nil {
+		previousArm = *trace.PreviousArm
+	}
+	switchCost := 0.0
+	cacheMissTokens := 0
+	if trace.SelectedArm >= 0 &&
+		trace.SelectedArm < len(trace.SwitchCostUSD) &&
+		trace.SelectedArm < len(trace.CacheMissTokens) {
+		switchCost = trace.SwitchCostUSD[trace.SelectedArm]
+		cacheMissTokens = trace.CacheMissTokens[trace.SelectedArm]
+	}
+	routermetrics.RecordRaylineARCSelection(
+		trace.EncoderLatency,
+		trace.SerializedTokens,
+		trace.FullHistoryTokens,
+		trace.TruncatedTokens,
+		trace.CachedPrefixTokens,
+		switchCost,
+		cacheMissTokens,
+	)
+	logging.ComponentEvent("extproc", "rayline_arc_selection", map[string]interface{}{
+		"request_id":             ctx.RequestID,
+		"artifact_id_hash":       trace.ArtifactID,
+		"artifact_revision_hash": trace.ArtifactRevision,
+		"encoder_revision":       trace.EncoderRevision,
+		"episode_id_hash":        trace.EpisodeIDHash,
+		"selected_arm":           trace.SelectedArm,
+		"previous_arm":           previousArm,
+		"raw_scores":             trace.RawScores,
+		"adjusted_scores":        trace.AdjustedScores,
+		"switch_cost_usd":        trace.SwitchCostUSD,
+		"cache_miss_tokens":      trace.CacheMissTokens,
+		"stayed":                 trace.Stayed,
+		"upgrade_exemptions":     trace.UpgradeExemptions,
+		"stay_upgrade_exempted":  trace.StayUpgradeExempted,
+		"serialized_tokens":      trace.SerializedTokens,
+		"full_history_tokens":    trace.FullHistoryTokens,
+		"truncated_tokens":       trace.TruncatedTokens,
+		"cached_prefix_tokens":   trace.CachedPrefixTokens,
+		"encoder_latency_millis": trace.EncoderLatency.Milliseconds(),
+	})
 }
 
 func (r *OpenAIRouter) selectSingleCandidateModel(
@@ -262,7 +488,7 @@ func (r *OpenAIRouter) buildSelectionContext(
 
 	sessionID, userID, conversationHistory := r.extractSessionContext(reqCtx)
 
-	return &selection.SelectionContext{
+	selCtx := &selection.SelectionContext{
 		Query:                      query,
 		DecisionName:               decisionName,
 		CategoryName:               categoryName,
@@ -278,6 +504,12 @@ func (r *OpenAIRouter) buildSelectionContext(
 		ConversationHistory:        conversationHistory,
 		CacheAffinityCtx:           r.buildCacheAffinityContext(reqCtx, modelRefs),
 	}
+	selCtx.RaylineARC = r.buildRaylineARCSelectionContext(
+		algorithm,
+		reqCtx,
+		len(modelRefs),
+	)
+	return selCtx
 }
 
 func (r *OpenAIRouter) buildAgenticSessionContext(

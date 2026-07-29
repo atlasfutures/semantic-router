@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 )
 
 func TestAlgorithmTier_Constants(t *testing.T) {
@@ -12,6 +14,12 @@ func TestAlgorithmTier_Constants(t *testing.T) {
 	}
 	if TierExperimental != AlgorithmTier("experimental") {
 		t.Errorf("TierExperimental = %q, want %q", TierExperimental, "experimental")
+	}
+}
+
+func TestRaylineARCMethodIsCatalogedExperimental(t *testing.T) {
+	if got := config.GetAlgorithmTier(string(MethodRaylineARC)); got != string(TierExperimental) {
+		t.Fatalf("Rayline ARC catalog tier = %q, want %q", got, TierExperimental)
 	}
 }
 

@@ -32,6 +32,88 @@ func (r *OpenAIRouter) handleToolSelectionForRequest(openAIRequest *openai.ChatC
 			logging.Errorf("Error clearing invalid tool_choice without tools: %v", err)
 		}
 	}
+	// Tool mutations reserialize the client's request, which would drop the
+	// artifact-owned model, provider policy, and execution limits. Reapply the
+	// ARC contract so it stays the last word on the dispatched body.
+	r.reapplyRaylineARCDispatch(response, ctx)
+}
+
+// reapplyRaylineARCDispatch restores the artifact-owned request shaping onto
+// whatever body a later mutation produced. A failure here fails closed: the
+// body mutation is cleared so no request can reach the provider without the
+// artifact contract.
+func (r *OpenAIRouter) reapplyRaylineARCDispatch(
+	response *ext_proc.ProcessingResponse,
+	ctx *RequestContext,
+) {
+	if ctx == nil || ctx.RaylineARCDispatch == nil || response == nil {
+		return
+	}
+	requestBody := response.GetRequestBody()
+	if requestBody == nil {
+		return
+	}
+	mutation := requestBody.GetResponse().GetBodyMutation()
+	body := mutation.GetBody()
+	if len(body) == 0 {
+		return
+	}
+	// A tool rewrite reserializes the client request, which also loses the
+	// generic system-prompt, memory, and request-parameter mutations applied
+	// before ARC shaping. Replay those first so the artifact contract is
+	// layered on the same body the non-tool path would have produced.
+	shaped, err := r.replayARCRequestMutations(body, ctx)
+	if err == nil {
+		shaped, err = applyRaylineARCDispatch(shaped, ctx.RaylineARCDispatch)
+	}
+	if err != nil {
+		logging.ComponentErrorEvent(
+			"extproc",
+			"rayline_arc_dispatch_reapply_failed",
+			map[string]interface{}{
+				"request_id":    ctx.RequestID,
+				"failure_class": "request_shape",
+			},
+		)
+		metrics.RecordRaylineARCFailure("dispatch_reapply")
+		mutation.Mutation = &ext_proc.BodyMutation_Body{Body: nil}
+		return
+	}
+	mutation.Mutation = &ext_proc.BodyMutation_Body{Body: shaped}
+	// The tool rewrite already emitted a Content-Length for its own body;
+	// shaping changes the length, so the header must follow the final bytes.
+	if headerMutation := requestBody.GetResponse().GetHeaderMutation(); headerMutation != nil {
+		ensureHeaderRemoved(headerMutation, "content-length")
+		setHeaderValue(headerMutation, "content-length", fmt.Sprintf("%d", len(shaped)))
+	}
+}
+
+// replayARCRequestMutations reapplies the generic body mutations that run
+// before ARC shaping on the normal path.
+func (r *OpenAIRouter) replayARCRequestMutations(
+	body []byte,
+	ctx *RequestContext,
+) ([]byte, error) {
+	modified := body
+	var err error
+	if ctx.VSRSelectedDecisionName != "" {
+		modified, err = r.addSystemPromptIfConfigured(
+			modified,
+			ctx.VSRSelectedDecisionName,
+			ctx.RaylineARCDispatch.ID,
+			ctx,
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if ctx.MemoryContext != "" {
+		modified, err = injectMemoryMessages(modified, ctx.MemoryContext)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return modified, nil
 }
 
 func (r *OpenAIRouter) applySelectedTools(

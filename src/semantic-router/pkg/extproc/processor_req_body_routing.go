@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"fmt"
+	"strings"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -187,8 +188,61 @@ func (r *OpenAIRouter) createRoutingResponse(
 		return errorResponse
 	}
 	r.applyDecisionHeaderMutations(state, ctx)
+	enforceRaylineARCCredentialHeader(state, ctx)
 
 	return buildRequestBodyContinueResponse(state, bodyMutation, false)
+}
+
+// enforceRaylineARCCredentialHeader guarantees the artifact-owned credential
+// is the only value for its auth header. Profile extra headers and decision
+// header mutations are appended after credential injection and carry Envoy's
+// default APPEND_IF_EXISTS_OR_ADD action, so without this pass a configured
+// Authorization extra header or decision mutation would add a second,
+// conflicting credential.
+func enforceRaylineARCCredentialHeader(
+	state *routeHeaderState,
+	ctx *RequestContext,
+) {
+	if ctx == nil || ctx.RaylineARCDispatch == nil || state == nil {
+		return
+	}
+	authHeader := ctx.RaylineARCAuthHeader
+	if authHeader == "" {
+		return
+	}
+	artifactIndex := -1
+	for index, option := range state.setHeaders {
+		if strings.EqualFold(option.GetHeader().GetKey(), authHeader) {
+			artifactIndex = index
+			break
+		}
+	}
+	retained := make([]*core.HeaderValueOption, 0, len(state.setHeaders))
+	for index, option := range state.setHeaders {
+		if index != artifactIndex &&
+			strings.EqualFold(option.GetHeader().GetKey(), authHeader) {
+			continue
+		}
+		retained = append(retained, option)
+	}
+	state.setHeaders = retained
+	state.removeHeaders = removeARCAuthHeaderDeletions(
+		state.removeHeaders,
+		authHeader,
+	)
+}
+
+// removeARCAuthHeaderDeletions keeps a decision `delete` mutation from
+// stripping the artifact-owned credential.
+func removeARCAuthHeaderDeletions(removeHeaders []string, authHeader string) []string {
+	retained := make([]string, 0, len(removeHeaders))
+	for _, name := range removeHeaders {
+		if strings.EqualFold(name, authHeader) {
+			continue
+		}
+		retained = append(retained, name)
+	}
+	return retained
 }
 
 // createSpecifiedModelResponse creates a response for specified-model routing.
@@ -294,6 +348,19 @@ func (r *OpenAIRouter) appendCredentialHeaders(
 		return r.createErrorResponse(500, "Internal routing error. Contact your administrator.")
 	}
 
+	// An armed ARC dispatch owns its credential: readiness verified that this
+	// endpoint's key comes from exactly the artifact worker's api_key_env, so
+	// caller-supplied per-user key headers must not override it.
+	if ctx != nil && ctx.RaylineARCDispatch != nil {
+		return r.appendRaylineARCCredentialHeader(
+			state,
+			model,
+			authHeader,
+			authPrefix,
+			ctx,
+		)
+	}
+
 	accessKey, credErr := r.CredentialResolver.KeyForProvider(llmProvider, model, ctx.Headers)
 	if credErr != nil {
 		logging.ComponentErrorEvent("extproc", "credential_resolution_failed", map[string]interface{}{
@@ -328,6 +395,51 @@ func (r *OpenAIRouter) appendCredentialHeaders(
 		"provider":    llmProvider,
 		"model":       model,
 		"header_name": authHeader,
+	})
+	return nil
+}
+
+// appendRaylineARCCredentialHeader injects the artifact-owned provider
+// credential for an armed ARC dispatch, bypassing the resolver chain so no
+// caller header, fail-open default, or unrelated provider entry can substitute
+// a different key. A missing credential fails closed rather than forwarding
+// the caller's own Authorization header.
+func (r *OpenAIRouter) appendRaylineARCCredentialHeader(
+	state *routeHeaderState,
+	model string,
+	authHeader string,
+	authPrefix string,
+	ctx *RequestContext,
+) *ext_proc.ProcessingResponse {
+	accessKey := ""
+	for _, endpoint := range r.Config.GetEndpointsForModel(model) {
+		if endpoint.APIKeyEnvName == ctx.RaylineARCDispatch.APIKeyEnv {
+			accessKey = endpoint.APIKey
+			break
+		}
+	}
+	if accessKey == "" {
+		return r.raylineARCDispatchFailureResponse(ctx)
+	}
+	value := accessKey
+	if authPrefix != "" {
+		value = authPrefix + " " + accessKey
+	}
+	state.setHeaders = append(state.setHeaders, &core.HeaderValueOption{
+		Header: &core.HeaderValue{
+			Key:      authHeader,
+			RawValue: []byte(value),
+		},
+		// Explicit overwrite: Envoy's default append action would combine
+		// this with any inbound value of the same header.
+		AppendAction: core.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+	})
+	ctx.RaylineARCAuthHeader = authHeader
+	logging.ComponentDebugEvent("extproc", "provider_auth_injected", map[string]interface{}{
+		"request_id":  ctx.RequestID,
+		"model":       model,
+		"header_name": authHeader,
+		"source":      "rayline_arc_artifact",
 	})
 	return nil
 }

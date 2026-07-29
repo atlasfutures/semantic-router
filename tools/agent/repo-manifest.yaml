@@ -142,6 +142,7 @@ docs:
 - docs/agent/plans/pl-0036-router-learning-followups.md
 - docs/agent/plans/pl-0037-router-flow-eval-campaign.md
 - docs/agent/plans/pl-0038-entrypoints-recipes.md
+- docs/agent/plans/pl-0039-rayline-arc-orchestrator.md
 - docs/agent/plans/pl-0040-rayline-remote-mvp.md
 - docs/agent/tech-debt/td-006-structural-rule-exceptions.md
 - docs/agent/tech-debt/td-016-fleet-sim-shared-ruff-contract-gap.md
@@ -151,6 +152,7 @@ docs:
 - docs/agent/tech-debt/td-042-ffi-embedding-structure-debt.md
 - docs/agent/tech-debt/td-043-semantic-router-go-cyclop-debt.md
 - docs/agent/tech-debt/td-044-flow-tool-state-durability-gap.md
+- docs/agent/tech-debt/td-045-rayline-arc-builder-adaptation-gap.md
 local_agent_rules:
 - path: src/vllm-sr/cli/AGENTS.md
   scope: src/vllm-sr/cli/**
@@ -294,6 +296,9 @@ doc_governance:
   - path: docs/agent/plans/pl-0038-entrypoints-recipes.md
     steward: router-core
     freshness: update while entrypoints and multi-recipe routing implementation is active
+  - path: docs/agent/plans/pl-0039-rayline-arc-orchestrator.md
+    steward: router-core
+    freshness: update after each completed Rayline ARC orchestrator implementation loop
   - path: docs/agent/plans/pl-0040-rayline-remote-mvp.md
     steward: router-core
     freshness: update while the Rayline remote router MVP implementation and end-to-end validation are active
@@ -321,6 +326,9 @@ doc_governance:
   - path: docs/agent/tech-debt/td-044-flow-tool-state-durability-gap.md
     steward: router-core
     freshness: update when the TD044 debt record changes materially
+  - path: docs/agent/tech-debt/td-045-rayline-arc-builder-adaptation-gap.md
+    steward: router-core
+    freshness: update when the TD045 debt record changes materially
 skills:
 - tools/agent/skills/config-platform-change/SKILL.md
 - tools/agent/skills/cross-stack-bugfix/SKILL.md

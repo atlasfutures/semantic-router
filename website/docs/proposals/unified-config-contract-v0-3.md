@@ -120,6 +120,7 @@ Router-global defaults are now owned by the router itself, not by a second user-
 - `global.router.auto_model_names` registers full-router auto aliases such as `vllm-sr/auto`, `auto`, and `MoM`; the legacy `auto_model_name` field remains a single-name compatibility shortcut
 - `global.router.learning` owns cross-request Router Learning state.
 - `global.router.learning.adaptation` is online model-choice learning. `global.router.learning.protection` is session/conversation stability protection. Decisions remain semantic and can opt out with `routing.decisions[].adaptations.mode: bypass`; `algorithm.type: session_aware|elo|rl_driven|gmtrouter` is not part of the public contract.
+- `algorithm.type: rayline_arc` is an experimental hard-policy exception that requires `adaptations.mode: bypass`, `on_error: fail_closed`, immutable artifact and vLLM engine/plugin/capability pins, and a fenced episode backend. The mounted manifest—not public source—owns the arm order and private deployment bindings.
 - `global.services` groups shared APIs and runtime services
 - `global.services.router_replay.enabled` provides the router-wide replay default, while route-local `router_replay.enabled: false` is the explicit opt-out
 - `global.stores` groups storage-backed services
@@ -152,7 +153,7 @@ The repo no longer ships large full-example trees under `config/intelligent-rout
 - `config/config.yaml` is the exhaustive canonical reference config
 - `config/signal/`, `config/decision/`, `config/algorithm/`, and `config/plugin/` hold reusable routing fragments
 - `config/decision/` is organized by boolean rule shape (`single`, `and`, `or`, `not`, `composite`)
-- `config/algorithm/` is organized by routing policy family (`looper`, `selection`), with `fusion` as the looper fragment for panel-and-judge deliberation
+- `config/algorithm/` is organized by routing policy family (`looper`, `selection`), with `fusion` as the looper fragment for panel-and-judge deliberation and `rayline-arc` as an experimental selection fragment
 - latest `docs/tutorials/` source tree mirrors `signal/decision/algorithm/plugin/global`, and the older tutorial trees were removed from the active docs surface
 - runtime support examples such as `deploy/examples/runtime/semantic-cache/`, `deploy/examples/runtime/response-api/`, and `deploy/examples/runtime/tools/` stay separate because they are not part of the user-facing config contract
 - harness-only manifests live under `e2e/config/`

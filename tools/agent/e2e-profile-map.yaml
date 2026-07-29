@@ -230,6 +230,30 @@ manual_profile_rules:
       - e2e/profiles/rag-hybrid-search/**
 
 workflow_suite_rules:
+  rayline-arc-compose:
+    owner: router-core
+    kind: workflow-integration
+    summary: Hermetic Envoy, Router, Redis, ARC artifact, encoder-contract, and provider-contract acceptance with transaction, restart, concurrency, and privacy checks.
+    workflow: .github/workflows/integration-test-rayline-arc.yml
+    local_command: make rayline-arc-test-integration
+    paths:
+      - deploy/compose/rayline-arc/**
+      - e2e/testing/rayline-arc/**
+      - src/semantic-router/pkg/config/rayline_arc_config.go
+      - src/semantic-router/pkg/extproc/*rayline_arc*
+      - src/semantic-router/pkg/config/canonical_config.go
+      - src/semantic-router/pkg/config/validator_decision.go
+      - src/semantic-router/pkg/extproc/processor_core.go
+      - src/semantic-router/pkg/extproc/processor_req_body.go
+      - src/semantic-router/pkg/extproc/processor_req_body_routing.go
+      - src/semantic-router/pkg/extproc/processor_res_header.go
+      - src/semantic-router/pkg/extproc/req_filter_classification.go
+      - src/semantic-router/pkg/extproc/router_selection.go
+      - src/semantic-router/pkg/selection/raylinearc/**
+      - src/vllm-plugins/rayline_arc_io/**
+      - tools/make/e2e.mk
+      - tools/agent/e2e-profile-map.yaml
+      - .github/workflows/integration-test-rayline-arc.yml
   vllm-sr-cli-integration:
     owner: vllm-sr-cli
     kind: workflow-integration

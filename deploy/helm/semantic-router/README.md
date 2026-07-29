@@ -40,6 +40,16 @@ Run `make helm-safety-validate HELM_REPO_UPDATE=false` from the repository root
 to validate the schema plus the multi-replica local-state safety guards against
 the locked chart dependencies.
 
+## Rayline ARC profile
+
+`values-rayline-arc.yaml` is the public production skeleton for the
+experimental Rayline ARC orchestrator. It requires an immutable artifact PVC,
+an existing runtime Secret, a protected vLLM pooling endpoint, Redis, and a
+private values overlay that exactly matches the artifact's arm order,
+provider identities, thinking modes, and prices. Deployment and rollback
+procedures are documented in the
+[Rayline ARC tutorial](../../../website/docs/tutorials/algorithm/selection/rayline-arc.md).
+
 ## Values
 
 | Key | Type | Default | Description |

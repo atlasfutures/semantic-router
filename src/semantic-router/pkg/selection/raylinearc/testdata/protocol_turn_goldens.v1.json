@@ -1,0 +1,407 @@
+{
+  "schema_version": "rayline.arc.protocol-turns.v1",
+  "cases": [
+    {
+      "id": "anthropic_tool_flow",
+      "protocol": "anthropic_messages",
+      "request": {
+        "system": "drop this",
+        "messages": [
+          {
+            "role": "system",
+            "content": "drop this message"
+          },
+          {
+            "role": "user",
+            "content": "Plan café"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "drop this block"
+              },
+              {
+                "type": "text",
+                "text": "Calling"
+              },
+              {
+                "type": "tool_use",
+                "id": "call_lookup",
+                "name": "lookup",
+                "input": {
+                  "z": "é",
+                  "a": 1
+                }
+              },
+              {
+                "type": "tool_use",
+                "id": "call_calc",
+                "name": "calc",
+                "input": {
+                  "flag": true
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "context"
+              },
+              {
+                "type": "image",
+                "source": {
+                  "type": "base64",
+                  "media_type": "image/png",
+                  "data": "not-a-real-image"
+                }
+              },
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_lookup",
+                "content": "found"
+              },
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_calc",
+                "is_error": true,
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "failed"
+                  },
+                  {
+                    "type": "image",
+                    "source": {
+                      "type": "base64",
+                      "media_type": "image/png",
+                      "data": "drop"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "Plan café"
+        },
+        {
+          "role": "assistant",
+          "text": "Calling\n[tool_call lookup] {\"a\": 1, \"z\": \"\\u00e9\"}\n[tool_call calc] {\"flag\": true}"
+        },
+        {
+          "role": "user",
+          "text": "context\n\n[tool_result lookup]\nfound\n\n[tool_result calc] [tool error]\nfailed"
+        }
+      ]
+    },
+    {
+      "id": "openai_chat_tool_flow",
+      "protocol": "openai_chat",
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "drop this"
+          },
+          {
+            "role": "developer",
+            "content": "drop this too"
+          },
+          {
+            "role": "user",
+            "content": "Plan café"
+          },
+          {
+            "role": "assistant",
+            "content": "Calling",
+            "tool_calls": [
+              {
+                "id": "call_lookup",
+                "type": "function",
+                "function": {
+                  "name": "lookup",
+                  "arguments": "{\"z\":\"é\",\"a\":1}"
+                }
+              },
+              {
+                "id": "call_calc",
+                "type": "function",
+                "function": {
+                  "name": "calc",
+                  "arguments": "{\"flag\":true}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": "context"
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call_lookup",
+            "content": "found"
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call_calc",
+            "content": "failed"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "Plan café"
+        },
+        {
+          "role": "assistant",
+          "text": "Calling\n[tool_call lookup] {\"a\": 1, \"z\": \"\\u00e9\"}\n[tool_call calc] {\"flag\": true}"
+        },
+        {
+          "role": "user",
+          "text": "context\n\n[tool_result lookup]\nfound\n\n[tool_result calc]\nfailed"
+        }
+      ]
+    },
+    {
+      "id": "openai_responses_tool_flow",
+      "protocol": "openai_responses",
+      "request": {
+        "input": [
+          {
+            "type": "message",
+            "role": "developer",
+            "content": "drop this"
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": "Plan café"
+          },
+          {
+            "type": "reasoning",
+            "summary": []
+          },
+          {
+            "type": "message",
+            "role": "assistant",
+            "content": "Calling"
+          },
+          {
+            "type": "function_call",
+            "call_id": "call_lookup",
+            "name": "lookup",
+            "arguments": "{\"z\":\"é\",\"a\":1}"
+          },
+          {
+            "type": "function_call",
+            "call_id": "call_calc",
+            "name": "calc",
+            "arguments": "{\"flag\":true}"
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": "context"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call_lookup",
+            "output": "found"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call_calc",
+            "is_error": true,
+            "output": "failed"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "Plan café"
+        },
+        {
+          "role": "assistant",
+          "text": "Calling\n[tool_call lookup] {\"a\": 1, \"z\": \"\\u00e9\"}\n[tool_call calc] {\"flag\": true}"
+        },
+        {
+          "role": "user",
+          "text": "context\n\n[tool_result lookup]\nfound\n\n[tool_result calc] [tool error]\nfailed"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_python_scalar_coercion",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "true_call",
+                "name": "truth",
+                "input": true
+              },
+              {
+                "type": "tool_use",
+                "id": "false_call",
+                "name": "falsehood",
+                "input": false
+              },
+              {
+                "type": "tool_use",
+                "id": "null_call",
+                "name": "empty",
+                "input": null
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "assistant",
+          "text": "[tool_call truth] True\n[tool_call falsehood] False\n[tool_call empty] "
+        }
+      ]
+    },
+    {
+      "id": "responses_string_input",
+      "protocol": "openai_responses",
+      "request": {
+        "input": "single input"
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "single input"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_unresolved_tool_id",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "missing",
+                "content": "result"
+              }
+            ]
+          }
+        ]
+      },
+      "error_code": "unresolved_tool_id"
+    },
+    {
+      "id": "chat_malformed_tool_arguments",
+      "protocol": "openai_chat",
+      "request": {
+        "messages": [
+          {
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                  "name": "run",
+                  "arguments": "{bad"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "error_code": "malformed_tool_arguments"
+    },
+    {
+      "id": "chat_unresolved_tool_id",
+      "protocol": "openai_chat",
+      "request": {
+        "messages": [
+          {
+            "role": "tool",
+            "tool_call_id": "missing",
+            "content": "result"
+          }
+        ]
+      },
+      "error_code": "unresolved_tool_id"
+    },
+    {
+      "id": "responses_unresolved_tool_id",
+      "protocol": "openai_responses",
+      "request": {
+        "input": [
+          {
+            "type": "function_call_output",
+            "call_id": "missing",
+            "output": "result"
+          }
+        ]
+      },
+      "error_code": "unresolved_tool_id"
+    },
+    {
+      "id": "anthropic_unknown_block",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "future_unknown_block"
+              }
+            ]
+          }
+        ]
+      },
+      "error_code": "unknown_item"
+    },
+    {
+      "id": "chat_unknown_role",
+      "protocol": "openai_chat",
+      "request": {
+        "messages": [
+          {
+            "role": "future_role",
+            "content": "unknown"
+          }
+        ]
+      },
+      "error_code": "unknown_item"
+    },
+    {
+      "id": "responses_unknown_item",
+      "protocol": "openai_responses",
+      "request": {
+        "input": [
+          {
+            "type": "future_unknown_item"
+          }
+        ]
+      },
+      "error_code": "unknown_item"
+    }
+  ]
+}

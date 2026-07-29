@@ -24,6 +24,7 @@ var selectionMethodByAlgorithmType = map[string]selection.SelectionMethod{
 	"svm":           selection.MethodSVM,
 	"multi_factor":  selection.MethodMultiFactor,
 	"mlp":           selection.MethodMLP,
+	"rayline_arc":   selection.MethodRaylineARC,
 }
 
 func (r *OpenAIRouter) evaluateSignalsForDecision(
@@ -192,7 +193,7 @@ func (r *OpenAIRouter) finalizeDecisionEvaluation(
 	originalModel string,
 	userContent string,
 	ctx *RequestContext,
-) (string, float64, entropy.ReasoningDecision, string) {
+) (string, float64, entropy.ReasoningDecision, string, error) {
 	reasoningDecision := entropy.ReasoningDecision{}
 	categoryName := r.applyDecisionResultToContext(result, ctx)
 	decisionName := result.Decision.Name
@@ -213,10 +214,10 @@ func (r *OpenAIRouter) finalizeDecisionEvaluation(
 			"original_model": originalModel,
 			"decision":       decisionName,
 		})
-		return decisionName, evaluationConfidence, reasoningDecision, ""
+		return decisionName, evaluationConfidence, reasoningDecision, "", nil
 	}
 
-	selectedModel, reasoningDecision := r.selectDecisionRuntimeModel(
+	selectedModel, reasoningDecision, err := r.selectDecisionRuntimeModel(
 		result,
 		decisionName,
 		userContent,
@@ -224,7 +225,7 @@ func (r *OpenAIRouter) finalizeDecisionEvaluation(
 		evaluationConfidence,
 		ctx,
 	)
-	return decisionName, evaluationConfidence, reasoningDecision, selectedModel
+	return decisionName, evaluationConfidence, reasoningDecision, selectedModel, err
 }
 
 func (r *OpenAIRouter) applyDecisionResultToContext(result *decision.DecisionResult, ctx *RequestContext) string {
@@ -260,7 +261,7 @@ func (r *OpenAIRouter) selectDecisionRuntimeModel(
 	categoryName string,
 	evaluationConfidence float64,
 	ctx *RequestContext,
-) (string, entropy.ReasoningDecision) {
+) (string, entropy.ReasoningDecision, error) {
 	if len(result.Decision.ModelRefs) == 0 {
 		selectedModel := r.Config.DefaultModel
 		ctx.VSRSelectedModel = selectedModel
@@ -270,7 +271,7 @@ func (r *OpenAIRouter) selectDecisionRuntimeModel(
 			"decision":       decisionName,
 			"selected_model": selectedModel,
 		})
-		return selectedModel, entropy.ReasoningDecision{}
+		return selectedModel, entropy.ReasoningDecision{}, nil
 	}
 
 	selCtx := r.buildSelectionContext(
@@ -282,13 +283,20 @@ func (r *OpenAIRouter) selectDecisionRuntimeModel(
 		result.Decision.CandidateIterations,
 		ctx,
 	)
-	selectedModelRef, usedMethod := r.selectModelFromCandidates(selCtx, result.Decision.Algorithm, ctx)
+	selectedModelRef, usedMethod, err := r.selectModelFromCandidates(
+		selCtx,
+		result.Decision.Algorithm,
+		ctx,
+	)
+	if err != nil {
+		return "", entropy.ReasoningDecision{}, err
+	}
 	if selectedModelRef == nil {
 		selectedModel := r.Config.DefaultModel
 		ctx.VSRSelectedModel = selectedModel
 		ctx.VSRSelectionMethod = "default"
 		logging.Warnf("[ModelSelection] No valid decision modelRefs for decision %s, using default model %s", decisionName, selectedModel)
-		return selectedModel, entropy.ReasoningDecision{}
+		return selectedModel, entropy.ReasoningDecision{}, nil
 	}
 	selectedModel := selectedModelRef.Model
 	selectionFields := map[string]interface{}{
@@ -306,7 +314,7 @@ func (r *OpenAIRouter) selectDecisionRuntimeModel(
 	logging.ComponentDebugEvent("extproc", "decision_model_selected", selectionFields)
 	ctx.VSRSelectedModel = selectedModel
 	ctx.VSRSelectionMethod = usedMethod
-	return selectedModel, applyReasoningModeFromSelectedModel(selectedModelRef, decisionName, evaluationConfidence, ctx)
+	return selectedModel, applyReasoningModeFromSelectedModel(selectedModelRef, decisionName, evaluationConfidence, ctx), nil
 }
 
 func applyReasoningModeFromSelectedModel(

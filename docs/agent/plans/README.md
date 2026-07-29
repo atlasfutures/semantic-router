@@ -84,4 +84,5 @@ Tasks use stable IDs and checkbox status:
 - [pl-0036-router-learning-followups.md](pl-0036-router-learning-followups.md)
 - [pl-0037-router-flow-eval-campaign.md](pl-0037-router-flow-eval-campaign.md)
 - [pl-0038-entrypoints-recipes.md](pl-0038-entrypoints-recipes.md)
+- [pl-0039-rayline-arc-orchestrator.md](pl-0039-rayline-arc-orchestrator.md)
 - [pl-0040-rayline-remote-mvp.md](pl-0040-rayline-remote-mvp.md)

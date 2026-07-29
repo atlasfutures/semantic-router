@@ -28,8 +28,10 @@ package selection
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // SelectionMethod defines the type of model selection algorithm
@@ -92,6 +94,10 @@ const (
 	// MethodMultiFactor combines quality/latency/cost/load signals via a
 	// weighted score with optional SLO ceilings. Issue #37.
 	MethodMultiFactor SelectionMethod = "multi_factor"
+
+	// MethodRaylineARC uses the artifact-verified Rayline ARC orchestrator.
+	// The encoder is served by a dedicated vLLM pooling deployment.
+	MethodRaylineARC SelectionMethod = "rayline_arc"
 
 	// MethodSessionAware wraps a base selector with agentic session policy:
 	// it keeps tool loops and hot multi-turn continuations on the current model
@@ -198,6 +204,41 @@ type SelectionContext struct {
 
 	// CacheAffinityCtx carries request-time session signals for cache-affinity estimation.
 	CacheAffinityCtx *CacheAffinityContext
+
+	// RaylineARC carries only the structured, privacy-safe inputs required by
+	// the artifact-owned ARC selector. It is nil for every other algorithm.
+	RaylineARC *RaylineARCSelectionContext
+}
+
+type RaylineARCSelectionContext struct {
+	EpisodeIDHash      string
+	Turns              []raylinearc.Turn
+	State              *raylinearc.EpisodeState
+	InputTokens        int
+	PreparationFailure string
+}
+
+type RaylineARCTrace struct {
+	// ArtifactID and ArtifactRevision hold SHA256-derived hashes of the
+	// deployment-private artifact identity, never the raw pins.
+	ArtifactID          string
+	ArtifactRevision    string
+	EncoderRevision     string
+	EpisodeIDHash       string
+	SelectedArm         int
+	PreviousArm         *int
+	RawScores           []float32
+	AdjustedScores      []float32
+	SwitchCostUSD       []float64
+	CacheMissTokens     []int
+	Stayed              bool
+	UpgradeExemptions   []bool
+	StayUpgradeExempted bool
+	SerializedTokens    int
+	FullHistoryTokens   int
+	TruncatedTokens     int
+	CachedPrefixTokens  int
+	EncoderLatency      time.Duration
 }
 
 // SelectionResult contains the result of a model selection decision
@@ -229,6 +270,9 @@ type SelectionResult struct {
 	// SessionPolicy records the session-aware stay/switch policy trace when
 	// Method is session_aware.
 	SessionPolicy *SessionPolicyTrace
+
+	// RaylineARC records bounded, privacy-safe artifact policy diagnostics.
+	RaylineARC *RaylineARCTrace
 }
 
 // Selector is the interface for model selection algorithms
