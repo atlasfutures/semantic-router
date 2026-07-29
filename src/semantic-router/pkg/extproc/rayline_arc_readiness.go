@@ -232,10 +232,33 @@ func raylineARCEndpointIdentityMatches(
 	if err != nil || profile == nil || profile.Type != "openai" {
 		return false
 	}
+	if !raylineARCAuthShapeMatches(profile) {
+		return false
+	}
 	parsed, err := url.Parse(profile.BaseURL)
 	return err == nil &&
 		strings.EqualFold(parsed.Hostname(), "openrouter.ai") &&
 		parsed.Scheme == "https"
+}
+
+// raylineARCAuthShapeMatches pins the credential's transport shape. A custom
+// auth header that collides with a routing or protocol header would let an
+// earlier same-named mutation stand in for the artifact credential, and a
+// non-Bearer prefix or custom chat path would not reach the pinned provider
+// contract at all.
+func raylineARCAuthShapeMatches(profile *config.ProviderProfile) bool {
+	authHeader := profile.AuthHeader
+	if authHeader == "" {
+		authHeader = "Authorization"
+	}
+	if !strings.EqualFold(authHeader, "Authorization") {
+		return false
+	}
+	authPrefix := profile.AuthPrefix
+	if authPrefix == "" {
+		authPrefix = "Bearer"
+	}
+	return authPrefix == "Bearer" && profile.ChatPath == ""
 }
 
 // raylineARCEndpointCredentialMatches enforces the artifact-owned credential

@@ -45,8 +45,8 @@ type raylineARCEpisodeTransaction struct {
 	renewCancel      context.CancelFunc
 	renewDone        chan struct{}
 	leaseLost        atomic.Bool
-	// onFinalize releases this transaction's hold on the owning router so a
-	// hot reload cannot close the episode store underneath an active lease.
+	// onFinalize is an optional terminal-path hook; the stream-level hold in
+	// processWithContext is what keeps the episode store open.
 	onFinalize func()
 }
 
@@ -195,6 +195,12 @@ func (transaction *raylineARCEpisodeTransaction) startRenewal() {
 				err := renewer.Renew(timeoutContext, transaction.lease)
 				timeoutCancel()
 				if err != nil {
+					if renewContext.Err() != nil {
+						// stopRenewal cancelled this attempt mid-flight. That
+						// is orderly shutdown, not a lost lease: treating it
+						// as loss would abort a valid upstream-2xx commit.
+						return
+					}
 					transaction.leaseLost.Store(true)
 					metrics.RecordRaylineARCEpisodeTransaction(
 						"lease_lost",

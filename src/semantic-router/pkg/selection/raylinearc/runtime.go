@@ -291,11 +291,9 @@ func validateHeadGoldenCaseIDs(cases []headGoldenCase) error {
 			return fmt.Errorf("head golden case %d has no id", index)
 		}
 		if _, duplicate := seen[id]; duplicate {
-			return fmt.Errorf(
-				"head golden case %d has duplicate id %q",
-				index,
-				id,
-			)
+			// Golden case IDs are artifact-owned content; report the index
+			// only.
+			return fmt.Errorf("head golden case %d has a duplicate id", index)
 		}
 		seen[id] = struct{}{}
 	}

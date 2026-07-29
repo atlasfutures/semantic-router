@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -293,12 +294,18 @@ func arcResponseHeaders(
 // terminal commit or abort.
 func TestRouterCloseWaitsForInflightARCTransactions(t *testing.T) {
 	closed := make(chan struct{})
+	store, _ := raylinearc.NewMemoryEpisodeStore(raylinearc.MemoryEpisodeStoreConfig{
+		MaxEpisodes: 4,
+		IdleTTL:     time.Minute,
+	})
 	router := &OpenAIRouter{
+		RaylineARCEpisodeStore: store,
 		raylineARCEpisodeStoreClose: func() error {
 			close(closed)
 			return nil
 		},
 	}
+	// Mirror processWithContext: the stream registers its hold on entry.
 	router.raylineARCInflight.Add(1)
 
 	returned := make(chan struct{})
@@ -324,5 +331,70 @@ func TestRouterCloseWaitsForInflightARCTransactions(t *testing.T) {
 	case <-closed:
 	default:
 		t.Fatal("episode store was never closed")
+	}
+}
+
+// blockingRenewStore signals when a renewal starts and blocks until its
+// context is cancelled, then returns that cancellation error.
+type blockingRenewStore struct {
+	*raylinearc.MemoryEpisodeStore
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (store *blockingRenewStore) Renew(
+	ctx context.Context,
+	_ raylinearc.Lease,
+) error {
+	store.once.Do(func() { close(store.entered) })
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// TestCommitSucceedsWhileRenewalIsInFlight proves that cancelling an in-flight
+// renewal during commit is treated as orderly shutdown, not a lost lease. The
+// upstream returned 2xx, so the episode must advance.
+func TestCommitSucceedsWhileRenewalIsInFlight(t *testing.T) {
+	memory, err := raylinearc.NewMemoryEpisodeStore(
+		raylinearc.MemoryEpisodeStoreConfig{MaxEpisodes: 4, IdleTTL: time.Minute},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &blockingRenewStore{
+		MemoryEpisodeStore: memory,
+		entered:            make(chan struct{}),
+	}
+	episode := raylinearc.HashEpisodeID("renewal-race")
+	lease, state, err := store.Prepare(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	transaction := newRaylineARCEpisodeTransaction(
+		store, lease, state, episode, 60*time.Millisecond, nil,
+	)
+	transaction.markSelection(1, 42)
+
+	select {
+	case <-store.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("renewal never started")
+	}
+
+	if commitErr := transaction.commit(
+		context.Background(),
+		&RequestContext{},
+	); commitErr != nil {
+		t.Fatalf("a valid 2xx commit was rejected as a lost lease: %v", commitErr)
+	}
+
+	// The committed turn must be visible to the next episode preparation.
+	_, resumed, err := store.Prepare(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.PreviousArm == nil || *resumed.PreviousArm != 1 {
+		t.Fatalf("episode did not advance: %#v", resumed)
 	}
 }

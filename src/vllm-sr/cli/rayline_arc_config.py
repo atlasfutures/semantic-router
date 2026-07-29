@@ -63,7 +63,9 @@ class RaylineARCEpisodeConfig(BaseModel):
     acquire_timeout_seconds: int = Field(gt=0)
     lease_ttl_seconds: int = Field(gt=0)
     idle_ttl_seconds: int = Field(gt=0)
-    max_in_memory_episodes: int = Field(ge=0)
+    # Only meaningful for backend=memory, and the Go loader accepts it as
+    # omitted for Redis; defaulting keeps both validators on the same contract.
+    max_in_memory_episodes: int = Field(default=0, ge=0)
     development_mode: bool = False
     redis: RaylineARCRedisConfig | None = None
 

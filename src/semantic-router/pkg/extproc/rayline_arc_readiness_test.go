@@ -135,6 +135,33 @@ func TestRaylineARCDispatchContractsRejectCredentialDrift(t *testing.T) {
 		) {
 			cfg.VLLMEndpoints[0].APIKeyEnvName = ""
 		}},
+		{"auth header collision", func(
+			cfg *config.RouterConfig,
+			_ []raylinearc.WorkerManifest,
+			_ []*config.Decision,
+		) {
+			profile := cfg.ProviderProfiles["openrouter"]
+			profile.AuthHeader = "content-length"
+			cfg.ProviderProfiles["openrouter"] = profile
+		}},
+		{"auth prefix drift", func(
+			cfg *config.RouterConfig,
+			_ []raylinearc.WorkerManifest,
+			_ []*config.Decision,
+		) {
+			profile := cfg.ProviderProfiles["openrouter"]
+			profile.AuthPrefix = "Token"
+			cfg.ProviderProfiles["openrouter"] = profile
+		}},
+		{"custom chat path", func(
+			cfg *config.RouterConfig,
+			_ []raylinearc.WorkerManifest,
+			_ []*config.Decision,
+		) {
+			profile := cfg.ProviderProfiles["openrouter"]
+			profile.ChatPath = "/custom/chat"
+			cfg.ProviderProfiles["openrouter"] = profile
+		}},
 		{"worker credential env unset", func(
 			_ *config.RouterConfig,
 			workers []raylinearc.WorkerManifest,

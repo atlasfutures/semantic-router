@@ -650,11 +650,9 @@ func readVerifiedFile(
 	digest := sha256.Sum256(data)
 	actual := hex.EncodeToString(digest[:])
 	if !strings.EqualFold(actual, expected) {
-		return nil, fmt.Errorf(
-			"SHA256 mismatch: expected %s, got %s",
-			expected,
-			actual,
-		)
+		// The expected value is a private artifact pin and the actual value
+		// fingerprints private content; report only the bounded failure class.
+		return nil, errors.New("artifact file SHA256 mismatch")
 	}
 	return data, nil
 }
