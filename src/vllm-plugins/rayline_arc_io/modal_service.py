@@ -34,7 +34,7 @@ CUDA_BASE_IMAGE = (
     "@sha256:93a8d207db5aaa6384f834a6bf70d417433f709e61b57a91e7cc99c16172f49c"
 )
 VLLM_BASE_WHEEL_COMMIT = "98e91a9600eb75b2de14ef27f13b10088d1a1279"
-VLLM_COMMIT = "143fa9c792298475e6440b81b4af16cb11e002c8"
+VLLM_COMMIT = "918a2d159b718ab7f50d3fba87578e310034593d"
 VLLM_VERSION = "0.26.1rc1.dev36+g98e91a960"
 VLLM_WHEEL_INDEX = f"https://wheels.vllm.ai/{VLLM_BASE_WHEEL_COMMIT}/cu130"
 VLLM_REPOSITORY = "https://github.com/davidvgilmore/vllm.git"
@@ -62,6 +62,7 @@ _RUNTIME_FILES = (
     "vllm/model_executor/layers/pooler/seqwise/methods.py",
     "vllm/model_executor/layers/pooler/seqwise/poolers.py",
     "vllm/model_executor/models/gritlm.py",
+    "vllm/pooling_params.py",
     "vllm/v1/core/sched/scheduler.py",
     "vllm/v1/pool/metadata.py",
     "vllm/v1/worker/gpu_input_batch.py",

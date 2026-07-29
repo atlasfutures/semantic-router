@@ -50,7 +50,7 @@ def test_modal_service_freezes_rung_b_vllm_contract() -> None:
     for expected in (
         'MODEL_ID = "Qwen/Qwen3.5-0.8B"',
         'MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"',
-        'VLLM_COMMIT = "143fa9c792298475e6440b81b4af16cb11e002c8"',
+        'VLLM_COMMIT = "918a2d159b718ab7f50d3fba87578e310034593d"',
         "CHUNK_SCHEDULE_TOKENS = 8_192",
         '"task": "embed"',
         '"pooling_type": "MEAN"',
@@ -63,6 +63,7 @@ def test_modal_service_freezes_rung_b_vllm_contract() -> None:
         '"--no-enable-log-requests",',
         "vllm/v1/core/sched/scheduler.py",
         "vllm/v1/worker/gpu_model_runner.py",
+        "vllm/pooling_params.py",
         "@sha256:",
         "RAYLINE_ARC_PLUGIN_SOURCE_DIGEST",
         "fetch --depth 1 origin",
