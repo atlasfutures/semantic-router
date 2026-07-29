@@ -160,7 +160,6 @@ func (selector *raylineARCSelector) Select(
 	return selector.selectionResult(
 		selCtx,
 		arcContext,
-		workerIDs,
 		state,
 		encoded,
 		decision,
@@ -249,7 +248,6 @@ func validARCDecision(
 func (selector *raylineARCSelector) selectionResult(
 	selCtx *selection.SelectionContext,
 	arcContext *selection.RaylineARCSelectionContext,
-	workerIDs []string,
 	state *raylinearc.EpisodeState,
 	encoded *raylinearc.EncoderResult,
 	decision raylinearc.Decision,
@@ -257,10 +255,6 @@ func (selector *raylineARCSelector) selectionResult(
 ) *selection.SelectionResult {
 	selected := &selCtx.CandidateModels[decision.SelectedArm]
 	score := float64(decision.AdjustedScores[decision.SelectedArm])
-	allScores := make(map[string]float64, len(workerIDs))
-	for index, workerID := range workerIDs {
-		allScores[workerID] = float64(decision.AdjustedScores[index])
-	}
 	return &selection.SelectionResult{
 		SelectedModel: selected.Model,
 		LoRAName:      selected.LoRAName,
@@ -269,7 +263,9 @@ func (selector *raylineARCSelector) selectionResult(
 		Method:        selection.MethodRaylineARC,
 		Tier:          selection.TierExperimental,
 		Reasoning:     "artifact-owned ARC policy",
-		AllScores:     allScores,
+		// Artifact arm IDs stay in the bounded ARC-native trace as ordinal
+		// arrays. Do not copy them into the generic model-keyed score channel.
+		AllScores: nil,
 		RaylineARC: &selection.RaylineARCTrace{
 			// The artifact ID and revision are deployment-private pins (the
 			// Helm profile sources the revision from a Secret); expose only

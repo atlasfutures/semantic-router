@@ -51,6 +51,7 @@ type OpenAIRouter struct {
 	MemoryExtractor             *memory.MemoryExtractor
 	RaylineARCEpisodeStore      raylinearc.EpisodeStore
 	raylineARCEpisodeStoreClose func() error
+	raylineARCDrainTimeout      time.Duration
 	// raylineARCInflight counts episode transactions still holding a lease on
 	// this router. A hot reload swaps routers and closes the old one, but
 	// in-flight streams keep using it, so the episode store must not close
@@ -125,6 +126,10 @@ func (r *OpenAIRouter) releaseRaylineARCHold() {
 // waitForRaylineARCDrain blocks until every in-flight ARC episode transaction
 // has finalized, bounded so a stuck upstream cannot block reload forever.
 func (r *OpenAIRouter) waitForRaylineARCDrain() {
+	timeout := r.raylineARCDrainTimeout
+	if timeout <= 0 {
+		timeout = defaultRaylineARCDrainTimeout
+	}
 	drained := make(chan struct{})
 	go func() {
 		defer close(drained)
@@ -132,20 +137,48 @@ func (r *OpenAIRouter) waitForRaylineARCDrain() {
 	}()
 	select {
 	case <-drained:
-	case <-time.After(raylineARCDrainTimeout):
+	case <-time.After(timeout):
 		logging.ComponentWarnEvent(
 			"extproc",
 			"rayline_arc_drain_timeout",
 			map[string]interface{}{
-				"timeout_seconds": raylineARCDrainTimeout.Seconds(),
+				"timeout_seconds": timeout.Seconds(),
 			},
 		)
 	}
 }
 
-// raylineARCDrainTimeout bounds reload on the encoder budget plus the
-// terminal-finalization allowance, so a hung upstream cannot stall it.
-const raylineARCDrainTimeout = 30 * time.Second
+// configuredRaylineARCDrainTimeout covers the largest configured encoder
+// request budget plus terminal finalization. A fixed 30-second drain could
+// close the episode store underneath a valid 180-second encoder request.
+func configuredRaylineARCDrainTimeout(
+	cfg *config.RouterConfig,
+) time.Duration {
+	timeout := defaultRaylineARCDrainTimeout
+	if cfg == nil {
+		return timeout
+	}
+	for _, decision := range cfg.Decisions {
+		if decision.Algorithm == nil ||
+			decision.Algorithm.Type != config.RaylineARCAlgorithmType ||
+			decision.Algorithm.RaylineARC == nil {
+			continue
+		}
+		encoderBudget := time.Duration(
+			decision.Algorithm.RaylineARC.Encoder.TotalTimeoutSeconds,
+		) * time.Second
+		if encoderBudget <= 0 {
+			continue
+		}
+		candidate := encoderBudget + episodeFinalizeTimeout
+		if candidate > timeout {
+			timeout = candidate
+		}
+	}
+	return timeout
+}
+
+const defaultRaylineARCDrainTimeout = 30 * time.Second
 
 // Ensure OpenAIRouter implements the ext_proc calls.
 var _ ext_proc.ExternalProcessorServer = (*OpenAIRouter)(nil)

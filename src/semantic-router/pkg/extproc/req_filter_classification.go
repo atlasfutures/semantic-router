@@ -236,13 +236,9 @@ func (r *OpenAIRouter) completeModelSelection(
 			}
 		}
 		observeRaylineARCSelection(ctx, result.RaylineARC)
-		selection.RecordSelection(
-			string(method),
-			selCtx.DecisionName,
-			selectedModelRef.Model,
-			result.Tier,
-			result.Score,
-		)
+		// ARC owns bounded ordinal telemetry. The generic selection metric uses
+		// model IDs as Prometheus labels, which would export artifact arm
+		// identity and create artifact-controlled cardinality.
 		return selectedModelRef, string(method), nil
 	}
 	recordSelCtx, result, selectedModelRef, learningApplied := r.applyRouterLearning(selCtx, result, selectedModelRef, ctx)

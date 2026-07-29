@@ -275,6 +275,17 @@ func (r *OpenAIRouter) handleAutoModelRouting(openAIRequest *openai.ChatCompleti
 	// Handle tool selection
 	r.handleToolSelectionForRequest(openAIRequest, response, ctx)
 
+	// Renewal runs concurrently with body preparation. Recheck at the last
+	// point before the mutation is returned to Envoy so a lease already known
+	// to be lost cannot dispatch an upstream provider request.
+	if ctx.RaylineARCDispatch != nil &&
+		!raylineARCDispatchAllowed(ctx) {
+		return r.raylineARCDispatchFailureResponseFor(
+			ctx,
+			"lease_lost",
+		), nil
+	}
+
 	// Record routing latency
 	r.recordRoutingLatency(ctx)
 
@@ -335,20 +346,36 @@ func (r *OpenAIRouter) resolveAutoRoutingTarget(
 func (r *OpenAIRouter) raylineARCDispatchFailureResponse(
 	ctx *RequestContext,
 ) *ext_proc.ProcessingResponse {
+	return r.raylineARCDispatchFailureResponseFor(
+		ctx,
+		"request_shape",
+	)
+}
+
+func (r *OpenAIRouter) raylineARCDispatchFailureResponseFor(
+	ctx *RequestContext,
+	failureClass string,
+) *ext_proc.ProcessingResponse {
 	logging.ComponentErrorEvent(
 		"extproc",
 		"rayline_arc_dispatch_failed",
 		map[string]interface{}{
 			"request_id":    ctx.RequestID,
-			"failure_class": "request_shape",
+			"failure_class": failureClass,
 		},
 	)
-	metrics.RecordRaylineARCFailure("dispatch_request_shape")
-	r.finalizeRaylineARCAbort(ctx, "dispatch_request_shape")
+	metrics.RecordRaylineARCFailure("dispatch_" + failureClass)
+	r.finalizeRaylineARCAbort(ctx, "dispatch_"+failureClass)
 	return r.createErrorResponse(
 		http.StatusServiceUnavailable,
 		"Rayline ARC routing unavailable",
 	)
+}
+
+func raylineARCDispatchAllowed(ctx *RequestContext) bool {
+	return ctx != nil &&
+		ctx.RaylineARCTransaction != nil &&
+		ctx.RaylineARCTransaction.dispatchAllowed()
 }
 
 // handleSpecifiedModelRouting handles routing for explicitly specified models

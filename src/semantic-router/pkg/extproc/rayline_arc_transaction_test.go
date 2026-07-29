@@ -29,6 +29,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -424,5 +425,38 @@ func TestHoldRefusedOnceCloseBegins(t *testing.T) {
 	}
 	if router.tryHoldRaylineARC() {
 		t.Fatal("hold granted on a closing router")
+	}
+}
+
+func TestRaylineARCDrainTimeoutCoversConfiguredEncoderBudget(t *testing.T) {
+	cfg := &config.RouterConfig{}
+	cfg.Decisions = []config.Decision{
+		{
+			Algorithm: &config.AlgorithmConfig{
+				Type: config.RaylineARCAlgorithmType,
+				RaylineARC: &config.RaylineARCAlgorithmConfig{
+					Encoder: config.RaylineARCEncoderConfig{
+						TotalTimeoutSeconds: 180,
+					},
+				},
+			},
+		},
+	}
+	got := configuredRaylineARCDrainTimeout(cfg)
+	want := 180*time.Second + episodeFinalizeTimeout
+	if got != want {
+		t.Fatalf("drain timeout = %s, want %s", got, want)
+	}
+}
+
+func TestKnownLeaseLossBlocksRaylineARCDispatch(t *testing.T) {
+	transaction := &raylineARCEpisodeTransaction{selectionReady: true}
+	ctx := &RequestContext{RaylineARCTransaction: transaction}
+	if !raylineARCDispatchAllowed(ctx) {
+		t.Fatal("valid prepared transaction was blocked")
+	}
+	transaction.leaseLost.Store(true)
+	if raylineARCDispatchAllowed(ctx) {
+		t.Fatal("known-lost lease remained dispatchable")
 	}
 }

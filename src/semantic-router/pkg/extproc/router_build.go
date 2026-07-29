@@ -238,6 +238,7 @@ func (components *routerComponents) buildRouter() *OpenAIRouter {
 		MemoryStore:                 components.memoryStore,
 		MemoryExtractor:             components.memoryExtractor,
 		RaylineARCEpisodeStore:      components.raylineARCEpisodeStore,
+		raylineARCDrainTimeout:      configuredRaylineARCDrainTimeout(components.cfg),
 		CredentialResolver:          components.credentialResolver,
 		RateLimiter:                 components.rateLimiter,
 		lookupTableCancel:           components.lookupTableCancel,

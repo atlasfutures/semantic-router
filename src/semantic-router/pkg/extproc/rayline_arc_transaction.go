@@ -90,6 +90,16 @@ func (transaction *raylineARCEpisodeTransaction) markSelection(
 	transaction.selectionReady = true
 }
 
+// dispatchAllowed is the last pre-upstream fence. The renewal goroutine can
+// discover lease loss after selection but before Envoy receives the request
+// mutation; a known-lost lease must never dispatch and later masquerade as a
+// committable turn.
+func (transaction *raylineARCEpisodeTransaction) dispatchAllowed() bool {
+	return transaction != nil &&
+		transaction.selectionReady &&
+		!transaction.leaseLost.Load()
+}
+
 func (transaction *raylineARCEpisodeTransaction) commit(
 	ctx context.Context,
 	requestContext *RequestContext,

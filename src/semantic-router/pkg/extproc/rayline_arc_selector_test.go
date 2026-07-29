@@ -87,6 +87,12 @@ func assertRaylineARCSelectionResult(
 		result.Tier != selection.TierExperimental {
 		t.Fatalf("unexpected selection result: %#v", result)
 	}
+	if result.AllScores != nil {
+		t.Fatalf(
+			"ARC worker ids leaked through generic scores: %#v",
+			result.AllScores,
+		)
+	}
 	if result.RaylineARC == nil ||
 		result.RaylineARC.SelectedArm != 1 ||
 		result.RaylineARC.EpisodeIDHash != strings.Repeat("a", 64) {
