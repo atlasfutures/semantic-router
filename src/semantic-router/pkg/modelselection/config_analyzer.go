@@ -18,9 +18,6 @@ package modelselection
 
 import (
 	"fmt"
-	"os"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
@@ -50,19 +47,16 @@ type ConfigAnalysisResult struct {
 // AnalyzeConfigForModelSelection reads a VSR config file and identifies
 // which categories have multiple models configured (requiring model selection)
 func AnalyzeConfigForModelSelection(configPath string) (*ConfigAnalysisResult, error) {
-	// Read config file
-	data, err := os.ReadFile(configPath)
+	// Go through the canonical loader so the analysis sees exactly what the
+	// router would load. A bare yaml.Unmarshal into RouterConfig cannot see
+	// decisions at all: they live under `routing:` in the canonical contract
+	// and are normalized into Recipes, not unmarshaled from the top level.
+	cfg, err := config.Parse(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	// Parse YAML
-	var cfg config.RouterConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
-	return AnalyzeConfig(&cfg), nil
+	return AnalyzeConfig(cfg), nil
 }
 
 // AnalyzeConfig analyzes a RouterConfig to find multi-model categories
