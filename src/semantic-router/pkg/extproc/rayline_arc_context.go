@@ -95,17 +95,19 @@ func (r *OpenAIRouter) prepareRaylineARCTransaction(
 		)*time.Second,
 	)
 	defer cancel()
+	// Register the hold before acquiring the lease: a hot reload that observes
+	// zero in-flight transactions closes the episode store, so incrementing
+	// after Prepare would leave a live lease unprotected in that window.
+	r.raylineARCInflight.Add(1)
 	lease, state, err := r.RaylineARCEpisodeStore.Prepare(
 		prepareContext,
 		episodeIDHash,
 		workerCount,
 	)
 	if err != nil {
+		r.raylineARCInflight.Done()
 		return nil, boundedARCPrepareFailure(err)
 	}
-	// Hold the router open until this transaction finalizes so a concurrent
-	// hot reload cannot close the episode store under an active lease.
-	r.raylineARCInflight.Add(1)
 	reqCtx.RaylineARCTransaction = newRaylineARCEpisodeTransaction(
 		r.RaylineARCEpisodeStore,
 		lease,

@@ -9,6 +9,12 @@ replicaCount: 2
 
 image:
   pullPolicy: IfNotPresent
+  # Required for this profile: pin the router by immutable digest. The chart
+  # otherwise resolves the default mutable `latest` tag, which would let nodes
+  # run different images and would make a Helm rollback restore a moving
+  # target instead of the reviewed snapshot. Replace with the digest of the
+  # router image built from the deployed Semantic Router commit.
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
 
 resources:
   limits:

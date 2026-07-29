@@ -211,6 +211,11 @@ func mergeARCExtraBody(
 	object map[string]any,
 	raw json.RawMessage,
 ) error {
+	if len(raw) == 0 {
+		// An arm that declares no extra body has nothing to merge; treating
+		// that as malformed would fail an otherwise valid dispatch closed.
+		return nil
+	}
 	extra, err := decodeARCRequestObject(raw)
 	if err != nil {
 		return errors.New("ARC extra body is invalid")

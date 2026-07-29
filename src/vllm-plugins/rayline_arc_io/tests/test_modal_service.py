@@ -50,7 +50,7 @@ def test_modal_service_freezes_rung_b_vllm_contract() -> None:
     for expected in (
         'MODEL_ID = "Qwen/Qwen3.5-0.8B"',
         'MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"',
-        'VLLM_COMMIT = "918a2d159b718ab7f50d3fba87578e310034593d"',
+        'VLLM_COMMIT = "3786ca6f63e051a0cfe560afa66b11adbe5b1584"',
         "CHUNK_SCHEDULE_TOKENS = 8_192",
         '"task": "embed"',
         '"pooling_type": "MEAN"',

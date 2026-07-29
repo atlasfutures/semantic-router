@@ -32,6 +32,47 @@ func (r *OpenAIRouter) handleToolSelectionForRequest(openAIRequest *openai.ChatC
 			logging.Errorf("Error clearing invalid tool_choice without tools: %v", err)
 		}
 	}
+	// Tool mutations reserialize the client's request, which would drop the
+	// artifact-owned model, provider policy, and execution limits. Reapply the
+	// ARC contract so it stays the last word on the dispatched body.
+	reapplyRaylineARCDispatch(response, ctx)
+}
+
+// reapplyRaylineARCDispatch restores the artifact-owned request shaping onto
+// whatever body a later mutation produced. A failure here fails closed: the
+// body mutation is cleared so no request can reach the provider without the
+// artifact contract.
+func reapplyRaylineARCDispatch(
+	response *ext_proc.ProcessingResponse,
+	ctx *RequestContext,
+) {
+	if ctx == nil || ctx.RaylineARCDispatch == nil || response == nil {
+		return
+	}
+	requestBody := response.GetRequestBody()
+	if requestBody == nil {
+		return
+	}
+	mutation := requestBody.GetResponse().GetBodyMutation()
+	body := mutation.GetBody()
+	if len(body) == 0 {
+		return
+	}
+	shaped, err := applyRaylineARCDispatch(body, ctx.RaylineARCDispatch)
+	if err != nil {
+		logging.ComponentErrorEvent(
+			"extproc",
+			"rayline_arc_dispatch_reapply_failed",
+			map[string]interface{}{
+				"request_id":    ctx.RequestID,
+				"failure_class": "request_shape",
+			},
+		)
+		metrics.RecordRaylineARCFailure("dispatch_reapply")
+		mutation.Mutation = &ext_proc.BodyMutation_Body{Body: nil}
+		return
+	}
+	mutation.Mutation = &ext_proc.BodyMutation_Body{Body: shaped}
 }
 
 func (r *OpenAIRouter) applySelectedTools(
