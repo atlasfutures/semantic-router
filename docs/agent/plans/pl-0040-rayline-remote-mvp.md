@@ -13,7 +13,9 @@ Rayline selects one of that decision's allowed workers, Semantic Router invokes
 the mapped provider, and Rayline advances or preserves episode state according
 to the observed provider outcome.
 
-Status: proposed on 2026-07-29. No implementation task is complete yet.
+Status: complete on 2026-07-30. Both deterministic end-to-end receipts and
+all reported CPU-local validation gates pass on the pinned implementation
+heads recorded below.
 
 ## Inputs and Dependency Boundary
 
@@ -34,6 +36,22 @@ The implementation starts from these reviewed inputs:
 
 These are integration inputs, not unreviewed merge instructions. RRM-001
 re-resolves their heads and records the exact bases used by the implementation.
+
+The implementation used isolated, signed-off branches:
+
+- Semantic Router `codex/rayline-remote-mvp`, based on
+  `d232c6594535c78624fa7b907217df2d368826d0`, integrating the reviewed
+  PL-0039 head through `46b0bc1842bff95c6e09487f5132e93e0daa65ca`,
+  hardening its shared transaction seam in
+  `9f33befd6e8e2f833ef1c3caefd0b64fece50235`, and completing PL-0040
+  production code at `00476c3e852632e5bab4ad3cefb7b845a34ee46e`.
+- Pathfinder `codex/rayline-vsr-mvp`, based on
+  `feec6409be249a045ef181711d48609a98f6cec6`, with the completed
+  transactional serving and cross-repository acceptance implementation at
+  `5eeed94cf7bf3d5c1d79407f56d84e5af173a33b`.
+- vLLM remained pinned to the reviewed PL-0039 input
+  `162bcefe1b41c5bb35eccc2f2219ea39e2c74bb7`; `rayline_remote` added no
+  vLLM runtime dependency or source change.
 
 PL-0039 and PL-0040 remain separate modes:
 
@@ -438,46 +456,103 @@ completion proof.
 
 ## Task List
 
-- [ ] RRM-001 Re-resolve and review the PL-0039 Semantic Router/vLLM heads and
+- [x] RRM-001 Re-resolve and review the PL-0039 Semantic Router/vLLM heads and
       Pathfinder main; record exact implementation bases and a clean
       cross-repository branch strategy.
-- [ ] RRM-002 Integrate the PL-0039 Semantic Router foundation and fix its three
+- [x] RRM-002 Integrate the PL-0039 Semantic Router foundation and fix its three
       recorded open findings before extracting shared transaction behavior.
-- [ ] RRM-003 Freeze `rayline_remote` configuration, wire schema, lifecycle
+- [x] RRM-003 Freeze `rayline_remote` configuration, wire schema, lifecycle
       state machine, error taxonomy, size limits, idempotency rules, and shared
       golden fixtures.
-- [ ] RRM-004 Refactor Pathfinder policy evaluation into a pure selection
+- [x] RRM-004 Refactor Pathfinder policy evaluation into a pure selection
       helper and add exact request-scoped candidate masking without changing
       legacy `/v1/route` behavior.
-- [ ] RRM-005 Implement Pathfinder prepare/renew/commit/abort/settle endpoints,
+- [x] RRM-005 Implement Pathfinder prepare/renew/commit/abort/settle endpoints,
       bounded pending journal, receipt expiry, idempotency cache, and
       read-snapshot/version support.
-- [ ] RRM-006 Add Semantic Router typed config, canonical validation, worker
+- [x] RRM-006 Add Semantic Router typed config, canonical validation, worker
       mapping, secret redaction, bounded HTTP client, and readiness/catalog
       validation.
-- [ ] RRM-007 Generalize the PL-0039 request transaction finalizer and add the
+- [x] RRM-007 Generalize the PL-0039 request transaction finalizer and add the
       remote selector, pre-dispatch lease check, provider mapping, header-time
       commit, pre-header abort, and post-body settlement.
-- [ ] RRM-008 Add focused Pathfinder and Semantic Router unit, concurrency,
+- [x] RRM-008 Add focused Pathfinder and Semantic Router unit, concurrency,
       cancellation, timeout, malformed-contract, and privacy tests.
-- [ ] RRM-009 Add the hermetic Semantic Router `rayline-remote` integration
+- [x] RRM-009 Add the hermetic Semantic Router `rayline-remote` integration
       profile and explicit pass/fail assertions for the acceptance table.
-- [ ] RRM-010 Add and run the Pathfinder-owned cross-repository E2E against the
+- [x] RRM-010 Add and run the Pathfinder-owned cross-repository E2E against the
       actual Rayline service, local Semantic Router image flow, Envoy, and fake
       providers.
-- [ ] RRM-011 Add config fragment, reference docs, local runbook,
+- [x] RRM-011 Add config fragment, reference docs, local runbook,
       readiness/metrics documentation, rollback steps, and indexed debt for
       every intentionally deferred production gap.
-- [ ] RRM-012 Run final affected gates in both repositories, record exact
+- [x] RRM-012 Run final affected gates in both repositories, record exact
       commits and commands, rerun both E2E receipts on those heads, and close
       the plan only when every exit criterion has evidence.
 
 ## Next Action
 
-Execute RRM-001. Re-resolve the three branch heads, review the complete PL-0039
-diff rather than only its final plan, identify the smallest reviewable commit
-stack that preserves `rayline_arc`, and record the exact Pathfinder base before
-editing production code.
+Closed. The MVP is ready for review as the two pinned, signed-off branches
+above. Production HA remains intentionally blocked by
+[TD046](../tech-debt/td-046-rayline-remote-durable-journal-gap.md); do not scale
+Pathfinder's pending-transaction owner beyond one replica until that debt's
+fencing and recovery criteria are complete.
+
+## Completion Evidence
+
+### Semantic Router
+
+Final production head:
+`00476c3e852632e5bab4ad3cefb7b845a34ee46e`.
+
+- `PATH="$PWD/.venv-agent/bin:$PATH" make agent-ci-gate ENV=cpu
+  AGENT_BASE_REF=origin/main`: pass across all 151 branch-changed files,
+  including manifest validation, pre-commit, Python and Go lint, config
+  contracts, structure checks, CLI unit tests, Helm lint, Rust/native build,
+  and the full Semantic Router test suite.
+- `docker run --rm -v "$PWD/src/semantic-router:/workspace" -v
+  "$PWD/deploy:/deploy:ro" -w /workspace
+  vllm-sr-go-builder:rayline-remote go test ./pkg/extproc`: pass.
+- `go test -race ./pkg/selection/raylineremote`: pass.
+- `make vllm-sr-test-integration`: 39 passed, zero failures or skips against
+  the rebuilt router, Envoy, dashboard, and simulator images.
+- `make helm-ci-validate HELM_REPO_UPDATE=false` and
+  `make helm-safety-validate HELM_REPO_UPDATE=false`: pass using the exact
+  `Chart.lock` dependencies, including render, schema-rejection, replica,
+  local-state, and HPA safety checks.
+- `make agent-dev ENV=cpu`, `make agent-serve-local ENV=cpu
+  AGENT_STACK_NAME=rayline-remote-final AGENT_PORT_OFFSET=40`, and
+  `make agent-smoke-local` with the same stack coordinates: pass for router,
+  Envoy, dashboard, and simulator; `make agent-stop-local` removed the stack
+  cleanly.
+- `make rayline-remote-test-integration`: pass on the rebuilt final image for
+  authoritative selection, worker-B-only dispatch, candidate masking,
+  prepare/renew/commit/abort/settle, idempotency, concurrency, timeout and
+  malformed-contract failures, streaming, absent usage, and cross-service
+  privacy canaries.
+- `make rayline-arc-test-integration`: pass for initial, restart/resume, and
+  Redis-loss phases, preserving the embedded PL-0039 selector's behavior.
+
+### Pathfinder
+
+Final production and acceptance head:
+`5eeed94cf7bf3d5c1d79407f56d84e5af173a33b`.
+
+- `.venv/bin/python -m pytest -q tests/test_selection_transactions.py
+  tests/test_control_plane.py tests/test_serving_emulation.py`: 31 passed.
+- `VLLM_SEMANTIC_ROUTER_ROOT=/Users/chilang/code/semantic-router bash
+  tests/integration/vsr_remote/run.sh`: pass against the actual Pathfinder
+  service, final local Semantic Router image, Envoy, and both fake providers.
+  The same lifecycle, failure, candidate-mask, settlement, idempotency,
+  concurrency, and privacy assertions used by the hermetic receipt passed.
+
+The original dirty Pathfinder worktree at `/Users/chilang/code/pathfinder` was
+not modified; all Pathfinder work and evidence used the isolated worktree
+`/Users/chilang/code/pathfinder-rayline-vsr-mvp`.
+
+The deferred single-replica pending-journal boundary is indexed as
+[TD046](../tech-debt/td-046-rayline-remote-durable-journal-gap.md). No other
+target-architecture divergence remains at this MVP boundary.
 
 ## Operating Rules
 
