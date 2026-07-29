@@ -229,29 +229,18 @@ func (r *OpenAIRouter) handleAutoModelRouting(openAIRequest *openai.ChatCompleti
 	// e.g., "qwen14b-rack1" -> "Qwen/Qwen2.5-14B-Instruct"
 	upstreamModel := r.resolveModelNameForBackend(matchedModel, backendName)
 
-	var modifiedBody []byte
-	var err error
-	if ctx.RaylineARCDispatch != nil {
-		modifiedBody, err = r.modifyRequestBodyForRaylineARC(
-			openAIRequest,
-			decisionName,
-			profile,
-			ctx,
-		)
-		if err != nil {
+	modifiedBody, err := r.modifyRequestBodyForSelectedRoute(
+		openAIRequest,
+		upstreamModel,
+		decisionName,
+		reasoningDecision.UseReasoning,
+		profile,
+		ctx,
+	)
+	if err != nil {
+		if ctx.RaylineARCDispatch != nil {
 			return r.raylineARCDispatchFailureResponse(ctx), nil
 		}
-	} else {
-		modifiedBody, err = r.modifyRequestBodyForAutoRouting(
-			openAIRequest,
-			upstreamModel,
-			decisionName,
-			reasoningDecision.UseReasoning,
-			profile,
-			ctx,
-		)
-	}
-	if err != nil {
 		return nil, err
 	}
 
