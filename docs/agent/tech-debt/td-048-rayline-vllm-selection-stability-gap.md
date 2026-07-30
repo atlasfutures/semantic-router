@@ -32,12 +32,15 @@ both local Transformers and stateless causal-MEAN vLLM. Seven of eight hard
 gates passed, but four worker selections flipped, so the preregistered
 zero-flip gate failed.
 
-The same run exposed a distinct interface mismatch. The local encoder returned
-the raw FP32 masked mean with vector norms from approximately 109 to 130.
-Rung B returned an L2-normalized vector. C82 has
-`normalize_embeddings: true`, so both inputs were normalized inside the policy
-head and the score comparison remains valid, but the receipt's raw absolute
-embedding-error metric compares incompatible scales.
+The same run exposed a distinct interface mismatch. That mismatch is now
+remediated: local and remote encoders declare the same normalized FP32
+contract, and receipt v2 refuses non-unit vectors. Offline replay shows that
+explicit local pre-normalization changes no raw argmax decision, so scale was
+a measurement defect rather than the cause of the four flips.
+
+The remaining debt is narrower: small directional differences between the
+Transformers and vLLM executions cross near-tie and previous-worker
+stay-threshold boundaries.
 
 ## Evidence
 
@@ -57,6 +60,19 @@ embedding-error metric compares incompatible scales.
 - The C82 remote-backend identity check requires
   `normalize_embeddings: true`, and the estimator normalizes again before its
   policy head.
+- Pathfinder
+  [`f08128bd`](https://github.com/atlasfutures/pathfinder/commit/f08128bdced1a71d5fb4f1ac6bf724f4936644ee)
+  implements `l2-normalized-fp32.v1`, the fail-closed v2 receipt, regression
+  coverage, and deterministic smoke derivation.
+- The canonicalized frozen observations have maximum embedding absolute error
+  `0.00112024` and minimum cosine similarity `0.9999729453`.
+- Explicit pre-normalization of the local vectors changes C82 q-values by at
+  most `3.5763e-7` and raw argmax on 0 of 1,000 decisions.
+- RSP-004S is materialized with six decisions, 426,979 full-history tokens, all
+  four historical flips, and one large-tool and one near-maximum-context case.
+  Its sanitized inputs and diagnostic are privately pinned at
+  `rayline-ai/router-artifacts@d73fae3a526ff4d350d462b93b453792099a08b9`;
+  no GPU or provider spend was incurred.
 
 ## Why It Matters
 
@@ -72,11 +88,12 @@ implementation feedback loop makes correction unnecessarily slow and costly.
 
 ## Desired End State
 
-Both encoder backends return the same documented normalized-vector contract,
-and parity receipts compare canonical embeddings plus policy outputs. Routing
-selection is deterministic under the accepted cross-engine numeric envelope,
-with any stability rule explicitly specified and evaluated for quality rather
-than introduced by weakening a gate after measurement.
+Both encoder backends now return the same documented normalized-vector
+contract, and parity receipts compare canonical embeddings plus policy
+outputs. The remaining desired state is deterministic routing selection under
+the accepted cross-engine numeric envelope, with any stability rule explicitly
+specified and evaluated for quality rather than introduced by weakening a gate
+after measurement.
 
 A small boundary-heavy smoke corpus provides fast implementation feedback. The
 full 1,000-decision corpus remains the final qualification.

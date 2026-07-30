@@ -25,7 +25,7 @@ published implementation heads:
   at `33716d1106f42cf38565a296cd71c338f89a959c`.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `5295fdb57adece07d1a62c0aa447143c0e9f3224`.
+  at `b280b585d482e33bb84e7ad23ae47e1f022452ac`.
 - David's reviewed vLLM causal-MEAN input
   [`davidvgilmore/vllm:rayline/pl-0039-causal-mean`](https://github.com/davidvgilmore/vllm/tree/rayline/pl-0039-causal-mean)
   at `162bcefe1b41c5bb35eccc2f2219ea39e2c74bb7`.
@@ -379,6 +379,19 @@ Not in scope:
   Rung B returns a normalized vector, although C82 normalizes both before
   scoring. Evidence and private artifact pins are recorded in
   [`atlasfutures/pathfinder@5295fdb5`](https://github.com/atlasfutures/pathfinder/commit/5295fdb57adece07d1a62c0aa447143c0e9f3224).
+  The first remediation rung is complete at
+  [`atlasfutures/pathfinder@b280b585`](https://github.com/atlasfutures/pathfinder/commit/b280b585d482e33bb84e7ad23ae47e1f022452ac):
+  the encoder seam now declares `l2-normalized-fp32.v1`, the v2 comparator
+  rejects non-unit vectors, and a six-decision RSP-004S corpus contains all
+  four historical flips plus large-tool and near-maximum coverage. Offline
+  canonicalization reduced the meaningful embedding maximum absolute error to
+  `0.00112024`; explicit local pre-normalization changed C82 q-values by at
+  most `3.5763e-7` and changed zero raw argmax decisions. The original scale
+  mismatch was therefore a comparator defect, not the flip cause. Kernel
+  direction drift at policy boundaries remains open. The sanitized diagnostic
+  and smoke inputs are privately pinned at
+  `rayline-ai/router-artifacts@d73fae3a526ff4d350d462b93b453792099a08b9`.
+  No provider call or GPU spend was used for this remediation.
   RSP-004 remains open under TD048; its zero-flip gate is not relaxed.
 - [ ] **RSP-004A — Enable cross-episode remote selection concurrency.** Add an
   explicit policy thread-safety capability, allow immutable MTRouter remote
@@ -422,25 +435,29 @@ Not in scope:
 Resolve RSP-004's four boundary flips before beginning cache or throughput
 qualification:
 
-1. make the local and vLLM encoder implementations satisfy the architecture's
-   same normalized-vector result contract, and make the comparator measure
-   canonical vectors instead of different raw scales;
-2. preserve the zero-flip and `5e-3` preregistered gates, then replay the pinned
-   observations offline to isolate interface normalization from model-execution
-   and chunk-boundary drift;
-3. create **RSP-004S**, a cheap stratified smoke corpus containing short,
-   growing, large, near-maximum, and all four observed boundary cases; it must
-   be small enough to finish both live arms in minutes;
-4. if cross-kernel drift still crosses a routing threshold, specify the
-   selection-stability rule and prove its quality/regret effect offline before
-   changing policy semantics;
-5. run RSP-004S once on the pinned L40S shape; and
-6. only after the smoke passes, run **RSP-004Q**, the existing 1,000-decision,
+1. **Complete:** both encoder implementations now declare the same normalized
+   FP32 result contract, and receipt v2 compares canonical unit vectors.
+2. **Complete:** offline replay isolated the scale mismatch from kernel
+   direction drift; normalization changed no raw argmax decision.
+3. **Complete:** RSP-004S contains six decisions and 426,979 full-history
+   tokens, approximately 1.04% of RSP-004Q. It includes every historical flip
+   and the two expensive coverage shapes.
+4. **Now:** freeze a deterministic selection-stability proposal before
+   evaluating it. Treat near-argmax ties and the previous-worker stay boundary
+   as separate surfaces. Derive any numeric band from an independent
+   development replay, not the four qualification failures. Compare unchanged
+   C82 against each candidate on policy quality, cost, churn, and regret; do
+   not alter live semantics without a reviewed decision.
+5. After a candidate passes offline, run RSP-004S once on the pinned L40S
+   shape.
+6. Only after the smoke passes, run **RSP-004Q**, the existing 1,000-decision,
    41.2-million-full-history-token corpus as the final qualification.
 
 The completed run is RSP-004Q attempt 1 and remains a failed receipt; it is not
-renamed or reinterpreted after the fact. No additional paid run is authorized
-until steps 1 through 4 complete. The v1 plugin continues to reject
+renamed or reinterpreted after the fact. The first three remediation steps are
+complete, but the offline result predicts that a normalization-only live smoke
+would preserve the historical flips. No additional paid run is authorized
+until step 4 completes. The v1 plugin continues to reject
 cached-prefix tokens until RSP-005 chooses and versions a cross-request cache
 design. RSP-002 remains pending until a Pathfinder human accepts ADR 0059.
 
