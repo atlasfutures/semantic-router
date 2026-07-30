@@ -25,7 +25,7 @@ published implementation heads:
   at `33716d1106f42cf38565a296cd71c338f89a959c`.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `5295fdb51ae0553a15ad4d6ed2dbf9cf3dc71581`.
+  at `5295fdb57adece07d1a62c0aa447143c0e9f3224`.
 - David's reviewed vLLM causal-MEAN input
   [`davidvgilmore/vllm:rayline/pl-0039-causal-mean`](https://github.com/davidvgilmore/vllm/tree/rayline/pl-0039-causal-mean)
   at `162bcefe1b41c5bb35eccc2f2219ea39e2c74bb7`.
@@ -378,7 +378,7 @@ Not in scope:
   seam mismatch: local Transformers returns an unnormalized FP32 mean while
   Rung B returns a normalized vector, although C82 normalizes both before
   scoring. Evidence and private artifact pins are recorded in
-  [`atlasfutures/pathfinder@5295fdb5`](https://github.com/atlasfutures/pathfinder/commit/5295fdb51ae0553a15ad4d6ed2dbf9cf3dc71581).
+  [`atlasfutures/pathfinder@5295fdb5`](https://github.com/atlasfutures/pathfinder/commit/5295fdb57adece07d1a62c0aa447143c0e9f3224).
   RSP-004 remains open under TD048; its zero-flip gate is not relaxed.
 - [ ] **RSP-004A — Enable cross-episode remote selection concurrency.** Add an
   explicit policy thread-safety capability, allow immutable MTRouter remote

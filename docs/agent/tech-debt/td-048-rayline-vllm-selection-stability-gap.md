@@ -43,7 +43,7 @@ embedding-error metric compares incompatible scales.
 
 - Pathfinder experiment
   `rayline-vllm-stateless-parity-rsp004-20260730` at
-  [`5295fdb5`](https://github.com/atlasfutures/pathfinder/commit/5295fdb51ae0553a15ad4d6ed2dbf9cf3dc71581)
+  [`5295fdb5`](https://github.com/atlasfutures/pathfinder/commit/5295fdb57adece07d1a62c0aa447143c0e9f3224)
   records the immutable receipt and private artifact revision.
 - All 1,000 token counts matched exactly and maximum adjusted top-two gap drift
   was `0.003936`, below the frozen `0.005` limit.
