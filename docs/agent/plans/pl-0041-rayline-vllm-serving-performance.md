@@ -328,15 +328,25 @@ Not in scope:
   decision comparing a separate vLLM service, same-Pod sidecar, embedded
   `AsyncLLM`, and current in-process Transformers execution. The detailed
   boundary is drafted in
-  `docs/architecture/rayline-vllm-serving-boundary.md`; Pathfinder human
-  endorsement remains pending.
-- [ ] **RSP-003 — Extract Pathfinder's encoder seam.** Make local Transformers
+  `docs/architecture/rayline-vllm-serving-boundary.md`; Pathfinder ADR 0059 is
+  proposed at
+  [`fb3a4b94`](https://github.com/atlasfutures/pathfinder/commit/fb3a4b9455653eb9f8e490ca414aaa90a24e0a55)
+  and still requires human acceptance.
+- [x] **RSP-003 — Extract Pathfinder's encoder seam.** Make local Transformers
   and remote vLLM implementations satisfy one strict, artifact-bound interface
-  with identical canonical serialization and telemetry.
+  with identical canonical serialization and telemetry. Implemented in
+  [`atlasfutures/pathfinder@7f13de3d`](https://github.com/atlasfutures/pathfinder/commit/7f13de3d10855ea44245717f9ccb50d55ea40e93):
+  the local backend preserves the accepted Transformers/KV behavior, while the
+  remote backend loads only the C82 policy head and fails closed on encoder
+  identity drift.
 - [ ] **RSP-004 — Build the stateless vLLM bridge.** Reuse the pinned IO plugin
   and causal-MEAN fork to serve full-history Pathfinder encodes; prove numeric
   and selection parity before adding cross-request caching. Fork vLLM under
-  `atlasfutures` before publishing any new vLLM change.
+  `atlasfutures` before publishing any new vLLM change. The strict client,
+  configuration, readiness probe, bounded response handling, and policy-head
+  integration landed with RSP-003 at `7f13de3d`; completion remains gated on a
+  pinned GPU run against the actual vLLM plugin with zero selection flips and
+  adjusted top-two gap drift at or below `5e-3`.
 - [ ] **RSP-005 — Prototype both KV designs.** Measure the automatic-prefix-
   cache plus pooling-accumulator extension against explicit pinned sessions.
   Test hybrid-model rewind, eviction, batching, replica affinity, and restart;
@@ -349,7 +359,11 @@ Not in scope:
   worker vLLM endpoints through the normal local image flow.
 - [ ] **RSP-008 — Add the benchmark harness.** Drive frozen open- and
   closed-loop workloads, collect synchronized client/component/GPU metrics, and
-  emit one versioned machine-readable receipt plus a human report.
+  emit one versioned machine-readable receipt plus a human report. Before the
+  concurrency ladder, move remote model execution out of Pathfinder's
+  process-wide one-thread pre-worker segment while preserving reservation and
+  same-trace ordering. Otherwise encoder calls serialize before vLLM and the
+  benchmark cannot exercise continuous batching.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
@@ -366,20 +380,29 @@ Not in scope:
 
 ## Next Action
 
-Complete RSP-002 human review, then implement RSP-003 and RSP-004 as the next
-reviewable code slice:
+Finish RSP-004 with a real pinned GPU receipt:
 
-1. extract a strict Pathfinder encoder interface whose local implementation
-   preserves the current behavior;
-2. add a remote implementation for the existing
-   `rayline.arc.pooling-request.v1` and response contract;
-3. add readiness identity and bounded-deadline checks; and
-4. prove local-full versus remote-vLLM numeric and selection parity before
-   changing cache semantics.
+1. deploy David's causal-MEAN vLLM commit and the existing Rayline ARC IO
+   plugin on the frozen L40S profile;
+2. configure Pathfinder `7f13de3d` with
+   `mtrouter_encoder_backend: vllm`, the dedicated pooling URL, and the exact
+   vLLM build and plugin identities;
+3. run the frozen corpus through local full encode and remote vLLM, then record
+   embedding, adjusted-score, token-count, latency, and selected-worker parity;
+4. require zero selection flips and adjusted top-two gap drift at or below
+   `5e-3`, including truncation-boundary cases; and
+5. keep RSP-002 pending until a Pathfinder human accepts ADR 0059.
 
 RSP-004 deliberately establishes a full-history performance baseline. The v1
 plugin continues to reject cached-prefix tokens until RSP-005 chooses and
 versions a cross-request cache design.
+
+Before RSP-008 measures concurrency, add a reviewed Pathfinder state-
+coordination change that lets independent remote encodes overlap. The current
+`AsyncStateCoordinator` has one process-wide segment thread and the pre-worker
+segment includes policy selection, so merely pointing the new client at vLLM
+would otherwise cap encoder concurrency at one and hide vLLM's batching
+capacity.
 
 ## Operating Rules
 
@@ -412,6 +435,8 @@ versions a cross-request cache design.
 - [Rayline ARC tutorial](../../../website/docs/tutorials/algorithm/selection/rayline-arc.md)
 - [Rayline Remote tutorial](../../../website/docs/tutorials/algorithm/selection/rayline-remote.md)
 - [TD046](../tech-debt/td-046-rayline-remote-durable-journal-gap.md)
+- [Pathfinder ADR 0059 proposal](https://github.com/atlasfutures/pathfinder/blob/fb3a4b9455653eb9f8e490ca414aaa90a24e0a55/docs/adr/0059-rayline-vllm-serving-boundary.md)
+- [Pathfinder stateless vLLM encoder implementation](https://github.com/atlasfutures/pathfinder/commit/7f13de3d10855ea44245717f9ccb50d55ea40e93)
 - Pathfinder `docs/adr/0021-service-owned-kv-sessions.md`
 - Pathfinder `docs/adr/0023-process-global-kv-memory-owner.md`
 - Pathfinder `docs/history/2026-07-22-mtrouter-c82-perf-smoke.md`
