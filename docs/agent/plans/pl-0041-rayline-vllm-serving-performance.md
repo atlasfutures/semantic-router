@@ -17,7 +17,7 @@ The plan must answer four questions with runnable evidence:
    `rayline_remote` saturate, and what latency, throughput, memory, and
    operational costs does each design impose?
 
-Status: proposed on 2026-07-30. PL-0040 is complete; this plan starts from its
+Status: active on 2026-07-30. PL-0040 is complete; this plan starts from its
 published implementation heads:
 
 - Semantic Router
@@ -318,13 +318,18 @@ Not in scope:
 
 ## Task List
 
-- [ ] **RSP-001 — Freeze targets and experiment contract.** Record the target
+- [x] **RSP-001 — Freeze targets and experiment contract.** Record the target
   request-start rate, TTFT budget, context/turn distributions, concurrency
   ladder, GPU classes, model pins, cost ceiling, repetitions, warmup, and
-  statistical summary before measuring.
+  statistical summary before measuring. Frozen as
+  `rayline-vllm-perf.v1` in
+  `docs/benchmarks/rayline-vllm-performance-contract.md`.
 - [ ] **RSP-002 — Decide the serving boundary.** Write the architecture
   decision comparing a separate vLLM service, same-Pod sidecar, embedded
-  `AsyncLLM`, and current in-process Transformers execution.
+  `AsyncLLM`, and current in-process Transformers execution. The detailed
+  boundary is drafted in
+  `docs/architecture/rayline-vllm-serving-boundary.md`; Pathfinder human
+  endorsement remains pending.
 - [ ] **RSP-003 — Extract Pathfinder's encoder seam.** Make local Transformers
   and remote vLLM implementations satisfy one strict, artifact-bound interface
   with identical canonical serialization and telemetry.
@@ -361,17 +366,20 @@ Not in scope:
 
 ## Next Action
 
-Start RSP-001 and RSP-002 together as one reviewable design slice:
+Complete RSP-002 human review, then implement RSP-003 and RSP-004 as the next
+reviewable code slice:
 
-1. freeze one representative product workload and its p95 routing/TTFT budget;
-2. freeze the exact Rayline model, artifact, serializer, GPU, and worker model
-   pins;
-3. specify the remote encoder interface and reconstructible cache contract; and
-4. write the architecture decision before changing the vLLM fork.
+1. extract a strict Pathfinder encoder interface whose local implementation
+   preserves the current behavior;
+2. add a remote implementation for the existing
+   `rayline.arc.pooling-request.v1` and response contract;
+3. add readiness identity and bounded-deadline checks; and
+4. prove local-full versus remote-vLLM numeric and selection parity before
+   changing cache semantics.
 
-The first implementation rung after that decision is RSP-004, the stateless
-Pathfinder-to-vLLM bridge. It deliberately establishes numerical parity and a
-full-history performance baseline before RSP-005 changes cache semantics.
+RSP-004 deliberately establishes a full-history performance baseline. The v1
+plugin continues to reject cached-prefix tokens until RSP-005 chooses and
+versions a cross-request cache design.
 
 ## Operating Rules
 
@@ -399,6 +407,8 @@ full-history performance baseline before RSP-005 changes cache semantics.
 
 - [pl-0039-rayline-arc-orchestrator.md](pl-0039-rayline-arc-orchestrator.md)
 - [pl-0040-rayline-remote-mvp.md](pl-0040-rayline-remote-mvp.md)
+- [Rayline vLLM serving boundary](../../../docs/architecture/rayline-vllm-serving-boundary.md)
+- [Rayline vLLM performance contract](../../../docs/benchmarks/rayline-vllm-performance-contract.md)
 - [Rayline ARC tutorial](../../../website/docs/tutorials/algorithm/selection/rayline-arc.md)
 - [Rayline Remote tutorial](../../../website/docs/tutorials/algorithm/selection/rayline-remote.md)
 - [TD046](../tech-debt/td-046-rayline-remote-durable-journal-gap.md)
