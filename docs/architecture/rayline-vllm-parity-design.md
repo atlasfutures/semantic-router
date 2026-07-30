@@ -101,8 +101,12 @@ The implementation is intentionally between Rungs A and B:
   provides one local/remote encoder seam, the strict stateless v1 pooling
   client, checkpoint identity validation, bounded response handling, and
   readiness propagation.
-- The deterministic parity corpus and receipt runner are the next
-  credential-free implementation slice.
+- Pathfinder
+  [`f580f961`](https://github.com/atlasfutures/pathfinder/commit/f580f9618787b90b6d876c33d510b9505f084327)
+  adds the deterministic exact-token 50/30/15/5 corpus generator, per-mode
+  observation runner, strict parity comparator, and sanitized aggregate
+  receipt. A real-tokenizer 20-decision smoke has passed; the generated
+  1,000-decision artifact is not checked into either source repository.
 - Actual pinned-model GPU parity, cross-episode batching, the paired-cache v2
   protocol, and the production-shaped five-service run are not complete.
 - Pathfinder ADR 0059 remains proposed and requires human acceptance before
@@ -851,6 +855,8 @@ The vLLM implementation has complete Rayline parity only when all are true:
       `atlasfutures/pathfinder@7f13de3d`.
 - [x] The stateless remote v1 client sends full canonical history on every
       encode and rejects cached-prefix claims.
+- [x] The exact-token synthetic corpus and prompt-free parity receipt harness
+      are implemented at `atlasfutures/pathfinder@f580f961`.
 - [ ] Stateless vLLM passes frozen numeric and selection parity first.
 - [ ] Different-episode remote selections overlap while same-episode prepares
       remain fenced.

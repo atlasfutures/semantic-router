@@ -25,7 +25,7 @@ published implementation heads:
   at `33716d1106f42cf38565a296cd71c338f89a959c`.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `5eeed94cf7bf3d5c1d79407f56d84e5af173a33b`.
+  at `f580f9618787b90b6d876c33d510b9505f084327`.
 - David's reviewed vLLM causal-MEAN input
   [`davidvgilmore/vllm:rayline/pl-0039-causal-mean`](https://github.com/davidvgilmore/vllm/tree/rayline/pl-0039-causal-mean)
   at `162bcefe1b41c5bb35eccc2f2219ea39e2c74bb7`.
@@ -366,10 +366,12 @@ Not in scope:
   and selection parity before adding cross-request caching. Fork vLLM under
   `atlasfutures` before publishing any new vLLM change. The strict client,
   configuration, readiness probe, bounded response handling, and policy-head
-  integration landed with RSP-003 at `7f13de3d`; completion remains gated on a
-  deterministic corpus/receipt runner followed by a pinned GPU run against the
-  actual vLLM plugin with zero selection flips and adjusted top-two gap drift
-  at or below `5e-3`.
+  integration landed with RSP-003 at `7f13de3d`. The deterministic exact-token
+  corpus, mode runner, strict comparator, and sanitized receipt landed at
+  [`f580f961`](https://github.com/atlasfutures/pathfinder/commit/f580f9618787b90b6d876c33d510b9505f084327).
+  Completion remains gated on materializing the full corpus and running the
+  pinned GPU comparison against the actual vLLM plugin with zero selection
+  flips and adjusted top-two gap drift at or below `5e-3`.
 - [ ] **RSP-004A — Enable cross-episode remote selection concurrency.** Add an
   explicit policy thread-safety capability, allow immutable MTRouter remote
   selections for different prepared episodes to overlap, retain the existing
@@ -409,11 +411,11 @@ Not in scope:
 
 ## Next Action
 
-Finish the credential-free part of RSP-004, then run its paid GPU gate:
+Materialize the frozen artifact, then run RSP-004's paid GPU gate:
 
-1. implement a deterministic synthetic corpus generator and sanitized parity
-   receipt comparator that pin workload and artifact identities without
-   requiring a model or provider credential;
+1. use Pathfinder `f580f961` to generate the full 1,000-decision exact-token
+   corpus with the pinned tokenizer, upload the generated artifact to private
+   immutable storage, and record its digest and location;
 2. deploy David's causal-MEAN vLLM commit and the existing Rayline ARC IO
    plugin on the frozen L40S profile;
 3. configure Pathfinder `7f13de3d` with
