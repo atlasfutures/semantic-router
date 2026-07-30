@@ -25,7 +25,7 @@ published implementation heads:
   at `33716d1106f42cf38565a296cd71c338f89a959c`.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `f580f9618787b90b6d876c33d510b9505f084327`.
+  at `5295fdb51ae0553a15ad4d6ed2dbf9cf3dc71581`.
 - David's reviewed vLLM causal-MEAN input
   [`davidvgilmore/vllm:rayline/pl-0039-causal-mean`](https://github.com/davidvgilmore/vllm/tree/rayline/pl-0039-causal-mean)
   at `162bcefe1b41c5bb35eccc2f2219ea39e2c74bb7`.
@@ -369,9 +369,17 @@ Not in scope:
   integration landed with RSP-003 at `7f13de3d`. The deterministic exact-token
   corpus, mode runner, strict comparator, and sanitized receipt landed at
   [`f580f961`](https://github.com/atlasfutures/pathfinder/commit/f580f9618787b90b6d876c33d510b9505f084327).
-  Completion remains gated on materializing the full corpus and running the
-  pinned GPU comparison against the actual vLLM plugin with zero selection
-  flips and adjusted top-two gap drift at or below `5e-3`.
+  The pinned L40S comparison completed on 2026-07-30 and **failed the strict
+  gate**: 1,000/1,000 decisions and exact token-count parity passed, maximum
+  adjusted top-two gap drift was `0.003936` against the `0.005` limit, but four
+  boundary decisions selected a different worker. Sequential diagnostic
+  runtime was 4,297.6 seconds locally and 1,203.2 seconds through vLLM
+  (`3.57x` faster); this is not a throughput claim. The run also exposed a
+  seam mismatch: local Transformers returns an unnormalized FP32 mean while
+  Rung B returns a normalized vector, although C82 normalizes both before
+  scoring. Evidence and private artifact pins are recorded in
+  [`atlasfutures/pathfinder@5295fdb5`](https://github.com/atlasfutures/pathfinder/commit/5295fdb51ae0553a15ad4d6ed2dbf9cf3dc71581).
+  RSP-004 remains open under TD048; its zero-flip gate is not relaxed.
 - [ ] **RSP-004A — Enable cross-episode remote selection concurrency.** Add an
   explicit policy thread-safety capability, allow immutable MTRouter remote
   selections for different prepared episodes to overlap, retain the existing
@@ -411,25 +419,30 @@ Not in scope:
 
 ## Next Action
 
-Materialize the frozen artifact, then run RSP-004's paid GPU gate:
+Resolve RSP-004's four boundary flips before beginning cache or throughput
+qualification:
 
-1. use Pathfinder `f580f961` to generate the full 1,000-decision exact-token
-   corpus with the pinned tokenizer, upload the generated artifact to private
-   immutable storage, and record its digest and location;
-2. deploy David's causal-MEAN vLLM commit and the existing Rayline ARC IO
-   plugin on the frozen L40S profile;
-3. configure Pathfinder `7f13de3d` with
-   `mtrouter_encoder_backend: vllm`, the dedicated pooling URL, and the exact
-   vLLM build and plugin identities;
-4. run the frozen corpus through local full encode and remote vLLM, then record
-   embedding, adjusted-score, token-count, latency, and selected-worker parity;
-5. require zero selection flips and adjusted top-two gap drift at or below
-   `5e-3`, including truncation-boundary cases; and
-6. keep RSP-002 pending until a Pathfinder human accepts ADR 0059.
+1. make the local and vLLM encoder implementations satisfy the architecture's
+   same normalized-vector result contract, and make the comparator measure
+   canonical vectors instead of different raw scales;
+2. preserve the zero-flip and `5e-3` preregistered gates, then replay the pinned
+   observations offline to isolate interface normalization from model-execution
+   and chunk-boundary drift;
+3. create **RSP-004S**, a cheap stratified smoke corpus containing short,
+   growing, large, near-maximum, and all four observed boundary cases; it must
+   be small enough to finish both live arms in minutes;
+4. if cross-kernel drift still crosses a routing threshold, specify the
+   selection-stability rule and prove its quality/regret effect offline before
+   changing policy semantics;
+5. run RSP-004S once on the pinned L40S shape; and
+6. only after the smoke passes, run **RSP-004Q**, the existing 1,000-decision,
+   41.2-million-full-history-token corpus as the final qualification.
 
-RSP-004 deliberately establishes a full-history performance baseline. The v1
-plugin continues to reject cached-prefix tokens until RSP-005 chooses and
-versions a cross-request cache design.
+The completed run is RSP-004Q attempt 1 and remains a failed receipt; it is not
+renamed or reinterpreted after the fact. No additional paid run is authorized
+until steps 1 through 4 complete. The v1 plugin continues to reject
+cached-prefix tokens until RSP-005 chooses and versions a cross-request cache
+design. RSP-002 remains pending until a Pathfinder human accepts ADR 0059.
 
 Complete RSP-004A before the throughput ladder or cache qualification. The
 transaction coordinator already releases its journal lock while different
