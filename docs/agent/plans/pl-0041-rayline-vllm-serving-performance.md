@@ -32,6 +32,25 @@ published implementation heads:
 
 ## Scope
 
+### Parent and Child Architecture
+
+The transactional-routing architecture is the parent system contract. Semantic
+Router owns HTTP normalization, candidate gating, credentials, dispatch,
+streaming, and execution truth. Pathfinder owns the policy artifact, committed
+routing state, pending selection receipts, same-episode fencing, and worker
+choice. The vLLM parity and cache work is a child execution workstream that
+replaces only Pathfinder's encoder backend.
+
+Conversation history follows each prepare request. Semantic Router sends the
+complete current history to Pathfinder, and Pathfinder forwards its canonical
+form to the encoder alongside its committed routing facts. Pathfinder does not
+need to persist prompts to make cache loss reconstructible.
+
+The current OpenAI Chat MVP already has the required transaction seam. A
+broader public transactional-selector abstraction and OpenAI Responses or
+Anthropic Messages normalization are deferred until another protocol or
+selector requires them.
+
 ### Recommended Deployment Boundary
 
 The default topology is a separate vLLM process integrated into the Rayline
@@ -128,7 +147,7 @@ request.
 
 RSP-005 must choose and prove one vLLM cross-request design:
 
-1. **Prefix-cache extension, preferred long-term.** Enable automatic prefix
+1. **Prefix-cache extension, preferred hypothesis.** Enable automatic prefix
    caching and persist or reconstruct the causal-MEAN sum/count at the matched
    block boundary. A hit restores both model cache state and pooling state;
    restoring only KV is incorrect.
@@ -138,14 +157,17 @@ RSP-005 must choose and prove one vLLM cross-request design:
    behavior.
 
 An IO processor change alone is not accepted as proof. The engine/scheduler
-must expose and test the cache lifecycle it actually owns.
+must expose and test the cache lifecycle it actually owns. RSP-005 time-boxes
+both feasibility spikes and records the winning design; it does not
+production-harden both or treat the preferred hypothesis as a predetermined
+result.
 
 ### Cache and State Contract
 
 The target contract keeps correctness separate from acceleration:
 
-- Pathfinder's committed episode history and selected-worker state are
-  authoritative.
+- The complete current request history supplied through Semantic Router and
+  Pathfinder's committed routing state are the reconstructible inputs.
 - vLLM's KV and pooling accumulator are reconstructible, non-durable
   acceleration state.
 - Every encoder request is bound to the immutable model, tokenizer,
@@ -155,7 +177,7 @@ The target contract keeps correctness separate from acceleration:
 - A cache hit reports the engine incarnation, matched prefix length, encode
   mode, evictions, and rebuild reason using bounded telemetry.
 - A miss, eviction, engine restart, affinity miss, or rejected session rebuilds
-  from authoritative history and must preserve the same selection.
+  from the complete current request and must preserve the same selection.
 - Same-episode concurrent requests are fenced before cache mutation.
 - GPU residency has one enforceable owner per engine and a measured bound.
 
@@ -296,7 +318,7 @@ Not in scope:
   the fixed parity corpus: zero selection flips and adjusted top-two gap drift
   within the existing `5e-3` gate.
 - Cache loss, eviction, affinity miss, and encoder restart rebuild correctly
-  from authoritative episode history.
+  from the complete current request supplied through Semantic Router.
 - GPU residency stays within the configured bound; OOM, unbounded session
   growth, silent cache drift, and secret-bearing telemetry are release
   blockers.
@@ -345,8 +367,15 @@ Not in scope:
   `atlasfutures` before publishing any new vLLM change. The strict client,
   configuration, readiness probe, bounded response handling, and policy-head
   integration landed with RSP-003 at `7f13de3d`; completion remains gated on a
-  pinned GPU run against the actual vLLM plugin with zero selection flips and
-  adjusted top-two gap drift at or below `5e-3`.
+  deterministic corpus/receipt runner followed by a pinned GPU run against the
+  actual vLLM plugin with zero selection flips and adjusted top-two gap drift
+  at or below `5e-3`.
+- [ ] **RSP-004A — Enable cross-episode remote selection concurrency.** Add an
+  explicit policy thread-safety capability, allow immutable MTRouter remote
+  selections for different prepared episodes to overlap, retain the existing
+  same-episode transaction fence, and keep mutable policies serialized. Prove
+  the boundary with a blocking fake encoder before throughput or cache
+  qualification. Tracked as TD047.
 - [ ] **RSP-005 — Prototype both KV designs.** Measure the automatic-prefix-
   cache plus pooling-accumulator extension against explicit pinned sessions.
   Test hybrid-model rewind, eviction, batching, replica affinity, and restart;
@@ -359,11 +388,11 @@ Not in scope:
   worker vLLM endpoints through the normal local image flow.
 - [ ] **RSP-008 — Add the benchmark harness.** Drive frozen open- and
   closed-loop workloads, collect synchronized client/component/GPU metrics, and
-  emit one versioned machine-readable receipt plus a human report. Before the
-  concurrency ladder, move remote model execution out of Pathfinder's
-  process-wide one-thread pre-worker segment while preserving reservation and
-  same-trace ordering. Otherwise encoder calls serialize before vLLM and the
-  benchmark cannot exercise continuous batching.
+  emit one versioned machine-readable receipt plus a human report. Do not start
+  the concurrency ladder until RSP-004A removes the transactional path's
+  process-wide policy-selection lock for concurrent-safe MTRouter execution;
+  otherwise encoder calls serialize before vLLM and the benchmark cannot
+  exercise continuous batching.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
@@ -380,29 +409,35 @@ Not in scope:
 
 ## Next Action
 
-Finish RSP-004 with a real pinned GPU receipt:
+Finish the credential-free part of RSP-004, then run its paid GPU gate:
 
-1. deploy David's causal-MEAN vLLM commit and the existing Rayline ARC IO
+1. implement a deterministic synthetic corpus generator and sanitized parity
+   receipt comparator that pin workload and artifact identities without
+   requiring a model or provider credential;
+2. deploy David's causal-MEAN vLLM commit and the existing Rayline ARC IO
    plugin on the frozen L40S profile;
-2. configure Pathfinder `7f13de3d` with
+3. configure Pathfinder `7f13de3d` with
    `mtrouter_encoder_backend: vllm`, the dedicated pooling URL, and the exact
    vLLM build and plugin identities;
-3. run the frozen corpus through local full encode and remote vLLM, then record
+4. run the frozen corpus through local full encode and remote vLLM, then record
    embedding, adjusted-score, token-count, latency, and selected-worker parity;
-4. require zero selection flips and adjusted top-two gap drift at or below
+5. require zero selection flips and adjusted top-two gap drift at or below
    `5e-3`, including truncation-boundary cases; and
-5. keep RSP-002 pending until a Pathfinder human accepts ADR 0059.
+6. keep RSP-002 pending until a Pathfinder human accepts ADR 0059.
 
 RSP-004 deliberately establishes a full-history performance baseline. The v1
 plugin continues to reject cached-prefix tokens until RSP-005 chooses and
 versions a cross-request cache design.
 
-Before RSP-008 measures concurrency, add a reviewed Pathfinder state-
-coordination change that lets independent remote encodes overlap. The current
-`AsyncStateCoordinator` has one process-wide segment thread and the pre-worker
-segment includes policy selection, so merely pointing the new client at vLLM
-would otherwise cap encoder concurrency at one and hide vLLM's batching
-capacity.
+Complete RSP-004A before the throughput ladder or cache qualification. The
+transaction coordinator already releases its journal lock while different
+episodes select and rejects a second prepare for the same episode. The
+immediate transactional-path limiter is instead
+`RouterService._policy_select_lock`: `/v1/route/prepare` reaches
+`selection_transaction_http.select()`, which calls `_policy_select()` under
+that process-wide lock. The legacy eager route also has a one-thread
+`AsyncStateCoordinator` segment, but it is a separate follow-up rather than
+the current `/v1/route/prepare` blocker.
 
 ## Operating Rules
 
@@ -425,16 +460,20 @@ capacity.
 - Use signed-off commits for work intended for review.
 - Keep TD046 open until durable pending transactions and multi-replica fencing
   are implemented and tested.
+- Keep TD047 open until concurrent-safe MTRouter selections overlap across
+  different episodes without weakening same-episode or mutable-policy fencing.
 
 ## Related Docs
 
 - [pl-0039-rayline-arc-orchestrator.md](pl-0039-rayline-arc-orchestrator.md)
 - [pl-0040-rayline-remote-mvp.md](pl-0040-rayline-remote-mvp.md)
 - [Rayline vLLM serving boundary](../../../docs/architecture/rayline-vllm-serving-boundary.md)
+- [Rayline-on-vLLM parity implementation](../../../docs/architecture/rayline-vllm-parity-design.md)
 - [Rayline vLLM performance contract](../../../docs/benchmarks/rayline-vllm-performance-contract.md)
 - [Rayline ARC tutorial](../../../website/docs/tutorials/algorithm/selection/rayline-arc.md)
 - [Rayline Remote tutorial](../../../website/docs/tutorials/algorithm/selection/rayline-remote.md)
 - [TD046](../tech-debt/td-046-rayline-remote-durable-journal-gap.md)
+- [TD047](../tech-debt/td-047-rayline-remote-cross-episode-selection-serialization.md)
 - [Pathfinder ADR 0059 proposal](https://github.com/atlasfutures/pathfinder/blob/fb3a4b9455653eb9f8e490ca414aaa90a24e0a55/docs/adr/0059-rayline-vllm-serving-boundary.md)
 - [Pathfinder stateless vLLM encoder implementation](https://github.com/atlasfutures/pathfinder/commit/7f13de3d10855ea44245717f9ccb50d55ea40e93)
 - Pathfinder `docs/adr/0021-service-owned-kv-sessions.md`

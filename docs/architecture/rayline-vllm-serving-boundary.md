@@ -54,7 +54,8 @@ scaling signals.
 | Client HTTP and streaming lifecycle | Envoy and Semantic Router | Fail the client request closed |
 | Worker allowlist and dispatch identity | Semantic Router request plus Pathfinder policy contract | Reject an unknown or ambiguous worker |
 | Prepare, renew, commit, abort, and settle | Pathfinder | Preserve or reject the authoritative transition |
-| Committed episode history and previous worker | Pathfinder | Durable source used to rebuild acceleration state |
+| Current conversation history | Semantic Router request, forwarded through Pathfinder | Complete encode input; not persisted as routing state |
+| Committed route version, previous worker, and bounded outcomes | Pathfinder | Authoritative policy state used alongside the current request |
 | Canonical Rayline serialization | Frozen IO plugin and parity fixtures | Readiness or request rejection |
 | Model forward and causal-MEAN pooling | Dedicated Rayline vLLM | Reconstructible encode failure |
 | Cross-turn model KV and pooling accumulator | Dedicated Rayline vLLM | Cache miss followed by a full rebuild |
@@ -62,15 +63,16 @@ scaling signals.
 | Worker generation KV | Each worker vLLM | Worker-local cache miss; never shared with Rayline |
 | Provider credentials and response usage | Semantic Router | Credentials never cross into Pathfinder or Rayline vLLM |
 
-Correctness must not depend on the Rayline vLLM cache. Pathfinder can
-reconstruct any encode from committed history after an engine restart,
-eviction, replica-affinity miss, or rejected cache entry.
+Correctness must not depend on the Rayline vLLM cache. Semantic Router supplies
+the complete current request history on every prepare, so Pathfinder can
+reissue a full encode after an engine restart, eviction, replica-affinity miss,
+or rejected cache entry without persisting prompt history.
 
 ## Stateless Bridge First
 
 RSP-004 reuses the existing strict PL-0039 IO plugin and David's causal-MEAN
 vLLM fork without changing cache semantics. Pathfinder forwards the complete
-committed history plus the candidate turn through the existing
+current request history received from Semantic Router through the existing
 `rayline.arc.pooling-request.v1` plugin envelope:
 
 ```json
@@ -96,8 +98,9 @@ by the local Transformers implementation.
 
 The stateless bridge has these rules:
 
-- Pathfinder constructs the canonical turn list from its authoritative
-  episode state; vLLM owns tokenization and pooling.
+- Semantic Router supplies the complete current request history; Pathfinder
+  combines it with authoritative routing state and constructs the canonical
+  turn list; vLLM owns tokenization and pooling.
 - The episode value on the wire is a one-way opaque digest, never a user
   episode identifier.
 - Every request has a bounded deadline and an unambiguous request ID.
@@ -108,6 +111,21 @@ The stateless bridge has these rules:
 - Full-history parity is established before a cross-request cache is enabled.
 - The v1 contract continues to require zero cached prefix tokens. RSP-005 must
   introduce a new capability/version rather than weakening v1 checks in place.
+
+## Cross-Episode Concurrency
+
+The selection-transaction journal already fences a second prepare for the same
+episode and releases its lock while different episodes select. The immediate
+transactional-path limiter is Pathfinder's process-wide
+`RouterService._policy_select_lock`, which wraps the policy call made by
+`/v1/route/prepare`. Remote vLLM requests therefore serialize before reaching
+the engine.
+
+RSP-004A and TD047 require an explicit per-policy concurrency capability.
+Immutable MTRouter selection through the remote encoder may overlap across
+different episodes; same-episode prepares remain fenced and mutable policies
+remain serialized. A blocking fake encoder must prove this seam before any
+continuous-batching or saturation claim.
 
 ## Cross-Turn Cache Contract
 

@@ -78,6 +78,10 @@ Every debt entry should include:
 
 - [TD046 Rayline Remote Pending Transactions Are Single-Replica](td-046-rayline-remote-durable-journal-gap.md)
 
+### PL0041 Rayline vLLM Serving and Performance Qualification
+
+- [TD047 Rayline Remote Selection Serializes Across Episodes](td-047-rayline-remote-cross-episode-selection-serialization.md)
+
 ## Retired Debt Policy
 
 Retired TD files are removed from this directory. Keep the ID in commit history
