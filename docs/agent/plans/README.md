@@ -86,3 +86,4 @@ Tasks use stable IDs and checkbox status:
 - [pl-0038-entrypoints-recipes.md](pl-0038-entrypoints-recipes.md)
 - [pl-0039-rayline-arc-orchestrator.md](pl-0039-rayline-arc-orchestrator.md)
 - [pl-0040-rayline-remote-mvp.md](pl-0040-rayline-remote-mvp.md)
+- [pl-0041-rayline-vllm-serving-performance.md](pl-0041-rayline-vllm-serving-performance.md)

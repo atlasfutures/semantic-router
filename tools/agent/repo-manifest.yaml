@@ -144,6 +144,7 @@ docs:
 - docs/agent/plans/pl-0038-entrypoints-recipes.md
 - docs/agent/plans/pl-0039-rayline-arc-orchestrator.md
 - docs/agent/plans/pl-0040-rayline-remote-mvp.md
+- docs/agent/plans/pl-0041-rayline-vllm-serving-performance.md
 - docs/agent/tech-debt/td-006-structural-rule-exceptions.md
 - docs/agent/tech-debt/td-016-fleet-sim-shared-ruff-contract-gap.md
 - docs/agent/tech-debt/td-017-fleet-sim-structure-gate-migration-gap.md
@@ -303,6 +304,9 @@ doc_governance:
   - path: docs/agent/plans/pl-0040-rayline-remote-mvp.md
     steward: router-core
     freshness: update while the Rayline remote router MVP implementation and end-to-end validation are active
+  - path: docs/agent/plans/pl-0041-rayline-vllm-serving-performance.md
+    steward: router-core
+    freshness: update while Rayline vLLM serving and performance qualification are active
   - path: docs/agent/tech-debt/td-006-structural-rule-exceptions.md
     steward: agent-contract
     freshness: update when the TD006 debt record changes materially
