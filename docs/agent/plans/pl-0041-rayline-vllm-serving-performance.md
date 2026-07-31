@@ -763,6 +763,46 @@ all-rungs envelope is `$19.886228`, leaving `$0.113772` below the user cap, so
 any packet failure stops paid execution. The held 1,000-case packet remains
 uninvoked.
 
+ORC004 reproduced the same external limit after exercising the new boundary
+exactly as designed. Three coverage requests again completed verified
+Fireworks generations and covered two arms. Logical request four returned
+HTTP 429; the driver reused the same Rayline episode and request after its
+two-second default because no `Retry-After` header was present, and the second
+external attempt also returned 429. Thus four logical calls produced five wire
+attempts and three confirmed generations. The request pacing, retry limit,
+privacy-safe exception, and fail-closed behavior worked, but three-model
+coverage failed before the direct, routed-comparison, or streaming phases.
+
+The private aggregate receipt is exact-round-trip verified at
+`rayline-ai/router-artifacts@e060a95e4f1a03f1e369b31b271c9fc731c8ed24`;
+Pathfinder records the closed result at `02f23596`. Cleanup again removed all
+compose resources, deleted both transient credentials, and returned the exact
+encoder app to zero containers. Conservative accounting retains the deleted
+key's full `$0.25` limit and charges `$0.142707` for the 106.19-second H100
+span, bringing cumulative observed upper-bound spend to `$8.675330`.
+
+A zero-generation public endpoint inventory after the run gives a plausible,
+but not conclusive, provider-side explanation. The ordinary Fireworks Kimi K3
+endpoint reported degraded status `-2` and 93.91% trailing-30-minute uptime;
+its premium `fireworks/fast` endpoint reported status `0` and 97.47% uptime.
+The ordinary Fireworks endpoints for DeepSeek V4 Flash and GLM 5.2 reported
+status `0`. Because the failed driver's selected worker was not persisted, the
+Kimi correlation is an inference rather than a proven per-request attribution.
+
+Paid execution stops at this boundary. A future packet must choose its claim
+before changing transport policy:
+
+- pin `fireworks/fast` only for Kimi to preserve one provider family while
+  accepting a 50% higher Kimi token price and a non-identical service tier;
+- allow OpenRouter fallbacks to test realistic availability, while giving up a
+  controlled provider comparison; or
+- pin one currently healthy provider per model, which preserves reproducible
+  provider identity but measures a heterogeneous provider/model bundle.
+
+Any option requires a new immutable artifact revision, source-frozen driver,
+preregistration, and explicit bounded packet. The current plan authorizes no
+additional paid generation. The held 1,000-case packet remains uninvoked.
+
 At the 2026-07-31 Modal rate snapshot, each 15-minute L4/4-CPU/16-GiB timeout
 envelope is `$0.278928`; both workers total `$0.557856`. Including the existing
 single-container H100 encoder's `$2.499617` timeout envelope gives a combined

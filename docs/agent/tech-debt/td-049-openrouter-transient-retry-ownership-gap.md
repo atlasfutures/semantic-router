@@ -50,6 +50,11 @@ silently changing the production gateway contract.
   before the fourth coverage request returned HTTP 429. Cleanup removed the
   one-run OpenRouter key, Modal proxy credential, compose stack, and exact H100
   encoder container.
+- ORC004 reused the same Rayline episode for one bounded retry of that fourth
+  logical request. Both external attempts returned 429, proving the canary
+  boundary and dual accounting work but do not resolve a sustained provider
+  limit. The private aggregate receipt is pinned at
+  `rayline-ai/router-artifacts@e060a95e4f1a03f1e369b31b271c9fc731c8ed24`.
 - The existing ARC transaction tests prove non-2xx provider responses abort
   without advancing episode state, which makes same-episode pre-response retry
   safe for the diagnostic packet.

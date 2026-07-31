@@ -245,6 +245,56 @@ def _scan_logs(environment: dict[str, str], protected_values: tuple[str, ...]) -
             raise RuntimeError("protected credential appeared in compose logs")
 
 
+def _collect_post_run_evidence(
+    *,
+    environment: dict[str, str],
+    protected_values: tuple[str, ...],
+    management_key: str,
+    key_hash: str,
+) -> float:
+    _scan_logs(environment, protected_values)
+    usage = _ephemeral_key_usage(management_key, key_hash)
+    print(
+        f"OpenRouter ephemeral key usage: ${usage:.8f}",
+        file=sys.stderr,
+        flush=True,
+    )
+    if usage > OPENROUTER_KEY_LIMIT_USD:
+        raise RuntimeError("OpenRouter key usage exceeded its hard limit")
+    return usage
+
+
+def _cleanup_runtime(
+    *,
+    environment: dict[str, str],
+    manager: Any,
+    proxy_token: Any,
+    management_key: str,
+    key_hash: str,
+    modal_command: list[str],
+) -> None:
+    print("OpenRouter cleanup: starting", file=sys.stderr, flush=True)
+    _run(
+        _compose_command("down", "--volumes", "--remove-orphans"),
+        environment=environment,
+        check=False,
+        capture_output=True,
+    )
+    try:
+        if proxy_token is not None:
+            manager.delete(proxy_token.token_id)
+    finally:
+        try:
+            _delete_ephemeral_key(management_key, key_hash)
+        finally:
+            _stop_encoder_containers(modal_command, environment)
+    print(
+        "OpenRouter cleanup: compose down, keys deleted, encoder stopped",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def _runtime_environment(
     *,
     openrouter_key: str,
@@ -291,6 +341,8 @@ def main() -> None:
     proxy_token = None
     manager = modal.Workspace.from_context().proxy_tokens
     environment = base_environment
+    run_failure: Exception | None = None
+    evidence_failure: Exception | None = None
     try:
         proxy_token = manager.create()
         environment = _runtime_environment(
@@ -326,43 +378,43 @@ def main() -> None:
             environment=environment,
             timeout=MAX_CANARY_SECONDS,
         )
-        _scan_logs(
-            environment,
-            (
-                management_key,
-                ephemeral_key,
-                proxy_token.token_id,
-                proxy_token.token_secret,
-            ),
-        )
-        usage = _ephemeral_key_usage(management_key, key_hash)
-        print(
-            f"OpenRouter ephemeral key usage: ${usage:.8f}",
-            file=sys.stderr,
-            flush=True,
-        )
-        if usage > OPENROUTER_KEY_LIMIT_USD:
-            raise RuntimeError("OpenRouter key usage exceeded its hard limit")
+    except Exception as error:  # preserve the primary failure through evidence cleanup
+        run_failure = error
     finally:
-        print("OpenRouter cleanup: starting", file=sys.stderr, flush=True)
-        _run(
-            _compose_command("down", "--volumes", "--remove-orphans"),
-            environment=environment,
-            check=False,
-            capture_output=True,
-        )
         try:
-            if proxy_token is not None:
-                manager.delete(proxy_token.token_id)
-        finally:
-            try:
-                _delete_ephemeral_key(management_key, key_hash)
-            finally:
-                _stop_encoder_containers(modal_command, environment)
-        print(
-            "OpenRouter cleanup: compose down, keys deleted, encoder stopped",
-            file=sys.stderr,
-            flush=True,
+            _collect_post_run_evidence(
+                environment=environment,
+                protected_values=(
+                    management_key,
+                    ephemeral_key,
+                    proxy_token.token_id if proxy_token is not None else "",
+                    proxy_token.token_secret if proxy_token is not None else "",
+                ),
+                management_key=management_key,
+                key_hash=key_hash,
+            )
+        except Exception as error:
+            evidence_failure = error
+            print(
+                "OpenRouter post-run evidence collection failed",
+                file=sys.stderr,
+                flush=True,
+            )
+        _cleanup_runtime(
+            environment=environment,
+            manager=manager,
+            proxy_token=proxy_token,
+            management_key=management_key,
+            key_hash=key_hash,
+            modal_command=modal_command,
+        )
+    if run_failure is not None:
+        if evidence_failure is not None:
+            run_failure.add_note("post-run evidence collection also failed")
+        raise run_failure
+    if evidence_failure is not None:
+        raise RuntimeError("OpenRouter post-run evidence collection failed") from (
+            evidence_failure
         )
 
 

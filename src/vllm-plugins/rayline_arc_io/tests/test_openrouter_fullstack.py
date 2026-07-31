@@ -29,6 +29,7 @@ EXPECTED_MAX_EXTERNAL_ATTEMPTS = 62
 EXPECTED_MAX_RETRY_DELAY_SECONDS = 30.0
 EXPECTED_RETRIED_ATTEMPTS = 2
 EXPECTED_MAX_PROVIDER_COST_USD = 0.10
+EXPECTED_EPHEMERAL_USAGE_USD = 0.01
 EXPECTED_WORKER_COUNT = 3
 
 
@@ -236,7 +237,41 @@ def test_openrouter_launcher_uses_ephemeral_limited_key_and_exact_cleanup() -> N
     assert '"container", "stop", container_id, "--yes"' in launcher_source
     assert "manager.delete(proxy_token.token_id)" in launcher_source
     assert "_wait_arc_component_ready(METRICS_URL)" in launcher_source
+    main_source = launcher_source.split("def main() -> None:", maxsplit=1)[1]
+    assert main_source.index("_collect_post_run_evidence(") < main_source.index(
+        "_cleanup_runtime("
+    )
     assert "execute-paid-1000" not in launcher_source
+
+
+def test_openrouter_post_run_evidence_scans_logs_before_reading_usage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, Any]] = []
+
+    def fake_scan(
+        environment: dict[str, str], protected_values: tuple[str, ...]
+    ) -> None:
+        calls.append(("scan", (environment, protected_values)))
+
+    def fake_usage(management_key: str, key_hash: str) -> float:
+        calls.append(("usage", (management_key, key_hash)))
+        return EXPECTED_EPHEMERAL_USAGE_USD
+
+    monkeypatch.setattr(launcher, "_scan_logs", fake_scan)
+    monkeypatch.setattr(launcher, "_ephemeral_key_usage", fake_usage)
+    usage = launcher._collect_post_run_evidence(
+        environment={"public": "value"},
+        protected_values=("protected",),
+        management_key="management-key",
+        key_hash="key-hash",
+    )
+
+    assert usage == EXPECTED_EPHEMERAL_USAGE_USD
+    assert calls == [
+        ("scan", ({"public": "value"}, ("protected",))),
+        ("usage", ("management-key", "key-hash")),
+    ]
 
 
 def test_openrouter_launcher_rejects_failed_arc_component_readiness() -> None:
