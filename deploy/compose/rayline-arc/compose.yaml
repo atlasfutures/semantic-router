@@ -69,12 +69,12 @@ services:
     pull_policy: never
     environment:
       SYNTHETIC_API_KEY: public-e2e-provider-key
-      RAYLINE_ARC_MODAL_KEY: public-e2e-modal-key
-      RAYLINE_ARC_MODAL_SECRET: public-e2e-modal-secret
+      RAYLINE_ARC_MODAL_KEY: ${RAYLINE_ARC_E2E_MODAL_KEY:-public-e2e-modal-key}
+      RAYLINE_ARC_MODAL_SECRET: ${RAYLINE_ARC_E2E_MODAL_SECRET:-public-e2e-modal-secret}
       RAYLINE_ARC_REDIS_PASSWORD: ${RAYLINE_ARC_E2E_REDIS_PASSWORD:-public-e2e-redis-secret}
     command: ["/app/config/rayline-arc.yaml"]
     volumes:
-      - ./config.yaml:/app/config/rayline-arc.yaml:ro
+      - ${RAYLINE_ARC_E2E_CONFIG_PATH:-./config.yaml}:/app/config/rayline-arc.yaml:ro
       - arc-artifact:/var/lib/vllm-sr/rayline-arc:ro
     ports:
       - "${RAYLINE_ARC_E2E_ROUTER_API_PORT:-18082}:8080"

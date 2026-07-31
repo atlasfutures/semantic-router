@@ -17,15 +17,16 @@ The plan must answer four questions with runnable evidence:
    `rayline_remote` saturate, and what latency, throughput, memory, and
    operational costs does each design impose?
 
-Status: active on 2026-07-31. The stateless end-to-end MVP parity gate and the
-first real-GPU retained-session engine gate pass. The explicit pinned-session
-design is selected; its versioned HTTP/client integration, concurrent GPU E2E,
-and development qualification remain in progress. Current published
+Status: active on 2026-07-31. The stateless end-to-end MVP parity gate, retained
+engine gate, versioned HTTP/client integration, and real-GPU concurrent gateway
+E2E pass. The explicit pinned-session design is selected; its 100–200-case
+development qualification and production hardening remain in progress. Current published
 implementation heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
-  at `4f14763b` for the bounded session gateway checkpoint.
+  at `29219dd0` for the capability-gated retained-session client and hermetic
+  full-stack checkpoint.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
   at `9e4678b0` for the registered retained-session canary.
@@ -177,13 +178,32 @@ one-shot/session latency ratios of `1.27x` and `2.14x` on turns 2 and 3. The
 verified private evidence is pinned at
 `rayline-ai/router-artifacts@6e387884239951ff29f48363c1adcf6c49e74d67`.
 
-The Semantic Router checkpoint at `4f14763b` adds the next lifecycle boundary:
-a separate authenticated ASGI endpoint, full-history exact-prefix validation,
-same-episode serialization, independent-session concurrency, identical-request
-reuse, mismatch rebuild, TTL/LRU eviction, global session/token residency
-bounds, and explicit close/health APIs. The normal `/pooling` v1 contract stays
-stateless. Capability `resumable_causal_mean` selects the session wire and
-requires `chunked_causal_mean`; automatic prefix caching remains disabled.
+The Semantic Router checkpoints at `4f14763b` and `29219dd0` add the next
+lifecycle boundary: a separate authenticated ASGI endpoint, full-history
+exact-prefix validation, same-episode serialization, independent-session
+concurrency, identical-request reuse, mismatch rebuild, TTL/LRU eviction,
+global session/token residency bounds, explicit close/health APIs, and a
+capability-gated Go client with bounded metrics. The normal `/pooling` v1
+contract stays stateless. Capability `resumable_causal_mean` selects the
+session wire and requires `chunked_causal_mean`; automatic prefix caching
+remains disabled.
+
+The deployed H100 HTTP canary
+`rayline-arc-session-http-shp001-20260731` passed `created → appended → reused
+→ rebuilt`, retained the exact 11-token prefix while appending 35 tokens, and
+returned zero resident sessions after explicit cleanup. Two independent
+episodes overlapped in `0.775s` wall time versus individual request latencies
+of `0.661s` and `0.760s`. The real gateway canary
+`rayline-arc-modal-gateway-mgp003-20260731` then traversed Envoy, Semantic
+Router, the protected Modal ASGI endpoint, retained vLLM state, Rayline scoring,
+and the synthetic provider. Both requests returned HTTP 200 and selected
+`worker-b`; the warm end-to-end latencies were `0.337s` and `0.424s`. Router
+metrics recorded one `created`, one `appended`, and zero selection failures.
+The Modal service disables automatic prefix caching and has a five-minute
+scale-to-zero window. At the pinned H100/CPU/memory price snapshot, one entire
+31-minute single-container timeout envelope is about `$2.50`, below the `$20`
+cap; this canary used only a fraction of that envelope and made zero paid
+provider calls.
 
 ### Cache and State Contract
 
@@ -491,10 +511,11 @@ Not in scope:
   open only for the measured router-only receipt proving more than one request
   reaches the encoder/vLLM boundary in the real stack.
 - [ ] **RSP-005 — Prove the selected explicit session end to end.** The engine
-  and local HTTP lifecycle rungs pass and the automatic-prefix-cache design is
-  rejected for the MVP. Finish the capability-gated Go client, hermetic stack,
-  and real-GPU HTTP/concurrency/rebuild canary. Record batching, eviction,
-  affinity, and restart behavior before closing this rung.
+  gate, local HTTP lifecycle, capability-gated Go client, hermetic restart and
+  Redis-loss stack, and real-GPU HTTP/concurrency/rebuild canaries pass. The
+  automatic-prefix-cache design is rejected for the MVP. Record batching,
+  eviction, affinity, and restart behavior in the development qualification
+  before closing this rung.
 - [ ] **RSP-006 — Implement and harden vLLM KV reuse.** Add bounded cache
   ownership, exact fallback, same-episode fencing, privacy-safe metrics, and
   full-vs-incremental parity gates.
@@ -552,12 +573,12 @@ but held:
    registered, digest-verified, dual-interlocked, and budgeted at a cumulative
    conservative `$14.484864` against the `$20` cap. Actual 1,000-case arms
    launched remain zero; only explicit user confirmation may change that.
-6. Continue RSP-005 without waiting for the held 1,000-case gate: finish the
-   capability-gated client and hermetic stack, then run a small real-GPU HTTP
-   canary covering concurrent sessions and rebuild behavior.
-7. If that passes, run a stratified 100–200-case development qualification for
-   parity, latency, throughput, and residency. Keep stateless full-history
-   replay as the comparison and reconstructible fallback.
+6. Treat the RSP-005 MVP path as end-to-end proven: the capability-gated client,
+   hermetic stack, protected H100 session endpoint, concurrent sessions,
+   rebuild path, and real Semantic Router gateway are green.
+7. Next, run a stratified 100–200-case development qualification for parity,
+   latency, throughput, residency, eviction, affinity loss, and restart. Keep
+   stateless full-history replay as the comparison and reconstructible fallback.
 8. Keep the 1,000-case release qualification held until every smaller rung is
    green and the user explicitly confirms execution.
 
