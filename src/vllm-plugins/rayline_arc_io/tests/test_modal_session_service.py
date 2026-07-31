@@ -7,6 +7,7 @@ from pathlib import Path
 
 SERVICE_PATH = Path(__file__).resolve().parents[1] / "modal_session_service.py"
 MAX_CONCURRENT_INPUTS = 32
+MAX_CONTAINERS = 1
 
 
 def source() -> str:
@@ -44,9 +45,19 @@ def test_session_service_is_authenticated_and_bounded() -> None:
     }
     web_keywords = {keyword.arg: keyword.value for keyword in asgi.keywords}
 
-    assert {"gpu", "cpu", "memory", "timeout", "scaledown_window", "volumes"} <= (
-        function_keywords
-    )
+    assert {
+        "gpu",
+        "cpu",
+        "memory",
+        "timeout",
+        "scaledown_window",
+        "max_containers",
+        "volumes",
+    } <= function_keywords
+    function_keyword_values = {
+        keyword.arg: keyword.value for keyword in function.keywords
+    }
+    assert ast.literal_eval(function_keyword_values["max_containers"]) == MAX_CONTAINERS
     assert ast.literal_eval(concurrency_keywords["max_inputs"]) == MAX_CONCURRENT_INPUTS
     assert ast.literal_eval(web_keywords["requires_proxy_auth"]) is True
 

@@ -88,6 +88,14 @@ class CanaryClient:
         episode_id: str,
         turns: list[dict[str, str]],
     ) -> dict[str, Any]:
+        summary, _embedding = self.encode_with_embedding(episode_id, turns)
+        return summary
+
+    def encode_with_embedding(
+        self,
+        episode_id: str,
+        turns: list[dict[str, str]],
+    ) -> tuple[dict[str, Any], tuple[float, ...]]:
         response, elapsed = self.request(
             "POST",
             "/v1/rayline/arc/session/pooling",
@@ -110,7 +118,10 @@ class CanaryClient:
             raise RuntimeError("retained session did not close cleanly")
 
 
-def _validate_response(response: dict[str, Any], elapsed: float) -> dict[str, Any]:
+def _validate_response(
+    response: dict[str, Any],
+    elapsed: float,
+) -> tuple[dict[str, Any], tuple[float, ...]]:
     expected = {
         "schema_version": RESPONSE_SCHEMA,
         "serializer_version": SERIALIZER_VERSION,
@@ -143,7 +154,7 @@ def _validate_response(response: dict[str, Any], elapsed: float) -> dict[str, An
     if retained + appended != serialized:
         raise RuntimeError("retained-session token accounting mismatch")
 
-    return {
+    summary = {
         "action": response["session_action"],
         "revision": response["session_revision"],
         "serialized_tokens": serialized,
@@ -153,6 +164,7 @@ def _validate_response(response: dict[str, Any], elapsed: float) -> dict[str, An
         "embedding_norm": norm,
         "latency_seconds": elapsed,
     }
+    return summary, tuple(float(value) for value in embedding)
 
 
 def _expect(

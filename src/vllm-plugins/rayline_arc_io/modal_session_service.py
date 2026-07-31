@@ -133,6 +133,7 @@ vllm_cache = modal.Volume.from_name("rayline-vllm-cache", create_if_missing=True
     memory=65_536,
     timeout=31 * 60,
     scaledown_window=300,
+    max_containers=1,
     volumes={
         "/root/.cache/huggingface": hf_cache,
         "/root/.cache/vllm": vllm_cache,

@@ -324,6 +324,37 @@ Record at least:
 External-provider latency is reported separately from local vLLM performance so
 WAN and provider queue variance cannot be mistaken for router cost.
 
+### Frozen 128-Case Development Qualification
+
+The next paid rung is fixed at 128 public synthetic history states: four turns
+for eight episodes in each of `short`, `medium`, `tool_dump`, and `long`
+shapes. Every retained result is compared in memory with a fresh full-history
+replay through the same pinned H100 engine. The driver refuses any case count
+other than 128 and hard-caps the development surface at 200; it cannot launch
+the held 1,000-case release packet.
+
+The qualification passes only if all of these gates hold:
+
+- minimum retained/replay cosine similarity is at least `0.9999`;
+- maximum embedding absolute drift is at most `0.01`;
+- maximum four-arm synthetic-head score drift is at most `0.005`, with zero
+  selected-arm flips;
+- retained appended tokens are at most 75% of full-replay serialized tokens;
+- eight independent episodes overlap with wall time at most 85% of their
+  summed individual latencies;
+- identical same-episode requests produce exactly `created` plus `reused`;
+- the ninth resident episode evicts the LRU session and reconstructs with
+  parity;
+- explicit affinity loss reconstructs with parity; and
+- cleanup returns both resident sessions and resident tokens to zero.
+
+The Modal MVP is pinned to one container. This is an intentional deployment
+constraint: it makes cache affinity and the cost bound enforceable while
+`@modal.concurrent(max_inputs=32)` still permits cross-episode batching. The
+single-container 31-minute timeout envelope is about `$2.50` at the pinned
+price snapshot. Before a later multi-replica qualification, add cache-aware
+affinity or an explicit session directory and freeze a new cost envelope.
+
 ### Scope Boundaries
 
 In scope:

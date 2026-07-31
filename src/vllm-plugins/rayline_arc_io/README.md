@@ -93,6 +93,12 @@ bounds both resident sessions and total retained tokens, and exposes those
 counts at `GET /health`. `DELETE /v1/rayline/arc/session/{episode_id_hash}`
 releases one idle session explicitly.
 
+The Modal MVP pins the service to one container so successive turns reach the
+same cache owner and the GPU cost envelope remains enforceable. Production
+horizontal scale requires cache-aware affinity or an explicit shared session
+directory; ordinary round-robin scaling is correct only by rebuilding and does
+not preserve the KV-reuse performance claim.
+
 The response reports `retained_prefix_tokens`, `appended_tokens`,
 `session_action`, and `session_revision`. These are explicit live-session
 metrics and must not be interpreted as vLLM automatic prefix-cache hits;
