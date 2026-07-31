@@ -34,10 +34,12 @@ class _FakeClient:
     def __init__(self, vectors: list[tuple[float, ...]]) -> None:
         self.vectors = iter(vectors)
         self.opened: set[str] = set()
+        self.maximum_opened = 0
 
     def encode_with_embedding(self, episode_id, turns):
         assert turns[0]["text"] in CANDIDATE_PROMPTS
         self.opened.add(episode_id)
+        self.maximum_opened = max(self.maximum_opened, len(self.opened))
         return {"latency_seconds": 0.01}, next(self.vectors)
 
     def close(self, episode_id):
@@ -67,6 +69,7 @@ def test_probe_report_is_aggregate_and_closes_sessions() -> None:
     assert report["raw_embeddings_emitted"] is False
     assert report["prompt_text_emitted"] is False
     assert not client.opened
+    assert client.maximum_opened == 1
     assert all(prompt not in encoded for prompt in CANDIDATE_PROMPTS)
 
 

@@ -81,21 +81,16 @@ def select_axis(embeddings: Sequence[Sequence[float]]) -> dict[str, Any]:
 def run_probe(client: CanaryClient, run_id: str) -> dict[str, Any]:
     embeddings: list[tuple[float, ...]] = []
     latencies: list[float] = []
-    opened_sessions: list[str] = []
-    try:
-        for index, prompt in enumerate(CANDIDATE_PROMPTS):
-            episode_id = _episode_hash(f"{run_id}:candidate-axis:{index}")
-            summary, embedding = client.encode_with_embedding(
-                episode_id,
-                [{"role": "user", "text": prompt}],
-            )
-            opened_sessions.append(episode_id)
-            latencies.append(float(summary["latency_seconds"]))
-            embeddings.append(embedding)
-        selected = select_axis(embeddings)
-    finally:
-        for episode_id in opened_sessions:
-            client.close(episode_id)
+    for index, prompt in enumerate(CANDIDATE_PROMPTS):
+        episode_id = _episode_hash(f"{run_id}:candidate-axis:{index}")
+        summary, embedding = client.encode_with_embedding(
+            episode_id,
+            [{"role": "user", "text": prompt}],
+        )
+        client.close(episode_id)
+        latencies.append(float(summary["latency_seconds"]))
+        embeddings.append(embedding)
+    selected = select_axis(embeddings)
 
     health, _latency = client.request("GET", "/health")
     if health.get("resident_sessions") != 0:
