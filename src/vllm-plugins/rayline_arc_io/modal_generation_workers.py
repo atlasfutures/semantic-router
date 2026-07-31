@@ -34,10 +34,8 @@ SCALEDOWN_WINDOW_SECONDS = 60
 FUNCTION_TIMEOUT_SECONDS = 15 * 60
 
 _deployment_api_key = os.environ.get("RAYLINE_ARC_WORKER_API_KEY", "")
-_worker_secrets = (
-    [modal.Secret.from_dict({"VLLM_API_KEY": _deployment_api_key})]
-    if _deployment_api_key
-    else []
+_worker_secret = modal.Secret.from_dict(
+    {"VLLM_API_KEY": _deployment_api_key},
 )
 
 image = (
@@ -120,7 +118,7 @@ def _launch(served_model_name: str) -> None:
     timeout=FUNCTION_TIMEOUT_SECONDS,
     scaledown_window=SCALEDOWN_WINDOW_SECONDS,
     max_containers=MAX_CONTAINERS,
-    secrets=_worker_secrets,
+    secrets=[_worker_secret],
     volumes={
         "/root/.cache/huggingface": hf_cache,
         "/root/.cache/vllm": vllm_cache,
@@ -140,7 +138,7 @@ def worker_a() -> None:
     timeout=FUNCTION_TIMEOUT_SECONDS,
     scaledown_window=SCALEDOWN_WINDOW_SECONDS,
     max_containers=MAX_CONTAINERS,
-    secrets=_worker_secrets,
+    secrets=[_worker_secret],
     volumes={
         "/root/.cache/huggingface": hf_cache,
         "/root/.cache/vllm": vllm_cache,
