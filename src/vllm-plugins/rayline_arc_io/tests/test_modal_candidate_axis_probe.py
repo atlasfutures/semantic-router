@@ -10,12 +10,14 @@ SCRIPT_DIR = REPO_ROOT / "e2e/testing/rayline-arc"
 sys.path.insert(0, str(SCRIPT_DIR))
 
 probe = importlib.import_module("modal_candidate_axis_probe")
-CANDIDATE_PROMPTS = importlib.import_module("modal_fullstack_inputs").CANDIDATE_PROMPTS
+fullstack_inputs = importlib.import_module("modal_fullstack_inputs")
+CANDIDATE_PROMPTS = fullstack_inputs.CANDIDATE_PROMPTS
 
 BALANCED_AXIS = 7
 UNBALANCED_AXIS = 9
 UNBALANCED_SPLIT = 8
 MIN_EXPECTED_MARGIN = 0.2
+REAL_ROUTING_AXIS = 252
 
 
 def _vectors() -> list[tuple[float, ...]]:
@@ -82,3 +84,22 @@ def test_launcher_is_bounded_and_stops_only_the_encoder_app_containers() -> None
     assert '"container", "stop", container_id, "--yes"' in launcher
     assert "manager.delete(proxy_token.token_id)" in launcher
     assert "1000" not in launcher
+
+
+def test_public_fixture_and_fake_encoder_share_selected_real_axis() -> None:
+    artifact_fixture = importlib.import_module("artifact_fixture")
+    mock_server = (SCRIPT_DIR / "mock_servers.py").read_text()
+    dockerfile = (SCRIPT_DIR / "Dockerfile").read_text()
+
+    assert fullstack_inputs.ROUTING_AXIS_INDEX == REAL_ROUTING_AXIS
+    assert artifact_fixture.ARTIFACT_ID == "public-rayline-arc-e2e-v2"
+    assert artifact_fixture._embedding(1)[fullstack_inputs.ROUTING_AXIS_INDEX] == 1
+    sparse = artifact_fixture._tensors()["q_network.backbone.0.weight"].sparse
+    assert sparse == {
+        REAL_ROUTING_AXIS: 1,
+        artifact_fixture.HISTORY_DIMENSION: 1,
+        artifact_fixture.JOINT_DIMENSION + REAL_ROUTING_AXIS: -1,
+        artifact_fixture.JOINT_DIMENSION + artifact_fixture.HISTORY_DIMENSION: -1,
+    }
+    assert "embedding[ROUTING_AXIS_INDEX] = sign" in mock_server
+    assert "modal_fullstack_inputs.py" in dockerfile

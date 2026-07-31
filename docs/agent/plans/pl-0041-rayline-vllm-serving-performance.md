@@ -540,6 +540,20 @@ synthetic head and goldens on a new signed commit; the subsequent two-L4
 real-worker canary requires its own preregistration and must retain every
 coverage, concurrency, streaming, metrics, privacy, and cleanup gate.
 
+`cap001` passed that gate on coordinate 252. Its 24 protected real embeddings
+split 12/12 with zero exact ties; the minimum, median, and maximum absolute
+normalized margins were `0.00129066`, `0.00513827`, and `0.01461668`. The
+first attempt collected all embeddings but deferred session closes beyond the
+service's three-session residency, so the oldest close correctly returned
+`closed=false`; the non-material retry closed each session immediately and
+finished with zero residents and zero running H100 containers. Across both
+attempts, its conservative cost is `$0.193519`, bringing the session and
+real-worker work to about `$5.021228`. The aggregate-only private receipt is
+pinned at `rayline-ai/router-artifacts@e1cc725b829ec7fea88e708ee46e558cb56e0ef5`.
+The public synthetic fixture now reads coordinate 252 in both its signed head
+and hermetic fake encoder. This is deterministic deployment-test plumbing, not
+a learned policy or task-quality claim.
+
 At the 2026-07-31 Modal rate snapshot, each 15-minute L4/4-CPU/16-GiB timeout
 envelope is `$0.278928`; both workers total `$0.557856`. Including the existing
 single-container H100 encoder's `$2.499617` timeout envelope gives a combined

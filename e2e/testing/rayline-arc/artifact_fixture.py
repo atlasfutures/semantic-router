@@ -12,7 +12,9 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-ARTIFACT_ID = "public-rayline-arc-e2e-v1"
+from modal_fullstack_inputs import ROUTING_AXIS_INDEX
+
+ARTIFACT_ID = "public-rayline-arc-e2e-v2"
 MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
 SERIALIZER = "mtrouter-token-blocks-v2"
 HISTORY_DIMENSION = 1024
@@ -77,9 +79,9 @@ def _tensors() -> dict[str, Tensor]:
         "q_network.backbone.0.weight": Tensor(
             (HIDDEN_DIMENSION, JOINT_DIMENSION),
             sparse={
-                0: 1,
+                ROUTING_AXIS_INDEX: 1,
                 candidate_offset: 1,
-                JOINT_DIMENSION: -1,
+                JOINT_DIMENSION + ROUTING_AXIS_INDEX: -1,
                 JOINT_DIMENSION + candidate_offset: -1,
             },
         ),
@@ -122,7 +124,9 @@ def _sha256(data: bytes) -> str:
 
 
 def _embedding(sign: int) -> list[float]:
-    return [float(sign)] + [0.0] * (HISTORY_DIMENSION - 1)
+    embedding = [0.0] * HISTORY_DIMENSION
+    embedding[ROUTING_AXIS_INDEX] = float(sign)
+    return embedding
 
 
 def _arm_axis() -> float:
@@ -235,7 +239,7 @@ def _manifest(weights: bytes, golden: bytes) -> dict[str, object]:
         "schema_version": "rayline.mtrouter-runtime.v3",
         "artifact_id": ARTIFACT_ID,
         "created_at": "2026-01-01T00:00:00Z",
-        "exporter_commit": "public-synthetic-e2e-exporter-v1",
+        "exporter_commit": "public-synthetic-e2e-exporter-v2",
         "weights": {
             "file": "head.safetensors",
             "sha256": _sha256(weights),

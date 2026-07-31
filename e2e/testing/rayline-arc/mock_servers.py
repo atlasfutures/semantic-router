@@ -10,6 +10,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+from modal_fullstack_inputs import ROUTING_AXIS_INDEX
+
 MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
 TOKENIZER_SHA256 = "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42"
 ENGINE_BUILD_ID = "vllm@public-rayline-e2e-build"
@@ -261,7 +263,8 @@ class EncoderHandler(QuietHandler):
                 self.send_vllm_error(503, "Service Unavailable", "InternalServerError")
                 return
             sign = -1.0 if "ARC_ROUTE_B" in text else 1.0
-            embedding = [sign] + [0.0] * (EMBEDDING_DIMENSION - 1)
+            embedding = [0.0] * EMBEDDING_DIMENSION
+            embedding[ROUTING_AXIS_INDEX] = sign
             token_count = max(1, sum(len(str(turn.get("text", ""))) for turn in turns))
             if session_wire:
                 action, retained, appended, revision = ENCODER_STATE.update_session(

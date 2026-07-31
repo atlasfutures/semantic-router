@@ -2,6 +2,8 @@
 
 """Frozen public inputs shared by bounded real-worker qualification tools."""
 
+ROUTING_AXIS_INDEX = 252
+
 CANDIDATE_PROMPTS = (
     "Reply with one word: amber.",
     "Return only the number four.",
