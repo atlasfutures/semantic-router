@@ -17,15 +17,19 @@ The plan must answer four questions with runnable evidence:
    `rayline_remote` saturate, and what latency, throughput, memory, and
    operational costs does each design impose?
 
-Status: active on 2026-07-30. PL-0040 is complete; this plan starts from its
-published implementation heads:
+Status: active on 2026-07-31. The stateless end-to-end MVP parity gate passes;
+full-corpus quality/regret, cross-request KV, concurrency, and throughput
+qualification remain open. Current published implementation heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
-  at `33716d1106f42cf38565a296cd71c338f89a959c`.
+  at `8c7171ebb2569241836960c273f679107b23a678`.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `b280b585d482e33bb84e7ad23ae47e1f022452ac`.
+  at `05c4f1df7e1654897fec291e338426b810b1af98`.
+- vLLM integration
+  [`atlasfutures/vllm:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/vllm/tree/codex/rayline-vsr-mvp)
+  at `6ef6e84425d4493566a95ffcdfcb79f3c27abc46`.
 - David's reviewed vLLM causal-MEAN input
   [`davidvgilmore/vllm:rayline/pl-0039-causal-mean`](https://github.com/davidvgilmore/vllm/tree/rayline/pl-0039-causal-mean)
   at `162bcefe1b41c5bb35eccc2f2219ea39e2c74bb7`.
@@ -361,7 +365,8 @@ Not in scope:
   the local backend preserves the accepted Transformers/KV behavior, while the
   remote backend loads only the C82 policy head and fails closed on encoder
   identity drift.
-- [ ] **RSP-004 — Build the stateless vLLM bridge.** Reuse the pinned IO plugin
+- [x] **RSP-004 — Build the stateless vLLM bridge and pass the MVP parity
+  smoke.** Reuse the pinned IO plugin
   and causal-MEAN fork to serve full-history Pathfinder encodes; prove numeric
   and selection parity before adding cross-request caching. Fork vLLM under
   `atlasfutures` before publishing any new vLLM change. The strict client,
@@ -380,7 +385,7 @@ Not in scope:
   scoring. Evidence and private artifact pins are recorded in
   [`atlasfutures/pathfinder@5295fdb5`](https://github.com/atlasfutures/pathfinder/commit/5295fdb57adece07d1a62c0aa447143c0e9f3224).
   The first remediation rung is complete at
-  [`atlasfutures/pathfinder@b280b585`](https://github.com/atlasfutures/pathfinder/commit/b280b585d482e33bb84e7ad23ae47e1f022452ac):
+  [`atlasfutures/pathfinder@b280b585`](https://github.com/atlasfutures/pathfinder/commit/b280b5856e71d0f5375eb0fc13920357ca4f1a50):
   the encoder seam now declares `l2-normalized-fp32.v1`, the v2 comparator
   rejects non-unit vectors, and a six-decision RSP-004S corpus contains all
   four historical flips plus large-tool and near-maximum coverage. Offline
@@ -392,7 +397,32 @@ Not in scope:
   and smoke inputs are privately pinned at
   `rayline-ai/router-artifacts@d73fae3a526ff4d350d462b93b453792099a08b9`.
   No provider call or GPU spend was used for this remediation.
-  RSP-004 remains open under TD048; its zero-flip gate is not relaxed.
+  The bounded execution-alignment follow-up then isolated scheduler, eager,
+  Transformers model-implementation, GDN, Q/K projection, normalization,
+  FlexAttention, and Triton-attention variants. The first strict MVP pass uses
+  David's causal-MEAN path, Transformers-ordered Torch-reference GDN
+  preparation, memory-bounded Triton attention, and the existing
+  cheap-default selection margin set to `0.002` on both local and remote
+  contracts. Its receipt passes all eight hard gates over six decisions and
+  426,979 tokens: zero selection flips, exact token-count and contract
+  identity, minimum embedding cosine `0.9999849695`, and maximum adjusted
+  top-two gap drift `0.0011914223` against the `0.005` gate. The guard changes
+  one local near-tie and zero remote decisions in offline replay; it is an MVP
+  stability contract, not evidence of production quality non-regression.
+  Private artifacts are pinned at
+  `rayline-ai/router-artifacts@306ca8c40470820f36d3decb5bfd9414552b5b7a`.
+  The reproducible controller and result ledger are published at
+  [`atlasfutures/pathfinder@05c4f1df`](https://github.com/atlasfutures/pathfinder/commit/05c4f1df7e1654897fec291e338426b810b1af98).
+  Measured infrastructure spend across successful and preserved failed arms
+  was `$1.1961`; adding the conservative `$1` preflight/preemption reserve
+  yields `$2.1961`, below the `$20` cap. All fourteen Modal apps were verified
+  stopped with zero tasks.
+- [ ] **RSP-004Q — Complete production parity and stability qualification.**
+  Replay a larger task-disjoint, quality-labeled development set to measure
+  task quality, cost, churn, and regret from the `0.002` stability margin, then
+  run the existing 1,000-decision, 41.2-million-token qualification corpus
+  through the winning local and remote contracts. TD048 remains open until
+  both gates pass.
 - [ ] **RSP-004A — Enable cross-episode remote selection concurrency.** Add an
   explicit policy thread-safety capability, allow immutable MTRouter remote
   selections for different prepared episodes to overlap, retain the existing
@@ -432,34 +462,27 @@ Not in scope:
 
 ## Next Action
 
-Resolve RSP-004's four boundary flips before beginning cache or throughput
-qualification:
+The end-to-end stateless MVP is complete. Preserve its exact winning contract
+while closing the production evidence gap:
 
-1. **Complete:** both encoder implementations now declare the same normalized
-   FP32 result contract, and receipt v2 compares canonical unit vectors.
-2. **Complete:** offline replay isolated the scale mismatch from kernel
-   direction drift; normalization changed no raw argmax decision.
-3. **Complete:** RSP-004S contains six decisions and 426,979 full-history
-   tokens, approximately 1.04% of RSP-004Q. It includes every historical flip
-   and the two expensive coverage shapes.
-4. **Now:** freeze a deterministic selection-stability proposal before
-   evaluating it. Treat near-argmax ties and the previous-worker stay boundary
-   as separate surfaces. Derive any numeric band from an independent
-   development replay, not the four qualification failures. Compare unchanged
-   C82 against each candidate on policy quality, cost, churn, and regret; do
-   not alter live semantics without a reviewed decision.
-5. After a candidate passes offline, run RSP-004S once on the pinned L40S
-   shape.
-6. Only after the smoke passes, run **RSP-004Q**, the existing 1,000-decision,
-   41.2-million-full-history-token corpus as the final qualification.
+1. Run a task-disjoint, quality-labeled replay for the `0.002` cheap-default
+   margin. Compare unchanged C82 and the stable contract on quality, cost,
+   churn, and regret; do not infer quality from the six-case parity smoke.
+2. If that gate passes, run **RSP-004Q**, the existing 1,000-decision,
+   41.2-million-full-history-token corpus, against the winning local and remote
+   contracts.
+3. Complete **RSP-004A** before throughput qualification so cross-episode
+   requests can reach vLLM concurrently instead of serializing at Pathfinder's
+   policy lock.
+4. Then proceed to RSP-005 cache feasibility and the router-only performance
+   ladder. Keep the stateless full-history path as the reconstructible
+   correctness fallback.
 
-The completed run is RSP-004Q attempt 1 and remains a failed receipt; it is not
-renamed or reinterpreted after the fact. The first three remediation steps are
-complete, but the offline result predicts that a normalization-only live smoke
-would preserve the historical flips. No additional paid run is authorized
-until step 4 completes. The v1 plugin continues to reject
-cached-prefix tokens until RSP-005 chooses and versions a cross-request cache
-design. RSP-002 remains pending until a Pathfinder human accepts ADR 0059.
+The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
+receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
+continues to reject cached-prefix tokens until RSP-005 chooses and versions a
+cross-request cache design. RSP-002 remains pending until a Pathfinder human
+accepts ADR 0059.
 
 Complete RSP-004A before the throughput ladder or cache qualification. The
 transaction coordinator already releases its journal lock while different
@@ -494,6 +517,8 @@ the current `/v1/route/prepare` blocker.
   are implemented and tested.
 - Keep TD047 open until concurrent-safe MTRouter selections overlap across
   different episodes without weakening same-episode or mutable-policy fencing.
+- Keep TD048 open until the stability margin passes task-disjoint
+  quality/regret evaluation and the full RSP-004Q parity qualification.
 
 ## Related Docs
 
@@ -506,6 +531,7 @@ the current `/v1/route/prepare` blocker.
 - [Rayline Remote tutorial](../../../website/docs/tutorials/algorithm/selection/rayline-remote.md)
 - [TD046](../tech-debt/td-046-rayline-remote-durable-journal-gap.md)
 - [TD047](../tech-debt/td-047-rayline-remote-cross-episode-selection-serialization.md)
+- [TD048](../tech-debt/td-048-rayline-vllm-selection-stability-gap.md)
 - [Pathfinder ADR 0059 proposal](https://github.com/atlasfutures/pathfinder/blob/fb3a4b9455653eb9f8e490ca414aaa90a24e0a55/docs/adr/0059-rayline-vllm-serving-boundary.md)
 - [Pathfinder stateless vLLM encoder implementation](https://github.com/atlasfutures/pathfinder/commit/7f13de3d10855ea44245717f9ccb50d55ea40e93)
 - Pathfinder `docs/adr/0021-service-owned-kv-sessions.md`

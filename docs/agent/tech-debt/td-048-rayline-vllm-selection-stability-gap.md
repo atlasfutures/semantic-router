@@ -2,7 +2,8 @@
 
 ## Status
 
-Open
+Open — the MVP smoke passes; production quality/regret and full-corpus
+qualification remain incomplete.
 
 ## Owner Plan
 
@@ -38,9 +39,15 @@ contract, and receipt v2 refuses non-unit vectors. Offline replay shows that
 explicit local pre-normalization changes no raw argmax decision, so scale was
 a measurement defect rather than the cause of the four flips.
 
-The remaining debt is narrower: small directional differences between the
-Transformers and vLLM executions cross near-tie and previous-worker
-stay-threshold boundaries.
+The execution-alignment MVP now closes the six-case smoke. A Torch-reference
+GDN path plus Triton attention reduced the original four flips to one
+same-model thinking-mode tie. Applying the existing cheap-default margin at
+`0.002` to both local and remote contracts changes one local decision, changes
+zero remote decisions, and produces a strict zero-flip receipt.
+
+The remaining debt is production evidence, not smoke functionality: the
+stability margin has not yet passed task-disjoint quality/regret evaluation or
+the full 1,000-decision RSP-004Q qualification.
 
 ## Evidence
 
@@ -73,6 +80,18 @@ stay-threshold boundaries.
   Its sanitized inputs and diagnostic are privately pinned at
   `rayline-ai/router-artifacts@d73fae3a526ff4d350d462b93b453792099a08b9`;
   no GPU or provider spend was incurred.
+- The winning paired local/remote smoke is pinned at
+  `rayline-ai/router-artifacts@306ca8c40470820f36d3decb5bfd9414552b5b7a`.
+  All eight receipt gates pass: 0/6 selection flips, exact token-count and
+  contract identity, minimum embedding cosine `0.9999849695`, and maximum
+  top-two gap drift `0.0011914223`.
+- The final vLLM implementation is
+  [`atlasfutures/vllm@6ef6e844`](https://github.com/atlasfutures/vllm/commit/6ef6e84425d4493566a95ffcdfcb79f3c27abc46);
+  the complete Pathfinder experiment ledger is
+  [`atlasfutures/pathfinder@05c4f1df`](https://github.com/atlasfutures/pathfinder/commit/05c4f1df7e1654897fec291e338426b810b1af98).
+- Measured infrastructure spend was `$1.1961`, or `$2.1961` including the
+  conservative `$1` preflight/preemption reserve, under the `$20` cap. All
+  fourteen Modal apps were verified stopped with zero tasks.
 
 ## Why It Matters
 
@@ -88,12 +107,11 @@ implementation feedback loop makes correction unnecessarily slow and costly.
 
 ## Desired End State
 
-Both encoder backends now return the same documented normalized-vector
-contract, and parity receipts compare canonical embeddings plus policy
-outputs. The remaining desired state is deterministic routing selection under
-the accepted cross-engine numeric envelope, with any stability rule explicitly
-specified and evaluated for quality rather than introduced by weakening a gate
-after measurement.
+Both encoder backends return the same documented normalized-vector contract,
+and the MVP receipt proves deterministic routing selection under the accepted
+cross-engine numeric envelope. The remaining desired state is evidence that
+the explicit stability rule preserves task quality and acceptable regret on a
+task-disjoint replay and the full qualification corpus.
 
 A small boundary-heavy smoke corpus provides fast implementation feedback. The
 full 1,000-decision corpus remains the final qualification.
