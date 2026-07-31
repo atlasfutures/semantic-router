@@ -726,6 +726,43 @@ The otherwise unchanged ORC003 packet is preregistered at Pathfinder
 `$17.136611`, still below the `$20` cap. The held 1,000-case packet remains
 uninvoked.
 
+ORC003 passed component readiness, the real retained encoder, corrected route
+rematching, and three real Fireworks generations. Those successful coverage
+responses validated output, per-response usage, provider identity, selected
+worker, and selected model; two of three arms were covered. The fourth
+coverage call returned HTTP 429. The source-frozen driver discarded both
+`Retry-After` and structured provider error metadata and failed immediately,
+so this is a failed full packet after verified external dispatch rather than a
+router-path regression. Cleanup deleted the one-run OpenRouter key and Modal
+proxy credential, removed every compose resource, and returned the exact H100
+encoder app to zero containers.
+
+The aggregate-only ORC003 receipt is private and exact-round-trip verified at
+`rayline-ai/router-artifacts@e5ba12a8c5a031f46ca08e121c4488d17ce9e488`.
+Conservative accounting retains the deleted key's full `$0.25` limit and a
+108-second H100 span, charging at most `$0.395139` and bringing cumulative
+observed upper-bound spend to `$8.282623`.
+
+Commit `ecdb173a` adds diagnostic-canary resilience without claiming a
+production data-plane fix: sequential requests are paced by one second;
+pre-response HTTP 429 or 503 may retry once with the same Rayline episode ID;
+`Retry-After` is honored within a 1–30 second clamp with a two-second default;
+and no stream retries after HTTP 200. Error reporting emits only bounded type
+and provider-code tokens, never the raw provider message. The receipt records
+successful logical requests separately from external wire attempts, with hard
+limits of 31 and 62 respectively. TD049 tracks the remaining production retry
+ownership gap.
+
+The exact ORC004 packet is preregistered at Pathfinder `b39b5c2a`. Models,
+Fireworks pin, disabled fallback and reasoning, public prompts, eight-token
+limit, `$0.10` reported-cost gate, `$0.25` one-run key limit, privacy rules,
+and cleanup contract remain unchanged. The internal per-request retry is the
+only authorized retry; no whole-run retry is allowed. Observed prior spend plus
+the full packet envelope is `$11.032240`. The deliberately conservative
+all-rungs envelope is `$19.886228`, leaving `$0.113772` below the user cap, so
+any packet failure stops paid execution. The held 1,000-case packet remains
+uninvoked.
+
 At the 2026-07-31 Modal rate snapshot, each 15-minute L4/4-CPU/16-GiB timeout
 envelope is `$0.278928`; both workers total `$0.557856`. Including the existing
 single-container H100 encoder's `$2.499617` timeout envelope gives a combined
