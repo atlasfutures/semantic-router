@@ -143,6 +143,33 @@ func TestValidateRaylineARCAlgorithmConfigRejectsInvalidContracts(t *testing.T) 
 	}
 }
 
+func TestValidateRaylineARCAlgorithmConfigRejectsResumableWithoutCausalMean(t *testing.T) {
+	decision := validRaylineARCDecision()
+	decision.Algorithm.RaylineARC.Encoder.RequiredCapabilities = []string{
+		RaylineARCCapabilityResumableMean,
+	}
+	err := validateDecisionAlgorithmConfig(decision.Name, decision.ModelRefs, decision.Algorithm)
+	if err == nil || !strings.Contains(err.Error(), "requires \"chunked_causal_mean\"") {
+		t.Fatalf("error = %v, want resumable dependency error", err)
+	}
+}
+
+func TestValidateRaylineARCAlgorithmConfigAcceptsRetainedSession(t *testing.T) {
+	decision := validRaylineARCDecision()
+	decision.Algorithm.RaylineARC.Encoder.ServingRung = RaylineARCServingRungB
+	decision.Algorithm.RaylineARC.Encoder.RequiredCapabilities = []string{
+		RaylineARCCapabilityChunkedMean,
+		RaylineARCCapabilityResumableMean,
+	}
+	if err := validateDecisionAlgorithmConfig(
+		decision.Name,
+		decision.ModelRefs,
+		decision.Algorithm,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidateRaylineARCDecisionRejectsLearningAndCandidateDrift(t *testing.T) {
 	tests := []struct {
 		name    string

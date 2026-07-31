@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -424,6 +425,10 @@ func raylineARCEncoderClientConfig(
 		RequiredCapabilities: append(
 			[]string(nil),
 			arcConfig.Encoder.RequiredCapabilities...,
+		),
+		RetainedSession: slices.Contains(
+			arcConfig.Encoder.RequiredCapabilities,
+			config.RaylineARCCapabilityResumableMean,
 		),
 		ModalKey:    modalKey,
 		ModalSecret: modalSecret,

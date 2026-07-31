@@ -120,7 +120,7 @@ Router-global defaults are now owned by the router itself, not by a second user-
 - `global.router.auto_model_names` registers full-router auto aliases such as `vllm-sr/auto`, `auto`, and `MoM`; the legacy `auto_model_name` field remains a single-name compatibility shortcut
 - `global.router.learning` owns cross-request Router Learning state.
 - `global.router.learning.adaptation` is online model-choice learning. `global.router.learning.protection` is session/conversation stability protection. Decisions remain semantic and can opt out with `routing.decisions[].adaptations.mode: bypass`; `algorithm.type: session_aware|elo|rl_driven|gmtrouter` is not part of the public contract.
-- `algorithm.type: rayline_arc` is an experimental hard-policy exception that requires `adaptations.mode: bypass`, `on_error: fail_closed`, immutable artifact and vLLM engine/plugin/capability pins, and a fenced episode backend. The mounted manifest—not public source—owns the arm order and private deployment bindings.
+- `algorithm.type: rayline_arc` is an experimental hard-policy exception that requires `adaptations.mode: bypass`, `on_error: fail_closed`, immutable artifact and vLLM engine/plugin/capability pins, and a fenced episode backend. The mounted manifest—not public source—owns the arm order and private deployment bindings. Capability negotiation also versions the encoder wire: `chunked_causal_mean` alone is stateless, while adding `resumable_causal_mean` selects the bounded retained-session endpoint.
 - `global.services` groups shared APIs and runtime services
 - `global.services.router_replay.enabled` provides the router-wide replay default, while route-local `router_replay.enabled: false` is the explicit opt-out
 - `global.stores` groups storage-backed services

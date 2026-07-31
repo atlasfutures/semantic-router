@@ -226,26 +226,7 @@ def _validate_encoder(name, encoder) -> list[ValidationError]:
                 field=f"{prefix}.serializer_version",
             )
         )
-    capabilities = encoder.required_pooling_capabilities
-    if len(capabilities) != len(set(capabilities)):
-        errors.append(
-            ValidationError(
-                "required_pooling_capabilities cannot contain duplicates",
-                field=f"{prefix}.required_pooling_capabilities",
-            )
-        )
-    required_rung_capability = {
-        "A": "all_plugin_mean",
-        "B": "chunked_causal_mean",
-    }[encoder.serving_rung]
-    if required_rung_capability not in capabilities:
-        errors.append(
-            ValidationError(
-                f"serving_rung {encoder.serving_rung!r} requires "
-                f"{required_rung_capability!r}",
-                field=f"{prefix}.required_pooling_capabilities",
-            )
-        )
+    errors.extend(_validate_encoder_capabilities(prefix, encoder))
     has_modal_key = bool(encoder.modal_key_env)
     has_modal_secret = bool(encoder.modal_secret_env)
     if has_modal_key != has_modal_secret:
@@ -270,6 +251,41 @@ def _validate_encoder(name, encoder) -> list[ValidationError]:
             ValidationError(
                 "connect_timeout_seconds cannot exceed total_timeout_seconds",
                 field=f"{prefix}.connect_timeout_seconds",
+            )
+        )
+    return errors
+
+
+def _validate_encoder_capabilities(prefix, encoder) -> list[ValidationError]:
+    errors: list[ValidationError] = []
+    capabilities = encoder.required_pooling_capabilities
+    if len(capabilities) != len(set(capabilities)):
+        errors.append(
+            ValidationError(
+                "required_pooling_capabilities cannot contain duplicates",
+                field=f"{prefix}.required_pooling_capabilities",
+            )
+        )
+    required_rung_capability = {
+        "A": "all_plugin_mean",
+        "B": "chunked_causal_mean",
+    }[encoder.serving_rung]
+    if required_rung_capability not in capabilities:
+        errors.append(
+            ValidationError(
+                f"serving_rung {encoder.serving_rung!r} requires "
+                f"{required_rung_capability!r}",
+                field=f"{prefix}.required_pooling_capabilities",
+            )
+        )
+    if (
+        "resumable_causal_mean" in capabilities
+        and "chunked_causal_mean" not in capabilities
+    ):
+        errors.append(
+            ValidationError(
+                "resumable_causal_mean requires chunked_causal_mean",
+                field=f"{prefix}.required_pooling_capabilities",
             )
         )
     return errors

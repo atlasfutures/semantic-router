@@ -23,11 +23,12 @@ const (
 	// RaylineARCCapabilityChunkedMean is the only Rung B capability the
 	// pinned plugin can report; prefix-cached MEAN stays unconfigurable
 	// until the Rung C phase gate opens.
-	RaylineARCCapabilityChunkedMean = "chunked_causal_mean"
-	maxRaylineARCEncoderRetries     = 3
-	maxRaylineARCConfigStringLength = 512
-	maxRaylineARCRequiredCapability = 8
-	maxNetworkPort                  = 65535
+	RaylineARCCapabilityChunkedMean   = "chunked_causal_mean"
+	RaylineARCCapabilityResumableMean = "resumable_causal_mean"
+	maxRaylineARCEncoderRetries       = 3
+	maxRaylineARCConfigStringLength   = 512
+	maxRaylineARCRequiredCapability   = 8
+	maxNetworkPort                    = 65535
 )
 
 var (
@@ -251,8 +252,9 @@ func validateRaylineARCCapabilities(capabilities []string) error {
 		return fmt.Errorf("required_pooling_capabilities must contain between 1 and %d entries", maxRaylineARCRequiredCapability)
 	}
 	allowed := map[string]bool{
-		RaylineARCCapabilityPluginMean:  true,
-		RaylineARCCapabilityChunkedMean: true,
+		RaylineARCCapabilityPluginMean:    true,
+		RaylineARCCapabilityChunkedMean:   true,
+		RaylineARCCapabilityResumableMean: true,
 	}
 	seen := make(map[string]bool, len(capabilities))
 	for _, capability := range capabilities {
@@ -263,6 +265,14 @@ func validateRaylineARCCapabilities(capabilities []string) error {
 			return fmt.Errorf("required_pooling_capabilities contains duplicate capability %q", capability)
 		}
 		seen[capability] = true
+	}
+	if seen[RaylineARCCapabilityResumableMean] &&
+		!seen[RaylineARCCapabilityChunkedMean] {
+		return fmt.Errorf(
+			"pooling capability %q requires %q",
+			RaylineARCCapabilityResumableMean,
+			RaylineARCCapabilityChunkedMean,
+		)
 	}
 	return nil
 }

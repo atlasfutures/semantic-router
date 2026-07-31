@@ -87,6 +87,7 @@ routing:
             serving_rung: B
             required_pooling_capabilities:
               - chunked_causal_mean
+              - resumable_causal_mean
             modal_key_env: RAYLINE_ARC_MODAL_KEY
             modal_secret_env: RAYLINE_ARC_MODAL_SECRET
             connect_timeout_seconds: 2

@@ -14,6 +14,7 @@ RAYLINE_ARC_SERIALIZER_VERSION = "mtrouter-token-blocks-v2"
 RaylineARCPoolingCapability = Literal[
     "all_plugin_mean",
     "chunked_causal_mean",
+    "resumable_causal_mean",
 ]
 
 

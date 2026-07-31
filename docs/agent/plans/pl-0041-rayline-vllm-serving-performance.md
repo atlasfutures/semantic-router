@@ -17,19 +17,21 @@ The plan must answer four questions with runnable evidence:
    `rayline_remote` saturate, and what latency, throughput, memory, and
    operational costs does each design impose?
 
-Status: active on 2026-07-31. The stateless end-to-end MVP parity gate passes;
-full-corpus quality/regret, cross-request KV, concurrency, and throughput
-qualification remain open. Current published implementation heads:
+Status: active on 2026-07-31. The stateless end-to-end MVP parity gate and the
+first real-GPU retained-session engine gate pass. The explicit pinned-session
+design is selected; its versioned HTTP/client integration, concurrent GPU E2E,
+and development qualification remain in progress. Current published
+implementation heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
-  at `8c7171ebb2569241836960c273f679107b23a678`.
+  at `4f14763b` for the bounded session gateway checkpoint.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `63eead4666c7785ceaa02c913bb810ac85280f94`.
+  at `9e4678b0` for the registered retained-session canary.
 - vLLM integration
   [`atlasfutures/vllm:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/vllm/tree/codex/rayline-vsr-mvp)
-  at `6ef6e84425d4493566a95ffcdfcb79f3c27abc46`.
+  at `b1049f6dd95c27d2e1b052eebc3b1a7f9f41195f`.
 - David's reviewed vLLM causal-MEAN input
   [`davidvgilmore/vllm:rayline/pl-0039-causal-mean`](https://github.com/davidvgilmore/vllm/tree/rayline/pl-0039-causal-mean)
   at `162bcefe1b41c5bb35eccc2f2219ea39e2c74bb7`.
@@ -149,22 +151,39 @@ The reference ARC deployment correspondingly runs with
 long prefill; it does not yet reuse an earlier turn's KV blocks on the next
 request.
 
-RSP-005 must choose and prove one vLLM cross-request design:
+RSP-005 considered two vLLM cross-request designs:
 
-1. **Prefix-cache extension, preferred hypothesis.** Enable automatic prefix
+1. **Prefix-cache extension, rejected for the MVP.** Enable automatic prefix
    caching and persist or reconstruct the causal-MEAN sum/count at the matched
    block boundary. A hit restores both model cache state and pooling state;
    restoring only KV is incorrect.
-2. **Pinned episode-session extension.** Add an explicit, bounded session
+2. **Pinned episode-session extension, selected.** Add an explicit, bounded session
    contract that retains vLLM-owned cache state between pooling requests and
    mirrors Pathfinder's existing prefix, rewind, eviction, and fallback
    behavior.
 
-An IO processor change alone is not accepted as proof. The engine/scheduler
-must expose and test the cache lifecycle it actually owns. RSP-005 time-boxes
-both feasibility spikes and records the winning design; it does not
-production-harden both or treat the preferred hypothesis as a predetermined
-result.
+The prefix-cache variant was rejected because vLLM's block-cache lifecycle does
+not own the matching causal-MEAN sum/count. Restoring KV without that
+accumulator is numerically wrong; coupling two independently evicted state
+stores would add a second cache-lifecycle protocol before the MVP has a measured
+need for it.
+
+The selected variant keeps one live pooling request as the owner of both model
+KV/GDN state and the causal-MEAN accumulator. vLLM commit `b1049f6d` adds a
+strict one-append/one-output `AsyncPoolingSession`. A real NVIDIA L40S canary
+processed 3,072 session tokens versus 7,680 cumulative replay tokens, with
+minimum cosine `0.9999889556`, maximum absolute drift `0.0005071524`, and
+one-shot/session latency ratios of `1.27x` and `2.14x` on turns 2 and 3. The
+verified private evidence is pinned at
+`rayline-ai/router-artifacts@6e387884239951ff29f48363c1adcf6c49e74d67`.
+
+The Semantic Router checkpoint at `4f14763b` adds the next lifecycle boundary:
+a separate authenticated ASGI endpoint, full-history exact-prefix validation,
+same-episode serialization, independent-session concurrency, identical-request
+reuse, mismatch rebuild, TTL/LRU eviction, global session/token residency
+bounds, and explicit close/health APIs. The normal `/pooling` v1 contract stays
+stateless. Capability `resumable_causal_mean` selects the session wire and
+requires `chunked_causal_mean`; automatic prefix caching remains disabled.
 
 ### Cache and State Contract
 
@@ -471,10 +490,11 @@ Not in scope:
   bounded policy-selection in-flight and queue-wait metrics. TD047 remains
   open only for the measured router-only receipt proving more than one request
   reaches the encoder/vLLM boundary in the real stack.
-- [ ] **RSP-005 — Prototype both KV designs.** Measure the automatic-prefix-
-  cache plus pooling-accumulator extension against explicit pinned sessions.
-  Test hybrid-model rewind, eviction, batching, replica affinity, and restart;
-  select one with a recorded decision.
+- [ ] **RSP-005 — Prove the selected explicit session end to end.** The engine
+  and local HTTP lifecycle rungs pass and the automatic-prefix-cache design is
+  rejected for the MVP. Finish the capability-gated Go client, hermetic stack,
+  and real-GPU HTTP/concurrency/rebuild canary. Record batching, eviction,
+  affinity, and restart behavior before closing this rung.
 - [ ] **RSP-006 — Implement and harden vLLM KV reuse.** Add bounded cache
   ownership, exact fallback, same-episode fencing, privacy-safe metrics, and
   full-vs-incremental parity gates.
@@ -504,8 +524,9 @@ Not in scope:
 
 ## Next Action
 
-The end-to-end stateless MVP is complete, RSP-004A's implementation boundary is
-landed, and RSP-004Q is fully prepared but held:
+The end-to-end stateless MVP is complete, the retained engine canary passes,
+RSP-004A's implementation boundary is landed, and RSP-004Q is fully prepared
+but held:
 
 1. Treat the original post-stay `0.002` guard as rejected. On 60 canonical C82
    dev attempts it changed 40/524 decisions (`7.63%`) and increased switches
@@ -531,16 +552,21 @@ landed, and RSP-004Q is fully prepared but held:
    registered, digest-verified, dual-interlocked, and budgeted at a cumulative
    conservative `$14.484864` against the `$20` cap. Actual 1,000-case arms
    launched remain zero; only explicit user confirmation may change that.
-6. After RSP-004Q execution and cleanup, proceed to RSP-005 cache feasibility
-   and the router-only performance
-   ladder. Keep the stateless full-history path as the reconstructible
-   correctness fallback.
+6. Continue RSP-005 without waiting for the held 1,000-case gate: finish the
+   capability-gated client and hermetic stack, then run a small real-GPU HTTP
+   canary covering concurrent sessions and rebuild behavior.
+7. If that passes, run a stratified 100–200-case development qualification for
+   parity, latency, throughput, and residency. Keep stateless full-history
+   replay as the comparison and reconstructible fallback.
+8. Keep the 1,000-case release qualification held until every smaller rung is
+   green and the user explicitly confirms execution.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
-continues to reject cached-prefix tokens until RSP-005 chooses and versions a
-cross-request cache design. RSP-002 remains pending until a Pathfinder human
-accepts ADR 0059.
+continues to reject cached-prefix tokens. The separate session v1 wire reports
+retained and appended tokens rather than mislabelling live-request reuse as an
+automatic prefix-cache hit. RSP-002 remains pending until a Pathfinder human
+accepts ADR 0064 (rayline-vllm-serving-boundary).
 
 RSP-004A now replaces the process-wide `_policy_select_lock` with a
 default-serialized executor and an explicit concurrency-safe capability. The

@@ -16,16 +16,27 @@ ENGINE_BUILD_ID = "vllm@public-rayline-e2e-build"
 PLUGIN_VERSION = "rayline-arc-io@0.1.0"
 SERIALIZER_VERSION = "mtrouter-token-blocks-v2"
 REQUEST_SCHEMA_VERSION = "rayline.arc.pooling-request.v1"
+SESSION_REQUEST_SCHEMA_VERSION = "rayline.arc.session-pooling-request.v1"
+SESSION_RESPONSE_SCHEMA_VERSION = "rayline.arc.session-pooling-response.v1"
 EMBEDDING_DIMENSION = 1024
 EPISODE_HASH_LENGTH = 64
 PROVIDER_API_KEY = "public-e2e-provider-key"
 
 
-def _validated_pooling_data(body: dict[str, Any]) -> dict[str, Any]:
+def _validated_pooling_data(
+    body: dict[str, Any],
+    *,
+    session_wire: bool,
+) -> dict[str, Any]:
     """Enforce the plugin's strict request contract like the real endpoint."""
-    if body.get("task", "plugin") != "plugin":
-        raise ValueError("task must be 'plugin'")
-    data = body["data"]
+    if session_wire:
+        data = body
+        expected_schema = SESSION_REQUEST_SCHEMA_VERSION
+    else:
+        if body.get("task", "plugin") != "plugin":
+            raise ValueError("task must be 'plugin'")
+        data = body["data"]
+        expected_schema = REQUEST_SCHEMA_VERSION
     if not isinstance(data, dict):
         raise ValueError("data must be an object")
     allowed = {
@@ -38,7 +49,7 @@ def _validated_pooling_data(body: dict[str, Any]) -> dict[str, Any]:
     unexpected = set(data) - allowed
     if unexpected:
         raise ValueError(f"unexpected fields: {sorted(unexpected)}")
-    if data["schema_version"] != REQUEST_SCHEMA_VERSION:
+    if data["schema_version"] != expected_schema:
         raise ValueError("unsupported schema_version")
     if data["serializer_version"] != SERIALIZER_VERSION:
         raise ValueError("unsupported serializer_version")
@@ -113,6 +124,8 @@ class EncoderState:
         self.max_same_episode = 0
         self.max_global = 0
         self.request_index = 0
+        self.session_history: dict[str, tuple[list[dict[str, str]], int, int]] = {}
+        self.session_actions: dict[str, int] = {}
 
     def next_request_index(self) -> int:
         with self.lock:
@@ -142,12 +155,54 @@ class EncoderState:
             self.active_global = 0
             self.max_same_episode = 0
             self.max_global = 0
+            self.session_history.clear()
+            self.session_actions.clear()
 
-    def snapshot(self) -> dict[str, int]:
+    def update_session(
+        self,
+        episode_hash: str,
+        turns: list[dict[str, str]],
+        token_count: int,
+    ) -> tuple[str, int, int, int]:
+        with self.lock:
+            previous = self.session_history.get(episode_hash)
+            if previous is None:
+                action = "created"
+                retained = 0
+                revision = 1
+            else:
+                previous_turns, previous_tokens, previous_revision = previous
+                revision = previous_revision
+                if turns == previous_turns:
+                    action = "reused"
+                    retained = token_count
+                elif (
+                    len(turns) > len(previous_turns)
+                    and turns[: len(previous_turns)] == previous_turns
+                    and token_count > previous_tokens
+                ):
+                    action = "appended"
+                    retained = previous_tokens
+                    revision += 1
+                else:
+                    action = "rebuilt"
+                    retained = 0
+                    revision += 1
+            appended = token_count - retained
+            self.session_history[episode_hash] = (
+                [dict(turn) for turn in turns],
+                token_count,
+                revision,
+            )
+            self.session_actions[action] = self.session_actions.get(action, 0) + 1
+            return action, retained, appended, revision
+
+    def snapshot(self) -> dict[str, Any]:
         with self.lock:
             return {
                 "max_same_episode": self.max_same_episode,
                 "max_global": self.max_global,
+                "session_actions": dict(self.session_actions),
             }
 
 
@@ -176,7 +231,8 @@ class EncoderHandler(QuietHandler):
             ENCODER_STATE.reset()
             self.send_json(200, {"status": "reset"})
             return
-        if self.path != "/pooling":
+        session_wire = self.path == "/v1/rayline/arc/session/pooling"
+        if self.path != "/pooling" and not session_wire:
             self.send_vllm_error(404, "Not Found", "NotFoundError")
             return
         if (
@@ -189,7 +245,7 @@ class EncoderHandler(QuietHandler):
             return
         try:
             body = self.read_json()
-            data = _validated_pooling_data(body)
+            data = _validated_pooling_data(body, session_wire=session_wire)
             episode_hash = data["episode_id_hash"]
             turns = data["turns"]
             text = "\n".join(str(turn.get("text", "")) for turn in turns)
@@ -207,6 +263,39 @@ class EncoderHandler(QuietHandler):
             sign = -1.0 if "ARC_ROUTE_B" in text else 1.0
             embedding = [sign] + [0.0] * (EMBEDDING_DIMENSION - 1)
             token_count = max(1, sum(len(str(turn.get("text", ""))) for turn in turns))
+            if session_wire:
+                action, retained, appended, revision = ENCODER_STATE.update_session(
+                    episode_hash,
+                    turns,
+                    token_count,
+                )
+                self.send_json(
+                    200,
+                    {
+                        "schema_version": SESSION_RESPONSE_SCHEMA_VERSION,
+                        "embedding": embedding,
+                        "serialized_tokens": token_count,
+                        "full_history_tokens": token_count,
+                        "truncated_tokens": 0,
+                        "retained_prefix_tokens": retained,
+                        "appended_tokens": appended,
+                        "session_action": action,
+                        "session_revision": revision,
+                        "serializer_version": SERIALIZER_VERSION,
+                        "model": "Qwen/Qwen3.5-0.8B",
+                        "model_revision": MODEL_REVISION,
+                        "tokenizer_revision": MODEL_REVISION,
+                        "tokenizer_sha256": TOKENIZER_SHA256,
+                        "eos_token_id": 248046,
+                        "engine_build_id": ENGINE_BUILD_ID,
+                        "io_plugin_version": PLUGIN_VERSION,
+                        "pooling_capabilities": [
+                            "chunked_causal_mean",
+                            "resumable_causal_mean",
+                        ],
+                    },
+                )
+                return
             self.send_json(
                 200,
                 {

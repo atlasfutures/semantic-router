@@ -74,6 +74,13 @@ var (
 		},
 		[]string{"outcome", "failure_class"},
 	)
+	RaylineARCSessionActions = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_rayline_arc_session_actions_total",
+			Help: "Rayline ARC retained-session results by bounded lifecycle action.",
+		},
+		[]string{"action"},
+	)
 )
 
 func RecordRaylineARCFailure(class string) {
@@ -86,6 +93,9 @@ func RecordRaylineARCSelection(
 	full int,
 	truncated int,
 	cached int,
+	retained int,
+	appended int,
+	sessionAction string,
 	switchCost float64,
 	cacheMissTokens int,
 ) {
@@ -95,11 +105,16 @@ func RecordRaylineARCSelection(
 		"full":       full,
 		"truncated":  truncated,
 		"cached":     cached,
+		"retained":   retained,
+		"appended":   appended,
 	} {
 		RaylineARCTokens.WithLabelValues(kind).Observe(float64(count))
 	}
 	RaylineARCSwitchCost.Observe(switchCost)
 	RaylineARCCacheMissTokens.Observe(float64(cacheMissTokens))
+	if sessionAction != "" {
+		RaylineARCSessionActions.WithLabelValues(sessionAction).Inc()
+	}
 }
 
 func SetRaylineARCComponentReady(ready bool) {

@@ -35,11 +35,13 @@ import (
 )
 
 const (
-	encoderRequestSchema = "rayline.arc.pooling-request.v1"
-	encoderServingRungA  = "A"
-	encoderServingRungB  = "B"
-	encoderDimension     = 1024
-	maxEncoderResponse   = 256 * 1024
+	encoderRequestSchema        = "rayline.arc.pooling-request.v1"
+	encoderSessionRequestSchema = "rayline.arc.session-pooling-request.v1"
+	encoderSessionCapability    = "resumable_causal_mean"
+	encoderServingRungA         = "A"
+	encoderServingRungB         = "B"
+	encoderDimension            = 1024
+	maxEncoderResponse          = 256 * 1024
 
 	// EncoderTokenizerSHA256 is a public file-integrity fingerprint, not a credential.
 	EncoderTokenizerSHA256 = "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42" // #nosec G101
@@ -87,6 +89,7 @@ type EncoderClientConfig struct {
 	SerializerVersion     string
 	ServingRung           string
 	RequiredCapabilities  []string
+	RetainedSession       bool
 	ModalKey              string
 	ModalSecret           string
 	ConnectTimeout        time.Duration
@@ -95,15 +98,19 @@ type EncoderClientConfig struct {
 }
 
 type EncoderResult struct {
-	Embedding           []float32
-	SerializedTokens    int
-	FullHistoryTokens   int
-	TruncatedTokens     int
-	CachedPrefixTokens  int
-	ModelRevision       string
-	EngineBuildID       string
-	IOPluginVersion     string
-	PoolingCapabilities []string
+	Embedding            []float32
+	SerializedTokens     int
+	FullHistoryTokens    int
+	TruncatedTokens      int
+	CachedPrefixTokens   int
+	RetainedPrefixTokens int
+	AppendedTokens       int
+	SessionAction        string
+	SessionRevision      int
+	ModelRevision        string
+	EngineBuildID        string
+	IOPluginVersion      string
+	PoolingCapabilities  []string
 }
 
 type EncoderClient struct {
@@ -162,7 +169,7 @@ func newEncoderClient(
 	config EncoderClientConfig,
 	httpClient *http.Client,
 ) (*EncoderClient, error) {
-	endpoint, err := encoderEndpoint(config.BaseURL)
+	endpoint, err := encoderEndpoint(config.BaseURL, config.RetainedSession)
 	if err != nil {
 		return nil, err
 	}
@@ -184,6 +191,19 @@ func validateEncoderClientConfig(
 	config EncoderClientConfig,
 	httpClient *http.Client,
 ) error {
+	if err := validateEncoderHTTPPolicy(config, httpClient); err != nil {
+		return err
+	}
+	if encoderReadinessContractIncomplete(config) {
+		return errors.New("ARC encoder readiness contract is incomplete")
+	}
+	return validateEncoderServingContract(config)
+}
+
+func validateEncoderHTTPPolicy(
+	config EncoderClientConfig,
+	httpClient *http.Client,
+) error {
 	if config.ConnectTimeout <= 0 || config.TotalTimeout <= 0 ||
 		config.ConnectTimeout > config.TotalTimeout {
 		return errors.New("invalid ARC encoder timeout configuration")
@@ -197,12 +217,20 @@ func validateEncoderClientConfig(
 	if (config.ModalKey == "") != (config.ModalSecret == "") {
 		return errors.New("ARC encoder Modal credentials must be paired")
 	}
-	if encoderReadinessContractIncomplete(config) {
-		return errors.New("ARC encoder readiness contract is incomplete")
-	}
+	return nil
+}
+
+func validateEncoderServingContract(config EncoderClientConfig) error {
 	if config.ServingRung != encoderServingRungA &&
 		config.ServingRung != encoderServingRungB {
 		return errors.New("ARC encoder serving rung must be A or B")
+	}
+	if config.RetainedSession && config.ServingRung != encoderServingRungB {
+		return errors.New("ARC retained sessions require serving rung B")
+	}
+	if config.RetainedSession &&
+		!slices.Contains(config.RequiredCapabilities, encoderSessionCapability) {
+		return errors.New("ARC retained sessions require resumable capability")
 	}
 	return nil
 }
@@ -219,12 +247,16 @@ func encoderReadinessContractIncomplete(config EncoderClientConfig) bool {
 		len(config.RequiredCapabilities) == 0
 }
 
-func encoderEndpoint(baseURL string) (string, error) {
+func encoderEndpoint(baseURL string, retainedSession bool) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return "", errors.New("invalid ARC encoder base URL")
 	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/pooling"
+	endpointPath := "/pooling"
+	if retainedSession {
+		endpointPath = "/v1/rayline/arc/session/pooling"
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + endpointPath
 	parsed.RawPath = ""
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
@@ -267,16 +299,22 @@ func (client *EncoderClient) buildPayload(
 	if len(turns) == 0 {
 		return nil, encoderFailure(EncoderFailureRequest, "turns")
 	}
-	payload, err := json.Marshal(encoderWireRequest{
+	requestData := encoderRequestData{
+		SchemaVersion: encoderRequestSchema,
+		Serializer:    client.config.SerializerVersion,
+		ServingRung:   client.config.ServingRung,
+		EpisodeIDHash: episodeIDHash,
+		Turns:         turns,
+	}
+	var wireRequest any = encoderWireRequest{
 		Task: "plugin",
-		Data: encoderRequestData{
-			SchemaVersion: encoderRequestSchema,
-			Serializer:    client.config.SerializerVersion,
-			ServingRung:   client.config.ServingRung,
-			EpisodeIDHash: episodeIDHash,
-			Turns:         turns,
-		},
-	})
+		Data: requestData,
+	}
+	if client.config.RetainedSession {
+		requestData.SchemaVersion = encoderSessionRequestSchema
+		wireRequest = requestData
+	}
+	payload, err := json.Marshal(wireRequest)
 	if err != nil {
 		return nil, encoderFailure(EncoderFailureRequest, "encode")
 	}
@@ -393,6 +431,9 @@ func (client *EncoderClient) consumeResponse(
 	}
 	if len(body) > maxEncoderResponse {
 		return nil, encoderFailure(EncoderFailureDecode, "response_limit")
+	}
+	if client.config.RetainedSession {
+		return client.consumeSessionResponse(body)
 	}
 	var wire encoderWireResponse
 	decoder := json.NewDecoder(bytes.NewReader(body))

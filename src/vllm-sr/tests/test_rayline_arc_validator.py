@@ -57,6 +57,32 @@ def test_rayline_arc_requires_paired_modal_proxy_environment_names():
     assert any("must be configured together" in error.message for error in errors)
 
 
+def test_rayline_arc_accepts_retained_session_capabilities():
+    decision = _valid_decision()
+    decision.algorithm.rayline_arc.encoder.serving_rung = "B"
+    decision.algorithm.rayline_arc.encoder.required_pooling_capabilities = [
+        "chunked_causal_mean",
+        "resumable_causal_mean",
+    ]
+
+    assert _validate_rayline_arc_decision(decision) == []
+
+
+def test_rayline_arc_rejects_resumable_mean_without_causal_mean():
+    decision = _valid_decision()
+    decision.algorithm.rayline_arc.encoder.serving_rung = "B"
+    decision.algorithm.rayline_arc.encoder.required_pooling_capabilities = [
+        "resumable_causal_mean"
+    ]
+
+    errors = _validate_rayline_arc_decision(decision)
+
+    assert any(
+        "resumable_causal_mean requires chunked_causal_mean" in error.message
+        for error in errors
+    )
+
+
 def _valid_decision():
     return SimpleNamespace(
         name="arc-route",

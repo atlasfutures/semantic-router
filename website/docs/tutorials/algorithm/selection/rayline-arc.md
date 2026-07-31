@@ -126,8 +126,23 @@ GPU canary; do not assume the example is an adequate production threshold.
 `serving_rung: B` selects vLLM's in-engine causal MEAN path and requires
 `chunked_causal_mean`. Rung A's `all_plugin_mean` remains a diagnostic
 bootstrap and is not the production maximum-context serving shape.
-Prefix-cached MEAN is a separately gated optimization whose capability name
-becomes configurable only if that phase gate opens.
+
+The stateless comparison arm reports only `chunked_causal_mean` and uses
+vLLM's standard `/pooling` wire. To select the explicit retained-session wire,
+require both capabilities:
+
+```yaml
+required_pooling_capabilities:
+  - chunked_causal_mean
+  - resumable_causal_mean
+```
+
+That mode sends the complete reconstructible history directly to
+`/v1/rayline/arc/session/pooling`. Exact token extensions compute only their
+suffix; retry, mismatch, eviction, affinity loss, and restart remain correct
+because the session is optional acceleration state. Automatic prefix caching
+stays disabled: `resumable_causal_mean` describes a pinned live request, not a
+vLLM prefix-cache hit.
 
 Modal proxy authentication is configured by environment-variable name, never
 by embedding credentials in YAML. Configure `modal_key_env` and

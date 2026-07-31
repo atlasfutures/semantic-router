@@ -77,12 +77,14 @@ def _chat(
     episode: str,
     marker: str,
     *,
+    messages: list[dict[str, str]] | None = None,
     stream: bool = False,
     timeout: float = 15,
 ) -> tuple[int, dict[str, Any], dict[str, str]]:
     body: dict[str, Any] = {
         "model": "auto",
-        "messages": [
+        "messages": messages
+        or [
             {
                 "role": "user",
                 "content": f"{PROMPT_CANARY} {marker}",
@@ -367,6 +369,37 @@ def _assert_concurrency() -> None:
     assert status == HTTP_OK and stats["max_global"] >= CONCURRENT_REQUESTS, stats
 
 
+def _assert_retained_session_extension() -> None:
+    _reset_service(ENCODER_PORT)
+    episode = f"{EPISODE_CANARY}-retained-extension"
+    first_message = {
+        "role": "user",
+        "content": f"{PROMPT_CANARY} ARC_ROUTE_A retained-first",
+    }
+    status, _, _ = _chat(
+        episode,
+        "ARC_ROUTE_A retained-first",
+        messages=[first_message],
+    )
+    assert status == HTTP_OK
+    status, _, _ = _chat(
+        episode,
+        "ARC_ROUTE_A retained-second",
+        messages=[
+            first_message,
+            {"role": "assistant", "content": "public synthetic prior answer"},
+            {
+                "role": "user",
+                "content": f"{PROMPT_CANARY} ARC_ROUTE_A retained-second",
+            },
+        ],
+    )
+    assert status == HTTP_OK
+    status, stats, _ = _json_request(ENCODER_PORT, "/stats")
+    assert status == HTTP_OK
+    assert stats["session_actions"] == {"created": 1, "appended": 1}, stats
+
+
 def _assert_response_boundaries() -> None:
     stream_episode = f"{EPISODE_CANARY}-stream-abort"
     try:
@@ -441,6 +474,7 @@ def _initial(receipt: Path) -> None:
         )
     )
     _assert_failure_transactions()
+    _assert_retained_session_extension()
     _assert_concurrency()
     _assert_response_boundaries()
 

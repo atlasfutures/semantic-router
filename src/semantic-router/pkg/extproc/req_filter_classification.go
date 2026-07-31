@@ -307,6 +307,9 @@ func observeRaylineARCSelection(
 		trace.FullHistoryTokens,
 		trace.TruncatedTokens,
 		trace.CachedPrefixTokens,
+		trace.RetainedPrefixTokens,
+		trace.AppendedTokens,
+		trace.SessionAction,
 		switchCost,
 		cacheMissTokens,
 	)
@@ -329,6 +332,10 @@ func observeRaylineARCSelection(
 		"full_history_tokens":    trace.FullHistoryTokens,
 		"truncated_tokens":       trace.TruncatedTokens,
 		"cached_prefix_tokens":   trace.CachedPrefixTokens,
+		"retained_prefix_tokens": trace.RetainedPrefixTokens,
+		"appended_tokens":        trace.AppendedTokens,
+		"session_action":         trace.SessionAction,
+		"session_revision":       trace.SessionRevision,
 		"encoder_latency_millis": trace.EncoderLatency.Milliseconds(),
 	})
 }
