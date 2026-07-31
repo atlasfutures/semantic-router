@@ -554,6 +554,21 @@ The public synthetic fixture now reads coordinate 252 in both its signed head
 and hermetic fake encoder. This is deterministic deployment-test plumbing, not
 a learned policy or task-quality claim.
 
+`rwe009` then passed the complete bounded real-worker packet. Both direct L4
+vLLM workers returned all eight baseline generations; the protected H100
+encoder warmup passed; coordinate 252 reached both workers after four coverage
+requests; four concurrent routed requests reached both arms at `0.845 req/s`;
+and the routed stream emitted 34 data events before `[DONE]`. The router
+reported nine session creates and zero ARC selection failures. In total, 17
+real generation requests completed with zero provider calls. Compose and Modal
+prompt scans found no public prompt bodies, the exact credential scan passed,
+and cleanup left zero compose containers, volumes, L4 tasks, or H100/L4
+containers. The digest-verified private receipt is pinned at
+`rayline-ai/router-artifacts@2e76a0a7b4bb0d418c375c52d2bafd7c2d358992`.
+Its conservative `$0.809061` cost brings all session-probe and real-worker work
+to about `$5.830288`. This closes the real-endpoint MVP acceptance gate; it
+does not yet establish saturation capacity or task-quality generalization.
+
 At the 2026-07-31 Modal rate snapshot, each 15-minute L4/4-CPU/16-GiB timeout
 envelope is `$0.278928`; both workers total `$0.557856`. Including the existing
 single-container H100 encoder's `$2.499617` timeout envelope gives a combined
@@ -814,11 +829,19 @@ but held:
 6. Treat the RSP-005 MVP path as end-to-end proven: the capability-gated client,
    hermetic stack, protected H100 session endpoint, concurrent sessions,
    rebuild path, and real Semantic Router gateway are green.
-7. Next, run a stratified 100–200-case development qualification for parity,
-   latency, throughput, residency, eviction, affinity loss, and restart. Keep
-   stateless full-history replay as the comparison and reconstructible fallback.
-8. Keep the 1,000-case release qualification held until every smaller rung is
-   green and the user explicitly confirms execution.
+7. Treat the 128-case development qualification as complete: parity, latency,
+   throughput, residency, eviction, affinity loss, restart, and cleanup passed
+   with zero selection flips and no provider calls. Keep stateless full-history
+   replay as the reconstructible fallback.
+8. Treat the bounded real-endpoint MVP gate as complete at `rwe009`: protected
+   retained H100 encoder, ARC, dedicated Envoy TLS routes, two real L4 vLLM
+   workers, concurrent routing, streaming, metrics, privacy, and cleanup pass.
+9. Scope the next performance rung separately: freeze an open/closed-loop
+   concurrency and soak workload, component/GPU metrics, saturation stop rules,
+   and a new cost envelope before launch. Do not infer production capacity from
+   the small MVP canary.
+10. Keep the 1,000-case release qualification held until the user explicitly
+    confirms execution.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
