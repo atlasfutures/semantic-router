@@ -30,6 +30,7 @@ WORKER_B_HOST = "atlasfutures-dev--rayline-arc-generation-workers-worker-b.modal
 GATEWAY_URL = "http://127.0.0.1:18888"
 METRICS_URL = "http://127.0.0.1:19190/metrics"
 MAX_STARTUP_SECONDS = 180
+MAX_CANARY_SECONDS = 15 * 60
 HTTP_OK = 200
 
 
@@ -39,6 +40,7 @@ def _run(
     environment: dict[str, str],
     check: bool = True,
     capture_output: bool = False,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
@@ -47,6 +49,7 @@ def _run(
         check=check,
         text=True,
         capture_output=capture_output,
+        timeout=timeout,
     )
 
 
@@ -153,6 +156,7 @@ def main() -> None:
                 str(args.timeout_seconds),
             ],
             environment=environment,
+            timeout=MAX_CANARY_SECONDS,
         )
         _scan_logs(
             environment,

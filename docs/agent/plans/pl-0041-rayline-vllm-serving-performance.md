@@ -415,7 +415,9 @@ The fixed workload contains at most 37 generation requests:
 The public synthetic artifact can raise gateway completion limits to 128
 tokens, so the gateway side is bounded to at most 3,712 generated tokens; the
 direct side adds at most 64. The driver does not accept a case-count argument
-and contains no path to the held 1,000-case packet.
+and contains no path to the held 1,000-case packet. The launcher also applies
+a 15-minute whole-canary deadline around the driver; expiration enters the same
+unconditional credential, compose, and worker cleanup path.
 
 The canary passes only if:
 
