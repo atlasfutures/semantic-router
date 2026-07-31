@@ -476,6 +476,28 @@ is recorded as unknown rather than zero. The next packet follows at most two
 same-origin result redirects using `GET`, and refuses to forward the worker
 bearer credential across origins.
 
+`rwe006` live-validated that continuation path and completed all eight direct
+OpenAI-compatible generations across both pinned L4 workers. The protected
+encoder and ARC selection then processed the first routed request, and ARC
+correctly replaced the public caller credential with the artifact-owned worker
+key. That exposed a fixture wiring error: both selected routes in the hermetic
+`envoy.yaml` still targeted `fake-provider`, which rejected the real-worker key
+with `401`. No routed request reached a real worker. Cleanup left zero compose
+containers or volumes and stopped both the generation app and exact H100
+encoder container. Its credential-scanned private receipt is pinned at
+`rayline-ai/router-artifacts@a76e51e5715df881fb4dea8641ee6c9f6b120294`;
+the conservative attempt estimate is `$0.632927`, bringing the session plus
+real-worker work to about `$2.632270`.
+
+The correction keeps the default hermetic Envoy fixture unchanged and adds a
+launcher-selected `envoy-real-workers.yaml`. It maps `worker-a` and `worker-b`
+to separate DNS/TLS Modal clusters with system-CA validation, exact SNI, and
+host rewrite, while ARC remains the sole owner of the upstream bearer
+mutation. The dedicated fixture contains no credential. Local tests validate the launch selection, route
+separation, absence of embedded authorization, compose interpolation, and
+Envoy v1.34 configuration. A new Pathfinder experiment ID and signed Semantic
+Router commit are required before that corrected path consumes paid resources.
+
 At the 2026-07-31 Modal rate snapshot, each 15-minute L4/4-CPU/16-GiB timeout
 envelope is `$0.278928`; both workers total `$0.557856`. Including the existing
 single-container H100 encoder's `$2.499617` timeout envelope gives a combined

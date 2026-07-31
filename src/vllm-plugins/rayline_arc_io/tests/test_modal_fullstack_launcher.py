@@ -7,9 +7,13 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 LAUNCHER_PATH = REPO_ROOT / "e2e/testing/rayline-arc/run_modal_fullstack.py"
 COMPOSE_PATH = REPO_ROOT / "deploy/compose/rayline-arc/compose.yaml"
 CONFIG_PATH = REPO_ROOT / "deploy/compose/rayline-arc/config.yaml"
+REAL_WORKER_ENVOY_PATH = (
+    REPO_ROOT / "deploy/compose/rayline-arc/envoy-real-workers.yaml"
+)
 EXPECTED_STARTUP_SECONDS = 240
 EXPECTED_CANARY_SECONDS = 15 * 60
 EXPECTED_MODAL_VERSION = "1.5.1"
+EXPECTED_TLS_CLUSTERS = 2
 
 
 def _tree() -> ast.Module:
@@ -62,3 +66,27 @@ def test_encoder_identity_is_dynamic_but_timeouts_remain_typed() -> None:
     assert "expected_build_id: ${RAYLINE_ARC_ENCODER_BUILD_ID}" in config
     assert "connect_timeout_seconds: 10" in config
     assert "total_timeout_seconds: 180" in config
+
+
+def test_paid_launcher_selects_dedicated_tls_worker_routes() -> None:
+    launcher = LAUNCHER_PATH.read_text(encoding="utf-8")
+    compose = COMPOSE_PATH.read_text(encoding="utf-8")
+    envoy = REAL_WORKER_ENVOY_PATH.read_text(encoding="utf-8")
+
+    assert "REAL_WORKER_ENVOY_FILE = (" in launcher
+    assert (
+        '"RAYLINE_ARC_E2E_ENVOY_CONFIG_PATH": str(REAL_WORKER_ENVOY_FILE)' in launcher
+    )
+    assert "${RAYLINE_ARC_E2E_ENVOY_CONFIG_PATH:-./envoy.yaml}" in compose
+    assert "cluster: worker_a" in envoy
+    assert "cluster: worker_b" in envoy
+    assert (
+        "atlasfutures-dev--rayline-arc-generation-workers-worker-a.modal.run" in envoy
+    )
+    assert (
+        "atlasfutures-dev--rayline-arc-generation-workers-worker-b.modal.run" in envoy
+    )
+    assert envoy.count("envoy.transport_sockets.tls") == EXPECTED_TLS_CLUSTERS
+    assert envoy.count("/etc/ssl/certs/ca-certificates.crt") == EXPECTED_TLS_CLUSTERS
+    assert "fake-provider" not in envoy
+    assert "authorization" not in envoy.lower()

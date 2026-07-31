@@ -103,7 +103,7 @@ services:
     image: envoyproxy/envoy:v1.34-latest
     command: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "warning"]
     volumes:
-      - ./envoy.yaml:/etc/envoy/envoy.yaml:ro
+      - ${RAYLINE_ARC_E2E_ENVOY_CONFIG_PATH:-./envoy.yaml}:/etc/envoy/envoy.yaml:ro
     ports:
       - "${RAYLINE_ARC_E2E_ENVOY_PORT:-18888}:8888"
     depends_on:

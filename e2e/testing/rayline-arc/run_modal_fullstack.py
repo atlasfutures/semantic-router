@@ -18,6 +18,9 @@ import modal
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = REPO_ROOT / "deploy/compose/rayline-arc/compose.yaml"
+REAL_WORKER_ENVOY_FILE = (
+    REPO_ROOT / "deploy/compose/rayline-arc/envoy-real-workers.yaml"
+)
 WORKER_SERVICE = (
     REPO_ROOT / "src/vllm-plugins/rayline_arc_io/modal_generation_workers.py"
 )
@@ -110,6 +113,7 @@ def _runtime_environment(
             "RAYLINE_ARC_E2E_ENCODER_BUILD_ID": (
                 "vllm@b1049f6dd95c27d2e1b052eebc3b1a7f9f41195f"
             ),
+            "RAYLINE_ARC_E2E_ENVOY_CONFIG_PATH": str(REAL_WORKER_ENVOY_FILE),
             "RAYLINE_ARC_E2E_WORKER_A_ENDPOINT": f"{WORKER_A_HOST}:443",
             "RAYLINE_ARC_E2E_WORKER_A_PROTOCOL": "https",
             "RAYLINE_ARC_E2E_WORKER_A_BASE_URL": f"https://{WORKER_A_HOST}/v1",
