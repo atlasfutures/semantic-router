@@ -3,7 +3,14 @@
 import pytest
 from pydantic import ValidationError
 from rayline_arc_io.constants import EOS_TOKEN_ID
-from rayline_arc_io.schemas import ArcPoolingRequest, ArcPoolingResponse
+from rayline_arc_io.schemas import (
+    ArcPoolingRequest,
+    ArcPoolingResponse,
+    ArcSessionPoolingRequest,
+    ArcSessionPoolingResponse,
+)
+
+SERIALIZED_TOKENS = 16
 
 
 def valid_request() -> dict:
@@ -64,8 +71,8 @@ def test_request_rejects_unknown_fields() -> None:
 def test_response_exposes_the_full_readiness_contract() -> None:
     response = ArcPoolingResponse(
         embedding=[0.0] * 1024,
-        serialized_tokens=16,
-        full_history_tokens=16,
+        serialized_tokens=SERIALIZED_TOKENS,
+        full_history_tokens=SERIALIZED_TOKENS,
         truncated_tokens=0,
         cached_prefix_tokens=0,
         serializer_version="mtrouter-token-blocks-v2",
@@ -80,3 +87,49 @@ def test_response_exposes_the_full_readiness_contract() -> None:
     )
     assert response.tokenizer_sha256 == "a" * 64
     assert response.eos_token_id == EOS_TOKEN_ID
+
+
+def test_session_schema_is_versioned_and_rung_b_only() -> None:
+    request = ArcSessionPoolingRequest.model_validate(
+        {
+            **valid_request(),
+            "schema_version": "rayline.arc.session-pooling-request.v1",
+            "serving_rung": "B",
+        }
+    )
+    assert request.serving_rung == "B"
+
+    with pytest.raises(ValidationError):
+        ArcSessionPoolingRequest.model_validate(
+            {
+                **valid_request(),
+                "schema_version": "rayline.arc.session-pooling-request.v1",
+                "serving_rung": "A",
+            }
+        )
+
+
+def test_session_response_exposes_retained_state_accounting() -> None:
+    response = ArcSessionPoolingResponse(
+        schema_version="rayline.arc.session-pooling-response.v1",
+        embedding=[0.0] * 1024,
+        serialized_tokens=16,
+        full_history_tokens=16,
+        truncated_tokens=0,
+        retained_prefix_tokens=12,
+        appended_tokens=4,
+        session_action="appended",
+        session_revision=2,
+        serializer_version="mtrouter-token-blocks-v2",
+        model="Qwen/Qwen3.5-0.8B",
+        model_revision="model-revision",
+        tokenizer_revision="tokenizer-revision",
+        tokenizer_sha256="a" * 64,
+        eos_token_id=EOS_TOKEN_ID,
+        engine_build_id="vllm@immutable-build",
+        io_plugin_version="rayline-arc-io@0.1.0",
+        pooling_capabilities=["chunked_causal_mean", "resumable_causal_mean"],
+    )
+    assert (
+        response.retained_prefix_tokens + response.appended_tokens == SERIALIZED_TOKENS
+    )

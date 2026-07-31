@@ -59,3 +59,41 @@ Unit tests are host-independent:
 ```bash
 uv run --project src/vllm-plugins/rayline_arc_io --extra test pytest
 ```
+
+## Retained-session endpoint
+
+`modal_session_service.py` is a separate, versioned comparison arm. It embeds
+the proven `AsyncPoolingSession` API instead of exposing retained state through
+vLLM's stateless `/pooling` contract:
+
+```bash
+modal deploy src/vllm-plugins/rayline_arc_io/modal_session_service.py
+```
+
+The protected endpoint accepts the complete reconstructible history at
+`POST /v1/rayline/arc/session/pooling`:
+
+```json
+{
+  "schema_version": "rayline.arc.session-pooling-request.v1",
+  "serializer_version": "mtrouter-token-blocks-v2",
+  "serving_rung": "B",
+  "episode_id_hash": "<64-lowercase-hex>",
+  "turns": [{"role": "user", "text": "public synthetic input"}]
+}
+```
+
+An exact token extension appends only its suffix. An identical retry reuses the
+last result, and any other history closes the old live request and rebuilds
+from the supplied full history. Sessions are ephemeral: TTL, LRU pressure,
+container restart, or an affinity miss can discard them without affecting
+correctness because every request remains reconstructible. Per-episode work is
+serialized; independent episodes may execute concurrently. The deployment
+bounds both resident sessions and total retained tokens, and exposes those
+counts at `GET /health`. `DELETE /v1/rayline/arc/session/{episode_id_hash}`
+releases one idle session explicitly.
+
+The response reports `retained_prefix_tokens`, `appended_tokens`,
+`session_action`, and `session_revision`. These are explicit live-session
+metrics and must not be interpreted as vLLM automatic prefix-cache hits;
+automatic prefix caching remains disabled.
