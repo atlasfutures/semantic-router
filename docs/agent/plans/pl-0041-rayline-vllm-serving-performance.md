@@ -355,6 +355,44 @@ single-container 31-minute timeout envelope is about `$2.50` at the pinned
 price snapshot. Before a later multi-replica qualification, add cache-aware
 affinity or an explicit session directory and freeze a new cost envelope.
 
+#### Development Qualification Result — 2026-07-31
+
+Run `rayline-arc-session-qualification-sqp001-20260731` passed all frozen gates
+on one NVIDIA H100 with automatic prefix caching disabled:
+
+| Signal | Result | Gate |
+|---|---:|---:|
+| History states | 128 | exactly 128 |
+| Minimum cosine similarity | `0.9999814` | at least `0.9999` |
+| Maximum absolute drift | `0.0006667` | at most `0.01` |
+| Maximum synthetic score drift | `0.0002751` | at most `0.005` |
+| Synthetic selected-arm flips | `0` | `0` |
+| Retained/full-replay token ratio | `0.4004` | at most `0.75` |
+| Eight-way create/append wall-to-sum ratio | `0.1420` / `0.1388` | at most `0.85` |
+| Same-episode actions | `created`, `reused` | exact match |
+| LRU / affinity-loss rebuild cosine | `1.0` / `0.9999967` | at least `0.9999` |
+| Residency after cleanup | `0` sessions, `0` tokens | both `0` |
+
+Retained latency was `0.841` / `0.910` / `1.010` seconds at p50/p95/p99,
+versus `0.856` / `1.041` / `1.073` seconds for full replay. The retained path
+therefore saved 60% of serialized token work, but the client-visible latency
+benefit at this workload was modest: about 1.8% at p50, 12.6% at p95, and 5.8%
+at p99. The retained maximum of `96.892` seconds is the one cold-start request
+and is reported separately from the warm percentiles.
+
+The complete driver took `421.998` seconds (`0.303` history states/second).
+At the pinned combined H100/CPU/memory rate, client elapsed time represents
+about `$0.567`; including the configured five-minute idle scale-down window is
+a conservative `$0.970` attempt estimate, below the `$2.50` timeout envelope.
+Provider calls and provider spend were zero. The sanitized receipt is pinned at
+`rayline-ai/router-artifacts@4b8a0b308d7980b5782cb8b41ac454874e8c7e16`
+under `runs/rayline-arc-session-qualification-sqp001-20260731`.
+
+This closes the 100–200 case development rung, not release qualification. It
+does not prove multi-container affinity, real worker-generation throughput, or
+production traffic behavior. The separate 1,000-case packet was not executed
+and remains confirmation-gated.
+
 ### Scope Boundaries
 
 In scope:
