@@ -25,6 +25,9 @@ launcher = importlib.import_module("run_openrouter_fullstack")
 EXPECTED_MAX_TOKENS = 8
 EXPECTED_MAX_COVERAGE_REQUESTS = 24
 EXPECTED_MAX_PROVIDER_REQUESTS = 31
+EXPECTED_MAX_EXTERNAL_ATTEMPTS = 62
+EXPECTED_MAX_RETRY_DELAY_SECONDS = 30.0
+EXPECTED_RETRIED_ATTEMPTS = 2
 EXPECTED_MAX_PROVIDER_COST_USD = 0.10
 EXPECTED_WORKER_COUNT = 3
 
@@ -62,9 +65,108 @@ def test_openrouter_canary_request_and_cost_bounds_are_small() -> None:
     assert canary.MAX_TOKENS == EXPECTED_MAX_TOKENS
     assert canary.MAX_COVERAGE_REQUESTS == EXPECTED_MAX_COVERAGE_REQUESTS
     assert canary.MAX_PROVIDER_REQUESTS == EXPECTED_MAX_PROVIDER_REQUESTS
+    assert canary.MAX_RETRIES_PER_REQUEST == 1
+    assert canary.MAX_EXTERNAL_ATTEMPTS == EXPECTED_MAX_EXTERNAL_ATTEMPTS
+    assert canary.REQUEST_PACING_SECONDS == 1.0
+    assert canary.MAX_RETRY_DELAY_SECONDS == EXPECTED_MAX_RETRY_DELAY_SECONDS
     assert canary.MAX_REPORTED_PROVIDER_COST_USD == EXPECTED_MAX_PROVIDER_COST_USD
     assert canary.PROVIDER_SLUG == "fireworks"
     assert canary.PROVIDER_NAME == "Fireworks"
+
+
+def test_chat_retries_one_pre_response_429_with_same_episode_and_accounts_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+    sleeps: list[float] = []
+
+    def fake_chat_once(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise canary.OpenRouterHTTPError(
+                endpoint="chat endpoint",
+                status_code=429,
+                retry_after_seconds=3.0,
+                error_type="rate_limit_exceeded",
+                provider_code="429",
+            )
+        return {
+            "selected_worker": "worker-a",
+            "response_model": canary.WORKERS["worker-a"],
+        }
+
+    monkeypatch.setattr(canary, "_chat_once", fake_chat_once)
+    monkeypatch.setattr(canary.time, "sleep", sleeps.append)
+    result = canary._chat(
+        base_url="http://gateway/v1",
+        model="auto",
+        prompt="private prompt",
+        authorization="Bearer private-key",
+        timeout_seconds=1,
+        episode_id="stable-episode",
+    )
+
+    assert calls[0] == calls[1]
+    assert calls[0]["episode_id"] == "stable-episode"
+    assert result["external_attempts"] == EXPECTED_RETRIED_ATTEMPTS
+    assert sleeps == [3.0, canary.REQUEST_PACING_SECONDS]
+
+
+def test_http_error_exposes_only_bounded_metadata_and_retry_delay() -> None:
+    prompt = "private prompt that must not be emitted"
+    credential = "Bearer private-key"
+    error = canary._http_error(
+        endpoint="chat endpoint",
+        status_code=429,
+        body=json.dumps(
+            {
+                "error": {
+                    "message": f"{prompt} {credential}",
+                    "metadata": {
+                        "error_type": "rate_limit_exceeded",
+                        "provider_code": "unsafe provider details",
+                    },
+                }
+            }
+        ).encode(),
+        retry_after="999",
+    )
+
+    assert error.retriable is True
+    assert error.error_type == "rate_limit_exceeded"
+    assert error.provider_code == ""
+    assert error.retry_after_seconds == canary.MAX_RETRY_DELAY_SECONDS
+    assert prompt not in str(error)
+    assert credential not in str(error)
+
+
+def test_chat_does_not_retry_non_transient_http_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+
+    def fake_chat_once(**_kwargs: Any) -> dict[str, Any]:
+        nonlocal attempts
+        attempts += 1
+        raise canary.OpenRouterHTTPError(
+            endpoint="chat endpoint",
+            status_code=401,
+            retry_after_seconds=1.0,
+            error_type="",
+            provider_code="",
+        )
+
+    monkeypatch.setattr(canary, "_chat_once", fake_chat_once)
+    with pytest.raises(canary.OpenRouterHTTPError, match="HTTP 401"):
+        canary._chat(
+            base_url="http://gateway/v1",
+            model="auto",
+            prompt="private prompt",
+            authorization="Bearer private-key",
+            timeout_seconds=1,
+        )
+
+    assert attempts == 1
 
 
 def test_coverage_discovers_all_three_models_without_emitting_prompts(

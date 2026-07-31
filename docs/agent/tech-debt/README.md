@@ -82,6 +82,7 @@ Every debt entry should include:
 
 - [TD047 Rayline Remote Selection Serializes Across Episodes](td-047-rayline-remote-cross-episode-selection-serialization.md)
 - [TD048 Rayline vLLM Selection Stability Gap](td-048-rayline-vllm-selection-stability-gap.md)
+- [TD049 OpenRouter Transient Retry Is Canary-Owned](td-049-openrouter-transient-retry-ownership-gap.md)
 
 ## Retired Debt Policy
 

@@ -8,8 +8,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 from modal_encoder_warmup import warm_encoder_from_environment
@@ -39,6 +42,13 @@ MAX_PROVIDER_REQUESTS = (
     + (DIRECT_REQUESTS_PER_MODEL + ROUTED_REQUESTS_PER_MODEL) * 3
     + STREAM_REQUESTS
 )
+MAX_RETRIES_PER_REQUEST = 1
+MAX_EXTERNAL_ATTEMPTS = MAX_PROVIDER_REQUESTS * (MAX_RETRIES_PER_REQUEST + 1)
+REQUEST_PACING_SECONDS = 1.0
+DEFAULT_RETRY_DELAY_SECONDS = 2.0
+MIN_RETRY_DELAY_SECONDS = 1.0
+MAX_RETRY_DELAY_SECONDS = 30.0
+RETRIABLE_HTTP_STATUSES = frozenset({429, 503})
 MAX_REPORTED_PROVIDER_COST_USD = 0.10
 PUBLIC_GATEWAY_AUTHORIZATION = "Bearer public-openrouter-fullstack-canary"
 SESSION_METRIC = "llm_rayline_arc_session_actions_total"
@@ -49,7 +59,88 @@ WORKERS = {
 }
 
 
-def _chat(
+class OpenRouterHTTPError(RuntimeError):
+    """Privacy-safe pre-response provider error eligible for bounded retry."""
+
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        status_code: int,
+        retry_after_seconds: float,
+        error_type: str,
+        provider_code: str,
+    ) -> None:
+        details = [f"{endpoint} returned HTTP {status_code}"]
+        if error_type:
+            details.append(f"error_type={error_type}")
+        if provider_code:
+            details.append(f"provider_code={provider_code}")
+        super().__init__("; ".join(details))
+        self.status_code = status_code
+        self.retry_after_seconds = retry_after_seconds
+        self.error_type = error_type
+        self.provider_code = provider_code
+
+    @property
+    def retriable(self) -> bool:
+        return self.status_code in RETRIABLE_HTTP_STATUSES
+
+
+def _bounded_error_token(value: Any) -> str:
+    if not isinstance(value, (str, int)):
+        return ""
+    token = str(value)[:64]
+    return token if re.fullmatch(r"[A-Za-z0-9_.:-]+", token) else ""
+
+
+def _retry_after_seconds(value: str | None) -> float:
+    delay = DEFAULT_RETRY_DELAY_SECONDS
+    if value:
+        try:
+            delay = float(value)
+        except ValueError:
+            try:
+                retry_at = parsedate_to_datetime(value)
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                delay = (retry_at - datetime.now(timezone.utc)).total_seconds()
+            except (TypeError, ValueError, OverflowError):
+                pass
+    return min(
+        MAX_RETRY_DELAY_SECONDS,
+        max(MIN_RETRY_DELAY_SECONDS, delay),
+    )
+
+
+def _http_error(
+    *,
+    endpoint: str,
+    status_code: int,
+    body: bytes,
+    retry_after: str | None,
+) -> OpenRouterHTTPError:
+    error_type = ""
+    provider_code = ""
+    try:
+        decoded = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        decoded = None
+    error = decoded.get("error") if isinstance(decoded, dict) else None
+    metadata = error.get("metadata") if isinstance(error, dict) else None
+    if isinstance(metadata, dict):
+        error_type = _bounded_error_token(metadata.get("error_type"))
+        provider_code = _bounded_error_token(metadata.get("provider_code"))
+    return OpenRouterHTTPError(
+        endpoint=endpoint,
+        status_code=status_code,
+        retry_after_seconds=_retry_after_seconds(retry_after),
+        error_type=error_type,
+        provider_code=provider_code,
+    )
+
+
+def _chat_once(
     *,
     base_url: str,
     model: str,
@@ -95,9 +186,15 @@ def _chat(
     body = response.read()
     latency_seconds = time.perf_counter() - started
     selected_worker = response.getheader("x-vsr-selected-model", "")
+    retry_after = response.getheader("retry-after")
     connection.close()
     if response.status != HTTP_OK:
-        raise RuntimeError(f"chat endpoint returned HTTP {response.status}")
+        raise _http_error(
+            endpoint="chat endpoint",
+            status_code=response.status,
+            body=body,
+            retry_after=retry_after,
+        )
     decoded = json.loads(body)
     choices = decoded.get("choices") if isinstance(decoded, dict) else None
     if (
@@ -122,6 +219,45 @@ def _chat(
         "completion_tokens": int(usage.get("completion_tokens") or 0),
         "cost_usd": float(usage["cost"]),
     }
+
+
+def _chat(
+    *,
+    base_url: str,
+    model: str,
+    prompt: str,
+    authorization: str,
+    timeout_seconds: float,
+    episode_id: str = "",
+    direct_openrouter: bool = False,
+) -> dict[str, Any]:
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            result = _chat_once(
+                base_url=base_url,
+                model=model,
+                prompt=prompt,
+                authorization=authorization,
+                timeout_seconds=timeout_seconds,
+                episode_id=episode_id,
+                direct_openrouter=direct_openrouter,
+            )
+            result["external_attempts"] = attempts
+            time.sleep(REQUEST_PACING_SECONDS)
+            return result
+        except OpenRouterHTTPError as error:
+            if not error.retriable or attempts > MAX_RETRIES_PER_REQUEST:
+                raise
+            print(
+                f"OpenRouter transient HTTP {error.status_code}; "
+                f"retrying attempt {attempts + 1}/{MAX_RETRIES_PER_REQUEST + 1} "
+                f"after {error.retry_after_seconds:g}s",
+                file=sys.stderr,
+                flush=True,
+            )
+            time.sleep(error.retry_after_seconds)
 
 
 def _validate_model(result: dict[str, Any], expected_model: str) -> None:
@@ -207,7 +343,7 @@ def _direct_and_routed(
     return direct, routed
 
 
-def _stream(
+def _stream_once(
     *,
     gateway_url: str,
     prompt: str,
@@ -239,9 +375,15 @@ def _stream(
     )
     selected_worker = response.getheader("x-vsr-selected-model", "")
     if response.status != HTTP_OK:
-        response.read()
+        body = response.read()
+        retry_after = response.getheader("retry-after")
         connection.close()
-        raise RuntimeError(f"streaming gateway returned HTTP {response.status}")
+        raise _http_error(
+            endpoint="streaming gateway",
+            status_code=response.status,
+            body=body,
+            retry_after=retry_after,
+        )
     first_event_seconds: float | None = None
     data_events = 0
     saw_done = False
@@ -290,9 +432,47 @@ def _stream(
     return result
 
 
+def _stream(
+    *,
+    gateway_url: str,
+    prompt: str,
+    run_id: str,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            result = _stream_once(
+                gateway_url=gateway_url,
+                prompt=prompt,
+                run_id=run_id,
+                timeout_seconds=timeout_seconds,
+            )
+            result["external_attempts"] = attempts
+            time.sleep(REQUEST_PACING_SECONDS)
+            return result
+        except OpenRouterHTTPError as error:
+            if not error.retriable or attempts > MAX_RETRIES_PER_REQUEST:
+                raise
+            print(
+                f"OpenRouter transient streaming HTTP {error.status_code}; "
+                f"retrying attempt {attempts + 1}/{MAX_RETRIES_PER_REQUEST + 1} "
+                f"after {error.retry_after_seconds:g}s",
+                file=sys.stderr,
+                flush=True,
+            )
+            time.sleep(error.retry_after_seconds)
+
+
 def _result_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
+    external_attempts = sum(
+        int(result.get("external_attempts", 1)) for result in results
+    )
     return {
         "requests": len(results),
+        "external_attempts": external_attempts,
+        "retries": external_attempts - len(results),
         "latency": _summary([float(result["latency_seconds"]) for result in results]),
         "prompt_tokens": sum(int(result["prompt_tokens"]) for result in results),
         "completion_tokens": sum(
@@ -356,6 +536,13 @@ def main() -> None:
     actual_provider_requests = len(all_nonstream) + STREAM_REQUESTS
     if actual_provider_requests > MAX_PROVIDER_REQUESTS:
         raise RuntimeError("OpenRouter request count exceeded the canary bound")
+    actual_external_attempts = sum(
+        int(result.get("external_attempts", 1)) for result in all_nonstream
+    ) + int(stream.get("external_attempts", 1))
+    if actual_external_attempts > MAX_EXTERNAL_ATTEMPTS:
+        raise RuntimeError(
+            "OpenRouter external attempt count exceeded the canary bound"
+        )
 
     metrics = _read_metrics(args.metrics_url, args.timeout_seconds)
     session_actions = _metric_values(metrics, SESSION_METRIC)
@@ -390,6 +577,9 @@ def main() -> None:
         "stream": stream,
         "actual_provider_requests": actual_provider_requests,
         "maximum_provider_requests": MAX_PROVIDER_REQUESTS,
+        "actual_external_attempts": actual_external_attempts,
+        "maximum_external_attempts": MAX_EXTERNAL_ATTEMPTS,
+        "provider_retries": actual_external_attempts - actual_provider_requests,
         "reported_provider_cost_usd": provider_cost,
         "maximum_reported_provider_cost_usd": MAX_REPORTED_PROVIDER_COST_USD,
         "session_actions_created": session_actions["created"],
