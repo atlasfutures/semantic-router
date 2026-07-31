@@ -19,17 +19,20 @@ The plan must answer four questions with runnable evidence:
 
 Status: active on 2026-07-31. The stateless end-to-end MVP parity gate, retained
 engine gate, versioned HTTP/client integration, and real-GPU concurrent gateway
-E2E pass. The explicit pinned-session design is selected; its 100–200-case
-development qualification and production hardening remain in progress. Current published
+E2E pass. The explicit pinned-session design is selected, its 128-case
+development qualification passes, and the first bounded full-stack performance
+packet is complete. That packet preserves correctness but exposes unacceptable
+ARC scaling that now requires decision-plane tracing. Current published
 implementation heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
-  at `b46178f3` for the capability-gated retained-session client, hermetic
-  stack, and completed real-endpoint MVP receipt.
+  at `c6d83697` for the capability-gated retained-session client, hermetic
+  stack, bounded real-worker benchmark, and three-model OpenRouter canary.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `bf4e1c40` for the registered retained-session and real-endpoint canaries.
+  at `bb215515` for the registered retained-session, real-endpoint, and bounded
+  performance receipts plus the preregistered OpenRouter canary.
 - vLLM integration
   [`atlasfutures/vllm:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/vllm/tree/codex/rayline-vsr-mvp)
   at `b1049f6dd95c27d2e1b052eebc3b1a7f9f41195f`.
@@ -599,6 +602,33 @@ envelope is `$8.887761`, below the `$20` cap. It requires a new signed Semantic
 Router implementation commit and Pathfinder preregistration under
 `rayline-arc-real-workers-perf001-20260731` before any Modal launch.
 
+The preregistered packet completed on the exact frozen implementation and
+passed every correctness, metrics, privacy, and cleanup gate. All 80 measured
+requests completed with balanced 40/40 worker selections, each worker advanced
+exactly 40 vLLM successes and latency-histogram observations, preemptions and
+router selection failures remained zero, and the live sampler observed no
+request queue. Four coverage requests plus eight direct setup/baseline calls
+brought total generations to 92, below the 112-call maximum. The private
+aggregate receipt round-trips byte-for-byte at
+`rayline-ai/router-artifacts@e6cf0245ec9f97f0626939ba7cc7826d67497363`.
+Cleanup independently found zero compose resources, generation-worker tasks or
+containers, and encoder containers.
+
+The performance result is a negative production-readiness signal. ARC/direct
+throughput ratios were `0.256`, `0.218`, `0.157`, and `0.083` at concurrency
+`1`, `2`, `4`, and `8`. At concurrency eight, maximum-wave p95 was `18.81s`
+through ARC versus `1.88s` direct. The subsequent concurrency-four ARC soak
+recovered to `1.70` requests per summed wave second with `2.59s` maximum-wave
+p95, so the bounded evidence points to variable decision-plane contention or
+queueing rather than a simple generation-worker saturation limit. Direct and
+ARC completion-token counts also differed, which prevents treating the ratios
+as a clean per-token service-capacity curve. The next self-hosted rung must add
+stage-level traces around Envoy, Semantic Router, Pathfinder policy execution,
+and the protected encoder, then isolate encoder concurrency and per-episode
+session scheduling before assigning an SLO or capacity number. Conservative
+span accounting charges `$0.926876` for this packet and brings cumulative
+observed upper-bound spend to `$6.757164`.
+
 The user-requested realistic data-plane packet is a separate three-model
 OpenRouter canary, not an external-provider load test. A public synthetic
 three-arm head maps the protected real encoder's coordinate 252 into positive,
@@ -904,12 +934,15 @@ but held:
 8. Treat the bounded real-endpoint MVP gate as complete at `rwe009`: protected
    retained H100 encoder, ARC, dedicated Envoy TLS routes, two real L4 vLLM
    workers, concurrent routing, streaming, metrics, privacy, and cleanup pass.
-9. Preregister and run the fixed self-hosted direct-versus-ARC ladder at
-   concurrency `1, 2, 4, 8` plus the five-wave concurrency-four soak. Treat it
-   as the first performance observation, not a production saturation claim.
-10. Then run the separately preregistered, spend-limited three-model OpenRouter
+9. Treat the fixed self-hosted direct-versus-ARC ladder as complete. It passed
+   correctness but exposed ARC/direct throughput ratios falling from `0.256`
+   at concurrency one to `0.083` at concurrency eight. Use its private receipt
+   as the regression baseline, not a production saturation claim.
+10. Run the separately preregistered, spend-limited three-model OpenRouter
     canary to prove real external dispatch and usage accounting. Do not use its
-    provider latency as a stable throughput benchmark.
+    provider latency as a stable throughput benchmark. After that canary,
+    preregister a traced self-hosted diagnostic that isolates the decision
+    plane before another capacity packet.
 11. Keep the 1,000-case release qualification held until the user explicitly
     confirms execution.
 
