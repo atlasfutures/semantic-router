@@ -27,12 +27,14 @@ implementation heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
-  at `c6d83697` for the capability-gated retained-session client, hermetic
-  stack, bounded real-worker benchmark, and three-model OpenRouter canary.
+  at `7e4672ff` for the capability-gated retained-session client, hermetic
+  stack, bounded real-worker benchmark, fixed three-model OpenRouter transport
+  contract, and mandatory ARC component-readiness preflight.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `bb215515` for the registered retained-session, real-endpoint, and bounded
-  performance receipts plus the preregistered OpenRouter canary.
+  at `358c0eee` for the registered retained-session, real-endpoint, bounded
+  performance, and failed ORC001 receipts plus the preregistered fixed ORC002
+  OpenRouter canary.
 - vLLM integration
   [`atlasfutures/vllm:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/vllm/tree/codex/rayline-vsr-mvp)
   at `b1049f6dd95c27d2e1b052eebc3b1a7f9f41195f`.
@@ -667,6 +669,37 @@ It requires its own Pathfinder preregistration under
 `rayline-arc-openrouter-orc001-20260731`. Neither packet executes or relaxes
 the held 1,000-case release qualification.
 
+ORC001 failed closed on its first coverage request with HTTP 503. Encoder
+health warmup passed, but the router made zero encoder pooling calls and no
+selected provider generation was observed. A zero-cost exact-config
+reproducer emitted `llm_rayline_arc_component_ready=0` with failure class
+`artifact_dispatch_contract`: the backend refs declared `provider=openrouter`,
+which changed the canonical transport profile type even though the artifact
+requires the OpenAI-compatible `openai` transport. Fireworks pinning remains
+in the artifact dispatch fields. Commit `7e4672ff` corrects all three profiles,
+adds a config-to-artifact contract test, and makes ARC component readiness a
+mandatory pre-provider launcher gate. The full Semantic Router suite, CI gate,
+and initial/resume/Redis-loss Rayline compose workflow pass.
+
+The failed aggregate receipt is privately pinned and byte-for-byte verified at
+`rayline-ai/router-artifacts@f8860b6b3ac12f45c1fb1965e39d199d8d21f156`.
+Cleanup removed every compose resource, deleted the one-run OpenRouter and
+Modal proxy credentials, and returned the exact encoder app to zero
+containers. Because cleanup deleted the ephemeral key before its usage read,
+provider spend is not asserted as zero; it is conservatively bounded at the
+key's `$0.25` hard limit. Together with a 90-second full-run H100 span estimate,
+the attempt upper bound is `$0.370949`, bringing observed cumulative
+upper-bound spend to `$7.128113`.
+
+The materially fixed retry is separately preregistered as
+`rayline-arc-openrouter-orc002-20260731` at Pathfinder `358c0eee`. Models,
+Fireworks pin, prompts, request and token limits, `$0.10` reported-cost gate,
+`$0.25` key limit, privacy rules, and cleanup contract are unchanged. Its new
+preflight must observe component readiness equal to one before any explicit
+warmup or provider request. Observed prior spend plus its full packet envelope
+is `$9.877730`; even the deliberately over-conservative all-rungs envelope is
+`$14.386995`, below the `$20` cap.
+
 At the 2026-07-31 Modal rate snapshot, each 15-minute L4/4-CPU/16-GiB timeout
 envelope is `$0.278928`; both workers total `$0.557856`. Including the existing
 single-container H100 encoder's `$2.499617` timeout envelope gives a combined
@@ -938,11 +971,13 @@ but held:
    correctness but exposed ARC/direct throughput ratios falling from `0.256`
    at concurrency one to `0.083` at concurrency eight. Use its private receipt
    as the regression baseline, not a production saturation claim.
-10. Run the separately preregistered, spend-limited three-model OpenRouter
-    canary to prove real external dispatch and usage accounting. Do not use its
-    provider latency as a stable throughput benchmark. After that canary,
-    preregister a traced self-hosted diagnostic that isolates the decision
-    plane before another capacity packet.
+10. Treat ORC001 as a closed dispatch-contract failure with complete cleanup
+    and a private aggregate receipt. Run the separately preregistered ORC002
+    canary from fixed commit `7e4672ff`; require component readiness before any
+    provider request, retain the same three Fireworks-pinned models and spend
+    limits, and do not use provider latency as a stable throughput benchmark.
+    After that canary, preregister a traced self-hosted diagnostic that isolates
+    the decision plane before another capacity packet.
 11. Keep the 1,000-case release qualification held until the user explicitly
     confirms execution.
 
