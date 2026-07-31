@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
@@ -11,6 +13,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 HTTP_PATH = REPO_ROOT / "e2e/testing/rayline-arc/modal_http.py"
+WARMUP_PATH = REPO_ROOT / "e2e/testing/rayline-arc/modal_encoder_warmup.py"
 EXPECTED_MAX_RESULT_REDIRECTS = 2
 EXPECTED_HTTP_OK = 200
 
@@ -25,9 +28,10 @@ def _http_module() -> ModuleType:
 
 
 class FakeResponse:
-    def __init__(self, status: int, *, location: str = "") -> None:
+    def __init__(self, status: int, *, location: str = "", body: bytes = b"") -> None:
         self.status = status
         self.location = location
+        self.body = body
         self.read_called = False
 
     def getheader(self, name: str, default: str = "") -> str:
@@ -35,7 +39,7 @@ class FakeResponse:
 
     def read(self) -> bytes:
         self.read_called = True
-        return b""
+        return self.body
 
 
 class FakeConnection:
@@ -132,4 +136,49 @@ def test_result_redirect_refuses_cross_origin_credentials() -> None:
         )
 
     assert len(connections[0].requests) == 1
+    assert connections[0].closed
+
+
+def test_encoder_warmup_uses_protected_health_without_session() -> None:
+    http_module = _http_module()
+    sys.modules["modal_http"] = http_module
+    spec = importlib.util.spec_from_file_location("modal_encoder_warmup", WARMUP_PATH)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    response = FakeResponse(
+        EXPECTED_HTTP_OK,
+        body=json.dumps(
+            {
+                "status": "ok",
+                "pooling_capabilities": [
+                    "resumable_causal_mean",
+                    "chunked_causal_mean",
+                ],
+            }
+        ).encode(),
+    )
+    connections, connection_factory = _fake_connection_factory(http_module, [response])
+
+    result = module.warm_encoder(
+        base_url="https://encoder.example",
+        modal_key="public-modal-key",
+        modal_secret="public-modal-secret",
+        timeout_seconds=1,
+        connection_factory=connection_factory,
+    )
+
+    assert result["status"] == "ok"
+    assert connections[0].requests == [
+        (
+            "GET",
+            "/health",
+            None,
+            {
+                "Modal-Key": "public-modal-key",
+                "Modal-Secret": "public-modal-secret",
+            },
+        )
+    ]
     assert connections[0].closed

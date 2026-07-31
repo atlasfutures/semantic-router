@@ -498,6 +498,25 @@ separation, absence of embedded authorization, compose interpolation, and
 Envoy v1.34 configuration. A new Pathfinder experiment ID and signed Semantic
 Router commit are required before that corrected path consumes paid resources.
 
+`rwe007` started that dedicated Envoy fixture and again passed all eight direct
+real-worker generations. Router startup had already warmed and validated the
+protected encoder, but the L4 cold baselines took about six minutes, exceeding
+the encoder's five-minute idle scale-down window. The first routed request then
+triggered a second H100 cold start and exhausted the 180-second end-to-end
+timeout before ARC produced a worker selection. No request reached either
+routed worker. Cleanup again reached zero local and Modal resources. The
+private receipt is pinned at
+`rayline-ai/router-artifacts@e4570094ec30d369d738ab6127e302cccdf68bc0`;
+its conservative `$1.144849` estimate brings session plus real-worker work to
+about `$3.777119`.
+
+The next packet adds one authenticated, continuation-aware `GET /health`
+against the exact protected encoder immediately after the direct baselines.
+It validates the retained pooling capability set, allocates no encoder session,
+adds no generation request or prompt, and reports its latency. This makes
+encoder residency at the start of routed measurement explicit without
+extending the deployed H100 idle window or weakening the routed timeout.
+
 At the 2026-07-31 Modal rate snapshot, each 15-minute L4/4-CPU/16-GiB timeout
 envelope is `$0.278928`; both workers total `$0.557856`. Including the existing
 single-container H100 encoder's `$2.499617` timeout envelope gives a combined

@@ -8,7 +8,6 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import hashlib
-import http.client
 import json
 import math
 import os
@@ -16,8 +15,9 @@ import re
 import sys
 import time
 from typing import Any
-from urllib.parse import urlparse
 
+from modal_encoder_warmup import warm_encoder_from_environment
+from modal_http import connection_for_url as _connection
 from modal_http import request_following_result_redirects
 
 HTTP_OK = 200
@@ -56,23 +56,6 @@ CANDIDATE_PROMPTS = (
     "Use one word to describe a mountain.",
     "Reply with the word done.",
 )
-
-
-def _connection(base_url: str, timeout_seconds: float) -> tuple[Any, str]:
-    parsed = urlparse(base_url)
-    if not parsed.hostname:
-        raise ValueError("URL omitted hostname")
-    connection_type = (
-        http.client.HTTPSConnection
-        if parsed.scheme == "https"
-        else http.client.HTTPConnection
-    )
-    connection = connection_type(
-        parsed.hostname,
-        parsed.port,
-        timeout=timeout_seconds,
-    )
-    return connection, parsed.path.rstrip("/")
 
 
 def _episode_id(run_id: str, label: str) -> str:
@@ -395,6 +378,7 @@ def _build_report(
     gateway_results: list[dict[str, Any]],
     concurrent_results: list[dict[str, Any]],
     concurrent_wall: float,
+    encoder_warmup: dict[str, Any],
     stream: dict[str, Any],
     session_actions: dict[str, float],
 ) -> dict[str, Any]:
@@ -415,6 +399,7 @@ def _build_report(
         "run_id": run_id,
         "status": "passed",
         "real_workers": sorted(WORKERS),
+        "encoder_warmup": encoder_warmup,
         "direct": direct_summary,
         "gateway": {
             "coverage_requests": len(gateway_results),
@@ -468,6 +453,12 @@ def main() -> None:
         authorization=f"Bearer {worker_api_key}",
         timeout_seconds=args.timeout_seconds,
     )
+    print("real-worker encoder warmup: starting", file=sys.stderr, flush=True)
+    encoder_warmup = warm_encoder_from_environment(
+        timeout_seconds=args.timeout_seconds,
+        connection_factory=_connection,
+    )
+    print("real-worker encoder warmup: complete", file=sys.stderr, flush=True)
     selected_prompts, gateway_results = _cover_workers(
         gateway_url=args.gateway_url,
         run_id=args.run_id,
@@ -497,6 +488,7 @@ def main() -> None:
         gateway_results=gateway_results,
         concurrent_results=concurrent_results,
         concurrent_wall=concurrent_wall,
+        encoder_warmup=encoder_warmup,
         stream=stream,
         session_actions=session_actions,
     )

@@ -4,12 +4,29 @@
 
 from __future__ import annotations
 
+import http.client
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
 HTTP_SEE_OTHER = 303
 MAX_RESULT_REDIRECTS = 2
+
+
+def connection_for_url(url: str, timeout_seconds: float) -> tuple[Any, str]:
+    """Create one bounded HTTP(S) connection and normalized path prefix."""
+    parsed = urlparse(url)
+    if not parsed.hostname:
+        raise ValueError("URL omitted hostname")
+    connection_type = (
+        http.client.HTTPSConnection
+        if parsed.scheme == "https"
+        else http.client.HTTPConnection
+    )
+    return (
+        connection_type(parsed.hostname, parsed.port, timeout=timeout_seconds),
+        parsed.path.rstrip("/"),
+    )
 
 
 def _origin(url: str) -> tuple[str, str | None, int | None]:
