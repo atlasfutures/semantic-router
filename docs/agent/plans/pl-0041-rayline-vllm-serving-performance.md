@@ -517,6 +517,29 @@ adds no generation request or prompt, and reports its latency. This makes
 encoder residency at the start of routed measurement explicit without
 extending the deployed H100 idle window or weakening the routed timeout.
 
+`rwe008` validated that correction: both direct workers passed, the protected
+post-baseline warmup restored the encoder, and 24/24 routed requests completed
+through the protected H100 encoder, ARC, dedicated Envoy TLS route, and a real
+vLLM worker. All 24 selected the same arm, so the preregistered two-arm coverage
+gate correctly stopped before concurrency and streaming. This is a synthetic
+fixture-axis problem rather than another transport failure: the test head reads
+embedding coordinate zero, which did not separate the frozen public candidates.
+The private receipt is pinned at
+`rayline-ai/router-artifacts@5c2d4580caa4e7ff8e281dbd242207897e27fc36`;
+its conservative `$1.050590` estimate brings session plus real-worker work to
+about `$4.827709`.
+
+The next bounded packet is an H100-only candidate-axis probe over those exact
+24 public prompts. It ranks coordinates first by minority-sign count, then by
+minimum and median absolute normalized margin, with the lowest coordinate as
+the deterministic final tie-break. It requires at least six candidates on each
+side and a `0.0001` minimum absolute margin. Its receipt contains only the
+selected coordinate, sign counts, aggregate margins, timings, and cleanup—not
+prompt text or raw embeddings. A passing result may update only the public
+synthetic head and goldens on a new signed commit; the subsequent two-L4
+real-worker canary requires its own preregistration and must retain every
+coverage, concurrency, streaming, metrics, privacy, and cleanup gate.
+
 At the 2026-07-31 Modal rate snapshot, each 15-minute L4/4-CPU/16-GiB timeout
 envelope is `$0.278928`; both workers total `$0.557856`. Including the existing
 single-container H100 encoder's `$2.499617` timeout envelope gives a combined
