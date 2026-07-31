@@ -39,11 +39,12 @@ contract, and receipt v2 refuses non-unit vectors. Offline replay shows that
 explicit local pre-normalization changes no raw argmax decision, so scale was
 a measurement defect rather than the cause of the four flips.
 
-The execution-alignment MVP now closes the six-case smoke. A Torch-reference
+The execution-alignment MVP closed the first six-case smoke. A Torch-reference
 GDN path plus Triton attention reduced the original four flips to one
-same-model thinking-mode tie. Applying the existing cheap-default margin at
-`0.002` to both local and remote contracts changes one local decision, changes
-zero remote decisions, and produces a strict zero-flip receipt.
+same-model thinking-mode tie. Applying a global cheap-default margin at `0.002`
+to both local and remote contracts changed one local decision, changed zero
+remote decisions, and produced a strict zero-flip receipt, but later quality
+evidence rejects that global contract.
 
 The first task-disjoint preflight rejects the original precedence. Applied
 after the previous-worker stay margin, the guard changed 40/524 canonical dev
@@ -53,9 +54,17 @@ evidence. Applying the same threshold before stay resolution changed 0/524 and
 preserved 14 switches. That candidate is behaviorally safe on this replay but
 explicitly `insufficient_power`, not a quality pass.
 
-The pre-stay six-case recanary now passes all execution-parity gates. The
-remaining debt is targeted same-state route-0 quality/regret evidence around
-the rare boundary and the full 1,000-decision RSP-004Q qualification.
+A targeted 178-state C9 route-0 screen found the global rule crossed model
+families four times. Three scorable changes had mean reward delta `-0.1667` and
+worst task delta `-0.5`; one unscorable change failed closed. The global rule
+is retired, regardless of whether it runs before or after stay resolution.
+
+The replacement is a `0.0005` tie-break restricted to thinking-on/off arms of
+the same Flash base model. It made zero cross-model changes and was inert on
+both the 178-state screen and all 524 historical decisions, preserving 14
+switches. Its dedicated six-case recanary passes all execution-parity gates.
+The remaining debt is a powered changed-action quality/regret result for this
+narrow rule and the held full 1,000-decision RSP-004Q qualification.
 
 ## Evidence
 
@@ -117,6 +126,28 @@ the rare boundary and the full 1,000-decision RSP-004Q qualification.
   provider calls, passed the prompt-log privacy scan, and the Modal app stopped
   with zero tasks. This closes the smoke criterion only; the replay remains
   underpowered for route-0 quality.
+- The targeted route-0 screen and the 524-decision narrow-rule replay are
+  privately pinned and exact-round-trip verified at
+  `rayline-ai/router-artifacts@d4a2d67b10b0e435c70de10a320c2b0590d520e8`.
+  The C9 screen contains 178 unique initial states outside C82's four source
+  lineages; it is not claimed task-identity-disjoint from every C82 fit row.
+  The global rule changed four decisions and is rejected; the narrow rule
+  changed zero decisions on both screens and is therefore scope-compatible but
+  underpowered.
+- The narrow-rule local/remote recanary is privately pinned and exact-round-trip
+  verified at
+  `rayline-ai/router-artifacts@b707b2715018edaa269e08e16f1755491d79fd06`.
+  It passed 6/6 decisions with zero flips, exact token counts,
+  `0.0011912882` maximum gap drift, `0.9999849696` minimum embedding cosine,
+  zero provider calls, and stopped cleanup. Observed infrastructure was
+  `$0.155999`.
+- Pathfinder
+  [`63eead46`](https://github.com/atlasfutures/pathfinder/commit/63eead4666c7785ceaa02c913bb810ac85280f94)
+  records the exact held RSP-004Q packet. The driver is source-frozen at
+  `c7dde584`, the confirmation-gated launcher at `565c2afb`, and the cumulative
+  conservative envelope is `$14.484864` against the `$20` cap. The launcher
+  refuses paid execution without both its dedicated flag and exact confirmation
+  token. Actual 1,000-decision arms launched: zero.
 
 ## Why It Matters
 
@@ -134,9 +165,10 @@ implementation feedback loop makes correction unnecessarily slow and costly.
 
 Both encoder backends return the same documented normalized-vector contract,
 and the MVP receipt proves deterministic routing selection under the accepted
-cross-engine numeric envelope. The remaining desired state is evidence that
-the explicit stability rule preserves task quality and acceptable regret on a
-task-disjoint replay and the full qualification corpus.
+cross-engine numeric envelope. The global cheap-default rule is no longer a
+candidate. The remaining desired state is evidence that the narrow same-model
+thinking tie-break preserves task quality and acceptable regret when it
+actually fires, plus a passing full qualification receipt.
 
 A small boundary-heavy smoke corpus provides fast implementation feedback. The
 full 1,000-decision corpus remains the final qualification.

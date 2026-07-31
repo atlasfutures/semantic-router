@@ -26,7 +26,7 @@ qualification remain open. Current published implementation heads:
   at `8c7171ebb2569241836960c273f679107b23a678`.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `05c4f1df7e1654897fec291e338426b810b1af98`.
+  at `63eead4666c7785ceaa02c913bb810ac85280f94`.
 - vLLM integration
   [`atlasfutures/vllm:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/vllm/tree/codex/rayline-vsr-mvp)
   at `6ef6e84425d4493566a95ffcdfcb79f3c27abc46`.
@@ -401,14 +401,15 @@ Not in scope:
   Transformers model-implementation, GDN, Q/K projection, normalization,
   FlexAttention, and Triton-attention variants. The first strict MVP pass uses
   David's causal-MEAN path, Transformers-ordered Torch-reference GDN
-  preparation, memory-bounded Triton attention, and the existing
+  preparation, memory-bounded Triton attention, and an exploratory global
   cheap-default selection margin set to `0.002` on both local and remote
   contracts. Its receipt passes all eight hard gates over six decisions and
   426,979 tokens: zero selection flips, exact token-count and contract
   identity, minimum embedding cosine `0.9999849695`, and maximum adjusted
-  top-two gap drift `0.0011914223` against the `0.005` gate. The guard changes
-  one local near-tie and zero remote decisions in offline replay; it is an MVP
-  stability contract, not evidence of production quality non-regression.
+  top-two gap drift `0.0011914223` against the `0.005` gate. That guard changed
+  one local near-tie and zero remote decisions in the smoke, but later quality
+  evidence rejects it; this receipt remains historical execution evidence, not
+  an accepted policy contract.
   Private artifacts are pinned at
   `rayline-ai/router-artifacts@306ca8c40470820f36d3decb5bfd9414552b5b7a`.
   The reproducible controller and result ledger are published at
@@ -426,14 +427,38 @@ Not in scope:
   `rayline-ai/router-artifacts@b82e0afc2da53e6268dc72ba13a23df7e863e9c0`.
   This closes the reordered-policy smoke only; it does not supply the missing
   route-0 quality/regret evidence.
+  A subsequent 178-state, source-lineage-disjoint C9 route-0 screen rejects the
+  global `0.002` Flash-off default outright. It crossed model families on four
+  decisions; three scorable changes had mean reward delta `-0.1667` and worst
+  task delta `-0.5`, while one unscorable change failed closed. The replacement
+  rule is restricted to Flash thinking-on versus the same base model's
+  thinking-off arm within `0.0005`. It made zero cross-model changes and was
+  inert on both the 178-state screen and all 524 canonical C82 dev decisions,
+  preserving the historical 14 switches. Those are scope and compatibility
+  screens, not powered changed-action quality evidence. Both private offline
+  bundles are round-trip verified at
+  `rayline-ai/router-artifacts@d4a2d67b10b0e435c70de10a320c2b0590d520e8`.
+  The narrow-rule L40S recanary then passed all hard gates: 6/6 decisions, zero
+  flips, exact token counts, `0.0011912882` maximum gap drift, and
+  `0.9999849696` minimum embedding cosine. Its seven-file private bundle is
+  round-trip verified at
+  `rayline-ai/router-artifacts@b707b2715018edaa269e08e16f1755491d79fd06`;
+  measured infrastructure was `$0.155999`, provider calls were zero, and the
+  Modal app stopped with zero tasks.
 - [ ] **RSP-004Q — Complete production parity and stability qualification.**
-  Replay a larger task-disjoint, quality-labeled development set to measure
-  task quality, cost, churn, and regret from the `0.002` stability margin, then
-  run the existing 1,000-decision, 41.2-million-token qualification corpus
-  through the winning local and remote contracts. TD048 remains open until
-  both gates pass. Preparation, input pinning, and dry-run validation are
-  authorized; launching either paid 1,000-decision arm requires a fresh,
-  explicit user confirmation after the readiness packet is presented.
+  The global `0.002` candidate is rejected. The selected qualification contract
+  is the `0.0005` same-model thinking tie-break, whose two offline screens are
+  compatible but underpowered because it fired zero times. The exact
+  1,000-decision, 41.2-million-token local and remote launch packet is now
+  frozen and registered at Pathfinder `63eead46`: source, input, model, plugin,
+  timeouts, acceptance gates, cleanup checks, and a cumulative conservative
+  `$14.484864` envelope are pinned against the `$20` cap. The launcher defaults
+  to packet-only mode and refuses Modal execution unless both
+  `--execute-paid-1000` and `RSP-004Q-1000-CONFIRMED` are supplied. Actual
+  1,000-decision arms launched: zero. Await fresh user confirmation before
+  either arm. TD048 remains open for both the held full-corpus parity result and
+  genuinely powered changed-action quality evidence (or an explicit reviewed
+  decision accepting the narrow same-model canonicalization without it).
 - [x] **RSP-004A — Enable cross-episode remote selection concurrency.** Add an
   explicit policy thread-safety capability, allow immutable MTRouter remote
   selections for different prepared episodes to overlap, retain the existing
@@ -480,30 +505,34 @@ Not in scope:
 ## Next Action
 
 The end-to-end stateless MVP is complete, RSP-004A's implementation boundary is
-landed, and the first task-disjoint stability preflight has resolved the policy
-ordering:
+landed, and RSP-004Q is fully prepared but held:
 
 1. Treat the original post-stay `0.002` guard as rejected. On 60 canonical C82
    dev attempts it changed 40/524 decisions (`7.63%`) and increased switches
    `14→30`, failing the frozen behavior gate. The sanitized replay is pinned at
    `rayline-ai/router-artifacts@b947be95f9181058270b572d285c7efde5b5b074`.
-2. Use the explicit `pre_stay` candidate for the next smoke. It changed 0/524
-   decisions and preserved 14 switches on the same replay, so it removes the
-   churn regression, but the result is `insufficient_power`, not a quality
-   pass: no route-0 action changed. Evidence is pinned at
-   `rayline-ai/router-artifacts@e7f862ede913559a4985b8354296b580ab1f919d`.
-3. The six-case local/remote `pre_stay` recanary is complete and passes 6/6
-   decisions with zero flips, exact tokens, `0.001191` maximum gap drift, and
-   `0.99998497` minimum embedding cosine. Its private bundle is pinned at
-   `rayline-ai/router-artifacts@b82e0afc2da53e6268dc72ba13a23df7e863e9c0`.
-   This is an execution-parity pass, not a quality pass.
-4. Build targeted same-state route-0 evidence around the `0.002` boundary. The
-   pre-stay replay remains `insufficient_power` until this rung can measure
-   quality/regret on decisions the rule actually changes.
-5. Prepare the **RSP-004Q** 1,000-decision local and remote commands, pins,
-   budget envelope, and cleanup checks. Stop at the launch boundary and wait
-   for the user's explicit confirmation; readiness alone is not authorization.
-6. Then proceed to RSP-005 cache feasibility and the router-only performance
+2. Retire the global rule rather than promoting its `pre_stay` ordering. The
+   targeted 178-state route-0 screen observed four cross-model changes, one
+   unscorable change, mean paired reward delta `-0.1667`, and worst delta
+   `-0.5`; it is rejected fail-closed. This screen excludes the C82 source
+   lineages but does not claim complete task-identity disjointness. Evidence is
+   pinned at
+   `rayline-ai/router-artifacts@d4a2d67b10b0e435c70de10a320c2b0590d520e8`.
+3. Use only the narrow `0.0005` same-model thinking tie-break. It changed 0/178
+   targeted route-0 states and 0/524 historical decisions, with zero cross-model
+   changes and switches preserved at 14. This establishes scope and historical
+   compatibility, not changed-action task quality.
+4. Treat the narrow-rule recanary as the final live readiness gate before the
+   full corpus: it passed 6/6 with zero flips, exact token counts, `0.001191`
+   maximum gap drift, `0.99998497` minimum embedding cosine, zero provider
+   calls, and stopped cleanup. Its bundle is pinned at
+   `rayline-ai/router-artifacts@b707b2715018edaa269e08e16f1755491d79fd06`.
+5. Keep the frozen **RSP-004Q** packet at Pathfinder `63eead46` held. It is
+   registered, digest-verified, dual-interlocked, and budgeted at a cumulative
+   conservative `$14.484864` against the `$20` cap. Actual 1,000-case arms
+   launched remain zero; only explicit user confirmation may change that.
+6. After RSP-004Q execution and cleanup, proceed to RSP-005 cache feasibility
+   and the router-only performance
    ladder. Keep the stateless full-history path as the reconstructible
    correctness fallback.
 
@@ -544,8 +573,10 @@ it is a separate follow-up rather than the current `/v1/route/prepare` blocker.
 - Keep TD047 open until a router-only receipt shows concurrent-safe MTRouter
   selections reaching the real encoder/vLLM boundary at observed in-flight
   concurrency above one; the in-process fencing tests are already green.
-- Keep TD048 open until the stability margin passes task-disjoint
-  quality/regret evaluation and the full RSP-004Q parity qualification.
+- Keep TD048 open until the narrow stability rule gains powered changed-action
+  quality/regret evidence (or an explicit reviewed acceptance of its
+  canonicalization semantics) and the full RSP-004Q parity qualification
+  passes.
 
 ## Related Docs
 
