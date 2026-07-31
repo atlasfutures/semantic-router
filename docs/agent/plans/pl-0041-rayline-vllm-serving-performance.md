@@ -445,6 +445,11 @@ probe through strictly numeric config, and leaves the hermetic fake URL/build
 as compose defaults. This separation was added after `rwe001` correctly failed readiness:
 that first packet switched only worker endpoints, so fresh Modal credentials
 were sent to the fake encoder and the real H100 service was never invoked.
+The follow-up `rwe002` reached and passed that protected encoder probe, but its
+launcher waited for `/health` on the Envoy generation listener. Envoy correctly
+returned `503` for that non-generation route while the router API health port
+was already `200`; the corrected launcher waits on the router API and still
+sends all measured generation requests through Envoy.
 
 At the 2026-07-31 Modal rate snapshot, each 15-minute L4/4-CPU/16-GiB timeout
 envelope is `$0.278928`; both workers total `$0.557856`. Including the existing

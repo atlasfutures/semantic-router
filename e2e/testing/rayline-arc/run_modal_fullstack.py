@@ -31,6 +31,7 @@ ENCODER_HOST = (
     "atlasfutures-dev--rayline-arc-session-encoder-sessionenc-2d82ac.modal.run"
 )
 GATEWAY_URL = "http://127.0.0.1:18888"
+ROUTER_HEALTH_URL = "http://127.0.0.1:18082/health"
 METRICS_URL = "http://127.0.0.1:19190/metrics"
 MAX_STARTUP_SECONDS = 240
 MAX_CANARY_SECONDS = 15 * 60
@@ -154,7 +155,7 @@ def main() -> None:
             _compose_command("up", "--build", "--detach"),
             environment=environment,
         )
-        _wait_http(f"{GATEWAY_URL}/health")
+        _wait_http(ROUTER_HEALTH_URL)
         print("real-worker canary: starting", file=sys.stderr, flush=True)
         _run(
             [

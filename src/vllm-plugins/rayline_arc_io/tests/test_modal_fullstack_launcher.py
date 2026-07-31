@@ -39,6 +39,8 @@ def test_real_worker_launcher_pins_real_encoder_and_global_deadlines() -> None:
     assert _assignment_value("MAX_CANARY_SECONDS") == EXPECTED_CANARY_SECONDS
     assert "rayline-arc-session-encoder-sessionenc-2d82ac.modal.run" in source
     assert "vllm@b1049f6dd95c27d2e1b052eebc3b1a7f9f41195f" in source
+    assert 'ROUTER_HEALTH_URL = "http://127.0.0.1:18082/health"' in source
+    assert "_wait_http(ROUTER_HEALTH_URL)" in source
     assert "timeout=MAX_CANARY_SECONDS" in source
 
 
