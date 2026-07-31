@@ -9,6 +9,7 @@ COMPOSE_PATH = REPO_ROOT / "deploy/compose/rayline-arc/compose.yaml"
 CONFIG_PATH = REPO_ROOT / "deploy/compose/rayline-arc/config.yaml"
 EXPECTED_STARTUP_SECONDS = 240
 EXPECTED_CANARY_SECONDS = 15 * 60
+EXPECTED_MODAL_VERSION = "1.5.1"
 
 
 def _tree() -> ast.Module:
@@ -42,6 +43,14 @@ def test_real_worker_launcher_pins_real_encoder_and_global_deadlines() -> None:
     assert 'ROUTER_HEALTH_URL = "http://127.0.0.1:18082/health"' in source
     assert "_wait_http(ROUTER_HEALTH_URL)" in source
     assert "timeout=MAX_CANARY_SECONDS" in source
+
+
+def test_launcher_uses_one_pinned_modal_sdk_for_api_and_cli() -> None:
+    source = LAUNCHER_PATH.read_text(encoding="utf-8")
+    assert f'REQUIRED_MODAL_VERSION = "{EXPECTED_MODAL_VERSION}"' in source
+    assert "modal.__version__ != REQUIRED_MODAL_VERSION" in source
+    assert 'modal_command = [sys.executable, "-m", "modal"]' in source
+    assert 'shutil.which("modal")' not in source
 
 
 def test_encoder_identity_is_dynamic_but_timeouts_remain_typed() -> None:

@@ -101,7 +101,6 @@ def server_command(served_model_name: str) -> list[str]:
         "--api-key",
         api_key,
         "--enforce-eager",
-        "--disable-log-requests",
         "--disable-log-stats",
     ]
 

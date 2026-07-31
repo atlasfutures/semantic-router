@@ -8,7 +8,6 @@ from __future__ import annotations
 import argparse
 import os
 import secrets
-import shutil
 import subprocess
 import sys
 import time
@@ -36,6 +35,7 @@ METRICS_URL = "http://127.0.0.1:19190/metrics"
 MAX_STARTUP_SECONDS = 240
 MAX_CANARY_SECONDS = 15 * 60
 HTTP_OK = 200
+REQUIRED_MODAL_VERSION = "1.5.1"
 
 
 def _run(
@@ -127,9 +127,12 @@ def main() -> None:
     parser.add_argument("--timeout-seconds", type=float, default=180.0)
     args = parser.parse_args()
 
-    modal_command = shutil.which("modal")
-    if not modal_command:
-        raise SystemExit("modal CLI is required")
+    if modal.__version__ != REQUIRED_MODAL_VERSION:
+        raise SystemExit(
+            f"Modal SDK {REQUIRED_MODAL_VERSION} is required; "
+            f"found {modal.__version__}"
+        )
+    modal_command = [sys.executable, "-m", "modal"]
     worker_api_key = secrets.token_urlsafe(32)
     manager = modal.Workspace.from_context().proxy_tokens
     proxy_token = manager.create()
@@ -141,7 +144,7 @@ def main() -> None:
     try:
         print("real-worker deploy: starting", file=sys.stderr, flush=True)
         _run(
-            [modal_command, "deploy", str(WORKER_SERVICE)],
+            [*modal_command, "deploy", str(WORKER_SERVICE)],
             environment=environment,
         )
         print("real-worker compose: starting", file=sys.stderr, flush=True)
@@ -197,7 +200,7 @@ def main() -> None:
             manager.delete(proxy_token.token_id)
         finally:
             _run(
-                [modal_command, "app", "stop", WORKER_APP_NAME, "--yes"],
+                [*modal_command, "app", "stop", WORKER_APP_NAME, "--yes"],
                 environment=environment,
                 check=False,
                 capture_output=True,

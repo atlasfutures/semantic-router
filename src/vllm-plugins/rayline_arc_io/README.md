@@ -112,4 +112,13 @@ servers, requires an injected `RAYLINE_ARC_WORKER_API_KEY`, disables automatic
 prefix caching, and caps each worker at one container. Use
 `e2e/testing/rayline-arc/run_modal_fullstack.py` to create short-lived
 credentials, deploy the workers, exercise both routing paths plus streaming,
-and stop the worker app during guaranteed cleanup.
+and stop the worker app during guaranteed cleanup. Run it with the pinned SDK:
+
+```bash
+UV_LOCKED=0 uv run --with modal==1.5.1 python \
+  e2e/testing/rayline-arc/run_modal_fullstack.py --run-id <registered-run-id>
+```
+
+The launcher uses that same interpreter for Modal deploy and cleanup commands,
+so its proxy-token API and serialized function graph cannot silently come from
+different SDK versions.

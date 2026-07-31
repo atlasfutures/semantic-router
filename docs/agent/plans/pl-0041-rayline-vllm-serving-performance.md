@@ -459,6 +459,15 @@ call. The next packet makes that Secret dependency structurally unconditional
 across both import environments while retaining `server_command`'s fail-closed
 authentication check.
 
+`rwe004` validated that correction on both live L4 functions, then stopped at
+the next pre-generation boundary: the pinned vLLM build rejected the legacy
+`--disable-log-requests` flag. In this build request logging is already opt-in
+through `--enable-log-requests`. An exact-commit source audit found every other
+configured flag, including `--no-enable-prefix-caching`; the next packet removes
+only the unsupported flag. It also pins Modal SDK `1.5.1` and invokes its CLI
+through the same Python interpreter as the proxy-token API, eliminating a
+local-library/system-CLI version split observed during zero-cost preflight.
+
 At the 2026-07-31 Modal rate snapshot, each 15-minute L4/4-CPU/16-GiB timeout
 envelope is `$0.278928`; both workers total `$0.557856`. Including the existing
 single-container H100 encoder's `$2.499617` timeout envelope gives a combined
