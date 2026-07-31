@@ -166,6 +166,74 @@ func TestManifestRejectsInvalidWorkerDispatchContract(t *testing.T) {
 	}
 }
 
+func TestLoadRuntimeAcceptsPinnedOpenAICompatibleWorkers(t *testing.T) {
+	runtimeDir := writeSyntheticRuntime(
+		t,
+		func(manifest *Manifest, _ map[string]syntheticTensor) {
+			for index := range manifest.Workers {
+				worker := &manifest.Workers[index]
+				worker.DispatchBackend = DispatchOpenAICompat
+				worker.ProviderBaseURL = "https://worker.example/v1"
+				worker.OpenRouterProviderSlug = ""
+				worker.OpenRouterProviderName = ""
+				worker.OpenRouterProviderOrder = nil
+				worker.OpenRouterRequireParameters = false
+				worker.OpenRouterPricingSource = ""
+				worker.ExtraBody = json.RawMessage(
+					`{"chat_template_kwargs":{"enable_thinking":false}}`,
+				)
+			}
+		},
+	)
+	if _, err := LoadRuntime(runtimeDir); err != nil {
+		t.Fatalf("LoadRuntime() error = %v", err)
+	}
+}
+
+func TestManifestRejectsOpenAICompatibleContractDrift(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*WorkerManifest)
+	}{
+		{"missing URL", func(worker *WorkerManifest) {
+			worker.ProviderBaseURL = ""
+		}},
+		{"URL credentials", func(worker *WorkerManifest) {
+			worker.ProviderBaseURL = "https://user:secret@worker.example/v1"
+		}},
+		{"OpenRouter fields", func(worker *WorkerManifest) {
+			worker.OpenRouterProviderSlug = "provider"
+		}},
+		{"missing thinking contract", func(worker *WorkerManifest) {
+			worker.ExtraBody = json.RawMessage(`{}`)
+		}},
+		{"thinking mismatch", func(worker *WorkerManifest) {
+			worker.ExtraBody = json.RawMessage(
+				`{"chat_template_kwargs":{"enable_thinking":true}}`,
+			)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			worker := syntheticWorker("worker", 0.00001, 0.000001)
+			worker.DispatchBackend = DispatchOpenAICompat
+			worker.ProviderBaseURL = "https://worker.example/v1"
+			worker.OpenRouterProviderSlug = ""
+			worker.OpenRouterProviderName = ""
+			worker.OpenRouterProviderOrder = nil
+			worker.OpenRouterRequireParameters = false
+			worker.OpenRouterPricingSource = ""
+			worker.ExtraBody = json.RawMessage(
+				`{"chat_template_kwargs":{"enable_thinking":false}}`,
+			)
+			test.mutate(&worker)
+			if err := validateWorker(&worker, 0, "worker", map[string]struct{}{}); err == nil {
+				t.Fatal("invalid openai-compatible worker was accepted")
+			}
+		})
+	}
+}
+
 func TestRuntimeArtifactFromEnvironment(t *testing.T) {
 	runtimeDir := os.Getenv("RAYLINE_ARC_TEST_RUNTIME_DIR")
 	if runtimeDir == "" {

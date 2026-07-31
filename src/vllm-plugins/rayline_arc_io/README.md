@@ -103,3 +103,13 @@ The response reports `retained_prefix_tokens`, `appended_tokens`,
 `session_action`, and `session_revision`. These are explicit live-session
 metrics and must not be interpreted as vLLM automatic prefix-cache hits;
 automatic prefix caching remains disabled.
+
+## Real generation workers
+
+`modal_generation_workers.py` is separate, ephemeral test infrastructure for
+the real-worker full-stack rung. It deploys two revision-pinned L4 vLLM OpenAI
+servers, requires an injected `RAYLINE_ARC_WORKER_API_KEY`, disables automatic
+prefix caching, and caps each worker at one container. Use
+`e2e/testing/rayline-arc/run_modal_fullstack.py` to create short-lived
+credentials, deploy the workers, exercise both routing paths plus streaming,
+and stop the worker app during guaranteed cleanup.

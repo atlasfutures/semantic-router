@@ -382,34 +382,6 @@ func validateWorkerDispatch(worker *WorkerManifest) error {
 	return nil
 }
 
-func validateWorkerProviderContract(worker *WorkerManifest) error {
-	required := map[string]string{
-		"api_key_env":             worker.APIKeyEnv,
-		"provider slug":           worker.OpenRouterProviderSlug,
-		"provider name":           worker.OpenRouterProviderName,
-		"provider pricing source": worker.OpenRouterPricingSource,
-	}
-	for label, value := range required {
-		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("worker %q %s is required", worker.ID, label)
-		}
-	}
-	if len(worker.OpenRouterProviderOrder) != 1 ||
-		worker.OpenRouterProviderOrder[0] != worker.OpenRouterProviderSlug {
-		return fmt.Errorf(
-			"worker %q provider order must contain only its provider slug",
-			worker.ID,
-		)
-	}
-	if worker.OpenRouterAllowFallbacks {
-		return fmt.Errorf("worker %q must disable provider fallbacks", worker.ID)
-	}
-	if !worker.OpenRouterRequireParameters {
-		return fmt.Errorf("worker %q must require provider parameters", worker.ID)
-	}
-	return nil
-}
-
 func validateWorkerExecutionContract(worker *WorkerManifest) error {
 	if err := validateWorkerThinkingContract(worker); err != nil {
 		return err
@@ -480,13 +452,60 @@ func validateWorkerExtraBody(worker *WorkerManifest) error {
 			)
 		}
 	}
-	if err := validateWorkerReasoningBody(worker, extra); err != nil {
-		return err
-	}
-	if err := validateWorkerReasoningEffort(worker, extra); err != nil {
+	if err := validateWorkerBackendExtraBody(worker, extra); err != nil {
 		return err
 	}
 	return validateWorkerExtraMaxTokens(worker, extra)
+}
+
+func validateWorkerBackendExtraBody(
+	worker *WorkerManifest,
+	extra map[string]json.RawMessage,
+) error {
+	if worker.EffectiveDispatchBackend() == DispatchOpenAICompat {
+		return validateWorkerOpenAICompatibleThinking(worker, extra)
+	}
+	if err := validateWorkerReasoningBody(worker, extra); err != nil {
+		return err
+	}
+	return validateWorkerReasoningEffort(worker, extra)
+}
+
+func validateWorkerOpenAICompatibleThinking(
+	worker *WorkerManifest,
+	extra map[string]json.RawMessage,
+) error {
+	if _, exists := extra["reasoning"]; exists {
+		return fmt.Errorf(
+			"worker %q openai-compatible extra_body cannot declare reasoning",
+			worker.ID,
+		)
+	}
+	if _, exists := extra["reasoning_effort"]; exists {
+		return fmt.Errorf(
+			"worker %q openai-compatible extra_body cannot declare reasoning_effort",
+			worker.ID,
+		)
+	}
+	raw, exists := extra["chat_template_kwargs"]
+	if !exists {
+		return fmt.Errorf(
+			"worker %q openai-compatible chat_template_kwargs contract is required",
+			worker.ID,
+		)
+	}
+	var template struct {
+		EnableThinking *bool `json:"enable_thinking"`
+	}
+	if err := decodeStrictJSON(raw, &template); err != nil ||
+		template.EnableThinking == nil ||
+		*template.EnableThinking != (worker.ThinkingMode == "on") {
+		return fmt.Errorf(
+			"worker %q openai-compatible thinking contract does not match its mode",
+			worker.ID,
+		)
+	}
+	return nil
 }
 
 func validateWorkerReasoningBody(

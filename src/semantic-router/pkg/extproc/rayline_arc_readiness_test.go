@@ -173,6 +173,24 @@ func TestRaylineARCDispatchContractsRejectCredentialDrift(t *testing.T) {
 	runARCDispatchDriftCases(t, tests)
 }
 
+func TestRaylineARCDispatchContractsAcceptPinnedOpenAICompatibleURL(t *testing.T) {
+	cfg, workers, decisions := validARCDispatchReadinessFixture()
+	workers[0].DispatchBackend = raylinearc.DispatchOpenAICompat
+	workers[0].ProviderBaseURL = "https://worker.example/v1"
+	profile := cfg.ProviderProfiles["openrouter"]
+	profile.BaseURL = workers[0].ProviderBaseURL
+	cfg.ProviderProfiles["openrouter"] = profile
+	if !raylineARCDispatchContractsMatch(cfg, workers, decisions) {
+		t.Fatal("pinned openai-compatible dispatch contract was rejected")
+	}
+
+	profile.BaseURL = "https://other-worker.example/v1"
+	cfg.ProviderProfiles["openrouter"] = profile
+	if raylineARCDispatchContractsMatch(cfg, workers, decisions) {
+		t.Fatal("openai-compatible base URL drift was accepted")
+	}
+}
+
 type arcDispatchDriftCase struct {
 	name   string
 	mutate func(*config.RouterConfig, []raylinearc.WorkerManifest, []*config.Decision)

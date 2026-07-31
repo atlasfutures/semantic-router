@@ -95,13 +95,15 @@ func applyRaylineARCDispatch(
 	}
 	removeClientOwnedARCFields(object)
 	object["model"] = worker.Model
-	object["provider"] = map[string]any{
-		"order": append(
-			[]string(nil),
-			worker.OpenRouterProviderOrder...,
-		),
-		"allow_fallbacks":    worker.OpenRouterAllowFallbacks,
-		"require_parameters": worker.OpenRouterRequireParameters,
+	if worker.EffectiveDispatchBackend() == raylinearc.DispatchOpenRouter {
+		object["provider"] = map[string]any{
+			"order": append(
+				[]string(nil),
+				worker.OpenRouterProviderOrder...,
+			),
+			"allow_fallbacks":    worker.OpenRouterAllowFallbacks,
+			"require_parameters": worker.OpenRouterRequireParameters,
+		}
 	}
 	if mergeErr := mergeARCExtraBody(object, worker.ExtraBody); mergeErr != nil {
 		return nil, mergeErr

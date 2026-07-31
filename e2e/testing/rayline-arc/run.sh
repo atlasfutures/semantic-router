@@ -41,7 +41,7 @@ scan_logs() {
     "rayline-arc-private-episode-canary" \
     "rayline-arc-private-key-canary" \
     "${RAYLINE_ARC_E2E_REDIS_PASSWORD:-public-e2e-redis-secret}" \
-    "public-e2e-provider-key" \
+    "${RAYLINE_ARC_E2E_PROVIDER_KEY:-public-e2e-provider-key}" \
     "public-e2e-modal-key" \
     "public-e2e-modal-secret"; do
     if rg --fixed-strings --quiet "${marker}" "${logs}"; then

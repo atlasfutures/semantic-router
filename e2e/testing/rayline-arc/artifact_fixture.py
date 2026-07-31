@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import struct
 import sys
 from pathlib import Path
@@ -169,12 +170,11 @@ def _worker(
     output_cost: float,
     thinking: bool,
 ) -> dict[str, object]:
-    reasoning: dict[str, object] = {"enabled": thinking}
-    if thinking:
-        reasoning["max_tokens"] = 64
-    else:
-        reasoning["effort"] = "none"
-    return {
+    dispatch_backend = os.getenv(
+        "RAYLINE_ARC_E2E_DISPATCH_BACKEND",
+        "openrouter",
+    )
+    worker = {
         "id": worker_id,
         "model": model,
         "api_key_env": "SYNTHETIC_API_KEY",
@@ -184,24 +184,49 @@ def _worker(
         "estimated_output_cost_per_token": output_cost,
         "latency_ms": 10,
         "capability_tags": ["public-synthetic"],
-        "openrouter_provider_slug": provider,
-        "openrouter_provider_name": provider,
-        "openrouter_provider_order": [provider],
-        "openrouter_allow_fallbacks": False,
-        "openrouter_require_parameters": True,
-        "openrouter_pricing_source": "public-synthetic-e2e",
         "thinking_mode": "on" if thinking else "off",
         "reasoning_budget_tokens": 64 if thinking else 0,
         "minimum_completion_tokens": 32,
         "max_completion_tokens": 128,
         "temperature": 0.3 if thinking else 0.2,
         "supports_output_effort": False,
-        "extra_body": {"reasoning": reasoning},
         "openrouter_max_retries": 1,
         "openrouter_retry_base_seconds": 0.1,
         "openrouter_retry_cap_seconds": 0.2,
         "attempt_deadline_seconds": 30,
     }
+    if dispatch_backend == "openai_compatible":
+        suffix = "A" if worker_id == "worker-a" else "B"
+        base_url = os.environ.get(f"RAYLINE_ARC_E2E_WORKER_{suffix}_BASE_URL", "")
+        if not base_url:
+            raise ValueError(f"worker {worker_id} base URL is required")
+        worker.update(
+            {
+                "dispatch_backend": dispatch_backend,
+                "provider_base_url": base_url,
+                "extra_body": {"chat_template_kwargs": {"enable_thinking": thinking}},
+            }
+        )
+        return worker
+    if dispatch_backend != "openrouter":
+        raise ValueError(f"unsupported dispatch backend: {dispatch_backend}")
+    reasoning: dict[str, object] = {"enabled": thinking}
+    if thinking:
+        reasoning["max_tokens"] = 64
+    else:
+        reasoning["effort"] = "none"
+    worker.update(
+        {
+            "openrouter_provider_slug": provider,
+            "openrouter_provider_name": provider,
+            "openrouter_provider_order": [provider],
+            "openrouter_allow_fallbacks": False,
+            "openrouter_require_parameters": True,
+            "openrouter_pricing_source": "public-synthetic-e2e",
+            "extra_body": {"reasoning": reasoning},
+        }
+    )
+    return worker
 
 
 def _manifest(weights: bytes, golden: bytes) -> dict[str, object]:

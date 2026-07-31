@@ -177,6 +177,49 @@ func TestApplyRaylineARCDispatchUsesSelectedArmLimits(t *testing.T) {
 	}
 }
 
+func TestApplyRaylineARCDispatchShapesOpenAICompatibleWorker(t *testing.T) {
+	maxCompletion := uint64(128)
+	worker := &raylinearc.WorkerManifest{
+		Model:               "self-hosted/model",
+		DispatchBackend:     raylinearc.DispatchOpenAICompat,
+		ThinkingMode:        "on",
+		MaxCompletionTokens: &maxCompletion,
+		ExtraBody: json.RawMessage(
+			`{"chat_template_kwargs":{"enable_thinking":true}}`,
+		),
+	}
+	body, err := applyRaylineARCDispatch(
+		[]byte(`{
+			"model":"client-model",
+			"messages":[],
+			"provider":{"order":["client-provider"]},
+			"reasoning":{"enabled":false},
+			"chat_template_kwargs":{"enable_thinking":false}
+		}`),
+		worker,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["model"] != "self-hosted/model" {
+		t.Fatalf("model = %#v", result["model"])
+	}
+	if _, exists := result["provider"]; exists {
+		t.Fatalf("OpenRouter provider payload survived: %#v", result["provider"])
+	}
+	if _, exists := result["reasoning"]; exists {
+		t.Fatalf("OpenRouter reasoning payload survived: %#v", result["reasoning"])
+	}
+	template := result["chat_template_kwargs"].(map[string]any)
+	if template["enable_thinking"] != true {
+		t.Fatalf("chat_template_kwargs = %#v", template)
+	}
+}
+
 func TestApplyRaylineARCDispatchRejectsMalformedInput(t *testing.T) {
 	worker := &raylinearc.WorkerManifest{
 		Model:                       "provider/model",

@@ -393,6 +393,59 @@ does not prove multi-container affinity, real worker-generation throughput, or
 production traffic behavior. The separate 1,000-case packet was not executed
 and remains confirmation-gated.
 
+### Frozen Real-Worker Full-Stack Canary
+
+The next rung is a bounded self-hosted generation canary, not another parity
+qualification. It deploys two separate OpenAI-compatible vLLM endpoints on
+NVIDIA L4 containers, both serving the pinned `Qwen/Qwen3.5-0.8B` revision
+under the artifact's `synthetic/provider-a` and `synthetic/provider-b` model
+identities. The existing protected H100 session encoder remains the routing
+model. Semantic Router sends a generated bearer credential to the workers and
+Modal proxy credentials to the encoder; all credentials are deleted or made
+unreachable during cleanup.
+
+The fixed workload contains at most 37 generation requests:
+
+- one warm-up plus three measured direct requests to each real worker;
+- at most 24 public candidate prompts, stopping as soon as the gateway has
+  selected both workers;
+- four concurrent gateway requests split across both selected paths; and
+- one streaming gateway request that must reach `[DONE]`.
+
+The public synthetic artifact can raise gateway completion limits to 128
+tokens, so the gateway side is bounded to at most 3,712 generated tokens; the
+direct side adds at most 64. The driver does not accept a case-count argument
+and contains no path to the held 1,000-case packet.
+
+The canary passes only if:
+
+- both direct vLLM endpoints generate a valid OpenAI-compatible response;
+- the real encoder and policy route at least one request to each worker;
+- each gateway response's model identity matches its selected-worker header;
+- the four-request concurrent phase reaches both workers and reports its
+  wall-to-summed-latency ratio and requests/second;
+- the streaming phase emits at least one data event and terminates with
+  `[DONE]`;
+- router metrics report every session create and zero ARC selection failures;
+- compose logs contain none of the ephemeral credentials; and
+- cleanup removes the compose stack and volumes, deletes the Modal proxy
+  token, and stops both L4 workers.
+
+ARC worker artifacts now distinguish the legacy default `openrouter` dispatch
+from `openai_compatible`. The latter must pin its exact `provider_base_url`,
+cannot carry OpenRouter provider fields, omits the OpenRouter request payload,
+and owns `chat_template_kwargs.enable_thinking` in its signed `extra_body`.
+Startup fails closed if config URL, credential environment identity, model,
+pricing, reasoning mode, or auth shape diverges from that artifact contract.
+
+At the 2026-07-31 Modal rate snapshot, each 15-minute L4/4-CPU/16-GiB timeout
+envelope is `$0.278928`; both workers total `$0.557856`. Including the existing
+single-container H100 encoder's `$2.499617` timeout envelope gives a combined
+worst-case `$3.057473`, with zero external-provider spend. Normal success is
+expected to be much lower because the workers are stopped immediately and the
+encoder scales to zero. This rung measures actual generation and dispatch, but
+it remains a small canary rather than a saturation benchmark.
+
 ### Scope Boundaries
 
 In scope:

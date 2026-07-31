@@ -21,10 +21,10 @@ providers:
         completion_per_1m: 2
       backend_refs:
         - name: openrouter
-          endpoint: fake-provider:8081
-          protocol: http
+          endpoint: ${RAYLINE_ARC_WORKER_A_ENDPOINT}
+          protocol: ${RAYLINE_ARC_WORKER_A_PROTOCOL}
           type: openai
-          base_url: https://openrouter.ai/api/v1
+          base_url: ${RAYLINE_ARC_WORKER_A_BASE_URL}
           provider: openai
           api_key_env: SYNTHETIC_API_KEY
     - name: worker-b
@@ -38,10 +38,10 @@ providers:
         completion_per_1m: 4
       backend_refs:
         - name: openrouter
-          endpoint: fake-provider:8081
-          protocol: http
+          endpoint: ${RAYLINE_ARC_WORKER_B_ENDPOINT}
+          protocol: ${RAYLINE_ARC_WORKER_B_PROTOCOL}
           type: openai
-          base_url: https://openrouter.ai/api/v1
+          base_url: ${RAYLINE_ARC_WORKER_B_BASE_URL}
           provider: openai
           api_key_env: SYNTHETIC_API_KEY
 

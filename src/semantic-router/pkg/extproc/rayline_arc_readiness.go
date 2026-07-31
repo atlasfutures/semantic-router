@@ -236,6 +236,9 @@ func raylineARCEndpointIdentityMatches(
 	if !raylineARCAuthShapeMatches(profile) {
 		return false
 	}
+	if worker.EffectiveDispatchBackend() == raylinearc.DispatchOpenAICompat {
+		return profile.BaseURL == worker.ProviderBaseURL
+	}
 	parsed, err := url.Parse(profile.BaseURL)
 	return err == nil &&
 		strings.EqualFold(parsed.Hostname(), "openrouter.ai") &&

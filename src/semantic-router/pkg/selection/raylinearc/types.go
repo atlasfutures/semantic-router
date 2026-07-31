@@ -21,9 +21,11 @@ package raylinearc
 import "encoding/json"
 
 const (
-	ManifestSchema    = "rayline.mtrouter-runtime.v3"
-	HeadGoldenSchema  = "rayline.mtrouter-head-golden.v1"
-	SerializationName = "mtrouter-token-blocks-v2"
+	ManifestSchema       = "rayline.mtrouter-runtime.v3"
+	HeadGoldenSchema     = "rayline.mtrouter-head-golden.v1"
+	SerializationName    = "mtrouter-token-blocks-v2"
+	DispatchOpenRouter   = "openrouter"
+	DispatchOpenAICompat = "openai_compatible"
 )
 
 type Manifest struct {
@@ -114,6 +116,8 @@ type WorkerManifest struct {
 	ID                              string          `json:"id"`
 	Model                           string          `json:"model"`
 	APIKeyEnv                       string          `json:"api_key_env"`
+	DispatchBackend                 string          `json:"dispatch_backend,omitempty"`
+	ProviderBaseURL                 string          `json:"provider_base_url,omitempty"`
 	EstimatedInputCostPerToken      float64         `json:"estimated_input_cost_per_token"`
 	EstimatedCacheReadCostPerToken  float64         `json:"estimated_cache_read_cost_per_token"`
 	EstimatedCacheWriteCostPerToken float64         `json:"estimated_cache_write_cost_per_token"`
@@ -137,6 +141,13 @@ type WorkerManifest struct {
 	OpenRouterRetryBaseSeconds      float64         `json:"openrouter_retry_base_seconds"`
 	OpenRouterRetryCapSeconds       float64         `json:"openrouter_retry_cap_seconds"`
 	AttemptDeadlineSeconds          *float64        `json:"attempt_deadline_seconds"`
+}
+
+func (worker *WorkerManifest) EffectiveDispatchBackend() string {
+	if worker == nil || worker.DispatchBackend == "" {
+		return DispatchOpenRouter
+	}
+	return worker.DispatchBackend
 }
 
 type PricingSnapshot struct {
