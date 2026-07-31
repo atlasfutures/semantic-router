@@ -34,6 +34,7 @@ OPENROUTER_KEY_LIMIT_USD = 0.25
 GATEWAY_URL = "http://127.0.0.1:18888"
 ROUTER_HEALTH_URL = "http://127.0.0.1:18082/health"
 METRICS_URL = "http://127.0.0.1:19190/metrics"
+ARC_READY_METRIC = 'llm_rayline_arc_component_ready{component="artifact_head_encoder"}'
 MAX_STARTUP_SECONDS = 240
 MAX_CANARY_SECONDS = 15 * 60
 MAX_CLEANUP_SECONDS = 60
@@ -86,6 +87,34 @@ def _wait_http(url: str) -> None:
             pass
         time.sleep(1)
     raise RuntimeError(f"timed out waiting for {url}")
+
+
+def _arc_component_ready(metrics: str) -> bool | None:
+    prefix = f"{ARC_READY_METRIC} "
+    for line in metrics.splitlines():
+        if line.startswith(prefix):
+            return float(line.removeprefix(prefix)) == 1.0
+    return None
+
+
+def _wait_arc_component_ready(url: str) -> None:
+    deadline = time.monotonic() + MAX_STARTUP_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=2) as response:
+                if response.status != HTTP_OK:
+                    continue
+                ready = _arc_component_ready(response.read().decode())
+                if ready is True:
+                    return
+                if ready is False:
+                    raise RuntimeError("Rayline ARC component failed startup readiness")
+        except RuntimeError:
+            raise
+        except (OSError, ValueError):
+            pass
+        time.sleep(1)
+    raise RuntimeError("timed out waiting for Rayline ARC component readiness")
 
 
 def _management_request(
@@ -280,6 +309,7 @@ def main() -> None:
             environment=environment,
         )
         _wait_http(ROUTER_HEALTH_URL)
+        _wait_arc_component_ready(METRICS_URL)
         _run(
             [
                 sys.executable,

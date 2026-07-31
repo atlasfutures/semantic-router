@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import json
 import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,9 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 artifact = importlib.import_module("openrouter_artifact_fixture")
 canary = importlib.import_module("openrouter_fullstack_canary")
+if importlib.util.find_spec("modal") is None:
+    sys.modules["modal"] = types.ModuleType("modal")
+launcher = importlib.import_module("run_openrouter_fullstack")
 
 EXPECTED_MAX_TOKENS = 8
 EXPECTED_MAX_COVERAGE_REQUESTS = 24
@@ -106,21 +110,33 @@ def test_openrouter_compose_contract_routes_only_known_workers() -> None:
         assert f"exact: {worker}" in envoy
     assert "prefix_rewrite: /api/v1/" in envoy
     assert "host_rewrite_literal: openrouter.ai" in envoy
+    assert config.count("provider: openai") == EXPECTED_WORKER_COUNT
+    assert "provider: openrouter" not in config
     assert "envoy.transport_sockets.tls" in envoy
     assert "openrouter_artifact_fixture.py" in override
     assert "openrouter_artifact_fixture.py" in dockerfile
 
 
 def test_openrouter_launcher_uses_ephemeral_limited_key_and_exact_cleanup() -> None:
-    launcher = (SCRIPT_DIR / "run_openrouter_fullstack.py").read_text()
+    launcher_source = (SCRIPT_DIR / "run_openrouter_fullstack.py").read_text()
 
-    assert "OPENROUTER_KEY_LIMIT_USD = 0.25" in launcher
+    assert "OPENROUTER_KEY_LIMIT_USD = 0.25" in launcher_source
     assert (
-        'management_key = os.environ.get("OPENROUTER_MANAGEMENT_KEY", "")' in launcher
+        'management_key = os.environ.get("OPENROUTER_MANAGEMENT_KEY", "")'
+        in launcher_source
     )
-    assert '"limit": OPENROUTER_KEY_LIMIT_USD' in launcher
-    assert "_delete_ephemeral_key(management_key, key_hash)" in launcher
-    assert 'ENCODER_APP_ID = "ap-rs3UkEn5XUnWjrZOXYbkuB"' in launcher
-    assert '"container", "stop", container_id, "--yes"' in launcher
-    assert "manager.delete(proxy_token.token_id)" in launcher
-    assert "execute-paid-1000" not in launcher
+    assert '"limit": OPENROUTER_KEY_LIMIT_USD' in launcher_source
+    assert "_delete_ephemeral_key(management_key, key_hash)" in launcher_source
+    assert 'ENCODER_APP_ID = "ap-rs3UkEn5XUnWjrZOXYbkuB"' in launcher_source
+    assert '"container", "stop", container_id, "--yes"' in launcher_source
+    assert "manager.delete(proxy_token.token_id)" in launcher_source
+    assert "_wait_arc_component_ready(METRICS_URL)" in launcher_source
+    assert "execute-paid-1000" not in launcher_source
+
+
+def test_openrouter_launcher_rejects_failed_arc_component_readiness() -> None:
+    metric = launcher.ARC_READY_METRIC
+
+    assert launcher._arc_component_ready(f"{metric} 1\n") is True
+    assert launcher._arc_component_ready(f"{metric} 0\n") is False
+    assert launcher._arc_component_ready("unrelated_metric 1\n") is None
