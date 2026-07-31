@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 
-"""Launch and clean up the bounded Modal real-worker full-stack canary."""
+"""Launch and clean up a bounded Modal real-worker full-stack run."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import secrets
 import subprocess
@@ -24,9 +25,13 @@ REAL_WORKER_ENVOY_FILE = (
 WORKER_SERVICE = (
     REPO_ROOT / "src/vllm-plugins/rayline_arc_io/modal_generation_workers.py"
 )
-DRIVER = Path(__file__).with_name("modal_fullstack_canary.py")
+DRIVERS = {
+    "canary": Path(__file__).with_name("modal_fullstack_canary.py"),
+    "benchmark": Path(__file__).with_name("modal_fullstack_benchmark.py"),
+}
 PROJECT_NAME = "rayline-arc-real-workers"
 WORKER_APP_NAME = "rayline-arc-generation-workers"
+ENCODER_APP_ID = "ap-rs3UkEn5XUnWjrZOXYbkuB"
 WORKER_A_HOST = "atlasfutures-dev--rayline-arc-generation-workers-worker-a.modal.run"
 WORKER_B_HOST = "atlasfutures-dev--rayline-arc-generation-workers-worker-b.modal.run"
 ENCODER_HOST = (
@@ -37,6 +42,7 @@ ROUTER_HEALTH_URL = "http://127.0.0.1:18082/health"
 METRICS_URL = "http://127.0.0.1:19190/metrics"
 MAX_STARTUP_SECONDS = 240
 MAX_CANARY_SECONDS = 15 * 60
+MAX_CLEANUP_SECONDS = 60
 HTTP_OK = 200
 REQUIRED_MODAL_VERSION = "1.5.1"
 
@@ -98,6 +104,40 @@ def _scan_logs(environment: dict[str, str], protected_values: tuple[str, ...]) -
             raise RuntimeError("protected credential appeared in compose logs")
 
 
+def _encoder_containers(
+    modal_command: list[str], environment: dict[str, str]
+) -> list[str]:
+    result = _run(
+        [*modal_command, "container", "list", "--json"],
+        environment=environment,
+        capture_output=True,
+    )
+    containers = json.loads(result.stdout)
+    return sorted(
+        str(container["container_id"])
+        for container in containers
+        if container.get("app_id") == ENCODER_APP_ID
+    )
+
+
+def _stop_encoder_containers(
+    modal_command: list[str], environment: dict[str, str]
+) -> None:
+    for container_id in _encoder_containers(modal_command, environment):
+        _run(
+            [*modal_command, "container", "stop", container_id, "--yes"],
+            environment=environment,
+            check=False,
+            capture_output=True,
+        )
+    deadline = time.monotonic() + MAX_CLEANUP_SECONDS
+    while time.monotonic() < deadline:
+        if not _encoder_containers(modal_command, environment):
+            return
+        time.sleep(1)
+    raise RuntimeError("protected encoder container remained after cleanup")
+
+
 def _runtime_environment(
     *, worker_api_key: str, modal_key: str, modal_secret: str
 ) -> dict[str, str]:
@@ -128,15 +168,18 @@ def _runtime_environment(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", required=True)
+    parser.add_argument("--mode", choices=sorted(DRIVERS), default="canary")
     parser.add_argument("--timeout-seconds", type=float, default=180.0)
     args = parser.parse_args()
 
     if modal.__version__ != REQUIRED_MODAL_VERSION:
         raise SystemExit(
-            f"Modal SDK {REQUIRED_MODAL_VERSION} is required; "
-            f"found {modal.__version__}"
+            f"Modal SDK {REQUIRED_MODAL_VERSION} is required; found {modal.__version__}"
         )
     modal_command = [sys.executable, "-m", "modal"]
+    base_environment = os.environ.copy()
+    if _encoder_containers(modal_command, base_environment):
+        raise SystemExit("protected encoder already has a running container")
     worker_api_key = secrets.token_urlsafe(32)
     manager = modal.Workspace.from_context().proxy_tokens
     proxy_token = manager.create()
@@ -163,11 +206,11 @@ def main() -> None:
             environment=environment,
         )
         _wait_http(ROUTER_HEALTH_URL)
-        print("real-worker canary: starting", file=sys.stderr, flush=True)
+        print(f"real-worker {args.mode}: starting", file=sys.stderr, flush=True)
         _run(
             [
                 sys.executable,
-                str(DRIVER),
+                str(DRIVERS[args.mode]),
                 "--gateway-url",
                 GATEWAY_URL,
                 "--metrics-url",
@@ -209,8 +252,9 @@ def main() -> None:
                 check=False,
                 capture_output=True,
             )
+            _stop_encoder_containers(modal_command, environment)
         print(
-            "real-worker cleanup: compose down, proxy token deleted, app stopped",
+            "real-worker cleanup: compose down, proxy token deleted, apps stopped",
             file=sys.stderr,
             flush=True,
         )

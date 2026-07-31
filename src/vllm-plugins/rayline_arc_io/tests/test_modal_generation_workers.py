@@ -120,5 +120,7 @@ def test_generation_command_requires_auth_and_disables_prefix_cache(
     assert "--api-key" in command
     assert "public-test-only-key" in command
     assert "--disable-log-requests" not in command
+    assert "--enable-log-requests" not in command
+    assert "--disable-log-stats" not in command
     assert "--no-enable-prefix-caching" in command
     assert command[command.index("--served-model-name") + 1] == "synthetic/provider-b"

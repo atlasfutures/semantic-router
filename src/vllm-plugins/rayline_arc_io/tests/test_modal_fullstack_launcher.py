@@ -47,6 +47,9 @@ def test_real_worker_launcher_pins_real_encoder_and_global_deadlines() -> None:
     assert 'ROUTER_HEALTH_URL = "http://127.0.0.1:18082/health"' in source
     assert "_wait_http(ROUTER_HEALTH_URL)" in source
     assert "timeout=MAX_CANARY_SECONDS" in source
+    assert 'ENCODER_APP_ID = "ap-rs3UkEn5XUnWjrZOXYbkuB"' in source
+    assert '"container", "stop", container_id, "--yes"' in source
+    assert "_stop_encoder_containers(modal_command, environment)" in source
 
 
 def test_launcher_uses_one_pinned_modal_sdk_for_api_and_cli() -> None:
@@ -55,6 +58,21 @@ def test_launcher_uses_one_pinned_modal_sdk_for_api_and_cli() -> None:
     assert "modal.__version__ != REQUIRED_MODAL_VERSION" in source
     assert 'modal_command = [sys.executable, "-m", "modal"]' in source
     assert 'shutil.which("modal")' not in source
+
+
+def test_launcher_selects_the_bounded_benchmark_driver_without_a_paid_bulk_flag() -> (
+    None
+):
+    source = LAUNCHER_PATH.read_text(encoding="utf-8")
+    assert (
+        '"benchmark": Path(__file__).with_name("modal_fullstack_benchmark.py")'
+        in source
+    )
+    assert (
+        'parser.add_argument("--mode", choices=sorted(DRIVERS), default="canary")'
+        in source
+    )
+    assert "execute-paid-1000" not in source
 
 
 def test_encoder_identity_is_dynamic_but_timeouts_remain_typed() -> None:

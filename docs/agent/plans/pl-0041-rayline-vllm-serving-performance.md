@@ -25,11 +25,11 @@ implementation heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
-  at `29219dd0` for the capability-gated retained-session client and hermetic
-  full-stack checkpoint.
+  at `b46178f3` for the capability-gated retained-session client, hermetic
+  stack, and completed real-endpoint MVP receipt.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `9e4678b0` for the registered retained-session canary.
+  at `bf4e1c40` for the registered retained-session and real-endpoint canaries.
 - vLLM integration
   [`atlasfutures/vllm:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/vllm/tree/codex/rayline-vsr-mvp)
   at `b1049f6dd95c27d2e1b052eebc3b1a7f9f41195f`.
@@ -569,6 +569,74 @@ Its conservative `$0.809061` cost brings all session-probe and real-worker work
 to about `$5.830288`. This closes the real-endpoint MVP acceptance gate; it
 does not yet establish saturation capacity or task-quality generalization.
 
+The next self-hosted packet is frozen as a bounded first performance rung,
+separate from both `rwe009` and the held release corpus. It compares direct
+requests with the identical prompt/model distribution routed through ARC at
+client concurrency `1, 2, 4, 8`, with two fixed waves at each level. It then
+runs five ARC-only soak waves at concurrency four. Direct warmup and baseline
+use eight generation calls, prompt coverage stops by 24 calls, the measured
+ladder uses 60 calls, and the soak uses 20 calls: at most 112 real generations,
+with 80 in the measured packet and exactly 40 measured requests per worker.
+There is no duration-unbounded loop or case-count argument.
+
+The packet passes only if all 80 measured generations succeed, every frozen
+prompt keeps selecting its discovered worker, both workers are exercised at
+every balanced level, and the five-wave soak completes without an error. vLLM
+Prometheus counters must advance by exactly 40 successes per worker, prompt and
+generation tokens must advance, TTFT, E2E, and queue-time histogram counts must
+each advance by 40, and preemptions must remain zero. A background sampler
+records observed request concurrency, queue depth, and KV utilization without
+logging requests. The receipt reports per-wave p50/p95/max, throughput, direct
+versus ARC throughput and p95 ratios, router actions, and component metrics.
+It does not assign a production SLO or claim saturation from the maximum-eight
+ladder. The launcher enables vLLM metrics, retains disabled request-body
+logging and automatic prefix caching, refuses an already-running encoder, and
+requires zero exact encoder containers after cleanup.
+
+The self-hosted packet retains the established `$3.057473` maximum resource
+envelope. Added to observed spend through `rwe009`, its conservative cumulative
+envelope is `$8.887761`, below the `$20` cap. It requires a new signed Semantic
+Router implementation commit and Pathfinder preregistration under
+`rayline-arc-real-workers-perf001-20260731` before any Modal launch.
+
+The user-requested realistic data-plane packet is a separate three-model
+OpenRouter canary, not an external-provider load test. A public synthetic
+three-arm head maps the protected real encoder's coordinate 252 into positive,
+near-zero, and negative regions. Its workers are pinned to:
+
+- `deepseek/deepseek-v4-flash`;
+- `moonshotai/kimi-k3`; and
+- `z-ai/glm-5.2`.
+
+All three OpenRouter arms pin the common `fireworks` provider, disable provider
+fallbacks and reasoning, require declared parameters, and cap each completion
+at eight tokens. This holds the hosting provider constant so observed model
+latency and dispatch behavior are not confounded by OpenRouter's own provider
+selection. Up to 24 routed public prompts may discover all three arms; one
+direct and one routed request then exercise each model, followed by one routed
+stream. The total is at most 31 paid model calls. Failure to cover all three
+arms stops the packet; it is not repaired by changing the head or prompt set
+after launch.
+
+The OpenRouter launcher requires a management credential supplied at runtime
+from 1Password. It creates a one-run API key with a server-enforced `$0.25`
+limit, passes only that ephemeral key to Semantic Router, reads sanitized key
+usage, scans compose logs for all credentials, and deletes both the OpenRouter
+key and Modal proxy token unconditionally. The receipt must report OpenRouter's
+per-response usage accounting and stay below a stricter `$0.10` aggregate
+cost gate. Every response must identify Fireworks and the selected model, ARC
+must cover all three workers without selection drift, streaming must reach
+`[DONE]`, router failures must remain zero, and the compose stack, credentials,
+and exact H100 encoder must all reach zero after cleanup.
+
+The external packet's conservative envelope is the established `$2.499617`
+protected-H100 timeout envelope plus the `$0.25` provider-key limit, or
+`$2.749617`. If both new packets consume their full envelopes, cumulative
+spend is bounded at `$11.637378`, leaving more than `$8.36` below the user cap.
+It requires its own Pathfinder preregistration under
+`rayline-arc-openrouter-orc001-20260731`. Neither packet executes or relaxes
+the held 1,000-case release qualification.
+
 At the 2026-07-31 Modal rate snapshot, each 15-minute L4/4-CPU/16-GiB timeout
 envelope is `$0.278928`; both workers total `$0.557856`. Including the existing
 single-container H100 encoder's `$2.499617` timeout envelope gives a combined
@@ -836,11 +904,13 @@ but held:
 8. Treat the bounded real-endpoint MVP gate as complete at `rwe009`: protected
    retained H100 encoder, ARC, dedicated Envoy TLS routes, two real L4 vLLM
    workers, concurrent routing, streaming, metrics, privacy, and cleanup pass.
-9. Scope the next performance rung separately: freeze an open/closed-loop
-   concurrency and soak workload, component/GPU metrics, saturation stop rules,
-   and a new cost envelope before launch. Do not infer production capacity from
-   the small MVP canary.
-10. Keep the 1,000-case release qualification held until the user explicitly
+9. Preregister and run the fixed self-hosted direct-versus-ARC ladder at
+   concurrency `1, 2, 4, 8` plus the five-wave concurrency-four soak. Treat it
+   as the first performance observation, not a production saturation claim.
+10. Then run the separately preregistered, spend-limited three-model OpenRouter
+    canary to prove real external dispatch and usage accounting. Do not use its
+    provider latency as a stable throughput benchmark.
+11. Keep the 1,000-case release qualification held until the user explicitly
     confirms execution.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
