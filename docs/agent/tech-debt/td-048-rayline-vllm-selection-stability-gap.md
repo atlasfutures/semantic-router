@@ -45,9 +45,17 @@ same-model thinking-mode tie. Applying the existing cheap-default margin at
 `0.002` to both local and remote contracts changes one local decision, changes
 zero remote decisions, and produces a strict zero-flip receipt.
 
-The remaining debt is production evidence, not smoke functionality: the
-stability margin has not yet passed task-disjoint quality/regret evaluation or
-the full 1,000-decision RSP-004Q qualification.
+The first task-disjoint preflight rejects the original precedence. Applied
+after the previous-worker stay margin, the guard changed 40/524 canonical dev
+decisions (`7.63%`) and increased switches from 14 to 30, failing its behavior
+gate; no change was at route 0, so it supplied no same-initial-state quality
+evidence. Applying the same threshold before stay resolution changed 0/524 and
+preserved 14 switches. That candidate is behaviorally safe on this replay but
+explicitly `insufficient_power`, not a quality pass.
+
+The remaining debt is therefore a pre-stay six-case recanary, targeted
+same-state route-0 quality/regret evidence around the rare boundary, and the
+full 1,000-decision RSP-004Q qualification.
 
 ## Evidence
 
@@ -92,6 +100,14 @@ the full 1,000-decision RSP-004Q qualification.
 - Measured infrastructure spend was `$1.1961`, or `$2.1961` including the
   conservative `$1` preflight/preemption reserve, under the `$20` cap. All
   fourteen Modal apps were verified stopped with zero tasks.
+- The failed post-stay replay is privately pinned at
+  `rayline-ai/router-artifacts@b947be95f9181058270b572d285c7efde5b5b074`;
+  the behaviorally clean but underpowered pre-stay replay is pinned at
+  `rayline-ai/router-artifacts@e7f862ede913559a4985b8354296b580ab1f919d`.
+  Both use 60 manifest-authoritative dev attempts and make zero provider or
+  Modal GPU calls. Pathfinder records the evaluator, explicit compatibility
+  stage, and results at
+  [`ce661e5f`](https://github.com/atlasfutures/pathfinder/commit/ce661e5ffe62301dcad307b9bc4b242324019497).
 
 ## Why It Matters
 

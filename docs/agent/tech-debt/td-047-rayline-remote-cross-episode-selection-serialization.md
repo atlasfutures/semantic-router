@@ -2,7 +2,8 @@
 
 ## Status
 
-Open
+Open — the serialization fix and tests are landed; a real-stack concurrency
+receipt is still required.
 
 ## Owner Plan
 
@@ -31,10 +32,11 @@ this entry.
 Pathfinder's transaction coordinator already fences a second prepare for the
 same episode and releases its journal lock while a selector runs, so different
 episodes could select concurrently. The HTTP transaction adapter ultimately
-calls `RouterService._policy_select()`, however, and that method holds one
-process-wide `_policy_select_lock`. A remote MTRouter encoder therefore sends
-only one pooling request to vLLM at a time, hiding the scheduler's continuous
-batching capacity.
+called `RouterService._policy_select()` under one process-wide lock. That
+implementation blocker is now removed: a default-serialized
+`PolicySelectionExecutor` permits overlap only when a policy explicitly
+declares `concurrent_selection_safe = True`; remote MTRouter opts in and local
+MTRouter remains serialized because it may mutate KV sessions.
 
 ## Evidence
 
@@ -48,6 +50,10 @@ batching capacity.
 - The stateless `VLLMMTRouterEncoder` client is safe to issue independent HTTP
   requests, while other policies may own mutable RNG or round-robin state and
   cannot be assumed concurrent-safe.
+- [`atlasfutures/pathfinder@ce661e5f`](https://github.com/atlasfutures/pathfinder/commit/ce661e5ffe62301dcad307b9bc4b242324019497)
+  adds the capability boundary, bounded `/readyz` metrics, and deterministic
+  tests for different-episode overlap, same-episode fencing, mutable-policy
+  serialization, and failure cleanup.
 
 ## Why It Matters
 
@@ -59,11 +65,11 @@ same state or thread-safety contract.
 
 ## Desired End State
 
-Declare concurrency capability at the policy implementation boundary.
-Immutable MTRouter selection with the remote vLLM encoder may execute
-concurrently for different prepared episodes. Same-episode prepares remain
-fenced by the transaction journal, and mutable policies remain serialized.
-Bounded metrics expose policy and encoder in-flight concurrency and queue time.
+The implementation now declares concurrency capability at the policy boundary.
+The remaining desired state is a router-only receipt showing independent
+requests reach the real encoder/vLLM boundary concurrently, with policy and
+encoder queue/in-flight telemetry sufficient to distinguish Pathfinder
+contention from vLLM saturation.
 
 ## Exit Criteria
 

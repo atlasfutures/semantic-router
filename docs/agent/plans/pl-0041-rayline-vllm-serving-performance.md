@@ -422,13 +422,21 @@ Not in scope:
   task quality, cost, churn, and regret from the `0.002` stability margin, then
   run the existing 1,000-decision, 41.2-million-token qualification corpus
   through the winning local and remote contracts. TD048 remains open until
-  both gates pass.
-- [ ] **RSP-004A — Enable cross-episode remote selection concurrency.** Add an
+  both gates pass. Preparation, input pinning, and dry-run validation are
+  authorized; launching either paid 1,000-decision arm requires a fresh,
+  explicit user confirmation after the readiness packet is presented.
+- [x] **RSP-004A — Enable cross-episode remote selection concurrency.** Add an
   explicit policy thread-safety capability, allow immutable MTRouter remote
   selections for different prepared episodes to overlap, retain the existing
   same-episode transaction fence, and keep mutable policies serialized. Prove
   the boundary with a blocking fake encoder before throughput or cache
-  qualification. Tracked as TD047.
+  qualification. Implemented at
+  [`atlasfutures/pathfinder@ce661e5f`](https://github.com/atlasfutures/pathfinder/commit/ce661e5ffe62301dcad307b9bc4b242324019497): undeclared and mutable policies
+  remain serialized, remote MTRouter declares concurrent safety, independent
+  episode prepares overlap, failures release capacity, and `/readyz` reports
+  bounded policy-selection in-flight and queue-wait metrics. TD047 remains
+  open only for the measured router-only receipt proving more than one request
+  reaches the encoder/vLLM boundary in the real stack.
 - [ ] **RSP-005 — Prototype both KV designs.** Measure the automatic-prefix-
   cache plus pooling-accumulator extension against explicit pinned sessions.
   Test hybrid-model rewind, eviction, batching, replica affinity, and restart;
@@ -462,19 +470,26 @@ Not in scope:
 
 ## Next Action
 
-The end-to-end stateless MVP is complete. Preserve its exact winning contract
-while closing the production evidence gap:
+The end-to-end stateless MVP is complete, RSP-004A's implementation boundary is
+landed, and the first task-disjoint stability preflight has resolved the policy
+ordering:
 
-1. Run a task-disjoint, quality-labeled replay for the `0.002` cheap-default
-   margin. Compare unchanged C82 and the stable contract on quality, cost,
-   churn, and regret; do not infer quality from the six-case parity smoke.
-2. If that gate passes, run **RSP-004Q**, the existing 1,000-decision,
-   41.2-million-full-history-token corpus, against the winning local and remote
-   contracts.
-3. Complete **RSP-004A** before throughput qualification so cross-episode
-   requests can reach vLLM concurrently instead of serializing at Pathfinder's
-   policy lock.
-4. Then proceed to RSP-005 cache feasibility and the router-only performance
+1. Treat the original post-stay `0.002` guard as rejected. On 60 canonical C82
+   dev attempts it changed 40/524 decisions (`7.63%`) and increased switches
+   `14→30`, failing the frozen behavior gate. The sanitized replay is pinned at
+   `rayline-ai/router-artifacts@b947be95f9181058270b572d285c7efde5b5b074`.
+2. Use the explicit `pre_stay` candidate for the next smoke. It changed 0/524
+   decisions and preserved 14 switches on the same replay, so it removes the
+   churn regression, but the result is `insufficient_power`, not a quality
+   pass: no route-0 action changed. Evidence is pinned at
+   `rayline-ai/router-artifacts@e7f862ede913559a4985b8354296b580ab1f919d`.
+3. Recanary the six-case local/remote parity corpus with `pre_stay`, then build
+   targeted same-state route-0 evidence around the `0.002` boundary. A clean
+   smoke cannot substitute for the missing quality/regret evidence.
+4. Prepare the **RSP-004Q** 1,000-decision local and remote commands, pins,
+   budget envelope, and cleanup checks. Stop at the launch boundary and wait
+   for the user's explicit confirmation; readiness alone is not authorization.
+5. Then proceed to RSP-005 cache feasibility and the router-only performance
    ladder. Keep the stateless full-history path as the reconstructible
    correctness fallback.
 
@@ -484,15 +499,12 @@ continues to reject cached-prefix tokens until RSP-005 chooses and versions a
 cross-request cache design. RSP-002 remains pending until a Pathfinder human
 accepts ADR 0059.
 
-Complete RSP-004A before the throughput ladder or cache qualification. The
-transaction coordinator already releases its journal lock while different
-episodes select and rejects a second prepare for the same episode. The
-immediate transactional-path limiter is instead
-`RouterService._policy_select_lock`: `/v1/route/prepare` reaches
-`selection_transaction_http.select()`, which calls `_policy_select()` under
-that process-wide lock. The legacy eager route also has a one-thread
-`AsyncStateCoordinator` segment, but it is a separate follow-up rather than
-the current `/v1/route/prepare` blocker.
+RSP-004A now replaces the process-wide `_policy_select_lock` with a
+default-serialized executor and an explicit concurrency-safe capability. The
+transaction coordinator still rejects a second prepare for the same episode;
+different episodes may overlap only when the concrete policy opts in. The
+legacy eager route still has a one-thread `AsyncStateCoordinator` segment, but
+it is a separate follow-up rather than the current `/v1/route/prepare` blocker.
 
 ## Operating Rules
 
@@ -515,8 +527,9 @@ the current `/v1/route/prepare` blocker.
 - Use signed-off commits for work intended for review.
 - Keep TD046 open until durable pending transactions and multi-replica fencing
   are implemented and tested.
-- Keep TD047 open until concurrent-safe MTRouter selections overlap across
-  different episodes without weakening same-episode or mutable-policy fencing.
+- Keep TD047 open until a router-only receipt shows concurrent-safe MTRouter
+  selections reaching the real encoder/vLLM boundary at observed in-flight
+  concurrency above one; the in-process fencing tests are already green.
 - Keep TD048 open until the stability margin passes task-disjoint
   quality/regret evaluation and the full RSP-004Q parity qualification.
 
