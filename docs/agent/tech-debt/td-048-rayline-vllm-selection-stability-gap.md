@@ -53,9 +53,9 @@ evidence. Applying the same threshold before stay resolution changed 0/524 and
 preserved 14 switches. That candidate is behaviorally safe on this replay but
 explicitly `insufficient_power`, not a quality pass.
 
-The remaining debt is therefore a pre-stay six-case recanary, targeted
-same-state route-0 quality/regret evidence around the rare boundary, and the
-full 1,000-decision RSP-004Q qualification.
+The pre-stay six-case recanary now passes all execution-parity gates. The
+remaining debt is targeted same-state route-0 quality/regret evidence around
+the rare boundary and the full 1,000-decision RSP-004Q qualification.
 
 ## Evidence
 
@@ -108,6 +108,15 @@ full 1,000-decision RSP-004Q qualification.
   Modal GPU calls. Pathfinder records the evaluator, explicit compatibility
   stage, and results at
   [`ce661e5f`](https://github.com/atlasfutures/pathfinder/commit/ce661e5ffe62301dcad307b9bc4b242324019497).
+- The explicit pre-stay local/remote recanary is privately pinned at
+  `rayline-ai/router-artifacts@b82e0afc2da53e6268dc72ba13a23df7e863e9c0`.
+  All eight receipt gates pass over six decisions: zero selection flips, exact
+  token and contract identity, maximum top-two-gap drift `0.0011912137`, and
+  minimum embedding cosine `0.9999849696`. The candidate runtime was 205.10
+  seconds on an isolated L40S, reported `$0.12549` infrastructure, made zero
+  provider calls, passed the prompt-log privacy scan, and the Modal app stopped
+  with zero tasks. This closes the smoke criterion only; the replay remains
+  underpowered for route-0 quality.
 
 ## Why It Matters
 

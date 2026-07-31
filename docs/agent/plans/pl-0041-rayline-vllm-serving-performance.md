@@ -417,6 +417,15 @@ Not in scope:
   was `$1.1961`; adding the conservative `$1` preflight/preemption reserve
   yields `$2.1961`, below the `$20` cap. All fourteen Modal apps were verified
   stopped with zero tasks.
+  The explicit `pre_stay` contract has now also passed the registered six-case
+  local/remote recanary. All eight hard gates passed with 0/6 selection flips,
+  exact token counts, maximum top-two-gap drift `0.001191`, and minimum
+  embedding cosine `0.99998497`. The remote arm ran in an isolated L40S
+  container, made zero provider calls, and its seven-file private bundle was
+  round-trip verified at
+  `rayline-ai/router-artifacts@b82e0afc2da53e6268dc72ba13a23df7e863e9c0`.
+  This closes the reordered-policy smoke only; it does not supply the missing
+  route-0 quality/regret evidence.
 - [ ] **RSP-004Q — Complete production parity and stability qualification.**
   Replay a larger task-disjoint, quality-labeled development set to measure
   task quality, cost, churn, and regret from the `0.002` stability margin, then
@@ -483,13 +492,18 @@ ordering:
    churn regression, but the result is `insufficient_power`, not a quality
    pass: no route-0 action changed. Evidence is pinned at
    `rayline-ai/router-artifacts@e7f862ede913559a4985b8354296b580ab1f919d`.
-3. Recanary the six-case local/remote parity corpus with `pre_stay`, then build
-   targeted same-state route-0 evidence around the `0.002` boundary. A clean
-   smoke cannot substitute for the missing quality/regret evidence.
-4. Prepare the **RSP-004Q** 1,000-decision local and remote commands, pins,
+3. The six-case local/remote `pre_stay` recanary is complete and passes 6/6
+   decisions with zero flips, exact tokens, `0.001191` maximum gap drift, and
+   `0.99998497` minimum embedding cosine. Its private bundle is pinned at
+   `rayline-ai/router-artifacts@b82e0afc2da53e6268dc72ba13a23df7e863e9c0`.
+   This is an execution-parity pass, not a quality pass.
+4. Build targeted same-state route-0 evidence around the `0.002` boundary. The
+   pre-stay replay remains `insufficient_power` until this rung can measure
+   quality/regret on decisions the rule actually changes.
+5. Prepare the **RSP-004Q** 1,000-decision local and remote commands, pins,
    budget envelope, and cleanup checks. Stop at the launch boundary and wait
    for the user's explicit confirmation; readiness alone is not authorization.
-5. Then proceed to RSP-005 cache feasibility and the router-only performance
+6. Then proceed to RSP-005 cache feasibility and the router-only performance
    ladder. Keep the stateless full-history path as the reconstructible
    correctness fallback.
 
