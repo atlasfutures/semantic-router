@@ -108,7 +108,10 @@ def test_openrouter_compose_contract_routes_only_known_workers() -> None:
         assert f"name: {worker}" in config
         assert f"provider_model_id: {model}" in config
         assert f"exact: {worker}" in envoy
-    assert "prefix_rewrite: /api/v1/" in envoy
+    # Semantic Router resolves the OpenAI-compatible base URL into this full
+    # upstream path before Envoy clears and rematches the route cache.
+    assert envoy.count("prefix: /api/v1/") == EXPECTED_WORKER_COUNT
+    assert "prefix_rewrite:" not in envoy
     assert "host_rewrite_literal: openrouter.ai" in envoy
     assert config.count("provider: openai") == EXPECTED_WORKER_COUNT
     assert "provider: openrouter" not in config

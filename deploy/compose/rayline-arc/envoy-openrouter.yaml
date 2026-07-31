@@ -26,7 +26,7 @@ static_resources:
                       domains: ["*"]
                       routes:
                         - match:
-                            prefix: /v1/
+                            prefix: /api/v1/
                             headers:
                               - name: x-selected-model
                                 string_match:
@@ -35,17 +35,16 @@ static_resources:
                             cluster: openrouter
                             timeout: 180s
                             idle_timeout: 180s
-                            prefix_rewrite: /api/v1/
                             host_rewrite_literal: openrouter.ai
                         - match:
-                            prefix: /v1/
+                            prefix: /api/v1/
                             headers:
                               - name: x-selected-model
                                 string_match:
                                   exact: worker-b
                           route: *openrouter_route
                         - match:
-                            prefix: /v1/
+                            prefix: /api/v1/
                             headers:
                               - name: x-selected-model
                                 string_match:
