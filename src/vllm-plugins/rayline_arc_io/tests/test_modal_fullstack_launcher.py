@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: Apache-2.0
+
+import ast
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+LAUNCHER_PATH = REPO_ROOT / "e2e/testing/rayline-arc/run_modal_fullstack.py"
+COMPOSE_PATH = REPO_ROOT / "deploy/compose/rayline-arc/compose.yaml"
+CONFIG_PATH = REPO_ROOT / "deploy/compose/rayline-arc/config.yaml"
+EXPECTED_STARTUP_SECONDS = 240
+EXPECTED_CANARY_SECONDS = 15 * 60
+
+
+def _tree() -> ast.Module:
+    return ast.parse(LAUNCHER_PATH.read_text(encoding="utf-8"))
+
+
+def _integer_value(node: ast.expr) -> int:
+    if isinstance(node, ast.Constant) and isinstance(node.value, int):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
+        return _integer_value(node.left) * _integer_value(node.right)
+    raise AssertionError("assignment is not a static integer expression")
+
+
+def _assignment_value(name: str) -> object:
+    for node in _tree().body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == name
+            for target in node.targets
+        ):
+            return _integer_value(node.value)
+    raise AssertionError(f"missing assignment: {name}")
+
+
+def test_real_worker_launcher_pins_real_encoder_and_global_deadlines() -> None:
+    source = LAUNCHER_PATH.read_text(encoding="utf-8")
+    assert _assignment_value("MAX_STARTUP_SECONDS") == EXPECTED_STARTUP_SECONDS
+    assert _assignment_value("MAX_CANARY_SECONDS") == EXPECTED_CANARY_SECONDS
+    assert "rayline-arc-session-encoder-sessionenc-2d82ac.modal.run" in source
+    assert "vllm@b1049f6dd95c27d2e1b052eebc3b1a7f9f41195f" in source
+    assert "timeout=MAX_CANARY_SECONDS" in source
+
+
+def test_encoder_identity_is_dynamic_but_timeouts_remain_typed() -> None:
+    compose = COMPOSE_PATH.read_text(encoding="utf-8")
+    config = CONFIG_PATH.read_text(encoding="utf-8")
+    assert "RAYLINE_ARC_ENCODER_BASE_URL:" in compose
+    assert "RAYLINE_ARC_ENCODER_BUILD_ID:" in compose
+    assert "base_url: ${RAYLINE_ARC_ENCODER_BASE_URL}" in config
+    assert "expected_build_id: ${RAYLINE_ARC_ENCODER_BUILD_ID}" in config
+    assert "connect_timeout_seconds: 10" in config
+    assert "total_timeout_seconds: 180" in config

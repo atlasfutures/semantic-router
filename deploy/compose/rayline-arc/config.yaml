@@ -78,10 +78,10 @@ routing:
           artifact_dir: /var/lib/vllm-sr/rayline-arc
           artifact_revision: public-rayline-arc-e2e-v1
           encoder:
-            base_url: http://fake-encoder:8080
+            base_url: ${RAYLINE_ARC_ENCODER_BASE_URL}
             model: Qwen/Qwen3.5-0.8B
             model_revision: 2fc06364715b967f1860aea9cf38778875588b17
-            expected_build_id: vllm@public-rayline-e2e-build
+            expected_build_id: ${RAYLINE_ARC_ENCODER_BUILD_ID}
             expected_io_plugin_version: rayline-arc-io@0.1.0
             serializer_version: mtrouter-token-blocks-v2
             serving_rung: B
@@ -90,8 +90,8 @@ routing:
               - resumable_causal_mean
             modal_key_env: RAYLINE_ARC_MODAL_KEY
             modal_secret_env: RAYLINE_ARC_MODAL_SECRET
-            connect_timeout_seconds: 2
-            total_timeout_seconds: 10
+            connect_timeout_seconds: 10
+            total_timeout_seconds: 180
             max_retries: 0
           episode:
             id_header: x-rayline-episode-id

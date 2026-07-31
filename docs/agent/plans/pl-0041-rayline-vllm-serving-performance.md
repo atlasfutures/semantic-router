@@ -439,6 +439,12 @@ cannot carry OpenRouter provider fields, omits the OpenRouter request payload,
 and owns `chat_template_kwargs.enable_thinking` in its signed `extra_body`.
 Startup fails closed if config URL, credential environment identity, model,
 pricing, reasoning mode, or auth shape diverges from that artifact contract.
+The real-worker launcher separately pins the protected encoder URL and exact
+`vllm@b1049f6d...` build identity, allows 180 seconds for its first retained
+probe through strictly numeric config, and leaves the hermetic fake URL/build
+as compose defaults. This separation was added after `rwe001` correctly failed readiness:
+that first packet switched only worker endpoints, so fresh Modal credentials
+were sent to the fake encoder and the real H100 service was never invoked.
 
 At the 2026-07-31 Modal rate snapshot, each 15-minute L4/4-CPU/16-GiB timeout
 envelope is `$0.278928`; both workers total `$0.557856`. Including the existing

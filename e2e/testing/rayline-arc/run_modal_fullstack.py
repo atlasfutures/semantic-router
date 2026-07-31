@@ -27,9 +27,12 @@ PROJECT_NAME = "rayline-arc-real-workers"
 WORKER_APP_NAME = "rayline-arc-generation-workers"
 WORKER_A_HOST = "atlasfutures-dev--rayline-arc-generation-workers-worker-a.modal.run"
 WORKER_B_HOST = "atlasfutures-dev--rayline-arc-generation-workers-worker-b.modal.run"
+ENCODER_HOST = (
+    "atlasfutures-dev--rayline-arc-session-encoder-sessionenc-2d82ac.modal.run"
+)
 GATEWAY_URL = "http://127.0.0.1:18888"
 METRICS_URL = "http://127.0.0.1:19190/metrics"
-MAX_STARTUP_SECONDS = 180
+MAX_STARTUP_SECONDS = 240
 MAX_CANARY_SECONDS = 15 * 60
 HTTP_OK = 200
 
@@ -91,6 +94,32 @@ def _scan_logs(environment: dict[str, str], protected_values: tuple[str, ...]) -
             raise RuntimeError("protected credential appeared in compose logs")
 
 
+def _runtime_environment(
+    *, worker_api_key: str, modal_key: str, modal_secret: str
+) -> dict[str, str]:
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "RAYLINE_ARC_WORKER_API_KEY": worker_api_key,
+            "RAYLINE_ARC_E2E_PROVIDER_KEY": worker_api_key,
+            "RAYLINE_ARC_E2E_DISPATCH_BACKEND": "openai_compatible",
+            "RAYLINE_ARC_E2E_MODAL_KEY": modal_key,
+            "RAYLINE_ARC_E2E_MODAL_SECRET": modal_secret,
+            "RAYLINE_ARC_E2E_ENCODER_BASE_URL": f"https://{ENCODER_HOST}",
+            "RAYLINE_ARC_E2E_ENCODER_BUILD_ID": (
+                "vllm@b1049f6dd95c27d2e1b052eebc3b1a7f9f41195f"
+            ),
+            "RAYLINE_ARC_E2E_WORKER_A_ENDPOINT": f"{WORKER_A_HOST}:443",
+            "RAYLINE_ARC_E2E_WORKER_A_PROTOCOL": "https",
+            "RAYLINE_ARC_E2E_WORKER_A_BASE_URL": f"https://{WORKER_A_HOST}/v1",
+            "RAYLINE_ARC_E2E_WORKER_B_ENDPOINT": f"{WORKER_B_HOST}:443",
+            "RAYLINE_ARC_E2E_WORKER_B_PROTOCOL": "https",
+            "RAYLINE_ARC_E2E_WORKER_B_BASE_URL": f"https://{WORKER_B_HOST}/v1",
+        }
+    )
+    return environment
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", required=True)
@@ -103,21 +132,10 @@ def main() -> None:
     worker_api_key = secrets.token_urlsafe(32)
     manager = modal.Workspace.from_context().proxy_tokens
     proxy_token = manager.create()
-    environment = os.environ.copy()
-    environment.update(
-        {
-            "RAYLINE_ARC_WORKER_API_KEY": worker_api_key,
-            "RAYLINE_ARC_E2E_PROVIDER_KEY": worker_api_key,
-            "RAYLINE_ARC_E2E_DISPATCH_BACKEND": "openai_compatible",
-            "RAYLINE_ARC_E2E_MODAL_KEY": proxy_token.token_id,
-            "RAYLINE_ARC_E2E_MODAL_SECRET": proxy_token.token_secret,
-            "RAYLINE_ARC_E2E_WORKER_A_ENDPOINT": f"{WORKER_A_HOST}:443",
-            "RAYLINE_ARC_E2E_WORKER_A_PROTOCOL": "https",
-            "RAYLINE_ARC_E2E_WORKER_A_BASE_URL": f"https://{WORKER_A_HOST}/v1",
-            "RAYLINE_ARC_E2E_WORKER_B_ENDPOINT": f"{WORKER_B_HOST}:443",
-            "RAYLINE_ARC_E2E_WORKER_B_PROTOCOL": "https",
-            "RAYLINE_ARC_E2E_WORKER_B_BASE_URL": f"https://{WORKER_B_HOST}/v1",
-        }
+    environment = _runtime_environment(
+        worker_api_key=worker_api_key,
+        modal_key=proxy_token.token_id,
+        modal_secret=proxy_token.token_secret,
     )
     try:
         print("real-worker deploy: starting", file=sys.stderr, flush=True)
