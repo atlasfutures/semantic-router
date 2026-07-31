@@ -18,6 +18,8 @@ import time
 from typing import Any
 from urllib.parse import urlparse
 
+from modal_http import request_following_result_redirects
+
 HTTP_OK = 200
 WORKERS = {
     "worker-a": "synthetic/provider-a",
@@ -96,7 +98,6 @@ def _nonstream_chat(
     timeout_seconds: float,
     episode_id: str = "",
 ) -> dict[str, Any]:
-    connection, prefix = _connection(base_url, timeout_seconds)
     payload = json.dumps(
         {
             "model": model,
@@ -114,13 +115,14 @@ def _nonstream_chat(
     if episode_id:
         headers["x-rayline-episode-id"] = episode_id
     started = time.perf_counter()
-    connection.request(
-        "POST",
-        f"{prefix}/v1/chat/completions",
+    connection, response = request_following_result_redirects(
+        connection_factory=_connection,
+        method="POST",
+        url=f"{base_url.rstrip('/')}/v1/chat/completions",
         body=payload,
         headers=headers,
+        timeout_seconds=timeout_seconds,
     )
-    response = connection.getresponse()
     body = response.read()
     elapsed = time.perf_counter() - started
     selected_worker = response.getheader("x-vsr-selected-model", "")
@@ -152,7 +154,6 @@ def _stream_chat(
     timeout_seconds: float,
     episode_id: str,
 ) -> dict[str, Any]:
-    connection, prefix = _connection(base_url, timeout_seconds)
     payload = json.dumps(
         {
             "model": "auto",
@@ -164,17 +165,18 @@ def _stream_chat(
         separators=(",", ":"),
     ).encode()
     started = time.perf_counter()
-    connection.request(
-        "POST",
-        f"{prefix}/v1/chat/completions",
+    connection, response = request_following_result_redirects(
+        connection_factory=_connection,
+        method="POST",
+        url=f"{base_url.rstrip('/')}/v1/chat/completions",
         body=payload,
         headers={
             "authorization": "Bearer public-modal-fullstack-canary",
             "content-type": "application/json",
             "x-rayline-episode-id": episode_id,
         },
+        timeout_seconds=timeout_seconds,
     )
-    response = connection.getresponse()
     selected_worker = response.getheader("x-vsr-selected-model", "")
     if response.status != HTTP_OK:
         response.read()

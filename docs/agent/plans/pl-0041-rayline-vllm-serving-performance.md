@@ -468,6 +468,14 @@ only the unsupported flag. It also pins Modal SDK `1.5.1` and invokes its CLI
 through the same Python interpreter as the proxy-token API, eliminating a
 local-library/system-CLI version split observed during zero-cost preflight.
 
+`rwe005` then loaded the pinned model on both L4 workers. Its two cold direct
+requests crossed Modal Web Functions' documented 150-second synchronous HTTP
+window, which returns `303` while the original request continues. The canary's
+low-level client treated that continuation as terminal, so generation completion
+is recorded as unknown rather than zero. The next packet follows at most two
+same-origin result redirects using `GET`, and refuses to forward the worker
+bearer credential across origins.
+
 At the 2026-07-31 Modal rate snapshot, each 15-minute L4/4-CPU/16-GiB timeout
 envelope is `$0.278928`; both workers total `$0.557856`. Including the existing
 single-container H100 encoder's `$2.499617` timeout envelope gives a combined
