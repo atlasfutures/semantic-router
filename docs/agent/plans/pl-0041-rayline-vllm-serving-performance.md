@@ -27,13 +27,13 @@ implementation heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
-  at `7e4672ff` for the capability-gated retained-session client, hermetic
+  at `db20cf48` for the capability-gated retained-session client, hermetic
   stack, bounded real-worker benchmark, fixed three-model OpenRouter transport
-  contract, and mandatory ARC component-readiness preflight.
+  and resolved-path route contracts, and mandatory ARC readiness preflight.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `358c0eee` for the registered retained-session, real-endpoint, bounded
-  performance, and failed ORC001 receipts plus the preregistered fixed ORC002
+  at `88524778` for the registered retained-session, real-endpoint, bounded
+  performance, failed ORC001/ORC002 receipts, and preregistered fixed ORC003
   OpenRouter canary.
 - vLLM integration
   [`atlasfutures/vllm:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/vllm/tree/codex/rayline-vsr-mvp)
@@ -700,6 +700,32 @@ warmup or provider request. Observed prior spend plus its full packet envelope
 is `$9.877730`; even the deliberately over-conservative all-rungs envelope is
 `$14.386995`, below the `$20` cap.
 
+Both permitted ORC002 attempts passed component readiness and completed the
+real encoder selection call, but the first coverage request returned HTTP 503.
+A hermetic three-arm request then reached its fake provider with the exact
+DeepSeek/Fireworks payload and HTTP 200. The same route using a fake encoder,
+real OpenRouter cluster, and intentionally invalid credential proved the 503
+was Envoy's local fallback: ext-proc resolves the provider profile into
+`/api/v1/chat/completions` and clears the route cache, but the Envoy worker
+routes rematched only `/v1/`. No external model generation was observed.
+
+Commit `db20cf48` changes all three matches to the resolved `/api/v1/` path and
+removes the duplicate prefix rewrite. The focused contract tests, CI gate, and
+three-phase Rayline compose workflow pass; the fixed zero-generation external
+probe reaches OpenRouter and returns the expected 401 for its invalid key,
+proving DNS, TLS, path rematching, auth forwarding, and upstream reachability.
+ORC002's aggregate two-attempt receipt is privately pinned at
+`rayline-ai/router-artifacts@49fdbe75edf9bb1bdd7d3031e8f12085f6f8d3e8`.
+Conservative accounting retains both deleted keys' full limits and a combined
+193-second H100 span, charging at most `$0.759371` and bringing cumulative
+upper-bound spend to `$7.887484`.
+
+The otherwise unchanged ORC003 packet is preregistered at Pathfinder
+`88524778`. Observed prior spend plus its full `$2.749617` packet envelope is
+`$10.637101`; the deliberately over-conservative all-rungs envelope is
+`$17.136611`, still below the `$20` cap. The held 1,000-case packet remains
+uninvoked.
+
 At the 2026-07-31 Modal rate snapshot, each 15-minute L4/4-CPU/16-GiB timeout
 envelope is `$0.278928`; both workers total `$0.557856`. Including the existing
 single-container H100 encoder's `$2.499617` timeout envelope gives a combined
@@ -971,13 +997,14 @@ but held:
    correctness but exposed ARC/direct throughput ratios falling from `0.256`
    at concurrency one to `0.083` at concurrency eight. Use its private receipt
    as the regression baseline, not a production saturation claim.
-10. Treat ORC001 as a closed dispatch-contract failure with complete cleanup
-    and a private aggregate receipt. Run the separately preregistered ORC002
-    canary from fixed commit `7e4672ff`; require component readiness before any
-    provider request, retain the same three Fireworks-pinned models and spend
-    limits, and do not use provider latency as a stable throughput benchmark.
-    After that canary, preregister a traced self-hosted diagnostic that isolates
-    the decision plane before another capacity packet.
+10. Treat ORC001 and ORC002 as closed local-contract failures with complete
+    cleanup and private aggregate receipts. Run the separately preregistered
+    ORC003 canary from fixed commit `db20cf48`; require component readiness and
+    the already-passed external-route preflight, retain the same three
+    Fireworks-pinned models and spend limits, and do not use provider latency as
+    a stable throughput benchmark. After that canary, preregister a traced
+    self-hosted diagnostic that isolates the decision plane before another
+    capacity packet.
 11. Keep the 1,000-case release qualification held until the user explicitly
     confirms execution.
 
