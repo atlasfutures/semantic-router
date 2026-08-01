@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -37,8 +38,18 @@ class SessionCoordinatorMetricsSnapshot:
 
 
 @dataclass(frozen=True)
+class SessionAppendMetricsSnapshot:
+    observations: int
+    queue_time_seconds_total: float
+    inference_time_seconds_total: float
+    e2e_time_seconds_total: float
+    appended_tokens_total: int
+
+
+@dataclass(frozen=True)
 class SessionEngineMetricsSnapshot:
     available: bool
+    measurement_scope: str | None = None
     requests_running: int | None = None
     requests_waiting: int | None = None
     queue_time_observations: int | None = None
@@ -86,6 +97,11 @@ class SessionMetrics:
         self._backend_inflight_max = 0
         self._backend_seconds_total = 0.0
         self._backend_appended_tokens_total = 0
+        self._append_observations = 0
+        self._append_queue_time_seconds_total = 0.0
+        self._append_inference_time_seconds_total = 0.0
+        self._append_e2e_time_seconds_total = 0.0
+        self._append_tokens_total = 0
 
     def observe_tokenization(self, seconds: float) -> None:
         if seconds < 0:
@@ -178,6 +194,26 @@ class SessionMetrics:
                 self._backend_inflight -= 1
                 self._backend_seconds_total += max(0.0, elapsed)
 
+    def observe_engine_append(
+        self,
+        *,
+        queue_time: float,
+        inference_time: float,
+        e2e_time: float,
+        appended_tokens: int,
+    ) -> None:
+        values = (queue_time, inference_time, e2e_time)
+        if any(not math.isfinite(value) or value < 0 for value in values):
+            raise ValueError("engine append duration must be finite and non-negative")
+        if appended_tokens < 0:
+            raise ValueError("engine appended tokens cannot be negative")
+        with self._lock:
+            self._append_observations += 1
+            self._append_queue_time_seconds_total += queue_time
+            self._append_inference_time_seconds_total += inference_time
+            self._append_e2e_time_seconds_total += e2e_time
+            self._append_tokens_total += appended_tokens
+
     def snapshot(self) -> SessionCoordinatorMetricsSnapshot:
         with self._lock:
             return SessionCoordinatorMetricsSnapshot(
@@ -200,4 +236,16 @@ class SessionMetrics:
                 backend_inflight_max=self._backend_inflight_max,
                 backend_seconds_total=self._backend_seconds_total,
                 backend_appended_tokens_total=self._backend_appended_tokens_total,
+            )
+
+    def append_snapshot(self) -> SessionAppendMetricsSnapshot:
+        with self._lock:
+            return SessionAppendMetricsSnapshot(
+                observations=self._append_observations,
+                queue_time_seconds_total=self._append_queue_time_seconds_total,
+                inference_time_seconds_total=(
+                    self._append_inference_time_seconds_total
+                ),
+                e2e_time_seconds_total=self._append_e2e_time_seconds_total,
+                appended_tokens_total=self._append_tokens_total,
             )

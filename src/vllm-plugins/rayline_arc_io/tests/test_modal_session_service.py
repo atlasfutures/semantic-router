@@ -65,18 +65,22 @@ def test_session_service_is_authenticated_and_bounded() -> None:
 def test_session_service_freezes_the_proven_retained_vllm_runtime() -> None:
     service_source = source()
     for expected in (
-        'VLLM_COMMIT = "b1049f6dd95c27d2e1b052eebc3b1a7f9f41195f"',
+        'VLLM_COMMIT = "77a901d233499ef588370f93056f82dae15bcb93"',
         'VLLM_REPOSITORY = "https://github.com/atlasfutures/vllm.git"',
         'GPU_TYPE = "H100"',
         "MAX_SESSIONS = 8",
         "MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS",
         "IDLE_TTL_SECONDS = 5 * 60",
+        '"vllm/outputs.py"',
+        '"vllm/v1/engine/output_processor.py"',
         '"vllm/v1/engine/pooling_session.py"',
         "python3 -m py_compile",
         "enable_prefix_caching=False",
         'gdn_prefill_backend="torch_reference"',
         "VLLMRetainedPoolingBackendFactory",
         "VLLMSessionEngineMetricsProvider",
+        "self._engine.get_scheduler_load",
+        "self._coordinator.append_metrics_snapshot",
         "SessionCoordinator",
         "create_session_app",
     ):

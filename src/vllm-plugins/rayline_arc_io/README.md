@@ -99,8 +99,12 @@ in-flight and peak in-flight counts, actual same-session lock contention and
 wait time, backend-append concurrency, latency, failures, and successfully
 appended tokens. The protected vLLM deployment also supplies curated scheduler
 gauges and cumulative queue, inference, end-to-end, and prompt-token metrics.
-The endpoint has no request, episode, prompt, embedding, or credential labels;
-an unavailable engine registry is represented explicitly rather than as zero.
+Those cumulative timings are scoped to completed retained appends, not whole
+sessions or ordinary terminal requests. Scheduler occupancy comes from a
+cached in-process vLLM snapshot, so reading the endpoint does not collect the
+Prometheus registry. The endpoint has no request, episode, prompt, embedding,
+or credential labels; unavailable engine telemetry is represented explicitly
+rather than as zero.
 
 The Modal MVP pins the service to one container so successive turns reach the
 same cache owner and the GPU cost envelope remains enforceable. Production

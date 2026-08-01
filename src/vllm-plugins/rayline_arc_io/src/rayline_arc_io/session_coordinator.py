@@ -10,7 +10,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from .session_metrics import SessionCoordinatorMetricsSnapshot, SessionMetrics
+from .session_metrics import (
+    SessionAppendMetricsSnapshot,
+    SessionCoordinatorMetricsSnapshot,
+    SessionMetrics,
+)
 
 
 class SessionCoordinatorError(RuntimeError):
@@ -26,9 +30,17 @@ class SessionBusyError(SessionCoordinatorError):
 
 
 @dataclass(frozen=True)
+class RetainedPoolingAppendMetrics:
+    queue_time: float
+    inference_time: float
+    e2e_time: float
+
+
+@dataclass(frozen=True)
 class RetainedPoolingOutput:
     embedding: tuple[float, ...]
     cumulative_token_ids: tuple[int, ...]
+    metrics: RetainedPoolingAppendMetrics | None = None
 
 
 class RetainedPoolingBackend(Protocol):
@@ -296,6 +308,13 @@ class SessionCoordinator:
             raise SessionCoordinatorError(
                 "retained backend returned a divergent cumulative token sequence"
             )
+        if output.metrics is not None:
+            self._metrics.observe_engine_append(
+                queue_time=output.metrics.queue_time,
+                inference_time=output.metrics.inference_time,
+                e2e_time=output.metrics.e2e_time,
+                appended_tokens=len(append_ids),
+            )
 
         entry.token_ids = token_ids
         entry.embedding = output.embedding
@@ -348,6 +367,9 @@ class SessionCoordinator:
 
     def metrics_snapshot(self) -> SessionCoordinatorMetricsSnapshot:
         return self._metrics.snapshot()
+
+    def append_metrics_snapshot(self) -> SessionAppendMetricsSnapshot:
+        return self._metrics.append_snapshot()
 
     @staticmethod
     async def _close_backends(backends: list[RetainedPoolingBackend]) -> None:

@@ -10,10 +10,33 @@ from collections.abc import Callable
 from typing import Any
 
 from .constants import EMBEDDING_DIMENSION
-from .session_coordinator import RetainedPoolingOutput
-from .session_metrics import SessionEngineMetricsSnapshot
+from .session_coordinator import (
+    RetainedPoolingAppendMetrics,
+    RetainedPoolingOutput,
+)
+from .session_metrics import (
+    SessionAppendMetricsSnapshot,
+    SessionEngineMetricsSnapshot,
+)
 
 _NORMALIZED_EMBEDDING_TOLERANCE = 1e-4
+
+
+def _retained_append_metrics(metrics: Any) -> RetainedPoolingAppendMetrics:
+    if metrics is None:
+        raise RuntimeError("retained pooling append metrics are unavailable")
+    metric_values = (
+        metrics.queue_time,
+        metrics.inference_time,
+        metrics.e2e_time,
+    )
+    if not all(math.isfinite(value) and value >= 0.0 for value in metric_values):
+        raise RuntimeError("retained pooling returned invalid append metrics")
+    return RetainedPoolingAppendMetrics(
+        queue_time=metrics.queue_time,
+        inference_time=metrics.inference_time,
+        e2e_time=metrics.e2e_time,
+    )
 
 
 class VLLMRetainedPoolingBackend:
@@ -48,6 +71,7 @@ class VLLMRetainedPoolingBackend:
             raise RuntimeError("retained pooling used automatic prefix cache state")
         if output.prompt_token_ids != self._cumulative_token_ids:
             raise RuntimeError("retained pooling cumulative token identity diverged")
+        append_metrics = _retained_append_metrics(getattr(output, "metrics", None))
 
         values = output.outputs.data.tolist()
         if not isinstance(values, list) or len(values) != EMBEDDING_DIMENSION:
@@ -61,6 +85,7 @@ class VLLMRetainedPoolingBackend:
         return RetainedPoolingOutput(
             embedding=embedding,
             cumulative_token_ids=tuple(self._cumulative_token_ids),
+            metrics=append_metrics,
         )
 
     async def close(self) -> None:
@@ -80,62 +105,26 @@ class VLLMSessionEngineMetricsProvider:
 
     def __init__(
         self,
-        snapshot_reader: Callable[[], list[Any]] | None = None,
+        scheduler_snapshot_reader: Callable[[], Any],
+        append_snapshot_reader: Callable[[], SessionAppendMetricsSnapshot],
     ) -> None:
-        self._snapshot_reader = snapshot_reader
-
-    def _read(self) -> list[Any]:
-        if self._snapshot_reader is not None:
-            return self._snapshot_reader()
-        from vllm.v1.metrics.reader import get_metrics_snapshot  # noqa: PLC0415
-
-        return get_metrics_snapshot()
+        self._scheduler_snapshot_reader = scheduler_snapshot_reader
+        self._append_snapshot_reader = append_snapshot_reader
 
     def __call__(self) -> SessionEngineMetricsSnapshot:
-        metrics = self._read()
-
-        def total(name: str, attribute: str) -> float | None:
-            values = [
-                float(getattr(metric, attribute))
-                for metric in metrics
-                if getattr(metric, "name", None) == name and hasattr(metric, attribute)
-            ]
-            return sum(values) if values else None
-
-        running = total("vllm:num_requests_running", "value")
-        waiting = total("vllm:num_requests_waiting", "value")
-        queue_count = total("vllm:request_queue_time_seconds", "count")
-        queue_seconds = total("vllm:request_queue_time_seconds", "sum")
-        inference_count = total("vllm:request_inference_time_seconds", "count")
-        inference_seconds = total("vllm:request_inference_time_seconds", "sum")
-        e2e_count = total("vllm:e2e_request_latency_seconds", "count")
-        e2e_seconds = total("vllm:e2e_request_latency_seconds", "sum")
-        prompt_count = total("vllm:request_prompt_tokens", "count")
-        prompt_tokens = total("vllm:request_prompt_tokens", "sum")
-        required = (
-            running,
-            waiting,
-            queue_count,
-            queue_seconds,
-            inference_count,
-            inference_seconds,
-            e2e_count,
-            e2e_seconds,
-            prompt_count,
-            prompt_tokens,
-        )
-        if any(value is None for value in required):
-            return SessionEngineMetricsSnapshot(available=False)
+        scheduler = self._scheduler_snapshot_reader()
+        append = self._append_snapshot_reader()
         return SessionEngineMetricsSnapshot(
             available=True,
-            requests_running=int(running),
-            requests_waiting=int(waiting),
-            queue_time_observations=int(queue_count),
-            queue_time_seconds_total=queue_seconds,
-            inference_time_observations=int(inference_count),
-            inference_time_seconds_total=inference_seconds,
-            e2e_time_observations=int(e2e_count),
-            e2e_time_seconds_total=e2e_seconds,
-            prompt_token_observations=int(prompt_count),
-            prompt_tokens_total=prompt_tokens,
+            measurement_scope="retained_append",
+            requests_running=int(scheduler.num_requests_running),
+            requests_waiting=int(scheduler.num_requests_waiting),
+            queue_time_observations=append.observations,
+            queue_time_seconds_total=append.queue_time_seconds_total,
+            inference_time_observations=append.observations,
+            inference_time_seconds_total=append.inference_time_seconds_total,
+            e2e_time_observations=append.observations,
+            e2e_time_seconds_total=append.e2e_time_seconds_total,
+            prompt_token_observations=append.observations,
+            prompt_tokens_total=float(append.appended_tokens_total),
         )

@@ -34,12 +34,12 @@ cost. Current published implementation heads:
   readiness preflight.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `dc4abee91c794ca91742a7501fade97aefa485cb` for the registered
+  at `75fbb19c32cb7bff08dbc1ea09d0c9b40e453445` for the registered
   retained-session, real-endpoint and OpenRouter canaries, plus the closed,
   artifact-pinned direct/static/ARC stage diagnostic.
 - vLLM integration
   [`atlasfutures/vllm:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/vllm/tree/codex/rayline-vsr-mvp)
-  at `b1049f6dd95c27d2e1b052eebc3b1a7f9f41195f`.
+  at `77a901d233499ef588370f93056f82dae15bcb93`.
 - David's reviewed vLLM causal-MEAN input
   [`davidvgilmore/vllm:rayline/pl-0039-causal-mean`](https://github.com/davidvgilmore/vllm/tree/rayline/pl-0039-causal-mean)
   at `162bcefe1b41c5bb35eccc2f2219ea39e2c74bb7`.
@@ -1218,10 +1218,19 @@ but held:
    queues stayed empty. The subsequent encoder-only packet found that vLLM's
    standard completed-request histograms remain zero for the retained streaming
    lifecycle and that full-registry HTTP sampling is too slow for the intended
-   interval; it produced no accepted capacity result. Implement append-scoped
-   retained queue/inference metrics and a cached aggregate snapshot without GPU
-   spend. Do not preregister another live packet until renewed budget authority
-   can cover its full envelope.
+   interval; it produced no accepted capacity result. The no-spend follow-up is
+   now implemented at vLLM `77a901d23`: every completed retained append carries
+   an immutable queue/inference/end-to-end timing record, timing state resets
+   before the next append, and `AsyncLLM` maintains a cached aggregate
+   running/waiting snapshot. The Semantic Router adapter exposes those counters
+   as the explicitly scoped `rayline.arc.session-metrics-response.v2` contract
+   without collecting the Prometheus registry. The plugin source digest is
+   `54df150905121eefc9ec65c6815c633d1e23d977681981f81247ee430872cfa9`.
+   The diagnostic launcher now exits before deployment or credential creation:
+   the conservative cumulative ceiling is `$19.23169762`, and another full
+   `$2.4996168` envelope would reach `$21.73131442`, above the `$20` cap. Do not
+   preregister another live packet until renewed budget authority can cover its
+   full envelope.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage

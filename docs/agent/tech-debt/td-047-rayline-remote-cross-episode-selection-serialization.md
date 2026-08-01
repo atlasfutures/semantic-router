@@ -2,9 +2,8 @@
 
 ## Status
 
-Open — the serialization fix and tests are landed; the first real-stack
-receipt attempts exposed a retained-session metrics gap before concurrency
-could be measured.
+Open — the serialization fix, append-scoped telemetry, and local tests are
+landed; a new real-stack receipt is still required to measure concurrency.
 
 ## Owner Plan
 
@@ -14,7 +13,8 @@ could be measured.
 
 Router-only capacity qualification and vLLM continuous-batching evidence still
 need a real-stack receipt. The process-wide lock is fixed; append-scoped
-retained-session telemetry is now the immediate evidence blocker.
+retained-session telemetry is now implemented, but the live evidence rung is
+held by the remaining GPU budget.
 
 ## Scope
 
@@ -72,6 +72,20 @@ MTRouter remains serialized because it may mutate KV sessions.
 - The same live logs show warmed full-registry metric requests taking roughly
   `165-230ms`, so the proposed `20ms` sampler would perturb the system and
   cannot observe at its requested cadence.
+- [`atlasfutures/vllm@77a901d23`](https://github.com/atlasfutures/vllm/commit/77a901d233499ef588370f93056f82dae15bcb93)
+  adds immutable per-append queue/inference/end-to-end timings, resets request
+  timing state between retained inputs, and caches aggregate scheduler
+  running/waiting occupancy in the AsyncLLM frontend.
+- Semantic Router consumes those two direct interfaces and exposes
+  `rayline.arc.session-metrics-response.v2` with
+  `measurement_scope=retained_append`; it no longer reads the Prometheus
+  registry or waits for terminal-request histogram settlement. Its plugin
+  source digest is
+  `54df150905121eefc9ec65c6815c633d1e23d977681981f81247ee430872cfa9`.
+- The paid diagnostic launcher is fail-closed at the current conservative
+  `$19.23169762` cumulative ceiling because another full run could reach
+  `$21.73131442`, above the `$20` cap. No source-validation step creates a
+  Modal credential or deployment.
 
 ## Why It Matters
 
@@ -83,13 +97,13 @@ same state or thread-safety contract.
 
 ## Desired End State
 
-The implementation now declares concurrency capability at the policy boundary.
-The remaining desired state is append-scoped retained telemetry inside the
-vLLM seam, exposed through a cached aggregate snapshot, followed by a
-router-only receipt showing independent requests reach the real encoder/vLLM
-boundary concurrently. The evidence must distinguish Pathfinder contention,
-same-session fencing, service admission, and vLLM scheduling without treating
-terminal session completion as an append.
+The implementation now declares concurrency capability at the policy boundary
+and exposes append-scoped retained telemetry through a cached aggregate
+snapshot. The remaining desired state is a router-only receipt showing
+independent requests reach the real encoder/vLLM boundary concurrently. The
+evidence must distinguish Pathfinder contention, same-session fencing, service
+admission, and vLLM scheduling without treating terminal session completion as
+an append.
 
 ## Exit Criteria
 

@@ -14,6 +14,10 @@ import time
 from pathlib import Path
 
 import modal
+from modal_encoder_diagnostic import (
+    CUMULATIVE_BEFORE_USD,
+    MAX_RESOURCE_ENVELOPE_USD,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DRIVER = Path(__file__).with_name("modal_encoder_diagnostic.py")
@@ -26,6 +30,7 @@ ENCODER_URL = (
 REQUIRED_MODAL_VERSION = "1.5.1"
 MAX_DIAGNOSTIC_SECONDS = 15 * 60
 MAX_CLEANUP_SECONDS = 60
+BUDGET_CAP_USD = 20.0
 
 
 def _run(
@@ -99,6 +104,8 @@ def main() -> None:
     parser.add_argument("--timeout-seconds", type=float, default=300.0)
     args = parser.parse_args()
 
+    if CUMULATIVE_BEFORE_USD + MAX_RESOURCE_ENVELOPE_USD > BUDGET_CAP_USD:
+        raise SystemExit("encoder diagnostic requires renewed budget authority")
     if modal.__version__ != REQUIRED_MODAL_VERSION:
         raise SystemExit(
             f"Modal SDK {REQUIRED_MODAL_VERSION} is required; "

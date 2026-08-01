@@ -185,6 +185,7 @@ class ArcSessionEngineMetrics(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     available: bool
+    measurement_scope: Literal["retained_append"] | None = None
     requests_running: Annotated[int, Field(ge=0)] | None = None
     requests_waiting: Annotated[int, Field(ge=0)] | None = None
     queue_time_observations: Annotated[int, Field(ge=0)] | None = None
@@ -199,6 +200,7 @@ class ArcSessionEngineMetrics(BaseModel):
     @model_validator(mode="after")
     def validate_availability(self) -> "ArcSessionEngineMetrics":
         values = (
+            self.measurement_scope,
             self.requests_running,
             self.requests_waiting,
             self.queue_time_observations,
@@ -218,6 +220,6 @@ class ArcSessionEngineMetrics(BaseModel):
 class ArcSessionMetricsResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    schema_version: Literal["rayline.arc.session-metrics-response.v1"]
+    schema_version: Literal["rayline.arc.session-metrics-response.v2"]
     coordinator: ArcSessionCoordinatorMetrics
     engine: ArcSessionEngineMetrics

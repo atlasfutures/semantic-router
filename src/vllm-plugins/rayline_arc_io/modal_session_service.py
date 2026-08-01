@@ -23,7 +23,7 @@ CUDA_BASE_IMAGE = (
     "@sha256:93a8d207db5aaa6384f834a6bf70d417433f709e61b57a91e7cc99c16172f49c"
 )
 VLLM_BASE_WHEEL_COMMIT = "98e91a9600eb75b2de14ef27f13b10088d1a1279"
-VLLM_COMMIT = "b1049f6dd95c27d2e1b052eebc3b1a7f9f41195f"
+VLLM_COMMIT = "77a901d233499ef588370f93056f82dae15bcb93"
 VLLM_VERSION = "0.26.1rc1.dev36+g98e91a960"
 VLLM_WHEEL_INDEX = f"https://wheels.vllm.ai/{VLLM_BASE_WHEEL_COMMIT}/cu130"
 VLLM_REPOSITORY = "https://github.com/atlasfutures/vllm.git"
@@ -49,10 +49,12 @@ VLLM_RUNTIME_FILES = (
     "vllm/model_executor/layers/pooler/seqwise/poolers.py",
     "vllm/model_executor/models/gritlm.py",
     "vllm/model_executor/models/qwen3_next.py",
+    "vllm/outputs.py",
     "vllm/pooling_params.py",
     "vllm/v1/attention/backends/gdn_attn.py",
     "vllm/v1/core/sched/scheduler.py",
     "vllm/v1/engine/async_llm.py",
+    "vllm/v1/engine/output_processor.py",
     "vllm/v1/engine/pooling_session.py",
     "vllm/v1/pool/metadata.py",
     "vllm/v1/worker/gpu_input_batch.py",
@@ -208,7 +210,10 @@ class SessionEncoder:
             self._coordinator,
             TokenBlockSerializer(tokenizer),
             SessionAPIMetadata(engine_build_id=ENGINE_BUILD_ID),
-            VLLMSessionEngineMetricsProvider(),
+            VLLMSessionEngineMetricsProvider(
+                self._engine.get_scheduler_load,
+                self._coordinator.append_metrics_snapshot,
+            ),
         )
 
     @modal.exit()

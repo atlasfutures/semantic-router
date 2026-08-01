@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 
 import pytest
 from rayline_arc_io.session_coordinator import (
+    RetainedPoolingAppendMetrics,
     RetainedPoolingOutput,
     SessionCapacityError,
     SessionCoordinator,
@@ -16,6 +17,8 @@ EXPECTED_RESIDENT_TOKENS = 5
 EXPECTED_RECREATED_TOKENS = 3
 EXPECTED_BACKEND_COUNT = 2
 EXPECTED_CONCURRENT_APPENDS = 2
+EXPECTED_OBSERVED_APPENDS = 3
+EXPECTED_APPENDED_TOKENS = 7
 
 
 @dataclass
@@ -32,6 +35,11 @@ class FakeBackend:
         return RetainedPoolingOutput(
             embedding=(float(len(self.cumulative)),),
             cumulative_token_ids=tuple(self.cumulative),
+            metrics=RetainedPoolingAppendMetrics(
+                queue_time=0.01,
+                inference_time=0.02,
+                e2e_time=0.03,
+            ),
         )
 
     async def close(self) -> None:
@@ -89,6 +97,9 @@ def test_session_create_append_retry_and_prefix_mismatch_rebuild() -> None:
         ]
         assert factory.backends[0].closed is True
         assert rebuilt.revision == EXPECTED_REVISION_AFTER_REBUILD
+        append_metrics = coordinator.append_metrics_snapshot()
+        assert append_metrics.observations == EXPECTED_OBSERVED_APPENDS
+        assert append_metrics.appended_tokens_total == EXPECTED_APPENDED_TOKENS
 
     run(scenario())
 

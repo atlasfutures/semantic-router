@@ -32,12 +32,11 @@ MIN_ENGINE_CONCURRENT_REQUESTS = 2
 MAX_POOLING_REQUESTS = (
     MEASURED_REQUESTS + APPEND_SETUP_REQUESTS + SAME_EPISODE_CONTROL_REQUESTS
 )
-METRICS_SCHEMA = "rayline.arc.session-metrics-response.v1"
-REPORT_SCHEMA = "rayline.arc.modal-encoder-diagnostic.v1"
+METRICS_SCHEMA = "rayline.arc.session-metrics-response.v2"
+REPORT_SCHEMA = "rayline.arc.modal-encoder-diagnostic.v2"
 SAMPLER_INTERVAL_SECONDS = 0.02
-ENGINE_METRIC_SETTLE_TIMEOUT_SECONDS = 10.0
 MAX_RESOURCE_ENVELOPE_USD = 2.4996168
-CUMULATIVE_BEFORE_USD = 14.23246402
+CUMULATIVE_BEFORE_USD = 19.23169762
 
 FIRST_TURNS = [{"role": "user", "text": CANDIDATE_PROMPTS[0]}]
 APPENDED_TURNS = [
@@ -115,6 +114,8 @@ def _read_metrics(client: CanaryClient) -> dict[str, Any]:
         raise TypeError("retained-session metrics omitted stage objects")
     if engine.get("available") is not True:
         raise RuntimeError("protected vLLM engine metrics are unavailable")
+    if engine.get("measurement_scope") != "retained_append":
+        raise RuntimeError("protected vLLM engine metric scope diverged")
     return metrics
 
 
@@ -137,41 +138,34 @@ def _metric_delta(
     return result
 
 
-def _read_completed_metrics(
+def _read_append_metrics(
     client: CanaryClient,
     before: dict[str, Any],
     expected_observations: int,
 ) -> dict[str, Any]:
-    """Wait briefly for vLLM's completed-request logger to settle after close."""
-    deadline = time.monotonic() + ENGINE_METRIC_SETTLE_TIMEOUT_SECONDS
-    observed: dict[str, float] = {}
-    while True:
-        after = _read_metrics(client)
-        observed = _metric_delta(
-            before,
-            after,
-            "engine",
-            ENGINE_CUMULATIVE_FIELDS,
+    """Read synchronous retained-append metrics after response completion."""
+    after = _read_metrics(client)
+    observed = _metric_delta(
+        before,
+        after,
+        "engine",
+        ENGINE_CUMULATIVE_FIELDS,
+    )
+    counts = tuple(
+        observed[field]
+        for field in (
+            "queue_time_observations",
+            "inference_time_observations",
+            "e2e_time_observations",
+            "prompt_token_observations",
         )
-        completed = tuple(
-            observed[field]
-            for field in (
-                "queue_time_observations",
-                "inference_time_observations",
-                "e2e_time_observations",
-                "prompt_token_observations",
-            )
+    )
+    if any(value != expected_observations for value in counts):
+        raise RuntimeError(
+            "vLLM retained-append metric count diverged: "
+            f"observed={counts}, expected={expected_observations}"
         )
-        if all(value == expected_observations for value in completed):
-            return after
-        if any(value > expected_observations for value in completed):
-            raise RuntimeError("vLLM completed-request metric exceeded packet count")
-        if time.monotonic() >= deadline:
-            raise RuntimeError(
-                "vLLM completed-request metrics did not settle: "
-                f"observed={completed}, expected={expected_observations}"
-            )
-        time.sleep(SAMPLER_INTERVAL_SECONDS)
+    return after
 
 
 def _merge_deltas(deltas: list[dict[str, float]]) -> dict[str, float]:
@@ -278,7 +272,7 @@ def _validate_phase_deltas(
         "prompt_token_observations",
     ):
         if engine[field] != requests:
-            raise RuntimeError(f"vLLM completed-request metric diverged: {field}")
+            raise RuntimeError(f"vLLM retained-append metric diverged: {field}")
 
 
 def _stage_report(delta: dict[str, float], calls: int) -> dict[str, float]:
@@ -347,7 +341,7 @@ def _run_level(
                 sampler.stop()
             finally:
                 _close_all(client, episode_ids)
-        after = _read_completed_metrics(client, before, concurrency)
+        after = _read_append_metrics(client, before, concurrency)
 
         expected_action = "created" if phase == "create" else "appended"
         if any(result["action"] != expected_action for result in results):
@@ -423,7 +417,7 @@ def _run_same_episode_control(
         SAME_EPISODE_TURNS,
     )
     client.close(episode_id)
-    after = _read_completed_metrics(client, before, 1)
+    after = _read_append_metrics(client, before, 1)
     coordinator = _metric_delta(
         before,
         after,
@@ -534,7 +528,8 @@ def main() -> None:
         "interpretation_boundary": (
             "coordinator backend time surrounds the retained vLLM append and "
             "therefore includes vLLM scheduling, model execution, and pooling; "
-            "vLLM completed-request histograms cover the whole retained session"
+            "engine timing counters cover each completed retained append, while "
+            "scheduler occupancy is read from vLLM's cached frontend snapshot"
         ),
         "budget": {
             "maximum_resource_envelope_usd": MAX_RESOURCE_ENVELOPE_USD,

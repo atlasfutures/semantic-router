@@ -194,7 +194,7 @@ def test_metrics_endpoint_reports_payload_free_stage_counters() -> None:
     assert metrics_response.status_code == HTTPStatus.OK
     body = metrics_response.json()
     coordinator = body["coordinator"]
-    assert body["schema_version"] == "rayline.arc.session-metrics-response.v1"
+    assert body["schema_version"] == "rayline.arc.session-metrics-response.v2"
     assert coordinator["tokenization_calls_total"] == 1
     assert coordinator["requests_started_total"] == 1
     assert coordinator["requests_succeeded_total"] == 1
@@ -205,6 +205,7 @@ def test_metrics_endpoint_reports_payload_free_stage_counters() -> None:
     assert coordinator["backend_appended_tokens_total"] > 0
     assert body["engine"] == {
         "available": False,
+        "measurement_scope": None,
         "requests_running": None,
         "requests_waiting": None,
         "queue_time_observations": None,
@@ -222,6 +223,7 @@ def test_metrics_endpoint_reports_payload_free_stage_counters() -> None:
 def test_metrics_endpoint_includes_curated_engine_snapshot() -> None:
     engine = SessionEngineMetricsSnapshot(
         available=True,
+        measurement_scope="retained_append",
         requests_running=2,
         requests_waiting=1,
         queue_time_observations=3,
@@ -239,6 +241,7 @@ def test_metrics_endpoint_includes_curated_engine_snapshot() -> None:
 
     assert body["engine"] == {
         "available": True,
+        "measurement_scope": "retained_append",
         "requests_running": 2,
         "requests_waiting": 1,
         "queue_time_observations": 3,
