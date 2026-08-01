@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import math
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from .constants import EMBEDDING_DIMENSION
 from .session_coordinator import RetainedPoolingOutput
+from .session_metrics import SessionEngineMetricsSnapshot
 
 _NORMALIZED_EMBEDDING_TOLERANCE = 1e-4
 
@@ -71,3 +73,69 @@ class VLLMRetainedPoolingBackendFactory:
 
     def __call__(self, episode_id_hash: str) -> VLLMRetainedPoolingBackend:
         return VLLMRetainedPoolingBackend(self._engine, episode_id_hash)
+
+
+class VLLMSessionEngineMetricsProvider:
+    """Return a curated, payload-free snapshot of vLLM scheduler metrics."""
+
+    def __init__(
+        self,
+        snapshot_reader: Callable[[], list[Any]] | None = None,
+    ) -> None:
+        self._snapshot_reader = snapshot_reader
+
+    def _read(self) -> list[Any]:
+        if self._snapshot_reader is not None:
+            return self._snapshot_reader()
+        from vllm.v1.metrics.reader import get_metrics_snapshot  # noqa: PLC0415
+
+        return get_metrics_snapshot()
+
+    def __call__(self) -> SessionEngineMetricsSnapshot:
+        metrics = self._read()
+
+        def total(name: str, attribute: str) -> float | None:
+            values = [
+                float(getattr(metric, attribute))
+                for metric in metrics
+                if getattr(metric, "name", None) == name and hasattr(metric, attribute)
+            ]
+            return sum(values) if values else None
+
+        running = total("vllm:num_requests_running", "value")
+        waiting = total("vllm:num_requests_waiting", "value")
+        queue_count = total("vllm:request_queue_time_seconds", "count")
+        queue_seconds = total("vllm:request_queue_time_seconds", "sum")
+        inference_count = total("vllm:request_inference_time_seconds", "count")
+        inference_seconds = total("vllm:request_inference_time_seconds", "sum")
+        e2e_count = total("vllm:e2e_request_latency_seconds", "count")
+        e2e_seconds = total("vllm:e2e_request_latency_seconds", "sum")
+        prompt_count = total("vllm:request_prompt_tokens", "count")
+        prompt_tokens = total("vllm:request_prompt_tokens", "sum")
+        required = (
+            running,
+            waiting,
+            queue_count,
+            queue_seconds,
+            inference_count,
+            inference_seconds,
+            e2e_count,
+            e2e_seconds,
+            prompt_count,
+            prompt_tokens,
+        )
+        if any(value is None for value in required):
+            return SessionEngineMetricsSnapshot(available=False)
+        return SessionEngineMetricsSnapshot(
+            available=True,
+            requests_running=int(running),
+            requests_waiting=int(waiting),
+            queue_time_observations=int(queue_count),
+            queue_time_seconds_total=queue_seconds,
+            inference_time_observations=int(inference_count),
+            inference_time_seconds_total=inference_seconds,
+            e2e_time_observations=int(e2e_count),
+            e2e_time_seconds_total=e2e_seconds,
+            prompt_token_observations=int(prompt_count),
+            prompt_tokens_total=prompt_tokens,
+        )

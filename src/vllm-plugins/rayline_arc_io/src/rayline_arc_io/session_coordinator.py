@@ -10,6 +10,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from .session_metrics import SessionCoordinatorMetricsSnapshot, SessionMetrics
+
 
 class SessionCoordinatorError(RuntimeError):
     """Base class for bounded, payload-free session failures."""
@@ -89,6 +91,7 @@ class SessionCoordinator:
         max_resident_tokens: int,
         idle_ttl_seconds: float,
         clock: Callable[[], float] = time.monotonic,
+        metrics: SessionMetrics | None = None,
     ) -> None:
         if max_sessions < 1:
             raise ValueError("max_sessions must be positive")
@@ -101,6 +104,7 @@ class SessionCoordinator:
         self._max_resident_tokens = max_resident_tokens
         self._idle_ttl_seconds = idle_ttl_seconds
         self._clock = clock
+        self._metrics = metrics if metrics is not None else SessionMetrics()
         self._entries: dict[str, _ResidentSession] = {}
         self._metadata_lock = asyncio.Lock()
 
@@ -116,17 +120,18 @@ class SessionCoordinator:
         if len(token_ids) > self._max_resident_tokens:
             raise SessionCapacityError("history exceeds retained-token capacity")
 
-        entry, victims = await self._borrow_entry(episode_id_hash)
-        try:
-            await self._close_backends(victims)
-            async with entry.lock:
-                return await self._encode_locked(
-                    episode_id_hash,
-                    entry,
-                    token_ids,
-                )
-        finally:
-            await self._release_entry(episode_id_hash, entry)
+        async with self._metrics.track_request():
+            entry, victims = await self._borrow_entry(episode_id_hash)
+            try:
+                await self._close_backends(victims)
+                async with self._metrics.track_session_lock(entry.lock):
+                    return await self._encode_locked(
+                        episode_id_hash,
+                        entry,
+                        token_ids,
+                    )
+            finally:
+                await self._release_entry(episode_id_hash, entry)
 
     async def _borrow_entry(
         self,
@@ -268,7 +273,8 @@ class SessionCoordinator:
             entry.backend = self._backend_factory(episode_id_hash)
 
         try:
-            output = await entry.backend.append(append_ids)
+            async with self._metrics.track_backend(len(append_ids)):
+                output = await entry.backend.append(append_ids)
         except BaseException:
             failed_backend = entry.backend
             entry.backend = None
@@ -336,6 +342,12 @@ class SessionCoordinator:
                 max_sessions=self._max_sessions,
                 max_resident_tokens=self._max_resident_tokens,
             )
+
+    def observe_tokenization(self, seconds: float) -> None:
+        self._metrics.observe_tokenization(seconds)
+
+    def metrics_snapshot(self) -> SessionCoordinatorMetricsSnapshot:
+        return self._metrics.snapshot()
 
     @staticmethod
     async def _close_backends(backends: list[RetainedPoolingBackend]) -> None:

@@ -193,5 +193,66 @@ def test_different_sessions_execute_concurrently() -> None:
             coordinator.encode("b" * 64, (3, 4)),
         )
         assert max_entered == EXPECTED_CONCURRENT_APPENDS
+        metrics = coordinator.metrics_snapshot()
+        assert metrics.requests_started_total == EXPECTED_CONCURRENT_APPENDS
+        assert metrics.requests_succeeded_total == EXPECTED_CONCURRENT_APPENDS
+        assert metrics.requests_failed_total == 0
+        assert metrics.requests_inflight == 0
+        assert metrics.requests_inflight_max == EXPECTED_CONCURRENT_APPENDS
+        assert metrics.backend_calls_succeeded_total == EXPECTED_CONCURRENT_APPENDS
+        assert metrics.backend_inflight_max == EXPECTED_CONCURRENT_APPENDS
+        assert metrics.session_lock_contentions_total == 0
+
+    run(scenario())
+
+
+def test_same_session_reports_lock_contention_without_parallel_backend_work() -> None:
+    async def scenario() -> None:
+        first_entered = asyncio.Event()
+        release_first = asyncio.Event()
+
+        class BlockingBackend(FakeBackend):
+            async def append(
+                self,
+                token_ids: tuple[int, ...],
+            ) -> RetainedPoolingOutput:
+                first_entered.set()
+                await asyncio.wait_for(release_first.wait(), timeout=1)
+                return await super().append(token_ids)
+
+        coordinator = SessionCoordinator(
+            BlockingBackend,
+            max_sessions=1,
+            max_resident_tokens=10,
+            idle_ttl_seconds=60,
+        )
+        episode_id = "a" * 64
+        first = asyncio.create_task(coordinator.encode(episode_id, (1, 2)))
+        await asyncio.wait_for(first_entered.wait(), timeout=1)
+        second = asyncio.create_task(coordinator.encode(episode_id, (1, 2)))
+        for _attempt in range(10):
+            await asyncio.sleep(0)
+            active = coordinator.metrics_snapshot()
+            if active.session_lock_waiters == 1:
+                break
+        else:
+            raise AssertionError("second same-session request never waited on lock")
+
+        assert active.requests_inflight == EXPECTED_CONCURRENT_APPENDS
+        assert active.backend_inflight == 1
+        assert active.session_lock_waiters == 1
+        release_first.set()
+        results = await asyncio.gather(first, second)
+        assert [result.action for result in results] == ["created", "reused"]
+
+        final = coordinator.metrics_snapshot()
+        assert final.requests_succeeded_total == EXPECTED_CONCURRENT_APPENDS
+        assert final.requests_inflight_max == EXPECTED_CONCURRENT_APPENDS
+        assert final.session_lock_contentions_total == 1
+        assert final.session_lock_waiters == 0
+        assert final.session_lock_waiters_max == 1
+        assert final.session_lock_wait_seconds_total >= 0
+        assert final.backend_calls_succeeded_total == 1
+        assert final.backend_inflight_max == 1
 
     run(scenario())

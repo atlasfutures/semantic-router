@@ -76,6 +76,7 @@ def test_session_service_freezes_the_proven_retained_vllm_runtime() -> None:
         "enable_prefix_caching=False",
         'gdn_prefill_backend="torch_reference"',
         "VLLMRetainedPoolingBackendFactory",
+        "VLLMSessionEngineMetricsProvider",
         "SessionCoordinator",
         "create_session_app",
     ):

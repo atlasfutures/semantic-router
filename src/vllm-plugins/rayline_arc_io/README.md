@@ -93,6 +93,15 @@ bounds both resident sessions and total retained tokens, and exposes those
 counts at `GET /health`. `DELETE /v1/rayline/arc/session/{episode_id_hash}`
 releases one idle session explicitly.
 
+`GET /v1/rayline/arc/session/metrics` exposes a versioned, aggregate-only
+diagnostic snapshot. Coordinator fields report tokenization time, request
+in-flight and peak in-flight counts, actual same-session lock contention and
+wait time, backend-append concurrency, latency, failures, and successfully
+appended tokens. The protected vLLM deployment also supplies curated scheduler
+gauges and cumulative queue, inference, end-to-end, and prompt-token metrics.
+The endpoint has no request, episode, prompt, embedding, or credential labels;
+an unavailable engine registry is represented explicitly rather than as zero.
+
 The Modal MVP pins the service to one container so successive turns reach the
 same cache owner and the GPU cost envelope remains enforceable. Production
 horizontal scale requires cache-aware affinity or an explicit shared session

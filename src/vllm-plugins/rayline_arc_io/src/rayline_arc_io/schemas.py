@@ -155,3 +155,69 @@ class ArcSessionHealthResponse(BaseModel):
     max_sessions: Annotated[int, Field(gt=0)]
     max_resident_tokens: Annotated[int, Field(gt=0)]
     pooling_capabilities: list[str]
+
+
+class ArcSessionCoordinatorMetrics(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    tokenization_calls_total: Annotated[int, Field(ge=0)]
+    tokenization_seconds_total: Annotated[float, Field(ge=0)]
+    requests_started_total: Annotated[int, Field(ge=0)]
+    requests_succeeded_total: Annotated[int, Field(ge=0)]
+    requests_failed_total: Annotated[int, Field(ge=0)]
+    requests_inflight: Annotated[int, Field(ge=0)]
+    requests_inflight_max: Annotated[int, Field(ge=0)]
+    request_seconds_total: Annotated[float, Field(ge=0)]
+    session_lock_contentions_total: Annotated[int, Field(ge=0)]
+    session_lock_waiters: Annotated[int, Field(ge=0)]
+    session_lock_waiters_max: Annotated[int, Field(ge=0)]
+    session_lock_wait_seconds_total: Annotated[float, Field(ge=0)]
+    backend_calls_started_total: Annotated[int, Field(ge=0)]
+    backend_calls_succeeded_total: Annotated[int, Field(ge=0)]
+    backend_calls_failed_total: Annotated[int, Field(ge=0)]
+    backend_inflight: Annotated[int, Field(ge=0)]
+    backend_inflight_max: Annotated[int, Field(ge=0)]
+    backend_seconds_total: Annotated[float, Field(ge=0)]
+    backend_appended_tokens_total: Annotated[int, Field(ge=0)]
+
+
+class ArcSessionEngineMetrics(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    available: bool
+    requests_running: Annotated[int, Field(ge=0)] | None = None
+    requests_waiting: Annotated[int, Field(ge=0)] | None = None
+    queue_time_observations: Annotated[int, Field(ge=0)] | None = None
+    queue_time_seconds_total: Annotated[float, Field(ge=0)] | None = None
+    inference_time_observations: Annotated[int, Field(ge=0)] | None = None
+    inference_time_seconds_total: Annotated[float, Field(ge=0)] | None = None
+    e2e_time_observations: Annotated[int, Field(ge=0)] | None = None
+    e2e_time_seconds_total: Annotated[float, Field(ge=0)] | None = None
+    prompt_token_observations: Annotated[int, Field(ge=0)] | None = None
+    prompt_tokens_total: Annotated[float, Field(ge=0)] | None = None
+
+    @model_validator(mode="after")
+    def validate_availability(self) -> "ArcSessionEngineMetrics":
+        values = (
+            self.requests_running,
+            self.requests_waiting,
+            self.queue_time_observations,
+            self.queue_time_seconds_total,
+            self.inference_time_observations,
+            self.inference_time_seconds_total,
+            self.e2e_time_observations,
+            self.e2e_time_seconds_total,
+            self.prompt_token_observations,
+            self.prompt_tokens_total,
+        )
+        if self.available != all(value is not None for value in values):
+            raise ValueError("engine metric availability diverged from values")
+        return self
+
+
+class ArcSessionMetricsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    schema_version: Literal["rayline.arc.session-metrics-response.v1"]
+    coordinator: ArcSessionCoordinatorMetrics
+    engine: ArcSessionEngineMetrics

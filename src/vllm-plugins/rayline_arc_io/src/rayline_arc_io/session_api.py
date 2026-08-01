@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import time
+from dataclasses import asdict, dataclass
 
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
@@ -23,7 +24,10 @@ from .constants import (
 )
 from .schemas import (
     ArcSessionCloseResponse,
+    ArcSessionCoordinatorMetrics,
+    ArcSessionEngineMetrics,
     ArcSessionHealthResponse,
+    ArcSessionMetricsResponse,
     ArcSessionPoolingRequest,
     ArcSessionPoolingResponse,
     EpisodeIDHash,
@@ -35,6 +39,10 @@ from .session_coordinator import (
     SessionCoordinator,
     SessionCoordinatorError,
     SessionEncodingResult,
+)
+from .session_metrics import (
+    SessionEngineMetricsProvider,
+    SessionEngineMetricsSnapshot,
 )
 
 
@@ -81,10 +89,30 @@ def _pooling_response(
     )
 
 
+def _metrics_response(
+    coordinator: SessionCoordinator,
+    engine_metrics_provider: SessionEngineMetricsProvider | None,
+) -> ArcSessionMetricsResponse:
+    coordinator_snapshot = coordinator.metrics_snapshot()
+    if engine_metrics_provider is None:
+        engine_snapshot = SessionEngineMetricsSnapshot(available=False)
+    else:
+        try:
+            engine_snapshot = engine_metrics_provider()
+        except Exception as error:
+            raise HTTPException(status_code=503, detail="engine_metrics") from error
+    return ArcSessionMetricsResponse(
+        schema_version="rayline.arc.session-metrics-response.v1",
+        coordinator=ArcSessionCoordinatorMetrics(**asdict(coordinator_snapshot)),
+        engine=ArcSessionEngineMetrics(**asdict(engine_snapshot)),
+    )
+
+
 def create_session_app(
     coordinator: SessionCoordinator,
     serializer: TokenBlockSerializer,
     metadata: SessionAPIMetadata,
+    engine_metrics_provider: SessionEngineMetricsProvider | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Rayline ARC retained pooling session",
@@ -118,6 +146,13 @@ def create_session_app(
             pooling_capabilities=list(SESSION_CAPABILITIES),
         )
 
+    @app.get(
+        "/v1/rayline/arc/session/metrics",
+        response_model=ArcSessionMetricsResponse,
+    )
+    async def metrics() -> ArcSessionMetricsResponse:
+        return _metrics_response(coordinator, engine_metrics_provider)
+
     @app.post(
         "/v1/rayline/arc/session/pooling",
         response_model=ArcSessionPoolingResponse,
@@ -125,7 +160,13 @@ def create_session_app(
     async def encode(
         request: ArcSessionPoolingRequest,
     ) -> ArcSessionPoolingResponse:
-        tokenization = serializer.tokenize(request.turns)
+        tokenization_started = time.perf_counter()
+        try:
+            tokenization = serializer.tokenize(request.turns)
+        finally:
+            coordinator.observe_tokenization(
+                max(0.0, time.perf_counter() - tokenization_started)
+            )
         try:
             result = await coordinator.encode(
                 request.episode_id_hash,

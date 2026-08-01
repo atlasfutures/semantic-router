@@ -158,6 +158,7 @@ class SessionEncoder:
         )
         from rayline_arc_io.session_runtime import (  # noqa: PLC0415
             VLLMRetainedPoolingBackendFactory,
+            VLLMSessionEngineMetricsProvider,
         )
         from transformers import AutoTokenizer  # noqa: PLC0415
         from vllm.config import PoolerConfig  # noqa: PLC0415
@@ -207,6 +208,7 @@ class SessionEncoder:
             self._coordinator,
             TokenBlockSerializer(tokenizer),
             SessionAPIMetadata(engine_build_id=ENGINE_BUILD_ID),
+            VLLMSessionEngineMetricsProvider(),
         )
 
     @modal.exit()
