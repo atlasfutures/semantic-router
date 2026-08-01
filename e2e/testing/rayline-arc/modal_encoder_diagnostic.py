@@ -35,6 +35,7 @@ MAX_POOLING_REQUESTS = (
 METRICS_SCHEMA = "rayline.arc.session-metrics-response.v1"
 REPORT_SCHEMA = "rayline.arc.modal-encoder-diagnostic.v1"
 SAMPLER_INTERVAL_SECONDS = 0.02
+ENGINE_METRIC_SETTLE_TIMEOUT_SECONDS = 10.0
 MAX_RESOURCE_ENVELOPE_USD = 2.4996168
 CUMULATIVE_BEFORE_USD = 14.23246402
 
@@ -134,6 +135,43 @@ def _metric_delta(
             raise RuntimeError(f"encoder metric moved backwards: {section}.{field}")
         result[field] = delta
     return result
+
+
+def _read_completed_metrics(
+    client: CanaryClient,
+    before: dict[str, Any],
+    expected_observations: int,
+) -> dict[str, Any]:
+    """Wait briefly for vLLM's completed-request logger to settle after close."""
+    deadline = time.monotonic() + ENGINE_METRIC_SETTLE_TIMEOUT_SECONDS
+    observed: dict[str, float] = {}
+    while True:
+        after = _read_metrics(client)
+        observed = _metric_delta(
+            before,
+            after,
+            "engine",
+            ENGINE_CUMULATIVE_FIELDS,
+        )
+        completed = tuple(
+            observed[field]
+            for field in (
+                "queue_time_observations",
+                "inference_time_observations",
+                "e2e_time_observations",
+                "prompt_token_observations",
+            )
+        )
+        if all(value == expected_observations for value in completed):
+            return after
+        if any(value > expected_observations for value in completed):
+            raise RuntimeError("vLLM completed-request metric exceeded packet count")
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                "vLLM completed-request metrics did not settle: "
+                f"observed={completed}, expected={expected_observations}"
+            )
+        time.sleep(SAMPLER_INTERVAL_SECONDS)
 
 
 def _merge_deltas(deltas: list[dict[str, float]]) -> dict[str, float]:
@@ -309,7 +347,7 @@ def _run_level(
                 sampler.stop()
             finally:
                 _close_all(client, episode_ids)
-        after = _read_metrics(client)
+        after = _read_completed_metrics(client, before, concurrency)
 
         expected_action = "created" if phase == "create" else "appended"
         if any(result["action"] != expected_action for result in results):
@@ -385,7 +423,7 @@ def _run_same_episode_control(
         SAME_EPISODE_TURNS,
     )
     client.close(episode_id)
-    after = _read_metrics(client)
+    after = _read_completed_metrics(client, before, 1)
     coordinator = _metric_delta(
         before,
         after,

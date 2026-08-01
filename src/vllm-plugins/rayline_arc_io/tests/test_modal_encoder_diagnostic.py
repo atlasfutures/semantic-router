@@ -55,6 +55,30 @@ def test_metric_delta_rejects_missing_or_decreasing_values() -> None:
         )
 
 
+def test_completed_metrics_wait_for_vllm_logger_settlement(monkeypatch) -> None:
+    before = {
+        "engine": dict.fromkeys(diagnostic.ENGINE_CUMULATIVE_FIELDS, 0.0),
+    }
+    incomplete = {
+        "engine": dict.fromkeys(diagnostic.ENGINE_CUMULATIVE_FIELDS, 0.0),
+    }
+    complete = {
+        "engine": dict.fromkeys(diagnostic.ENGINE_CUMULATIVE_FIELDS, 0.0),
+    }
+    for field in (
+        "queue_time_observations",
+        "inference_time_observations",
+        "e2e_time_observations",
+        "prompt_token_observations",
+    ):
+        complete["engine"][field] = 1.0
+    snapshots = iter((incomplete, complete))
+    monkeypatch.setattr(diagnostic, "_read_metrics", lambda _client: next(snapshots))
+    monkeypatch.setattr(diagnostic.time, "sleep", lambda _seconds: None)
+
+    assert diagnostic._read_completed_metrics(object(), before, 1) is complete
+
+
 def test_cross_episode_gate_requires_exact_counts_and_zero_lock_contention() -> None:
     requests = 4
     coordinator = dict.fromkeys(diagnostic.COORDINATOR_CUMULATIVE_FIELDS, 0.0)
@@ -99,6 +123,9 @@ def test_launcher_deploys_exact_service_and_cleans_only_encoder_containers() -> 
     assert "MAX_DIAGNOSTIC_SECONDS = 15 * 60" in launcher
     assert 'ENCODER_APP_ID = "ap-rs3UkEn5XUnWjrZOXYbkuB"' in launcher
     assert 'modal_command, "deploy", str(SERVICE)' in launcher
+    assert "check=False" in launcher
+    assert "_emit_sanitized_result" in launcher
+    assert "raise SystemExit(result.returncode)" in launcher
     assert '"container", "stop", container_id, "--yes"' in launcher
     assert "manager.delete(proxy_token.token_id)" in launcher
     assert "execute-paid-1000" not in launcher

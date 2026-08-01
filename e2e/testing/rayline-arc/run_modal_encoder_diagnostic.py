@@ -136,6 +136,7 @@ def main() -> None:
                 str(args.timeout_seconds),
             ],
             environment=environment,
+            check=False,
             capture_output=True,
             timeout=MAX_DIAGNOSTIC_SECONDS,
         )
@@ -143,6 +144,8 @@ def main() -> None:
             result,
             (proxy_token.token_id, proxy_token.token_secret),
         )
+        if result.returncode != 0:
+            raise SystemExit(result.returncode)
     finally:
         print("encoder diagnostic cleanup: starting", file=sys.stderr, flush=True)
         try:
