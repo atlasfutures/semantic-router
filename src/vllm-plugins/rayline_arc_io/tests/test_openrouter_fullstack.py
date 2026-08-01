@@ -38,7 +38,7 @@ def test_openrouter_artifact_is_three_arm_pinned_and_bounded(tmp_path: Path) -> 
     manifest = json.loads((tmp_path / "manifest.json").read_text())
     golden = json.loads((tmp_path / "head_golden.json").read_text())
 
-    assert manifest["artifact_id"] == "public-rayline-arc-openrouter-v1"
+    assert manifest["artifact_id"] == "public-rayline-arc-openrouter-luna-v2"
     assert manifest["architecture"]["pool"] == [
         "worker-a",
         "worker-b",
@@ -46,11 +46,19 @@ def test_openrouter_artifact_is_three_arm_pinned_and_bounded(tmp_path: Path) -> 
     ]
     assert [worker["model"] for worker in manifest["workers"]] == [
         "deepseek/deepseek-v4-flash",
-        "moonshotai/kimi-k3",
+        "openai/gpt-5.6-luna",
         "z-ai/glm-5.2",
     ]
+    expected_providers = {
+        "worker-a": ("fireworks", "Fireworks"),
+        "worker-b": ("openai", "OpenAI"),
+        "worker-c": ("fireworks", "Fireworks"),
+    }
     for worker in manifest["workers"]:
-        assert worker["openrouter_provider_order"] == ["fireworks"]
+        provider_slug, provider_name = expected_providers[worker["id"]]
+        assert worker["openrouter_provider_slug"] == provider_slug
+        assert worker["openrouter_provider_name"] == provider_name
+        assert worker["openrouter_provider_order"] == [provider_slug]
         assert worker["openrouter_allow_fallbacks"] is False
         assert worker["openrouter_require_parameters"] is True
         assert worker["max_completion_tokens"] == EXPECTED_MAX_TOKENS
@@ -58,6 +66,9 @@ def test_openrouter_artifact_is_three_arm_pinned_and_bounded(tmp_path: Path) -> 
         assert worker["extra_body"] == {
             "reasoning": {"enabled": False, "effort": "none"}
         }
+    assert "temperature" not in manifest["workers"][1]
+    assert manifest["workers"][0]["temperature"] == 0
+    assert manifest["workers"][2]["temperature"] == 0
     assert [case["selected_index"] for case in golden["cases"]] == [0, 1, 2]
     assert (tmp_path / "head.safetensors").stat().st_size > 0
 
@@ -71,8 +82,40 @@ def test_openrouter_canary_request_and_cost_bounds_are_small() -> None:
     assert canary.REQUEST_PACING_SECONDS == 1.0
     assert canary.MAX_RETRY_DELAY_SECONDS == EXPECTED_MAX_RETRY_DELAY_SECONDS
     assert canary.MAX_REPORTED_PROVIDER_COST_USD == EXPECTED_MAX_PROVIDER_COST_USD
-    assert canary.PROVIDER_SLUG == "fireworks"
-    assert canary.PROVIDER_NAME == "Fireworks"
+    assert canary.PROVIDER_SLUGS == {
+        "worker-a": "fireworks",
+        "worker-b": "openai",
+        "worker-c": "fireworks",
+    }
+    assert canary.PROVIDER_NAMES == {
+        "worker-a": "Fireworks",
+        "worker-b": "OpenAI",
+        "worker-c": "Fireworks",
+    }
+    assert canary.TEMPERATURES == {
+        "worker-a": 0,
+        "worker-b": None,
+        "worker-c": 0,
+    }
+
+
+def test_luna_direct_request_uses_openai_pin_and_omits_temperature() -> None:
+    request = canary._chat_request(
+        model=canary.WORKERS["worker-b"],
+        prompt="bounded public prompt",
+        direct_openrouter=True,
+        provider_slug=canary.PROVIDER_SLUGS["worker-b"],
+        temperature=canary.TEMPERATURES["worker-b"],
+    )
+
+    assert request["model"] == "openai/gpt-5.6-luna"
+    assert request["provider"] == {
+        "order": ["openai"],
+        "allow_fallbacks": False,
+        "require_parameters": True,
+    }
+    assert request["reasoning"] == {"enabled": False, "effort": "none"}
+    assert "temperature" not in request
 
 
 def test_chat_retries_one_pre_response_429_with_same_episode_and_accounts_attempts(
@@ -218,6 +261,13 @@ def test_openrouter_compose_contract_routes_only_known_workers() -> None:
     assert "host_rewrite_literal: openrouter.ai" in envoy
     assert config.count("provider: openai") == EXPECTED_WORKER_COUNT
     assert "provider: openrouter" not in config
+    assert "fireworks/fast" not in config
+    assert "moonshotai/kimi" not in config
+    assert "artifact_revision: public-rayline-arc-openrouter-luna-v2" in config
+    assert "prompt_per_1m: 0.1" in config
+    assert "cached_input_per_1m: 0.01" in config
+    assert "cache_write_per_1m: 0.125" in config
+    assert "completion_per_1m: 0.6" in config
     assert "envoy.transport_sockets.tls" in envoy
     assert "openrouter_artifact_fixture.py" in override
     assert "openrouter_artifact_fixture.py" in dockerfile

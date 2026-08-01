@@ -800,8 +800,46 @@ before changing transport policy:
   provider identity but measures a heterogeneous provider/model bundle.
 
 Any option requires a new immutable artifact revision, source-frozen driver,
-preregistration, and explicit bounded packet. The current plan authorizes no
-additional paid generation. The held 1,000-case packet remains uninvoked.
+preregistration, and explicit bounded packet. At ORC004 closure the plan
+authorized no additional paid generation. The held 1,000-case packet remains
+uninvoked.
+
+On 2026-08-01 the user selected the third option and authorized one bounded
+continuation packet under the existing `$20` total cap. ORC005 replaces only
+the degraded Kimi arm with `openai/gpt-5.6-luna`; it does not select the
+premium Fireworks Fast endpoint. Every generation still traverses the
+OpenRouter API and ephemeral OpenRouter credential. The immutable artifact
+revision is `public-rayline-arc-openrouter-luna-v2`, with these execution
+contracts:
+
+- `worker-a`: `deepseek/deepseek-v4-flash`, pinned to standard provider slug
+  `fireworks`, with `temperature=0`;
+- `worker-b`: `openai/gpt-5.6-luna`, pinned to standard provider slug `openai`,
+  with the `temperature` parameter omitted because the pinned endpoint does
+  not advertise it; and
+- `worker-c`: `z-ai/glm-5.2`, pinned to standard provider slug `fireworks`,
+  with `temperature=0`.
+
+All three contracts keep provider fallbacks and reasoning disabled and require
+declared parameters. `fireworks/fast`, OpenAI Flex, and OpenAI Priority are not
+allowed. The source-frozen price snapshot records Luna at `$0.10` prompt,
+`$0.01` cache-read, `$0.125` cache-write, and `$0.60` completion per million
+tokens from the
+[OpenRouter Luna endpoint inventory](https://openrouter.ai/api/v1/models/openai/gpt-5.6-luna/endpoints).
+The DeepSeek and GLM prices remain pinned to their standard Fireworks endpoint
+snapshots. The compose backend profile remains the OpenAI-compatible transport
+to `https://openrouter.ai/api/v1` for every worker; artifact fields, not the
+transport profile name, own each downstream provider pin.
+
+ORC005 retains the 31-logical-call and 62-wire-attempt ceilings, one-second
+sequential pacing, one same-episode retry only for pre-response HTTP 429/503,
+eight-token completions, `$0.10` reported-cost gate, `$0.25` ephemeral-key hard
+limit, and exact cleanup/privacy gates. It must be preregistered against the
+signed Semantic Router implementation commit before one launch; there is no
+whole-packet retry. The `$2.749617` packet envelope added to the `$8.675330`
+cumulative observed upper bound yields `$11.424947`, leaving more than `$8.57`
+under the user cap. This authorization does not include the held 1,000-case
+qualification.
 
 At the 2026-07-31 Modal rate snapshot, each 15-minute L4/4-CPU/16-GiB timeout
 envelope is `$0.278928`; both workers total `$0.557856`. Including the existing
@@ -1074,14 +1112,17 @@ but held:
    correctness but exposed ARC/direct throughput ratios falling from `0.256`
    at concurrency one to `0.083` at concurrency eight. Use its private receipt
    as the regression baseline, not a production saturation claim.
-10. Treat ORC001 and ORC002 as closed local-contract failures with complete
-    cleanup and private aggregate receipts. Run the separately preregistered
-    ORC003 canary from fixed commit `db20cf48`; require component readiness and
-    the already-passed external-route preflight, retain the same three
-    Fireworks-pinned models and spend limits, and do not use provider latency as
-    a stable throughput benchmark. After that canary, preregister a traced
-    self-hosted diagnostic that isolates the decision plane before another
-    capacity packet.
+10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003 and
+    ORC004 as closed provider-limit failures, all with complete cleanup and
+    private aggregate receipts. Finish and sign the Luna artifact/driver
+    revision, preregister ORC005 against that exact commit, and launch the
+    bounded packet once. Require component readiness and the already-passed
+    external-route preflight; route every model through OpenRouter; pin
+    DeepSeek/GLM to standard Fireworks and Luna to standard OpenAI; reject
+    Fireworks Fast, fallbacks, and unregistered service tiers. Do not interpret
+    provider latency as a stable throughput benchmark. After the canary,
+    preregister a traced self-hosted diagnostic that isolates the decision
+    plane before another capacity packet.
 11. Keep the 1,000-case release qualification held until the user explicitly
     confirms execution.
 

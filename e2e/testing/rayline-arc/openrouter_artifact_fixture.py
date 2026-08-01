@@ -24,33 +24,46 @@ from artifact_fixture import (
 )
 from modal_fullstack_inputs import ROUTING_AXIS_INDEX
 
-ARTIFACT_ID = "public-rayline-arc-openrouter-v1"
+ARTIFACT_ID = "public-rayline-arc-openrouter-luna-v2"
 EXPECTED_ARGUMENT_COUNT = 2
 TARGET_AXIS_VALUE = 0.006
-PROVIDER_SLUG = "fireworks"
-PROVIDER_NAME = "Fireworks"
 MAX_COMPLETION_TOKENS = 8
 WORKERS = (
     {
         "id": "worker-a",
         "model": "deepseek/deepseek-v4-flash",
+        "provider_slug": "fireworks",
+        "provider_name": "Fireworks",
+        "pricing_source": "openrouter-fireworks-2026-08-01",
         "prompt_cost": 0.00000014,
         "cache_read_cost": 0.000000028,
+        "cache_write_cost": 0.00000014,
         "completion_cost": 0.00000028,
+        "temperature": 0,
     },
     {
         "id": "worker-b",
-        "model": "moonshotai/kimi-k3",
-        "prompt_cost": 0.000003,
-        "cache_read_cost": 0.0000003,
-        "completion_cost": 0.000015,
+        "model": "openai/gpt-5.6-luna",
+        "provider_slug": "openai",
+        "provider_name": "OpenAI",
+        "pricing_source": "openrouter-openai-2026-08-01",
+        "prompt_cost": 0.0000001,
+        "cache_read_cost": 0.00000001,
+        "cache_write_cost": 0.000000125,
+        "completion_cost": 0.0000006,
+        "temperature": None,
     },
     {
         "id": "worker-c",
         "model": "z-ai/glm-5.2",
+        "provider_slug": "fireworks",
+        "provider_name": "Fireworks",
+        "pricing_source": "openrouter-fireworks-2026-08-01",
         "prompt_cost": 0.0000014,
         "cache_read_cost": 0.00000014,
+        "cache_write_cost": 0.0000014,
         "completion_cost": 0.0000044,
+        "temperature": 0,
     },
 )
 
@@ -156,27 +169,26 @@ def _golden(checkpoint_sha256: str) -> dict[str, object]:
 
 
 def _worker_contract(worker: dict[str, object]) -> dict[str, object]:
-    return {
+    contract: dict[str, object] = {
         "id": worker["id"],
         "model": worker["model"],
         "api_key_env": "SYNTHETIC_API_KEY",
         "estimated_input_cost_per_token": worker["prompt_cost"],
         "estimated_cache_read_cost_per_token": worker["cache_read_cost"],
-        "estimated_cache_write_cost_per_token": worker["prompt_cost"],
+        "estimated_cache_write_cost_per_token": worker["cache_write_cost"],
         "estimated_output_cost_per_token": worker["completion_cost"],
         "latency_ms": 1000,
         "capability_tags": ["public-openrouter-canary"],
-        "openrouter_provider_slug": PROVIDER_SLUG,
-        "openrouter_provider_name": PROVIDER_NAME,
-        "openrouter_provider_order": [PROVIDER_SLUG],
+        "openrouter_provider_slug": worker["provider_slug"],
+        "openrouter_provider_name": worker["provider_name"],
+        "openrouter_provider_order": [worker["provider_slug"]],
         "openrouter_allow_fallbacks": False,
         "openrouter_require_parameters": True,
-        "openrouter_pricing_source": "openrouter-fireworks-2026-07-31",
+        "openrouter_pricing_source": worker["pricing_source"],
         "thinking_mode": "off",
         "reasoning_budget_tokens": 0,
         "minimum_completion_tokens": MAX_COMPLETION_TOKENS,
         "max_completion_tokens": MAX_COMPLETION_TOKENS,
-        "temperature": 0,
         "supports_output_effort": False,
         "extra_body": {"reasoning": {"enabled": False, "effort": "none"}},
         "openrouter_max_retries": 1,
@@ -184,6 +196,9 @@ def _worker_contract(worker: dict[str, object]) -> dict[str, object]:
         "openrouter_retry_cap_seconds": 0.2,
         "attempt_deadline_seconds": 120,
     }
+    if worker["temperature"] is not None:
+        contract["temperature"] = worker["temperature"]
+    return contract
 
 
 def _manifest(weights: bytes, golden: bytes) -> dict[str, object]:
@@ -193,8 +208,8 @@ def _manifest(weights: bytes, golden: bytes) -> dict[str, object]:
     return {
         "schema_version": "rayline.mtrouter-runtime.v3",
         "artifact_id": ARTIFACT_ID,
-        "created_at": "2026-07-31T00:00:00Z",
-        "exporter_commit": "public-openrouter-canary-exporter-v1",
+        "created_at": "2026-08-01T00:00:00Z",
+        "exporter_commit": "public-openrouter-canary-exporter-v2",
         "weights": {
             "file": "head.safetensors",
             "sha256": _sha256(weights),
@@ -249,8 +264,8 @@ def _manifest(weights: bytes, golden: bytes) -> dict[str, object]:
         },
         "workers": [_worker_contract(worker) for worker in WORKERS],
         "pricing_snapshot": {
-            "config_path": "openrouter-fireworks-endpoints-2026-07-31",
-            "config_commit": "public-openrouter-pricing-v1",
+            "config_path": "openrouter-pinned-endpoints-2026-08-01",
+            "config_commit": "public-openrouter-pricing-v2",
             "mutable_live_prices_affect_decisions": False,
         },
         "golden": {

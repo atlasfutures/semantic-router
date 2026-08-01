@@ -50,8 +50,8 @@ func TestOpenRouterCanaryConfigMatchesThreeArmDispatchContract(t *testing.T) {
 			0.00000014, 0.000000028, 0.00000014, 0.00000028,
 		),
 		openRouterCanaryWorker(
-			"worker-b", "moonshotai/kimi-k3",
-			0.000003, 0.0000003, 0.000003, 0.000015,
+			"worker-b", "openai/gpt-5.6-luna",
+			0.0000001, 0.00000001, 0.000000125, 0.0000006,
 		),
 		openRouterCanaryWorker(
 			"worker-c", "z-ai/glm-5.2",

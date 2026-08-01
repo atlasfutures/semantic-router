@@ -30,8 +30,6 @@ from modal_http import request_following_result_redirects
 
 HTTP_OK = 200
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-PROVIDER_SLUG = "fireworks"
-PROVIDER_NAME = "Fireworks"
 MAX_TOKENS = 8
 MAX_COVERAGE_REQUESTS = 24
 DIRECT_REQUESTS_PER_MODEL = 1
@@ -54,8 +52,23 @@ PUBLIC_GATEWAY_AUTHORIZATION = "Bearer public-openrouter-fullstack-canary"
 SESSION_METRIC = "llm_rayline_arc_session_actions_total"
 WORKERS = {
     "worker-a": "deepseek/deepseek-v4-flash",
-    "worker-b": "moonshotai/kimi-k3",
+    "worker-b": "openai/gpt-5.6-luna",
     "worker-c": "z-ai/glm-5.2",
+}
+PROVIDER_SLUGS = {
+    "worker-a": "fireworks",
+    "worker-b": "openai",
+    "worker-c": "fireworks",
+}
+PROVIDER_NAMES = {
+    "worker-a": "Fireworks",
+    "worker-b": "OpenAI",
+    "worker-c": "Fireworks",
+}
+TEMPERATURES: dict[str, int | None] = {
+    "worker-a": 0,
+    "worker-b": None,
+    "worker-c": 0,
 }
 
 
@@ -140,6 +153,38 @@ def _http_error(
     )
 
 
+def _chat_request(
+    *,
+    model: str,
+    prompt: str,
+    direct_openrouter: bool,
+    provider_slug: str,
+    temperature: int | None,
+) -> dict[str, Any]:
+    request: dict[str, Any] = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": MAX_TOKENS,
+        "stream": False,
+    }
+    if temperature is not None:
+        request["temperature"] = temperature
+    if direct_openrouter:
+        if not provider_slug:
+            raise ValueError("direct OpenRouter calls require a provider slug")
+        request.update(
+            {
+                "provider": {
+                    "order": [provider_slug],
+                    "allow_fallbacks": False,
+                    "require_parameters": True,
+                },
+                "reasoning": {"enabled": False, "effort": "none"},
+            }
+        )
+    return request
+
+
 def _chat_once(
     *,
     base_url: str,
@@ -149,25 +194,19 @@ def _chat_once(
     timeout_seconds: float,
     episode_id: str = "",
     direct_openrouter: bool = False,
+    provider_slug: str = "",
+    expected_provider_name: str = "",
+    temperature: int | None = 0,
 ) -> dict[str, Any]:
-    request: dict[str, Any] = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": MAX_TOKENS,
-        "temperature": 0,
-        "stream": False,
-    }
-    if direct_openrouter:
-        request.update(
-            {
-                "provider": {
-                    "order": [PROVIDER_SLUG],
-                    "allow_fallbacks": False,
-                    "require_parameters": True,
-                },
-                "reasoning": {"enabled": False, "effort": "none"},
-            }
-        )
+    if direct_openrouter and not expected_provider_name:
+        raise ValueError("direct OpenRouter calls require an expected provider")
+    request = _chat_request(
+        model=model,
+        prompt=prompt,
+        direct_openrouter=direct_openrouter,
+        provider_slug=provider_slug,
+        temperature=temperature,
+    )
     headers = {
         "authorization": authorization,
         "content-type": "application/json",
@@ -208,7 +247,10 @@ def _chat_once(
     if not isinstance(usage, dict) or not isinstance(usage.get("cost"), (int, float)):
         raise TypeError("OpenRouter response omitted usage cost")
     provider = str(decoded.get("provider") or "")
-    if provider != PROVIDER_NAME:
+    expected_provider = expected_provider_name or PROVIDER_NAMES.get(
+        selected_worker, ""
+    )
+    if not expected_provider or provider != expected_provider:
         raise RuntimeError("OpenRouter did not use the pinned provider")
     return {
         "latency_seconds": latency_seconds,
@@ -230,6 +272,9 @@ def _chat(
     timeout_seconds: float,
     episode_id: str = "",
     direct_openrouter: bool = False,
+    provider_slug: str = "",
+    expected_provider_name: str = "",
+    temperature: int | None = 0,
 ) -> dict[str, Any]:
     attempts = 0
     while True:
@@ -243,6 +288,9 @@ def _chat(
                 timeout_seconds=timeout_seconds,
                 episode_id=episode_id,
                 direct_openrouter=direct_openrouter,
+                provider_slug=provider_slug,
+                expected_provider_name=expected_provider_name,
+                temperature=temperature,
             )
             result["external_attempts"] = attempts
             time.sleep(REQUEST_PACING_SECONDS)
@@ -322,6 +370,9 @@ def _direct_and_routed(
                 authorization=f"Bearer {openrouter_key}",
                 timeout_seconds=timeout_seconds,
                 direct_openrouter=True,
+                provider_slug=PROVIDER_SLUGS[worker],
+                expected_provider_name=PROVIDER_NAMES[worker],
+                temperature=TEMPERATURES[worker],
             )
             for _index in range(DIRECT_REQUESTS_PER_MODEL)
         ]
@@ -413,7 +464,7 @@ def _stream_once(
         raise RuntimeError("streaming OpenRouter response was incomplete")
     if selected_worker != "worker-a":
         raise RuntimeError("streaming ARC selection changed for the frozen prompt")
-    if provider != PROVIDER_NAME:
+    if provider != PROVIDER_NAMES["worker-a"]:
         raise RuntimeError("streaming OpenRouter response used the wrong provider")
     if not isinstance(usage, dict) or not isinstance(usage.get("cost"), (int, float)):
         raise TypeError("streaming OpenRouter response omitted usage cost")
@@ -559,7 +610,7 @@ def main() -> None:
         "run_id": args.run_id,
         "status": "passed",
         "models": WORKERS,
-        "pinned_provider": PROVIDER_NAME,
+        "pinned_providers": PROVIDER_NAMES,
         "encoder_warmup": encoder_warmup,
         "coverage": {
             **_result_summary(coverage),
