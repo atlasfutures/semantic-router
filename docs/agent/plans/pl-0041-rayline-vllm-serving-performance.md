@@ -17,24 +17,26 @@ The plan must answer four questions with runnable evidence:
    `rayline_remote` saturate, and what latency, throughput, memory, and
    operational costs does each design impose?
 
-Status: active on 2026-07-31. The stateless end-to-end MVP parity gate, retained
+Status: active on 2026-08-01. The stateless end-to-end MVP parity gate, retained
 engine gate, versioned HTTP/client integration, and real-GPU concurrent gateway
 E2E pass. The explicit pinned-session design is selected, its 128-case
 development qualification passes, and the first bounded full-stack performance
-packet is complete. That packet preserves correctness but exposes unacceptable
-ARC scaling that now requires decision-plane tracing. Current published
-implementation heads:
+packet is complete. Its direct-only comparison was confounded by completion and
+time-order variance; the source-frozen static-gateway follow-up passes and
+isolates the protected encoder/session request as the dominant measured ARC
+cost. Current published implementation heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
-  at `db20cf48` for the capability-gated retained-session client, hermetic
-  stack, bounded real-worker benchmark, fixed three-model OpenRouter transport
-  and resolved-path route contracts, and mandatory ARC readiness preflight.
+  at `b6687be8c6fb987ee7d0cc1f7155341fed2d54e1` for the capability-gated
+  retained-session client, hermetic stack, bounded direct/static/ARC diagnostic,
+  fixed three-model OpenRouter transport and retry contracts, and mandatory ARC
+  readiness preflight.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `88524778` for the registered retained-session, real-endpoint, bounded
-  performance, failed ORC001/ORC002 receipts, and preregistered fixed ORC003
-  OpenRouter canary.
+  at `dc4abee91c794ca91742a7501fade97aefa485cb` for the registered
+  retained-session, real-endpoint and OpenRouter canaries, plus the closed,
+  artifact-pinned direct/static/ARC stage diagnostic.
 - vLLM integration
   [`atlasfutures/vllm:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/vllm/tree/codex/rayline-vsr-mvp)
   at `b1049f6dd95c27d2e1b052eebc3b1a7f9f41195f`.
@@ -650,12 +652,32 @@ totals must match across all three paths per worker. This fixes the principal
 confounder in `perf001`; it remains a diagnostic at concurrency one and four,
 not a production saturation or SLO claim.
 
-The new packet makes no provider calls and retains the established
-`$3.0574728` 15-minute two-L4-plus-H100 maximum envelope. Added to the current
-`$11.17499122` cumulative conservative upper bound, the worst case is
-`$14.23246402`, leaving more than `$5.76` under the user cap. A new signed
-Semantic Router source commit and Pathfinder preregistration are required
-before one launch. The held 1,000-case packet remains uninvoked.
+The source-frozen packet completed once and passed all correctness, metrics,
+parity, privacy, and cleanup gates. It launched 42 self-hosted generations, 30
+measured and exactly 15 per worker, with zero retries, selection failures,
+preemptions, or worker queues. Execution fields and completion-token totals
+matched across direct, specified-model gateway, and ARC paths.
+
+The static-gateway arm is the causal baseline. ARC/static throughput was
+`0.748` at concurrency one and `0.755` at concurrency four; ARC added `0.351s`
+and `0.596s` to client p95. Static routing cost only `0.329ms` and `0.146ms`
+mean, while ARC routing mean was `0.367s` and `0.597s`. The protected encoder
+consumed `0.363s` and `0.595s`, more than 99% of the measured routing stage.
+Static and ARC worker E2E means were nearly identical at both levels, maximum
+worker queue depth remained zero, and maximum KV utilization was `0.00301`.
+The next self-hosted rung should therefore instrument protected-encoder
+in-flight and queue behavior directly, not increase packet size.
+
+The aggregate-only receipt and manifest are private and byte-for-byte verified
+at
+`rayline-ai/router-artifacts@9592cdc676fedcba1512e071772f2771285a8793`;
+Pathfinder closes the experiment at
+[`dc4abee9`](https://github.com/atlasfutures/pathfinder/commit/dc4abee91c794ca91742a7501fade97aefa485cb).
+Independent inventory found zero compose resources, zero generation-worker
+tasks, and zero protected-encoder tasks. There were zero provider calls and
+`$0` provider charge. Conservatively charging the full `$3.0574728` resource
+envelope yields a `$14.23246402` cumulative upper bound and `$5.76753598`
+headroom under the user cap. The held 1,000-case packet remains uninvoked.
 
 The user-requested realistic data-plane packet is a separate three-model
 OpenRouter canary, not an external-provider load test. A public synthetic
@@ -1159,10 +1181,13 @@ but held:
 8. Treat the bounded real-endpoint MVP gate as complete at `rwe009`: protected
    retained H100 encoder, ARC, dedicated Envoy TLS routes, two real L4 vLLM
    workers, concurrent routing, streaming, metrics, privacy, and cleanup pass.
-9. Treat the fixed self-hosted direct-versus-ARC ladder as complete. It passed
-   correctness but exposed ARC/direct throughput ratios falling from `0.256`
-   at concurrency one to `0.083` at concurrency eight. Use its private receipt
-   as the regression baseline, not a production saturation claim.
+9. Treat the original direct-versus-ARC ladder as a confounded regression
+   baseline, not a capacity curve. The source-frozen static-control diagnostic
+   passed with exact token parity and measured ARC/static throughput ratios of
+   `0.748` and `0.755` at concurrency one and four. More than 99% of ARC routing
+   time was the protected encoder/session request, while generation-worker
+   queues stayed empty. Before another capacity packet, preregister the smallest
+   encoder-only diagnostic that exposes service in-flight and queue behavior.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage
