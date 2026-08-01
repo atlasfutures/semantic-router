@@ -841,6 +841,31 @@ cumulative observed upper bound yields `$11.424947`, leaving more than `$8.57`
 under the user cap. This authorization does not include the held 1,000-case
 qualification.
 
+ORC005 is now closed with no whole-packet retry. The protected encoder and
+component-readiness gates passed. Four routed coverage generations exercised
+all three workers for the first time and validated the exact
+DeepSeek/Fireworks, Luna/OpenAI, and GLM/Fireworks contracts through
+OpenRouter; a direct worker-a baseline also completed. The routed worker-a
+comparison then returned HTTP 429, reused the same episode for its one allowed
+retry after two seconds, and returned HTTP 429 again. Six logical requests
+therefore made seven wire attempts and produced five confirmed generations;
+the remaining comparisons and stream were not executed, so the full packet
+gate failed.
+
+OpenRouter's one-run key reported `$0.00004472` usage before deletion. The
+failed-run launcher did not persist exact wall timing, so final conservative
+accounting charges the full `$2.4996168` H100 timeout envelope rather than
+inventing an observed infrastructure amount. The resulting cumulative upper
+bound is `$11.17499122`, leaving more than `$8.82` under the user cap. The
+aggregate-only receipt and manifest are private and exact-round-trip verified
+at `rayline-ai/router-artifacts@ca708efafa93526c8f298a457ad7662fc737c9b7`;
+Pathfinder records closure at
+[`623933be`](https://github.com/atlasfutures/pathfinder/commit/623933be4008d180714a1be0091c6233f834747e).
+Cleanup found zero compose resources and zero protected encoder containers and
+deleted both transient credentials. This proves the OpenRouter-only Luna
+topology can reach every arm without Fireworks Fast; it does not establish a
+stable provider-throughput or latency result, and TD049 remains open.
+
 At the 2026-07-31 Modal rate snapshot, each 15-minute L4/4-CPU/16-GiB timeout
 envelope is `$0.278928`; both workers total `$0.557856`. Including the existing
 single-container H100 encoder's `$2.499617` timeout envelope gives a combined
@@ -1112,17 +1137,15 @@ but held:
    correctness but exposed ARC/direct throughput ratios falling from `0.256`
    at concurrency one to `0.083` at concurrency eight. Use its private receipt
    as the regression baseline, not a production saturation claim.
-10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003 and
-    ORC004 as closed provider-limit failures, all with complete cleanup and
-    private aggregate receipts. Finish and sign the Luna artifact/driver
-    revision, preregister ORC005 against that exact commit, and launch the
-    bounded packet once. Require component readiness and the already-passed
-    external-route preflight; route every model through OpenRouter; pin
-    DeepSeek/GLM to standard Fireworks and Luna to standard OpenAI; reject
-    Fireworks Fast, fallbacks, and unregistered service tiers. Do not interpret
-    provider latency as a stable throughput benchmark. After the canary,
-    preregister a traced self-hosted diagnostic that isolates the decision
-    plane before another capacity packet.
+10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
+    ORC004, and ORC005 as closed provider-limit failures, all with complete
+    cleanup and private aggregate receipts. ORC005 proves three-arm coverage
+    through OpenRouter with DeepSeek/GLM pinned to standard Fireworks and Luna
+    pinned to standard OpenAI, without Fireworks Fast or fallbacks; it still
+    fails the complete direct/routed/streaming gate after the routed worker-a
+    retry exhausts. Do not rerun it or interpret provider latency as a stable
+    throughput benchmark. Preregister a traced self-hosted diagnostic that
+    isolates the decision plane before another capacity packet.
 11. Keep the 1,000-case release qualification held until the user explicitly
     confirms execution.
 
