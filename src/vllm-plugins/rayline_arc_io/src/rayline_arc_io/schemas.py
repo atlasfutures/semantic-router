@@ -190,6 +190,7 @@ class ArcSessionEngineMetrics(BaseModel):
     requests_waiting: Annotated[int, Field(ge=0)] | None = None
     requests_running_max: Annotated[int, Field(ge=0)] | None = None
     requests_waiting_max: Annotated[int, Field(ge=0)] | None = None
+    requests_scheduled_max: Annotated[int, Field(ge=0)] | None = None
     scheduler_updates_total: Annotated[int, Field(ge=0)] | None = None
     queue_time_observations: Annotated[int, Field(ge=0)] | None = None
     queue_time_seconds_total: Annotated[float, Field(ge=0)] | None = None
@@ -208,6 +209,7 @@ class ArcSessionEngineMetrics(BaseModel):
             self.requests_waiting,
             self.requests_running_max,
             self.requests_waiting_max,
+            self.requests_scheduled_max,
             self.scheduler_updates_total,
             self.queue_time_observations,
             self.queue_time_seconds_total,
@@ -226,6 +228,6 @@ class ArcSessionEngineMetrics(BaseModel):
 class ArcSessionMetricsResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    schema_version: Literal["rayline.arc.session-metrics-response.v3"]
+    schema_version: Literal["rayline.arc.session-metrics-response.v4"]
     coordinator: ArcSessionCoordinatorMetrics
     engine: ArcSessionEngineMetrics

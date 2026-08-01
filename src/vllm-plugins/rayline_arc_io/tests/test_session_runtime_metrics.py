@@ -47,6 +47,7 @@ def test_vllm_metrics_provider_combines_cached_load_and_append_metrics() -> None
         num_requests_waiting=1,
         num_requests_running_max=6,
         num_requests_waiting_max=3,
+        num_requests_scheduled_max=8,
         num_scheduler_updates=12,
     )
     append = SessionAppendMetricsSnapshot(
@@ -69,6 +70,7 @@ def test_vllm_metrics_provider_combines_cached_load_and_append_metrics() -> None
         requests_waiting=1,
         requests_running_max=6,
         requests_waiting_max=3,
+        requests_scheduled_max=8,
         scheduler_updates_total=12,
         queue_time_observations=4,
         queue_time_seconds_total=0.25,
@@ -87,6 +89,7 @@ def test_vllm_metrics_provider_reports_zero_before_first_append() -> None:
         num_requests_waiting=0,
         num_requests_running_max=0,
         num_requests_waiting_max=0,
+        num_requests_scheduled_max=0,
         num_scheduler_updates=0,
     )
     append = SessionAppendMetricsSnapshot(

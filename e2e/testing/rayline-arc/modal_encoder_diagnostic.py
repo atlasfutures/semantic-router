@@ -18,6 +18,13 @@ import threading
 import time
 from typing import Any
 
+from modal_encoder_diagnostic_report import build_report
+from modal_encoder_diagnostic_report import (
+    scheduler_snapshot as _scheduler_snapshot,
+)
+from modal_encoder_diagnostic_report import (
+    validate_or_emit_failure as _validate_or_emit_failure,
+)
 from modal_fullstack_inputs import CANDIDATE_PROMPTS
 from modal_session_canary import CanaryClient, _episode_hash
 
@@ -31,10 +38,10 @@ MIN_ENGINE_CONCURRENT_REQUESTS = 2
 MAX_POOLING_REQUESTS = (
     MEASURED_REQUESTS + APPEND_SETUP_REQUESTS + SAME_EPISODE_CONTROL_REQUESTS
 )
-METRICS_SCHEMA = "rayline.arc.session-metrics-response.v3"
-REPORT_SCHEMA = "rayline.arc.modal-encoder-diagnostic.v3"
+METRICS_SCHEMA = "rayline.arc.session-metrics-response.v4"
+REPORT_SCHEMA = "rayline.arc.modal-encoder-diagnostic.v4"
 MAX_RESOURCE_ENVELOPE_USD = 2.4996168
-CUMULATIVE_BEFORE_USD = 19.23169762
+CUMULATIVE_BEFORE_USD = 21.73131442
 
 FIRST_TURNS = [{"role": "user", "text": CANDIDATE_PROMPTS[0]}]
 APPENDED_TURNS = [
@@ -73,13 +80,6 @@ ENGINE_CUMULATIVE_FIELDS = (
     "e2e_time_seconds_total",
     "prompt_token_observations",
     "prompt_tokens_total",
-)
-ENGINE_SCHEDULER_FIELDS = (
-    "requests_running",
-    "requests_waiting",
-    "requests_running_max",
-    "requests_waiting_max",
-    "scheduler_updates_total",
 )
 
 
@@ -169,33 +169,6 @@ def _merge_deltas(deltas: list[dict[str, float]]) -> dict[str, float]:
     return {
         key: math.fsum(delta.get(key, 0.0) for delta in deltas) for key in sorted(keys)
     }
-
-
-def _scheduler_snapshot(metrics: dict[str, Any]) -> dict[str, int]:
-    engine = metrics["engine"]
-    snapshot: dict[str, int] = {}
-    for field in ENGINE_SCHEDULER_FIELDS:
-        value = engine.get(field)
-        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-            raise TypeError(f"invalid vLLM scheduler metric: engine.{field}")
-        snapshot[field] = value
-    return snapshot
-
-
-def _validate_capacity_peaks(
-    coordinator: dict[str, Any],
-    engine: dict[str, Any],
-) -> None:
-    if coordinator["backend_inflight_max"] < max(CONCURRENCY_LEVELS):
-        raise RuntimeError("cross-episode calls did not overlap at the vLLM boundary")
-    running_max = engine.get("requests_running_max")
-    if not isinstance(running_max, int) or isinstance(running_max, bool):
-        raise TypeError("vLLM scheduler running peak is unavailable")
-    if running_max < MIN_ENGINE_CONCURRENT_REQUESTS:
-        raise RuntimeError("vLLM scheduler never ran concurrent requests")
-    updates = engine.get("scheduler_updates_total")
-    if not isinstance(updates, int) or isinstance(updates, bool) or updates < 1:
-        raise RuntimeError("vLLM scheduler emitted no load updates")
 
 
 def _run_concurrent(
@@ -459,56 +432,35 @@ def main() -> None:
     if coordinator["session_lock_contentions_total"] != 1:
         raise RuntimeError("encoder diagnostic lock-contention total diverged")
     engine = final["engine"]
-    _validate_capacity_peaks(coordinator, engine)
     scheduler = _scheduler_snapshot(final)
 
-    report = {
-        "schema_version": REPORT_SCHEMA,
-        "run_id": args.run_id,
-        "status": "passed",
-        "workload": {
-            "phases": list(PHASES),
-            "concurrency_levels": list(CONCURRENCY_LEVELS),
-            "waves_per_level": WAVES_PER_LEVEL,
-            "measured_pooling_requests": MEASURED_REQUESTS,
-            "append_setup_requests": APPEND_SETUP_REQUESTS,
-            "same_episode_control_requests": SAME_EPISODE_CONTROL_REQUESTS,
-            "maximum_pooling_requests": MAX_POOLING_REQUESTS,
-        },
-        "results": results,
-        "same_episode_control": same_episode,
-        "overall": {
-            "elapsed_seconds": time.perf_counter() - started,
-            "requests_started_total": coordinator["requests_started_total"],
-            "requests_failed_total": coordinator["requests_failed_total"],
-            "backend_inflight_max": coordinator["backend_inflight_max"],
-            "session_lock_contentions_total": coordinator[
-                "session_lock_contentions_total"
-            ],
-            "engine_scheduler_process_lifetime": scheduler,
-            "initial_engine_metrics_available": initial["engine"]["available"],
-        },
-        "interpretation_boundary": (
-            "coordinator backend time surrounds the retained vLLM append and "
-            "therefore includes vLLM scheduling, model execution, and pooling; "
-            "engine timing counters cover each completed retained append, while "
-            "scheduler maxima are process-lifetime peaks retained inside the fresh "
-            "dedicated vLLM encoder and read after request completion without hot "
-            "client-side metrics polling"
-        ),
-        "budget": {
-            "maximum_resource_envelope_usd": MAX_RESOURCE_ENVELOPE_USD,
-            "cumulative_before_usd": CUMULATIVE_BEFORE_USD,
-            "cumulative_if_full_envelope_usd": (
-                CUMULATIVE_BEFORE_USD + MAX_RESOURCE_ENVELOPE_USD
-            ),
-            "provider_spend_usd": 0.0,
-        },
-        "provider_calls": 0,
-        "automatic_prefix_cache_enabled": False,
-        "release_qualification_1000_executed": False,
-    }
-    print(json.dumps(report, indent=2, sort_keys=True))
+    report = build_report(
+        schema_version=REPORT_SCHEMA,
+        run_id=args.run_id,
+        phases=PHASES,
+        concurrency_levels=CONCURRENCY_LEVELS,
+        waves_per_level=WAVES_PER_LEVEL,
+        measured_requests=MEASURED_REQUESTS,
+        append_setup_requests=APPEND_SETUP_REQUESTS,
+        same_episode_requests=SAME_EPISODE_CONTROL_REQUESTS,
+        maximum_requests=MAX_POOLING_REQUESTS,
+        results=results,
+        same_episode=same_episode,
+        coordinator=coordinator,
+        scheduler=scheduler,
+        initial_engine_available=initial["engine"]["available"],
+        elapsed_seconds=time.perf_counter() - started,
+        maximum_resource_envelope_usd=MAX_RESOURCE_ENVELOPE_USD,
+        cumulative_before_usd=CUMULATIVE_BEFORE_USD,
+    )
+    _validate_or_emit_failure(
+        report,
+        coordinator,
+        engine,
+        minimum_backend_inflight=max(CONCURRENCY_LEVELS),
+        minimum_scheduled_requests=MIN_ENGINE_CONCURRENT_REQUESTS,
+    )
+    print(json.dumps(report, indent=2, sort_keys=True), flush=True)
 
 
 if __name__ == "__main__":

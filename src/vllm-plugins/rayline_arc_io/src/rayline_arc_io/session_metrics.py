@@ -54,6 +54,7 @@ class SessionEngineMetricsSnapshot:
     requests_waiting: int | None = None
     requests_running_max: int | None = None
     requests_waiting_max: int | None = None
+    requests_scheduled_max: int | None = None
     scheduler_updates_total: int | None = None
     queue_time_observations: int | None = None
     queue_time_seconds_total: float | None = None

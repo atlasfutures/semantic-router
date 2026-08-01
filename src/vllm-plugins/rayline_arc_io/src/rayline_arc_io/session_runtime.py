@@ -121,6 +121,7 @@ class VLLMSessionEngineMetricsProvider:
             requests_waiting=int(scheduler.num_requests_waiting),
             requests_running_max=int(scheduler.num_requests_running_max),
             requests_waiting_max=int(scheduler.num_requests_waiting_max),
+            requests_scheduled_max=int(scheduler.num_requests_scheduled_max),
             scheduler_updates_total=int(scheduler.num_scheduler_updates),
             queue_time_observations=append.observations,
             queue_time_seconds_total=append.queue_time_seconds_total,

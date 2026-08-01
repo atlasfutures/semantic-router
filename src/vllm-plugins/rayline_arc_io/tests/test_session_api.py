@@ -194,7 +194,7 @@ def test_metrics_endpoint_reports_payload_free_stage_counters() -> None:
     assert metrics_response.status_code == HTTPStatus.OK
     body = metrics_response.json()
     coordinator = body["coordinator"]
-    assert body["schema_version"] == "rayline.arc.session-metrics-response.v3"
+    assert body["schema_version"] == "rayline.arc.session-metrics-response.v4"
     assert coordinator["tokenization_calls_total"] == 1
     assert coordinator["requests_started_total"] == 1
     assert coordinator["requests_succeeded_total"] == 1
@@ -210,6 +210,7 @@ def test_metrics_endpoint_reports_payload_free_stage_counters() -> None:
         "requests_waiting": None,
         "requests_running_max": None,
         "requests_waiting_max": None,
+        "requests_scheduled_max": None,
         "scheduler_updates_total": None,
         "queue_time_observations": None,
         "queue_time_seconds_total": None,
@@ -231,6 +232,7 @@ def test_metrics_endpoint_includes_curated_engine_snapshot() -> None:
         requests_waiting=1,
         requests_running_max=6,
         requests_waiting_max=3,
+        requests_scheduled_max=8,
         scheduler_updates_total=12,
         queue_time_observations=3,
         queue_time_seconds_total=0.25,
@@ -252,6 +254,7 @@ def test_metrics_endpoint_includes_curated_engine_snapshot() -> None:
         "requests_waiting": 1,
         "requests_running_max": 6,
         "requests_waiting_max": 3,
+        "requests_scheduled_max": 8,
         "scheduler_updates_total": 12,
         "queue_time_observations": 3,
         "queue_time_seconds_total": 0.25,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 from pathlib import Path
 
@@ -13,11 +14,12 @@ SCRIPT_DIR = REPO_ROOT / "e2e/testing/rayline-arc"
 sys.path.insert(0, str(SCRIPT_DIR))
 
 diagnostic = importlib.import_module("modal_encoder_diagnostic")
+reporting = importlib.import_module("modal_encoder_diagnostic_report")
 
 EXPECTED_MEASURED_REQUESTS = 60
 EXPECTED_SETUP_REQUESTS = 30
 EXPECTED_MAX_REQUESTS = 92
-EXPECTED_CUMULATIVE_ENVELOPE_USD = 21.73131442
+EXPECTED_CUMULATIVE_ENVELOPE_USD = 24.23093122
 EXPECTED_BUDGET_CAP_USD = 40.0
 EXPECTED_WAVES_PER_LEVEL = 2
 
@@ -120,15 +122,45 @@ def test_cross_episode_gate_requires_exact_counts_and_zero_lock_contention() -> 
 def test_capacity_gate_uses_server_retained_scheduler_peak() -> None:
     coordinator = {"backend_inflight_max": max(diagnostic.CONCURRENCY_LEVELS)}
     engine = {
-        "requests_running_max": diagnostic.MIN_ENGINE_CONCURRENT_REQUESTS,
+        "requests_scheduled_max": diagnostic.MIN_ENGINE_CONCURRENT_REQUESTS,
         "scheduler_updates_total": 1,
     }
 
-    diagnostic._validate_capacity_peaks(coordinator, engine)
+    reporting.validate_capacity_peaks(
+        coordinator,
+        engine,
+        minimum_backend_inflight=max(diagnostic.CONCURRENCY_LEVELS),
+        minimum_scheduled_requests=diagnostic.MIN_ENGINE_CONCURRENT_REQUESTS,
+    )
 
-    engine["requests_running_max"] = diagnostic.MIN_ENGINE_CONCURRENT_REQUESTS - 1
-    with pytest.raises(RuntimeError, match="never ran concurrent"):
-        diagnostic._validate_capacity_peaks(coordinator, engine)
+    engine["requests_scheduled_max"] = diagnostic.MIN_ENGINE_CONCURRENT_REQUESTS - 1
+    with pytest.raises(RuntimeError, match="never scheduled concurrent"):
+        reporting.validate_capacity_peaks(
+            coordinator,
+            engine,
+            minimum_backend_inflight=max(diagnostic.CONCURRENCY_LEVELS),
+            minimum_scheduled_requests=diagnostic.MIN_ENGINE_CONCURRENT_REQUESTS,
+        )
+
+
+def test_final_capacity_failure_emits_partial_aggregate_report(capsys) -> None:
+    report = {"status": "passed", "results": [{"requests": 60}]}
+    coordinator = {"backend_inflight_max": max(diagnostic.CONCURRENCY_LEVELS)}
+    engine = {"requests_scheduled_max": 1, "scheduler_updates_total": 1}
+
+    with pytest.raises(RuntimeError, match="never scheduled concurrent"):
+        reporting.validate_or_emit_failure(
+            report,
+            coordinator,
+            engine,
+            minimum_backend_inflight=max(diagnostic.CONCURRENCY_LEVELS),
+            minimum_scheduled_requests=diagnostic.MIN_ENGINE_CONCURRENT_REQUESTS,
+        )
+
+    emitted = json.loads(capsys.readouterr().out)
+    assert emitted["status"] == "failed"
+    assert emitted["results"] == [{"requests": 60}]
+    assert emitted["failure"]["phase"] == "final_capacity_peak_validation"
 
 
 def test_launcher_deploys_exact_service_and_cleans_only_encoder_containers() -> None:
