@@ -1158,15 +1158,20 @@ Not in scope:
   bounded policy-selection in-flight and queue-wait metrics. PERF009 completes
   the measured real-stack receipt with Pathfinder in-flight `8`, encoder
   in-flight `7`, and vLLM scheduled batch width `6`.
-- [ ] **RSP-005 — Prove the selected explicit session end to end.** The engine
+- [x] **RSP-005 — Prove the selected explicit session end to end.** The engine
   gate, local HTTP lifecycle, capability-gated Go client, hermetic restart and
   Redis-loss stack, and real-GPU HTTP/concurrency/rebuild canaries pass. The
   automatic-prefix-cache design is rejected for the MVP. Record batching,
   eviction, affinity, and restart behavior in the development qualification
-  before closing this rung.
-- [ ] **RSP-006 — Implement and harden vLLM KV reuse.** Add bounded cache
+  before closing this rung. Closed by the 128-case development qualification:
+  retained/full replay parity, cross-episode overlap, LRU eviction, affinity
+  loss, restart/rebuild, and zero-residency cleanup all passed.
+- [x] **RSP-006 — Implement and harden vLLM KV reuse.** Add bounded cache
   ownership, exact fallback, same-episode fencing, privacy-safe metrics, and
-  full-vs-incremental parity gates.
+  full-vs-incremental parity gates. Closed for the single-container MVP by the
+  explicit retained-session implementation and its development qualification;
+  multi-replica affinity remains production follow-up, not an unbounded cache
+  correctness dependency.
 - [ ] **RSP-007 — Add the production-shaped local stack.** Compose Envoy,
   Semantic Router, Pathfinder, dedicated Rayline vLLM, state store, and two
   worker vLLM endpoints through the normal local image flow.
@@ -1176,7 +1181,17 @@ Not in scope:
   the concurrency ladder until RSP-004A removes the transactional path's
   process-wide policy-selection lock for concurrent-safe MTRouter execution;
   otherwise encoder calls serialize before vLLM and the benchmark cannot
-  exercise continuous batching.
+  exercise continuous batching. The identity-locked comparator, deterministic
+  packet adapter, three protocol drivers, private runtime stager, generated ARC
+  config, and ARC Compose profile are implemented under
+  `e2e/testing/rayline-arc/` and `deploy/compose/rayline-arc/`. The packet
+  preserves 32 ordered four-turn episode lanes at concurrency eight. Its
+  Remote path commits and settles the synthetic 2xx result with the exact
+  serialized input-token count instead of aborting successful turns. The
+  private C82 runtime passes the real Go loader/golden preflight, and the ARC
+  local gateway reaches component readiness plus HTTP 200 through Envoy and a
+  worker double. Paid launcher ownership, synchronized runtime collection, and
+  the three-arm receipt remain.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.

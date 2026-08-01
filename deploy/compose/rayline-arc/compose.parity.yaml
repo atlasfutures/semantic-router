@@ -1,0 +1,78 @@
+name: rayline-arc-parity
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --requirepass
+      - public-rayline-parity-redis-password
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - -a
+        - public-rayline-parity-redis-password
+        - ping
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  worker-double:
+    build:
+      context: ../../../e2e/testing/rayline-remote
+    command:
+      - python
+      - /app/mock_services.py
+      - provider
+      - --identity
+      - a
+      - --port
+      - "8081"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=2)
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  router:
+    image: ${RAYLINE_PARITY_ROUTER_IMAGE:?set RAYLINE_PARITY_ROUTER_IMAGE}
+    pull_policy: never
+    environment:
+      RAYLINE_PARITY_WORKER_KEY: public-e2e-provider-key
+      RAYLINE_ARC_MODAL_KEY: ${RAYLINE_ARC_MODAL_KEY:?set RAYLINE_ARC_MODAL_KEY}
+      RAYLINE_ARC_MODAL_SECRET: ${RAYLINE_ARC_MODAL_SECRET:?set RAYLINE_ARC_MODAL_SECRET}
+      RAYLINE_ARC_REDIS_PASSWORD: public-rayline-parity-redis-password
+    command: ["/app/config/rayline-parity.yaml"]
+    volumes:
+      - ${RAYLINE_PARITY_ARC_CONFIG:?set RAYLINE_PARITY_ARC_CONFIG}:/app/config/rayline-parity.yaml:ro
+      - ${RAYLINE_PARITY_ARC_ARTIFACT_DIR:?set RAYLINE_PARITY_ARC_ARTIFACT_DIR}:/var/lib/vllm-sr/rayline-arc:ro
+    ports:
+      - "${RAYLINE_PARITY_ARC_ROUTER_PORT:-18094}:8080"
+      - "${RAYLINE_PARITY_ARC_METRICS_PORT:-19192}:9190"
+    depends_on:
+      redis:
+        condition: service_healthy
+      worker-double:
+        condition: service_healthy
+
+  envoy:
+    image: envoyproxy/envoy:v1.34-latest
+    command: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "warning"]
+    volumes:
+      - ./envoy-parity.yaml:/etc/envoy/envoy.yaml:ro
+    ports:
+      - "${RAYLINE_PARITY_ARC_ENVOY_PORT:-18890}:8888"
+    depends_on:
+      - router
+      - worker-double

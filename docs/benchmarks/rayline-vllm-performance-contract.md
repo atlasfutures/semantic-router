@@ -221,6 +221,68 @@ The comparison report must separate selection-plane cost from downstream
 generation time and show cold/warm latency, saturation throughput, memory,
 cache effectiveness, failures, and operational ownership for each row.
 
+## Three-Arm Directional Parity Packet
+
+The next paid packet is a directional router-only comparison across the current
+Modal in-process Rayline router, `rayline_remote` with the retained vLLM
+session service, and `rayline_arc` with the same retained vLLM session service.
+It is not the 1,000-case release qualification and must not be presented as a
+production saturation result.
+
+Before any arm launches, all three input receipts must declare the exact same:
+
+- 128-case public synthetic corpus and workload digests;
+- encoder model/revision, tokenizer digest, serializer, and policy artifact;
+- GPU class, warm-state declaration, seed, placement profile, and worker
+  topology digest; and
+- measurement scope and selected-worker trace construction.
+
+The first packet uses the router-only scope, eight-way closed-loop admission,
+zero provider calls, and identical worker doubles. Cold start is recorded
+separately and excluded from the warm percentile calculation. The three arms
+run sequentially against the same pinned GPU class and placement profile so
+their resource envelopes cannot overlap silently.
+
+The 128 measured decisions are 32 complete four-turn episodes selected from
+the already content-addressed public parity corpus; eight warmup decisions are
+two separate complete episodes. Episode lanes may overlap up to concurrency
+eight, but turns within one episode remain serial. The Modal reference uses
+`POST /v1/route`; Remote uses `prepare → synthetic-2xx commit → settle`; ARC
+uses the normal OpenAI gateway and an immediate worker double. Remote never
+aborts a successful measured turn: doing so would suppress committed
+`previous_worker`, route-index, and input-token state and compare different
+policy semantics. Its settle record carries the corpus's exact post-serializer
+input-token count. All three paths make zero real provider calls.
+
+The machine-readable inputs use
+`rayline.vllm.three-arm-input.v1`. The comparator rejects unknown fields,
+missing arms, duplicate arms, malformed SHA-256 identities, mismatched case
+counts, inconsistent throughput arithmetic, non-monotonic latency percentiles,
+and any identity mismatch before producing a comparison. The output uses
+`rayline.vllm.three-arm-comparison.v1` and retains failed gates as evidence.
+
+Absolute gates for every arm remain the frozen router-only targets:
+
+- at least 99.9% completion;
+- at least 8 decisions per second;
+- at most 1,000 ms p95 selection latency; and
+- at most 2,000 ms p99 selection latency.
+
+Directional parity additionally requires both `rayline_remote` and
+`rayline_arc` to achieve at least 90% of the Modal in-process throughput and
+no more than 1.10 times its p95 latency. All three selected-worker trace
+digests must match. The ARC-versus-Remote ratios are reported but do not add a
+fourth promotion gate; they diagnose the cost of the extra Pathfinder
+authority boundary.
+
+The newly authorized incremental infrastructure ceiling is USD 20 above the
+previous conservative USD 39.31282402 envelope. No launch may consume more
+than USD 15 of that increment; at least USD 5 remains reserved for a diagnosed
+rerun or cleanup discrepancy. Packet generation and local validation spend
+USD 0. A launcher must fail before mutation unless its own exact maximum cost,
+app names, cleanup owner, and stable-zero rule fit inside the USD 15 packet
+ceiling.
+
 ## External Provider Canary
 
 This canary proves transport and settlement only; it is excluded from local
