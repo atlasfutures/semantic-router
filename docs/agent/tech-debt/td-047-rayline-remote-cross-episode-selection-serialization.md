@@ -2,8 +2,9 @@
 
 ## Status
 
-Open — the serialization fix and tests are landed; a real-stack concurrency
-receipt is still required.
+Open — the serialization fix and tests are landed; the first real-stack
+receipt attempts exposed a retained-session metrics gap before concurrency
+could be measured.
 
 ## Owner Plan
 
@@ -11,9 +12,9 @@ receipt is still required.
 
 ## Release Relevance
 
-Router-only capacity qualification and vLLM continuous-batching evidence are
-blocked while every transactional policy selection passes through one
-process-wide lock.
+Router-only capacity qualification and vLLM continuous-batching evidence still
+need a real-stack receipt. The process-wide lock is fixed; append-scoped
+retained-session telemetry is now the immediate evidence blocker.
 
 ## Scope
 
@@ -54,6 +55,23 @@ MTRouter remains serialized because it may mutate KV sessions.
   adds the capability boundary, bounded `/readyz` metrics, and deterministic
   tests for different-episode overlap, same-episode fencing, mutable-policy
   serialization, and failure cleanup.
+- Semantic Router `f9e32269` adds payload-free coordinator concurrency,
+  contention, backend, and token-work counters plus a curated vLLM registry
+  view. `83782ab9` makes driver failures observable and permits a bounded
+  completed-metric settlement window.
+- `rayline-arc-encoder-service-perf003-20260801` stopped after one successful
+  append because its launcher suppressed the captured driver failure; it was
+  closed without retry and cleanup returned the exact encoder inventory to
+  zero.
+- `rayline-arc-encoder-service-perf004-20260801` proved the underlying gap:
+  after one retained append and explicit close both returned HTTP 200, vLLM's
+  queue, inference, end-to-end, and prompt-token completed-request histogram
+  deltas stayed `0/0/0/0` for ten seconds. Its private aggregate receipt is
+  pinned at
+  `rayline-ai/router-artifacts@28a3f5cf5b82a20f7b6f93f245d825a70e7f5685`.
+- The same live logs show warmed full-registry metric requests taking roughly
+  `165-230ms`, so the proposed `20ms` sampler would perturb the system and
+  cannot observe at its requested cadence.
 
 ## Why It Matters
 
@@ -66,10 +84,12 @@ same state or thread-safety contract.
 ## Desired End State
 
 The implementation now declares concurrency capability at the policy boundary.
-The remaining desired state is a router-only receipt showing independent
-requests reach the real encoder/vLLM boundary concurrently, with policy and
-encoder queue/in-flight telemetry sufficient to distinguish Pathfinder
-contention from vLLM saturation.
+The remaining desired state is append-scoped retained telemetry inside the
+vLLM seam, exposed through a cached aggregate snapshot, followed by a
+router-only receipt showing independent requests reach the real encoder/vLLM
+boundary concurrently. The evidence must distinguish Pathfinder contention,
+same-session fencing, service admission, and vLLM scheduling without treating
+terminal session completion as an append.
 
 ## Exit Criteria
 
@@ -83,5 +103,8 @@ contention from vLLM saturation.
   resources without leaking an active episode.
 - Router-only receipts record policy/encoder queue time and observed in-flight
   concurrency.
+- Retained append queue/inference observations advance exactly once per append;
+  session-total metrics remain separately named, and no full Prometheus
+  registry collection runs on the hot sampling path.
 - The frozen throughput ladder can drive more than one pooling request into
   vLLM, and this debt entry is deleted.

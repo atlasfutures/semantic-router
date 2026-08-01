@@ -679,6 +679,35 @@ tasks, and zero protected-encoder tasks. There were zero provider calls and
 envelope yields a `$14.23246402` cumulative upper bound and `$5.76753598`
 headroom under the user cap. The held 1,000-case packet remains uninvoked.
 
+The encoder-only observability rung then added aggregate coordinator counters
+for tokenization, request and backend in-flight peaks, same-session lock
+contention, append latency, failures, and token work, plus a curated view of
+vLLM scheduler gauges and completed-request histograms. The implementation is
+source-frozen at
+[`83782ab9`](https://github.com/atlasfutures/semantic-router/commit/83782ab99316869b6eab47efc20dbc31a73a833a)
+after the first attempt exposed and fixed a launcher failure-visibility gap.
+
+The second source-frozen attempt failed at the first concurrency-one wave for
+a substantive lifecycle mismatch: one retained append and explicit close both
+returned HTTP 200, but vLLM's standard queue, inference, end-to-end, and
+prompt-token completed-request histogram deltas remained `0/0/0/0` throughout
+a ten-second settlement window. Those terminal-request histograms therefore do
+not describe retained-stream appends, or even advance on this close path in the
+exact pinned runtime. The packet stopped before accepting any throughput or
+concurrency result. Full Prometheus-registry reads also took roughly
+`165-230ms` at the warmed HTTP boundary, so they are too invasive for the
+planned `20ms` sampler.
+
+The aggregate-only failure receipt is private and byte-for-byte verified at
+`rayline-ai/router-artifacts@28a3f5cf5b82a20f7b6f93f245d825a70e7f5685`,
+path `runs/rayline-arc-encoder-service-perf004-20260801`. Both attempts deleted
+their proxy tokens and left zero protected-encoder containers. Conservative
+accounting charges both full H100 envelopes, bringing the cumulative ceiling
+to `$19.23169762` and leaving `$0.76830238` under the cap. No further
+full-envelope GPU packet may launch without renewed budget authority. The next
+implementation must add append-scoped retained telemetry inside the vLLM seam
+and serve cached aggregate snapshots before restoring the ladder.
+
 The user-requested realistic data-plane packet is a separate three-model
 OpenRouter canary, not an external-provider load test. A public synthetic
 three-arm head maps the protected real encoder's coordinate 252 into positive,
@@ -1186,8 +1215,13 @@ but held:
    passed with exact token parity and measured ARC/static throughput ratios of
    `0.748` and `0.755` at concurrency one and four. More than 99% of ARC routing
    time was the protected encoder/session request, while generation-worker
-   queues stayed empty. Before another capacity packet, preregister the smallest
-   encoder-only diagnostic that exposes service in-flight and queue behavior.
+   queues stayed empty. The subsequent encoder-only packet found that vLLM's
+   standard completed-request histograms remain zero for the retained streaming
+   lifecycle and that full-registry HTTP sampling is too slow for the intended
+   interval; it produced no accepted capacity result. Implement append-scoped
+   retained queue/inference metrics and a cached aggregate snapshot without GPU
+   spend. Do not preregister another live packet until renewed budget authority
+   can cover its full envelope.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage
@@ -1243,7 +1277,9 @@ it is a separate follow-up rather than the current `/v1/route/prepare` blocker.
   are implemented and tested.
 - Keep TD047 open until a router-only receipt shows concurrent-safe MTRouter
   selections reaching the real encoder/vLLM boundary at observed in-flight
-  concurrency above one; the in-process fencing tests are already green.
+  concurrency above one; the in-process fencing tests are already green. The
+  receipt must use append-scoped retained telemetry, not terminal-request
+  histograms, and must not scrape the full Prometheus registry on the hot path.
 - Keep TD048 open until the narrow stability rule gains powered changed-action
   quality/regret evidence (or an explicit reviewed acceptance of its
   canonicalization semantics) and the full RSP-004Q parity qualification
