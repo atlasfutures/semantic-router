@@ -14,6 +14,7 @@ from rayline_arc_io.session_coordinator import (
 from rayline_arc_io.session_metrics import SessionEngineMetricsSnapshot
 
 REBUILT_BACKEND_COUNT = 2
+STATELESS_BACKEND_COUNT = 2
 
 
 class TinyTokenizer:
@@ -63,6 +64,12 @@ def request_body(turns: list[dict[str, str]]) -> dict:
         "episode_id_hash": "a" * 64,
         "turns": turns,
     }
+
+
+def plugin_request_body(turns: list[dict[str, str]]) -> dict:
+    body = request_body(turns)
+    body["schema_version"] = "rayline.arc.pooling-request.v1"
+    return {"task": "plugin", "data": body}
 
 
 def build_client(
@@ -118,6 +125,57 @@ def test_session_http_contract_appends_only_exact_suffix() -> None:
         "resumable_causal_mean",
     ]
     assert len(factory.backends) == 1
+
+
+def test_stateless_plugin_contract_is_ephemeral_and_vllm_compatible() -> None:
+    client, factory = build_client()
+
+    response = client.post(
+        "/pooling",
+        json=plugin_request_body([{"role": "user", "text": "task"}]),
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    body = response.json()
+    assert body["request_id"].startswith("pool-")
+    assert body["created_at"] > 0
+    assert body["data"]["cached_prefix_tokens"] == 0
+    assert body["data"]["pooling_capabilities"] == ["chunked_causal_mean"]
+    assert body["data"]["serialized_tokens"] > 0
+    assert client.get("/health").json()["resident_sessions"] == 0
+    assert len(factory.backends) == 1
+    assert factory.backends[0].closed is True
+
+
+def test_stateless_plugin_calls_never_share_supplied_episode_state() -> None:
+    client, factory = build_client()
+    payload = plugin_request_body([{"role": "user", "text": "task"}])
+
+    first = client.post("/pooling", json=payload)
+    second = client.post("/pooling", json=payload)
+
+    assert first.status_code == HTTPStatus.OK
+    assert second.status_code == HTTPStatus.OK
+    assert len(factory.backends) == STATELESS_BACKEND_COUNT
+    assert all(backend.closed for backend in factory.backends)
+    metrics = client.get("/v1/rayline/arc/session/metrics").json()
+    assert (
+        metrics["coordinator"]["backend_calls_succeeded_total"]
+        == STATELESS_BACKEND_COUNT
+    )
+    assert metrics["coordinator"]["session_lock_contentions_total"] == 0
+
+
+def test_stateless_plugin_endpoint_rejects_rung_a() -> None:
+    client, factory = build_client()
+    payload = plugin_request_body([{"role": "user", "text": "task"}])
+    payload["data"]["serving_rung"] = "A"
+
+    response = client.post("/pooling", json=payload)
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert response.json() == {"detail": "serving_rung"}
+    assert factory.backends == []
 
 
 def test_session_http_contract_rebuilds_after_non_prefix_history() -> None:

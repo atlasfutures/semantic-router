@@ -71,6 +71,25 @@ class ArcPoolingResponse(BaseModel):
     pooling_capabilities: list[str]
 
 
+class ArcPluginPoolingRequest(BaseModel):
+    """vLLM-compatible plugin envelope for the stateless ARC contract."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    task: Literal["plugin"]
+    data: ArcPoolingRequest
+
+
+class ArcPluginPoolingResponse(BaseModel):
+    """Minimal vLLM pooling response envelope consumed by Pathfinder."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    request_id: str
+    created_at: Annotated[int, Field(ge=0)]
+    data: ArcPoolingResponse
+
+
 class ArcSessionPoolingRequest(BaseModel):
     """Full-history request for the bounded retained-state endpoint."""
 

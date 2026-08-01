@@ -106,6 +106,14 @@ Prometheus registry. The endpoint has no request, episode, prompt, embedding,
 or credential labels; unavailable engine telemetry is represented explicitly
 rather than as zero.
 
+The same protected service also exposes a compatibility `POST /pooling` route
+for Pathfinder's strict stateless v1 client. Each call runs as one randomly
+namespaced ephemeral append and closes its backend before returning the normal
+vLLM plugin envelope. It therefore preserves `cached_prefix_tokens: 0` and
+never turns the stateless contract into cross-request cache reuse, while still
+making append-scoped scheduler and latency metrics available for
+transaction-path capacity receipts.
+
 The Modal MVP pins the service to one container so successive turns reach the
 same cache owner and the GPU cost envelope remains enforceable. Production
 horizontal scale requires cache-aware affinity or an explicit shared session
