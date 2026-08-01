@@ -1190,8 +1190,11 @@ Not in scope:
   serialized input-token count instead of aborting successful turns. The
   private C82 runtime passes the real Go loader/golden preflight, and the ARC
   local gateway reaches component readiness plus HTTP 200 through Envoy and a
-  worker double. Paid launcher ownership, synchronized runtime collection, and
-  the three-arm receipt remain.
+  worker double. The source/pin/budget fail-closed PERF015 launcher now owns one
+  protected H100 app, one local Pathfinder process, and one exact Compose
+  project, with a USD 10.1597328 worst-case resource envelope and 65-second
+  stable-zero cleanup. Synchronized component metrics beyond arm receipts and
+  the paid three-arm result remain.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.

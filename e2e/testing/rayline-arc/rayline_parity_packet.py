@@ -33,6 +33,7 @@ MEASURED_CASES = 128
 WARMUP_CASES = 8
 CONCURRENCY = 8
 DECISIONS_PER_EPISODE = 4
+SHA256_LENGTH = 64
 
 
 class PacketError(ValueError):
@@ -95,7 +96,7 @@ def _runtime_identity(runtime_dir: Path) -> tuple[list[str], dict[str, Any]]:
         raise PacketError("runtime worker ids must be non-empty and unique")
     checkpoint = manifest.get("source", {}).get("checkpoint", {})
     checkpoint_sha = str(checkpoint.get("sha256") or "")
-    if len(checkpoint_sha) != 64:
+    if len(checkpoint_sha) != SHA256_LENGTH:
         raise PacketError("runtime manifest omits the source checkpoint digest")
     return worker_ids, {
         "model": str(encoder.get("model") or ""),
@@ -156,6 +157,79 @@ def _validate_complete_episodes(cases: list[dict[str, Any]], label: str) -> None
             raise PacketError(f"{label} episode order is not a complete 0..3 sequence")
 
 
+def _write_packet(
+    *,
+    output_dir: Path,
+    measured: list[dict[str, Any]],
+    warmup: list[dict[str, Any]],
+    worker_ids: list[str],
+    source: Mapping[str, Any],
+    runtime: Mapping[str, Any],
+    placement_profile: str,
+    gpu_class: str,
+) -> dict[str, Any]:
+    output_dir.mkdir(parents=True)
+    corpus_path = output_dir / "corpus.json"
+    workload_path = output_dir / "workload.json"
+    topology_path = output_dir / "topology.json"
+    identity_path = output_dir / "identity.json"
+    _write_json(
+        corpus_path,
+        {
+            "schema_version": CORPUS_SCHEMA,
+            "warmup": warmup,
+            "measured": measured,
+        },
+    )
+    _write_json(
+        workload_path,
+        {
+            "schema_version": WORKLOAD_SCHEMA,
+            "concurrency": CONCURRENCY,
+            "warmup_cases": WARMUP_CASES,
+            "measured_cases": MEASURED_CASES,
+            "seed": int(source["seed"]),
+        },
+    )
+    identity_maps = {worker_id: worker_id for worker_id in worker_ids}
+    _write_json(
+        topology_path,
+        {
+            "schema_version": TOPOLOGY_SCHEMA,
+            "canonical_workers": worker_ids,
+            "arm_worker_maps": {arm: dict(identity_maps) for arm in ARMS},
+        },
+    )
+    _write_json(
+        identity_path,
+        {
+            "measurement_scope": "architecture_decision_boundary",
+            "case_count": MEASURED_CASES,
+            "corpus_sha256": _sha256(corpus_path),
+            "workload_sha256": _sha256(workload_path),
+            "encoder_model": runtime["model"],
+            "encoder_revision": runtime["revision"],
+            "tokenizer_sha256": str(source["tokenizer_sha256"]),
+            "serializer_version": runtime["serialization"],
+            "policy_artifact_revision": f"sha256:{runtime['checkpoint_sha256']}",
+            "gpu_class": gpu_class,
+            "worker_topology_sha256": _sha256(topology_path),
+            "placement_profile": placement_profile,
+            "warm_state": "warm",
+            "seed": int(source["seed"]),
+        },
+    )
+    return {
+        "schema_version": PACKET_SCHEMA,
+        "case_count": MEASURED_CASES,
+        "warmup_case_count": WARMUP_CASES,
+        "concurrency": CONCURRENCY,
+        "corpus_sha256": _sha256(corpus_path),
+        "workload_sha256": _sha256(workload_path),
+        "worker_topology_sha256": _sha256(topology_path),
+    }
+
+
 def build_packet(
     *,
     source_corpus_path: Path,
@@ -205,66 +279,16 @@ def build_packet(
     for case in [*measured, *warmup]:
         case.pop("_sequence_index")
 
-    output_dir.mkdir(parents=True)
-    corpus_path = output_dir / "corpus.json"
-    workload_path = output_dir / "workload.json"
-    topology_path = output_dir / "topology.json"
-    identity_path = output_dir / "identity.json"
-    _write_json(
-        corpus_path,
-        {
-            "schema_version": CORPUS_SCHEMA,
-            "warmup": warmup,
-            "measured": measured,
-        },
+    return _write_packet(
+        output_dir=output_dir,
+        measured=measured,
+        warmup=warmup,
+        worker_ids=worker_ids,
+        source=source,
+        runtime=runtime,
+        placement_profile=placement_profile,
+        gpu_class=gpu_class,
     )
-    _write_json(
-        workload_path,
-        {
-            "schema_version": WORKLOAD_SCHEMA,
-            "concurrency": CONCURRENCY,
-            "warmup_cases": WARMUP_CASES,
-            "measured_cases": MEASURED_CASES,
-            "seed": int(source["seed"]),
-        },
-    )
-    identity_maps = {worker_id: worker_id for worker_id in worker_ids}
-    _write_json(
-        topology_path,
-        {
-            "schema_version": TOPOLOGY_SCHEMA,
-            "canonical_workers": worker_ids,
-            "arm_worker_maps": {arm: dict(identity_maps) for arm in ARMS},
-        },
-    )
-    _write_json(
-        identity_path,
-        {
-            "measurement_scope": "architecture_decision_boundary",
-            "case_count": MEASURED_CASES,
-            "corpus_sha256": _sha256(corpus_path),
-            "workload_sha256": _sha256(workload_path),
-            "encoder_model": runtime["model"],
-            "encoder_revision": runtime["revision"],
-            "tokenizer_sha256": str(source["tokenizer_sha256"]),
-            "serializer_version": runtime["serialization"],
-            "policy_artifact_revision": (f"sha256:{runtime['checkpoint_sha256']}"),
-            "gpu_class": gpu_class,
-            "worker_topology_sha256": _sha256(topology_path),
-            "placement_profile": placement_profile,
-            "warm_state": "warm",
-            "seed": int(source["seed"]),
-        },
-    )
-    return {
-        "schema_version": PACKET_SCHEMA,
-        "case_count": MEASURED_CASES,
-        "warmup_case_count": WARMUP_CASES,
-        "concurrency": CONCURRENCY,
-        "corpus_sha256": _sha256(corpus_path),
-        "workload_sha256": _sha256(workload_path),
-        "worker_topology_sha256": _sha256(topology_path),
-    }
 
 
 def _parse_args() -> argparse.Namespace:
@@ -273,7 +297,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--source-manifest", required=True, type=Path)
     parser.add_argument("--runtime-dir", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--placement-profile", default="modal-us-east-public-https")
+    parser.add_argument(
+        "--placement-profile",
+        default="london-policy-us-east-encoder-public-https",
+    )
     parser.add_argument("--gpu-class", default="NVIDIA H100 80GB")
     return parser.parse_args()
 

@@ -223,11 +223,12 @@ cache effectiveness, failures, and operational ownership for each row.
 
 ## Three-Arm Directional Parity Packet
 
-The next paid packet is a directional router-only comparison across the current
-Modal in-process Rayline router, `rayline_remote` with the retained vLLM
-session service, and `rayline_arc` with the same retained vLLM session service.
-It is not the 1,000-case release qualification and must not be presented as a
-production saturation result.
+The next paid packet is a directional router-only comparison across the
+Modal-compatible in-process Rayline reference interface, `rayline_remote` with
+the retained vLLM session service's stateless compatibility path, and
+`rayline_arc` with that service's retained-session path. It is not the
+1,000-case release qualification and must not be presented as a production
+saturation result or as a measurement of Modal policy-process placement.
 
 Before any arm launches, all three input receipts must declare the exact same:
 
@@ -242,6 +243,15 @@ zero provider calls, and identical worker doubles. Cold start is recorded
 separately and excluded from the warm percentile calculation. The three arms
 run sequentially against the same pinned GPU class and placement profile so
 their resource envelopes cannot overlap silently.
+
+For this controlled architecture-boundary packet, the client, Pathfinder
+reference process, Remote transaction process, and ARC gateway run on the same
+London host; all encoder calls traverse the same public HTTPS path to the
+single Modal `us-east` H100. The identity is therefore
+`london-policy-us-east-encoder-public-https`. The arm name
+`modal_inprocess` denotes the current eager `/v1/route` interface and optimistic
+state transition, not a claim that its policy process is executing inside
+Modal. A separate placement study is required for that deployment comparison.
 
 The 128 measured decisions are 32 complete four-turn episodes selected from
 the already content-addressed public parity corpus; eight warmup decisions are
@@ -282,6 +292,13 @@ rerun or cleanup discrepancy. Packet generation and local validation spend
 USD 0. A launcher must fail before mutation unless its own exact maximum cost,
 app names, cleanup owner, and stable-zero rule fit inside the USD 15 packet
 ceiling.
+
+PERF015 owns the exact Modal app `rayline-arc-session-encoder`, the local
+Compose project `rayline-three-arm-perf015`, and a 65-second stable-zero cleanup
+window. Its 90-minute paid wall limit plus one worst-case 31-minute orphan
+request and five-minute scale-down tail bound the H100/CPU/memory envelope at
+USD 10.1597328. The cumulative conservative maximum is USD 49.47255682, leaving
+USD 9.8402672 under the new authority and zero provider spend.
 
 ## External Provider Canary
 
