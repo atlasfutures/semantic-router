@@ -116,16 +116,16 @@ The stateless bridge has these rules:
 
 The selection-transaction journal already fences a second prepare for the same
 episode and releases its lock while different episodes select. The immediate
-transactional-path limiter is Pathfinder's process-wide
-`RouterService._policy_select_lock`, which wraps the policy call made by
-`/v1/route/prepare`. Remote vLLM requests therefore serialize before reaching
-the engine.
+transactional-path limiter was Pathfinder's process-wide
+`RouterService._policy_select_lock`, which wrapped the policy call made by
+`/v1/route/prepare`.
 
-RSP-004A and TD047 require an explicit per-policy concurrency capability.
+RSP-004A adds an explicit per-policy concurrency capability.
 Immutable MTRouter selection through the remote encoder may overlap across
 different episodes; same-episode prepares remain fenced and mutable policies
-remain serialized. A blocking fake encoder must prove this seam before any
-continuous-batching or saturation claim.
+remain serialized. Deterministic blocking tests prove the seam, and PERF009
+proves the real transaction path reaches Pathfinder in-flight `8`, encoder
+in-flight `7`, and vLLM scheduled batch width `6`.
 
 ## Cross-Turn Cache Contract
 

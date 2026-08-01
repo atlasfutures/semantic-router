@@ -155,7 +155,6 @@ docs:
 - docs/agent/tech-debt/td-044-flow-tool-state-durability-gap.md
 - docs/agent/tech-debt/td-045-rayline-arc-builder-adaptation-gap.md
 - docs/agent/tech-debt/td-046-rayline-remote-durable-journal-gap.md
-- docs/agent/tech-debt/td-047-rayline-remote-cross-episode-selection-serialization.md
 - docs/agent/tech-debt/td-048-rayline-vllm-selection-stability-gap.md
 - docs/agent/tech-debt/td-049-openrouter-transient-retry-ownership-gap.md
 local_agent_rules:
@@ -340,9 +339,6 @@ doc_governance:
   - path: docs/agent/tech-debt/td-046-rayline-remote-durable-journal-gap.md
     steward: router-core
     freshness: update when the TD046 debt record changes materially
-  - path: docs/agent/tech-debt/td-047-rayline-remote-cross-episode-selection-serialization.md
-    steward: router-core
-    freshness: update when the TD047 debt record changes materially
   - path: docs/agent/tech-debt/td-048-rayline-vllm-selection-stability-gap.md
     steward: router-core
     freshness: update when the TD048 debt record changes materially

@@ -27,24 +27,27 @@ isolates the protected encoder/session request as the dominant measured ARC
 cost. Two encoder-only concurrency packets prove eight-way admission and a
 complete 92-call workload, and the distinct eight-call PERF007 microprobe now
 proves multi-request vLLM scheduling with a pre-execution batch width of seven.
-The remaining performance gap is a fixed-duration, multi-episode soak through
-the Pathfinder transaction path rather than another encoder-only proof. Current
-published implementation heads:
+PERF009 now closes the transaction-path concurrency gap with 128 capped
+prepare/abort transactions through Pathfinder and the protected encoder at
+`10.263 req/s`, Pathfinder in-flight `8`, encoder in-flight `7`, and vLLM
+scheduled batch width `6`. The remaining work is deployment-shape comparison
+and the separately held quality qualification, not another proof of transaction
+concurrency. Current published implementation heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
-  at `87e8109639435090fa2241d767eaed926fd59506` for the capability-gated
+  at `24897734839859ac90cc5dfdd74d0f873f7a6d99` for the capability-gated
   retained-session client, hermetic stack, bounded direct/static/ARC diagnostic,
   fixed three-model OpenRouter transport and retry contracts, and mandatory ARC
   readiness preflight. The protected session service explicitly enables vLLM
-  iteration-detail capture, the minimal batch probe, and future diagnostic
-  accounting from the `$26.73054802` conservative cumulative ceiling.
+  iteration-detail capture, the minimal batch probe, and protected stateless
+  pooling compatibility used by the Pathfinder transaction lane.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `1b0b8f1f640e2995c6dabb3ac69268fcf3515ef1` for the registered
+  at `9f971cd2fef19ed28c6c5430d20f2470acab2f2c` for the registered
   retained-session, real-endpoint and OpenRouter canaries, plus the closed,
-  artifact-pinned direct/static/ARC stage and PERF005/PERF006/PERF007
-  diagnostics.
+  artifact-pinned direct/static/ARC stage, encoder diagnostics, and PERF009
+  transaction-capacity result.
 - vLLM integration
   [`atlasfutures/vllm:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/vllm/tree/codex/rayline-vsr-mvp)
   at `9f5ea81ca0aa570aea46baf82311a1139c1267ca` for append-scoped
@@ -1144,9 +1147,9 @@ Not in scope:
   [`atlasfutures/pathfinder@ce661e5f`](https://github.com/atlasfutures/pathfinder/commit/ce661e5ffe62301dcad307b9bc4b242324019497): undeclared and mutable policies
   remain serialized, remote MTRouter declares concurrent safety, independent
   episode prepares overlap, failures release capacity, and `/readyz` reports
-  bounded policy-selection in-flight and queue-wait metrics. TD047 remains
-  open only for the measured router-only receipt proving more than one request
-  reaches the encoder/vLLM boundary in the real stack.
+  bounded policy-selection in-flight and queue-wait metrics. PERF009 completes
+  the measured real-stack receipt with Pathfinder in-flight `8`, encoder
+  in-flight `7`, and vLLM scheduled batch width `6`.
 - [ ] **RSP-005 — Prove the selected explicit session end to end.** The engine
   gate, local HTTP lifecycle, capability-gated Go client, hermetic restart and
   Redis-loss stack, and real-GPU HTTP/concurrency/rebuild canaries pass. The
@@ -1249,10 +1252,22 @@ but held:
    `rayline-ai/router-artifacts@67c44b5a188960a270756da3e62afc97f6d5d8be`,
    and
    `rayline-ai/router-artifacts@2ffc810d8494dd23e3811dff49b8cb2da7a4a014`.
-   Conservative accounting is `$26.73054802`, leaving `$13.26945198` below the
-   approved `$40` cap. A future full packet would reserve through
-   `$29.23016482`; it requires a new experiment ID and may not reinterpret or
-   retry any prior packet.
+   PERF008 then stopped before its soak because the cold readiness call exceeded
+   Pathfinder's readiness TTL and the harness incorrectly required exactly two
+   encoder calls. It made zero soak prepares and was closed without retry.
+   PERF009 proved encoder metrics were zero before readiness and allowed the one
+   legitimate TTL refresh. It passed all 128 capped prepare/abort transactions
+   in `12.473s` at `10.263 req/s`; prepare latency was `0.721s` p50, `1.036s`
+   p95, and `1.484s` p99. Pathfinder in-flight reached `8`, encoder backend
+   in-flight reached `7`, vLLM scheduled batch width reached `6`, all 128
+   encoder calls succeeded, and final residency, provider calls, and provider
+   spend were zero. Mean encoder queue time was `0.013ms`, versus `196.347ms`
+   inference and `273.647ms` encoder e2e. The private receipt is pinned at
+   `rayline-ai/router-artifacts@f1fab622034e913400b6cc6962d020cbd7eeea98`.
+   Conservative accounting charges both full envelopes and is now
+   `$31.72978162`, leaving `$8.27021838` below the approved `$40` cap; the
+   PERF009 launcher-window upper estimate was `$0.217977`. No prior packet may
+   be retried or reinterpreted.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage
@@ -1306,12 +1321,6 @@ it is a separate follow-up rather than the current `/v1/route/prepare` blocker.
 - Use signed-off commits for work intended for review.
 - Keep TD046 open until durable pending transactions and multi-replica fencing
   are implemented and tested.
-- Keep TD047 open until a router-only receipt shows concurrent-safe MTRouter
-  selections reaching the real encoder/vLLM boundary at observed in-flight
-  concurrency above one. The in-process fencing tests, eight-way service
-  admission, and scheduled batch width `7` are already green. The remaining
-  receipt must use append-scoped retained telemetry, not terminal-request
-  histograms, and must not scrape the full Prometheus registry on the hot path.
 - Keep TD048 open until the narrow stability rule gains powered changed-action
   quality/regret evidence (or an explicit reviewed acceptance of its
   canonicalization semantics) and the full RSP-004Q parity qualification
@@ -1327,7 +1336,6 @@ it is a separate follow-up rather than the current `/v1/route/prepare` blocker.
 - [Rayline ARC tutorial](../../../website/docs/tutorials/algorithm/selection/rayline-arc.md)
 - [Rayline Remote tutorial](../../../website/docs/tutorials/algorithm/selection/rayline-remote.md)
 - [TD046](../tech-debt/td-046-rayline-remote-durable-journal-gap.md)
-- [TD047](../tech-debt/td-047-rayline-remote-cross-episode-selection-serialization.md)
 - [TD048](../tech-debt/td-048-rayline-vllm-selection-stability-gap.md)
 - [Pathfinder ADR 0059 proposal](https://github.com/atlasfutures/pathfinder/blob/fb3a4b9455653eb9f8e490ca414aaa90a24e0a55/docs/adr/0059-rayline-vllm-serving-boundary.md)
 - [Pathfinder stateless vLLM encoder implementation](https://github.com/atlasfutures/pathfinder/commit/7f13de3d10855ea44245717f9ccb50d55ea40e93)
