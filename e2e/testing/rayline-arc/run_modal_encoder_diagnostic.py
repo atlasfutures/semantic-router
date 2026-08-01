@@ -24,13 +24,12 @@ DRIVER = Path(__file__).with_name("modal_encoder_diagnostic.py")
 SERVICE = REPO_ROOT / "src/vllm-plugins/rayline_arc_io/modal_session_service.py"
 ENCODER_APP_ID = "ap-rs3UkEn5XUnWjrZOXYbkuB"
 ENCODER_URL = (
-    "https://atlasfutures-dev--rayline-arc-session-encoder-sessionenc-2d82ac."
-    "modal.run"
+    "https://atlasfutures-dev--rayline-arc-session-encoder-sessionenc-2d82ac.modal.run"
 )
 REQUIRED_MODAL_VERSION = "1.5.1"
 MAX_DIAGNOSTIC_SECONDS = 15 * 60
 MAX_CLEANUP_SECONDS = 60
-BUDGET_CAP_USD = 20.0
+BUDGET_CAP_USD = 40.0
 
 
 def _run(
@@ -108,8 +107,7 @@ def main() -> None:
         raise SystemExit("encoder diagnostic requires renewed budget authority")
     if modal.__version__ != REQUIRED_MODAL_VERSION:
         raise SystemExit(
-            f"Modal SDK {REQUIRED_MODAL_VERSION} is required; "
-            f"found {modal.__version__}"
+            f"Modal SDK {REQUIRED_MODAL_VERSION} is required; found {modal.__version__}"
         )
     modal_command = [sys.executable, "-m", "modal"]
     environment = os.environ.copy()

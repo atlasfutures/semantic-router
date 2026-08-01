@@ -16,7 +16,6 @@ import math
 import os
 import threading
 import time
-from dataclasses import replace
 from typing import Any
 
 from modal_fullstack_inputs import CANDIDATE_PROMPTS
@@ -32,9 +31,8 @@ MIN_ENGINE_CONCURRENT_REQUESTS = 2
 MAX_POOLING_REQUESTS = (
     MEASURED_REQUESTS + APPEND_SETUP_REQUESTS + SAME_EPISODE_CONTROL_REQUESTS
 )
-METRICS_SCHEMA = "rayline.arc.session-metrics-response.v2"
-REPORT_SCHEMA = "rayline.arc.modal-encoder-diagnostic.v2"
-SAMPLER_INTERVAL_SECONDS = 0.02
+METRICS_SCHEMA = "rayline.arc.session-metrics-response.v3"
+REPORT_SCHEMA = "rayline.arc.modal-encoder-diagnostic.v3"
 MAX_RESOURCE_ENVELOPE_USD = 2.4996168
 CUMULATIVE_BEFORE_USD = 19.23169762
 
@@ -76,16 +74,13 @@ ENGINE_CUMULATIVE_FIELDS = (
     "prompt_token_observations",
     "prompt_tokens_total",
 )
-SAMPLED_FIELDS = {
-    "coordinator_requests_inflight": ("coordinator", "requests_inflight"),
-    "coordinator_session_lock_waiters": (
-        "coordinator",
-        "session_lock_waiters",
-    ),
-    "coordinator_backend_inflight": ("coordinator", "backend_inflight"),
-    "engine_requests_running": ("engine", "requests_running"),
-    "engine_requests_waiting": ("engine", "requests_waiting"),
-}
+ENGINE_SCHEDULER_FIELDS = (
+    "requests_running",
+    "requests_waiting",
+    "requests_running_max",
+    "requests_waiting_max",
+    "scheduler_updates_total",
+)
 
 
 def _percentile(values: list[float], percentile: float) -> float:
@@ -116,6 +111,7 @@ def _read_metrics(client: CanaryClient) -> dict[str, Any]:
         raise RuntimeError("protected vLLM engine metrics are unavailable")
     if engine.get("measurement_scope") != "retained_append":
         raise RuntimeError("protected vLLM engine metric scope diverged")
+    _scheduler_snapshot(metrics)
     return metrics
 
 
@@ -175,45 +171,31 @@ def _merge_deltas(deltas: list[dict[str, float]]) -> dict[str, float]:
     }
 
 
-class _MetricsSampler:
-    def __init__(self, client: CanaryClient) -> None:
-        self._client = replace(client, timeout_seconds=min(2.0, client.timeout_seconds))
-        self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self.samples = 0
-        self.errors = 0
-        self.maximum = dict.fromkeys(SAMPLED_FIELDS, 0.0)
+def _scheduler_snapshot(metrics: dict[str, Any]) -> dict[str, int]:
+    engine = metrics["engine"]
+    snapshot: dict[str, int] = {}
+    for field in ENGINE_SCHEDULER_FIELDS:
+        value = engine.get(field)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise TypeError(f"invalid vLLM scheduler metric: engine.{field}")
+        snapshot[field] = value
+    return snapshot
 
-    def start(self) -> None:
-        self._thread.start()
 
-    def stop(self) -> None:
-        self._stop.set()
-        self._thread.join(timeout=5)
-        if self._thread.is_alive():
-            raise RuntimeError("encoder metric sampler did not stop")
-        if self.samples < 1 or self.errors:
-            raise RuntimeError("encoder metric sampler did not remain healthy")
-
-    def _run(self) -> None:
-        while not self._stop.is_set():
-            try:
-                metrics = _read_metrics(self._client)
-                for field, (section, metric) in SAMPLED_FIELDS.items():
-                    value = metrics[section].get(metric)
-                    if isinstance(value, (int, float)):
-                        self.maximum[field] = max(self.maximum[field], float(value))
-                self.samples += 1
-            except Exception:
-                self.errors += 1
-            self._stop.wait(SAMPLER_INTERVAL_SECONDS)
-
-    def report(self) -> dict[str, Any]:
-        return {
-            "samples": self.samples,
-            "errors": self.errors,
-            "maximum": dict(self.maximum),
-        }
+def _validate_capacity_peaks(
+    coordinator: dict[str, Any],
+    engine: dict[str, Any],
+) -> None:
+    if coordinator["backend_inflight_max"] < max(CONCURRENCY_LEVELS):
+        raise RuntimeError("cross-episode calls did not overlap at the vLLM boundary")
+    running_max = engine.get("requests_running_max")
+    if not isinstance(running_max, int) or isinstance(running_max, bool):
+        raise TypeError("vLLM scheduler running peak is unavailable")
+    if running_max < MIN_ENGINE_CONCURRENT_REQUESTS:
+        raise RuntimeError("vLLM scheduler never ran concurrent requests")
+    updates = engine.get("scheduler_updates_total")
+    if not isinstance(updates, int) or isinstance(updates, bool) or updates < 1:
+        raise RuntimeError("vLLM scheduler emitted no load updates")
 
 
 def _run_concurrent(
@@ -317,8 +299,8 @@ def _run_level(
     wave_walls: list[float] = []
     coordinator_deltas: list[dict[str, float]] = []
     engine_deltas: list[dict[str, float]] = []
-    sampler_reports: list[dict[str, Any]] = []
     serialized_tokens: list[int] = []
+    scheduler_after_waves: list[dict[str, int]] = []
 
     for wave in range(WAVES_PER_LEVEL):
         episode_ids = [
@@ -332,15 +314,10 @@ def _run_level(
                 raise RuntimeError("append setup did not create every session")
 
         before = _read_metrics(client)
-        sampler = _MetricsSampler(client)
-        sampler.start()
         try:
             results, wall = _run_concurrent(client, episode_ids, turns)
         finally:
-            try:
-                sampler.stop()
-            finally:
-                _close_all(client, episode_ids)
+            _close_all(client, episode_ids)
         after = _read_append_metrics(client, before, concurrency)
 
         expected_action = "created" if phase == "create" else "appended"
@@ -368,17 +345,11 @@ def _run_level(
         wave_walls.append(wall)
         coordinator_deltas.append(coordinator_delta)
         engine_deltas.append(engine_delta)
-        sampler_reports.append(sampler.report())
+        scheduler_after_waves.append(_scheduler_snapshot(after))
 
     requests = concurrency * WAVES_PER_LEVEL
     coordinator = _merge_deltas(coordinator_deltas)
     engine = _merge_deltas(engine_deltas)
-    sampled_maximum = {
-        field: max(report["maximum"][field] for report in sampler_reports)
-        for field in SAMPLED_FIELDS
-    }
-    if phase == "create" and sampled_maximum["coordinator_backend_inflight"] < 1:
-        raise RuntimeError("encoder sampler observed no backend work")
     return {
         "phase": phase,
         "concurrency": concurrency,
@@ -397,11 +368,7 @@ def _run_level(
             **_stage_report(coordinator, requests),
         },
         "engine": _engine_report(engine),
-        "sampler": {
-            "samples": sum(report["samples"] for report in sampler_reports),
-            "errors": sum(report["errors"] for report in sampler_reports),
-            "maximum": sampled_maximum,
-        },
+        "engine_scheduler_process_lifetime_after_level": scheduler_after_waves[-1],
     }
 
 
@@ -489,15 +456,11 @@ def main() -> None:
         raise RuntimeError("encoder diagnostic total request count diverged")
     if coordinator["requests_failed_total"] != 0:
         raise RuntimeError("encoder diagnostic recorded failed requests")
-    if coordinator["backend_inflight_max"] < max(CONCURRENCY_LEVELS):
-        raise RuntimeError("cross-episode calls did not overlap at the vLLM boundary")
     if coordinator["session_lock_contentions_total"] != 1:
         raise RuntimeError("encoder diagnostic lock-contention total diverged")
-    maximum_engine_running = max(
-        result["sampler"]["maximum"]["engine_requests_running"] for result in results
-    )
-    if maximum_engine_running < MIN_ENGINE_CONCURRENT_REQUESTS:
-        raise RuntimeError("vLLM scheduler never exposed concurrent running requests")
+    engine = final["engine"]
+    _validate_capacity_peaks(coordinator, engine)
+    scheduler = _scheduler_snapshot(final)
 
     report = {
         "schema_version": REPORT_SCHEMA,
@@ -522,14 +485,16 @@ def main() -> None:
             "session_lock_contentions_total": coordinator[
                 "session_lock_contentions_total"
             ],
-            "maximum_engine_requests_running": maximum_engine_running,
+            "engine_scheduler_process_lifetime": scheduler,
             "initial_engine_metrics_available": initial["engine"]["available"],
         },
         "interpretation_boundary": (
             "coordinator backend time surrounds the retained vLLM append and "
             "therefore includes vLLM scheduling, model execution, and pooling; "
             "engine timing counters cover each completed retained append, while "
-            "scheduler occupancy is read from vLLM's cached frontend snapshot"
+            "scheduler maxima are process-lifetime peaks retained inside the fresh "
+            "dedicated vLLM encoder and read after request completion without hot "
+            "client-side metrics polling"
         ),
         "budget": {
             "maximum_resource_envelope_usd": MAX_RESOURCE_ENVELOPE_USD,

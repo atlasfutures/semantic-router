@@ -102,7 +102,7 @@ def _metrics_response(
         except Exception as error:
             raise HTTPException(status_code=503, detail="engine_metrics") from error
     return ArcSessionMetricsResponse(
-        schema_version="rayline.arc.session-metrics-response.v2",
+        schema_version="rayline.arc.session-metrics-response.v3",
         coordinator=ArcSessionCoordinatorMetrics(**asdict(coordinator_snapshot)),
         engine=ArcSessionEngineMetrics(**asdict(engine_snapshot)),
     )

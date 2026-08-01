@@ -65,7 +65,7 @@ def test_session_service_is_authenticated_and_bounded() -> None:
 def test_session_service_freezes_the_proven_retained_vllm_runtime() -> None:
     service_source = source()
     for expected in (
-        'VLLM_COMMIT = "77a901d233499ef588370f93056f82dae15bcb93"',
+        'VLLM_COMMIT = "c82e1ae22895b2ced7b8b0a6383ba199b51dcc45"',
         'VLLM_REPOSITORY = "https://github.com/atlasfutures/vllm.git"',
         'GPU_TYPE = "H100"',
         "MAX_SESSIONS = 8",

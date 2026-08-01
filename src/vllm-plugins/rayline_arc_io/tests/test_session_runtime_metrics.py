@@ -42,7 +42,13 @@ def test_retained_append_metrics_fail_closed_and_preserve_scope() -> None:
 
 
 def test_vllm_metrics_provider_combines_cached_load_and_append_metrics() -> None:
-    scheduler = SimpleNamespace(num_requests_running=2, num_requests_waiting=1)
+    scheduler = SimpleNamespace(
+        num_requests_running=2,
+        num_requests_waiting=1,
+        num_requests_running_max=6,
+        num_requests_waiting_max=3,
+        num_scheduler_updates=12,
+    )
     append = SessionAppendMetricsSnapshot(
         observations=4,
         queue_time_seconds_total=0.25,
@@ -61,6 +67,9 @@ def test_vllm_metrics_provider_combines_cached_load_and_append_metrics() -> None
         measurement_scope="retained_append",
         requests_running=2,
         requests_waiting=1,
+        requests_running_max=6,
+        requests_waiting_max=3,
+        scheduler_updates_total=12,
         queue_time_observations=4,
         queue_time_seconds_total=0.25,
         inference_time_observations=4,
@@ -73,7 +82,13 @@ def test_vllm_metrics_provider_combines_cached_load_and_append_metrics() -> None
 
 
 def test_vllm_metrics_provider_reports_zero_before_first_append() -> None:
-    scheduler = SimpleNamespace(num_requests_running=0, num_requests_waiting=0)
+    scheduler = SimpleNamespace(
+        num_requests_running=0,
+        num_requests_waiting=0,
+        num_requests_running_max=0,
+        num_requests_waiting_max=0,
+        num_scheduler_updates=0,
+    )
     append = SessionAppendMetricsSnapshot(
         observations=0,
         queue_time_seconds_total=0.0,
