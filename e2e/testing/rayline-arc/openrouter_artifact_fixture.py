@@ -192,8 +192,8 @@ def _worker_contract(worker: dict[str, object]) -> dict[str, object]:
         "supports_output_effort": False,
         "extra_body": {"reasoning": {"enabled": False, "effort": "none"}},
         "openrouter_max_retries": 1,
-        "openrouter_retry_base_seconds": 0.1,
-        "openrouter_retry_cap_seconds": 0.2,
+        "openrouter_retry_base_seconds": 2.0,
+        "openrouter_retry_cap_seconds": 30.0,
         "attempt_deadline_seconds": 120,
     }
     if worker["temperature"] is not None:

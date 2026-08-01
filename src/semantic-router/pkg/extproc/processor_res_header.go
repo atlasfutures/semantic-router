@@ -23,6 +23,13 @@ func (r *OpenAIRouter) handleResponseHeaders(v *ext_proc.ProcessingRequest_Respo
 		// path can avoid caching non-2xx error bodies (cache poisoning).
 		ctx.UpstreamStatusCode = outcome.statusCode
 	}
+	if v != nil && v.ResponseHeaders != nil {
+		captureRaylineARCProviderAttempts(
+			v.ResponseHeaders.Headers,
+			ctx,
+			outcome.statusCode,
+		)
+	}
 	if err := finalizeSelectionResponseHeaders(
 		ctx,
 		outcome.isSuccessful,

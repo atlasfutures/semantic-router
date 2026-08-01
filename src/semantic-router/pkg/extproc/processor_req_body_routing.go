@@ -189,6 +189,7 @@ func (r *OpenAIRouter) createRoutingResponse(
 	}
 	r.applyDecisionHeaderMutations(state, ctx)
 	enforceRaylineARCCredentialHeader(state, ctx)
+	enforceRaylineARCTransportRetryHeaders(state, ctx)
 
 	return buildRequestBodyContinueResponse(state, bodyMutation, false)
 }

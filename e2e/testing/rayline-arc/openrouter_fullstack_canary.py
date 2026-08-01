@@ -40,8 +40,10 @@ MAX_PROVIDER_REQUESTS = (
     + (DIRECT_REQUESTS_PER_MODEL + ROUTED_REQUESTS_PER_MODEL) * 3
     + STREAM_REQUESTS
 )
-MAX_RETRIES_PER_REQUEST = 1
-MAX_EXTERNAL_ATTEMPTS = MAX_PROVIDER_REQUESTS * (MAX_RETRIES_PER_REQUEST + 1)
+MAX_DATA_PLANE_RETRIES_PER_ROUTED_REQUEST = 1
+MAX_EXTERNAL_ATTEMPTS = MAX_PROVIDER_REQUESTS * (
+    MAX_DATA_PLANE_RETRIES_PER_ROUTED_REQUEST + 1
+)
 REQUEST_PACING_SECONDS = 1.0
 DEFAULT_RETRY_DELAY_SECONDS = 2.0
 MIN_RETRY_DELAY_SECONDS = 1.0
@@ -50,6 +52,10 @@ RETRIABLE_HTTP_STATUSES = frozenset({429, 503})
 MAX_REPORTED_PROVIDER_COST_USD = 0.10
 PUBLIC_GATEWAY_AUTHORIZATION = "Bearer public-openrouter-fullstack-canary"
 SESSION_METRIC = "llm_rayline_arc_session_actions_total"
+PROVIDER_LOGICAL_METRIC = "llm_rayline_arc_provider_logical_requests_total"
+PROVIDER_ATTEMPT_METRIC = "llm_rayline_arc_provider_attempts_total"
+PROVIDER_RETRY_METRIC = "llm_rayline_arc_provider_retries_total"
+PROVIDER_EXHAUSTION_METRIC = "llm_rayline_arc_provider_retry_exhaustions_total"
 WORKERS = {
     "worker-a": "deepseek/deepseek-v4-flash",
     "worker-b": "openai/gpt-5.6-luna",
@@ -153,6 +159,14 @@ def _http_error(
     )
 
 
+def _attempt_count(value: str | None) -> int:
+    try:
+        attempts = int(value or "1")
+    except ValueError:
+        return 1
+    return max(1, attempts)
+
+
 def _chat_request(
     *,
     model: str,
@@ -225,6 +239,7 @@ def _chat_once(
     body = response.read()
     latency_seconds = time.perf_counter() - started
     selected_worker = response.getheader("x-vsr-selected-model", "")
+    external_attempts = _attempt_count(response.getheader("x-envoy-attempt-count"))
     retry_after = response.getheader("retry-after")
     connection.close()
     if response.status != HTTP_OK:
@@ -254,6 +269,7 @@ def _chat_once(
         raise RuntimeError("OpenRouter did not use the pinned provider")
     return {
         "latency_seconds": latency_seconds,
+        "external_attempts": external_attempts,
         "selected_worker": selected_worker,
         "response_model": str(decoded.get("model") or ""),
         "provider": provider,
@@ -276,36 +292,20 @@ def _chat(
     expected_provider_name: str = "",
     temperature: int | None = 0,
 ) -> dict[str, Any]:
-    attempts = 0
-    while True:
-        attempts += 1
-        try:
-            result = _chat_once(
-                base_url=base_url,
-                model=model,
-                prompt=prompt,
-                authorization=authorization,
-                timeout_seconds=timeout_seconds,
-                episode_id=episode_id,
-                direct_openrouter=direct_openrouter,
-                provider_slug=provider_slug,
-                expected_provider_name=expected_provider_name,
-                temperature=temperature,
-            )
-            result["external_attempts"] = attempts
-            time.sleep(REQUEST_PACING_SECONDS)
-            return result
-        except OpenRouterHTTPError as error:
-            if not error.retriable or attempts > MAX_RETRIES_PER_REQUEST:
-                raise
-            print(
-                f"OpenRouter transient HTTP {error.status_code}; "
-                f"retrying attempt {attempts + 1}/{MAX_RETRIES_PER_REQUEST + 1} "
-                f"after {error.retry_after_seconds:g}s",
-                file=sys.stderr,
-                flush=True,
-            )
-            time.sleep(error.retry_after_seconds)
+    result = _chat_once(
+        base_url=base_url,
+        model=model,
+        prompt=prompt,
+        authorization=authorization,
+        timeout_seconds=timeout_seconds,
+        episode_id=episode_id,
+        direct_openrouter=direct_openrouter,
+        provider_slug=provider_slug,
+        expected_provider_name=expected_provider_name,
+        temperature=temperature,
+    )
+    time.sleep(REQUEST_PACING_SECONDS)
+    return result
 
 
 def _validate_model(result: dict[str, Any], expected_model: str) -> None:
@@ -425,6 +425,7 @@ def _stream_once(
         timeout_seconds=timeout_seconds,
     )
     selected_worker = response.getheader("x-vsr-selected-model", "")
+    external_attempts = _attempt_count(response.getheader("x-envoy-attempt-count"))
     if response.status != HTTP_OK:
         body = response.read()
         retry_after = response.getheader("retry-after")
@@ -470,6 +471,7 @@ def _stream_once(
         raise TypeError("streaming OpenRouter response omitted usage cost")
     result = {
         "selected_worker": selected_worker,
+        "external_attempts": external_attempts,
         "response_model": response_model,
         "provider": provider,
         "time_to_first_event_seconds": first_event_seconds,
@@ -490,30 +492,14 @@ def _stream(
     run_id: str,
     timeout_seconds: float,
 ) -> dict[str, Any]:
-    attempts = 0
-    while True:
-        attempts += 1
-        try:
-            result = _stream_once(
-                gateway_url=gateway_url,
-                prompt=prompt,
-                run_id=run_id,
-                timeout_seconds=timeout_seconds,
-            )
-            result["external_attempts"] = attempts
-            time.sleep(REQUEST_PACING_SECONDS)
-            return result
-        except OpenRouterHTTPError as error:
-            if not error.retriable or attempts > MAX_RETRIES_PER_REQUEST:
-                raise
-            print(
-                f"OpenRouter transient streaming HTTP {error.status_code}; "
-                f"retrying attempt {attempts + 1}/{MAX_RETRIES_PER_REQUEST + 1} "
-                f"after {error.retry_after_seconds:g}s",
-                file=sys.stderr,
-                flush=True,
-            )
-            time.sleep(error.retry_after_seconds)
+    result = _stream_once(
+        gateway_url=gateway_url,
+        prompt=prompt,
+        run_id=run_id,
+        timeout_seconds=timeout_seconds,
+    )
+    time.sleep(REQUEST_PACING_SECONDS)
+    return result
 
 
 def _result_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -535,6 +521,77 @@ def _result_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "providers": sorted({str(result["provider"]) for result in results}),
     }
+
+
+def _metric_total(metrics: str, name: str) -> float:
+    return sum(
+        float(line.rsplit(" ", 1)[1])
+        for line in metrics.splitlines()
+        if line.startswith(name + "{")
+    )
+
+
+def _provider_totals(
+    all_nonstream: list[dict[str, Any]],
+    stream: dict[str, Any],
+) -> tuple[float, int, int]:
+    provider_cost = sum(float(result["cost_usd"]) for result in all_nonstream) + float(
+        stream["cost_usd"]
+    )
+    if provider_cost > MAX_REPORTED_PROVIDER_COST_USD:
+        raise RuntimeError("OpenRouter reported cost exceeded the canary gate")
+    actual_provider_requests = len(all_nonstream) + STREAM_REQUESTS
+    if actual_provider_requests > MAX_PROVIDER_REQUESTS:
+        raise RuntimeError("OpenRouter request count exceeded the canary bound")
+    actual_external_attempts = sum(
+        int(result.get("external_attempts", 1)) for result in all_nonstream
+    ) + int(stream.get("external_attempts", 1))
+    if actual_external_attempts > MAX_EXTERNAL_ATTEMPTS:
+        raise RuntimeError(
+            "OpenRouter external attempt count exceeded the canary bound"
+        )
+    return provider_cost, actual_provider_requests, actual_external_attempts
+
+
+def _validate_router_metrics(
+    metrics: str,
+    coverage: list[dict[str, Any]],
+    routed: dict[str, list[dict[str, Any]]],
+    stream: dict[str, Any],
+) -> tuple[dict[str, int], int, int, int]:
+    session_actions = _metric_values(metrics, SESSION_METRIC)
+    expected_creates = (
+        len(coverage) + len(WORKERS) * ROUTED_REQUESTS_PER_MODEL + STREAM_REQUESTS
+    )
+    if session_actions.get("created", 0) < expected_creates:
+        raise RuntimeError("router metrics omitted OpenRouter session creates")
+    if _failure_total(metrics) != 0:
+        raise RuntimeError("router recorded an ARC selection failure")
+    routed_nonstream = [
+        *coverage,
+        *(result for results in routed.values() for result in results),
+    ]
+    routed_logical_requests = len(routed_nonstream) + STREAM_REQUESTS
+    routed_external_attempts = sum(
+        int(result["external_attempts"]) for result in routed_nonstream
+    ) + int(stream["external_attempts"])
+    observed_logical_requests = int(_metric_total(metrics, PROVIDER_LOGICAL_METRIC))
+    observed_external_attempts = int(_metric_total(metrics, PROVIDER_ATTEMPT_METRIC))
+    observed_retries = int(_metric_total(metrics, PROVIDER_RETRY_METRIC))
+    if observed_logical_requests != routed_logical_requests:
+        raise RuntimeError("router provider logical-request metric drifted")
+    if observed_external_attempts != routed_external_attempts:
+        raise RuntimeError("router provider attempt metric drifted")
+    if observed_retries != routed_external_attempts - routed_logical_requests:
+        raise RuntimeError("router provider retry metric drifted")
+    if _metric_total(metrics, PROVIDER_EXHAUSTION_METRIC) != 0:
+        raise RuntimeError("router recorded a retry exhaustion in a passing canary")
+    return (
+        session_actions,
+        routed_logical_requests,
+        routed_external_attempts,
+        observed_retries,
+    )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -579,34 +636,19 @@ def main() -> None:
         *(result for results in direct.values() for result in results),
         *(result for results in routed.values() for result in results),
     ]
-    provider_cost = sum(float(result["cost_usd"]) for result in all_nonstream) + float(
-        stream["cost_usd"]
+    provider_cost, actual_provider_requests, actual_external_attempts = (
+        _provider_totals(all_nonstream, stream)
     )
-    if provider_cost > MAX_REPORTED_PROVIDER_COST_USD:
-        raise RuntimeError("OpenRouter reported cost exceeded the canary gate")
-    actual_provider_requests = len(all_nonstream) + STREAM_REQUESTS
-    if actual_provider_requests > MAX_PROVIDER_REQUESTS:
-        raise RuntimeError("OpenRouter request count exceeded the canary bound")
-    actual_external_attempts = sum(
-        int(result.get("external_attempts", 1)) for result in all_nonstream
-    ) + int(stream.get("external_attempts", 1))
-    if actual_external_attempts > MAX_EXTERNAL_ATTEMPTS:
-        raise RuntimeError(
-            "OpenRouter external attempt count exceeded the canary bound"
-        )
-
     metrics = _read_metrics(args.metrics_url, args.timeout_seconds)
-    session_actions = _metric_values(metrics, SESSION_METRIC)
-    expected_creates = (
-        len(coverage) + len(WORKERS) * ROUTED_REQUESTS_PER_MODEL + STREAM_REQUESTS
-    )
-    if session_actions.get("created", 0) < expected_creates:
-        raise RuntimeError("router metrics omitted OpenRouter session creates")
-    if _failure_total(metrics) != 0:
-        raise RuntimeError("router recorded an ARC selection failure")
+    (
+        session_actions,
+        routed_logical_requests,
+        routed_external_attempts,
+        observed_retries,
+    ) = _validate_router_metrics(metrics, coverage, routed, stream)
 
     report = {
-        "schema_version": "rayline.arc.openrouter-fullstack-canary.v1",
+        "schema_version": "rayline.arc.openrouter-fullstack-canary.v2",
         "run_id": args.run_id,
         "status": "passed",
         "models": WORKERS,
@@ -631,6 +673,9 @@ def main() -> None:
         "actual_external_attempts": actual_external_attempts,
         "maximum_external_attempts": MAX_EXTERNAL_ATTEMPTS,
         "provider_retries": actual_external_attempts - actual_provider_requests,
+        "routed_logical_requests": routed_logical_requests,
+        "routed_external_attempts": routed_external_attempts,
+        "routed_retries": observed_retries,
         "reported_provider_cost_usd": provider_cost,
         "maximum_reported_provider_cost_usd": MAX_REPORTED_PROVIDER_COST_USD,
         "session_actions_created": session_actions["created"],

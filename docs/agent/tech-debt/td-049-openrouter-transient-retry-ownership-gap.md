@@ -2,8 +2,9 @@
 
 ## Status
 
-Open — the bounded external canary handles transient pre-response failures,
-but the production data plane does not yet own an equivalent policy.
+Implementation complete; external confirmation pending — Envoy now owns the
+production OpenRouter retry policy and the external canary no longer retries.
+Hermetic transaction, streaming, attempt-accounting, and exhaustion gates pass.
 
 ## Owner Plan
 
@@ -32,12 +33,12 @@ generations before the fourth coverage call returned HTTP 429. The canary
 previously discarded the structured error metadata and `Retry-After` header and
 failed immediately.
 
-The diagnostic canary now retries at most once for a pre-response 429 or 503,
-reuses the same Rayline episode ID, honors a clamped `Retry-After`, paces
-sequential requests, never retries a stream after HTTP 200, and records logical
-requests separately from external attempts. This is intentionally canary-owned
-so the acceptance run can tolerate ordinary provider variance without
-silently changing the production gateway contract.
+Envoy now retries at most once for a pre-response 429 or 503 on OpenRouter-only
+routes, below one Rayline decision and prepared transaction. It honors the
+bounded rate-limit delay, exposes the final attempt count, and never retries a
+stream after HTTP 200. Self-hosted vLLM routes intentionally have no retry
+policy because their 429 signals local admission pressure. The diagnostic
+canary retains pacing and accounting but no longer supplies its own retry.
 
 ## Evidence
 
@@ -58,6 +59,14 @@ silently changing the production gateway contract.
 - The existing ARC transaction tests prove non-2xx provider responses abort
   without advancing episode state, which makes same-episode pre-response retry
   safe for the diagnostic packet.
+- `deploy/compose/rayline-arc/README.md` documents Envoy as the production
+  owner, the OpenRouter/self-hosted boundary, deadlines, streaming semantics,
+  and aggregate metrics.
+- `e2e/testing/rayline-arc/run.sh` passes deterministic 429-to-200,
+  503-to-200, streaming retry, exhausted retry, post-200 partial-stream,
+  restart, Redis-loss, and privacy gates. The 2026-08-01 run observed three
+  logical requests, six wire attempts, and three retries; `Retry-After: 1`
+  recovered in 1.425, 1.390, and 1.166 seconds.
 
 ## Why It Matters
 
@@ -89,5 +98,6 @@ behavior instead of supplying it.
   exhaustion without recording prompt, response, episode, or credential data.
 - Streaming and cancellation tests prove no retry occurs after HTTP 200 headers
   or partial response delivery.
-- The external canary removes its client-owned retry loop and still passes the
-  same real-provider acceptance packet.
+- The external canary removes its client-owned retry loop and passes the same
+  real-provider acceptance packet. This final external confirmation remains
+  open; ORC005 is not rerun as an implicit whole-packet retry.

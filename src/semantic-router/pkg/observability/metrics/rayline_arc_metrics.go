@@ -17,6 +17,7 @@ limitations under the License.
 package metrics
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -81,6 +82,34 @@ var (
 		},
 		[]string{"action"},
 	)
+	RaylineARCProviderLogicalRequests = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_rayline_arc_provider_logical_requests_total",
+			Help: "Logical Rayline ARC OpenRouter requests by bounded final outcome.",
+		},
+		[]string{"outcome"},
+	)
+	RaylineARCProviderAttempts = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_rayline_arc_provider_attempts_total",
+			Help: "OpenRouter wire attempts beneath logical Rayline ARC requests by final outcome.",
+		},
+		[]string{"outcome"},
+	)
+	RaylineARCProviderRetries = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_rayline_arc_provider_retries_total",
+			Help: "Envoy-owned OpenRouter retries beneath logical Rayline ARC requests by final outcome.",
+		},
+		[]string{"outcome"},
+	)
+	RaylineARCProviderRetryExhaustions = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_rayline_arc_provider_retry_exhaustions_total",
+			Help: "Rayline ARC OpenRouter retry budgets exhausted by bounded final status.",
+		},
+		[]string{"status"},
+	)
 )
 
 func RecordRaylineARCFailure(class string) {
@@ -140,4 +169,27 @@ func RecordRaylineARCEpisodeTransaction(
 		outcome,
 		failureClass,
 	).Inc()
+}
+
+func RecordRaylineARCProviderRequest(
+	outcome string,
+	statusCode int,
+	attempts uint64,
+	exhausted bool,
+) {
+	if attempts < 1 {
+		attempts = 1
+	}
+	RaylineARCProviderLogicalRequests.WithLabelValues(outcome).Inc()
+	RaylineARCProviderAttempts.WithLabelValues(outcome).Add(float64(attempts))
+	if attempts > 1 {
+		RaylineARCProviderRetries.WithLabelValues(outcome).Add(
+			float64(attempts - 1),
+		)
+	}
+	if exhausted {
+		RaylineARCProviderRetryExhaustions.WithLabelValues(
+			strconv.Itoa(statusCode),
+		).Inc()
+	}
 }

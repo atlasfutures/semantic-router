@@ -40,7 +40,7 @@ def _validated_pooling_data(
         data = body["data"]
         expected_schema = REQUEST_SCHEMA_VERSION
     if not isinstance(data, dict):
-        raise ValueError("data must be an object")
+        raise TypeError("data must be an object")
     allowed = {
         "schema_version",
         "serializer_version",
@@ -77,7 +77,7 @@ def _validate_turns(turns: Any) -> None:
         if turn["role"] not in ("user", "assistant"):
             raise ValueError("turn role must be user or assistant")
         if not isinstance(turn["text"], str):
-            raise ValueError("turn text must be a string")
+            raise TypeError("turn text must be a string")
 
 
 def _json_bytes(value: object) -> bytes:
@@ -103,14 +103,22 @@ class QuietHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("content-length", "0"))
         value = json.loads(self.rfile.read(length))
         if not isinstance(value, dict):
-            raise ValueError("request body must be an object")
+            raise TypeError("request body must be an object")
         return value
 
-    def send_json(self, status: int, value: object) -> None:
+    def send_json(
+        self,
+        status: int,
+        value: object,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         payload = _json_bytes(value)
         self.send_response(status)
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(payload)))
+        for name, header_value in (headers or {}).items():
+            self.send_header(name, header_value)
         self.end_headers()
         self.wfile.write(payload)
 
@@ -346,6 +354,10 @@ class ProviderState:
         with self.lock:
             return list(self.requests)
 
+    def matching_count(self, marker: str) -> int:
+        with self.lock:
+            return sum(marker in _message_text(body) for body in self.requests)
+
 
 PROVIDER_STATE = ProviderState()
 
@@ -359,6 +371,76 @@ class ProviderHandler(QuietHandler):
             self.send_json(200, {"requests": PROVIDER_STATE.snapshot()})
             return
         self.send_json(404, {"error": "not_found"})
+
+    def _send_retry_scenario(self, text: str, sequence: int) -> bool:
+        for marker, status, error in (
+            (
+                "ARC_PROVIDER_429_THEN_OK",
+                429,
+                "synthetic_provider_rate_limit",
+            ),
+            (
+                "ARC_PROVIDER_503_THEN_OK",
+                503,
+                "synthetic_provider_unavailable",
+            ),
+        ):
+            if marker in text and PROVIDER_STATE.matching_count(marker) == 1:
+                self.send_json(
+                    status,
+                    {"error": error},
+                    headers={"Retry-After": "1"},
+                )
+                return True
+        if "ARC_PROVIDER_429_ALWAYS" in text:
+            self.send_json(
+                429,
+                {"error": "synthetic_provider_rate_limit"},
+                headers={"Retry-After": "1"},
+            )
+            return True
+        if "ARC_STREAM_429_THEN_OK" not in text:
+            return False
+        if PROVIDER_STATE.matching_count("ARC_STREAM_429_THEN_OK") == 1:
+            self.send_json(
+                429,
+                {"error": "synthetic_provider_rate_limit"},
+                headers={"Retry-After": "1"},
+            )
+            return True
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.send_header("transfer-encoding", "chunked")
+        self.send_header("x-e2e-provider-sequence", str(sequence))
+        self.end_headers()
+        for payload in (
+            b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+            b"data: [DONE]\n\n",
+        ):
+            self.wfile.write(f"{len(payload):x}\r\n".encode() + payload + b"\r\n")
+        self.wfile.write(b"0\r\n\r\n")
+        self.wfile.flush()
+        return True
+
+    def _send_terminal_scenario(self, text: str, sequence: int) -> bool:
+        if "ARC_PROVIDER_TRANSPORT" in text:
+            self.close_connection = True
+            return True
+        if "ARC_PROVIDER_5XX" in text:
+            self.send_json(503, {"error": "synthetic_provider_failure"})
+            return True
+        if "ARC_STREAM_ABORT" not in text:
+            return False
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.send_header("transfer-encoding", "chunked")
+        self.send_header("x-e2e-provider-sequence", str(sequence))
+        self.end_headers()
+        payload = b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+        self.wfile.write(f"{len(payload):x}\r\n".encode() + payload + b"\r\n")
+        self.wfile.flush()
+        self.close_connection = True
+        return True
 
     def do_POST(self) -> None:
         if self.path == "/reset":
@@ -381,29 +463,16 @@ class ProviderHandler(QuietHandler):
             return
         try:
             body = self.read_json()
-        except (ValueError, json.JSONDecodeError):
+        except (TypeError, ValueError, json.JSONDecodeError):
             self.send_json(400, {"error": "invalid_request"})
             return
         sequence = PROVIDER_STATE.append(body)
         text = _message_text(body)
+        if self._send_retry_scenario(text, sequence):
+            return
         if "ARC_PROVIDER_DELAY" in text:
             time.sleep(1)
-        if "ARC_PROVIDER_TRANSPORT" in text:
-            self.close_connection = True
-            return
-        if "ARC_PROVIDER_5XX" in text:
-            self.send_json(503, {"error": "synthetic_provider_failure"})
-            return
-        if "ARC_STREAM_ABORT" in text:
-            self.send_response(200)
-            self.send_header("content-type", "text/event-stream")
-            self.send_header("transfer-encoding", "chunked")
-            self.send_header("x-e2e-provider-sequence", str(sequence))
-            self.end_headers()
-            payload = b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
-            self.wfile.write(f"{len(payload):x}\r\n".encode() + payload + b"\r\n")
-            self.wfile.flush()
-            self.close_connection = True
+        if self._send_terminal_scenario(text, sequence):
             return
         self.send_json(
             200,

@@ -24,6 +24,8 @@ static_resources:
                   virtual_hosts:
                     - name: rayline_arc_openrouter
                       domains: ["*"]
+                      include_request_attempt_count: true
+                      include_attempt_count_in_response: true
                       routes:
                         - match:
                             prefix: /api/v1/
@@ -36,6 +38,18 @@ static_resources:
                             timeout: 180s
                             idle_timeout: 180s
                             host_rewrite_literal: openrouter.ai
+                            retry_policy:
+                              retry_on: retriable-status-codes
+                              num_retries: 1
+                              retriable_status_codes: [429, 503]
+                              retry_back_off:
+                                base_interval: 2s
+                                max_interval: 30s
+                              rate_limited_retry_back_off:
+                                reset_headers:
+                                  - name: Retry-After
+                                    format: SECONDS
+                                max_interval: 30s
                         - match:
                             prefix: /api/v1/
                             headers:

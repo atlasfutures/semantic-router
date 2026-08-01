@@ -1146,7 +1146,13 @@ but held:
     retry exhausts. Do not rerun it or interpret provider latency as a stable
     throughput benchmark. Preregister a traced self-hosted diagnostic that
     isolates the decision plane before another capacity packet.
-11. Keep the 1,000-case release qualification held until the user explicitly
+11. Treat the production retry ownership implementation as hermetically green:
+    Envoy retries one OpenRouter 429/503 below a single Rayline decision,
+    honors bounded `Retry-After`, reports logical and wire counts separately,
+    and never retries after HTTP 200. Self-hosted vLLM routes have no retry
+    policy. The external canary no longer retries, but TD049 remains pending
+    until a separately authorized real-provider confirmation passes.
+12. Keep the 1,000-case release qualification held until the user explicitly
     confirms execution.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed

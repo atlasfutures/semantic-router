@@ -195,8 +195,8 @@ def _worker(
         "temperature": 0.3 if thinking else 0.2,
         "supports_output_effort": False,
         "openrouter_max_retries": 1,
-        "openrouter_retry_base_seconds": 0.1,
-        "openrouter_retry_cap_seconds": 0.2,
+        "openrouter_retry_base_seconds": 2.0,
+        "openrouter_retry_cap_seconds": 30.0,
         "attempt_deadline_seconds": 30,
     }
     if dispatch_backend == "openai_compatible":

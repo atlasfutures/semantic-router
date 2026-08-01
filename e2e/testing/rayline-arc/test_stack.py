@@ -9,6 +9,7 @@ import hashlib
 import http.client
 import json
 import os
+import re
 import socket
 import time
 import urllib.error
@@ -20,6 +21,7 @@ ENVOY_PORT = int(os.getenv("RAYLINE_ARC_E2E_ENVOY_PORT", "18888"))
 ENCODER_PORT = int(os.getenv("RAYLINE_ARC_E2E_ENCODER_PORT", "18080"))
 PROVIDER_PORT = int(os.getenv("RAYLINE_ARC_E2E_PROVIDER_PORT", "18081"))
 REDIS_PORT = int(os.getenv("RAYLINE_ARC_E2E_REDIS_PORT", "16379"))
+METRICS_PORT = int(os.getenv("RAYLINE_ARC_E2E_METRICS_PORT", "19190"))
 REDIS_PASSWORD = os.getenv(
     "RAYLINE_ARC_E2E_REDIS_PASSWORD",
     "public-e2e-redis-secret",
@@ -31,10 +33,15 @@ EPISODE_CANARY = "rayline-arc-private-episode-canary"
 KEY_CANARY = "rayline-arc-private-key-canary"
 STATE_KEY_PREFIX = "vsr:rayline-arc:"
 HTTP_OK = 200
+HTTP_TOO_MANY_REQUESTS = 429
 HTTP_BAD_GATEWAY = 502
 HTTP_UNAVAILABLE = 503
 REASONING_BUDGET_TOKENS = 64
 CONCURRENT_REQUESTS = 2
+RETRY_AFTER_MIN_SECONDS = 1.0
+RETRY_AFTER_MAX_SECONDS = 5.0
+EXPECTED_SUCCESSFUL_RETRIES = 3
+EXPECTED_EXHAUSTED_RETRIES = 2
 
 
 def _url(port: int, path: str) -> str:
@@ -249,6 +256,15 @@ def _provider_requests() -> list[dict[str, Any]]:
     return body["requests"]
 
 
+def _metric_value(name: str, **labels: str) -> float:
+    with urllib.request.urlopen(_url(METRICS_PORT, "/metrics"), timeout=5) as response:
+        text = response.read().decode()
+    expected = ",".join(f'{key}="{value}"' for key, value in sorted(labels.items()))
+    pattern = rf"^{re.escape(name)}\{{{re.escape(expected)}\}}\s+([0-9.eE+-]+)$"
+    match = re.search(pattern, text, re.MULTILINE)
+    return 0.0 if match is None else float(match.group(1))
+
+
 def _reset_service(port: int) -> None:
     status, _, _ = _json_request(port, "/reset", method="POST", body={})
     assert status == HTTP_OK
@@ -312,10 +328,19 @@ def _assert_route(
 def _assert_failure_transactions() -> None:
     provider_episode = f"{EPISODE_CANARY}-provider-5xx"
     before_count = len(_provider_requests())
-    status, _, _ = _chat(provider_episode, "ARC_PROVIDER_5XX")
+    status, _, headers = _chat(provider_episode, "ARC_PROVIDER_5XX")
     assert status == HTTP_UNAVAILABLE
-    assert len(_provider_requests()) == before_count + 1
+    assert headers["x-envoy-attempt-count"] == "2", headers
+    assert len(_provider_requests()) == before_count + 2
     assert _wait_for_state(provider_episode, None) is None
+
+    rate_limit_episode = f"{EPISODE_CANARY}-provider-429"
+    before_count = len(_provider_requests())
+    status, _, headers = _chat(rate_limit_episode, "ARC_PROVIDER_429_ALWAYS")
+    assert status == HTTP_TOO_MANY_REQUESTS
+    assert headers["x-envoy-attempt-count"] == "2", headers
+    assert len(_provider_requests()) == before_count + 2
+    assert _wait_for_state(rate_limit_episode, None) is None
 
     transport_episode = f"{EPISODE_CANARY}-provider-transport"
     before_count = len(_provider_requests())
@@ -330,6 +355,78 @@ def _assert_failure_transactions() -> None:
     assert status == HTTP_UNAVAILABLE
     assert len(_provider_requests()) == before_count
     assert _wait_for_state(encoder_episode, None) is None
+
+
+def _assert_transient_retry_transactions() -> dict[str, float | int]:
+    timings: dict[str, float | int] = {}
+    cases = (
+        ("429", "ARC_PROVIDER_429_THEN_OK"),
+        ("503", "ARC_PROVIDER_503_THEN_OK"),
+    )
+    for name, marker in cases:
+        episode = f"{EPISODE_CANARY}-provider-{name}-then-ok"
+        before = _provider_requests()
+        started = time.perf_counter()
+        status, _, headers = _chat(episode, marker, timeout=20)
+        elapsed = time.perf_counter() - started
+        after = _provider_requests()
+        assert status == HTTP_OK, (status, headers)
+        assert headers["x-envoy-attempt-count"] == "2", headers
+        assert len(after) == len(before) + 2
+        assert after[-2]["model"] == after[-1]["model"]
+        state = _wait_for_state(episode, 1)
+        assert state is not None and state["turn_index"] == 1, state
+        assert RETRY_AFTER_MIN_SECONDS <= elapsed < RETRY_AFTER_MAX_SECONDS, elapsed
+        timings[f"{name}_retry_after_seconds"] = round(elapsed, 6)
+
+    stream_episode = f"{EPISODE_CANARY}-stream-429-then-ok"
+    before_count = len(_provider_requests())
+    started = time.perf_counter()
+    status, _, headers = _chat(
+        stream_episode,
+        "ARC_STREAM_429_THEN_OK",
+        stream=True,
+        timeout=20,
+    )
+    elapsed = time.perf_counter() - started
+    assert status == HTTP_OK, (status, headers)
+    assert headers["x-envoy-attempt-count"] == "2", headers
+    assert len(_provider_requests()) == before_count + 2
+    state = _wait_for_state(stream_episode, 1)
+    assert state is not None and state["turn_index"] == 1, state
+    assert RETRY_AFTER_MIN_SECONDS <= elapsed < RETRY_AFTER_MAX_SECONDS, elapsed
+    timings["stream_retry_after_seconds"] = round(elapsed, 6)
+    timings["logical_requests"] = 3
+    timings["wire_attempts"] = 6
+    timings["retries"] = 3
+    return timings
+
+
+def _assert_retry_metrics() -> None:
+    successful_retries = _metric_value(
+        "llm_rayline_arc_provider_retries_total",
+        outcome="success",
+    )
+    exhausted_retries = _metric_value(
+        "llm_rayline_arc_provider_retries_total",
+        outcome="retry_exhausted",
+    )
+    assert successful_retries >= EXPECTED_SUCCESSFUL_RETRIES, successful_retries
+    assert exhausted_retries >= EXPECTED_EXHAUSTED_RETRIES, exhausted_retries
+    assert (
+        _metric_value(
+            "llm_rayline_arc_provider_retry_exhaustions_total",
+            status="429",
+        )
+        >= 1
+    )
+    assert (
+        _metric_value(
+            "llm_rayline_arc_provider_retry_exhaustions_total",
+            status="503",
+        )
+        >= 1
+    )
 
 
 def _assert_concurrency() -> None:
@@ -402,6 +499,7 @@ def _assert_retained_session_extension() -> None:
 
 def _assert_response_boundaries() -> None:
     stream_episode = f"{EPISODE_CANARY}-stream-abort"
+    before_count = len(_provider_requests())
     try:
         status, _, _ = _chat(
             stream_episode,
@@ -415,6 +513,7 @@ def _assert_response_boundaries() -> None:
         pass
     state = _wait_for_state(stream_episode, 1)
     assert state is not None and state["turn_index"] == 1, state
+    assert len(_provider_requests()) == before_count + 1
 
     cancel_episode = f"{EPISODE_CANARY}-client-cancel"
     _cancel_chat(cancel_episode)
@@ -463,12 +562,14 @@ def _initial(receipt: Path) -> None:
         worker="worker-a",
         reasoning_header="off",
     )
+    retry_benchmark = _assert_transient_retry_transactions()
     receipt.write_text(
         json.dumps(
             {
                 "episode": persistent_episode,
                 "version": persistent_state["version"],
                 "turn_index": persistent_state["turn_index"],
+                "retry_benchmark": retry_benchmark,
             },
             sort_keys=True,
         )
@@ -477,6 +578,12 @@ def _initial(receipt: Path) -> None:
     _assert_retained_session_extension()
     _assert_concurrency()
     _assert_response_boundaries()
+    _assert_retry_metrics()
+    print(
+        "Rayline ARC Envoy retry benchmark: "
+        + json.dumps(retry_benchmark, sort_keys=True),
+        flush=True,
+    )
 
 
 def _resume(receipt: Path) -> None:

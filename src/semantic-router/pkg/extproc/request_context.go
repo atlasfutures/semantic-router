@@ -112,6 +112,13 @@ type RequestContext struct {
 	// this request (e.g. response headers not processed). The cache-write path
 	// reads it to avoid caching non-2xx error bodies (cache poisoning).
 	UpstreamStatusCode int
+	// UpstreamAttemptCount distinguishes one logical Rayline request from the
+	// wire attempts Envoy made beneath it. RetryCount is attempts minus one;
+	// RetryExhausted is true only when the final 429/503 consumed the artifact
+	// budget. These fields never contain provider, prompt, or episode identity.
+	UpstreamAttemptCount   uint64
+	UpstreamRetryCount     uint64
+	UpstreamRetryExhausted bool
 
 	// TTFT tracking
 	TTFTRecorded bool
