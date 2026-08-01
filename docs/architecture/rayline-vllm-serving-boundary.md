@@ -1,7 +1,7 @@
 # Rayline vLLM Serving Boundary
 
-Status: proposed for PL-0041. Pathfinder human endorsement is tracked by the
-corresponding proposed architecture decision.
+Status: accepted as the PL-0041 MVP boundary on 2026-08-01. Broader production
+endorsement remains tracked by the corresponding architecture decision.
 
 ## Decision
 
@@ -176,10 +176,18 @@ Pinning both processes to Modal `us-east` produced `1.042x` the PERF009 prepare
 p50 and `0.994x` its throughput; neither preregistered strong-placement gate
 passed. Its p99 improved to `0.749x`, but encoder inference/e2e means increased
 to `2.377x/2.413x` while queueing stayed negligible. Because PERF009 did not
-attest its encoder region, this is a composite one-sample placement result, not
-a pure WAN estimate. The separate endpoint therefore remains the MVP default;
-future work should isolate inference/batch variability or a private transport
-before changing this boundary.
+attest its encoder region, that comparison alone was composite.
+
+PERF014 controls the missing region fact: a London Pathfinder called an
+explicitly `us-east` encoder with the same fixed 128-request workload. It
+completed at `8.753 req/s` with `0.950s` p50, while its encoder inference/e2e
+means were `1.076x/0.930x` PERF011 and `2.558x/2.244x` PERF009. Reproducing the
+colocated encoder time without colocating Pathfinder makes encoder
+region/host/warmup/batching variability the stronger explanation for the
+PERF009/PERF011 gap, although one sample is not causal proof. PERF014's p50 and
+throughput were worse than both earlier samples. The separate endpoint
+therefore remains the MVP default; a private-transport or powered repeated
+experiment is required before changing this boundary.
 
 ### Allowed experiment: same Pod, separate containers
 
@@ -217,6 +225,12 @@ evict decision-plane state or make routing queue behind long completions.
   a new engine incarnation and rebuilds.
 - A selected worker is committed only after the existing first-2xx-headers
   boundary. Encoder success alone never commits dispatch.
+- Cold-start deadlines must cover real model load and Triton kernel warmup;
+  PERF012's 90-second direct-metrics deadline was insufficient, while PERF014's
+  240-second boundary completed before the measured workload.
+- Modal cleanup owns the stable exact app name, not a deployment-specific app
+  ID or a single container snapshot. Stop the app to cancel disconnected
+  server-side retries, then require a stable zero-container window.
 - Roll back the encoder backend from remote vLLM to local Transformers without
   migrating committed episode state.
 - Do not enable a vLLM cross-turn cache until stateless full-history parity,

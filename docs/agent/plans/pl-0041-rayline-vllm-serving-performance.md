@@ -32,13 +32,17 @@ prepare/abort transactions through Pathfinder and the protected encoder at
 `10.263 req/s`, Pathfinder in-flight `8`, encoder in-flight `7`, and vLLM
 scheduled batch width `6`. PERF011 completes the first placement comparison:
 pinning both components to Modal `us-east` did not improve p50 or throughput,
-so the independent endpoint remains the MVP default. The separately held
-quality qualification and HA journal remain open; another transaction
-concurrency proof is not required. Current published implementation heads:
+and PERF014 removes the largest region confound: a London Pathfinder calling
+an explicitly `us-east` encoder reproduced PERF011's slower encoder time
+without colocation. The independent endpoint therefore remains the MVP
+default. The separately held quality qualification and HA journal remain open;
+another transaction concurrency proof is not required. Current published
+implementation heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
-  at `50941e8f721e7ef2aeefa2d30370a1db3700908a` for the capability-gated
+  runtime implementation at `27c33f1582e4981c866d80e47fc306acef4c3ce5`
+  for the capability-gated
   retained-session client, hermetic stack, bounded direct/static/ARC diagnostic,
   fixed three-model OpenRouter transport and retry contracts, and mandatory ARC
   readiness preflight. The protected session service explicitly enables vLLM
@@ -47,10 +51,11 @@ concurrency proof is not required. Current published implementation heads:
   explicit `us-east` placement pin for controlled comparison.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `17f39ea85451e76c79026d0ed55b8781216f0de4` for the registered
+  at `5adfef2934fead6774b6543487eec4b3360d25be` for the registered
   retained-session, real-endpoint and OpenRouter canaries, plus the closed,
   artifact-pinned direct/static/ARC stage, encoder diagnostics, PERF009 remote
-  transaction-capacity result, and PERF011 placement comparator.
+  transaction-capacity result, PERF011 placement comparator, and PERF014
+  explicitly region-pinned remote control with app-owned cleanup.
 - vLLM integration
   [`atlasfutures/vllm:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/vllm/tree/codex/rayline-vsr-mvp)
   at `9f5ea81ca0aa570aea46baf82311a1139c1267ca` for append-scoped
@@ -1287,9 +1292,36 @@ but held:
    `rayline-ai/router-artifacts@02d01f19d6c481b5a2113ea8ece5065e0185a221`.
    Conservative accounting is now `$34.31359042`, leaving `$5.68640958` below
    the approved `$40` cap; the PERF011 launcher-window upper estimate was
-   `$0.448730`. Keep the independent endpoint as the MVP default. Any further
-   performance lane should isolate batch-width/inference variability or a
-   private Modal transport rather than increase qualification size.
+   `$0.448730`.
+   PERF012 then attempted the region-controlled remote topology: London
+   Pathfinder to an explicitly `us-east` encoder. Its first zero-metrics call
+   timed out at 90 seconds while vLLM was compiling the Qwen GDN Triton warmup
+   kernel, before any prepare or provider call. It is charged the full
+   `$2.4996168` envelope and was not retried. A disconnected Modal request
+   continued creating replacement containers after zero inventories; exact app
+   shutdown was required to cancel it. PERF013 failed closed at the existing-
+   container preflight before creating a token, deployment, or cost.
+   The separately preregistered PERF014 raised only the protected encoder
+   cold-start deadline to 240 seconds and made cleanup own the stable exact app
+   name across redeploy IDs. It passed 128/128 transactions in `14.623s` at
+   `8.753 req/s`; prepare p50/p95/p99 were `0.950s/1.286s/1.308s`, Pathfinder
+   and encoder in-flight both reached `8`, vLLM scheduled `7`, and failures,
+   contention, residency, provider calls, and provider spend were zero. Its
+   encoder inference/e2e means were `0.502s/0.614s`: `1.076x/0.930x` PERF011,
+   but `2.558x/2.244x` PERF009. Because the explicitly pinned remote run
+   reproduced the colocated encoder time without colocating Pathfinder,
+   region/host/warmup/batching variability is the stronger explanation for the
+   original encoder gap; one sample does not establish causality. End-to-end
+   p50 and throughput were worse than both prior samples, so the evidence does
+   not justify colocation.
+   The PERF014 receipt is privately pinned at
+   `rayline-ai/router-artifacts@81ab491a303c5e7b45e5706400fe748a1568ba50`.
+   Conservative accounting is now `$39.31282402`, leaving `$0.68717598` below
+   the approved `$40` cap; the PERF014 launcher-window upper estimate was
+   `$0.330942`. Keep the independent endpoint as the MVP default. No further
+   paid performance packet fits this cap. Future work requires new budget
+   authority and should test a private transport or a powered repeated design,
+   not increase qualification size opportunistically.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage
