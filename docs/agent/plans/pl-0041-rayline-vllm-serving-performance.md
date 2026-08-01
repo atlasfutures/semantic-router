@@ -24,22 +24,31 @@ development qualification passes, and the first bounded full-stack performance
 packet is complete. Its direct-only comparison was confounded by completion and
 time-order variance; the source-frozen static-gateway follow-up passes and
 isolates the protected encoder/session request as the dominant measured ARC
-cost. Current published implementation heads:
+cost. Two encoder-only concurrency packets now prove eight-way admission and a
+complete 92-call workload, but do not yet prove multi-request vLLM scheduling:
+the first metric sampled post-output occupancy and the second exposed that
+vLLM iteration-detail capture was disabled. The no-spend configuration fix is
+landed and awaits a distinct live verification packet. Current published
+implementation heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
-  at `999c740b34860732b02404f77d807f66b292d483` for the capability-gated
+  at `d70a35bd0de4f8fc8484f0dda471e43a3f7243c1` for the capability-gated
   retained-session client, hermetic stack, bounded direct/static/ARC diagnostic,
   fixed three-model OpenRouter transport and retry contracts, and mandatory ARC
-  readiness preflight.
+  readiness preflight. The protected session service explicitly enables vLLM
+  iteration-detail capture and the next diagnostic envelope accounts from the
+  `$24.23093122` conservative cumulative ceiling.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `75fbb19c32cb7bff08dbc1ea09d0c9b40e453445` for the registered
+  at `effd8730e7334c6391971af085cdd21ccd8638e8` for the registered
   retained-session, real-endpoint and OpenRouter canaries, plus the closed,
-  artifact-pinned direct/static/ARC stage diagnostic.
+  artifact-pinned direct/static/ARC stage and PERF005/PERF006 diagnostics.
 - vLLM integration
   [`atlasfutures/vllm:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/vllm/tree/codex/rayline-vsr-mvp)
-  at `77a901d233499ef588370f93056f82dae15bcb93`.
+  at `9f5ea81ca0aa570aea46baf82311a1139c1267ca` for append-scoped
+  timing, process-lifetime scheduler occupancy, and pre-execution scheduled
+  batch-width telemetry.
 - David's reviewed vLLM causal-MEAN input
   [`davidvgilmore/vllm:rayline/pl-0039-causal-mean`](https://github.com/davidvgilmore/vllm/tree/rayline/pl-0039-causal-mean)
   at `162bcefe1b41c5bb35eccc2f2219ea39e2c74bb7`.
@@ -1215,22 +1224,29 @@ but held:
    passed with exact token parity and measured ARC/static throughput ratios of
    `0.748` and `0.755` at concurrency one and four. More than 99% of ARC routing
    time was the protected encoder/session request, while generation-worker
-   queues stayed empty. The subsequent encoder-only packet found that vLLM's
-   standard completed-request histograms remain zero for the retained streaming
-   lifecycle and that full-registry HTTP sampling is too slow for the intended
-   interval; it produced no accepted capacity result. The no-spend follow-up is
-   now implemented at vLLM `77a901d23`: every completed retained append carries
-   an immutable queue/inference/end-to-end timing record, timing state resets
-   before the next append, and `AsyncLLM` maintains a cached aggregate
-   running/waiting snapshot. The Semantic Router adapter exposes those counters
-   as the explicitly scoped `rayline.arc.session-metrics-response.v2` contract
-   without collecting the Prometheus registry. The plugin source digest is
-   `54df150905121eefc9ec65c6815c633d1e23d977681981f81247ee430872cfa9`.
-   The diagnostic launcher now exits before deployment or credential creation:
-   the conservative cumulative ceiling is `$19.23169762`, and another full
-   `$2.4996168` envelope would reach `$21.73131442`, above the `$20` cap. Do not
-   preregister another live packet until renewed budget authority can cover its
-   full envelope.
+   queues stayed empty. The subsequent encoder-only work replaced vLLM
+   terminal-request histograms and hot Prometheus polling with append-scoped
+   timing plus cached scheduler peaks. PERF005 completed all 92 calls with
+   coordinator in-flight max `8`, but failed because its occupancy metric was
+   sampled after one-step pooling requests completed. PERF006 moved the
+   observation before output removal and emitted a complete failure receipt.
+   At concurrency eight, create and append reached `5.742` and `5.831 req/s`;
+   p95 latency was `1.407s` and `1.393s`; mean vLLM queue time was only
+   `0.030ms` and `0.044ms`; coordinator in-flight max was `8`; and all 92
+   requests passed. The engine reported waiting max `8` but scheduled max `0`,
+   which traced to `ObservabilityConfig.enable_logging_iteration_details=False`,
+   not proof of absent batching. Semantic Router `d70a35bd` now enables that
+   signal while keeping request logging disabled. No further GPU packet was
+   run. The v4 plugin source digest remains
+   `67a9015c0c0399d4846930a9836982dd62c4a42f537af9f6c8917eb3beed23e5`.
+   PERF005 and PERF006 are privately pinned at
+   `rayline-ai/router-artifacts@462cc5cefdba03ceb66284611dfa1f4da1652b98`
+   and
+   `rayline-ai/router-artifacts@67c44b5a188960a270756da3e62afc97f6d5d8be`.
+   Conservative accounting is `$24.23093122`, leaving `$15.76906878` below the
+   approved `$40` cap. A future full diagnostic would reserve through
+   `$26.73054802`; it requires a new experiment ID and may not reinterpret or
+   retry PERF006.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage
@@ -1286,9 +1302,11 @@ it is a separate follow-up rather than the current `/v1/route/prepare` blocker.
   are implemented and tested.
 - Keep TD047 open until a router-only receipt shows concurrent-safe MTRouter
   selections reaching the real encoder/vLLM boundary at observed in-flight
-  concurrency above one; the in-process fencing tests are already green. The
-  receipt must use append-scoped retained telemetry, not terminal-request
-  histograms, and must not scrape the full Prometheus registry on the hot path.
+  concurrency above one and a protected-encoder receipt observes scheduled
+  batch width above one. The in-process fencing tests and eight-way service
+  admission are already green. The receipt must use append-scoped retained
+  telemetry, not terminal-request histograms, and must not scrape the full
+  Prometheus registry on the hot path.
 - Keep TD048 open until the narrow stability rule gains powered changed-action
   quality/regret evidence (or an explicit reviewed acceptance of its
   canonicalization semantics) and the full RSP-004Q parity qualification

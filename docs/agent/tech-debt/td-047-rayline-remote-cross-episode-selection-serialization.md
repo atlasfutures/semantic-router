@@ -2,8 +2,9 @@
 
 ## Status
 
-Open — the serialization fix, append-scoped telemetry, and local tests are
-landed; a new real-stack receipt is still required to measure concurrency.
+Open — the serialization fix, append-scoped telemetry, service-admission proof,
+and local tests are landed; a new real-stack receipt is still required to prove
+multi-request vLLM scheduling.
 
 ## Owner Plan
 
@@ -13,8 +14,9 @@ landed; a new real-stack receipt is still required to measure concurrency.
 
 Router-only capacity qualification and vLLM continuous-batching evidence still
 need a real-stack receipt. The process-wide lock is fixed; append-scoped
-retained-session telemetry is now implemented, but the live evidence rung is
-held by the remaining GPU budget.
+retained-session telemetry and eight-way protected-service admission are now
+implemented. The remaining evidence rung is an explicitly configured scheduled
+batch-width observation, not another process-concurrency implementation change.
 
 ## Scope
 
@@ -83,10 +85,28 @@ MTRouter remains serialized because it may mutate KV sessions.
   registry or waits for terminal-request histogram settlement. Its plugin
   source digest is
   `54df150905121eefc9ec65c6815c633d1e23d977681981f81247ee430872cfa9`.
-- The paid diagnostic launcher is fail-closed at the current conservative
-  `$19.23169762` cumulative ceiling because another full run could reach
-  `$21.73131442`, above the `$20` cap. No source-validation step creates a
-  Modal credential or deployment.
+- PERF005 completed all 92 protected-encoder calls, observed coordinator
+  in-flight max `8`, and failed only its post-output vLLM running-occupancy
+  gate. Its private aggregate receipt is pinned at
+  `rayline-ai/router-artifacts@462cc5cefdba03ceb66284611dfa1f4da1652b98`.
+- [`atlasfutures/vllm@9f5ea81c`](https://github.com/atlasfutures/vllm/commit/9f5ea81ca0aa570aea46baf82311a1139c1267ca)
+  adds process-lifetime occupancy peaks and records pre-execution scheduled
+  batch width from scheduler iteration details.
+- PERF006 completed all 92 calls with coordinator in-flight max `8`. At
+  concurrency eight it measured create/append throughput of `5.742/5.831
+  req/s`, p95 latency of `1.407/1.393s`, and mean vLLM queue time of
+  `0.030/0.044ms`. It observed waiting max `8` but scheduled max `0` because
+  vLLM iteration-detail capture was disabled. The aggregate receipt is pinned
+  at
+  `rayline-ai/router-artifacts@67c44b5a188960a270756da3e62afc97f6d5d8be`.
+- [`atlasfutures/semantic-router@d70a35bd`](https://github.com/atlasfutures/semantic-router/commit/d70a35bd0de4f8fc8484f0dda471e43a3f7243c1)
+  explicitly enables `enable_logging_iteration_details` on the protected vLLM
+  engine while leaving request logging disabled. Its 110 plugin tests and
+  repo-native lint/CI gates pass; the configuration is not yet live-verified.
+- Conservative accounting is now `$24.23093122` under the approved `$40` cap.
+  The launcher reserves a future full packet through `$26.73054802` before
+  deployment or credential creation. No source-validation step creates a Modal
+  credential or deployment.
 
 ## Why It Matters
 
@@ -99,12 +119,13 @@ same state or thread-safety contract.
 ## Desired End State
 
 The implementation now declares concurrency capability at the policy boundary
-and exposes append-scoped retained telemetry through a cached aggregate
-snapshot. The remaining desired state is a router-only receipt showing
-independent requests reach the real encoder/vLLM boundary concurrently. The
-evidence must distinguish Pathfinder contention, same-session fencing, service
-admission, and vLLM scheduling without treating terminal session completion as
-an append.
+and exposes append-scoped retained telemetry through cached process-lifetime
+peaks. The service boundary has observed eight concurrent requests. The
+remaining desired state is a router-only receipt showing independent requests
+reach the real encoder/vLLM boundary concurrently and a protected-encoder
+receipt showing scheduled batch width above one. The evidence must distinguish
+Pathfinder contention, same-session fencing, service admission, and vLLM
+scheduling without treating terminal session completion as an append.
 
 ## Exit Criteria
 
