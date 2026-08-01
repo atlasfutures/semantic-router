@@ -40,7 +40,7 @@ MIN_SCHEDULED_REQUESTS = 2
 METRICS_SCHEMA = "rayline.arc.session-metrics-response.v4"
 REPORT_SCHEMA = "rayline.arc.modal-encoder-batch-probe.v1"
 MAX_RESOURCE_ENVELOPE_USD = 2.4996168
-CUMULATIVE_BEFORE_USD = 24.23093122
+CUMULATIVE_BEFORE_USD = 26.73054802
 
 
 def _validate_fresh_start(metrics: dict[str, Any]) -> None:
