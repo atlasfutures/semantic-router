@@ -197,6 +197,7 @@ class SessionEncoder:
                 use_activation=True,
                 enable_chunked_processing=False,
             ),
+            enable_logging_iteration_details=True,
             enable_log_requests=False,
         )
         self._engine = AsyncLLM.from_engine_args(engine_args)

@@ -41,7 +41,7 @@ MAX_POOLING_REQUESTS = (
 METRICS_SCHEMA = "rayline.arc.session-metrics-response.v4"
 REPORT_SCHEMA = "rayline.arc.modal-encoder-diagnostic.v4"
 MAX_RESOURCE_ENVELOPE_USD = 2.4996168
-CUMULATIVE_BEFORE_USD = 21.73131442
+CUMULATIVE_BEFORE_USD = 24.23093122
 
 FIRST_TURNS = [{"role": "user", "text": CANDIDATE_PROMPTS[0]}]
 APPENDED_TURNS = [

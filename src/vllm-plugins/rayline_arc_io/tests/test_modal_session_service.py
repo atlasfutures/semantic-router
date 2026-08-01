@@ -76,6 +76,7 @@ def test_session_service_freezes_the_proven_retained_vllm_runtime() -> None:
         '"vllm/v1/engine/pooling_session.py"',
         "python3 -m py_compile",
         "enable_prefix_caching=False",
+        "enable_logging_iteration_details=True",
         'gdn_prefill_backend="torch_reference"',
         "VLLMRetainedPoolingBackendFactory",
         "VLLMSessionEngineMetricsProvider",
