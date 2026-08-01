@@ -62,3 +62,28 @@ e2e/testing/rayline-arc/run.sh
 It covers 429-to-200, 503-to-200, streaming 429-to-200, exhausted 429 and 503,
 single commit/abort behavior, post-200 partial streaming, process restart,
 Redis loss, aggregate attempt metrics, and privacy-log scanning.
+
+## Bounded performance diagnostic
+
+`run_modal_fullstack.py --mode diagnostic` compares three paths against the
+same two real vLLM workers and the same frozen prompt, token, temperature,
+thinking, and seed fields:
+
+1. direct worker access;
+2. a specified-model request through Envoy and Semantic Router that skips
+   automatic selection; and
+3. the full `model: auto` Rayline ARC path.
+
+The diagnostic runs two waves at concurrency one and four. It contains 30
+measured generations and allows at most 62 generations including direct
+warmup and prompt coverage. It has no case-count or paid-provider flag, makes
+zero external-provider calls, and cannot invoke the held 1,000-case packet.
+
+Each wave snapshots vLLM success, token, TTFT, end-to-end, queue, preemption,
+running, waiting, and KV-utilization metrics. Router snapshots separate the
+general routing histogram from the ARC encoder histogram. Gateway responses
+must contain one Envoy attempt and `x-envoy-upstream-service-time`; the report
+also shows client latency minus that header as an explicitly approximate
+gateway residual. Completion-token totals must match across all three paths
+for each worker, or the diagnostic fails instead of publishing a confounded
+throughput comparison.

@@ -55,17 +55,21 @@ def _nonstream_chat(
     authorization: str,
     timeout_seconds: float,
     episode_id: str = "",
+    max_tokens: int = 8,
+    temperature: float | None = 0,
+    extra_fields: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    payload = json.dumps(
-        {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 8,
-            "temperature": 0,
-            "stream": False,
-        },
-        separators=(",", ":"),
-    ).encode()
+    request = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+        "stream": False,
+    }
+    if temperature is not None:
+        request["temperature"] = temperature
+    if extra_fields:
+        request.update(extra_fields)
+    payload = json.dumps(request, separators=(",", ":")).encode()
     headers = {
         "authorization": authorization,
         "content-type": "application/json",
@@ -84,6 +88,11 @@ def _nonstream_chat(
     body = response.read()
     elapsed = time.perf_counter() - started
     selected_worker = response.getheader("x-vsr-selected-model", "")
+    upstream_service_millis = response.getheader(
+        "x-envoy-upstream-service-time",
+        "",
+    )
+    attempt_count = response.getheader("x-envoy-attempt-count", "")
     connection.close()
     if response.status != HTTP_OK:
         raise RuntimeError(f"chat endpoint returned HTTP {response.status}")
@@ -97,11 +106,30 @@ def _nonstream_chat(
     ):
         raise RuntimeError("chat endpoint omitted generated output")
     usage = decoded.get("usage") or {}
+    upstream_service_seconds: float | None = None
+    if upstream_service_millis:
+        try:
+            parsed_millis = float(upstream_service_millis)
+        except ValueError as exc:
+            raise RuntimeError("invalid Envoy upstream service time") from exc
+        if not math.isfinite(parsed_millis) or parsed_millis < 0:
+            raise RuntimeError("invalid Envoy upstream service time")
+        upstream_service_seconds = parsed_millis / 1_000
+    parsed_attempt_count: int | None = None
+    if attempt_count:
+        try:
+            parsed_attempt_count = int(attempt_count)
+        except ValueError as exc:
+            raise RuntimeError("invalid Envoy attempt count") from exc
+        if parsed_attempt_count < 1:
+            raise RuntimeError("invalid Envoy attempt count")
     return {
         "latency_seconds": elapsed,
         "response_model": decoded.get("model", ""),
         "completion_tokens": int(usage.get("completion_tokens") or 0),
         "selected_worker": selected_worker,
+        "envoy_upstream_service_seconds": upstream_service_seconds,
+        "envoy_attempt_count": parsed_attempt_count,
     }
 
 

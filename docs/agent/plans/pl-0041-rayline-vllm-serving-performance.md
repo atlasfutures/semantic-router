@@ -631,6 +631,32 @@ session scheduling before assigning an SLO or capacity number. Conservative
 span accounting charges `$0.926876` for this packet and brings cumulative
 observed upper-bound spend to `$6.757164`.
 
+The follow-up diagnostic is source-bounded before any new GPU launch. It adds
+a specified-model gateway control between direct vLLM and full ARC, and sends
+the same discovered prompt, 32-token limit, artifact-matching temperature,
+thinking flag, and fixed seed through all three paths. Two waves at concurrency
+one and four produce 30 measured generations, exactly 15 per worker, with at
+most 62 total generations including warmup and coverage. Every self-hosted
+gateway response must report exactly one Envoy attempt; local vLLM 429s remain
+backpressure and are not retried.
+
+The packet records client p50/p95/max and throughput, Envoy upstream service
+time, the explicitly approximate client-minus-upstream residual, Semantic
+Router routing and Rayline encoder histograms, and vLLM TTFT, E2E, queue,
+preemption, running, waiting, token, and KV-utilization metrics. Direct requests
+must add zero router observations, specified-model requests must add routing
+but zero encoder observations, and ARC requests must add both. Completion-token
+totals must match across all three paths per worker. This fixes the principal
+confounder in `perf001`; it remains a diagnostic at concurrency one and four,
+not a production saturation or SLO claim.
+
+The new packet makes no provider calls and retains the established
+`$3.0574728` 15-minute two-L4-plus-H100 maximum envelope. Added to the current
+`$11.17499122` cumulative conservative upper bound, the worst case is
+`$14.23246402`, leaving more than `$5.76` under the user cap. A new signed
+Semantic Router source commit and Pathfinder preregistration are required
+before one launch. The held 1,000-case packet remains uninvoked.
+
 The user-requested realistic data-plane packet is a separate three-model
 OpenRouter canary, not an external-provider load test. A public synthetic
 three-arm head maps the protected real encoder's coordinate 252 into positive,

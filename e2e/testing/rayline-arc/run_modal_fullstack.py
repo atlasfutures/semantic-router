@@ -28,6 +28,7 @@ WORKER_SERVICE = (
 DRIVERS = {
     "canary": Path(__file__).with_name("modal_fullstack_canary.py"),
     "benchmark": Path(__file__).with_name("modal_fullstack_benchmark.py"),
+    "diagnostic": Path(__file__).with_name("modal_fullstack_diagnostic.py"),
 }
 PROJECT_NAME = "rayline-arc-real-workers"
 WORKER_APP_NAME = "rayline-arc-generation-workers"

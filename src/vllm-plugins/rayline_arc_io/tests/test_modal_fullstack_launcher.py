@@ -75,6 +75,14 @@ def test_launcher_selects_the_bounded_benchmark_driver_without_a_paid_bulk_flag(
     assert "execute-paid-1000" not in source
 
 
+def test_launcher_selects_the_bounded_stage_diagnostic() -> None:
+    source = LAUNCHER_PATH.read_text(encoding="utf-8")
+    assert (
+        '"diagnostic": Path(__file__).with_name("modal_fullstack_diagnostic.py")'
+        in source
+    )
+
+
 def test_encoder_identity_is_dynamic_but_timeouts_remain_typed() -> None:
     compose = COMPOSE_PATH.read_text(encoding="utf-8")
     config = CONFIG_PATH.read_text(encoding="utf-8")

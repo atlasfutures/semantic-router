@@ -42,6 +42,9 @@ RETRY_AFTER_MIN_SECONDS = 1.0
 RETRY_AFTER_MAX_SECONDS = 5.0
 EXPECTED_SUCCESSFUL_RETRIES = 3
 EXPECTED_EXHAUSTED_RETRIES = 2
+STATIC_CONTROL_MAX_TOKENS = 32
+STATIC_CONTROL_TEMPERATURE = 0.2
+STATIC_CONTROL_SEED = 20260801
 
 
 def _url(port: int, path: str) -> str:
@@ -265,6 +268,14 @@ def _metric_value(name: str, **labels: str) -> float:
     return 0.0 if match is None else float(match.group(1))
 
 
+def _metric_scalar(name: str) -> float:
+    with urllib.request.urlopen(_url(METRICS_PORT, "/metrics"), timeout=5) as response:
+        text = response.read().decode()
+    pattern = rf"^{re.escape(name)}\s+([0-9.eE+-]+)$"
+    match = re.search(pattern, text, re.MULTILINE)
+    return 0.0 if match is None else float(match.group(1))
+
+
 def _reset_service(port: int) -> None:
     status, _, _ = _json_request(port, "/reset", method="POST", body={})
     assert status == HTTP_OK
@@ -323,6 +334,54 @@ def _assert_route(
     state = _state(episode)
     assert state is not None
     return requests[-1], state
+
+
+def _assert_static_gateway_control() -> None:
+    before_count = len(_provider_requests())
+    before_encoder = _metric_scalar("llm_rayline_arc_encoder_latency_seconds_count")
+    before_routing = _metric_scalar("llm_model_routing_latency_seconds_count")
+    before_sessions = _metric_value(
+        "llm_rayline_arc_session_actions_total",
+        action="created",
+    )
+    status, _, headers = _json_request(
+        ENVOY_PORT,
+        "/v1/chat/completions",
+        method="POST",
+        body={
+            "model": "worker-a",
+            "messages": [{"role": "user", "content": PROMPT_CANARY}],
+            "max_tokens": STATIC_CONTROL_MAX_TOKENS,
+            "temperature": STATIC_CONTROL_TEMPERATURE,
+            "seed": STATIC_CONTROL_SEED,
+            "chat_template_kwargs": {"enable_thinking": False},
+            "stream": False,
+        },
+    )
+    assert status == HTTP_OK, (status, headers)
+    assert headers["x-envoy-attempt-count"] == "1", headers
+    assert float(headers["x-envoy-upstream-service-time"]) >= 0, headers
+    requests = _provider_requests()
+    assert len(requests) == before_count + 1
+    assert requests[-1]["model"] == "synthetic/provider-a"
+    assert requests[-1]["max_tokens"] == STATIC_CONTROL_MAX_TOKENS
+    assert requests[-1]["temperature"] == STATIC_CONTROL_TEMPERATURE
+    assert requests[-1]["seed"] == STATIC_CONTROL_SEED
+    assert requests[-1]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert (
+        _metric_scalar("llm_rayline_arc_encoder_latency_seconds_count")
+        == before_encoder
+    )
+    assert (
+        _metric_scalar("llm_model_routing_latency_seconds_count") == before_routing + 1
+    )
+    assert (
+        _metric_value(
+            "llm_rayline_arc_session_actions_total",
+            action="created",
+        )
+        == before_sessions
+    )
 
 
 def _assert_failure_transactions() -> None:
@@ -523,6 +582,7 @@ def _assert_response_boundaries() -> None:
 
 def _initial(receipt: Path) -> None:
     _reset_service(PROVIDER_PORT)
+    _assert_static_gateway_control()
     body_a, state_a = _assert_route(
         f"{EPISODE_CANARY}-route-a",
         "ARC_ROUTE_A",
