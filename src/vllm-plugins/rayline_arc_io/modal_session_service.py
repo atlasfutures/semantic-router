@@ -30,6 +30,7 @@ VLLM_REPOSITORY = "https://github.com/atlasfutures/vllm.git"
 ENGINE_BUILD_ID = f"vllm@{VLLM_COMMIT}"
 
 GPU_TYPE = "H100"
+MODAL_REGION = "us-east"
 MAX_SESSIONS = 8
 MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS
 IDLE_TTL_SECONDS = 5 * 60
@@ -131,6 +132,7 @@ vllm_cache = modal.Volume.from_name("rayline-vllm-cache", create_if_missing=True
 @app.cls(
     image=image,
     gpu=GPU_TYPE,
+    region=MODAL_REGION,
     cpu=8.0,
     memory=65_536,
     timeout=31 * 60,

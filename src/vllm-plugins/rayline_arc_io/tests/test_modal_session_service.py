@@ -47,6 +47,7 @@ def test_session_service_is_authenticated_and_bounded() -> None:
 
     assert {
         "gpu",
+        "region",
         "cpu",
         "memory",
         "timeout",
@@ -68,6 +69,7 @@ def test_session_service_freezes_the_proven_retained_vllm_runtime() -> None:
         'VLLM_COMMIT = "9f5ea81ca0aa570aea46baf82311a1139c1267ca"',
         'VLLM_REPOSITORY = "https://github.com/atlasfutures/vllm.git"',
         'GPU_TYPE = "H100"',
+        'MODAL_REGION = "us-east"',
         "MAX_SESSIONS = 8",
         "MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS",
         "IDLE_TTL_SECONDS = 5 * 60",
