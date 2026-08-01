@@ -171,6 +171,16 @@ performance optimization. A non-affine request rebuilds from Pathfinder state.
 This shape is the qualification baseline because it preserves independent
 scaling and failure domains and makes GPU resource use visible.
 
+PERF011 does not justify tighter colocation on latency or throughput alone.
+Pinning both processes to Modal `us-east` produced `1.042x` the PERF009 prepare
+p50 and `0.994x` its throughput; neither preregistered strong-placement gate
+passed. Its p99 improved to `0.749x`, but encoder inference/e2e means increased
+to `2.377x/2.413x` while queueing stayed negligible. Because PERF009 did not
+attest its encoder region, this is a composite one-sample placement result, not
+a pure WAN estimate. The separate endpoint therefore remains the MVP default;
+future work should isolate inference/batch variability or a private transport
+before changing this boundary.
+
 ### Allowed experiment: same Pod, separate containers
 
 A Pathfinder container and Rayline vLLM sidecar may communicate over localhost.

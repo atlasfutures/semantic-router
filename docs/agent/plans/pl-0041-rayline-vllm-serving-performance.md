@@ -30,24 +30,27 @@ proves multi-request vLLM scheduling with a pre-execution batch width of seven.
 PERF009 now closes the transaction-path concurrency gap with 128 capped
 prepare/abort transactions through Pathfinder and the protected encoder at
 `10.263 req/s`, Pathfinder in-flight `8`, encoder in-flight `7`, and vLLM
-scheduled batch width `6`. The remaining work is deployment-shape comparison
-and the separately held quality qualification, not another proof of transaction
-concurrency. Current published implementation heads:
+scheduled batch width `6`. PERF011 completes the first placement comparison:
+pinning both components to Modal `us-east` did not improve p50 or throughput,
+so the independent endpoint remains the MVP default. The separately held
+quality qualification and HA journal remain open; another transaction
+concurrency proof is not required. Current published implementation heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
-  at `24897734839859ac90cc5dfdd74d0f873f7a6d99` for the capability-gated
+  at `50941e8f721e7ef2aeefa2d30370a1db3700908a` for the capability-gated
   retained-session client, hermetic stack, bounded direct/static/ARC diagnostic,
   fixed three-model OpenRouter transport and retry contracts, and mandatory ARC
   readiness preflight. The protected session service explicitly enables vLLM
   iteration-detail capture, the minimal batch probe, and protected stateless
-  pooling compatibility used by the Pathfinder transaction lane.
+  pooling compatibility used by the Pathfinder transaction lane and an
+  explicit `us-east` placement pin for controlled comparison.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `9f971cd2fef19ed28c6c5430d20f2470acab2f2c` for the registered
+  at `17f39ea85451e76c79026d0ed55b8781216f0de4` for the registered
   retained-session, real-endpoint and OpenRouter canaries, plus the closed,
-  artifact-pinned direct/static/ARC stage, encoder diagnostics, and PERF009
-  transaction-capacity result.
+  artifact-pinned direct/static/ARC stage, encoder diagnostics, PERF009 remote
+  transaction-capacity result, and PERF011 placement comparator.
 - vLLM integration
   [`atlasfutures/vllm:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/vllm/tree/codex/rayline-vsr-mvp)
   at `9f5ea81ca0aa570aea46baf82311a1139c1267ca` for append-scoped
@@ -1268,6 +1271,25 @@ but held:
    `$31.72978162`, leaving `$8.27021838` below the approved `$40` cap; the
    PERF009 launcher-window upper estimate was `$0.217977`. No prior packet may
    be retried or reinterpreted.
+   PERF010 then failed during local module import before its budget guard or any
+   external mutation; it created no app, credential, CPU/GPU resource, or cost
+   and was closed without retry. PERF011 added a detonated direct-script
+   regression test and completed the otherwise unchanged same-region packet.
+   All 128 transactions passed at `10.199 req/s`; prepare latency was `0.752s`
+   p50, `1.086s` p95, and `1.112s` p99. Pathfinder and encoder in-flight both
+   reached `8`, scheduled batch width reached `7`, every encoder call
+   succeeded, provider traffic was zero, and final residency was zero. Against
+   PERF009, p50 and throughput ratios were `1.042` and `0.994`, so neither
+   strong-placement threshold passed; p99 improved to `0.749x`, but mean
+   encoder inference/e2e grew to `2.377x/2.413x` while queue time remained only
+   `0.018ms`. This rejects colocation as an obvious p50/throughput win without
+   claiming a pure network cause. The immutable private receipt is pinned at
+   `rayline-ai/router-artifacts@02d01f19d6c481b5a2113ea8ece5065e0185a221`.
+   Conservative accounting is now `$34.31359042`, leaving `$5.68640958` below
+   the approved `$40` cap; the PERF011 launcher-window upper estimate was
+   `$0.448730`. Keep the independent endpoint as the MVP default. Any further
+   performance lane should isolate batch-width/inference variability or a
+   private Modal transport rather than increase qualification size.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage
