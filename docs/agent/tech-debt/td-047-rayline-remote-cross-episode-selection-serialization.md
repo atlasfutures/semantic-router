@@ -76,7 +76,8 @@ MTRouter remains serialized because it may mutate KV sessions.
   adds immutable per-append queue/inference/end-to-end timings, resets request
   timing state between retained inputs, and caches aggregate scheduler
   running/waiting occupancy in the AsyncLLM frontend.
-- Semantic Router consumes those two direct interfaces and exposes
+- [`atlasfutures/semantic-router@999c740b`](https://github.com/atlasfutures/semantic-router/commit/999c740b34860732b02404f77d807f66b292d483)
+  consumes those two direct interfaces and exposes
   `rayline.arc.session-metrics-response.v2` with
   `measurement_scope=retained_append`; it no longer reads the Prometheus
   registry or waits for terminal-request histogram settlement. Its plugin

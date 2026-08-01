@@ -28,7 +28,7 @@ cost. Current published implementation heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
-  at `b6687be8c6fb987ee7d0cc1f7155341fed2d54e1` for the capability-gated
+  at `999c740b34860732b02404f77d807f66b292d483` for the capability-gated
   retained-session client, hermetic stack, bounded direct/static/ARC diagnostic,
   fixed three-model OpenRouter transport and retry contracts, and mandatory ARC
   readiness preflight.
