@@ -3,8 +3,8 @@
 ## Status
 
 Open — the serialization fix, append-scoped telemetry, service-admission proof,
-and local tests are landed; a new real-stack receipt is still required to prove
-multi-request vLLM scheduling.
+multi-request vLLM scheduling proof, and local tests are landed; a
+router-through-Pathfinder receipt is still required.
 
 ## Owner Plan
 
@@ -12,11 +12,11 @@ multi-request vLLM scheduling.
 
 ## Release Relevance
 
-Router-only capacity qualification and vLLM continuous-batching evidence still
-need a real-stack receipt. The process-wide lock is fixed; append-scoped
-retained-session telemetry and eight-way protected-service admission are now
-implemented. The remaining evidence rung is an explicitly configured scheduled
-batch-width observation, not another process-concurrency implementation change.
+Router-only capacity qualification still needs a real-stack receipt. The
+process-wide lock is fixed; append-scoped retained-session telemetry, eight-way
+protected-service admission, and a scheduled batch width of seven are now
+proven live. The remaining evidence rung must begin at Pathfinder's transaction API
+so it measures the complete concurrent-safe policy-selection seam.
 
 ## Scope
 
@@ -101,10 +101,17 @@ MTRouter remains serialized because it may mutate KV sessions.
   `rayline-ai/router-artifacts@67c44b5a188960a270756da3e62afc97f6d5d8be`.
 - [`atlasfutures/semantic-router@d70a35bd`](https://github.com/atlasfutures/semantic-router/commit/d70a35bd0de4f8fc8484f0dda471e43a3f7243c1)
   explicitly enables `enable_logging_iteration_details` on the protected vLLM
-  engine while leaving request logging disabled. Its 110 plugin tests and
-  repo-native lint/CI gates pass; the configuration is not yet live-verified.
-- Conservative accounting is now `$24.23093122` under the approved `$40` cap.
-  The launcher reserves a future full packet through `$26.73054802` before
+  engine while leaving request logging disabled.
+- PERF007 live-verifies that configuration with one preregistered eight-call
+  wave: coordinator in-flight max `8`, pre-execution scheduled max `7`, waiting
+  max `8`, zero failures, `4.208 req/s`, `1.899s` p95, and `0.023ms` mean queue
+  time. Its private aggregate receipt is round-trip verified at
+  `rayline-ai/router-artifacts@2ffc810d8494dd23e3811dff49b8cb2da7a4a014`.
+- [`atlasfutures/semantic-router@87e81096`](https://github.com/atlasfutures/semantic-router/commit/87e8109639435090fa2241d767eaed926fd59506)
+  advances both launchers' conservative accounting after the run. Its 113
+  plugin tests and repo-native lint/CI gates pass.
+- Conservative accounting is now `$26.73054802` under the approved `$40` cap.
+  The launchers reserve a future full packet through `$29.23016482` before
   deployment or credential creation. No source-validation step creates a Modal
   credential or deployment.
 
@@ -120,12 +127,12 @@ same state or thread-safety contract.
 
 The implementation now declares concurrency capability at the policy boundary
 and exposes append-scoped retained telemetry through cached process-lifetime
-peaks. The service boundary has observed eight concurrent requests. The
-remaining desired state is a router-only receipt showing independent requests
-reach the real encoder/vLLM boundary concurrently and a protected-encoder
-receipt showing scheduled batch width above one. The evidence must distinguish
-Pathfinder contention, same-session fencing, service admission, and vLLM
-scheduling without treating terminal session completion as an append.
+peaks. The service boundary has observed eight concurrent requests and a vLLM
+scheduled batch width of seven. The remaining desired state is a router-only
+receipt showing independent transaction-path requests reach that boundary
+concurrently. The evidence must distinguish Pathfinder contention,
+same-session fencing, service admission, and vLLM scheduling without treating
+terminal session completion as an append.
 
 ## Exit Criteria
 
@@ -142,5 +149,5 @@ scheduling without treating terminal session completion as an append.
 - Retained append queue/inference observations advance exactly once per append;
   session-total metrics remain separately named, and no full Prometheus
   registry collection runs on the hot sampling path.
-- The frozen throughput ladder can drive more than one pooling request into
-  vLLM, and this debt entry is deleted.
+- A frozen router-through-Pathfinder workload drives more than one pooling
+  request into vLLM, and this debt entry is deleted.

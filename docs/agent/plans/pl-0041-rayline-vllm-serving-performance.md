@@ -24,26 +24,27 @@ development qualification passes, and the first bounded full-stack performance
 packet is complete. Its direct-only comparison was confounded by completion and
 time-order variance; the source-frozen static-gateway follow-up passes and
 isolates the protected encoder/session request as the dominant measured ARC
-cost. Two encoder-only concurrency packets now prove eight-way admission and a
-complete 92-call workload, but do not yet prove multi-request vLLM scheduling:
-the first metric sampled post-output occupancy and the second exposed that
-vLLM iteration-detail capture was disabled. The no-spend configuration fix is
-landed and awaits a distinct live verification packet. Current published
-implementation heads:
+cost. Two encoder-only concurrency packets prove eight-way admission and a
+complete 92-call workload, and the distinct eight-call PERF007 microprobe now
+proves multi-request vLLM scheduling with a pre-execution batch width of seven.
+The remaining performance gap is a fixed-duration, multi-episode soak through
+the Pathfinder transaction path rather than another encoder-only proof. Current
+published implementation heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
-  at `d70a35bd0de4f8fc8484f0dda471e43a3f7243c1` for the capability-gated
+  at `87e8109639435090fa2241d767eaed926fd59506` for the capability-gated
   retained-session client, hermetic stack, bounded direct/static/ARC diagnostic,
   fixed three-model OpenRouter transport and retry contracts, and mandatory ARC
   readiness preflight. The protected session service explicitly enables vLLM
-  iteration-detail capture and the next diagnostic envelope accounts from the
-  `$24.23093122` conservative cumulative ceiling.
+  iteration-detail capture, the minimal batch probe, and future diagnostic
+  accounting from the `$26.73054802` conservative cumulative ceiling.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `effd8730e7334c6391971af085cdd21ccd8638e8` for the registered
+  at `1b0b8f1f640e2995c6dabb3ac69268fcf3515ef1` for the registered
   retained-session, real-endpoint and OpenRouter canaries, plus the closed,
-  artifact-pinned direct/static/ARC stage and PERF005/PERF006 diagnostics.
+  artifact-pinned direct/static/ARC stage and PERF005/PERF006/PERF007
+  diagnostics.
 - vLLM integration
   [`atlasfutures/vllm:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/vllm/tree/codex/rayline-vsr-mvp)
   at `9f5ea81ca0aa570aea46baf82311a1139c1267ca` for append-scoped
@@ -1235,18 +1236,23 @@ but held:
    `0.030ms` and `0.044ms`; coordinator in-flight max was `8`; and all 92
    requests passed. The engine reported waiting max `8` but scheduled max `0`,
    which traced to `ObservabilityConfig.enable_logging_iteration_details=False`,
-   not proof of absent batching. Semantic Router `d70a35bd` now enables that
-   signal while keeping request logging disabled. No further GPU packet was
-   run. The v4 plugin source digest remains
+   not proof of absent batching. Semantic Router `d70a35bd` enables that signal
+   while keeping request logging disabled. The distinct PERF007 microprobe
+   then passed one frozen eight-call wave: coordinator in-flight max `8`,
+   pre-execution scheduled max `7`, waiting max `8`, zero failures, `4.208
+   req/s`, `1.899s` p95, and `0.023ms` mean engine queue time. This accepts
+   batch existence, not saturation capacity or an SLO. The v4 plugin source
+   digest remains
    `67a9015c0c0399d4846930a9836982dd62c4a42f537af9f6c8917eb3beed23e5`.
-   PERF005 and PERF006 are privately pinned at
-   `rayline-ai/router-artifacts@462cc5cefdba03ceb66284611dfa1f4da1652b98`
+   PERF005, PERF006, and PERF007 are privately pinned at
+   `rayline-ai/router-artifacts@462cc5cefdba03ceb66284611dfa1f4da1652b98`,
+   `rayline-ai/router-artifacts@67c44b5a188960a270756da3e62afc97f6d5d8be`,
    and
-   `rayline-ai/router-artifacts@67c44b5a188960a270756da3e62afc97f6d5d8be`.
-   Conservative accounting is `$24.23093122`, leaving `$15.76906878` below the
-   approved `$40` cap. A future full diagnostic would reserve through
-   `$26.73054802`; it requires a new experiment ID and may not reinterpret or
-   retry PERF006.
+   `rayline-ai/router-artifacts@2ffc810d8494dd23e3811dff49b8cb2da7a4a014`.
+   Conservative accounting is `$26.73054802`, leaving `$13.26945198` below the
+   approved `$40` cap. A future full packet would reserve through
+   `$29.23016482`; it requires a new experiment ID and may not reinterpret or
+   retry any prior packet.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage
@@ -1302,11 +1308,10 @@ it is a separate follow-up rather than the current `/v1/route/prepare` blocker.
   are implemented and tested.
 - Keep TD047 open until a router-only receipt shows concurrent-safe MTRouter
   selections reaching the real encoder/vLLM boundary at observed in-flight
-  concurrency above one and a protected-encoder receipt observes scheduled
-  batch width above one. The in-process fencing tests and eight-way service
-  admission are already green. The receipt must use append-scoped retained
-  telemetry, not terminal-request histograms, and must not scrape the full
-  Prometheus registry on the hot path.
+  concurrency above one. The in-process fencing tests, eight-way service
+  admission, and scheduled batch width `7` are already green. The remaining
+  receipt must use append-scoped retained telemetry, not terminal-request
+  histograms, and must not scrape the full Prometheus registry on the hot path.
 - Keep TD048 open until the narrow stability rule gains powered changed-action
   quality/regret evidence (or an explicit reviewed acceptance of its
   canonicalization semantics) and the full RSP-004Q parity qualification
