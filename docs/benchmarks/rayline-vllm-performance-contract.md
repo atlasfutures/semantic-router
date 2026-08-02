@@ -457,7 +457,7 @@ is conservatively charged as 216 resource seconds, or USD 0.29027808, from the
 reported 119.535-second deploy, one 30-second request timeout, 65-second
 stable-zero cleanup, and rounding. PERF017 is closed without retry.
 
-### PERF018 identity-equivalent startup retry (authorized, unlaunched)
+### PERF018 identity-equivalent startup retry result
 
 PERF018 changes only the run/state namespace and the readiness transport
 handling: `TimeoutError` and `URLError` now become the same sanitized state
@@ -472,11 +472,45 @@ Charging the PERF017 startup failure makes the new prior conservative total
 USD 55.89092770. PERF018 retains the same 3,960-second, USD 5.3217648 full
 resource envelope, producing a cumulative maximum of USD 61.21269250 and
 leaving USD 3.10013152 under the existing USD 64.31282402 authority. No new
-authority is needed. The failure receipt is privately round-trip verified at
+authority was needed. The PERF017 failure receipt is privately round-trip
+verified at
 `rayline-ai/router-artifacts@d109f1201abf8c39cd824e637bf841872bb2bbf9`.
-Pathfinder `01b78615` closes PERF017 and preregisters PERF018; the signed,
-pushed Semantic Router checkpoint now opens only the new one-shot ID. The held
-1,000-case qualification remains unreachable.
+Pathfinder `01b78615` closed PERF017 and preregistered PERF018; the signed,
+pushed Semantic Router checkpoint opened only the new one-shot ID.
+
+PERF018 tolerated the cold-start timeouts, warmed one H100, and completed the
+concurrency-one Remote arm 32/32 with zero failures or provider calls. It
+measured `0.314 rps` with `1.04s/17.63s/17.67s` p50/p95/p99 and the expected
+worker trace. Before ARC began, the new empty-state gate found the encoder was
+not empty. Sanitized service logs and source inspection identify one retained
+session created by ARC's startup readiness probe before Remote's 36 stateless
+pooling requests. `EncoderClient.Probe` exercised the retained-session wire but
+never deleted that fixed readiness session. The gate therefore prevented a
+contaminated ARC comparison.
+
+The exact app lifetime plus stable-zero cleanup is conservatively charged as
+433 resource seconds, or USD 0.58190004. The app stopped with zero tasks and
+containers, and no local process or Compose project remained. The aggregate
+failure receipt and completed Remote receipt are privately round-trip verified
+at `rayline-ai/router-artifacts@cb14a91eadc836e5a83ed5a04e9eb3aacceeb2f8`.
+PERF018 is closed without retry.
+
+### PERF019 retained-readiness cleanup retry (implemented, authority held)
+
+PERF019 preserves PERF018's packet, placement, arm order, model, state-reset
+rules, thresholds, and resource envelope under a new run/state namespace. Its
+only semantic fix makes retained-session readiness transactional: after the
+probe exercises the exact session wire, it issues an authenticated bounded
+DELETE for the hashed readiness session, fails startup if the confirmed session
+cannot be closed, and also attempts cleanup after an invalid probe response.
+
+Charging both failed attempts makes PERF019's prior conservative total USD
+56.47282774. Its unchanged USD 5.3217648 full envelope produces a cumulative
+maximum of USD 61.79459254. Preserving the frozen USD 3 reserve requires USD
+64.79459254 of cumulative authority, USD 0.48176852 above the current USD
+64.31282402 cap. The source interlock is closed, so no PERF019 GPU request can
+launch before the exact fix and registry pins pass and the small authority gap
+is explicitly covered. The held 1,000-case qualification remains unreachable.
 
 ## External Provider Canary
 

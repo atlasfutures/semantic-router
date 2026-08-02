@@ -28,7 +28,7 @@ from rayline_concurrency_comparator import compare_sweep
 from rayline_concurrency_contract import (
     MEASURED_CASES,
     MEASURED_EPISODES,
-    PERF018_RUN_ID,
+    PERF019_RUN_ID,
     SWEEP_ARMS,
     WARMUP_CASES,
     WARMUP_EPISODES,
@@ -128,7 +128,7 @@ class LocalCell:
 def _parse_args() -> argparse.Namespace:
     root = Path(__file__).resolve().parents[3]
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-id", default=PERF018_RUN_ID)
+    parser.add_argument("--run-id", default=PERF019_RUN_ID)
     parser.add_argument("--pathfinder-root", type=Path, required=True)
     parser.add_argument(
         "--packet-dir",

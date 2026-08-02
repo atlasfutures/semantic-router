@@ -42,6 +42,7 @@ const (
 	encoderServingRungB         = "B"
 	encoderDimension            = 1024
 	maxEncoderResponse          = 256 * 1024
+	maxEncoderCloseResponse     = 4096
 
 	// EncoderTokenizerSHA256 is a public file-integrity fingerprint, not a credential.
 	EncoderTokenizerSHA256 = "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42" // #nosec G101
@@ -156,6 +157,10 @@ type encoderResponseData struct {
 	EngineBuildID       string    `json:"engine_build_id"`
 	IOPluginVersion     string    `json:"io_plugin_version"`
 	PoolingCapabilities []string  `json:"pooling_capabilities"`
+}
+
+type encoderSessionCloseResponse struct {
+	Closed *bool `json:"closed"`
 }
 
 func NewEncoderClient(config EncoderClientConfig) (*EncoderClient, error) {
@@ -372,6 +377,104 @@ func (client *EncoderClient) doAttempt(
 	return client.httpClient.Do(request)
 }
 
+func (client *EncoderClient) closeSession(
+	parent context.Context,
+	episodeIDHash string,
+) error {
+	endpoint, err := encoderSessionCloseEndpoint(
+		client.config.BaseURL,
+		episodeIDHash,
+	)
+	if err != nil {
+		return encoderFailure(EncoderFailureRequest, "close_endpoint")
+	}
+	ctx, cancel := context.WithTimeout(parent, client.config.TotalTimeout)
+	defer cancel()
+	for attempt := 0; ; attempt++ {
+		response, requestErr := client.doCloseAttempt(ctx, endpoint)
+		if requestErr == nil {
+			return client.consumeCloseResponse(response)
+		}
+		failure, retry := requestAttemptFailure(
+			ctx,
+			response,
+			requestErr,
+			attempt < client.config.MaxRetries,
+		)
+		if !retry {
+			return failure
+		}
+	}
+}
+
+func encoderSessionCloseEndpoint(baseURL, episodeIDHash string) (string, error) {
+	if !validEpisodeIDHash(episodeIDHash) {
+		return "", errors.New("invalid ARC encoder episode hash")
+	}
+	parsed, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", errors.New("invalid ARC encoder base URL")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/") +
+		"/v1/rayline/arc/session/" + episodeIDHash
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String(), nil
+}
+
+func (client *EncoderClient) doCloseAttempt(
+	ctx context.Context,
+	endpoint string,
+) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodDelete,
+		endpoint,
+		nil,
+	)
+	if err != nil {
+		return nil, encoderFailure(EncoderFailureRequest, "close_construct")
+	}
+	request.Header.Set("accept", "application/json")
+	if client.config.ModalKey != "" {
+		request.Header.Set("Modal-Key", client.config.ModalKey)
+		request.Header.Set("Modal-Secret", client.config.ModalSecret)
+	}
+	return client.httpClient.Do(request)
+}
+
+func (client *EncoderClient) consumeCloseResponse(response *http.Response) error {
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK ||
+		response.StatusCode >= http.StatusMultipleChoices {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		return encoderFailure(EncoderFailureStatus, "close_http_status")
+	}
+	body, err := io.ReadAll(
+		io.LimitReader(response.Body, maxEncoderCloseResponse+1),
+	)
+	if err != nil {
+		return encoderFailure(EncoderFailureDecode, "close_read")
+	}
+	if len(body) > maxEncoderCloseResponse {
+		return encoderFailure(EncoderFailureDecode, "close_response_limit")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	var wire encoderSessionCloseResponse
+	if err := decoder.Decode(&wire); err != nil {
+		return encoderFailure(EncoderFailureDecode, "close_json")
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return encoderFailure(EncoderFailureDecode, "close_json_trailing")
+	}
+	if wire.Closed == nil || !*wire.Closed {
+		return encoderFailure(EncoderFailureContract, "close_status")
+	}
+	return nil
+}
+
 func requestAttemptFailure(
 	ctx context.Context,
 	response *http.Response,
@@ -407,12 +510,26 @@ func (client *EncoderClient) Probe(
 	ctx context.Context,
 	correlation string,
 ) error {
-	_, err := client.Encode(
+	if client == nil {
+		return encoderFailure(EncoderFailureRequest, "client")
+	}
+	episodeIDHash := HashEpisodeID(correlation)
+	_, encodeErr := client.Encode(
 		ctx,
-		HashEpisodeID(correlation),
+		episodeIDHash,
 		[]Turn{{Role: "user", Text: "Rayline ARC readiness probe"}},
 	)
-	return err
+	if !client.config.RetainedSession {
+		return encodeErr
+	}
+	closeErr := client.closeSession(context.WithoutCancel(ctx), episodeIDHash)
+	if encodeErr != nil && closeErr != nil {
+		return errors.Join(encodeErr, closeErr)
+	}
+	if encodeErr != nil {
+		return encodeErr
+	}
+	return closeErr
 }
 
 func (client *EncoderClient) consumeResponse(

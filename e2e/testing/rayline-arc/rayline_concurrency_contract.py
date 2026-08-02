@@ -11,6 +11,7 @@ from rayline_three_arm_budget import BudgetContract
 
 PERF017_RUN_ID = "rayline-concurrency-sweep-perf017-20260802"
 PERF018_RUN_ID = "rayline-concurrency-sweep-perf018-20260802"
+PERF019_RUN_ID = "rayline-concurrency-sweep-perf019-20260802"
 MEASURED_CASES = 32
 WARMUP_CASES = 4
 MEASURED_EPISODES = 8
@@ -100,18 +101,20 @@ def _contract(run_id: str, previous_conservative_usd: float) -> ConcurrencyRunCo
 
 PERF017 = _contract(PERF017_RUN_ID, 55.60064962)
 PERF018 = _contract(PERF018_RUN_ID, 55.89092770)
+PERF019 = _contract(PERF019_RUN_ID, 56.47282774)
 
 # PERF017 is closed after its first health request timed out before measurement.
 # Conservatively accounting 216 resource seconds makes PERF018's cumulative
 # full-envelope ceiling USD 61.21269250 and preserves USD 3.10013152.
 PERF017_STARTUP_FAILURE_UPPER_USD = 0.29027808
-PERF018_REQUIRED_CUMULATIVE_AUTHORITY_USD = 64.21269250
+PERF018_STATE_FAILURE_UPPER_USD = 0.58190004
+PERF019_REQUIRED_CUMULATIVE_AUTHORITY_USD = 64.79459254
 ADDITIONAL_AUTHORITY_GRANTED_USD = 5.0
-ADDITIONAL_AUTHORITY_REQUIRED_USD = 0.0
-# PERF018 is separately preregistered after PERF017 closed. This signed source
-# checkpoint is the new one-shot launch boundary; the closed PERF017 ID remains
-# unreachable from the generalized launcher.
-LAUNCHABLE_CONTRACT: ConcurrencyRunContract | None = PERF018
+ADDITIONAL_AUTHORITY_REQUIRED_USD = 0.48176852
+# PERF018 is closed after its pre-ARC state-isolation gate caught a retained
+# startup-readiness session. PERF019 remains unlaunchable until its exact fix,
+# registry pins, and additional authority are all in place.
+LAUNCHABLE_CONTRACT: ConcurrencyRunContract | None = None
 
 
 def resolve_launch_contract(run_id: str) -> ConcurrencyRunContract:

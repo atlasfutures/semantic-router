@@ -29,25 +29,33 @@ def test_concurrency_packet_and_cell_contract_is_exact() -> None:
     assert expected_warmup_cases == contract.WARMUP_CASES
     assert contract.SWEEP_ARMS == ("rayline_remote", "rayline_arc")
     assert contract.PERF018.cells == contract.PERF017.cells
+    assert contract.PERF019.cells == contract.PERF017.cells
 
 
-def test_perf018_budget_is_preregistered_and_authorized() -> None:
-    receipt = budget.budget_receipt(contract.PERF018.budget)
-    envelope = receipt["maximum_resource_envelope_usd"]
-    required_authority = (
-        contract.PERF018.budget.previous_conservative_usd
-        + envelope
-        + contract.PERF018.budget.required_reserve_usd
+def test_perf019_budget_is_preregistered_but_needs_authority() -> None:
+    with pytest.raises(budget.BudgetError, match="exceeds budget authority"):
+        budget.budget_receipt(contract.PERF019.budget)
+    resource_seconds = (
+        contract.PERF019.budget.maximum_paid_wall_seconds
+        + contract.PERF019.budget.maximum_orphan_request_seconds
+        + contract.PERF019.budget.maximum_scaledown_seconds
     )
+    envelope = resource_seconds * budget.resource_rate_usd_per_second()
+    required_authority = (
+        contract.PERF019.budget.previous_conservative_usd
+        + envelope
+        + contract.PERF019.budget.required_reserve_usd
+    )
+    cumulative = contract.PERF019.budget.previous_conservative_usd + envelope
+    reserve = contract.PERF019.budget.authorized_cumulative_usd - cumulative
 
     assert envelope == pytest.approx(5.3217648)
     assert required_authority == pytest.approx(
-        contract.PERF018_REQUIRED_CUMULATIVE_AUTHORITY_USD
+        contract.PERF019_REQUIRED_CUMULATIVE_AUTHORITY_USD
     )
-    assert receipt["cumulative_if_full_envelope_usd"] == pytest.approx(61.21269250)
-    assert receipt["reserve_after_full_envelope_usd"] == pytest.approx(3.10013152)
+    assert cumulative == pytest.approx(61.79459254)
+    assert reserve == pytest.approx(2.51823148)
     assert pytest.approx(5.0) == contract.ADDITIONAL_AUTHORITY_GRANTED_USD
-    assert contract.ADDITIONAL_AUTHORITY_REQUIRED_USD == 0.0
-    assert contract.resolve_launch_contract(contract.PERF018_RUN_ID) is contract.PERF018
-    with pytest.raises(ValueError, match="only permits preregistered"):
-        contract.resolve_launch_contract(contract.PERF017_RUN_ID)
+    assert pytest.approx(0.48176852) == contract.ADDITIONAL_AUTHORITY_REQUIRED_USD
+    with pytest.raises(ValueError, match="no Rayline concurrency sweep"):
+        contract.resolve_launch_contract(contract.PERF019_RUN_ID)

@@ -50,11 +50,15 @@ or new local stacks. The run is closed and conservatively charged USD
 Remote-versus-ARC cells at concurrency `1`, `4`, and `8`, fresh
 Pathfinder/ARC/Redis state, packet, placement, and gates remain frozen; only
 the new run namespace and transient startup transport normalization change.
-The existing USD 64.31282402 cap leaves USD 3.10013152 after its complete
-envelope. PERF017's sanitized failure receipt is privately round-trip verified
-at `rayline-ai/router-artifacts@d109f120`; Pathfinder `01b78615` preregisters
-PERF018, and the signed Semantic Router checkpoint opens only that new one-shot
-ID. The independent endpoint therefore remains the MVP default while
+The PERF017 failure receipt is privately round-trip verified. PERF018 then
+tolerated cold start and completed c1 Remote 32/32 at `0.314 rps`, but its
+pre-ARC state gate caught a retained session created by ARC startup readiness.
+The gate prevented a contaminated comparison; cleanup reached zero and the two
+aggregate receipts are privately pinned at
+`rayline-ai/router-artifacts@cb14a91e`. PERF019 fixes the production readiness
+probe to close its retained session, but its source interlock is held:
+preserving the USD 3 reserve needs USD 0.48176852 beyond the current cap. The
+independent endpoint therefore remains the MVP default while
 retained KV is a measured optimization, not a production-readiness claim. The
 separately held quality qualification and HA journal remain open; another
 transaction concurrency proof is not required. Current published implementation
@@ -1242,13 +1246,16 @@ Not in scope:
   `c8/c1` scaling without inventing a new absolute SLO. The 3,960-second full
   resource envelope was USD 5.3217648. Its first cold-start health request
   timed out before any cell ran, cleanup reached zero, and the one-shot ID is
-  closed with a conservative USD 0.29027808 charge. PERF018 preserves every
-  workload and acceptance detail under a new namespace and fixes only
-  transient readiness transport handling. Its full envelope leaves USD
-  3.10013152 under the existing USD 64.31282402 cap. PERF017's sanitized
-  failure receipt is privately pinned at `rayline-ai/router-artifacts@d109f120`;
-  PERF018 is registered and its one-shot source interlock is open. The
-  1,000-case qualification remains unreachable.
+  closed with a conservative USD 0.29027808 charge. PERF018 preserved every
+  workload and acceptance detail under a new namespace and fixed only
+  transient readiness transport handling. It then completed c1 Remote 32/32 at
+  `0.314 rps` before its pre-ARC state gate found ARC startup readiness's
+  retained session still resident. Cleanup reached zero and receipts are
+  pinned at `rayline-ai/router-artifacts@cb14a91e`. PERF019 closes that
+  production readiness session after probing while keeping the packet and
+  gates fixed. Its full envelope needs USD 0.48176852 more authority to retain
+  the USD 3 reserve, so the source interlock remains closed. The 1,000-case
+  qualification remains unreachable.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
@@ -1424,10 +1431,13 @@ but held:
    packet were ready, but PERF017 failed before measurement because the first
    cold-start health read timed out outside the readiness loop. Its cleanup is
    complete and the one-shot ID is closed. Normalize transient startup
-   transport failures, preregister the otherwise identity-equivalent PERF018
-   under the existing authority, execute its Remote/ARC cells at concurrency
-   1, 4, and 8, verify every state reset, and publish only aggregate receipts.
-   Do not execute the held 1,000-case qualification.
+   transport failures, preregister the otherwise identity-equivalent PERF018,
+   and execute it once. PERF018 reached c1 Remote but correctly failed before
+   ARC when startup readiness's retained session violated the empty-state
+   gate. Close PERF018, make the production readiness probe close its session,
+   and preregister otherwise identical PERF019. Keep its launch interlock and
+   the held 1,000-case qualification closed until the small additional resource
+   authority is explicit.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage
