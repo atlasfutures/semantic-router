@@ -102,13 +102,13 @@ Remote at the three ordered cells. The
 independent endpoint therefore remains the MVP default while
 retained KV is a measured optimization, not a production-readiness claim. The
 separately held quality qualification and HA journal remain open; another
-transaction concurrency proof is not required. PERF022 is implemented and its
-exact preregistration, attestation, and Pathfinder authorization are pushed at
-`edfb58a2`, `6bb425d7`, and `24b4a3d6`: it compares the same-proxy one-replica
-control with deterministic episode-affinity across two explicit one-container
-ARC apps at the two overloaded PERF021 cells. Only its distinct signed source
-authorization checkpoint may open the one-shot resolver. Current published
-implementation heads:
+transaction concurrency proof is not required. PERF022's exact preregistration,
+attestation, Pathfinder authorization, and source authorization are pushed at
+`edfb58a2`, `6bb425d7`, `24b4a3d6`, and `06a4ba4a`. Its one launch stopped
+before GPU hydration or measurement at Modal class-method endpoint lookup and
+is closed with complete exact-name cleanup. PERF023 is the identity-equivalent
+corrected successor and remains source-closed pending its own external chain.
+Current published implementation heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
@@ -387,6 +387,26 @@ claim a production service directory, replica membership protocol, failover,
 rebalance, shared cache, or HA transaction journal. Those boundaries remain
 required before turning the local deterministic proxy into a supported public
 deployment mode.
+
+PERF022 launched once and stopped before GPU hydration or measurement. Modal
+SDK 1.5.1 rejected `Function.from_name("SessionEncoder.web")`: class methods
+must be resolved through `Cls.from_name("SessionEncoder")` and an instance.
+The cleanup path then exposed a second pre-measurement defect because
+`modal app stop` lacked `-y` and waited for confirmation until its timeout.
+Manual recovery stopped the exact app A, verified app B was never deployed,
+deleted the run's proxy token, and found zero named encoder containers, local
+containers, affinity proxies, provider calls, warmups, measured turns, or
+1,000-case qualification calls. The conservative launcher-to-verified-cleanup
+upper estimate is `$1.01328552`, bringing the observed cumulative upper to
+`$62.82257284218463`. PERF022 is closed without retry.
+
+PERF023 is the identity-equivalent successor. It changes only the run and
+resource namespaces, class-method endpoint lookup, noninteractive exact-app
+cleanup, and prior-cost basis. Its full two-replica envelope remains
+`$13.8688416`, which would bring the conservative cumulative maximum to
+`$76.69141444218463` and leave `$57.62140957781537` under current authority.
+It remains source-closed until a new immutable preregistration, attestation,
+and authorization sequence is pushed.
 
 ### ARC and Remote Comparison
 
@@ -1387,12 +1407,15 @@ Not in scope:
   PERF022 implements the resulting bounded scale-out experiment: one ARC
   replica versus two explicit one-container ARC replicas behind the same
   deterministic episode-affinity proxy at only `r030` and `r045`. The
-  implementation and local gates must be signed and pushed while the source
-  interlock remains closed, followed by immutable Pathfinder preregistration,
-  self-attestation, and a distinct authorization checkpoint before one launch.
-  The complete two-replica envelope is `$13.8688416`; providers, generation,
-  runtime-added cells, whole-run retry, and the 1,000-case qualification remain
-  unreachable.
+  one launch stopped at class-method endpoint lookup before GPU hydration or
+  measurement and is closed. Exact cleanup reached zero after noninteractive
+  manual recovery; its conservative upper is `$1.01328552`. PERF023 preserves
+  the packet and topology under a new namespace while correcting only
+  `Cls.from_name` endpoint resolution and `modal app stop -y`. Keep its source
+  interlock closed until new immutable Pathfinder preregistration,
+  self-attestation, and authorization checkpoints are pushed. Providers,
+  generation, runtime-added cells, whole-run retry, and the 1,000-case
+  qualification remain unreachable.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
@@ -1588,15 +1611,19 @@ but held:
    zero failures, exact trace/telemetry parity, complete cleanup, and zero
    provider spend. Preregister the next bounded deployment phase from the
    measured `0.1862`-to-`0.3724` single-H100 knee; do not reopen PERF021.
-   PERF022 is that phase. Finish and push its deterministic episode-affinity
-   source with launch authority closed, preregister the exact two-cell/four-arm
-   packet and `$13.8688416` envelope, attest and authorize it from distinct
-   Pathfinder heads, then execute it once. Close source and registry authority
-   after success or failure, verify private aggregate evidence through a
-   separate read credential, and use only its measured scale-out efficiency to
-   choose the next bounded phase. Do not add provider traffic, generation
-   workers, failover semantics, or the held 1,000-case qualification to this
-   packet.
+   PERF022 was that phase but stopped before GPU hydration or measurement when
+   Modal rejected function-style lookup of a class web method; close it without
+   retry and privately verify its aggregate failure receipt. PERF023 is the
+   identity-equivalent successor with only `Cls.from_name` endpoint resolution,
+   noninteractive exact-app cleanup, new namespaces, and the updated prior-cost
+   basis. Push its source while launch authority is closed, preregister the same
+   two-cell/four-arm packet and `$13.8688416` envelope, attest and authorize it
+   from distinct Pathfinder heads, then execute it once. Close source and
+   registry authority after success or failure, verify private aggregate
+   evidence through a separate read credential, and use only its measured
+   scale-out efficiency to choose the next bounded phase. Do not add provider
+   traffic, generation workers, failover semantics, or the held 1,000-case
+   qualification to this packet.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage

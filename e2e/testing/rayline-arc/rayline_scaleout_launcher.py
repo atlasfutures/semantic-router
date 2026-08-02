@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import importlib
 import json
@@ -48,7 +49,7 @@ from rayline_scaleout_comparator import compare_scaleout
 from rayline_scaleout_contract import (
     ENCODER_APP_NAMES,
     PATHFINDER_AUTHORIZATION_COMMIT,
-    PERF022_RUN_ID,
+    PERF023_RUN_ID,
     SCALEOUT_ARMS,
     OpenLoopCell,
     ScaleoutRunContract,
@@ -110,7 +111,7 @@ class PreparedArm:
 def _parse_args() -> argparse.Namespace:
     root = Path(__file__).resolve().parents[3]
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-id", default=PERF022_RUN_ID)
+    parser.add_argument("--run-id", default=PERF023_RUN_ID)
     parser.add_argument("--pathfinder-root", type=Path, required=True)
     parser.add_argument(
         "--packet-dir",
@@ -185,6 +186,27 @@ def _named_encoder_containers(context: SweepContext) -> list[dict[str, Any]]:
         row
         for row in json.loads(result.stdout)
         if row.get("app_name") in ENCODER_APP_NAMES
+    ]
+
+
+def _named_encoder_apps(context: SweepContext) -> list[dict[str, Any]]:
+    result = _run(
+        [
+            str(context.pathfinder_python),
+            "-m",
+            "modal",
+            "app",
+            "list",
+            "--json",
+        ],
+        cwd=context.pathfinder_root,
+        environment=context.base_environment,
+        timeout=30,
+    )
+    return [
+        row
+        for row in json.loads(result.stdout)
+        if row.get("description") in ENCODER_APP_NAMES
     ]
 
 
@@ -301,6 +323,18 @@ def _warm_replica(base_url: str, key: str, secret: str, label: str) -> None:
             raise LaunchError("encoder replica warmup cleanup failed")
 
 
+def _deployed_encoder_url(context: SweepContext, app_name: str) -> str:
+    cls = context.modal.Cls.from_name(
+        app_name,
+        "SessionEncoder",
+        environment_name=IDENTITY.modal_environment,
+    )
+    url = cls().web.get_web_url()
+    if not url:
+        raise LaunchError("encoder replica web URL is unavailable")
+    return url.rstrip("/")
+
+
 def _start_encoder_pair(context: SweepContext) -> EncoderPairOwnership:
     manager = context.modal.Workspace.from_context().proxy_tokens
     proxy = manager.create()
@@ -335,15 +369,7 @@ def _start_encoder_pair(context: SweepContext) -> EncoderPairOwnership:
                 timeout=15 * 60,
                 capture=False,
             )
-            function = context.modal.Function.from_name(
-                app_name,
-                "SessionEncoder.web",
-                environment_name=IDENTITY.modal_environment,
-            )
-            url = function.get_web_url()
-            if not url:
-                raise LaunchError("encoder replica web URL is unavailable")
-            urls.append(url.rstrip("/"))
+            urls.append(_deployed_encoder_url(context, app_name))
         ownership.base_urls = (urls[0], urls[1])
         deadline = time.monotonic() + 15 * 60
         last_error: BaseException | None = None
@@ -369,15 +395,28 @@ def _start_encoder_pair(context: SweepContext) -> EncoderPairOwnership:
                 time.sleep(1)
         else:
             raise LaunchError("encoder replicas did not become ready") from last_error
-    except BaseException:
-        _cleanup_encoder_pair(context, ownership)
-        raise
+    except BaseException as error:
+        try:
+            _cleanup_encoder_pair(context, ownership)
+        except BaseException as cleanup_error:
+            raise LaunchError(
+                "encoder startup and exact-app cleanup both failed"
+            ) from cleanup_error
+        raise error
     return ownership
 
 
 def _stop_app(context: SweepContext, environment: Mapping[str, str], app: str) -> bool:
     result = _run(
-        [str(context.pathfinder_python), "-m", "modal", "app", "stop", app],
+        [
+            str(context.pathfinder_python),
+            "-m",
+            "modal",
+            "app",
+            "stop",
+            "-y",
+            app,
+        ],
         cwd=context.pathfinder_root,
         environment=environment,
         timeout=120,
@@ -389,18 +428,29 @@ def _stop_app(context: SweepContext, environment: Mapping[str, str], app: str) -
 def _cleanup_encoder_pair(
     context: SweepContext, ownership: EncoderPairOwnership
 ) -> None:
-    stopped = [
-        _stop_app(context, ownership.service_environment, app)
-        for app in ENCODER_APP_NAMES
-    ]
-    ownership.cleanup["encoder_apps_stopped"] = all(stopped)
+    for app in ENCODER_APP_NAMES:
+        # Final exact-name inventory below, rather than one CLI response, is
+        # the cleanup source of truth. Always continue to token deletion.
+        with contextlib.suppress(BaseException):
+            _stop_app(context, ownership.service_environment, app)
     try:
         ownership.manager.delete(ownership.proxy.token_id)
         ownership.cleanup["proxy_token_deleted"] = True
     finally:
+        apps = _named_encoder_apps(context)
+        ownership.cleanup["encoder_apps_stopped"] = all(
+            row.get("state") == "stopped" and str(row.get("tasks")) == "0"
+            for row in apps
+        )
         ownership.cleanup["encoder_containers_remaining"] = len(
             _named_encoder_containers(context)
         )
+    if (
+        not ownership.cleanup["proxy_token_deleted"]
+        or not ownership.cleanup["encoder_apps_stopped"]
+        or ownership.cleanup["encoder_containers_remaining"] != 0
+    ):
+        raise LaunchError("encoder pair cleanup did not reach exact-name zero")
 
 
 def _start_affinity(
