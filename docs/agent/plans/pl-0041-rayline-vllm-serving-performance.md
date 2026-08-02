@@ -405,8 +405,10 @@ resource namespaces, class-method endpoint lookup, noninteractive exact-app
 cleanup, and prior-cost basis. Its full two-replica envelope remains
 `$13.8688416`, which would bring the conservative cumulative maximum to
 `$76.69141444218463` and leave `$57.62140957781537` under current authority.
-It remains source-closed until a new immutable preregistration, attestation,
-and authorization sequence is pushed.
+Its corrected source is pushed at `dabac197`; immutable preregistration,
+attestation, and Pathfinder authorization are pushed at `bef9a117`, `01263c5d`,
+and `057f3d26`. Only the distinct signed source authorization checkpoint opens
+its one-shot resolver.
 
 ### ARC and Remote Comparison
 

@@ -37,9 +37,10 @@ def test_perf023_preserves_perf022_cells_apps_and_corrected_budget() -> None:
     )
 
 
-def test_perf022_and_perf023_launch_authority_is_closed() -> None:
-    assert contract.PATHFINDER_AUTHORIZATION_COMMIT == "PENDING"
-    with pytest.raises(ValueError, match="no Rayline scale-out experiment"):
+def test_only_perf023_launch_authority_is_open() -> None:
+    assert contract.PATHFINDER_AUTHORIZATION_COMMIT == (
+        "057f3d26b50de33b3e9acd66c641f6bbb898bc36"
+    )
+    with pytest.raises(ValueError, match="launcher only permits preregistered"):
         contract.resolve_launch_contract(contract.PERF022_RUN_ID)
-    with pytest.raises(ValueError, match="no Rayline scale-out experiment"):
-        contract.resolve_launch_contract(contract.PERF023_RUN_ID)
+    assert contract.resolve_launch_contract(contract.PERF023_RUN_ID) is contract.PERF023

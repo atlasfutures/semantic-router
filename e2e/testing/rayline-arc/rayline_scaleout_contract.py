@@ -12,7 +12,7 @@ from rayline_three_arm_budget import BudgetContract
 
 PERF022_RUN_ID = "rayline-affinity-scaleout-perf022-20260802"
 PERF023_RUN_ID = "rayline-affinity-scaleout-perf023-20260802"
-PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
+PATHFINDER_AUTHORIZATION_COMMIT = "057f3d26b50de33b3e9acd66c641f6bbb898bc36"
 SCALEOUT_ARMS = ("arc_single", "arc_dual_affinity")
 ENCODER_APP_NAMES = (
     "rayline-arc-session-encoder-a",
@@ -82,9 +82,9 @@ PERF023 = ScaleoutRunContract(
     ),
 )
 
-# PERF022 is closed after its one failed launch. PERF023 remains closed until
-# its corrected source, preregistration, attestation, and authorization are pushed.
-LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = None
+# PERF022 is closed. PERF023 is the only launchable contract after its corrected
+# source, preregistration, attestation, and authorization checkpoints were pushed.
+LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = PERF023
 
 
 def resolve_launch_contract(run_id: str) -> ScaleoutRunContract:
