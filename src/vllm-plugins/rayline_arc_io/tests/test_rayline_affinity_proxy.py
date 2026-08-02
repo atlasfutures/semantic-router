@@ -17,8 +17,11 @@ sys.path.insert(0, str(SCRIPT_DIR))
 proxy = importlib.import_module("rayline_affinity_proxy")
 
 
-def _state() -> tuple[object, list[tuple[str, str]]]:
+def _state(
+    *, failover_after_pooling: int | None = None
+) -> tuple[object, list[tuple[str, str]]]:
     calls: list[tuple[str, str]] = []
+    pooling_by_host: dict[str, int] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append((request.url.host or "", request.url.path))
@@ -40,13 +43,23 @@ def _state() -> tuple[object, list[tuple[str, str]]]:
             )
         if request.method == "DELETE":
             return httpx.Response(200, json={"closed": True})
-        return httpx.Response(200, json={"status": "encoded"})
+        host = request.url.host or ""
+        pooling_by_host[host] = pooling_by_host.get(host, 0) + 1
+        return httpx.Response(
+            200,
+            json={
+                "session_action": (
+                    "created" if pooling_by_host[host] == 1 else "appended"
+                )
+            },
+        )
 
     state = proxy.AffinityState(
         ["https://replica-a.test", "https://replica-b.test"],
         modal_key="key",
         modal_secret="secret",
         timeout_seconds=10.0,
+        failover_after_pooling=failover_after_pooling,
     )
     state._client.close()
     state._client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -116,6 +129,43 @@ def test_health_aggregates_state_without_hiding_replica_capacity() -> None:
             "chunked_causal_mean",
             "resumable_causal_mean",
         ],
+    }
+
+
+def test_forced_failover_rebuilds_on_peer_and_fans_out_close() -> None:
+    state, calls = _state(failover_after_pooling=2)
+    episode = "0" * 64
+    body = json.dumps({"episode_id_hash": episode, "turns": [{}]}).encode()
+    try:
+        for _ in range(4):
+            assert state.forward_session_pooling(body).status_code == HTTPStatus.OK
+        close = json.loads(state.forward_close(episode).body)
+        stats = json.loads(state.stats().body)
+    finally:
+        state.close()
+
+    assert calls == [
+        ("replica-a.test", proxy.SESSION_POOLING_PATH),
+        ("replica-a.test", proxy.SESSION_POOLING_PATH),
+        ("replica-b.test", proxy.SESSION_POOLING_PATH),
+        ("replica-b.test", proxy.SESSION_POOLING_PATH),
+        ("replica-a.test", proxy.SESSION_CLOSE_PREFIX + episode),
+        ("replica-b.test", proxy.SESSION_CLOSE_PREFIX + episode),
+    ]
+    assert close == {"closed": True}
+    assert stats == {
+        "schema_version": proxy.FAILOVER_STATS_SCHEMA,
+        "replicas": 2,
+        "requests_by_replica": [3, 3],
+        "session_pooling_requests_by_replica": [2, 2],
+        "session_deletes_by_replica": [1, 1],
+        "unique_sessions_by_replica": [1, 1],
+        "affinity_mismatches": 0,
+        "failover_after_pooling": 2,
+        "failover_pooling_requests": 2,
+        "failover_sessions": 1,
+        "close_fanout_requests": 2,
+        "session_rebuild_responses": 1,
     }
 
 

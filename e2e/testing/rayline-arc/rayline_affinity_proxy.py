@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 import httpx
 
 STATS_SCHEMA = "rayline.vllm.episode-affinity-stats.v1"
+FAILOVER_STATS_SCHEMA = "rayline.vllm.episode-affinity-failover-stats.v1"
 SESSION_POOLING_PATH = "/v1/rayline/arc/session/pooling"
 SESSION_CLOSE_PREFIX = "/v1/rayline/arc/session/"
 STATE_PATH = "/health"
@@ -28,6 +29,7 @@ RESET_PATH = "/v1/rayline/affinity/reset"
 MAX_REQUEST_BYTES = 4 * 1024 * 1024
 MAX_RESPONSE_BYTES = 512 * 1024
 MAX_REPLICAS = 8
+MIN_FAILOVER_REPLICAS = 2
 EPISODE_HASH = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -52,6 +54,7 @@ class AffinityState:
         modal_key: str,
         modal_secret: str,
         timeout_seconds: float,
+        failover_after_pooling: int | None = None,
     ) -> None:
         if not 1 <= len(upstreams) <= MAX_REPLICAS:
             raise ValueError("affinity proxy requires between one and eight replicas")
@@ -72,7 +75,14 @@ class AffinityState:
             raise ValueError("affinity upstreams must be unique")
         if bool(modal_key) != bool(modal_secret):
             raise ValueError("affinity upstream credentials must be paired")
+        if failover_after_pooling is not None and (
+            failover_after_pooling < 1 or len(normalized) < MIN_FAILOVER_REPLICAS
+        ):
+            raise ValueError(
+                "forced failover requires two replicas and a positive threshold"
+            )
         self.upstreams = tuple(normalized)
+        self._failover_after_pooling = failover_after_pooling
         self._headers = {"accept": "application/json"}
         if modal_key:
             self._headers.update({"Modal-Key": modal_key, "Modal-Secret": modal_secret})
@@ -89,7 +99,13 @@ class AffinityState:
         self._session_pooling_requests = [0 for _ in self.upstreams]
         self._session_deletes = [0 for _ in self.upstreams]
         self._placement_by_episode: dict[str, int] = {}
+        self._visited_by_episode: dict[str, set[int]] = {}
+        self._pooling_count_by_episode: dict[str, int] = {}
         self._affinity_mismatches = 0
+        self._failover_pooling_requests = 0
+        self._failover_episodes: set[str] = set()
+        self._close_fanout_requests = 0
+        self._session_rebuild_responses = 0
 
     def close(self) -> None:
         self._client.close()
@@ -99,16 +115,42 @@ class AffinityState:
             raise AffinityProxyError("episode hash is invalid")
         return int(episode_hash[:16], 16) % len(self.upstreams)
 
-    def _observe(self, episode_hash: str, replica: int, *, deletion: bool) -> None:
+    def _observe(
+        self,
+        episode_hash: str,
+        replica: int,
+        *,
+        deletion: bool,
+        expected_remap: bool = False,
+    ) -> None:
         with self._lock:
             previous = self._placement_by_episode.setdefault(episode_hash, replica)
-            if previous != replica:
+            if previous != replica and not expected_remap:
                 self._affinity_mismatches += 1
+            self._visited_by_episode.setdefault(episode_hash, set()).add(replica)
             self._requests[replica] += 1
             if deletion:
                 self._session_deletes[replica] += 1
+                if self._failover_after_pooling is not None:
+                    self._close_fanout_requests += 1
             else:
                 self._session_pooling_requests[replica] += 1
+
+    def _pooling_replica(self, episode_hash: str) -> tuple[int, bool]:
+        primary = self.replica_for_hash(episode_hash)
+        with self._lock:
+            count = self._pooling_count_by_episode.get(episode_hash, 0) + 1
+            self._pooling_count_by_episode[episode_hash] = count
+            failed_over = (
+                self._failover_after_pooling is not None
+                and count > self._failover_after_pooling
+            )
+            if failed_over:
+                self._failover_pooling_requests += 1
+                self._failover_episodes.add(episode_hash)
+        if failed_over:
+            return (primary + 1) % len(self.upstreams), True
+        return primary, False
 
     def _forward(
         self,
@@ -148,18 +190,62 @@ class AffinityState:
         episode_hash = payload.get("episode_id_hash")
         if not isinstance(episode_hash, str):
             raise AffinityProxyError("session request omits episode hash")
-        replica = self.replica_for_hash(episode_hash)
-        self._observe(episode_hash, replica, deletion=False)
-        return self._forward(replica, "POST", SESSION_POOLING_PATH, body)
+        replica, failed_over = self._pooling_replica(episode_hash)
+        self._observe(
+            episode_hash,
+            replica,
+            deletion=False,
+            expected_remap=failed_over,
+        )
+        response = self._forward(replica, "POST", SESSION_POOLING_PATH, body)
+        if failed_over and response.status_code == HTTPStatus.OK:
+            try:
+                payload = json.loads(response.body)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict) and payload.get("session_action") == "created":
+                with self._lock:
+                    self._session_rebuild_responses += 1
+        return response
 
     def forward_close(self, episode_hash: str) -> ForwardedResponse:
-        replica = self.replica_for_hash(episode_hash)
-        self._observe(episode_hash, replica, deletion=True)
-        return self._forward(
-            replica,
-            "DELETE",
-            SESSION_CLOSE_PREFIX + episode_hash,
-        )
+        if self._failover_after_pooling is None:
+            replica = self.replica_for_hash(episode_hash)
+            self._observe(episode_hash, replica, deletion=True)
+            return self._forward(
+                replica,
+                "DELETE",
+                SESSION_CLOSE_PREFIX + episode_hash,
+            )
+        with self._lock:
+            replicas = sorted(self._visited_by_episode.get(episode_hash, set()))
+        if not replicas:
+            replicas = [self.replica_for_hash(episode_hash)]
+        closed = False
+        for replica in replicas:
+            self._observe(
+                episode_hash,
+                replica,
+                deletion=True,
+                expected_remap=True,
+            )
+            response = self._forward(
+                replica,
+                "DELETE",
+                SESSION_CLOSE_PREFIX + episode_hash,
+            )
+            if response.status_code != HTTPStatus.OK:
+                return response
+            try:
+                payload = json.loads(response.body)
+            except json.JSONDecodeError as error:
+                raise AffinityProxyError("session close response is invalid") from error
+            if not isinstance(payload, dict) or not isinstance(
+                payload.get("closed"), bool
+            ):
+                raise AffinityProxyError("session close contract failed")
+            closed = closed or payload["closed"]
+        return self._json_response({"closed": closed})
 
     def aggregate_health(self) -> ForwardedResponse:
         with ThreadPoolExecutor(max_workers=len(self.upstreams)) as pool:
@@ -211,10 +297,15 @@ class AffinityState:
     def stats(self) -> ForwardedResponse:
         with self._lock:
             unique = [0 for _ in self.upstreams]
-            for replica in self._placement_by_episode.values():
-                unique[replica] += 1
+            for replicas in self._visited_by_episode.values():
+                for replica in replicas:
+                    unique[replica] += 1
             payload = {
-                "schema_version": STATS_SCHEMA,
+                "schema_version": (
+                    FAILOVER_STATS_SCHEMA
+                    if self._failover_after_pooling is not None
+                    else STATS_SCHEMA
+                ),
                 "replicas": len(self.upstreams),
                 "requests_by_replica": list(self._requests),
                 "session_pooling_requests_by_replica": list(
@@ -224,6 +315,16 @@ class AffinityState:
                 "unique_sessions_by_replica": unique,
                 "affinity_mismatches": self._affinity_mismatches,
             }
+            if self._failover_after_pooling is not None:
+                payload.update(
+                    {
+                        "failover_after_pooling": self._failover_after_pooling,
+                        "failover_pooling_requests": self._failover_pooling_requests,
+                        "failover_sessions": len(self._failover_episodes),
+                        "close_fanout_requests": self._close_fanout_requests,
+                        "session_rebuild_responses": self._session_rebuild_responses,
+                    }
+                )
         return self._json_response(payload)
 
     def reset_stats(self) -> ForwardedResponse:
@@ -232,7 +333,13 @@ class AffinityState:
             self._session_pooling_requests = [0 for _ in self.upstreams]
             self._session_deletes = [0 for _ in self.upstreams]
             self._placement_by_episode.clear()
+            self._visited_by_episode.clear()
+            self._pooling_count_by_episode.clear()
             self._affinity_mismatches = 0
+            self._failover_pooling_requests = 0
+            self._failover_episodes.clear()
+            self._close_fanout_requests = 0
+            self._session_rebuild_responses = 0
         return self._json_response({"status": "reset"})
 
     @staticmethod
@@ -330,6 +437,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--upstream", action="append", required=True)
     parser.add_argument("--timeout-seconds", type=float, default=180.0)
+    parser.add_argument("--failover-after-pooling", type=int)
     return parser.parse_args()
 
 
@@ -344,6 +452,7 @@ def main() -> None:
         modal_key=key,
         modal_secret=secret,
         timeout_seconds=args.timeout_seconds,
+        failover_after_pooling=args.failover_after_pooling,
     )
     server = AffinityHTTPServer((args.listen_host, args.port), state)
     try:

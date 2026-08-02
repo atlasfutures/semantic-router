@@ -449,6 +449,28 @@ upper is `$2.725376389638886`, bringing the cumulative observed upper to
 `$68.343219631823516`. Source authority is closed; the 1,000-case qualification
 remains held.
 
+PERF025 is the next bounded deployment phase. It keeps the passed two-replica
+topology and exact `r030` packet, then compares dual sticky affinity with dual
+forced affinity loss. The treatment remaps every episode to its peer after two
+pooling calls: turn three must recreate from the supplied full history, turn
+four must append on the peer, and close must fan out to both visited replicas.
+Across the warmup plus eight measured episodes, the sticky arm must report nine
+creates and 27 appends; the treatment must report 18 creates, 18 appends, nine
+peer rebuild responses, 18 failover pooling requests, and 18 close attempts.
+Both arms must complete 32/32, preserve the exact selected-worker trace, and
+return both replicas to zero state. The comparator reports throughput, latency,
+drain, backlog, appended-token work, and retained-token ratios without adding
+an absolute SLO.
+
+This is controlled affinity-loss injection, not a claim of real outage
+detection, service discovery, membership, or ambiguous-transport retry. Those
+production gaps are tracked in TD050. PERF025 has one `r030` cell, no provider
+or generation path, no whole-run retry, and a `$7.4182176` full two-replica
+envelope. That would bring the cumulative conservative maximum to
+`$75.761437231823516` and leave `$58.551386788176484` under current authority.
+Its implementation remains source-closed pending the distinct Pathfinder
+preregistration, attestation, and authorization chain.
+
 ### ARC and Remote Comparison
 
 The experiment must not conflate policy placement with cache placement:
@@ -1456,12 +1478,15 @@ Not in scope:
   completed and the comparator passed, but the run failed after measurement
   because exact-app stop state was checked before Modal's asynchronous state
   transition converged. Independent verification reached stable zero and the
-  complete measurements remain diagnostic only. PERF024 preserves the exact
-  packet under a new namespace and changes only cleanup verification to poll
-  for bounded stable zero. Keep its source interlock closed until new immutable
-  Pathfinder preregistration, self-attestation, and authorization checkpoints
-  are pushed. Providers, generation, runtime-added cells, whole-run retry, and
-  the 1,000-case qualification remain unreachable.
+  complete measurements remain diagnostic only. PERF024 preserved the exact
+  packet under a new namespace, changed only cleanup verification to poll for
+  bounded stable zero, and passed all 128 measured turns, comparison, and
+  cleanup gates. Its two-replica throughput gain was `1.1442x` at `r030` and
+  `1.3990x` at `r045`; private evidence is pinned at
+  `rayline-ai/router-artifacts@cd832e8d`. PERF025 is source-closed with one
+  `r030` sticky-versus-forced-remap cell to measure cross-replica rebuild and
+  cleanup cost. Providers, generation, runtime-added cells, whole-run retry,
+  and the 1,000-case qualification remain unreachable.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
@@ -1664,15 +1689,18 @@ but held:
    but it failed after measurement because cleanup verification raced Modal's
    asynchronous app-stop convergence. Close it without retry, privately verify
    its complete aggregate evidence, and retain the results only as diagnostic.
-   PERF024 is the identity-equivalent successor: it changes only namespaces,
-   the prior-cost basis, and bounded polling for stable-zero cleanup. Push its
-   source while launch authority is closed, preregister the same two-cell/four-
-   arm packet and `$13.8688416` envelope, attest and authorize it from distinct
-   Pathfinder heads, then execute it once. Close source and registry authority
-   after success or failure, verify private aggregate evidence through a
-   separate read credential, and use only a passed PERF024 packet to choose the
-   next bounded phase. Do not add provider traffic, generation workers,
-   failover semantics, or the held 1,000-case qualification to this packet.
+   PERF024 was the identity-equivalent successor and passed all four arms,
+   comparator, state-reset, and stable-zero cleanup gates. Its private aggregate
+   evidence is byte-verified at `rayline-ai/router-artifacts@cd832e8d`; close it
+   without retry. Implement PERF025 as one `r030` dual-sticky versus dual-forced-
+   remap cell. Remap every episode after its second pooling request, require the
+   peer to recreate from full history, preserve the exact selected-worker trace,
+   fan close out to both visited replicas, and report token-work plus latency
+   cost under a `$7.4182176` envelope. Keep source closed until distinct
+   Pathfinder preregistration, self-attestation, authorization, and source-pin
+   checkpoints are pushed; then execute it once and close authority after any
+   outcome. Do not interpret fault injection as production membership or
+   outage detection; keep TD050 and the held 1,000-case qualification open.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage

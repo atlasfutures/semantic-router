@@ -213,6 +213,16 @@ def _named_encoder_apps(context: SweepContext) -> list[dict[str, Any]]:
 
 def _preflight(args: argparse.Namespace) -> SweepContext:
     contract = resolve_launch_contract(args.run_id)
+    return _preflight_contract(args, contract, PATHFINDER_AUTHORIZATION_COMMIT)
+
+
+def _preflight_contract(
+    args: argparse.Namespace,
+    contract: ScaleoutRunContract,
+    pathfinder_authorization_commit: str,
+    *,
+    arms: tuple[str, ...] = SCALEOUT_ARMS,
+) -> SweepContext:
     budget_receipt(contract.budget)
     semantic_root = Path(__file__).resolve().parents[3]
     pathfinder_root = args.pathfinder_root.resolve()
@@ -227,8 +237,8 @@ def _preflight(args: argparse.Namespace) -> SweepContext:
     pathfinder_head = _assert_pushed(
         pathfinder_root, IDENTITY.pathfinder_branch, "origin", contract.run_id
     )
-    if pathfinder_head != PATHFINDER_AUTHORIZATION_COMMIT:
-        raise LaunchError("Pathfinder PERF022 authorization head differs")
+    if pathfinder_head != pathfinder_authorization_commit:
+        raise LaunchError("Pathfinder experiment authorization head differs")
     worker_ids = _validate_packet(contract, packet_dir)
     _run(["docker", "image", "inspect", args.router_image], cwd=semantic_root)
     _run(
@@ -282,9 +292,9 @@ def _preflight(args: argparse.Namespace) -> SweepContext:
         yaml=yaml,
     )
     if _named_encoder_containers(context):
-        raise LaunchError("a PERF022 encoder replica already has a container")
+        raise LaunchError("a named encoder replica already has a container")
     for cell in contract.cells:
-        for arm in SCALEOUT_ARMS:
+        for arm in arms:
             project = f"{contract.compose_project_prefix}-{cell.label}-{arm}"
             existing = _run(
                 ["docker", "ps", "-aq", "--filter", f"name={project}"],
@@ -468,6 +478,8 @@ def _start_affinity(
     context: SweepContext,
     pair: EncoderPairOwnership,
     upstreams: tuple[str, ...],
+    *,
+    failover_after_pooling: int | None = None,
 ) -> AffinityOwnership:
     port = _free_port()
     command = [
@@ -480,6 +492,8 @@ def _start_affinity(
     ]
     for upstream in upstreams:
         command.extend(("--upstream", upstream))
+    if failover_after_pooling is not None:
+        command.extend(("--failover-after-pooling", str(failover_after_pooling)))
     process = subprocess.Popen(
         command,
         cwd=context.semantic_root,
