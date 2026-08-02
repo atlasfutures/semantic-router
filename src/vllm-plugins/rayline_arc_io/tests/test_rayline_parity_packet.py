@@ -47,7 +47,7 @@ def _source_packet(root: Path) -> tuple[Path, Path, Path]:
                 "token_counts": {
                     "prefix": index + 1,
                     "new_turn": 1,
-                    "full": index + 2,
+                    "full": (4096, 16384, 65536, 150000)[sequence],
                     "truncated": 0,
                 },
             }
@@ -86,7 +86,7 @@ def test_packet_is_probe_ready_and_preserves_complete_episodes(tmp_path: Path) -
         gpu_class="NVIDIA H100 80GB",
     )
 
-    assert receipt["case_count"] == 128
+    assert receipt["case_count"] == packet.MEASURED_CASES
     warmup, measured, identity, worker_map = probe.load_packet(
         arm="rayline_arc",
         corpus_path=output / "corpus.json",
@@ -94,9 +94,11 @@ def test_packet_is_probe_ready_and_preserves_complete_episodes(tmp_path: Path) -
         topology_path=output / "topology.json",
         identity_path=output / "identity.json",
     )
-    assert len(warmup) == 8
-    assert len(measured) == 128
-    assert len({case.episode_id for case in measured}) == 32
+    assert len(warmup) == packet.WARMUP_CASES
+    assert len(measured) == packet.MEASURED_CASES
+    assert len({case.episode_id for case in measured}) == (
+        packet.MEASURED_CASES // packet.DECISIONS_PER_EPISODE
+    )
     assert not (
         {case.episode_id for case in measured} & {case.episode_id for case in warmup}
     )

@@ -151,6 +151,7 @@ def derive_pathfinder_config(
     checkpoint: Path,
     decision_log: Path,
     worker_ids: list[str],
+    worker_model_prefix: str = "mock/perf015",
 ) -> dict[str, Any]:
     derived = copy.deepcopy(dict(base))
     router = derived.get("router")
@@ -191,7 +192,7 @@ def derive_pathfinder_config(
         worker.update(
             {
                 "backend": "mock",
-                "model": f"mock/perf015-{index}",
+                "model": f"{worker_model_prefix}-{index}",
                 "api_key_env": "",
             }
         )

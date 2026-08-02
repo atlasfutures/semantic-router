@@ -41,6 +41,7 @@ PROTOCOL_BY_ARM = {
 TRANSACTION_SCHEMA = "rayline-router.selection-transaction.v1"
 EXPECTED_CONCURRENCY = 8
 EXPECTED_MEASURED_CASES = 128
+EXPECTED_WARMUP_CASES = 8
 MIN_CANONICAL_WORKERS = 2
 HTTP_OK = 200
 TOKEN_BUCKET_8K = 8192
@@ -64,6 +65,37 @@ class Case:
     episode_id: str
     input_tokens: int
     messages: tuple[dict[str, str], ...]
+
+
+@dataclass(frozen=True)
+class WorkloadContract:
+    """One registered packet size and admission level."""
+
+    profile: str
+    concurrency: int
+    warmup_cases: int
+    measured_cases: int
+
+
+DIRECTIONAL_WORKLOAD = WorkloadContract(
+    profile="directional-128-c8",
+    concurrency=EXPECTED_CONCURRENCY,
+    warmup_cases=EXPECTED_WARMUP_CASES,
+    measured_cases=EXPECTED_MEASURED_CASES,
+)
+SWEEP_WORKLOADS = {
+    concurrency: WorkloadContract(
+        profile=f"sweep-32-c{concurrency}",
+        concurrency=concurrency,
+        warmup_cases=4,
+        measured_cases=32,
+    )
+    for concurrency in (1, 4, 8)
+}
+WORKLOAD_PROFILES = {
+    contract.profile: contract
+    for contract in (DIRECTIONAL_WORKLOAD, *SWEEP_WORKLOADS.values())
+}
 
 
 class JSONClient:
@@ -227,6 +259,7 @@ def load_packet(
     workload_path: Path,
     topology_path: Path,
     identity_path: Path,
+    workload_contract: WorkloadContract = DIRECTIONAL_WORKLOAD,
 ) -> tuple[list[Case], list[Case], dict[str, Any], dict[str, str]]:
     warmup, measured = load_corpus(corpus_path)
     workload = _read_json(workload_path, "workload")
@@ -243,15 +276,24 @@ def load_packet(
     )
     if workload["schema_version"] != WORKLOAD_SCHEMA:
         raise ProbeError("unsupported workload schema")
-    if workload["concurrency"] != EXPECTED_CONCURRENCY:
-        raise ProbeError("the directional packet requires concurrency 8")
-    if workload["warmup_cases"] != len(warmup):
+    if workload["concurrency"] != workload_contract.concurrency:
+        raise ProbeError(
+            f"{workload_contract.profile} requires concurrency "
+            f"{workload_contract.concurrency}"
+        )
+    if (
+        workload["warmup_cases"] != len(warmup)
+        or len(warmup) != workload_contract.warmup_cases
+    ):
         raise ProbeError("workload warmup count differs from corpus")
     if (
         workload["measured_cases"] != len(measured)
-        or len(measured) != EXPECTED_MEASURED_CASES
+        or len(measured) != workload_contract.measured_cases
     ):
-        raise ProbeError("the directional packet requires 128 measured cases")
+        raise ProbeError(
+            f"{workload_contract.profile} requires "
+            f"{workload_contract.measured_cases} measured cases"
+        )
 
     identity = _read_json(identity_path, "identity")
     if identity.get("case_count") != len(measured):
@@ -292,8 +334,8 @@ def load_packet(
     return warmup, measured, identity, worker_map
 
 
-def _episode_key(case: Case, seed: int) -> str:
-    key = f"rayline-three-arm:{seed}".encode()
+def _episode_key(case: Case, seed: int, run_id: str) -> str:
+    key = f"rayline-three-arm:{seed}:{run_id}".encode()
     return (
         "hmac-sha256:"
         + hmac.new(
@@ -365,7 +407,7 @@ def _select_remote(
             body={
                 "schema_version": TRANSACTION_SCHEMA,
                 "decision_id": decision_id,
-                "episode_key": _episode_key(case, seed),
+                "episode_key": _episode_key(case, seed, run_id),
                 "bundle_version": bundle,
                 "candidates": candidates,
                 "request": {
@@ -434,7 +476,7 @@ def _select_arc(client: JSONClient, case: Case, run_id: str) -> tuple[str, float
                 "max_tokens": 1,
             },
             headers={
-                "x-rayline-episode-id": case.episode_id,
+                "x-rayline-episode-id": f"{run_id}:{case.episode_id}",
                 "x-rayline-route-id": f"{run_id}:{case.case_id}",
             },
         ),
@@ -628,6 +670,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--timeout-seconds", type=float, default=90.0)
     parser.add_argument("--authorization-env", default="")
+    parser.add_argument(
+        "--workload-profile",
+        choices=WORKLOAD_PROFILES,
+        default=DIRECTIONAL_WORKLOAD.profile,
+    )
     return parser.parse_args()
 
 
@@ -640,12 +687,14 @@ def main() -> None:
             raise SystemExit("authorization environment variable is empty")
         authorization = f"Bearer {token}"
     try:
+        workload_contract = WORKLOAD_PROFILES[args.workload_profile]
         warmup, measured, identity, worker_map = load_packet(
             arm=args.arm,
             corpus_path=args.corpus,
             workload_path=args.workload,
             topology_path=args.topology,
             identity_path=args.identity,
+            workload_contract=workload_contract,
         )
         report = run_probe(
             arm=args.arm,
@@ -660,6 +709,7 @@ def main() -> None:
             identity=identity,
             worker_map=worker_map,
             run_id=args.run_id,
+            concurrency=workload_contract.concurrency,
         )
         args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     except (OSError, ProbeError, ValueError) as error:

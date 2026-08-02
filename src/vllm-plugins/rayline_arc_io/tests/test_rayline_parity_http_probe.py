@@ -29,6 +29,7 @@ class FakeClient:
         self.fail_case = fail_case
         self.commits = 0
         self.settles = 0
+        self.last_headers: dict[str, str] = {}
 
     def request(
         self,
@@ -38,6 +39,7 @@ class FakeClient:
         body: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
     ) -> tuple[int, dict[str, Any], dict[str, str], float]:
+        self.last_headers = dict(headers or {})
         if path == "/v1/route/capabilities":
             return (
                 200,
@@ -207,6 +209,24 @@ def _loaded(root: Path, arm: str) -> tuple[Any, ...]:
 )
 def test_input_token_bucket_boundaries(input_tokens: int, expected: str) -> None:
     assert probe._input_token_bucket(input_tokens) == expected
+
+
+def test_run_id_namespaces_remote_and_arc_episode_state() -> None:
+    case = probe.Case(
+        "public-case-000",
+        "public-episode",
+        100,
+        ({"role": "user", "content": "Public synthetic request."},),
+    )
+    first_key = probe._episode_key(case, 20260730, "perf017-c1")
+    second_key = probe._episode_key(case, 20260730, "perf017-c8")
+    client = FakeClient("rayline_arc")
+
+    probe._select_arc(client, case, "perf017-c1")
+
+    assert first_key.startswith("hmac-sha256:")
+    assert first_key != second_key
+    assert client.last_headers["x-rayline-episode-id"] == ("perf017-c1:public-episode")
 
 
 @pytest.mark.parametrize(

@@ -408,6 +408,48 @@ The exact Modal app stopped with zero tasks and held zero containers for 65
 seconds. PERF016 is closed without retry, and no three-arm experiment is
 currently launchable from the source tree.
 
+### PERF017 preregistered concurrency sweep (unlaunched)
+
+PERF017 is the next bounded diagnostic, not a larger qualification. It derives
+the first eight complete measured episodes and the first disjoint warmup episode
+from the PERF015/016 packet. Every cell therefore contains 4 warmup turns and
+32 measured turns, with 13 `<8k`, 11 `8k–<32k`, 5 `32k–<128k`, and 3 `≥128k`
+measured histories. The derived corpus digest is
+`72bbb22c6a8673d78cb4eadbce46ffd88f882f91f1880b4163e117f4679b1105`;
+the topology digest remains
+`ad0970c68d2e6b035c187d193f3da8ca49f48a68267bd323e0d66c9d44bcfddd`.
+The concurrency-one, -four, and -eight workload digests are respectively
+`a350a92ee0f38c3feb72407e9590da29b9ef70da2ca466d3959358c0999f8230`,
+`2a5cc697004b95c9384489663b7d6d67e69e78c63b2b606c22e55ed58d02e5fb`,
+and `a7cc6948e731fb8277bbc0d9b79a4b21539515402c3d2d1b146885056c31ebca`.
+
+Each concurrency cell runs Remote and then ARC against the same corpus and one
+already-warm protected encoder. Eager is excluded because PERF017 isolates the
+production interface choice. Between cells, the launcher stops the fresh
+Pathfinder process, deletes the fresh ARC Compose project and Redis volume,
+closes every namespaced retained encoder session, and requires zero resident
+sessions and tokens before advancing. Remote must also leave the encoder empty
+before ARC begins. Run IDs participate in both Remote's HMAC episode key and
+ARC's raw episode ID before hashing, so no cell can reuse another cell's state.
+
+The evidence gate requires six valid v2 receipts, 32/32 completions and zero
+failures or provider calls in every arm, matching Remote/ARC traces within each
+cell and one trace across all cells, reconciled token buckets, 36 ARC actions
+including warmup per cell, and successful local and encoder-state cleanup. The
+comparison reports ARC/Remote latency and throughput at concurrency 1, 4, and
+8 plus each arm's `c4/c1` and `c8/c1` scaling. Those ratios are diagnostic; no
+new absolute performance threshold is invented from the two prior samples.
+
+The run ID is `rayline-concurrency-sweep-perf017-20260802`. Its exact 30-minute
+paid wall, 31-minute orphan request, and five-minute scale-down tail total 3,960
+resource seconds and USD 5.3217648. Charging the full PERF016 envelope first
+would make the cumulative conservative maximum USD 60.92241442. Preserving the
+frozen USD 3 reserve requires cumulative authority of USD 63.92241442, which is
+USD 4.6095904 above the current USD 59.31282402 authority. Therefore
+`LAUNCHABLE_CONTRACT` remains `None`: the packet, comparator, state reset, and
+launcher are ready, but no PERF017 GPU or provider request has been launched.
+The held 1,000-case qualification remains unreachable.
+
 ## External Provider Canary
 
 This canary proves transport and settlement only; it is excluded from local

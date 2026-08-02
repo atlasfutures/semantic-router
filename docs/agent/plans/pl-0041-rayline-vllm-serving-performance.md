@@ -42,8 +42,15 @@ PERF016 repeat reproduced the ARC/Remote throughput direction at `1.256x`,
 localized the largest p95 wins to histories above 32k tokens, and proved 1.206M
 tokens were explicitly retained across 102 session appends. Its queued `<8k`
 tail regressed, so concurrency and service time still need separation. The
-independent endpoint therefore remains the MVP default while retained KV is a
-measured optimization, not a production-readiness claim. The separately held
+zero-spend PERF017 implementation now freezes a 32-turn Remote-versus-ARC sweep
+at concurrency `1`, `4`, and `8`, with a fresh Pathfinder and ARC/Redis stack
+plus explicit zero-resident-session proof between every cell. Its packet,
+probe, comparator, cleanup receipt, and launcher are implemented, but the
+source launch interlock remains closed: preserving the registered USD 3 reserve
+requires USD 4.6095904 more cumulative authority. No PERF017 GPU request has
+been issued. The independent endpoint therefore remains the MVP default while
+retained KV is a measured optimization, not a production-readiness claim. The
+separately held
 quality qualification and HA journal remain open; another transaction
 concurrency proof is not required. Current published implementation heads:
 
@@ -1218,6 +1225,18 @@ Not in scope:
   128k, but `1.116x` below 8k under the queued lane mix. Aggregate ARC telemetry
   records 34 creates, 102 appends, zero rebuilds, and 1.206M retained tokens.
   Receipts are pinned at `rayline-ai/router-artifacts@5bf052df`.
+  PERF017 now derives eight complete measured episodes plus one disjoint warmup
+  episode into a 32-turn packet spanning all four length buckets. It runs only
+  Remote and ARC at concurrency 1, 4, and 8 against one warm encoder. Every
+  cell owns a fresh Pathfinder process and ARC Compose/Redis stack; Remote must
+  leave zero encoder residency before ARC, and exact namespaced ARC sessions
+  are deleted and verified empty before the next cell. Six v2 receipts must
+  complete 32/32 with zero provider calls and one shared worker trace. The
+  comparator reports per-cell ARC/Remote ratios and per-arm `c4/c1` and
+  `c8/c1` scaling without inventing a new absolute SLO. The 3,960-second full
+  resource envelope is USD 5.3217648; preserving the USD 3 reserve needs USD
+  63.92241442 cumulative authority, USD 4.6095904 above the current authority.
+  The launch contract is therefore closed and PERF017 remains unlaunched.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
@@ -1389,7 +1408,12 @@ but held:
    `rayline-ai/router-artifacts@5bf052dffeaa5ffbfb5cc333741e18aaba81c9e0`.
    Close PERF016 without retry. Preregister a bounded concurrency sweep with
    state isolation between cells before another launch; do not increase
-   qualification size opportunistically.
+   qualification size opportunistically. That PERF017 implementation and exact
+   packet are now ready. Keep its launch interlock closed until at least USD
+   4.6095904 of additional cumulative authority preserves the frozen USD 3
+   reserve; then execute the one-shot 32-turn Remote/ARC cells at concurrency
+   1, 4, and 8 and publish only aggregate receipts. Do not execute the held
+   1,000-case qualification.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage
