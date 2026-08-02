@@ -17,7 +17,7 @@ The plan must answer four questions with runnable evidence:
    `rayline_remote` saturate, and what latency, throughput, memory, and
    operational costs does each design impose?
 
-Status: active on 2026-08-01. The stateless end-to-end MVP parity gate, retained
+Status: active on 2026-08-02. The stateless end-to-end MVP parity gate, retained
 engine gate, versioned HTTP/client integration, and real-GPU concurrent gateway
 E2E pass. The explicit pinned-session design is selected, its 128-case
 development qualification passes, and the first bounded full-stack performance
@@ -34,14 +34,18 @@ scheduled batch width `6`. PERF011 completes the first placement comparison:
 pinning both components to Modal `us-east` did not improve p50 or throughput,
 and PERF014 removes the largest region confound: a London Pathfinder calling
 an explicitly `us-east` encoder reproduced PERF011's slower encoder time
-without colocation. The independent endpoint therefore remains the MVP
-default. The separately held quality qualification and HA journal remain open;
-another transaction concurrency proof is not required. Current published
-implementation heads:
+without colocation. PERF015 then completed the source-frozen three-interface
+packet with exact worker-trace parity and zero failures. ARC retained sessions
+improved throughput by 35.9% over eager and 26.4% over Remote, but every arm
+failed the immutable absolute SLO gates on 42k-token-average histories. The
+independent endpoint therefore remains the MVP default while retained KV is a
+measured optimization, not a production-readiness claim. The separately held
+quality qualification and HA journal remain open; another transaction
+concurrency proof is not required. Current published implementation heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
-  runtime implementation at `27c33f1582e4981c866d80e47fc306acef4c3ce5`
+  runtime and PERF015 harness at `4447856f30a79887b92c60f6cfd351595effdc02`
   for the capability-gated
   retained-session client, hermetic stack, bounded direct/static/ARC diagnostic,
   fixed three-model OpenRouter transport and retry contracts, and mandatory ARC
@@ -51,11 +55,12 @@ implementation heads:
   explicit `us-east` placement pin for controlled comparison.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `5adfef2934fead6774b6543487eec4b3360d25be` for the registered
+  at `9124c6d4` for the registered
   retained-session, real-endpoint and OpenRouter canaries, plus the closed,
   artifact-pinned direct/static/ARC stage, encoder diagnostics, PERF009 remote
   transaction-capacity result, PERF011 placement comparator, and PERF014
-  explicitly region-pinned remote control with app-owned cleanup.
+  explicitly region-pinned remote control, and the completed PERF015 result
+  with private aggregate receipts and app-owned cleanup.
 - vLLM integration
   [`atlasfutures/vllm:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/vllm/tree/codex/rayline-vsr-mvp)
   at `9f5ea81ca0aa570aea46baf82311a1139c1267ca` for append-scoped
@@ -1193,8 +1198,13 @@ Not in scope:
   worker double. The source/pin/budget fail-closed PERF015 launcher now owns one
   protected H100 app, one local Pathfinder process, and one exact Compose
   project, with a USD 10.1597328 worst-case resource envelope and 65-second
-  stable-zero cleanup. Synchronized component metrics beyond arm receipts and
-  the paid three-arm result remain.
+  stable-zero cleanup. PERF015 completed all three 128-turn arms with exact
+  trace parity and zero failures. ARC achieved `0.318 rps` and
+  `9.09s/76.70s/98.72s` p50/p95/p99 versus Remote `0.251 rps` and
+  `14.09s/90.54s/99.92s`; relative gates passed, but every arm failed the
+  frozen 8 rps / 1s p95 / 2s p99 absolute gates. Receipts are pinned at
+  `rayline-ai/router-artifacts@6e391a8b`. Synchronized component metrics beyond
+  arm receipts and input-length-stratified latency remain.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
@@ -1334,12 +1344,27 @@ but held:
    not justify colocation.
    The PERF014 receipt is privately pinned at
    `rayline-ai/router-artifacts@81ab491a303c5e7b45e5706400fe748a1568ba50`.
-   Conservative accounting is now `$39.31282402`, leaving `$0.68717598` below
-   the approved `$40` cap; the PERF014 launcher-window upper estimate was
-   `$0.330942`. Keep the independent endpoint as the MVP default. No further
-   paid performance packet fits this cap. Future work requires new budget
-   authority and should test a private transport or a powered repeated design,
-   not increase qualification size opportunistically.
+   Conservative accounting through PERF014 is `$39.31282402`; its launcher-
+   window upper estimate was `$0.330942`. Keep the independent endpoint as the
+   MVP default.
+   The user then authorized another `$20`, and PERF015 ran one exact
+   source-frozen 128-turn packet per arm against the same protected `us-east`
+   H100. Eager, Remote, and ARC each completed 128/128 with zero failures and
+   the same worker-trace digest. ARC reached `0.318 rps`, `9.09s` p50, `76.70s`
+   p95, and `98.72s` p99 versus Remote `0.251 rps`, `14.09s`, `90.54s`, and
+   `99.92s`, and eager `0.234 rps`, `15.82s`, `96.14s`, and `108.09s`.
+   Therefore every relative gate passed, including ARC/Remote throughput
+   `1.264x` and p95 `0.847x`, while all arms failed the frozen absolute 8 rps,
+   1s p95, and 2s p99 gates. This supports retained KV but rejects production
+   SLO qualification on histories averaging about 42k tokens and peaking near
+   248k. The observed launcher-window resource upper estimate was `$2.467912`,
+   providers were unused, cleanup reached 65 seconds of stable zero, and five
+   aggregate receipts are privately verified at
+   `rayline-ai/router-artifacts@6e391a8b77394d730af2117ccc79482dd45c65de`.
+   The cumulative full-envelope maximum is `$49.47255682` under the
+   `$59.31282402` authority, leaving `$9.8402672` conservative reserve. Before
+   another paid run, persist ARC create/append/cache telemetry and stratify
+   latency by input length; do not increase qualification size opportunistically.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage

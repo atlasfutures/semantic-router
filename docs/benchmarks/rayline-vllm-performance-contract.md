@@ -223,7 +223,7 @@ cache effectiveness, failures, and operational ownership for each row.
 
 ## Three-Arm Directional Parity Packet
 
-The next paid packet is a directional router-only comparison across the
+PERF015 is a directional router-only comparison across the
 Modal-compatible in-process Rayline reference interface, `rayline_remote` with
 the retained vLLM session service's stateless compatibility path, and
 `rayline_arc` with that service's retained-session path. It is not the
@@ -299,6 +299,33 @@ window. Its 90-minute paid wall limit plus one worst-case 31-minute orphan
 request and five-minute scale-down tail bound the H100/CPU/memory envelope at
 USD 10.1597328. The cumulative conservative maximum is USD 49.47255682, leaving
 USD 9.8402672 under the new authority and zero provider spend.
+
+### PERF015 result
+
+The single preregistered run completed all 128 measured turns on every arm
+with zero failures and an exact selected-worker trace match. The source-frozen
+histories averaged about 42k input tokens and peaked near 248k.
+
+| Arm | Throughput | p50 | p95 | p99 |
+| --- | ---: | ---: | ---: | ---: |
+| Eager local interface (`modal_inprocess`) | 0.234 rps | 15.82 s | 96.14 s | 108.09 s |
+| Remote prepare/commit/settle | 0.251 rps | 14.09 s | 90.54 s | 99.92 s |
+| ARC retained session/KV | 0.318 rps | 9.09 s | 76.70 s | 98.72 s |
+
+All relative gates passed. ARC throughput was `1.359x` eager and `1.264x`
+Remote; its p95 ratios were `0.798x` and `0.847x`. The overall comparator
+status remains `failed` because every arm missed the immutable 8 rps, 1-second
+p95, and 2-second p99 absolute gates. This is positive evidence for retained
+KV, not production SLO qualification. The eager label still does not imply a
+Modal-hosted policy process.
+
+The launcher window, including cleanup, was 1,836.41 seconds. Its conservative
+resource upper estimate is USD 2.4679120734; provider spend is zero. Cleanup
+stopped Pathfinder, removed the exact Compose project and volumes, deleted the
+ephemeral proxy, and held the protected encoder at zero containers for 65
+seconds. Five aggregate-only receipts are privately round-trip verified at
+`rayline-ai/router-artifacts@6e391a8b77394d730af2117ccc79482dd45c65de`.
+The 1,000-case qualification was not executed.
 
 ## External Provider Canary
 
