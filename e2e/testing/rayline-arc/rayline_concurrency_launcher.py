@@ -331,7 +331,13 @@ def _start_encoder(context: SweepContext) -> EncoderOwnership:
     return ownership
 
 
-def _prepare_cell(context: SweepContext, cell: SweepCell, work: Path) -> PreparedCell:
+def _prepare_cell(
+    context: SweepContext,
+    cell: SweepCell,
+    work: Path,
+    *,
+    encoder_base_url: str = IDENTITY.encoder_url,
+) -> PreparedCell:
     work.mkdir(parents=True)
     config_path = work / "pathfinder.yaml"
     base = context.yaml.safe_load(
@@ -381,7 +387,7 @@ def _prepare_cell(context: SweepContext, cell: SweepCell, work: Path) -> Prepare
             "--artifact-mount-path",
             "/var/lib/vllm-sr/rayline-arc",
             "--encoder-base-url",
-            IDENTITY.encoder_url,
+            encoder_base_url,
             "--encoder-build-id",
             IDENTITY.engine_build_id,
             "--encoder-plugin-version",

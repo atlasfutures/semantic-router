@@ -15,7 +15,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 from rayline_arc_io.constants import MAX_SERIALIZED_TOKENS
 from rayline_arc_io.integrity import compute_source_digest, installed_source_digest
 
-APP_NAME = "rayline-arc-session-encoder"
+DEFAULT_APP_NAME = "rayline-arc-session-encoder"
+SCALEOUT_APP_NAMES = (
+    "rayline-arc-session-encoder-a",
+    "rayline-arc-session-encoder-b",
+)
+APP_NAME = os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", DEFAULT_APP_NAME)
+if APP_NAME not in (DEFAULT_APP_NAME, *SCALEOUT_APP_NAMES):
+    raise RuntimeError("unsupported Rayline ARC session app name")
 MODEL_ID = "Qwen/Qwen3.5-0.8B"
 MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
 CUDA_BASE_IMAGE = (

@@ -28,6 +28,7 @@ class BudgetContract:
     maximum_paid_wall_seconds: int
     maximum_orphan_request_seconds: int = 31 * 60
     maximum_scaledown_seconds: int = 5 * 60
+    encoder_replicas: int = 1
 
 
 class BudgetError(RuntimeError):
@@ -50,7 +51,11 @@ def budget_receipt(
         + contract.maximum_orphan_request_seconds
         + contract.maximum_scaledown_seconds
     )
-    packet_max = resource_seconds * resource_rate_usd_per_second()
+    if contract.encoder_replicas <= 0:
+        raise BudgetError("encoder replica count must be positive")
+    packet_max = (
+        resource_seconds * resource_rate_usd_per_second() * contract.encoder_replicas
+    )
     cumulative_max = contract.previous_conservative_usd + packet_max
     reserve = contract.authorized_cumulative_usd - cumulative_max
     if (
@@ -67,6 +72,7 @@ def budget_receipt(
         "required_reserve_usd": contract.required_reserve_usd,
         "maximum_paid_wall_seconds": contract.maximum_paid_wall_seconds,
         "maximum_resource_seconds": resource_seconds,
+        "encoder_replicas": contract.encoder_replicas,
         "maximum_resource_envelope_usd": packet_max,
         "cumulative_if_full_envelope_usd": cumulative_max,
         "reserve_after_full_envelope_usd": reserve,
@@ -76,7 +82,9 @@ def budget_receipt(
     if elapsed_seconds is not None:
         observed_upper = min(
             packet_max,
-            max(0.0, elapsed_seconds) * resource_rate_usd_per_second(),
+            max(0.0, elapsed_seconds)
+            * resource_rate_usd_per_second()
+            * contract.encoder_replicas,
         )
         receipt["launcher_window_seconds"] = elapsed_seconds
         receipt["launcher_window_resource_upper_usd"] = observed_upper

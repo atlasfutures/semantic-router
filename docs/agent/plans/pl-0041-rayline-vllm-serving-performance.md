@@ -102,7 +102,10 @@ Remote at the three ordered cells. The
 independent endpoint therefore remains the MVP default while
 retained KV is a measured optimization, not a production-readiness claim. The
 separately held quality qualification and HA journal remain open; another
-transaction concurrency proof is not required. Current published implementation
+transaction concurrency proof is not required. PERF022 is now implemented
+locally with launch authority closed: it compares the same-proxy one-replica
+control with deterministic episode-affinity across two explicit one-container
+ARC apps at the two overloaded PERF021 cells. Current published implementation
 heads:
 
 - Semantic Router
@@ -324,6 +327,64 @@ Horizontal scale requires cache-aware affinity for performance, not
 correctness. A request reaching another encoder replica may be slower because
 it rebuilds, but it must not make a different policy decision outside the
 frozen numeric tolerance.
+
+### PERF022 Bounded Affinity Scale-Out Phase
+
+PERF021 places the first overloaded single-H100 cell at a realized `0.3724`
+decisions per second and shows further backlog at `0.5586`. The next justified
+deployment experiment is therefore horizontal encoder scale-out, not a larger
+qualification packet or another transaction-concurrency proof.
+
+PERF022 keeps the frozen PERF021 corpus, seed, topology, model, artifact,
+serializer, worker trace, and `r030`/`r045` schedules. It compares only two ARC
+deployment shapes:
+
+```text
+arc_single
+Semantic Router -> local affinity proxy -> encoder A (one H100 container)
+
+arc_dual_affinity
+Semantic Router -> local affinity proxy -+-> encoder A (one H100 container)
+                                         +-> encoder B (one H100 container)
+```
+
+The two explicit Modal apps are
+`rayline-arc-session-encoder-a` and `rayline-arc-session-encoder-b`; each keeps
+the proven `max_containers=1` boundary. The proxy selects a replica from the
+first 64 bits of the opaque episode SHA-256 modulo the replica count. Pooling,
+subsequent appends, and explicit close for one episode therefore reach the same
+process-local retained session. Both arms traverse the proxy so its local hop
+is symmetric. The proxy records only bounded aggregate counts, never prompt
+content, raw episode IDs, credentials, or request paths.
+
+Each arm/cell owns a fresh Semantic Router, Pathfinder, Redis, Compose project,
+proxy, and retained-session namespace. The encoder pair remains fixed across
+the four arms so model hydration is outside the comparison, but every arm must
+start and finish with zero resident sessions and tokens. The run contains four
+receipts, 128 measured turns, 16 warmups, and zero provider or generation
+calls. It passes integrity only when all turns complete, worker traces match,
+provider calls stay zero, ARC telemetry records exactly 36 session actions per
+arm, nine sessions are closed, both treatment replicas receive at least one
+episode, and affinity mismatches remain zero. Reported throughput, service and
+scheduled latency, backlog, and drain ratios are diagnostic rather than a new
+production SLO.
+
+The launcher is fail-closed until its signed Semantic Router implementation,
+Pathfinder preregistration, self-attestation, and distinct authorization commit
+are all remote-visible. Its two-replica envelope is 5,160 resource-seconds per
+replica: 2,400 seconds paid wall time, 2,460 seconds for an orphaned request,
+and 300 seconds scale-down. At the pinned Modal price snapshot this is
+`$13.8688416`; added to the `$61.80928732218463` prior conservative total it
+would reach `$75.67812892218463`, leaving `$58.63469509781537` under the current
+`$134.31282402` authority. The launcher-window estimate also charges both
+replicas for all elapsed time. No whole-run retry exists, and the separately
+held 1,000-case qualification remains unreachable.
+
+PERF022 is deliberately an experiment-side deployment proof. It does not yet
+claim a production service directory, replica membership protocol, failover,
+rebalance, shared cache, or HA transaction journal. Those boundaries remain
+required before turning the local deterministic proxy into a supported public
+deployment mode.
 
 ### ARC and Remote Comparison
 
@@ -1321,8 +1382,15 @@ Not in scope:
   resolver pinned `b53434ab` for one execution. PERF021 passed with 192/192
   measured turns, zero failures, exact trace and telemetry parity, zero
   providers, and complete cleanup; close its source and registry authority.
-  Use its measured knee to preregister a bounded multi-replica, cache-affinity
-  deployment experiment. The 1,000-case qualification remains unreachable.
+  PERF022 implements the resulting bounded scale-out experiment: one ARC
+  replica versus two explicit one-container ARC replicas behind the same
+  deterministic episode-affinity proxy at only `r030` and `r045`. The
+  implementation and local gates must be signed and pushed while the source
+  interlock remains closed, followed by immutable Pathfinder preregistration,
+  self-attestation, and a distinct authorization checkpoint before one launch.
+  The complete two-replica envelope is `$13.8688416`; providers, generation,
+  runtime-added cells, whole-run retry, and the 1,000-case qualification remain
+  unreachable.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
@@ -1518,6 +1586,15 @@ but held:
    zero failures, exact trace/telemetry parity, complete cleanup, and zero
    provider spend. Preregister the next bounded deployment phase from the
    measured `0.1862`-to-`0.3724` single-H100 knee; do not reopen PERF021.
+   PERF022 is that phase. Finish and push its deterministic episode-affinity
+   source with launch authority closed, preregister the exact two-cell/four-arm
+   packet and `$13.8688416` envelope, attest and authorize it from distinct
+   Pathfinder heads, then execute it once. Close source and registry authority
+   after success or failure, verify private aggregate evidence through a
+   separate read credential, and use only its measured scale-out efficiency to
+   choose the next bounded phase. Do not add provider traffic, generation
+   workers, failover semantics, or the held 1,000-case qualification to this
+   packet.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage

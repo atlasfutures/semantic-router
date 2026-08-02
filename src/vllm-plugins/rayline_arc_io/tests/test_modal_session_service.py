@@ -88,3 +88,15 @@ def test_session_service_freezes_the_proven_retained_vllm_runtime() -> None:
         "create_session_app",
     ):
         assert expected in service_source
+
+
+def test_session_service_allows_only_the_frozen_scaleout_app_names() -> None:
+    service_source = source()
+
+    assert 'DEFAULT_APP_NAME = "rayline-arc-session-encoder"' in service_source
+    assert '"rayline-arc-session-encoder-a"' in service_source
+    assert '"rayline-arc-session-encoder-b"' in service_source
+    assert 'os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", DEFAULT_APP_NAME)' in (
+        service_source
+    )
+    assert "unsupported Rayline ARC session app name" in service_source

@@ -214,10 +214,12 @@ def _probe_cell(
     base_url: str,
     output_dir: Path,
     timeout_seconds: float,
+    logical_arm: str | None = None,
 ) -> dict[str, Any]:
-    output = output_dir / f"{arm}.json"
+    receipt_arm = logical_arm or arm
+    output = output_dir / f"{receipt_arm}.json"
     cell_dir = context.packet_dir / "cells" / cell.label
-    probe_run_id = f"{context.contract.run_id}:{cell.label}:{arm}"
+    probe_run_id = f"{context.contract.run_id}:{cell.label}:{receipt_arm}"
     _run(
         [
             sys.executable,
