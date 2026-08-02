@@ -436,7 +436,9 @@ PERF024 preserves every measurement input and adds only a bounded stable-zero
 poll after noninteractive stop and token deletion. Its `$13.8688416` full
 envelope would bring the cumulative conservative maximum to
 `$79.48668484218463`, leaving `$54.82613917781537` under current authority. It
-remains source-closed pending its own external authorization chain.
+is preregistered, self-attested, and externally authorized at `e5ba2084`,
+`a524d0d8`, and `739270a1`; only a distinct signed source checkpoint may open
+its one execution.
 
 ### ARC and Remote Comparison
 
