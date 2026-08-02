@@ -90,9 +90,11 @@ arrival rate derived from the frozen schedule span; all six PERF020 v1 receipts
 remain replayable. The successor's USD 6.9344208 full envelope would bring the
 cumulative conservative maximum to USD 66.66615137 and leave USD 17.64667265
 reserve under the previous authority. The additional USD 50 authority raises
-that full-envelope reserve to USD 67.64667265. Its source interlock remains
-closed pending signed source push and
-Pathfinder preregistration. The
+that full-envelope reserve to USD 67.64667265. Its implementation is pushed at
+`7c685cca`, renewed authority at `8caf6b49`, immutable Pathfinder
+preregistration at `ae205109`, attestation at `86f43d09`, and authorization at
+`b53434ab`. The source interlock pins that authorization commit and opens only
+PERF021 for one execution. The
 independent endpoint therefore remains the MVP default while
 retained KV is a measured optimization, not a production-readiness claim. The
 separately held quality qualification and HA journal remain open; another
@@ -1310,9 +1312,10 @@ Not in scope:
   PERF021 must close a thread-local client connection only after each complete
   decision transaction and compare achieved start rate with the schedule's
   realized rate. PERF021 implements that narrow delta with replay compatibility
-  for all PERF020 v1 receipts. Keep its launch closed until the implementation
-  and registry checkpoints are pushed. The 1,000-case qualification remains
-  unreachable.
+  for all PERF020 v1 receipts. Its signed implementation, preregistration,
+  attestation, and registry authorization are remote-visible; the source
+  resolver pins `b53434ab` and opens only PERF021 for one execution. The
+  1,000-case qualification remains unreachable.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
@@ -1504,6 +1507,8 @@ but held:
    once on direct-client stale idle connections and is closed. Prepare PERF021
    under a new ID with transaction-boundary connection close and realized-rate
    diagnostics; do not reinterpret the valid ARC-only curve as parity evidence.
+   PERF021's signed source and registry checkpoints are now remote-visible, and
+   only its exact run ID is launchable for one execution.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage

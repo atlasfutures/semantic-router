@@ -48,8 +48,10 @@ def test_perf020_contract_freezes_rates_and_budget() -> None:
     )
 
 
-def test_perf020_launch_authority_is_closed_after_execution() -> None:
-    with pytest.raises(ValueError, match="no Rayline open-loop sweep"):
+def test_only_perf021_launch_authority_is_open() -> None:
+    assert contract.PATHFINDER_AUTHORIZATION_COMMIT == (
+        "b53434ab01260339785050ee1761be388ce5a2ad"
+    )
+    with pytest.raises(ValueError, match="launcher only permits preregistered"):
         contract.resolve_launch_contract(contract.PERF020_RUN_ID)
-    with pytest.raises(ValueError, match="no Rayline open-loop sweep"):
-        contract.resolve_launch_contract(contract.PERF021_RUN_ID)
+    assert contract.resolve_launch_contract(contract.PERF021_RUN_ID) is contract.PERF021

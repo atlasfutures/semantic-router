@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 
-"""Frozen PERF020 open-loop sweep and one-shot launch authority."""
+"""Frozen PERF020/PERF021 open-loop sweeps and one-shot launch authority."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from rayline_three_arm_budget import BudgetContract
 
 PERF020_RUN_ID = "rayline-open-loop-sweep-perf020-20260802"
 PERF021_RUN_ID = "rayline-open-loop-sweep-perf021-20260802"
-PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
+PATHFINDER_AUTHORIZATION_COMMIT = "b53434ab01260339785050ee1761be388ce5a2ad"
 MEASURED_CASES = 32
 WARMUP_CASES = 4
 MEASURED_EPISODES = 8
@@ -111,9 +111,9 @@ PERF021 = OpenLoopRunContract(
     ),
 )
 
-# PERF020 is closed. PERF021 remains closed while the transport fix, strict
-# receipt update, source push, and external preregistration are validated.
-LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
+# PERF020 is closed. PERF021 is the only launchable contract after its exact
+# Pathfinder preregistration and authorization checkpoints became remote-visible.
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF021
 
 
 def resolve_launch_contract(run_id: str) -> OpenLoopRunContract:
