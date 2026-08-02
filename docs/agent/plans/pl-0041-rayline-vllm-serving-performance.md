@@ -51,8 +51,10 @@ Remote-versus-ARC cells at concurrency `1`, `4`, and `8`, fresh
 Pathfinder/ARC/Redis state, packet, placement, and gates remain frozen; only
 the new run namespace and transient startup transport normalization change.
 The existing USD 64.31282402 cap leaves USD 3.10013152 after its complete
-envelope. The source interlock is closed while the new ID and exact pins are
-registered. The independent endpoint therefore remains the MVP default while
+envelope. PERF017's sanitized failure receipt is privately round-trip verified
+at `rayline-ai/router-artifacts@d109f120`; Pathfinder `01b78615` preregisters
+PERF018, and the signed Semantic Router checkpoint opens only that new one-shot
+ID. The independent endpoint therefore remains the MVP default while
 retained KV is a measured optimization, not a production-readiness claim. The
 separately held quality qualification and HA journal remain open; another
 transaction concurrency proof is not required. Current published implementation
@@ -1243,9 +1245,10 @@ Not in scope:
   closed with a conservative USD 0.29027808 charge. PERF018 preserves every
   workload and acceptance detail under a new namespace and fixes only
   transient readiness transport handling. Its full envelope leaves USD
-  3.10013152 under the existing USD 64.31282402 cap. The source interlock is
-  closed pending exact registry pins; the 1,000-case qualification remains
-  unreachable.
+  3.10013152 under the existing USD 64.31282402 cap. PERF017's sanitized
+  failure receipt is privately pinned at `rayline-ai/router-artifacts@d109f120`;
+  PERF018 is registered and its one-shot source interlock is open. The
+  1,000-case qualification remains unreachable.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.

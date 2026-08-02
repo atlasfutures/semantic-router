@@ -31,7 +31,7 @@ def test_concurrency_packet_and_cell_contract_is_exact() -> None:
     assert contract.PERF018.cells == contract.PERF017.cells
 
 
-def test_perf018_budget_is_preregistered_but_interlock_is_closed() -> None:
+def test_perf018_budget_is_preregistered_and_authorized() -> None:
     receipt = budget.budget_receipt(contract.PERF018.budget)
     envelope = receipt["maximum_resource_envelope_usd"]
     required_authority = (
@@ -48,5 +48,6 @@ def test_perf018_budget_is_preregistered_but_interlock_is_closed() -> None:
     assert receipt["reserve_after_full_envelope_usd"] == pytest.approx(3.10013152)
     assert pytest.approx(5.0) == contract.ADDITIONAL_AUTHORITY_GRANTED_USD
     assert contract.ADDITIONAL_AUTHORITY_REQUIRED_USD == 0.0
-    with pytest.raises(ValueError, match="no Rayline concurrency sweep"):
-        contract.resolve_launch_contract(contract.PERF018_RUN_ID)
+    assert contract.resolve_launch_contract(contract.PERF018_RUN_ID) is contract.PERF018
+    with pytest.raises(ValueError, match="only permits preregistered"):
+        contract.resolve_launch_contract(contract.PERF017_RUN_ID)

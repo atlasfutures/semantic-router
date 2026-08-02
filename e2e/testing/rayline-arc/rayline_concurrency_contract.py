@@ -108,7 +108,10 @@ PERF017_STARTUP_FAILURE_UPPER_USD = 0.29027808
 PERF018_REQUIRED_CUMULATIVE_AUTHORITY_USD = 64.21269250
 ADDITIONAL_AUTHORITY_GRANTED_USD = 5.0
 ADDITIONAL_AUTHORITY_REQUIRED_USD = 0.0
-LAUNCHABLE_CONTRACT: ConcurrencyRunContract | None = None
+# PERF018 is separately preregistered after PERF017 closed. This signed source
+# checkpoint is the new one-shot launch boundary; the closed PERF017 ID remains
+# unreachable from the generalized launcher.
+LAUNCHABLE_CONTRACT: ConcurrencyRunContract | None = PERF018
 
 
 def resolve_launch_contract(run_id: str) -> ConcurrencyRunContract:

@@ -457,7 +457,7 @@ is conservatively charged as 216 resource seconds, or USD 0.29027808, from the
 reported 119.535-second deploy, one 30-second request timeout, 65-second
 stable-zero cleanup, and rounding. PERF017 is closed without retry.
 
-### PERF018 identity-equivalent startup retry (implemented, interlock closed)
+### PERF018 identity-equivalent startup retry (authorized, unlaunched)
 
 PERF018 changes only the run/state namespace and the readiness transport
 handling: `TimeoutError` and `URLError` now become the same sanitized state
@@ -472,8 +472,10 @@ Charging the PERF017 startup failure makes the new prior conservative total
 USD 55.89092770. PERF018 retains the same 3,960-second, USD 5.3217648 full
 resource envelope, producing a cumulative maximum of USD 61.21269250 and
 leaving USD 3.10013152 under the existing USD 64.31282402 authority. No new
-authority is needed. The source interlock remains closed until the failure,
-fix, exact pins, and new one-shot ID are committed and registered. The held
+authority is needed. The failure receipt is privately round-trip verified at
+`rayline-ai/router-artifacts@d109f1201abf8c39cd824e637bf841872bb2bbf9`.
+Pathfinder `01b78615` closes PERF017 and preregisters PERF018; the signed,
+pushed Semantic Router checkpoint now opens only the new one-shot ID. The held
 1,000-case qualification remains unreachable.
 
 ## External Provider Canary
