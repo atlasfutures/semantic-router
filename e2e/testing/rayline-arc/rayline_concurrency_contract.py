@@ -73,7 +73,11 @@ SWEEP_CELLS = (
 )
 
 
-def _contract(run_id: str, previous_conservative_usd: float) -> ConcurrencyRunContract:
+def _contract(
+    run_id: str,
+    previous_conservative_usd: float,
+    authorized_cumulative_usd: float,
+) -> ConcurrencyRunContract:
     return ConcurrencyRunContract(
         run_id=run_id,
         packet_manifest_sha256=(
@@ -91,7 +95,7 @@ def _contract(run_id: str, previous_conservative_usd: float) -> ConcurrencyRunCo
         budget=BudgetContract(
             run_id=run_id,
             previous_conservative_usd=previous_conservative_usd,
-            authorized_cumulative_usd=64.31282402,
+            authorized_cumulative_usd=authorized_cumulative_usd,
             packet_ceiling_usd=6.0,
             required_reserve_usd=3.0,
             maximum_paid_wall_seconds=30 * 60,
@@ -99,9 +103,9 @@ def _contract(run_id: str, previous_conservative_usd: float) -> ConcurrencyRunCo
     )
 
 
-PERF017 = _contract(PERF017_RUN_ID, 55.60064962)
-PERF018 = _contract(PERF018_RUN_ID, 55.89092770)
-PERF019 = _contract(PERF019_RUN_ID, 56.47282774)
+PERF017 = _contract(PERF017_RUN_ID, 55.60064962, 64.31282402)
+PERF018 = _contract(PERF018_RUN_ID, 55.89092770, 64.31282402)
+PERF019 = _contract(PERF019_RUN_ID, 56.47282774, 84.31282402)
 
 # PERF017 is closed after its first health request timed out before measurement.
 # Conservatively accounting 216 resource seconds makes PERF018's cumulative
@@ -109,12 +113,12 @@ PERF019 = _contract(PERF019_RUN_ID, 56.47282774)
 PERF017_STARTUP_FAILURE_UPPER_USD = 0.29027808
 PERF018_STATE_FAILURE_UPPER_USD = 0.58190004
 PERF019_REQUIRED_CUMULATIVE_AUTHORITY_USD = 64.79459254
-ADDITIONAL_AUTHORITY_GRANTED_USD = 5.0
-ADDITIONAL_AUTHORITY_REQUIRED_USD = 0.48176852
+PERF019_ADDITIONAL_AUTHORITY_GRANTED_USD = 20.0
+PERF019_RESERVE_AFTER_FULL_ENVELOPE_USD = 22.51823148
 # PERF018 is closed after its pre-ARC state-isolation gate caught a retained
-# startup-readiness session. PERF019 remains unlaunchable until its exact fix,
-# registry pins, and additional authority are all in place.
-LAUNCHABLE_CONTRACT: ConcurrencyRunContract | None = None
+# startup-readiness session. The exact fix and renewed authority now open only
+# the preregistered PERF019 namespace; historical IDs remain closed.
+LAUNCHABLE_CONTRACT: ConcurrencyRunContract | None = PERF019
 
 
 def resolve_launch_contract(run_id: str) -> ConcurrencyRunContract:

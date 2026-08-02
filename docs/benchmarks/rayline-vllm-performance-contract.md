@@ -495,7 +495,7 @@ failure receipt and completed Remote receipt are privately round-trip verified
 at `rayline-ai/router-artifacts@cb14a91eadc836e5a83ed5a04e9eb3aacceeb2f8`.
 PERF018 is closed without retry.
 
-### PERF019 retained-readiness cleanup retry (implemented, authority held)
+### PERF019 retained-readiness cleanup retry (implemented and authorized)
 
 PERF019 preserves PERF018's packet, placement, arm order, model, state-reset
 rules, thresholds, and resource envelope under a new run/state namespace. Its
@@ -506,11 +506,11 @@ cannot be closed, and also attempts cleanup after an invalid probe response.
 
 Charging both failed attempts makes PERF019's prior conservative total USD
 56.47282774. Its unchanged USD 5.3217648 full envelope produces a cumulative
-maximum of USD 61.79459254. Preserving the frozen USD 3 reserve requires USD
-64.79459254 of cumulative authority, USD 0.48176852 above the current USD
-64.31282402 cap. The source interlock is closed, so no PERF019 GPU request can
-launch before the exact fix and registry pins pass and the small authority gap
-is explicitly covered. The held 1,000-case qualification remains unreachable.
+maximum of USD 61.79459254. The user approved another USD 20, raising cumulative
+authority from USD 64.31282402 to USD 84.31282402 and leaving USD 22.51823148
+after the full envelope. The source interlock opens only PERF019 after the exact
+fix, registry pins, and signed pushed authorization checkpoints pass. The held
+1,000-case qualification remains unreachable.
 
 ## External Provider Canary
 

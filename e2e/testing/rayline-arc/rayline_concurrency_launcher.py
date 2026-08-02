@@ -5,8 +5,8 @@
 
 The protected encoder stays warm across concurrency cells, while each cell gets
 a fresh Pathfinder process, ARC Compose/Redis stack, run-ID namespace, and an
-explicit retained-session cleanup proof. The source interlock remains closed
-until the frozen conservative budget receives additional authority.
+explicit retained-session cleanup proof. The source interlock permits only the
+preregistered PERF019 namespace under its frozen conservative budget.
 """
 
 from __future__ import annotations
