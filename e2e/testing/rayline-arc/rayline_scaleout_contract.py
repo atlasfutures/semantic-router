@@ -11,7 +11,7 @@ from rayline_open_loop_contract import PERF021, OpenLoopCell
 from rayline_three_arm_budget import BudgetContract
 
 PERF022_RUN_ID = "rayline-affinity-scaleout-perf022-20260802"
-PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
+PATHFINDER_AUTHORIZATION_COMMIT = "24b4a3d6a548e5b96589432a5f5d32f572575165"
 SCALEOUT_ARMS = ("arc_single", "arc_dual_affinity")
 ENCODER_APP_NAMES = (
     "rayline-arc-session-encoder-a",
@@ -60,9 +60,9 @@ PERF022 = ScaleoutRunContract(
     ),
 )
 
-# PERF022 remains closed until implementation, source push, preregistration,
-# and a distinct authorization checkpoint are all remote-visible.
-LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = None
+# PERF022 is the only launchable contract after its exact Pathfinder
+# preregistration, attestation, and authorization checkpoints became visible.
+LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = PERF022
 
 
 def resolve_launch_contract(run_id: str) -> ScaleoutRunContract:

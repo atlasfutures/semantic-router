@@ -24,7 +24,7 @@ def test_unregistered_scaleout_stops_before_side_effects(tmp_path: Path) -> None
         router_image="unused",
     )
 
-    with pytest.raises(ValueError, match="no Rayline scale-out experiment"):
+    with pytest.raises(ValueError, match="launcher only permits preregistered"):
         launcher._preflight(args)
 
     assert list(tmp_path.iterdir()) == []

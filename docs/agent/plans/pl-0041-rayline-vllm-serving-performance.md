@@ -102,11 +102,13 @@ Remote at the three ordered cells. The
 independent endpoint therefore remains the MVP default while
 retained KV is a measured optimization, not a production-readiness claim. The
 separately held quality qualification and HA journal remain open; another
-transaction concurrency proof is not required. PERF022 is now implemented
-locally with launch authority closed: it compares the same-proxy one-replica
+transaction concurrency proof is not required. PERF022 is implemented and its
+exact preregistration, attestation, and Pathfinder authorization are pushed at
+`edfb58a2`, `6bb425d7`, and `24b4a3d6`: it compares the same-proxy one-replica
 control with deterministic episode-affinity across two explicit one-container
-ARC apps at the two overloaded PERF021 cells. Current published implementation
-heads:
+ARC apps at the two overloaded PERF021 cells. Only its distinct signed source
+authorization checkpoint may open the one-shot resolver. Current published
+implementation heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)

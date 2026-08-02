@@ -36,6 +36,10 @@ def test_perf022_freezes_overloaded_cells_two_apps_and_budget() -> None:
     )
 
 
-def test_perf022_launch_authority_is_closed() -> None:
-    with pytest.raises(ValueError, match="no Rayline scale-out experiment"):
-        contract.resolve_launch_contract(contract.PERF022_RUN_ID)
+def test_only_perf022_launch_authority_is_open() -> None:
+    assert contract.PATHFINDER_AUTHORIZATION_COMMIT == (
+        "24b4a3d6a548e5b96589432a5f5d32f572575165"
+    )
+    assert contract.resolve_launch_contract(contract.PERF022_RUN_ID) is contract.PERF022
+    with pytest.raises(ValueError, match="launcher only permits preregistered"):
+        contract.resolve_launch_contract("unregistered-run")
