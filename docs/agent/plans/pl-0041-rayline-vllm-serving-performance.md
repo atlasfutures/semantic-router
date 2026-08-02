@@ -438,7 +438,16 @@ envelope would bring the cumulative conservative maximum to
 `$79.48668484218463`, leaving `$54.82613917781537` under current authority. It
 is preregistered, self-attested, and externally authorized at `e5ba2084`,
 `a524d0d8`, and `739270a1`; only a distinct signed source checkpoint may open
-its one execution.
+its one execution. PERF024 passed that execution: 128/128 measured turns and 16
+warmups completed with zero failures or providers, the worker trace and all
+affinity/telemetry/state-reset gates matched, and bounded cleanup reached exact
+zero. At `r030`, dual affinity improved throughput `1.1442x`, reduced p95
+service latency to `0.7209x`, reduced drain to `0.7169x`, and lowered final
+backlog by two. At `r045`, the ratios were `1.3990x`, `0.4849x`, and `0.5003x`,
+with final backlog lower by one. The conservative 1,013.995-second resource
+upper is `$2.725376389638886`, bringing the cumulative observed upper to
+`$68.343219631823516`. Source authority is closed; the 1,000-case qualification
+remains held.
 
 ### ARC and Remote Comparison
 
