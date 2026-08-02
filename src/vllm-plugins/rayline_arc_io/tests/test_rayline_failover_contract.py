@@ -36,7 +36,10 @@ def test_perf025_freezes_one_r030_cell_and_bounded_two_replica_budget() -> None:
     )
 
 
-def test_perf025_launch_authority_is_closed() -> None:
-    assert contract.PATHFINDER_AUTHORIZATION_COMMIT == "PENDING"
-    with pytest.raises(ValueError, match="no Rayline failover experiment"):
-        contract.resolve_launch_contract(contract.PERF025_RUN_ID)
+def test_only_perf025_launch_authority_is_open() -> None:
+    assert contract.PATHFINDER_AUTHORIZATION_COMMIT == (
+        "c1b080f4a12127985745ff22480d206fc40dd9da"
+    )
+    assert contract.resolve_launch_contract(contract.PERF025_RUN_ID) is contract.PERF025
+    with pytest.raises(ValueError, match="launcher only permits preregistered"):
+        contract.resolve_launch_contract("different-run")

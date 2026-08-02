@@ -468,8 +468,10 @@ production gaps are tracked in TD050. PERF025 has one `r030` cell, no provider
 or generation path, no whole-run retry, and a `$7.4182176` full two-replica
 envelope. That would bring the cumulative conservative maximum to
 `$75.761437231823516` and leave `$58.551386788176484` under current authority.
-Its implementation remains source-closed pending the distinct Pathfinder
-preregistration, attestation, and authorization chain.
+Its implementation was pushed source-closed at `c449a396`. The distinct
+Pathfinder preregistration, attestation, and authorization checkpoints are
+pushed at `652bc815`, `adc8965a`, and `c1b080f4`; only a separate signed source
+checkpoint may open its one execution.
 
 ### ARC and Remote Comparison
 

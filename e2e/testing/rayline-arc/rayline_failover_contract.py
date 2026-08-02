@@ -9,7 +9,7 @@ from rayline_scaleout_contract import ENCODER_APP_NAMES, PERF024, ScaleoutRunCon
 from rayline_three_arm_budget import BudgetContract
 
 PERF025_RUN_ID = "rayline-affinity-failover-perf025-20260803"
-PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
+PATHFINDER_AUTHORIZATION_COMMIT = "c1b080f4a12127985745ff22480d206fc40dd9da"
 FAILOVER_ARMS = ("arc_dual_sticky", "arc_dual_forced_failover")
 TURNS_PER_EPISODE = 4
 FAILOVER_AFTER_POOLING = TURNS_PER_EPISODE // 2
@@ -43,9 +43,9 @@ PERF025 = ScaleoutRunContract(
     ),
 )
 
-# PERF025 remains source-closed until its implementation, preregistration,
-# attestation, and authorization checkpoints are all pushed.
-LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = None
+# PERF025 is the only launchable failover contract after its implementation,
+# preregistration, attestation, and authorization checkpoints were pushed.
+LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = PERF025
 
 
 def resolve_launch_contract(run_id: str) -> ScaleoutRunContract:
