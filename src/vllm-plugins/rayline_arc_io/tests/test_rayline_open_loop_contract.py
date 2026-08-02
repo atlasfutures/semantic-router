@@ -38,7 +38,6 @@ def test_perf020_contract_freezes_rates_and_budget() -> None:
     )
 
 
-def test_perf020_launch_authority_opens_only_registered_run() -> None:
-    assert contract.resolve_launch_contract(contract.PERF020_RUN_ID) is contract.PERF020
-    with pytest.raises(ValueError, match="only permits preregistered run id"):
-        contract.resolve_launch_contract("unregistered-run")
+def test_perf020_launch_authority_is_closed_after_execution() -> None:
+    with pytest.raises(ValueError, match="no Rayline open-loop sweep"):
+        contract.resolve_launch_contract(contract.PERF020_RUN_ID)

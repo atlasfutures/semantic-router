@@ -90,9 +90,10 @@ PERF020 = OpenLoopRunContract(
     ),
 )
 
-# The registry authorization above is signed and pushed. This separate source
-# checkpoint opens exactly one run ID; any launched outcome closes it.
-LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF020
+# PERF020 completed its only authorized execution. It failed integrity because
+# the direct client reused server-expired idle connections. Another measurement
+# requires a new run ID, packet/receipt contract, and dual authorization.
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
 
 
 def resolve_launch_contract(run_id: str) -> OpenLoopRunContract:

@@ -71,8 +71,17 @@ backlog, drain time, achieved start rate, and completion throughput. Its pass
 status is integrity-only; the first overloaded rate is a preregistered
 diagnostic, not a new production SLO. The complete 5,160-resource-second
 envelope is USD 6.9344208 and leaves USD 19.27874248 reserve under current
-authority. Pathfinder authorization is pinned at `8785d0ca`; this signed
-source checkpoint opens exactly PERF020 once it is pushed. The
+authority. PERF020 completed once and failed integrity because Remote completed
+only 16/32 turns in every cell while ARC completed 32/32. The sparse schedule
+left 10.3-52.4 seconds between same-episode turns, beyond the direct Uvicorn
+idle keep-alive; every lane consequently alternated one successful fresh
+connection with one failed stale connection. ARC's Envoy boundary reconnected
+and passed. Cleanup reached zero throughout, provider spend was zero, and the
+observed infrastructure upper estimate was USD 1.63206983. The result also
+showed that this 32-sample Poisson seed realized 1.24 times each nominal rate,
+so successor knee logic must compare achieved starts with the realized
+schedule rate. PERF020's source interlock is closed; its evidence cannot support
+a Remote-versus-ARC capacity comparison. The
 independent endpoint therefore remains the MVP default while
 retained KV is a measured optimization, not a production-readiness claim. The
 separately held quality qualification and HA journal remain open; another
@@ -1281,9 +1290,15 @@ Not in scope:
   provider calls, matching worker traces, 36 ARC session actions, and empty
   retained state after cleanup. Saturation-knee reporting is diagnostic; only
   integrity controls pass/fail. The full USD 6.9344208 envelope is within the
-  current cumulative authority. Pathfinder authorization is pushed at
-  `8785d0ca`; this separate source checkpoint opens exactly one PERF020 launch
-  after push. The 1,000-case qualification remains unreachable.
+  current cumulative authority. PERF020 executed once and failed integrity:
+  Remote alternated fresh-connection success and stale-connection failure,
+  completing 16/32 in all three cells, while ARC completed every turn. The
+  10.3-52.4 second same-episode gaps exceed the direct server's idle keep-alive.
+  Cleanup passed with zero residents and containers; the launcher-window upper
+  estimate was USD 1.63206983 and providers remained unused. Close PERF020.
+  PERF021 must close a thread-local client connection only after each complete
+  decision transaction and compare achieved start rate with the schedule's
+  realized rate. The 1,000-case qualification remains unreachable.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
@@ -1471,7 +1486,10 @@ but held:
    provider or generation endpoint, do not add rate cells at runtime, and close
    launch authority after success or failure. Use its scheduled-arrival
    latency and final-arrival backlog to bracket the single-encoder knee before
-   considering a multi-replica affinity experiment.
+   considering a multi-replica affinity experiment. PERF020 failed exactly
+   once on direct-client stale idle connections and is closed. Prepare PERF021
+   under a new ID with transaction-boundary connection close and realized-rate
+   diagnostics; do not reinterpret the valid ARC-only curve as parity evidence.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage
