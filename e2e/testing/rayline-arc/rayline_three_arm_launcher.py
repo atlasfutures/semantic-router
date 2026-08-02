@@ -34,8 +34,8 @@ from rayline_parity_http_probe import PROTOCOL_BY_ARM, load_packet
 from rayline_three_arm_budget import budget_receipt
 from rayline_three_arm_contract import (
     IDENTITY,
-    LAUNCHABLE_CONTRACT,
     NON_RUNTIME_SECRET_NAMES,
+    PERF016_RUN_ID,
     RunContract,
     resolve_launch_contract,
 )
@@ -366,7 +366,7 @@ def _probe(
 def _parse_args() -> argparse.Namespace:
     root = Path(__file__).resolve().parents[3]
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-id", default=LAUNCHABLE_CONTRACT.run_id)
+    parser.add_argument("--run-id", default=PERF016_RUN_ID)
     parser.add_argument("--pathfinder-root", type=Path, required=True)
     parser.add_argument(
         "--packet-dir",

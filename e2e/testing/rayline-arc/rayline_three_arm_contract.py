@@ -108,11 +108,13 @@ PERF016 = RunContract(
 )
 
 # Historical contracts remain calculable, but closed experiment IDs are not
-# launchable. Changing this value requires a new preregistered experiment ID.
-LAUNCHABLE_CONTRACT = PERF016
+# launchable. A future run requires a new preregistered contract and registry ID.
+LAUNCHABLE_CONTRACT: RunContract | None = None
 
 
 def resolve_launch_contract(run_id: str) -> RunContract:
+    if LAUNCHABLE_CONTRACT is None:
+        raise ValueError("no Rayline three-arm experiment is currently launchable")
     if run_id != LAUNCHABLE_CONTRACT.run_id:
         raise ValueError(
             f"launcher only permits preregistered run id "

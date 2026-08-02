@@ -38,6 +38,10 @@ without colocation. PERF015 then completed the source-frozen three-interface
 packet with exact worker-trace parity and zero failures. ARC retained sessions
 improved throughput by 35.9% over eager and 26.4% over Remote, but every arm
 failed the immutable absolute SLO gates on 42k-token-average histories. The
+PERF016 repeat reproduced the ARC/Remote throughput direction at `1.256x`,
+localized the largest p95 wins to histories above 32k tokens, and proved 1.206M
+tokens were explicitly retained across 102 session appends. Its queued `<8k`
+tail regressed, so concurrency and service time still need separation. The
 independent endpoint therefore remains the MVP default while retained KV is a
 measured optimization, not a production-readiness claim. The separately held
 quality qualification and HA journal remain open; another transaction
@@ -45,7 +49,7 @@ concurrency proof is not required. Current published implementation heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
-  runtime and PERF015 harness at `4447856f30a79887b92c60f6cfd351595effdc02`
+  PERF016 launch source at `769ecae2892112d28c8e96e0d5cf16c370435b01`
   for the capability-gated
   retained-session client, hermetic stack, bounded direct/static/ARC diagnostic,
   fixed three-model OpenRouter transport and retry contracts, and mandatory ARC
@@ -55,7 +59,8 @@ concurrency proof is not required. Current published implementation heads:
   explicit `us-east` placement pin for controlled comparison.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
-  at `9124c6d4` for the registered
+  PERF016 launch source at `78b9310a4b5ef46353c88ee31a30d38bde475d94`
+  for the registered
   retained-session, real-endpoint and OpenRouter canaries, plus the closed,
   artifact-pinned direct/static/ARC stage, encoder diagnostics, PERF009 remote
   transaction-capacity result, PERF011 placement comparator, and PERF014
@@ -1206,10 +1211,13 @@ Not in scope:
   `rayline-ai/router-artifacts@6e391a8b`. The zero-spend follow-up implements
   v2 arm receipts with four fixed input-length buckets and an aggregate ARC
   telemetry sidecar captured before teardown; legacy v1 receipts remain
-  replayable, but mixed schemas fail closed. PERF016 is preregistered as one
-  exact repeat using those new fields. It has a 40-minute paid wall, USD
-  6.1280928 full resource envelope, one-shot ID, zero providers, and no path to
-  the held qualification.
+  replayable, but mixed schemas fail closed. PERF016 completed that exact
+  repeat with trace parity, zero failures, all relative gates passing, and all
+  absolute gates failing. Its ARC/Remote throughput ratio was `1.256x`; ARC p95
+  ratios were `0.536x` from 32k to below 128k tokens and `0.499x` at or above
+  128k, but `1.116x` below 8k under the queued lane mix. Aggregate ARC telemetry
+  records 34 creates, 102 appends, zero rebuilds, and 1.206M retained tokens.
+  Receipts are pinned at `rayline-ai/router-artifacts@5bf052df`.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
@@ -1368,16 +1376,20 @@ but held:
    `rayline-ai/router-artifacts@6e391a8b77394d730af2117ccc79482dd45c65de`.
    The cumulative full-envelope maximum is `$49.47255682` under the
    `$59.31282402` authority, leaving `$9.8402672` conservative reserve. The
-   receipt v2 and aggregate telemetry follow-up now implements ARC
-   create/append/cache persistence plus input-length latency stratification
-   without GPU spend. PERF016 is preregistered as one exact 128-turn-per-arm
-   repeat at concurrency eight, with the same sequential arm order and
-   placement. Its full resource envelope is `$6.1280928`, producing a
-   cumulative conservative maximum of `$55.60064962` and `$3.7121744` reserve
-   under the approved authority. Execute this ID at most once, close it on any
-   failure, and use its bucket and ARC-session telemetry to decide whether a
-   separate concurrency sweep is justified. Do not increase qualification size
-   opportunistically.
+   PERF016 then repeated the exact packet with v2 receipts. All arms completed
+   128/128 with the same worker trace, and all relative gates passed again. ARC
+   reached `0.349 rps` and `10.19s/63.07s/85.09s` p50/p95/p99 versus Remote
+   `0.277 rps` and `12.04s/82.42s/92.18s`. Its ARC/Remote throughput ratio
+   (`1.256x`) nearly duplicated PERF015 (`1.264x`). ARC explicitly retained
+   1,205,793 of 5,703,416 full-history tokens through 34 creates and 102 appends
+   with zero rebuilds. The p95 win concentrated above 32k tokens, while `<8k`
+   was `1.116x` Remote under the queued lane mix. The run used a `$2.268730`
+   launcher-window resource upper estimate, cleaned to stable zero, and is
+   privately pinned at
+   `rayline-ai/router-artifacts@5bf052dffeaa5ffbfb5cc333741e18aaba81c9e0`.
+   Close PERF016 without retry. Preregister a bounded concurrency sweep with
+   state isolation between cells before another launch; do not increase
+   qualification size opportunistically.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage

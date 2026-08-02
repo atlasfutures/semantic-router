@@ -48,7 +48,7 @@ def test_budget_preserves_packet_ceiling_and_cleanup_reserve() -> None:
     assert receipt["maximum_resource_seconds"] > receipt["maximum_paid_wall_seconds"]
 
 
-def test_perf016_contract_is_exact_and_closed_runs_are_not_launchable() -> None:
+def test_perf016_contract_is_exact_and_all_completed_runs_are_closed() -> None:
     receipt = budget.budget_receipt(contract.PERF016.budget)
     expected_resource_seconds = (
         contract.PERF016.budget.maximum_paid_wall_seconds
@@ -56,7 +56,7 @@ def test_perf016_contract_is_exact_and_closed_runs_are_not_launchable() -> None:
         + contract.PERF016.budget.maximum_scaledown_seconds
     )
 
-    assert contract.LAUNCHABLE_CONTRACT.run_id == contract.PERF016_RUN_ID
+    assert contract.LAUNCHABLE_CONTRACT is None
     assert (
         receipt["maximum_paid_wall_seconds"]
         == contract.PERF016.budget.maximum_paid_wall_seconds
@@ -65,8 +65,10 @@ def test_perf016_contract_is_exact_and_closed_runs_are_not_launchable() -> None:
     assert receipt["maximum_resource_envelope_usd"] == pytest.approx(6.1280928)
     assert receipt["cumulative_if_full_envelope_usd"] == pytest.approx(55.60064962)
     assert receipt["reserve_after_full_envelope_usd"] == pytest.approx(3.7121744)
-    with pytest.raises(ValueError, match="only permits preregistered run id"):
+    with pytest.raises(ValueError, match="currently launchable"):
         contract.resolve_launch_contract(contract.PERF015_RUN_ID)
+    with pytest.raises(ValueError, match="currently launchable"):
+        contract.resolve_launch_contract(contract.PERF016_RUN_ID)
 
 
 def test_pathfinder_config_uses_same_workers_and_protected_encoder(

@@ -370,6 +370,44 @@ produces a cumulative conservative maximum of USD 55.60064962 under the USD
 59.31282402 authority, leaving USD 3.7121744. Provider calls and spend remain
 zero, and the held 1,000-case qualification is unreachable from this launcher.
 
+### PERF016 result
+
+PERF016 completed every integrity gate: all three arms finished 128/128 turns
+with zero failures or provider calls, their worker-trace digest exactly matched
+PERF015, all v2 token buckets reconciled, and ARC telemetry reconciled 34
+session creates plus 102 appends to its 136 measured-plus-warmup requests. No
+session rebuilt or truncated.
+
+| Arm | Throughput | p50 | p95 | p99 |
+| --- | ---: | ---: | ---: | ---: |
+| Eager local interface (`modal_inprocess`) | 0.259 rps | 14.33 s | 84.92 s | 94.88 s |
+| Remote prepare/commit/settle | 0.277 rps | 12.04 s | 82.42 s | 92.18 s |
+| ARC retained session/KV | 0.349 rps | 10.19 s | 63.07 s | 85.09 s |
+
+All relative gates passed again. ARC throughput was `1.346x` eager and
+`1.256x` Remote; its p95 ratios were `0.743x` and `0.765x`. PERF015's
+ARC/Remote throughput ratio was `1.264x`, so the central direction repeated
+almost exactly despite roughly 10% run-to-run throughput variation. Every arm
+again failed the immutable absolute SLO gates.
+
+ARC processed 5,703,416 full-history tokens as 1,205,793 retained and
+4,497,623 appended tokens, a 21.14% retained share. Automatic-prefix-cached
+tokens remain zero by design; explicit retained-session tokens are the relevant
+cross-turn reuse measure. Compared with Remote, ARC p95 was `0.536x` for the
+24 cases from 32k to below 128k tokens and `0.499x` for the 11 cases at or above
+128k. It was `1.116x` on the 55 cases below 8k. Because these buckets include
+client queueing at concurrency eight, especially lane-order head-of-line
+blocking, they diagnose where to measure next rather than define an isolated
+encoder service curve.
+
+The launcher window, including cleanup, was 1,688.19 seconds, with a USD
+2.2687301622 resource upper estimate and zero provider spend. Seven
+aggregate-only files are privately round-trip verified at
+`rayline-ai/router-artifacts@5bf052dffeaa5ffbfb5cc333741e18aaba81c9e0`.
+The exact Modal app stopped with zero tasks and held zero containers for 65
+seconds. PERF016 is closed without retry, and no three-arm experiment is
+currently launchable from the source tree.
+
 ## External Provider Canary
 
 This canary proves transport and settlement only; it is excluded from local
