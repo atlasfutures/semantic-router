@@ -62,7 +62,17 @@ was `0.931x`, `0.871x`, and `0.774x`; both arms scaled only about `1.05-1.07x`
 from c1, exposing the shared single-encoder saturation boundary. All state and
 resource cleanup passed, provider calls stayed zero, and private receipts are
 pinned at `rayline-ai/router-artifacts@1bc01b2b`. The source interlock is closed
-after the one authorized execution. The
+after the one authorized execution. PERF020 is implemented and locally
+validated as the next bounded diagnostic: it replays the same 32 measured turns
+per arm under seeded-Poisson open-loop arrivals at `0.15`, `0.30`, and `0.45`
+decisions per second. It preserves per-episode ordering and fresh state per
+cell, and records scheduled-arrival latency, service latency, start lag,
+backlog, drain time, achieved start rate, and completion throughput. Its pass
+status is integrity-only; the first overloaded rate is a preregistered
+diagnostic, not a new production SLO. The complete 5,160-resource-second
+envelope is USD 6.9344208 and leaves USD 19.27874248 reserve under current
+authority. Launch remains closed until the source checkpoint is pushed and the
+new experiment namespace is preregistered in Pathfinder. The
 independent endpoint therefore remains the MVP default while
 retained KV is a measured optimization, not a production-readiness claim. The
 separately held quality qualification and HA journal remain open; another
@@ -1263,7 +1273,16 @@ Not in scope:
   only about 5-7% throughput from c1 to c8, so the single remote encoder is
   already the shared bottleneck. Cleanup reached stable zero and aggregate-only
   receipts are privately pinned at `rayline-ai/router-artifacts@1bc01b2b`.
-  Close PERF019 without retry; the 1,000-case qualification remains unreachable.
+  Close PERF019 without retry. PERF020 freezes the same 32-turn packet into
+  seeded-Poisson open-loop cells at `0.15`, `0.30`, and `0.45` decisions per
+  second, with queue-inclusive scheduled latency, start lag, client backlog,
+  and drain time separated from selector service time. Each rate gets fresh
+  Pathfinder/ARC/Redis state and both arms must complete 32/32 with zero
+  provider calls, matching worker traces, 36 ARC session actions, and empty
+  retained state after cleanup. Saturation-knee reporting is diagnostic; only
+  integrity controls pass/fail. The full USD 6.9344208 envelope is within the
+  current cumulative authority. Keep launch closed until source push and
+  Pathfinder preregistration; the 1,000-case qualification remains unreachable.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
@@ -1446,7 +1465,12 @@ but held:
    and preregister otherwise identical PERF019. The additional USD 20 authority
    opened exactly one execution. PERF019 passed all six arms and cleanup gates;
    close its source interlock without retry and keep the held 1,000-case
-   qualification closed.
+   qualification closed. Implement and execute PERF020 exactly once after its
+   signed source and registry checkpoints are both remote-visible. Use no
+   provider or generation endpoint, do not add rate cells at runtime, and close
+   launch authority after success or failure. Use its scheduled-arrival
+   latency and final-arrival backlog to bracket the single-encoder knee before
+   considering a multi-replica affinity experiment.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage
