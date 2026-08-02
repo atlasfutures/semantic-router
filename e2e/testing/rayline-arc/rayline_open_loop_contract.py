@@ -111,9 +111,8 @@ PERF021 = OpenLoopRunContract(
     ),
 )
 
-# PERF020 is closed. PERF021 is the only launchable contract after its exact
-# Pathfinder preregistration and authorization checkpoints became remote-visible.
-LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF021
+# PERF020 and PERF021 are closed after their one authorized executions.
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
 
 
 def resolve_launch_contract(run_id: str) -> OpenLoopRunContract:

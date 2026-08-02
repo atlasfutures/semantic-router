@@ -93,8 +93,12 @@ reserve under the previous authority. The additional USD 50 authority raises
 that full-envelope reserve to USD 67.64667265. Its implementation is pushed at
 `7c685cca`, renewed authority at `8caf6b49`, immutable Pathfinder
 preregistration at `ae205109`, attestation at `86f43d09`, and authorization at
-`b53434ab`. The source interlock pins that authorization commit and opens only
-PERF021 for one execution. The
+`b53434ab`. PERF021 then passed its one execution: all six arms completed 32/32
+with zero failures and identical traces, all telemetry and state-reset gates
+reconciled, and cleanup reached zero. The source interlock is closed again.
+The realized single-H100 saturation knee is bracketed between `0.1862` and
+`0.3724` decisions per second; ARC throughput was 6.9%, 9.2%, and 13.5% above
+Remote at the three ordered cells. The
 independent endpoint therefore remains the MVP default while
 retained KV is a measured optimization, not a production-readiness claim. The
 separately held quality qualification and HA journal remain open; another
@@ -1314,8 +1318,11 @@ Not in scope:
   realized rate. PERF021 implements that narrow delta with replay compatibility
   for all PERF020 v1 receipts. Its signed implementation, preregistration,
   attestation, and registry authorization are remote-visible; the source
-  resolver pins `b53434ab` and opens only PERF021 for one execution. The
-  1,000-case qualification remains unreachable.
+  resolver pinned `b53434ab` for one execution. PERF021 passed with 192/192
+  measured turns, zero failures, exact trace and telemetry parity, zero
+  providers, and complete cleanup; close its source and registry authority.
+  Use its measured knee to preregister a bounded multi-replica, cache-affinity
+  deployment experiment. The 1,000-case qualification remains unreachable.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
@@ -1507,8 +1514,10 @@ but held:
    once on direct-client stale idle connections and is closed. Prepare PERF021
    under a new ID with transaction-boundary connection close and realized-rate
    diagnostics; do not reinterpret the valid ARC-only curve as parity evidence.
-   PERF021's signed source and registry checkpoints are now remote-visible, and
-   only its exact run ID is launchable for one execution.
+   PERF021 passed its one authorized run and is closed: 192/192 measured turns,
+   zero failures, exact trace/telemetry parity, complete cleanup, and zero
+   provider spend. Preregister the next bounded deployment phase from the
+   measured `0.1862`-to-`0.3724` single-H100 knee; do not reopen PERF021.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage
