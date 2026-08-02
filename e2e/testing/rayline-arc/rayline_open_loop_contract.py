@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from rayline_three_arm_budget import BudgetContract
 
 PERF020_RUN_ID = "rayline-open-loop-sweep-perf020-20260802"
-PATHFINDER_AUTHORIZATION_COMMIT = "8785d0ca94b579accf128a06c369f9a06ab229f0"
+PERF021_RUN_ID = "rayline-open-loop-sweep-perf021-20260802"
+PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
 MEASURED_CASES = 32
 WARMUP_CASES = 4
 MEASURED_EPISODES = 8
@@ -90,9 +91,28 @@ PERF020 = OpenLoopRunContract(
     ),
 )
 
-# PERF020 completed its only authorized execution. It failed integrity because
-# the direct client reused server-expired idle connections. Another measurement
-# requires a new run ID, packet/receipt contract, and dual authorization.
+PERF021 = OpenLoopRunContract(
+    run_id=PERF021_RUN_ID,
+    packet_manifest_sha256=PERF020.packet_manifest_sha256,
+    corpus_sha256=PERF020.corpus_sha256,
+    topology_sha256=PERF020.topology_sha256,
+    cells=PERF020.cells,
+    compose_project_prefix="rayline-open-loop-perf021",
+    temporary_prefix="rayline-perf021-",
+    budget=BudgetContract(
+        run_id=PERF021_RUN_ID,
+        previous_conservative_usd=59.73173056879144,
+        authorized_cumulative_usd=84.31282402,
+        packet_ceiling_usd=7.0,
+        required_reserve_usd=3.0,
+        maximum_paid_wall_seconds=MAXIMUM_PAID_WALL_SECONDS,
+        maximum_orphan_request_seconds=MAXIMUM_ORPHAN_REQUEST_SECONDS,
+        maximum_scaledown_seconds=MAXIMUM_SCALEDOWN_SECONDS,
+    ),
+)
+
+# PERF020 is closed. PERF021 remains closed while the transport fix, strict
+# receipt update, source push, and external preregistration are validated.
 LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
 
 

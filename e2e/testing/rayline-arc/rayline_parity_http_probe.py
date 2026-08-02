@@ -137,6 +137,13 @@ class JSONClient:
             self._local.connection = connection
         return connection
 
+    def close_thread_connection(self) -> None:
+        """Close the caller thread's keep-alive connection, if one exists."""
+        connection = getattr(self._local, "connection", None)
+        if connection is not None:
+            connection.close()
+            self._local.connection = None
+
     def request(
         self,
         method: str,

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
+import http.client
 import importlib
 import sys
 from pathlib import Path
@@ -37,11 +39,21 @@ def test_poisson_schedule_is_seeded_and_round_robins_episode_turns() -> None:
     assert all(value >= 0 for value in first.values())
 
 
+def test_json_client_closes_the_calling_threads_connection() -> None:
+    client = parity.JSONClient("http://127.0.0.1:1", timeout_seconds=1.0)
+    client._local.connection = http.client.HTTPConnection("127.0.0.1", 1)
+
+    client.close_thread_connection()
+
+    assert client._local.connection is None
+
+
 def test_open_loop_receipt_schema_is_aggregate_only() -> None:
     source = (SCRIPT_DIR / "rayline_open_loop_probe.py").read_text()
 
     assert "scheduled_latency_seconds" in probe.RESULT_FIELDS
     assert "start_lag_seconds" in probe.RESULT_FIELDS
+    assert "realized_arrival_rate_rps" in probe.RESULT_FIELDS
     assert "backlog_at_final_arrival" in probe.RESULT_FIELDS
     assert '"messages"' not in probe.RESULT_FIELDS
     assert "raw_cases" not in probe.RESULT_FIELDS
@@ -75,10 +87,17 @@ def test_open_loop_probe_executes_all_episode_lanes(monkeypatch) -> None:
         lambda **_kwargs: lambda _case_value: ("worker", 0.0001),
     )
 
+    class Client:
+        closes = 0
+
+        def close_thread_connection(self) -> None:
+            self.closes += 1
+
+    client = Client()
     receipt = probe.run_open_loop_probe(
         arm="rayline_arc",
         protocol=parity.PROTOCOL_BY_ARM["rayline_arc"],
-        client=object(),
+        client=client,
         warmup=[],
         measured=measured,
         identity=identity,
@@ -90,3 +109,14 @@ def test_open_loop_probe_executes_all_episode_lanes(monkeypatch) -> None:
     assert receipt["results"]["completed"] == len(measured)
     assert receipt["results"]["failed"] == 0
     assert receipt["results"]["provider_calls"] == 0
+    assert client.closes == len(measured)
+    assert receipt["results"]["realized_arrival_rate_rps"] > 0
+
+    legacy = copy.deepcopy(receipt)
+    legacy["schema_version"] = probe.LEGACY_INPUT_SCHEMA
+    legacy["results"].pop("realized_arrival_rate_rps")
+    normalized = probe.validate_receipt(legacy)
+    assert normalized["schema_version"] == probe.LEGACY_INPUT_SCHEMA
+    assert normalized["results"]["realized_arrival_rate_rps"] == (
+        (len(measured) - 1) / normalized["results"]["scheduled_span_seconds"]
+    )

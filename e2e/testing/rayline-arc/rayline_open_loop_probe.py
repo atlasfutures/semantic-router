@@ -43,7 +43,8 @@ from rayline_parity_http_probe import (
     load_corpus,
 )
 
-INPUT_SCHEMA = "rayline.vllm.open-loop-input.v1"
+LEGACY_INPUT_SCHEMA = "rayline.vllm.open-loop-input.v1"
+INPUT_SCHEMA = "rayline.vllm.open-loop-input.v2"
 RUN_ID_MAX_LENGTH = 128
 SHA256_LENGTH = 64
 LATENCY_FIELDS = ("p50", "p95", "p99")
@@ -52,6 +53,7 @@ RESULT_FIELDS = (
     "completed",
     "failed",
     "offered_rate_rps",
+    "realized_arrival_rate_rps",
     "scheduled_span_seconds",
     "duration_seconds",
     "completion_throughput_rps",
@@ -64,6 +66,9 @@ RESULT_FIELDS = (
     "drain_seconds_after_final_arrival",
     "selected_worker_trace_sha256",
     "provider_calls",
+)
+LEGACY_RESULT_FIELDS = tuple(
+    field for field in RESULT_FIELDS if field != "realized_arrival_rate_rps"
 )
 
 
@@ -114,10 +119,15 @@ def _validate_identity(identity_raw: object) -> dict[str, Any]:
     return identity
 
 
-def _validate_results(results_raw: object, *, case_count: int) -> dict[str, Any]:
+def _validate_results(
+    results_raw: object, *, case_count: int, schema_version: str
+) -> dict[str, Any]:
     if not isinstance(results_raw, Mapping):
         raise ProbeError("results must be an object")
-    _exact_keys(results_raw, set(RESULT_FIELDS), "results")
+    result_fields = (
+        RESULT_FIELDS if schema_version == INPUT_SCHEMA else LEGACY_RESULT_FIELDS
+    )
+    _exact_keys(results_raw, set(result_fields), "results")
     results = dict(results_raw)
     for field in (
         "scheduled",
@@ -146,11 +156,25 @@ def _validate_results(results_raw: object, *, case_count: int) -> dict[str, Any]
             positive=field
             in {
                 "offered_rate_rps",
+                "scheduled_span_seconds",
                 "duration_seconds",
                 "completion_throughput_rps",
                 "achieved_start_rate_rps",
             },
         )
+    realized_rate = (results["scheduled"] - 1) / results["scheduled_span_seconds"]
+    if schema_version == INPUT_SCHEMA:
+        results["realized_arrival_rate_rps"] = _finite(
+            results["realized_arrival_rate_rps"],
+            "results.realized_arrival_rate_rps",
+            positive=True,
+        )
+        if not math.isclose(
+            results["realized_arrival_rate_rps"], realized_rate, rel_tol=1e-9
+        ):
+            raise ProbeError("realized arrival rate differs from scheduled span")
+    else:
+        results["realized_arrival_rate_rps"] = realized_rate
     for field in (
         "service_latency_seconds",
         "scheduled_latency_seconds",
@@ -172,15 +196,23 @@ def validate_receipt(raw: Mapping[str, Any]) -> dict[str, Any]:
     _exact_keys(
         raw, {"schema_version", "arm", "run_id", "identity", "results"}, "receipt"
     )
-    if raw["schema_version"] != INPUT_SCHEMA or raw["arm"] not in ARMS:
+    schema_version = str(raw["schema_version"])
+    if (
+        schema_version not in {LEGACY_INPUT_SCHEMA, INPUT_SCHEMA}
+        or raw["arm"] not in ARMS
+    ):
         raise ProbeError("unsupported open-loop receipt identity")
     run_id = str(raw["run_id"])
     if not run_id or len(run_id) > RUN_ID_MAX_LENGTH:
         raise ProbeError("run_id must contain 1 to 128 characters")
     identity = _validate_identity(raw["identity"])
-    results = _validate_results(raw["results"], case_count=int(identity["case_count"]))
+    results = _validate_results(
+        raw["results"],
+        case_count=int(identity["case_count"]),
+        schema_version=schema_version,
+    )
     return {
-        "schema_version": INPUT_SCHEMA,
+        "schema_version": schema_version,
         "arm": str(raw["arm"]),
         "run_id": run_id,
         "identity": identity,
@@ -309,6 +341,7 @@ def run_open_loop_probe(
         base=base,
         clock=clock,
         sleeper=sleeper,
+        close_connection=client.close_thread_connection,
     )
     return _render_receipt(
         arm=arm,
@@ -330,6 +363,7 @@ def _execute_open_loop(
     base: float,
     clock: Callable[[], float],
     sleeper: Callable[[float], None],
+    close_connection: Callable[[], None],
 ) -> dict[str, dict[str, Any]]:
 
     def run_lane(cases: list[Case]) -> list[dict[str, Any]]:
@@ -351,6 +385,7 @@ def _execute_open_loop(
                 service_latency = 0.0
                 success = False
             completed_at = clock()
+            close_connection()
             outcomes.append(
                 {
                     "case_id": case.case_id,
@@ -416,6 +451,9 @@ def _render_receipt(
             "completed": len(successes),
             "failed": len(measured) - len(successes),
             "offered_rate_rps": offered_rate_rps,
+            "realized_arrival_rate_rps": (
+                (len(measured) - 1) / (arrival_offsets[-1] - arrival_offsets[0])
+            ),
             "scheduled_span_seconds": arrival_offsets[-1] - arrival_offsets[0],
             "duration_seconds": duration,
             "completion_throughput_rps": len(successes) / duration,
@@ -455,9 +493,12 @@ def _warm_selector(
         raise ProbeError("arm/protocol pair is not registered")
     select = _selector(arm=arm, client=client, run_id=run_id, identity=identity)
     for case in warmup:
-        observed, _latency_value = select(case)
-        if observed not in worker_map:
-            raise ProbeError("warmup selected an unmapped worker")
+        try:
+            observed, _latency_value = select(case)
+            if observed not in worker_map:
+                raise ProbeError("warmup selected an unmapped worker")
+        finally:
+            client.close_thread_connection()
     return select
 
 

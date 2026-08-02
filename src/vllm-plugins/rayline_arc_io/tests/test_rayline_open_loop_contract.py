@@ -37,7 +37,19 @@ def test_perf020_contract_freezes_rates_and_budget() -> None:
         19.27874248044413
     )
 
+    successor = budget.budget_receipt(contract.PERF021.budget)
+    assert contract.PERF021.cells == contract.PERF020.cells
+    assert successor["maximum_resource_envelope_usd"] == pytest.approx(6.9344208)
+    assert successor["cumulative_if_full_envelope_usd"] == pytest.approx(
+        66.66615136879144
+    )
+    assert successor["reserve_after_full_envelope_usd"] == pytest.approx(
+        17.64667265120856
+    )
+
 
 def test_perf020_launch_authority_is_closed_after_execution() -> None:
     with pytest.raises(ValueError, match="no Rayline open-loop sweep"):
         contract.resolve_launch_contract(contract.PERF020_RUN_ID)
+    with pytest.raises(ValueError, match="no Rayline open-loop sweep"):
+        contract.resolve_launch_contract(contract.PERF021_RUN_ID)

@@ -16,7 +16,7 @@ from rayline_open_loop_packet import MEASUREMENT_SCOPE, OFFERED_RATES, rate_labe
 from rayline_open_loop_probe import INPUT_SCHEMA, ProbeError, validate_receipt
 from rayline_parity_comparator import IDENTITY_FIELDS
 
-REPORT_SCHEMA = "rayline.vllm.open-loop-comparison.v1"
+REPORT_SCHEMA = "rayline.vllm.open-loop-comparison.v2"
 OPEN_LOOP_ARMS = ("rayline_remote", "rayline_arc")
 MEASURED_CASES = 32
 FINAL_BACKLOG_KNEE = 8
@@ -86,11 +86,12 @@ def _diagnostic(receipt: Mapping[str, Any]) -> dict[str, Any]:
     results = receipt["results"]
     maintained = (
         results["achieved_start_rate_rps"]
-        >= START_RATE_FLOOR_RATIO * results["offered_rate_rps"]
+        >= START_RATE_FLOOR_RATIO * results["realized_arrival_rate_rps"]
     )
     bounded = results["backlog_at_final_arrival"] < FINAL_BACKLOG_KNEE
     return {
         "offered_rate_maintained": maintained,
+        "realized_arrival_rate_rps": results["realized_arrival_rate_rps"],
         "final_arrival_backlog_bounded": bounded,
         "queue_latency_dominates_service_p95": (
             results["start_lag_seconds"]["p95"]

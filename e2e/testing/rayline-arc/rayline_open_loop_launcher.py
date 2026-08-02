@@ -35,7 +35,7 @@ from rayline_open_loop_contract import (
     MEASURED_EPISODES,
     OPEN_LOOP_ARMS,
     PATHFINDER_AUTHORIZATION_COMMIT,
-    PERF020_RUN_ID,
+    PERF021_RUN_ID,
     WARMUP_CASES,
     WARMUP_EPISODES,
     OpenLoopCell,
@@ -62,7 +62,7 @@ EXPECTED_ARC_REQUESTS = MEASURED_CASES + WARMUP_CASES
 def _parse_args() -> argparse.Namespace:
     root = Path(__file__).resolve().parents[3]
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-id", default=PERF020_RUN_ID)
+    parser.add_argument("--run-id", default=PERF021_RUN_ID)
     parser.add_argument("--pathfinder-root", type=Path, required=True)
     parser.add_argument(
         "--packet-dir",

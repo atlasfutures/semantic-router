@@ -81,7 +81,16 @@ observed infrastructure upper estimate was USD 1.63206983. The result also
 showed that this 32-sample Poisson seed realized 1.24 times each nominal rate,
 so successor knee logic must compare achieved starts with the realized
 schedule rate. PERF020's source interlock is closed; its evidence cannot support
-a Remote-versus-ARC capacity comparison. The
+a Remote-versus-ARC capacity comparison. PERF021 is implemented locally as an
+identity-equivalent successor under a new namespace. Its direct and ARC clients
+close only the caller thread's connection after a complete routing decision,
+so Remote still keeps prepare/commit/settle on one connection but cannot reuse
+it after an idle server timeout. Strict v2 receipts now carry the realized
+arrival rate derived from the frozen schedule span; all six PERF020 v1 receipts
+remain replayable. The successor's USD 6.9344208 full envelope would bring the
+cumulative conservative maximum to USD 66.66615137 and leave USD 17.64667265
+reserve. Its source interlock remains closed pending signed source push and
+Pathfinder preregistration. The
 independent endpoint therefore remains the MVP default while
 retained KV is a measured optimization, not a production-readiness claim. The
 separately held quality qualification and HA journal remain open; another
@@ -1298,7 +1307,10 @@ Not in scope:
   estimate was USD 1.63206983 and providers remained unused. Close PERF020.
   PERF021 must close a thread-local client connection only after each complete
   decision transaction and compare achieved start rate with the schedule's
-  realized rate. The 1,000-case qualification remains unreachable.
+  realized rate. PERF021 implements that narrow delta with replay compatibility
+  for all PERF020 v1 receipts. Keep its launch closed until the implementation
+  and registry checkpoints are pushed. The 1,000-case qualification remains
+  unreachable.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
