@@ -83,7 +83,7 @@ PERF017 = ConcurrencyRunContract(
     budget=BudgetContract(
         run_id=PERF017_RUN_ID,
         previous_conservative_usd=55.60064962,
-        authorized_cumulative_usd=59.31282402,
+        authorized_cumulative_usd=64.31282402,
         packet_ceiling_usd=6.0,
         required_reserve_usd=3.0,
         maximum_paid_wall_seconds=30 * 60,
@@ -91,11 +91,12 @@ PERF017 = ConcurrencyRunContract(
 )
 
 # PERF017 needs USD 63.92241442 of cumulative authority to preserve its frozen
-# USD 3 reserve. Current authority is lower, so neither source nor CLI can
-# launch it. Raising authority requires a new signed, pushed source checkpoint.
+# USD 3 reserve. The user authorized another USD 5, and this signed, pushed
+# source checkpoint is the one-shot launch boundary.
 REQUIRED_CUMULATIVE_AUTHORITY_USD = 63.92241442
-ADDITIONAL_AUTHORITY_REQUIRED_USD = 4.6095904
-LAUNCHABLE_CONTRACT: ConcurrencyRunContract | None = None
+ADDITIONAL_AUTHORITY_GRANTED_USD = 5.0
+ADDITIONAL_AUTHORITY_REQUIRED_USD = 0.0
+LAUNCHABLE_CONTRACT: ConcurrencyRunContract | None = PERF017
 
 
 def resolve_launch_contract(run_id: str) -> ConcurrencyRunContract:

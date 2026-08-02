@@ -45,10 +45,11 @@ tail regressed, so concurrency and service time still need separation. The
 zero-spend PERF017 implementation now freezes a 32-turn Remote-versus-ARC sweep
 at concurrency `1`, `4`, and `8`, with a fresh Pathfinder and ARC/Redis stack
 plus explicit zero-resident-session proof between every cell. Its packet,
-probe, comparator, cleanup receipt, and launcher are implemented, but the
-source launch interlock remains closed: preserving the registered USD 3 reserve
-requires USD 4.6095904 more cumulative authority. No PERF017 GPU request has
-been issued. The independent endpoint therefore remains the MVP default while
+probe, comparator, cleanup receipt, and launcher are implemented. The user
+approved the proposed additional USD 5, raising cumulative authority to USD
+64.31282402 and leaving USD 3.3904096 after the full envelope. The signed,
+pushed launch checkpoint opens only PERF017; no GPU request preceded it. The
+independent endpoint therefore remains the MVP default while
 retained KV is a measured optimization, not a production-readiness claim. The
 separately held
 quality qualification and HA journal remain open; another transaction
@@ -1235,8 +1236,10 @@ Not in scope:
   comparator reports per-cell ARC/Remote ratios and per-arm `c4/c1` and
   `c8/c1` scaling without inventing a new absolute SLO. The 3,960-second full
   resource envelope is USD 5.3217648; preserving the USD 3 reserve needs USD
-  63.92241442 cumulative authority, USD 4.6095904 above the current authority.
-  The launch contract is therefore closed and PERF017 remains unlaunched.
+  63.92241442 cumulative authority. The user approved another USD 5, raising
+  the cumulative cap to USD 64.31282402 and leaving USD 3.3904096 after the
+  full envelope. The one-shot PERF017 launch contract is therefore open; the
+  1,000-case qualification remains unreachable.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
@@ -1409,11 +1412,11 @@ but held:
    Close PERF016 without retry. Preregister a bounded concurrency sweep with
    state isolation between cells before another launch; do not increase
    qualification size opportunistically. That PERF017 implementation and exact
-   packet are now ready. Keep its launch interlock closed until at least USD
-   4.6095904 of additional cumulative authority preserves the frozen USD 3
-   reserve; then execute the one-shot 32-turn Remote/ARC cells at concurrency
-   1, 4, and 8 and publish only aggregate receipts. Do not execute the held
-   1,000-case qualification.
+   packet are now ready. The user approved the proposed additional USD 5, so
+   publish the signed authorization checkpoints, execute the one-shot 32-turn
+   Remote/ARC cells at concurrency 1, 4, and 8, verify every state reset, and
+   publish only aggregate receipts. Do not execute the held 1,000-case
+   qualification.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage

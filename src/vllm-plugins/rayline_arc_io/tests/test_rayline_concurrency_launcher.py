@@ -16,16 +16,16 @@ contract = importlib.import_module("rayline_concurrency_contract")
 launcher = importlib.import_module("rayline_concurrency_launcher")
 
 
-def test_closed_contract_stops_before_preflight_side_effects(tmp_path: Path) -> None:
+def test_unregistered_run_stops_before_preflight_side_effects(tmp_path: Path) -> None:
     args = launcher.argparse.Namespace(
-        run_id=contract.PERF017_RUN_ID,
+        run_id="unregistered-run",
         pathfinder_root=tmp_path,
         packet_dir=tmp_path / "packet",
         runtime_dir=tmp_path / "runtime",
         router_image="unused",
     )
 
-    with pytest.raises(ValueError, match="currently launchable"):
+    with pytest.raises(ValueError, match="only permits preregistered"):
         launcher._preflight(args)
 
     assert list(tmp_path.iterdir()) == []

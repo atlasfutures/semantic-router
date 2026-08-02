@@ -408,7 +408,7 @@ The exact Modal app stopped with zero tasks and held zero containers for 65
 seconds. PERF016 is closed without retry, and no three-arm experiment is
 currently launchable from the source tree.
 
-### PERF017 preregistered concurrency sweep (unlaunched)
+### PERF017 preregistered concurrency sweep (authorized, unlaunched)
 
 PERF017 is the next bounded diagnostic, not a larger qualification. It derives
 the first eight complete measured episodes and the first disjoint warmup episode
@@ -444,11 +444,13 @@ The run ID is `rayline-concurrency-sweep-perf017-20260802`. Its exact 30-minute
 paid wall, 31-minute orphan request, and five-minute scale-down tail total 3,960
 resource seconds and USD 5.3217648. Charging the full PERF016 envelope first
 would make the cumulative conservative maximum USD 60.92241442. Preserving the
-frozen USD 3 reserve requires cumulative authority of USD 63.92241442, which is
-USD 4.6095904 above the current USD 59.31282402 authority. Therefore
-`LAUNCHABLE_CONTRACT` remains `None`: the packet, comparator, state reset, and
-launcher are ready, but no PERF017 GPU or provider request has been launched.
-The held 1,000-case qualification remains unreachable.
+frozen USD 3 reserve requires cumulative authority of USD 63.92241442. The user
+approved the proposed additional USD 5, raising cumulative authority to USD
+64.31282402 and leaving USD 3.3904096 after the full envelope. The signed,
+pushed source checkpoint therefore sets `LAUNCHABLE_CONTRACT` to PERF017. The
+packet, comparator, state reset, and launcher are ready; no PERF017 GPU or
+provider request had been launched before this authorization checkpoint. The
+held 1,000-case qualification remains unreachable.
 
 ## External Provider Canary
 

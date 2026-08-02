@@ -30,12 +30,9 @@ def test_perf017_packet_and_cell_contract_is_exact() -> None:
     assert contract.SWEEP_ARMS == ("rayline_remote", "rayline_arc")
 
 
-def test_perf017_budget_is_preregistered_but_not_authorized() -> None:
-    envelope = (
-        contract.PERF017.budget.maximum_paid_wall_seconds
-        + contract.PERF017.budget.maximum_orphan_request_seconds
-        + contract.PERF017.budget.maximum_scaledown_seconds
-    ) * budget.resource_rate_usd_per_second()
+def test_perf017_budget_is_preregistered_and_authorized() -> None:
+    receipt = budget.budget_receipt(contract.PERF017.budget)
+    envelope = receipt["maximum_resource_envelope_usd"]
     required_authority = (
         contract.PERF017.budget.previous_conservative_usd
         + envelope
@@ -46,11 +43,8 @@ def test_perf017_budget_is_preregistered_but_not_authorized() -> None:
     assert required_authority == pytest.approx(
         contract.REQUIRED_CUMULATIVE_AUTHORITY_USD
     )
-    assert (
-        required_authority - contract.PERF017.budget.authorized_cumulative_usd
-        == pytest.approx(contract.ADDITIONAL_AUTHORITY_REQUIRED_USD)
-    )
-    with pytest.raises(budget.BudgetError, match="exceeds budget authority"):
-        budget.budget_receipt(contract.PERF017.budget)
-    with pytest.raises(ValueError, match="currently launchable"):
-        contract.resolve_launch_contract(contract.PERF017_RUN_ID)
+    assert receipt["cumulative_if_full_envelope_usd"] == pytest.approx(60.92241442)
+    assert receipt["reserve_after_full_envelope_usd"] == pytest.approx(3.3904096)
+    assert pytest.approx(5.0) == contract.ADDITIONAL_AUTHORITY_GRANTED_USD
+    assert contract.ADDITIONAL_AUTHORITY_REQUIRED_USD == 0.0
+    assert contract.resolve_launch_contract(contract.PERF017_RUN_ID) is contract.PERF017
