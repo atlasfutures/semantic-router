@@ -25,7 +25,7 @@ def test_unregistered_scaleout_stops_before_side_effects(tmp_path: Path) -> None
         router_image="unused",
     )
 
-    with pytest.raises(ValueError, match="launcher only permits preregistered"):
+    with pytest.raises(ValueError, match="no Rayline scale-out experiment"):
         launcher._preflight(args)
 
     assert list(tmp_path.iterdir()) == []
@@ -76,7 +76,7 @@ def test_cleanup_stop_is_noninteractive() -> None:
     assert "Function.from_name" not in source
 
 
-def test_cleanup_deletes_token_even_when_one_stop_call_fails(monkeypatch) -> None:
+def test_cleanup_deletes_token_and_waits_for_stable_zero(monkeypatch) -> None:
     deleted: list[str] = []
     calls: list[str] = []
 
@@ -99,12 +99,19 @@ def test_cleanup_deletes_token_even_when_one_stop_call_fails(monkeypatch) -> Non
         return True
 
     monkeypatch.setattr(launcher, "_stop_app", stop)
+    app_states = iter(
+        (
+            [{"state": "deployed", "tasks": "0"}],
+            [{"state": "stopped", "tasks": "0"}],
+        )
+    )
     monkeypatch.setattr(
         launcher,
         "_named_encoder_apps",
-        lambda _context: [{"state": "stopped", "tasks": "0"}],
+        lambda _context: next(app_states),
     )
     monkeypatch.setattr(launcher, "_named_encoder_containers", lambda _context: [])
+    monkeypatch.setattr(launcher.time, "sleep", lambda _seconds: None)
 
     launcher._cleanup_encoder_pair(context, ownership)
 

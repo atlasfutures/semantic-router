@@ -48,8 +48,9 @@ from rayline_open_loop_probe import load_open_loop_packet
 from rayline_scaleout_comparator import compare_scaleout
 from rayline_scaleout_contract import (
     ENCODER_APP_NAMES,
+    MAXIMUM_SCALEDOWN_SECONDS,
     PATHFINDER_AUTHORIZATION_COMMIT,
-    PERF023_RUN_ID,
+    PERF024_RUN_ID,
     SCALEOUT_ARMS,
     OpenLoopCell,
     ScaleoutRunContract,
@@ -111,7 +112,7 @@ class PreparedArm:
 def _parse_args() -> argparse.Namespace:
     root = Path(__file__).resolve().parents[3]
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-id", default=PERF023_RUN_ID)
+    parser.add_argument("--run-id", default=PERF024_RUN_ID)
     parser.add_argument("--pathfinder-root", type=Path, required=True)
     parser.add_argument(
         "--packet-dir",
@@ -437,14 +438,24 @@ def _cleanup_encoder_pair(
         ownership.manager.delete(ownership.proxy.token_id)
         ownership.cleanup["proxy_token_deleted"] = True
     finally:
-        apps = _named_encoder_apps(context)
-        ownership.cleanup["encoder_apps_stopped"] = all(
-            row.get("state") == "stopped" and str(row.get("tasks")) == "0"
-            for row in apps
-        )
-        ownership.cleanup["encoder_containers_remaining"] = len(
-            _named_encoder_containers(context)
-        )
+        deadline = time.monotonic() + MAXIMUM_SCALEDOWN_SECONDS
+        while True:
+            apps = _named_encoder_apps(context)
+            ownership.cleanup["encoder_apps_stopped"] = all(
+                row.get("state") == "stopped" and str(row.get("tasks")) == "0"
+                for row in apps
+            )
+            ownership.cleanup["encoder_containers_remaining"] = len(
+                _named_encoder_containers(context)
+            )
+            if (
+                ownership.cleanup["encoder_apps_stopped"]
+                and ownership.cleanup["encoder_containers_remaining"] == 0
+            ):
+                break
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(1)
     if (
         not ownership.cleanup["proxy_token_deleted"]
         or not ownership.cleanup["encoder_apps_stopped"]

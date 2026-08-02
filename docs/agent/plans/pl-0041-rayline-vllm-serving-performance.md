@@ -106,8 +106,13 @@ transaction concurrency proof is not required. PERF022's exact preregistration,
 attestation, Pathfinder authorization, and source authorization are pushed at
 `edfb58a2`, `6bb425d7`, `24b4a3d6`, and `06a4ba4a`. Its one launch stopped
 before GPU hydration or measurement at Modal class-method endpoint lookup and
-is closed with complete exact-name cleanup. PERF023 is the identity-equivalent
-corrected successor and remains source-closed pending its own external chain.
+is closed with complete exact-name cleanup. PERF023 completed its exact four
+arms and passed the performance comparator, but the launcher failed after both
+stops because Modal app state had not yet converged to zero. Independent
+cleanup verification reached exact zero; close PERF023 without retry and use
+its measurements only as diagnostic evidence. PERF024 is the
+identity-equivalent, cleanup-stabilized successor and remains source-closed
+pending its own external chain.
 Current published implementation heads:
 
 - Semantic Router
@@ -409,6 +414,29 @@ Its corrected source is pushed at `dabac197`; immutable preregistration,
 attestation, and Pathfinder authorization are pushed at `bef9a117`, `01263c5d`,
 and `057f3d26`. Only the distinct signed source authorization checkpoint opens
 its one-shot resolver.
+
+PERF023 completed all four measurement arms and its strict comparison passed:
+128/128 measured turns, 16 warmups, zero failures or providers, one shared
+worker trace, zero affinity mismatches, exact 36-pooling/nine-close accounting
+per arm, and zero retained state after every arm. At `r030`, dual affinity
+improved completion throughput `1.3696x`, reduced p95 service latency to
+`0.3338x`, reduced drain to `0.3975x`, and lowered final-arrival backlog by two.
+At `r045`, the ratios were `1.3188x`, `0.5594x`, and `0.5740x`, with unchanged
+final backlog. Both treatment replicas received sessions.
+
+The packet is nevertheless not a pass: both exact app stops and token deletion
+succeeded, but the launcher immediately read Modal's still-converging app state
+and raised before writing its run manifest. Independent verification seconds
+later found both apps stopped with zero tasks, zero named containers, zero local
+containers or proxies, and no run token. The conservative 1,040-second upper is
+`$2.7952704`, bringing the observed cumulative upper to `$65.61784324218463`.
+PERF023 is closed without retry; its complete performance receipt is diagnostic.
+
+PERF024 preserves every measurement input and adds only a bounded stable-zero
+poll after noninteractive stop and token deletion. Its `$13.8688416` full
+envelope would bring the cumulative conservative maximum to
+`$79.48668484218463`, leaving `$54.82613917781537` under current authority. It
+remains source-closed pending its own external authorization chain.
 
 ### ARC and Remote Comparison
 
@@ -1411,13 +1439,18 @@ Not in scope:
   deterministic episode-affinity proxy at only `r030` and `r045`. The
   one launch stopped at class-method endpoint lookup before GPU hydration or
   measurement and is closed. Exact cleanup reached zero after noninteractive
-  manual recovery; its conservative upper is `$1.01328552`. PERF023 preserves
+  manual recovery; its conservative upper is `$1.01328552`. PERF023 preserved
   the packet and topology under a new namespace while correcting only
-  `Cls.from_name` endpoint resolution and `modal app stop -y`. Keep its source
-  interlock closed until new immutable Pathfinder preregistration,
-  self-attestation, and authorization checkpoints are pushed. Providers,
-  generation, runtime-added cells, whole-run retry, and the 1,000-case
-  qualification remain unreachable.
+  `Cls.from_name` endpoint resolution and `modal app stop -y`. All four arms
+  completed and the comparator passed, but the run failed after measurement
+  because exact-app stop state was checked before Modal's asynchronous state
+  transition converged. Independent verification reached stable zero and the
+  complete measurements remain diagnostic only. PERF024 preserves the exact
+  packet under a new namespace and changes only cleanup verification to poll
+  for bounded stable zero. Keep its source interlock closed until new immutable
+  Pathfinder preregistration, self-attestation, and authorization checkpoints
+  are pushed. Providers, generation, runtime-added cells, whole-run retry, and
+  the 1,000-case qualification remain unreachable.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
@@ -1615,17 +1648,20 @@ but held:
    measured `0.1862`-to-`0.3724` single-H100 knee; do not reopen PERF021.
    PERF022 was that phase but stopped before GPU hydration or measurement when
    Modal rejected function-style lookup of a class web method; close it without
-   retry and privately verify its aggregate failure receipt. PERF023 is the
-   identity-equivalent successor with only `Cls.from_name` endpoint resolution,
-   noninteractive exact-app cleanup, new namespaces, and the updated prior-cost
-   basis. Push its source while launch authority is closed, preregister the same
-   two-cell/four-arm packet and `$13.8688416` envelope, attest and authorize it
-   from distinct Pathfinder heads, then execute it once. Close source and
-   registry authority after success or failure, verify private aggregate
-   evidence through a separate read credential, and use only its measured
-   scale-out efficiency to choose the next bounded phase. Do not add provider
-   traffic, generation workers, failover semantics, or the held 1,000-case
-   qualification to this packet.
+   retry and privately verify its aggregate failure receipt. PERF023 completed
+   the identity-equivalent four-arm packet and its strict comparator passed,
+   but it failed after measurement because cleanup verification raced Modal's
+   asynchronous app-stop convergence. Close it without retry, privately verify
+   its complete aggregate evidence, and retain the results only as diagnostic.
+   PERF024 is the identity-equivalent successor: it changes only namespaces,
+   the prior-cost basis, and bounded polling for stable-zero cleanup. Push its
+   source while launch authority is closed, preregister the same two-cell/four-
+   arm packet and `$13.8688416` envelope, attest and authorize it from distinct
+   Pathfinder heads, then execute it once. Close source and registry authority
+   after success or failure, verify private aggregate evidence through a
+   separate read credential, and use only a passed PERF024 packet to choose the
+   next bounded phase. Do not add provider traffic, generation workers,
+   failover semantics, or the held 1,000-case qualification to this packet.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage

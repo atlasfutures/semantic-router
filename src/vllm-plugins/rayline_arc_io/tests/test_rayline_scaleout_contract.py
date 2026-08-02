@@ -16,31 +16,32 @@ budget = importlib.import_module("rayline_three_arm_budget")
 contract = importlib.import_module("rayline_scaleout_contract")
 
 
-def test_perf023_preserves_perf022_cells_apps_and_corrected_budget() -> None:
+def test_perf024_preserves_scaleout_cells_apps_and_stabilized_budget() -> None:
     assert contract.SCALEOUT_ARMS == ("arc_single", "arc_dual_affinity")
     assert contract.ENCODER_APP_NAMES == (
         "rayline-arc-session-encoder-a",
         "rayline-arc-session-encoder-b",
     )
-    assert contract.PERF023.cells == contract.PERF022.cells
-    assert [cell.label for cell in contract.PERF023.cells] == ["r030", "r045"]
-    assert [cell.offered_rate_rps for cell in contract.PERF023.cells] == [0.30, 0.45]
-    receipt = budget.budget_receipt(contract.PERF023.budget)
+    assert contract.PERF024.cells == contract.PERF023.cells == contract.PERF022.cells
+    assert [cell.label for cell in contract.PERF024.cells] == ["r030", "r045"]
+    assert [cell.offered_rate_rps for cell in contract.PERF024.cells] == [0.30, 0.45]
+    receipt = budget.budget_receipt(contract.PERF024.budget)
     assert receipt["encoder_replicas"] == len(contract.ENCODER_APP_NAMES)
     assert receipt["maximum_resource_seconds"] == contract.MAXIMUM_RESOURCE_SECONDS
     assert receipt["maximum_resource_envelope_usd"] == pytest.approx(13.8688416)
     assert receipt["cumulative_if_full_envelope_usd"] == pytest.approx(
-        76.69141444218463
+        79.48668484218463
     )
     assert receipt["reserve_after_full_envelope_usd"] == pytest.approx(
-        57.62140957781537
+        54.82613917781537
     )
 
 
-def test_only_perf023_launch_authority_is_open() -> None:
-    assert contract.PATHFINDER_AUTHORIZATION_COMMIT == (
-        "057f3d26b50de33b3e9acd66c641f6bbb898bc36"
-    )
-    with pytest.raises(ValueError, match="launcher only permits preregistered"):
+def test_all_scaleout_launch_authority_is_closed() -> None:
+    assert contract.PATHFINDER_AUTHORIZATION_COMMIT == "PENDING"
+    with pytest.raises(ValueError, match="no Rayline scale-out experiment"):
         contract.resolve_launch_contract(contract.PERF022_RUN_ID)
-    assert contract.resolve_launch_contract(contract.PERF023_RUN_ID) is contract.PERF023
+    with pytest.raises(ValueError, match="no Rayline scale-out experiment"):
+        contract.resolve_launch_contract(contract.PERF023_RUN_ID)
+    with pytest.raises(ValueError, match="no Rayline scale-out experiment"):
+        contract.resolve_launch_contract(contract.PERF024_RUN_ID)

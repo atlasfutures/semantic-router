@@ -12,7 +12,8 @@ from rayline_three_arm_budget import BudgetContract
 
 PERF022_RUN_ID = "rayline-affinity-scaleout-perf022-20260802"
 PERF023_RUN_ID = "rayline-affinity-scaleout-perf023-20260802"
-PATHFINDER_AUTHORIZATION_COMMIT = "057f3d26b50de33b3e9acd66c641f6bbb898bc36"
+PERF024_RUN_ID = "rayline-affinity-scaleout-perf024-20260802"
+PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
 SCALEOUT_ARMS = ("arc_single", "arc_dual_affinity")
 ENCODER_APP_NAMES = (
     "rayline-arc-session-encoder-a",
@@ -82,9 +83,30 @@ PERF023 = ScaleoutRunContract(
     ),
 )
 
-# PERF022 is closed. PERF023 is the only launchable contract after its corrected
-# source, preregistration, attestation, and authorization checkpoints were pushed.
-LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = PERF023
+PERF024 = ScaleoutRunContract(
+    run_id=PERF024_RUN_ID,
+    packet_manifest_sha256=PERF023.packet_manifest_sha256,
+    corpus_sha256=PERF023.corpus_sha256,
+    topology_sha256=PERF023.topology_sha256,
+    cells=PERF023.cells,
+    compose_project_prefix="rayline-affinity-perf024",
+    temporary_prefix="rayline-perf024-",
+    budget=BudgetContract(
+        run_id=PERF024_RUN_ID,
+        previous_conservative_usd=65.61784324218463,
+        authorized_cumulative_usd=134.31282402,
+        packet_ceiling_usd=14.0,
+        required_reserve_usd=3.0,
+        maximum_paid_wall_seconds=MAXIMUM_PAID_WALL_SECONDS,
+        maximum_orphan_request_seconds=MAXIMUM_ORPHAN_REQUEST_SECONDS,
+        maximum_scaledown_seconds=MAXIMUM_SCALEDOWN_SECONDS,
+        encoder_replicas=2,
+    ),
+)
+
+# PERF022 and PERF023 are closed after their one launches. PERF024 remains
+# closed until its cleanup-stabilized source and authorization chain are pushed.
+LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = None
 
 
 def resolve_launch_contract(run_id: str) -> ScaleoutRunContract:
