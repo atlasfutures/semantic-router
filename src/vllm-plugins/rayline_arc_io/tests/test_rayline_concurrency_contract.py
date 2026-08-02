@@ -16,7 +16,7 @@ budget = importlib.import_module("rayline_three_arm_budget")
 contract = importlib.import_module("rayline_concurrency_contract")
 
 
-def test_perf017_packet_and_cell_contract_is_exact() -> None:
+def test_concurrency_packet_and_cell_contract_is_exact() -> None:
     expected_measured_cases = 32
     expected_warmup_cases = 4
     assert [cell.concurrency for cell in contract.PERF017.cells] == [1, 4, 8]
@@ -28,23 +28,25 @@ def test_perf017_packet_and_cell_contract_is_exact() -> None:
     assert expected_measured_cases == contract.MEASURED_CASES
     assert expected_warmup_cases == contract.WARMUP_CASES
     assert contract.SWEEP_ARMS == ("rayline_remote", "rayline_arc")
+    assert contract.PERF018.cells == contract.PERF017.cells
 
 
-def test_perf017_budget_is_preregistered_and_authorized() -> None:
-    receipt = budget.budget_receipt(contract.PERF017.budget)
+def test_perf018_budget_is_preregistered_but_interlock_is_closed() -> None:
+    receipt = budget.budget_receipt(contract.PERF018.budget)
     envelope = receipt["maximum_resource_envelope_usd"]
     required_authority = (
-        contract.PERF017.budget.previous_conservative_usd
+        contract.PERF018.budget.previous_conservative_usd
         + envelope
-        + contract.PERF017.budget.required_reserve_usd
+        + contract.PERF018.budget.required_reserve_usd
     )
 
     assert envelope == pytest.approx(5.3217648)
     assert required_authority == pytest.approx(
-        contract.REQUIRED_CUMULATIVE_AUTHORITY_USD
+        contract.PERF018_REQUIRED_CUMULATIVE_AUTHORITY_USD
     )
-    assert receipt["cumulative_if_full_envelope_usd"] == pytest.approx(60.92241442)
-    assert receipt["reserve_after_full_envelope_usd"] == pytest.approx(3.3904096)
+    assert receipt["cumulative_if_full_envelope_usd"] == pytest.approx(61.21269250)
+    assert receipt["reserve_after_full_envelope_usd"] == pytest.approx(3.10013152)
     assert pytest.approx(5.0) == contract.ADDITIONAL_AUTHORITY_GRANTED_USD
     assert contract.ADDITIONAL_AUTHORITY_REQUIRED_USD == 0.0
-    assert contract.resolve_launch_contract(contract.PERF017_RUN_ID) is contract.PERF017
+    with pytest.raises(ValueError, match="no Rayline concurrency sweep"):
+        contract.resolve_launch_contract(contract.PERF018_RUN_ID)

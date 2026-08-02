@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 
-"""Run the bounded, state-isolated Remote-versus-ARC PERF017 sweep.
+"""Run a bounded, state-isolated Remote-versus-ARC concurrency sweep.
 
 The protected encoder stays warm across concurrency cells, while each cell gets
 a fresh Pathfinder process, ARC Compose/Redis stack, run-ID namespace, and an
@@ -28,7 +28,7 @@ from rayline_concurrency_comparator import compare_sweep
 from rayline_concurrency_contract import (
     MEASURED_CASES,
     MEASURED_EPISODES,
-    PERF017_RUN_ID,
+    PERF018_RUN_ID,
     SWEEP_ARMS,
     WARMUP_CASES,
     WARMUP_EPISODES,
@@ -128,7 +128,7 @@ class LocalCell:
 def _parse_args() -> argparse.Namespace:
     root = Path(__file__).resolve().parents[3]
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-id", default=PERF017_RUN_ID)
+    parser.add_argument("--run-id", default=PERF018_RUN_ID)
     parser.add_argument("--pathfinder-root", type=Path, required=True)
     parser.add_argument(
         "--packet-dir",
@@ -151,24 +151,24 @@ def _validate_packet(
     contract: ConcurrencyRunContract, packet_dir: Path
 ) -> tuple[list[str], tuple[str, ...], tuple[str, ...]]:
     if _sha256(packet_dir / "manifest.json") != contract.packet_manifest_sha256:
-        raise LaunchError("PERF017 packet manifest digest differs")
+        raise LaunchError("concurrency packet manifest digest differs")
     if _sha256(packet_dir / "corpus.json") != contract.corpus_sha256:
-        raise LaunchError("PERF017 corpus digest differs")
+        raise LaunchError("concurrency corpus digest differs")
     if _sha256(packet_dir / "topology.json") != contract.topology_sha256:
-        raise LaunchError("PERF017 topology digest differs")
+        raise LaunchError("concurrency topology digest differs")
     manifest = json.loads((packet_dir / "manifest.json").read_text())
     if (
         manifest.get("measured_cases") != MEASURED_CASES
         or manifest.get("warmup_cases") != WARMUP_CASES
     ):
-        raise LaunchError("PERF017 packet counts differ")
+        raise LaunchError("concurrency packet counts differ")
     for cell in contract.cells:
         cell_dir = packet_dir / "cells" / f"c{cell.concurrency}"
         if (
             _sha256(cell_dir / "workload.json") != cell.workload_sha256
             or _sha256(cell_dir / "identity.json") != cell.identity_sha256
         ):
-            raise LaunchError(f"PERF017 c{cell.concurrency} digest differs")
+            raise LaunchError(f"concurrency c{cell.concurrency} digest differs")
         for arm in SWEEP_ARMS:
             load_packet(
                 arm=arm,
@@ -191,7 +191,7 @@ def _validate_packet(
         len(measured_episodes) != MEASURED_EPISODES
         or len(warmup_episodes) != WARMUP_EPISODES
     ):
-        raise LaunchError("PERF017 episode counts differ")
+        raise LaunchError("concurrency episode counts differ")
     return worker_ids, measured_episodes, warmup_episodes
 
 

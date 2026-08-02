@@ -408,9 +408,9 @@ The exact Modal app stopped with zero tasks and held zero containers for 65
 seconds. PERF016 is closed without retry, and no three-arm experiment is
 currently launchable from the source tree.
 
-### PERF017 preregistered concurrency sweep (authorized, unlaunched)
+### PERF017 concurrency sweep result
 
-PERF017 is the next bounded diagnostic, not a larger qualification. It derives
+PERF017 was the next bounded diagnostic, not a larger qualification. It derives
 the first eight complete measured episodes and the first disjoint warmup episode
 from the PERF015/016 packet. Every cell therefore contains 4 warmup turns and
 32 measured turns, with 13 `<8k`, 11 `8k–<32k`, 5 `32k–<128k`, and 3 `≥128k`
@@ -447,10 +447,34 @@ would make the cumulative conservative maximum USD 60.92241442. Preserving the
 frozen USD 3 reserve requires cumulative authority of USD 63.92241442. The user
 approved the proposed additional USD 5, raising cumulative authority to USD
 64.31282402 and leaving USD 3.3904096 after the full envelope. The signed,
-pushed source checkpoint therefore sets `LAUNCHABLE_CONTRACT` to PERF017. The
-packet, comparator, state reset, and launcher are ready; no PERF017 GPU or
-provider request had been launched before this authorization checkpoint. The
-held 1,000-case qualification remains unreachable.
+pushed source checkpoint set `LAUNCHABLE_CONTRACT` to PERF017. The one-shot
+launch failed before any benchmark cell or provider request: the first
+protected `/health` request exceeded its 30-second socket read timeout during
+the Modal cold start, and that transport exception escaped the intended
+15-minute readiness loop. The exact encoder app then stopped with zero tasks
+and containers, and no local cell stack or sweep process remained. The failure
+is conservatively charged as 216 resource seconds, or USD 0.29027808, from the
+reported 119.535-second deploy, one 30-second request timeout, 65-second
+stable-zero cleanup, and rounding. PERF017 is closed without retry.
+
+### PERF018 identity-equivalent startup retry (implemented, interlock closed)
+
+PERF018 changes only the run/state namespace and the readiness transport
+handling: `TimeoutError` and `URLError` now become the same sanitized state
+error already retried by the fixed 15-minute startup loop. The packet, source
+corpus, topology, concurrency cells, arm order, placement, model, thresholds,
+state-isolation rules, and six-receipt acceptance gate are otherwise identical
+to PERF017. Its run ID is
+`rayline-concurrency-sweep-perf018-20260802`, so it cannot append to or reuse
+the failed run's output or retained-session namespace.
+
+Charging the PERF017 startup failure makes the new prior conservative total
+USD 55.89092770. PERF018 retains the same 3,960-second, USD 5.3217648 full
+resource envelope, producing a cumulative maximum of USD 61.21269250 and
+leaving USD 3.10013152 under the existing USD 64.31282402 authority. No new
+authority is needed. The source interlock remains closed until the failure,
+fix, exact pins, and new one-shot ID are committed and registered. The held
+1,000-case qualification remains unreachable.
 
 ## External Provider Canary
 

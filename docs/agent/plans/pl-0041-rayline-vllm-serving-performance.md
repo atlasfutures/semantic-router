@@ -42,18 +42,21 @@ PERF016 repeat reproduced the ARC/Remote throughput direction at `1.256x`,
 localized the largest p95 wins to histories above 32k tokens, and proved 1.206M
 tokens were explicitly retained across 102 session appends. Its queued `<8k`
 tail regressed, so concurrency and service time still need separation. The
-zero-spend PERF017 implementation now freezes a 32-turn Remote-versus-ARC sweep
-at concurrency `1`, `4`, and `8`, with a fresh Pathfinder and ARC/Redis stack
-plus explicit zero-resident-session proof between every cell. Its packet,
-probe, comparator, cleanup receipt, and launcher are implemented. The user
-approved the proposed additional USD 5, raising cumulative authority to USD
-64.31282402 and leaving USD 3.3904096 after the full envelope. The signed,
-pushed launch checkpoint opens only PERF017; no GPU request preceded it. The
-independent endpoint therefore remains the MVP default while
+PERF017 launch stopped before measurement when its first protected health
+request timed out during the Modal cold start and escaped the intended
+readiness loop. Cleanup left zero encoder tasks/containers, sweep processes,
+or new local stacks. The run is closed and conservatively charged USD
+0.29027808. PERF018 is the identity-equivalent retry: the 32-turn
+Remote-versus-ARC cells at concurrency `1`, `4`, and `8`, fresh
+Pathfinder/ARC/Redis state, packet, placement, and gates remain frozen; only
+the new run namespace and transient startup transport normalization change.
+The existing USD 64.31282402 cap leaves USD 3.10013152 after its complete
+envelope. The source interlock is closed while the new ID and exact pins are
+registered. The independent endpoint therefore remains the MVP default while
 retained KV is a measured optimization, not a production-readiness claim. The
-separately held
-quality qualification and HA journal remain open; another transaction
-concurrency proof is not required. Current published implementation heads:
+separately held quality qualification and HA journal remain open; another
+transaction concurrency proof is not required. Current published implementation
+heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
@@ -1226,7 +1229,7 @@ Not in scope:
   128k, but `1.116x` below 8k under the queued lane mix. Aggregate ARC telemetry
   records 34 creates, 102 appends, zero rebuilds, and 1.206M retained tokens.
   Receipts are pinned at `rayline-ai/router-artifacts@5bf052df`.
-  PERF017 now derives eight complete measured episodes plus one disjoint warmup
+  PERF017 derived eight complete measured episodes plus one disjoint warmup
   episode into a 32-turn packet spanning all four length buckets. It runs only
   Remote and ARC at concurrency 1, 4, and 8 against one warm encoder. Every
   cell owns a fresh Pathfinder process and ARC Compose/Redis stack; Remote must
@@ -1235,11 +1238,14 @@ Not in scope:
   complete 32/32 with zero provider calls and one shared worker trace. The
   comparator reports per-cell ARC/Remote ratios and per-arm `c4/c1` and
   `c8/c1` scaling without inventing a new absolute SLO. The 3,960-second full
-  resource envelope is USD 5.3217648; preserving the USD 3 reserve needs USD
-  63.92241442 cumulative authority. The user approved another USD 5, raising
-  the cumulative cap to USD 64.31282402 and leaving USD 3.3904096 after the
-  full envelope. The one-shot PERF017 launch contract is therefore open; the
-  1,000-case qualification remains unreachable.
+  resource envelope was USD 5.3217648. Its first cold-start health request
+  timed out before any cell ran, cleanup reached zero, and the one-shot ID is
+  closed with a conservative USD 0.29027808 charge. PERF018 preserves every
+  workload and acceptance detail under a new namespace and fixes only
+  transient readiness transport handling. Its full envelope leaves USD
+  3.10013152 under the existing USD 64.31282402 cap. The source interlock is
+  closed pending exact registry pins; the 1,000-case qualification remains
+  unreachable.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
@@ -1412,11 +1418,13 @@ but held:
    Close PERF016 without retry. Preregister a bounded concurrency sweep with
    state isolation between cells before another launch; do not increase
    qualification size opportunistically. That PERF017 implementation and exact
-   packet are now ready. The user approved the proposed additional USD 5, so
-   publish the signed authorization checkpoints, execute the one-shot 32-turn
-   Remote/ARC cells at concurrency 1, 4, and 8, verify every state reset, and
-   publish only aggregate receipts. Do not execute the held 1,000-case
-   qualification.
+   packet were ready, but PERF017 failed before measurement because the first
+   cold-start health read timed out outside the readiness loop. Its cleanup is
+   complete and the one-shot ID is closed. Normalize transient startup
+   transport failures, preregister the otherwise identity-equivalent PERF018
+   under the existing authority, execute its Remote/ARC cells at concurrency
+   1, 4, and 8, verify every state reset, and publish only aggregate receipts.
+   Do not execute the held 1,000-case qualification.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage

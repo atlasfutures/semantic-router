@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+import urllib.error
 from pathlib import Path
 from typing import Any
 
@@ -103,3 +104,25 @@ def test_protected_client_repr_redacts_credentials() -> None:
 
     assert "private-key" not in repr(client)
     assert "private-secret" not in repr(client)
+
+
+@pytest.mark.parametrize(
+    "transport_error",
+    (TimeoutError("cold start"), urllib.error.URLError("connection pending")),
+)
+def test_protected_client_normalizes_transient_transport_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    transport_error: BaseException,
+) -> None:
+    def fail_urlopen(*_args: Any, **_kwargs: Any) -> None:
+        raise transport_error
+
+    monkeypatch.setattr(state.urllib.request, "urlopen", fail_urlopen)
+    client = state.ProtectedEncoderClient(
+        "https://public.example",
+        "private-key",
+        "private-secret",
+    )
+
+    with pytest.raises(state.StateResetError, match="transport did not complete"):
+        client.request("GET", "/health")

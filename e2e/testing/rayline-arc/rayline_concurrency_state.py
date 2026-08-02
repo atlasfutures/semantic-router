@@ -60,6 +60,10 @@ class ProtectedEncoderClient:
             raise StateResetError(
                 f"protected encoder returned HTTP {error.code}"
             ) from error
+        except (TimeoutError, urllib.error.URLError) as error:
+            raise StateResetError(
+                "protected encoder transport did not complete"
+            ) from error
         if status != HTTP_OK:
             raise StateResetError(f"protected encoder returned HTTP {status}")
         try:
