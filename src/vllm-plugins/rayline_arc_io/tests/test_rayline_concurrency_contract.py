@@ -32,7 +32,7 @@ def test_concurrency_packet_and_cell_contract_is_exact() -> None:
     assert contract.PERF019.cells == contract.PERF017.cells
 
 
-def test_perf019_budget_is_preregistered_and_authorized() -> None:
+def test_perf019_budget_remains_auditable_after_close() -> None:
     receipt = budget.budget_receipt(contract.PERF019.budget)
     resource_seconds = (
         contract.PERF019.budget.maximum_paid_wall_seconds
@@ -55,9 +55,8 @@ def test_perf019_budget_is_preregistered_and_authorized() -> None:
         contract.PERF019_RESERVE_AFTER_FULL_ENVELOPE_USD
     )
     assert pytest.approx(20.0) == contract.PERF019_ADDITIONAL_AUTHORITY_GRANTED_USD
-    assert contract.resolve_launch_contract(contract.PERF019_RUN_ID) is contract.PERF019
-    with pytest.raises(ValueError, match="only permits preregistered run id"):
-        contract.resolve_launch_contract(contract.PERF018_RUN_ID)
+    with pytest.raises(ValueError, match="no Rayline concurrency sweep"):
+        contract.resolve_launch_contract(contract.PERF019_RUN_ID)
 
 
 def test_historical_sweep_authority_remains_frozen() -> None:

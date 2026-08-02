@@ -512,6 +512,23 @@ after the full envelope. The source interlock opens only PERF019 after the exact
 fix, registry pins, and signed pushed authorization checkpoints pass. The held
 1,000-case qualification remains unreachable.
 
+The single authorized PERF019 execution passed all six identity-locked
+receipts. Remote throughput at concurrency 1, 4, and 8 was `0.240`, `0.255`,
+and `0.253 rps`; ARC reached `0.289`, `0.308`, and `0.305 rps`, respectively.
+ARC/Remote throughput ratios were `1.204x`, `1.209x`, and `1.207x`. ARC p95
+latency was `21.25s`, `42.27s`, and `62.80s` versus Remote's `22.83s`, `48.53s`,
+and `81.16s`. Every arm completed 32/32 with zero failures and provider calls,
+one worker trace matched within and across cells, and every cell cleaned to zero
+resident sessions and tokens. Pathfinder, Compose, Redis volumes, the ephemeral
+proxy token, and the protected encoder all cleaned successfully.
+
+The 1,210.55-second launcher window has a conservative infrastructure upper
+estimate of USD 1.626833 and USD 0 provider spend. Fourteen aggregate-only files
+are privately round-trip verified at
+`rayline-ai/router-artifacts@1bc01b2bcb7c39e38ced1bfc630d3d6909d88cfd`.
+The source interlock is closed after this success; PERF019 cannot retry, and the
+held 1,000-case qualification remains unreachable.
+
 ## External Provider Canary
 
 This canary proves transport and settlement only; it is excluded from local

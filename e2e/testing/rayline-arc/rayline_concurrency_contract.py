@@ -115,10 +115,10 @@ PERF018_STATE_FAILURE_UPPER_USD = 0.58190004
 PERF019_REQUIRED_CUMULATIVE_AUTHORITY_USD = 64.79459254
 PERF019_ADDITIONAL_AUTHORITY_GRANTED_USD = 20.0
 PERF019_RESERVE_AFTER_FULL_ENVELOPE_USD = 22.51823148
-# PERF018 is closed after its pre-ARC state-isolation gate caught a retained
-# startup-readiness session. The exact fix and renewed authority now open only
-# the preregistered PERF019 namespace; historical IDs remain closed.
-LAUNCHABLE_CONTRACT: ConcurrencyRunContract | None = PERF019
+# PERF019 completed its only authorized execution with all six receipts and
+# cleanup gates passing. Every sweep ID is now closed; another measurement
+# requires a new preregistered namespace and explicit launch authority.
+LAUNCHABLE_CONTRACT: ConcurrencyRunContract | None = None
 
 
 def resolve_launch_contract(run_id: str) -> ConcurrencyRunContract:

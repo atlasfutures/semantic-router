@@ -55,11 +55,14 @@ tolerated cold start and completed c1 Remote 32/32 at `0.314 rps`, but its
 pre-ARC state gate caught a retained session created by ARC startup readiness.
 The gate prevented a contaminated comparison; cleanup reached zero and the two
 aggregate receipts are privately pinned at
-`rayline-ai/router-artifacts@cb14a91e`. PERF019 fixes the production readiness
-probe to close its retained session. The user approved another USD 20, raising
-the cumulative cap to USD 84.31282402; its full envelope leaves USD 22.51823148
-after the frozen reserve. Signed source and registry checkpoints open only
-PERF019 for one execution. The
+`rayline-ai/router-artifacts@cb14a91e`. PERF019 fixed the production readiness
+probe and passed all six Remote/ARC receipts at concurrency `1`, `4`, and `8`.
+ARC throughput was `1.204x`, `1.209x`, and `1.207x` Remote while its p95 latency
+was `0.931x`, `0.871x`, and `0.774x`; both arms scaled only about `1.05-1.07x`
+from c1, exposing the shared single-encoder saturation boundary. All state and
+resource cleanup passed, provider calls stayed zero, and private receipts are
+pinned at `rayline-ai/router-artifacts@1bc01b2b`. The source interlock is closed
+after the one authorized execution. The
 independent endpoint therefore remains the MVP default while
 retained KV is a measured optimization, not a production-readiness claim. The
 separately held quality qualification and HA journal remain open; another
@@ -1253,12 +1256,14 @@ Not in scope:
   transient readiness transport handling. It then completed c1 Remote 32/32 at
   `0.314 rps` before its pre-ARC state gate found ARC startup readiness's
   retained session still resident. Cleanup reached zero and receipts are
-  pinned at `rayline-ai/router-artifacts@cb14a91e`. PERF019 closes that
-  production readiness session after probing while keeping the packet and
-  gates fixed. Another USD 20 raises cumulative authority to USD 84.31282402,
-  leaving USD 22.51823148 after its full envelope. Open only PERF019 after the
-  signed source and registry checkpoints; the 1,000-case qualification remains
-  unreachable.
+  pinned at `rayline-ai/router-artifacts@cb14a91e`. PERF019 closed that
+  production readiness session after probing and passed the fixed six-arm
+  packet. ARC/Remote throughput was `1.204x`, `1.209x`, and `1.207x` at c1, c4,
+  and c8; ARC p95 ratios were `0.931x`, `0.871x`, and `0.774x`. Both arms gained
+  only about 5-7% throughput from c1 to c8, so the single remote encoder is
+  already the shared bottleneck. Cleanup reached stable zero and aggregate-only
+  receipts are privately pinned at `rayline-ai/router-artifacts@1bc01b2b`.
+  Close PERF019 without retry; the 1,000-case qualification remains unreachable.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
@@ -1439,8 +1444,9 @@ but held:
    ARC when startup readiness's retained session violated the empty-state
    gate. Close PERF018, make the production readiness probe close its session,
    and preregister otherwise identical PERF019. The additional USD 20 authority
-   is explicit: open only PERF019 after signed source and registry checkpoints,
-   and keep the held 1,000-case qualification closed.
+   opened exactly one execution. PERF019 passed all six arms and cleanup gates;
+   close its source interlock without retry and keep the held 1,000-case
+   qualification closed.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage

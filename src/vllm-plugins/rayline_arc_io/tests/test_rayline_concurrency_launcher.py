@@ -25,7 +25,7 @@ def test_unregistered_run_stops_before_preflight_side_effects(tmp_path: Path) ->
         router_image="unused",
     )
 
-    with pytest.raises(ValueError, match="only permits preregistered run id"):
+    with pytest.raises(ValueError, match="no Rayline concurrency sweep"):
         launcher._preflight(args)
 
     assert list(tmp_path.iterdir()) == []
