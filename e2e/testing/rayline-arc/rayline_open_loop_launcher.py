@@ -34,6 +34,7 @@ from rayline_open_loop_contract import (
     MEASURED_CASES,
     MEASURED_EPISODES,
     OPEN_LOOP_ARMS,
+    PATHFINDER_AUTHORIZATION_COMMIT,
     PERF020_RUN_ID,
     WARMUP_CASES,
     WARMUP_EPISODES,
@@ -135,6 +136,8 @@ def _preflight(args: argparse.Namespace) -> SweepContext:
     pathfinder_head = _assert_pushed(
         pathfinder_root, IDENTITY.pathfinder_branch, "origin", contract.run_id
     )
+    if pathfinder_head != PATHFINDER_AUTHORIZATION_COMMIT:
+        raise LaunchError("Pathfinder PERF020 authorization head differs")
     worker_ids = _validate_packet(contract, packet_dir)
     _run(["docker", "image", "inspect", args.router_image], cwd=semantic_root)
     _run(

@@ -71,8 +71,8 @@ backlog, drain time, achieved start rate, and completion throughput. Its pass
 status is integrity-only; the first overloaded rate is a preregistered
 diagnostic, not a new production SLO. The complete 5,160-resource-second
 envelope is USD 6.9344208 and leaves USD 19.27874248 reserve under current
-authority. Launch remains closed until the source checkpoint is pushed and the
-new experiment namespace is preregistered in Pathfinder. The
+authority. Pathfinder authorization is pinned at `8785d0ca`; this signed
+source checkpoint opens exactly PERF020 once it is pushed. The
 independent endpoint therefore remains the MVP default while
 retained KV is a measured optimization, not a production-readiness claim. The
 separately held quality qualification and HA journal remain open; another
@@ -1281,8 +1281,9 @@ Not in scope:
   provider calls, matching worker traces, 36 ARC session actions, and empty
   retained state after cleanup. Saturation-knee reporting is diagnostic; only
   integrity controls pass/fail. The full USD 6.9344208 envelope is within the
-  current cumulative authority. Keep launch closed until source push and
-  Pathfinder preregistration; the 1,000-case qualification remains unreachable.
+  current cumulative authority. Pathfinder authorization is pushed at
+  `8785d0ca`; this separate source checkpoint opens exactly one PERF020 launch
+  after push. The 1,000-case qualification remains unreachable.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.

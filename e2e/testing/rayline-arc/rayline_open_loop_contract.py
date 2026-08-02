@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from rayline_three_arm_budget import BudgetContract
 
 PERF020_RUN_ID = "rayline-open-loop-sweep-perf020-20260802"
+PATHFINDER_AUTHORIZATION_COMMIT = "8785d0ca94b579accf128a06c369f9a06ab229f0"
 MEASURED_CASES = 32
 WARMUP_CASES = 4
 MEASURED_EPISODES = 8
@@ -89,9 +90,9 @@ PERF020 = OpenLoopRunContract(
     ),
 )
 
-# Closed while implementation, packet digesting, source push, and external
-# preregistration are incomplete. A separate signed checkpoint opens one ID.
-LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
+# The registry authorization above is signed and pushed. This separate source
+# checkpoint opens exactly one run ID; any launched outcome closes it.
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF020
 
 
 def resolve_launch_contract(run_id: str) -> OpenLoopRunContract:
