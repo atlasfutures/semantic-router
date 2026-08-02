@@ -44,7 +44,7 @@ def test_perf020_contract_freezes_rates_and_budget() -> None:
         66.66615136879144
     )
     assert successor["reserve_after_full_envelope_usd"] == pytest.approx(
-        17.64667265120856
+        67.64667265120856
     )
 
 

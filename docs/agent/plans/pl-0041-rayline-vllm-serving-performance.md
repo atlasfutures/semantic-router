@@ -89,7 +89,9 @@ it after an idle server timeout. Strict v2 receipts now carry the realized
 arrival rate derived from the frozen schedule span; all six PERF020 v1 receipts
 remain replayable. The successor's USD 6.9344208 full envelope would bring the
 cumulative conservative maximum to USD 66.66615137 and leave USD 17.64667265
-reserve. Its source interlock remains closed pending signed source push and
+reserve under the previous authority. The additional USD 50 authority raises
+that full-envelope reserve to USD 67.64667265. Its source interlock remains
+closed pending signed source push and
 Pathfinder preregistration. The
 independent endpoint therefore remains the MVP default while
 retained KV is a measured optimization, not a production-readiness claim. The
