@@ -337,6 +337,39 @@ full/serialized/retained/appended/cached/truncated token sums and counts, and
 cache-miss token sums and counts. Session actions must reconcile with ARC
 request counts or the launcher fails closed.
 
+### PERF016 preregistered repeat
+
+PERF016 is one repeat of PERF015, not a new load cell. It keeps the same
+source-frozen packet, arm order, eight-way closed-loop admission, 8 warmup plus
+128 measured turns per arm, London policy placement, public HTTPS path to one
+protected Modal `us-east` H100, synthetic worker doubles, and absolute and
+relative gates. It changes only the receipt surface: all arms must emit
+`rayline.vllm.three-arm-input.v2`, and the launcher must capture the reconciled
+`rayline.vllm.arc-telemetry.v1` sidecar before teardown.
+
+The run ID is `rayline-three-arm-repeat-perf016-20260802`; it owns Compose
+project `rayline-three-arm-perf016` and the same exact protected encoder app.
+The closed PERF015 ID is not launchable from the generalized launcher. PERF016
+has no whole-run retry: a failure closes this ID, and any source, workload,
+placement, order, threshold, or cost change requires a new registry entry.
+
+The run passes its evidence-integrity gate only if every arm schedules and
+completes exactly 128 measured turns with zero failures and provider calls,
+the three worker-trace digests match, every input-length bucket reconciles to
+the arm totals, and ARC session-action counts reconcile to ARC requests. The
+immutable absolute and relative performance gates still determine comparator
+status. Results will be reported both overall and for `<8k`, `8k–<32k`,
+`32k–<128k`, and `≥128k` histories. Two sequential samples may show whether
+the PERF015 direction repeats; they do not establish a powered variance,
+causal-placement, or saturation claim.
+
+The paid wall limit is 40 minutes. Adding one worst-case 31-minute orphan
+request and a five-minute scale-down tail bounds the resource exposure at
+4,560 seconds and USD 6.1280928. Charging the complete PERF015 envelope first
+produces a cumulative conservative maximum of USD 55.60064962 under the USD
+59.31282402 authority, leaving USD 3.7121744. Provider calls and spend remain
+zero, and the held 1,000-case qualification is unreachable from this launcher.
+
 ## External Provider Canary
 
 This canary proves transport and settlement only; it is excluded from local

@@ -1,25 +1,33 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 
-"""Fail-closed cost envelope for the bounded PERF015 packet."""
+"""Fail-closed cost receipts for bounded Rayline three-arm packets."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
-PREVIOUS_CONSERVATIVE_USD = 39.31282402
-AUTHORIZED_CUMULATIVE_USD = 59.31282402
-PACKET_CEILING_USD = 15.0
-REQUIRED_RESERVE_USD = 5.0
-MAX_PAID_WALL_SECONDS = 90 * 60
-MAX_ORPHAN_REQUEST_SECONDS = 31 * 60
-MAX_SCALEDOWN_SECONDS = 5 * 60
 H100_USD_PER_SECOND = 0.001097
 CPU_CORE_USD_PER_SECOND = 0.0000131
 MEMORY_GIB_USD_PER_SECOND = 0.00000222
 ENCODER_CPU_CORES = 8.0
 ENCODER_MEMORY_GIB = 64.0
 PRICING_SNAPSHOT = "modal-on-demand-2026-07-31-h100-cpu-memory"
+
+
+@dataclass(frozen=True)
+class BudgetContract:
+    """One preregistered packet's complete conservative authority."""
+
+    run_id: str
+    previous_conservative_usd: float
+    authorized_cumulative_usd: float
+    packet_ceiling_usd: float
+    required_reserve_usd: float
+    maximum_paid_wall_seconds: int
+    maximum_orphan_request_seconds: int = 31 * 60
+    maximum_scaledown_seconds: int = 5 * 60
 
 
 class BudgetError(RuntimeError):
@@ -34,20 +42,30 @@ def resource_rate_usd_per_second() -> float:
     )
 
 
-def budget_receipt(elapsed_seconds: float | None = None) -> dict[str, Any]:
+def budget_receipt(
+    contract: BudgetContract, elapsed_seconds: float | None = None
+) -> dict[str, Any]:
     resource_seconds = (
-        MAX_PAID_WALL_SECONDS + MAX_ORPHAN_REQUEST_SECONDS + MAX_SCALEDOWN_SECONDS
+        contract.maximum_paid_wall_seconds
+        + contract.maximum_orphan_request_seconds
+        + contract.maximum_scaledown_seconds
     )
     packet_max = resource_seconds * resource_rate_usd_per_second()
-    cumulative_max = PREVIOUS_CONSERVATIVE_USD + packet_max
-    reserve = AUTHORIZED_CUMULATIVE_USD - cumulative_max
-    if packet_max > PACKET_CEILING_USD or reserve < REQUIRED_RESERVE_USD:
-        raise BudgetError("PERF015 resource envelope exceeds budget authority")
+    cumulative_max = contract.previous_conservative_usd + packet_max
+    reserve = contract.authorized_cumulative_usd - cumulative_max
+    if (
+        packet_max > contract.packet_ceiling_usd
+        or reserve < contract.required_reserve_usd
+    ):
+        raise BudgetError(
+            f"{contract.run_id} resource envelope exceeds budget authority"
+        )
     receipt: dict[str, Any] = {
-        "previous_conservative_usd": PREVIOUS_CONSERVATIVE_USD,
-        "authorized_cumulative_usd": AUTHORIZED_CUMULATIVE_USD,
-        "packet_ceiling_usd": PACKET_CEILING_USD,
-        "maximum_paid_wall_seconds": MAX_PAID_WALL_SECONDS,
+        "previous_conservative_usd": contract.previous_conservative_usd,
+        "authorized_cumulative_usd": contract.authorized_cumulative_usd,
+        "packet_ceiling_usd": contract.packet_ceiling_usd,
+        "required_reserve_usd": contract.required_reserve_usd,
+        "maximum_paid_wall_seconds": contract.maximum_paid_wall_seconds,
         "maximum_resource_seconds": resource_seconds,
         "maximum_resource_envelope_usd": packet_max,
         "cumulative_if_full_envelope_usd": cumulative_max,

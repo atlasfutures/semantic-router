@@ -14,6 +14,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 launcher = importlib.import_module("rayline_three_arm_launcher")
 budget = importlib.import_module("rayline_three_arm_budget")
+contract = importlib.import_module("rayline_three_arm_contract")
 
 
 def _base() -> dict:
@@ -33,12 +34,39 @@ def _base() -> dict:
 
 
 def test_budget_preserves_packet_ceiling_and_cleanup_reserve() -> None:
-    receipt = budget.budget_receipt()
+    receipt = budget.budget_receipt(contract.PERF016.budget)
 
-    assert receipt["maximum_resource_envelope_usd"] < budget.PACKET_CEILING_USD
-    assert receipt["reserve_after_full_envelope_usd"] >= budget.REQUIRED_RESERVE_USD
+    assert (
+        receipt["maximum_resource_envelope_usd"]
+        < contract.PERF016.budget.packet_ceiling_usd
+    )
+    assert (
+        receipt["reserve_after_full_envelope_usd"]
+        >= contract.PERF016.budget.required_reserve_usd
+    )
     assert receipt["provider_spend_usd"] == 0
     assert receipt["maximum_resource_seconds"] > receipt["maximum_paid_wall_seconds"]
+
+
+def test_perf016_contract_is_exact_and_closed_runs_are_not_launchable() -> None:
+    receipt = budget.budget_receipt(contract.PERF016.budget)
+    expected_resource_seconds = (
+        contract.PERF016.budget.maximum_paid_wall_seconds
+        + contract.PERF016.budget.maximum_orphan_request_seconds
+        + contract.PERF016.budget.maximum_scaledown_seconds
+    )
+
+    assert contract.LAUNCHABLE_CONTRACT.run_id == contract.PERF016_RUN_ID
+    assert (
+        receipt["maximum_paid_wall_seconds"]
+        == contract.PERF016.budget.maximum_paid_wall_seconds
+    )
+    assert receipt["maximum_resource_seconds"] == expected_resource_seconds
+    assert receipt["maximum_resource_envelope_usd"] == pytest.approx(6.1280928)
+    assert receipt["cumulative_if_full_envelope_usd"] == pytest.approx(55.60064962)
+    assert receipt["reserve_after_full_envelope_usd"] == pytest.approx(3.7121744)
+    with pytest.raises(ValueError, match="only permits preregistered run id"):
+        contract.resolve_launch_contract(contract.PERF015_RUN_ID)
 
 
 def test_pathfinder_config_uses_same_workers_and_protected_encoder(
@@ -53,8 +81,10 @@ def test_pathfinder_config_uses_same_workers_and_protected_encoder(
 
     router = config["router"]
     assert router["mtrouter_encoder_backend"] == "vllm"
-    assert router["mtrouter_vllm_base_url"] == launcher.ENCODER_URL
-    assert router["mtrouter_vllm_expected_build_id"] == launcher.ENGINE_BUILD_ID
+    assert router["mtrouter_vllm_base_url"] == contract.IDENTITY.encoder_url
+    assert (
+        router["mtrouter_vllm_expected_build_id"] == contract.IDENTITY.engine_build_id
+    )
     assert router["mtrouter_incremental_encode"] is False
     assert [worker["id"] for worker in config["workers"]] == [
         "worker-a",

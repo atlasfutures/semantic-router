@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 
-"""Run the bounded PERF015 Rayline three-arm directional packet.
+"""Run one bounded, preregistered Rayline three-arm packet.
 
 This launcher owns one protected Modal H100 encoder, one local Pathfinder
 process, and one local ARC Compose project. It refuses mutation until source,
@@ -31,52 +31,19 @@ from typing import Any
 
 from rayline_parity_comparator import ARMS, compare_receipts
 from rayline_parity_http_probe import PROTOCOL_BY_ARM, load_packet
-from rayline_three_arm_budget import (
-    MAX_PAID_WALL_SECONDS,
-    budget_receipt,
+from rayline_three_arm_budget import budget_receipt
+from rayline_three_arm_contract import (
+    IDENTITY,
+    LAUNCHABLE_CONTRACT,
+    NON_RUNTIME_SECRET_NAMES,
+    RunContract,
+    resolve_launch_contract,
 )
 from rayline_three_arm_telemetry import capture_arc_telemetry
-
-RUN_ID = "rayline-three-arm-directional-perf015-20260802"
-COMPOSE_PROJECT = "rayline-three-arm-perf015"
-ENCODER_APP_NAME = "rayline-arc-session-encoder"
-ENCODER_URL = (
-    "https://atlasfutures-dev--rayline-arc-session-encoder-sessionenc-2d82ac.modal.run"
-)
-ENGINE_BUILD_ID = "vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca"
-PLUGIN_VERSION = "rayline-arc-io@0.1.0"
-CHECKPOINT_REPO = "rayline-ai/mtrouter-c82"
-CHECKPOINT_REVISION = "a06a4cc194761cfb39f92549ba305b0a8173a3d4"
-CHECKPOINT_PATH = "provenance/source/mtrouter_estimator.pt"
-CHECKPOINT_SHA256 = "c2b0e63216c11f1496b47b22dff9f6c83baa6ef065e205a34897deff7493920f"
-PATHFINDER_BRANCH = "codex/rayline-vsr-mvp"
-SEMANTIC_BRANCH = "codex/rayline-remote-mvp"
-MODAL_ENVIRONMENT = "dev"
-REQUIRED_MODAL_VERSION = "1.5.1"
 
 MAX_CLEANUP_SECONDS = 180
 STABLE_ZERO_SECONDS = 65
 HTTP_OK = 200
-
-PROVIDER_KEY_NAMES = (
-    "ANTHROPIC_API_KEY",
-    "DEEPSEEK_API_KEY",
-    "GOOGLE_API_KEY",
-    "OPENAI_API_KEY",
-    "OPENROUTER_API_KEY",
-    "TOGETHER_API_KEY",
-)
-NON_RUNTIME_SECRET_NAMES = (
-    *PROVIDER_KEY_NAMES,
-    "HF_TOKEN",
-    "HF_API_TOKEN",
-    "HUGGINGFACE_HUB_TOKEN",
-    "HUGGING_FACE_HUB_TOKEN",
-    "HUGGINGFACE_TOKEN",
-    "OP_SERVICE_ACCOUNT_TOKEN",
-    "GITHUB_TOKEN",
-    "GH_TOKEN",
-)
 
 
 class LaunchError(RuntimeError):
@@ -85,6 +52,7 @@ class LaunchError(RuntimeError):
 
 @dataclass(frozen=True)
 class LaunchContext:
+    contract: RunContract
     semantic_root: Path
     pathfinder_root: Path
     pathfinder_python: Path
@@ -152,14 +120,14 @@ def _git(root: Path, *args: str) -> str:
     return _run(["git", *args], cwd=root, timeout=30).stdout.strip()
 
 
-def _assert_pushed(root: Path, branch: str, remote: str) -> str:
+def _assert_pushed(root: Path, branch: str, remote: str, run_id: str) -> str:
     head = _git(root, "rev-parse", "HEAD")
     if _git(root, "branch", "--show-current") != branch:
         raise LaunchError(f"{root.name} must be on {branch}")
     if _git(root, "status", "--porcelain"):
-        raise LaunchError(f"{root.name} must be clean before PERF015")
+        raise LaunchError(f"{root.name} must be clean before {run_id}")
     if _git(root, "rev-parse", f"{remote}/{branch}") != head:
-        raise LaunchError(f"{root.name} must be pushed before PERF015")
+        raise LaunchError(f"{root.name} must be pushed before {run_id}")
     return head
 
 
@@ -199,9 +167,9 @@ def derive_pathfinder_config(
             "mtrouter_device": "cpu",
             "mtrouter_incremental_encode": False,
             "mtrouter_encoder_backend": "vllm",
-            "mtrouter_vllm_base_url": ENCODER_URL,
-            "mtrouter_vllm_expected_build_id": ENGINE_BUILD_ID,
-            "mtrouter_vllm_expected_plugin_version": PLUGIN_VERSION,
+            "mtrouter_vllm_base_url": IDENTITY.encoder_url,
+            "mtrouter_vllm_expected_build_id": IDENTITY.engine_build_id,
+            "mtrouter_vllm_expected_plugin_version": IDENTITY.plugin_version,
             "mtrouter_vllm_timeout_s": 180.0,
             "mtrouter_vllm_connect_timeout_s": 10.0,
             "mtrouter_vllm_modal_key_env": "RAYLINE_ARC_MODAL_KEY",
@@ -242,15 +210,23 @@ def _modal_containers(
     return sorted(
         str(row["container_id"])
         for row in json.loads(result.stdout)
-        if row.get("app_name") == ENCODER_APP_NAME
+        if row.get("app_name") == IDENTITY.encoder_app_name
     )
 
 
 def _stop_modal_encoder(
-    python: Path, root: Path, environment: Mapping[str, str]
+    python: Path, root: Path, environment: Mapping[str, str], run_id: str
 ) -> None:
     _run(
-        [str(python), "-m", "modal", "app", "stop", ENCODER_APP_NAME, "--yes"],
+        [
+            str(python),
+            "-m",
+            "modal",
+            "app",
+            "stop",
+            IDENTITY.encoder_app_name,
+            "--yes",
+        ],
         cwd=root,
         environment=environment,
         timeout=30,
@@ -283,7 +259,7 @@ def _stop_modal_encoder(
         elif time.monotonic() - zero_since >= STABLE_ZERO_SECONDS:
             return
         time.sleep(1)
-    raise LaunchError("PERF015 encoder cleanup did not reach stable zero")
+    raise LaunchError(f"{run_id} encoder cleanup did not reach stable zero")
 
 
 def _wait_http(url: str, timeout_seconds: float) -> None:
@@ -325,6 +301,7 @@ def _stop_process(process: subprocess.Popen[str] | None) -> None:
 def _compose(
     semantic_root: Path,
     environment: Mapping[str, str],
+    compose_project: str,
     *args: str,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
@@ -333,7 +310,7 @@ def _compose(
             "docker",
             "compose",
             "--project-name",
-            COMPOSE_PROJECT,
+            compose_project,
             "--file",
             str(semantic_root / "deploy/compose/rayline-arc/compose.parity.yaml"),
             *args,
@@ -352,6 +329,7 @@ def _probe(
     arm: str,
     base_url: str,
     timeout_seconds: float,
+    run_id: str,
 ) -> dict[str, Any]:
     output = output_dir / f"{arm}.json"
     _run(
@@ -373,7 +351,7 @@ def _probe(
             "--identity",
             str(packet_dir / "identity.json"),
             "--run-id",
-            f"{RUN_ID}:{arm}",
+            f"{run_id}:{arm}",
             "--output",
             str(output),
             "--timeout-seconds",
@@ -388,7 +366,7 @@ def _probe(
 def _parse_args() -> argparse.Namespace:
     root = Path(__file__).resolve().parents[3]
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-id", default=RUN_ID)
+    parser.add_argument("--run-id", default=LAUNCHABLE_CONTRACT.run_id)
     parser.add_argument("--pathfinder-root", type=Path, required=True)
     parser.add_argument(
         "--packet-dir",
@@ -408,9 +386,8 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _preflight(args: argparse.Namespace) -> LaunchContext:
-    if args.run_id != RUN_ID:
-        raise LaunchError(f"this launcher only permits run id {RUN_ID}")
-    budget_receipt()
+    contract = resolve_launch_contract(args.run_id)
+    budget_receipt(contract.budget)
     semantic_root = Path(__file__).resolve().parents[3]
     pathfinder_root = args.pathfinder_root.resolve()
     packet_dir = args.packet_dir.resolve()
@@ -418,8 +395,12 @@ def _preflight(args: argparse.Namespace) -> LaunchContext:
     pathfinder_python = pathfinder_root / ".venv/bin/python"
     if not pathfinder_python.is_file():
         raise LaunchError("Pathfinder .venv Python is required")
-    semantic_head = _assert_pushed(semantic_root, SEMANTIC_BRANCH, "atlasfutures")
-    pathfinder_head = _assert_pushed(pathfinder_root, PATHFINDER_BRANCH, "origin")
+    semantic_head = _assert_pushed(
+        semantic_root, IDENTITY.semantic_branch, "atlasfutures", contract.run_id
+    )
+    pathfinder_head = _assert_pushed(
+        pathfinder_root, IDENTITY.pathfinder_branch, "origin", contract.run_id
+    )
     for arm in ARMS:
         load_packet(
             arm=arm,
@@ -443,41 +424,52 @@ def _preflight(args: argparse.Namespace) -> LaunchContext:
     if not os.environ.get("HF_TOKEN"):
         raise LaunchError("HF_TOKEN is required for the private checkpoint")
 
-    base_environment = {**os.environ, "MODAL_ENVIRONMENT": MODAL_ENVIRONMENT}
+    base_environment = {
+        **os.environ,
+        "MODAL_ENVIRONMENT": IDENTITY.modal_environment,
+    }
     if _modal_containers(pathfinder_python, pathfinder_root, base_environment):
         raise LaunchError("protected encoder already has a running container")
     existing = _run(
-        ["docker", "ps", "-aq", "--filter", f"name={COMPOSE_PROJECT}"],
+        [
+            "docker",
+            "ps",
+            "-aq",
+            "--filter",
+            f"name={contract.compose_project}",
+        ],
         cwd=semantic_root,
     ).stdout.strip()
     if existing:
-        raise LaunchError("PERF015 Compose project already exists")
+        raise LaunchError(f"{contract.run_id} Compose project already exists")
 
     modal = importlib.import_module("modal")
     yaml = importlib.import_module("yaml")
     hf_hub_download = importlib.import_module("huggingface_hub").hf_hub_download
 
-    if modal.__version__ != REQUIRED_MODAL_VERSION:
+    if modal.__version__ != IDENTITY.required_modal_version:
         raise LaunchError(
-            f"Modal SDK {REQUIRED_MODAL_VERSION} is required; found {modal.__version__}"
+            f"Modal SDK {IDENTITY.required_modal_version} is required; "
+            f"found {modal.__version__}"
         )
 
     checkpoint = Path(
         hf_hub_download(
-            CHECKPOINT_REPO,
-            CHECKPOINT_PATH,
-            revision=CHECKPOINT_REVISION,
+            IDENTITY.checkpoint_repo,
+            IDENTITY.checkpoint_path,
+            revision=IDENTITY.checkpoint_revision,
             token=os.environ["HF_TOKEN"],
         )
     )
-    if _sha256(checkpoint) != CHECKPOINT_SHA256:
+    if _sha256(checkpoint) != IDENTITY.checkpoint_sha256:
         raise LaunchError("private checkpoint digest differs")
 
-    output_dir = semantic_root / ".agent-harness/rayline-parity" / RUN_ID
+    output_dir = semantic_root / ".agent-harness/rayline-parity" / contract.run_id
     if output_dir.exists():
-        raise LaunchError("PERF015 output directory already exists")
+        raise LaunchError(f"{contract.run_id} output directory already exists")
     output_dir.mkdir(parents=True)
     return LaunchContext(
+        contract=contract,
         semantic_root=semantic_root,
         pathfinder_root=pathfinder_root,
         pathfinder_python=pathfinder_python,
@@ -518,9 +510,9 @@ def _prepare_workload(context: LaunchContext, work: Path) -> PreparedWorkload:
             "--output",
             str(bundle),
             "--bundle-version",
-            f"{RUN_ID}-bundle-v1",
+            f"{context.contract.run_id}-bundle-v1",
             "--pricing-snapshot-version",
-            f"{RUN_ID}-pricing-v1",
+            f"{context.contract.run_id}-pricing-v1",
             "--checkpoint",
             str(context.checkpoint),
         ],
@@ -544,11 +536,11 @@ def _prepare_workload(context: LaunchContext, work: Path) -> PreparedWorkload:
             "--artifact-mount-path",
             "/var/lib/vllm-sr/rayline-arc",
             "--encoder-base-url",
-            ENCODER_URL,
+            IDENTITY.encoder_url,
             "--encoder-build-id",
-            ENGINE_BUILD_ID,
+            IDENTITY.engine_build_id,
             "--encoder-plugin-version",
-            PLUGIN_VERSION,
+            IDENTITY.plugin_version,
         ],
         cwd=context.semantic_root,
         timeout=30,
@@ -648,6 +640,7 @@ def _execute_arms(
     _compose(
         context.semantic_root,
         resources.compose_environment,
+        context.contract.compose_project,
         "up",
         "--build",
         "--detach",
@@ -660,9 +653,13 @@ def _execute_arms(
         ("rayline_remote", router_url),
         ("rayline_arc", f"http://127.0.0.1:{ports['envoy']}"),
     ):
-        remaining = MAX_PAID_WALL_SECONDS - (time.perf_counter() - paid_started)
+        remaining = context.contract.budget.maximum_paid_wall_seconds - (
+            time.perf_counter() - paid_started
+        )
         if remaining <= 0:
-            raise LaunchError("PERF015 paid wall-time ceiling reached")
+            raise LaunchError(
+                f"{context.contract.run_id} paid wall-time ceiling reached"
+            )
         receipts.append(
             _probe(
                 context.semantic_root,
@@ -671,6 +668,7 @@ def _execute_arms(
                 arm,
                 base_url,
                 remaining,
+                context.contract.run_id,
             )
         )
     capture_arc_telemetry(
@@ -694,6 +692,7 @@ def _cleanup(context: LaunchContext, resources: OwnedResources) -> None:
     result = _compose(
         context.semantic_root,
         resources.compose_environment,
+        context.contract.compose_project,
         "down",
         "--volumes",
         "--remove-orphans",
@@ -708,6 +707,7 @@ def _cleanup(context: LaunchContext, resources: OwnedResources) -> None:
             context.pathfinder_python,
             context.pathfinder_root,
             resources.service_environment,
+            context.contract.run_id,
         )
     remaining = _modal_containers(
         context.pathfinder_python,
@@ -740,12 +740,12 @@ def _write_manifest(
 ) -> dict[str, Any]:
     manifest = {
         "schema_version": "rayline.vllm.three-arm-run.v1",
-        "run_id": RUN_ID,
+        "run_id": context.contract.run_id,
         "source": {
             "semantic_router_commit": context.semantic_head,
             "pathfinder_commit": context.pathfinder_head,
-            "engine_build_id": ENGINE_BUILD_ID,
-            "plugin_version": PLUGIN_VERSION,
+            "engine_build_id": IDENTITY.engine_build_id,
+            "plugin_version": IDENTITY.plugin_version,
             "router_image_id": _run(
                 [
                     "docker",
@@ -758,7 +758,7 @@ def _write_manifest(
                 cwd=context.semantic_root,
             ).stdout.strip(),
         },
-        "budget": budget_receipt(elapsed),
+        "budget": budget_receipt(context.contract.budget, elapsed),
         "cleanup": cleanup,
         "release_qualification_1000_executed": False,
     }
@@ -770,14 +770,16 @@ def _write_manifest(
 
 def main() -> None:
     context = _preflight(_parse_args())
-    with tempfile.TemporaryDirectory(prefix="rayline-perf015-") as temp_name:
+    with tempfile.TemporaryDirectory(
+        prefix=context.contract.temporary_prefix
+    ) as temp_name:
         prepared = _prepare_workload(context, Path(temp_name))
         comparison, cleanup, elapsed = _run_paid_packet(context, prepared)
     manifest = _write_manifest(context, cleanup, elapsed)
     print(
         json.dumps(
             {
-                "run_id": RUN_ID,
+                "run_id": context.contract.run_id,
                 "output_dir": str(context.output_dir),
                 "comparison_status": comparison["status"],
                 "cleanup": cleanup,

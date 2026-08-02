@@ -1206,8 +1206,10 @@ Not in scope:
   `rayline-ai/router-artifacts@6e391a8b`. The zero-spend follow-up implements
   v2 arm receipts with four fixed input-length buckets and an aggregate ARC
   telemetry sidecar captured before teardown; legacy v1 receipts remain
-  replayable, but mixed schemas fail closed. A paid repeat or concurrency sweep
-  using those new fields remains.
+  replayable, but mixed schemas fail closed. PERF016 is preregistered as one
+  exact repeat using those new fields. It has a 40-minute paid wall, USD
+  6.1280928 full resource envelope, one-shot ID, zero providers, and no path to
+  the held qualification.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
@@ -1368,8 +1370,13 @@ but held:
    `$59.31282402` authority, leaving `$9.8402672` conservative reserve. The
    receipt v2 and aggregate telemetry follow-up now implements ARC
    create/append/cache persistence plus input-length latency stratification
-   without GPU spend. Before another paid run, preregister a small repetition
-   or concurrency sweep using those fields; do not increase qualification size
+   without GPU spend. PERF016 is preregistered as one exact 128-turn-per-arm
+   repeat at concurrency eight, with the same sequential arm order and
+   placement. Its full resource envelope is `$6.1280928`, producing a
+   cumulative conservative maximum of `$55.60064962` and `$3.7121744` reserve
+   under the approved authority. Execute this ID at most once, close it on any
+   failure, and use its bucket and ARC-session telemetry to decide whether a
+   separate concurrency sweep is justified. Do not increase qualification size
    opportunistically.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
