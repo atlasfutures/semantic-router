@@ -1203,8 +1203,11 @@ Not in scope:
   `9.09s/76.70s/98.72s` p50/p95/p99 versus Remote `0.251 rps` and
   `14.09s/90.54s/99.92s`; relative gates passed, but every arm failed the
   frozen 8 rps / 1s p95 / 2s p99 absolute gates. Receipts are pinned at
-  `rayline-ai/router-artifacts@6e391a8b`. Synchronized component metrics beyond
-  arm receipts and input-length-stratified latency remain.
+  `rayline-ai/router-artifacts@6e391a8b`. The zero-spend follow-up implements
+  v2 arm receipts with four fixed input-length buckets and an aggregate ARC
+  telemetry sidecar captured before teardown; legacy v1 receipts remain
+  replayable, but mixed schemas fail closed. A paid repeat or concurrency sweep
+  using those new fields remains.
 - [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
   cache break-even, saturation, memory envelope, and failure behavior without
   provider spend.
@@ -1362,9 +1365,12 @@ but held:
    aggregate receipts are privately verified at
    `rayline-ai/router-artifacts@6e391a8b77394d730af2117ccc79482dd45c65de`.
    The cumulative full-envelope maximum is `$49.47255682` under the
-   `$59.31282402` authority, leaving `$9.8402672` conservative reserve. Before
-   another paid run, persist ARC create/append/cache telemetry and stratify
-   latency by input length; do not increase qualification size opportunistically.
+   `$59.31282402` authority, leaving `$9.8402672` conservative reserve. The
+   receipt v2 and aggregate telemetry follow-up now implements ARC
+   create/append/cache persistence plus input-length latency stratification
+   without GPU spend. Before another paid run, preregister a small repetition
+   or concurrency sweep using those fields; do not increase qualification size
+   opportunistically.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage

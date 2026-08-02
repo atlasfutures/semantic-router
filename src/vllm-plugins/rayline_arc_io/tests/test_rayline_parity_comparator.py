@@ -23,6 +23,29 @@ HASH_D = "d" * 64
 TRACE_HASH = "e" * 64
 
 
+def _latency_buckets(
+    *, completed: int, p50: float, p95: float, p99: float
+) -> dict[str, Any]:
+    buckets = {
+        name: {
+            "scheduled": 0,
+            "completed": 0,
+            "failed": 0,
+            "selection_latency_seconds": None,
+        }
+        for name in comparator.INPUT_TOKEN_BUCKETS
+    }
+    buckets["lt_8192"] = {
+        "scheduled": 128,
+        "completed": completed,
+        "failed": 128 - completed,
+        "selection_latency_seconds": (
+            {"p50": p50, "p95": p95, "p99": p99} if completed else None
+        ),
+    }
+    return buckets
+
+
 def _receipt(
     arm: str,
     *,
@@ -67,6 +90,9 @@ def _receipt(
             },
             "selected_worker_trace_sha256": trace_hash,
             "provider_calls": 0,
+            "latency_by_input_tokens": _latency_buckets(
+                completed=completed, p50=p50, p95=p95, p99=p99
+            ),
         },
     }
 
@@ -149,3 +175,23 @@ def test_receipt_rejects_unregistered_fields() -> None:
 
     with pytest.raises(comparator.ReceiptError, match="results keys differ"):
         comparator.validate_receipt(receipt)
+
+
+def test_receipt_rejects_bucket_totals_that_hide_a_case() -> None:
+    receipt = deepcopy(_receipt("rayline_arc"))
+    receipt["results"]["latency_by_input_tokens"]["lt_8192"]["scheduled"] -= 1
+
+    with pytest.raises(comparator.ReceiptError, match="counts do not reconcile"):
+        comparator.validate_receipt(receipt)
+
+
+def test_legacy_receipt_remains_valid_but_cannot_mix_with_v2() -> None:
+    legacy = deepcopy(_receipt("modal_inprocess"))
+    legacy["schema_version"] = comparator.LEGACY_INPUT_SCHEMA
+    legacy["results"].pop("latency_by_input_tokens")
+
+    validated = comparator.validate_receipt(legacy)
+
+    assert validated["schema_version"] == comparator.LEGACY_INPUT_SCHEMA
+    with pytest.raises(comparator.ReceiptError, match="schemas differ"):
+        comparator.compare_receipts([legacy, *_passing_packet()[1:]])

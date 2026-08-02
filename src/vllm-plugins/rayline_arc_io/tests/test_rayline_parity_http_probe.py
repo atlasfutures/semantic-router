@@ -18,6 +18,9 @@ SCRIPT_DIR = REPO_ROOT / "e2e/testing/rayline-arc"
 sys.path.insert(0, str(SCRIPT_DIR))
 
 probe = importlib.import_module("rayline_parity_http_probe")
+MEASURED_CASES = 128
+TOTAL_CASES = 136
+MEASURED_AFTER_ONE_FAILURE = 127
 
 
 class FakeClient:
@@ -192,6 +195,21 @@ def _loaded(root: Path, arm: str) -> tuple[Any, ...]:
 
 
 @pytest.mark.parametrize(
+    ("input_tokens", "expected"),
+    [
+        (8191, "lt_8192"),
+        (8192, "8192_to_32767"),
+        (32767, "8192_to_32767"),
+        (32768, "32768_to_131071"),
+        (131071, "32768_to_131071"),
+        (131072, "gte_131072"),
+    ],
+)
+def test_input_token_bucket_boundaries(input_tokens: int, expected: str) -> None:
+    assert probe._input_token_bucket(input_tokens) == expected
+
+
+@pytest.mark.parametrize(
     ("arm", "protocol"),
     list(probe.PROTOCOL_BY_ARM.items()),
 )
@@ -214,12 +232,15 @@ def test_each_registered_protocol_emits_the_same_canonical_trace(
         run_id=f"test-{arm}",
     )
 
-    assert receipt["results"]["completed"] == 128
+    assert receipt["results"]["completed"] == MEASURED_CASES
     assert receipt["results"]["failed"] == 0
     assert receipt["results"]["provider_calls"] == 0
+    buckets = receipt["results"]["latency_by_input_tokens"]
+    assert buckets["lt_8192"]["completed"] == MEASURED_CASES
+    assert buckets["8192_to_32767"]["selection_latency_seconds"] is None
     if arm == "rayline_remote":
-        assert client.commits == 136
-        assert client.settles == 136
+        assert client.commits == TOTAL_CASES
+        assert client.settles == TOTAL_CASES
 
 
 def test_packet_rejects_digest_drift(tmp_path: Path) -> None:
@@ -251,7 +272,7 @@ def test_failed_request_is_retained_as_aggregate_evidence(tmp_path: Path) -> Non
         run_id="test-failure",
     )
 
-    assert receipt["results"]["completed"] == 127
+    assert receipt["results"]["completed"] == MEASURED_AFTER_ONE_FAILURE
     assert receipt["results"]["failed"] == 1
 
 
@@ -319,5 +340,5 @@ def test_measured_turns_never_overlap_within_one_episode(tmp_path: Path) -> None
         run_id="test-episode-order",
     )
 
-    assert receipt["results"]["completed"] == 128
+    assert receipt["results"]["completed"] == MEASURED_CASES
     assert receipt["results"]["failed"] == 0

@@ -5,7 +5,7 @@
 
 The three protocols deliberately exercise each architecture's real decision
 boundary. Modal uses its decision-only route API, Remote uses the Pathfinder
-prepare/abort transaction, and ARC uses the normal Semantic Router gateway
+prepare/commit/settle transaction, and ARC uses the normal Semantic Router gateway
 with a zero-cost worker double. Raw cases and endpoint credentials never enter
 the receipt.
 """
@@ -22,7 +22,7 @@ import math
 import os
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -39,6 +39,19 @@ PROTOCOL_BY_ARM = {
     "rayline_arc": "openai_gateway",
 }
 TRANSACTION_SCHEMA = "rayline-router.selection-transaction.v1"
+EXPECTED_CONCURRENCY = 8
+EXPECTED_MEASURED_CASES = 128
+MIN_CANONICAL_WORKERS = 2
+HTTP_OK = 200
+TOKEN_BUCKET_8K = 8192
+TOKEN_BUCKET_32K = 32768
+TOKEN_BUCKET_128K = 131072
+INPUT_TOKEN_BUCKET_NAMES = (
+    "lt_8192",
+    "8192_to_32767",
+    "32768_to_131071",
+    "gte_131072",
+)
 
 
 class ProbeError(ValueError):
@@ -230,11 +243,14 @@ def load_packet(
     )
     if workload["schema_version"] != WORKLOAD_SCHEMA:
         raise ProbeError("unsupported workload schema")
-    if workload["concurrency"] != 8:
+    if workload["concurrency"] != EXPECTED_CONCURRENCY:
         raise ProbeError("the directional packet requires concurrency 8")
     if workload["warmup_cases"] != len(warmup):
         raise ProbeError("workload warmup count differs from corpus")
-    if workload["measured_cases"] != len(measured) or len(measured) != 128:
+    if (
+        workload["measured_cases"] != len(measured)
+        or len(measured) != EXPECTED_MEASURED_CASES
+    ):
         raise ProbeError("the directional packet requires 128 measured cases")
 
     identity = _read_json(identity_path, "identity")
@@ -263,7 +279,7 @@ def load_packet(
     maps = topology["arm_worker_maps"]
     if (
         not isinstance(canonical, list)
-        or len(canonical) < 2
+        or len(canonical) < MIN_CANONICAL_WORKERS
         or len(canonical) != len(set(map(str, canonical)))
         or not isinstance(maps, Mapping)
         or set(maps) != set(ARMS)
@@ -293,7 +309,7 @@ def _expect_ok(
     operation: str,
 ) -> tuple[dict[str, Any], dict[str, str], float]:
     status, body, headers, elapsed = response
-    if status != 200:
+    if status != HTTP_OK:
         raise ProbeError(f"{operation} returned HTTP {status}")
     return body, headers, elapsed
 
@@ -435,6 +451,89 @@ def _percentile(values: list[float], fraction: float) -> float:
     return ordered[max(0, math.ceil(fraction * len(ordered)) - 1)]
 
 
+def _input_token_bucket(input_tokens: int) -> str:
+    if input_tokens < TOKEN_BUCKET_8K:
+        return "lt_8192"
+    if input_tokens < TOKEN_BUCKET_32K:
+        return "8192_to_32767"
+    if input_tokens < TOKEN_BUCKET_128K:
+        return "32768_to_131071"
+    return "gte_131072"
+
+
+def _latency_by_input_tokens(
+    measured: list[Case], successes: Mapping[str, tuple[str, float]]
+) -> dict[str, Any]:
+    samples: dict[str, dict[str, Any]] = {
+        name: {"scheduled": 0, "latencies": []} for name in INPUT_TOKEN_BUCKET_NAMES
+    }
+    for case in measured:
+        bucket = samples[_input_token_bucket(case.input_tokens)]
+        bucket["scheduled"] += 1
+        outcome = successes.get(case.case_id)
+        if outcome is not None:
+            bucket["latencies"].append(outcome[1])
+    rendered: dict[str, Any] = {}
+    for name, sample in samples.items():
+        latencies = sample["latencies"]
+        completed = len(latencies)
+        rendered[name] = {
+            "scheduled": sample["scheduled"],
+            "completed": completed,
+            "failed": sample["scheduled"] - completed,
+            "selection_latency_seconds": (
+                {
+                    "p50": _percentile(latencies, 0.50),
+                    "p95": _percentile(latencies, 0.95),
+                    "p99": _percentile(latencies, 0.99),
+                }
+                if latencies
+                else None
+            ),
+        }
+    return rendered
+
+
+def _selector(
+    *,
+    arm: str,
+    client: JSONClient,
+    run_id: str,
+    identity: Mapping[str, Any],
+) -> Callable[[Case], tuple[str, float]]:
+    if arm == "modal_inprocess":
+        return lambda case: _select_modal(client, case, run_id)
+    if arm == "rayline_remote":
+        bundle, candidates = _remote_capabilities(client)
+        return lambda case: _select_remote(
+            client,
+            case,
+            run_id,
+            seed=int(identity["seed"]),
+            bundle=bundle,
+            candidates=candidates,
+        )
+    return lambda case: _select_arc(client, case, run_id)
+
+
+def _select_episode(
+    cases: list[Case],
+    select: Callable[[Case], tuple[str, float]],
+    worker_map: Mapping[str, str],
+) -> list[tuple[str, str, float] | None]:
+    outcomes: list[tuple[str, str, float] | None] = []
+    for case in cases:
+        try:
+            observed, latency = select(case)
+            canonical = worker_map.get(observed)
+            if canonical is None:
+                raise ProbeError("measured request selected an unmapped worker")
+            outcomes.append((case.case_id, canonical, latency))
+        except (OSError, ProbeError):
+            outcomes.append(None)
+    return outcomes
+
+
 def run_probe(
     *,
     arm: str,
@@ -445,26 +544,11 @@ def run_probe(
     identity: Mapping[str, Any],
     worker_map: Mapping[str, str],
     run_id: str,
-    concurrency: int = 8,
+    concurrency: int = EXPECTED_CONCURRENCY,
 ) -> dict[str, Any]:
     if PROTOCOL_BY_ARM.get(arm) != protocol:
         raise ProbeError("arm/protocol pair is not registered")
-    remote_context = _remote_capabilities(client) if arm == "rayline_remote" else None
-
-    def select(case: Case) -> tuple[str, float]:
-        if arm == "modal_inprocess":
-            return _select_modal(client, case, run_id)
-        if arm == "rayline_remote":
-            assert remote_context is not None
-            return _select_remote(
-                client,
-                case,
-                run_id,
-                seed=int(identity["seed"]),
-                bundle=remote_context[0],
-                candidates=remote_context[1],
-            )
-        return _select_arc(client, case, run_id)
+    select = _selector(arm=arm, client=client, run_id=run_id, identity=identity)
 
     for case in warmup:
         observed, _latency = select(case)
@@ -479,25 +563,13 @@ def run_probe(
     for case in measured:
         episode_lanes.setdefault(case.episode_id, []).append(case)
 
-    def select_episode(cases: list[Case]) -> list[tuple[str, str, float] | None]:
-        outcomes: list[tuple[str, str, float] | None] = []
-        for case in cases:
-            try:
-                observed, latency = select(case)
-                canonical = worker_map.get(observed)
-                if canonical is None:
-                    raise ProbeError("measured request selected an unmapped worker")
-                outcomes.append((case.case_id, canonical, latency))
-            except (OSError, ProbeError):
-                outcomes.append(None)
-        return outcomes
-
     started = time.perf_counter()
     successes: dict[str, tuple[str, float]] = {}
     failures = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
         futures = [
-            executor.submit(select_episode, cases) for cases in episode_lanes.values()
+            executor.submit(_select_episode, cases, select, worker_map)
+            for cases in episode_lanes.values()
         ]
         for future in concurrent.futures.as_completed(futures):
             for outcome in future.result():
@@ -537,6 +609,7 @@ def run_probe(
             },
             "selected_worker_trace_sha256": hashlib.sha256(trace).hexdigest(),
             "provider_calls": 0,
+            "latency_by_input_tokens": _latency_by_input_tokens(measured, successes),
         },
     }
     return validate_receipt(receipt)

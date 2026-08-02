@@ -35,6 +35,7 @@ from rayline_three_arm_budget import (
     MAX_PAID_WALL_SECONDS,
     budget_receipt,
 )
+from rayline_three_arm_telemetry import capture_arc_telemetry
 
 RUN_ID = "rayline-three-arm-directional-perf015-20260802"
 COMPOSE_PROJECT = "rayline-three-arm-perf015"
@@ -672,6 +673,10 @@ def _execute_arms(
                 remaining,
             )
         )
+    capture_arc_telemetry(
+        f"http://127.0.0.1:{ports['metrics']}/metrics",
+        context.output_dir / "rayline_arc_telemetry.json",
+    )
     comparison = compare_receipts(receipts)
     (context.output_dir / "comparison.json").write_text(
         json.dumps(comparison, indent=2, sort_keys=True) + "\n"

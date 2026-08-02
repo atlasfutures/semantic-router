@@ -264,12 +264,15 @@ aborts a successful measured turn: doing so would suppress committed
 policy semantics. Its settle record carries the corpus's exact post-serializer
 input-token count. All three paths make zero real provider calls.
 
-The machine-readable inputs use
-`rayline.vllm.three-arm-input.v1`. The comparator rejects unknown fields,
-missing arms, duplicate arms, malformed SHA-256 identities, mismatched case
-counts, inconsistent throughput arithmetic, non-monotonic latency percentiles,
-and any identity mismatch before producing a comparison. The output uses
-`rayline.vllm.three-arm-comparison.v1` and retains failed gates as evidence.
+New machine-readable inputs use `rayline.vllm.three-arm-input.v2`. The
+comparator still validates v1 receipts for historical replay, rejects mixed
+v1/v2 arms, and emits `rayline.vllm.three-arm-comparison.v2` for v2 inputs.
+V2 adds scheduled/completed/failed counts and p50/p95/p99 for fixed `<8k`,
+`8k–<32k`, `32k–<128k`, and `≥128k` input-token buckets; empty buckets carry a
+null latency. The comparator rejects unknown fields, missing or duplicate arms,
+malformed SHA-256 identities, mismatched case or bucket totals, inconsistent
+throughput arithmetic, non-monotonic latency percentiles, and any identity
+mismatch before producing a comparison. Failed gates remain evidence.
 
 Absolute gates for every arm remain the frozen router-only targets:
 
@@ -326,6 +329,13 @@ ephemeral proxy, and held the protected encoder at zero containers for 65
 seconds. Five aggregate-only receipts are privately round-trip verified at
 `rayline-ai/router-artifacts@6e391a8b77394d730af2117ccc79482dd45c65de`.
 The 1,000-case qualification was not executed.
+
+The zero-spend follow-up captures one additional
+`rayline.vllm.arc-telemetry.v1` sidecar before teardown. It persists only
+aggregate component readiness, session create/append/rebuild/reuse counts,
+full/serialized/retained/appended/cached/truncated token sums and counts, and
+cache-miss token sums and counts. Session actions must reconcile with ARC
+request counts or the launcher fails closed.
 
 ## External Provider Canary
 

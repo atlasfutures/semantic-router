@@ -13,8 +13,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-INPUT_SCHEMA = "rayline.vllm.three-arm-input.v1"
-REPORT_SCHEMA = "rayline.vllm.three-arm-comparison.v1"
+LEGACY_INPUT_SCHEMA = "rayline.vllm.three-arm-input.v1"
+INPUT_SCHEMA = "rayline.vllm.three-arm-input.v2"
+LEGACY_REPORT_SCHEMA = "rayline.vllm.three-arm-comparison.v1"
+REPORT_SCHEMA = "rayline.vllm.three-arm-comparison.v2"
 ARMS = ("modal_inprocess", "rayline_remote", "rayline_arc")
 
 COMPLETION_FLOOR = 0.999
@@ -50,8 +52,17 @@ RESULT_FIELDS = (
     "selected_worker_trace_sha256",
     "provider_calls",
 )
+STRATIFIED_RESULT_FIELDS = (*RESULT_FIELDS, "latency_by_input_tokens")
 LATENCY_FIELDS = ("p50", "p95", "p99")
+INPUT_TOKEN_BUCKETS = (
+    "lt_8192",
+    "8192_to_32767",
+    "32768_to_131071",
+    "gte_131072",
+)
+BUCKET_FIELDS = ("scheduled", "completed", "failed", "selection_latency_seconds")
 SHA256_LENGTH = 64
+RUN_ID_MAX_LENGTH = 128
 
 
 class ReceiptError(ValueError):
@@ -92,56 +103,92 @@ def _non_negative_integer(value: object, label: str) -> int:
     return value
 
 
-def validate_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
-    _require_exact_keys(
-        receipt,
-        ("schema_version", "arm", "run_id", "identity", "results"),
-        "receipt",
-    )
-    if receipt["schema_version"] != INPUT_SCHEMA:
-        raise ReceiptError("unsupported receipt schema")
-    arm = str(receipt["arm"])
-    if arm not in ARMS:
-        raise ReceiptError(f"unsupported arm: {arm}")
-    run_id = str(receipt["run_id"])
-    if not run_id or len(run_id) > 128:
-        raise ReceiptError("run_id must contain 1 to 128 characters")
+def _validate_latency(raw: object, label: str) -> dict[str, float]:
+    if not isinstance(raw, Mapping):
+        raise ReceiptError(f"{label} must be an object")
+    _require_exact_keys(raw, LATENCY_FIELDS, label)
+    latency = {
+        field: _finite_number(raw[field], f"{label}.{field}")
+        for field in LATENCY_FIELDS
+    }
+    if not latency["p50"] <= latency["p95"] <= latency["p99"]:
+        raise ReceiptError(f"{label} percentiles must be monotonic")
+    return latency
 
-    identity_raw = receipt["identity"]
-    if not isinstance(identity_raw, Mapping):
+
+def _validate_length_buckets(
+    raw: object, *, scheduled: int, completed: int, failed: int
+) -> dict[str, Any]:
+    if not isinstance(raw, Mapping):
+        raise ReceiptError("results.latency_by_input_tokens must be an object")
+    _require_exact_keys(raw, INPUT_TOKEN_BUCKETS, "latency_by_input_tokens")
+    buckets: dict[str, Any] = {}
+    for name in INPUT_TOKEN_BUCKETS:
+        bucket_raw = raw[name]
+        if not isinstance(bucket_raw, Mapping):
+            raise ReceiptError(f"latency_by_input_tokens.{name} must be an object")
+        _require_exact_keys(bucket_raw, BUCKET_FIELDS, f"input bucket {name}")
+        bucket = {
+            field: _non_negative_integer(
+                bucket_raw[field], f"latency_by_input_tokens.{name}.{field}"
+            )
+            for field in ("scheduled", "completed", "failed")
+        }
+        if bucket["completed"] + bucket["failed"] != bucket["scheduled"]:
+            raise ReceiptError(f"input bucket {name} counts do not reconcile")
+        latency_raw = bucket_raw["selection_latency_seconds"]
+        if bucket["completed"] == 0:
+            if latency_raw is not None:
+                raise ReceiptError(f"empty input bucket {name} latency must be null")
+            latency = None
+        else:
+            latency = _validate_latency(latency_raw, f"latency_by_input_tokens.{name}")
+        bucket["selection_latency_seconds"] = latency
+        buckets[name] = bucket
+    totals = {
+        field: sum(bucket[field] for bucket in buckets.values())
+        for field in ("scheduled", "completed", "failed")
+    }
+    if totals != {"scheduled": scheduled, "completed": completed, "failed": failed}:
+        raise ReceiptError("input bucket totals do not match receipt totals")
+    return buckets
+
+
+def _validate_identity(raw: object) -> tuple[dict[str, Any], int]:
+    if not isinstance(raw, Mapping):
         raise ReceiptError("identity must be an object")
-    _require_exact_keys(identity_raw, IDENTITY_FIELDS, "identity")
-    identity = dict(identity_raw)
+    _require_exact_keys(raw, IDENTITY_FIELDS, "identity")
+    identity = dict(raw)
     case_count = _non_negative_integer(identity["case_count"], "identity.case_count")
     if case_count == 0:
         raise ReceiptError("identity.case_count must be positive")
-    seed = _non_negative_integer(identity["seed"], "identity.seed")
-    identity["seed"] = seed
-    for field in (
+    identity["seed"] = _non_negative_integer(identity["seed"], "identity.seed")
+    digest_fields = {
         "corpus_sha256",
         "workload_sha256",
         "tokenizer_sha256",
         "worker_topology_sha256",
-    ):
+    }
+    for field in digest_fields:
         identity[field] = _require_sha256(identity[field], f"identity.{field}")
-    for field in set(IDENTITY_FIELDS) - {
-        "case_count",
-        "seed",
-        "corpus_sha256",
-        "workload_sha256",
-        "tokenizer_sha256",
-        "worker_topology_sha256",
-    }:
+    for field in set(IDENTITY_FIELDS) - {"case_count", "seed", *digest_fields}:
         text = str(identity[field])
         if not text:
             raise ReceiptError(f"identity.{field} must be non-empty")
         identity[field] = text
+    return identity, case_count
 
-    results_raw = receipt["results"]
-    if not isinstance(results_raw, Mapping):
+
+def _validate_results(
+    raw: object, *, schema_version: str, case_count: int
+) -> dict[str, Any]:
+    if not isinstance(raw, Mapping):
         raise ReceiptError("results must be an object")
-    _require_exact_keys(results_raw, RESULT_FIELDS, "results")
-    results = dict(results_raw)
+    result_fields = (
+        STRATIFIED_RESULT_FIELDS if schema_version == INPUT_SCHEMA else RESULT_FIELDS
+    )
+    _require_exact_keys(raw, result_fields, "results")
+    results = dict(raw)
     for field in ("scheduled", "completed", "failed", "provider_calls"):
         results[field] = _non_negative_integer(results[field], f"results.{field}")
     if results["scheduled"] != case_count:
@@ -159,24 +206,44 @@ def validate_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
     observed_rps = results["completed"] / results["duration_seconds"]
     if not math.isclose(results["throughput_rps"], observed_rps, rel_tol=1e-6):
         raise ReceiptError("throughput_rps does not match completed / duration_seconds")
-
-    latency_raw = results["selection_latency_seconds"]
-    if not isinstance(latency_raw, Mapping):
-        raise ReceiptError("results.selection_latency_seconds must be an object")
-    _require_exact_keys(latency_raw, LATENCY_FIELDS, "selection_latency_seconds")
-    latency = {
-        field: _finite_number(latency_raw[field], f"selection_latency_seconds.{field}")
-        for field in LATENCY_FIELDS
-    }
-    if not latency["p50"] <= latency["p95"] <= latency["p99"]:
-        raise ReceiptError("selection latency percentiles must be monotonic")
-    results["selection_latency_seconds"] = latency
+    results["selection_latency_seconds"] = _validate_latency(
+        results["selection_latency_seconds"], "selection_latency_seconds"
+    )
     results["selected_worker_trace_sha256"] = _require_sha256(
         results["selected_worker_trace_sha256"],
         "results.selected_worker_trace_sha256",
     )
+    if schema_version == INPUT_SCHEMA:
+        results["latency_by_input_tokens"] = _validate_length_buckets(
+            results["latency_by_input_tokens"],
+            scheduled=results["scheduled"],
+            completed=results["completed"],
+            failed=results["failed"],
+        )
+    return results
+
+
+def validate_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
+    _require_exact_keys(
+        receipt,
+        ("schema_version", "arm", "run_id", "identity", "results"),
+        "receipt",
+    )
+    schema_version = str(receipt["schema_version"])
+    if schema_version not in {LEGACY_INPUT_SCHEMA, INPUT_SCHEMA}:
+        raise ReceiptError("unsupported receipt schema")
+    arm = str(receipt["arm"])
+    if arm not in ARMS:
+        raise ReceiptError(f"unsupported arm: {arm}")
+    run_id = str(receipt["run_id"])
+    if not run_id or len(run_id) > RUN_ID_MAX_LENGTH:
+        raise ReceiptError("run_id must contain 1 to 128 characters")
+    identity, case_count = _validate_identity(receipt["identity"])
+    results = _validate_results(
+        receipt["results"], schema_version=schema_version, case_count=case_count
+    )
     return {
-        "schema_version": INPUT_SCHEMA,
+        "schema_version": schema_version,
         "arm": arm,
         "run_id": run_id,
         "identity": identity,
@@ -260,6 +327,10 @@ def compare_receipts(raw_receipts: list[Mapping[str, Any]]) -> dict[str, Any]:
     missing = [arm for arm in ARMS if arm not in receipts]
     if missing:
         raise ReceiptError(f"missing receipts for arms: {missing}")
+    input_schemas = {receipt["schema_version"] for receipt in receipts.values()}
+    if len(input_schemas) != 1:
+        raise ReceiptError("comparison receipt schemas differ")
+    input_schema = input_schemas.pop()
 
     identity = _matching_identity(receipts)
     trace_digests = {
@@ -284,8 +355,10 @@ def compare_receipts(raw_receipts: list[Mapping[str, Any]]) -> dict[str, Any]:
         and all(result["passed"] for result in arm_gates.values())
         and baseline_parity_passed
     )
-    return {
-        "schema_version": REPORT_SCHEMA,
+    report = {
+        "schema_version": (
+            REPORT_SCHEMA if input_schema == INPUT_SCHEMA else LEGACY_REPORT_SCHEMA
+        ),
         "status": "passed" if passed else "failed",
         "identity": identity,
         "thresholds": {
@@ -304,6 +377,9 @@ def compare_receipts(raw_receipts: list[Mapping[str, Any]]) -> dict[str, Any]:
         "baseline_parity_passed": baseline_parity_passed,
         "passed": passed,
     }
+    if input_schema == INPUT_SCHEMA:
+        report["input_schema_version"] = input_schema
+    return report
 
 
 def _parse_args() -> argparse.Namespace:
