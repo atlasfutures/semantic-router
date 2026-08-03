@@ -304,7 +304,7 @@ def test_openrouter_launcher_uses_ephemeral_limited_key_and_exact_cleanup() -> N
         'management_key = os.environ.get("OPENROUTER_MANAGEMENT_KEY", "")'
         in launcher_source
     )
-    assert '"limit": OPENROUTER_KEY_LIMIT_USD' in launcher_source
+    assert '"limit": key_limit_usd' in launcher_source
     assert "_delete_ephemeral_key(management_key, key_hash)" in launcher_source
     assert 'ENCODER_APP_ID = "ap-rs3UkEn5XUnWjrZOXYbkuB"' in launcher_source
     assert '"container", "stop", container_id, "--yes"' in launcher_source
@@ -321,11 +321,14 @@ def test_openrouter_post_run_evidence_scans_logs_before_reading_usage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, Any]] = []
+    packet = launcher.PACKETS["canary"]
 
     def fake_scan(
-        environment: dict[str, str], protected_values: tuple[str, ...]
+        received_packet: launcher.RunPacket,
+        environment: dict[str, str],
+        protected_values: tuple[str, ...],
     ) -> None:
-        calls.append(("scan", (environment, protected_values)))
+        calls.append(("scan", (received_packet, environment, protected_values)))
 
     def fake_usage(management_key: str, key_hash: str) -> float:
         calls.append(("usage", (management_key, key_hash)))
@@ -338,11 +341,12 @@ def test_openrouter_post_run_evidence_scans_logs_before_reading_usage(
         protected_values=("protected",),
         management_key="management-key",
         key_hash="key-hash",
+        packet=packet,
     )
 
     assert usage == EXPECTED_EPHEMERAL_USAGE_USD
     assert calls == [
-        ("scan", ({"public": "value"}, ("protected",))),
+        ("scan", (packet, {"public": "value"}, ("protected",))),
         ("usage", ("management-key", "key-hash")),
     ]
 

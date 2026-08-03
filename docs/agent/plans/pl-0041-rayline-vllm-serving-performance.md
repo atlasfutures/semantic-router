@@ -1909,13 +1909,77 @@ The 1,000-case qualification was not executed.
 
 ### Next Action
 
-Integrate fleet provisioning and drain invocation with the Kubernetes/operator
-surface while preserving the proven membership/controller contract. Separately
-preregister powered workload characterization with a real generation tier only
-when it answers a concrete capacity or deployment decision. Add spontaneous
-health and ambiguous in-flight failure policy before claiming general HA. Do
-not rerun DYN006, and keep the 1,000-case qualification held until explicit
-user confirmation.
+The user has reprioritized the immediate continuation to single-router,
+end-to-end serving performance. Park multi-router transactional consistency in
+[GitHub issue #2756](https://github.com/vllm-project/semantic-router/issues/2756)
+and leave Kubernetes fleet provisioning under TD050. Implement and preregister
+AGT001 below, execute it at most once after its exact source checkpoint is
+remote-visible, and compare its normalized routing overhead with the completed
+pure-Modal static-control diagnostic. Do not rerun DYN006, and keep the
+1,000-case qualification held until explicit user confirmation.
+
+### AGT001 OpenRouter Agentic Serving Diagnostic
+
+AGT001 answers one bounded deployment question: what client-visible throughput,
+TTFT, and end-to-end latency does the complete Rayline ARC serving path deliver
+for small realistic agentic requests when generation is provided by three real
+models through OpenRouter, and how much routing overhead does it add relative to
+both direct OpenRouter and a specified-model static gateway?
+
+The frozen generation pool is:
+
+- `deepseek/deepseek-v4-flash`, pinned through OpenRouter to standard Baidu;
+- `xiaomi/mimo-v2.5`, pinned through OpenRouter to standard Xiaomi; and
+- `tencent/hy3`, pinned through OpenRouter to standard Tencent.
+
+Provider fallback and reasoning are disabled, and Fireworks Fast, Kimi, GLM,
+and Luna are absent. The source snapshot records the 2026-08-03 endpoint prices
+and health contract. All requests carry public synthetic coding, research, or
+incident-triage histories with an assistant tool call, a bounded tool result,
+and a final synthesis turn. Output is streamed and capped at 96 tokens.
+
+The benchmark first discovers exactly two frozen cases per selected worker and
+requires all three workload shapes. It then compares the same six payloads
+through `direct`, `gateway_static`, and full `arc` paths at concurrency one and
+four. Two serial waves plus one doubled concurrency-four wave produce exactly
+72 measured generations; coverage stops by 24 generations. The source contains
+no request-count argument or duration-unbounded loop. The report includes:
+
+- completed requests/second and output tokens/second;
+- client TTFT and end-to-end p50/p95/max;
+- per-model/provider latency, tokens, and cost;
+- Envoy upstream service time, logical requests, external attempts, retries,
+  and retry exhaustion;
+- exact ARC selection coverage, session creates, failures, and cleanup; and
+- ARC/static throughput and latency deltas beside the existing pure-Modal
+  diagnostic reference (`0.748x`/`0.755x` throughput at c1/c4 and
+  `+0.351s`/`+0.596s` p95).
+
+The pure-Modal absolute throughput is not an interchangeable model benchmark:
+it used Qwen3.5-0.8B generation on two Modal L4 workers and shorter inputs. Only
+normalized ARC-versus-static overhead is compared directly. AGT001's absolute
+OpenRouter numbers describe the requested hybrid deployment: local
+Envoy/Semantic Router/Redis, the protected Modal H100 Rayline encoder, and real
+OpenRouter generation.
+
+The ephemeral OpenRouter key has a `$0.75` server-enforced limit and the report
+has a stricter `$0.50` provider-cost gate. The 30-minute protected-H100 ceiling
+is `$4.9992336`; the total full envelope is therefore `$5.7492336`. Added to
+the `$77.72054280274334` cumulative observed accounting, the conservative
+maximum is `$83.46977640274334`, below the existing `$134.31282402` authority.
+The launcher must delete both transient credentials, stop the exact encoder,
+remove Compose state, scan for credentials and public request bodies, and
+reach stable zero after success or failure.
+
+- [x] AGT001a: Freeze the requested model/provider pool, public tool-use
+  workload, three-path comparator, source bounds, and focused unit tests.
+- [x] AGT001b: Pass the source-exact artifact/config checks, focused Python
+  suite, Rayline Compose integration, and repository gates.
+- [ ] AGT001c: Push the signed Semantic Router checkpoint, preregister and
+  authorize the exact one-shot packet in Pathfinder, then execute once.
+- [ ] AGT001d: Privately pin the aggregate receipt, compare with the pure-Modal
+  reference without conflating model speed, close authority, and verify stable
+  zero cleanup.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin

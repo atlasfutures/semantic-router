@@ -13,10 +13,12 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import modal
+from modal_fullstack_inputs import CANDIDATE_PROMPTS
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = REPO_ROOT / "deploy/compose/rayline-arc/compose.yaml"
@@ -40,7 +42,57 @@ MAX_CANARY_SECONDS = 15 * 60
 MAX_CLEANUP_SECONDS = 60
 HTTP_OK = 200
 HTTP_CREATED = 201
+GIT_SHA1_HEX_LENGTH = 40
 REQUIRED_MODAL_VERSION = "1.5.1"
+AGENTIC_PREREGISTRATION_COMMIT = ""
+AGENTIC_AUTHORIZATION_COMMIT = ""
+AGENTIC_SOURCE_REMOTE_REF = "atlasfutures/codex/rayline-remote-mvp"
+PUBLIC_REQUEST_LOG_MARKERS = (
+    *CANDIDATE_PROMPTS,
+    "await state.commit",
+    "source=public-synthetic",
+    "event=retry",
+)
+
+
+@dataclass(frozen=True)
+class RunPacket:
+    compose_override: Path
+    config: Path
+    driver: Path
+    project_name: str
+    key_limit_usd: float
+    maximum_seconds: int
+
+
+@dataclass
+class RuntimeState:
+    environment: dict[str, str]
+    proxy_token: Any = None
+
+
+PACKETS = {
+    "canary": RunPacket(
+        compose_override=COMPOSE_OVERRIDE_FILE,
+        config=OPENROUTER_CONFIG_FILE,
+        driver=DRIVER,
+        project_name=PROJECT_NAME,
+        key_limit_usd=OPENROUTER_KEY_LIMIT_USD,
+        maximum_seconds=MAX_CANARY_SECONDS,
+    ),
+    "agentic": RunPacket(
+        compose_override=(
+            REPO_ROOT / "deploy/compose/rayline-arc/compose-openrouter-agentic.yaml"
+        ),
+        config=(
+            REPO_ROOT / "deploy/compose/rayline-arc/config-openrouter-agentic.yaml"
+        ),
+        driver=Path(__file__).with_name("openrouter_agentic_benchmark.py"),
+        project_name="rayline-arc-openrouter-agentic",
+        key_limit_usd=0.75,
+        maximum_seconds=30 * 60,
+    ),
+}
 
 
 def _run(
@@ -62,16 +114,16 @@ def _run(
     )
 
 
-def _compose_command(*arguments: str) -> list[str]:
+def _compose_command(packet: RunPacket, *arguments: str) -> list[str]:
     return [
         "docker",
         "compose",
         "--project-name",
-        PROJECT_NAME,
+        packet.project_name,
         "--file",
         str(COMPOSE_FILE),
         "--file",
-        str(COMPOSE_OVERRIDE_FILE),
+        str(packet.compose_override),
         *arguments,
     ]
 
@@ -154,13 +206,15 @@ def _management_request(
     return decoded
 
 
-def _create_ephemeral_key(management_key: str, run_id: str) -> tuple[str, str]:
+def _create_ephemeral_key(
+    management_key: str, run_id: str, key_limit_usd: float
+) -> tuple[str, str]:
     response = _management_request(
         method="POST",
         management_key=management_key,
         payload={
             "name": f"rayline-arc-{run_id}",
-            "limit": OPENROUTER_KEY_LIMIT_USD,
+            "limit": key_limit_usd,
             "include_byok_in_limit": True,
         },
         expected_status=HTTP_CREATED,
@@ -232,9 +286,13 @@ def _stop_encoder_containers(
     raise RuntimeError("protected encoder container remained after cleanup")
 
 
-def _scan_logs(environment: dict[str, str], protected_values: tuple[str, ...]) -> None:
+def _scan_logs(
+    packet: RunPacket,
+    environment: dict[str, str],
+    protected_values: tuple[str, ...],
+) -> None:
     result = _run(
-        _compose_command("logs", "--no-color"),
+        _compose_command(packet, "logs", "--no-color"),
         environment=environment,
         check=False,
         capture_output=True,
@@ -251,15 +309,16 @@ def _collect_post_run_evidence(
     protected_values: tuple[str, ...],
     management_key: str,
     key_hash: str,
+    packet: RunPacket,
 ) -> float:
-    _scan_logs(environment, protected_values)
+    _scan_logs(packet, environment, protected_values)
     usage = _ephemeral_key_usage(management_key, key_hash)
     print(
         f"OpenRouter ephemeral key usage: ${usage:.8f}",
         file=sys.stderr,
         flush=True,
     )
-    if usage > OPENROUTER_KEY_LIMIT_USD:
+    if usage > packet.key_limit_usd:
         raise RuntimeError("OpenRouter key usage exceeded its hard limit")
     return usage
 
@@ -272,10 +331,11 @@ def _cleanup_runtime(
     management_key: str,
     key_hash: str,
     modal_command: list[str],
+    packet: RunPacket,
 ) -> None:
     print("OpenRouter cleanup: starting", file=sys.stderr, flush=True)
     _run(
-        _compose_command("down", "--volumes", "--remove-orphans"),
+        _compose_command(packet, "down", "--volumes", "--remove-orphans"),
         environment=environment,
         check=False,
         capture_output=True,
@@ -300,6 +360,7 @@ def _runtime_environment(
     openrouter_key: str,
     modal_key: str,
     modal_secret: str,
+    packet: RunPacket,
 ) -> dict[str, str]:
     environment = os.environ.copy()
     environment.update(
@@ -312,18 +373,103 @@ def _runtime_environment(
             "RAYLINE_ARC_E2E_ENCODER_BUILD_ID": (
                 "vllm@b1049f6dd95c27d2e1b052eebc3b1a7f9f41195f"
             ),
-            "RAYLINE_ARC_E2E_CONFIG_PATH": str(OPENROUTER_CONFIG_FILE),
+            "RAYLINE_ARC_E2E_CONFIG_PATH": str(packet.config),
             "RAYLINE_ARC_E2E_ENVOY_CONFIG_PATH": str(OPENROUTER_ENVOY_FILE),
         }
     )
     return environment
 
 
-def main() -> None:
+def _verify_agentic_source_authority(mode: str, environment: dict[str, str]) -> None:
+    if mode != "agentic":
+        return
+    pins = (AGENTIC_PREREGISTRATION_COMMIT, AGENTIC_AUTHORIZATION_COMMIT)
+    if any(len(pin) != GIT_SHA1_HEX_LENGTH for pin in pins):
+        raise SystemExit("agentic launch authority is source-closed")
+    status = _run(
+        ["git", "status", "--porcelain"],
+        environment=environment,
+        capture_output=True,
+    )
+    if status.stdout:
+        raise SystemExit("agentic launch requires a clean source checkpoint")
+    head = _run(
+        ["git", "rev-parse", "HEAD"],
+        environment=environment,
+        capture_output=True,
+    ).stdout.strip()
+    remote = _run(
+        ["git", "rev-parse", AGENTIC_SOURCE_REMOTE_REF],
+        environment=environment,
+        capture_output=True,
+    ).stdout.strip()
+    pushed = _run(
+        ["git", "merge-base", "--is-ancestor", head, remote],
+        environment=environment,
+        check=False,
+        capture_output=True,
+    )
+    if pushed.returncode != 0:
+        raise SystemExit("agentic launch source is not remote-visible")
+
+
+def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", required=True)
+    parser.add_argument("--mode", choices=sorted(PACKETS), default="canary")
     parser.add_argument("--timeout-seconds", type=float, default=180.0)
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def _execute_runtime(
+    *,
+    args: argparse.Namespace,
+    packet: RunPacket,
+    ephemeral_key: str,
+    manager: Any,
+    state: RuntimeState,
+) -> None:
+    state.proxy_token = manager.create()
+    state.environment = _runtime_environment(
+        openrouter_key=ephemeral_key,
+        modal_key=state.proxy_token.token_id,
+        modal_secret=state.proxy_token.token_secret,
+        packet=packet,
+    )
+    _run(
+        _compose_command(packet, "down", "--volumes", "--remove-orphans"),
+        environment=state.environment,
+        check=False,
+        capture_output=True,
+    )
+    _run(
+        _compose_command(packet, "up", "--build", "--detach"),
+        environment=state.environment,
+    )
+    _wait_http(ROUTER_HEALTH_URL)
+    _wait_arc_component_ready(METRICS_URL)
+    _run(
+        [
+            sys.executable,
+            str(packet.driver),
+            "--gateway-url",
+            GATEWAY_URL,
+            "--metrics-url",
+            METRICS_URL,
+            "--run-id",
+            args.run_id,
+            "--timeout-seconds",
+            str(args.timeout_seconds),
+        ],
+        environment=state.environment,
+        timeout=packet.maximum_seconds,
+    )
+
+
+def main() -> None:
+    args = _parse_args()
+
+    packet = PACKETS[args.mode]
 
     if modal.__version__ != REQUIRED_MODAL_VERSION:
         raise SystemExit(
@@ -334,64 +480,45 @@ def main() -> None:
         raise SystemExit("OPENROUTER_MANAGEMENT_KEY is required")
     modal_command = [sys.executable, "-m", "modal"]
     base_environment = os.environ.copy()
+    _verify_agentic_source_authority(args.mode, base_environment)
     if _encoder_containers(modal_command, base_environment):
         raise SystemExit("protected encoder already has a running container")
 
-    ephemeral_key, key_hash = _create_ephemeral_key(management_key, args.run_id)
-    proxy_token = None
+    ephemeral_key, key_hash = _create_ephemeral_key(
+        management_key, args.run_id, packet.key_limit_usd
+    )
     manager = modal.Workspace.from_context().proxy_tokens
-    environment = base_environment
+    state = RuntimeState(environment=base_environment)
     run_failure: Exception | None = None
     evidence_failure: Exception | None = None
     try:
-        proxy_token = manager.create()
-        environment = _runtime_environment(
-            openrouter_key=ephemeral_key,
-            modal_key=proxy_token.token_id,
-            modal_secret=proxy_token.token_secret,
-        )
-        _run(
-            _compose_command("down", "--volumes", "--remove-orphans"),
-            environment=environment,
-            check=False,
-            capture_output=True,
-        )
-        _run(
-            _compose_command("up", "--build", "--detach"),
-            environment=environment,
-        )
-        _wait_http(ROUTER_HEALTH_URL)
-        _wait_arc_component_ready(METRICS_URL)
-        _run(
-            [
-                sys.executable,
-                str(DRIVER),
-                "--gateway-url",
-                GATEWAY_URL,
-                "--metrics-url",
-                METRICS_URL,
-                "--run-id",
-                args.run_id,
-                "--timeout-seconds",
-                str(args.timeout_seconds),
-            ],
-            environment=environment,
-            timeout=MAX_CANARY_SECONDS,
+        _execute_runtime(
+            args=args,
+            packet=packet,
+            ephemeral_key=ephemeral_key,
+            manager=manager,
+            state=state,
         )
     except Exception as error:  # preserve the primary failure through evidence cleanup
         run_failure = error
     finally:
         try:
             _collect_post_run_evidence(
-                environment=environment,
+                environment=state.environment,
                 protected_values=(
                     management_key,
                     ephemeral_key,
-                    proxy_token.token_id if proxy_token is not None else "",
-                    proxy_token.token_secret if proxy_token is not None else "",
+                    state.proxy_token.token_id if state.proxy_token is not None else "",
+                    (
+                        state.proxy_token.token_secret
+                        if state.proxy_token is not None
+                        else ""
+                    ),
+                    *PUBLIC_REQUEST_LOG_MARKERS,
                 ),
                 management_key=management_key,
                 key_hash=key_hash,
+                packet=packet,
             )
         except Exception as error:
             evidence_failure = error
@@ -401,12 +528,13 @@ def main() -> None:
                 flush=True,
             )
         _cleanup_runtime(
-            environment=environment,
+            environment=state.environment,
             manager=manager,
-            proxy_token=proxy_token,
+            proxy_token=state.proxy_token,
             management_key=management_key,
             key_hash=key_hash,
             modal_command=modal_command,
+            packet=packet,
         )
     if run_failure is not None:
         if evidence_failure is not None:

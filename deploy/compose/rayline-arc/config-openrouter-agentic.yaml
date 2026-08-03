@@ -1,0 +1,164 @@
+version: v0.3
+
+listeners:
+  - name: rayline-arc-openrouter-agentic
+    address: 0.0.0.0
+    port: 8888
+    timeout: 180s
+
+providers:
+  defaults:
+    default_model: worker-a
+  models:
+    - name: worker-a
+      provider_model_id: deepseek/deepseek-v4-flash
+      api_format: openai
+      pricing:
+        currency: USD
+        prompt_per_1m: 0.0882
+        cached_input_per_1m: 0.01764
+        cache_write_per_1m: 0.0882
+        completion_per_1m: 0.1764
+      backend_refs:
+        - name: openrouter
+          endpoint: openrouter.ai:443
+          protocol: https
+          type: openai
+          base_url: https://openrouter.ai/api/v1
+          provider: openai
+          api_key_env: SYNTHETIC_API_KEY
+    - name: worker-b
+      provider_model_id: xiaomi/mimo-v2.5
+      api_format: openai
+      pricing:
+        currency: USD
+        prompt_per_1m: 0.14
+        cached_input_per_1m: 0.0028
+        cache_write_per_1m: 0.14
+        completion_per_1m: 0.28
+      backend_refs:
+        - name: openrouter
+          endpoint: openrouter.ai:443
+          protocol: https
+          type: openai
+          base_url: https://openrouter.ai/api/v1
+          provider: openai
+          api_key_env: SYNTHETIC_API_KEY
+    - name: worker-c
+      provider_model_id: tencent/hy3
+      api_format: openai
+      pricing:
+        currency: USD
+        prompt_per_1m: 0.132
+        cached_input_per_1m: 0.033
+        cache_write_per_1m: 0.132
+        completion_per_1m: 0.528
+      backend_refs:
+        - name: openrouter
+          endpoint: openrouter.ai:443
+          protocol: https
+          type: openai
+          base_url: https://openrouter.ai/api/v1
+          provider: openai
+          api_key_env: SYNTHETIC_API_KEY
+
+routing:
+  modelCards:
+    - name: worker-a
+      modality: text
+    - name: worker-b
+      modality: text
+    - name: worker-c
+      modality: text
+  decisions:
+    - name: rayline-arc-openrouter-agentic
+      description: Bounded three-model OpenRouter agentic benchmark
+      priority: 100
+      rules:
+        operator: AND
+        conditions: []
+      modelRefs:
+        - model: worker-a
+          use_reasoning: false
+        - model: worker-b
+          use_reasoning: false
+        - model: worker-c
+          use_reasoning: false
+      adaptations:
+        mode: bypass
+      plugins:
+        - type: router_replay
+          configuration:
+            enabled: false
+      algorithm:
+        type: rayline_arc
+        on_error: fail_closed
+        rayline_arc:
+          artifact_dir: /var/lib/vllm-sr/rayline-arc
+          artifact_revision: public-rayline-arc-openrouter-agentic-v1
+          encoder:
+            base_url: ${RAYLINE_ARC_ENCODER_BASE_URL}
+            model: Qwen/Qwen3.5-0.8B
+            model_revision: 2fc06364715b967f1860aea9cf38778875588b17
+            expected_build_id: ${RAYLINE_ARC_ENCODER_BUILD_ID}
+            expected_io_plugin_version: rayline-arc-io@0.1.0
+            serializer_version: mtrouter-token-blocks-v2
+            serving_rung: B
+            required_pooling_capabilities:
+              - chunked_causal_mean
+              - resumable_causal_mean
+            modal_key_env: RAYLINE_ARC_MODAL_KEY
+            modal_secret_env: RAYLINE_ARC_MODAL_SECRET
+            connect_timeout_seconds: 10
+            total_timeout_seconds: 180
+            max_retries: 0
+          episode:
+            id_header: x-rayline-episode-id
+            backend: redis
+            key_prefix: "vsr:rayline-arc-openrouter-agentic:"
+            acquire_timeout_seconds: 5
+            lease_ttl_seconds: 3
+            idle_ttl_seconds: 300
+            max_in_memory_episodes: 256
+            redis:
+              address: redis:6379
+              db: 0
+              password_env: RAYLINE_ARC_REDIS_PASSWORD
+              use_tls: false
+              pool_size: 16
+
+global:
+  stores:
+    semantic_cache:
+      enabled: false
+  model_catalog:
+    embeddings:
+      semantic:
+        mmbert_model_path: ""
+        qwen3_model_path: ""
+        gemma_model_path: ""
+        bert_model_path: ""
+        multimodal_model_path: ""
+    modules:
+      prompt_guard:
+        enabled: false
+        model_ref: ""
+        model_id: ""
+        jailbreak_mapping_path: ""
+        use_mmbert_32k: false
+      classifier:
+        domain:
+          model_ref: ""
+          model_id: ""
+          category_mapping_path: ""
+          use_mmbert_32k: false
+        pii:
+          model_ref: ""
+          model_id: ""
+          pii_mapping_path: ""
+          use_mmbert_32k: false
+      feedback_detector:
+        enabled: false
+        model_ref: ""
+        model_id: ""
+        use_mmbert_32k: false

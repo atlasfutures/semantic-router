@@ -168,7 +168,12 @@ def _golden(checkpoint_sha256: str) -> dict[str, object]:
     }
 
 
-def _worker_contract(worker: dict[str, object]) -> dict[str, object]:
+def _worker_contract(
+    worker: dict[str, object],
+    *,
+    capability_tag: str = "public-openrouter-canary",
+    max_completion_tokens: int = MAX_COMPLETION_TOKENS,
+) -> dict[str, object]:
     contract: dict[str, object] = {
         "id": worker["id"],
         "model": worker["model"],
@@ -178,7 +183,7 @@ def _worker_contract(worker: dict[str, object]) -> dict[str, object]:
         "estimated_cache_write_cost_per_token": worker["cache_write_cost"],
         "estimated_output_cost_per_token": worker["completion_cost"],
         "latency_ms": 1000,
-        "capability_tags": ["public-openrouter-canary"],
+        "capability_tags": [capability_tag],
         "openrouter_provider_slug": worker["provider_slug"],
         "openrouter_provider_name": worker["provider_name"],
         "openrouter_provider_order": [worker["provider_slug"]],
@@ -187,8 +192,8 @@ def _worker_contract(worker: dict[str, object]) -> dict[str, object]:
         "openrouter_pricing_source": worker["pricing_source"],
         "thinking_mode": "off",
         "reasoning_budget_tokens": 0,
-        "minimum_completion_tokens": MAX_COMPLETION_TOKENS,
-        "max_completion_tokens": MAX_COMPLETION_TOKENS,
+        "minimum_completion_tokens": max_completion_tokens,
+        "max_completion_tokens": max_completion_tokens,
         "supports_output_effort": False,
         "extra_body": {"reasoning": {"enabled": False, "effort": "none"}},
         "openrouter_max_retries": 1,
@@ -201,15 +206,26 @@ def _worker_contract(worker: dict[str, object]) -> dict[str, object]:
     return contract
 
 
-def _manifest(weights: bytes, golden: bytes) -> dict[str, object]:
+def _manifest(
+    weights: bytes,
+    golden: bytes,
+    *,
+    artifact_id: str = ARTIFACT_ID,
+    workers: tuple[dict[str, object], ...] = WORKERS,
+    capability_tag: str = "public-openrouter-canary",
+    max_completion_tokens: int = MAX_COMPLETION_TOKENS,
+    created_at: str = "2026-08-01T00:00:00Z",
+    exporter_commit: str = "public-openrouter-canary-exporter-v2",
+    pricing_snapshot: str = "openrouter-pinned-endpoints-2026-08-01",
+) -> dict[str, object]:
     checkpoint_sha256 = hashlib.sha256(
         b"public synthetic ARC OpenRouter checkpoint"
     ).hexdigest()
     return {
         "schema_version": "rayline.mtrouter-runtime.v3",
-        "artifact_id": ARTIFACT_ID,
-        "created_at": "2026-08-01T00:00:00Z",
-        "exporter_commit": "public-openrouter-canary-exporter-v2",
+        "artifact_id": artifact_id,
+        "created_at": created_at,
+        "exporter_commit": exporter_commit,
         "weights": {
             "file": "head.safetensors",
             "sha256": _sha256(weights),
@@ -252,7 +268,7 @@ def _manifest(weights: bytes, golden: bytes) -> dict[str, object]:
             "joint_input_dimension": JOINT_DIMENSION,
             "hidden_dimensions": [HIDDEN_DIMENSION, HIDDEN_DIMENSION],
             "dropout": 0.1,
-            "pool": [worker["id"] for worker in WORKERS],
+            "pool": [worker["id"] for worker in workers],
         },
         "policy": {
             "previous_worker_stay_margin": 0,
@@ -262,9 +278,16 @@ def _manifest(weights: bytes, golden: bytes) -> dict[str, object]:
             "reference_worker": "worker-a",
             "reference_margin": 0,
         },
-        "workers": [_worker_contract(worker) for worker in WORKERS],
+        "workers": [
+            _worker_contract(
+                worker,
+                capability_tag=capability_tag,
+                max_completion_tokens=max_completion_tokens,
+            )
+            for worker in workers
+        ],
         "pricing_snapshot": {
-            "config_path": "openrouter-pinned-endpoints-2026-08-01",
+            "config_path": pricing_snapshot,
             "config_commit": "public-openrouter-pricing-v2",
             "mutable_live_prices_affect_decisions": False,
         },
@@ -280,17 +303,62 @@ def _manifest(weights: bytes, golden: bytes) -> dict[str, object]:
     }
 
 
-def generate(output_dir: Path) -> None:
+def generate_contract(
+    output_dir: Path,
+    *,
+    artifact_id: str,
+    workers: tuple[dict[str, object], ...],
+    capability_tag: str,
+    max_completion_tokens: int,
+    created_at: str,
+    exporter_commit: str,
+    pricing_snapshot: str,
+) -> None:
+    if [worker.get("id") for worker in workers] != [
+        "worker-a",
+        "worker-b",
+        "worker-c",
+    ]:
+        raise ValueError("OpenRouter artifact requires the exact three worker IDs")
+    if max_completion_tokens <= 0:
+        raise ValueError("OpenRouter maximum completion tokens must be positive")
     output_dir.mkdir(parents=True, exist_ok=True)
     weights = _encode_safetensors(_tensors())
     checkpoint_sha256 = hashlib.sha256(
         b"public synthetic ARC OpenRouter checkpoint"
     ).hexdigest()
     golden = json.dumps(_golden(checkpoint_sha256), indent=2, sort_keys=True).encode()
-    manifest = json.dumps(_manifest(weights, golden), indent=2, sort_keys=True).encode()
+    manifest = json.dumps(
+        _manifest(
+            weights,
+            golden,
+            artifact_id=artifact_id,
+            workers=workers,
+            capability_tag=capability_tag,
+            max_completion_tokens=max_completion_tokens,
+            created_at=created_at,
+            exporter_commit=exporter_commit,
+            pricing_snapshot=pricing_snapshot,
+        ),
+        indent=2,
+        sort_keys=True,
+    ).encode()
     (output_dir / "head.safetensors").write_bytes(weights)
     (output_dir / "head_golden.json").write_bytes(golden)
     (output_dir / "manifest.json").write_bytes(manifest)
+
+
+def generate(output_dir: Path) -> None:
+    generate_contract(
+        output_dir,
+        artifact_id=ARTIFACT_ID,
+        workers=WORKERS,
+        capability_tag="public-openrouter-canary",
+        max_completion_tokens=MAX_COMPLETION_TOKENS,
+        created_at="2026-08-01T00:00:00Z",
+        exporter_commit="public-openrouter-canary-exporter-v2",
+        pricing_snapshot="openrouter-pinned-endpoints-2026-08-01",
+    )
 
 
 if __name__ == "__main__":
