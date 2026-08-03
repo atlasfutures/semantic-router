@@ -6,35 +6,37 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
-
+from artifact_fixture import MODEL_REVISION, SERIALIZER
 from openrouter_agentic_artifact_fixture import (
     MAX_COMPLETION_TOKENS,
     WORKERS,
 )
 from openrouter_artifact_fixture import _golden, _tensors
-from artifact_fixture import MODEL_REVISION, SERIALIZER
 
 ENCODER_MODEL = "Qwen/Qwen3.5-0.8B"
 CHECKPOINT_REMOTE_PATH = "agt014/native-openrouter-agentic.pt"
 DECISION_LOG_REMOTE_PATH = "agt014/native-openrouter-decisions.jsonl"
 PRICING_SNAPSHOT = "openrouter-bounded-provider-orders-2026-08-03"
+GOLDEN_TOLERANCE = 0.001
+CLI_ARGUMENT_COUNT = 3
 
 
 def _load_pathfinder(pathfinder_root: Path) -> tuple[Any, Any, Any, Any]:
     sys.path.insert(0, str(pathfinder_root / "src"))
-    import torch
-    from rayline_router.policy.mtrouter_model import (
-        MTRouterConfig,
-        MTRouterEstimator,
-        MTRouterModelMeta,
+    torch = importlib.import_module("torch")
+    model = importlib.import_module("rayline_router.policy.mtrouter_model")
+    return (
+        torch,
+        model.MTRouterConfig,
+        model.MTRouterEstimator,
+        model.MTRouterModelMeta,
     )
-
-    return torch, MTRouterConfig, MTRouterEstimator, MTRouterModelMeta
 
 
 def _model_meta(model_meta_type: Any) -> list[Any]:
@@ -103,7 +105,10 @@ def build_checkpoint(pathfinder_root: Path, output: Path) -> dict[str, Any]:
             route_call_index=int(case["route_call_index"]),
         ).tolist()
         expected = list(map(float, case["scores"]))
-        if max(abs(left - right) for left, right in zip(actual, expected)) > 0.001:
+        if (
+            max(abs(left - right) for left, right in zip(actual, expected, strict=True))
+            > GOLDEN_TOLERANCE
+        ):
             raise RuntimeError("native checkpoint did not reproduce the ARC golden")
         if max(range(len(actual)), key=actual.__getitem__) != int(
             case["selected_index"]
@@ -120,7 +125,12 @@ def build_checkpoint(pathfinder_root: Path, output: Path) -> dict[str, Any]:
     }
 
 
-def router_config_text() -> str:
+def router_config_text(
+    *,
+    training_stage: str = "openrouter_modal_native_agt014",
+    max_completion_tokens: int = MAX_COMPLETION_TOKENS,
+    app_title: str = "Rayline AGT014",
+) -> str:
     workers = []
     for worker in WORKERS:
         workers.append(
@@ -143,8 +153,8 @@ def router_config_text() -> str:
                 "openrouter_pricing_source": worker["pricing_source"],
                 "thinking_mode": "disabled",
                 "reasoning_budget_tokens": 0,
-                "minimum_completion_tokens": MAX_COMPLETION_TOKENS,
-                "max_completion_tokens": MAX_COMPLETION_TOKENS,
+                "minimum_completion_tokens": max_completion_tokens,
+                "max_completion_tokens": max_completion_tokens,
                 "temperature": 0,
                 "extra_body": {"reasoning": {"enabled": False, "effort": "none"}},
                 "openrouter_max_retries": 1,
@@ -162,7 +172,7 @@ def router_config_text() -> str:
             "pricing_snapshot_version": PRICING_SNAPSHOT,
             "encoder_dim": 1024,
             "seed": 20260803,
-            "training_stage": "openrouter_modal_native_agt014",
+            "training_stage": training_stage,
             "trace_store": "memory",
             "mtrouter_device": "cuda",
             "mtrouter_incremental_encode": True,
@@ -173,7 +183,7 @@ def router_config_text() -> str:
             "mtrouter_kv_session_budget_tokens": 262_144,
             "mtrouter_kv_process_budget_tokens": 524_288,
             "mtrouter_kv_session_idle_ttl_s": 900,
-            "openrouter_app_title": "Rayline AGT014",
+            "openrouter_app_title": app_title,
             "openrouter_app_url": "https://rayline.ai",
             "openrouter_app_categories": "benchmark",
         },
@@ -183,7 +193,7 @@ def router_config_text() -> str:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
+    if len(sys.argv) != CLI_ARGUMENT_COUNT:
         raise SystemExit(
             "usage: openrouter_modal_native_fixture.py PATHFINDER_ROOT OUTPUT"
         )

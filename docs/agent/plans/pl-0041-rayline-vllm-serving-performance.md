@@ -3014,6 +3014,64 @@ ephemeral OpenRouter key, Modal secret, Dicts, and Volume are absent. Aggregate
 credential and public-prompt-body scans passed. Both AGT014 authority pins are
 empty, and the 1,000-case qualification remains held.
 
+### AGT015 Retained-KV Cache Effect
+
+AGT015 measures the end-to-end effect of the two explicit retained-session
+implementations. It is a paired diagnostic, not a new throughput campaign. The
+native arm is Pathfinder's in-process chunk-grid KV session; the remote arm is
+Semantic Router plus the protected vLLM `AsyncPoolingSession` and causal-mean
+accumulator. vLLM automatic prefix caching remains disabled, so the result
+must not be described as an APC or provider prompt-cache measurement.
+
+Both deployments use one H100, the same Qwen3.5-0.8B revision, the same
+synthetic three-worker head/checkpoint, the same OpenRouter target models, and
+the same progressively growing public synthetic agent history. The base is
+`agentic-02`, whose serialized encoder input exceeds one 8,192-token native
+chunk. Two append-only evidence blocks create three exact-prefix history
+states. Each deployment runs two episodes and interleaves a retained episode
+with a fresh full-replay episode at every state: `2 episodes * 3 states * 2
+modes = 12` real provider requests per deployment, 24 total. Every completion
+is capped at 24 tokens. There is no readiness request that reaches a provider,
+no unbounded loop, and no 1,000-case path.
+
+The cache contract is checked from serving telemetry, not inferred from wall
+time. Native retained actions must be `prefill, delta, delta`, while every
+native replay is `prefill`; native token work is `serialized_tokens -
+cached_prefix_tokens`. Remote retained actions must be `created, appended,
+appended`, while every remote replay is `created`; remote token work is the
+protected encoder's `backend_appended_tokens` delta. Retained and replay
+selection must match for each state, and selections must also match across the
+two deployments. A passing packet requires fewer retained encoder-work tokens
+than replay tokens, exactly 24 external attempts, and zero retries.
+
+The primary comparisons are retained/replay encoder token-work, router mean,
+encoder mean, and end-to-end mean ratios within each deployment. These
+within-deployment ratios are the valid cache-effect comparison because the two
+systems retain state at different boundaries. Cross-deployment absolute
+router time is secondary. Native Modal still buffers the provider completion,
+so its observed first token remains explicitly non-comparable to true provider
+TTFT. Interleaving limits but cannot remove OpenRouter temporal variance.
+
+Each ephemeral OpenRouter key has a `$0.50` server-enforced limit. Each H100
+arm has a conservative `$2.50` 20-minute envelope, for a `$6.00` program
+maximum. Added to the `$87.864463066383` cumulative conservative observed
+bound, the maximum is `$93.864463066383`, below the existing
+`$134.31282402` authority. The native launcher must remove its exact app,
+secret, Dicts, Volume, and key. The remote launcher must remove Compose state
+and its key while leaving the already protected encoder deployed at zero
+containers. The aggregate receipt must be credential- and prompt-marker-free,
+round-trip byte-exactly through the private artifact store, and return HTTP 401
+without authentication. Paid launch stays source-closed until both signed
+source checkpoints are pushed and pinned.
+
+- [x] AGT015a: Implement the fixed retained/replay clients, native H100
+  launcher, remote packet, aggregate reporter, and focused tests.
+- [ ] AGT015b: Pass the repo gates, push the signed preregistration checkpoint,
+  pin and push the signed authorization checkpoint, then execute each arm once.
+- [ ] AGT015c: Verify token-work and selection contracts, persist the sanitized
+  receipt, record the measured ratios and costs, clean all transient resources,
+  and permanently close both authority pins.
+
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
 continues to reject cached-prefix tokens. The separate session v1 wire reports

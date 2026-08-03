@@ -34,6 +34,7 @@ from openrouter_key_management import (
 from openrouter_key_management import (
     ephemeral_key_usage as _ephemeral_key_usage,
 )
+from openrouter_launch_authority import verify_source_authority
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = REPO_ROOT / "deploy/compose/rayline-arc/compose.yaml"
@@ -63,22 +64,13 @@ MAX_CANARY_SECONDS = 15 * 60
 MAX_CLEANUP_SECONDS = 60
 HTTP_OK = 200
 HTTP_UNAUTHORIZED = 401
-GIT_SHA1_HEX_LENGTH = 40
 REQUIRED_MODAL_VERSION = "1.5.1"
-AGT011_PREREGISTRATION_COMMIT = ""
-AGT011_AUTHORIZATION_COMMIT = ""
-AGT013_PREREGISTRATION_COMMIT = ""
-AGT013_AUTHORIZATION_COMMIT = ""
-DGN003_PREREGISTRATION_COMMIT = ""
-DGN003_AUTHORIZATION_COMMIT = ""
-DGN004_PREREGISTRATION_COMMIT = ""
-DGN004_AUTHORIZATION_COMMIT = ""
-AGENTIC_SOURCE_REMOTE_REF = "atlasfutures/codex/rayline-remote-mvp"
 PUBLIC_REQUEST_LOG_MARKERS = (
     *CANDIDATE_PROMPTS,
     "await state.commit",
     "source=public-synthetic",
     "event=retry",
+    "public-cache-step=",
 )
 
 
@@ -114,6 +106,17 @@ PACKETS = {
     "agentic-stage": _agentic_packet(
         "openrouter_agentic_stage_benchmark.py",
         "rayline-arc-openrouter-agentic-stage",
+    ),
+    "kv-cache": RunPacket(
+        compose_override=(
+            REPO_ROOT / "deploy/compose/rayline-arc/compose-openrouter-agentic.yaml"
+        ),
+        config=REPO_ROOT / "deploy/compose/rayline-arc/config-openrouter-agentic.yaml",
+        driver=Path(__file__).with_name("openrouter_kv_cache_remote.py"),
+        project_name="rayline-arc-openrouter-kv-cache",
+        key_limit_usd=0.50,
+        maximum_seconds=20 * 60,
+        protected_encoder=True,
     ),
     "gateway-shape": RunPacket(
         compose_override=(
@@ -575,52 +578,34 @@ def _activate_protected_encoder(
     )
 
 
-def _verify_source_authority(mode: str, environment: dict[str, str]) -> None:
-    authorities = {
-        "agentic": (AGT011_PREREGISTRATION_COMMIT, AGT011_AUTHORIZATION_COMMIT),
-        "agentic-stage": (
-            AGT013_PREREGISTRATION_COMMIT,
-            AGT013_AUTHORIZATION_COMMIT,
-        ),
-        "gateway-shape": (
-            DGN003_PREREGISTRATION_COMMIT,
-            DGN003_AUTHORIZATION_COMMIT,
-        ),
-        "gateway-prime": (
-            DGN004_PREREGISTRATION_COMMIT,
-            DGN004_AUTHORIZATION_COMMIT,
-        ),
-    }
-    pins = authorities.get(mode)
-    if pins is None:
+def _persist_kv_evidence(args: argparse.Namespace, usage: float) -> None:
+    if args.mode != "kv-cache":
         return
-    if any(len(pin) != GIT_SHA1_HEX_LENGTH for pin in pins):
-        raise SystemExit(f"{mode} launch authority is source-closed")
-    status = _run(
-        ["git", "status", "--porcelain"],
-        environment=environment,
-        capture_output=True,
-    )
-    if status.stdout:
-        raise SystemExit(f"{mode} launch requires a clean source checkpoint")
-    head = _run(
+    output_dir = REPO_ROOT / ".agent-harness/rayline-kv-cache" / args.run_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+    source_commit = _run(
         ["git", "rev-parse", "HEAD"],
-        environment=environment,
+        environment=os.environ.copy(),
         capture_output=True,
     ).stdout.strip()
-    remote = _run(
-        ["git", "rev-parse", AGENTIC_SOURCE_REMOTE_REF],
-        environment=environment,
-        capture_output=True,
-    ).stdout.strip()
-    pushed = _run(
-        ["git", "merge-base", "--is-ancestor", head, remote],
-        environment=environment,
-        check=False,
-        capture_output=True,
+    (output_dir / "remote-key-usage.json").write_text(
+        json.dumps({"usage_usd": usage}, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
-    if pushed.returncode != 0:
-        raise SystemExit(f"{mode} launch source is not remote-visible")
+    deployment = {
+        "architecture": "semantic-router with retained remote vLLM encoder",
+        "encoder_app_id": ENCODER_APP_ID,
+        "encoder_app_name": ENCODER_APP_NAME,
+        "encoder_gpu": "H100",
+        "encoder_build_id": ENCODER_BUILD_ID,
+        "encoder_deployment_source_commit": ENCODER_DEPLOYMENT_SOURCE_COMMIT,
+        "encoder_plugin_source_digest": ENCODER_PLUGIN_SOURCE_DIGEST,
+        "semantic_router_commit": source_commit,
+    }
+    (output_dir / "remote-deployment.json").write_text(
+        json.dumps(deployment, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -716,7 +701,11 @@ def main() -> None:
         raise SystemExit("OPENROUTER_MANAGEMENT_KEY is required")
     modal_command = [sys.executable, "-m", "modal"]
     base_environment = os.environ.copy()
-    _verify_source_authority(args.mode, base_environment)
+    verify_source_authority(
+        args.mode,
+        base_environment,
+        repo_root=REPO_ROOT,
+    )
     if packet.protected_encoder:
         _verify_encoder_deployment(modal_command, base_environment)
         if _encoder_containers(modal_command, base_environment):
@@ -730,6 +719,7 @@ def main() -> None:
     state = RuntimeState(environment=base_environment)
     run_failure: Exception | None = None
     evidence_failure: Exception | None = None
+    key_usage = 0.0
     try:
         _execute_runtime(
             args=args,
@@ -742,7 +732,7 @@ def main() -> None:
         run_failure = error
     finally:
         try:
-            _collect_post_run_evidence(
+            key_usage = _collect_post_run_evidence(
                 environment=state.environment,
                 protected_values=(
                     management_key,
@@ -759,6 +749,7 @@ def main() -> None:
                 key_hash=state.key_hash,
                 packet=packet,
             )
+            _persist_kv_evidence(args, key_usage)
         except Exception as error:
             evidence_failure = error
             print(
