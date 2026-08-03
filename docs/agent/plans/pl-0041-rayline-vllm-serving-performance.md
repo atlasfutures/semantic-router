@@ -1909,14 +1909,14 @@ The 1,000-case qualification was not executed.
 
 ### Next Action
 
-The user has reprioritized the immediate continuation to single-router,
-end-to-end serving performance. Park multi-router transactional consistency in
+Continue the single-router end-to-end serving proof under AGT002 below. Park
+multi-router transactional consistency in
 [GitHub issue #2756](https://github.com/vllm-project/semantic-router/issues/2756)
-and leave Kubernetes fleet provisioning under TD050. Implement and preregister
-AGT001 below, execute it at most once after its exact source checkpoint is
-remote-visible, and compare its normalized routing overhead with the completed
-pure-Modal static-control diagnostic. Do not rerun DYN006, and keep the
-1,000-case qualification held until explicit user confirmation.
+and leave Kubernetes fleet provisioning under TD050. AGT001 is permanently
+closed as a zero-provider startup failure; do not rerun it or DYN006. Execute
+AGT002 at most once after its corrected encoder deployment and full cross-repo
+authorization chain are remote-visible. Keep the 1,000-case qualification held
+until explicit user confirmation.
 
 ### AGT001 OpenRouter Agentic Serving Diagnostic
 
@@ -1977,9 +1977,9 @@ reach stable zero after success or failure.
   suite, Rayline Compose integration, and repository gates.
 - [x] AGT001c: Push the signed Semantic Router checkpoint, preregister and
   authorize the exact one-shot packet in Pathfinder, then execute once.
-- [ ] AGT001d: Privately pin the aggregate receipt, compare with the pure-Modal
-  reference without conflating model speed, close authority, and verify stable
-  zero cleanup.
+- [x] AGT001d: Privately pin the aggregate failure receipt, record that no
+  pure-Modal comparison is admissible, close authority, and verify stable zero
+  cleanup.
 
 #### AGT001 Result
 
@@ -1998,6 +1998,47 @@ with an explicit source-pinned deployment of the current retained-session
 encoder before creating the OpenRouter key. Preserve the frozen models,
 providers, workloads, counts, metrics, cost gates, and pure-Modal comparison;
 only the encoder deployment lifecycle and resulting identity pins may change.
+
+### AGT002 Source-Pinned Encoder Retry
+
+AGT002 preserves AGT001's exact three OpenRouter models/providers, public
+agentic payloads, request counts, concurrency cells, output cap, direct/static/
+ARC paths, metrics, retry bounds, cost ceilings, privacy contract, and
+pure-Modal comparison doctrine. Its only experimental correction is the
+external encoder lifecycle.
+
+The retained-session encoder was explicitly deployed from Semantic Router
+`0e07fa25` with plugin source digest `1ff4ee4d7a22`, vLLM `9f5ea81c`, and Qwen
+revision `2fc06364`. Modal assigned deployed app
+`ap-XtsWCBEWdw1ncu9Kv12Chj`; its protected route returns HTTP 401 without a
+proxy token and its inventory is deployed with zero tasks. Before any
+OpenRouter key creation, the launcher must:
+
+1. attest that exact deployed app ID/name, zero-task state, protected route,
+   deployment-source commit, plugin digest, vLLM build, and model revision;
+2. refuse any pre-existing encoder container;
+3. create a transient Modal proxy token and obtain a healthy zero-session,
+   zero-token response from the protected endpoint, allowing the cold H100 to
+   initialize; and
+4. only then create the server-limited OpenRouter key and start Compose.
+
+If encoder initialization fails, no OpenRouter key or provider request may
+exist. Cleanup remains unconditional and stops the exact new app's container.
+The packet retains the `$0.75` OpenRouter hard limit, `$0.50` reported-cost
+gate, 30-minute H100 limit, `$5.7492336` total envelope, and existing
+`$134.31282402` authority. AGT001 used zero provider and GPU spend, so the
+conservative cumulative envelope remains `$83.46977640274334`.
+
+- [x] AGT002a: Deploy and attest the current zero-task protected encoder; move
+  encoder health before OpenRouter key creation; update exact cleanup ownership
+  and focused tests.
+- [x] AGT002b: Pass repository lint, focused tests, source-exact config startup,
+  and the hermetic Rayline Compose suite.
+- [ ] AGT002c: Push the signed source checkpoint and complete distinct
+  preregistration, source attestation, authorization, and launch-pin commits.
+- [ ] AGT002d: Execute once, privately pin the aggregate receipt, permanently
+  close authority, verify stable zero, and compare normalized ARC/static
+  overhead with the pure-Modal reference.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin

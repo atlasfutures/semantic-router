@@ -27,9 +27,15 @@ OPENROUTER_CONFIG_FILE = REPO_ROOT / "deploy/compose/rayline-arc/config-openrout
 OPENROUTER_ENVOY_FILE = REPO_ROOT / "deploy/compose/rayline-arc/envoy-openrouter.yaml"
 DRIVER = Path(__file__).with_name("openrouter_fullstack_canary.py")
 PROJECT_NAME = "rayline-arc-openrouter"
-ENCODER_APP_ID = "ap-rs3UkEn5XUnWjrZOXYbkuB"
+ENCODER_APP_ID = "ap-XtsWCBEWdw1ncu9Kv12Chj"
+ENCODER_APP_NAME = "rayline-arc-session-encoder"
 ENCODER_HOST = (
     "atlasfutures-dev--rayline-arc-session-encoder-sessionenc-2d82ac.modal.run"
+)
+ENCODER_BUILD_ID = "vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca"
+ENCODER_DEPLOYMENT_SOURCE_COMMIT = "0e07fa25410adf2ec2fc8e087dd951436c6b6e0d"
+ENCODER_PLUGIN_SOURCE_DIGEST = (
+    "1ff4ee4d7a22cc1d74c0cdb0352d3f76f5081b7201fa63e7f8f3dd10af246afd"
 )
 OPENROUTER_MANAGEMENT_URL = "https://openrouter.ai/api/v1/keys"
 OPENROUTER_KEY_LIMIT_USD = 0.25
@@ -42,9 +48,10 @@ MAX_CANARY_SECONDS = 15 * 60
 MAX_CLEANUP_SECONDS = 60
 HTTP_OK = 200
 HTTP_CREATED = 201
+HTTP_UNAUTHORIZED = 401
 GIT_SHA1_HEX_LENGTH = 40
 REQUIRED_MODAL_VERSION = "1.5.1"
-AGENTIC_PREREGISTRATION_COMMIT = "59334dbd7b92e39df440ad581f049ceb87323153"
+AGENTIC_PREREGISTRATION_COMMIT = ""
 AGENTIC_AUTHORIZATION_COMMIT = ""
 AGENTIC_SOURCE_REMOTE_REF = "atlasfutures/codex/rayline-remote-mvp"
 PUBLIC_REQUEST_LOG_MARKERS = (
@@ -69,6 +76,8 @@ class RunPacket:
 class RuntimeState:
     environment: dict[str, str]
     proxy_token: Any = None
+    ephemeral_key: str = ""
+    key_hash: str = ""
 
 
 PACKETS = {
@@ -268,6 +277,68 @@ def _encoder_containers(
     )
 
 
+def _verify_encoder_deployment(
+    modal_command: list[str], environment: dict[str, str]
+) -> None:
+    result = _run(
+        [*modal_command, "app", "list", "--json"],
+        environment=environment,
+        capture_output=True,
+    )
+    apps = json.loads(result.stdout)
+    matching = [app for app in apps if app.get("description") == ENCODER_APP_NAME]
+    if len(matching) != 1:
+        raise SystemExit("protected encoder deployment identity is ambiguous")
+    app = matching[0]
+    if (
+        app.get("app_id") != ENCODER_APP_ID
+        or app.get("state") != "deployed"
+        or str(app.get("tasks")) != "0"
+    ):
+        raise SystemExit("protected encoder deployment is not the frozen idle app")
+    request = urllib.request.Request(f"https://{ENCODER_HOST}/health")
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            status = response.status
+    except urllib.error.HTTPError as error:
+        error.read()
+        status = error.code
+    if status != HTTP_UNAUTHORIZED:
+        raise SystemExit("protected encoder route is not registered behind auth")
+
+
+def _wait_protected_encoder(proxy_token: Any) -> None:
+    request = urllib.request.Request(
+        f"https://{ENCODER_HOST}/health",
+        headers={
+            "Modal-Key": proxy_token.token_id,
+            "Modal-Secret": proxy_token.token_secret,
+        },
+    )
+    deadline = time.monotonic() + MAX_STARTUP_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                body = json.loads(response.read())
+                if (
+                    response.status == HTTP_OK
+                    and body.get("status") == "ok"
+                    and body.get("resident_sessions") == 0
+                    and body.get("resident_tokens") == 0
+                ):
+                    return
+        except urllib.error.HTTPError as error:
+            error.read()
+            if error.code == HTTP_UNAUTHORIZED:
+                raise RuntimeError(
+                    "protected encoder rejected its proxy token"
+                ) from error
+        except (json.JSONDecodeError, OSError, TypeError):
+            pass
+        time.sleep(1)
+    raise RuntimeError("timed out waiting for the protected encoder deployment")
+
+
 def _stop_encoder_containers(
     modal_command: list[str], environment: dict[str, str]
 ) -> None:
@@ -312,6 +383,13 @@ def _collect_post_run_evidence(
     packet: RunPacket,
 ) -> float:
     _scan_logs(packet, environment, protected_values)
+    if not key_hash:
+        print(
+            "OpenRouter ephemeral key was not created",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 0.0
     usage = _ephemeral_key_usage(management_key, key_hash)
     print(
         f"OpenRouter ephemeral key usage: ${usage:.8f}",
@@ -345,7 +423,8 @@ def _cleanup_runtime(
             manager.delete(proxy_token.token_id)
     finally:
         try:
-            _delete_ephemeral_key(management_key, key_hash)
+            if key_hash:
+                _delete_ephemeral_key(management_key, key_hash)
         finally:
             _stop_encoder_containers(modal_command, environment)
     print(
@@ -370,9 +449,7 @@ def _runtime_environment(
             "RAYLINE_ARC_E2E_MODAL_KEY": modal_key,
             "RAYLINE_ARC_E2E_MODAL_SECRET": modal_secret,
             "RAYLINE_ARC_E2E_ENCODER_BASE_URL": f"https://{ENCODER_HOST}",
-            "RAYLINE_ARC_E2E_ENCODER_BUILD_ID": (
-                "vllm@b1049f6dd95c27d2e1b052eebc3b1a7f9f41195f"
-            ),
+            "RAYLINE_ARC_E2E_ENCODER_BUILD_ID": ENCODER_BUILD_ID,
             "RAYLINE_ARC_E2E_CONFIG_PATH": str(packet.config),
             "RAYLINE_ARC_E2E_ENVOY_CONFIG_PATH": str(OPENROUTER_ENVOY_FILE),
         }
@@ -425,13 +502,17 @@ def _execute_runtime(
     *,
     args: argparse.Namespace,
     packet: RunPacket,
-    ephemeral_key: str,
+    management_key: str,
     manager: Any,
     state: RuntimeState,
 ) -> None:
     state.proxy_token = manager.create()
+    _wait_protected_encoder(state.proxy_token)
+    state.ephemeral_key, state.key_hash = _create_ephemeral_key(
+        management_key, args.run_id, packet.key_limit_usd
+    )
     state.environment = _runtime_environment(
-        openrouter_key=ephemeral_key,
+        openrouter_key=state.ephemeral_key,
         modal_key=state.proxy_token.token_id,
         modal_secret=state.proxy_token.token_secret,
         packet=packet,
@@ -481,12 +562,10 @@ def main() -> None:
     modal_command = [sys.executable, "-m", "modal"]
     base_environment = os.environ.copy()
     _verify_agentic_source_authority(args.mode, base_environment)
+    _verify_encoder_deployment(modal_command, base_environment)
     if _encoder_containers(modal_command, base_environment):
         raise SystemExit("protected encoder already has a running container")
 
-    ephemeral_key, key_hash = _create_ephemeral_key(
-        management_key, args.run_id, packet.key_limit_usd
-    )
     manager = modal.Workspace.from_context().proxy_tokens
     state = RuntimeState(environment=base_environment)
     run_failure: Exception | None = None
@@ -495,7 +574,7 @@ def main() -> None:
         _execute_runtime(
             args=args,
             packet=packet,
-            ephemeral_key=ephemeral_key,
+            management_key=management_key,
             manager=manager,
             state=state,
         )
@@ -507,7 +586,7 @@ def main() -> None:
                 environment=state.environment,
                 protected_values=(
                     management_key,
-                    ephemeral_key,
+                    state.ephemeral_key,
                     state.proxy_token.token_id if state.proxy_token is not None else "",
                     (
                         state.proxy_token.token_secret
@@ -517,7 +596,7 @@ def main() -> None:
                     *PUBLIC_REQUEST_LOG_MARKERS,
                 ),
                 management_key=management_key,
-                key_hash=key_hash,
+                key_hash=state.key_hash,
                 packet=packet,
             )
         except Exception as error:
@@ -532,7 +611,7 @@ def main() -> None:
             manager=manager,
             proxy_token=state.proxy_token,
             management_key=management_key,
-            key_hash=key_hash,
+            key_hash=state.key_hash,
             modal_command=modal_command,
             packet=packet,
         )

@@ -306,11 +306,31 @@ def test_openrouter_launcher_uses_ephemeral_limited_key_and_exact_cleanup() -> N
     )
     assert '"limit": key_limit_usd' in launcher_source
     assert "_delete_ephemeral_key(management_key, key_hash)" in launcher_source
-    assert 'ENCODER_APP_ID = "ap-rs3UkEn5XUnWjrZOXYbkuB"' in launcher_source
+    assert 'ENCODER_APP_ID = "ap-XtsWCBEWdw1ncu9Kv12Chj"' in launcher_source
+    assert (
+        'ENCODER_BUILD_ID = "vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca"'
+        in launcher_source
+    )
+    assert (
+        'ENCODER_DEPLOYMENT_SOURCE_COMMIT = "0e07fa25410adf2ec2fc8e087dd951436c6b6e0d"'
+        in launcher_source
+    )
+    assert "1ff4ee4d7a22cc1d74c0cdb0352d3f76f5081b7201fa63e7f8f3dd10af246afd" in (
+        launcher_source
+    )
     assert '"container", "stop", container_id, "--yes"' in launcher_source
     assert "manager.delete(proxy_token.token_id)" in launcher_source
     assert "_wait_arc_component_ready(METRICS_URL)" in launcher_source
+    execution_source = launcher_source.split("def _execute_runtime(", maxsplit=1)[
+        1
+    ].split("def main() -> None:", maxsplit=1)[0]
+    assert execution_source.index("_wait_protected_encoder(") < execution_source.index(
+        "_create_ephemeral_key("
+    )
     main_source = launcher_source.split("def main() -> None:", maxsplit=1)[1]
+    assert main_source.index("_verify_encoder_deployment(") < main_source.index(
+        "_encoder_containers("
+    )
     assert main_source.index("_collect_post_run_evidence(") < main_source.index(
         "_cleanup_runtime("
     )
@@ -349,6 +369,27 @@ def test_openrouter_post_run_evidence_scans_logs_before_reading_usage(
         ("scan", (packet, {"public": "value"}, ("protected",))),
         ("usage", ("management-key", "key-hash")),
     ]
+
+
+def test_openrouter_post_run_evidence_allows_no_key_before_encoder_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_scan(*_args: Any) -> None:
+        calls.append("scan")
+
+    monkeypatch.setattr(launcher, "_scan_logs", fake_scan)
+    usage = launcher._collect_post_run_evidence(
+        environment={},
+        protected_values=(),
+        management_key="management-key",
+        key_hash="",
+        packet=launcher.PACKETS["agentic"],
+    )
+
+    assert usage == 0.0
+    assert calls == ["scan"]
 
 
 def test_openrouter_launcher_rejects_failed_arc_component_readiness() -> None:
