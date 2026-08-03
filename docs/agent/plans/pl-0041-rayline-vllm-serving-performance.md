@@ -2739,7 +2739,7 @@ full resource envelope is `$5.7492336`: cumulative cost would be at most
   launcher; pass repo-native validation and fake-encoder integration.
 - [x] AGT012b: Preregister the frozen source, attest it in Pathfinder, authorize
   one attempt, attest the registry, and pin both signed pushed authorities.
-- [ ] AGT012c: Execute once, upload the private aggregate receipt byte-exactly,
+- [x] AGT012c: Execute once, upload the private aggregate receipt byte-exactly,
   compare the natural c4 decomposition with AGT011 and the pure-Modal stage
   reference, verify cleanup, and permanently close launch authority.
 
@@ -2750,6 +2750,45 @@ surface is labelled non-semantic, no request payload or credential enters the
 receipt, cleanup returns keys/Compose/encoder containers to zero, and the
 source/registry authority chain is closed. It may produce diagnostic evidence
 without claiming parity; a throughput ratio alone is not a pass/fail gate.
+
+#### AGT012 Result
+
+The single authorized AGT012 attempt failed its strict protected-encoder idle
+gate on 2026-08-03, after the natural static and ARC c4 cells completed but
+before any stratified control ran. The four-request transport-first gate, key
+readiness, all three model reachability probes, 24-request discovery, 12 static
+requests, and 12 ARC requests completed. Natural selection reproduced AGT011
+exactly at `16/0/8` for DS4 Flash, MiMo v2.5, and HY3. The encoder had exactly
+12 successful retained-append observations, zero backend failures, and zero
+session-lock contention before the idle assertion failed. Consequently no
+latency, throughput, or stage-attribution inference is admissible.
+
+The defect was in the diagnostic contract, not evidence of a stuck live
+request. Coordinator current-state gauges and completed append counters are
+synchronous, but `VLLMSessionEngineMetricsProvider` exposes vLLM scheduler
+occupancy as the last reported scheduler snapshot. A final output can complete
+without another scheduler iteration publishing zero occupancy, so treating
+`requests_running` and `requests_waiting` as synchronous idle assertions was
+invalid. A successor must gate coordinator inflight/waiter/backend gauges and
+exact completed engine observations, while retaining scheduler occupancy only
+as explicitly labelled last-reported diagnostic context.
+
+The attempt completed 56 provider requests before stopping. External attempts
+and aggregate provider-reported cost were not persisted, so they remain
+unknown; actual ephemeral-key usage was `$0.01963979`. The 235-second
+whole-process upper bound prices Modal at most `$0.65267772`, bringing
+cumulative conservative observed cost to `$82.142505209543` and leaving
+`$52.170318810457` under user authority. Cleanup verified zero transient keys,
+zero Compose containers/volumes, and zero protected encoder containers; the
+deployed app remained at zero tasks.
+
+The private aggregate failure receipt is at
+`rayline-ai/router-artifacts/runs/rayline-openrouter-agentic-stage-agt012-20260803`,
+revision `22834bd349b88fa19a142db0c35e0aa89e2e3e4d`, SHA-256
+`6ecf338a3cfcc0bf253d094ee39d4358de8805340d933ed19aca5d3a27574961`.
+It round-tripped byte-exactly and returned HTTP 401 without authentication.
+Both AGT012 authority pins are permanently empty; the packet cannot rerun.
+The 1,000-case qualification remains held.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
