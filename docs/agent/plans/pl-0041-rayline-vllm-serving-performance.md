@@ -2450,7 +2450,7 @@ latency, or timestamp. From `$80.429964624743`, its full envelope reaches
 
 - [x] DGN004a: Source-close the fresh-key prime driver and local launcher mode;
   pass focused tests, repository validation/lint, and hermetic ARC acceptance.
-- [ ] DGN004b: Preregister and authorize exactly one attempt, then pin both
+- [x] DGN004b: Preregister and authorize exactly one attempt, then pin both
   registry checkpoints in signed, pushed source.
 - [ ] DGN004c: Execute once, privately pin and close the aggregate receipt,
   prove all inventories at zero, and decide whether a gateway-local one-token
@@ -2462,6 +2462,10 @@ If all calls pass, treat the 404 as unresolved intermittent edge behavior and
 do not spend another H100 packet without stronger observability. If both static
 96 calls fail while direct succeeds, fix the gateway transport seam. Keep the
 1,000-case qualification held in every branch.
+
+The remote-visible DGN004 authority chain is Pathfinder preregistration
+`063f68f3`, Pathfinder registry attestation `cc08ce90`, and the final signed
+Semantic Router launch pin. It authorizes only this four-request no-H100 packet.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
