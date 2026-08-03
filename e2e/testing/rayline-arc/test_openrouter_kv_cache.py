@@ -93,12 +93,17 @@ def _native_client() -> tuple[dict[str, object], list[dict[str, object]]]:
                         },
                         "transport": {"attempts": [{"status": "success"}]},
                         "settlement_cost_basis": {"provider_charged_usd": 0.001},
+                        "input_tokens": serialized[step],
+                        "output_tokens": EXPECTED_COMPLETION_LIMIT,
                     }
                 )
     return (
         {
             "run_id": "agt015-test",
-            "workload": {"requests": EXPECTED_REQUESTS_PER_DEPLOYMENT},
+            "workload": {
+                "requests": EXPECTED_REQUESTS_PER_DEPLOYMENT,
+                "max_completion_tokens": EXPECTED_COMPLETION_LIMIT,
+            },
             "results": results,
         },
         decisions,
@@ -127,6 +132,8 @@ def _remote_client() -> dict[str, object]:
                         "external_attempts": 1,
                         "cost_usd": 0.001,
                         "provider": PROVIDER_NAMES["worker-a"][0],
+                        "prompt_tokens": serialized[step],
+                        "completion_tokens": EXPECTED_COMPLETION_LIMIT,
                         "router_stage": {
                             "mean_decomposition": {
                                 "router_seconds": 0.2,
@@ -141,7 +148,10 @@ def _remote_client() -> dict[str, object]:
                 )
     return {
         "run_id": "agt015-test",
-        "workload": {"requests": EXPECTED_REQUESTS_PER_DEPLOYMENT},
+        "workload": {
+            "requests": EXPECTED_REQUESTS_PER_DEPLOYMENT,
+            "max_completion_tokens": EXPECTED_COMPLETION_LIMIT,
+        },
         "results": results,
     }
 
@@ -162,10 +172,41 @@ def test_report_enforces_a_smaller_retained_token_work_envelope() -> None:
     assert report["actual_provider_requests"] == EXPECTED_TOTAL_REQUESTS
     assert report["actual_external_attempts"] == EXPECTED_TOTAL_REQUESTS
     assert report["cross_deployment"]["selection_parity"] is True
+    assert report["completion_contract"]["cross_deployment_matched"] is True
+    assert report["completion_contract"]["cross_deployment_e2e_comparable"] is True
+    assert report["deployments"]["native_modal"]["steady_state"]["episode"] == 1
     for deployment in report["deployments"].values():
         assert deployment["comparison"]["retained_token_work_saved_fraction"] > 0
         assert deployment["paths"]["retained"]["retries"] == 0
         assert deployment["paths"]["replay"]["retries"] == 0
+
+
+def test_report_marks_a_completion_policy_deviation() -> None:
+    native, decisions = _native_client()
+    remote = _remote_client()
+    for result in remote["results"]:
+        result["completion_tokens"] = 96 if result["step"] < EXPECTED_STEPS - 1 else 18
+    final_serialized_tokens = max(
+        decision["features"]["serialized_tokens"] for decision in decisions
+    )
+    for decision in decisions:
+        decision["output_tokens"] = (
+            EXPECTED_COMPLETION_LIMIT
+            if decision["features"]["serialized_tokens"] < final_serialized_tokens
+            else 18
+        )
+    report = reporting.build_report(
+        native=copy.deepcopy(native),
+        decisions=copy.deepcopy(decisions),
+        remote=copy.deepcopy(remote),
+        native_deployment={"gpu": "H100"},
+        remote_deployment={"gpu": "H100"},
+        native_key_usage=0.01,
+        remote_key_usage=0.01,
+    )
+    assert report["status"] == "passed_with_protocol_deviation"
+    assert report["completion_contract"]["cross_deployment_matched"] is False
+    assert report["completion_contract"]["cross_deployment_e2e_comparable"] is False
 
 
 def test_cross_deployment_selection_divergence_fails() -> None:
@@ -194,8 +235,8 @@ def test_worker_set_remains_the_three_model_openrouter_pool() -> None:
 
 def test_paid_remote_launch_starts_source_closed() -> None:
     preregistration, authorization = authority.AUTHORITY_PINS["kv-cache"]
-    assert preregistration == "02102e02a6da8090d272ece8c18ce7bc32f7e8d9"
-    assert authorization == "4742e176cde87e8f0da365f3c81261858a4980ab"
+    assert preregistration == ""
+    assert authorization == ""
 
 
 def test_native_request_uses_session_identity_for_kv_isolation(monkeypatch) -> None:

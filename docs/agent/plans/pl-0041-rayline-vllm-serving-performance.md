@@ -3116,10 +3116,59 @@ for `$96.864463066383` maximum cumulative cost and at least
 
 - [x] AGT016a: Pass focused and repository gates, push the corrected
   preregistration checkpoint, then bind the separate authorization commit.
-- [ ] AGT016b: Execute the corrected native arm and the held remote-vLLM arm
+- [x] AGT016b: Execute the corrected native arm and the held remote-vLLM arm
   once each, then verify exact cleanup.
-- [ ] AGT016c: Build and validate the aggregate result, persist its private
+- [x] AGT016c: Build and validate the aggregate result, persist its private
   receipt, record the measured cache effects, and permanently close authority.
+
+#### AGT016 Result
+
+AGT016 completed 24/24 real OpenRouter requests with exactly 24 external
+attempts, zero retries, and selection parity: every cell selected worker-a and
+its allowed Baidu provider. The native arm finished in `88.415s`; the remote
+vLLM arm finished in `52.532s`. These serial whole-run times include provider
+generation and are not throughput measurements.
+
+The steady-state second episode is the primary cache comparison because the
+first native episode includes Torch first-shape compilation. Pathfinder's
+native retained session reduced encoder token work from `53,922` to `29,346`
+(`45.58%`), router mean from `0.2198s` to `0.1475s` (`32.88%`), encoder mean
+from `0.2178s` to `0.1455s` (`33.17%`), and end-to-end mean from `2.1968s` to
+`1.9525s` (`11.12%`). The vLLM retained session reduced encoder token work
+from `53,922` to `20,788` (`61.45%`), router mean from `1.9905s` to `1.2457s`
+(`37.42%`), encoder mean from `1.9841s` to `1.2402s` (`37.49%`), and
+end-to-end mean from `3.8889s` to `3.3222s` (`14.57%`). vLLM saves more token
+work because it appends the exact suffix; the native implementation replays
+from its 8,192-token chunk-grid boundary.
+
+The cache-effect contracts pass, but the run has one explicit protocol
+deviation. Native honored the requested 24-token completion cap and observed
+`[18, 24]`; the remote ARC worker manifest raised the first two states to its
+96-token minimum and observed `[18, 96]`. Retained and replay completions match
+within every deployment/episode/state pair, so each within-deployment cache
+ratio remains valid. Absolute native-versus-vLLM end-to-end latency and cost
+are not apples-to-apples and are not used as parity evidence. Steady-state
+retained router time was `0.1475s` native versus `1.2457s` vLLM, making the
+native router stage about `8.45x` faster in this diagnostic; that comparison
+does not include a matched completion-policy claim.
+
+Exact AGT016 key usage was `$0.003960757` native and `$0.00567295` remote,
+`$0.009633707` total. Including AGT015's failed diagnostic, the full cache
+program used `$0.014944085` of OpenRouter key authority. Conservative
+cumulative accounting remains bounded at `$96.864463066383`, leaving at least
+`$37.448360953617`. Native apps `ap-B9zFVjkEvLFEl3wa46CyVL` and
+`ap-9wIXKM7wWAr5nsIFANjITn` are stopped with zero tasks; their exact secrets,
+Dicts, Volumes, containers, and ephemeral keys are absent. The protected vLLM
+encoder is deployed at zero containers, remote Compose state is absent, and
+its ephemeral key is deleted.
+
+The aggregate-only receipt is private at
+`rayline-ai/router-artifacts/runs/rayline-openrouter-kv-cache-agt016-20260803`,
+revision `5f11d0128337f05c050a8bc655a9616351cb14a2`, SHA-256
+`7bba3c294cd3bcf6a1f4af9ec78f0c7701815f214202c53135e75c20ded8cccc`.
+Credential and prompt-marker scans passed, the receipt round-tripped
+byte-exactly, and unauthenticated access returned HTTP 401. Both AGT016 source
+pins are closed, and the 1,000-case qualification remains held.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin

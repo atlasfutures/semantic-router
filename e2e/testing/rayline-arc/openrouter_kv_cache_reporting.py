@@ -17,6 +17,7 @@ from openrouter_agentic_workload import PROVIDER_NAMES, WORKERS
 from openrouter_modal_native_benchmark import _decision_cost, read_decisions
 
 EXPECTED_REQUESTS_PER_DEPLOYMENT = 12
+EXPECTED_MODES_PER_STATE = 2
 
 
 def _args() -> argparse.Namespace:
@@ -80,6 +81,8 @@ def enrich_native(client: dict[str, Any], decisions: list[dict[str, Any]]) -> No
                 "provider": str(row.get("served_provider") or ""),
                 "cost_usd": _decision_cost(row),
                 "external_attempts": _native_attempts(row),
+                "prompt_tokens": int(row.get("input_tokens") or 0),
+                "completion_tokens": int(row.get("output_tokens") or 0),
             }
         )
     expected = {
@@ -134,6 +137,12 @@ def _mode_report(results: list[dict[str, Any]]) -> dict[str, Any]:
         "external_attempts": attempts,
         "retries": attempts - len(results),
         "provider_cost_usd": math.fsum(float(result["cost_usd"]) for result in results),
+        "completion_tokens": sum(
+            int(result["completion_tokens"]) for result in results
+        ),
+        "completion_token_values": sorted(
+            {int(result["completion_tokens"]) for result in results}
+        ),
         "selected_workers": dict(
             Counter(result["selected_worker"] for result in results)
         ),
@@ -234,6 +243,93 @@ def _selection_parity(native: dict[str, Any], remote: dict[str, Any]) -> None:
         raise RuntimeError("native Modal and remote vLLM selections diverged")
 
 
+def _validate_within_deployment_completion_parity(client: dict[str, Any]) -> None:
+    for episode in range(2):
+        for step in range(3):
+            pair = [
+                int(result["completion_tokens"])
+                for result in client["results"]
+                if result["episode"] == episode and result["step"] == step
+            ]
+            if len(pair) != EXPECTED_MODES_PER_STATE or len(set(pair)) != 1:
+                raise RuntimeError("retained/replay completion-token parity diverged")
+
+
+def _validated_deployments(
+    native: dict[str, Any], remote: dict[str, Any]
+) -> tuple[dict[str, Any], int]:
+    deployments = {
+        "native_modal": _deployment_report(native),
+        "remote_vllm": _deployment_report(remote),
+    }
+    for deployment in deployments.values():
+        for scope in (deployment, deployment["steady_state"]):
+            retained = scope["paths"]["retained"]
+            replay = scope["paths"]["replay"]
+            if retained["encoder_token_work"] >= replay["encoder_token_work"]:
+                raise RuntimeError("retained session did not reduce encoder token work")
+            if retained["retries"] or replay["retries"]:
+                raise RuntimeError("KV comparison observed an external retry")
+    actual_attempts = sum(
+        int(result["external_attempts"])
+        for client in (native, remote)
+        for result in client["results"]
+    )
+    expected_attempts = EXPECTED_REQUESTS_PER_DEPLOYMENT * EXPECTED_MODES_PER_STATE
+    if actual_attempts != expected_attempts:
+        raise RuntimeError("KV comparison external attempt envelope diverged")
+    return deployments, actual_attempts
+
+
+def _completion_contract(
+    native: dict[str, Any], remote: dict[str, Any]
+) -> dict[str, Any]:
+    native_values = sorted(
+        {int(result["completion_tokens"]) for result in native["results"]}
+    )
+    remote_values = sorted(
+        {int(result["completion_tokens"]) for result in remote["results"]}
+    )
+    matched = native_values == remote_values
+    return {
+        "requested_max_tokens": int(native["workload"]["max_completion_tokens"]),
+        "native_observed_completion_token_values": native_values,
+        "remote_observed_completion_token_values": remote_values,
+        "within_deployment_retained_replay_parity": True,
+        "cross_deployment_matched": matched,
+        "cross_deployment_e2e_comparable": matched,
+        "deviation": (
+            ""
+            if matched
+            else (
+                "the remote ARC worker manifest enforced its 96-token minimum; "
+                "native Pathfinder honored the requested 24-token cap"
+            )
+        ),
+    }
+
+
+def _cross_deployment_report(deployments: dict[str, Any]) -> dict[str, Any]:
+    native = deployments["native_modal"]
+    remote = deployments["remote_vllm"]
+    return {
+        "selection_parity": True,
+        "primary_comparison_basis": "steady_state_episode_1",
+        "native_to_vllm_retained_router_mean_ratio": (
+            native["paths"]["retained"]["router_latency"]["mean_seconds"]
+            / remote["paths"]["retained"]["router_latency"]["mean_seconds"]
+        ),
+        "native_to_vllm_steady_state_retained_router_mean_ratio": (
+            native["steady_state"]["paths"]["retained"]["router_latency"][
+                "mean_seconds"
+            ]
+            / remote["steady_state"]["paths"]["retained"]["router_latency"][
+                "mean_seconds"
+            ]
+        ),
+    }
+
+
 def build_report(
     *,
     native: dict[str, Any],
@@ -254,30 +350,18 @@ def build_report(
     enrich_native(native, decisions)
     _normalize_remote(remote)
     _selection_parity(native, remote)
-    deployments = {
-        "native_modal": _deployment_report(native),
-        "remote_vllm": _deployment_report(remote),
-    }
-    for deployment in deployments.values():
-        for scope in (deployment, deployment["steady_state"]):
-            retained = scope["paths"]["retained"]
-            replay = scope["paths"]["replay"]
-            if retained["encoder_token_work"] >= replay["encoder_token_work"]:
-                raise RuntimeError("retained session did not reduce encoder token work")
-            if retained["retries"] or replay["retries"]:
-                raise RuntimeError("KV comparison observed an external retry")
-    actual_attempts = sum(
-        int(result["external_attempts"])
-        for client in (native, remote)
-        for result in client["results"]
-    )
-    expected_attempts = EXPECTED_REQUESTS_PER_DEPLOYMENT * 2
-    if actual_attempts != expected_attempts:
-        raise RuntimeError("KV comparison external attempt envelope diverged")
+    for client in (native, remote):
+        _validate_within_deployment_completion_parity(client)
+    deployments, actual_attempts = _validated_deployments(native, remote)
+    completion_contract = _completion_contract(native, remote)
     return {
         "schema_version": "rayline.openrouter-kv-cache-comparison.v1",
         "run_id": native["run_id"],
-        "status": "passed",
+        "status": (
+            "passed"
+            if completion_contract["cross_deployment_matched"]
+            else "passed_with_protocol_deviation"
+        ),
         "workload": native["workload"],
         "models": WORKERS,
         "deployment_identity": {
@@ -285,28 +369,10 @@ def build_report(
             "remote_vllm": remote_deployment,
         },
         "deployments": deployments,
-        "cross_deployment": {
-            "selection_parity": True,
-            "primary_comparison_basis": "steady_state_episode_1",
-            "native_to_vllm_retained_router_mean_ratio": (
-                deployments["native_modal"]["paths"]["retained"]["router_latency"][
-                    "mean_seconds"
-                ]
-                / deployments["remote_vllm"]["paths"]["retained"]["router_latency"][
-                    "mean_seconds"
-                ]
-            ),
-            "native_to_vllm_steady_state_retained_router_mean_ratio": (
-                deployments["native_modal"]["steady_state"]["paths"]["retained"][
-                    "router_latency"
-                ]["mean_seconds"]
-                / deployments["remote_vllm"]["steady_state"]["paths"]["retained"][
-                    "router_latency"
-                ]["mean_seconds"]
-            ),
-        },
+        "cross_deployment": _cross_deployment_report(deployments),
         "actual_provider_requests": EXPECTED_REQUESTS_PER_DEPLOYMENT * 2,
         "actual_external_attempts": actual_attempts,
+        "completion_contract": completion_contract,
         "openrouter_key_usage_usd": {
             "native_modal": native_key_usage,
             "remote_vllm": remote_key_usage,
@@ -318,7 +384,13 @@ def build_report(
             "maximum_cumulative_usd": 96.864463066383,
             "authorized_cumulative_usd": 134.31282402,
             "minimum_remaining_authority_usd": 37.448360953617,
+            "prior_failed_diagnostic_key_usage_usd": 0.005310378,
+            "all_cache_program_key_usage_usd": (
+                native_key_usage + remote_key_usage + 0.005310378
+            ),
         },
+        "prior_failed_diagnostic_provider_requests": 12,
+        "total_cache_program_provider_requests": 36,
         "automatic_prefix_cache_enabled": False,
         "cache_contracts": {
             "native_modal": "Pathfinder-owned chunk-grid KV session",
@@ -330,6 +402,7 @@ def build_report(
             "native Modal buffers provider completion, so its observed first token is not provider TTFT",
             "native and vLLM cache effects are normalized against replay within each deployment",
             "episode 0 includes first-shape compilation; episode 1 is the steady-state comparison",
+            "cross-deployment E2E is not compared because the remote artifact enforced 96 completion tokens",
             "provider latency remains externally variable despite interleaved retained/replay requests",
         ],
     }
