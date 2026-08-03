@@ -186,8 +186,10 @@ def _worker_contract(
         "capability_tags": [capability_tag],
         "openrouter_provider_slug": worker["provider_slug"],
         "openrouter_provider_name": worker["provider_name"],
-        "openrouter_provider_order": [worker["provider_slug"]],
-        "openrouter_allow_fallbacks": False,
+        "openrouter_provider_order": worker.get(
+            "provider_order", [worker["provider_slug"]]
+        ),
+        "openrouter_allow_fallbacks": worker.get("allow_fallbacks", False),
         "openrouter_require_parameters": True,
         "openrouter_pricing_source": worker["pricing_source"],
         "thinking_mode": "off",

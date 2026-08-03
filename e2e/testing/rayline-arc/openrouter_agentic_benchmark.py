@@ -124,8 +124,8 @@ def _request_payload(
         payload.update(
             {
                 "provider": {
-                    "order": [PROVIDER_SLUGS[expected_worker]],
-                    "allow_fallbacks": False,
+                    "order": list(PROVIDER_SLUGS[expected_worker]),
+                    "allow_fallbacks": True,
                     "require_parameters": True,
                 },
                 "reasoning": {"enabled": False, "effort": "none"},
@@ -244,8 +244,8 @@ def _validate_frozen_target(
     expected_model = WORKERS[expected_worker]
     if not _response_model_matches(response_model, expected_model):
         raise RuntimeError("agentic response model did not match the frozen target")
-    if provider != PROVIDER_NAMES[expected_worker]:
-        raise RuntimeError("agentic response used the wrong pinned provider")
+    if provider not in PROVIDER_NAMES[expected_worker]:
+        raise RuntimeError("agentic response used a provider outside its order")
     if path == "arc" and selected_worker != expected_worker:
         raise RuntimeError("ARC selection changed for a frozen agentic case")
     if path == "gateway_static" and selected_worker not in {"", expected_worker}:
@@ -371,6 +371,7 @@ def _stream_request(
                 attempt == maximum_attempts
                 or error.status_code not in retryable_status_codes
             ):
+                error.external_attempts = external_attempts
                 raise
             time.sleep(error.retry_after_seconds)
             continue
@@ -525,8 +526,8 @@ def _coverage_request(
         raise RuntimeError("agentic coverage response was incomplete")
     if attempts > MAX_DATA_PLANE_ATTEMPTS:
         raise RuntimeError("agentic coverage exceeded the data-plane attempt bound")
-    if stream["provider"] != PROVIDER_NAMES[selected_worker]:
-        raise RuntimeError("agentic coverage used the wrong pinned provider")
+    if stream["provider"] not in PROVIDER_NAMES[selected_worker]:
+        raise RuntimeError("agentic coverage used a provider outside its order")
     if not _response_model_matches(stream["response_model"], WORKERS[selected_worker]):
         raise RuntimeError("agentic coverage returned the wrong model")
     return {

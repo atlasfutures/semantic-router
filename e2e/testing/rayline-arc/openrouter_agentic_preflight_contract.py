@@ -80,7 +80,7 @@ def validate_report(report: Any, *, require_reuse: bool) -> dict[str, Any]:
             str(identity.get("model", "")), model
         ):
             raise RuntimeError("agentic preflight model identity diverged")
-        if identity.get("provider") != PROVIDER_NAMES[worker]:
+        if identity.get("provider") not in PROVIDER_NAMES[worker]:
             raise RuntimeError("agentic preflight provider identity diverged")
     return report
 

@@ -655,9 +655,21 @@ provider, workload, retry, measurement, cost, H100, privacy, cleanup, and
 AGT009 stopped at its pre-encoder gate after direct DS4 readiness and the DS4
 static probe completed. The MiMo v2.5 static probe returned HTTP 404
 `no_endpoints`; the structured receipt records two completed requests, three
-external attempts, and USD 0.0003326904 cost. No H100, discovery, or measurement
+external attempts, and USD 0.0003326904 cost. Source reconstruction found the
+exhausted 404 retry was not accumulated into the terminal exception, so the
+actual minimum was four wire attempts. No H100, discovery, or measurement
 request started, so the run provides transport evidence but no latency,
 throughput, TTFT, natural-mix, ARC/static, or pure-Modal performance inference.
+
+AGT010 preserves those three exact model identities while replacing each single
+provider pin with a bounded OpenRouter provider order. Native providers remain
+first; fallbacks are limited by validation to Baidu/StreamLake/DeepInfra for
+DS4, Xiaomi/Parasail/Venice/Novita for MiMo, and Tencent/DeepInfra/Novita for
+HY3. Every result reports its actual provider, conservative routing metadata
+uses the maximum rate in each order, and exhausted client retries now propagate
+their full wire-attempt count. No model substitution or Fireworks Fast model is
+allowed. All workload, measurement, H100, cost, privacy, cleanup, and held
+qualification bounds remain unchanged.
 
 ## Evidence Lineage
 

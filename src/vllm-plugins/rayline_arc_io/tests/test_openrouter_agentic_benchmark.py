@@ -69,9 +69,14 @@ def test_agentic_artifact_uses_the_requested_low_cost_pool(tmp_path: Path) -> No
     for worker in manifest["workers"]:
         assert worker["capability_tags"] == ["public-openrouter-agentic-benchmark"]
         assert worker["max_completion_tokens"] == EXPECTED_MAX_COMPLETION_TOKENS
-        assert worker["openrouter_allow_fallbacks"] is False
+        assert worker["openrouter_allow_fallbacks"] is True
         assert worker["openrouter_max_retries"] == 1
         assert worker["thinking_mode"] == "off"
+    assert [worker["openrouter_provider_order"] for worker in manifest["workers"]] == [
+        ["baidu", "streamlake", "deepinfra"],
+        ["xiaomi", "parasail", "venice", "novita"],
+        ["tencent", "deepinfra", "novita"],
+    ]
 
 
 def test_agentic_workload_is_bounded_realistic_and_balanced() -> None:
@@ -274,8 +279,8 @@ def test_agentic_paths_preserve_one_payload_and_change_only_routing() -> None:
         direct["provider"]
         == static["provider"]
         == {
-            "order": ["xiaomi"],
-            "allow_fallbacks": False,
+            "order": ["xiaomi", "parasail", "venice", "novita"],
+            "allow_fallbacks": True,
             "require_parameters": True,
         }
     )
@@ -412,6 +417,44 @@ def test_gateway_readiness_retries_one_404_and_counts_both_wire_attempts(
     assert result["external_attempts"] == benchmark.MAX_DATA_PLANE_ATTEMPTS
     assert result["client_attempts"] == benchmark.MAX_DATA_PLANE_ATTEMPTS
     assert sleeps == [0.5]
+
+
+def test_gateway_readiness_exhaustion_preserves_all_wire_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts: list[dict[str, Any]] = []
+
+    def fake_once(**kwargs: Any) -> dict[str, Any]:
+        attempts.append(kwargs)
+        raise benchmark.OpenRouterHTTPError(
+            endpoint="gateway readiness",
+            status_code=404,
+            retry_after_seconds=0.0,
+            error_type="",
+            provider_code="404",
+            error_category="no_endpoints",
+            external_attempts=1,
+        )
+
+    monkeypatch.setattr(benchmark, "_stream_request_once", fake_once)
+    monkeypatch.setattr(benchmark.time, "sleep", lambda _seconds: None)
+    with pytest.raises(benchmark.OpenRouterHTTPError) as failure:
+        benchmark._stream_request(
+            path="gateway_static",
+            case={},
+            expected_worker="worker-b",
+            gateway_url="http://gateway.invalid",
+            openrouter_key="ignored",
+            episode_id="gateway-exhaustion",
+            timeout_seconds=1.0,
+            maximum_attempts=benchmark.MAX_DATA_PLANE_ATTEMPTS,
+            retryable_status_codes=(
+                benchmark.ENDPOINT_REACHABILITY_RETRYABLE_STATUS_CODES
+            ),
+        )
+
+    assert len(attempts) == benchmark.MAX_DATA_PLANE_ATTEMPTS
+    assert failure.value.external_attempts == benchmark.MAX_DATA_PLANE_ATTEMPTS
 
 
 def test_gateway_shape_diagnostic_interleaves_exact_bounded_probe_shapes(
@@ -638,8 +681,8 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
     assert "fireworks/fast" not in config
     assert launcher.PACKETS["agentic"].key_limit_usd == EXPECTED_EPHEMERAL_KEY_LIMIT_USD
     assert launcher.PACKETS["agentic"].maximum_seconds == 30 * 60
-    assert launcher.AGT009_PREREGISTRATION_COMMIT == ""
-    assert launcher.AGT009_AUTHORIZATION_COMMIT == ""
+    assert launcher.AGT010_PREREGISTRATION_COMMIT == ""
+    assert launcher.AGT010_AUTHORIZATION_COMMIT == ""
     assert launcher.DGN003_PREREGISTRATION_COMMIT == ""
     assert launcher.DGN003_AUTHORIZATION_COMMIT == ""
     assert launcher.DGN004_PREREGISTRATION_COMMIT == ""

@@ -38,7 +38,7 @@ def test_agentic_preflight_proves_all_endpoints_without_request_data(
         "_probe_key_readiness",
         lambda **_kwargs: {
             "response_model": benchmark.WORKERS["worker-a"],
-            "provider": benchmark.PROVIDER_NAMES["worker-a"],
+            "provider": benchmark.PROVIDER_NAMES["worker-a"][0],
             "completion_tokens": 1,
             "external_attempts": 1,
             "cost_usd": 0.001,
@@ -49,7 +49,7 @@ def test_agentic_preflight_proves_all_endpoints_without_request_data(
         "_probe_endpoint",
         lambda **kwargs: {
             "response_model": benchmark.WORKERS[kwargs["worker"]],
-            "provider": benchmark.PROVIDER_NAMES[kwargs["worker"]],
+            "provider": benchmark.PROVIDER_NAMES[kwargs["worker"]][0],
             "completion_tokens": EXPECTED_MAX_COMPLETION_TOKENS,
             "external_attempts": 1,
             "cost_usd": 0.001,
@@ -79,7 +79,7 @@ def test_agentic_preflight_returns_bounded_provider_failure(
         "_probe_key_readiness",
         lambda **_kwargs: {
             "response_model": benchmark.WORKERS["worker-a"],
-            "provider": benchmark.PROVIDER_NAMES["worker-a"],
+            "provider": benchmark.PROVIDER_NAMES["worker-a"][0],
             "completion_tokens": 1,
             "external_attempts": 1,
             "cost_usd": 0.001,
@@ -99,7 +99,7 @@ def test_agentic_preflight_returns_bounded_provider_failure(
             )
         return {
             "response_model": benchmark.WORKERS[kwargs["worker"]],
-            "provider": benchmark.PROVIDER_NAMES[kwargs["worker"]],
+            "provider": benchmark.PROVIDER_NAMES[kwargs["worker"]][0],
             "completion_tokens": EXPECTED_MAX_COMPLETION_TOKENS,
             "external_attempts": 1,
             "cost_usd": 0.001,
@@ -141,7 +141,7 @@ def test_agentic_benchmark_requires_reused_preflight_identity(
         "workers": {
             worker: {
                 "model": model,
-                "provider": benchmark.PROVIDER_NAMES[worker],
+                "provider": benchmark.PROVIDER_NAMES[worker][0],
             }
             for worker, model in benchmark.WORKERS.items()
         },

@@ -218,7 +218,12 @@ def _endpoint_report(endpoint_probes: list[dict[str, Any]]) -> dict[str, Any]:
                     result["selected_worker"] == worker for result in endpoint_probes
                 ),
                 "model": model,
-                "provider": PROVIDER_NAMES[worker],
+                "provider": next(
+                    result["provider"]
+                    for result in endpoint_probes
+                    if result["selected_worker"] == worker
+                ),
+                "provider_order": PROVIDER_NAMES[worker],
             }
             for worker, model in WORKERS.items()
         },
@@ -264,8 +269,8 @@ def build_report(
         "run_id": run_id,
         "status": "passed",
         "models": WORKERS,
-        "pinned_providers": PROVIDER_NAMES,
-        "provider_fallbacks": False,
+        "provider_orders": PROVIDER_NAMES,
+        "provider_fallbacks": True,
         "reasoning_enabled": False,
         "encoder_warmup": encoder_warmup,
         "pre_encoder_transport_preflight": transport_preflight,

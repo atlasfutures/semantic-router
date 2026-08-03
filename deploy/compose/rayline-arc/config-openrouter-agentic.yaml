@@ -15,10 +15,10 @@ providers:
       api_format: openai
       pricing:
         currency: USD
-        prompt_per_1m: 0.0882
-        cached_input_per_1m: 0.01764
-        cache_write_per_1m: 0.0882
-        completion_per_1m: 0.1764
+        prompt_per_1m: 0.09
+        cached_input_per_1m: 0.09
+        cache_write_per_1m: 0.09
+        completion_per_1m: 0.18
       backend_refs:
         - name: openrouter
           endpoint: openrouter.ai:443
@@ -32,10 +32,10 @@ providers:
       api_format: openai
       pricing:
         currency: USD
-        prompt_per_1m: 0.14
-        cached_input_per_1m: 0.0028
-        cache_write_per_1m: 0.14
-        completion_per_1m: 0.28
+        prompt_per_1m: 0.168
+        cached_input_per_1m: 0.168
+        cache_write_per_1m: 0.168
+        completion_per_1m: 0.336
       backend_refs:
         - name: openrouter
           endpoint: openrouter.ai:443
@@ -49,10 +49,10 @@ providers:
       api_format: openai
       pricing:
         currency: USD
-        prompt_per_1m: 0.132
-        cached_input_per_1m: 0.033
-        cache_write_per_1m: 0.132
-        completion_per_1m: 0.528
+        prompt_per_1m: 0.14
+        cached_input_per_1m: 0.14
+        cache_write_per_1m: 0.14
+        completion_per_1m: 0.58
       backend_refs:
         - name: openrouter
           endpoint: openrouter.ai:443

@@ -2573,7 +2573,7 @@ transition; 104-request and 214-attempt maxima; original 72 measured calls;
 AGT009 used its only attempt and stopped before H100 allocation. Direct DS4 key
 readiness and the DS4 static 96-token probe completed, then the MiMo v2.5
 (`worker-b`) static endpoint returned HTTP 404 `no_endpoints`. The bounded
-receipt records two completed provider requests, three external attempts,
+receipt records two completed provider requests and three external attempts,
 `$0.0003326904` completed cost, zero admissible performance inference, and no
 protected or measured requests. It is privately pinned at Hugging Face revision
 `79ef0dbb72e05539b2e3b4be541a2c52c607b448` with SHA-256
@@ -2582,6 +2582,37 @@ the exact-byte round trip passed and unauthenticated retrieval returned 401.
 Cleanup proved zero transient keys, Compose containers and volumes, and Modal
 encoder containers; the protected app remained deployed at zero tasks. Both
 AGT009 source authority pins are cleared, so it cannot be rerun.
+
+Post-run source reconstruction found that the exhausted client-side 404 retry
+was not accumulated into the final exception, so the receipt's three attempts
+understate the actual minimum by one. AGT009 made four wire attempts - DS4
+direct, DS4 static, and two MiMo static attempts. The immutable receipt remains
+unchanged; successors accumulate prior attempts into the terminal error.
+
+### AGT010 Bounded OpenRouter Provider-Failover Measurement
+
+AGT010 keeps DS4 Flash, MiMo v2.5, and HY3 as the exact model identities but
+uses bounded OpenRouter provider orders instead of a single brittle endpoint.
+The preferred native hosts remain first. DS4 may use Baidu, StreamLake, or
+DeepInfra; MiMo may use Xiaomi, Parasail, Venice, or Novita; HY3 may use
+Tencent, DeepInfra, or Novita. OpenRouter fallback is enabled, every response
+must identify a provider in its model's order, and actual providers remain in
+the aggregate result. No model substitution or Fireworks Fast model is allowed.
+
+Conservative manifest/config pricing uses the highest prompt, cache, and output
+rate in each bounded order. The model pool, public agentic histories, selection
+logic, same-key/same-Envoy transition, 104-request and 214-attempt maxima,
+original 72 measurements, `$0.50` report gate, `$0.75` key limit, 30-minute H100
+limit, `$5.7492336` envelope, privacy, cleanup, and held 1,000-case path remain
+unchanged.
+
+- [x] AGT010a: Implement bounded provider orders, actual-provider validation and
+  reporting, conservative pricing, exhausted-retry accounting, focused tests,
+  repo gates, and hermetic Compose acceptance with authority pins empty.
+- [ ] AGT010b: Preregister, attest, authorize one attempt, attest the registry,
+  and pin both authorities in signed pushed source.
+- [ ] AGT010c: Execute once and publish either bounded preflight failure evidence
+  or the complete 72-request performance result, then close all authority.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin

@@ -15,14 +15,14 @@ WORKERS = {
     "worker-c": "tencent/hy3",
 }
 PROVIDER_SLUGS = {
-    "worker-a": "baidu",
-    "worker-b": "xiaomi",
-    "worker-c": "tencent",
+    "worker-a": ("baidu", "streamlake", "deepinfra"),
+    "worker-b": ("xiaomi", "parasail", "venice", "novita"),
+    "worker-c": ("tencent", "deepinfra", "novita"),
 }
 PROVIDER_NAMES = {
-    "worker-a": "Baidu",
-    "worker-b": "Xiaomi",
-    "worker-c": "Tencent",
+    "worker-a": ("Baidu", "StreamLake", "DeepInfra"),
+    "worker-b": ("Xiaomi", "Parasail", "Venice", "Novita"),
+    "worker-c": ("Tencent", "DeepInfra", "Novita"),
 }
 
 MODAL_REFERENCE = {
