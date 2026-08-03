@@ -204,4 +204,6 @@ def test_launcher_stage_packet_is_closed_and_reuses_agentic_sources() -> None:
     assert launcher.AGT012_PREREGISTRATION_COMMIT == (
         "cb432cc61d0071bda46c8c5403d1630c2e31c106"
     )
-    assert launcher.AGT012_AUTHORIZATION_COMMIT == ""
+    assert launcher.AGT012_AUTHORIZATION_COMMIT == (
+        "648befff40013f27220cff54cc8e6eab5ec3ffb8"
+    )

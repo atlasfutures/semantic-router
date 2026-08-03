@@ -2737,7 +2737,7 @@ full resource envelope is `$5.7492336`: cumulative cost would be at most
 - [x] AGT012a: Implement the aggregate-only stage snapshots, natural c4 cell,
   stratified direct/static controls, exact request/cost gates, and source-closed
   launcher; pass repo-native validation and fake-encoder integration.
-- [ ] AGT012b: Preregister the frozen source, attest it in Pathfinder, authorize
+- [x] AGT012b: Preregister the frozen source, attest it in Pathfinder, authorize
   one attempt, attest the registry, and pin both signed pushed authorities.
 - [ ] AGT012c: Execute once, upload the private aggregate receipt byte-exactly,
   compare the natural c4 decomposition with AGT011 and the pure-Modal stage
