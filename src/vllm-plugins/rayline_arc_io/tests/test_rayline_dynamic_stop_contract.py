@@ -52,6 +52,9 @@ def _rendezvous_owner(raw_episode_id: str, replicas: tuple[str, ...]) -> str:
 def test_dyn006_freezes_three_replica_budget_and_closed_authority() -> None:
     receipt = budget.budget_receipt(contract.DYN006.budget)
 
+    assert contract.PATHFINDER_AUTHORIZATION_COMMIT == (
+        "06fb91b47f2652ee31e538d860f92947b42e3a6d"
+    )
     assert contract.ENCODER_REPLICA_IDS == ("encoder-a", "encoder-b", "encoder-c")
     assert contract.EXPECTED_PRE_BOUNDARY_OWNERS == (2, 3, 3)
     assert contract.EXPECTED_POST_STOP_OWNERS == (0, 4, 4)

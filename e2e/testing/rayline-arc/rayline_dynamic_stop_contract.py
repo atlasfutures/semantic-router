@@ -9,7 +9,7 @@ from rayline_scaleout_contract import PERF024, ScaleoutRunContract
 from rayline_three_arm_budget import BudgetContract
 
 DYN006_RUN_ID = "rayline-dynamic-capacity-stop-dyn006-20260803"
-PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
+PATHFINDER_AUTHORIZATION_COMMIT = "06fb91b47f2652ee31e538d860f92947b42e3a6d"
 DYNAMIC_STOP_ARMS = (
     "arc_dynamic_three_control",
     "arc_dynamic_drain_stop",
