@@ -2947,9 +2947,72 @@ for credentials and public prompt markers, and leave no AGT014 container. The
   bounded client/decision-log join, aggregate reporter, and focused tests.
 - [x] AGT014b: Freeze and push both signed source checkpoints, then pin the
   preregistration and authorization commits.
-- [ ] AGT014c: Execute the one authorized 76-request packet and verify cleanup.
-- [ ] AGT014d: Persist the aggregate receipt, record the apples-to-apples
+- [x] AGT014c: Execute the one authorized 76-request packet and verify cleanup.
+- [x] AGT014d: Persist the aggregate receipt, record the apples-to-apples
   comparison and buffered-TTFT limitation, then permanently close authority.
+
+#### AGT014 Result
+
+The single authorized AGT014 attempt completed the fixed packet on 2026-08-03:
+76/76 provider requests and 76 external attempts, with zero retry or selection
+failure. Natural semantic coverage exactly reproduced AGT013 at `16/0/8`; the
+measured six-case set was three DS4 Flash and three HY3 cases. The deterministic
+native checkpoint SHA-256 was
+`e37b1d4313a7ab622e7049e3079542c2dfb2e707fb334b035b1627e7b960e834`.
+
+| Natural path | RPS | Output tok/s | Buffered first token p50 / p95 | E2E p50 / p95 |
+|---|---:|---:|---:|---:|
+| Native Modal static c4 | 0.296 | 28.06 | 12.654s / 16.556s | 12.751s / 16.659s |
+| Native Modal ARC c4 | 0.278 | 26.38 | 13.137s / 16.951s | 13.233s / 17.052s |
+
+ARC retained `0.939x` of its colocated static request throughput and `0.940x`
+of output-token throughput. It added `+0.482s` E2E p50 and `+0.393s` E2E p95.
+This is a much smaller normalized routing tax than AGT013's remote-vLLM
+`0.622x` result: the retained-throughput ratio is `1.509x` the remote result.
+
+The local classifier is correspondingly fast. Natural ARC mean router time was
+`0.1107s`, of which `0.1091s` was encoder work and `0.000892s` q-head work.
+Compared with AGT013's `1.490s` total and `1.485s` remote encoder means, the
+native router and encoder stages were `13.46x` and `13.62x` faster. Ten of 12
+calls used `full_sub_chunk_fallback` and two used `prefill`; this fixed workload
+assigns a distinct episode to each request, so it does not claim an incremental
+KV-cache hit.
+
+Absolute service throughput is nevertheless lower: native ARC delivered only
+`0.331x` AGT013 ARC RPS and native static only `0.219x` AGT013 static RPS. This
+is not caused by classification. The native Modal app holds its per-token lock
+across service lookup, the complete OpenRouter call, and state persistence, and
+the benchmark intentionally uses one token. It therefore serializes the c4
+workload. It also buffers the complete provider response before synthesizing
+SSE, so the displayed first-token values are time-to-buffered-response rather
+than real provider TTFT. In the same-run three-model control, direct OpenRouter
+delivered `1.343` RPS while Modal pinned routing delivered `0.433` RPS
+(`0.323x`); MiMo used Venice direct and Xiaomi through Modal, and completion
+counts differed, so that control describes the whole deployment path rather
+than an isolated gateway tax.
+
+The measurement itself passed, but the first aggregate finalizer rejected the
+downloaded sink because it contained 63 decision events and 63 colocated budget
+events. The repaired report filters only the declared
+`rayline-router.decision.v3` schema; it did not rerun or alter any measurement.
+The reader now has a regression test, and key usage is persisted before report
+assembly on future runs. Receipt-derived provider cost was `$0.02873196484`.
+The management API was observed before the join error, but its numeric result
+was not durably written, so no exact management-key usage value is claimed.
+Using the full `$5.00` Modal allowance with the receipt-derived provider cost
+bounds cumulative conservative observed cost at `$87.864463066383`, leaving at
+least `$46.448360953617` under the `$134.31282402` authority.
+
+The sanitized aggregate receipt is private at
+`rayline-ai/router-artifacts/runs/rayline-openrouter-modal-native-agt014-20260803`,
+revision `703a6278e7e7d13e63b16d57a747ea5efcf33cdd`, SHA-256
+`cd93529de754b8a9b474f4795215cbea166e743d315b94fff97924664f7a6464`.
+It round-tripped byte-exactly and returned HTTP 401 without authentication.
+
+The isolated Modal app stopped after 367 seconds with zero containers. The
+ephemeral OpenRouter key, Modal secret, Dicts, and Volume are absent. Aggregate
+credential and public-prompt-body scans passed. Both AGT014 authority pins are
+empty, and the 1,000-case qualification remains held.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin

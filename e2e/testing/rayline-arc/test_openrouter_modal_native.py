@@ -2,15 +2,27 @@
 
 from __future__ import annotations
 
-import yaml
+from pathlib import Path
 
 import openrouter_modal_native_benchmark as benchmark
+import yaml
 from openrouter_agentic_workload import PROVIDER_NAMES, WORKERS
 from openrouter_modal_native_fixture import (
     CHECKPOINT_REMOTE_PATH,
     DECISION_LOG_REMOTE_PATH,
     router_config_text,
 )
+
+EXPECTED_COMPLETION_LIMIT = 96
+EXPECTED_NATIVE_REQUESTS = 63
+EXPECTED_DIRECT_REQUESTS = 13
+EXPECTED_TOTAL_REQUESTS = 76
+EXPECTED_COVERAGE_REQUESTS = 24
+EXPECTED_CONCURRENCY = 4
+EXPECTED_REPETITIONS = 2
+FIXTURE_TOTAL_REQUESTS = 6
+FIXTURE_THROUGHPUT_RATIO = 0.5
+FIXTURE_EMBEDDING_SECONDS = 1.5
 
 
 def test_native_config_is_the_agt013_pool_with_local_kv_encoding() -> None:
@@ -25,16 +37,35 @@ def test_native_config_is_the_agt013_pool_with_local_kv_encoding() -> None:
     assert all(
         worker["openrouter_allow_fallbacks"] is False for worker in config["workers"]
     )
-    assert all(worker["max_completion_tokens"] == 96 for worker in config["workers"])
+    assert all(
+        worker["max_completion_tokens"] == EXPECTED_COMPLETION_LIMIT
+        for worker in config["workers"]
+    )
 
 
 def test_native_benchmark_has_a_fixed_small_request_envelope() -> None:
-    assert benchmark.EXPECTED_NATIVE_REQUESTS == 63
-    assert benchmark.EXPECTED_DIRECT_REQUESTS == 13
-    assert benchmark.MAX_PROVIDER_REQUESTS == 76
-    assert benchmark.MAX_COVERAGE_REQUESTS == 24
-    assert benchmark.CONCURRENCY == 4
-    assert benchmark.REPETITIONS == 2
+    assert benchmark.EXPECTED_NATIVE_REQUESTS == EXPECTED_NATIVE_REQUESTS
+    assert benchmark.EXPECTED_DIRECT_REQUESTS == EXPECTED_DIRECT_REQUESTS
+    assert benchmark.MAX_PROVIDER_REQUESTS == EXPECTED_TOTAL_REQUESTS
+    assert benchmark.MAX_COVERAGE_REQUESTS == EXPECTED_COVERAGE_REQUESTS
+    assert benchmark.CONCURRENCY == EXPECTED_CONCURRENCY
+    assert benchmark.REPETITIONS == EXPECTED_REPETITIONS
+
+
+def test_decision_reader_excludes_same_sink_budget_events(tmp_path: Path) -> None:
+    path = tmp_path / "events.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                '{"schema_version":"rayline-router.budget.v1"}',
+                '{"schema_version":"rayline-router.decision.v3","request_id":"r1"}',
+            ]
+        )
+        + "\n"
+    )
+    assert benchmark.read_decisions(path) == [
+        {"schema_version": "rayline-router.decision.v3", "request_id": "r1"}
+    ]
 
 
 def _result(request_id: str, path: str, total: float) -> dict[str, object]:
@@ -137,9 +168,17 @@ def test_final_report_joins_client_and_decision_planes(monkeypatch) -> None:
         checkpoint={"checkpoint_sha256": "a" * 64},
     )
     assert report["status"] == "passed"
-    assert report["actual_provider_requests"] == 6
-    assert report["natural_comparison"]["arc_to_static_throughput_ratio"] == 0.5
+    assert report["actual_provider_requests"] == FIXTURE_TOTAL_REQUESTS
     assert (
-        report["natural_paths"]["modal_arc"]["embedding_latency"]["p50_seconds"] == 1.5
+        report["natural_comparison"]["arc_to_static_throughput_ratio"]
+        == FIXTURE_THROUGHPUT_RATIO
+    )
+    assert (
+        report["natural_paths"]["modal_arc"]["embedding_latency"]["p50_seconds"]
+        == FIXTURE_EMBEDDING_SECONDS
+    )
+    assert (
+        report["natural_paths"]["modal_arc"]["embedding_latency"]["mean_seconds"]
+        == FIXTURE_EMBEDDING_SECONDS
     )
     assert report["natural_paths"]["modal_arc"]["providers"] == ["Baidu"]
