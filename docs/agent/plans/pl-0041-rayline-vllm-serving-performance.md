@@ -2340,7 +2340,7 @@ upper bound of `$80.218561026743`, leaving `$54.094262993257` under the current
 
 - [x] DGN003a: Source-close the local fake-encoder mode, six-request driver,
   privacy-safe upstream classifier, and focused/hermetic validation.
-- [ ] DGN003b: Preregister and authorize exactly one diagnostic attempt, then
+- [x] DGN003b: Preregister and authorize exactly one diagnostic attempt, then
   pin the pushed registry authority in source.
 - [ ] DGN003c: Execute once, privately pin and close the aggregate receipt,
   prove key/Compose/Modal inventories at zero, and choose the AGT007 correction
@@ -2352,6 +2352,10 @@ succeeds while static fails, inspect the sanitized upstream category and fix
 the gateway transport contract before another H100 run. If only 96-token calls
 fail, correct the provider/request-shape contract. In every branch, keep the
 1,000-case qualification held.
+
+The remote-visible DGN003 authority chain is Pathfinder preregistration
+`d40ffb74`, Pathfinder registry attestation `b87a602f`, and the final signed
+Semantic Router launch pin. It authorizes only the six-request, no-H100 packet.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
