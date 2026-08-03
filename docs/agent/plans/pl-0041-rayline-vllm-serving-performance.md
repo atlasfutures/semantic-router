@@ -2315,7 +2315,8 @@ bringing cumulative observed accounting to `$80.168561026743`. The private
 aggregate receipt is byte-verified at `rayline-ai/router-artifacts@ee2d6fc8`
 with SHA-256
 `d28b926c06cb94eddb56cab922376f233dee4e115aa94a68373de807a30bfc2b`.
-The source authority is closed and the 1,000-case qualification remains held.
+Semantic Router closes source authority at `ae323259`, and Pathfinder closes
+the registry at `e3908495`. The 1,000-case qualification remains held.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
