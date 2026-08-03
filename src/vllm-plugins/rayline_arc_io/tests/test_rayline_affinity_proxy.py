@@ -15,16 +15,23 @@ SCRIPT_DIR = REPO_ROOT / "e2e/testing/rayline-arc"
 sys.path.insert(0, str(SCRIPT_DIR))
 
 proxy = importlib.import_module("rayline_affinity_proxy")
+EXPECTED_SURVIVOR_MAX_SESSIONS = 8
 
 
 def _state(
-    *, failover_after_pooling: int | None = None
+    *,
+    failover_after_pooling: int | None = None,
+    unavailable_replica: int | None = None,
+    stopped_hosts: set[str] | None = None,
 ) -> tuple[object, list[tuple[str, str]]]:
     calls: list[tuple[str, str]] = []
     pooling_by_host: dict[str, int] = {}
+    stopped = stopped_hosts if stopped_hosts is not None else set()
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append((request.url.host or "", request.url.path))
+        if request.url.host in stopped:
+            return httpx.Response(503, json={"error": "stopped"})
         if request.url.path == "/health":
             resident = 1 if request.url.host == "replica-a.test" else 2
             return httpx.Response(
@@ -60,6 +67,7 @@ def _state(
         modal_secret="secret",
         timeout_seconds=10.0,
         failover_after_pooling=failover_after_pooling,
+        unavailable_replica=unavailable_replica,
     )
     state._client.close()
     state._client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -170,6 +178,56 @@ def test_forced_failover_rebuilds_on_peer_and_fans_out_close() -> None:
     }
 
 
+def test_confirmed_replica_stop_rebuilds_once_and_closes_survivor() -> None:
+    stopped: set[str] = set()
+    state, calls = _state(unavailable_replica=0, stopped_hosts=stopped)
+    episode = "0" * 64
+    body = json.dumps({"episode_id_hash": episode, "turns": [{}]}).encode()
+    try:
+        for _ in range(2):
+            assert state.forward_session_pooling(body).status_code == HTTPStatus.OK
+        stopped.add("replica-a.test")
+        for _ in range(2):
+            assert state.forward_session_pooling(body).status_code == HTTPStatus.OK
+        close = json.loads(state.forward_close(episode).body)
+        health = json.loads(state.aggregate_health().body)
+        stats = json.loads(state.stats().body)
+    finally:
+        state.close()
+
+    assert close == {"closed": True}
+    assert health["max_sessions"] == EXPECTED_SURVIVOR_MAX_SESSIONS
+    assert calls == [
+        ("replica-a.test", proxy.SESSION_POOLING_PATH),
+        ("replica-a.test", proxy.SESSION_POOLING_PATH),
+        ("replica-a.test", proxy.SESSION_POOLING_PATH),
+        ("replica-b.test", proxy.SESSION_POOLING_PATH),
+        ("replica-b.test", proxy.SESSION_POOLING_PATH),
+        ("replica-b.test", proxy.SESSION_CLOSE_PREFIX + episode),
+        ("replica-b.test", proxy.STATE_PATH),
+    ]
+    assert stats == {
+        "schema_version": proxy.OUTAGE_STATS_SCHEMA,
+        "replicas": 2,
+        "requests_by_replica": [2, 3],
+        "session_pooling_requests_by_replica": [2, 2],
+        "session_deletes_by_replica": [0, 1],
+        "unique_sessions_by_replica": [1, 1],
+        "affinity_mismatches": 0,
+        "primary_sessions_by_replica": [1, 0],
+        "unavailable_replica": 0,
+        "outage_confirmed": True,
+        "unavailability_detections": 1,
+        "unavailable_http_responses": 1,
+        "unavailable_transport_errors": 0,
+        "outage_failover_pooling_requests": 2,
+        "outage_failover_sessions": 1,
+        "unavailable_close_skips": 1,
+        "survivor_close_requests": 1,
+        "session_rebuild_responses": 1,
+    }
+
+
 def test_proxy_rejects_duplicate_upstreams_and_invalid_hashes() -> None:
     try:
         proxy.AffinityState(
@@ -193,3 +251,17 @@ def test_proxy_rejects_duplicate_upstreams_and_invalid_hashes() -> None:
             raise AssertionError("invalid episode hash was accepted")
     finally:
         state.close()
+
+    try:
+        proxy.AffinityState(
+            ["https://replica-a.test", "https://replica-b.test"],
+            modal_key="key",
+            modal_secret="secret",
+            timeout_seconds=10.0,
+            failover_after_pooling=2,
+            unavailable_replica=0,
+        )
+    except ValueError as error:
+        assert "mutually exclusive" in str(error)
+    else:
+        raise AssertionError("two failover modes were accepted together")

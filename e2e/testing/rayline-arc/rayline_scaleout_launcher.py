@@ -480,6 +480,7 @@ def _start_affinity(
     upstreams: tuple[str, ...],
     *,
     failover_after_pooling: int | None = None,
+    unavailable_replica: int | None = None,
 ) -> AffinityOwnership:
     port = _free_port()
     command = [
@@ -494,6 +495,8 @@ def _start_affinity(
         command.extend(("--upstream", upstream))
     if failover_after_pooling is not None:
         command.extend(("--failover-after-pooling", str(failover_after_pooling)))
+    if unavailable_replica is not None:
+        command.extend(("--unavailable-replica", str(unavailable_replica)))
     process = subprocess.Popen(
         command,
         cwd=context.semantic_root,

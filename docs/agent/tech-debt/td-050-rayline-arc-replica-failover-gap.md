@@ -59,6 +59,12 @@ deployment surface.
   completed, and cleanup reached stable zero. Forced remap used `1.0575x`
   appended-token work and `1.1371x` p50 latency; this remains experiment-side
   fault injection rather than proof of outage detection or membership.
+- PERF027 is source-closed around a real exact-app stop. It stages identical
+  two-turn retained sessions, proves one Modal app stopped with zero containers
+  while its peer remains deployed, and permits bounded remap only after that
+  proof. Even if it passes, the controller and proxy remain experiment-owned;
+  production discovery, health policy, ambiguous-failure idempotency, rollout,
+  and operator configuration remain exit criteria here.
 - `e2e/testing/rayline-arc/rayline_affinity_proxy.py` owns deterministic
   experiment placement and aggregate-only accounting.
 - `SessionCoordinator` rebuilds from full supplied history when a retained

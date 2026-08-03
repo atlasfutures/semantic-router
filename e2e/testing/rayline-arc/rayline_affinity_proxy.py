@@ -21,6 +21,7 @@ import httpx
 
 STATS_SCHEMA = "rayline.vllm.episode-affinity-stats.v1"
 FAILOVER_STATS_SCHEMA = "rayline.vllm.episode-affinity-failover-stats.v2"
+OUTAGE_STATS_SCHEMA = "rayline.vllm.episode-affinity-replica-stop-stats.v1"
 SESSION_POOLING_PATH = "/v1/rayline/arc/session/pooling"
 SESSION_CLOSE_PREFIX = "/v1/rayline/arc/session/"
 STATE_PATH = "/health"
@@ -30,11 +31,24 @@ MAX_REQUEST_BYTES = 4 * 1024 * 1024
 MAX_RESPONSE_BYTES = 512 * 1024
 MAX_REPLICAS = 8
 MIN_FAILOVER_REPLICAS = 2
+UNAVAILABLE_STATUS_CODES = frozenset(
+    {
+        HTTPStatus.NOT_FOUND,
+        HTTPStatus.GONE,
+        HTTPStatus.BAD_GATEWAY,
+        HTTPStatus.SERVICE_UNAVAILABLE,
+        HTTPStatus.GATEWAY_TIMEOUT,
+    }
+)
 EPISODE_HASH = re.compile(r"^[0-9a-f]{64}$")
 
 
 class AffinityProxyError(RuntimeError):
     """A bounded proxy contract failed without exposing request payloads."""
+
+
+class AffinityTransportError(AffinityProxyError):
+    """An upstream connection failed before a usable response was received."""
 
 
 @dataclass(frozen=True)
@@ -55,6 +69,7 @@ class AffinityState:
         modal_secret: str,
         timeout_seconds: float,
         failover_after_pooling: int | None = None,
+        unavailable_replica: int | None = None,
     ) -> None:
         if not 1 <= len(upstreams) <= MAX_REPLICAS:
             raise ValueError("affinity proxy requires between one and eight replicas")
@@ -81,8 +96,19 @@ class AffinityState:
             raise ValueError(
                 "forced failover requires two replicas and a positive threshold"
             )
+        if unavailable_replica is not None and (
+            len(normalized) < MIN_FAILOVER_REPLICAS
+            or unavailable_replica < 0
+            or unavailable_replica >= len(normalized)
+        ):
+            raise ValueError("replica-stop failover requires a valid replica index")
+        if failover_after_pooling is not None and unavailable_replica is not None:
+            raise ValueError(
+                "forced-remap and replica-stop modes are mutually exclusive"
+            )
         self.upstreams = tuple(normalized)
         self._failover_after_pooling = failover_after_pooling
+        self._unavailable_replica = unavailable_replica
         self._headers = {"accept": "application/json"}
         if modal_key:
             self._headers.update({"Modal-Key": modal_key, "Modal-Secret": modal_secret})
@@ -106,6 +132,14 @@ class AffinityState:
         self._failover_episodes: set[str] = set()
         self._close_fanout_requests = 0
         self._session_rebuild_responses = 0
+        self._outage_confirmed = False
+        self._outage_failover_episodes: set[str] = set()
+        self._unavailability_detections = 0
+        self._unavailable_http_responses = 0
+        self._unavailable_transport_errors = 0
+        self._outage_failover_pooling_requests = 0
+        self._unavailable_close_skips = 0
+        self._survivor_close_requests = 0
 
     def close(self) -> None:
         self._client.close()
@@ -170,7 +204,7 @@ class AffinityState:
                 headers=headers,
             )
         except httpx.HTTPError as error:
-            raise AffinityProxyError("upstream transport failed") from error
+            raise AffinityTransportError("upstream transport failed") from error
         content = response.content
         if len(content) > MAX_RESPONSE_BYTES:
             raise AffinityProxyError("upstream response exceeded the bounded limit")
@@ -190,6 +224,8 @@ class AffinityState:
         episode_hash = payload.get("episode_id_hash")
         if not isinstance(episode_hash, str):
             raise AffinityProxyError("session request omits episode hash")
+        if self._unavailable_replica is not None:
+            return self._forward_outage_pooling(episode_hash, body)
         replica, failed_over = self._pooling_replica(episode_hash)
         self._observe(
             episode_hash,
@@ -208,7 +244,72 @@ class AffinityState:
                     self._session_rebuild_responses += 1
         return response
 
+    def _record_created_response(
+        self, response: ForwardedResponse, *, failed_over: bool
+    ) -> None:
+        if not failed_over or response.status_code != HTTPStatus.OK:
+            return
+        try:
+            payload = json.loads(response.body)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict) and payload.get("session_action") == "created":
+            with self._lock:
+                self._session_rebuild_responses += 1
+
+    def _forward_outage_peer(
+        self, episode_hash: str, body: bytes, primary: int
+    ) -> ForwardedResponse:
+        replica = (primary + 1) % len(self.upstreams)
+        with self._lock:
+            self._outage_failover_pooling_requests += 1
+        response = self._forward(replica, "POST", SESSION_POOLING_PATH, body)
+        if response.status_code == HTTPStatus.OK:
+            self._observe(
+                episode_hash,
+                replica,
+                deletion=False,
+                expected_remap=True,
+            )
+        self._record_created_response(response, failed_over=True)
+        return response
+
+    def _forward_outage_pooling(
+        self, episode_hash: str, body: bytes
+    ) -> ForwardedResponse:
+        primary = self.replica_for_hash(episode_hash)
+        with self._lock:
+            failed_over = episode_hash in self._outage_failover_episodes
+        if failed_over:
+            return self._forward_outage_peer(episode_hash, body, primary)
+        try:
+            response = self._forward(primary, "POST", SESSION_POOLING_PATH, body)
+        except AffinityTransportError:
+            if primary != self._unavailable_replica:
+                raise
+            with self._lock:
+                self._unavailable_transport_errors += 1
+                self._unavailability_detections += 1
+                self._outage_confirmed = True
+                self._outage_failover_episodes.add(episode_hash)
+            return self._forward_outage_peer(episode_hash, body, primary)
+        if (
+            primary == self._unavailable_replica
+            and response.status_code in UNAVAILABLE_STATUS_CODES
+        ):
+            with self._lock:
+                self._unavailable_http_responses += 1
+                self._unavailability_detections += 1
+                self._outage_confirmed = True
+                self._outage_failover_episodes.add(episode_hash)
+            return self._forward_outage_peer(episode_hash, body, primary)
+        if response.status_code == HTTPStatus.OK:
+            self._observe(episode_hash, primary, deletion=False)
+        return response
+
     def forward_close(self, episode_hash: str) -> ForwardedResponse:
+        if self._unavailable_replica is not None:
+            return self._forward_outage_close(episode_hash)
         if self._failover_after_pooling is None:
             replica = self.replica_for_hash(episode_hash)
             self._observe(episode_hash, replica, deletion=True)
@@ -247,12 +348,55 @@ class AffinityState:
             closed = closed or payload["closed"]
         return self._json_response({"closed": closed})
 
+    def _forward_outage_close(self, episode_hash: str) -> ForwardedResponse:
+        with self._lock:
+            replicas = sorted(self._visited_by_episode.get(episode_hash, set()))
+            outage_confirmed = self._outage_confirmed
+        if not replicas:
+            replicas = [self.replica_for_hash(episode_hash)]
+        closed = False
+        for replica in replicas:
+            if outage_confirmed and replica == self._unavailable_replica:
+                with self._lock:
+                    self._unavailable_close_skips += 1
+                continue
+            response = self._forward(
+                replica,
+                "DELETE",
+                SESSION_CLOSE_PREFIX + episode_hash,
+            )
+            if response.status_code != HTTPStatus.OK:
+                return response
+            self._observe(
+                episode_hash,
+                replica,
+                deletion=True,
+                expected_remap=True,
+            )
+            with self._lock:
+                self._survivor_close_requests += 1
+            try:
+                payload = json.loads(response.body)
+            except json.JSONDecodeError as error:
+                raise AffinityProxyError("session close response is invalid") from error
+            if not isinstance(payload, dict) or not isinstance(
+                payload.get("closed"), bool
+            ):
+                raise AffinityProxyError("session close contract failed")
+            closed = closed or payload["closed"]
+        return self._json_response({"closed": closed})
+
     def aggregate_health(self) -> ForwardedResponse:
+        with self._lock:
+            unavailable = self._unavailable_replica if self._outage_confirmed else None
+        replicas = [
+            replica for replica in range(len(self.upstreams)) if replica != unavailable
+        ]
         with ThreadPoolExecutor(max_workers=len(self.upstreams)) as pool:
             responses = list(
                 pool.map(
                     lambda replica: self._forward(replica, "GET", STATE_PATH),
-                    range(len(self.upstreams)),
+                    replicas,
                 )
             )
         decoded: list[dict[str, Any]] = []
@@ -307,7 +451,11 @@ class AffinityState:
                 "schema_version": (
                     FAILOVER_STATS_SCHEMA
                     if self._failover_after_pooling is not None
-                    else STATS_SCHEMA
+                    else (
+                        OUTAGE_STATS_SCHEMA
+                        if self._unavailable_replica is not None
+                        else STATS_SCHEMA
+                    )
                 ),
                 "replicas": len(self.upstreams),
                 "requests_by_replica": list(self._requests),
@@ -329,6 +477,22 @@ class AffinityState:
                         "session_rebuild_responses": self._session_rebuild_responses,
                     }
                 )
+            if self._unavailable_replica is not None:
+                payload.update(
+                    {
+                        "primary_sessions_by_replica": primary,
+                        "unavailable_replica": self._unavailable_replica,
+                        "outage_confirmed": self._outage_confirmed,
+                        "unavailability_detections": self._unavailability_detections,
+                        "unavailable_http_responses": self._unavailable_http_responses,
+                        "unavailable_transport_errors": self._unavailable_transport_errors,
+                        "outage_failover_pooling_requests": self._outage_failover_pooling_requests,
+                        "outage_failover_sessions": len(self._outage_failover_episodes),
+                        "unavailable_close_skips": self._unavailable_close_skips,
+                        "survivor_close_requests": self._survivor_close_requests,
+                        "session_rebuild_responses": self._session_rebuild_responses,
+                    }
+                )
         return self._json_response(payload)
 
     def reset_stats(self) -> ForwardedResponse:
@@ -344,6 +508,14 @@ class AffinityState:
             self._failover_episodes.clear()
             self._close_fanout_requests = 0
             self._session_rebuild_responses = 0
+            self._outage_confirmed = False
+            self._outage_failover_episodes.clear()
+            self._unavailability_detections = 0
+            self._unavailable_http_responses = 0
+            self._unavailable_transport_errors = 0
+            self._outage_failover_pooling_requests = 0
+            self._unavailable_close_skips = 0
+            self._survivor_close_requests = 0
         return self._json_response({"status": "reset"})
 
     @staticmethod
@@ -442,6 +614,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--upstream", action="append", required=True)
     parser.add_argument("--timeout-seconds", type=float, default=180.0)
     parser.add_argument("--failover-after-pooling", type=int)
+    parser.add_argument("--unavailable-replica", type=int)
     return parser.parse_args()
 
 
@@ -457,6 +630,7 @@ def main() -> None:
         modal_secret=secret,
         timeout_seconds=args.timeout_seconds,
         failover_after_pooling=args.failover_after_pooling,
+        unavailable_replica=args.unavailable_replica,
     )
     server = AffinityHTTPServer((args.listen_host, args.port), state)
     try:

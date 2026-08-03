@@ -1741,6 +1741,26 @@ but held:
    frozen stop boundary, survivor capacity, retry/idempotency semantics,
    aggregate failure/rebuild/fanout metrics, cleanup, and budget before opening
    source. Keep production exposure blocked by TD050 and keep qualification held.
+   PERF027 is that source-closed staged packet. Use run ID
+   `rayline-replica-stop-perf027-20260803`, the shared
+   `shared-replica-stop` namespace, and the exact r030 corpus whose eight
+   measured episodes place `[4,4]` across replicas; the one warmup episode makes
+   the all-session vector `[5,4]`. In each arm, warm four turns and preload turns
+   one and two for all eight measured episodes before the boundary. The control
+   performs no stop. Treatment stops exact app
+   `rayline-arc-session-encoder-a`, waits for stopped/zero-container state while
+   encoder B remains deployed with one container, then measures only turns three
+   and four on the same seeded post-boundary schedule. The proxy may retry an
+   unavailable primary only after that orchestration proof, on explicit
+   404/410/502/503/504 or transport failure; cache the episode remap so exactly
+   four detections produce eight peer pooling calls and four created responses.
+   Require identical preload and post-boundary worker traces, `[5,4]` primary
+   identity, 16/16 post-boundary completions per arm, eight survivor closes,
+   five unavailable-owner close skips, survivor zero state, exact final app/
+   container zero, and aggregate-only evidence. The stop-convergence duration
+   is reported but excluded from request latency. Freeze the same `$7.4182176`
+   two-replica envelope from prior observed accounting `$71.9354755968929`;
+   keep providers, generation workers, whole-run retry, and qualification out.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage
