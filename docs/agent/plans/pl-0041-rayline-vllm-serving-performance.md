@@ -2452,7 +2452,7 @@ latency, or timestamp. From `$80.429964624743`, its full envelope reaches
   pass focused tests, repository validation/lint, and hermetic ARC acceptance.
 - [x] DGN004b: Preregister and authorize exactly one attempt, then pin both
   registry checkpoints in signed, pushed source.
-- [ ] DGN004c: Execute once, privately pin and close the aggregate receipt,
+- [x] DGN004c: Execute once, privately pin and close the aggregate receipt,
   prove all inventories at zero, and decide whether a gateway-local one-token
   prime is justified before any new H100 packet.
 
@@ -2466,6 +2466,24 @@ do not spend another H100 packet without stronger observability. If both static
 The remote-visible DGN004 authority chain is Pathfinder preregistration
 `063f68f3`, Pathfinder registry attestation `cc08ce90`, and the final signed
 Semantic Router launch pin. It authorizes only this four-request no-H100 packet.
+
+DGN004 passed its only attempt. Static 96 tokens as the first gateway request,
+static one token, static 96 tokens after that explicit prime, and the direct
+96-token control completed 4/4 with HTTP 200, exact DS4/Baidu identity, and one
+wire attempt each. The 96-token probes returned two completion tokens and the
+one-token probe returned one. OpenRouter and Modal both reported `$0`; cleanup
+deleted the ephemeral key and Compose state while the protected app remained at
+zero tasks and containers. Cumulative observed accounting remains
+`$80.429964624743`. The private aggregate receipt is byte-verified at
+`rayline-ai/router-artifacts@d971bbbb` with SHA-256
+`4acb2fca54d601fcb0ce02a45074f33be22d8c486aa27dccaee00a7587200589`.
+
+The result falsifies gateway-local priming as the explanation for AGT007's
+intermittent 404. Do not launch another H100 packet yet. First prove the same
+OpenRouter/Envoy endpoints before paid encoder startup, while preserving the
+gateway process and ephemeral key into the protected phase, or add privacy-safe
+full-stack edge observability that can distinguish the failing hop. DGN004 is
+permanently closed, and the 1,000-case qualification remains held.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin

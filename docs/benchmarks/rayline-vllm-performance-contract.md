@@ -606,6 +606,16 @@ remaining sequencing difference is that DGN003 primed the gateway with a
 one-token static request before its successful 96-token static calls. AGT007 is
 closed and cannot retry; no performance inference is admissible.
 
+DGN004 tested that remaining sequencing hypothesis with a fresh key. Static 96
+tokens as the gateway's first request, a static one-token prime, static 96
+tokens after the prime, and a direct 96-token control all completed with HTTP
+200, exact DS4/Baidu identity, and one wire attempt. OpenRouter and Modal both
+reported USD 0. This falsifies gateway priming as the explanation for the
+intermittent full-stack 404. Another paid-encoder packet is not admissible until
+the same OpenRouter/Envoy endpoint path is proven before encoder startup or the
+full-stack edge failure gains privacy-safe observability. DGN004 is closed, and
+the 1,000-case qualification remains held.
+
 ## Evidence Lineage
 
 The frozen choices build on:
