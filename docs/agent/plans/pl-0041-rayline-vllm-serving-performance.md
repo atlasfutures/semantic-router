@@ -2507,7 +2507,7 @@ From `$80.429964624743`, the conservative cumulative envelope is
 - [x] AGT008a: Implement the fake-to-protected lifecycle, same-key/same-Envoy
   interlocks, aggregate v4 accounting, focused tests, repository gates, and
   hermetic ARC acceptance with launch authority empty.
-- [ ] AGT008b: Preregister the immutable packet, attest the source, authorize
+- [x] AGT008b: Preregister the immutable packet, attest the source, authorize
   exactly one attempt, attest the registry, and pin both authorities in signed
   pushed source.
 - [ ] AGT008c: Execute once, privately pin the aggregate receipt, close both
@@ -2524,6 +2524,12 @@ result. Keep the 1,000-case qualification held in every branch.
 AGT008's immutable no-authority Pathfinder preregistration is `2109c8fe`.
 Semantic Router source may attest that commit while keeping its distinct
 authorization pin empty; this attestation still cannot launch.
+
+The complete remote-visible launch chain is Pathfinder preregistration
+`2109c8fe`, Semantic Router source attestation `99dcea74`, Pathfinder
+authorization `9f208315`, and Pathfinder registry attestation `8bb0ad02`. The
+final signed Semantic Router checkpoint pins both registry authorities and is
+the only source permitted to launch AGT008's one attempt.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
