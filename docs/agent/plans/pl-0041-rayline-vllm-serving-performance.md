@@ -2193,12 +2193,18 @@ estimate of `$79.110389914743`; the full AGT005 envelope reaches
 - [x] AGT005a: Validate the one-token key-readiness probe, 100/200 request
   bounds, aggregate v3 report, source-exact config startup, and hermetic ARC
   stack; then push a signed source-closed checkpoint.
-- [ ] AGT005b: Preregister AGT005 in Pathfinder and complete distinct source
+- [x] AGT005b: Preregister AGT005 in Pathfinder and complete distinct source
   attestation, one-attempt authorization, and final Semantic Router launch pin.
 - [ ] AGT005c: Execute once, privately pin the aggregate receipt, permanently
   close both authorities, prove stable-zero cleanup, and report real TTFT,
   latency, throughput, retry, cost, natural mix, and normalized ARC/static
   comparison. The 1,000-case qualification remains held.
+
+The signed source-closed implementation is `29eb128f`, Pathfinder
+preregistration is `9b115765`, the signed Semantic Router preregistration
+attestation is `e9aea88b`, the distinct Pathfinder authorization is
+`15657a24`, and its finalized registry attestation is `2b31fdcd`. The final
+source pin names only that last remote-visible registry state.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
