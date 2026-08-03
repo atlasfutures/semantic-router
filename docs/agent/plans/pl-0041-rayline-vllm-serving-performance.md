@@ -2195,7 +2195,7 @@ estimate of `$79.110389914743`; the full AGT005 envelope reaches
   stack; then push a signed source-closed checkpoint.
 - [x] AGT005b: Preregister AGT005 in Pathfinder and complete distinct source
   attestation, one-attempt authorization, and final Semantic Router launch pin.
-- [ ] AGT005c: Execute once, privately pin the aggregate receipt, permanently
+- [x] AGT005c: Execute once, privately pin the aggregate receipt, permanently
   close both authorities, prove stable-zero cleanup, and report real TTFT,
   latency, throughput, retry, cost, natural mix, and normalized ARC/static
   comparison. The 1,000-case qualification remains held.
@@ -2205,6 +2205,51 @@ preregistration is `9b115765`, the signed Semantic Router preregistration
 attestation is `e9aea88b`, the distinct Pathfinder authorization is
 `15657a24`, and its finalized registry attestation is `2b31fdcd`. The final
 source pin names only that last remote-visible registry state.
+
+AGT005's only attempt passed protected health, then failed before the direct
+key-readiness canary because ARC's retained-session startup probe was not
+transactionally affine. Modal's aggregate system log shows the probe `POST`
+returned HTTP 200 from one H100 container, while the required `DELETE`
+cold-started a second container and returned HTTP 200 after `78.9s`. The
+process-local session was absent there, so its bounded `{closed:false}`
+contract correctly left `artifact_head_encoder` not ready. OpenRouter usage
+was exactly `$0`; no discovery or measured request ran. Cleanup returned the
+key, proxy, Compose, volume, and encoder-container inventories to zero. The
+conservative 188-second H100 upper estimate is `$0.522142176`, bringing the
+cumulative observed upper estimate to `$79.632532090743`. The private failure
+receipt is byte-verified at `rayline-ai/router-artifacts@1086cddd` with
+SHA-256 `cbe8138dd8b7b95bfa247073f7d2098935766546c8fb7d275ba7b44dbf830170`;
+Semantic Router `5acb9406` and Pathfinder `70154044` close the run. No
+performance inference is admissible.
+
+### DGN002 Singleton Retained-Session Affinity
+
+DGN002 tests the deployment invariant exposed by AGT005 without creating an
+OpenRouter key or starting generation. The benchmark launcher temporarily
+overrides the exact deployed Modal class to `min_containers=1`,
+`max_containers=1`, `buffer_containers=0`, and a 300-second scale-down window
+before protected health. Unconditional cleanup restores `min_containers=0`
+with the source-frozen remaining settings, then stops the exact container and
+proves stable zero. This is not merely a warm-start optimization: the retained
+KV/session owner is process-local, so one live singleton is required for
+correctness during a run.
+
+The paid diagnostic will create one transient Modal proxy, require empty
+health, create and explicitly close one public synthetic retained session,
+require empty health again, restore scale-to-zero, delete the proxy, and stop
+the exact container. It records aggregate status, create/close success, token
+counts, and resource upper bound only. No OpenRouter credential, model route,
+prompt, embedding, raw episode ID, or timestamp may enter the receipt.
+
+- [x] DGN002a: Validate singleton pin/restore ownership, source-close the
+  launcher, and pass focused tests, repository lint, and hermetic ARC
+  acceptance.
+- [ ] DGN002b: Preregister and execute one zero-provider retained-session
+  create/close diagnostic, privately pin the aggregate receipt, and prove
+  autoscaler plus container cleanup.
+- [ ] DGN002c: If affinity passes, preregister AGT006 as AGT005's otherwise
+  unchanged full successor. If it fails, stop and redesign the state owner;
+  do not hide the result with request retries.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin

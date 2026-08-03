@@ -21,7 +21,7 @@ artifact = importlib.import_module("openrouter_agentic_artifact_fixture")
 benchmark = importlib.import_module("openrouter_agentic_benchmark")
 reporting = importlib.import_module("openrouter_agentic_reporting")
 workload = importlib.import_module("openrouter_agentic_workload")
-if importlib.util.find_spec("modal") is None:
+if "modal" not in sys.modules and importlib.util.find_spec("modal") is None:
     modal_stub = types.ModuleType("modal")
     modal_stub.__spec__ = importlib.machinery.ModuleSpec("modal", loader=None)
     sys.modules["modal"] = modal_stub
@@ -345,6 +345,49 @@ def test_key_readiness_can_retry_one_pre_response_404(
     assert len(attempts) == benchmark.MAX_DATA_PLANE_ATTEMPTS
     assert result["external_attempts"] == benchmark.MAX_DATA_PLANE_ATTEMPTS
     assert sleeps == [0.5]
+
+
+def test_agentic_launcher_pins_and_restores_one_encoder_container(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updates: list[dict[str, int]] = []
+
+    class FakeInstance:
+        def update_autoscaler(self, **kwargs: int) -> None:
+            updates.append(kwargs)
+
+    class FakeClass:
+        def __call__(self) -> FakeInstance:
+            return FakeInstance()
+
+    class FakeClsAPI:
+        @staticmethod
+        def from_name(app_name: str, class_name: str) -> FakeClass:
+            assert app_name == launcher.ENCODER_APP_NAME
+            assert class_name == launcher.ENCODER_CLASS_NAME
+            return FakeClass()
+
+    monkeypatch.setattr(launcher.modal, "Cls", FakeClsAPI, raising=False)
+    state = launcher.RuntimeState(environment={})
+
+    launcher._pin_encoder_singleton(state)
+    assert state.encoder_autoscaler_pinned is True
+    launcher._restore_encoder_scale_to_zero(state)
+    assert state.encoder_autoscaler_pinned is False
+    assert updates == [
+        {
+            "min_containers": 1,
+            "max_containers": 1,
+            "buffer_containers": 0,
+            "scaledown_window": 300,
+        },
+        {
+            "min_containers": 0,
+            "max_containers": 1,
+            "buffer_containers": 0,
+            "scaledown_window": 300,
+        },
+    ]
 
 
 def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:

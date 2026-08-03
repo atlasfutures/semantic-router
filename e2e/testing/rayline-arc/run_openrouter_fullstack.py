@@ -29,6 +29,7 @@ DRIVER = Path(__file__).with_name("openrouter_fullstack_canary.py")
 PROJECT_NAME = "rayline-arc-openrouter"
 ENCODER_APP_ID = "ap-XtsWCBEWdw1ncu9Kv12Chj"
 ENCODER_APP_NAME = "rayline-arc-session-encoder"
+ENCODER_CLASS_NAME = "SessionEncoder"
 ENCODER_HOST = (
     "atlasfutures-dev--rayline-arc-session-encoder-sessionenc-2d82ac.modal.run"
 )
@@ -78,6 +79,8 @@ class RuntimeState:
     proxy_token: Any = None
     ephemeral_key: str = ""
     key_hash: str = ""
+    encoder_instance: Any = None
+    encoder_autoscaler_pinned: bool = False
 
 
 PACKETS = {
@@ -357,6 +360,32 @@ def _stop_encoder_containers(
     raise RuntimeError("protected encoder container remained after cleanup")
 
 
+def _pin_encoder_singleton(state: RuntimeState) -> None:
+    state.encoder_instance = modal.Cls.from_name(
+        ENCODER_APP_NAME,
+        ENCODER_CLASS_NAME,
+    )()
+    state.encoder_instance.update_autoscaler(
+        min_containers=1,
+        max_containers=1,
+        buffer_containers=0,
+        scaledown_window=300,
+    )
+    state.encoder_autoscaler_pinned = True
+
+
+def _restore_encoder_scale_to_zero(state: RuntimeState) -> None:
+    if not state.encoder_autoscaler_pinned or state.encoder_instance is None:
+        return
+    state.encoder_instance.update_autoscaler(
+        min_containers=0,
+        max_containers=1,
+        buffer_containers=0,
+        scaledown_window=300,
+    )
+    state.encoder_autoscaler_pinned = False
+
+
 def _scan_logs(
     packet: RunPacket,
     environment: dict[str, str],
@@ -410,6 +439,7 @@ def _cleanup_runtime(
     key_hash: str,
     modal_command: list[str],
     packet: RunPacket,
+    state: RuntimeState,
 ) -> None:
     print("OpenRouter cleanup: starting", file=sys.stderr, flush=True)
     _run(
@@ -426,7 +456,10 @@ def _cleanup_runtime(
             if key_hash:
                 _delete_ephemeral_key(management_key, key_hash)
         finally:
-            _stop_encoder_containers(modal_command, environment)
+            try:
+                _restore_encoder_scale_to_zero(state)
+            finally:
+                _stop_encoder_containers(modal_command, environment)
     print(
         "OpenRouter cleanup: compose down, keys deleted, encoder stopped",
         file=sys.stderr,
@@ -506,6 +539,7 @@ def _execute_runtime(
     manager: Any,
     state: RuntimeState,
 ) -> None:
+    _pin_encoder_singleton(state)
     state.proxy_token = manager.create()
     _wait_protected_encoder(state.proxy_token)
     state.ephemeral_key, state.key_hash = _create_ephemeral_key(
@@ -614,6 +648,7 @@ def main() -> None:
             key_hash=state.key_hash,
             modal_command=modal_command,
             packet=packet,
+            state=state,
         )
     if run_failure is not None:
         if evidence_failure is not None:

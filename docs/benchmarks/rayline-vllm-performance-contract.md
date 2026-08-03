@@ -564,15 +564,19 @@ owned by Envoy.
 
 The OpenRouter ephemeral key has a USD 0.75 server-side hard limit, and the
 aggregate report rejects provider cost above USD 0.50. The protected Modal
-encoder has a 30-minute paid-wall limit. The receipt reports aggregate request
-and output-token throughput, TTFT, end-to-end and Envoy upstream latency,
-tokens, retries, cost, provider/model identity, C82 natural mix, and
-ARC-versus-static ratios. It persists no credential, authorization header,
-prompt, tool output, routing anchor, per-request assignment, raw error body, or
-timestamp. Cleanup must delete transient OpenRouter and Modal credentials,
-remove Compose and Redis state, stop the exact encoder container, and retain
-the deployed app at zero tasks. The 1,000-case qualification is unreachable
-from this launcher.
+encoder has a 30-minute paid-wall limit. Because retained sessions and KV are
+process-local, the launcher must temporarily pin the exact deployed class to
+one warm container for the entire session-bearing run; a scale-to-zero
+transition between append or close requests is a correctness failure, not a
+cache miss. Cleanup restores the source-frozen zero-minimum autoscaler before
+stopping the exact container. The receipt reports aggregate request and
+output-token throughput, TTFT, end-to-end and Envoy upstream latency, tokens,
+retries, cost, provider/model identity, C82 natural mix, and ARC-versus-static
+ratios. It persists no credential, authorization header, prompt, tool output,
+routing anchor, per-request assignment, raw error body, or timestamp. Cleanup
+must delete transient OpenRouter and Modal credentials, remove Compose and
+Redis state, stop the exact encoder container, and retain the deployed app at
+zero tasks. The 1,000-case qualification is unreachable from this launcher.
 
 ## Evidence Lineage
 
