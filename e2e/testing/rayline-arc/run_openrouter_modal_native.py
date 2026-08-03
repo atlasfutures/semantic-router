@@ -32,7 +32,7 @@ from openrouter_modal_native_fixture import (
 )
 
 RUN_ID = "rayline-openrouter-modal-native-agt014-20260803"
-PREREGISTRATION_COMMIT = ""
+PREREGISTRATION_COMMIT = "39f68311c5bc7d98225aa53ef1459eb5bfe14088"
 AUTHORIZATION_COMMIT = ""
 REQUIRED_MODAL_VERSION = "1.5.1"
 PATHFINDER_BRANCH = "codex/rayline-vsr-mvp"
