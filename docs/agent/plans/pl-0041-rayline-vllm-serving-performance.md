@@ -2895,6 +2895,62 @@ Cleanup verified zero transient keys, Compose state, and encoder containers;
 the app remains deployed at zero tasks. Both AGT013 authority pins are empty,
 and the 1,000-case qualification remains held.
 
+### AGT014 Native-Modal Apples-to-Apples Comparison
+
+AGT014 closes the comparison gap left by the old pure-Modal reference. It
+deploys Pathfinder's native Rayline HTTP service as one isolated Modal L40S
+container and changes no generation-side variable from AGT013: the same 24
+public synthetic agentic candidates, six-case natural selection rule, c4
+measurement, two repetitions, 96-token cap, and OpenRouter DS4 Flash, MiMo
+v2.5, and HY3 provider orders are used. The specified-model control uses the
+same Modal service with `rayline/<worker-id>` request pins, while the semantic
+arm uses `rayline/router`.
+
+The native Torch checkpoint is generated from the exact synthetic three-arm
+weights used by the AGT013 ARC artifact. Its tensor-name set must match the
+Pathfinder estimator exactly, all three head goldens must pass within `0.001`,
+and its encoder contract remains Qwen3.5-0.8B at revision `2fc06364`,
+`mtrouter-token-blocks-v2`, normalized masked-mean pooling. Unlike AGT013's
+remote retained-vLLM encoder, the native arm runs local CUDA encoding with
+incremental KV enabled. That makes encoder placement and implementation the
+intentional treatment while holding the policy head, workload, target models,
+providers, and request envelope fixed.
+
+The packet performs one direct key-readiness call, three Modal pinned-worker
+reachability calls, 24 native semantic coverage calls, 12 natural pinned calls,
+12 natural semantic calls, 12 stratified direct calls, and 12 stratified Modal
+pinned calls: exactly 76 provider requests, with no duration-unbounded loop.
+It joins client request IDs to the native decision log so provider identity,
+attempts/retries, token counts, charged or estimated cost, decision latency,
+embedding latency, q-head latency, serialized tokens, and encode modes are
+measured from the serving boundary rather than inferred.
+
+Native Modal currently awaits `RouterService.route()` before constructing its
+OpenAI `StreamingResponse`; the upstream completion is therefore buffered.
+Its observed first-token timestamp is explicitly labelled
+`observed_first_token_after_buffering` and is not compared with AGT013 TTFT.
+The admissible cross-deployment comparisons are E2E latency, throughput,
+output-token throughput, normalized semantic/static overhead, and server-side
+routing/encoder stages. Temporal OpenRouter variance remains a limitation and
+is bounded with the same-run direct and pinned controls.
+
+The ephemeral OpenRouter key has a `$0.75` server-enforced limit. The isolated
+single-L40S deployment has a conservative `$5.00` 30-minute envelope, for a
+`$5.75` packet maximum. Added to the `$82.835731101543` cumulative conservative
+accounting, the maximum becomes `$88.585731101543`, below the existing
+`$134.31282402` authority. The launcher must stop the exact app, delete the
+ephemeral OpenRouter key, Modal secret, Dicts, and Volume, scan aggregate output
+for credentials and public prompt markers, and leave no AGT014 container. The
+1,000-case qualification remains unreachable.
+
+- [x] AGT014a: Implement the exact policy converter, isolated Modal deployment,
+  bounded client/decision-log join, aggregate reporter, and focused tests.
+- [ ] AGT014b: Freeze and push both signed source checkpoints, then pin the
+  preregistration and authorization commits.
+- [ ] AGT014c: Execute the one authorized 76-request packet and verify cleanup.
+- [ ] AGT014d: Persist the aggregate receipt, record the apples-to-apples
+  comparison and buffered-TTFT limitation, then permanently close authority.
+
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
 continues to reject cached-prefix tokens. The separate session v1 wire reports
