@@ -557,10 +557,12 @@ gateway, and ARC paths at concurrency one and four. The measured packet is
 exactly 72 requests with a 96-output-token cap. Before discovery, one direct
 DS4/Baidu request capped at one output token establishes new-key/provider
 readiness, followed by one specified-model gateway reachability request for
-each worker. The complete AGT006 bound is 100 logical provider requests and
-200 external attempts. Only the readiness canary may retry one initial 404;
-ordinary direct calls retry one pre-response 429/503, and gateway retry remains
-owned by Envoy.
+each worker. The complete AGT007 bound is 100 logical provider requests and
+203 external attempts. The direct key-readiness canary may retry one initial
+404/429/503. Each static endpoint-readiness probe may retry one initial 404;
+that client retry set excludes 429/503 because those remain owned by Envoy.
+Discovery and measured gateway calls do not retry 404, and ordinary direct
+calls retry one pre-response 429/503.
 
 The OpenRouter ephemeral key has a USD 0.75 server-side hard limit, and the
 aggregate report rejects provider cost above USD 0.50. The protected Modal

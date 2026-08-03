@@ -30,6 +30,7 @@ launcher = importlib.import_module("run_openrouter_fullstack")
 EXPECTED_MAX_COMPLETION_TOKENS = 96
 EXPECTED_MAX_MEASURED_REQUESTS = 72
 EXPECTED_MAX_PROVIDER_REQUESTS = 100
+EXPECTED_MAX_EXTERNAL_ATTEMPTS = 203
 EXPECTED_PROVIDER_COST_LIMIT_USD = 0.50
 EXPECTED_MIN_TOOL_RESULT_CHARACTERS = 1_000
 EXPECTED_SELECTED_CASES = 6
@@ -75,6 +76,7 @@ def test_agentic_workload_is_bounded_realistic_and_balanced() -> None:
     assert benchmark.MAX_COMPLETION_TOKENS == EXPECTED_MAX_COMPLETION_TOKENS
     assert benchmark.MAX_MEASURED_REQUESTS == EXPECTED_MAX_MEASURED_REQUESTS
     assert benchmark.MAX_PROVIDER_REQUESTS == EXPECTED_MAX_PROVIDER_REQUESTS
+    assert benchmark.MAX_EXTERNAL_ATTEMPTS == EXPECTED_MAX_EXTERNAL_ATTEMPTS
     assert benchmark.MAX_REPORTED_PROVIDER_COST_USD == EXPECTED_PROVIDER_COST_LIMIT_USD
 
     cases = [benchmark._candidate_case(index) for index in range(3)]
@@ -152,6 +154,14 @@ def test_agentic_endpoint_probes_reach_every_pinned_worker(
     assert len(results) == len(benchmark.WORKERS)
     assert [call["path"] for call in calls] == ["gateway_static"] * 3
     assert [call["expected_worker"] for call in calls] == list(benchmark.WORKERS)
+    assert all(
+        call["maximum_attempts"] == benchmark.MAX_DATA_PLANE_ATTEMPTS for call in calls
+    )
+    assert all(
+        call["retryable_status_codes"]
+        == benchmark.ENDPOINT_REACHABILITY_RETRYABLE_STATUS_CODES
+        for call in calls
+    )
 
 
 def test_agentic_key_readiness_is_a_bounded_direct_ds4_probe(
@@ -349,6 +359,46 @@ def test_key_readiness_can_retry_one_pre_response_404(
 
     assert len(attempts) == benchmark.MAX_DATA_PLANE_ATTEMPTS
     assert result["external_attempts"] == benchmark.MAX_DATA_PLANE_ATTEMPTS
+    assert sleeps == [0.5]
+
+
+def test_gateway_readiness_retries_one_404_and_counts_both_wire_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts: list[dict[str, Any]] = []
+    sleeps: list[float] = []
+
+    def fake_once(**kwargs: Any) -> dict[str, Any]:
+        attempts.append(kwargs)
+        if len(attempts) == 1:
+            raise benchmark.OpenRouterHTTPError(
+                endpoint="gateway readiness",
+                status_code=404,
+                retry_after_seconds=0.5,
+                error_type="",
+                provider_code="404",
+                error_category="no_endpoints",
+                external_attempts=1,
+            )
+        return {"external_attempts": 1}
+
+    monkeypatch.setattr(benchmark, "_stream_request_once", fake_once)
+    monkeypatch.setattr(benchmark.time, "sleep", sleeps.append)
+    result = benchmark._stream_request(
+        path="gateway_static",
+        case={},
+        expected_worker="worker-a",
+        gateway_url="http://gateway.invalid",
+        openrouter_key="ignored",
+        episode_id="gateway-readiness",
+        timeout_seconds=1.0,
+        maximum_attempts=benchmark.MAX_DATA_PLANE_ATTEMPTS,
+        retryable_status_codes=(benchmark.ENDPOINT_REACHABILITY_RETRYABLE_STATUS_CODES),
+    )
+
+    assert len(attempts) == benchmark.MAX_DATA_PLANE_ATTEMPTS
+    assert result["external_attempts"] == benchmark.MAX_DATA_PLANE_ATTEMPTS
+    assert result["client_attempts"] == benchmark.MAX_DATA_PLANE_ATTEMPTS
     assert sleeps == [0.5]
 
 

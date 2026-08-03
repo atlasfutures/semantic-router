@@ -2374,6 +2374,38 @@ readiness probe. Envoy continues to own 429/503 retry; ordinary static and ARC
 measurement requests do not gain a 404 retry. DGN003 is permanently closed,
 and the 1,000-case qualification remains held.
 
+### AGT007 Readiness-Retry Natural-Mix Measurement
+
+AGT007 is AGT006 under a new run/state namespace with one transport correction
+supported by DGN003: each of the three static endpoint-readiness probes may
+retry one initial HTTP 404 after the bounded retry delay. That retry set is
+exactly `{404}`. Envoy remains the sole owner of 429/503 retries, and discovery
+plus all measured direct/static/ARC calls preserve their prior retry behavior.
+The external-attempt ceiling increases from 200 to 203 to cover the worst-case
+first 404 plus a second Envoy attempt pair for each readiness probe.
+
+Everything else is unchanged: the DS4/Baidu, MiMo/Xiaomi, and HY3/Tencent
+pool; fallback/reasoning disabled; one direct one-token key readiness call;
+three static probes; 24 natural-mix discovery calls; six selected cases across
+at least two active workers; 72 measured calls at concurrency one and four;
+96 output tokens; singleton protected encoder lifecycle; aggregate v3 report;
+privacy; cleanup; 100 logical request ceiling; `$0.75` key limit; `$0.50`
+report gate; and 30-minute H100 limit. The complete packet envelope remains
+`$5.7492336`. From `$80.168893536743`, the conservative cumulative envelope is
+`$85.918127136743`, leaving `$48.394696883257` under the current
+`$134.31282402` authority.
+
+- [x] AGT007a: Source-close the readiness-only 404 retry, accurate cumulative
+  wire-attempt accounting, focused tests, repository gates, and hermetic ARC
+  acceptance.
+- [ ] AGT007b: Preregister the immutable packet and complete distinct source
+  attestation, one-attempt authorization, registry attestation, and final
+  launch pin.
+- [ ] AGT007c: Execute once, privately pin the aggregate receipt, close both
+  authorities, prove stable-zero cleanup, and report real E2E throughput,
+  TTFT, latency, retry, cost, natural mix, and normalized ARC/static overhead.
+  The 1,000-case qualification remains held.
+
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
 continues to reject cached-prefix tokens. The separate session v1 wire reports

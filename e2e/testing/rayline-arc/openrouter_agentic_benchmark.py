@@ -58,6 +58,7 @@ MAX_REPORTED_PROVIDER_COST_USD = 0.50
 MAX_DATA_PLANE_ATTEMPTS = 2
 RETRYABLE_STATUS_CODES = frozenset({429, 503})
 KEY_READINESS_RETRYABLE_STATUS_CODES = frozenset({404, *RETRYABLE_STATUS_CODES})
+ENDPOINT_REACHABILITY_RETRYABLE_STATUS_CODES = frozenset({404})
 MEASURED_REQUESTS_PER_PATH = (
     SELECTED_CASE_COUNT * SERIAL_WAVES + SELECTED_CASE_COUNT * CONCURRENT_REPETITIONS
 )
@@ -68,7 +69,9 @@ MAX_PROVIDER_REQUESTS = (
     + MAX_COVERAGE_REQUESTS
     + MAX_MEASURED_REQUESTS
 )
-MAX_EXTERNAL_ATTEMPTS = MAX_PROVIDER_REQUESTS * MAX_DATA_PLANE_ATTEMPTS
+MAX_EXTERNAL_ATTEMPTS = (
+    MAX_PROVIDER_REQUESTS * MAX_DATA_PLANE_ATTEMPTS + ENDPOINT_PROBE_REQUESTS
+)
 
 
 def _response_model_matches(response_model: str, expected_model: str) -> bool:
@@ -329,6 +332,7 @@ def _stream_request(
     retryable_status_codes: frozenset[int] = RETRYABLE_STATUS_CODES,
 ) -> dict[str, Any]:
     started = time.perf_counter()
+    external_attempts = 0
     if maximum_attempts is None:
         maximum_attempts = MAX_DATA_PLANE_ATTEMPTS if path == "direct" else 1
     if maximum_attempts < 1 or maximum_attempts > MAX_DATA_PLANE_ATTEMPTS:
@@ -347,6 +351,7 @@ def _stream_request(
                 max_completion_tokens=max_completion_tokens,
             )
         except OpenRouterHTTPError as error:
+            external_attempts += error.external_attempts
             if (
                 attempt == maximum_attempts
                 or error.status_code not in retryable_status_codes
@@ -354,8 +359,9 @@ def _stream_request(
                 raise
             time.sleep(error.retry_after_seconds)
             continue
-        if path == "direct":
-            result["external_attempts"] = attempt
+        external_attempts += int(result["external_attempts"])
+        result["external_attempts"] = external_attempts
+        result["client_attempts"] = attempt
         return result
     raise AssertionError("bounded direct retry loop did not return or raise")
 
@@ -427,6 +433,8 @@ def _probe_endpoints(
             openrouter_key=openrouter_key,
             episode_id=_episode_id(run_id, f"agentic-endpoint-{worker}"),
             timeout_seconds=timeout_seconds,
+            maximum_attempts=MAX_DATA_PLANE_ATTEMPTS,
+            retryable_status_codes=ENDPOINT_REACHABILITY_RETRYABLE_STATUS_CODES,
         )
         for index, worker in enumerate(WORKERS)
     ]
