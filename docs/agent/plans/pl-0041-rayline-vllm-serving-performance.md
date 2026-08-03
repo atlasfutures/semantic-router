@@ -2566,9 +2566,22 @@ transition; 104-request and 214-attempt maxima; original 72 measured calls;
   lint with both source authority pins empty.
 - [x] AGT009b: Preregister, attest, authorize exactly one attempt, attest the
   registry, and pin both authorities in signed pushed source.
-- [ ] AGT009c: Execute once and either publish the structured zero-H100 failure
+- [x] AGT009c: Execute once and either publish the structured zero-H100 failure
   receipt or the complete measured throughput, TTFT, latency, retry, cost,
   natural-mix, and normalized pure-Modal comparison; then close all authority.
+
+AGT009 used its only attempt and stopped before H100 allocation. Direct DS4 key
+readiness and the DS4 static 96-token probe completed, then the MiMo v2.5
+(`worker-b`) static endpoint returned HTTP 404 `no_endpoints`. The bounded
+receipt records two completed provider requests, three external attempts,
+`$0.0003326904` completed cost, zero admissible performance inference, and no
+protected or measured requests. It is privately pinned at Hugging Face revision
+`79ef0dbb72e05539b2e3b4be541a2c52c607b448` with SHA-256
+`f04f1e2f587d2e14cdbdf94df91f64e24e0f059133d02ad6d761d0372cf0f28f`;
+the exact-byte round trip passed and unauthenticated retrieval returned 401.
+Cleanup proved zero transient keys, Compose containers and volumes, and Modal
+encoder containers; the protected app remained deployed at zero tasks. Both
+AGT009 source authority pins are cleared, so it cannot be rerun.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin

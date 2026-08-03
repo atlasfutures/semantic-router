@@ -652,6 +652,13 @@ success or failure receipt. Raw provider text remains forbidden. All model,
 provider, workload, retry, measurement, cost, H100, privacy, cleanup, and
 1,000-case bounds remain unchanged from AGT008.
 
+AGT009 stopped at its pre-encoder gate after direct DS4 readiness and the DS4
+static probe completed. The MiMo v2.5 static probe returned HTTP 404
+`no_endpoints`; the structured receipt records two completed requests, three
+external attempts, and USD 0.0003326904 cost. No H100, discovery, or measurement
+request started, so the run provides transport evidence but no latency,
+throughput, TTFT, natural-mix, ARC/static, or pure-Modal performance inference.
+
 ## Evidence Lineage
 
 The frozen choices build on:
