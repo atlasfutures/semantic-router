@@ -2510,7 +2510,7 @@ From `$80.429964624743`, the conservative cumulative envelope is
 - [x] AGT008b: Preregister the immutable packet, attest the source, authorize
   exactly one attempt, attest the registry, and pin both authorities in signed
   pushed source.
-- [ ] AGT008c: Execute once, privately pin the aggregate receipt, close both
+- [x] AGT008c: Execute once, privately pin the aggregate receipt, close both
   authorities, prove stable-zero cleanup, and report real E2E throughput,
   output throughput, TTFT, latency, retry, cost, natural mix, and normalized
   ARC/static versus pure-Modal overhead.
@@ -2530,6 +2530,21 @@ The complete remote-visible launch chain is Pathfinder preregistration
 authorization `9f208315`, and Pathfinder registry attestation `8bb0ad02`. The
 final signed Semantic Router checkpoint pins both registry authorities and is
 the only source permitted to launch AGT008's one attempt.
+
+AGT008 used its only attempt and stopped inside the four-request pre-encoder
+transport subprocess. The H100 was never pinned, OpenRouter reported `$0`, and
+no protected readiness, discovery, or measured request ran. Cleanup removed
+the key and Compose state while the deployed encoder remained at zero tasks and
+containers. Cumulative observed accounting therefore remains
+`$80.429964624743`. The private aggregate failure receipt is byte-verified at
+`rayline-ai/router-artifacts@b35e171c` with SHA-256
+`7aa0f616ed98c2a07015dc5013ccfbffb159c9585abf52e66a9901c24c4c881f`.
+
+The subprocess error stream was captured but not propagated, so the receipt
+cannot identify which preflight probe failed. Close AGT008 without retry. A
+successor must emit structured, privacy-safe preflight failure metadata while
+keeping the same zero-H100 stop, same-key/same-Envoy transition, exact
+three-model pool, unchanged 72 measured requests, and held 1,000-case path.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin

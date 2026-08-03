@@ -635,6 +635,15 @@ provider cost remains capped at USD 0.50, and the complete conservative packet
 envelope remains USD 5.7492336. The 1,000-case qualification is unreachable and
 held.
 
+AGT008's only attempt failed inside that four-request pre-encoder subprocess,
+so the protected H100 never started. OpenRouter reported USD 0, no discovery or
+measured request ran, and cleanup left Compose, key, and encoder inventories at
+zero while retaining the deployed app at zero tasks. The launcher captured but
+did not propagate the subprocess's privacy-safe error stream, so the failed
+probe and bounded provider category are unknown. No performance inference is
+admissible. AGT008 is closed and cannot retry; a successor must preserve the
+zero-H100 gate while returning a structured aggregate failure receipt.
+
 ## Evidence Lineage
 
 The frozen choices build on:
