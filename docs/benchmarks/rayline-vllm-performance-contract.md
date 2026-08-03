@@ -686,6 +686,19 @@ artifact and direct/static controls all send the same order with
 `allow_fallbacks=false`; successful responses outside the order fail closed and
 actual provider identities remain in aggregate evidence.
 
+The one authorized AGT011 run passed all 104 provider requests without retry and
+completed the 72-request measurement. Natural ARC mix was DS4/MiMo/HY3
+`16/0/8`; MiMo passed reachability through Venice but was not naturally selected
+into the six-case measured set. ARC/static throughput was `0.762x` at c1 and
+`0.588x` at c4. ARC minus static TTFT p95 was `+0.622s` and `+3.389s`; E2E p95
+was `+0.008s` and `+2.804s`. The prior pure-Modal normalized throughput result
+was `0.748x`/`0.755x`, so c1 is similar while c4 is not parity. The comparison
+remains diagnostic because the prior target models and prompt lengths differ
+and the new sample has only 12 requests per path/concurrency cell. Private
+aggregate evidence is pinned at `rayline-ai/router-artifacts`, revision
+`6039a41b8902445ef2ddf5f944cf3b2a60b4b544`, SHA-256
+`0c2a6492e981e6c61915e686974ab062084badea7ffbbb232d24f6b848da6d31`.
+
 ## Evidence Lineage
 
 The frozen choices build on:

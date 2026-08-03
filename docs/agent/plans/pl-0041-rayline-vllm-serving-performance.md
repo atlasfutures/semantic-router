@@ -2647,8 +2647,54 @@ workload, measurements, resource/cost limits, privacy, cleanup, and the held
   config reaches fake-encoder router readiness before source freeze.
 - [x] AGT011b: Preregister, attest, authorize one attempt, attest the registry,
   and pin both authorities in signed pushed source.
-- [ ] AGT011c: Execute once and publish either bounded preflight failure evidence
+- [x] AGT011c: Execute once and publish either bounded preflight failure evidence
   or the complete 72-request performance result, then close all authority.
+
+#### AGT011 Result
+
+The single authorized AGT011 attempt passed end to end on 2026-08-03. Its
+transport-first gate completed direct DS4 readiness plus static DS4, MiMo, and
+HY3 probes 4/4 before H100 activation. Actual providers were Baidu, Venice, and
+Tencent respectively. OpenRouter automatic fallback remained disabled, the
+models remained fixed, and all 104 provider requests completed in 104 external
+attempts with zero retry, retry exhaustion, or ARC selection failure.
+
+ARC discovery routed the 24 synthetic agentic histories `16/0/8` across DS4,
+MiMo, and HY3. The frozen six-case measurement set therefore contained three
+DS4 and three HY3 cases spanning all three scenarios; MiMo was reachable but
+had no natural measured share. Each path completed 12 requests at concurrency
+one and 12 at concurrency four, for exactly 72 measured generations:
+
+| Path | C | RPS | Output tok/s | TTFT p50 / p95 | E2E p50 / p95 |
+|---|---:|---:|---:|---:|---:|
+| Direct OpenRouter | 1 | 0.379 | 27.84 | 1.415s / 1.971s | 2.261s / 3.922s |
+| Static gateway | 1 | 0.391 | 26.04 | 1.301s / 2.371s | 2.111s / 4.712s |
+| Rayline ARC | 1 | 0.298 | 19.85 | 2.091s / 2.993s | 3.363s / 4.720s |
+| Direct OpenRouter | 4 | 1.279 | 84.59 | 1.172s / 3.644s | 2.269s / 4.194s |
+| Static gateway | 4 | 1.459 | 97.27 | 1.030s / 1.664s | 2.245s / 3.932s |
+| Rayline ARC | 4 | 0.858 | 57.20 | 2.878s / 5.053s | 4.329s / 6.736s |
+
+Against the same-run static control, ARC delivered `0.762x` throughput at c1
+and `0.588x` at c4. ARC added `+0.622s` TTFT p95 and `+0.008s` E2E p95 at c1,
+then `+3.389s` TTFT p95 and `+2.804s` E2E p95 at c4. The old pure-Modal Qwen
+diagnostic recorded `0.748x`/`0.755x` throughput and `+0.351s`/`+0.596s` p95 at
+c1/c4. Thus c1 normalized throughput is similar, but the new real-generation
+c4 result is not parity. Absolute values cannot be compared because the Modal
+reference used shorter prompts and local Qwen targets; the small sample also
+shows provider-time variance, including static exceeding direct throughput.
+
+The aggregate v4 receipt is private at
+`rayline-ai/router-artifacts/runs/rayline-openrouter-agentic-agt011-20260803`,
+revision `6039a41b8902445ef2ddf5f944cf3b2a60b4b544`, SHA-256
+`0c2a6492e981e6c61915e686974ab062084badea7ffbbb232d24f6b848da6d31`.
+It round-tripped byte-exactly and returned HTTP 401 without authentication.
+Reported conservative provider cost was `$0.0289342564`; actual bounded-key
+usage was `$0.02824575`. The 364-second whole-process upper bound prices Modal
+at most `$1.010956128`, bringing cumulative conservative observed cost to
+`$81.470187699543` and leaving `$52.842636320457` under user authority.
+Cleanup independently verified zero transient OpenRouter keys, zero Compose
+state, and zero protected encoder containers. The 1,000-case qualification was
+not executed and remains held.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
