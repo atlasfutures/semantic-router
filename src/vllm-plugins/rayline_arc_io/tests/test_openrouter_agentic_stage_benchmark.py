@@ -201,5 +201,7 @@ def test_launcher_stage_packet_is_closed_and_reuses_agentic_sources() -> None:
     assert packet.key_limit_usd == EXPECTED_EPHEMERAL_KEY_LIMIT_USD
     assert packet.maximum_seconds == 30 * 60
     assert packet.protected_encoder is True
-    assert launcher.AGT012_PREREGISTRATION_COMMIT == ""
+    assert launcher.AGT012_PREREGISTRATION_COMMIT == (
+        "cb432cc61d0071bda46c8c5403d1630c2e31c106"
+    )
     assert launcher.AGT012_AUTHORIZATION_COMMIT == ""
