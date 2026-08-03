@@ -2247,7 +2247,7 @@ prompt, embedding, raw episode ID, or timestamp may enter the receipt.
 - [x] DGN002b: Preregister and execute one zero-provider retained-session
   create/close diagnostic, privately pin the aggregate receipt, and prove
   autoscaler plus container cleanup.
-- [ ] DGN002c: If affinity passes, preregister AGT006 as AGT005's otherwise
+- [x] DGN002c: If affinity passes, preregister AGT006 as AGT005's otherwise
   unchanged full successor. If it fails, stop and redesign the state owner;
   do not hide the result with request retries.
 
@@ -2286,13 +2286,19 @@ current `$134.31282402` authority.
 - [x] AGT006a: Source-close and validate the singleton lifecycle, focused
   benchmark tests, repository lint, hermetic full-stack acceptance, updated
   performance contract, and execution plan.
-- [ ] AGT006b: Preregister AGT006 and complete distinct Semantic Router
+- [x] AGT006b: Preregister AGT006 and complete distinct Semantic Router
   attestation, Pathfinder one-attempt authorization, registry attestation, and
   final source launch pin.
 - [ ] AGT006c: Execute once, privately pin the aggregate receipt, close both
   authorities, prove autoscaler and resource cleanup, and report the real E2E
   throughput, TTFT, latency, retry, cost, natural mix, and normalized
   ARC/static comparison. The 1,000-case qualification remains held.
+
+The remote-visible launch chain is Pathfinder preregistration `25ef39da`,
+Semantic Router source attestation `eb33a209`, Pathfinder authorization
+`f97d502d`, and Pathfinder registry attestation `5df342cc`. The final signed
+Semantic Router source checkpoint pins both Pathfinder authorities and is the
+only checkpoint permitted to launch the one AGT006 attempt.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
