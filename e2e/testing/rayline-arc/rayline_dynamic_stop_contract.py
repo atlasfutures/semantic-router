@@ -9,7 +9,7 @@ from rayline_scaleout_contract import PERF024, ScaleoutRunContract
 from rayline_three_arm_budget import BudgetContract
 
 DYN006_RUN_ID = "rayline-dynamic-capacity-stop-dyn006-20260803"
-PATHFINDER_AUTHORIZATION_COMMIT = "06fb91b47f2652ee31e538d860f92947b42e3a6d"
+PATHFINDER_AUTHORIZATION_COMMIT = "5edcb6d27c1a72ab25953ed11c24526e4f9ac7d4"
 DYNAMIC_STOP_ARMS = (
     "arc_dynamic_three_control",
     "arc_dynamic_drain_stop",
@@ -74,10 +74,10 @@ DYN006 = ScaleoutRunContract(
     ),
 )
 
-# Source, registry preregistration, attestation, and authorization must all be
-# pushed before this can name DYN006. The held 1,000-case qualification has no
-# entrypoint in this launcher.
-LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = None
+# The pushed Pathfinder authorization names the immutable preregistration and
+# closed source attestation. This final source checkpoint opens only DYN006 for
+# one launch. The held 1,000-case qualification has no entrypoint here.
+LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = DYN006
 
 
 def resolve_launch_contract(run_id: str) -> ScaleoutRunContract:
