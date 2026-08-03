@@ -1975,11 +1975,29 @@ reach stable zero after success or failure.
   workload, three-path comparator, source bounds, and focused unit tests.
 - [x] AGT001b: Pass the source-exact artifact/config checks, focused Python
   suite, Rayline Compose integration, and repository gates.
-- [ ] AGT001c: Push the signed Semantic Router checkpoint, preregister and
+- [x] AGT001c: Push the signed Semantic Router checkpoint, preregister and
   authorize the exact one-shot packet in Pathfinder, then execute once.
 - [ ] AGT001d: Privately pin the aggregate receipt, compare with the pure-Modal
   reference without conflating model speed, close authority, and verify stable
   zero cleanup.
+
+#### AGT001 Result
+
+The single authorized AGT001 attempt closed during ARC startup on 2026-08-03,
+before workload discovery or any generation request. The configured protected
+encoder URL returned HTTP 404 and the Modal app recorded no request from the
+attempt, so the router marked `artifact_head_encoder` not ready. OpenRouter
+reported exactly `$0.00000000` of ephemeral-key usage. The launcher deleted the
+ephemeral key and Modal proxy token, removed the Compose stack, stopped the
+exact encoder container inventory to stable zero, and its signed source closure
+clears the authorization pin. No latency or throughput inference is admissible
+from AGT001 and it cannot be rerun.
+
+Use a new AGT002 registry ID to replace the stale deployed-endpoint assumption
+with an explicit source-pinned deployment of the current retained-session
+encoder before creating the OpenRouter key. Preserve the frozen models,
+providers, workloads, counts, metrics, cost gates, and pure-Modal comparison;
+only the encoder deployment lifecycle and resulting identity pins may change.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
