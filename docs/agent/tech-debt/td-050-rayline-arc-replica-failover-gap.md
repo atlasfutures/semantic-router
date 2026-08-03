@@ -35,14 +35,24 @@ no production service directory, health-based membership, rebalance, or
 failover contract.
 
 Every retained-session request does carry full reconstructible history, so a
-new replica can recreate a missing session without shared KV. PERF025 adds only
-an experiment-side forced-remap path to quantify that rebuild and verify close
-fanout. It does not make the proxy a supported deployment surface.
+new replica can recreate a missing session without shared KV. PERF025 added
+only an experiment-side forced-remap path to quantify that rebuild and verify
+close fanout. It completed all correctness and cleanup gates, but an independent
+audit found arm-specific episode-hash namespaces, so its performance ratios are
+confounded and retained only as diagnostic evidence. PERF026 explicitly shares
+the hash namespace and adds a strict primary-placement vector gate before any
+performance comparison. Neither experiment makes the proxy a supported
+deployment surface.
 
 ## Evidence
 
 - PERF024's private aggregate packet is pinned at
   `rayline-ai/router-artifacts@cd832e8da7fc8dba9f6518f65b613c9afb271978`.
+- PERF025 completed 64/64 measured turns, nine peer reconstructions, 18 fanout
+  closes, exact trace parity, and stable-zero cleanup. Its latency, throughput,
+  backlog, drain, and token ratios are inadmissible because the two arms used
+  different hash namespaces; the private aggregate packet and audit receipt
+  remain the diagnostic system of record.
 - `e2e/testing/rayline-arc/rayline_affinity_proxy.py` owns deterministic
   experiment placement and aggregate-only accounting.
 - `SessionCoordinator` rebuilds from full supplied history when a retained

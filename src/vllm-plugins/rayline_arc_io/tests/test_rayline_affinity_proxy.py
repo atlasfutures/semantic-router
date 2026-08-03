@@ -160,6 +160,7 @@ def test_forced_failover_rebuilds_on_peer_and_fans_out_close() -> None:
         "session_pooling_requests_by_replica": [2, 2],
         "session_deletes_by_replica": [1, 1],
         "unique_sessions_by_replica": [1, 1],
+        "primary_sessions_by_replica": [1, 0],
         "affinity_mismatches": 0,
         "failover_after_pooling": 2,
         "failover_pooling_requests": 2,

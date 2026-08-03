@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 
-"""Run the bounded PERF025 sticky-versus-forced-failover ARC experiment."""
+"""Run the bounded PERF026 sticky-versus-forced-failover ARC experiment."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from rayline_failover_contract import (
     FAILOVER_AFTER_POOLING,
     FAILOVER_ARMS,
     PATHFINDER_AUTHORIZATION_COMMIT,
-    PERF025_RUN_ID,
+    PERF026_RUN_ID,
     resolve_launch_contract,
 )
 from rayline_open_loop_contract import MEASURED_CASES
@@ -27,12 +27,13 @@ from rayline_three_arm_launcher import LaunchError, _free_port, _stop_process
 from rayline_three_arm_telemetry import capture_arc_telemetry
 
 EXPECTED_ARC_REQUESTS = 36
+SHARED_SESSION_NAMESPACE = "shared-affinity"
 
 
 def _parse_args() -> argparse.Namespace:
     root = Path(__file__).resolve().parents[3]
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-id", default=PERF025_RUN_ID)
+    parser.add_argument("--run-id", default=PERF026_RUN_ID)
     parser.add_argument("--pathfinder-root", type=Path, required=True)
     parser.add_argument(
         "--packet-dir",
@@ -107,7 +108,7 @@ def _run_arm(
     cell = context.contract.cells[0]
     arm = _prepare_arm(context, pair, logical_arm, work)
     measured_episodes, warmup_episodes = scaleout._cell_episode_ids(context)
-    arc_run_id = f"{context.contract.run_id}:{cell.label}:{logical_arm}"
+    arc_run_id = f"{context.contract.run_id}:{cell.label}:{SHARED_SESSION_NAMESPACE}"
     arc_started = False
     arc_completed = False
     receipt: dict[str, Any] | None = None
@@ -126,7 +127,7 @@ def _run_arm(
             time.perf_counter() - paid_started
         )
         if remaining <= 0:
-            raise LaunchError("PERF025 paid wall-time ceiling reached")
+            raise LaunchError("PERF026 paid wall-time ceiling reached")
         receipt = scaleout._probe_cell(
             context,
             cell,
@@ -135,6 +136,7 @@ def _run_arm(
             arm.output,
             remaining,
             logical_arm=logical_arm,
+            session_namespace=SHARED_SESSION_NAMESPACE,
         )
         arc_completed = (
             receipt["results"]["completed"] == MEASURED_CASES

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 
-"""Frozen PERF025 retained-session affinity-loss contract."""
+"""Frozen PERF025/PERF026 retained-session affinity-loss contracts."""
 
 from __future__ import annotations
 
@@ -9,7 +9,8 @@ from rayline_scaleout_contract import ENCODER_APP_NAMES, PERF024, ScaleoutRunCon
 from rayline_three_arm_budget import BudgetContract
 
 PERF025_RUN_ID = "rayline-affinity-failover-perf025-20260803"
-PATHFINDER_AUTHORIZATION_COMMIT = "c1b080f4a12127985745ff22480d206fc40dd9da"
+PERF026_RUN_ID = "rayline-affinity-failover-perf026-20260803"
+PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
 FAILOVER_ARMS = ("arc_dual_sticky", "arc_dual_forced_failover")
 TURNS_PER_EPISODE = 4
 FAILOVER_AFTER_POOLING = TURNS_PER_EPISODE // 2
@@ -43,9 +44,30 @@ PERF025 = ScaleoutRunContract(
     ),
 )
 
-# PERF025 is the only launchable failover contract after its implementation,
-# preregistration, attestation, and authorization checkpoints were pushed.
-LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = PERF025
+PERF026 = ScaleoutRunContract(
+    run_id=PERF026_RUN_ID,
+    packet_manifest_sha256=PERF024.packet_manifest_sha256,
+    corpus_sha256=PERF024.corpus_sha256,
+    topology_sha256=PERF024.topology_sha256,
+    cells=PERF024.cells[:1],
+    compose_project_prefix="rayline-failover-perf026",
+    temporary_prefix="rayline-perf026-",
+    budget=BudgetContract(
+        run_id=PERF026_RUN_ID,
+        previous_conservative_usd=70.1005119398672,
+        authorized_cumulative_usd=134.31282402,
+        packet_ceiling_usd=7.5,
+        required_reserve_usd=3.0,
+        maximum_paid_wall_seconds=MAXIMUM_PAID_WALL_SECONDS,
+        maximum_orphan_request_seconds=MAXIMUM_ORPHAN_REQUEST_SECONDS,
+        maximum_scaledown_seconds=MAXIMUM_SCALEDOWN_SECONDS,
+        encoder_replicas=len(ENCODER_APP_NAMES),
+    ),
+)
+
+# PERF025 is closed after one execution. PERF026 remains source-closed until
+# its preregistration, attestation, authorization, and source-pin are pushed.
+LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = None
 
 
 def resolve_launch_contract(run_id: str) -> ScaleoutRunContract:

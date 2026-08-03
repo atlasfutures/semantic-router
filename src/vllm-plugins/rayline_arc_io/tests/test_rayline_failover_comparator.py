@@ -85,6 +85,7 @@ def _affinity(*, failover: bool) -> dict[str, object]:
             "session_pooling_requests_by_replica": [18, 18],
             "session_deletes_by_replica": [9, 9],
             "unique_sessions_by_replica": [9, 9],
+            "primary_sessions_by_replica": [4, 5],
             "affinity_mismatches": 0,
             "failover_after_pooling": 2,
             "failover_pooling_requests": 18,
@@ -150,6 +151,15 @@ def test_failover_comparison_rejects_missing_rebuild() -> None:
     broken[contract.FAILOVER_ARMS[1]]["session_rebuild_responses"] = 8
 
     with pytest.raises(comparator.FailoverComparisonError, match="failover"):
+        comparator.compare_failover(receipts, broken, telemetry)
+
+
+def test_failover_comparison_rejects_cross_arm_primary_placement_drift() -> None:
+    receipts, affinity, telemetry = _inputs()
+    broken = copy.deepcopy(affinity)
+    broken[contract.FAILOVER_ARMS[1]]["primary_sessions_by_replica"] = [5, 4]
+
+    with pytest.raises(comparator.FailoverComparisonError, match="primary placement"):
         comparator.compare_failover(receipts, broken, telemetry)
 
 

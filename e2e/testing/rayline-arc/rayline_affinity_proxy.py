@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 import httpx
 
 STATS_SCHEMA = "rayline.vllm.episode-affinity-stats.v1"
-FAILOVER_STATS_SCHEMA = "rayline.vllm.episode-affinity-failover-stats.v1"
+FAILOVER_STATS_SCHEMA = "rayline.vllm.episode-affinity-failover-stats.v2"
 SESSION_POOLING_PATH = "/v1/rayline/arc/session/pooling"
 SESSION_CLOSE_PREFIX = "/v1/rayline/arc/session/"
 STATE_PATH = "/health"
@@ -300,6 +300,9 @@ class AffinityState:
             for replicas in self._visited_by_episode.values():
                 for replica in replicas:
                     unique[replica] += 1
+            primary = [0 for _ in self.upstreams]
+            for replica in self._placement_by_episode.values():
+                primary[replica] += 1
             payload = {
                 "schema_version": (
                     FAILOVER_STATS_SCHEMA
@@ -318,6 +321,7 @@ class AffinityState:
             if self._failover_after_pooling is not None:
                 payload.update(
                     {
+                        "primary_sessions_by_replica": primary,
                         "failover_after_pooling": self._failover_after_pooling,
                         "failover_pooling_requests": self._failover_pooling_requests,
                         "failover_sessions": len(self._failover_episodes),

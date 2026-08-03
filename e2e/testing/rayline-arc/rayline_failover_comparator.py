@@ -14,7 +14,7 @@ from rayline_parity_comparator import IDENTITY_FIELDS
 
 REPORT_SCHEMA = "rayline.vllm.affinity-failover-comparison.v1"
 STICKY_AFFINITY_SCHEMA = "rayline.vllm.episode-affinity-stats.v1"
-FAILOVER_AFFINITY_SCHEMA = "rayline.vllm.episode-affinity-failover-stats.v1"
+FAILOVER_AFFINITY_SCHEMA = "rayline.vllm.episode-affinity-failover-stats.v2"
 TELEMETRY_SCHEMA = "rayline.vllm.arc-telemetry.v1"
 EXPECTED_POOLING_REQUESTS = 36
 EXPECTED_SESSIONS = 9
@@ -60,6 +60,7 @@ def _validate_affinity(value: Mapping[str, Any], *, failover: bool) -> dict[str,
         "affinity_mismatches",
     }
     extra = {
+        "primary_sessions_by_replica",
         "failover_after_pooling",
         "failover_pooling_requests",
         "failover_sessions",
@@ -82,6 +83,13 @@ def _validate_affinity(value: Mapping[str, Any], *, failover: bool) -> dict[str,
             "unique_sessions_by_replica",
         )
     }
+    if failover:
+        vectors["primary_sessions_by_replica"] = _integer_vector(
+            value,
+            "primary_sessions_by_replica",
+            replicas=EXPECTED_REPLICAS,
+            label=label,
+        )
     expected_deletes = EXPECTED_SESSIONS * (2 if failover else 1)
     expected_unique = EXPECTED_SESSIONS * (2 if failover else 1)
     if (
@@ -95,7 +103,9 @@ def _validate_affinity(value: Mapping[str, Any], *, failover: bool) -> dict[str,
     ):
         raise FailoverComparisonError(f"{label} affinity accounting differs")
     if failover and (
-        value["failover_after_pooling"] != FAILOVER_AFTER_POOLING
+        sum(vectors["primary_sessions_by_replica"]) != EXPECTED_SESSIONS
+        or any(item == 0 for item in vectors["primary_sessions_by_replica"])
+        or value["failover_after_pooling"] != FAILOVER_AFTER_POOLING
         or value["failover_pooling_requests"] != EXPECTED_FAILOVER_POOLING_REQUESTS
         or value["failover_sessions"] != EXPECTED_SESSIONS
         or value["close_fanout_requests"] != EXPECTED_SESSIONS * EXPECTED_REPLICAS
@@ -172,6 +182,11 @@ def compare_failover(
             raw_affinity[FAILOVER_ARMS[1]], failover=True
         ),
     }
+    if (
+        affinity[FAILOVER_ARMS[0]]["unique_sessions_by_replica"]
+        != affinity[FAILOVER_ARMS[1]]["primary_sessions_by_replica"]
+    ):
+        raise FailoverComparisonError("failover primary placement differs from sticky")
     telemetry = {
         FAILOVER_ARMS[0]: _validate_telemetry(
             raw_telemetry[FAILOVER_ARMS[0]], failover=False

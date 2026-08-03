@@ -35,11 +35,22 @@ def test_perf025_freezes_one_r030_cell_and_bounded_two_replica_budget() -> None:
         58.551386788176484
     )
 
-
-def test_only_perf025_launch_authority_is_open() -> None:
-    assert contract.PATHFINDER_AUTHORIZATION_COMMIT == (
-        "c1b080f4a12127985745ff22480d206fc40dd9da"
+    successor_receipt = budget.budget_receipt(contract.PERF026.budget)
+    assert [cell.label for cell in contract.PERF026.cells] == ["r030"]
+    assert successor_receipt["previous_conservative_usd"] == pytest.approx(
+        70.1005119398672
     )
-    assert contract.resolve_launch_contract(contract.PERF025_RUN_ID) is contract.PERF025
-    with pytest.raises(ValueError, match="launcher only permits preregistered"):
-        contract.resolve_launch_contract("different-run")
+    assert successor_receipt["cumulative_if_full_envelope_usd"] == pytest.approx(
+        77.5187295398672
+    )
+    assert successor_receipt["reserve_after_full_envelope_usd"] == pytest.approx(
+        56.7940944801328
+    )
+
+
+def test_all_failover_launch_authority_is_source_closed() -> None:
+    assert contract.PATHFINDER_AUTHORIZATION_COMMIT == "PENDING"
+    assert contract.LAUNCHABLE_CONTRACT is None
+    for run_id in (contract.PERF025_RUN_ID, contract.PERF026_RUN_ID):
+        with pytest.raises(ValueError, match="no Rayline failover experiment"):
+            contract.resolve_launch_contract(run_id)

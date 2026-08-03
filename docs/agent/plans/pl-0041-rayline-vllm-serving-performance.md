@@ -1701,8 +1701,28 @@ but held:
    cost under a `$7.4182176` envelope. Keep source closed until distinct
    Pathfinder preregistration, self-attestation, authorization, and source-pin
    checkpoints are pushed; then execute it once and close authority after any
-   outcome. Do not interpret fault injection as production membership or
-   outage detection; keep TD050 and the held 1,000-case qualification open.
+   outcome. PERF025 completed 64/64 measured turns with zero failures or
+   provider calls, exact selected-worker trace parity, nine peer-created
+   responses, 18 fanout closes, and stable-zero cleanup. Its generated
+   comparator passed, but the independent preregistration audit found that
+   `_probe_cell` included the logical arm in the episode-hash namespace. The
+   sticky primary distribution was `[3,6]`; failover stats v1 exposed only the
+   treatment's visited distribution `[9,9]`, so it could not attest matching
+   primary placement. Close PERF025 without retry and retain only its
+   correctness, reconstruction, fanout, and cleanup evidence; its performance
+   ratios are confounded and inadmissible as a clean failover-cost estimate.
+   PERF026 is the identity-corrected successor. Give both logical arms the same
+   explicit `shared-affinity` probe/session namespace while retaining distinct
+   receipt names, emit failover-stats v2 with
+   `primary_sessions_by_replica`, and require that vector to exactly equal the
+   sticky arm's unique-session vector before computing performance ratios. Use
+   the same r030 packet, arm order, fault boundary, topology, and `$7.4182176`
+   envelope, with prior observed accounting `$70.1005119398672`; source-close
+   it until distinct Pathfinder preregistration, self-attestation,
+   authorization, and source-pin checkpoints are pushed. Execute it once after
+   those gates and close authority after any outcome. Do not interpret fault
+   injection as production membership or outage detection; keep TD050 and the
+   held 1,000-case qualification open.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage

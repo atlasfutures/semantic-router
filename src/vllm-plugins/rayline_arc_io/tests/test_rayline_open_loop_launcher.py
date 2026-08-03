@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import importlib
+import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -38,3 +40,43 @@ def test_launcher_has_no_provider_or_qualification_path() -> None:
     assert "openrouter" not in source.lower()
     assert "execute-paid-1000" not in source
     assert '"release_qualification_1000_executed": False' in source
+
+
+def test_probe_cell_can_share_session_namespace_without_changing_receipt_arm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    packet_dir = tmp_path / "packet"
+    (packet_dir / "cells/r030").mkdir(parents=True)
+    context = SimpleNamespace(
+        contract=SimpleNamespace(run_id="run"),
+        packet_dir=packet_dir,
+        semantic_root=REPO_ROOT,
+    )
+    cell = SimpleNamespace(label="r030")
+    seen: list[str] = []
+
+    def fake_run(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        seen.extend(command)
+        output = Path(command[command.index("--output") + 1])
+        output.write_text('{"status":"ok"}\n')
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(launcher, "_run", fake_run)
+    receipt = launcher._probe_cell(
+        context,
+        cell,
+        "rayline_arc",
+        "http://example.test",
+        output_dir,
+        10.0,
+        logical_arm="treatment",
+        session_namespace="shared-affinity",
+    )
+
+    assert seen[seen.index("--run-id") + 1] == "run:r030:shared-affinity"
+    assert (output_dir / "treatment.json").exists()
+    assert receipt == {"status": "ok"}
