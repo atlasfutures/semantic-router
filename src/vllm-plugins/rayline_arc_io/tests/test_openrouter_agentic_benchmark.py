@@ -681,7 +681,9 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
     assert "fireworks/fast" not in config
     assert launcher.PACKETS["agentic"].key_limit_usd == EXPECTED_EPHEMERAL_KEY_LIMIT_USD
     assert launcher.PACKETS["agentic"].maximum_seconds == 30 * 60
-    assert launcher.AGT010_PREREGISTRATION_COMMIT == ""
+    assert launcher.AGT010_PREREGISTRATION_COMMIT == (
+        "0196a7b52a42a768b653fa3adc15ddc23a5c22d5"
+    )
     assert launcher.AGT010_AUTHORIZATION_COMMIT == ""
     assert launcher.DGN003_PREREGISTRATION_COMMIT == ""
     assert launcher.DGN003_AUTHORIZATION_COMMIT == ""
