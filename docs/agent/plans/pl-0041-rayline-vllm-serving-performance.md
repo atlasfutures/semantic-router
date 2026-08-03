@@ -2244,12 +2244,55 @@ prompt, embedding, raw episode ID, or timestamp may enter the receipt.
 - [x] DGN002a: Validate singleton pin/restore ownership, source-close the
   launcher, and pass focused tests, repository lint, and hermetic ARC
   acceptance.
-- [ ] DGN002b: Preregister and execute one zero-provider retained-session
+- [x] DGN002b: Preregister and execute one zero-provider retained-session
   create/close diagnostic, privately pin the aggregate receipt, and prove
   autoscaler plus container cleanup.
 - [ ] DGN002c: If affinity passes, preregister AGT006 as AGT005's otherwise
   unchanged full successor. If it fails, stop and redesign the state owner;
   do not hide the result with request retries.
+
+DGN002 passed its only authorized attempt. With the exact Modal class pinned,
+one protected container created an 11-token session at revision 1 in `1.258s`,
+explicitly closed it in `0.456s`, and returned empty health in `0.441s`.
+Cleanup restored the zero-minimum autoscaler, deleted the transient proxy, and
+stopped the exact container with zero tasks. The 84-second conservative H100
+upper estimate is `$0.233297568`, bringing cumulative observed accounting to
+`$79.865829658743`; provider spend remained zero. The private aggregate
+receipt is byte-verified at `rayline-ai/router-artifacts@7c970c93` with
+SHA-256 `175267bb1da22c6970faf8dc6cb1197a322189b7430ca21e40ffca25bcb2ca14`;
+Pathfinder closes the diagnostic at `5246afce`. This proves lifecycle affinity,
+not throughput or high availability.
+
+### AGT006 Singleton-Pinned Natural-Mix Measurement
+
+AGT006 is AGT005 under a new run/state namespace with exactly one experimental
+correction: DGN002's benchmark-owned Modal singleton lifecycle surrounds the
+complete session-bearing window. The three OpenRouter models/providers,
+one-token direct key readiness, three static endpoint probes, 24 ARC discovery
+requests, natural-share case selection, six cases, 72 measured requests,
+direct/static/ARC paths, concurrency one and four, 96-token measured cap,
+100/200 request bounds, retry rules, aggregate metrics, privacy, and normalized
+pure-Modal comparison remain unchanged.
+
+Before proxy health, the launcher pins the exact deployed class to
+`min=1/max=1/buffer=0`; unconditional cleanup restores `min=0/max=1/buffer=0`,
+deletes credentials and Compose/Redis state, and stops the exact container.
+The `$0.75` OpenRouter hard limit, `$0.50` report gate, 30-minute H100 ceiling,
+and `$5.7492336` packet envelope are unchanged. Charging DGN002 first gives a
+prior cumulative observed upper estimate of `$79.865829658743`; a full AGT006
+envelope reaches `$85.615063258743`, leaving `$48.697760761257` under the
+current `$134.31282402` authority.
+
+- [x] AGT006a: Source-close and validate the singleton lifecycle, focused
+  benchmark tests, repository lint, hermetic full-stack acceptance, updated
+  performance contract, and execution plan.
+- [ ] AGT006b: Preregister AGT006 and complete distinct Semantic Router
+  attestation, Pathfinder one-attempt authorization, registry attestation, and
+  final source launch pin.
+- [ ] AGT006c: Execute once, privately pin the aggregate receipt, close both
+  authorities, prove autoscaler and resource cleanup, and report the real E2E
+  throughput, TTFT, latency, retry, cost, natural mix, and normalized
+  ARC/static comparison. The 1,000-case qualification remains held.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
