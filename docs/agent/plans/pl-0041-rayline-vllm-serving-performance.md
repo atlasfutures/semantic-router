@@ -134,16 +134,17 @@ The launcher-window infrastructure upper estimate was `$4.08003918826349`,
 bringing cumulative observed accounting to `$77.72054280274334` under the
 `$134.31282402` authority. Fleet provisioning/operator integration remains
 TD050; DYN006 cannot retry and the 1,000-case qualification remains held.
-The first four single-router OpenRouter agentic packets are also closed:
+The single-router OpenRouter agentic packets through AGT006 are also closed:
 AGT002 proved real ARC generation and a 16/0/8 natural DS4/MiMo/HY3 mix but
 stopped at an obsolete three-worker coverage gate; AGT003 and AGT004 stopped
 on the first static DS4 probe with a transient-looking HTTP 404. The zero-H100
 DGN001 follow-up then proved direct, pinned-static, and unpinned-static requests
 all succeed against the same real route, ruling out a deterministic model,
-provider, path, or credential rewrite bug. AGT005 is now the active bounded
-successor: one one-token direct key/provider readiness canary precedes the
-unchanged 72-request measured packet. No performance result exists yet, and the
-1,000-case qualification remains held.
+provider, path, or credential rewrite bug. AGT005 exposed process-local Modal
+session affinity; DGN002 proved the singleton lifecycle correction. AGT006 then
+passed singleton warmup and direct DS4/Baidu key readiness but again received
+HTTP 404 on the first static gateway probe. It produced no performance result,
+all run authorities are closed, and the 1,000-case qualification remains held.
 Current published implementation heads:
 
 - Semantic Router
@@ -1919,13 +1920,15 @@ The 1,000-case qualification was not executed.
 
 ### Next Action
 
-Continue the single-router end-to-end serving proof under AGT005 below. Park
+Continue the single-router end-to-end serving proof below. Park
 multi-router transactional consistency in
 [GitHub issue #2756](https://github.com/vllm-project/semantic-router/issues/2756)
-and leave Kubernetes fleet provisioning under TD050. AGT001 through AGT004 and
-DGN001 are permanently closed; do not rerun them or DYN006. Complete AGT005's
-source validation and cross-repo authorization chain, then execute it at most
-once. Keep the 1,000-case qualification held until explicit user confirmation.
+and leave Kubernetes fleet provisioning under TD050. AGT001 through AGT006,
+DGN001, DGN002, and DYN006 are permanently closed; do not rerun them. AGT006
+passed direct key readiness but stopped on the first static gateway probe, so
+no serving-performance result is admissible. Diagnose that seam without
+reinterpreting the failed packet. Keep the 1,000-case qualification held until
+explicit user confirmation.
 
 ### AGT001 OpenRouter Agentic Serving Diagnostic
 
@@ -2289,7 +2292,7 @@ current `$134.31282402` authority.
 - [x] AGT006b: Preregister AGT006 and complete distinct Semantic Router
   attestation, Pathfinder one-attempt authorization, registry attestation, and
   final source launch pin.
-- [ ] AGT006c: Execute once, privately pin the aggregate receipt, close both
+- [x] AGT006c: Execute once, privately pin the aggregate receipt, close both
   authorities, prove autoscaler and resource cleanup, and report the real E2E
   throughput, TTFT, latency, retry, cost, natural mix, and normalized
   ARC/static comparison. The 1,000-case qualification remains held.
@@ -2299,6 +2302,20 @@ Semantic Router source attestation `eb33a209`, Pathfinder authorization
 `f97d502d`, and Pathfinder registry attestation `5df342cc`. The final signed
 Semantic Router source checkpoint pins both Pathfinder authorities and is the
 only checkpoint permitted to launch the one AGT006 attempt.
+
+AGT006's only attempt passed the singleton encoder warmup and one-token direct
+DS4/Baidu readiness, then the first specified-model static gateway request
+returned HTTP 404 before a completed streamed response. Discovery and all 72
+measured requests did not run, so there is no TTFT, latency, throughput,
+natural-mix, or ARC/static comparison. OpenRouter usage was zero. Cleanup
+restored the zero-minimum autoscaler, removed Compose and Redis state, deleted
+both transient credentials, and left the protected app deployed with zero
+tasks and containers. The 109-second H100 upper estimate is `$0.302731368`,
+bringing cumulative observed accounting to `$80.168561026743`. The private
+aggregate receipt is byte-verified at `rayline-ai/router-artifacts@ee2d6fc8`
+with SHA-256
+`d28b926c06cb94eddb56cab922376f233dee4e115aa94a68373de807a30bfc2b`.
+The source authority is closed and the 1,000-case qualification remains held.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin

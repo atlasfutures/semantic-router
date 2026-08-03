@@ -557,7 +557,7 @@ gateway, and ARC paths at concurrency one and four. The measured packet is
 exactly 72 requests with a 96-output-token cap. Before discovery, one direct
 DS4/Baidu request capped at one output token establishes new-key/provider
 readiness, followed by one specified-model gateway reachability request for
-each worker. The complete AGT005 bound is 100 logical provider requests and
+each worker. The complete AGT006 bound is 100 logical provider requests and
 200 external attempts. Only the readiness canary may retry one initial 404;
 ordinary direct calls retry one pre-response 429/503, and gateway retry remains
 owned by Envoy.
@@ -577,6 +577,15 @@ routing anchor, per-request assignment, raw error body, or timestamp. Cleanup
 must delete transient OpenRouter and Modal credentials, remove Compose and
 Redis state, stop the exact encoder container, and retain the deployed app at
 zero tasks. The 1,000-case qualification is unreachable from this launcher.
+
+AGT006's only authorized attempt passed singleton encoder warmup and the
+one-token direct DS4/Baidu readiness request, then the first DS4/Baidu static
+gateway probe returned HTTP 404. OpenRouter usage remained USD 0, discovery and
+all 72 measured requests did not run, and no performance inference is
+admissible. Cleanup restored the zero-minimum autoscaler, removed all transient
+credentials and Compose state, stopped the exact encoder container, and left
+the deployed app at zero tasks. The source interlock is closed; AGT006 cannot
+retry, and the 1,000-case qualification remains held.
 
 ## Evidence Lineage
 

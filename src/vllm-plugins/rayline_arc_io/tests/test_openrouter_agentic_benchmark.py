@@ -410,10 +410,7 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
         launcher.AGENTIC_PREREGISTRATION_COMMIT
         == "25ef39dac03015934bde87b6739505dfac2e5210"
     )
-    assert (
-        launcher.AGENTIC_AUTHORIZATION_COMMIT
-        == "5df342cc5c9cd8e23cd41e0a2e674e57ba64ef7d"
-    )
+    assert launcher.AGENTIC_AUTHORIZATION_COMMIT == ""
     assert "source=public-synthetic" in launcher.PUBLIC_REQUEST_LOG_MARKERS
     benchmark_source = (SCRIPT_DIR / "openrouter_agentic_benchmark.py").read_text()
     reporting_source = (SCRIPT_DIR / "openrouter_agentic_reporting.py").read_text()
