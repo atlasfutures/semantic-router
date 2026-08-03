@@ -82,6 +82,27 @@ var (
 		},
 		[]string{"action"},
 	)
+	RaylineARCEncoderReplicaRoutes = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_rayline_arc_encoder_replica_routes_total",
+			Help: "Rayline ARC retained-encoder routes by bounded direct or failover outcome.",
+		},
+		[]string{"outcome"},
+	)
+	RaylineARCEncoderReplicaAttempts = promauto.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "llm_rayline_arc_encoder_replica_attempts",
+			Help:    "Number of retained-encoder replica attempts per Rayline ARC selection.",
+			Buckets: []float64{1, 2},
+		},
+	)
+	RaylineARCEncoderSessionCloses = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_rayline_arc_encoder_session_closes_total",
+			Help: "Rayline ARC retained-session close fanout by bounded outcome.",
+		},
+		[]string{"outcome"},
+	)
 	RaylineARCProviderLogicalRequests = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "llm_rayline_arc_provider_logical_requests_total",
@@ -143,6 +164,36 @@ func RecordRaylineARCSelection(
 	RaylineARCCacheMissTokens.Observe(float64(cacheMissTokens))
 	if sessionAction != "" {
 		RaylineARCSessionActions.WithLabelValues(sessionAction).Inc()
+	}
+}
+
+func RecordRaylineARCEncoderReplicaRoute(attempts int, failover bool) {
+	if attempts <= 0 {
+		return
+	}
+	outcome := "direct"
+	if failover {
+		outcome = "failover"
+	}
+	RaylineARCEncoderReplicaRoutes.WithLabelValues(outcome).Inc()
+	RaylineARCEncoderReplicaAttempts.Observe(float64(attempts))
+}
+
+func RecordRaylineARCEncoderSessionClose(
+	closed int,
+	unavailable int,
+	failed int,
+) {
+	for outcome, count := range map[string]int{
+		"closed":      closed,
+		"unavailable": unavailable,
+		"failed":      failed,
+	} {
+		if count > 0 {
+			RaylineARCEncoderSessionCloses.WithLabelValues(outcome).Add(
+				float64(count),
+			)
+		}
 	}
 }
 

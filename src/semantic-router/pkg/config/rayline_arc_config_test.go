@@ -170,6 +170,134 @@ func TestValidateRaylineARCAlgorithmConfigAcceptsRetainedSession(t *testing.T) {
 	}
 }
 
+func TestValidateRaylineARCAlgorithmConfigAcceptsVersionedReplicaMembership(
+	t *testing.T,
+) {
+	decision := validReplicatedRaylineARCDecision()
+	if err := validateDecisionAlgorithmConfig(
+		decision.Name,
+		decision.ModelRefs,
+		decision.Algorithm,
+	); err != nil {
+		t.Fatalf("replicated ARC config rejected: %v", err)
+	}
+	encoded, err := yaml.Marshal(decision.Algorithm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded AlgorithmConfig
+	if err := yaml.UnmarshalStrict(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(*decision.Algorithm, decoded) {
+		t.Fatalf("replicated ARC config did not round-trip")
+	}
+}
+
+func TestValidateRaylineARCAlgorithmConfigRejectsUnsafeReplicaContracts(
+	t *testing.T,
+) {
+	tests := []struct {
+		name    string
+		mutate  func(*RaylineARCEncoderConfig)
+		wantErr string
+	}{
+		{
+			name: "single URL and replicas",
+			mutate: func(cfg *RaylineARCEncoderConfig) {
+				cfg.BaseURL = "http://single.example:8000"
+			},
+			wantErr: "exactly one of base_url or replicas",
+		},
+		{
+			name: "duplicate ID",
+			mutate: func(cfg *RaylineARCEncoderConfig) {
+				cfg.Replicas[1].ID = cfg.Replicas[0].ID
+			},
+			wantErr: "duplicated",
+		},
+		{
+			name: "duplicate URL",
+			mutate: func(cfg *RaylineARCEncoderConfig) {
+				cfg.Replicas[1].BaseURL = cfg.Replicas[0].BaseURL + "/"
+			},
+			wantErr: "base_url is duplicated",
+		},
+		{
+			name: "no active member",
+			mutate: func(cfg *RaylineARCEncoderConfig) {
+				cfg.Replicas[0].State = RaylineARCEncoderDraining
+				cfg.Replicas[1].State = RaylineARCEncoderDraining
+			},
+			wantErr: "at least one active",
+		},
+		{
+			name: "stateless rung",
+			mutate: func(cfg *RaylineARCEncoderConfig) {
+				cfg.ServingRung = RaylineARCServingRungA
+			},
+			wantErr: "retained serving rung B",
+		},
+		{
+			name: "internal retries",
+			mutate: func(cfg *RaylineARCEncoderConfig) {
+				cfg.MaxRetries = 1
+			},
+			wantErr: "max_retries=0",
+		},
+		{
+			name: "unknown schema",
+			mutate: func(cfg *RaylineARCEncoderConfig) {
+				cfg.Failover.SchemaVersion = "rayline.arc.encoder-failover.v2"
+			},
+			wantErr: "schema_version",
+		},
+		{
+			name: "ambiguous remap count",
+			mutate: func(cfg *RaylineARCEncoderConfig) {
+				cfg.Failover.MaxRemaps = 2
+			},
+			wantErr: "max_remaps must be 1",
+		},
+		{
+			name: "invalid unavailable status",
+			mutate: func(cfg *RaylineARCEncoderConfig) {
+				cfg.Failover.UnavailableStatusCodes = []int{200}
+			},
+			wantErr: "between 400 and 599",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			decision := validReplicatedRaylineARCDecision()
+			test.mutate(&decision.Algorithm.RaylineARC.Encoder)
+			err := validateDecisionAlgorithmConfig(
+				decision.Name,
+				decision.ModelRefs,
+				decision.Algorithm,
+			)
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("error = %v, want substring %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateRaylineARCAlgorithmConfigRequiresReplicaCloseProtocol(
+	t *testing.T,
+) {
+	decision := validReplicatedRaylineARCDecision()
+	decision.Algorithm.RaylineARC.Episode.CloseHeader = ""
+	err := validateDecisionAlgorithmConfig(
+		decision.Name,
+		decision.ModelRefs,
+		decision.Algorithm,
+	)
+	if err == nil || !strings.Contains(err.Error(), "close_header is required") {
+		t.Fatalf("error = %v, want required close-header failure", err)
+	}
+}
+
 func TestValidateRaylineARCDecisionRejectsLearningAndCandidateDrift(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -323,4 +451,36 @@ func validRaylineARCDecision() Decision {
 			},
 		},
 	}
+}
+
+func validReplicatedRaylineARCDecision() Decision {
+	decision := validRaylineARCDecision()
+	encoder := &decision.Algorithm.RaylineARC.Encoder
+	encoder.BaseURL = ""
+	encoder.Replicas = []RaylineARCEncoderReplicaConfig{
+		{
+			ID:      "encoder-a",
+			BaseURL: "http://rayline-arc-encoder-a:8000",
+			State:   RaylineARCEncoderActive,
+		},
+		{
+			ID:      "encoder-b",
+			BaseURL: "http://rayline-arc-encoder-b:8000",
+			State:   RaylineARCEncoderActive,
+		},
+	}
+	encoder.Failover = RaylineARCEncoderFailoverConfig{
+		SchemaVersion:              RaylineARCEncoderFailoverV1,
+		UnavailableStatusCodes:     []int{404, 410, 502, 503, 504},
+		UnavailableCooldownSeconds: 30,
+		MaxRemaps:                  1,
+	}
+	encoder.ServingRung = RaylineARCServingRungB
+	encoder.RequiredCapabilities = []string{
+		RaylineARCCapabilityChunkedMean,
+		RaylineARCCapabilityResumableMean,
+	}
+	encoder.MaxRetries = 0
+	decision.Algorithm.RaylineARC.Episode.CloseHeader = "x-rayline-episode-close"
+	return decision
 }

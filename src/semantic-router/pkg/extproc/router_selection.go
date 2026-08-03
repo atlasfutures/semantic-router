@@ -24,6 +24,7 @@ func createModelSelectorRegistry(
 	func(),
 	raylinearc.EpisodeStore,
 	func() error,
+	raylineARCSessionCloseFunc,
 ) {
 	modelSelectionCfg := buildModelSelectionConfig(cfg)
 	backendModels := cfg.BackendModels
@@ -43,7 +44,7 @@ func createModelSelectorRegistry(
 	}
 
 	registry := selectionFactory.CreateAll()
-	arcSelector, episodeStore, closeEpisodeStore, readinessFailure := createRaylineARCSelector(cfg)
+	arcSelector, episodeStore, closeEpisodeStore, closeEncoderSession, readinessFailure := createRaylineARCSelector(cfg)
 	if arcSelector != nil {
 		registry.Register(selection.MethodRaylineARC, arcSelector)
 		metrics.SetRaylineARCComponentReady(readinessFailure == "")
@@ -108,7 +109,7 @@ func createModelSelectorRegistry(
 	logging.ComponentEvent("extproc", "model_selection_registry_initialized", map[string]interface{}{
 		"mode": "per_decision_algorithm_config",
 	})
-	return registry, lt, cancel, episodeStore, closeEpisodeStore
+	return registry, lt, cancel, episodeStore, closeEpisodeStore, closeEncoderSession
 }
 
 func resolveSelectionEmbeddingFunc(cfg *config.RouterConfig) func(string) ([]float32, error) {

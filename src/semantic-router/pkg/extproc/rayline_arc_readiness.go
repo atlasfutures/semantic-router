@@ -38,24 +38,26 @@ func createRaylineARCSelector(
 	selection.Selector,
 	raylinearc.EpisodeStore,
 	func() error,
+	raylineARCSessionCloseFunc,
 	string,
 ) {
 	decisions := configuredRaylineARCDecisions(cfg)
 	if len(decisions) == 0 {
-		return nil, nil, nil, ""
+		return nil, nil, nil, nil, ""
 	}
 	arcConfig := decisions[0].Algorithm.RaylineARC
 	unavailable := func(class string) (
 		selection.Selector,
 		raylinearc.EpisodeStore,
 		func() error,
+		raylineARCSessionCloseFunc,
 		string,
 	) {
 		return newRaylineARCSelector(
 			nil,
 			nil,
 			arcConfig.ArtifactRevision,
-		), nil, nil, class
+		), nil, nil, nil, class
 	}
 	for index := 1; index < len(decisions); index++ {
 		if !reflect.DeepEqual(
@@ -77,31 +79,40 @@ func createRaylineARCSelector(
 	); failureClass != "" {
 		return unavailable(failureClass)
 	}
-	encoderConfig, err := raylineARCEncoderClientConfig(arcConfig)
-	if err != nil {
-		return unavailable("encoder_auth")
-	}
-	encoder, err := raylinearc.NewEncoderClient(encoderConfig)
-	if err != nil {
-		return unavailable("encoder_config")
+	encoder, failureClass := createRaylineARCEncoder(arcConfig)
+	if failureClass != "" {
+		return unavailable(failureClass)
 	}
 	if probeErr := encoder.Probe(
 		context.Background(),
 		"semantic-router-startup-readiness",
 	); probeErr != nil {
+		encoder.Close()
 		return unavailable("encoder_probe")
 	}
 	episodeStore, closeStore, err := createRaylineARCEpisodeStore(
 		arcConfig.Episode,
 	)
 	if err != nil {
+		encoder.Close()
 		return unavailable("episode_store")
+	}
+	closeResources := func() error {
+		encoder.Close()
+		if closeStore != nil {
+			return closeStore()
+		}
+		return nil
+	}
+	var closeSession raylineARCSessionCloseFunc
+	if pool, ok := encoder.(*raylinearc.EncoderPool); ok {
+		closeSession = pool.CloseSession
 	}
 	return newRaylineARCSelector(
 		&runtimeARCScorer{runtime: runtime, policy: runtime.Policy()},
 		encoder,
 		arcConfig.ArtifactRevision,
-	), episodeStore, closeStore, ""
+	), episodeStore, closeResources, closeSession, ""
 }
 
 func raylineARCLoadedContractFailure(

@@ -23,8 +23,28 @@ services:
     build:
       context: ../../../e2e/testing/rayline-arc
     command: ["python", "/app/mock_servers.py", "encoder", "--port", "8080"]
+    environment:
+      RAYLINE_ARC_E2E_ENCODER_ID: encoder-a
     ports:
       - "${RAYLINE_ARC_E2E_ENCODER_PORT:-18080}:8080"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  fake-encoder-b:
+    build:
+      context: ../../../e2e/testing/rayline-arc
+    command: ["python", "/app/mock_servers.py", "encoder", "--port", "8080"]
+    environment:
+      RAYLINE_ARC_E2E_ENCODER_ID: encoder-b
+    ports:
+      - "${RAYLINE_ARC_E2E_ENCODER_B_PORT:-18083}:8080"
     healthcheck:
       test:
         - CMD
@@ -77,6 +97,7 @@ services:
       RAYLINE_ARC_MODAL_SECRET: ${RAYLINE_ARC_E2E_MODAL_SECRET:-public-e2e-modal-secret}
       RAYLINE_ARC_REDIS_PASSWORD: ${RAYLINE_ARC_E2E_REDIS_PASSWORD:-public-e2e-redis-secret}
       RAYLINE_ARC_ENCODER_BASE_URL: ${RAYLINE_ARC_E2E_ENCODER_BASE_URL:-http://fake-encoder:8080}
+      RAYLINE_ARC_ENCODER_B_BASE_URL: ${RAYLINE_ARC_E2E_ENCODER_B_BASE_URL:-http://fake-encoder-b:8080}
       RAYLINE_ARC_ENCODER_BUILD_ID: ${RAYLINE_ARC_E2E_ENCODER_BUILD_ID:-vllm@public-rayline-e2e-build}
       RAYLINE_ARC_WORKER_A_ENDPOINT: ${RAYLINE_ARC_E2E_WORKER_A_ENDPOINT:-fake-provider:8081}
       RAYLINE_ARC_WORKER_A_PROTOCOL: ${RAYLINE_ARC_E2E_WORKER_A_PROTOCOL:-http}
@@ -95,6 +116,8 @@ services:
       artifact-init:
         condition: service_completed_successfully
       fake-encoder:
+        condition: service_healthy
+      fake-encoder-b:
         condition: service_healthy
       redis:
         condition: service_healthy

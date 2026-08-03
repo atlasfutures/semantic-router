@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -36,7 +37,12 @@ import (
 
 func TestRaylineARCEpisodeCommitsOnceOnFirst2xxHeaders(t *testing.T) {
 	router, requestContext, store, episode := newTestARCEpisodeTransaction(t)
-	requestContext.RaylineARCTransaction.markSelection(1, 123)
+	requestContext.RaylineARCTransaction.markSelectionWithAffinity(
+		1,
+		123,
+		"replica-b",
+		[]string{"replica-a", "replica-b"},
+	)
 	requestContext.VSRRaylineARC = &selection.RaylineARCTrace{
 		EpisodeIDHash: episode,
 	}
@@ -71,7 +77,12 @@ func TestRaylineARCEpisodeCommitsOnceOnFirst2xxHeaders(t *testing.T) {
 		state.PreviousArm == nil ||
 		*state.PreviousArm != 1 ||
 		state.Warmth[1] == nil ||
-		state.Warmth[1].LastInputTokens != 123 {
+		state.Warmth[1].LastInputTokens != 123 ||
+		state.EncoderOwner != "replica-b" ||
+		!slices.Equal(
+			state.EncoderVisitedOwners,
+			[]string{"replica-a", "replica-b"},
+		) {
 		t.Fatalf("committed state = %#v", state)
 	}
 }
@@ -86,6 +97,95 @@ func TestRaylineARCEpisodeAbortsOnNon2xx(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertARCEpisodeNotAdvanced(t, store, episode)
+}
+
+func TestRaylineARCEpisodeCloseFansOutAfter2xxAndClearsAffinity(t *testing.T) {
+	router, requestContext, store, episode := newTestARCEpisodeTransaction(t)
+	transaction := requestContext.RaylineARCTransaction
+	transaction.markSelectionWithAffinity(
+		1,
+		123,
+		"replica-b",
+		[]string{"replica-a", "replica-b"},
+	)
+	transaction.closeRequested = true
+	transaction.sessionCloseWait = time.Second
+	closeCalls := 0
+	transaction.sessionCloser = func(
+		_ context.Context,
+		gotEpisode string,
+		visited []string,
+	) (raylinearc.EncoderCloseReport, error) {
+		closeCalls++
+		if gotEpisode != episode ||
+			!slices.Equal(visited, []string{"replica-a", "replica-b"}) {
+			t.Fatalf("close input = %q/%v", gotEpisode, visited)
+		}
+		return raylinearc.EncoderCloseReport{Attempted: 2, Closed: 2}, nil
+	}
+	if _, err := router.handleResponseHeaders(
+		arcResponseHeaders("200"),
+		requestContext,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if closeCalls != 1 {
+		t.Fatalf("close calls = %d, want 1", closeCalls)
+	}
+	lease, state, err := store.Prepare(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Abort(context.Background(), lease) }()
+	if state.TurnIndex != 1 || state.EncoderOwner != "" ||
+		len(state.EncoderVisitedOwners) != 0 {
+		t.Fatalf("post-close state = %#v", state)
+	}
+}
+
+func TestRaylineARCEpisodeCloseFailurePreservesProviderSuccessAndAffinity(
+	t *testing.T,
+) {
+	router, requestContext, store, episode := newTestARCEpisodeTransaction(t)
+	transaction := requestContext.RaylineARCTransaction
+	transaction.markSelectionWithAffinity(
+		1,
+		123,
+		"replica-b",
+		[]string{"replica-a", "replica-b"},
+	)
+	transaction.closeRequested = true
+	transaction.sessionCloseWait = time.Second
+	transaction.sessionCloser = func(
+		context.Context,
+		string,
+		[]string,
+	) (raylinearc.EncoderCloseReport, error) {
+		return raylinearc.EncoderCloseReport{Attempted: 2, Closed: 1, Failed: 1},
+			&raylinearc.EncoderFailure{
+				Class: raylinearc.EncoderFailureTransport,
+				Stage: "pre_response",
+			}
+	}
+	response, err := router.handleResponseHeaders(
+		arcResponseHeaders("200"),
+		requestContext,
+	)
+	if err != nil || response == nil || response.GetImmediateResponse() != nil {
+		t.Fatalf("successful provider response replaced by close failure: response=%#v err=%v", response, err)
+	}
+	lease, state, err := store.Prepare(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Abort(context.Background(), lease) }()
+	if state.EncoderOwner != "replica-b" ||
+		!slices.Equal(
+			state.EncoderVisitedOwners,
+			[]string{"replica-a", "replica-b"},
+		) {
+		t.Fatalf("failed-close affinity = %#v", state)
+	}
 }
 
 func TestRaylineARCEpisodeFinalizerCoversEOFErrorCancelAndPanic(

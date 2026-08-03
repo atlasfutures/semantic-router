@@ -54,12 +54,14 @@ scan_logs() {
 compose down --volumes --remove-orphans >/dev/null 2>&1 || true
 compose up --build --detach
 wait_http "http://127.0.0.1:${RAYLINE_ARC_E2E_ENCODER_PORT:-18080}/health"
+wait_http "http://127.0.0.1:${RAYLINE_ARC_E2E_ENCODER_B_PORT:-18083}/health"
 wait_http "http://127.0.0.1:${RAYLINE_ARC_E2E_PROVIDER_PORT:-18081}/health"
 wait_http "http://127.0.0.1:${RAYLINE_ARC_E2E_ROUTER_API_PORT:-18082}/health"
 
 python3 "${repo_root}/e2e/testing/rayline-arc/test_stack.py" \
   --phase initial \
   --receipt "${receipt}"
+python3 "${repo_root}/e2e/testing/rayline-arc/replica_contract.py"
 
 compose restart router
 wait_http "http://127.0.0.1:${RAYLINE_ARC_E2E_ROUTER_API_PORT:-18082}/health"

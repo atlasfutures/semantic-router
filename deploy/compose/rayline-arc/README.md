@@ -52,6 +52,9 @@ episode IDs, model payloads, or credentials:
 - `llm_rayline_arc_provider_attempts_total{outcome}`
 - `llm_rayline_arc_provider_retries_total{outcome}`
 - `llm_rayline_arc_provider_retry_exhaustions_total{status}`
+- `llm_rayline_arc_encoder_replica_routes_total{outcome}`
+- `llm_rayline_arc_encoder_replica_attempts`
+- `llm_rayline_arc_encoder_session_closes_total{outcome}`
 
 Run the hermetic contract with:
 
@@ -60,8 +63,16 @@ e2e/testing/rayline-arc/run.sh
 ```
 
 It covers 429-to-200, 503-to-200, streaming 429-to-200, exhausted 429 and 503,
-single commit/abort behavior, post-200 partial streaming, process restart,
-Redis loss, aggregate attempt metrics, and privacy-log scanning.
+single commit/abort behavior, post-200 partial streaming, two retained-encoder
+replicas, explicit-status remap, survivor stickiness, cooldown recovery, close
+fanout, process restart, Redis loss, aggregate attempt metrics, and privacy-log
+scanning.
+
+The compose profile uses the static
+`rayline.arc.encoder-failover.v1` contract. Replica IDs name concrete retained
+state owners, not load balancers. New episodes rendezvous across active
+members; persisted owners remain sticky; transport ambiguity fails closed;
+and the exact final-turn header fans DELETE out to all visited owners.
 
 ## Bounded performance diagnostic
 

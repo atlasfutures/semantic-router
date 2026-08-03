@@ -19,6 +19,7 @@ package raylinearc
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -197,6 +198,73 @@ func TestEpisodeStateWireRejectsFutureAndUnknownFields(t *testing.T) {
 	)
 	if _, _, err := unmarshalEpisodeState(payload, 1, now); err == nil {
 		t.Fatal("unknown field accepted")
+	}
+}
+
+func TestEpisodeStateWireV2PersistsEncoderAffinity(t *testing.T) {
+	now := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+	state, err := NewEpisodeState(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.EncoderOwner = "replica-b"
+	state.EncoderVisitedOwners = []string{"replica-a", "replica-b"}
+	payload, err := marshalEpisodeState(state, 7, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"schema_version":"rayline.arc.episode-state.v2"`) ||
+		!strings.Contains(string(payload), `"encoder_owner":"replica-b"`) {
+		t.Fatalf("v2 payload omitted affinity: %s", payload)
+	}
+	decoded, version, err := unmarshalEpisodeState(payload, 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != 7 || decoded.EncoderOwner != "replica-b" ||
+		!slices.Equal(
+			decoded.EncoderVisitedOwners,
+			[]string{"replica-a", "replica-b"},
+		) {
+		t.Fatalf("decoded v2 state/version = %#v/%d", decoded, version)
+	}
+}
+
+func TestEpisodeStateWireReadsV1WithoutEncoderAffinity(t *testing.T) {
+	now := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+	legacy := []byte(
+		`{"schema_version":"rayline.arc.episode-state.v1",` +
+			`"version":6,"previous_arm":null,"turn_index":0,` +
+			`"warmth":[null]}`,
+	)
+	decoded, version, err := unmarshalEpisodeState(legacy, 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != 6 || decoded.EncoderOwner != "" ||
+		len(decoded.EncoderVisitedOwners) != 0 {
+		t.Fatalf("legacy migration = %#v/%d", decoded, version)
+	}
+}
+
+func TestEpisodeStateWireRejectsInvalidOrIncompleteV2Affinity(t *testing.T) {
+	now := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+	state, err := NewEpisodeState(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.EncoderOwner = "replica-b"
+	state.EncoderVisitedOwners = []string{"replica-a"}
+	if _, err := marshalEpisodeState(state, 1, now); err == nil {
+		t.Fatal("owner absent from visited set was accepted")
+	}
+	incomplete := []byte(
+		`{"schema_version":"rayline.arc.episode-state.v2",` +
+			`"version":1,"previous_arm":null,"turn_index":0,` +
+			`"warmth":[null],"encoder_owner":""}`,
+	)
+	if _, _, err := unmarshalEpisodeState(incomplete, 1, now); err == nil {
+		t.Fatal("v2 state without visited-owner field was accepted")
 	}
 }
 

@@ -191,6 +191,44 @@ func TestRaylineARCDispatchContractsAcceptPinnedOpenAICompatibleURL(t *testing.T
 	}
 }
 
+func TestCreateRaylineARCEncoderBuildsVersionedReplicaPool(t *testing.T) {
+	arcConfig := &config.RaylineARCAlgorithmConfig{
+		Encoder: config.RaylineARCEncoderConfig{
+			Replicas: []config.RaylineARCEncoderReplicaConfig{
+				{ID: "encoder-a", BaseURL: "http://encoder-a.test:8000", State: config.RaylineARCEncoderActive},
+				{ID: "encoder-b", BaseURL: "http://encoder-b.test:8000", State: config.RaylineARCEncoderDraining},
+			},
+			Failover: config.RaylineARCEncoderFailoverConfig{
+				SchemaVersion:              config.RaylineARCEncoderFailoverV1,
+				UnavailableStatusCodes:     []int{404, 410, 502, 503, 504},
+				UnavailableCooldownSeconds: 30,
+				MaxRemaps:                  1,
+			},
+			Model:                 config.RaylineARCEncoderModel,
+			ModelRevision:         config.RaylineARCEncoderModelRevision,
+			ExpectedBuildID:       "vllm@immutable-test-build",
+			ExpectedPluginVersion: "rayline-arc-io@0.1.0",
+			SerializerVersion:     config.RaylineARCSerializerVersion,
+			ServingRung:           config.RaylineARCServingRungB,
+			RequiredCapabilities: []string{
+				config.RaylineARCCapabilityChunkedMean,
+				config.RaylineARCCapabilityResumableMean,
+			},
+			ConnectTimeoutSeconds: 1,
+			TotalTimeoutSeconds:   2,
+			MaxRetries:            0,
+		},
+	}
+	encoder, failureClass := createRaylineARCEncoder(arcConfig)
+	if failureClass != "" {
+		t.Fatalf("create replica encoder failure class = %q", failureClass)
+	}
+	if _, ok := encoder.(*raylinearc.EncoderPool); !ok {
+		t.Fatalf("encoder type = %T, want *raylinearc.EncoderPool", encoder)
+	}
+	encoder.Close()
+}
+
 type arcDispatchDriftCase struct {
 	name   string
 	mutate func(*config.RouterConfig, []raylinearc.WorkerManifest, []*config.Decision)

@@ -350,9 +350,13 @@ func finalizeSelectionResponseHeaders(
 	if ctx == nil || ctx.SelectionTransaction == nil {
 		return nil
 	}
+	finalizeTimeout := episodeFinalizeTimeout
+	if ctx.RaylineARCTransaction != nil {
+		finalizeTimeout = ctx.RaylineARCTransaction.finalizeTimeout()
+	}
 	finalizeContext, cancel := context.WithTimeout(
 		context.Background(),
-		episodeFinalizeTimeout,
+		finalizeTimeout,
 	)
 	defer cancel()
 	if !successful {

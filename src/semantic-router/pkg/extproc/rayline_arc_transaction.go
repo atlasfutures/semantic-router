@@ -39,6 +39,11 @@ type raylineARCEpisodeTransaction struct {
 	leaseTTL         time.Duration
 	selectedArm      int
 	serializedTokens int
+	encoderOwner     string
+	encoderVisited   []string
+	closeRequested   bool
+	sessionCloser    raylineARCSessionCloseFunc
+	sessionCloseWait time.Duration
 	selectionReady   bool
 	finalizeOnce     sync.Once
 	finalizeErr      error
@@ -82,11 +87,35 @@ func (transaction *raylineARCEpisodeTransaction) markSelection(
 	selectedArm int,
 	serializedTokens int,
 ) {
+	transaction.markSelectionWithAffinity(
+		selectedArm,
+		serializedTokens,
+		"",
+		nil,
+	)
+}
+
+func (transaction *raylineARCEpisodeTransaction) markSelectionWithAffinity(
+	selectedArm int,
+	serializedTokens int,
+	encoderOwner string,
+	encoderVisited []string,
+) {
 	if transaction == nil {
 		return
 	}
 	transaction.selectedArm = selectedArm
 	transaction.serializedTokens = serializedTokens
+	if encoderOwner != "" {
+		transaction.encoderOwner = encoderOwner
+		transaction.encoderVisited = append([]string(nil), encoderVisited...)
+	} else if transaction.state != nil {
+		transaction.encoderOwner = transaction.state.EncoderOwner
+		transaction.encoderVisited = append(
+			[]string(nil),
+			transaction.state.EncoderVisitedOwners...,
+		)
+	}
 	transaction.selectionReady = true
 }
 
@@ -116,6 +145,11 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			return
 		}
 		nextState := cloneARCState(transaction.state)
+		nextState.EncoderOwner = transaction.encoderOwner
+		nextState.EncoderVisitedOwners = append(
+			[]string(nil),
+			transaction.encoderVisited...,
+		)
 		if err := nextState.Commit(
 			transaction.selectedArm,
 			transaction.serializedTokens,
@@ -125,6 +159,11 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			transaction.abortStore(ctx)
 			return
 		}
+		transaction.closeRetainedEncoderSession(
+			ctx,
+			requestContext,
+			nextState,
+		)
 		transaction.finalizeErr = transaction.store.Commit(
 			ctx,
 			transaction.lease,
@@ -283,8 +322,10 @@ func cloneARCState(
 		return nil
 	}
 	cloned := &raylinearc.EpisodeState{
-		TurnIndex: state.TurnIndex,
-		Warmth:    make([]*raylinearc.WorkerWarmth, len(state.Warmth)),
+		TurnIndex:            state.TurnIndex,
+		Warmth:               make([]*raylinearc.WorkerWarmth, len(state.Warmth)),
+		EncoderOwner:         state.EncoderOwner,
+		EncoderVisitedOwners: append([]string(nil), state.EncoderVisitedOwners...),
 	}
 	if state.PreviousArm != nil {
 		value := *state.PreviousArm

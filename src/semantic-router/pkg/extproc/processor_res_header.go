@@ -71,9 +71,13 @@ func finalizeRaylineARCResponseHeaders(
 		requestContext.RaylineARCTransaction == nil {
 		return nil
 	}
+	finalizeTimeout := episodeFinalizeTimeout
+	if requestContext.RaylineARCTransaction != nil {
+		finalizeTimeout = requestContext.RaylineARCTransaction.finalizeTimeout()
+	}
 	finalizeContext, cancel := context.WithTimeout(
 		context.Background(),
-		episodeFinalizeTimeout,
+		finalizeTimeout,
 	)
 	defer cancel()
 	if !successful {

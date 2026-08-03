@@ -50,6 +50,13 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		return result
 	}
 	result.EpisodeIDHash = raylinearc.HashEpisodeID(rawEpisodeID)
+	if failure := parseRaylineARCCloseRequest(
+		algorithm.RaylineARC.Episode.CloseHeader,
+		reqCtx,
+	); failure != "" {
+		result.PreparationFailure = failure
+		return result
+	}
 	state, failure := r.prepareRaylineARCTransaction(
 		algorithm.RaylineARC,
 		reqCtx,
@@ -73,6 +80,25 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	}
 	result.Turns = turns
 	return result
+}
+
+func parseRaylineARCCloseRequest(
+	closeHeader string,
+	reqCtx *RequestContext,
+) string {
+	if closeHeader == "" {
+		return ""
+	}
+	switch strings.TrimSpace(reqCtx.Headers[closeHeader]) {
+	case "", "false":
+		reqCtx.RaylineARCCloseRequested = false
+		return ""
+	case "true":
+		reqCtx.RaylineARCCloseRequested = true
+		return ""
+	default:
+		return "invalid_close_signal"
+	}
 }
 
 func (r *OpenAIRouter) prepareRaylineARCTransaction(
@@ -115,6 +141,11 @@ func (r *OpenAIRouter) prepareRaylineARCTransaction(
 		)*time.Second,
 		nil,
 	)
+	reqCtx.RaylineARCTransaction.closeRequested = reqCtx.RaylineARCCloseRequested
+	reqCtx.RaylineARCTransaction.sessionCloser = r.raylineARCSessionClose
+	reqCtx.RaylineARCTransaction.sessionCloseWait = time.Duration(
+		arcConfig.Encoder.TotalTimeoutSeconds,
+	) * time.Second
 	bindRaylineARCSelectionTransaction(reqCtx)
 	return state, ""
 }

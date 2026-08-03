@@ -1,4 +1,4 @@
-# TD050: Rayline ARC Replica Failover Is Experiment-Only
+# TD050: Rayline ARC Dynamic Membership Remains Manual
 
 ## Status
 
@@ -10,105 +10,94 @@ Open
 
 ## Release Relevance
 
-Two explicit retained-session encoder replicas improve overloaded routing
-throughput, but the current affinity proxy is an experiment harness rather than
-a supported discovery, membership, and failover layer.
+Semantic Router now has a supported static, versioned retained-encoder replica
+contract. Dynamic service discovery, automated drain completion, and a
+controller-owned membership rollout remain manual operator responsibilities.
 
 ## Scope
 
-- cache-aware episode affinity across Rayline ARC encoder replicas;
-- bounded remap after replica unavailability;
-- full-history rebuild cost and exact routing parity;
-- session-close fanout across every replica visited by an episode; and
-- membership, health, observability, and rollout ownership.
+- optional dynamic discovery beyond the implemented static replica set;
+- controller-owned active/draining publication and drain completion;
+- automated removal only after the episode idle-TTL boundary; and
+- preservation of the implemented affinity, health, close, privacy, and
+  observability semantics during dynamic rollout.
 
-Shared KV storage and Pathfinder's pending-transaction journal are out of scope.
-The latter remains tracked by TD046.
+Shared KV storage and Pathfinder's pending-transaction journal are out of
+scope. The latter remains tracked by TD046.
 
 ## Summary
 
-PERF024 passed a same-proxy comparison between one and two explicit H100
-encoders. Deterministic episode affinity kept every four-turn episode on one
-process-local KV owner and improved completion throughput by `1.1442x` at the
-frozen `r030` cell and `1.3990x` at `r045`. The implementation deliberately has
-no production service directory, health-based membership, rebalance, or
-failover contract.
+PERF024 proved that deterministic episode affinity across two explicit H100
+encoders preserved process-local KV ownership and improved overloaded routing
+throughput. PERF026 corrected the cross-arm identity of the forced-remap
+experiment and quantified full-history reconstruction. PERF027 then stopped a
+real exact Modal app, detected affected primaries, rebuilt them on the
+survivor, fanned close out, and measured the one-survivor capacity penalty.
+Those experiments did not promote their Python affinity proxy.
 
-Every retained-session request does carry full reconstructible history, so a
-new replica can recreate a missing session without shared KV. PERF025 added
-only an experiment-side forced-remap path to quantify that rebuild and verify
-close fanout. It completed all correctness and cleanup gates, but an independent
-audit found arm-specific episode-hash namespaces, so its performance ratios are
-confounded and retained only as diagnostic evidence. PERF026 explicitly shares
-the hash namespace and adds a strict primary-placement vector gate before any
-performance comparison. Neither experiment makes the proxy a supported
-deployment surface.
+The subsequent zero-provider implementation phase moved the contract into
+Semantic Router itself. `rayline.arc.encoder-failover.v1` now validates two to
+eight stable active/draining members, deterministic rendezvous affinity, one
+remap only after configured HTTP unavailability, process-local passive
+cooldown, transport-ambiguity fail-closed, Redis-persisted owner/visited state,
+startup probe coverage for draining owners, low-cardinality metrics, and
+explicit post-2xx close fanout. Episode-state v2 reads v1 and migrates on the
+next successful commit. Removing a persisted owner early fails before any
+encoder call, making the documented active -> draining -> idle-TTL -> remove
+sequence enforceable rather than implicit.
 
 ## Evidence
 
 - PERF024's private aggregate packet is pinned at
   `rayline-ai/router-artifacts@cd832e8da7fc8dba9f6518f65b613c9afb271978`.
-- PERF025 completed 64/64 measured turns, nine peer reconstructions, 18 fanout
-  closes, exact trace parity, and stable-zero cleanup. Its latency, throughput,
-  backlog, drain, and token ratios are inadmissible because the two arms used
-  different hash namespaces; the private aggregate packet and audit receipt
-  remain the diagnostic system of record.
-- PERF026 corrected the cross-arm identity and passed: both arms attested the
-  exact `[7,2]` primary split, all 64 measured turns completed, the selected-
-  worker trace matched, nine peer sessions reconstructed, all 18 fanout closes
-  completed, and cleanup reached stable zero. Forced remap used `1.0575x`
-  appended-token work and `1.1371x` p50 latency; this remains experiment-side
-  fault injection rather than proof of outage detection or membership.
-- PERF027 passed a real exact-app stop. Both arms completed identical preload
-  and post-boundary worker traces with zero failures. Treatment proved app A
-  stopped with zero containers while app B retained one container, detected
-  four affected primaries, rebuilt four sessions through eight failover
-  pooling requests, closed all eight measured sessions on the survivor, and
-  reached stable-zero retained and deployment state. Its ten aggregate-only
-  files are byte-for-byte verified at
+- PERF026 passed 64/64 measured turns, exact `[7,2]` cross-arm primary
+  placement, nine peer reconstructions, 18 fanout closes, and stable-zero
+  cleanup. Forced remap used `1.0575x` appended-token work and `1.1371x` p50
+  latency in that bounded sample.
+- PERF027 passed a real exact-app stop. It detected four affected primaries,
+  rebuilt four sessions through eight failover pooling calls, closed all eight
+  measured sessions, and reached stable-zero retained and deployment state.
+  The stop converged in `10.909s`; the survivor delivered `0.5929x` control
+  throughput, `3.1924x` p50 service latency, and `2.6551x` p95 service latency.
+  Its ten aggregate-only files are byte-for-byte verified at
   `rayline-ai/router-artifacts@2c38ad5760961b04f80c4d2c9d5c1bd85c78ae41`.
-  The stop converged in `10.909s`; after the boundary the single survivor
-  delivered `0.5929x` control throughput, `3.1924x` p50 service latency, and
-  `2.6551x` p95 service latency. This proves bounded reconstruction and exposes
-  the one-survivor capacity penalty, but the controller and proxy remain
-  experiment-owned. Production discovery, health policy, ambiguous-failure
-  idempotency, rollout, and operator configuration remain exit criteria here.
-- `e2e/testing/rayline-arc/rayline_affinity_proxy.py` owns deterministic
-  experiment placement and aggregate-only accounting.
-- `SessionCoordinator` rebuilds from full supplied history when a retained
-  prefix is absent or divergent.
-- The single-container development qualification already proves an explicit
-  affinity-loss rebuild has cosine similarity above the frozen `0.9999` gate;
-  it does not prove cross-replica routing or cleanup.
+- Production Go tests and the two-encoder compose profile pass deterministic
+  affinity, configured-503 failover, survivor stickiness, cooldown recovery,
+  router restart, concurrent close fanout, stable-zero resident sessions,
+  Redis-loss fail-closed, aggregate metrics, and log privacy. This phase used
+  no Modal GPU or provider requests and cost `$0`.
+- The implemented contract is documented in
+  [Rayline ARC Retained-Encoder Replica Contract](../../architecture/rayline-arc-replica-membership.md).
 
 ## Why It Matters
 
-Process-local KV makes affinity a performance property, while full-history
-rebuild preserves correctness. Without a supported remap and close contract, a
-replica outage can either fail a routing decision or leave duplicate retained
-state after a retry. Treating the experiment proxy as production-ready would
-also hide membership and rollout behavior that materially affects latency and
-capacity.
+The static remap and close contract now covers bounded deployments without an
+experiment proxy. A larger installation still needs a source of reviewed
+membership and evidence that a draining member has no owners before automatic
+removal. Treating static YAML as dynamic discovery would hide rollout behavior
+that materially affects latency and capacity.
 
 ## Desired End State
 
-Provide a supported cache-aware service layer that assigns each episode to one
-healthy encoder, remaps only under a documented failure policy, reconstructs
-from the full request history, and closes state on every visited owner. Expose
-privacy-safe affinity, rebuild, retry, and cleanup metrics, and document how
-membership changes interact with in-flight requests and deployments.
+Preserve the supported static contract while adding an optional versioned
+membership provider/controller that can publish reviewed active/draining sets,
+observe aggregate drain completion, and remove a member only after the episode
+idle-TTL boundary. Dynamic membership must retain the same affinity, ambiguous
+failure, privacy, and close semantics.
 
 ## Exit Criteria
 
-- A versioned production configuration selects and discovers multiple Rayline
-  ARC encoder replicas without experiment-only process wiring.
-- Sticky traffic preserves per-episode KV locality under normal operation.
-- A bounded replica failure remaps the request, preserves the selected worker,
-  and reports the full-history rebuild cost.
-- Ambiguous transport failure has a documented retry/idempotency boundary.
-- Session close reaches every replica that may retain the episode, including
-  after a remap, and stable-zero cleanup is integration-tested.
-- Membership changes, readiness, and rolling replacement have deterministic
-  behavior and aggregate metrics.
-- Operator documentation removes the experiment-only warning and this debt
-  entry is deleted.
+- [x] A versioned static production configuration selects multiple Rayline ARC
+  encoder replicas without experiment-only process wiring.
+- [x] Sticky traffic preserves per-episode KV locality under normal operation.
+- [x] A bounded configured-status failure remaps once and reports aggregate
+  rebuild/session work.
+- [x] Ambiguous transport failure has a documented fail-closed boundary.
+- [x] Session close reaches every visited configured owner and stable-zero
+  cleanup is integration-tested.
+- [x] Readiness and active/draining rolling replacement have deterministic
+  static behavior and aggregate metrics.
+- [ ] A reviewed dynamic membership source and controller can prove drain
+  completion before removal without weakening the v1 request contract.
+- [ ] Operator automation covers that dynamic rollout; then this debt entry is
+  deleted.

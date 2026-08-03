@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,6 +24,7 @@ SESSION_RESPONSE_SCHEMA_VERSION = "rayline.arc.session-pooling-response.v1"
 EMBEDDING_DIMENSION = 1024
 EPISODE_HASH_LENGTH = 64
 PROVIDER_API_KEY = "public-e2e-provider-key"
+ENCODER_ID = os.getenv("RAYLINE_ARC_E2E_ENCODER_ID", "encoder-a")
 
 
 def _validated_pooling_data(
@@ -134,8 +136,10 @@ class EncoderState:
         self.max_same_episode = 0
         self.max_global = 0
         self.request_index = 0
+        self.pooling_requests = 0
         self.session_history: dict[str, tuple[list[dict[str, str]], int, int]] = {}
         self.session_actions: dict[str, int] = {}
+        self.close_calls = 0
 
     def next_request_index(self) -> int:
         with self.lock:
@@ -144,6 +148,7 @@ class EncoderState:
 
     def begin(self, episode_hash: str) -> None:
         with self.lock:
+            self.pooling_requests += 1
             active = self.active_by_episode.get(episode_hash, 0) + 1
             self.active_by_episode[episode_hash] = active
             self.active_global += 1
@@ -165,8 +170,15 @@ class EncoderState:
             self.active_global = 0
             self.max_same_episode = 0
             self.max_global = 0
+            self.pooling_requests = 0
             self.session_history.clear()
             self.session_actions.clear()
+            self.close_calls = 0
+
+    def close_session(self, episode_hash: str) -> None:
+        with self.lock:
+            self.close_calls += 1
+            self.session_history.pop(episode_hash, None)
 
     def update_session(
         self,
@@ -212,6 +224,9 @@ class EncoderState:
             return {
                 "max_same_episode": self.max_same_episode,
                 "max_global": self.max_global,
+                "pooling_requests": self.pooling_requests,
+                "resident_sessions": len(self.session_history),
+                "close_calls": self.close_calls,
                 "session_actions": dict(self.session_actions),
             }
 
@@ -234,6 +249,98 @@ class EncoderHandler(QuietHandler):
         self.send_json(
             status,
             {"error": {"message": message, "type": err_type, "code": status}},
+        )
+
+    def do_DELETE(self) -> None:
+        prefix = "/v1/rayline/arc/session/"
+        if not self.path.startswith(prefix):
+            self.send_vllm_error(404, "Not Found", "NotFoundError")
+            return
+        if (
+            self.headers.get("Modal-Key") != "public-e2e-modal-key"
+            or self.headers.get("Modal-Secret") != "public-e2e-modal-secret"
+        ):
+            self.send_vllm_error(
+                401, "modal-proxy: missing credentials", "Unauthorized"
+            )
+            return
+        episode_hash = self.path[len(prefix) :]
+        if len(episode_hash) != EPISODE_HASH_LENGTH or any(
+            character not in "0123456789abcdef" for character in episode_hash
+        ):
+            self.send_vllm_error(400, "invalid episode hash", "BadRequestError")
+            return
+        ENCODER_STATE.close_session(episode_hash)
+        self.send_json(200, {"closed": True})
+
+    def send_session_pooling_response(
+        self,
+        episode_hash: str,
+        turns: list[dict[str, Any]],
+        embedding: list[float],
+        token_count: int,
+    ) -> None:
+        action, retained, appended, revision = ENCODER_STATE.update_session(
+            episode_hash,
+            turns,
+            token_count,
+        )
+        self.send_json(
+            200,
+            {
+                "schema_version": SESSION_RESPONSE_SCHEMA_VERSION,
+                "embedding": embedding,
+                "serialized_tokens": token_count,
+                "full_history_tokens": token_count,
+                "truncated_tokens": 0,
+                "retained_prefix_tokens": retained,
+                "appended_tokens": appended,
+                "session_action": action,
+                "session_revision": revision,
+                "serializer_version": SERIALIZER_VERSION,
+                "model": "Qwen/Qwen3.5-0.8B",
+                "model_revision": MODEL_REVISION,
+                "tokenizer_revision": MODEL_REVISION,
+                "tokenizer_sha256": TOKENIZER_SHA256,
+                "eos_token_id": 248046,
+                "engine_build_id": ENGINE_BUILD_ID,
+                "io_plugin_version": PLUGIN_VERSION,
+                "pooling_capabilities": [
+                    "chunked_causal_mean",
+                    "resumable_causal_mean",
+                ],
+            },
+        )
+
+    def send_stateless_pooling_response(
+        self,
+        embedding: list[float],
+        token_count: int,
+    ) -> None:
+        self.send_json(
+            200,
+            {
+                # Mirror the vLLM IOProcessorResponse envelope exactly,
+                # including the engine-owned correlation fields.
+                "request_id": f"pool-{ENCODER_STATE.next_request_index()}",
+                "created_at": int(time.time()),
+                "data": {
+                    "embedding": embedding,
+                    "serialized_tokens": token_count,
+                    "full_history_tokens": token_count,
+                    "truncated_tokens": 0,
+                    "cached_prefix_tokens": 0,
+                    "serializer_version": SERIALIZER_VERSION,
+                    "model": "Qwen/Qwen3.5-0.8B",
+                    "model_revision": MODEL_REVISION,
+                    "tokenizer_revision": MODEL_REVISION,
+                    "tokenizer_sha256": TOKENIZER_SHA256,
+                    "eos_token_id": 248046,
+                    "engine_build_id": ENGINE_BUILD_ID,
+                    "io_plugin_version": PLUGIN_VERSION,
+                    "pooling_capabilities": ["chunked_causal_mean"],
+                },
+            },
         )
 
     def do_POST(self) -> None:
@@ -270,68 +377,22 @@ class EncoderHandler(QuietHandler):
             if "ARC_ENCODER_FAIL" in text:
                 self.send_vllm_error(503, "Service Unavailable", "InternalServerError")
                 return
+            if "ARC_ENCODER_A_UNAVAILABLE" in text and ENCODER_ID == "encoder-a":
+                self.send_vllm_error(503, "Service Unavailable", "InternalServerError")
+                return
             sign = -1.0 if "ARC_ROUTE_B" in text else 1.0
             embedding = [0.0] * EMBEDDING_DIMENSION
             embedding[ROUTING_AXIS_INDEX] = sign
             token_count = max(1, sum(len(str(turn.get("text", ""))) for turn in turns))
             if session_wire:
-                action, retained, appended, revision = ENCODER_STATE.update_session(
+                self.send_session_pooling_response(
                     episode_hash,
                     turns,
+                    embedding,
                     token_count,
                 )
-                self.send_json(
-                    200,
-                    {
-                        "schema_version": SESSION_RESPONSE_SCHEMA_VERSION,
-                        "embedding": embedding,
-                        "serialized_tokens": token_count,
-                        "full_history_tokens": token_count,
-                        "truncated_tokens": 0,
-                        "retained_prefix_tokens": retained,
-                        "appended_tokens": appended,
-                        "session_action": action,
-                        "session_revision": revision,
-                        "serializer_version": SERIALIZER_VERSION,
-                        "model": "Qwen/Qwen3.5-0.8B",
-                        "model_revision": MODEL_REVISION,
-                        "tokenizer_revision": MODEL_REVISION,
-                        "tokenizer_sha256": TOKENIZER_SHA256,
-                        "eos_token_id": 248046,
-                        "engine_build_id": ENGINE_BUILD_ID,
-                        "io_plugin_version": PLUGIN_VERSION,
-                        "pooling_capabilities": [
-                            "chunked_causal_mean",
-                            "resumable_causal_mean",
-                        ],
-                    },
-                )
                 return
-            self.send_json(
-                200,
-                {
-                    # Mirror the vLLM IOProcessorResponse envelope exactly,
-                    # including the engine-owned correlation fields.
-                    "request_id": f"pool-{ENCODER_STATE.next_request_index()}",
-                    "created_at": int(time.time()),
-                    "data": {
-                        "embedding": embedding,
-                        "serialized_tokens": token_count,
-                        "full_history_tokens": token_count,
-                        "truncated_tokens": 0,
-                        "cached_prefix_tokens": 0,
-                        "serializer_version": SERIALIZER_VERSION,
-                        "model": "Qwen/Qwen3.5-0.8B",
-                        "model_revision": MODEL_REVISION,
-                        "tokenizer_revision": MODEL_REVISION,
-                        "tokenizer_sha256": TOKENIZER_SHA256,
-                        "eos_token_id": 248046,
-                        "engine_build_id": ENGINE_BUILD_ID,
-                        "io_plugin_version": PLUGIN_VERSION,
-                        "pooling_capabilities": ["chunked_causal_mean"],
-                    },
-                },
-            )
+            self.send_stateless_pooling_response(embedding, token_count)
         finally:
             ENCODER_STATE.end(episode_hash)
 

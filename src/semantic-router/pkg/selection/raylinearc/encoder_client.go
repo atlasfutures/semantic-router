@@ -63,8 +63,9 @@ const (
 // EncoderFailure is deliberately bounded: it reports a stable class and stage
 // but never includes request text, episode identity, response bodies, or keys.
 type EncoderFailure struct {
-	Class EncoderFailureClass
-	Stage string
+	Class      EncoderFailureClass
+	Stage      string
+	StatusCode int
 }
 
 func (failure *EncoderFailure) Error() string {
@@ -112,6 +113,13 @@ type EncoderResult struct {
 	EngineBuildID        string
 	IOPluginVersion      string
 	PoolingCapabilities  []string
+	// ReplicaID and VisitedReplicaIDs are internal transactional affinity.
+	// Callers must not export them as telemetry labels or log fields.
+	ReplicaID         string
+	ReplicaIndex      int
+	ReplicaAttempts   int
+	ReplicaFailover   bool
+	VisitedReplicaIDs []string
 }
 
 type EncoderClient struct {
@@ -407,6 +415,31 @@ func (client *EncoderClient) closeSession(
 	}
 }
 
+// CloseSession explicitly releases a retained encoder session. It is public
+// so a replica pool can fan the close out to every replica that has owned the
+// episode. The client still enforces the same bounded response contract and
+// never includes episode identity or response bodies in returned errors.
+func (client *EncoderClient) CloseSession(
+	parent context.Context,
+	episodeIDHash string,
+) error {
+	if client == nil {
+		return encoderFailure(EncoderFailureRequest, "client")
+	}
+	if !client.config.RetainedSession {
+		return encoderFailure(EncoderFailureRequest, "close_not_retained")
+	}
+	return client.closeSession(parent, episodeIDHash)
+}
+
+// Close releases idle HTTP connections owned by this client.
+func (client *EncoderClient) Close() {
+	if client == nil || client.httpClient == nil {
+		return
+	}
+	client.httpClient.CloseIdleConnections()
+}
+
 func encoderSessionCloseEndpoint(baseURL, episodeIDHash string) (string, error) {
 	if !validEpisodeIDHash(episodeIDHash) {
 		return "", errors.New("invalid ARC encoder episode hash")
@@ -449,7 +482,7 @@ func (client *EncoderClient) consumeCloseResponse(response *http.Response) error
 	if response.StatusCode < http.StatusOK ||
 		response.StatusCode >= http.StatusMultipleChoices {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return encoderFailure(EncoderFailureStatus, "close_http_status")
+		return encoderStatusFailure("close_http_status", response.StatusCode)
 	}
 	body, err := io.ReadAll(
 		io.LimitReader(response.Body, maxEncoderCloseResponse+1),
@@ -539,7 +572,7 @@ func (client *EncoderClient) consumeResponse(
 	if response.StatusCode < http.StatusOK ||
 		response.StatusCode >= http.StatusMultipleChoices {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return nil, encoderFailure(EncoderFailureStatus, "http_status")
+		return nil, encoderStatusFailure("http_status", response.StatusCode)
 	}
 	limited := io.LimitReader(response.Body, maxEncoderResponse+1)
 	body, err := io.ReadAll(limited)
@@ -679,4 +712,12 @@ func encoderFailure(
 	stage string,
 ) *EncoderFailure {
 	return &EncoderFailure{Class: class, Stage: stage}
+}
+
+func encoderStatusFailure(stage string, statusCode int) *EncoderFailure {
+	return &EncoderFailure{
+		Class:      EncoderFailureStatus,
+		Stage:      stage,
+		StatusCode: statusCode,
+	}
 }

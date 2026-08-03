@@ -253,6 +253,13 @@ type RaylineARCTrace struct {
 	SessionAction        string
 	SessionRevision      int
 	EncoderLatency       time.Duration
+	EncoderReplicaIndex  int
+	EncoderAttempts      int
+	EncoderFailover      bool
+	// EncoderReplicaID and EncoderVisitedReplicaIDs are internal transaction
+	// state. They must never be logged or exported as metric labels.
+	EncoderReplicaID         string
+	EncoderVisitedReplicaIDs []string
 }
 
 type RaylineRemoteSelectionContext struct {

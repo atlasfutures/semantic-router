@@ -43,6 +43,7 @@ type routerComponents struct {
 	memoryExtractor             *memory.MemoryExtractor
 	raylineARCEpisodeStore      raylinearc.EpisodeStore
 	raylineARCEpisodeStoreClose func() error
+	raylineARCSessionClose      raylineARCSessionCloseFunc
 	credentialResolver          *authz.CredentialResolver
 	rateLimiter                 *ratelimit.RateLimitResolver
 	lookupTableCancel           func()
@@ -182,7 +183,7 @@ func buildRouterComponents(cfg *config.RouterConfig) (*routerComponents, error) 
 	if replayRecorder != nil {
 		replayReaderForLookup = replayRecorder.Reader()
 	}
-	modelSelector, lookupTable, lookupTableCancel, raylineARCEpisodeStore, raylineARCEpisodeStoreClose := createModelSelectorRegistry(cfg, replayReaderForLookup)
+	modelSelector, lookupTable, lookupTableCancel, raylineARCEpisodeStore, raylineARCEpisodeStoreClose, raylineARCSessionClose := createModelSelectorRegistry(cfg, replayReaderForLookup)
 	memoryStore, memoryExtractor := createMemoryRuntime(cfg)
 	credentialResolver := buildCredentialResolver(cfg)
 	rateLimiter := buildRateLimitResolver(cfg)
@@ -218,6 +219,7 @@ func buildRouterComponents(cfg *config.RouterConfig) (*routerComponents, error) 
 		lookupTableCancel:           lookupTableCancel,
 		raylineARCEpisodeStore:      raylineARCEpisodeStore,
 		raylineARCEpisodeStoreClose: raylineARCEpisodeStoreClose,
+		raylineARCSessionClose:      raylineARCSessionClose,
 	}, nil
 }
 
@@ -243,5 +245,6 @@ func (components *routerComponents) buildRouter() *OpenAIRouter {
 		RateLimiter:                 components.rateLimiter,
 		lookupTableCancel:           components.lookupTableCancel,
 		raylineARCEpisodeStoreClose: components.raylineARCEpisodeStoreClose,
+		raylineARCSessionClose:      components.raylineARCSessionClose,
 	}
 }

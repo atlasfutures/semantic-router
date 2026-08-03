@@ -3,6 +3,12 @@
 Status: accepted as the PL-0041 MVP boundary on 2026-08-01. Broader production
 endorsement remains tracked by the corresponding architecture decision.
 
+Semantic Router's native `rayline_arc` retained-encoder replica behavior is
+specified separately in
+[Rayline ARC Retained-Encoder Replica Contract](rayline-arc-replica-membership.md).
+That static membership contract is distinct from the Pathfinder-owned
+`rayline_remote` decision plane described here.
+
 ## Decision
 
 Run the Rayline encoder in a dedicated vLLM service. Keep Pathfinder as the

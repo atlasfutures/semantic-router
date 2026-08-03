@@ -51,6 +51,7 @@ type OpenAIRouter struct {
 	MemoryExtractor             *memory.MemoryExtractor
 	RaylineARCEpisodeStore      raylinearc.EpisodeStore
 	raylineARCEpisodeStoreClose func() error
+	raylineARCSessionClose      raylineARCSessionCloseFunc
 	raylineARCDrainTimeout      time.Duration
 	// raylineARCInflight counts episode transactions still holding a lease on
 	// this router. A hot reload swaps routers and closes the old one, but

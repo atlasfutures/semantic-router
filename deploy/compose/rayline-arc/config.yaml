@@ -78,7 +78,18 @@ routing:
           artifact_dir: /var/lib/vllm-sr/rayline-arc
           artifact_revision: public-rayline-arc-e2e-v2
           encoder:
-            base_url: ${RAYLINE_ARC_ENCODER_BASE_URL}
+            replicas:
+              - id: encoder-a
+                base_url: ${RAYLINE_ARC_ENCODER_BASE_URL}
+                state: active
+              - id: encoder-b
+                base_url: ${RAYLINE_ARC_ENCODER_B_BASE_URL}
+                state: active
+            failover:
+              schema_version: rayline.arc.encoder-failover.v1
+              unavailable_status_codes: [404, 410, 502, 503, 504]
+              unavailable_cooldown_seconds: 1
+              max_remaps: 1
             model: Qwen/Qwen3.5-0.8B
             model_revision: 2fc06364715b967f1860aea9cf38778875588b17
             expected_build_id: ${RAYLINE_ARC_ENCODER_BUILD_ID}
@@ -90,11 +101,12 @@ routing:
               - resumable_causal_mean
             modal_key_env: RAYLINE_ARC_MODAL_KEY
             modal_secret_env: RAYLINE_ARC_MODAL_SECRET
-            connect_timeout_seconds: 10
-            total_timeout_seconds: 180
+            connect_timeout_seconds: 5
+            total_timeout_seconds: 10
             max_retries: 0
           episode:
             id_header: x-rayline-episode-id
+            close_header: x-rayline-episode-close
             backend: redis
             key_prefix: "vsr:rayline-arc:"
             acquire_timeout_seconds: 5

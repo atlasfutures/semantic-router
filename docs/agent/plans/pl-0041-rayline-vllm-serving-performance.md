@@ -111,20 +111,37 @@ arms and passed the performance comparator, but the launcher failed after both
 stops because Modal app state had not yet converged to zero. Independent
 cleanup verification reached exact zero; close PERF023 without retry and use
 its measurements only as diagnostic evidence. PERF024 is the
-identity-equivalent, cleanup-stabilized successor and remains source-closed
-pending its own external chain.
+identity-equivalent, cleanup-stabilized successor and passed, followed by the
+identity-corrected PERF026 forced-remap packet and PERF027 real-replica-stop
+packet. PERF027 proved the expected single-survivor capacity penalty: throughput
+fell to `0.5929x` control while p50 service latency rose to `3.1924x`.
+Semantic Router now implements the static `rayline.arc.encoder-failover.v1`
+production contract with active/draining membership, persisted v2 owner
+affinity, one explicitly status-gated remap, ambiguous-failure fail-closed
+behavior, aggregate metrics, and explicit final-turn close fanout. A
+two-encoder Envoy/Semantic Router/Redis integration stack exercises failover,
+recovery, restart, Redis loss, cleanup, and privacy without a GPU or provider
+call. The source-exact integration, 104 IO-plugin tests, the full serialized
+Semantic Router suite, the repo CI gate, and the canonical CPU-local
+build/serve/smoke feature gate all pass. This implementation phase spent USD
+0; cumulative observed accounting remains `$73.64050361447986` under the
+`$134.31282402` authority, leaving `$60.67232040552014` before the required
+`$3` reserve. No additional paid run is justified until capacity provisioning
+or automatic membership materially changes. Dynamic discovery remains TD050
+and the 1,000-case qualification remains held.
 Current published implementation heads:
 
 - Semantic Router
   [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
-  PERF016 launch source at `769ecae2892112d28c8e96e0d5cf16c370435b01`
-  for the capability-gated
+  contains the capability-gated
   retained-session client, hermetic stack, bounded direct/static/ARC diagnostic,
   fixed three-model OpenRouter transport and retry contracts, and mandatory ARC
   readiness preflight. The protected session service explicitly enables vLLM
   iteration-detail capture, the minimal batch probe, and protected stateless
   pooling compatibility used by the Pathfinder transaction lane and an
-  explicit `us-east` placement pin for controlled comparison.
+  explicit `us-east` placement pin for controlled comparison. It also contains
+  the static native-ARC replica membership, affinity, failover, close, metrics,
+  and two-encoder integration contract derived from PERF024/PERF026/PERF027.
 - Pathfinder
   [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
   PERF016 launch source at `78b9310a4b5ef46353c88ee31a30d38bde475d94`
@@ -1784,7 +1801,23 @@ but held:
    Stop further live expansion: use PERF024/PERF026/PERF027 to implement the
    versioned production membership, health, idempotency, observability, close,
    and rollout contract tracked by TD050. Keep the 1,000-case qualification
-   held.
+   held. That static production contract is now implemented as
+   `rayline.arc.encoder-failover.v1`: two to eight stable replicas, explicit
+   active/draining state, deterministic new-episode affinity, persisted v2
+   owner/visited state, one status-gated remap, ambiguous-failure fail-closed,
+   concurrent close fanout, and low-cardinality metrics. The real Envoy,
+   Semantic Router, Redis, and two-fake-encoder integration passes failover,
+   survivor stickiness, cooldown recovery, router restart, Redis loss, cleanup,
+   and privacy. No GPU or provider was used and the implementation phase spent
+   `$0`, so cumulative observed accounting stays
+   `$73.64050361447986`; `$60.67232040552014` remains under the
+   `$134.31282402` cap before the required `$3` reserve. Do not add another paid
+   performance run from the present evidence: PERF027 already proves the
+   expected single-survivor capacity penalty. Reopen live measurement only
+   after a preregistered change to survivor capacity, automatic membership, or
+   another deployment variable capable of changing that boundary. Track
+   automatic provider/controller discovery under TD050 and keep the 1,000-case
+   qualification held.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage

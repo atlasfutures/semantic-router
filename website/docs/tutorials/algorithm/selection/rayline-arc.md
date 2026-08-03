@@ -63,6 +63,9 @@ ARC is deliberately stricter than other selectors:
   `development_mode: true`, a positive bound, and sticky single-replica use.
 - Redis passwords are named through `password_env`; the canonical config never
   contains the credential value.
+- Retained-session deployments choose exactly one `encoder.base_url` or a
+  static, versioned `encoder.replicas` set. Replica mode requires an explicit
+  final-turn close header and disables per-client retries.
 
 ## Configuration
 
@@ -144,6 +147,63 @@ because the session is optional acceleration state. Automatic prefix caching
 stays disabled: `resumable_causal_mean` describes a pinned live request, not a
 vLLM prefix-cache hit.
 
+### Static retained-encoder replicas
+
+For two to eight independent vLLM retained-session services, replace
+`encoder.base_url` with a static membership block. All replicas share the same
+model, build, plugin, serializer, capabilities, timeout, and optional Modal
+credential shape:
+
+```yaml
+encoder:
+  replicas:
+    - id: encoder-a
+      base_url: http://rayline-arc-encoder-a:8000
+      state: active
+    - id: encoder-b
+      base_url: http://rayline-arc-encoder-b:8000
+      state: active
+  failover:
+    schema_version: rayline.arc.encoder-failover.v1
+    unavailable_status_codes: [404, 410, 502, 503, 504]
+    unavailable_cooldown_seconds: 30
+    max_remaps: 1
+  model: Qwen/Qwen3.5-0.8B
+  model_revision: 2fc06364715b967f1860aea9cf38778875588b17
+  expected_build_id: ${RAYLINE_ARC_VLLM_BUILD_ID}
+  expected_io_plugin_version: rayline-arc-io@0.1.0
+  serializer_version: mtrouter-token-blocks-v2
+  serving_rung: B
+  required_pooling_capabilities:
+    - chunked_causal_mean
+    - resumable_causal_mean
+  connect_timeout_seconds: 5
+  total_timeout_seconds: 180
+  max_retries: 0
+episode:
+  id_header: x-rayline-episode-id
+  close_header: x-rayline-episode-close
+  # Keep the remaining Redis lease/TTL fields from the complete example.
+```
+
+New episodes use deterministic rendezvous placement across `active` members.
+An existing episode stays on its persisted owner even when that member is
+`draining`. Only an explicitly configured HTTP status can trigger one remap;
+transport, timeout, decode, and identity failures fail closed without calling
+a peer. Treat the status list as a deployment assertion that those responses
+occur before retained mutation, not as a generic retry list.
+
+The configured close header accepts exact `true` on a final request. After the
+provider returns 2xx, Semantic Router concurrently closes every visited
+encoder owner. Clean close clears encoder affinity but retains ARC policy
+history. For rolling replacement, first change a member from `active` to
+`draining`, wait at least `episode.idle_ttl_seconds` after its last admitted
+owner while watching close/session metrics, and only then remove it. Premature
+removal fails closed.
+
+See [Rayline ARC Retained-Encoder Replica Contract](../../../../../docs/architecture/rayline-arc-replica-membership.md)
+for the full interaction, failure, observability, and rollout model.
+
 Modal proxy authentication is configured by environment-variable name, never
 by embedding credentials in YAML. Configure `modal_key_env` and
 `modal_secret_env` together for a protected Modal web endpoint, or omit both
@@ -167,6 +227,9 @@ from an existing `rayline-arc-runtime` Secret. Before deployment:
 4. Deploy the protected Rung B encoder from
    `src/vllm-plugins/rayline_arc_io/modal_service.py` only after its CUDA
    correctness gate passes.
+5. For replica mode, provide stable IDs and independent endpoints in the
+   private values overlay. Do not place a load balancer behind one replica ID;
+   the ID is the retained-state owner.
 
 Render and deploy a pinned chart release:
 
@@ -189,9 +252,10 @@ For local CPU integration, `make rayline-arc-test-integration` builds and runs
 real Envoy, Semantic Router, and Redis with a generated full-shape synthetic
 artifact plus contract-faithful encoder and provider doubles. It covers both
 arms, dispatch ownership, 2xx/non-2xx transactions, stream abort, client
-cancel, same-episode fencing, cross-episode concurrency, router restart, and
-log privacy. It does not claim Qwen/CUDA correctness; the Modal CUDA gate is
-separate.
+cancel, same-episode fencing, cross-episode concurrency, two-replica affinity,
+explicit-status failover, cooldown recovery, close fanout, stable-zero retained
+sessions, router restart, and log privacy. It does not claim Qwen/CUDA
+correctness; the Modal CUDA gate is separate.
 
 ## Rollback
 

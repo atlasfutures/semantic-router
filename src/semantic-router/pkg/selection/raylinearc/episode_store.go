@@ -27,7 +27,8 @@ import (
 )
 
 const (
-	episodeStateSchema   = "rayline.arc.episode-state.v1"
+	episodeStateSchemaV1 = "rayline.arc.episode-state.v1"
+	episodeStateSchema   = "rayline.arc.episode-state.v2"
 	maxFutureClockSkew   = 5 * time.Minute
 	episodeOwnerBytes    = 24
 	maxEpisodeStateBytes = 64 * 1024
@@ -74,11 +75,13 @@ type EpisodeStoreReadiness interface {
 }
 
 type episodeStateWire struct {
-	SchemaVersion string               `json:"schema_version"`
-	Version       uint64               `json:"version"`
-	PreviousArm   *int                 `json:"previous_arm"`
-	TurnIndex     uint64               `json:"turn_index"`
-	Warmth        []*episodeWarmthWire `json:"warmth"`
+	SchemaVersion        string               `json:"schema_version"`
+	Version              uint64               `json:"version"`
+	PreviousArm          *int                 `json:"previous_arm"`
+	TurnIndex            uint64               `json:"turn_index"`
+	Warmth               []*episodeWarmthWire `json:"warmth"`
+	EncoderOwner         *string              `json:"encoder_owner,omitempty"`
+	EncoderVisitedOwners *[]string            `json:"encoder_visited_owners,omitempty"`
 }
 
 type episodeWarmthWire struct {
@@ -99,9 +102,11 @@ func cloneEpisodeState(state *EpisodeState) *EpisodeState {
 		return nil
 	}
 	cloned := &EpisodeState{
-		PreviousArm: cloneEpisodeArm(state.PreviousArm),
-		TurnIndex:   state.TurnIndex,
-		Warmth:      make([]*WorkerWarmth, len(state.Warmth)),
+		PreviousArm:          cloneEpisodeArm(state.PreviousArm),
+		TurnIndex:            state.TurnIndex,
+		Warmth:               make([]*WorkerWarmth, len(state.Warmth)),
+		EncoderOwner:         state.EncoderOwner,
+		EncoderVisitedOwners: append([]string(nil), state.EncoderVisitedOwners...),
 	}
 	for index, warmth := range state.Warmth {
 		if warmth == nil {
@@ -136,6 +141,10 @@ func marshalEpisodeState(
 		TurnIndex:     state.TurnIndex,
 		Warmth:        make([]*episodeWarmthWire, len(state.Warmth)),
 	}
+	owner := state.EncoderOwner
+	visited := append([]string{}, state.EncoderVisitedOwners...)
+	wire.EncoderOwner = &owner
+	wire.EncoderVisitedOwners = &visited
 	for index, warmth := range state.Warmth {
 		if warmth == nil {
 			continue
@@ -171,14 +180,53 @@ func unmarshalEpisodeState(
 	if err := decodeStrictJSON(payload, &wire); err != nil {
 		return nil, 0, errors.New("decode ARC episode state")
 	}
-	if wire.SchemaVersion != episodeStateSchema ||
-		len(wire.Warmth) != workerCount {
+	if len(wire.Warmth) != workerCount {
 		return nil, 0, errors.New("ARC episode state contract mismatch")
 	}
+	owner, visited, err := decodeEpisodeStateAffinity(wire)
+	if err != nil {
+		return nil, 0, err
+	}
+	state := episodeStateFromWire(wire, workerCount, owner, visited)
+	if err := validatePersistedEpisodeState(state, now); err != nil {
+		return nil, 0, err
+	}
+	return state, wire.Version, nil
+}
+
+func decodeEpisodeStateAffinity(
+	wire episodeStateWire,
+) (string, []string, error) {
+	switch wire.SchemaVersion {
+	case episodeStateSchemaV1:
+		if wire.EncoderOwner != nil || wire.EncoderVisitedOwners != nil {
+			return "", nil, errors.New("ARC episode state contract mismatch")
+		}
+		return "", nil, nil
+	case episodeStateSchema:
+		if wire.EncoderOwner == nil || wire.EncoderVisitedOwners == nil ||
+			*wire.EncoderVisitedOwners == nil {
+			return "", nil, errors.New("ARC episode state contract mismatch")
+		}
+		return *wire.EncoderOwner,
+			append([]string(nil), (*wire.EncoderVisitedOwners)...), nil
+	default:
+		return "", nil, errors.New("ARC episode state contract mismatch")
+	}
+}
+
+func episodeStateFromWire(
+	wire episodeStateWire,
+	workerCount int,
+	owner string,
+	visited []string,
+) *EpisodeState {
 	state := &EpisodeState{
-		PreviousArm: cloneEpisodeArm(wire.PreviousArm),
-		TurnIndex:   wire.TurnIndex,
-		Warmth:      make([]*WorkerWarmth, workerCount),
+		PreviousArm:          cloneEpisodeArm(wire.PreviousArm),
+		TurnIndex:            wire.TurnIndex,
+		Warmth:               make([]*WorkerWarmth, workerCount),
+		EncoderOwner:         owner,
+		EncoderVisitedOwners: visited,
 	}
 	for index, warmth := range wire.Warmth {
 		if warmth == nil {
@@ -189,10 +237,7 @@ func unmarshalEpisodeState(
 			LastInputTokens: warmth.LastInputTokens,
 		}
 	}
-	if err := validatePersistedEpisodeState(state, now); err != nil {
-		return nil, 0, err
-	}
-	return state, wire.Version, nil
+	return state
 }
 
 func validatePersistedEpisodeState(

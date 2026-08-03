@@ -48,25 +48,28 @@ type RaylineARCAlgorithmConfig struct {
 
 // RaylineARCEncoderConfig pins the dedicated vLLM pooling service contract.
 type RaylineARCEncoderConfig struct {
-	BaseURL               string   `yaml:"base_url"`
-	Model                 string   `yaml:"model"`
-	ModelRevision         string   `yaml:"model_revision"`
-	ExpectedBuildID       string   `yaml:"expected_build_id"`
-	ExpectedPluginVersion string   `yaml:"expected_io_plugin_version"`
-	SerializerVersion     string   `yaml:"serializer_version"`
-	ServingRung           string   `yaml:"serving_rung"`
-	RequiredCapabilities  []string `yaml:"required_pooling_capabilities"`
-	ModalKeyEnv           string   `yaml:"modal_key_env,omitempty"`
-	ModalSecretEnv        string   `yaml:"modal_secret_env,omitempty"`
-	ConnectTimeoutSeconds int      `yaml:"connect_timeout_seconds"`
-	TotalTimeoutSeconds   int      `yaml:"total_timeout_seconds"`
-	MaxRetries            int      `yaml:"max_retries"`
+	BaseURL               string                           `yaml:"base_url"`
+	Replicas              []RaylineARCEncoderReplicaConfig `yaml:"replicas,omitempty"`
+	Failover              RaylineARCEncoderFailoverConfig  `yaml:"failover,omitempty"`
+	Model                 string                           `yaml:"model"`
+	ModelRevision         string                           `yaml:"model_revision"`
+	ExpectedBuildID       string                           `yaml:"expected_build_id"`
+	ExpectedPluginVersion string                           `yaml:"expected_io_plugin_version"`
+	SerializerVersion     string                           `yaml:"serializer_version"`
+	ServingRung           string                           `yaml:"serving_rung"`
+	RequiredCapabilities  []string                         `yaml:"required_pooling_capabilities"`
+	ModalKeyEnv           string                           `yaml:"modal_key_env,omitempty"`
+	ModalSecretEnv        string                           `yaml:"modal_secret_env,omitempty"`
+	ConnectTimeoutSeconds int                              `yaml:"connect_timeout_seconds"`
+	TotalTimeoutSeconds   int                              `yaml:"total_timeout_seconds"`
+	MaxRetries            int                              `yaml:"max_retries"`
 }
 
 // RaylineARCEpisodeConfig configures serialized, fenced episode state.
 // Memory is permitted only when DevelopmentMode is explicitly true.
 type RaylineARCEpisodeConfig struct {
 	IDHeader              string                `yaml:"id_header"`
+	CloseHeader           string                `yaml:"close_header,omitempty"`
 	Backend               string                `yaml:"backend"`
 	KeyPrefix             string                `yaml:"key_prefix"`
 	AcquireTimeoutSeconds int                   `yaml:"acquire_timeout_seconds"`
@@ -101,6 +104,12 @@ func validateRaylineARCAlgorithmConfig(cfg *RaylineARCAlgorithmConfig) error {
 	if err := validateRaylineARCEpisodeConfig(cfg.Episode); err != nil {
 		return fmt.Errorf("episode: %w", err)
 	}
+	if len(cfg.Encoder.Replicas) > 0 && cfg.Episode.CloseHeader == "" {
+		return fmt.Errorf("episode: close_header is required with encoder replicas")
+	}
+	if len(cfg.Encoder.Replicas) == 0 && cfg.Episode.CloseHeader != "" {
+		return fmt.Errorf("episode: close_header requires encoder replicas")
+	}
 	return nil
 }
 
@@ -116,7 +125,7 @@ func validateRaylineARCArtifactConfig(cfg *RaylineARCAlgorithmConfig) error {
 }
 
 func validateRaylineARCEncoderConfig(cfg RaylineARCEncoderConfig) error {
-	if err := validateRaylineARCBaseURL(cfg.BaseURL); err != nil {
+	if err := validateRaylineARCEncoderMembership(cfg); err != nil {
 		return err
 	}
 	if cfg.Model != RaylineARCEncoderModel {
@@ -294,6 +303,14 @@ func validateRaylineARCEpisodeConfig(cfg RaylineARCEpisodeConfig) error {
 func validateRaylineARCEpisodeFields(cfg RaylineARCEpisodeConfig) error {
 	if !raylineARCHeaderNamePattern.MatchString(cfg.IDHeader) {
 		return fmt.Errorf("id_header must be a nonempty lowercase HTTP field name")
+	}
+	if cfg.CloseHeader != "" {
+		if !raylineARCHeaderNamePattern.MatchString(cfg.CloseHeader) {
+			return fmt.Errorf("close_header must be a lowercase HTTP field name")
+		}
+		if cfg.CloseHeader == cfg.IDHeader {
+			return fmt.Errorf("close_header must differ from id_header")
+		}
 	}
 	if strings.TrimSpace(cfg.KeyPrefix) == "" || len(cfg.KeyPrefix) > 128 {
 		return fmt.Errorf("key_prefix must contain between 1 and 128 bytes")

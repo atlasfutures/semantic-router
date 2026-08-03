@@ -36,6 +36,15 @@ type raylineARCEncoder interface {
 	) (*raylinearc.EncoderResult, error)
 }
 
+type raylineARCAffinityEncoder interface {
+	EncodeWithAffinity(
+		context.Context,
+		string,
+		[]raylinearc.Turn,
+		raylinearc.EncoderAffinity,
+	) (*raylinearc.EncoderResult, error)
+}
+
 type raylineARCScorer interface {
 	WorkerIDs() []string
 	ArtifactID() string
@@ -141,7 +150,7 @@ func (selector *raylineARCSelector) Select(
 	if err != nil {
 		return nil, err
 	}
-	encoded, latency, err := selector.encode(ctx, arcContext)
+	encoded, latency, err := selector.encode(ctx, arcContext, state)
 	if err != nil {
 		return nil, err
 	}
@@ -210,13 +219,28 @@ func (selector *raylineARCSelector) prepareSelection(
 func (selector *raylineARCSelector) encode(
 	ctx context.Context,
 	arcContext *selection.RaylineARCSelectionContext,
+	state *raylinearc.EpisodeState,
 ) (*raylinearc.EncoderResult, time.Duration, error) {
 	started := selector.now()
-	encoded, err := selector.encoder.Encode(
-		ctx,
-		arcContext.EpisodeIDHash,
-		arcContext.Turns,
-	)
+	var encoded *raylinearc.EncoderResult
+	var err error
+	if encoder, ok := selector.encoder.(raylineARCAffinityEncoder); ok {
+		encoded, err = encoder.EncodeWithAffinity(
+			ctx,
+			arcContext.EpisodeIDHash,
+			arcContext.Turns,
+			raylinearc.EncoderAffinity{
+				Owner:   state.EncoderOwner,
+				Visited: state.EncoderVisitedOwners,
+			},
+		)
+	} else {
+		encoded, err = selector.encoder.Encode(
+			ctx,
+			arcContext.EpisodeIDHash,
+			arcContext.Turns,
+		)
+	}
 	encoderLatency := selector.now().Sub(started)
 	if err != nil {
 		return nil, encoderLatency, boundedARCEncoderFailure(err)
@@ -255,6 +279,10 @@ func (selector *raylineARCSelector) selectionResult(
 ) *selection.SelectionResult {
 	selected := &selCtx.CandidateModels[decision.SelectedArm]
 	score := float64(decision.AdjustedScores[decision.SelectedArm])
+	replicaIndex := encoded.ReplicaIndex
+	if encoded.ReplicaID == "" {
+		replicaIndex = -1
+	}
 	return &selection.SelectionResult{
 		SelectedModel: selected.Model,
 		LoRAName:      selected.LoRAName,
@@ -292,6 +320,14 @@ func (selector *raylineARCSelector) selectionResult(
 			SessionAction:        encoded.SessionAction,
 			SessionRevision:      encoded.SessionRevision,
 			EncoderLatency:       encoderLatency,
+			EncoderReplicaIndex:  replicaIndex,
+			EncoderAttempts:      encoded.ReplicaAttempts,
+			EncoderFailover:      encoded.ReplicaFailover,
+			EncoderReplicaID:     encoded.ReplicaID,
+			EncoderVisitedReplicaIDs: append(
+				[]string(nil),
+				encoded.VisitedReplicaIDs...,
+			),
 		},
 	}
 }

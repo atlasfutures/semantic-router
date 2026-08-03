@@ -36,9 +36,11 @@ type WorkerWarmth struct {
 }
 
 type EpisodeState struct {
-	PreviousArm *int
-	TurnIndex   uint64
-	Warmth      []*WorkerWarmth
+	PreviousArm          *int
+	TurnIndex            uint64
+	Warmth               []*WorkerWarmth
+	EncoderOwner         string
+	EncoderVisitedOwners []string
 }
 
 func NewEpisodeState(workerCount int) (*EpisodeState, error) {
@@ -215,7 +217,38 @@ func validateEpisodeState(state *EpisodeState, workerCount int) error {
 		(*state.PreviousArm < 0 || *state.PreviousArm >= workerCount) {
 		return errors.New("previous arm is out of range")
 	}
+	if err := validatePersistedEncoderAffinity(
+		state.EncoderOwner,
+		state.EncoderVisitedOwners,
+	); err != nil {
+		return err
+	}
 	return validateWarmth(state.Warmth)
+}
+
+func validatePersistedEncoderAffinity(owner string, visited []string) error {
+	if owner != "" && !validEncoderReplicaID(owner) {
+		return errors.New("encoder owner is invalid")
+	}
+	if len(visited) > maxEncoderReplicas {
+		return errors.New("encoder visited-owner count exceeds limit")
+	}
+	seen := make(map[string]struct{}, len(visited))
+	for _, replicaID := range visited {
+		if !validEncoderReplicaID(replicaID) {
+			return errors.New("encoder visited owner is invalid")
+		}
+		if _, exists := seen[replicaID]; exists {
+			return errors.New("encoder visited owner is duplicated")
+		}
+		seen[replicaID] = struct{}{}
+	}
+	if owner != "" {
+		if _, exists := seen[owner]; !exists {
+			return errors.New("encoder owner is absent from visited owners")
+		}
+	}
+	return nil
 }
 
 func validateWarmth(warmth []*WorkerWarmth) error {

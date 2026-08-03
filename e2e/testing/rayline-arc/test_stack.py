@@ -19,6 +19,7 @@ from typing import Any
 
 ENVOY_PORT = int(os.getenv("RAYLINE_ARC_E2E_ENVOY_PORT", "18888"))
 ENCODER_PORT = int(os.getenv("RAYLINE_ARC_E2E_ENCODER_PORT", "18080"))
+ENCODER_B_PORT = int(os.getenv("RAYLINE_ARC_E2E_ENCODER_B_PORT", "18083"))
 PROVIDER_PORT = int(os.getenv("RAYLINE_ARC_E2E_PROVIDER_PORT", "18081"))
 REDIS_PORT = int(os.getenv("RAYLINE_ARC_E2E_REDIS_PORT", "16379"))
 METRICS_PORT = int(os.getenv("RAYLINE_ARC_E2E_METRICS_PORT", "19190"))
@@ -90,6 +91,7 @@ def _chat(
     messages: list[dict[str, str]] | None = None,
     stream: bool = False,
     timeout: float = 15,
+    close: bool = False,
 ) -> tuple[int, dict[str, Any], dict[str, str]]:
     body: dict[str, Any] = {
         "model": "auto",
@@ -131,15 +133,18 @@ def _chat(
         ENVOY_PORT,
         timeout=timeout,
     )
+    request_headers = {
+        "content-type": "application/json",
+        "x-rayline-episode-id": episode,
+        "authorization": f"Bearer {KEY_CANARY}",
+    }
+    if close:
+        request_headers["x-rayline-episode-close"] = "true"
     connection.request(
         "POST",
         "/v1/chat/completions",
         body=payload,
-        headers={
-            "content-type": "application/json",
-            "x-rayline-episode-id": episode,
-            "authorization": f"Bearer {KEY_CANARY}",
-        },
+        headers=request_headers,
     )
     response = connection.getresponse()
     headers = {key.lower(): value for key, value in response.getheaders()}
@@ -281,6 +286,23 @@ def _reset_service(port: int) -> None:
     assert status == HTTP_OK
 
 
+def _reset_encoders() -> None:
+    for port in (ENCODER_PORT, ENCODER_B_PORT):
+        _reset_service(port)
+
+
+def _encoder_stats() -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for replica_id, port in (
+        ("encoder-a", ENCODER_PORT),
+        ("encoder-b", ENCODER_B_PORT),
+    ):
+        status, stats, _ = _json_request(port, "/stats")
+        assert status == HTTP_OK
+        result[replica_id] = stats
+    return result
+
+
 def _assert_dispatch(
     body: dict[str, Any],
     *,
@@ -414,6 +436,10 @@ def _assert_failure_transactions() -> None:
     assert status == HTTP_UNAVAILABLE
     assert len(_provider_requests()) == before_count
     assert _wait_for_state(encoder_episode, None) is None
+    # Both replicas returned an explicit configured 503 and are passively
+    # unavailable for one second. Let that bounded cooldown expire before the
+    # next independent scenario.
+    time.sleep(1.1)
 
 
 def _assert_transient_retry_transactions() -> dict[str, float | int]:
@@ -489,7 +515,7 @@ def _assert_retry_metrics() -> None:
 
 
 def _assert_concurrency() -> None:
-    _reset_service(ENCODER_PORT)
+    _reset_encoders()
     same_episode = f"{EPISODE_CANARY}-same-concurrency"
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         results = list(
@@ -505,10 +531,10 @@ def _assert_concurrency() -> None:
     assert all(result[0] == HTTP_OK for result in results), results
     state = _state(same_episode)
     assert state is not None and state["version"] == CONCURRENT_REQUESTS
-    status, stats, _ = _json_request(ENCODER_PORT, "/stats")
-    assert status == HTTP_OK and stats["max_same_episode"] == 1, stats
+    stats = _encoder_stats()
+    assert max(value["max_same_episode"] for value in stats.values()) == 1, stats
 
-    _reset_service(ENCODER_PORT)
+    _reset_encoders()
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         results = list(
             executor.map(
@@ -521,12 +547,14 @@ def _assert_concurrency() -> None:
             )
         )
     assert all(result[0] == HTTP_OK for result in results), results
-    status, stats, _ = _json_request(ENCODER_PORT, "/stats")
-    assert status == HTTP_OK and stats["max_global"] >= CONCURRENT_REQUESTS, stats
+    stats = _encoder_stats()
+    assert (
+        sum(value["max_global"] for value in stats.values()) >= CONCURRENT_REQUESTS
+    ), stats
 
 
 def _assert_retained_session_extension() -> None:
-    _reset_service(ENCODER_PORT)
+    _reset_encoders()
     episode = f"{EPISODE_CANARY}-retained-extension"
     first_message = {
         "role": "user",
@@ -551,9 +579,12 @@ def _assert_retained_session_extension() -> None:
         ],
     )
     assert status == HTTP_OK
-    status, stats, _ = _json_request(ENCODER_PORT, "/stats")
-    assert status == HTTP_OK
-    assert stats["session_actions"] == {"created": 1, "appended": 1}, stats
+    stats = _encoder_stats()
+    actions: dict[str, int] = {}
+    for value in stats.values():
+        for action, count in value["session_actions"].items():
+            actions[action] = actions.get(action, 0) + count
+    assert actions == {"created": 1, "appended": 1}, stats
 
 
 def _assert_response_boundaries() -> None:
@@ -629,6 +660,7 @@ def _initial(receipt: Path) -> None:
                 "episode": persistent_episode,
                 "version": persistent_state["version"],
                 "turn_index": persistent_state["turn_index"],
+                "encoder_owner": persistent_state["encoder_owner"],
                 "retry_benchmark": retry_benchmark,
             },
             sort_keys=True,
@@ -652,6 +684,7 @@ def _resume(receipt: Path) -> None:
     assert before is not None
     assert before["version"] == expected["version"], before
     assert before["turn_index"] == expected["turn_index"], before
+    assert before["encoder_owner"] == expected["encoder_owner"], before
     _, after = _assert_route(
         expected["episode"],
         "after router restart",
@@ -660,6 +693,7 @@ def _resume(receipt: Path) -> None:
     )
     assert after["version"] == before["version"] + 1, after
     assert after["turn_index"] == before["turn_index"] + 1, after
+    assert after["encoder_owner"] == before["encoder_owner"], after
 
 
 def _redis_loss() -> None:

@@ -145,9 +145,11 @@ func (r *OpenAIRouter) completeModelSelection(
 			ctx.VSRRaylineARC = result.RaylineARC
 			if ctx.RaylineARCTransaction != nil &&
 				result.RaylineARC != nil {
-				ctx.RaylineARCTransaction.markSelection(
+				ctx.RaylineARCTransaction.markSelectionWithAffinity(
 					result.RaylineARC.SelectedArm,
 					result.RaylineARC.SerializedTokens,
+					result.RaylineARC.EncoderReplicaID,
+					result.RaylineARC.EncoderVisitedReplicaIDs,
 				)
 			}
 		}
@@ -313,6 +315,10 @@ func observeRaylineARCSelection(
 		switchCost,
 		cacheMissTokens,
 	)
+	routermetrics.RecordRaylineARCEncoderReplicaRoute(
+		trace.EncoderAttempts,
+		trace.EncoderFailover,
+	)
 	logging.ComponentEvent("extproc", "rayline_arc_selection", map[string]interface{}{
 		"request_id":             ctx.RequestID,
 		"artifact_id_hash":       trace.ArtifactID,
@@ -337,6 +343,9 @@ func observeRaylineARCSelection(
 		"session_action":         trace.SessionAction,
 		"session_revision":       trace.SessionRevision,
 		"encoder_latency_millis": trace.EncoderLatency.Milliseconds(),
+		"encoder_replica_index":  trace.EncoderReplicaIndex,
+		"encoder_attempts":       trace.EncoderAttempts,
+		"encoder_failover":       trace.EncoderFailover,
 	})
 }
 
