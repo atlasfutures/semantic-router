@@ -529,25 +529,50 @@ are privately round-trip verified at
 The source interlock is closed after this success; PERF019 cannot retry, and the
 held 1,000-case qualification remains unreachable.
 
-## External Provider Canary
+## External Provider Agentic Qualification
 
-This canary proves transport and settlement only; it is excluded from local
-throughput comparisons.
+This opt-in packet measures the complete single-router serving path against
+real OpenRouter generation. Absolute provider latency and throughput describe
+this packet only; they are not interchangeable with the self-hosted Modal
+worker results because the generation models, prompt lengths, and provider
+queues differ. Only normalized ARC/static ratios and latency deltas may be
+compared across the two environments.
 
-- opt-in, single concurrency, at most 8 paid requests;
-- at most 128 output tokens per request;
-- hard observed provider-spend cap of USD 1.00 for the run;
-- dedicated credential with an account-side USD 5.00 spend limit;
-- frozen C82 worker/model routes
-  `deepseek/deepseek-v4-flash@thinking-off` through `baidu/fp8` and
-  `xiaomi/mimo-v2.5-pro@thinking-off` through `xiaomi/fp8`;
-- provider fallback disabled and parameter support required; and
-- abort before spend if the model, provider route, price snapshot, or
-  credential scope cannot be proven.
+The frozen model pool is:
 
-The sanitized receipt records provider model and route identity, status,
-streaming behavior, usage, and settled cost, but never the credential,
-authorization headers, prompt content, or provider receipt body.
+- `deepseek/deepseek-v4-flash@thinking-off`, pinned to standard Baidu;
+- `xiaomi/mimo-v2.5@thinking-off`, pinned to standard Xiaomi; and
+- `tencent/hy3@thinking-off`, pinned to standard Tencent.
+
+Provider fallback is disabled and parameter support is required. No Fireworks
+Fast, Kimi, or GLM route is permitted. The agentic histories are public
+synthetic multi-turn code-patch, research-synthesis, and incident-triage
+requests with tool schemas and bounded tool results. C82 routes 24 discovery
+requests, and natural model share is a reported result rather than a
+three-model coverage precondition. Six cases spanning all three scenario
+shapes and at least two active workers are frozen for comparison.
+
+Each frozen request runs through direct OpenRouter, specified-model static
+gateway, and ARC paths at concurrency one and four. The measured packet is
+exactly 72 requests with a 96-output-token cap. Before discovery, one direct
+DS4/Baidu request capped at one output token establishes new-key/provider
+readiness, followed by one specified-model gateway reachability request for
+each worker. The complete AGT005 bound is 100 logical provider requests and
+200 external attempts. Only the readiness canary may retry one initial 404;
+ordinary direct calls retry one pre-response 429/503, and gateway retry remains
+owned by Envoy.
+
+The OpenRouter ephemeral key has a USD 0.75 server-side hard limit, and the
+aggregate report rejects provider cost above USD 0.50. The protected Modal
+encoder has a 30-minute paid-wall limit. The receipt reports aggregate request
+and output-token throughput, TTFT, end-to-end and Envoy upstream latency,
+tokens, retries, cost, provider/model identity, C82 natural mix, and
+ARC-versus-static ratios. It persists no credential, authorization header,
+prompt, tool output, routing anchor, per-request assignment, raw error body, or
+timestamp. Cleanup must delete transient OpenRouter and Modal credentials,
+remove Compose and Redis state, stop the exact encoder container, and retain
+the deployed app at zero tasks. The 1,000-case qualification is unreachable
+from this launcher.
 
 ## Evidence Lineage
 

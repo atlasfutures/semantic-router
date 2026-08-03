@@ -28,7 +28,7 @@ if importlib.util.find_spec("modal") is None:
 launcher = importlib.import_module("run_openrouter_fullstack")
 EXPECTED_MAX_COMPLETION_TOKENS = 96
 EXPECTED_MAX_MEASURED_REQUESTS = 72
-EXPECTED_MAX_PROVIDER_REQUESTS = 99
+EXPECTED_MAX_PROVIDER_REQUESTS = 100
 EXPECTED_PROVIDER_COST_LIMIT_USD = 0.50
 EXPECTED_MIN_TOOL_RESULT_CHARACTERS = 1_000
 EXPECTED_SELECTED_CASES = 6
@@ -147,6 +147,36 @@ def test_agentic_endpoint_probes_reach_every_pinned_worker(
     assert len(results) == len(benchmark.WORKERS)
     assert [call["path"] for call in calls] == ["gateway_static"] * 3
     assert [call["expected_worker"] for call in calls] == list(benchmark.WORKERS)
+
+
+def test_agentic_key_readiness_is_a_bounded_direct_ds4_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def fake_stream(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {
+            "selected_worker": kwargs["expected_worker"],
+            "external_attempts": 1,
+            "cost_usd": 0.0,
+        }
+
+    monkeypatch.setattr(benchmark, "_stream_request", fake_stream)
+    result = benchmark._probe_key_readiness(
+        gateway_url="http://gateway.invalid",
+        openrouter_key="test-key",
+        run_id="test-run",
+        timeout_seconds=1.0,
+    )
+
+    assert result["selected_worker"] == "worker-a"
+    assert len(calls) == benchmark.KEY_READINESS_REQUESTS
+    assert calls[0]["path"] == "direct"
+    assert calls[0]["expected_worker"] == "worker-a"
+    assert calls[0]["max_completion_tokens"] == 1
+    assert calls[0]["maximum_attempts"] == benchmark.MAX_DATA_PLANE_ATTEMPTS
+    assert calls[0]["retryable_status_codes"] == frozenset({404, 429, 503})
 
 
 def test_agentic_discovery_reports_the_full_natural_mix(
@@ -279,6 +309,44 @@ def test_direct_path_retries_one_pre_response_429(
     assert sleeps == [0.25]
 
 
+def test_key_readiness_can_retry_one_pre_response_404(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts: list[dict[str, Any]] = []
+    sleeps: list[float] = []
+
+    def fake_once(**kwargs: Any) -> dict[str, Any]:
+        attempts.append(kwargs)
+        if len(attempts) == 1:
+            raise benchmark.OpenRouterHTTPError(
+                endpoint="readiness test",
+                status_code=404,
+                retry_after_seconds=0.5,
+                error_type="not_found",
+                provider_code="404",
+            )
+        return {"external_attempts": 1}
+
+    monkeypatch.setattr(benchmark, "_stream_request_once", fake_once)
+    monkeypatch.setattr(benchmark.time, "sleep", sleeps.append)
+    result = benchmark._stream_request(
+        path="direct",
+        case={},
+        expected_worker="worker-a",
+        gateway_url="http://gateway.invalid",
+        openrouter_key="test-key",
+        episode_id="test-readiness",
+        timeout_seconds=1.0,
+        max_completion_tokens=1,
+        maximum_attempts=benchmark.MAX_DATA_PLANE_ATTEMPTS,
+        retryable_status_codes=benchmark.KEY_READINESS_RETRYABLE_STATUS_CODES,
+    )
+
+    assert len(attempts) == benchmark.MAX_DATA_PLANE_ATTEMPTS
+    assert result["external_attempts"] == benchmark.MAX_DATA_PLANE_ATTEMPTS
+    assert sleeps == [0.5]
+
+
 def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
     config = (DEPLOY_DIR / "config-openrouter-agentic.yaml").read_text()
     override = (DEPLOY_DIR / "compose-openrouter-agentic.yaml").read_text()
@@ -295,15 +363,15 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
     assert "fireworks/fast" not in config
     assert launcher.PACKETS["agentic"].key_limit_usd == EXPECTED_EPHEMERAL_KEY_LIMIT_USD
     assert launcher.PACKETS["agentic"].maximum_seconds == 30 * 60
-    assert (
-        launcher.AGENTIC_PREREGISTRATION_COMMIT
-        == "f76839c1878747447a25230021b32674cb89f406"
-    )
+    assert launcher.AGENTIC_PREREGISTRATION_COMMIT == ""
     assert launcher.AGENTIC_AUTHORIZATION_COMMIT == ""
     assert "source=public-synthetic" in launcher.PUBLIC_REQUEST_LOG_MARKERS
     benchmark_source = (SCRIPT_DIR / "openrouter_agentic_benchmark.py").read_text()
-    assert '"selected_case_counts_by_worker"' in benchmark_source
-    assert '"selected_cases": [' not in benchmark_source
+    reporting_source = (SCRIPT_DIR / "openrouter_agentic_reporting.py").read_text()
+    assert '"rayline.arc.openrouter-agentic-benchmark.v3"' in reporting_source
+    assert '"openrouter_key_readiness"' in reporting_source
+    assert '"selected_case_counts_by_worker"' in reporting_source
+    assert '"selected_cases": [' not in benchmark_source + reporting_source
     assert (
         "execute-paid-1000"
         not in (SCRIPT_DIR / "run_openrouter_fullstack.py").read_text()

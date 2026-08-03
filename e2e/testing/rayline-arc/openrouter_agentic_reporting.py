@@ -9,7 +9,12 @@ from collections.abc import Iterable
 from typing import Any
 
 from modal_fullstack_canary import _failure_total, _metric_values, _summary
-from openrouter_agentic_workload import MODAL_REFERENCE, WORKERS
+from openrouter_agentic_workload import (
+    MODAL_REFERENCE,
+    PROVIDER_NAMES,
+    SCENARIOS,
+    WORKERS,
+)
 from openrouter_fullstack_canary import (
     PROVIDER_ATTEMPT_METRIC,
     PROVIDER_EXHAUSTION_METRIC,
@@ -144,6 +149,157 @@ def comparison(
             ),
         }
     return result
+
+
+def _readiness_report(
+    key_readiness: dict[str, Any], key_readiness_requests: int
+) -> dict[str, Any]:
+    return {
+        "requests": key_readiness_requests,
+        "model": key_readiness["response_model"],
+        "provider": key_readiness["provider"],
+        "completion_tokens": key_readiness["completion_tokens"],
+        "external_attempts": key_readiness["external_attempts"],
+        "retries": key_readiness["external_attempts"] - 1,
+        "cost_usd": key_readiness["cost_usd"],
+    }
+
+
+def _workload_report(
+    *,
+    selected_cases: list[dict[str, Any]],
+    measured_requests: int,
+    selected_case_count: int,
+    minimum_active_workers: int,
+    minimum_selected_cases_per_active_worker: int,
+    max_completion_tokens: int,
+    concurrency_levels: tuple[int, ...],
+) -> dict[str, Any]:
+    return {
+        "scenarios": sorted(SCENARIOS),
+        "selected_case_counts_by_scenario": {
+            scenario: sum(case["scenario"] == scenario for case in selected_cases)
+            for scenario in SCENARIOS
+        },
+        "selected_case_counts_by_worker": {
+            worker: sum(case["expected_worker"] == worker for case in selected_cases)
+            for worker in WORKERS
+        },
+        "selected_case_count": selected_case_count,
+        "minimum_active_workers": minimum_active_workers,
+        "minimum_selected_cases_per_active_worker": (
+            minimum_selected_cases_per_active_worker
+        ),
+        "max_completion_tokens": max_completion_tokens,
+        "concurrency_levels": concurrency_levels,
+        "measured_requests": measured_requests,
+    }
+
+
+def _coverage_report(coverage: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "requests": len(coverage),
+        "selection_counts": {
+            worker: sum(result["selected_worker"] == worker for result in coverage)
+            for worker in WORKERS
+        },
+        "cost_usd": sum(float(result["cost_usd"]) for result in coverage),
+    }
+
+
+def _endpoint_report(endpoint_probes: list[dict[str, Any]]) -> dict[str, Any]:
+    attempts = sum(int(result["external_attempts"]) for result in endpoint_probes)
+    return {
+        "requests": len(endpoint_probes),
+        "all_reachable": len(endpoint_probes) == len(WORKERS),
+        "workers": {
+            worker: {
+                "reachable": any(
+                    result["selected_worker"] == worker for result in endpoint_probes
+                ),
+                "model": model,
+                "provider": PROVIDER_NAMES[worker],
+            }
+            for worker, model in WORKERS.items()
+        },
+        "external_attempts": attempts,
+        "retries": attempts - len(endpoint_probes),
+        "cost_usd": sum(float(result["cost_usd"]) for result in endpoint_probes),
+    }
+
+
+def build_report(
+    *,
+    run_id: str,
+    encoder_warmup: dict[str, Any],
+    key_readiness: dict[str, Any],
+    endpoint_probes: list[dict[str, Any]],
+    selected_cases: list[dict[str, Any]],
+    coverage: list[dict[str, Any]],
+    phases: list[dict[str, Any]],
+    router_metrics: dict[str, int],
+    all_results: list[dict[str, Any]],
+    external_attempts: int,
+    provider_cost: float,
+    paths: tuple[str, ...],
+    concurrency_levels: tuple[int, ...],
+    key_readiness_requests: int,
+    selected_case_count: int,
+    minimum_active_workers: int,
+    minimum_selected_cases_per_active_worker: int,
+    max_completion_tokens: int,
+    maximum_provider_requests: int,
+    maximum_external_attempts: int,
+    maximum_reported_provider_cost_usd: float,
+) -> dict[str, Any]:
+    measured_results = flatten(phases)
+    reports = path_reports(
+        phases,
+        paths=paths,
+        concurrency_levels=concurrency_levels,
+    )
+    return {
+        "schema_version": "rayline.arc.openrouter-agentic-benchmark.v3",
+        "run_id": run_id,
+        "status": "passed",
+        "models": WORKERS,
+        "pinned_providers": PROVIDER_NAMES,
+        "provider_fallbacks": False,
+        "reasoning_enabled": False,
+        "encoder_warmup": encoder_warmup,
+        "openrouter_key_readiness": _readiness_report(
+            key_readiness, key_readiness_requests
+        ),
+        "workload": _workload_report(
+            selected_cases=selected_cases,
+            measured_requests=len(measured_results),
+            selected_case_count=selected_case_count,
+            minimum_active_workers=minimum_active_workers,
+            minimum_selected_cases_per_active_worker=(
+                minimum_selected_cases_per_active_worker
+            ),
+            max_completion_tokens=max_completion_tokens,
+            concurrency_levels=concurrency_levels,
+        ),
+        "coverage": _coverage_report(coverage),
+        "endpoint_reachability": _endpoint_report(endpoint_probes),
+        "paths": reports,
+        "comparison": comparison(reports, concurrency_levels),
+        "router_metrics": router_metrics,
+        "actual_provider_requests": len(all_results),
+        "maximum_provider_requests": maximum_provider_requests,
+        "actual_external_attempts": external_attempts,
+        "maximum_external_attempts": maximum_external_attempts,
+        "reported_provider_cost_usd": provider_cost,
+        "maximum_reported_provider_cost_usd": maximum_reported_provider_cost_usd,
+        "automatic_prefix_cache_enabled": False,
+        "release_qualification_1000_executed": False,
+        "limitations": [
+            "small diagnostic sample, not a production SLO qualification",
+            "synthetic public tool outputs and routing anchors",
+            "pure-Modal reference used different generation models and prompt lengths",
+        ],
+    }
 
 
 def _metric_delta(after: float, before: float) -> int:

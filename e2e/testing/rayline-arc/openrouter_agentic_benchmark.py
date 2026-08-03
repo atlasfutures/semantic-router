@@ -23,9 +23,8 @@ from modal_fullstack_inputs import CANDIDATE_PROMPTS
 from modal_http import connection_for_url as _connection
 from modal_http import request_following_result_redirects
 from openrouter_agentic_reporting import (
-    comparison,
+    build_report,
     flatten,
-    path_reports,
     validate_router_metrics,
 )
 from openrouter_agentic_workload import (
@@ -51,17 +50,23 @@ SELECTED_CASE_COUNT = 6
 MIN_ACTIVE_WORKERS = 2
 MIN_SELECTED_CASES_PER_ACTIVE_WORKER = 2
 MAX_COVERAGE_REQUESTS = 24
+KEY_READINESS_REQUESTS = 1
 ENDPOINT_PROBE_REQUESTS = len(WORKERS)
 MAX_COMPLETION_TOKENS = 96
+KEY_READINESS_COMPLETION_TOKENS = 1
 MAX_REPORTED_PROVIDER_COST_USD = 0.50
 MAX_DATA_PLANE_ATTEMPTS = 2
 RETRYABLE_STATUS_CODES = frozenset({429, 503})
+KEY_READINESS_RETRYABLE_STATUS_CODES = frozenset({404, *RETRYABLE_STATUS_CODES})
 MEASURED_REQUESTS_PER_PATH = (
     SELECTED_CASE_COUNT * SERIAL_WAVES + SELECTED_CASE_COUNT * CONCURRENT_REPETITIONS
 )
 MAX_MEASURED_REQUESTS = len(PATHS) * MEASURED_REQUESTS_PER_PATH
 MAX_PROVIDER_REQUESTS = (
-    ENDPOINT_PROBE_REQUESTS + MAX_COVERAGE_REQUESTS + MAX_MEASURED_REQUESTS
+    KEY_READINESS_REQUESTS
+    + ENDPOINT_PROBE_REQUESTS
+    + MAX_COVERAGE_REQUESTS
+    + MAX_MEASURED_REQUESTS
 )
 MAX_EXTERNAL_ATTEMPTS = MAX_PROVIDER_REQUESTS * MAX_DATA_PLANE_ATTEMPTS
 
@@ -73,7 +78,11 @@ def _response_model_matches(response_model: str, expected_model: str) -> bool:
 
 
 def _request_payload(
-    *, path: str, case: dict[str, Any], expected_worker: str
+    *,
+    path: str,
+    case: dict[str, Any],
+    expected_worker: str,
+    max_completion_tokens: int = MAX_COMPLETION_TOKENS,
 ) -> dict[str, Any]:
     if path == "direct":
         model = WORKERS[expected_worker]
@@ -88,7 +97,7 @@ def _request_payload(
         "messages": case["messages"],
         "tools": case["tools"],
         "tool_choice": "none",
-        "max_tokens": MAX_COMPLETION_TOKENS,
+        "max_tokens": max_completion_tokens,
         "temperature": 0,
         "stream": True,
         "stream_options": {"include_usage": True},
@@ -237,6 +246,7 @@ def _stream_request_once(
     episode_id: str,
     timeout_seconds: float,
     started: float,
+    max_completion_tokens: int,
 ) -> dict[str, Any]:
     direct = path == "direct"
     base_url = OPENROUTER_BASE_URL if direct else f"{gateway_url.rstrip('/')}/v1"
@@ -254,6 +264,7 @@ def _stream_request_once(
                 path=path,
                 case=case,
                 expected_worker=expected_worker,
+                max_completion_tokens=max_completion_tokens,
             ),
             separators=(",", ":"),
         ).encode(),
@@ -312,9 +323,15 @@ def _stream_request(
     openrouter_key: str,
     episode_id: str,
     timeout_seconds: float,
+    max_completion_tokens: int = MAX_COMPLETION_TOKENS,
+    maximum_attempts: int | None = None,
+    retryable_status_codes: frozenset[int] = RETRYABLE_STATUS_CODES,
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    maximum_attempts = MAX_DATA_PLANE_ATTEMPTS if path == "direct" else 1
+    if maximum_attempts is None:
+        maximum_attempts = MAX_DATA_PLANE_ATTEMPTS if path == "direct" else 1
+    if maximum_attempts < 1 or maximum_attempts > MAX_DATA_PLANE_ATTEMPTS:
+        raise ValueError("agentic request attempt bound was invalid")
     for attempt in range(1, maximum_attempts + 1):
         try:
             result = _stream_request_once(
@@ -326,11 +343,12 @@ def _stream_request(
                 episode_id=episode_id,
                 timeout_seconds=timeout_seconds,
                 started=started,
+                max_completion_tokens=max_completion_tokens,
             )
         except OpenRouterHTTPError as error:
             if (
                 attempt == maximum_attempts
-                or error.status_code not in RETRYABLE_STATUS_CODES
+                or error.status_code not in retryable_status_codes
             ):
                 raise
             time.sleep(error.retry_after_seconds)
@@ -339,6 +357,24 @@ def _stream_request(
             result["external_attempts"] = attempt
         return result
     raise AssertionError("bounded direct retry loop did not return or raise")
+
+
+def _probe_key_readiness(
+    *, gateway_url: str, openrouter_key: str, run_id: str, timeout_seconds: float
+) -> dict[str, Any]:
+    print("agentic OpenRouter key readiness: starting", file=sys.stderr, flush=True)
+    return _stream_request(
+        path="direct",
+        case=_candidate_case(0),
+        expected_worker="worker-a",
+        gateway_url=gateway_url,
+        openrouter_key=openrouter_key,
+        episode_id=_episode_id(run_id, "agentic-key-readiness"),
+        timeout_seconds=timeout_seconds,
+        max_completion_tokens=KEY_READINESS_COMPLETION_TOKENS,
+        maximum_attempts=MAX_DATA_PLANE_ATTEMPTS,
+        retryable_status_codes=KEY_READINESS_RETRYABLE_STATUS_CODES,
+    )
 
 
 def _choose_cases(
@@ -601,12 +637,13 @@ def _bind_expected_workers(
 
 
 def _bounded_totals(
+    key_readiness: dict[str, Any],
     endpoint_probes: list[dict[str, Any]],
     coverage: list[dict[str, Any]],
     phases: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], int, float]:
     measured_results = flatten(phases)
-    all_results = [*endpoint_probes, *coverage, *measured_results]
+    all_results = [key_readiness, *endpoint_probes, *coverage, *measured_results]
     if len(measured_results) != MAX_MEASURED_REQUESTS:
         raise RuntimeError("agentic measured request count diverged")
     if len(all_results) > MAX_PROVIDER_REQUESTS:
@@ -618,105 +655,6 @@ def _bounded_totals(
     if provider_cost > MAX_REPORTED_PROVIDER_COST_USD:
         raise RuntimeError("agentic provider cost exceeded its reported-cost gate")
     return all_results, external_attempts, provider_cost
-
-
-def _build_report(
-    *,
-    run_id: str,
-    encoder_warmup: dict[str, Any],
-    endpoint_probes: list[dict[str, Any]],
-    selected_cases: list[dict[str, Any]],
-    coverage: list[dict[str, Any]],
-    phases: list[dict[str, Any]],
-    router_metrics: dict[str, int],
-    all_results: list[dict[str, Any]],
-    external_attempts: int,
-    provider_cost: float,
-) -> dict[str, Any]:
-    measured_results = flatten(phases)
-    reports = path_reports(
-        phases,
-        paths=PATHS,
-        concurrency_levels=CONCURRENCY_LEVELS,
-    )
-    return {
-        "schema_version": "rayline.arc.openrouter-agentic-benchmark.v2",
-        "run_id": run_id,
-        "status": "passed",
-        "models": WORKERS,
-        "pinned_providers": PROVIDER_NAMES,
-        "provider_fallbacks": False,
-        "reasoning_enabled": False,
-        "encoder_warmup": encoder_warmup,
-        "workload": {
-            "scenarios": sorted(SCENARIOS),
-            "selected_case_counts_by_scenario": {
-                scenario: sum(case["scenario"] == scenario for case in selected_cases)
-                for scenario in SCENARIOS
-            },
-            "selected_case_counts_by_worker": {
-                worker: sum(
-                    case["expected_worker"] == worker for case in selected_cases
-                )
-                for worker in WORKERS
-            },
-            "selected_case_count": SELECTED_CASE_COUNT,
-            "minimum_active_workers": MIN_ACTIVE_WORKERS,
-            "minimum_selected_cases_per_active_worker": (
-                MIN_SELECTED_CASES_PER_ACTIVE_WORKER
-            ),
-            "max_completion_tokens": MAX_COMPLETION_TOKENS,
-            "concurrency_levels": CONCURRENCY_LEVELS,
-            "measured_requests": len(measured_results),
-        },
-        "coverage": {
-            "requests": len(coverage),
-            "selection_counts": {
-                worker: sum(result["selected_worker"] == worker for result in coverage)
-                for worker in WORKERS
-            },
-            "cost_usd": sum(float(result["cost_usd"]) for result in coverage),
-        },
-        "endpoint_reachability": {
-            "requests": len(endpoint_probes),
-            "all_reachable": len(endpoint_probes) == len(WORKERS),
-            "workers": {
-                worker: {
-                    "reachable": any(
-                        result["selected_worker"] == worker
-                        for result in endpoint_probes
-                    ),
-                    "model": model,
-                    "provider": PROVIDER_NAMES[worker],
-                }
-                for worker, model in WORKERS.items()
-            },
-            "external_attempts": sum(
-                int(result["external_attempts"]) for result in endpoint_probes
-            ),
-            "retries": sum(
-                int(result["external_attempts"]) for result in endpoint_probes
-            )
-            - len(endpoint_probes),
-            "cost_usd": sum(float(result["cost_usd"]) for result in endpoint_probes),
-        },
-        "paths": reports,
-        "comparison": comparison(reports, CONCURRENCY_LEVELS),
-        "router_metrics": router_metrics,
-        "actual_provider_requests": len(all_results),
-        "maximum_provider_requests": MAX_PROVIDER_REQUESTS,
-        "actual_external_attempts": external_attempts,
-        "maximum_external_attempts": MAX_EXTERNAL_ATTEMPTS,
-        "reported_provider_cost_usd": provider_cost,
-        "maximum_reported_provider_cost_usd": MAX_REPORTED_PROVIDER_COST_USD,
-        "automatic_prefix_cache_enabled": False,
-        "release_qualification_1000_executed": False,
-        "limitations": [
-            "small diagnostic sample, not a production SLO qualification",
-            "synthetic public tool outputs and routing anchors",
-            "pure-Modal reference used different generation models and prompt lengths",
-        ],
-    }
 
 
 def _encode_private_report(report: dict[str, Any], openrouter_key: str) -> str:
@@ -740,6 +678,12 @@ def main() -> None:
         connection_factory=_connection,
     )
     metrics_before = _read_metrics(args.metrics_url, args.timeout_seconds)
+    key_readiness = _probe_key_readiness(
+        gateway_url=args.gateway_url,
+        openrouter_key=openrouter_key,
+        run_id=args.run_id,
+        timeout_seconds=args.timeout_seconds,
+    )
     endpoint_probes = _probe_endpoints(
         gateway_url=args.gateway_url,
         openrouter_key=openrouter_key,
@@ -760,7 +704,7 @@ def main() -> None:
         timeout_seconds=args.timeout_seconds,
     )
     all_results, external_attempts, provider_cost = _bounded_totals(
-        endpoint_probes, coverage, phases
+        key_readiness, endpoint_probes, coverage, phases
     )
     router_metrics = validate_router_metrics(
         before=metrics_before,
@@ -768,9 +712,10 @@ def main() -> None:
         coverage=coverage,
         phases=phases,
     )
-    report = _build_report(
+    report = build_report(
         run_id=args.run_id,
         encoder_warmup=encoder_warmup,
+        key_readiness=key_readiness,
         endpoint_probes=endpoint_probes,
         selected_cases=selected_cases,
         coverage=coverage,
@@ -779,6 +724,16 @@ def main() -> None:
         all_results=all_results,
         external_attempts=external_attempts,
         provider_cost=provider_cost,
+        paths=PATHS,
+        concurrency_levels=CONCURRENCY_LEVELS,
+        key_readiness_requests=KEY_READINESS_REQUESTS,
+        selected_case_count=SELECTED_CASE_COUNT,
+        minimum_active_workers=MIN_ACTIVE_WORKERS,
+        minimum_selected_cases_per_active_worker=(MIN_SELECTED_CASES_PER_ACTIVE_WORKER),
+        max_completion_tokens=MAX_COMPLETION_TOKENS,
+        maximum_provider_requests=MAX_PROVIDER_REQUESTS,
+        maximum_external_attempts=MAX_EXTERNAL_ATTEMPTS,
+        maximum_reported_provider_cost_usd=MAX_REPORTED_PROVIDER_COST_USD,
     )
     print(_encode_private_report(report, openrouter_key))
 

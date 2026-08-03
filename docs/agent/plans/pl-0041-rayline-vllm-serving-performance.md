@@ -134,6 +134,16 @@ The launcher-window infrastructure upper estimate was `$4.08003918826349`,
 bringing cumulative observed accounting to `$77.72054280274334` under the
 `$134.31282402` authority. Fleet provisioning/operator integration remains
 TD050; DYN006 cannot retry and the 1,000-case qualification remains held.
+The first four single-router OpenRouter agentic packets are also closed:
+AGT002 proved real ARC generation and a 16/0/8 natural DS4/MiMo/HY3 mix but
+stopped at an obsolete three-worker coverage gate; AGT003 and AGT004 stopped
+on the first static DS4 probe with a transient-looking HTTP 404. The zero-H100
+DGN001 follow-up then proved direct, pinned-static, and unpinned-static requests
+all succeed against the same real route, ruling out a deterministic model,
+provider, path, or credential rewrite bug. AGT005 is now the active bounded
+successor: one one-token direct key/provider readiness canary precedes the
+unchanged 72-request measured packet. No performance result exists yet, and the
+1,000-case qualification remains held.
 Current published implementation heads:
 
 - Semantic Router
@@ -1909,14 +1919,13 @@ The 1,000-case qualification was not executed.
 
 ### Next Action
 
-Continue the single-router end-to-end serving proof under AGT002 below. Park
+Continue the single-router end-to-end serving proof under AGT005 below. Park
 multi-router transactional consistency in
 [GitHub issue #2756](https://github.com/vllm-project/semantic-router/issues/2756)
-and leave Kubernetes fleet provisioning under TD050. AGT001 is permanently
-closed as a zero-provider startup failure; do not rerun it or DYN006. Execute
-AGT002 at most once after its corrected encoder deployment and full cross-repo
-authorization chain are remote-visible. Keep the 1,000-case qualification held
-until explicit user confirmation.
+and leave Kubernetes fleet provisioning under TD050. AGT001 through AGT004 and
+DGN001 are permanently closed; do not rerun them or DYN006. Complete AGT005's
+source validation and cross-repo authorization chain, then execute it at most
+once. Keep the 1,000-case qualification held until explicit user confirmation.
 
 ### AGT001 OpenRouter Agentic Serving Diagnostic
 
@@ -2121,9 +2130,75 @@ privacy, cleanup, and pure-Modal comparison doctrine remain unchanged.
   including the hermetic static-control provider-key and model-rewrite proof.
 - [x] AGT004b: Preregister and complete the distinct source-attestation,
   authorization, and final launch-pin chain.
-- [ ] AGT004c: Execute once, privately pin the aggregate result, permanently
+- [x] AGT004c: Execute once, privately pin the aggregate result, permanently
   close authority, verify stable zero, and compare normalized overhead with the
   pure-Modal reference.
+
+AGT004's only attempt failed its first headerless worker-a static probe with
+HTTP 404, exactly as AGT003 had. It therefore produced no discovery or measured
+requests and OpenRouter usage remained `$0`. Cleanup returned the key, proxy,
+Compose, and encoder-container inventories to zero. The aggregate-only receipt
+is private and exact-round-trip verified at
+`rayline-ai/router-artifacts@1eb0037c` with SHA-256
+`8c647dd2010794c3da70356d4676cdd408e3f4706730cb486aceb21b756ab809`;
+Semantic Router `5c9f0e7a` and Pathfinder `4e6ab4dc` close the attempt. Removing
+caller Authorization consequently falsified the duplicate-credential theory,
+but the failure still did not identify the malformed seam.
+
+### DGN001 Real Static-Mutation Diagnostic
+
+DGN001 used the same agentic config, Envoy route, router image, and local
+contract-faithful encoder without starting Modal. Its one authorized packet
+sent three one-token DS4-Flash requests:
+
+1. direct OpenRouter with the Baidu pin;
+2. headerless worker-a static routing with the Baidu pin; and
+3. the same headerless worker-a static route without a provider pin.
+
+All three returned HTTP 200 and the external
+`deepseek/deepseek-v4-flash` model ID. The pinned static path used Baidu; the
+unpinned static path used Morph. This proves the real gateway rewrites the
+worker alias, provider model, path, and config-owned credential correctly. It
+falsifies a deterministic static-mutation defect, but the direct-first order
+does not distinguish transient endpoint availability from new-key or first-
+request propagation. No latency or throughput inference is admissible from
+three diagnostic calls. OpenRouter reported `$0`, no H100 started, and cleanup
+reached zero. The aggregate receipt is private and byte-verified at
+`rayline-ai/router-artifacts@86510f14` with SHA-256
+`40d7a444844ba024492acdeed7ed42d17603fc518b67778e52fd9ad21a3eb274`;
+Pathfinder closes DGN001 at `43d76aca`.
+
+### AGT005 Key-Ready Natural-Mix Measurement
+
+AGT005 preserves AGT004's exact model/provider pool, protected encoder,
+headerless gateway credential ownership, three static endpoint probes,
+24-request natural-mix discovery, six selected cases, 72 measured
+direct/static/ARC requests, concurrency-one and -four cells, 96-token measured
+cap, retry policy, metrics, privacy, cleanup, and normalized pure-Modal
+comparison. It adds only one direct DS4-Flash/Baidu readiness request with a
+one-token cap before the existing static probes.
+
+The readiness canary receives at most two attempts and may treat an initial
+HTTP 404, 429, or 503 as transient. All ordinary direct calls retain only the
+existing 429/503 retry set; gateway retries remain owned by Envoy. The packet
+therefore increases from 99 to 100 logical provider requests and from 198 to
+200 maximum external attempts, while measured traffic remains exactly 72
+requests. The `$0.75` key hard limit, `$0.50` reported-cost gate, 30-minute H100
+limit, and `$5.7492336` packet envelope do not change. Charging the observed
+AGT004 upper bound and DGN001's zero spend first gives a prior cumulative upper
+estimate of `$79.110389914743`; the full AGT005 envelope reaches
+`$84.859623514743`, leaving `$49.453200505257` under the current
+`$134.31282402` authority.
+
+- [x] AGT005a: Validate the one-token key-readiness probe, 100/200 request
+  bounds, aggregate v3 report, source-exact config startup, and hermetic ARC
+  stack; then push a signed source-closed checkpoint.
+- [ ] AGT005b: Preregister AGT005 in Pathfinder and complete distinct source
+  attestation, one-attempt authorization, and final Semantic Router launch pin.
+- [ ] AGT005c: Execute once, privately pin the aggregate receipt, permanently
+  close both authorities, prove stable-zero cleanup, and report real TTFT,
+  latency, throughput, retry, cost, natural mix, and normalized ARC/static
+  comparison. The 1,000-case qualification remains held.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
