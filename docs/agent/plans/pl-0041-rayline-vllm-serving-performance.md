@@ -2814,7 +2814,7 @@ the current `$134.31282402` authority. The 1,000-case qualification stays held.
   aggregate report, then pass focused, repository, and hermetic ARC gates.
 - [x] AGT013b: Freeze source and create the distinct signed, pushed
   preregistration, authorization, registry-attestation, and source pins.
-- [ ] AGT013c: Execute once, persist either a success or bounded failure receipt,
+- [x] AGT013c: Execute once, persist either a success or bounded failure receipt,
   verify cleanup, compare admissible natural stage and stratified evidence if
   available, and permanently close launch authority.
 
@@ -2823,6 +2823,77 @@ occupancy is last-reported context rather than an idle assertion. No result is
 admissible unless exact 12-request routing and retained-append counts, zero
 coordinator failures/contention, coordinator idle, claim separation, privacy,
 cost/request bounds, and cleanup all pass.
+
+#### AGT013 Result
+
+The single authorized AGT013 attempt passed end to end on 2026-08-03. The
+transport-first gate, all three protected reachability probes, natural
+discovery, natural static/ARC c4 cells, and equal-model direct/static controls
+completed in exactly 80 provider requests and 80 external attempts, with zero
+retry, retry exhaustion, or selection failure. Providers were Baidu for DS4
+Flash, Venice for MiMo v2.5, and Tencent for HY3. Natural selection reproduced
+AGT011 and AGT012 at `16/0/8`; the six measured cases remained three DS4 and
+three HY3, while the separate control contributed four requests per path for
+each model.
+
+| Natural path | RPS | Output tok/s | TTFT p50 / p95 | E2E p50 / p95 |
+|---|---:|---:|---:|---:|
+| Static gateway c4 | 1.348 | 89.18 | 0.982s / 2.224s | 2.262s / 4.942s |
+| Rayline ARC c4 | 0.839 | 55.72 | 2.192s / 4.657s | 4.157s / 7.375s |
+
+ARC delivered `0.622x` static request throughput and `0.625x` output-token
+throughput. It added `+1.210s` TTFT p50, `+2.434s` TTFT p95, `+1.895s` E2E
+p50, and `+2.432s` E2E p95. AGT011's equivalent throughput ratio was `0.588x`;
+the small cells make that difference directional rather than a regression or
+improvement claim.
+
+The stage decomposition isolates the dominant seam:
+
+| Mean stage | Static | ARC |
+|---|---:|---:|
+| Client E2E | 2.757s | 4.170s |
+| OpenRouter upstream service | 1.277s | 1.343s |
+| Router total | 0.000837s | 1.490s |
+| Remote encoder inside router | 0s | 1.485s |
+| Router excluding encoder | 0.000837s | 0.00511s |
+| Residual after router | 1.479s | 1.337s |
+
+The encoder accounts for `99.66%` of ARC router time. Within the protected
+service, coordinator mean was `1.188s`, retained vLLM E2E mean `1.186s`,
+inference mean `0.790s`, and queue mean `0.190s`; each had exactly 12
+observations, zero failure/contention, and idle coordinator gauges afterward.
+The scheduler's last-reported state was running `0`, waiting `8`, demonstrating
+why it is context rather than synchronous liveness. ARC and static upstream
+means differed by only `+0.066s`, while post-router residual was lower for ARC,
+so OpenRouter transport does not explain the routing penalty in this cell.
+
+The prior pure-Modal diagnostic measured `0.595s` encoder and `0.597s` total
+ARC routing with `0.755x` ARC/static throughput. AGT013's encoder mean is
+`2.50x` that reference and its `0.622x` normalized throughput is only `82.4%`
+of the pure-Modal ratio. This is not parity. The evidence points to remote
+encoder work on the much longer agentic histories, including queue and model
+execution, rather than Semantic Router's non-encoder classifier/orchestration.
+Absolute latency remains non-comparable because pure Modal used shorter prompts
+and local Qwen generation targets.
+
+The separately labelled three-model control showed no systematic static gateway
+throughput penalty: direct was `1.602` RPS and static `1.702` RPS (`1.062x`).
+Direct/static E2E p50 was `0.960s/1.182s` for DS4, `1.160s/1.030s` for MiMo,
+and `2.601s/2.423s` for HY3. Each model/path cell has only four requests, so
+these are deployment-shape observations rather than model rankings or SLOs.
+
+The aggregate v2 receipt is private at
+`rayline-ai/router-artifacts/runs/rayline-openrouter-agentic-stage-agt013-20260803`,
+revision `6e1d3308bcb7a5de172651c04ac2b0f24b371d28`, SHA-256
+`f277ebd03a3af95870cda59373df0a6f0c8358ff87180b1e94aeb8b75e5b191b`.
+It round-tripped byte-exactly and returned HTTP 401 without authentication.
+Reported conservative provider cost was `$0.0246343188`; actual key usage was
+`$0.02388406`. The 241-second whole-process upper bound prices Modal at most
+`$0.669341832`, bringing cumulative conservative observed cost to
+`$82.835731101543` and leaving `$51.477092918457` under user authority.
+Cleanup verified zero transient keys, Compose state, and encoder containers;
+the app remains deployed at zero tasks. Both AGT013 authority pins are empty,
+and the 1,000-case qualification remains held.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
