@@ -2790,6 +2790,40 @@ It round-tripped byte-exactly and returned HTTP 401 without authentication.
 Both AGT012 authority pins are permanently empty; the packet cannot rerun.
 The 1,000-case qualification remains held.
 
+### AGT013 Corrected Stage-Completion Contract
+
+AGT013 is a new one-attempt packet, not an AGT012 retry. It preserves the exact
+AGT012 source identities, provider policy, transport-first transition, natural
+and stratified request cells, privacy boundary, 80-request/166-attempt bounds,
+`$0.75` key, `$0.50` report gate, and 30-minute H100 limit. The only behavioral
+change is the completion contract and the report schema advances to v2.
+
+After each ARC cell, exact coordinator and engine cumulative deltas remain
+mandatory. The coordinator's current `requests_inflight`,
+`session_lock_waiters`, and `backend_inflight` gauges must all be zero. The
+vLLM `requests_running` and `requests_waiting` values remain in the receipt as
+`scheduler_last_reported_after`, together with an explicit warning that they
+describe the last scheduler update and are not synchronous idle gauges. This
+preserves useful scheduling evidence without repeating AGT012's invalid gate.
+
+The conservative full envelope would raise cumulative cost from
+`$82.142505209543` to `$87.891738809543`, leaving `$46.421085210457` under
+the current `$134.31282402` authority. The 1,000-case qualification stays held.
+
+- [x] AGT013a: Implement and test the corrected completion contract and v2
+  aggregate report, then pass focused, repository, and hermetic ARC gates.
+- [ ] AGT013b: Freeze source and create the distinct signed, pushed
+  preregistration, authorization, registry-attestation, and source pins.
+- [ ] AGT013c: Execute once, persist either a success or bounded failure receipt,
+  verify cleanup, compare admissible natural stage and stratified evidence if
+  available, and permanently close launch authority.
+
+AGT013 passes the same acceptance criteria as AGT012 except that scheduler
+occupancy is last-reported context rather than an idle assertion. No result is
+admissible unless exact 12-request routing and retained-append counts, zero
+coordinator failures/contention, coordinator idle, claim separation, privacy,
+cost/request bounds, and cleanup all pass.
+
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
 continues to reject cached-prefix tokens. The separate session v1 wire reports

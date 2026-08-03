@@ -143,7 +143,7 @@ def build_stage_report(
     maximum_reported_provider_cost_usd: float,
 ) -> dict[str, Any]:
     return {
-        "schema_version": "rayline.arc.openrouter-agentic-stage-attribution.v1",
+        "schema_version": "rayline.arc.openrouter-agentic-stage-attribution.v2",
         "run_id": run_id,
         "status": "passed",
         "models": WORKERS,
@@ -182,6 +182,7 @@ def build_stage_report(
             "single-router c4 diagnostic, not a production SLO qualification",
             "12 requests per path in each natural or stratified control cell",
             "stratified controls bypass semantic ARC selection",
+            "engine occupancy is last-reported scheduler state, not an idle gauge",
             "pure-Modal reference used different generation models and prompt lengths",
         ],
     }

@@ -73,15 +73,13 @@ def encoder_stage_delta(
     )
     coordinator_after = after["coordinator"]
     engine_after = after["engine"]
-    idle_fields = {
+    coordinator_idle_fields = {
         "requests_inflight": coordinator_after.get("requests_inflight"),
         "session_lock_waiters": coordinator_after.get("session_lock_waiters"),
         "backend_inflight": coordinator_after.get("backend_inflight"),
-        "requests_running": engine_after.get("requests_running"),
-        "requests_waiting": engine_after.get("requests_waiting"),
     }
-    if any(value != 0 for value in idle_fields.values()):
-        raise RuntimeError("protected encoder was not idle after the measured phase")
+    if any(value != 0 for value in coordinator_idle_fields.values()):
+        raise RuntimeError("protected encoder coordinator was not idle after the phase")
     before_scheduler = scheduler_snapshot(before)
     after_scheduler = scheduler_snapshot(after)
     return {
@@ -114,7 +112,15 @@ def encoder_stage_delta(
                 "requests_scheduled_max"
             ],
         },
-        "idle_after": idle_fields,
+        "coordinator_idle_after": coordinator_idle_fields,
+        "scheduler_last_reported_after": {
+            "requests_running": engine_after.get("requests_running"),
+            "requests_waiting": engine_after.get("requests_waiting"),
+        },
+        "scheduler_semantics": (
+            "last reported after the final scheduler update; retained for "
+            "diagnosis and not asserted as synchronous engine idle state"
+        ),
     }
 
 

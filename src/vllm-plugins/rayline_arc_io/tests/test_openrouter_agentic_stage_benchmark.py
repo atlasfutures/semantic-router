@@ -165,10 +165,12 @@ def test_router_stage_delta_attributes_arc_without_payloads() -> None:
     assert math.isclose(decomposition["residual_after_router_seconds"], 0.7)
 
 
-def test_protected_encoder_stage_delta_requires_exact_idle_completion() -> None:
+def test_protected_encoder_stage_accepts_last_reported_scheduler_occupancy() -> None:
+    after = _encoder_snapshot(requests=12, elapsed=6.0)
+    after["engine"]["requests_running"] = EXPECTED_CONCURRENCY
     report = stage_metrics.encoder_stage_delta(
         before=_encoder_snapshot(requests=0, elapsed=0.0),
-        after=_encoder_snapshot(requests=12, elapsed=6.0),
+        after=after,
         requests=12,
     )
 
@@ -181,13 +183,16 @@ def test_protected_encoder_stage_delta_requires_exact_idle_completion() -> None:
         report["engine"]["inference_time_mean_seconds"],
         EXPECTED_INFERENCE_MEAN_SECONDS,
     )
-    assert report["idle_after"] == {
+    assert report["coordinator_idle_after"] == {
         "requests_inflight": 0,
         "session_lock_waiters": 0,
         "backend_inflight": 0,
-        "requests_running": 0,
+    }
+    assert report["scheduler_last_reported_after"] == {
+        "requests_running": EXPECTED_CONCURRENCY,
         "requests_waiting": 0,
     }
+    assert "not asserted as synchronous engine idle" in report["scheduler_semantics"]
 
 
 def test_launcher_stage_packet_is_closed_and_reuses_agentic_sources() -> None:
@@ -201,5 +206,5 @@ def test_launcher_stage_packet_is_closed_and_reuses_agentic_sources() -> None:
     assert packet.key_limit_usd == EXPECTED_EPHEMERAL_KEY_LIMIT_USD
     assert packet.maximum_seconds == 30 * 60
     assert packet.protected_encoder is True
-    assert launcher.AGT012_PREREGISTRATION_COMMIT == ""
-    assert launcher.AGT012_AUTHORIZATION_COMMIT == ""
+    assert launcher.AGT013_PREREGISTRATION_COMMIT == ""
+    assert launcher.AGT013_AUTHORIZATION_COMMIT == ""
