@@ -470,14 +470,8 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
         == "25ef39dac03015934bde87b6739505dfac2e5210"
     )
     assert launcher.AGENTIC_AUTHORIZATION_COMMIT == ""
-    assert (
-        launcher.DGN003_PREREGISTRATION_COMMIT
-        == "d40ffb7421025bc0a779ea63e85a5a91341be3a7"
-    )
-    assert (
-        launcher.DGN003_AUTHORIZATION_COMMIT
-        == "b87a602f9ad0a666e838a54cc15c02e67b584d1d"
-    )
+    assert launcher.DGN003_PREREGISTRATION_COMMIT == ""
+    assert launcher.DGN003_AUTHORIZATION_COMMIT == ""
     gateway_packet = launcher.PACKETS["gateway-shape"]
     assert gateway_packet.key_limit_usd == EXPECTED_DIAGNOSTIC_KEY_LIMIT_USD
     assert gateway_packet.maximum_seconds == 5 * 60

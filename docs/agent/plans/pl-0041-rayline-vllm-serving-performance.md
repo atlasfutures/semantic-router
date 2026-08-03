@@ -2342,7 +2342,7 @@ upper bound of `$80.218561026743`, leaving `$54.094262993257` under the current
   privacy-safe upstream classifier, and focused/hermetic validation.
 - [x] DGN003b: Preregister and authorize exactly one diagnostic attempt, then
   pin the pushed registry authority in source.
-- [ ] DGN003c: Execute once, privately pin and close the aggregate receipt,
+- [x] DGN003c: Execute once, privately pin and close the aggregate receipt,
   prove key/Compose/Modal inventories at zero, and choose the AGT007 correction
   from the observed direct/static and one/96-token matrix.
 
@@ -2356,6 +2356,23 @@ fail, correct the provider/request-shape contract. In every branch, keep the
 The remote-visible DGN003 authority chain is Pathfinder preregistration
 `d40ffb74`, Pathfinder registry attestation `b87a602f`, and the final signed
 Semantic Router launch pin. It authorizes only the six-request, no-H100 packet.
+
+DGN003 passed its only attempt. Direct/static at one token and both repeated
+direct/static pairs at 96 tokens completed 6/6 with HTTP 200, exact DS4/Baidu
+identity, and one wire attempt each. Both static 96-token calls emitted all 96
+tokens. OpenRouter usage was `$0.00033251`; Modal usage was zero. Cleanup
+deleted the ephemeral key and Compose state while the protected app remained
+at zero tasks and containers. Cumulative observed accounting is now
+`$80.168893536743`. The private aggregate receipt is byte-verified at
+`rayline-ai/router-artifacts@03c76740` with SHA-256
+`dc1e8060f6bdd837f8bcec7e7afce49d0bb34f93ee92fbb68af0d13254c92d95`.
+
+The result rules out a deterministic gateway model rewrite and a 96-token
+agentic request-shape failure. AGT007 should preserve the 72 measured requests
+unchanged and add one client-owned HTTP 404 retry only to each static endpoint
+readiness probe. Envoy continues to own 429/503 retry; ordinary static and ARC
+measurement requests do not gain a 404 retry. DGN003 is permanently closed,
+and the 1,000-case qualification remains held.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin

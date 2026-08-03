@@ -587,6 +587,15 @@ credentials and Compose state, stopped the exact encoder container, and left
 the deployed app at zero tasks. The source interlock is closed; AGT006 cannot
 retry, and the 1,000-case qualification remains held.
 
+The no-H100 DGN003 follow-up then interleaved six exact DS4/Baidu requests:
+direct/static at one token and two direct/static pairs at 96 tokens. All six
+completed with HTTP 200, exact model/provider identity, and one wire attempt;
+the two static 96-token calls each emitted 96 tokens. This rules out a
+deterministic specified-model rewrite or 96-token agentic request-shape defect.
+Together with the intermittent AGT003/004/006 404s, it supports one bounded
+HTTP 404 retry only in static endpoint readiness, not in measured traffic.
+DGN003 spent USD 0.00033251 on OpenRouter and zero on Modal.
+
 ## Evidence Lineage
 
 The frozen choices build on:
