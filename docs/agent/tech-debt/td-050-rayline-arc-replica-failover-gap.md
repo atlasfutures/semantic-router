@@ -53,6 +53,12 @@ deployment surface.
   backlog, drain, and token ratios are inadmissible because the two arms used
   different hash namespaces; the private aggregate packet and audit receipt
   remain the diagnostic system of record.
+- PERF026 corrected the cross-arm identity and passed: both arms attested the
+  exact `[7,2]` primary split, all 64 measured turns completed, the selected-
+  worker trace matched, nine peer sessions reconstructed, all 18 fanout closes
+  completed, and cleanup reached stable zero. Forced remap used `1.0575x`
+  appended-token work and `1.1371x` p50 latency; this remains experiment-side
+  fault injection rather than proof of outage detection or membership.
 - `e2e/testing/rayline-arc/rayline_affinity_proxy.py` owns deterministic
   experiment placement and aggregate-only accounting.
 - `SessionCoordinator` rebuilds from full supplied history when a retained

@@ -1723,6 +1723,24 @@ but held:
    those gates and close authority after any outcome. Do not interpret fault
    injection as production membership or outage detection; keep TD050 and the
    held 1,000-case qualification open.
+   PERF026 passed its one authorized execution and is closed: 64/64 measured
+   turns, zero failures or providers, exact selected-worker trace, nine peer
+   reconstructions, 18 fanout closes, stable-zero cleanup, and exact `[7,2]`
+   cross-arm primary-placement identity. Forced remap increased appended-token
+   work by `1.0575x` and p50 service latency by `1.1371x`; throughput was
+   `1.0176x`, p95 service latency `0.9533x`, drain `0.9524x`, and final backlog
+   unchanged. Treat the mixed latency/throughput direction as one bounded sample,
+   not a speedup claim. Its observed launcher-window resource upper estimate is
+   `$1.834964`, bringing cumulative observed accounting to
+   `$71.9354755968929`. Privately verify the aggregate packet before registry
+   closure. The next justified live phase is a staged real-replica-stop packet,
+   not another forced-remap sample: preload an identical bounded set of retained
+   sessions through two turns, stop one exact app only in treatment, require
+   bounded transport-failure detection and remap to the surviving replica, then
+   compare turns three and four against a no-stop control. Preregister a new ID,
+   frozen stop boundary, survivor capacity, retry/idempotency semantics,
+   aggregate failure/rebuild/fanout metrics, cleanup, and budget before opening
+   source. Keep production exposure blocked by TD050 and keep qualification held.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage

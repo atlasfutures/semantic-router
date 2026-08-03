@@ -65,9 +65,8 @@ PERF026 = ScaleoutRunContract(
     ),
 )
 
-# PERF025 is closed. PERF026 is the only launchable failover contract after its
-# preregistration, attestation, authorization, and source-pin were pushed.
-LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = PERF026
+# PERF025 and PERF026 are closed after their one authorized executions.
+LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = None
 
 
 def resolve_launch_contract(run_id: str) -> ScaleoutRunContract:
