@@ -122,7 +122,7 @@ def run_preflight(
             }
             for worker, result in zip(WORKERS, endpoint_probes, strict=True)
         },
-        "provider_fallbacks": True,
+        "provider_fallbacks": False,
         "reasoning_enabled": False,
         "performance_inference_admissible": False,
     }

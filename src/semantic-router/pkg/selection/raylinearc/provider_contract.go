@@ -51,12 +51,31 @@ func validateWorkerOpenRouterContract(worker *WorkerManifest) error {
 			return fmt.Errorf("worker %q %s is required", worker.ID, label)
 		}
 	}
-	if len(worker.OpenRouterProviderOrder) != 1 ||
+	if len(worker.OpenRouterProviderOrder) == 0 ||
 		worker.OpenRouterProviderOrder[0] != worker.OpenRouterProviderSlug {
 		return fmt.Errorf(
-			"worker %q provider order must contain only its provider slug",
+			"worker %q provider order must start with its provider slug",
 			worker.ID,
 		)
+	}
+	seenProviders := make(map[string]struct{}, len(worker.OpenRouterProviderOrder))
+	for _, provider := range worker.OpenRouterProviderOrder {
+		normalizedProvider := strings.TrimSpace(provider)
+		if normalizedProvider == "" || normalizedProvider != provider {
+			return fmt.Errorf(
+				"worker %q provider order contains an invalid slug %q",
+				worker.ID,
+				provider,
+			)
+		}
+		if _, exists := seenProviders[provider]; exists {
+			return fmt.Errorf(
+				"worker %q provider order contains duplicate slug %q",
+				worker.ID,
+				provider,
+			)
+		}
+		seenProviders[provider] = struct{}{}
 	}
 	if worker.OpenRouterAllowFallbacks {
 		return fmt.Errorf("worker %q must disable provider fallbacks", worker.ID)

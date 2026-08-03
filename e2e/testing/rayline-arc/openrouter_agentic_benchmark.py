@@ -125,7 +125,7 @@ def _request_payload(
             {
                 "provider": {
                     "order": list(PROVIDER_SLUGS[expected_worker]),
-                    "allow_fallbacks": True,
+                    "allow_fallbacks": False,
                     "require_parameters": True,
                 },
                 "reasoning": {"enabled": False, "effort": "none"},

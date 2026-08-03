@@ -121,6 +121,21 @@ func TestManifestRejectsInvalidWorkerDispatchContract(t *testing.T) {
 		{"provider order", func(worker *WorkerManifest) {
 			worker.OpenRouterProviderOrder = []string{"other"}
 		}},
+		{"empty provider", func(worker *WorkerManifest) {
+			worker.OpenRouterProviderOrder = []string{worker.OpenRouterProviderSlug, ""}
+		}},
+		{"provider whitespace", func(worker *WorkerManifest) {
+			worker.OpenRouterProviderOrder = []string{
+				worker.OpenRouterProviderSlug,
+				" backup-provider ",
+			}
+		}},
+		{"duplicate provider", func(worker *WorkerManifest) {
+			worker.OpenRouterProviderOrder = []string{
+				worker.OpenRouterProviderSlug,
+				worker.OpenRouterProviderSlug,
+			}
+		}},
 		{"fallbacks", func(worker *WorkerManifest) {
 			worker.OpenRouterAllowFallbacks = true
 		}},

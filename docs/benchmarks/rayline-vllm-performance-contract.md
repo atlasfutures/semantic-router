@@ -679,6 +679,13 @@ fallback disabled but permits a bounded unique provider order with the preferred
 provider first; router-controlled request retry and post-response provider
 validation remain authoritative.
 
+AGT011 makes that provider order a first-class Rayline ARC contract. The order
+must be non-empty, contain unique non-empty slugs, and start with the preferred
+provider. Automatic OpenRouter fallback remains forbidden. The exact agentic
+artifact and direct/static controls all send the same order with
+`allow_fallbacks=false`; successful responses outside the order fail closed and
+actual provider identities remain in aggregate evidence.
+
 ## Evidence Lineage
 
 The frozen choices build on:

@@ -69,7 +69,7 @@ def test_agentic_artifact_uses_the_requested_low_cost_pool(tmp_path: Path) -> No
     for worker in manifest["workers"]:
         assert worker["capability_tags"] == ["public-openrouter-agentic-benchmark"]
         assert worker["max_completion_tokens"] == EXPECTED_MAX_COMPLETION_TOKENS
-        assert worker["openrouter_allow_fallbacks"] is True
+        assert worker["openrouter_allow_fallbacks"] is False
         assert worker["openrouter_max_retries"] == 1
         assert worker["thinking_mode"] == "off"
     assert [worker["openrouter_provider_order"] for worker in manifest["workers"]] == [
@@ -280,7 +280,7 @@ def test_agentic_paths_preserve_one_payload_and_change_only_routing() -> None:
         == static["provider"]
         == {
             "order": ["xiaomi", "parasail", "venice", "novita"],
-            "allow_fallbacks": True,
+            "allow_fallbacks": False,
             "require_parameters": True,
         }
     )
@@ -681,8 +681,8 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
     assert "fireworks/fast" not in config
     assert launcher.PACKETS["agentic"].key_limit_usd == EXPECTED_EPHEMERAL_KEY_LIMIT_USD
     assert launcher.PACKETS["agentic"].maximum_seconds == 30 * 60
-    assert launcher.AGT010_PREREGISTRATION_COMMIT == ""
-    assert launcher.AGT010_AUTHORIZATION_COMMIT == ""
+    assert launcher.AGT011_PREREGISTRATION_COMMIT == ""
+    assert launcher.AGT011_AUTHORIZATION_COMMIT == ""
     assert launcher.DGN003_PREREGISTRATION_COMMIT == ""
     assert launcher.DGN003_AUTHORIZATION_COMMIT == ""
     assert launcher.DGN004_PREREGISTRATION_COMMIT == ""

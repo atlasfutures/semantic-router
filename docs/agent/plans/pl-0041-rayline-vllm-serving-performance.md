@@ -2631,6 +2631,25 @@ provider, continue to reject OpenRouter automatic fallback, and send
 the bounded order while preserving router-controlled request retries and
 fail-closed model/provider validation.
 
+### AGT011 Bounded Provider-Order Measurement
+
+AGT011 implements that explicit contract. Rayline ARC accepts one or more
+unique, non-empty provider slugs only when the preferred manifest provider is
+first; it still rejects `openrouter_allow_fallbacks=true`. Direct, static, and
+ARC requests send the same bounded order with `allow_fallbacks=false`, require
+all parameters, keep the model fixed, validate the returned provider against
+the order, and report the actual provider. Conservative prices, retry bounds,
+workload, measurements, resource/cost limits, privacy, cleanup, and the held
+1,000-case path remain unchanged.
+
+- [x] AGT011a: Implement and test the multi-provider-order ARC contract, keep
+  automatic fallback disabled, run repo gates, and prove the exact agentic
+  config reaches fake-encoder router readiness before source freeze.
+- [ ] AGT011b: Preregister, attest, authorize one attempt, attest the registry,
+  and pin both authorities in signed pushed source.
+- [ ] AGT011c: Execute once and publish either bounded preflight failure evidence
+  or the complete 72-request performance result, then close all authority.
+
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
 continues to reject cached-prefix tokens. The separate session v1 wire reports

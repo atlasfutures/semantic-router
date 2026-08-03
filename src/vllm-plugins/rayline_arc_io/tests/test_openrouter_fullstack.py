@@ -32,6 +32,7 @@ EXPECTED_MAX_PROVIDER_COST_USD = 0.10
 EXPECTED_EPHEMERAL_USAGE_USD = 0.01
 EXPECTED_WORKER_COUNT = 3
 EXPECTED_ENVOY_EXTERNAL_ATTEMPTS = 2
+EXPECTED_READINESS_REQUEST_TIMEOUT_SECONDS = 2
 
 
 def test_openrouter_artifact_is_three_arm_pinned_and_bounded(tmp_path: Path) -> None:
@@ -428,9 +429,41 @@ def test_openrouter_post_run_evidence_allows_no_key_before_encoder_readiness(
     assert calls == ["scan"]
 
 
-def test_openrouter_launcher_rejects_failed_arc_component_readiness() -> None:
+def test_openrouter_launcher_parses_arc_component_readiness() -> None:
     metric = launcher.ARC_READY_METRIC
 
     assert launcher._arc_component_ready(f"{metric} 1\n") is True
     assert launcher._arc_component_ready(f"{metric} 0\n") is False
     assert launcher._arc_component_ready("unrelated_metric 1\n") is None
+
+
+def test_arc_component_readiness_waits_through_transient_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metric = launcher.ARC_READY_METRIC
+    bodies = iter((f"{metric} 0\n", f"{metric} 1\n"))
+    calls: list[str] = []
+
+    class FakeResponse:
+        status = launcher.HTTP_OK
+
+        def __enter__(self) -> FakeResponse:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return next(bodies).encode()
+
+    def fake_urlopen(url: str, timeout: float) -> FakeResponse:
+        assert timeout == EXPECTED_READINESS_REQUEST_TIMEOUT_SECONDS
+        calls.append(url)
+        return FakeResponse()
+
+    monkeypatch.setattr(launcher.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(launcher.time, "sleep", lambda _seconds: None)
+
+    launcher._wait_arc_component_ready("http://metrics.invalid")
+
+    assert calls == ["http://metrics.invalid", "http://metrics.invalid"]

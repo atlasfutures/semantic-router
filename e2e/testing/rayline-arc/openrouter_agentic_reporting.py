@@ -270,7 +270,7 @@ def build_report(
         "status": "passed",
         "models": WORKERS,
         "provider_orders": PROVIDER_NAMES,
-        "provider_fallbacks": True,
+        "provider_fallbacks": False,
         "reasoning_enabled": False,
         "encoder_warmup": encoder_warmup,
         "pre_encoder_transport_preflight": transport_preflight,

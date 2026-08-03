@@ -65,8 +65,8 @@ HTTP_OK = 200
 HTTP_UNAUTHORIZED = 401
 GIT_SHA1_HEX_LENGTH = 40
 REQUIRED_MODAL_VERSION = "1.5.1"
-AGT010_PREREGISTRATION_COMMIT = ""
-AGT010_AUTHORIZATION_COMMIT = ""
+AGT011_PREREGISTRATION_COMMIT = ""
+AGT011_AUTHORIZATION_COMMIT = ""
 DGN003_PREREGISTRATION_COMMIT = ""
 DGN003_AUTHORIZATION_COMMIT = ""
 DGN004_PREREGISTRATION_COMMIT = ""
@@ -197,10 +197,6 @@ def _wait_arc_component_ready(url: str) -> None:
                 ready = _arc_component_ready(response.read().decode())
                 if ready is True:
                     return
-                if ready is False:
-                    raise RuntimeError("Rayline ARC component failed startup readiness")
-        except RuntimeError:
-            raise
         except (OSError, ValueError):
             pass
         time.sleep(1)
@@ -570,7 +566,7 @@ def _activate_protected_encoder(
 
 def _verify_source_authority(mode: str, environment: dict[str, str]) -> None:
     authorities = {
-        "agentic": (AGT010_PREREGISTRATION_COMMIT, AGT010_AUTHORIZATION_COMMIT),
+        "agentic": (AGT011_PREREGISTRATION_COMMIT, AGT011_AUTHORIZATION_COMMIT),
         "gateway-shape": (
             DGN003_PREREGISTRATION_COMMIT,
             DGN003_AUTHORIZATION_COMMIT,

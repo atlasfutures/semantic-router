@@ -3,7 +3,11 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 compose_file="${repo_root}/deploy/compose/rayline-arc/compose.yaml"
+agentic_override="${repo_root}/deploy/compose/rayline-arc/compose-openrouter-agentic.yaml"
+agentic_config="${repo_root}/deploy/compose/rayline-arc/config-openrouter-agentic.yaml"
+agentic_envoy="${repo_root}/deploy/compose/rayline-arc/envoy-openrouter.yaml"
 project_name="rayline-arc-e2e"
+agentic_project_name="rayline-arc-agentic-readiness"
 run_dir="$(mktemp -d)"
 receipt="${run_dir}/restart-receipt.json"
 dynamic_receipt="${run_dir}/dynamic-membership-receipt.json"
@@ -16,8 +20,19 @@ compose() {
     "$@"
 }
 
+agentic_compose() {
+  RAYLINE_ARC_E2E_CONFIG_PATH="${agentic_config}" \
+    RAYLINE_ARC_E2E_ENVOY_CONFIG_PATH="${agentic_envoy}" \
+    docker compose \
+    --project-name "${agentic_project_name}" \
+    --file "${compose_file}" \
+    --file "${agentic_override}" \
+    "$@"
+}
+
 cleanup() {
   compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+  agentic_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -26,6 +41,20 @@ wait_http() {
   local deadline=$((SECONDS + 60))
   while ((SECONDS < deadline)); do
     if curl --fail --silent --show-error --max-time 2 "${url}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+wait_arc_ready() {
+  local url="$1"
+  local deadline=$((SECONDS + 60))
+  while ((SECONDS < deadline)); do
+    if curl --fail --silent --show-error --max-time 2 "${url}" 2>/dev/null | \
+      rg --fixed-strings --quiet \
+        'llm_rayline_arc_component_ready{component="artifact_head_encoder"} 1'; then
       return 0
     fi
     sleep 1
@@ -92,4 +121,18 @@ python3 "${repo_root}/e2e/testing/rayline-arc/test_stack.py" \
   --receipt "${receipt}"
 
 scan_logs
+
+compose down --volumes --remove-orphans >/dev/null 2>&1
+agentic_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+agentic_compose up --build --detach \
+  artifact-init fake-encoder fake-encoder-b fake-encoder-c fake-provider \
+  redis membership-init router envoy
+wait_http "http://127.0.0.1:${RAYLINE_ARC_E2E_ROUTER_API_PORT:-18082}/health"
+if ! wait_arc_ready \
+  "http://127.0.0.1:${RAYLINE_ARC_E2E_METRICS_PORT:-19190}/metrics"; then
+  echo "Rayline ARC agentic provider-order readiness failed" >&2
+  exit 1
+fi
+agentic_compose down --volumes --remove-orphans >/dev/null 2>&1
+echo "Rayline ARC agentic provider-order readiness: PASS"
 echo "Rayline ARC hermetic full-stack acceptance: PASS"
