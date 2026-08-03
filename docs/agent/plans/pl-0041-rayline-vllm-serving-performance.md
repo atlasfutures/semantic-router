@@ -2645,7 +2645,7 @@ workload, measurements, resource/cost limits, privacy, cleanup, and the held
 - [x] AGT011a: Implement and test the multi-provider-order ARC contract, keep
   automatic fallback disabled, run repo gates, and prove the exact agentic
   config reaches fake-encoder router readiness before source freeze.
-- [ ] AGT011b: Preregister, attest, authorize one attempt, attest the registry,
+- [x] AGT011b: Preregister, attest, authorize one attempt, attest the registry,
   and pin both authorities in signed pushed source.
 - [ ] AGT011c: Execute once and publish either bounded preflight failure evidence
   or the complete 72-request performance result, then close all authority.
