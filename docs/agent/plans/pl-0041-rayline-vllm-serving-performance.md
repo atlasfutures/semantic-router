@@ -2812,7 +2812,7 @@ the current `$134.31282402` authority. The 1,000-case qualification stays held.
 
 - [x] AGT013a: Implement and test the corrected completion contract and v2
   aggregate report, then pass focused, repository, and hermetic ARC gates.
-- [ ] AGT013b: Freeze source and create the distinct signed, pushed
+- [x] AGT013b: Freeze source and create the distinct signed, pushed
   preregistration, authorization, registry-attestation, and source pins.
 - [ ] AGT013c: Execute once, persist either a success or bounded failure receipt,
   verify cleanup, compare admissible natural stage and stratified evidence if
