@@ -25,7 +25,7 @@ def test_unregistered_failover_stops_before_side_effects(tmp_path: Path) -> None
         router_image="unused",
     )
 
-    with pytest.raises(ValueError, match="no Rayline failover experiment"):
+    with pytest.raises(ValueError, match="launcher only permits preregistered"):
         launcher._preflight(args)
 
     assert list(tmp_path.iterdir()) == []
@@ -44,4 +44,4 @@ def test_launcher_freezes_forced_remap_without_provider_or_qualification() -> No
     assert '"release_qualification_1000_executed": False' in source
     assert launcher.SHARED_SESSION_NAMESPACE == "shared-affinity"
     assert "session_namespace=SHARED_SESSION_NAMESPACE" in source
-    assert contract.LAUNCHABLE_CONTRACT is None
+    assert contract.LAUNCHABLE_CONTRACT is contract.PERF026
