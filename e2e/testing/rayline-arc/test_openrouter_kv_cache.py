@@ -195,4 +195,4 @@ def test_worker_set_remains_the_three_model_openrouter_pool() -> None:
 def test_paid_remote_launch_starts_source_closed() -> None:
     preregistration, authorization = authority.AUTHORITY_PINS["kv-cache"]
     assert preregistration == "6c1d3ead7c6af1557951f7382f7bf826631f3c4a"
-    assert authorization == ""
+    assert authorization == "3b98be94cead03e55283d580080b056575b3cba2"

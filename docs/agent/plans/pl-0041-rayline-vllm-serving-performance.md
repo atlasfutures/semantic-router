@@ -3066,9 +3066,10 @@ source checkpoints are pushed and pinned.
 
 - [x] AGT015a: Implement the fixed retained/replay clients, native H100
   launcher, remote packet, aggregate reporter, and focused tests.
-- [ ] AGT015b: Pass the repo gates, push the signed preregistration checkpoint,
-  pin and push the signed authorization checkpoint, then execute each arm once.
-- [ ] AGT015c: Verify token-work and selection contracts, persist the sanitized
+- [x] AGT015b: Pass the repo gates, push the signed preregistration checkpoint,
+  then pin and push the signed authorization checkpoint.
+- [ ] AGT015c: Execute each arm once and verify transient-resource cleanup.
+- [ ] AGT015d: Verify token-work and selection contracts, persist the sanitized
   receipt, record the measured ratios and costs, clean all transient resources,
   and permanently close both authority pins.
 
