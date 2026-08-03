@@ -74,10 +74,10 @@ DYN006 = ScaleoutRunContract(
     ),
 )
 
-# The pushed Pathfinder authorization names the immutable preregistration and
-# closed source attestation. This final source checkpoint opens only DYN006 for
-# one launch. The held 1,000-case qualification has no entrypoint here.
-LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = DYN006
+# DYN006 passed its single authorized execution. Source authority is closed
+# permanently: there is no retry, and the held 1,000-case qualification has no
+# entrypoint here.
+LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = None
 
 
 def resolve_launch_contract(run_id: str) -> ScaleoutRunContract:

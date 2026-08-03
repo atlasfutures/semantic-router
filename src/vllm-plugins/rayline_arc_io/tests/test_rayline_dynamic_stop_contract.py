@@ -49,7 +49,7 @@ def _rendezvous_owner(raw_episode_id: str, replicas: tuple[str, ...]) -> str:
     )
 
 
-def test_dyn006_freezes_three_replica_budget_and_exact_authority() -> None:
+def test_dyn006_freezes_three_replica_budget_and_closed_authority() -> None:
     receipt = budget.budget_receipt(contract.DYN006.budget)
 
     assert contract.PATHFINDER_AUTHORIZATION_COMMIT == (
@@ -65,10 +65,9 @@ def test_dyn006_freezes_three_replica_budget_and_exact_authority() -> None:
     assert receipt["reserve_after_full_envelope_usd"] == pytest.approx(
         49.54499400552014
     )
-    assert contract.LAUNCHABLE_CONTRACT is contract.DYN006
-    assert contract.resolve_launch_contract(contract.DYN006_RUN_ID) is contract.DYN006
-    with pytest.raises(ValueError, match="launcher only permits"):
-        contract.resolve_launch_contract("held-qualification-1000")
+    assert contract.LAUNCHABLE_CONTRACT is None
+    with pytest.raises(ValueError, match="no Rayline dynamic-stop experiment"):
+        contract.resolve_launch_contract(contract.DYN006_RUN_ID)
 
 
 def test_dyn006_namespace_freezes_balanced_measured_placement() -> None:
@@ -133,16 +132,16 @@ def test_generated_dynamic_config_uses_membership_and_close_contract(
     assert arc["episode"]["idle_ttl_seconds"] == config_builder.DYNAMIC_IDLE_TTL_SECONDS
 
 
-def test_wrong_dyn006_run_id_stops_before_side_effects(tmp_path: Path) -> None:
+def test_closed_dyn006_stops_before_side_effects(tmp_path: Path) -> None:
     args = launcher.argparse.Namespace(
-        run_id="held-qualification-1000",
+        run_id=contract.DYN006_RUN_ID,
         pathfinder_root=tmp_path,
         packet_dir=tmp_path / "packet",
         runtime_dir=tmp_path / "runtime",
         router_image="unused",
     )
 
-    with pytest.raises(ValueError, match="launcher only permits"):
+    with pytest.raises(ValueError, match="no Rayline dynamic-stop experiment"):
         launcher._preflight(args)
 
     assert list(tmp_path.iterdir()) == []
