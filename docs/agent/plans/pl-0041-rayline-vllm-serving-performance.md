@@ -2696,6 +2696,61 @@ Cleanup independently verified zero transient OpenRouter keys, zero Compose
 state, and zero protected encoder containers. The 1,000-case qualification was
 not executed and remains held.
 
+### AGT012 c4 Stage Attribution and Stratified Model Control
+
+AGT011 established the real-generation symptom but did not isolate it: ARC
+throughput fell to `0.588x` static at c4 while the old pure-Modal diagnostic
+held `0.755x`. AGT012 is a single-router diagnostic that reuses the exact
+AGT011 config, provider orders, public agentic workload, protected H100
+encoder, and OpenRouter generation pool. It adds payload-free snapshots around
+each measured phase instead of changing request handling in production.
+
+The natural experiment repeats the six cases selected from a fresh 24-request
+ARC discovery twice. It measures 12 static and 12 ARC requests at c4 using
+identical payloads and the naturally selected model mix. For each phase it
+captures the router's routing and ARC-encoder histogram deltas and decomposes
+mean client E2E into OpenRouter upstream service time, gateway residual,
+router time, encoder time, router non-encoder time, and residual after routing.
+The ARC phase also snapshots the protected encoder's v4 metrics before and
+after the wave, requiring exactly 12 successful retained appends, zero failure
+or session-lock contention, and an idle encoder afterward. Coordinator,
+vLLM queue, inference, and retained-append E2E means are reported alongside
+process-lifetime scheduler peaks.
+
+Because AGT011's natural ARC mix selected no MiMo cases, AGT012 keeps a second
+claim surface explicitly separate. The stratified control binds the same two
+public cases to each of DS4 Flash, MiMo v2.5, and HY3, repeats each twice, and
+measures 12 direct plus 12 static requests at c4. This proves equal-model
+OpenRouter transport and gateway behavior only: it bypasses semantic ARC
+selection and must not be presented as a natural routing result.
+
+The packet is source-closed until its preregistration and authorization commits
+are pinned. It performs the unchanged four-request transport-first preflight
+before H100 activation, then one key-readiness request, three endpoint probes,
+24 discovery requests, and 48 measured requests. The exact bound is therefore
+80 provider requests and 166 external attempts, with a `$0.50` report gate, a
+`$0.75` ephemeral-key limit, and a 30-minute H100 wall limit. The conservative
+full resource envelope is `$5.7492336`: cumulative cost would be at most
+`$87.219421299543`, leaving `$47.093402720457` under the current
+`$134.31282402` user authority. The 1,000-case qualification remains held.
+
+- [x] AGT012a: Implement the aggregate-only stage snapshots, natural c4 cell,
+  stratified direct/static controls, exact request/cost gates, and source-closed
+  launcher; pass repo-native validation and fake-encoder integration.
+- [ ] AGT012b: Preregister the frozen source, attest it in Pathfinder, authorize
+  one attempt, attest the registry, and pin both signed pushed authorities.
+- [ ] AGT012c: Execute once, upload the private aggregate receipt byte-exactly,
+  compare the natural c4 decomposition with AGT011 and the pure-Modal stage
+  reference, verify cleanup, and permanently close launch authority.
+
+AGT012 passes only if all three requested models are reachable, natural
+static/ARC payloads are identical, every metric count equals its request cell,
+the encoder is idle with zero failures after measurement, the stratified
+surface is labelled non-semantic, no request payload or credential enters the
+receipt, cleanup returns keys/Compose/encoder containers to zero, and the
+source/registry authority chain is closed. It may produce diagnostic evidence
+without claiming parity; a throughput ratio alone is not a pass/fail gate.
+
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
 continues to reject cached-prefix tokens. The separate session v1 wire reports

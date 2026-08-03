@@ -67,6 +67,8 @@ GIT_SHA1_HEX_LENGTH = 40
 REQUIRED_MODAL_VERSION = "1.5.1"
 AGT011_PREREGISTRATION_COMMIT = ""
 AGT011_AUTHORIZATION_COMMIT = ""
+AGT012_PREREGISTRATION_COMMIT = ""
+AGT012_AUTHORIZATION_COMMIT = ""
 DGN003_PREREGISTRATION_COMMIT = ""
 DGN003_AUTHORIZATION_COMMIT = ""
 DGN004_PREREGISTRATION_COMMIT = ""
@@ -80,6 +82,21 @@ PUBLIC_REQUEST_LOG_MARKERS = (
 )
 
 
+def _agentic_packet(driver_name: str, project_name: str) -> RunPacket:
+    return RunPacket(
+        compose_override=(
+            REPO_ROOT / "deploy/compose/rayline-arc/compose-openrouter-agentic.yaml"
+        ),
+        config=REPO_ROOT / "deploy/compose/rayline-arc/config-openrouter-agentic.yaml",
+        driver=Path(__file__).with_name(driver_name),
+        project_name=project_name,
+        key_limit_usd=0.75,
+        maximum_seconds=30 * 60,
+        protected_encoder=True,
+        preflight_driver=Path(__file__).with_name("openrouter_agentic_preflight.py"),
+    )
+
+
 PACKETS = {
     "canary": RunPacket(
         compose_override=COMPOSE_OVERRIDE_FILE,
@@ -90,19 +107,13 @@ PACKETS = {
         maximum_seconds=MAX_CANARY_SECONDS,
         protected_encoder=True,
     ),
-    "agentic": RunPacket(
-        compose_override=(
-            REPO_ROOT / "deploy/compose/rayline-arc/compose-openrouter-agentic.yaml"
-        ),
-        config=(
-            REPO_ROOT / "deploy/compose/rayline-arc/config-openrouter-agentic.yaml"
-        ),
-        driver=Path(__file__).with_name("openrouter_agentic_benchmark.py"),
-        project_name="rayline-arc-openrouter-agentic",
-        key_limit_usd=0.75,
-        maximum_seconds=30 * 60,
-        protected_encoder=True,
-        preflight_driver=Path(__file__).with_name("openrouter_agentic_preflight.py"),
+    "agentic": _agentic_packet(
+        "openrouter_agentic_benchmark.py",
+        "rayline-arc-openrouter-agentic",
+    ),
+    "agentic-stage": _agentic_packet(
+        "openrouter_agentic_stage_benchmark.py",
+        "rayline-arc-openrouter-agentic-stage",
     ),
     "gateway-shape": RunPacket(
         compose_override=(
@@ -567,6 +578,10 @@ def _activate_protected_encoder(
 def _verify_source_authority(mode: str, environment: dict[str, str]) -> None:
     authorities = {
         "agentic": (AGT011_PREREGISTRATION_COMMIT, AGT011_AUTHORIZATION_COMMIT),
+        "agentic-stage": (
+            AGT012_PREREGISTRATION_COMMIT,
+            AGT012_AUTHORIZATION_COMMIT,
+        ),
         "gateway-shape": (
             DGN003_PREREGISTRATION_COMMIT,
             DGN003_AUTHORIZATION_COMMIT,
