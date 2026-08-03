@@ -598,6 +598,14 @@ Together with the intermittent AGT003/004/006 404s, it supports one bounded
 HTTP 404 retry only in static endpoint readiness, not in measured traffic.
 DGN003 spent USD 0.00033251 on OpenRouter and zero on Modal.
 
+AGT007 then retried the first static 96-token DS4/Baidu readiness request once,
+but both client attempts returned HTTP 404 after direct key readiness passed.
+OpenRouter usage remained USD 0 and no discovery or measured request ran. This
+falsifies the hypothesis that one generic readiness retry is sufficient. The
+remaining sequencing difference is that DGN003 primed the gateway with a
+one-token static request before its successful 96-token static calls. AGT007 is
+closed and cannot retry; no performance inference is admissible.
+
 ## Evidence Lineage
 
 The frozen choices build on:

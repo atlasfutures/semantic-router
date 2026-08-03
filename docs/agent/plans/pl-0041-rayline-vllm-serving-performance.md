@@ -2401,7 +2401,7 @@ report gate; and 30-minute H100 limit. The complete packet envelope remains
 - [x] AGT007b: Preregister the immutable packet and complete distinct source
   attestation, one-attempt authorization, registry attestation, and final
   launch pin.
-- [ ] AGT007c: Execute once, privately pin the aggregate receipt, close both
+- [x] AGT007c: Execute once, privately pin the aggregate receipt, close both
   authorities, prove stable-zero cleanup, and report real E2E throughput,
   TTFT, latency, retry, cost, natural mix, and normalized ARC/static overhead.
   The 1,000-case qualification remains held.
@@ -2411,6 +2411,24 @@ The remote-visible AGT007 launch chain is Pathfinder preregistration
 authorization `0f69f5c8`, and Pathfinder registry attestation `c4892e8d`. The
 final signed Semantic Router source checkpoint pins both Pathfinder authorities
 and is the only checkpoint permitted to launch the one AGT007 attempt.
+
+AGT007's only attempt passed singleton warmup and direct one-token DS4/Baidu
+readiness. Its first static 96-token DS4/Baidu probe then returned HTTP 404 on
+both permitted client attempts, with provider code `404`. Discovery and all 72
+measured requests did not run; OpenRouter usage remained zero. Cleanup restored
+scale-to-zero, removed both transient credentials and Compose state, and left
+the protected app deployed with zero tasks and containers. The 94-second H100
+upper estimate is `$0.261071088`, bringing cumulative observed accounting to
+`$80.429964624743`. The private receipt is byte-verified at
+`rayline-ai/router-artifacts@bc849b69` with SHA-256
+`0ec5f3ed4d4be625a8cbf9f8164fd5e0f06d0788358cd337a98602e4aa1fca48`.
+
+This falsifies the one-retry hypothesis but leaves a concrete sequencing
+difference: DGN003's first gateway request was a one-token static call, after
+which both static 96-token calls passed. Before another H100 run, a new no-H100
+diagnostic must use a fresh key and compare static-96-first against
+static-1-prime-then-static-96. AGT007 is permanently closed, and the 1,000-case
+qualification remains held.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin

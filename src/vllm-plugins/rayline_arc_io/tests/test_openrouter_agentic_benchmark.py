@@ -519,10 +519,7 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
         launcher.AGENTIC_PREREGISTRATION_COMMIT
         == "eeca56f41a092cde23436816697356a6f13d4d7f"
     )
-    assert (
-        launcher.AGENTIC_AUTHORIZATION_COMMIT
-        == "c4892e8d2b3ec715ba1592326f71ffb432f09b9b"
-    )
+    assert launcher.AGENTIC_AUTHORIZATION_COMMIT == ""
     assert launcher.DGN003_PREREGISTRATION_COMMIT == ""
     assert launcher.DGN003_AUTHORIZATION_COMMIT == ""
     gateway_packet = launcher.PACKETS["gateway-shape"]
