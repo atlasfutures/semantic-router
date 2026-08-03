@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 
-"""Frozen source-closed PERF027 real-replica-stop contract."""
+"""Frozen launch-authorized PERF027 real-replica-stop contract."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from rayline_scaleout_contract import ENCODER_APP_NAMES, PERF024, ScaleoutRunCon
 from rayline_three_arm_budget import BudgetContract
 
 PERF027_RUN_ID = "rayline-replica-stop-perf027-20260803"
-PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
+PATHFINDER_AUTHORIZATION_COMMIT = "afb5aa1be2fb9416422ac3adeb5bccefa360e401"
 STOP_ARMS = ("arc_dual_staged_control", "arc_dual_replica_stop")
 SESSION_NAMESPACE = "shared-replica-stop"
 UNAVAILABLE_REPLICA = 0
@@ -47,7 +47,7 @@ PERF027 = ScaleoutRunContract(
     ),
 )
 
-LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = None
+LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = PERF027
 
 
 def resolve_launch_contract(run_id: str) -> ScaleoutRunContract:

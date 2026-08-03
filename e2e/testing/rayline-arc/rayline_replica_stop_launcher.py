@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 
-"""Run the source-closed PERF027 staged real-replica-stop experiment."""
+"""Run the launch-authorized PERF027 staged real-replica-stop experiment."""
 
 from __future__ import annotations
 
