@@ -177,7 +177,10 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
     assert "fireworks/fast" not in config
     assert launcher.PACKETS["agentic"].key_limit_usd == EXPECTED_EPHEMERAL_KEY_LIMIT_USD
     assert launcher.PACKETS["agentic"].maximum_seconds == 30 * 60
-    assert launcher.AGENTIC_PREREGISTRATION_COMMIT == ""
+    assert (
+        launcher.AGENTIC_PREREGISTRATION_COMMIT
+        == "59334dbd7b92e39df440ad581f049ceb87323153"
+    )
     assert launcher.AGENTIC_AUTHORIZATION_COMMIT == ""
     assert "source=public-synthetic" in launcher.PUBLIC_REQUEST_LOG_MARKERS
     benchmark_source = (SCRIPT_DIR / "openrouter_agentic_benchmark.py").read_text()
