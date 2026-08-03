@@ -31,6 +31,7 @@ EXPECTED_MAX_RETRY_DELAY_SECONDS = 30.0
 EXPECTED_MAX_PROVIDER_COST_USD = 0.10
 EXPECTED_EPHEMERAL_USAGE_USD = 0.01
 EXPECTED_WORKER_COUNT = 3
+EXPECTED_ENVOY_EXTERNAL_ATTEMPTS = 2
 
 
 def test_openrouter_artifact_is_three_arm_pinned_and_bounded(tmp_path: Path) -> None:
@@ -179,9 +180,40 @@ def test_http_error_exposes_only_bounded_metadata_and_retry_delay() -> None:
     assert error.retriable is True
     assert error.error_type == "rate_limit_exceeded"
     assert error.provider_code == ""
+    assert error.error_category == "other_json_error"
+    assert error.external_attempts == 1
     assert error.retry_after_seconds == canary.MAX_RETRY_DELAY_SECONDS
     assert prompt not in str(error)
     assert credential not in str(error)
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("No endpoints found for this request", "no_endpoints"),
+        ("This endpoint does not support tools", "unsupported_parameters"),
+        ("Model not available", "unavailable"),
+        ("Route not found", "not_found"),
+        ("Provider rate limit reached", "rate_limited"),
+        ("Invalid API key", "authentication"),
+        ("opaque provider failure", "other_json_error"),
+    ],
+)
+def test_http_error_classifies_messages_without_retaining_them(
+    message: str, expected: str
+) -> None:
+    error = canary._http_error(
+        endpoint="chat endpoint",
+        status_code=404,
+        body=json.dumps({"error": {"message": message, "code": 404}}).encode(),
+        retry_after=None,
+        external_attempts=2,
+    )
+
+    assert error.error_category == expected
+    assert error.provider_code == "404"
+    assert error.external_attempts == EXPECTED_ENVOY_EXTERNAL_ATTEMPTS
+    assert message not in str(error)
 
 
 def test_chat_does_not_retry_non_transient_http_errors(

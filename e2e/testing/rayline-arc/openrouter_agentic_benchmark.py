@@ -283,6 +283,7 @@ def _stream_request_once(
             status_code=response.status,
             body=body,
             retry_after=retry_after,
+            external_attempts=attempts,
         )
 
     stream = _read_stream(connection, response, started)

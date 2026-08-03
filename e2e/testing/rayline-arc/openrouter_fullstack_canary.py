@@ -89,6 +89,8 @@ class OpenRouterHTTPError(RuntimeError):
         retry_after_seconds: float,
         error_type: str,
         provider_code: str,
+        error_category: str = "",
+        external_attempts: int = 1,
     ) -> None:
         details = [f"{endpoint} returned HTTP {status_code}"]
         if error_type:
@@ -100,6 +102,8 @@ class OpenRouterHTTPError(RuntimeError):
         self.retry_after_seconds = retry_after_seconds
         self.error_type = error_type
         self.provider_code = provider_code
+        self.error_category = error_category
+        self.external_attempts = external_attempts
 
     @property
     def retriable(self) -> bool:
@@ -138,6 +142,7 @@ def _http_error(
     status_code: int,
     body: bytes,
     retry_after: str | None,
+    external_attempts: int = 1,
 ) -> OpenRouterHTTPError:
     error_type = ""
     provider_code = ""
@@ -147,16 +152,42 @@ def _http_error(
         decoded = None
     error = decoded.get("error") if isinstance(decoded, dict) else None
     metadata = error.get("metadata") if isinstance(error, dict) else None
+    message = error.get("message") if isinstance(error, dict) else None
+    error_category = _classify_error_message(message, decoded is not None)
     if isinstance(metadata, dict):
         error_type = _bounded_error_token(metadata.get("error_type"))
         provider_code = _bounded_error_token(metadata.get("provider_code"))
+    if not provider_code and isinstance(error, dict):
+        provider_code = _bounded_error_token(error.get("code"))
     return OpenRouterHTTPError(
         endpoint=endpoint,
         status_code=status_code,
         retry_after_seconds=_retry_after_seconds(retry_after),
         error_type=error_type,
         provider_code=provider_code,
+        error_category=error_category,
+        external_attempts=max(1, external_attempts),
     )
+
+
+def _classify_error_message(message: Any, decoded_json: bool) -> str:
+    if not isinstance(message, str):
+        return "unclassified_json" if decoded_json else "unclassified_non_json"
+    normalized = message.casefold()
+    categories = (
+        ("no endpoints found", "no_endpoints"),
+        ("does not support", "unsupported_parameters"),
+        ("not supported", "unsupported_parameters"),
+        ("not available", "unavailable"),
+        ("not found", "not_found"),
+        ("rate limit", "rate_limited"),
+        ("api key", "authentication"),
+        ("unauthorized", "authentication"),
+    )
+    for marker, category in categories:
+        if marker in normalized:
+            return category
+    return "other_json_error"
 
 
 def _attempt_count(value: str | None) -> int:

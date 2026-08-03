@@ -2318,6 +2318,41 @@ with SHA-256
 Semantic Router closes source authority at `ae323259`, and Pathfinder closes
 the registry at `e3908495`. The 1,000-case qualification remains held.
 
+### DGN003 Gateway-Shape Isolation
+
+DGN003 is a no-H100, six-request diagnostic for the remaining AGT006 failure
+seam. It uses the exact agentic config, Envoy route, router image, fake encoder
+contract, DS4/Baidu pin, and first public synthetic agentic case. In fixed
+order it sends direct/static requests at one token, then two interleaved
+direct/static pairs at the exact 96-token measured cap. It permits no
+client-owned retry; Envoy may make at most one existing 429/503 retry per
+gateway request. The packet therefore has six logical requests and twelve
+external attempts at most.
+
+The aggregate receipt records only path, token cap, status, bounded error
+category/type/code, response model/provider, completion tokens, and attempt
+count. It persists no request body, provider error message, credential,
+episode ID, latency, or timestamp. This packet cannot support performance
+inference. Its ephemeral OpenRouter key is hard-capped at `$0.05`; there is no
+Modal H100 or proxy token. Charging the complete envelope gives a cumulative
+upper bound of `$80.218561026743`, leaving `$54.094262993257` under the current
+`$134.31282402` authority.
+
+- [x] DGN003a: Source-close the local fake-encoder mode, six-request driver,
+  privacy-safe upstream classifier, and focused/hermetic validation.
+- [ ] DGN003b: Preregister and authorize exactly one diagnostic attempt, then
+  pin the pushed registry authority in source.
+- [ ] DGN003c: Execute once, privately pin and close the aggregate receipt,
+  prove key/Compose/Modal inventories at zero, and choose the AGT007 correction
+  from the observed direct/static and one/96-token matrix.
+
+If direct and static behave alike, treat AGT006 as an upstream transient and
+add only a bounded static readiness retry under a new full packet. If direct
+succeeds while static fails, inspect the sanitized upstream category and fix
+the gateway transport contract before another H100 run. If only 96-token calls
+fail, correct the provider/request-shape contract. In every branch, keep the
+1,000-case qualification held.
+
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
 continues to reject cached-prefix tokens. The separate session v1 wire reports

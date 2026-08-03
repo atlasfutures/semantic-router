@@ -54,6 +54,8 @@ GIT_SHA1_HEX_LENGTH = 40
 REQUIRED_MODAL_VERSION = "1.5.1"
 AGENTIC_PREREGISTRATION_COMMIT = "25ef39dac03015934bde87b6739505dfac2e5210"
 AGENTIC_AUTHORIZATION_COMMIT = ""
+DGN003_PREREGISTRATION_COMMIT = ""
+DGN003_AUTHORIZATION_COMMIT = ""
 AGENTIC_SOURCE_REMOTE_REF = "atlasfutures/codex/rayline-remote-mvp"
 PUBLIC_REQUEST_LOG_MARKERS = (
     *CANDIDATE_PROMPTS,
@@ -71,6 +73,7 @@ class RunPacket:
     project_name: str
     key_limit_usd: float
     maximum_seconds: int
+    protected_encoder: bool
 
 
 @dataclass
@@ -91,6 +94,7 @@ PACKETS = {
         project_name=PROJECT_NAME,
         key_limit_usd=OPENROUTER_KEY_LIMIT_USD,
         maximum_seconds=MAX_CANARY_SECONDS,
+        protected_encoder=True,
     ),
     "agentic": RunPacket(
         compose_override=(
@@ -103,6 +107,20 @@ PACKETS = {
         project_name="rayline-arc-openrouter-agentic",
         key_limit_usd=0.75,
         maximum_seconds=30 * 60,
+        protected_encoder=True,
+    ),
+    "gateway-shape": RunPacket(
+        compose_override=(
+            REPO_ROOT / "deploy/compose/rayline-arc/compose-openrouter-agentic.yaml"
+        ),
+        config=(
+            REPO_ROOT / "deploy/compose/rayline-arc/config-openrouter-agentic.yaml"
+        ),
+        driver=Path(__file__).with_name("openrouter_gateway_shape_diagnostic.py"),
+        project_name="rayline-arc-openrouter-gateway-shape",
+        key_limit_usd=0.05,
+        maximum_seconds=5 * 60,
+        protected_encoder=False,
     ),
 }
 
@@ -456,10 +474,11 @@ def _cleanup_runtime(
             if key_hash:
                 _delete_ephemeral_key(management_key, key_hash)
         finally:
-            try:
-                _restore_encoder_scale_to_zero(state)
-            finally:
-                _stop_encoder_containers(modal_command, environment)
+            if packet.protected_encoder:
+                try:
+                    _restore_encoder_scale_to_zero(state)
+                finally:
+                    _stop_encoder_containers(modal_command, environment)
     print(
         "OpenRouter cleanup: compose down, keys deleted, encoder stopped",
         file=sys.stderr,
@@ -479,30 +498,51 @@ def _runtime_environment(
         {
             "OPENROUTER_EPHEMERAL_API_KEY": openrouter_key,
             "RAYLINE_ARC_E2E_PROVIDER_KEY": openrouter_key,
-            "RAYLINE_ARC_E2E_MODAL_KEY": modal_key,
-            "RAYLINE_ARC_E2E_MODAL_SECRET": modal_secret,
-            "RAYLINE_ARC_E2E_ENCODER_BASE_URL": f"https://{ENCODER_HOST}",
-            "RAYLINE_ARC_E2E_ENCODER_BUILD_ID": ENCODER_BUILD_ID,
             "RAYLINE_ARC_E2E_CONFIG_PATH": str(packet.config),
             "RAYLINE_ARC_E2E_ENVOY_CONFIG_PATH": str(OPENROUTER_ENVOY_FILE),
         }
     )
+    if packet.protected_encoder:
+        environment.update(
+            {
+                "RAYLINE_ARC_E2E_MODAL_KEY": modal_key,
+                "RAYLINE_ARC_E2E_MODAL_SECRET": modal_secret,
+                "RAYLINE_ARC_E2E_ENCODER_BASE_URL": f"https://{ENCODER_HOST}",
+                "RAYLINE_ARC_E2E_ENCODER_BUILD_ID": ENCODER_BUILD_ID,
+            }
+        )
+    else:
+        environment.update(
+            {
+                "RAYLINE_ARC_E2E_MODAL_KEY": "public-e2e-modal-key",
+                "RAYLINE_ARC_E2E_MODAL_SECRET": "public-e2e-modal-secret",
+                "RAYLINE_ARC_E2E_ENCODER_BASE_URL": "http://fake-encoder:8080",
+                "RAYLINE_ARC_E2E_ENCODER_BUILD_ID": ("vllm@public-rayline-e2e-build"),
+            }
+        )
     return environment
 
 
-def _verify_agentic_source_authority(mode: str, environment: dict[str, str]) -> None:
-    if mode != "agentic":
+def _verify_source_authority(mode: str, environment: dict[str, str]) -> None:
+    authorities = {
+        "agentic": (AGENTIC_PREREGISTRATION_COMMIT, AGENTIC_AUTHORIZATION_COMMIT),
+        "gateway-shape": (
+            DGN003_PREREGISTRATION_COMMIT,
+            DGN003_AUTHORIZATION_COMMIT,
+        ),
+    }
+    pins = authorities.get(mode)
+    if pins is None:
         return
-    pins = (AGENTIC_PREREGISTRATION_COMMIT, AGENTIC_AUTHORIZATION_COMMIT)
     if any(len(pin) != GIT_SHA1_HEX_LENGTH for pin in pins):
-        raise SystemExit("agentic launch authority is source-closed")
+        raise SystemExit(f"{mode} launch authority is source-closed")
     status = _run(
         ["git", "status", "--porcelain"],
         environment=environment,
         capture_output=True,
     )
     if status.stdout:
-        raise SystemExit("agentic launch requires a clean source checkpoint")
+        raise SystemExit(f"{mode} launch requires a clean source checkpoint")
     head = _run(
         ["git", "rev-parse", "HEAD"],
         environment=environment,
@@ -520,7 +560,7 @@ def _verify_agentic_source_authority(mode: str, environment: dict[str, str]) -> 
         capture_output=True,
     )
     if pushed.returncode != 0:
-        raise SystemExit("agentic launch source is not remote-visible")
+        raise SystemExit(f"{mode} launch source is not remote-visible")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -539,16 +579,19 @@ def _execute_runtime(
     manager: Any,
     state: RuntimeState,
 ) -> None:
-    _pin_encoder_singleton(state)
-    state.proxy_token = manager.create()
-    _wait_protected_encoder(state.proxy_token)
+    if packet.protected_encoder:
+        _pin_encoder_singleton(state)
+        state.proxy_token = manager.create()
+        _wait_protected_encoder(state.proxy_token)
     state.ephemeral_key, state.key_hash = _create_ephemeral_key(
         management_key, args.run_id, packet.key_limit_usd
     )
     state.environment = _runtime_environment(
         openrouter_key=state.ephemeral_key,
-        modal_key=state.proxy_token.token_id,
-        modal_secret=state.proxy_token.token_secret,
+        modal_key=(state.proxy_token.token_id if state.proxy_token is not None else ""),
+        modal_secret=(
+            state.proxy_token.token_secret if state.proxy_token is not None else ""
+        ),
         packet=packet,
     )
     _run(
@@ -586,7 +629,7 @@ def main() -> None:
 
     packet = PACKETS[args.mode]
 
-    if modal.__version__ != REQUIRED_MODAL_VERSION:
+    if packet.protected_encoder and modal.__version__ != REQUIRED_MODAL_VERSION:
         raise SystemExit(
             f"Modal SDK {REQUIRED_MODAL_VERSION} is required; found {modal.__version__}"
         )
@@ -595,12 +638,17 @@ def main() -> None:
         raise SystemExit("OPENROUTER_MANAGEMENT_KEY is required")
     modal_command = [sys.executable, "-m", "modal"]
     base_environment = os.environ.copy()
-    _verify_agentic_source_authority(args.mode, base_environment)
-    _verify_encoder_deployment(modal_command, base_environment)
-    if _encoder_containers(modal_command, base_environment):
-        raise SystemExit("protected encoder already has a running container")
+    _verify_source_authority(args.mode, base_environment)
+    if packet.protected_encoder:
+        _verify_encoder_deployment(modal_command, base_environment)
+        if _encoder_containers(modal_command, base_environment):
+            raise SystemExit("protected encoder already has a running container")
 
-    manager = modal.Workspace.from_context().proxy_tokens
+    manager = (
+        modal.Workspace.from_context().proxy_tokens
+        if packet.protected_encoder
+        else None
+    )
     state = RuntimeState(environment=base_environment)
     run_failure: Exception | None = None
     evidence_failure: Exception | None = None

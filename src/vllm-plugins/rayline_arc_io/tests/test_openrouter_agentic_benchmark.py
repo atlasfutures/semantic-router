@@ -19,6 +19,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 artifact = importlib.import_module("openrouter_agentic_artifact_fixture")
 benchmark = importlib.import_module("openrouter_agentic_benchmark")
+gateway_diagnostic = importlib.import_module("openrouter_gateway_shape_diagnostic")
 reporting = importlib.import_module("openrouter_agentic_reporting")
 workload = importlib.import_module("openrouter_agentic_workload")
 if "modal" not in sys.modules and importlib.util.find_spec("modal") is None:
@@ -34,6 +35,10 @@ EXPECTED_MIN_TOOL_RESULT_CHARACTERS = 1_000
 EXPECTED_SELECTED_CASES = 6
 EXPECTED_SELECTED_CASES_PER_ACTIVE_WORKER = 3
 EXPECTED_EPHEMERAL_KEY_LIMIT_USD = 0.75
+EXPECTED_DIAGNOSTIC_KEY_LIMIT_USD = 0.05
+EXPECTED_DIAGNOSTIC_REQUESTS = 6
+EXPECTED_DIAGNOSTIC_SUCCESSES = 4
+EXPECTED_DIAGNOSTIC_FAILURES = 2
 
 
 def test_agentic_artifact_uses_the_requested_low_cost_pool(tmp_path: Path) -> None:
@@ -347,6 +352,60 @@ def test_key_readiness_can_retry_one_pre_response_404(
     assert sleeps == [0.5]
 
 
+def test_gateway_shape_diagnostic_interleaves_exact_bounded_probe_shapes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def fake_stream_request(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        if (
+            kwargs["path"] == "gateway_static"
+            and kwargs["max_completion_tokens"] == EXPECTED_MAX_COMPLETION_TOKENS
+        ):
+            raise benchmark.OpenRouterHTTPError(
+                endpoint="gateway diagnostic",
+                status_code=404,
+                retry_after_seconds=1.0,
+                error_type="",
+                provider_code="404",
+                error_category="no_endpoints",
+                external_attempts=1,
+            )
+        return {
+            "response_model": "deepseek/deepseek-v4-flash",
+            "provider": "Baidu",
+            "completion_tokens": kwargs["max_completion_tokens"],
+            "external_attempts": 1,
+        }
+
+    monkeypatch.setattr(gateway_diagnostic, "_stream_request", fake_stream_request)
+    report = gateway_diagnostic.run_diagnostic(
+        gateway_url="http://gateway.invalid",
+        openrouter_key="private-key",
+        run_id="public-diagnostic",
+        timeout_seconds=1.0,
+    )
+
+    assert [(call["path"], call["max_completion_tokens"]) for call in calls] == [
+        ("direct", 1),
+        ("gateway_static", 1),
+        ("direct", 96),
+        ("gateway_static", 96),
+        ("direct", 96),
+        ("gateway_static", 96),
+    ]
+    assert all(call["maximum_attempts"] == 1 for call in calls)
+    assert report["provider_requests"] == EXPECTED_DIAGNOSTIC_REQUESTS
+    assert report["successful_requests"] == EXPECTED_DIAGNOSTIC_SUCCESSES
+    assert report["failed_requests"] == EXPECTED_DIAGNOSTIC_FAILURES
+    assert {result.get("error_category") for result in report["results"]} == {
+        None,
+        "no_endpoints",
+    }
+    assert "private-key" not in json.dumps(report)
+
+
 def test_agentic_launcher_pins_and_restores_one_encoder_container(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -411,6 +470,24 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
         == "25ef39dac03015934bde87b6739505dfac2e5210"
     )
     assert launcher.AGENTIC_AUTHORIZATION_COMMIT == ""
+    assert launcher.DGN003_PREREGISTRATION_COMMIT == ""
+    assert launcher.DGN003_AUTHORIZATION_COMMIT == ""
+    gateway_packet = launcher.PACKETS["gateway-shape"]
+    assert gateway_packet.key_limit_usd == EXPECTED_DIAGNOSTIC_KEY_LIMIT_USD
+    assert gateway_packet.maximum_seconds == 5 * 60
+    assert gateway_packet.protected_encoder is False
+    gateway_environment = launcher._runtime_environment(
+        openrouter_key="ephemeral-key",
+        modal_key="",
+        modal_secret="",
+        packet=gateway_packet,
+    )
+    assert gateway_environment["RAYLINE_ARC_E2E_ENCODER_BASE_URL"] == (
+        "http://fake-encoder:8080"
+    )
+    assert gateway_environment["RAYLINE_ARC_E2E_ENCODER_BUILD_ID"] == (
+        "vllm@public-rayline-e2e-build"
+    )
     assert "source=public-synthetic" in launcher.PUBLIC_REQUEST_LOG_MARKERS
     benchmark_source = (SCRIPT_DIR / "openrouter_agentic_benchmark.py").read_text()
     reporting_source = (SCRIPT_DIR / "openrouter_agentic_reporting.py").read_text()
