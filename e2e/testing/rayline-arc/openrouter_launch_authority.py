@@ -12,7 +12,7 @@ SOURCE_REMOTE_REF = "atlasfutures/codex/rayline-remote-mvp"
 AUTHORITY_PINS = {
     "agentic": ("", ""),
     "agentic-stage": ("", ""),
-    "kv-cache": ("", ""),
+    "kv-cache": ("6c1d3ead7c6af1557951f7382f7bf826631f3c4a", ""),
     "gateway-shape": ("", ""),
     "gateway-prime": ("", ""),
 }
