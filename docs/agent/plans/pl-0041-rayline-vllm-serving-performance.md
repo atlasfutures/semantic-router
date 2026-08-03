@@ -2521,6 +2521,10 @@ the preserved Envoy/key evidence narrows the defect to the router transition or
 later full-stack state. If measurement completes, publish the requested E2E
 result. Keep the 1,000-case qualification held in every branch.
 
+AGT008's immutable no-authority Pathfinder preregistration is `2109c8fe`.
+Semantic Router source may attest that commit while keeping its distinct
+authorization pin empty; this attestation still cannot launch.
+
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
 continues to reject cached-prefix tokens. The separate session v1 wire reports
