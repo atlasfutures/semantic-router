@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 RAYLINE_ARC_ENCODER_MODEL = "Qwen/Qwen3.5-0.8B"
 RAYLINE_ARC_ENCODER_MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
@@ -18,12 +18,46 @@ RaylineARCPoolingCapability = Literal[
 ]
 
 
+class RaylineARCEncoderReplicaConfig(BaseModel):
+    """Stable retained-encoder identity for static membership."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    base_url: str
+    state: Literal["active", "draining"]
+
+
+class RaylineARCEncoderFailoverConfig(BaseModel):
+    """The exact retained-encoder remap contract."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str
+    unavailable_status_codes: list[int] = Field(min_length=1, max_length=16)
+    unavailable_cooldown_seconds: int = Field(gt=0, le=3600)
+    max_remaps: int
+
+
+class RaylineARCEncoderMembershipConfig(BaseModel):
+    """Reviewed dynamic membership source, separate from request semantics."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str
+    source: str
+    refresh_seconds: int = Field(gt=0, le=300)
+
+
 class RaylineARCEncoderConfig(BaseModel):
     """Pinned contract for the dedicated vLLM pooling deployment."""
 
     model_config = ConfigDict(extra="forbid")
 
-    base_url: str
+    base_url: str | None = None
+    replicas: list[RaylineARCEncoderReplicaConfig] = Field(default_factory=list)
+    membership: RaylineARCEncoderMembershipConfig | None = None
+    failover: RaylineARCEncoderFailoverConfig | None = None
     model: str
     model_revision: str
     expected_build_id: str
@@ -39,6 +73,16 @@ class RaylineARCEncoderConfig(BaseModel):
     connect_timeout_seconds: int = Field(gt=0)
     total_timeout_seconds: int = Field(gt=0)
     max_retries: int = Field(ge=0, le=3)
+
+    @field_validator("membership", mode="before")
+    @classmethod
+    def empty_membership_is_absent(cls, value):
+        # The canonical reference config includes membership: {} so its
+        # field inventory is covered without changing the selected static
+        # base_url mode. Treat that zero block exactly as an omitted field.
+        if value in (None, {}):
+            return None
+        return value
 
 
 class RaylineARCRedisConfig(BaseModel):
@@ -59,6 +103,7 @@ class RaylineARCEpisodeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id_header: str
+    close_header: str | None = None
     backend: Literal["redis", "memory"]
     key_prefix: str
     acquire_timeout_seconds: int = Field(gt=0)

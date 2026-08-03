@@ -3,7 +3,12 @@
 from types import SimpleNamespace
 
 from cli.algorithms import AlgorithmConfig, ModelRef
-from cli.rayline_arc_config import RaylineARCAlgorithmConfig
+from cli.rayline_arc_config import (
+    RaylineARCAlgorithmConfig,
+    RaylineARCEncoderFailoverConfig,
+    RaylineARCEncoderMembershipConfig,
+    RaylineARCEncoderReplicaConfig,
+)
 from cli.validator_rayline_arc import (
     _effective_auto_model_names,
     _valid_host_port,
@@ -83,6 +88,50 @@ def test_rayline_arc_rejects_resumable_mean_without_causal_mean():
     )
 
 
+def test_rayline_arc_accepts_dynamic_redis_membership():
+    decision = _valid_dynamic_membership_decision()
+
+    assert _validate_rayline_arc_decision(decision) == []
+
+
+def test_rayline_arc_dynamic_membership_requires_redis_and_close_header():
+    decision = _valid_dynamic_membership_decision()
+    decision.algorithm.rayline_arc.episode.backend = "memory"
+    decision.algorithm.rayline_arc.episode.development_mode = True
+    decision.algorithm.rayline_arc.episode.max_in_memory_episodes = 4
+    decision.algorithm.rayline_arc.episode.close_header = None
+
+    errors = _validate_rayline_arc_decision(decision)
+
+    assert any("redis backend" in error.message for error in errors)
+    assert any("close_header is required" in error.message for error in errors)
+
+
+def test_rayline_arc_accepts_static_replica_contract_in_cli_schema():
+    decision = _valid_dynamic_membership_decision()
+    encoder = decision.algorithm.rayline_arc.encoder
+    encoder.membership = None
+    encoder.replicas = [
+        RaylineARCEncoderReplicaConfig(
+            id="encoder-a", base_url="http://encoder-a.test:8000", state="active"
+        ),
+        RaylineARCEncoderReplicaConfig(
+            id="encoder-b", base_url="http://encoder-b.test:8000", state="draining"
+        ),
+    ]
+
+    assert _validate_rayline_arc_decision(decision) == []
+
+
+def test_rayline_arc_cli_treats_empty_reference_membership_as_absent():
+    raw = _valid_decision().algorithm.rayline_arc.model_dump()
+    raw["encoder"]["membership"] = {}
+
+    parsed = RaylineARCAlgorithmConfig.model_validate(raw)
+
+    assert parsed.encoder.membership is None
+
+
 def _valid_decision():
     return SimpleNamespace(
         name="arc-route",
@@ -128,6 +177,32 @@ def _valid_decision():
             ModelRef(model="public-arm-b"),
         ],
     )
+
+
+def _valid_dynamic_membership_decision():
+    decision = _valid_decision()
+    arc = decision.algorithm.rayline_arc
+    arc.encoder.base_url = None
+    arc.encoder.replicas = []
+    arc.encoder.membership = RaylineARCEncoderMembershipConfig(
+        schema_version="rayline.arc.encoder-membership.v1",
+        source="redis",
+        refresh_seconds=5,
+    )
+    arc.encoder.failover = RaylineARCEncoderFailoverConfig(
+        schema_version="rayline.arc.encoder-failover.v1",
+        unavailable_status_codes=[503],
+        unavailable_cooldown_seconds=30,
+        max_remaps=1,
+    )
+    arc.encoder.serving_rung = "B"
+    arc.encoder.required_pooling_capabilities = [
+        "chunked_causal_mean",
+        "resumable_causal_mean",
+    ]
+    arc.encoder.max_retries = 0
+    arc.episode.close_header = "x-rayline-episode-close"
+    return decision
 
 
 def test_redis_address_table_matches_go_validator():

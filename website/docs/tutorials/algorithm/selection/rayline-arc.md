@@ -201,6 +201,61 @@ history. For rolling replacement, first change a member from `active` to
 owner while watching close/session metrics, and only then remove it. Premature
 removal fails closed.
 
+### Dynamic retained-encoder membership
+
+Dynamic membership replaces `encoder.replicas` with a reviewed Redis document;
+it does not change the v1 request, affinity, remap, or close contract.
+
+```yaml
+encoder:
+  membership:
+    schema_version: rayline.arc.encoder-membership.v1
+    source: redis
+    refresh_seconds: 5
+  failover:
+    schema_version: rayline.arc.encoder-failover.v1
+    unavailable_status_codes: [503]
+    unavailable_cooldown_seconds: 30
+    max_remaps: 1
+```
+
+The controller stores a revisioned membership document at
+`<episode.key_prefix>encoder-membership`. It must publish `active` to
+`draining` first, then wait one full `episode.idle_ttl_seconds` and prove that
+the aggregate persisted owner/visited-owner count is zero before its CAS
+removal revision. A router accepts only ordered revisions and pins a stable
+replica ID to its original endpoint. If the source is missing at startup, the
+router fails closed; if it fails after startup, the router retains the last
+valid snapshot.
+
+Run membership mutation in the separate controller image, never in the router
+process. The controller reads the same canonical config and supports
+privacy-safe `status`, one-shot `drain`/`reconcile`, and a continuous `run`
+loop:
+
+```bash
+rayline-arc-controller status --config /app/config.yaml --decision arc-prod
+rayline-arc-controller register --config /app/config.yaml \
+  --decision arc-prod --replica-id encoder-c \
+  --base-url https://encoder-c.internal
+rayline-arc-controller drain --config /app/config.yaml \
+  --decision arc-prod --replica-id encoder-a
+rayline-arc-controller run --config /app/config.yaml \
+  --decision arc-prod --interval 5s
+```
+
+`register` is idempotent only for the exact active ID/endpoint pair. It rejects
+endpoint changes and draining-ID reactivation. Each router probes a newly
+registered endpoint before adopting that membership revision; a failed probe
+leaves its last valid snapshot in service.
+
+Set `RAYLINE_ARC_CONTROLLER_PASSWORD_ENV` to the name of a controller-only
+Redis password variable when the controller uses credentials distinct from
+the router, and set `RAYLINE_ARC_CONTROLLER_REDIS_USERNAME` for a named Redis
+ACL user. The router identity needs read-only access to the membership key;
+the controller identity needs membership CAS authority plus read/scan access
+to episode ownership fields.
+
 See [Rayline ARC Retained-Encoder Replica Contract](../../../../../docs/architecture/rayline-arc-replica-membership.md)
 for the full interaction, failure, observability, and rollout model.
 

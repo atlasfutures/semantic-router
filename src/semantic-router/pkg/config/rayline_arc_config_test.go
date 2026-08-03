@@ -298,6 +298,67 @@ func TestValidateRaylineARCAlgorithmConfigRequiresReplicaCloseProtocol(
 	}
 }
 
+func TestValidateRaylineARCAlgorithmConfigAcceptsDynamicReplicaMembership(
+	t *testing.T,
+) {
+	decision := validDynamicRaylineARCDecision()
+	if err := validateDecisionAlgorithmConfig(
+		decision.Name,
+		decision.ModelRefs,
+		decision.Algorithm,
+	); err != nil {
+		t.Fatalf("dynamic ARC config rejected: %v", err)
+	}
+}
+
+func TestValidateRaylineARCAlgorithmConfigRejectsUnsafeDynamicMembership(
+	t *testing.T,
+) {
+	tests := []struct {
+		name    string
+		mutate  func(*Decision)
+		wantErr string
+	}{
+		{
+			name: "non redis source",
+			mutate: func(decision *Decision) {
+				decision.Algorithm.RaylineARC.Encoder.Membership.Source = "dns"
+			},
+			wantErr: "membership.source",
+		},
+		{
+			name: "memory episode store",
+			mutate: func(decision *Decision) {
+				decision.Algorithm.RaylineARC.Episode.Backend = RaylineARCBackendMemory
+				decision.Algorithm.RaylineARC.Episode.DevelopmentMode = true
+				decision.Algorithm.RaylineARC.Episode.MaxInMemoryEpisodes = 4
+			},
+			wantErr: "redis backend",
+		},
+		{
+			name: "missing close header",
+			mutate: func(decision *Decision) {
+				decision.Algorithm.RaylineARC.Episode.CloseHeader = ""
+			},
+			wantErr: "close_header is required",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			decision := validDynamicRaylineARCDecision()
+			test.mutate(&decision)
+			err := validateDecisionAlgorithmConfig(
+				decision.Name,
+				decision.ModelRefs,
+				decision.Algorithm,
+			)
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("error = %v, want substring %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestValidateRaylineARCDecisionRejectsLearningAndCandidateDrift(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -482,5 +543,17 @@ func validReplicatedRaylineARCDecision() Decision {
 	}
 	encoder.MaxRetries = 0
 	decision.Algorithm.RaylineARC.Episode.CloseHeader = "x-rayline-episode-close"
+	return decision
+}
+
+func validDynamicRaylineARCDecision() Decision {
+	decision := validReplicatedRaylineARCDecision()
+	encoder := &decision.Algorithm.RaylineARC.Encoder
+	encoder.Replicas = nil
+	encoder.Membership = RaylineARCEncoderMembershipConfig{
+		SchemaVersion:  RaylineARCEncoderMembershipV1,
+		Source:         RaylineARCEncoderMembershipRedis,
+		RefreshSeconds: 5,
+	}
 	return decision
 }

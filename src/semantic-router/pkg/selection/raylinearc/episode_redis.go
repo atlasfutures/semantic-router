@@ -81,6 +81,7 @@ return 1
 type RedisEpisodeStoreConfig struct {
 	Address   string
 	DB        int
+	Username  string
 	Password  string
 	UseTLS    bool
 	PoolSize  int
@@ -110,6 +111,7 @@ func NewRedisEpisodeStore(
 	options := &redis.Options{
 		Addr:     config.Address,
 		DB:       config.DB,
+		Username: config.Username,
 		Password: config.Password,
 		PoolSize: config.PoolSize,
 	}

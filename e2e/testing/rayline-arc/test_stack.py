@@ -646,6 +646,15 @@ def _initial(receipt: Path) -> None:
     )
     assert state_b["version"] == 1 and state_b["turn_index"] == 1, state_b
 
+    retry_benchmark = _assert_transient_retry_transactions()
+    _assert_failure_transactions()
+    _assert_retained_session_extension()
+    _assert_concurrency()
+    _assert_response_boundaries()
+    _assert_retry_metrics()
+
+    # Create the restart canary after the longer behavior suite so the short
+    # hermetic idle TTL measures router restart, not test-suite wall time.
     persistent_episode = f"{EPISODE_CANARY}-restart"
     _, persistent_state = _assert_route(
         persistent_episode,
@@ -653,7 +662,6 @@ def _initial(receipt: Path) -> None:
         worker="worker-a",
         reasoning_header="off",
     )
-    retry_benchmark = _assert_transient_retry_transactions()
     receipt.write_text(
         json.dumps(
             {
@@ -666,11 +674,6 @@ def _initial(receipt: Path) -> None:
             sort_keys=True,
         )
     )
-    _assert_failure_transactions()
-    _assert_retained_session_extension()
-    _assert_concurrency()
-    _assert_response_boundaries()
-    _assert_retry_metrics()
     print(
         "Rayline ARC Envoy retry benchmark: "
         + json.dumps(retry_benchmark, sort_keys=True),

@@ -19,6 +19,7 @@ DEFAULT_APP_NAME = "rayline-arc-session-encoder"
 SCALEOUT_APP_NAMES = (
     "rayline-arc-session-encoder-a",
     "rayline-arc-session-encoder-b",
+    "rayline-arc-session-encoder-c",
 )
 APP_NAME = os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", DEFAULT_APP_NAME)
 if APP_NAME not in (DEFAULT_APP_NAME, *SCALEOUT_APP_NAMES):

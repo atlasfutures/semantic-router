@@ -8,26 +8,39 @@ import (
 )
 
 const (
-	RaylineARCEncoderFailoverV1 = "rayline.arc.encoder-failover.v1"
-	RaylineARCEncoderActive     = "active"
-	RaylineARCEncoderDraining   = "draining"
+	RaylineARCEncoderFailoverV1      = "rayline.arc.encoder-failover.v1"
+	RaylineARCEncoderMembershipV1    = "rayline.arc.encoder-membership.v1"
+	RaylineARCEncoderMembershipRedis = "redis"
+	RaylineARCEncoderActive          = "active"
+	RaylineARCEncoderDraining        = "draining"
 
-	maxRaylineARCEncoderReplicas = 8
-	maxRaylineARCReplicaIDLength = 64
-	maxRaylineARCCooldownSeconds = 3600
+	maxRaylineARCEncoderReplicas          = 8
+	maxRaylineARCReplicaIDLength          = 64
+	maxRaylineARCCooldownSeconds          = 3600
+	maxRaylineARCMembershipRefreshSeconds = 300
 )
 
 var raylineARCReplicaIDPattern = regexp.MustCompile(
 	`^[A-Za-z0-9][A-Za-z0-9._-]*$`,
 )
 
-// RaylineARCEncoderReplicaConfig is static, version-controlled membership.
-// A draining replica continues serving persisted owners but receives no new
+// RaylineARCEncoderReplicaConfig is a versioned retained-encoder member. A
+// draining replica continues serving persisted owners but receives no new
 // episode assignments.
 type RaylineARCEncoderReplicaConfig struct {
 	ID      string `yaml:"id"`
 	BaseURL string `yaml:"base_url"`
 	State   string `yaml:"state"`
+}
+
+// RaylineARCEncoderMembershipConfig opts a retained-session deployment into
+// the reviewed dynamic membership source. The source holds the member URLs and
+// active/draining state; this static config holds only the versioned transport
+// and refresh contract.
+type RaylineARCEncoderMembershipConfig struct {
+	SchemaVersion  string `yaml:"schema_version"`
+	Source         string `yaml:"source"`
+	RefreshSeconds int    `yaml:"refresh_seconds"`
 }
 
 // RaylineARCEncoderFailoverConfig opts a replicated retained-session service
@@ -43,8 +56,18 @@ type RaylineARCEncoderFailoverConfig struct {
 func validateRaylineARCEncoderMembership(cfg RaylineARCEncoderConfig) error {
 	hasBaseURL := strings.TrimSpace(cfg.BaseURL) != ""
 	hasReplicas := len(cfg.Replicas) != 0
-	if hasBaseURL == hasReplicas {
-		return fmt.Errorf("exactly one of base_url or replicas must be configured")
+	hasDynamicMembership := cfg.usesDynamicMembership()
+	modeCount := 0
+	for _, enabled := range []bool{hasBaseURL, hasReplicas, hasDynamicMembership} {
+		if enabled {
+			modeCount++
+		}
+	}
+	if modeCount != 1 {
+		if !hasDynamicMembership {
+			return fmt.Errorf("exactly one of base_url or replicas must be configured")
+		}
+		return fmt.Errorf("exactly one of base_url, replicas, or membership must be configured")
 	}
 	if hasBaseURL {
 		if err := validateRaylineARCBaseURL(cfg.BaseURL); err != nil {
@@ -55,7 +78,20 @@ func validateRaylineARCEncoderMembership(cfg RaylineARCEncoderConfig) error {
 		}
 		return nil
 	}
+	if hasDynamicMembership {
+		return validateRaylineARCDynamicEncoderMembership(cfg)
+	}
 	return validateRaylineARCEncoderReplicas(cfg)
+}
+
+func (cfg RaylineARCEncoderConfig) usesDynamicMembership() bool {
+	return cfg.Membership.SchemaVersion != "" ||
+		cfg.Membership.Source != "" ||
+		cfg.Membership.RefreshSeconds != 0
+}
+
+func (cfg RaylineARCEncoderConfig) usesReplicaMembership() bool {
+	return len(cfg.Replicas) != 0 || cfg.usesDynamicMembership()
 }
 
 func emptyRaylineARCFailoverConfig(cfg RaylineARCEncoderFailoverConfig) bool {
@@ -66,7 +102,13 @@ func emptyRaylineARCFailoverConfig(cfg RaylineARCEncoderFailoverConfig) bool {
 }
 
 func validateRaylineARCEncoderReplicas(cfg RaylineARCEncoderConfig) error {
-	if err := validateRaylineARCReplicaMode(cfg); err != nil {
+	if len(cfg.Replicas) < 2 || len(cfg.Replicas) > maxRaylineARCEncoderReplicas {
+		return fmt.Errorf(
+			"replicas must contain between 2 and %d entries",
+			maxRaylineARCEncoderReplicas,
+		)
+	}
+	if err := validateRaylineARCReplicaServingMode(cfg); err != nil {
 		return err
 	}
 	active, err := validateRaylineARCReplicaMembers(cfg.Replicas)
@@ -79,13 +121,21 @@ func validateRaylineARCEncoderReplicas(cfg RaylineARCEncoderConfig) error {
 	return validateRaylineARCEncoderFailover(cfg.Failover)
 }
 
-func validateRaylineARCReplicaMode(cfg RaylineARCEncoderConfig) error {
-	if len(cfg.Replicas) < 2 || len(cfg.Replicas) > maxRaylineARCEncoderReplicas {
-		return fmt.Errorf(
-			"replicas must contain between 2 and %d entries",
-			maxRaylineARCEncoderReplicas,
-		)
+func validateRaylineARCDynamicEncoderMembership(
+	cfg RaylineARCEncoderConfig,
+) error {
+	if err := validateRaylineARCReplicaServingMode(cfg); err != nil {
+		return err
 	}
+	if err := validateRaylineARCEncoderDynamicMembershipConfig(
+		cfg.Membership,
+	); err != nil {
+		return err
+	}
+	return validateRaylineARCEncoderFailover(cfg.Failover)
+}
+
+func validateRaylineARCReplicaServingMode(cfg RaylineARCEncoderConfig) error {
 	if cfg.ServingRung != RaylineARCServingRungB ||
 		!slices.Contains(
 			cfg.RequiredCapabilities,
@@ -97,6 +147,31 @@ func validateRaylineARCReplicaMode(cfg RaylineARCEncoderConfig) error {
 	}
 	if cfg.MaxRetries != 0 {
 		return fmt.Errorf("replicas require max_retries=0")
+	}
+	return nil
+}
+
+func validateRaylineARCEncoderDynamicMembershipConfig(
+	cfg RaylineARCEncoderMembershipConfig,
+) error {
+	if cfg.SchemaVersion != RaylineARCEncoderMembershipV1 {
+		return fmt.Errorf(
+			"membership.schema_version must be %q",
+			RaylineARCEncoderMembershipV1,
+		)
+	}
+	if cfg.Source != RaylineARCEncoderMembershipRedis {
+		return fmt.Errorf(
+			"membership.source must be %q",
+			RaylineARCEncoderMembershipRedis,
+		)
+	}
+	if cfg.RefreshSeconds <= 0 ||
+		cfg.RefreshSeconds > maxRaylineARCMembershipRefreshSeconds {
+		return fmt.Errorf(
+			"membership.refresh_seconds must be between 1 and %d",
+			maxRaylineARCMembershipRefreshSeconds,
+		)
 	}
 	return nil
 }

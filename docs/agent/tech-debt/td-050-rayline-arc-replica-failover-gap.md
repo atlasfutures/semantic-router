@@ -2,7 +2,10 @@
 
 ## Status
 
-Open
+Open — DYN001-DYN005 and the DYN006 source-closed implementation are complete.
+The controller-driven hermetic full-stack acceptance passes, including active
+capacity registration. The preregistered three-H100 live drain/stop cell and
+fleet provisioning automation remain open.
 
 ## Owner Plan
 
@@ -10,9 +13,10 @@ Open
 
 ## Release Relevance
 
-Semantic Router now has a supported static, versioned retained-encoder replica
-contract. Dynamic service discovery, automated drain completion, and a
-controller-owned membership rollout remain manual operator responsibilities.
+Semantic Router now has a supported static contract plus an optional versioned
+Redis membership source and standalone controller. The controller can register
+reviewed capacity, but fleet provisioning remains an external operator
+responsibility and the topology-changing live gate is not yet evidence.
 
 ## Scope
 
@@ -66,16 +70,31 @@ sequence enforceable rather than implicit.
   router restart, concurrent close fanout, stable-zero resident sessions,
   Redis-loss fail-closed, aggregate metrics, and log privacy. This phase used
   no Modal GPU or provider requests and cost `$0`.
+- The standalone `rayline-arc-controller` image runs non-root, accepts
+  `status`, idempotent `register`, `drain`, `reconcile`, and continuous `run`,
+  reads Redis topology and TTLs from the same canonical router config, and can
+  receive a controller-only password environment override. A router probes
+  newly registered capacity before snapshot adoption. The Compose acceptance
+  now creates register revision 2, drain revision 3, and removal revision 4
+  through this process rather than publishing those states from Python.
+- The source-closed DYN006 harness freezes three H100 encoder apps, A/B initial
+  membership, controller registration of C, a five-minute idle boundary, a
+  treatment-only drain and exact stop of A, `[2,3,3]` pre-boundary placement,
+  `[0,4,4]` post-stop placement, 32 post-boundary measured decisions, strict
+  aggregate lifecycle/telemetry gates, and a `$12` packet ceiling. It is not
+  live evidence until its distinct registry authorization is pushed and the
+  one-shot run completes.
 - The implemented contract is documented in
   [Rayline ARC Retained-Encoder Replica Contract](../../architecture/rayline-arc-replica-membership.md).
 
 ## Why It Matters
 
 The static remap and close contract now covers bounded deployments without an
-experiment proxy. A larger installation still needs a source of reviewed
-membership and evidence that a draining member has no owners before automatic
-removal. Treating static YAML as dynamic discovery would hide rollout behavior
-that materially affects latency and capacity.
+experiment proxy, and the standalone controller automates safe drain removal.
+A larger installation still needs fleet ownership for adding reviewed
+capacity and invoking drain as replicas scale down. Treating process discovery
+as automatic capacity management would hide rollout behavior that materially
+affects latency and capacity.
 
 ## Desired End State
 
@@ -97,7 +116,14 @@ failure, privacy, and close semantics.
   cleanup is integration-tested.
 - [x] Readiness and active/draining rolling replacement have deterministic
   static behavior and aggregate metrics.
-- [ ] A reviewed dynamic membership source and controller can prove drain
+- [x] A reviewed dynamic membership source and controller can prove drain
   completion before removal without weakening the v1 request contract.
-- [ ] Operator automation covers that dynamic rollout; then this debt entry is
-  deleted.
+- [x] A standalone non-root operator command/image drives status, drain, and
+  reconciliation through the reviewed source and is covered end to end.
+- [x] The controller idempotently registers a new active identity, while each
+  router probes the new endpoint before adopting the successor snapshot.
+- [ ] The preregistered DYN006 three-encoder cell passes controller registration,
+  drain-before-stop, balanced survivor capacity, idle-TTL removal, aggregate
+  cleanup, and its performance gate.
+- [ ] Fleet automation provisions capacity and invokes those controller
+  transitions; then this debt entry is deleted.

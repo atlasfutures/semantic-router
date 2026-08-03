@@ -1,0 +1,44 @@
+services:
+  membership-init:
+    image: redis:7.4-alpine
+    command:
+      - sh
+      - -ceu
+      - >-
+        redis-cli -h redis -a public-rayline-parity-redis-password
+        --no-auth-warning -x SET
+        'vsr:rayline-dyn006:encoder-membership'
+        < /run/rayline/membership.json
+    volumes:
+      - ${RAYLINE_DYNAMIC_MEMBERSHIP_DOCUMENT:?set RAYLINE_DYNAMIC_MEMBERSHIP_DOCUMENT}:/run/rayline/membership.json:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: "no"
+
+  membership-controller:
+    build:
+      context: ../../..
+      dockerfile: tools/docker/Dockerfile.rayline-arc-controller
+    image: ${RAYLINE_ARC_CONTROLLER_IMAGE:-rayline-arc-controller:dyn006}
+    environment:
+      RAYLINE_ARC_CONTROLLER_CONFIG: /app/config/rayline-parity.yaml
+      RAYLINE_ARC_CONTROLLER_DECISION: rayline-three-arm-parity
+      RAYLINE_ARC_CONTROLLER_PASSWORD_ENV: RAYLINE_ARC_CONTROLLER_REDIS_PASSWORD
+      RAYLINE_ARC_CONTROLLER_REDIS_PASSWORD: public-rayline-parity-redis-password
+    command: ["run", "--interval", "1s"]
+    volumes:
+      - ${RAYLINE_PARITY_ARC_CONFIG:?set RAYLINE_PARITY_ARC_CONFIG}:/app/config/rayline-parity.yaml:ro
+    depends_on:
+      membership-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/rayline-arc-controller", "status"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  router:
+    depends_on:
+      membership-init:
+        condition: service_completed_successfully

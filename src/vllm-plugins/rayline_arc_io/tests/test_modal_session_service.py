@@ -96,6 +96,7 @@ def test_session_service_allows_only_the_frozen_scaleout_app_names() -> None:
     assert 'DEFAULT_APP_NAME = "rayline-arc-session-encoder"' in service_source
     assert '"rayline-arc-session-encoder-a"' in service_source
     assert '"rayline-arc-session-encoder-b"' in service_source
+    assert '"rayline-arc-session-encoder-c"' in service_source
     assert 'os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", DEFAULT_APP_NAME)' in (
         service_source
     )

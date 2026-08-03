@@ -1,0 +1,39 @@
+# Rayline ARC membership control plane. This image deliberately excludes the
+# router runtime and native model bindings so membership mutation credentials
+# can be scoped to a small, independently deployable process.
+ARG BUILDPLATFORM
+FROM --platform=$BUILDPLATFORM golang:1.25-bookworm AS builder
+
+ARG TARGETARCH
+WORKDIR /workspace
+
+# Local replace directives in the router module require these module roots to
+# exist even though the controller's pure-Go dependency graph does not compile
+# any native binding.
+COPY candle-binding/go.mod candle-binding/
+COPY ml-binding/go.mod ml-binding/
+COPY nlp-binding/go.mod nlp-binding/
+COPY openvino-binding/go.mod openvino-binding/
+COPY onnx-binding/go.mod onnx-binding/
+COPY src/semantic-router/ src/semantic-router/
+
+RUN cd src/semantic-router && \
+    CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH}" \
+    go build -buildvcs=false -ldflags="-w -s" \
+    -o /out/rayline-arc-controller ./cmd/rayline-arc-controller
+
+FROM debian:bookworm-slim
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates; \
+    groupadd --gid 65532 nonroot; \
+    useradd --uid 65532 --gid 65532 --no-create-home --shell /usr/sbin/nologin nonroot; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /out/rayline-arc-controller /usr/local/bin/rayline-arc-controller
+
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/rayline-arc-controller"]
+CMD ["help"]

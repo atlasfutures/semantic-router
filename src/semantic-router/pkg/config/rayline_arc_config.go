@@ -48,21 +48,22 @@ type RaylineARCAlgorithmConfig struct {
 
 // RaylineARCEncoderConfig pins the dedicated vLLM pooling service contract.
 type RaylineARCEncoderConfig struct {
-	BaseURL               string                           `yaml:"base_url"`
-	Replicas              []RaylineARCEncoderReplicaConfig `yaml:"replicas,omitempty"`
-	Failover              RaylineARCEncoderFailoverConfig  `yaml:"failover,omitempty"`
-	Model                 string                           `yaml:"model"`
-	ModelRevision         string                           `yaml:"model_revision"`
-	ExpectedBuildID       string                           `yaml:"expected_build_id"`
-	ExpectedPluginVersion string                           `yaml:"expected_io_plugin_version"`
-	SerializerVersion     string                           `yaml:"serializer_version"`
-	ServingRung           string                           `yaml:"serving_rung"`
-	RequiredCapabilities  []string                         `yaml:"required_pooling_capabilities"`
-	ModalKeyEnv           string                           `yaml:"modal_key_env,omitempty"`
-	ModalSecretEnv        string                           `yaml:"modal_secret_env,omitempty"`
-	ConnectTimeoutSeconds int                              `yaml:"connect_timeout_seconds"`
-	TotalTimeoutSeconds   int                              `yaml:"total_timeout_seconds"`
-	MaxRetries            int                              `yaml:"max_retries"`
+	BaseURL               string                            `yaml:"base_url"`
+	Replicas              []RaylineARCEncoderReplicaConfig  `yaml:"replicas,omitempty"`
+	Membership            RaylineARCEncoderMembershipConfig `yaml:"membership,omitempty"`
+	Failover              RaylineARCEncoderFailoverConfig   `yaml:"failover,omitempty"`
+	Model                 string                            `yaml:"model"`
+	ModelRevision         string                            `yaml:"model_revision"`
+	ExpectedBuildID       string                            `yaml:"expected_build_id"`
+	ExpectedPluginVersion string                            `yaml:"expected_io_plugin_version"`
+	SerializerVersion     string                            `yaml:"serializer_version"`
+	ServingRung           string                            `yaml:"serving_rung"`
+	RequiredCapabilities  []string                          `yaml:"required_pooling_capabilities"`
+	ModalKeyEnv           string                            `yaml:"modal_key_env,omitempty"`
+	ModalSecretEnv        string                            `yaml:"modal_secret_env,omitempty"`
+	ConnectTimeoutSeconds int                               `yaml:"connect_timeout_seconds"`
+	TotalTimeoutSeconds   int                               `yaml:"total_timeout_seconds"`
+	MaxRetries            int                               `yaml:"max_retries"`
 }
 
 // RaylineARCEpisodeConfig configures serialized, fenced episode state.
@@ -104,11 +105,15 @@ func validateRaylineARCAlgorithmConfig(cfg *RaylineARCAlgorithmConfig) error {
 	if err := validateRaylineARCEpisodeConfig(cfg.Episode); err != nil {
 		return fmt.Errorf("episode: %w", err)
 	}
-	if len(cfg.Encoder.Replicas) > 0 && cfg.Episode.CloseHeader == "" {
+	if cfg.Encoder.usesReplicaMembership() && cfg.Episode.CloseHeader == "" {
 		return fmt.Errorf("episode: close_header is required with encoder replicas")
 	}
-	if len(cfg.Encoder.Replicas) == 0 && cfg.Episode.CloseHeader != "" {
+	if !cfg.Encoder.usesReplicaMembership() && cfg.Episode.CloseHeader != "" {
 		return fmt.Errorf("episode: close_header requires encoder replicas")
+	}
+	if cfg.Encoder.usesDynamicMembership() &&
+		cfg.Episode.Backend != RaylineARCBackendRedis {
+		return fmt.Errorf("episode: redis backend is required with dynamic encoder membership")
 	}
 	return nil
 }

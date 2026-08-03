@@ -37,6 +37,9 @@ func createRaylineARCEncoder(
 	if err != nil {
 		return nil, "encoder_auth"
 	}
+	if arcConfig.Encoder.Membership.SchemaVersion != "" {
+		return createDynamicRaylineARCEncoder(arcConfig, clientConfig)
+	}
 	if len(arcConfig.Encoder.Replicas) == 0 {
 		encoder, clientErr := raylinearc.NewEncoderClient(clientConfig)
 		if clientErr != nil {
@@ -85,6 +88,75 @@ func createRaylineARCEncoder(
 	if err != nil {
 		closeClients()
 		return nil, "encoder_config"
+	}
+	return pool, ""
+}
+
+func createDynamicRaylineARCEncoder(
+	arcConfig *config.RaylineARCAlgorithmConfig,
+	clientConfig raylinearc.EncoderClientConfig,
+) (raylineARCReadyEncoder, string) {
+	if arcConfig == nil {
+		return nil, "encoder_config"
+	}
+	password, err := raylineARCRedisPassword(arcConfig.Episode.Redis)
+	if err != nil {
+		return nil, "encoder_auth"
+	}
+	membershipStore, err := raylinearc.NewRedisEpisodeStore(
+		raylinearc.RedisEpisodeStoreConfig{
+			Address:   arcConfig.Episode.Redis.Address,
+			DB:        arcConfig.Episode.Redis.DB,
+			Password:  password,
+			UseTLS:    arcConfig.Episode.Redis.UseTLS,
+			PoolSize:  arcConfig.Episode.Redis.PoolSize,
+			KeyPrefix: arcConfig.Episode.KeyPrefix,
+			LeaseTTL: time.Duration(
+				arcConfig.Episode.LeaseTTLSeconds,
+			) * time.Second,
+			IdleTTL: time.Duration(
+				arcConfig.Episode.IdleTTLSeconds,
+			) * time.Second,
+		},
+	)
+	if err != nil {
+		return nil, "encoder_membership"
+	}
+	source, err := raylinearc.NewRedisEncoderMembershipSource(membershipStore)
+	if err != nil {
+		_ = membershipStore.Close()
+		return nil, "encoder_membership"
+	}
+	pool, err := raylinearc.NewDynamicEncoderPool(
+		context.Background(),
+		raylinearc.DynamicEncoderPoolConfig{
+			Source: source,
+			ClientFactory: func(
+				member raylinearc.EncoderMembershipReplica,
+			) (*raylinearc.EncoderClient, error) {
+				replicaConfig := clientConfig
+				replicaConfig.BaseURL = member.BaseURL
+				return raylinearc.NewEncoderClient(replicaConfig)
+			},
+			PoolConfig: raylinearc.EncoderPoolConfig{
+				SchemaVersion: arcConfig.Encoder.Failover.SchemaVersion,
+				UnavailableStatusCodes: append(
+					[]int(nil),
+					arcConfig.Encoder.Failover.UnavailableStatusCodes...,
+				),
+				UnavailableCooldown: time.Duration(
+					arcConfig.Encoder.Failover.UnavailableCooldownSeconds,
+				) * time.Second,
+				MaxRemaps: arcConfig.Encoder.Failover.MaxRemaps,
+			},
+			RefreshInterval: time.Duration(
+				arcConfig.Encoder.Membership.RefreshSeconds,
+			) * time.Second,
+		},
+	)
+	if err != nil {
+		_ = source.Close()
+		return nil, "encoder_membership"
 	}
 	return pool, ""
 }

@@ -1836,6 +1836,90 @@ but held:
 12. Keep the 1,000-case release qualification held until the user explicitly
     confirms execution.
 
+## TD050 Dynamic Membership Continuation
+
+### Goal
+
+Replace the manual, static retained-encoder replica list with an optional,
+reviewed Redis membership source. The request contract remains
+`rayline.arc.encoder-failover.v1`: deterministic affinity, persisted owner and
+visited-owner state, one status-gated remap, ambiguous-failure fail-closed,
+and explicit close fanout do not change.
+
+### Task List
+
+- [x] DYN001: Add the versioned Redis membership document and a runtime
+  snapshot reader. Each router starts only after reading a valid two-to-eight
+  member document and atomically adopts newer revisions without replacing a
+  stable replica identity's endpoint.
+- [x] DYN002: Add controller-owned active-to-draining and drain-completion
+  operations. A controller must wait the idle boundary, prove no persisted
+  owner or visited-owner references remain, and use a compare-and-set revision
+  before removing a draining member.
+- [x] DYN003: Preserve close and failure safety across snapshot changes,
+  including retained clients for a removed owner until router shutdown and
+  fail-closed behavior for an invalid or unavailable membership source.
+- [x] DYN004: Add config/CLI parity, focused unit coverage, and the two-encoder
+  Envoy/Semantic Router/Redis integration case for active, draining, and
+  controller-confirmed removal.
+- [x] DYN005: Deliver a standalone least-privilege membership controller
+  command and image. `status`, `drain`, `reconcile`, and continuous `run`
+  consume the canonical router config, resolve the write credential only in
+  the controller process, emit privacy-safe JSON, and drive the Compose
+  active-to-draining-to-removed acceptance without fabricating those
+  revisions in the test harness.
+- [x] DYN006a: Add idempotent controller `register`, readiness-safe router
+  adoption of newly registered clients, controller-driven scale-out in the
+  hermetic E2E, and focused contract tests.
+- [x] DYN006b: Implement a source-closed three-encoder real-stop launcher,
+  strict comparator, aggregate dynamic lifecycle telemetry, exact-image pin,
+  and one-shot cleanup/budget interlocks.
+- [ ] DYN006c: Push signed source and registry checkpoints, open the exact
+  one-shot authority, execute the preregistered cell once, privately verify
+  aggregate evidence, and close launch authority after success or failure.
+
+### Next Action
+
+Finish DYN006c without changing the frozen cell:
+
+- run ID `rayline-dynamic-capacity-stop-dyn006-20260803`, one `r030` cell, and
+  logical arms `arc_dynamic_three_control` then
+  `arc_dynamic_drain_stop`;
+- one shared fleet of three Modal H100 apps A/B/C; each arm starts Redis
+  membership at active A/B, invokes the production controller to register C
+  as revision 2, and proves router adoption with one C-owned canary;
+- exact session namespace `dynamic-capacity-61`, whose frozen packet hashes
+  place the eight measured sessions `[2,3,3]` on A/B/C and the warmup session
+  on B. Treatment drains A as revision 3, waits two refresh windows, then
+  stops only A. Its two affected sessions remap one each to B/C, producing
+  `[0,4,4]`; control retains `[2,3,3]`;
+- four warmup, 16 preload, and 16 post-boundary staged decisions per arm. Only
+  the 16 post-boundary decisions per arm enter the capacity comparison (32
+  total). Including the capacity canary open/close and nine packet-session
+  closes yields exactly 47 gateway selections per arm and 94 total;
+- strict zero-failure and matching preload/post selected-worker traces;
+  exact register/drain/stop/remap/close/owner-vector/final-membership evidence;
+  treatment/control throughput at least `0.75x`; treatment/control p50 and p95
+  service latency no more than `2.0x`;
+- five-minute episode idle TTL, explicit session close, controller-confirmed
+  revision-4 removal, empty retained state on live replicas, zero named Modal
+  containers, stopped apps, and deleted proxy token;
+- no external provider or generation calls (the upstream is the local worker
+  double), no retry of the whole packet, no runtime arm/rate changes, and no
+  1,000-case qualification entrypoint;
+- 20-minute paid wall ceiling, 21-minute orphan-request ceiling, five-minute
+  cleanup ceiling, three encoder replicas, `$11.1273264` maximum resource
+  envelope, and `$12` packet ceiling. From the conservative observed upper
+  `$73.64050361447986`, the full envelope reaches `$84.76783001447986` and
+  leaves `$49.54499400552014` under the `$134.31282402` authority.
+
+The router image tag must exactly name the pushed Semantic Router commit and
+its image ID is written to the aggregate manifest. Source stays closed until a
+distinct Pathfinder preregistration, Semantic Router attestation, Pathfinder
+authorization, and final Semantic Router source-pin checkpoint are all
+remote-visible. The completed DYN005/DYN006a-b local phase used no GPU or
+provider request and cost `$0`.
+
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
 continues to reject cached-prefix tokens. The separate session v1 wire reports

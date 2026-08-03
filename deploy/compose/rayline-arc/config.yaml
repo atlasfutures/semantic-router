@@ -78,13 +78,10 @@ routing:
           artifact_dir: /var/lib/vllm-sr/rayline-arc
           artifact_revision: public-rayline-arc-e2e-v2
           encoder:
-            replicas:
-              - id: encoder-a
-                base_url: ${RAYLINE_ARC_ENCODER_BASE_URL}
-                state: active
-              - id: encoder-b
-                base_url: ${RAYLINE_ARC_ENCODER_B_BASE_URL}
-                state: active
+            membership:
+              schema_version: rayline.arc.encoder-membership.v1
+              source: redis
+              refresh_seconds: 1
             failover:
               schema_version: rayline.arc.encoder-failover.v1
               unavailable_status_codes: [404, 410, 502, 503, 504]
@@ -111,7 +108,9 @@ routing:
             key_prefix: "vsr:rayline-arc:"
             acquire_timeout_seconds: 5
             lease_ttl_seconds: 3
-            idle_ttl_seconds: 300
+            # Short only in the hermetic stack so controller-driven drain
+            # completion is observable without a five-minute test delay.
+            idle_ttl_seconds: 12
             max_in_memory_episodes: 128
             redis:
               address: redis:6379

@@ -105,8 +105,10 @@ func createRaylineARCSelector(
 		return nil
 	}
 	var closeSession raylineARCSessionCloseFunc
-	if pool, ok := encoder.(*raylinearc.EncoderPool); ok {
-		closeSession = pool.CloseSession
+	if closer, ok := encoder.(interface {
+		CloseSession(context.Context, string, []string) (raylinearc.EncoderCloseReport, error)
+	}); ok {
+		closeSession = closer.CloseSession
 	}
 	return newRaylineARCSelector(
 		&runtimeARCScorer{runtime: runtime, policy: runtime.Policy()},

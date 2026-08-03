@@ -6,6 +6,7 @@ compose_file="${repo_root}/deploy/compose/rayline-arc/compose.yaml"
 project_name="rayline-arc-e2e"
 run_dir="$(mktemp -d)"
 receipt="${run_dir}/restart-receipt.json"
+dynamic_receipt="${run_dir}/dynamic-membership-receipt.json"
 logs="${run_dir}/compose.log"
 
 compose() {
@@ -68,6 +69,22 @@ wait_http "http://127.0.0.1:${RAYLINE_ARC_E2E_ROUTER_API_PORT:-18082}/health"
 python3 "${repo_root}/e2e/testing/rayline-arc/test_stack.py" \
   --phase resume \
   --receipt "${receipt}"
+compose run --rm --no-deps membership-controller \
+  register \
+  --replica-id encoder-c \
+  --base-url http://fake-encoder-c:8080
+python3 "${repo_root}/e2e/testing/rayline-arc/dynamic_membership_contract.py" \
+  --phase prepare \
+  --receipt "${dynamic_receipt}"
+compose run --rm --no-deps membership-controller \
+  drain \
+  --replica-id encoder-a
+python3 "${repo_root}/e2e/testing/rayline-arc/dynamic_membership_contract.py" \
+  --phase drain \
+  --receipt "${dynamic_receipt}"
+python3 "${repo_root}/e2e/testing/rayline-arc/dynamic_membership_contract.py" \
+  --phase removed
+compose run --rm --no-deps membership-controller status
 
 compose stop redis
 python3 "${repo_root}/e2e/testing/rayline-arc/test_stack.py" \
