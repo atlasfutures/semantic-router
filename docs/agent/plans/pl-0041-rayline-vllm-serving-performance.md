@@ -3068,10 +3068,58 @@ source checkpoints are pushed and pinned.
   launcher, remote packet, aggregate reporter, and focused tests.
 - [x] AGT015b: Pass the repo gates, push the signed preregistration checkpoint,
   then pin and push the signed authorization checkpoint.
-- [ ] AGT015c: Execute each arm once and verify transient-resource cleanup.
-- [ ] AGT015d: Verify token-work and selection contracts, persist the sanitized
-  receipt, record the measured ratios and costs, clean all transient resources,
-  and permanently close both authority pins.
+- [x] AGT015c: Execute the native arm once, hold the remote arm when native
+  telemetry invalidates the replay control, and verify resource cleanup.
+- [x] AGT015d: Record the failed diagnostic and permanently close both
+  authority pins without reinterpreting its measurements.
+
+#### AGT015 Failed Diagnostic
+
+The native arm completed 12/12 provider requests in `106.235s` with exact
+OpenRouter key usage of `$0.005310378`. The selected worker/provider was
+consistently worker-a/Baidu. The downloaded sink contained 12 decision and 12
+budget events. Cleanup stopped app `ap-B9zFVjkEvLFEl3wa46CyVL` at zero tasks
+and removed the ephemeral key, secret, Dicts, Volume, and all app containers.
+The initial cleanup verifier incorrectly required Modal's stopped app-history
+row itself to disappear; its failure was a verification race, not live spend.
+
+The run is nevertheless invalid for the planned cache comparison. Native
+telemetry was `prefill, cached, delta, cached, delta, cached, rebuild, cached,
+delta, cached, delta, cached`, rather than fresh replay prefills. Pathfinder's
+native KV identity uses registered `run_id` as its root and includes
+`session_id`, but does not include `episode_id` when `run_id` is present. The
+benchmark supplied distinct `x-rayline-episode-id` values only, so retained
+and replay requests shared one KV session. The remote arm was not started and
+no cross-deployment claim is made. Charging the full `$3.00` native envelope
+bounds cumulative conservative observed cost at `$90.864463066383`, leaving
+at least `$43.448360953617` under current authority. Both AGT015 pins are
+closed, and the 1,000-case qualification remains held.
+
+### AGT016 Corrected Native Session Isolation
+
+AGT016 repeats the unchanged 24-request matched protocol with one correction:
+every native request sends the same derived identity in both
+`x-rayline-episode-id` and `x-rayline-session`. The latter is part of the
+current native KV key, so retained requests share only their intended episode
+and every replay state gets a fresh session. This preserves one registered
+run and one global router budget; it does not use per-request run IDs. Remote
+Semantic Router continues to use its native episode identity contract.
+
+The cleanup verifier now treats a stopped zero-task Modal app as inactive while
+still requiring its secret, Dicts, Volume, and containers to be absent. All
+other workload, model, provider, H100, token-work, selection, retry, latency,
+privacy, artifact, and source-closure gates remain identical to AGT015.
+
+The corrected attempt adds at most `$6.00` to the `$90.864463066383` bound,
+for `$96.864463066383` maximum cumulative cost and at least
+`$37.448360953617` remaining authority.
+
+- [ ] AGT016a: Pass focused and repository gates, push the corrected
+  preregistration checkpoint, then bind the separate authorization commit.
+- [ ] AGT016b: Execute the corrected native arm and the held remote-vLLM arm
+  once each, then verify exact cleanup.
+- [ ] AGT016c: Build and validate the aggregate result, persist its private
+  receipt, record the measured cache effects, and permanently close authority.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin

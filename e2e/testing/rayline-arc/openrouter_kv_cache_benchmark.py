@@ -116,6 +116,26 @@ def _payload(deployment: str, case: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _request_headers(deployment: str, episode_id: str) -> dict[str, str]:
+    headers = {
+        "content-type": "application/json",
+        "x-rayline-episode-id": episode_id,
+    }
+    if deployment == "native_modal":
+        token = os.environ.get("RAYLINE_MODAL_NATIVE_ROUTER_TOKEN", "")
+        if not token:
+            raise RuntimeError("native Modal router token is missing")
+        headers.update(
+            {
+                "authorization": f"Bearer {token}",
+                # Native Pathfinder's current KV key includes session_id but
+                # not episode_id when a registered run_id is present.
+                "x-rayline-session": episode_id,
+            }
+        )
+    return headers
+
+
 def _read_stream(connection: Any, response: Any, started: float) -> dict[str, Any]:
     first_token: float | None = None
     response_model = ""
@@ -162,15 +182,7 @@ def _request(
     episode_id: str,
     timeout_seconds: float,
 ) -> dict[str, Any]:
-    headers = {
-        "content-type": "application/json",
-        "x-rayline-episode-id": episode_id,
-    }
-    if deployment == "native_modal":
-        token = os.environ.get("RAYLINE_MODAL_NATIVE_ROUTER_TOKEN", "")
-        if not token:
-            raise RuntimeError("native Modal router token is missing")
-        headers["authorization"] = f"Bearer {token}"
+    headers = _request_headers(deployment, episode_id)
     started = time.perf_counter()
     connection, response = request_following_result_redirects(
         connection_factory=_connection,

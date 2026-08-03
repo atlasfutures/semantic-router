@@ -32,13 +32,13 @@ def test_history_states_are_strict_growing_prefixes() -> None:
 def test_native_fixture_accepts_the_cache_completion_cap() -> None:
     config = yaml.safe_load(
         router_config_text(
-            training_stage="openrouter_kv_cache_agt015",
+            training_stage="openrouter_kv_cache_agt016",
             max_completion_tokens=EXPECTED_COMPLETION_LIMIT,
-            app_title="Rayline AGT015",
+            app_title="Rayline AGT016",
         )
     )
-    assert config["router"]["training_stage"] == "openrouter_kv_cache_agt015"
-    assert config["router"]["openrouter_app_title"] == "Rayline AGT015"
+    assert config["router"]["training_stage"] == "openrouter_kv_cache_agt016"
+    assert config["router"]["openrouter_app_title"] == "Rayline AGT016"
     assert all(
         worker["max_completion_tokens"] == EXPECTED_COMPLETION_LIMIT
         for worker in config["workers"]
@@ -193,6 +193,11 @@ def test_worker_set_remains_the_three_model_openrouter_pool() -> None:
 
 
 def test_paid_remote_launch_starts_source_closed() -> None:
-    preregistration, authorization = authority.AUTHORITY_PINS["kv-cache"]
-    assert preregistration == "6c1d3ead7c6af1557951f7382f7bf826631f3c4a"
-    assert authorization == "3b98be94cead03e55283d580080b056575b3cba2"
+    assert authority.AUTHORITY_PINS["kv-cache"] == ("", "")
+
+
+def test_native_request_uses_session_identity_for_kv_isolation(monkeypatch) -> None:
+    monkeypatch.setenv("RAYLINE_MODAL_NATIVE_ROUTER_TOKEN", "test-token")
+    headers = benchmark._request_headers("native_modal", "episode-1")
+    assert headers["x-rayline-episode-id"] == "episode-1"
+    assert headers["x-rayline-session"] == "episode-1"

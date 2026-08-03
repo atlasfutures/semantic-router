@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 
-"""Aggregate-only reporter for the matched AGT015 cache comparison."""
+"""Aggregate-only reporter for the matched AGT016 cache comparison."""
 
 from __future__ import annotations
 
@@ -287,11 +287,11 @@ def build_report(
             "total": native_key_usage + remote_key_usage,
         },
         "cost_accounting": {
-            "previous_conservative_usd": 87.864463066383,
+            "previous_conservative_usd": 90.864463066383,
             "maximum_program_cost_usd": 6.0,
-            "maximum_cumulative_usd": 93.864463066383,
+            "maximum_cumulative_usd": 96.864463066383,
             "authorized_cumulative_usd": 134.31282402,
-            "minimum_remaining_authority_usd": 40.448360953617,
+            "minimum_remaining_authority_usd": 37.448360953617,
         },
         "automatic_prefix_cache_enabled": False,
         "cache_contracts": {
