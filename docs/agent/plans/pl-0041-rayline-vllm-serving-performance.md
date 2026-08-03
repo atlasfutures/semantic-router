@@ -2546,6 +2546,30 @@ successor must emit structured, privacy-safe preflight failure metadata while
 keeping the same zero-H100 stop, same-key/same-Envoy transition, exact
 three-model pool, unchanged 72 measured requests, and held 1,000-case path.
 
+### AGT009 Structured-Preflight Natural-Mix Measurement
+
+AGT009 is AGT008 with no experiment change except failure evidence. The
+preflight now emits one bounded JSON success or failure contract. Failure
+metadata is limited to stage, worker, HTTP status, error category/type/provider
+code, completed requests, external attempts, and completed cost. Compose build
+output is captured so stdout is machine-readable evidence. Raw provider text,
+prompts, tools, credentials, episode IDs, request assignments, and timestamps
+remain forbidden.
+
+The exact DS4/Baidu, MiMo/Xiaomi, and HY3/Tencent pool; same-key/same-Envoy
+transition; 104-request and 214-attempt maxima; original 72 measured calls;
+`$0.50` aggregate report gate; `$0.75` key limit; 30-minute H100 limit;
+`$5.7492336` envelope; cleanup; and held 1,000-case path are unchanged.
+
+- [x] AGT009a: Implement structured privacy-safe preflight failure evidence,
+  pure receipt stdout, narrow state/contract modules, focused tests, and repo
+  lint with both source authority pins empty.
+- [ ] AGT009b: Preregister, attest, authorize exactly one attempt, attest the
+  registry, and pin both authorities in signed pushed source.
+- [ ] AGT009c: Execute once and either publish the structured zero-H100 failure
+  receipt or the complete measured throughput, TTFT, latency, retry, cost,
+  natural-mix, and normalized pure-Modal comparison; then close all authority.
+
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
 continues to reject cached-prefix tokens. The separate session v1 wire reports

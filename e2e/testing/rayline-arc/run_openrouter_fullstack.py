@@ -13,7 +13,6 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +21,10 @@ from modal_fullstack_inputs import CANDIDATE_PROMPTS
 from openrouter_agentic_preflight_contract import (
     ENVIRONMENT_KEY as TRANSPORT_PREFLIGHT_ENV,
 )
-from openrouter_agentic_preflight_contract import validate_report
+from openrouter_agentic_preflight_contract import (
+    validate_report,
+)
+from openrouter_fullstack_state import RunPacket, RuntimeState
 from openrouter_key_management import (
     create_ephemeral_key as _create_ephemeral_key,
 )
@@ -63,8 +65,8 @@ HTTP_OK = 200
 HTTP_UNAUTHORIZED = 401
 GIT_SHA1_HEX_LENGTH = 40
 REQUIRED_MODAL_VERSION = "1.5.1"
-AGT008_PREREGISTRATION_COMMIT = ""
-AGT008_AUTHORIZATION_COMMIT = ""
+AGT009_PREREGISTRATION_COMMIT = ""
+AGT009_AUTHORIZATION_COMMIT = ""
 DGN003_PREREGISTRATION_COMMIT = ""
 DGN003_AUTHORIZATION_COMMIT = ""
 DGN004_PREREGISTRATION_COMMIT = ""
@@ -76,29 +78,6 @@ PUBLIC_REQUEST_LOG_MARKERS = (
     "source=public-synthetic",
     "event=retry",
 )
-
-
-@dataclass(frozen=True)
-class RunPacket:
-    compose_override: Path
-    config: Path
-    driver: Path
-    project_name: str
-    key_limit_usd: float
-    maximum_seconds: int
-    protected_encoder: bool
-    preflight_driver: Path | None = None
-
-
-@dataclass
-class RuntimeState:
-    environment: dict[str, str]
-    proxy_token: Any = None
-    ephemeral_key: str = ""
-    key_hash: str = ""
-    encoder_instance: Any = None
-    encoder_autoscaler_pinned: bool = False
-    transport_preflight: dict[str, Any] | None = None
 
 
 PACKETS = {
@@ -483,6 +462,7 @@ def _start_compose(packet: RunPacket, environment: dict[str, str]) -> None:
     _run(
         _compose_command(packet, "up", "--build", "--detach"),
         environment=environment,
+        capture_output=True,
     )
     _wait_http(ROUTER_HEALTH_URL)
     _wait_arc_component_ready(METRICS_URL)
@@ -564,6 +544,7 @@ def _activate_protected_encoder(
             "router",
         ),
         environment=state.environment,
+        capture_output=True,
     )
     _wait_http(ROUTER_HEALTH_URL)
     _wait_arc_component_ready(METRICS_URL)
@@ -589,7 +570,7 @@ def _activate_protected_encoder(
 
 def _verify_source_authority(mode: str, environment: dict[str, str]) -> None:
     authorities = {
-        "agentic": (AGT008_PREREGISTRATION_COMMIT, AGT008_AUTHORIZATION_COMMIT),
+        "agentic": (AGT009_PREREGISTRATION_COMMIT, AGT009_AUTHORIZATION_COMMIT),
         "gateway-shape": (
             DGN003_PREREGISTRATION_COMMIT,
             DGN003_AUTHORIZATION_COMMIT,
@@ -664,6 +645,14 @@ def _execute_runtime(
             packet=packet,
             state=state,
         )
+        if state.transport_preflight["status"] != "passed":
+            failed_stage = state.transport_preflight["failed_stage"]
+            failed_worker = state.transport_preflight["failed_worker"]
+            status = state.transport_preflight["http_status"]
+            raise RuntimeError(
+                "agentic transport preflight failed: "
+                f"stage={failed_stage}; worker={failed_worker}; HTTP {status}"
+            )
         _activate_protected_encoder(packet=packet, manager=manager, state=state)
     else:
         if packet.protected_encoder:
@@ -777,6 +766,14 @@ def main() -> None:
             state=state,
         )
     if run_failure is not None:
+        if (
+            state.transport_preflight is not None
+            and state.transport_preflight.get("status") == "failed"
+        ):
+            print(
+                json.dumps(state.transport_preflight, indent=2, sort_keys=True),
+                flush=True,
+            )
         if evidence_failure is not None:
             run_failure.add_note("post-run evidence collection also failed")
         raise run_failure

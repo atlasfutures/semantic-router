@@ -12,7 +12,8 @@ from typing import Any
 from openrouter_agentic_benchmark import (
     MAX_COMPLETION_TOKENS,
     WORKERS,
-    _probe_endpoints,
+    OpenRouterHTTPError,
+    _probe_endpoint,
     _probe_key_readiness,
 )
 from openrouter_agentic_preflight_contract import (
@@ -23,27 +24,83 @@ from openrouter_agentic_preflight_contract import (
 )
 
 
+def _failure_report(
+    *,
+    run_id: str,
+    results: list[dict[str, Any]],
+    error: OpenRouterHTTPError,
+    failed_stage: str,
+    failed_worker: str,
+) -> dict[str, Any]:
+    attempts = sum(int(result["external_attempts"]) for result in results)
+    attempts += error.external_attempts
+    return {
+        "schema_version": REPORT_SCHEMA,
+        "run_id": run_id,
+        "status": "failed",
+        "failed_stage": failed_stage,
+        "failed_worker": failed_worker or None,
+        "http_status": error.status_code,
+        "error_category": error.error_category,
+        "error_type": error.error_type,
+        "provider_code": error.provider_code,
+        "provider_requests": len(results) + 1,
+        "completed_provider_requests": len(results),
+        "maximum_provider_requests": MAX_PROVIDER_REQUESTS,
+        "external_attempts": attempts,
+        "maximum_external_attempts": MAX_EXTERNAL_ATTEMPTS,
+        "cost_usd": sum(float(result["cost_usd"]) for result in results),
+        "performance_inference_admissible": False,
+    }
+
+
 def run_preflight(
     *, gateway_url: str, openrouter_key: str, run_id: str, timeout_seconds: float
 ) -> dict[str, Any]:
-    key_readiness = _probe_key_readiness(
-        gateway_url=gateway_url,
-        openrouter_key=openrouter_key,
-        run_id=run_id,
-        timeout_seconds=timeout_seconds,
-    )
-    endpoint_probes = _probe_endpoints(
-        gateway_url=gateway_url,
-        openrouter_key=openrouter_key,
-        run_id=run_id,
-        timeout_seconds=timeout_seconds,
-    )
-    results = [key_readiness, *endpoint_probes]
+    results: list[dict[str, Any]] = []
+    try:
+        key_readiness = _probe_key_readiness(
+            gateway_url=gateway_url,
+            openrouter_key=openrouter_key,
+            run_id=run_id,
+            timeout_seconds=timeout_seconds,
+        )
+    except OpenRouterHTTPError as error:
+        return _failure_report(
+            run_id=run_id,
+            results=results,
+            error=error,
+            failed_stage="direct_key_readiness",
+            failed_worker="worker-a",
+        )
+    results.append(key_readiness)
+    endpoint_probes: list[dict[str, Any]] = []
+    for index, worker in enumerate(WORKERS):
+        try:
+            endpoint = _probe_endpoint(
+                gateway_url=gateway_url,
+                openrouter_key=openrouter_key,
+                run_id=run_id,
+                timeout_seconds=timeout_seconds,
+                index=index,
+                worker=worker,
+            )
+        except OpenRouterHTTPError as error:
+            return _failure_report(
+                run_id=run_id,
+                results=results,
+                error=error,
+                failed_stage="static_endpoint_reachability",
+                failed_worker=worker,
+            )
+        endpoint_probes.append(endpoint)
+        results.append(endpoint)
     attempts = sum(int(result["external_attempts"]) for result in results)
     if len(results) != MAX_PROVIDER_REQUESTS or attempts > MAX_EXTERNAL_ATTEMPTS:
         raise RuntimeError("agentic transport preflight exceeded its frozen bounds")
     return {
         "schema_version": REPORT_SCHEMA,
+        "run_id": run_id,
         "status": "passed",
         "provider_requests": len(results),
         "maximum_provider_requests": MAX_PROVIDER_REQUESTS,

@@ -644,6 +644,14 @@ probe and bounded provider category are unknown. No performance inference is
 admissible. AGT008 is closed and cannot retry; a successor must preserve the
 zero-H100 gate while returning a structured aggregate failure receipt.
 
+AGT009 is that otherwise identity-equivalent successor. A preflight HTTP
+failure returns a bounded JSON receipt containing only stage, worker, status,
+error category/type/provider code, completed requests, attempts, and completed
+cost. Compose build output is captured so stdout contains only the aggregate
+success or failure receipt. Raw provider text remains forbidden. All model,
+provider, workload, retry, measurement, cost, H100, privacy, cleanup, and
+1,000-case bounds remain unchanged from AGT008.
+
 ## Evidence Lineage
 
 The frozen choices build on:

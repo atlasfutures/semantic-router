@@ -435,21 +435,40 @@ def _choose_cases(
     return None
 
 
+def _probe_endpoint(
+    *,
+    gateway_url: str,
+    openrouter_key: str,
+    run_id: str,
+    timeout_seconds: float,
+    index: int,
+    worker: str,
+) -> dict[str, Any]:
+    return _stream_request(
+        path="gateway_static",
+        case=_candidate_case(index),
+        expected_worker=worker,
+        gateway_url=gateway_url,
+        openrouter_key=openrouter_key,
+        episode_id=_episode_id(run_id, f"agentic-endpoint-{worker}"),
+        timeout_seconds=timeout_seconds,
+        maximum_attempts=MAX_DATA_PLANE_ATTEMPTS,
+        retryable_status_codes=ENDPOINT_REACHABILITY_RETRYABLE_STATUS_CODES,
+    )
+
+
 def _probe_endpoints(
     *, gateway_url: str, openrouter_key: str, run_id: str, timeout_seconds: float
 ) -> list[dict[str, Any]]:
     print("agentic endpoint probes: starting", file=sys.stderr, flush=True)
     return [
-        _stream_request(
-            path="gateway_static",
-            case=_candidate_case(index),
-            expected_worker=worker,
+        _probe_endpoint(
             gateway_url=gateway_url,
             openrouter_key=openrouter_key,
-            episode_id=_episode_id(run_id, f"agentic-endpoint-{worker}"),
+            run_id=run_id,
             timeout_seconds=timeout_seconds,
-            maximum_attempts=MAX_DATA_PLANE_ATTEMPTS,
-            retryable_status_codes=ENDPOINT_REACHABILITY_RETRYABLE_STATUS_CODES,
+            index=index,
+            worker=worker,
         )
         for index, worker in enumerate(WORKERS)
     ]

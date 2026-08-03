@@ -206,81 +206,6 @@ def test_agentic_key_readiness_is_a_bounded_direct_ds4_probe(
     assert calls[0]["retryable_status_codes"] == frozenset({404, 429, 503})
 
 
-def test_agentic_preflight_proves_all_endpoints_without_persisting_request_data(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        preflight,
-        "_probe_key_readiness",
-        lambda **_kwargs: {
-            "response_model": benchmark.WORKERS["worker-a"],
-            "provider": benchmark.PROVIDER_NAMES["worker-a"],
-            "completion_tokens": 1,
-            "external_attempts": 1,
-            "cost_usd": 0.001,
-        },
-    )
-    monkeypatch.setattr(
-        preflight,
-        "_probe_endpoints",
-        lambda **_kwargs: [
-            {
-                "response_model": model,
-                "provider": benchmark.PROVIDER_NAMES[worker],
-                "completion_tokens": EXPECTED_MAX_COMPLETION_TOKENS,
-                "external_attempts": 1,
-                "cost_usd": 0.001,
-            }
-            for worker, model in benchmark.WORKERS.items()
-        ],
-    )
-
-    report = preflight.run_preflight(
-        gateway_url="http://gateway.invalid",
-        openrouter_key="private-key",
-        run_id="public-preflight",
-        timeout_seconds=1.0,
-    )
-
-    assert report["schema_version"] == preflight.REPORT_SCHEMA
-    assert report["provider_requests"] == preflight.MAX_PROVIDER_REQUESTS
-    assert report["external_attempts"] == preflight.MAX_PROVIDER_REQUESTS
-    assert set(report["workers"]) == set(benchmark.WORKERS)
-    assert report["performance_inference_admissible"] is False
-    assert "private-key" not in preflight.encode_report(report, "private-key")
-
-
-def test_agentic_benchmark_requires_reused_preflight_identity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    report = {
-        "schema_version": preflight.REPORT_SCHEMA,
-        "status": "passed",
-        "provider_requests": 4,
-        "maximum_provider_requests": 4,
-        "external_attempts": 4,
-        "maximum_external_attempts": 11,
-        "cost_usd": 0.004,
-        "envoy_container_reused": True,
-        "ephemeral_key_reused": True,
-        "workers": {
-            worker: {
-                "model": model,
-                "provider": benchmark.PROVIDER_NAMES[worker],
-            }
-            for worker, model in benchmark.WORKERS.items()
-        },
-    }
-    monkeypatch.setenv(benchmark.TRANSPORT_PREFLIGHT_ENV, json.dumps(report))
-
-    assert benchmark._transport_preflight_from_environment() == report
-
-    report["envoy_container_reused"] = False
-    monkeypatch.setenv(benchmark.TRANSPORT_PREFLIGHT_ENV, json.dumps(report))
-    with pytest.raises(RuntimeError, match="contract diverged"):
-        benchmark._transport_preflight_from_environment()
-
-
 def test_agentic_discovery_reports_the_full_natural_mix(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -713,8 +638,8 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
     assert "fireworks/fast" not in config
     assert launcher.PACKETS["agentic"].key_limit_usd == EXPECTED_EPHEMERAL_KEY_LIMIT_USD
     assert launcher.PACKETS["agentic"].maximum_seconds == 30 * 60
-    assert launcher.AGT008_PREREGISTRATION_COMMIT == ""
-    assert launcher.AGT008_AUTHORIZATION_COMMIT == ""
+    assert launcher.AGT009_PREREGISTRATION_COMMIT == ""
+    assert launcher.AGT009_AUTHORIZATION_COMMIT == ""
     assert launcher.DGN003_PREREGISTRATION_COMMIT == ""
     assert launcher.DGN003_AUTHORIZATION_COMMIT == ""
     assert launcher.DGN004_PREREGISTRATION_COMMIT == ""

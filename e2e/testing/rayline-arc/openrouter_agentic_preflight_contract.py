@@ -29,12 +29,34 @@ def validate_report(report: Any, *, require_reuse: bool) -> dict[str, Any]:
         raise TypeError("agentic transport preflight report was malformed")
     if (
         report.get("schema_version") != REPORT_SCHEMA
-        or report.get("status") != "passed"
-        or report.get("provider_requests") != MAX_PROVIDER_REQUESTS
         or report.get("maximum_provider_requests") != MAX_PROVIDER_REQUESTS
         or report.get("maximum_external_attempts") != MAX_EXTERNAL_ATTEMPTS
     ):
         raise RuntimeError("agentic transport preflight contract diverged")
+    status = report.get("status")
+    if status == "failed":
+        if require_reuse:
+            raise RuntimeError("agentic transport preflight did not pass")
+        completed = report.get("completed_provider_requests")
+        provider_requests = report.get("provider_requests")
+        attempts = report.get("external_attempts")
+        cost = report.get("cost_usd")
+        if (
+            not isinstance(completed, int)
+            or completed < 0
+            or not isinstance(provider_requests, int)
+            or provider_requests != completed + 1
+            or provider_requests > MAX_PROVIDER_REQUESTS
+            or not isinstance(attempts, int)
+            or attempts < provider_requests
+            or attempts > MAX_EXTERNAL_ATTEMPTS
+            or not isinstance(cost, (int, float))
+            or cost < 0
+        ):
+            raise RuntimeError("agentic transport preflight failure was malformed")
+        return report
+    if status != "passed" or report.get("provider_requests") != MAX_PROVIDER_REQUESTS:
+        raise RuntimeError("agentic transport preflight did not pass all probes")
     if require_reuse and (
         report.get("envoy_container_reused") is not True
         or report.get("ephemeral_key_reused") is not True
