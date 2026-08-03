@@ -2564,7 +2564,7 @@ transition; 104-request and 214-attempt maxima; original 72 measured calls;
 - [x] AGT009a: Implement structured privacy-safe preflight failure evidence,
   pure receipt stdout, narrow state/contract modules, focused tests, and repo
   lint with both source authority pins empty.
-- [ ] AGT009b: Preregister, attest, authorize exactly one attempt, attest the
+- [x] AGT009b: Preregister, attest, authorize exactly one attempt, attest the
   registry, and pin both authorities in signed pushed source.
 - [ ] AGT009c: Execute once and either publish the structured zero-H100 failure
   receipt or the complete measured throughput, TTFT, latency, retry, cost,
