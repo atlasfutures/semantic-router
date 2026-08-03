@@ -2119,7 +2119,7 @@ privacy, cleanup, and pure-Modal comparison doctrine remain unchanged.
 
 - [x] AGT004a: Implement and validate path-specific credential ownership,
   including the hermetic static-control provider-key and model-rewrite proof.
-- [ ] AGT004b: Preregister and complete the distinct source-attestation,
+- [x] AGT004b: Preregister and complete the distinct source-attestation,
   authorization, and final launch-pin chain.
 - [ ] AGT004c: Execute once, privately pin the aggregate result, permanently
   close authority, verify stable zero, and compare normalized overhead with the
