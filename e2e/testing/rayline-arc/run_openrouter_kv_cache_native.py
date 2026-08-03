@@ -29,7 +29,7 @@ from openrouter_modal_native_fixture import (
 )
 
 RUN_ID = "rayline-openrouter-kv-cache-agt016-20260803"
-PREREGISTRATION_COMMIT = ""
+PREREGISTRATION_COMMIT = "02102e02a6da8090d272ece8c18ce7bc32f7e8d9"
 AUTHORIZATION_COMMIT = ""
 GIT_SHA_LENGTH = 40
 REQUIRED_MODAL_VERSION = "1.5.1"
