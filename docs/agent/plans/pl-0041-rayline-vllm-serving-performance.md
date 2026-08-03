@@ -2398,13 +2398,19 @@ report gate; and 30-minute H100 limit. The complete packet envelope remains
 - [x] AGT007a: Source-close the readiness-only 404 retry, accurate cumulative
   wire-attempt accounting, focused tests, repository gates, and hermetic ARC
   acceptance.
-- [ ] AGT007b: Preregister the immutable packet and complete distinct source
+- [x] AGT007b: Preregister the immutable packet and complete distinct source
   attestation, one-attempt authorization, registry attestation, and final
   launch pin.
 - [ ] AGT007c: Execute once, privately pin the aggregate receipt, close both
   authorities, prove stable-zero cleanup, and report real E2E throughput,
   TTFT, latency, retry, cost, natural mix, and normalized ARC/static overhead.
   The 1,000-case qualification remains held.
+
+The remote-visible AGT007 launch chain is Pathfinder preregistration
+`eeca56f4`, Semantic Router source attestation `62304e2a`, Pathfinder
+authorization `0f69f5c8`, and Pathfinder registry attestation `c4892e8d`. The
+final signed Semantic Router source checkpoint pins both Pathfinder authorities
+and is the only checkpoint permitted to launch the one AGT007 attempt.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
