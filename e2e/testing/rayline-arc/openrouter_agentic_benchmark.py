@@ -48,18 +48,22 @@ PATHS = ("direct", "gateway_static", "arc")
 CONCURRENCY_LEVELS = (1, 4)
 SERIAL_WAVES = 2
 CONCURRENT_REPETITIONS = 2
-SELECTED_CASES_PER_WORKER = 2
+SELECTED_CASE_COUNT = 6
+MIN_ACTIVE_WORKERS = 2
+MIN_SELECTED_CASES_PER_ACTIVE_WORKER = 2
 MAX_COVERAGE_REQUESTS = 24
+ENDPOINT_PROBE_REQUESTS = len(WORKERS)
 MAX_COMPLETION_TOKENS = 96
 MAX_REPORTED_PROVIDER_COST_USD = 0.50
 MAX_DATA_PLANE_ATTEMPTS = 2
 RETRYABLE_STATUS_CODES = frozenset({429, 503})
 MEASURED_REQUESTS_PER_PATH = (
-    SELECTED_CASES_PER_WORKER * 3 * SERIAL_WAVES
-    + SELECTED_CASES_PER_WORKER * 3 * CONCURRENT_REPETITIONS
+    SELECTED_CASE_COUNT * SERIAL_WAVES + SELECTED_CASE_COUNT * CONCURRENT_REPETITIONS
 )
 MAX_MEASURED_REQUESTS = len(PATHS) * MEASURED_REQUESTS_PER_PATH
-MAX_PROVIDER_REQUESTS = MAX_COVERAGE_REQUESTS + MAX_MEASURED_REQUESTS
+MAX_PROVIDER_REQUESTS = (
+    ENDPOINT_PROBE_REQUESTS + MAX_COVERAGE_REQUESTS + MAX_MEASURED_REQUESTS
+)
 MAX_EXTERNAL_ATTEMPTS = MAX_PROVIDER_REQUESTS * MAX_DATA_PLANE_ATTEMPTS
 
 
@@ -334,17 +338,55 @@ def _stream_request(
 def _choose_cases(
     candidates: dict[str, list[dict[str, Any]]],
 ) -> list[dict[str, Any]] | None:
-    if any(len(candidates[worker]) < SELECTED_CASES_PER_WORKER for worker in WORKERS):
-        return None
-    combinations = [
-        list(itertools.combinations(candidates[worker], SELECTED_CASES_PER_WORKER))
+    active_workers = [
+        worker
         for worker in WORKERS
+        if len(candidates[worker]) >= MIN_SELECTED_CASES_PER_ACTIVE_WORKER
     ]
-    for worker_groups in itertools.product(*combinations):
-        selected = [case for group in worker_groups for case in group]
-        if {case["scenario"] for case in selected} == set(SCENARIOS):
-            return selected
+    if len(active_workers) < MIN_ACTIVE_WORKERS:
+        return None
+    allocations = [
+        counts
+        for counts in itertools.product(
+            *(
+                range(
+                    MIN_SELECTED_CASES_PER_ACTIVE_WORKER,
+                    min(len(candidates[worker]), SELECTED_CASE_COUNT) + 1,
+                )
+                for worker in active_workers
+            )
+        )
+        if sum(counts) == SELECTED_CASE_COUNT
+    ]
+    allocations.sort(key=lambda counts: (max(counts) - min(counts), counts))
+    for allocation in allocations:
+        combinations = [
+            list(itertools.combinations(candidates[worker], count))
+            for worker, count in zip(active_workers, allocation, strict=True)
+        ]
+        for worker_groups in itertools.product(*combinations):
+            selected = [case for group in worker_groups for case in group]
+            if {case["scenario"] for case in selected} == set(SCENARIOS):
+                return selected
     return None
+
+
+def _probe_endpoints(
+    *, gateway_url: str, openrouter_key: str, run_id: str, timeout_seconds: float
+) -> list[dict[str, Any]]:
+    print("agentic endpoint probes: starting", file=sys.stderr, flush=True)
+    return [
+        _stream_request(
+            path="gateway_static",
+            case=_candidate_case(index),
+            expected_worker=worker,
+            gateway_url=gateway_url,
+            openrouter_key=openrouter_key,
+            episode_id=_episode_id(run_id, f"agentic-endpoint-{worker}"),
+            timeout_seconds=timeout_seconds,
+        )
+        for index, worker in enumerate(WORKERS)
+    ]
 
 
 def _coverage_request(
@@ -442,9 +484,10 @@ def _discover_cases(
             file=sys.stderr,
             flush=True,
         )
-        if selected := _choose_cases(candidates):
-            return selected, results
-    raise RuntimeError("agentic candidates did not cover two cases per model")
+    selected = _choose_cases(candidates)
+    if selected is None:
+        raise RuntimeError("agentic candidates did not cover two active workers")
+    return selected, results
 
 
 def _run_batch(
@@ -552,10 +595,12 @@ def _bind_expected_workers(
 
 
 def _bounded_totals(
-    coverage: list[dict[str, Any]], phases: list[dict[str, Any]]
+    endpoint_probes: list[dict[str, Any]],
+    coverage: list[dict[str, Any]],
+    phases: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], int, float]:
     measured_results = flatten(phases)
-    all_results = [*coverage, *measured_results]
+    all_results = [*endpoint_probes, *coverage, *measured_results]
     if len(measured_results) != MAX_MEASURED_REQUESTS:
         raise RuntimeError("agentic measured request count diverged")
     if len(all_results) > MAX_PROVIDER_REQUESTS:
@@ -573,6 +618,7 @@ def _build_report(
     *,
     run_id: str,
     encoder_warmup: dict[str, Any],
+    endpoint_probes: list[dict[str, Any]],
     selected_cases: list[dict[str, Any]],
     coverage: list[dict[str, Any]],
     phases: list[dict[str, Any]],
@@ -588,7 +634,7 @@ def _build_report(
         concurrency_levels=CONCURRENCY_LEVELS,
     )
     return {
-        "schema_version": "rayline.arc.openrouter-agentic-benchmark.v1",
+        "schema_version": "rayline.arc.openrouter-agentic-benchmark.v2",
         "run_id": run_id,
         "status": "passed",
         "models": WORKERS,
@@ -608,7 +654,11 @@ def _build_report(
                 )
                 for worker in WORKERS
             },
-            "selected_cases_per_worker": SELECTED_CASES_PER_WORKER,
+            "selected_case_count": SELECTED_CASE_COUNT,
+            "minimum_active_workers": MIN_ACTIVE_WORKERS,
+            "minimum_selected_cases_per_active_worker": (
+                MIN_SELECTED_CASES_PER_ACTIVE_WORKER
+            ),
             "max_completion_tokens": MAX_COMPLETION_TOKENS,
             "concurrency_levels": CONCURRENCY_LEVELS,
             "measured_requests": len(measured_results),
@@ -620,6 +670,29 @@ def _build_report(
                 for worker in WORKERS
             },
             "cost_usd": sum(float(result["cost_usd"]) for result in coverage),
+        },
+        "endpoint_reachability": {
+            "requests": len(endpoint_probes),
+            "all_reachable": len(endpoint_probes) == len(WORKERS),
+            "workers": {
+                worker: {
+                    "reachable": any(
+                        result["selected_worker"] == worker
+                        for result in endpoint_probes
+                    ),
+                    "model": model,
+                    "provider": PROVIDER_NAMES[worker],
+                }
+                for worker, model in WORKERS.items()
+            },
+            "external_attempts": sum(
+                int(result["external_attempts"]) for result in endpoint_probes
+            ),
+            "retries": sum(
+                int(result["external_attempts"]) for result in endpoint_probes
+            )
+            - len(endpoint_probes),
+            "cost_usd": sum(float(result["cost_usd"]) for result in endpoint_probes),
         },
         "paths": reports,
         "comparison": comparison(reports, CONCURRENCY_LEVELS),
@@ -661,6 +734,12 @@ def main() -> None:
         connection_factory=_connection,
     )
     metrics_before = _read_metrics(args.metrics_url, args.timeout_seconds)
+    endpoint_probes = _probe_endpoints(
+        gateway_url=args.gateway_url,
+        openrouter_key=openrouter_key,
+        run_id=args.run_id,
+        timeout_seconds=args.timeout_seconds,
+    )
     selected_cases, coverage = _discover_cases(
         gateway_url=args.gateway_url,
         run_id=args.run_id,
@@ -674,7 +753,9 @@ def main() -> None:
         run_id=args.run_id,
         timeout_seconds=args.timeout_seconds,
     )
-    all_results, external_attempts, provider_cost = _bounded_totals(coverage, phases)
+    all_results, external_attempts, provider_cost = _bounded_totals(
+        endpoint_probes, coverage, phases
+    )
     router_metrics = validate_router_metrics(
         before=metrics_before,
         after=_read_metrics(args.metrics_url, args.timeout_seconds),
@@ -684,6 +765,7 @@ def main() -> None:
     report = _build_report(
         run_id=args.run_id,
         encoder_warmup=encoder_warmup,
+        endpoint_probes=endpoint_probes,
         selected_cases=selected_cases,
         coverage=coverage,
         phases=phases,

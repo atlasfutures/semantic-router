@@ -19,6 +19,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 artifact = importlib.import_module("openrouter_agentic_artifact_fixture")
 benchmark = importlib.import_module("openrouter_agentic_benchmark")
+reporting = importlib.import_module("openrouter_agentic_reporting")
 workload = importlib.import_module("openrouter_agentic_workload")
 if importlib.util.find_spec("modal") is None:
     modal_stub = types.ModuleType("modal")
@@ -27,10 +28,11 @@ if importlib.util.find_spec("modal") is None:
 launcher = importlib.import_module("run_openrouter_fullstack")
 EXPECTED_MAX_COMPLETION_TOKENS = 96
 EXPECTED_MAX_MEASURED_REQUESTS = 72
-EXPECTED_MAX_PROVIDER_REQUESTS = 96
+EXPECTED_MAX_PROVIDER_REQUESTS = 99
 EXPECTED_PROVIDER_COST_LIMIT_USD = 0.50
 EXPECTED_MIN_TOOL_RESULT_CHARACTERS = 1_000
 EXPECTED_SELECTED_CASES = 6
+EXPECTED_SELECTED_CASES_PER_ACTIVE_WORKER = 3
 EXPECTED_EPHEMERAL_KEY_LIMIT_USD = 0.75
 
 
@@ -84,7 +86,7 @@ def test_agentic_workload_is_bounded_realistic_and_balanced() -> None:
         assert len(tool_result) > EXPECTED_MIN_TOOL_RESULT_CHARACTERS
 
 
-def test_agentic_case_selection_requires_two_per_worker_and_all_shapes() -> None:
+def test_agentic_case_selection_balances_three_active_workers_and_all_shapes() -> None:
     candidates = {
         "worker-a": [benchmark._candidate_case(0), benchmark._candidate_case(3)],
         "worker-b": [benchmark._candidate_case(1), benchmark._candidate_case(4)],
@@ -96,6 +98,104 @@ def test_agentic_case_selection_requires_two_per_worker_and_all_shapes() -> None
     assert selected is not None
     assert len(selected) == EXPECTED_SELECTED_CASES
     assert {case["scenario"] for case in selected} == set(benchmark.SCENARIOS)
+
+
+def test_agentic_case_selection_treats_zero_share_as_a_result() -> None:
+    candidates = {
+        "worker-a": [benchmark._candidate_case(index) for index in (1, 2, 4, 5)],
+        "worker-b": [],
+        "worker-c": [benchmark._candidate_case(index) for index in (0, 3, 6, 9)],
+    }
+
+    selected = benchmark._choose_cases(candidates)
+
+    assert selected is not None
+    assert len(selected) == EXPECTED_SELECTED_CASES
+    assert {case["scenario"] for case in selected} == set(benchmark.SCENARIOS)
+    assert (
+        sum(case in candidates["worker-a"] for case in selected)
+        == EXPECTED_SELECTED_CASES_PER_ACTIVE_WORKER
+    )
+    assert sum(case in candidates["worker-b"] for case in selected) == 0
+    assert (
+        sum(case in candidates["worker-c"] for case in selected)
+        == EXPECTED_SELECTED_CASES_PER_ACTIVE_WORKER
+    )
+
+
+def test_agentic_endpoint_probes_reach_every_pinned_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def fake_stream(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {
+            "selected_worker": kwargs["expected_worker"],
+            "external_attempts": 1,
+            "cost_usd": 0.001,
+        }
+
+    monkeypatch.setattr(benchmark, "_stream_request", fake_stream)
+    results = benchmark._probe_endpoints(
+        gateway_url="http://gateway.invalid",
+        openrouter_key="test-key",
+        run_id="test-run",
+        timeout_seconds=1.0,
+    )
+
+    assert len(results) == len(benchmark.WORKERS)
+    assert [call["path"] for call in calls] == ["gateway_static"] * 3
+    assert [call["expected_worker"] for call in calls] == list(benchmark.WORKERS)
+
+
+def test_agentic_discovery_reports_the_full_natural_mix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_coverage_request(**kwargs: Any) -> dict[str, Any]:
+        index = int(kwargs["case"]["case_id"].rsplit("-", maxsplit=1)[1])
+        return {
+            "case_id": kwargs["case"]["case_id"],
+            "selected_worker": "worker-c" if index % 3 == 0 else "worker-a",
+        }
+
+    monkeypatch.setattr(benchmark, "_coverage_request", fake_coverage_request)
+    selected, coverage = benchmark._discover_cases(
+        gateway_url="http://gateway.invalid",
+        run_id="test-run",
+        timeout_seconds=1.0,
+    )
+
+    assert len(coverage) == benchmark.MAX_COVERAGE_REQUESTS
+    assert len(selected) == EXPECTED_SELECTED_CASES
+    benchmark._bind_expected_workers(selected, coverage)
+    assert (
+        sum(case["expected_worker"] == "worker-a" for case in selected)
+        == EXPECTED_SELECTED_CASES_PER_ACTIVE_WORKER
+    )
+    assert sum(case["expected_worker"] == "worker-b" for case in selected) == 0
+    assert (
+        sum(case["expected_worker"] == "worker-c" for case in selected)
+        == EXPECTED_SELECTED_CASES_PER_ACTIVE_WORKER
+    )
+    selected_ids = {case["case_id"] for case in selected}
+    assert len(selected_ids) == EXPECTED_SELECTED_CASES
+
+
+def test_agentic_per_model_report_represents_zero_share() -> None:
+    assert reporting._per_model_report([]) == {
+        "requests": 0,
+        "time_to_first_token": None,
+        "end_to_end_latency": None,
+        "envoy_upstream_service_time": None,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "external_attempts": 0,
+        "retries": 0,
+        "cost_usd": 0.0,
+        "providers": [],
+        "models": [],
+    }
 
 
 def test_agentic_paths_preserve_one_payload_and_change_only_routing() -> None:
@@ -177,10 +277,7 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
     assert "fireworks/fast" not in config
     assert launcher.PACKETS["agentic"].key_limit_usd == EXPECTED_EPHEMERAL_KEY_LIMIT_USD
     assert launcher.PACKETS["agentic"].maximum_seconds == 30 * 60
-    assert (
-        launcher.AGENTIC_PREREGISTRATION_COMMIT
-        == "a5d8fa2a2ddd33d28f8f6c0589b0f78f39eb5a56"
-    )
+    assert launcher.AGENTIC_PREREGISTRATION_COMMIT == ""
     assert launcher.AGENTIC_AUTHORIZATION_COMMIT == ""
     assert "source=public-synthetic" in launcher.PUBLIC_REQUEST_LOG_MARKERS
     benchmark_source = (SCRIPT_DIR / "openrouter_agentic_benchmark.py").read_text()

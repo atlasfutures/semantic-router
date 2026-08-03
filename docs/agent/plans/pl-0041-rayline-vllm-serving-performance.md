@@ -2060,6 +2060,36 @@ assignment for the same request. That preserves a realistic model mix while
 still measuring direct, static, and ARC overhead. Any such change requires a
 new registry ID and authorization chain; AGT002 cannot retry.
 
+### AGT003 Natural-Mix Measurement
+
+AGT003 keeps the exact DS4 Flash/Baidu, MiMo V2.5/Xiaomi, and HY3/Tencent pool,
+provider pins, public agentic histories, 96-token cap, 24-request discovery,
+six-case and 72-request measured workload, concurrency cells, retry bounds,
+cost ceilings, protected encoder deployment, privacy contract, and cleanup.
+It changes only the failed coverage interpretation:
+
+1. issue one specified-model gateway reachability probe to each exact endpoint;
+2. run all 24 ARC discovery requests and report their natural model share;
+3. require at least two active workers and select six balanced cases spanning
+   all three scenario shapes, while allowing the third worker to have zero
+   natural share; and
+4. freeze direct and static controls to each selected case's observed ARC
+   worker, then run the unchanged direct/static/ARC measurement cells.
+
+The three reachability probes increase the logical provider ceiling from 96 to
+99 and the two-attempt wire ceiling from 192 to 198. The `$0.75` key limit,
+`$0.50` reported-cost gate, H100 limit, user budget, and held 1,000-case
+qualification do not change. A distinct AGT003 registration and authorization
+chain is required.
+
+- [x] AGT003a: Implement and validate endpoint probes, natural-share selection,
+  zero-share reporting, fixed request bounds, and aggregate-only evidence.
+- [ ] AGT003b: Preregister and complete the distinct source-attestation,
+  authorization, and final launch-pin chain.
+- [ ] AGT003c: Execute once, privately pin the aggregate result, permanently
+  close authority, verify stable zero, and compare normalized overhead with the
+  pure-Modal reference.
+
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
 continues to reject cached-prefix tokens. The separate session v1 wire reports

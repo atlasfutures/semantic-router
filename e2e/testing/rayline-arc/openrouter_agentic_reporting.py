@@ -55,6 +55,20 @@ def result_report(results: list[dict[str, Any]], wall_seconds: float) -> dict[st
 
 
 def _per_model_report(results: list[dict[str, Any]]) -> dict[str, Any]:
+    if not results:
+        return {
+            "requests": 0,
+            "time_to_first_token": None,
+            "end_to_end_latency": None,
+            "envoy_upstream_service_time": None,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "external_attempts": 0,
+            "retries": 0,
+            "cost_usd": 0.0,
+            "providers": [],
+            "models": [],
+        }
     report = result_report(
         results,
         sum(float(result["total_seconds"]) for result in results),
