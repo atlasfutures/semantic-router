@@ -2086,7 +2086,42 @@ chain is required.
   zero-share reporting, fixed request bounds, and aggregate-only evidence.
 - [x] AGT003b: Preregister and complete the distinct source-attestation,
   authorization, and final launch-pin chain.
-- [ ] AGT003c: Execute once, privately pin the aggregate result, permanently
+- [x] AGT003c: Execute once, privately pin the aggregate result, permanently
+  close authority, verify stable zero, and compare normalized overhead with the
+  pure-Modal reference.
+
+AGT003's only authorized attempt failed its first specified-model gateway probe
+with HTTP 404 before a completed response. Natural ARC discovery and all
+measurement cells remained untouched, and OpenRouter recorded exactly `$0`
+usage. The launcher returned Compose and the encoder to stable zero, proved the
+ephemeral key absent, and closed source authority at `b1b291b2`. Its private
+aggregate receipt is pinned at `rayline-ai/router-artifacts@3402e2ce` with
+SHA-256 `bc655d826e1ba56d2d41ffe290ef4e0cc25c0d341b5c2c88aa454c43bdf2e920`;
+Pathfinder closes the packet at `65ed3832`.
+
+The specified-model control had supplied a public placeholder Authorization
+value. Unlike ARC dispatch, which explicitly overwrites caller authorization
+with its artifact-owned credential, specified-model routing uses the configured
+credential path and must receive no caller credential from this unauthenticated
+benchmark ingress. The hermetic stack already proves that a headerless static
+control becomes exactly one config-owned provider credential and rewrites
+`worker-a` to its external provider model ID.
+
+### AGT004 Config-Owned Static Credentials
+
+AGT004 removes caller Authorization from all gateway requests. Direct
+OpenRouter requests continue to use the ephemeral key; specified-model gateway
+requests rely on the router's config-owned credential; ARC requests rely on the
+artifact-owned credential. The exact AGT003 models, providers, endpoint probes,
+24-request natural-mix discovery, six selected cases, 72 measured requests,
+request/attempt bounds, retry policy, cost ceilings, protected encoder,
+privacy, cleanup, and pure-Modal comparison doctrine remain unchanged.
+
+- [x] AGT004a: Implement and validate path-specific credential ownership,
+  including the hermetic static-control provider-key and model-rewrite proof.
+- [ ] AGT004b: Preregister and complete the distinct source-attestation,
+  authorization, and final launch-pin chain.
+- [ ] AGT004c: Execute once, privately pin the aggregate result, permanently
   close authority, verify stable zero, and compare normalized overhead with the
   pure-Modal reference.
 

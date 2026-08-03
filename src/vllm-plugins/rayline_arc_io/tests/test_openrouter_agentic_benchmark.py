@@ -226,6 +226,24 @@ def test_agentic_paths_preserve_one_payload_and_change_only_routing() -> None:
     assert all(payload["stream"] is True for payload in (direct, static, arc))
 
 
+def test_gateway_paths_never_forward_a_caller_authorization_value() -> None:
+    direct = benchmark._request_headers(
+        path="direct", openrouter_key="ephemeral-key", episode_id="direct"
+    )
+    static = benchmark._request_headers(
+        path="gateway_static", openrouter_key="ignored", episode_id="static"
+    )
+    arc = benchmark._request_headers(
+        path="arc", openrouter_key="ignored", episode_id="arc-episode"
+    )
+
+    assert direct["authorization"] == "Bearer ephemeral-key"
+    assert "authorization" not in static
+    assert "authorization" not in arc
+    assert "x-rayline-episode-id" not in static
+    assert arc["x-rayline-episode-id"] == "arc-episode"
+
+
 def test_direct_path_retries_one_pre_response_429(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -277,10 +295,7 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
     assert "fireworks/fast" not in config
     assert launcher.PACKETS["agentic"].key_limit_usd == EXPECTED_EPHEMERAL_KEY_LIMIT_USD
     assert launcher.PACKETS["agentic"].maximum_seconds == 30 * 60
-    assert (
-        launcher.AGENTIC_PREREGISTRATION_COMMIT
-        == "4de94eb003e676bb448274fe87255f44622506d9"
-    )
+    assert launcher.AGENTIC_PREREGISTRATION_COMMIT == ""
     assert launcher.AGENTIC_AUTHORIZATION_COMMIT == ""
     assert "source=public-synthetic" in launcher.PUBLIC_REQUEST_LOG_MARKERS
     benchmark_source = (SCRIPT_DIR / "openrouter_agentic_benchmark.py").read_text()

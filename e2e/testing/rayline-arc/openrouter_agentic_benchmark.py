@@ -43,7 +43,6 @@ from openrouter_fullstack_canary import (
 
 HTTP_OK = 200
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-PUBLIC_GATEWAY_AUTHORIZATION = "Bearer public-openrouter-agentic-benchmark"
 PATHS = ("direct", "gateway_static", "arc")
 CONCURRENCY_LEVELS = (1, 4)
 SERIAL_WAVES = 2
@@ -106,6 +105,17 @@ def _request_payload(
             }
         )
     return payload
+
+
+def _request_headers(
+    *, path: str, openrouter_key: str, episode_id: str
+) -> dict[str, str]:
+    headers = {"content-type": "application/json"}
+    if path == "direct":
+        headers["authorization"] = f"Bearer {openrouter_key}"
+    if path == "arc":
+        headers["x-rayline-episode-id"] = episode_id
+    return headers
 
 
 def _event_emits_token(event: Any) -> bool:
@@ -230,15 +240,11 @@ def _stream_request_once(
 ) -> dict[str, Any]:
     direct = path == "direct"
     base_url = OPENROUTER_BASE_URL if direct else f"{gateway_url.rstrip('/')}/v1"
-    authorization = (
-        f"Bearer {openrouter_key}" if direct else PUBLIC_GATEWAY_AUTHORIZATION
+    headers = _request_headers(
+        path=path,
+        openrouter_key=openrouter_key,
+        episode_id=episode_id,
     )
-    headers = {
-        "authorization": authorization,
-        "content-type": "application/json",
-    }
-    if path == "arc":
-        headers["x-rayline-episode-id"] = episode_id
     connection, response = request_following_result_redirects(
         connection_factory=_connection,
         method="POST",
@@ -415,11 +421,11 @@ def _coverage_request(
         method="POST",
         url=f"{gateway_url.rstrip('/')}/v1/chat/completions",
         body=json.dumps(payload, separators=(",", ":")).encode(),
-        headers={
-            "authorization": PUBLIC_GATEWAY_AUTHORIZATION,
-            "content-type": "application/json",
-            "x-rayline-episode-id": episode_id,
-        },
+        headers=_request_headers(
+            path="arc",
+            openrouter_key="",
+            episode_id=episode_id,
+        ),
         timeout_seconds=timeout_seconds,
     )
     selected_worker = response.getheader("x-vsr-selected-model", "")
