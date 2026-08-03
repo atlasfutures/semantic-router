@@ -2609,7 +2609,7 @@ unchanged.
 - [x] AGT010a: Implement bounded provider orders, actual-provider validation and
   reporting, conservative pricing, exhausted-retry accounting, focused tests,
   repo gates, and hermetic Compose acceptance with authority pins empty.
-- [ ] AGT010b: Preregister, attest, authorize one attempt, attest the registry,
+- [x] AGT010b: Preregister, attest, authorize one attempt, attest the registry,
   and pin both authorities in signed pushed source.
 - [ ] AGT010c: Execute once and publish either bounded preflight failure evidence
   or the complete 72-request performance result, then close all authority.
