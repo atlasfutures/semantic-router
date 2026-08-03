@@ -517,7 +517,7 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
     assert launcher.PACKETS["agentic"].maximum_seconds == 30 * 60
     assert (
         launcher.AGENTIC_PREREGISTRATION_COMMIT
-        == "25ef39dac03015934bde87b6739505dfac2e5210"
+        == "eeca56f41a092cde23436816697356a6f13d4d7f"
     )
     assert launcher.AGENTIC_AUTHORIZATION_COMMIT == ""
     assert launcher.DGN003_PREREGISTRATION_COMMIT == ""
