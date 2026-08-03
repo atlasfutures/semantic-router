@@ -56,6 +56,8 @@ AGENTIC_PREREGISTRATION_COMMIT = "eeca56f41a092cde23436816697356a6f13d4d7f"
 AGENTIC_AUTHORIZATION_COMMIT = ""
 DGN003_PREREGISTRATION_COMMIT = ""
 DGN003_AUTHORIZATION_COMMIT = ""
+DGN004_PREREGISTRATION_COMMIT = ""
+DGN004_AUTHORIZATION_COMMIT = ""
 AGENTIC_SOURCE_REMOTE_REF = "atlasfutures/codex/rayline-remote-mvp"
 PUBLIC_REQUEST_LOG_MARKERS = (
     *CANDIDATE_PROMPTS,
@@ -118,6 +120,19 @@ PACKETS = {
         ),
         driver=Path(__file__).with_name("openrouter_gateway_shape_diagnostic.py"),
         project_name="rayline-arc-openrouter-gateway-shape",
+        key_limit_usd=0.05,
+        maximum_seconds=5 * 60,
+        protected_encoder=False,
+    ),
+    "gateway-prime": RunPacket(
+        compose_override=(
+            REPO_ROOT / "deploy/compose/rayline-arc/compose-openrouter-agentic.yaml"
+        ),
+        config=(
+            REPO_ROOT / "deploy/compose/rayline-arc/config-openrouter-agentic.yaml"
+        ),
+        driver=Path(__file__).with_name("openrouter_gateway_prime_diagnostic.py"),
+        project_name="rayline-arc-openrouter-gateway-prime",
         key_limit_usd=0.05,
         maximum_seconds=5 * 60,
         protected_encoder=False,
@@ -529,6 +544,10 @@ def _verify_source_authority(mode: str, environment: dict[str, str]) -> None:
         "gateway-shape": (
             DGN003_PREREGISTRATION_COMMIT,
             DGN003_AUTHORIZATION_COMMIT,
+        ),
+        "gateway-prime": (
+            DGN004_PREREGISTRATION_COMMIT,
+            DGN004_AUTHORIZATION_COMMIT,
         ),
     }
     pins = authorities.get(mode)

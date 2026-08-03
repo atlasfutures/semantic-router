@@ -2430,6 +2430,39 @@ diagnostic must use a fresh key and compare static-96-first against
 static-1-prime-then-static-96. AGT007 is permanently closed, and the 1,000-case
 qualification remains held.
 
+### DGN004 Fresh-Key Gateway Prime Sequence
+
+DGN004 is a four-request, no-H100 follow-up that corrects DGN003's sequencing
+blind spot. With one fresh `$0.05`-limited key and the exact agentic config,
+Envoy route, router image, fake encoder, first public synthetic case, and
+DS4/Baidu pin, it sends: static 96 tokens as the gateway's first request;
+static one token as an explicit gateway-local prime; static 96 tokens again;
+then direct 96 tokens as the host-path control. It permits no client retry;
+Envoy retains only its existing 429/503 retry, for four logical requests and
+at most eight wire attempts.
+
+The aggregate receipt records only status, bounded error metadata, exact
+model/provider identity, completion tokens, and attempts. It cannot support
+performance inference and persists no body, raw error, credential, episode,
+latency, or timestamp. From `$80.429964624743`, its full envelope reaches
+`$80.479964624743`, leaving `$53.832859395257` under the current
+`$134.31282402` authority.
+
+- [x] DGN004a: Source-close the fresh-key prime driver and local launcher mode;
+  pass focused tests, repository validation/lint, and hermetic ARC acceptance.
+- [ ] DGN004b: Preregister and authorize exactly one attempt, then pin both
+  registry checkpoints in signed, pushed source.
+- [ ] DGN004c: Execute once, privately pin and close the aggregate receipt,
+  prove all inventories at zero, and decide whether a gateway-local one-token
+  prime is justified before any new H100 packet.
+
+If static-96-first fails and post-prime static-96 succeeds, AGT008 may add one
+gateway-local one-token readiness call before the unchanged per-worker probes.
+If all calls pass, treat the 404 as unresolved intermittent edge behavior and
+do not spend another H100 packet without stronger observability. If both static
+96 calls fail while direct succeeds, fix the gateway transport seam. Keep the
+1,000-case qualification held in every branch.
+
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
 continues to reject cached-prefix tokens. The separate session v1 wire reports

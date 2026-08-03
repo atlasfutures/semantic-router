@@ -20,6 +20,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 artifact = importlib.import_module("openrouter_agentic_artifact_fixture")
 benchmark = importlib.import_module("openrouter_agentic_benchmark")
 gateway_diagnostic = importlib.import_module("openrouter_gateway_shape_diagnostic")
+prime_diagnostic = importlib.import_module("openrouter_gateway_prime_diagnostic")
 reporting = importlib.import_module("openrouter_agentic_reporting")
 workload = importlib.import_module("openrouter_agentic_workload")
 if "modal" not in sys.modules and importlib.util.find_spec("modal") is None:
@@ -456,6 +457,41 @@ def test_gateway_shape_diagnostic_interleaves_exact_bounded_probe_shapes(
     assert "private-key" not in json.dumps(report)
 
 
+def test_gateway_prime_diagnostic_exercises_first_request_and_prime_sequence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def fake_stream_request(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {
+            "response_model": "deepseek/deepseek-v4-flash",
+            "provider": "Baidu",
+            "completion_tokens": kwargs["max_completion_tokens"],
+            "external_attempts": 1,
+        }
+
+    monkeypatch.setattr(prime_diagnostic, "_stream_request", fake_stream_request)
+    report = prime_diagnostic.run_diagnostic(
+        gateway_url="http://gateway.invalid",
+        openrouter_key="private-key",
+        run_id="public-prime-diagnostic",
+        timeout_seconds=1.0,
+    )
+
+    assert [(call["path"], call["max_completion_tokens"]) for call in calls] == [
+        ("gateway_static", EXPECTED_MAX_COMPLETION_TOKENS),
+        ("gateway_static", 1),
+        ("gateway_static", EXPECTED_MAX_COMPLETION_TOKENS),
+        ("direct", EXPECTED_MAX_COMPLETION_TOKENS),
+    ]
+    assert all(call["maximum_attempts"] == 1 for call in calls)
+    assert report["provider_requests"] == len(prime_diagnostic.PROBES)
+    assert report["successful_requests"] == len(prime_diagnostic.PROBES)
+    assert report["failed_requests"] == 0
+    assert "private-key" not in json.dumps(report)
+
+
 def test_agentic_launcher_pins_and_restores_one_encoder_container(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -522,6 +558,8 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
     assert launcher.AGENTIC_AUTHORIZATION_COMMIT == ""
     assert launcher.DGN003_PREREGISTRATION_COMMIT == ""
     assert launcher.DGN003_AUTHORIZATION_COMMIT == ""
+    assert launcher.DGN004_PREREGISTRATION_COMMIT == ""
+    assert launcher.DGN004_AUTHORIZATION_COMMIT == ""
     gateway_packet = launcher.PACKETS["gateway-shape"]
     assert gateway_packet.key_limit_usd == EXPECTED_DIAGNOSTIC_KEY_LIMIT_USD
     assert gateway_packet.maximum_seconds == 5 * 60
@@ -538,6 +576,10 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
     assert gateway_environment["RAYLINE_ARC_E2E_ENCODER_BUILD_ID"] == (
         "vllm@public-rayline-e2e-build"
     )
+    prime_packet = launcher.PACKETS["gateway-prime"]
+    assert prime_packet.key_limit_usd == EXPECTED_DIAGNOSTIC_KEY_LIMIT_USD
+    assert prime_packet.maximum_seconds == 5 * 60
+    assert prime_packet.protected_encoder is False
     assert "source=public-synthetic" in launcher.PUBLIC_REQUEST_LOG_MARKERS
     benchmark_source = (SCRIPT_DIR / "openrouter_agentic_benchmark.py").read_text()
     reporting_source = (SCRIPT_DIR / "openrouter_agentic_reporting.py").read_text()
