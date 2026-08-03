@@ -121,14 +121,19 @@ affinity, one explicitly status-gated remap, ambiguous-failure fail-closed
 behavior, aggregate metrics, and explicit final-turn close fanout. A
 two-encoder Envoy/Semantic Router/Redis integration stack exercises failover,
 recovery, restart, Redis loss, cleanup, and privacy without a GPU or provider
-call. The source-exact integration, 104 IO-plugin tests, the full serialized
-Semantic Router suite, the repo CI gate, and the canonical CPU-local
-build/serve/smoke feature gate all pass. This implementation phase spent USD
-0; cumulative observed accounting remains `$73.64050361447986` under the
-`$134.31282402` authority, leaving `$60.67232040552014` before the required
-`$3` reserve. No additional paid run is justified until capacity provisioning
-or automatic membership materially changes. Dynamic discovery remains TD050
-and the 1,000-case qualification remains held.
+call. The source-exact integration, IO-plugin tests, full serialized Semantic
+Router suite, and repository CI gate pass. DYN006 then exercised the production
+controller with three exact H100 encoder apps: both arms registered ready C as
+revision 2 and placed measured sessions `[2,3,3]`; treatment drained/stopped A,
+failed over exactly two sessions to `[0,4,4]`, and observed TTL removal at
+revision 4. Its capacity gate passed at `0.8668x` control throughput, `1.0785x`
+p50, and `1.4688x` p95 service latency. Cleanup reached stable zero and the
+aggregate-only evidence is privately pinned at
+`rayline-ai/router-artifacts@fb75f38d20c7fdd1a2565bce52b9dd094bc3285c`.
+The launcher-window infrastructure upper estimate was `$4.08003918826349`,
+bringing cumulative observed accounting to `$77.72054280274334` under the
+`$134.31282402` authority. Fleet provisioning/operator integration remains
+TD050; DYN006 cannot retry and the 1,000-case qualification remains held.
 Current published implementation heads:
 
 - Semantic Router
@@ -1874,51 +1879,43 @@ and explicit close fanout do not change.
 - [x] DYN006b: Implement a source-closed three-encoder real-stop launcher,
   strict comparator, aggregate dynamic lifecycle telemetry, exact-image pin,
   and one-shot cleanup/budget interlocks.
-- [ ] DYN006c: Push signed source and registry checkpoints, open the exact
+- [x] DYN006c: Push signed source and registry checkpoints, open the exact
   one-shot authority, execute the preregistered cell once, privately verify
   aggregate evidence, and close launch authority after success or failure.
 
+### DYN006 Result
+
+DYN006 passed its single authorized execution. Both arms completed 16/16
+preload and 16/16 post-boundary decisions with matching selected-worker traces,
+zero failures, and zero provider calls. Controller registration produced
+revision 2 and exact `[2,3,3]` placement in both arms. Treatment drain produced
+revision 3, exact app A stopped in `0.876s` and converged in `16.576s`, two
+affected sessions failed over to B/C, and the five-minute idle boundary ended
+at revision 4 with `[0,4,4]` ownership and active B/C only.
+
+Control completed at `0.2390 rps`, with `3.470s` p50 and `26.456s` p95 service
+latency. Treatment completed at `0.2072 rps`, with `3.743s` p50 and `38.859s`
+p95. Ratios were `0.8668x` throughput, `1.0785x` p50, and `1.4688x` p95, passing
+the frozen `>=0.75x` throughput and `<=2.0x` latency gates. All 94 gateway
+selections reconciled; treatment recorded exactly two failovers and two
+unavailable-owner closes. All apps, containers, local stacks, episode states,
+and the proxy token reached stable zero.
+
+The exact source authorization was `493b2149`, permanent source closure is
+`e260440d`, Pathfinder result closure is `028a37c6`, and the eight-file private
+aggregate bundle is byte-for-byte verified at
+`rayline-ai/router-artifacts@fb75f38d20c7fdd1a2565bce52b9dd094bc3285c`.
+The 1,000-case qualification was not executed.
+
 ### Next Action
 
-Finish DYN006c without changing the frozen cell:
-
-- run ID `rayline-dynamic-capacity-stop-dyn006-20260803`, one `r030` cell, and
-  logical arms `arc_dynamic_three_control` then
-  `arc_dynamic_drain_stop`;
-- one shared fleet of three Modal H100 apps A/B/C; each arm starts Redis
-  membership at active A/B, invokes the production controller to register C
-  as revision 2, and proves router adoption with one C-owned canary;
-- exact session namespace `dynamic-capacity-61`, whose frozen packet hashes
-  place the eight measured sessions `[2,3,3]` on A/B/C and the warmup session
-  on B. Treatment drains A as revision 3, waits two refresh windows, then
-  stops only A. Its two affected sessions remap one each to B/C, producing
-  `[0,4,4]`; control retains `[2,3,3]`;
-- four warmup, 16 preload, and 16 post-boundary staged decisions per arm. Only
-  the 16 post-boundary decisions per arm enter the capacity comparison (32
-  total). Including the capacity canary open/close and nine packet-session
-  closes yields exactly 47 gateway selections per arm and 94 total;
-- strict zero-failure and matching preload/post selected-worker traces;
-  exact register/drain/stop/remap/close/owner-vector/final-membership evidence;
-  treatment/control throughput at least `0.75x`; treatment/control p50 and p95
-  service latency no more than `2.0x`;
-- five-minute episode idle TTL, explicit session close, controller-confirmed
-  revision-4 removal, empty retained state on live replicas, zero named Modal
-  containers, stopped apps, and deleted proxy token;
-- no external provider or generation calls (the upstream is the local worker
-  double), no retry of the whole packet, no runtime arm/rate changes, and no
-  1,000-case qualification entrypoint;
-- 20-minute paid wall ceiling, 21-minute orphan-request ceiling, five-minute
-  cleanup ceiling, three encoder replicas, `$11.1273264` maximum resource
-  envelope, and `$12` packet ceiling. From the conservative observed upper
-  `$73.64050361447986`, the full envelope reaches `$84.76783001447986` and
-  leaves `$49.54499400552014` under the `$134.31282402` authority.
-
-The router image tag must exactly name the pushed Semantic Router commit and
-its image ID is written to the aggregate manifest. Source stays closed until a
-distinct Pathfinder preregistration, Semantic Router attestation, Pathfinder
-authorization, and final Semantic Router source-pin checkpoint are all
-remote-visible. The completed DYN005/DYN006a-b local phase used no GPU or
-provider request and cost `$0`.
+Integrate fleet provisioning and drain invocation with the Kubernetes/operator
+surface while preserving the proven membership/controller contract. Separately
+preregister powered workload characterization with a real generation tier only
+when it answers a concrete capacity or deployment decision. Add spontaneous
+health and ambiguous in-flight failure policy before claiming general HA. Do
+not rerun DYN006, and keep the 1,000-case qualification held until explicit
+user confirmation.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin

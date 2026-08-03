@@ -2,10 +2,9 @@
 
 ## Status
 
-Open — DYN001-DYN005 and the DYN006 source-closed implementation are complete.
-The controller-driven hermetic full-stack acceptance passes, including active
-capacity registration. The preregistered three-H100 live drain/stop cell and
-fleet provisioning automation remain open.
+Open — DYN001-DYN006 are complete. The controller-driven hermetic acceptance
+and the preregistered three-H100 live add/drain/stop cell pass. Fleet
+provisioning and platform-owned invocation of those transitions remain open.
 
 ## Owner Plan
 
@@ -14,9 +13,9 @@ fleet provisioning automation remain open.
 ## Release Relevance
 
 Semantic Router now has a supported static contract plus an optional versioned
-Redis membership source and standalone controller. The controller can register
-reviewed capacity, but fleet provisioning remains an external operator
-responsibility and the topology-changing live gate is not yet evidence.
+Redis membership source and standalone controller. DYN006 is live evidence that
+the controller can register reviewed capacity and safely drain/remove it, but
+fleet provisioning remains an external operator responsibility.
 
 ## Scope
 
@@ -77,13 +76,15 @@ sequence enforceable rather than implicit.
   newly registered capacity before snapshot adoption. The Compose acceptance
   now creates register revision 2, drain revision 3, and removal revision 4
   through this process rather than publishing those states from Python.
-- The source-closed DYN006 harness freezes three H100 encoder apps, A/B initial
-  membership, controller registration of C, a five-minute idle boundary, a
-  treatment-only drain and exact stop of A, `[2,3,3]` pre-boundary placement,
-  `[0,4,4]` post-stop placement, 32 post-boundary measured decisions, strict
-  aggregate lifecycle/telemetry gates, and a `$12` packet ceiling. It is not
-  live evidence until its distinct registry authorization is pushed and the
-  one-shot run completes.
+- DYN006 passed its single authorized three-H100 execution. Both arms registered
+  ready C as revision 2 and placed measured sessions `[2,3,3]`; treatment drained
+  A as revision 3, stopped the exact app, failed over two sessions to `[0,4,4]`,
+  and observed active B/C at revision 4 after the five-minute TTL. Treatment
+  retained `0.8668x` control throughput with `1.0785x` p50 and `1.4688x` p95
+  service latency, passing the frozen gate. All 94 selections reconciled, provider
+  calls were zero, and cleanup reached stable zero. The eight aggregate-only files
+  are byte-for-byte verified at
+  `rayline-ai/router-artifacts@fb75f38d20c7fdd1a2565bce52b9dd094bc3285c`.
 - The implemented contract is documented in
   [Rayline ARC Retained-Encoder Replica Contract](../../architecture/rayline-arc-replica-membership.md).
 
@@ -122,7 +123,7 @@ failure, privacy, and close semantics.
   reconciliation through the reviewed source and is covered end to end.
 - [x] The controller idempotently registers a new active identity, while each
   router probes the new endpoint before adopting the successor snapshot.
-- [ ] The preregistered DYN006 three-encoder cell passes controller registration,
+- [x] The preregistered DYN006 three-encoder cell passes controller registration,
   drain-before-stop, balanced survivor capacity, idle-TTL removal, aggregate
   cleanup, and its performance gate.
 - [ ] Fleet automation provisions capacity and invokes those controller
