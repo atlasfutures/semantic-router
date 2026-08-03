@@ -2611,8 +2611,25 @@ unchanged.
   repo gates, and hermetic Compose acceptance with authority pins empty.
 - [x] AGT010b: Preregister, attest, authorize one attempt, attest the registry,
   and pin both authorities in signed pushed source.
-- [ ] AGT010c: Execute once and publish either bounded preflight failure evidence
+- [x] AGT010c: Execute once and publish either bounded preflight failure evidence
   or the complete 72-request performance result, then close all authority.
+
+AGT010 used its only attempt and failed at fake-encoder router readiness before
+any OpenRouter or Modal H100 request. Rayline ARC's manifest contract requires
+one provider in the order and rejects `openrouter_allow_fallbacks=true`. Cost
+was zero. Cleanup proved zero transient keys, Compose state, and encoder
+containers; the deployed encoder remained at zero tasks. The private aggregate
+receipt is revision `0c1c8006ce6bcf3d225fc114842f5a137e10666c`, SHA-256
+`9bc0878b8c9bc290979b19f074c75a01ebd0e68b699bb366ea0597fc33bb081e`,
+with exact-byte round trip and unauthenticated HTTP 401. Source authority is
+cleared, so AGT010 cannot rerun.
+
+The successor must make the provider policy an explicit Rayline ARC contract:
+accept a non-empty, unique provider order whose first entry is the preferred
+provider, continue to reject OpenRouter automatic fallback, and send
+`allow_fallbacks=false`. This lets OpenRouter select an eligible provider from
+the bounded order while preserving router-controlled request retries and
+fail-closed model/provider validation.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin

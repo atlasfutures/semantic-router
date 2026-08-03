@@ -671,6 +671,14 @@ their full wire-attempt count. No model substitution or Fireworks Fast model is
 allowed. All workload, measurement, H100, cost, privacy, cleanup, and held
 qualification bounds remain unchanged.
 
+AGT010 then stopped at fake-encoder router readiness before any provider or H100
+request because the existing Rayline ARC manifest contract requires exactly one
+provider and rejects `openrouter_allow_fallbacks=true`. Cost was zero and no
+performance inference is admissible. The next contract keeps automatic provider
+fallback disabled but permits a bounded unique provider order with the preferred
+provider first; router-controlled request retry and post-response provider
+validation remain authoritative.
+
 ## Evidence Lineage
 
 The frozen choices build on:
