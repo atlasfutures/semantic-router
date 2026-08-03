@@ -2034,7 +2034,7 @@ conservative cumulative envelope remains `$83.46977640274334`.
   and focused tests.
 - [x] AGT002b: Pass repository lint, focused tests, source-exact config startup,
   and the hermetic Rayline Compose suite.
-- [ ] AGT002c: Push the signed source checkpoint and complete distinct
+- [x] AGT002c: Push the signed source checkpoint and complete distinct
   preregistration, source attestation, authorization, and launch-pin commits.
 - [ ] AGT002d: Execute once, privately pin the aggregate receipt, permanently
   close authority, verify stable zero, and compare normalized ARC/static
