@@ -3114,7 +3114,7 @@ The corrected attempt adds at most `$6.00` to the `$90.864463066383` bound,
 for `$96.864463066383` maximum cumulative cost and at least
 `$37.448360953617` remaining authority.
 
-- [ ] AGT016a: Pass focused and repository gates, push the corrected
+- [x] AGT016a: Pass focused and repository gates, push the corrected
   preregistration checkpoint, then bind the separate authorization commit.
 - [ ] AGT016b: Execute the corrected native arm and the held remote-vLLM arm
   once each, then verify exact cleanup.
