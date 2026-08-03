@@ -19,6 +19,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 artifact = importlib.import_module("openrouter_agentic_artifact_fixture")
 benchmark = importlib.import_module("openrouter_agentic_benchmark")
+preflight = importlib.import_module("openrouter_agentic_preflight")
 gateway_diagnostic = importlib.import_module("openrouter_gateway_shape_diagnostic")
 prime_diagnostic = importlib.import_module("openrouter_gateway_prime_diagnostic")
 reporting = importlib.import_module("openrouter_agentic_reporting")
@@ -30,8 +31,10 @@ if "modal" not in sys.modules and importlib.util.find_spec("modal") is None:
 launcher = importlib.import_module("run_openrouter_fullstack")
 EXPECTED_MAX_COMPLETION_TOKENS = 96
 EXPECTED_MAX_MEASURED_REQUESTS = 72
-EXPECTED_MAX_PROVIDER_REQUESTS = 100
-EXPECTED_MAX_EXTERNAL_ATTEMPTS = 203
+EXPECTED_BENCHMARK_PROVIDER_REQUESTS = 100
+EXPECTED_BENCHMARK_EXTERNAL_ATTEMPTS = 203
+EXPECTED_MAX_PROVIDER_REQUESTS = 104
+EXPECTED_MAX_EXTERNAL_ATTEMPTS = 214
 EXPECTED_PROVIDER_COST_LIMIT_USD = 0.50
 EXPECTED_MIN_TOOL_RESULT_CHARACTERS = 1_000
 EXPECTED_SELECTED_CASES = 6
@@ -78,6 +81,14 @@ def test_agentic_workload_is_bounded_realistic_and_balanced() -> None:
     assert benchmark.MAX_MEASURED_REQUESTS == EXPECTED_MAX_MEASURED_REQUESTS
     assert benchmark.MAX_PROVIDER_REQUESTS == EXPECTED_MAX_PROVIDER_REQUESTS
     assert benchmark.MAX_EXTERNAL_ATTEMPTS == EXPECTED_MAX_EXTERNAL_ATTEMPTS
+    assert (
+        benchmark.MAX_BENCHMARK_PROVIDER_REQUESTS
+        == EXPECTED_BENCHMARK_PROVIDER_REQUESTS
+    )
+    assert (
+        benchmark.MAX_BENCHMARK_EXTERNAL_ATTEMPTS
+        == EXPECTED_BENCHMARK_EXTERNAL_ATTEMPTS
+    )
     assert benchmark.MAX_REPORTED_PROVIDER_COST_USD == EXPECTED_PROVIDER_COST_LIMIT_USD
 
     cases = [benchmark._candidate_case(index) for index in range(3)]
@@ -193,6 +204,81 @@ def test_agentic_key_readiness_is_a_bounded_direct_ds4_probe(
     assert calls[0]["max_completion_tokens"] == 1
     assert calls[0]["maximum_attempts"] == benchmark.MAX_DATA_PLANE_ATTEMPTS
     assert calls[0]["retryable_status_codes"] == frozenset({404, 429, 503})
+
+
+def test_agentic_preflight_proves_all_endpoints_without_persisting_request_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        preflight,
+        "_probe_key_readiness",
+        lambda **_kwargs: {
+            "response_model": benchmark.WORKERS["worker-a"],
+            "provider": benchmark.PROVIDER_NAMES["worker-a"],
+            "completion_tokens": 1,
+            "external_attempts": 1,
+            "cost_usd": 0.001,
+        },
+    )
+    monkeypatch.setattr(
+        preflight,
+        "_probe_endpoints",
+        lambda **_kwargs: [
+            {
+                "response_model": model,
+                "provider": benchmark.PROVIDER_NAMES[worker],
+                "completion_tokens": EXPECTED_MAX_COMPLETION_TOKENS,
+                "external_attempts": 1,
+                "cost_usd": 0.001,
+            }
+            for worker, model in benchmark.WORKERS.items()
+        ],
+    )
+
+    report = preflight.run_preflight(
+        gateway_url="http://gateway.invalid",
+        openrouter_key="private-key",
+        run_id="public-preflight",
+        timeout_seconds=1.0,
+    )
+
+    assert report["schema_version"] == preflight.REPORT_SCHEMA
+    assert report["provider_requests"] == preflight.MAX_PROVIDER_REQUESTS
+    assert report["external_attempts"] == preflight.MAX_PROVIDER_REQUESTS
+    assert set(report["workers"]) == set(benchmark.WORKERS)
+    assert report["performance_inference_admissible"] is False
+    assert "private-key" not in preflight.encode_report(report, "private-key")
+
+
+def test_agentic_benchmark_requires_reused_preflight_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report = {
+        "schema_version": preflight.REPORT_SCHEMA,
+        "status": "passed",
+        "provider_requests": 4,
+        "maximum_provider_requests": 4,
+        "external_attempts": 4,
+        "maximum_external_attempts": 11,
+        "cost_usd": 0.004,
+        "envoy_container_reused": True,
+        "ephemeral_key_reused": True,
+        "workers": {
+            worker: {
+                "model": model,
+                "provider": benchmark.PROVIDER_NAMES[worker],
+            }
+            for worker, model in benchmark.WORKERS.items()
+        },
+    }
+    monkeypatch.setenv(benchmark.TRANSPORT_PREFLIGHT_ENV, json.dumps(report))
+
+    assert benchmark._transport_preflight_from_environment() == report
+
+    report["envoy_container_reused"] = False
+    monkeypatch.setenv(benchmark.TRANSPORT_PREFLIGHT_ENV, json.dumps(report))
+    with pytest.raises(RuntimeError, match="contract diverged"):
+        benchmark._transport_preflight_from_environment()
 
 
 def test_agentic_discovery_reports_the_full_natural_mix(
@@ -535,6 +621,82 @@ def test_agentic_launcher_pins_and_restores_one_encoder_container(
     ]
 
 
+def test_agentic_launcher_reuses_envoy_and_key_across_encoder_activation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[list[str]] = []
+
+    class FakeToken:
+        token_id = "modal-token-id"
+        token_secret = "modal-token-secret"
+
+    class FakeManager:
+        @staticmethod
+        def create() -> FakeToken:
+            return FakeToken()
+
+    state = launcher.RuntimeState(
+        environment={"phase": "preflight"},
+        ephemeral_key="ephemeral-key",
+        transport_preflight={
+            "schema_version": preflight.REPORT_SCHEMA,
+            "status": "passed",
+            "provider_requests": 4,
+            "maximum_provider_requests": 4,
+            "external_attempts": 4,
+            "maximum_external_attempts": 11,
+            "cost_usd": 0.0,
+        },
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_compose_service_container_id",
+        lambda _packet, _environment, service: (
+            "stable-envoy-container" if service == "envoy" else ""
+        ),
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_pin_encoder_singleton",
+        lambda runtime_state: setattr(runtime_state, "encoder_autoscaler_pinned", True),
+    )
+    monkeypatch.setattr(launcher, "_wait_protected_encoder", lambda _token: None)
+    monkeypatch.setattr(launcher, "_wait_http", lambda _url: None)
+    monkeypatch.setattr(launcher, "_wait_arc_component_ready", lambda _url: None)
+
+    def fake_run(command: list[str], **_kwargs: Any) -> Any:
+        commands.append(command)
+        return types.SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    monkeypatch.setattr(launcher, "_run", fake_run)
+    packet = launcher.PACKETS["agentic"]
+
+    launcher._activate_protected_encoder(
+        packet=packet,
+        manager=FakeManager(),
+        state=state,
+    )
+
+    assert any(
+        command[-5:]
+        == [
+            "up",
+            "--detach",
+            "--no-deps",
+            "--force-recreate",
+            "router",
+        ]
+        for command in commands
+    )
+    assert state.environment["OPENROUTER_EPHEMERAL_API_KEY"] == "ephemeral-key"
+    assert state.environment["RAYLINE_ARC_E2E_ENCODER_BASE_URL"] == (
+        f"https://{launcher.ENCODER_HOST}"
+    )
+    persisted = json.loads(state.environment[launcher.TRANSPORT_PREFLIGHT_ENV])
+    assert persisted["envoy_container_reused"] is True
+    assert persisted["ephemeral_key_reused"] is True
+
+
 def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
     config = (DEPLOY_DIR / "config-openrouter-agentic.yaml").read_text()
     override = (DEPLOY_DIR / "compose-openrouter-agentic.yaml").read_text()
@@ -551,11 +713,8 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
     assert "fireworks/fast" not in config
     assert launcher.PACKETS["agentic"].key_limit_usd == EXPECTED_EPHEMERAL_KEY_LIMIT_USD
     assert launcher.PACKETS["agentic"].maximum_seconds == 30 * 60
-    assert (
-        launcher.AGENTIC_PREREGISTRATION_COMMIT
-        == "eeca56f41a092cde23436816697356a6f13d4d7f"
-    )
-    assert launcher.AGENTIC_AUTHORIZATION_COMMIT == ""
+    assert launcher.AGT008_PREREGISTRATION_COMMIT == ""
+    assert launcher.AGT008_AUTHORIZATION_COMMIT == ""
     assert launcher.DGN003_PREREGISTRATION_COMMIT == ""
     assert launcher.DGN003_AUTHORIZATION_COMMIT == ""
     assert launcher.DGN004_PREREGISTRATION_COMMIT == ""
@@ -576,6 +735,20 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
     assert gateway_environment["RAYLINE_ARC_E2E_ENCODER_BUILD_ID"] == (
         "vllm@public-rayline-e2e-build"
     )
+    agentic_packet = launcher.PACKETS["agentic"]
+    assert agentic_packet.preflight_driver == (
+        SCRIPT_DIR / "openrouter_agentic_preflight.py"
+    )
+    preflight_environment = launcher._runtime_environment(
+        openrouter_key="ephemeral-key",
+        modal_key="",
+        modal_secret="",
+        packet=agentic_packet,
+        protected_encoder=False,
+    )
+    assert preflight_environment["RAYLINE_ARC_E2E_ENCODER_BASE_URL"] == (
+        "http://fake-encoder:8080"
+    )
     prime_packet = launcher.PACKETS["gateway-prime"]
     assert prime_packet.key_limit_usd == EXPECTED_DIAGNOSTIC_KEY_LIMIT_USD
     assert prime_packet.maximum_seconds == 5 * 60
@@ -583,7 +756,7 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
     assert "source=public-synthetic" in launcher.PUBLIC_REQUEST_LOG_MARKERS
     benchmark_source = (SCRIPT_DIR / "openrouter_agentic_benchmark.py").read_text()
     reporting_source = (SCRIPT_DIR / "openrouter_agentic_reporting.py").read_text()
-    assert '"rayline.arc.openrouter-agentic-benchmark.v3"' in reporting_source
+    assert '"rayline.arc.openrouter-agentic-benchmark.v4"' in reporting_source
     assert '"openrouter_key_readiness"' in reporting_source
     assert '"selected_case_counts_by_worker"' in reporting_source
     assert '"selected_cases": [' not in benchmark_source + reporting_source

@@ -231,6 +231,7 @@ def _endpoint_report(endpoint_probes: list[dict[str, Any]]) -> dict[str, Any]:
 def build_report(
     *,
     run_id: str,
+    transport_preflight: dict[str, Any],
     encoder_warmup: dict[str, Any],
     key_readiness: dict[str, Any],
     endpoint_probes: list[dict[str, Any]],
@@ -259,7 +260,7 @@ def build_report(
         concurrency_levels=concurrency_levels,
     )
     return {
-        "schema_version": "rayline.arc.openrouter-agentic-benchmark.v3",
+        "schema_version": "rayline.arc.openrouter-agentic-benchmark.v4",
         "run_id": run_id,
         "status": "passed",
         "models": WORKERS,
@@ -267,6 +268,7 @@ def build_report(
         "provider_fallbacks": False,
         "reasoning_enabled": False,
         "encoder_warmup": encoder_warmup,
+        "pre_encoder_transport_preflight": transport_preflight,
         "openrouter_key_readiness": _readiness_report(
             key_readiness, key_readiness_requests
         ),
@@ -286,7 +288,9 @@ def build_report(
         "paths": reports,
         "comparison": comparison(reports, concurrency_levels),
         "router_metrics": router_metrics,
-        "actual_provider_requests": len(all_results),
+        "actual_provider_requests": (
+            len(all_results) + int(transport_preflight["provider_requests"])
+        ),
         "maximum_provider_requests": maximum_provider_requests,
         "actual_external_attempts": external_attempts,
         "maximum_external_attempts": maximum_external_attempts,

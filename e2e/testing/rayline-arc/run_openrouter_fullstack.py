@@ -19,6 +19,19 @@ from typing import Any
 
 import modal
 from modal_fullstack_inputs import CANDIDATE_PROMPTS
+from openrouter_agentic_preflight_contract import (
+    ENVIRONMENT_KEY as TRANSPORT_PREFLIGHT_ENV,
+)
+from openrouter_agentic_preflight_contract import validate_report
+from openrouter_key_management import (
+    create_ephemeral_key as _create_ephemeral_key,
+)
+from openrouter_key_management import (
+    delete_ephemeral_key as _delete_ephemeral_key,
+)
+from openrouter_key_management import (
+    ephemeral_key_usage as _ephemeral_key_usage,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = REPO_ROOT / "deploy/compose/rayline-arc/compose.yaml"
@@ -38,7 +51,6 @@ ENCODER_DEPLOYMENT_SOURCE_COMMIT = "0e07fa25410adf2ec2fc8e087dd951436c6b6e0d"
 ENCODER_PLUGIN_SOURCE_DIGEST = (
     "1ff4ee4d7a22cc1d74c0cdb0352d3f76f5081b7201fa63e7f8f3dd10af246afd"
 )
-OPENROUTER_MANAGEMENT_URL = "https://openrouter.ai/api/v1/keys"
 OPENROUTER_KEY_LIMIT_USD = 0.25
 GATEWAY_URL = "http://127.0.0.1:18888"
 ROUTER_HEALTH_URL = "http://127.0.0.1:18082/health"
@@ -48,12 +60,11 @@ MAX_STARTUP_SECONDS = 240
 MAX_CANARY_SECONDS = 15 * 60
 MAX_CLEANUP_SECONDS = 60
 HTTP_OK = 200
-HTTP_CREATED = 201
 HTTP_UNAUTHORIZED = 401
 GIT_SHA1_HEX_LENGTH = 40
 REQUIRED_MODAL_VERSION = "1.5.1"
-AGENTIC_PREREGISTRATION_COMMIT = "eeca56f41a092cde23436816697356a6f13d4d7f"
-AGENTIC_AUTHORIZATION_COMMIT = ""
+AGT008_PREREGISTRATION_COMMIT = ""
+AGT008_AUTHORIZATION_COMMIT = ""
 DGN003_PREREGISTRATION_COMMIT = ""
 DGN003_AUTHORIZATION_COMMIT = ""
 DGN004_PREREGISTRATION_COMMIT = ""
@@ -76,6 +87,7 @@ class RunPacket:
     key_limit_usd: float
     maximum_seconds: int
     protected_encoder: bool
+    preflight_driver: Path | None = None
 
 
 @dataclass
@@ -86,6 +98,7 @@ class RuntimeState:
     key_hash: str = ""
     encoder_instance: Any = None
     encoder_autoscaler_pinned: bool = False
+    transport_preflight: dict[str, Any] | None = None
 
 
 PACKETS = {
@@ -110,6 +123,7 @@ PACKETS = {
         key_limit_usd=0.75,
         maximum_seconds=30 * 60,
         protected_encoder=True,
+        preflight_driver=Path(__file__).with_name("openrouter_agentic_preflight.py"),
     ),
     "gateway-shape": RunPacket(
         compose_override=(
@@ -212,89 +226,6 @@ def _wait_arc_component_ready(url: str) -> None:
             pass
         time.sleep(1)
     raise RuntimeError("timed out waiting for Rayline ARC component readiness")
-
-
-def _management_request(
-    *,
-    method: str,
-    management_key: str,
-    path: str = "",
-    payload: dict[str, Any] | None = None,
-    expected_status: int = HTTP_OK,
-) -> dict[str, Any]:
-    body = None
-    headers = {"authorization": f"Bearer {management_key}"}
-    if payload is not None:
-        body = json.dumps(payload, separators=(",", ":")).encode()
-        headers["content-type"] = "application/json"
-    request = urllib.request.Request(
-        f"{OPENROUTER_MANAGEMENT_URL}{path}",
-        data=body,
-        headers=headers,
-        method=method,
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            if response.status != expected_status:
-                raise RuntimeError(
-                    "OpenRouter management request returned wrong status"
-                )
-            response_body = response.read()
-    except urllib.error.HTTPError as error:
-        error.read()
-        raise RuntimeError("OpenRouter management request failed") from error
-    if not response_body:
-        return {}
-    decoded = json.loads(response_body)
-    if not isinstance(decoded, dict):
-        raise TypeError("OpenRouter management response was malformed")
-    return decoded
-
-
-def _create_ephemeral_key(
-    management_key: str, run_id: str, key_limit_usd: float
-) -> tuple[str, str]:
-    response = _management_request(
-        method="POST",
-        management_key=management_key,
-        payload={
-            "name": f"rayline-arc-{run_id}",
-            "limit": key_limit_usd,
-            "include_byok_in_limit": True,
-        },
-        expected_status=HTTP_CREATED,
-    )
-    key = response.get("key")
-    data = response.get("data")
-    key_hash = data.get("hash") if isinstance(data, dict) else None
-    if (
-        not isinstance(key, str)
-        or not key
-        or not isinstance(key_hash, str)
-        or not key_hash
-    ):
-        raise RuntimeError("OpenRouter did not return an ephemeral key contract")
-    return key, key_hash
-
-
-def _ephemeral_key_usage(management_key: str, key_hash: str) -> float:
-    response = _management_request(
-        method="GET", management_key=management_key, path=f"/{key_hash}"
-    )
-    data = response.get("data")
-    usage = data.get("usage") if isinstance(data, dict) else None
-    if not isinstance(usage, (int, float)):
-        raise TypeError("OpenRouter key usage was unavailable")
-    return float(usage)
-
-
-def _delete_ephemeral_key(management_key: str, key_hash: str) -> None:
-    _management_request(
-        method="DELETE",
-        management_key=management_key,
-        path=f"/{key_hash}",
-        expected_status=HTTP_OK,
-    )
 
 
 def _encoder_containers(
@@ -507,6 +438,7 @@ def _runtime_environment(
     modal_key: str,
     modal_secret: str,
     packet: RunPacket,
+    protected_encoder: bool | None = None,
 ) -> dict[str, str]:
     environment = os.environ.copy()
     environment.update(
@@ -517,7 +449,10 @@ def _runtime_environment(
             "RAYLINE_ARC_E2E_ENVOY_CONFIG_PATH": str(OPENROUTER_ENVOY_FILE),
         }
     )
-    if packet.protected_encoder:
+    use_protected_encoder = (
+        packet.protected_encoder if protected_encoder is None else protected_encoder
+    )
+    if use_protected_encoder:
         environment.update(
             {
                 "RAYLINE_ARC_E2E_MODAL_KEY": modal_key,
@@ -538,9 +473,123 @@ def _runtime_environment(
     return environment
 
 
+def _start_compose(packet: RunPacket, environment: dict[str, str]) -> None:
+    _run(
+        _compose_command(packet, "down", "--volumes", "--remove-orphans"),
+        environment=environment,
+        check=False,
+        capture_output=True,
+    )
+    _run(
+        _compose_command(packet, "up", "--build", "--detach"),
+        environment=environment,
+    )
+    _wait_http(ROUTER_HEALTH_URL)
+    _wait_arc_component_ready(METRICS_URL)
+
+
+def _compose_service_container_id(
+    packet: RunPacket, environment: dict[str, str], service: str
+) -> str:
+    result = _run(
+        _compose_command(packet, "ps", "--quiet", service),
+        environment=environment,
+        capture_output=True,
+    )
+    container_id = result.stdout.strip()
+    if not container_id or "\n" in container_id:
+        raise RuntimeError(f"Compose service {service} did not have one container")
+    return container_id
+
+
+def _validate_transport_preflight(report: Any) -> dict[str, Any]:
+    return validate_report(report, require_reuse=False)
+
+
+def _run_transport_preflight(
+    *, args: argparse.Namespace, packet: RunPacket, state: RuntimeState
+) -> dict[str, Any]:
+    if packet.preflight_driver is None:
+        raise RuntimeError("agentic packet omitted its transport preflight driver")
+    result = _run(
+        [
+            sys.executable,
+            str(packet.preflight_driver),
+            "--gateway-url",
+            GATEWAY_URL,
+            "--run-id",
+            args.run_id,
+            "--timeout-seconds",
+            str(args.timeout_seconds),
+        ],
+        environment=state.environment,
+        capture_output=True,
+        timeout=5 * 60,
+    )
+    try:
+        decoded = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(
+            "agentic transport preflight emitted invalid JSON"
+        ) from error
+    return _validate_transport_preflight(decoded)
+
+
+def _activate_protected_encoder(
+    *,
+    packet: RunPacket,
+    manager: Any,
+    state: RuntimeState,
+) -> None:
+    envoy_container_id = _compose_service_container_id(
+        packet, state.environment, "envoy"
+    )
+    _pin_encoder_singleton(state)
+    state.proxy_token = manager.create()
+    _wait_protected_encoder(state.proxy_token)
+    state.environment = _runtime_environment(
+        openrouter_key=state.ephemeral_key,
+        modal_key=state.proxy_token.token_id,
+        modal_secret=state.proxy_token.token_secret,
+        packet=packet,
+        protected_encoder=True,
+    )
+    _run(
+        _compose_command(
+            packet,
+            "up",
+            "--detach",
+            "--no-deps",
+            "--force-recreate",
+            "router",
+        ),
+        environment=state.environment,
+    )
+    _wait_http(ROUTER_HEALTH_URL)
+    _wait_arc_component_ready(METRICS_URL)
+    if (
+        _compose_service_container_id(packet, state.environment, "envoy")
+        != envoy_container_id
+    ):
+        raise RuntimeError("Envoy was replaced across the protected encoder transition")
+    if state.transport_preflight is None:
+        raise RuntimeError("protected transition lost its transport preflight")
+    state.transport_preflight.update(
+        {
+            "envoy_container_reused": True,
+            "ephemeral_key_reused": True,
+        }
+    )
+    state.environment[TRANSPORT_PREFLIGHT_ENV] = json.dumps(
+        state.transport_preflight,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
 def _verify_source_authority(mode: str, environment: dict[str, str]) -> None:
     authorities = {
-        "agentic": (AGENTIC_PREREGISTRATION_COMMIT, AGENTIC_AUTHORIZATION_COMMIT),
+        "agentic": (AGT008_PREREGISTRATION_COMMIT, AGT008_AUTHORIZATION_COMMIT),
         "gateway-shape": (
             DGN003_PREREGISTRATION_COMMIT,
             DGN003_AUTHORIZATION_COMMIT,
@@ -598,33 +647,43 @@ def _execute_runtime(
     manager: Any,
     state: RuntimeState,
 ) -> None:
-    if packet.protected_encoder:
-        _pin_encoder_singleton(state)
-        state.proxy_token = manager.create()
-        _wait_protected_encoder(state.proxy_token)
-    state.ephemeral_key, state.key_hash = _create_ephemeral_key(
-        management_key, args.run_id, packet.key_limit_usd
-    )
-    state.environment = _runtime_environment(
-        openrouter_key=state.ephemeral_key,
-        modal_key=(state.proxy_token.token_id if state.proxy_token is not None else ""),
-        modal_secret=(
-            state.proxy_token.token_secret if state.proxy_token is not None else ""
-        ),
-        packet=packet,
-    )
-    _run(
-        _compose_command(packet, "down", "--volumes", "--remove-orphans"),
-        environment=state.environment,
-        check=False,
-        capture_output=True,
-    )
-    _run(
-        _compose_command(packet, "up", "--build", "--detach"),
-        environment=state.environment,
-    )
-    _wait_http(ROUTER_HEALTH_URL)
-    _wait_arc_component_ready(METRICS_URL)
+    if packet.preflight_driver is not None:
+        state.ephemeral_key, state.key_hash = _create_ephemeral_key(
+            management_key, args.run_id, packet.key_limit_usd
+        )
+        state.environment = _runtime_environment(
+            openrouter_key=state.ephemeral_key,
+            modal_key="",
+            modal_secret="",
+            packet=packet,
+            protected_encoder=False,
+        )
+        _start_compose(packet, state.environment)
+        state.transport_preflight = _run_transport_preflight(
+            args=args,
+            packet=packet,
+            state=state,
+        )
+        _activate_protected_encoder(packet=packet, manager=manager, state=state)
+    else:
+        if packet.protected_encoder:
+            _pin_encoder_singleton(state)
+            state.proxy_token = manager.create()
+            _wait_protected_encoder(state.proxy_token)
+        state.ephemeral_key, state.key_hash = _create_ephemeral_key(
+            management_key, args.run_id, packet.key_limit_usd
+        )
+        state.environment = _runtime_environment(
+            openrouter_key=state.ephemeral_key,
+            modal_key=(
+                state.proxy_token.token_id if state.proxy_token is not None else ""
+            ),
+            modal_secret=(
+                state.proxy_token.token_secret if state.proxy_token is not None else ""
+            ),
+            packet=packet,
+        )
+        _start_compose(packet, state.environment)
     _run(
         [
             sys.executable,

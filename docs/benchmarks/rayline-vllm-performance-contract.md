@@ -616,6 +616,25 @@ the same OpenRouter/Envoy endpoint path is proven before encoder startup or the
 full-stack edge failure gains privacy-safe observability. DGN004 is closed, and
 the 1,000-case qualification remains held.
 
+AGT008 moves that uncertainty outside the paid encoder window. With the same
+ephemeral key, Compose project, router image, agentic config, and Envoy process,
+it first starts against the public fake encoder and runs direct one-token
+DS4/Baidu readiness plus 96-token static probes for DS4/Baidu, MiMo/Xiaomi, and
+HY3/Tencent. Only a 4/4 pass may pin the protected singleton H100 encoder. The
+launcher then recreates only the router with the protected endpoint and verifies
+that the Envoy container and ephemeral key were preserved. The original
+protected key readiness, three endpoint probes, 24-case natural-mix discovery,
+and 72 measured direct/static/ARC calls remain unchanged.
+
+The complete AGT008 bound is 104 logical provider requests and 214 external
+attempts. Its aggregate v4 receipt includes the pre-encoder preflight but admits
+performance inference only from the original 72 measured requests. The
+preflight adds no H100 exposure; the protected window remains capped at 30
+minutes. The ephemeral key remains hard-limited to USD 0.75, aggregate reported
+provider cost remains capped at USD 0.50, and the complete conservative packet
+envelope remains USD 5.7492336. The 1,000-case qualification is unreachable and
+held.
+
 ## Evidence Lineage
 
 The frozen choices build on:

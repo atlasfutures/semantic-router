@@ -330,13 +330,14 @@ def test_self_hosted_worker_routes_do_not_retry_backpressure() -> None:
 
 def test_openrouter_launcher_uses_ephemeral_limited_key_and_exact_cleanup() -> None:
     launcher_source = (SCRIPT_DIR / "run_openrouter_fullstack.py").read_text()
+    key_source = (SCRIPT_DIR / "openrouter_key_management.py").read_text()
 
     assert "OPENROUTER_KEY_LIMIT_USD = 0.25" in launcher_source
     assert (
         'management_key = os.environ.get("OPENROUTER_MANAGEMENT_KEY", "")'
         in launcher_source
     )
-    assert '"limit": key_limit_usd' in launcher_source
+    assert '"limit": key_limit_usd' in key_source
     assert "_delete_ephemeral_key(management_key, key_hash)" in launcher_source
     assert 'ENCODER_APP_ID = "ap-XtsWCBEWdw1ncu9Kv12Chj"' in launcher_source
     assert (
@@ -356,8 +357,11 @@ def test_openrouter_launcher_uses_ephemeral_limited_key_and_exact_cleanup() -> N
     execution_source = launcher_source.split("def _execute_runtime(", maxsplit=1)[
         1
     ].split("def main() -> None:", maxsplit=1)[0]
-    assert execution_source.index("_wait_protected_encoder(") < execution_source.index(
-        "_create_ephemeral_key("
+    assert execution_source.index("_create_ephemeral_key(") < execution_source.index(
+        "_run_transport_preflight("
+    )
+    assert execution_source.index("_run_transport_preflight(") < execution_source.index(
+        "_activate_protected_encoder("
     )
     main_source = launcher_source.split("def main() -> None:", maxsplit=1)[1]
     assert main_source.index("_verify_encoder_deployment(") < main_source.index(

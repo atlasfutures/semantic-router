@@ -2485,6 +2485,42 @@ gateway process and ephemeral key into the protected phase, or add privacy-safe
 full-stack edge observability that can distinguish the failing hop. DGN004 is
 permanently closed, and the 1,000-case qualification remains held.
 
+### AGT008 Transport-First Natural-Mix Measurement
+
+AGT008 preserves the requested DS4-Flash/Baidu, MiMo-v2.5/Xiaomi, and
+HY3/Tencent pool and all 72 measured direct/static/ARC calls. Before paid
+encoder startup, the same fresh key, Compose project, router image, config, and
+Envoy process run against the public fake encoder and must pass direct
+one-token DS4 readiness plus 96-token static reachability for all three
+workers. Only then may the launcher pin the singleton H100, create its proxy
+token, recreate only the router with the protected endpoint, and prove that
+the Envoy container and ephemeral key survived the transition.
+
+The new preflight plus the unchanged protected packet total at most 104 logical
+provider requests and 214 external attempts. Preflight cost is included in the
+aggregate v4 `$0.50` report gate and the existing `$0.75` key hard limit. The
+30-minute H100 bound and complete `$5.7492336` packet envelope do not increase.
+From `$80.429964624743`, the conservative cumulative envelope is
+`$86.179198224743`, leaving `$48.133625795257` under the current
+`$134.31282402` authority.
+
+- [x] AGT008a: Implement the fake-to-protected lifecycle, same-key/same-Envoy
+  interlocks, aggregate v4 accounting, focused tests, repository gates, and
+  hermetic ARC acceptance with launch authority empty.
+- [ ] AGT008b: Preregister the immutable packet, attest the source, authorize
+  exactly one attempt, attest the registry, and pin both authorities in signed
+  pushed source.
+- [ ] AGT008c: Execute once, privately pin the aggregate receipt, close both
+  authorities, prove stable-zero cleanup, and report real E2E throughput,
+  output throughput, TTFT, latency, retry, cost, natural mix, and normalized
+  ARC/static versus pure-Modal overhead.
+
+The preflight cannot support performance inference. If it fails, AGT008 stops
+with zero H100 exposure. If it passes but protected reachability still fails,
+the preserved Envoy/key evidence narrows the defect to the router transition or
+later full-stack state. If measurement completes, publish the requested E2E
+result. Keep the 1,000-case qualification held in every branch.
+
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
 continues to reject cached-prefix tokens. The separate session v1 wire reports

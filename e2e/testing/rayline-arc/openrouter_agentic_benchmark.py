@@ -22,6 +22,16 @@ from modal_fullstack_canary import (
 from modal_fullstack_inputs import CANDIDATE_PROMPTS
 from modal_http import connection_for_url as _connection
 from modal_http import request_following_result_redirects
+from openrouter_agentic_preflight_contract import (
+    ENVIRONMENT_KEY,
+    from_environment,
+)
+from openrouter_agentic_preflight_contract import (
+    MAX_EXTERNAL_ATTEMPTS as TRANSPORT_PREFLIGHT_EXTERNAL_ATTEMPTS,
+)
+from openrouter_agentic_preflight_contract import (
+    MAX_PROVIDER_REQUESTS as TRANSPORT_PREFLIGHT_REQUESTS,
+)
 from openrouter_agentic_reporting import (
     build_report,
     flatten,
@@ -63,15 +73,20 @@ MEASURED_REQUESTS_PER_PATH = (
     SELECTED_CASE_COUNT * SERIAL_WAVES + SELECTED_CASE_COUNT * CONCURRENT_REPETITIONS
 )
 MAX_MEASURED_REQUESTS = len(PATHS) * MEASURED_REQUESTS_PER_PATH
-MAX_PROVIDER_REQUESTS = (
+MAX_BENCHMARK_PROVIDER_REQUESTS = (
     KEY_READINESS_REQUESTS
     + ENDPOINT_PROBE_REQUESTS
     + MAX_COVERAGE_REQUESTS
     + MAX_MEASURED_REQUESTS
 )
-MAX_EXTERNAL_ATTEMPTS = (
-    MAX_PROVIDER_REQUESTS * MAX_DATA_PLANE_ATTEMPTS + ENDPOINT_PROBE_REQUESTS
+MAX_BENCHMARK_EXTERNAL_ATTEMPTS = (
+    MAX_BENCHMARK_PROVIDER_REQUESTS * MAX_DATA_PLANE_ATTEMPTS + ENDPOINT_PROBE_REQUESTS
 )
+MAX_PROVIDER_REQUESTS = MAX_BENCHMARK_PROVIDER_REQUESTS + TRANSPORT_PREFLIGHT_REQUESTS
+MAX_EXTERNAL_ATTEMPTS = (
+    MAX_BENCHMARK_EXTERNAL_ATTEMPTS + TRANSPORT_PREFLIGHT_EXTERNAL_ATTEMPTS
+)
+TRANSPORT_PREFLIGHT_ENV = ENVIRONMENT_KEY
 
 
 def _response_model_matches(response_model: str, expected_model: str) -> bool:
@@ -655,15 +670,19 @@ def _bounded_totals(
     all_results = [key_readiness, *endpoint_probes, *coverage, *measured_results]
     if len(measured_results) != MAX_MEASURED_REQUESTS:
         raise RuntimeError("agentic measured request count diverged")
-    if len(all_results) > MAX_PROVIDER_REQUESTS:
+    if len(all_results) > MAX_BENCHMARK_PROVIDER_REQUESTS:
         raise RuntimeError("agentic provider request bound was exceeded")
     external_attempts = sum(int(result["external_attempts"]) for result in all_results)
-    if external_attempts > MAX_EXTERNAL_ATTEMPTS:
+    if external_attempts > MAX_BENCHMARK_EXTERNAL_ATTEMPTS:
         raise RuntimeError("agentic external-attempt bound was exceeded")
     provider_cost = sum(float(result["cost_usd"]) for result in all_results)
     if provider_cost > MAX_REPORTED_PROVIDER_COST_USD:
         raise RuntimeError("agentic provider cost exceeded its reported-cost gate")
     return all_results, external_attempts, provider_cost
+
+
+def _transport_preflight_from_environment() -> dict[str, Any]:
+    return from_environment(os.environ)
 
 
 def _encode_private_report(report: dict[str, Any], openrouter_key: str) -> str:
@@ -681,6 +700,7 @@ def main() -> None:
     openrouter_key = os.environ.get("OPENROUTER_EPHEMERAL_API_KEY", "")
     if not openrouter_key:
         raise SystemExit("OPENROUTER_EPHEMERAL_API_KEY is required")
+    transport_preflight = _transport_preflight_from_environment()
     print("agentic encoder warmup: starting", file=sys.stderr, flush=True)
     encoder_warmup = warm_encoder_from_environment(
         timeout_seconds=args.timeout_seconds,
@@ -715,6 +735,12 @@ def main() -> None:
     all_results, external_attempts, provider_cost = _bounded_totals(
         key_readiness, endpoint_probes, coverage, phases
     )
+    external_attempts += int(transport_preflight["external_attempts"])
+    provider_cost += float(transport_preflight["cost_usd"])
+    if external_attempts > MAX_EXTERNAL_ATTEMPTS:
+        raise RuntimeError("agentic packet external-attempt bound was exceeded")
+    if provider_cost > MAX_REPORTED_PROVIDER_COST_USD:
+        raise RuntimeError("agentic packet provider cost exceeded its gate")
     router_metrics = validate_router_metrics(
         before=metrics_before,
         after=_read_metrics(args.metrics_url, args.timeout_seconds),
@@ -723,6 +749,7 @@ def main() -> None:
     )
     report = build_report(
         run_id=args.run_id,
+        transport_preflight=transport_preflight,
         encoder_warmup=encoder_warmup,
         key_readiness=key_readiness,
         endpoint_probes=endpoint_probes,
