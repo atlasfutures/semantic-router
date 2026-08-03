@@ -173,9 +173,9 @@ def _step_reports(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return reports
 
 
-def _deployment_report(client: dict[str, Any]) -> dict[str, Any]:
-    retained = [result for result in client["results"] if result["mode"] == "retained"]
-    replay = [result for result in client["results"] if result["mode"] == "replay"]
+def _result_set_report(results: list[dict[str, Any]]) -> dict[str, Any]:
+    retained = [result for result in results if result["mode"] == "retained"]
+    replay = [result for result in results if result["mode"] == "replay"]
     retained_report = _mode_report(retained)
     replay_report = _mode_report(replay)
     return {
@@ -201,7 +201,23 @@ def _deployment_report(client: dict[str, Any]) -> dict[str, Any]:
                 / replay_report["end_to_end_latency"]["mean_seconds"]
             ),
         },
-        "steps": _step_reports(client["results"]),
+        "steps": _step_reports(results),
+    }
+
+
+def _deployment_report(client: dict[str, Any]) -> dict[str, Any]:
+    results = client["results"]
+    aggregate = _result_set_report(results)
+    steady_state_episode = max(int(result["episode"]) for result in results)
+    steady_state = _result_set_report(
+        [result for result in results if int(result["episode"]) == steady_state_episode]
+    )
+    return {
+        **aggregate,
+        "steady_state": {
+            "episode": steady_state_episode,
+            **steady_state,
+        },
     }
 
 
@@ -243,12 +259,13 @@ def build_report(
         "remote_vllm": _deployment_report(remote),
     }
     for deployment in deployments.values():
-        retained = deployment["paths"]["retained"]
-        replay = deployment["paths"]["replay"]
-        if retained["encoder_token_work"] >= replay["encoder_token_work"]:
-            raise RuntimeError("retained session did not reduce encoder token work")
-        if retained["retries"] or replay["retries"]:
-            raise RuntimeError("KV comparison observed an external retry")
+        for scope in (deployment, deployment["steady_state"]):
+            retained = scope["paths"]["retained"]
+            replay = scope["paths"]["replay"]
+            if retained["encoder_token_work"] >= replay["encoder_token_work"]:
+                raise RuntimeError("retained session did not reduce encoder token work")
+            if retained["retries"] or replay["retries"]:
+                raise RuntimeError("KV comparison observed an external retry")
     actual_attempts = sum(
         int(result["external_attempts"])
         for client in (native, remote)
@@ -270,6 +287,7 @@ def build_report(
         "deployments": deployments,
         "cross_deployment": {
             "selection_parity": True,
+            "primary_comparison_basis": "steady_state_episode_1",
             "native_to_vllm_retained_router_mean_ratio": (
                 deployments["native_modal"]["paths"]["retained"]["router_latency"][
                     "mean_seconds"
@@ -277,6 +295,14 @@ def build_report(
                 / deployments["remote_vllm"]["paths"]["retained"]["router_latency"][
                     "mean_seconds"
                 ]
+            ),
+            "native_to_vllm_steady_state_retained_router_mean_ratio": (
+                deployments["native_modal"]["steady_state"]["paths"]["retained"][
+                    "router_latency"
+                ]["mean_seconds"]
+                / deployments["remote_vllm"]["steady_state"]["paths"]["retained"][
+                    "router_latency"
+                ]["mean_seconds"]
             ),
         },
         "actual_provider_requests": EXPECTED_REQUESTS_PER_DEPLOYMENT * 2,
@@ -303,6 +329,7 @@ def build_report(
             "two episodes and three history states are a diagnostic, not an SLO",
             "native Modal buffers provider completion, so its observed first token is not provider TTFT",
             "native and vLLM cache effects are normalized against replay within each deployment",
+            "episode 0 includes first-shape compilation; episode 1 is the steady-state comparison",
             "provider latency remains externally variable despite interleaved retained/replay requests",
         ],
     }

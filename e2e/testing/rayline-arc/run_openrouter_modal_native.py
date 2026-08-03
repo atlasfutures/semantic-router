@@ -200,22 +200,31 @@ def _listed_names(
 
 
 def _assert_resources_absent(
-    *, python: Path, root: Path, environment: dict[str, str]
+    *,
+    python: Path,
+    root: Path,
+    environment: dict[str, str],
+    wait_seconds: float = 0,
 ) -> None:
-    apps = _run(
-        [str(python), "-m", "modal", "app", "list", "--json"],
-        cwd=root,
-        environment=environment,
-        timeout=60,
-    )
-    active_apps = [
-        row
-        for row in json.loads(apps.stdout)
-        if row.get("description") == APP_NAME
-        and (row.get("state") != "stopped" or str(row.get("tasks")) != "0")
-    ]
-    if active_apps:
-        raise RuntimeError(f"Modal app {APP_NAME} is still active")
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        apps = _run(
+            [str(python), "-m", "modal", "app", "list", "--json"],
+            cwd=root,
+            environment=environment,
+            timeout=60,
+        )
+        active_apps = [
+            row
+            for row in json.loads(apps.stdout)
+            if row.get("description") == APP_NAME
+            and (row.get("state") != "stopped" or str(row.get("tasks")) != "0")
+        ]
+        if not active_apps:
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"Modal app {APP_NAME} is still active")
+        time.sleep(1)
     expected = {
         "secret": {OPENROUTER_SECRET},
         "dict": {CONTEXT_DICT, REGISTRATION_RECEIPTS_DICT},

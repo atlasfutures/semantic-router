@@ -45,6 +45,7 @@ ROUTER_URL = f"https://atlasfutures-dev--{WEBHOOK_LABEL}.modal.run"
 GPU = "H100"
 KEY_LIMIT_USD = 0.50
 MAXIMUM_PAID_SECONDS = 20 * 60
+MAXIMUM_CLEANUP_SETTLE_SECONDS = 60
 MAXIMUM_MODAL_COST_USD = 2.50
 MAXIMUM_TOTAL_COST_USD = KEY_LIMIT_USD + MAXIMUM_MODAL_COST_USD
 PREVIOUS_CONSERVATIVE_USD = 90.864463066383
@@ -333,6 +334,7 @@ def _cleanup(
             python=context.pathfinder_python,
             root=context.pathfinder_root,
             environment=context.environment,
+            wait_seconds=MAXIMUM_CLEANUP_SETTLE_SECONDS,
         )
     except Exception as error:
         cleanup_error = _remember_cleanup_error(
