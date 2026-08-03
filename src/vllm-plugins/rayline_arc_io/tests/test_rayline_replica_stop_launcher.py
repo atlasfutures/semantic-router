@@ -25,7 +25,7 @@ def test_unregistered_replica_stop_stops_before_side_effects(tmp_path: Path) -> 
         runtime_dir=tmp_path / "runtime",
         router_image="unused",
     )
-    with pytest.raises(ValueError, match="only permits preregistered run id"):
+    with pytest.raises(ValueError, match="no Rayline replica-stop experiment"):
         launcher._preflight(args)
     assert list(tmp_path.iterdir()) == []
 
@@ -68,4 +68,4 @@ def test_launcher_has_no_provider_or_qualification_path() -> None:
     assert "openrouter" not in source.lower()
     assert "execute-paid-1000" not in source
     assert '"release_qualification_1000_executed": False' in source
-    assert contract.LAUNCHABLE_CONTRACT is contract.PERF027
+    assert contract.LAUNCHABLE_CONTRACT is None

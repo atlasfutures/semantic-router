@@ -1761,6 +1761,30 @@ but held:
    is reported but excluded from request latency. Freeze the same `$7.4182176`
    two-replica envelope from prior observed accounting `$71.9354755968929`;
    keep providers, generation workers, whole-run retry, and qualification out.
+   PERF027 passed its one authorized launch and is closed. Both arms completed
+   16/16 preload and 16/16 post-boundary decisions with zero failures or
+   providers and exact preload/post-boundary worker traces. Treatment proved
+   app A stopped with zero containers while app B retained one container,
+   detected exactly four affected primaries through explicit HTTP failures,
+   rebuilt four sessions with eight failover pooling calls, closed all eight
+   measured sessions on the survivor, skipped five unavailable-owner closes,
+   and ended with zero retained sessions/tokens and stable-zero resources.
+   The real stop converged in `10.909s`, excluded from request latency. Under
+   the surviving single encoder, post-boundary throughput was `0.1371 rps`
+   versus control `0.2312 rps` (`0.5929x`), p50 service latency was `8.268s`
+   versus `2.590s` (`3.1924x`), p95 was `76.219s` versus `28.707s`
+   (`2.6551x`), and drain was `76.227s` versus `28.716s` (`2.6545x`). The
+   small one-schedule result is capacity-impact evidence, not an SLO or
+   variance claim. Treatment appended-token work was `1.0263x` control while
+   retained work was `0.8945x`. Observed launcher-window resource upper cost
+   was `$1.705028`, bringing cumulative observed accounting to
+   `$73.64050361447986`. The ten aggregate-only files are byte-for-byte
+   verified at
+   `rayline-ai/router-artifacts@2c38ad5760961b04f80c4d2c9d5c1bd85c78ae41`.
+   Stop further live expansion: use PERF024/PERF026/PERF027 to implement the
+   versioned production membership, health, idempotency, observability, close,
+   and rollout contract tracked by TD050. Keep the 1,000-case qualification
+   held.
 10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
     ORC004, and ORC005 as closed provider-limit failures, all with complete
     cleanup and private aggregate receipts. ORC005 proves three-arm coverage

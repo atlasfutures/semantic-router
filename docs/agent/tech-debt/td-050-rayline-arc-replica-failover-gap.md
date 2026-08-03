@@ -59,12 +59,20 @@ deployment surface.
   completed, and cleanup reached stable zero. Forced remap used `1.0575x`
   appended-token work and `1.1371x` p50 latency; this remains experiment-side
   fault injection rather than proof of outage detection or membership.
-- PERF027 is source-closed around a real exact-app stop. It stages identical
-  two-turn retained sessions, proves one Modal app stopped with zero containers
-  while its peer remains deployed, and permits bounded remap only after that
-  proof. Even if it passes, the controller and proxy remain experiment-owned;
-  production discovery, health policy, ambiguous-failure idempotency, rollout,
-  and operator configuration remain exit criteria here.
+- PERF027 passed a real exact-app stop. Both arms completed identical preload
+  and post-boundary worker traces with zero failures. Treatment proved app A
+  stopped with zero containers while app B retained one container, detected
+  four affected primaries, rebuilt four sessions through eight failover
+  pooling requests, closed all eight measured sessions on the survivor, and
+  reached stable-zero retained and deployment state. Its ten aggregate-only
+  files are byte-for-byte verified at
+  `rayline-ai/router-artifacts@2c38ad5760961b04f80c4d2c9d5c1bd85c78ae41`.
+  The stop converged in `10.909s`; after the boundary the single survivor
+  delivered `0.5929x` control throughput, `3.1924x` p50 service latency, and
+  `2.6551x` p95 service latency. This proves bounded reconstruction and exposes
+  the one-survivor capacity penalty, but the controller and proxy remain
+  experiment-owned. Production discovery, health policy, ambiguous-failure
+  idempotency, rollout, and operator configuration remain exit criteria here.
 - `e2e/testing/rayline-arc/rayline_affinity_proxy.py` owns deterministic
   experiment placement and aggregate-only accounting.
 - `SessionCoordinator` rebuilds from full supplied history when a retained

@@ -32,9 +32,10 @@ def test_perf027_freezes_balanced_real_stop_and_budget() -> None:
     assert receipt["reserve_after_full_envelope_usd"] == pytest.approx(54.9591308231071)
 
 
-def test_perf027_source_authority_is_launchable() -> None:
+def test_perf027_source_authority_is_closed_after_execution() -> None:
     assert contract.PATHFINDER_AUTHORIZATION_COMMIT == (
         "afb5aa1be2fb9416422ac3adeb5bccefa360e401"
     )
-    assert contract.LAUNCHABLE_CONTRACT is contract.PERF027
-    assert contract.resolve_launch_contract(contract.PERF027_RUN_ID) is contract.PERF027
+    assert contract.LAUNCHABLE_CONTRACT is None
+    with pytest.raises(ValueError, match="no Rayline replica-stop experiment"):
+        contract.resolve_launch_contract(contract.PERF027_RUN_ID)

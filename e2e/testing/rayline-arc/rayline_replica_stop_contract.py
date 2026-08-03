@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 
-"""Frozen launch-authorized PERF027 real-replica-stop contract."""
+"""Frozen closed PERF027 real-replica-stop contract."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ PERF027 = ScaleoutRunContract(
     ),
 )
 
-LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = PERF027
+LAUNCHABLE_CONTRACT: ScaleoutRunContract | None = None
 
 
 def resolve_launch_contract(run_id: str) -> ScaleoutRunContract:
