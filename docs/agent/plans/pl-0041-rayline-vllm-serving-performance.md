@@ -2084,7 +2084,7 @@ chain is required.
 
 - [x] AGT003a: Implement and validate endpoint probes, natural-share selection,
   zero-share reporting, fixed request bounds, and aggregate-only evidence.
-- [ ] AGT003b: Preregister and complete the distinct source-attestation,
+- [x] AGT003b: Preregister and complete the distinct source-attestation,
   authorization, and final launch-pin chain.
 - [ ] AGT003c: Execute once, privately pin the aggregate result, permanently
   close authority, verify stable zero, and compare normalized overhead with the
