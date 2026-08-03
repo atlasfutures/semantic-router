@@ -2945,7 +2945,7 @@ for credentials and public prompt markers, and leave no AGT014 container. The
 
 - [x] AGT014a: Implement the exact policy converter, isolated Modal deployment,
   bounded client/decision-log join, aggregate reporter, and focused tests.
-- [ ] AGT014b: Freeze and push both signed source checkpoints, then pin the
+- [x] AGT014b: Freeze and push both signed source checkpoints, then pin the
   preregistration and authorization commits.
 - [ ] AGT014c: Execute the one authorized 76-request packet and verify cleanup.
 - [ ] AGT014d: Persist the aggregate receipt, record the apples-to-apples
