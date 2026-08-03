@@ -2036,9 +2036,29 @@ conservative cumulative envelope remains `$83.46977640274334`.
   and the hermetic Rayline Compose suite.
 - [x] AGT002c: Push the signed source checkpoint and complete distinct
   preregistration, source attestation, authorization, and launch-pin commits.
-- [ ] AGT002d: Execute once, privately pin the aggregate receipt, permanently
+- [x] AGT002d: Execute once, privately pin the aggregate receipt, permanently
   close authority, verify stable zero, and compare normalized ARC/static
   overhead with the pure-Modal reference.
+
+AGT002's only authorized attempt failed its preregistered coverage gate before
+measurement. Across the maximum 24 discovery requests, C82 selected
+DeepSeek/Baidu 16 times, MiMo/Xiaomi zero times, and HY3/Tencent 8 times; the
+required two cases per worker therefore could not be frozen. No direct, static,
+or ARC measurement cell ran, so no TTFT, latency, throughput, retry, or
+pure-Modal performance comparison is admissible. OpenRouter charged
+`$0.01228052`; the full launch-wall H100 upper estimate is `$0.769326504`.
+Cleanup returned Compose and the encoder to stable zero, independently proved
+the ephemeral key absent, and closed source authority at Semantic Router
+`b8caee17`. The private aggregate failure receipt is pinned at
+`rayline-ai/router-artifacts@53c13911` with SHA-256 `d0d307920420847f7f1b267276c256b261d447001b6017efd97ad1df3b4b6024`;
+Pathfinder closes the packet at `6cdc1c4f`.
+
+The next packet must treat natural ARC model share as a result instead of a
+precondition: prove each native endpoint separately, allow a zero-share worker
+in the routed workload, and freeze each static control to ARC's observed
+assignment for the same request. That preserves a realistic model mix while
+still measuring direct, static, and ARC overhead. Any such change requires a
+new registry ID and authorization chain; AGT002 cannot retry.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
