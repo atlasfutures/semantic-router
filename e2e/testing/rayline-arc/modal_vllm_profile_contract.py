@@ -11,7 +11,7 @@ from rayline_three_arm_budget import BudgetContract
 RUN_ID = "rayline-vllm-gdn-perf029-20260804"
 SEMANTIC_BRANCH = "codex/rayline-remote-mvp"
 SEMANTIC_REMOTE_REF = f"atlasfutures/{SEMANTIC_BRANCH}"
-PREREGISTRATION_COMMIT = ""
+PREREGISTRATION_COMMIT = "dbcaf022ab0ce8c66029414d63da88423ed7bc00"
 AUTHORIZATION_COMMIT = ""
 REQUIRED_MODAL_VERSION = "1.5.1"
 MODAL_ENVIRONMENT = "dev"

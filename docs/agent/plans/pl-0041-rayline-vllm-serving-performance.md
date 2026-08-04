@@ -3268,7 +3268,7 @@ accounting to `$114.926210266383` and leave `$19.386613753617` under current
 authority. The source remains closed until a new signed preregistration and
 separate authorization chain are pushed.
 
-- [ ] PERF029a: Validate and push the source-closed staged-warmup successor.
+- [x] PERF029a: Validate and push the source-closed staged-warmup successor.
 - [ ] PERF029b: Bind a separate authorization commit and execute PERF029 once.
 - [ ] PERF029c: Verify exact cleanup, persist the aggregate-only receipt, close
   launch authority, and choose the next path from the frozen candidate verdict.
