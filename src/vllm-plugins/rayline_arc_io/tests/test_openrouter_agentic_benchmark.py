@@ -29,6 +29,7 @@ if "modal" not in sys.modules and importlib.util.find_spec("modal") is None:
     modal_stub.__spec__ = importlib.machinery.ModuleSpec("modal", loader=None)
     sys.modules["modal"] = modal_stub
 launcher = importlib.import_module("run_openrouter_fullstack")
+encoder_runtime = importlib.import_module("openrouter_encoder_runtime")
 EXPECTED_MAX_COMPLETION_TOKENS = 96
 EXPECTED_MAX_MEASURED_REQUESTS = 72
 EXPECTED_BENCHMARK_PROVIDER_REQUESTS = 100
@@ -561,17 +562,25 @@ def test_agentic_launcher_pins_and_restores_one_encoder_container(
 
     class FakeClsAPI:
         @staticmethod
-        def from_name(app_name: str, class_name: str) -> FakeClass:
+        def from_name(
+            app_name: str, class_name: str, *, environment_name: str
+        ) -> FakeClass:
             assert app_name == launcher.ENCODER_APP_NAME
             assert class_name == launcher.ENCODER_CLASS_NAME
+            assert environment_name == "dev"
             return FakeClass()
 
-    monkeypatch.setattr(launcher.modal, "Cls", FakeClsAPI, raising=False)
+    monkeypatch.setattr(
+        encoder_runtime.importlib,
+        "import_module",
+        lambda _name: types.SimpleNamespace(Cls=FakeClsAPI),
+    )
     state = launcher.RuntimeState(environment={})
 
-    launcher._pin_encoder_singleton(state)
+    packet = launcher.PACKETS["agentic"]
+    launcher.pin_encoder_singleton(packet, state)
     assert state.encoder_autoscaler_pinned is True
-    launcher._restore_encoder_scale_to_zero(state)
+    encoder_runtime._restore_encoder_scale_to_zero(state)
     assert state.encoder_autoscaler_pinned is False
     assert updates == [
         {
@@ -606,6 +615,7 @@ def test_agentic_launcher_reuses_envoy_and_key_across_encoder_activation(
     state = launcher.RuntimeState(
         environment={"phase": "preflight"},
         ephemeral_key="ephemeral-key",
+        encoder_base_url=f"https://{launcher.ENCODER_HOST}",
         transport_preflight={
             "schema_version": preflight.REPORT_SCHEMA,
             "status": "passed",
@@ -625,10 +635,12 @@ def test_agentic_launcher_reuses_envoy_and_key_across_encoder_activation(
     )
     monkeypatch.setattr(
         launcher,
-        "_pin_encoder_singleton",
-        lambda runtime_state: setattr(runtime_state, "encoder_autoscaler_pinned", True),
+        "pin_encoder_singleton",
+        lambda _packet, runtime_state: setattr(
+            runtime_state, "encoder_autoscaler_pinned", True
+        ),
     )
-    monkeypatch.setattr(launcher, "_wait_protected_encoder", lambda _token: None)
+    monkeypatch.setattr(launcher, "wait_protected_encoder", lambda _state, _token: None)
     monkeypatch.setattr(launcher, "_wait_http", lambda _url: None)
     monkeypatch.setattr(launcher, "_wait_arc_component_ready", lambda _url: None)
 

@@ -8,10 +8,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
-import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -24,7 +24,24 @@ from openrouter_agentic_preflight_contract import (
 from openrouter_agentic_preflight_contract import (
     validate_report,
 )
-from openrouter_fullstack_state import RunPacket, RuntimeState
+from openrouter_encoder_runtime import (
+    assert_encoder_inactive,
+    cleanup_encoder,
+    deploy_encoder,
+    encoder_containers,
+    packet_encoder,
+    pin_encoder_singleton,
+    plugin_source_digest,
+    verify_encoder_deployment,
+    wait_protected_encoder,
+)
+from openrouter_fullstack_packets import packet_catalog
+from openrouter_fullstack_state import (
+    EncoderDeployment,
+    LaunchOutcome,
+    RunPacket,
+    RuntimeState,
+)
 from openrouter_key_management import (
     create_ephemeral_key as _create_ephemeral_key,
 )
@@ -34,15 +51,21 @@ from openrouter_key_management import (
 from openrouter_key_management import (
     ephemeral_key_usage as _ephemeral_key_usage,
 )
+from openrouter_kv_cache_matched_contract import (
+    AGT017_RESOURCE_BUDGET,
+    FLASHINFER_APP_NAME,
+    FLASHINFER_CLASS_NAME,
+    FLASHINFER_ENGINE_BUILD_ID,
+    matched_budget_receipt,
+)
+from openrouter_kv_cache_matched_contract import (
+    RUN_ID as AGT017_RUN_ID,
+)
 from openrouter_launch_authority import verify_source_authority
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = REPO_ROOT / "deploy/compose/rayline-arc/compose.yaml"
-COMPOSE_OVERRIDE_FILE = REPO_ROOT / "deploy/compose/rayline-arc/compose-openrouter.yaml"
-OPENROUTER_CONFIG_FILE = REPO_ROOT / "deploy/compose/rayline-arc/config-openrouter.yaml"
 OPENROUTER_ENVOY_FILE = REPO_ROOT / "deploy/compose/rayline-arc/envoy-openrouter.yaml"
-DRIVER = Path(__file__).with_name("openrouter_fullstack_canary.py")
-PROJECT_NAME = "rayline-arc-openrouter"
 ENCODER_APP_ID = "ap-XtsWCBEWdw1ncu9Kv12Chj"
 ENCODER_APP_NAME = "rayline-arc-session-encoder"
 ENCODER_CLASS_NAME = "SessionEncoder"
@@ -61,9 +84,7 @@ METRICS_URL = "http://127.0.0.1:19190/metrics"
 ARC_READY_METRIC = 'llm_rayline_arc_component_ready{component="artifact_head_encoder"}'
 MAX_STARTUP_SECONDS = 240
 MAX_CANARY_SECONDS = 15 * 60
-MAX_CLEANUP_SECONDS = 60
 HTTP_OK = 200
-HTTP_UNAUTHORIZED = 401
 REQUIRED_MODAL_VERSION = "1.5.1"
 PUBLIC_REQUEST_LOG_MARKERS = (
     *CANDIDATE_PROMPTS,
@@ -72,79 +93,41 @@ PUBLIC_REQUEST_LOG_MARKERS = (
     "event=retry",
     "public-cache-step=",
 )
+SESSION_SERVICE_PATH = (
+    REPO_ROOT / "src/vllm-plugins/rayline_arc_io/modal_session_service.py"
+)
+
+DEFAULT_ENCODER = EncoderDeployment(
+    app_name=ENCODER_APP_NAME,
+    class_name=ENCODER_CLASS_NAME,
+    app_id=ENCODER_APP_ID,
+    expected_host=ENCODER_HOST,
+    build_id=ENCODER_BUILD_ID,
+    deployment_source_commit=ENCODER_DEPLOYMENT_SOURCE_COMMIT,
+    plugin_source_digest=ENCODER_PLUGIN_SOURCE_DIGEST,
+)
+FLASHINFER_ENCODER = EncoderDeployment(
+    app_name=FLASHINFER_APP_NAME,
+    class_name=FLASHINFER_CLASS_NAME,
+    build_id=FLASHINFER_ENGINE_BUILD_ID,
+    deployment_source_commit="runtime-attested-launch-source",
+    plugin_source_digest="runtime-attested-launch-source",
+    deploy_service_path=SESSION_SERVICE_PATH,
+    ephemeral=True,
+)
 
 
-def _agentic_packet(driver_name: str, project_name: str) -> RunPacket:
-    return RunPacket(
-        compose_override=(
-            REPO_ROOT / "deploy/compose/rayline-arc/compose-openrouter-agentic.yaml"
-        ),
-        config=REPO_ROOT / "deploy/compose/rayline-arc/config-openrouter-agentic.yaml",
-        driver=Path(__file__).with_name(driver_name),
-        project_name=project_name,
-        key_limit_usd=0.75,
-        maximum_seconds=30 * 60,
-        protected_encoder=True,
-        preflight_driver=Path(__file__).with_name("openrouter_agentic_preflight.py"),
-    )
+def _paid_wall_timeout(_signal_number: int, _frame: Any) -> None:
+    raise TimeoutError("AGT017 remote arm reached its maximum paid wall time")
 
 
-PACKETS = {
-    "canary": RunPacket(
-        compose_override=COMPOSE_OVERRIDE_FILE,
-        config=OPENROUTER_CONFIG_FILE,
-        driver=DRIVER,
-        project_name=PROJECT_NAME,
-        key_limit_usd=OPENROUTER_KEY_LIMIT_USD,
-        maximum_seconds=MAX_CANARY_SECONDS,
-        protected_encoder=True,
-    ),
-    "agentic": _agentic_packet(
-        "openrouter_agentic_benchmark.py",
-        "rayline-arc-openrouter-agentic",
-    ),
-    "agentic-stage": _agentic_packet(
-        "openrouter_agentic_stage_benchmark.py",
-        "rayline-arc-openrouter-agentic-stage",
-    ),
-    "kv-cache": RunPacket(
-        compose_override=(
-            REPO_ROOT / "deploy/compose/rayline-arc/compose-openrouter-agentic.yaml"
-        ),
-        config=REPO_ROOT / "deploy/compose/rayline-arc/config-openrouter-agentic.yaml",
-        driver=Path(__file__).with_name("openrouter_kv_cache_remote.py"),
-        project_name="rayline-arc-openrouter-kv-cache",
-        key_limit_usd=0.50,
-        maximum_seconds=20 * 60,
-        protected_encoder=True,
-    ),
-    "gateway-shape": RunPacket(
-        compose_override=(
-            REPO_ROOT / "deploy/compose/rayline-arc/compose-openrouter-agentic.yaml"
-        ),
-        config=(
-            REPO_ROOT / "deploy/compose/rayline-arc/config-openrouter-agentic.yaml"
-        ),
-        driver=Path(__file__).with_name("openrouter_gateway_shape_diagnostic.py"),
-        project_name="rayline-arc-openrouter-gateway-shape",
-        key_limit_usd=0.05,
-        maximum_seconds=5 * 60,
-        protected_encoder=False,
-    ),
-    "gateway-prime": RunPacket(
-        compose_override=(
-            REPO_ROOT / "deploy/compose/rayline-arc/compose-openrouter-agentic.yaml"
-        ),
-        config=(
-            REPO_ROOT / "deploy/compose/rayline-arc/config-openrouter-agentic.yaml"
-        ),
-        driver=Path(__file__).with_name("openrouter_gateway_prime_diagnostic.py"),
-        project_name="rayline-arc-openrouter-gateway-prime",
-        key_limit_usd=0.05,
-        maximum_seconds=5 * 60,
-        protected_encoder=False,
-    ),
-}
+PACKETS = packet_catalog(
+    REPO_ROOT,
+    DEFAULT_ENCODER,
+    FLASHINFER_ENCODER,
+    canary_key_limit_usd=OPENROUTER_KEY_LIMIT_USD,
+    maximum_canary_seconds=MAX_CANARY_SECONDS,
+)
 
 
 def _run(
@@ -215,128 +198,6 @@ def _wait_arc_component_ready(url: str) -> None:
             pass
         time.sleep(1)
     raise RuntimeError("timed out waiting for Rayline ARC component readiness")
-
-
-def _encoder_containers(
-    modal_command: list[str], environment: dict[str, str]
-) -> list[str]:
-    result = _run(
-        [*modal_command, "container", "list", "--json"],
-        environment=environment,
-        capture_output=True,
-    )
-    containers = json.loads(result.stdout)
-    return sorted(
-        str(container["container_id"])
-        for container in containers
-        if container.get("app_id") == ENCODER_APP_ID
-    )
-
-
-def _verify_encoder_deployment(
-    modal_command: list[str], environment: dict[str, str]
-) -> None:
-    result = _run(
-        [*modal_command, "app", "list", "--json"],
-        environment=environment,
-        capture_output=True,
-    )
-    apps = json.loads(result.stdout)
-    matching = [app for app in apps if app.get("description") == ENCODER_APP_NAME]
-    if len(matching) != 1:
-        raise SystemExit("protected encoder deployment identity is ambiguous")
-    app = matching[0]
-    if (
-        app.get("app_id") != ENCODER_APP_ID
-        or app.get("state") != "deployed"
-        or str(app.get("tasks")) != "0"
-    ):
-        raise SystemExit("protected encoder deployment is not the frozen idle app")
-    request = urllib.request.Request(f"https://{ENCODER_HOST}/health")
-    try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            status = response.status
-    except urllib.error.HTTPError as error:
-        error.read()
-        status = error.code
-    if status != HTTP_UNAUTHORIZED:
-        raise SystemExit("protected encoder route is not registered behind auth")
-
-
-def _wait_protected_encoder(proxy_token: Any) -> None:
-    request = urllib.request.Request(
-        f"https://{ENCODER_HOST}/health",
-        headers={
-            "Modal-Key": proxy_token.token_id,
-            "Modal-Secret": proxy_token.token_secret,
-        },
-    )
-    deadline = time.monotonic() + MAX_STARTUP_SECONDS
-    while time.monotonic() < deadline:
-        try:
-            with urllib.request.urlopen(request, timeout=15) as response:
-                body = json.loads(response.read())
-                if (
-                    response.status == HTTP_OK
-                    and body.get("status") == "ok"
-                    and body.get("resident_sessions") == 0
-                    and body.get("resident_tokens") == 0
-                ):
-                    return
-        except urllib.error.HTTPError as error:
-            error.read()
-            if error.code == HTTP_UNAUTHORIZED:
-                raise RuntimeError(
-                    "protected encoder rejected its proxy token"
-                ) from error
-        except (json.JSONDecodeError, OSError, TypeError):
-            pass
-        time.sleep(1)
-    raise RuntimeError("timed out waiting for the protected encoder deployment")
-
-
-def _stop_encoder_containers(
-    modal_command: list[str], environment: dict[str, str]
-) -> None:
-    for container_id in _encoder_containers(modal_command, environment):
-        _run(
-            [*modal_command, "container", "stop", container_id, "--yes"],
-            environment=environment,
-            check=False,
-            capture_output=True,
-        )
-    deadline = time.monotonic() + MAX_CLEANUP_SECONDS
-    while time.monotonic() < deadline:
-        if not _encoder_containers(modal_command, environment):
-            return
-        time.sleep(1)
-    raise RuntimeError("protected encoder container remained after cleanup")
-
-
-def _pin_encoder_singleton(state: RuntimeState) -> None:
-    state.encoder_instance = modal.Cls.from_name(
-        ENCODER_APP_NAME,
-        ENCODER_CLASS_NAME,
-    )()
-    state.encoder_instance.update_autoscaler(
-        min_containers=1,
-        max_containers=1,
-        buffer_containers=0,
-        scaledown_window=300,
-    )
-    state.encoder_autoscaler_pinned = True
-
-
-def _restore_encoder_scale_to_zero(state: RuntimeState) -> None:
-    if not state.encoder_autoscaler_pinned or state.encoder_instance is None:
-        return
-    state.encoder_instance.update_autoscaler(
-        min_containers=0,
-        max_containers=1,
-        buffer_containers=0,
-        scaledown_window=300,
-    )
-    state.encoder_autoscaler_pinned = False
 
 
 def _scan_logs(
@@ -410,10 +271,13 @@ def _cleanup_runtime(
                 _delete_ephemeral_key(management_key, key_hash)
         finally:
             if packet.protected_encoder:
-                try:
-                    _restore_encoder_scale_to_zero(state)
-                finally:
-                    _stop_encoder_containers(modal_command, environment)
+                cleanup_encoder(
+                    packet,
+                    state,
+                    modal_command,
+                    environment,
+                    cwd=REPO_ROOT,
+                )
     print(
         "OpenRouter cleanup: compose down, keys deleted, encoder stopped",
         file=sys.stderr,
@@ -427,6 +291,7 @@ def _runtime_environment(
     modal_key: str,
     modal_secret: str,
     packet: RunPacket,
+    encoder_base_url: str = "",
     protected_encoder: bool | None = None,
 ) -> dict[str, str]:
     environment = os.environ.copy()
@@ -442,12 +307,15 @@ def _runtime_environment(
         packet.protected_encoder if protected_encoder is None else protected_encoder
     )
     if use_protected_encoder:
+        encoder = packet_encoder(packet)
+        if not encoder_base_url:
+            raise RuntimeError("protected encoder base URL is unresolved")
         environment.update(
             {
                 "RAYLINE_ARC_E2E_MODAL_KEY": modal_key,
                 "RAYLINE_ARC_E2E_MODAL_SECRET": modal_secret,
-                "RAYLINE_ARC_E2E_ENCODER_BASE_URL": f"https://{ENCODER_HOST}",
-                "RAYLINE_ARC_E2E_ENCODER_BUILD_ID": ENCODER_BUILD_ID,
+                "RAYLINE_ARC_E2E_ENCODER_BASE_URL": encoder_base_url,
+                "RAYLINE_ARC_E2E_ENCODER_BUILD_ID": encoder.build_id,
             }
         )
     else:
@@ -534,14 +402,15 @@ def _activate_protected_encoder(
     envoy_container_id = _compose_service_container_id(
         packet, state.environment, "envoy"
     )
-    _pin_encoder_singleton(state)
+    pin_encoder_singleton(packet, state)
     state.proxy_token = manager.create()
-    _wait_protected_encoder(state.proxy_token)
+    wait_protected_encoder(state, state.proxy_token)
     state.environment = _runtime_environment(
         openrouter_key=state.ephemeral_key,
         modal_key=state.proxy_token.token_id,
         modal_secret=state.proxy_token.token_secret,
         packet=packet,
+        encoder_base_url=state.encoder_base_url,
         protected_encoder=True,
     )
     _run(
@@ -578,9 +447,15 @@ def _activate_protected_encoder(
     )
 
 
-def _persist_kv_evidence(args: argparse.Namespace, usage: float) -> None:
-    if args.mode != "kv-cache":
+def _persist_kv_evidence(
+    args: argparse.Namespace,
+    usage: float,
+    packet: RunPacket,
+    state: RuntimeState,
+) -> None:
+    if args.mode not in {"kv-cache", "kv-cache-flashinfer"}:
         return
+    encoder = packet_encoder(packet)
     output_dir = REPO_ROOT / ".agent-harness/rayline-kv-cache" / args.run_id
     output_dir.mkdir(parents=True, exist_ok=True)
     source_commit = _run(
@@ -594,12 +469,22 @@ def _persist_kv_evidence(args: argparse.Namespace, usage: float) -> None:
     )
     deployment = {
         "architecture": "semantic-router with retained remote vLLM encoder",
-        "encoder_app_id": ENCODER_APP_ID,
-        "encoder_app_name": ENCODER_APP_NAME,
+        "encoder_app_id": state.encoder_app_id,
+        "encoder_app_name": encoder.app_name,
         "encoder_gpu": "H100",
-        "encoder_build_id": ENCODER_BUILD_ID,
-        "encoder_deployment_source_commit": ENCODER_DEPLOYMENT_SOURCE_COMMIT,
-        "encoder_plugin_source_digest": ENCODER_PLUGIN_SOURCE_DIGEST,
+        "encoder_build_id": encoder.build_id,
+        "encoder_gdn_prefill_backend": (
+            "flashinfer" if args.mode == "kv-cache-flashinfer" else "torch_reference"
+        ),
+        "encoder_deployment_source_commit": (
+            source_commit if encoder.ephemeral else encoder.deployment_source_commit
+        ),
+        "encoder_plugin_source_digest": (
+            plugin_source_digest(REPO_ROOT)
+            if encoder.ephemeral
+            else encoder.plugin_source_digest
+        ),
+        "encoder_ephemeral": encoder.ephemeral,
         "semantic_router_commit": source_commit,
     }
     (output_dir / "remote-deployment.json").write_text(
@@ -652,9 +537,9 @@ def _execute_runtime(
         _activate_protected_encoder(packet=packet, manager=manager, state=state)
     else:
         if packet.protected_encoder:
-            _pin_encoder_singleton(state)
+            pin_encoder_singleton(packet, state)
             state.proxy_token = manager.create()
-            _wait_protected_encoder(state.proxy_token)
+            wait_protected_encoder(state, state.proxy_token)
         state.ephemeral_key, state.key_hash = _create_ephemeral_key(
             management_key, args.run_id, packet.key_limit_usd
         )
@@ -667,6 +552,7 @@ def _execute_runtime(
                 state.proxy_token.token_secret if state.proxy_token is not None else ""
             ),
             packet=packet,
+            encoder_base_url=state.encoder_base_url,
         )
         _start_compose(packet, state.environment)
     _run(
@@ -687,11 +573,13 @@ def _execute_runtime(
     )
 
 
-def main() -> None:
-    args = _parse_args()
-
-    packet = PACKETS[args.mode]
-
+def _initial_context(
+    args: argparse.Namespace, packet: RunPacket
+) -> tuple[str, list[str], dict[str, str], Any, RuntimeState]:
+    if args.mode == "kv-cache-flashinfer":
+        if args.run_id != AGT017_RUN_ID:
+            raise SystemExit("FlashInfer launcher only permits the AGT017 run ID")
+        matched_budget_receipt()
     if packet.protected_encoder and modal.__version__ != REQUIRED_MODAL_VERSION:
         raise SystemExit(
             f"Modal SDK {REQUIRED_MODAL_VERSION} is required; found {modal.__version__}"
@@ -700,63 +588,93 @@ def main() -> None:
     if not management_key:
         raise SystemExit("OPENROUTER_MANAGEMENT_KEY is required")
     modal_command = [sys.executable, "-m", "modal"]
-    base_environment = os.environ.copy()
-    verify_source_authority(
-        args.mode,
-        base_environment,
-        repo_root=REPO_ROOT,
-    )
-    if packet.protected_encoder:
-        _verify_encoder_deployment(modal_command, base_environment)
-        if _encoder_containers(modal_command, base_environment):
-            raise SystemExit("protected encoder already has a running container")
-
+    environment = os.environ.copy()
+    if args.mode == "kv-cache-flashinfer":
+        environment["MODAL_ENVIRONMENT"] = "dev"
+    verify_source_authority(args.mode, environment, repo_root=REPO_ROOT)
     manager = (
         modal.Workspace.from_context().proxy_tokens
         if packet.protected_encoder
         else None
     )
-    state = RuntimeState(environment=base_environment)
-    run_failure: Exception | None = None
-    evidence_failure: Exception | None = None
-    key_usage = 0.0
+    return (
+        management_key,
+        modal_command,
+        environment,
+        manager,
+        RuntimeState(environment=environment),
+    )
+
+
+def _prepare_encoder_runtime(
+    packet: RunPacket,
+    modal_command: list[str],
+    environment: dict[str, str],
+    state: RuntimeState,
+) -> None:
+    if not packet.protected_encoder:
+        return
+    encoder = packet_encoder(packet)
+    if encoder.ephemeral:
+        assert_encoder_inactive(packet, modal_command, environment, cwd=REPO_ROOT)
+        deploy_encoder(packet, modal_command, environment, state, cwd=REPO_ROOT)
+    app, state.encoder_base_url, state.encoder_instance = verify_encoder_deployment(
+        packet, modal_command, environment, cwd=REPO_ROOT
+    )
+    state.encoder_app_id = str(app["app_id"])
+    if encoder_containers(
+        packet,
+        modal_command,
+        environment,
+        cwd=REPO_ROOT,
+        app_id=state.encoder_app_id,
+    ):
+        raise RuntimeError("protected encoder already has a running container")
+
+
+def _collect_evidence_safely(
+    args: argparse.Namespace,
+    packet: RunPacket,
+    state: RuntimeState,
+    management_key: str,
+) -> Exception | None:
     try:
-        _execute_runtime(
-            args=args,
-            packet=packet,
-            management_key=management_key,
-            manager=manager,
-            state=state,
-        )
-    except Exception as error:  # preserve the primary failure through evidence cleanup
-        run_failure = error
-    finally:
-        try:
-            key_usage = _collect_post_run_evidence(
-                environment=state.environment,
-                protected_values=(
-                    management_key,
-                    state.ephemeral_key,
-                    state.proxy_token.token_id if state.proxy_token is not None else "",
-                    (
-                        state.proxy_token.token_secret
-                        if state.proxy_token is not None
-                        else ""
-                    ),
-                    *PUBLIC_REQUEST_LOG_MARKERS,
+        key_usage = _collect_post_run_evidence(
+            environment=state.environment,
+            protected_values=(
+                management_key,
+                state.ephemeral_key,
+                state.proxy_token.token_id if state.proxy_token is not None else "",
+                (
+                    state.proxy_token.token_secret
+                    if state.proxy_token is not None
+                    else ""
                 ),
-                management_key=management_key,
-                key_hash=state.key_hash,
-                packet=packet,
-            )
-            _persist_kv_evidence(args, key_usage)
-        except Exception as error:
-            evidence_failure = error
-            print(
-                "OpenRouter post-run evidence collection failed",
-                file=sys.stderr,
-                flush=True,
-            )
+                *PUBLIC_REQUEST_LOG_MARKERS,
+            ),
+            management_key=management_key,
+            key_hash=state.key_hash,
+            packet=packet,
+        )
+        _persist_kv_evidence(args, key_usage, packet, state)
+    except Exception as error:
+        print(
+            "OpenRouter post-run evidence collection failed",
+            file=sys.stderr,
+            flush=True,
+        )
+        return error
+    return None
+
+
+def _cleanup_safely(
+    packet: RunPacket,
+    state: RuntimeState,
+    manager: Any,
+    management_key: str,
+    modal_command: list[str],
+) -> Exception | None:
+    try:
         _cleanup_runtime(
             environment=state.environment,
             manager=manager,
@@ -767,7 +685,66 @@ def main() -> None:
             packet=packet,
             state=state,
         )
-    if run_failure is not None:
+    except Exception as error:
+        return error
+    return None
+
+
+def _launch_packet(
+    args: argparse.Namespace,
+    packet: RunPacket,
+    management_key: str,
+    modal_command: list[str],
+    environment: dict[str, str],
+    manager: Any,
+    state: RuntimeState,
+) -> LaunchOutcome:
+    outcome = LaunchOutcome()
+    paid_started = None
+    previous_alarm_handler = None
+    if packet.encoder is not None and packet.encoder.ephemeral:
+        paid_started = time.monotonic()
+        previous_alarm_handler = signal.signal(signal.SIGALRM, _paid_wall_timeout)
+        signal.setitimer(
+            signal.ITIMER_REAL,
+            AGT017_RESOURCE_BUDGET.maximum_paid_wall_seconds,
+        )
+    try:
+        _prepare_encoder_runtime(packet, modal_command, environment, state)
+        _execute_runtime(
+            args=args,
+            packet=packet,
+            management_key=management_key,
+            manager=manager,
+            state=state,
+        )
+    except Exception as error:  # preserve primary failure through exact cleanup
+        outcome.run_failure = error
+    finally:
+        if paid_started is not None:
+            outcome.paid_elapsed = time.monotonic() - paid_started
+        if previous_alarm_handler is not None:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous_alarm_handler)
+        outcome.evidence_failure = _collect_evidence_safely(
+            args, packet, state, management_key
+        )
+        outcome.cleanup_failure = _cleanup_safely(
+            packet, state, manager, management_key, modal_command
+        )
+    return outcome
+
+
+def _raise_outcome(outcome: LaunchOutcome, state: RuntimeState) -> None:
+    if (
+        outcome.paid_elapsed is not None
+        and outcome.paid_elapsed > AGT017_RESOURCE_BUDGET.maximum_paid_wall_seconds
+        and outcome.run_failure is None
+    ):
+        outcome.run_failure = RuntimeError(
+            "AGT017 remote arm exceeded its paid wall ceiling"
+        )
+    if outcome.run_failure is not None:
         if (
             state.transport_preflight is not None
             and state.transport_preflight.get("status") == "failed"
@@ -776,13 +753,37 @@ def main() -> None:
                 json.dumps(state.transport_preflight, indent=2, sort_keys=True),
                 flush=True,
             )
-        if evidence_failure is not None:
-            run_failure.add_note("post-run evidence collection also failed")
-        raise run_failure
-    if evidence_failure is not None:
+        if outcome.evidence_failure is not None:
+            outcome.run_failure.add_note("post-run evidence collection also failed")
+        if outcome.cleanup_failure is not None:
+            outcome.run_failure.add_note("exact resource cleanup also failed")
+        raise outcome.run_failure
+    if outcome.evidence_failure is not None:
         raise RuntimeError("OpenRouter post-run evidence collection failed") from (
-            evidence_failure
+            outcome.evidence_failure
         )
+    if outcome.cleanup_failure is not None:
+        raise RuntimeError("OpenRouter exact resource cleanup failed") from (
+            outcome.cleanup_failure
+        )
+
+
+def main() -> None:
+    args = _parse_args()
+    packet = PACKETS[args.mode]
+    management_key, modal_command, environment, manager, state = _initial_context(
+        args, packet
+    )
+    outcome = _launch_packet(
+        args,
+        packet,
+        management_key,
+        modal_command,
+        environment,
+        manager,
+        state,
+    )
+    _raise_outcome(outcome, state)
 
 
 if __name__ == "__main__":

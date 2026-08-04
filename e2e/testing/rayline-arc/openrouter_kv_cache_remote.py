@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 
-"""Remote-vLLM entrypoint for the AGT016 retained-versus-replay workload."""
+"""Remote-vLLM entrypoint for the matched retained-versus-replay workload."""
 
 from __future__ import annotations
 

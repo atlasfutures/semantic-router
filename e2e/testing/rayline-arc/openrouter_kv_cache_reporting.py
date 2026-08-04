@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 
-"""Aggregate-only reporter for the matched AGT016 cache comparison."""
+"""Aggregate-only reporter for the matched AGT017 cache comparison."""
 
 from __future__ import annotations
 
@@ -14,10 +14,21 @@ from typing import Any
 
 from modal_fullstack_canary import _summary
 from openrouter_agentic_workload import PROVIDER_NAMES, WORKERS
+from openrouter_kv_cache_matched_contract import (
+    FLASHINFER_APP_NAME,
+    FLASHINFER_BACKEND,
+    FLASHINFER_ENGINE_BUILD_ID,
+    MAX_COMPLETION_TOKENS,
+    matched_budget_receipt,
+)
 from openrouter_modal_native_benchmark import _decision_cost, read_decisions
 
 EXPECTED_REQUESTS_PER_DEPLOYMENT = 12
 EXPECTED_MODES_PER_STATE = 2
+AGT016_REFERENCE_STEADY_RETAINED_ROUTER_MEAN_SECONDS = 1.2457
+MAX_FLASHINFER_TO_REFERENCE_ROUTER_RATIO = 0.80
+MIN_NATIVE_STEADY_RETAINED_TOKEN_SAVING = 0.40
+MIN_FLASHINFER_STEADY_RETAINED_TOKEN_SAVING = 0.55
 
 
 def _args() -> argparse.Namespace:
@@ -223,6 +234,9 @@ def _deployment_report(client: dict[str, Any]) -> dict[str, Any]:
     )
     return {
         **aggregate,
+        "serial_request_throughput_rps": len(results)
+        / float(client["elapsed_seconds"]),
+        "whole_run_elapsed_seconds": float(client["elapsed_seconds"]),
         "steady_state": {
             "episode": steady_state_episode,
             **steady_state,
@@ -291,20 +305,24 @@ def _completion_contract(
         {int(result["completion_tokens"]) for result in remote["results"]}
     )
     matched = native_values == remote_values
+    within_requested_cap = (
+        int(native["workload"]["max_completion_tokens"])
+        == int(remote["workload"]["max_completion_tokens"])
+        == MAX_COMPLETION_TOKENS
+        and max((*native_values, *remote_values), default=0) <= MAX_COMPLETION_TOKENS
+    )
     return {
         "requested_max_tokens": int(native["workload"]["max_completion_tokens"]),
         "native_observed_completion_token_values": native_values,
         "remote_observed_completion_token_values": remote_values,
         "within_deployment_retained_replay_parity": True,
         "cross_deployment_matched": matched,
-        "cross_deployment_e2e_comparable": matched,
+        "within_requested_cap": within_requested_cap,
+        "cross_deployment_e2e_comparable": matched and within_requested_cap,
         "deviation": (
             ""
             if matched
-            else (
-                "the remote ARC worker manifest enforced its 96-token minimum; "
-                "native Pathfinder honored the requested 24-token cap"
-            )
+            else ("native and remote observed completion-token policies diverged")
         ),
     }
 
@@ -312,6 +330,8 @@ def _completion_contract(
 def _cross_deployment_report(deployments: dict[str, Any]) -> dict[str, Any]:
     native = deployments["native_modal"]
     remote = deployments["remote_vllm"]
+    native_steady = native["steady_state"]["paths"]["retained"]
+    remote_steady = remote["steady_state"]["paths"]["retained"]
     return {
         "selection_parity": True,
         "primary_comparison_basis": "steady_state_episode_1",
@@ -320,13 +340,99 @@ def _cross_deployment_report(deployments: dict[str, Any]) -> dict[str, Any]:
             / remote["paths"]["retained"]["router_latency"]["mean_seconds"]
         ),
         "native_to_vllm_steady_state_retained_router_mean_ratio": (
-            native["steady_state"]["paths"]["retained"]["router_latency"][
-                "mean_seconds"
-            ]
-            / remote["steady_state"]["paths"]["retained"]["router_latency"][
-                "mean_seconds"
-            ]
+            native_steady["router_latency"]["mean_seconds"]
+            / remote_steady["router_latency"]["mean_seconds"]
         ),
+        "vllm_to_native_steady_state_retained_router_mean_ratio": (
+            remote_steady["router_latency"]["mean_seconds"]
+            / native_steady["router_latency"]["mean_seconds"]
+        ),
+        "vllm_to_native_steady_state_retained_e2e_mean_ratio": (
+            remote_steady["end_to_end_latency"]["mean_seconds"]
+            / native_steady["end_to_end_latency"]["mean_seconds"]
+        ),
+        "vllm_to_native_steady_state_retained_observed_first_token_mean_ratio": (
+            remote_steady["observed_first_token"]["mean_seconds"]
+            / native_steady["observed_first_token"]["mean_seconds"]
+        ),
+        "vllm_to_native_serial_request_throughput_ratio": (
+            remote["serial_request_throughput_rps"]
+            / native["serial_request_throughput_rps"]
+        ),
+    }
+
+
+def _validate_deployment_identity(
+    native_deployment: dict[str, Any], remote_deployment: dict[str, Any]
+) -> dict[str, Any]:
+    if native_deployment.get("gpu") != "H100":
+        raise RuntimeError("native deployment did not attest H100")
+    expected_remote = {
+        "encoder_app_name": FLASHINFER_APP_NAME,
+        "encoder_gpu": "H100",
+        "encoder_build_id": FLASHINFER_ENGINE_BUILD_ID,
+        "encoder_gdn_prefill_backend": FLASHINFER_BACKEND,
+        "encoder_ephemeral": True,
+    }
+    for field, expected in expected_remote.items():
+        if remote_deployment.get(field) != expected:
+            raise RuntimeError(f"remote deployment identity diverged: {field}")
+    return {
+        "native_h100": True,
+        "remote_h100": True,
+        "remote_flashinfer_runtime": True,
+        "remote_ephemeral_app": True,
+    }
+
+
+def _acceptance_report(
+    deployments: dict[str, Any], completion_contract: dict[str, Any]
+) -> dict[str, Any]:
+    native = deployments["native_modal"]["steady_state"]
+    remote = deployments["remote_vllm"]["steady_state"]
+    remote_router_mean = remote["paths"]["retained"]["router_latency"]["mean_seconds"]
+    remote_to_reference = (
+        remote_router_mean / AGT016_REFERENCE_STEADY_RETAINED_ROUTER_MEAN_SECONDS
+    )
+    native_saving = native["comparison"]["retained_token_work_saved_fraction"]
+    remote_saving = remote["comparison"]["retained_token_work_saved_fraction"]
+    gates = {
+        "completion_policy_matched": completion_contract[
+            "cross_deployment_e2e_comparable"
+        ],
+        "native_retained_token_saving": (
+            native_saving >= MIN_NATIVE_STEADY_RETAINED_TOKEN_SAVING
+        ),
+        "flashinfer_retained_token_saving": (
+            remote_saving >= MIN_FLASHINFER_STEADY_RETAINED_TOKEN_SAVING
+        ),
+        "flashinfer_router_improves_on_agt016_reference": (
+            remote_to_reference <= MAX_FLASHINFER_TO_REFERENCE_ROUTER_RATIO
+        ),
+    }
+    return {
+        "passed": all(gates.values()),
+        "gates": gates,
+        "thresholds": {
+            "native_minimum_steady_retained_token_saving_fraction": (
+                MIN_NATIVE_STEADY_RETAINED_TOKEN_SAVING
+            ),
+            "flashinfer_minimum_steady_retained_token_saving_fraction": (
+                MIN_FLASHINFER_STEADY_RETAINED_TOKEN_SAVING
+            ),
+            "agt016_reference_steady_retained_router_mean_seconds": (
+                AGT016_REFERENCE_STEADY_RETAINED_ROUTER_MEAN_SECONDS
+            ),
+            "maximum_flashinfer_to_reference_router_ratio": (
+                MAX_FLASHINFER_TO_REFERENCE_ROUTER_RATIO
+            ),
+        },
+        "observed": {
+            "native_steady_retained_token_saving_fraction": native_saving,
+            "flashinfer_steady_retained_token_saving_fraction": remote_saving,
+            "flashinfer_steady_retained_router_mean_seconds": remote_router_mean,
+            "flashinfer_to_agt016_reference_router_ratio": remote_to_reference,
+        },
     }
 
 
@@ -354,20 +460,24 @@ def build_report(
         _validate_within_deployment_completion_parity(client)
     deployments, actual_attempts = _validated_deployments(native, remote)
     completion_contract = _completion_contract(native, remote)
+    deployment_attestation = _validate_deployment_identity(
+        native_deployment, remote_deployment
+    )
+    acceptance = _acceptance_report(deployments, completion_contract)
+    budget = matched_budget_receipt()
+    provider_usage = native_key_usage + remote_key_usage
     return {
-        "schema_version": "rayline.openrouter-kv-cache-comparison.v1",
+        "schema_version": "rayline.openrouter-kv-cache-comparison.v2",
         "run_id": native["run_id"],
-        "status": (
-            "passed"
-            if completion_contract["cross_deployment_matched"]
-            else "passed_with_protocol_deviation"
-        ),
+        "status": "passed" if acceptance["passed"] else "failed_acceptance",
         "workload": native["workload"],
         "models": WORKERS,
         "deployment_identity": {
             "native_modal": native_deployment,
             "remote_vllm": remote_deployment,
         },
+        "deployment_attestation": deployment_attestation,
+        "acceptance": acceptance,
         "deployments": deployments,
         "cross_deployment": _cross_deployment_report(deployments),
         "actual_provider_requests": EXPECTED_REQUESTS_PER_DEPLOYMENT * 2,
@@ -379,18 +489,12 @@ def build_report(
             "total": native_key_usage + remote_key_usage,
         },
         "cost_accounting": {
-            "previous_conservative_usd": 90.864463066383,
-            "maximum_program_cost_usd": 6.0,
-            "maximum_cumulative_usd": 96.864463066383,
-            "authorized_cumulative_usd": 134.31282402,
-            "minimum_remaining_authority_usd": 37.448360953617,
-            "prior_failed_diagnostic_key_usage_usd": 0.005310378,
-            "all_cache_program_key_usage_usd": (
-                native_key_usage + remote_key_usage + 0.005310378
+            **budget,
+            "actual_provider_spend_usd": provider_usage,
+            "actual_provider_within_envelope": (
+                provider_usage <= budget["maximum_provider_spend_usd"]
             ),
         },
-        "prior_failed_diagnostic_provider_requests": 12,
-        "total_cache_program_provider_requests": 36,
         "automatic_prefix_cache_enabled": False,
         "cache_contracts": {
             "native_modal": "Pathfinder-owned chunk-grid KV session",
@@ -402,8 +506,9 @@ def build_report(
             "native Modal buffers provider completion, so its observed first token is not provider TTFT",
             "native and vLLM cache effects are normalized against replay within each deployment",
             "episode 0 includes first-shape compilation; episode 1 is the steady-state comparison",
-            "cross-deployment E2E is not compared because the remote artifact enforced 96 completion tokens",
+            "the serial request rate includes provider generation and is not a concurrency throughput SLO",
             "provider latency remains externally variable despite interleaved retained/replay requests",
+            "native observed first token is emitted after Pathfinder buffers the provider response and is not provider TTFT",
         ],
     }
 

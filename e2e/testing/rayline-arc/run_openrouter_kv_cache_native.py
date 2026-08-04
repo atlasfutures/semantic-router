@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 
-"""Deploy, measure, and remove the one-shot AGT016 native Modal router."""
+"""Deploy, measure, and remove the one-shot AGT017 native Modal router."""
 
 from __future__ import annotations
 
@@ -22,35 +22,38 @@ from openrouter_key_management import (
     delete_ephemeral_key,
     ephemeral_key_usage,
 )
+from openrouter_kv_cache_matched_contract import (
+    AUTHORIZATION_COMMIT,
+    MAX_COMPLETION_TOKENS,
+    NATIVE_APP_NAME,
+    NATIVE_WEBHOOK_LABEL,
+    OPENROUTER_KEY_LIMIT_USD_PER_ARM,
+    PATHFINDER_BRANCH,
+    PREREGISTRATION_COMMIT,
+    RUN_ID,
+    SEMANTIC_BRANCH,
+    matched_budget_receipt,
+)
 from openrouter_modal_native_fixture import (
     DECISION_LOG_REMOTE_PATH,
     build_checkpoint,
     router_config_text,
 )
 
-RUN_ID = "rayline-openrouter-kv-cache-agt016-20260803"
-PREREGISTRATION_COMMIT = ""
-AUTHORIZATION_COMMIT = ""
 GIT_SHA_LENGTH = 40
 REQUIRED_MODAL_VERSION = "1.5.1"
-PATHFINDER_BRANCH = "codex/rayline-vsr-mvp"
-SEMANTIC_BRANCH = "codex/rayline-remote-mvp"
-APP_NAME = "rayline-router-openrouter-agt016"
-WEBHOOK_LABEL = "router-openrouter-agt016"
+APP_NAME = NATIVE_APP_NAME
+WEBHOOK_LABEL = NATIVE_WEBHOOK_LABEL
 ARTIFACT_VOLUME = APP_NAME
 CONTEXT_DICT = APP_NAME
 REGISTRATION_RECEIPTS_DICT = f"{CONTEXT_DICT}-registration-receipts"
 OPENROUTER_SECRET = APP_NAME
 ROUTER_URL = f"https://atlasfutures-dev--{WEBHOOK_LABEL}.modal.run"
 GPU = "H100"
-KEY_LIMIT_USD = 0.50
+KEY_LIMIT_USD = OPENROUTER_KEY_LIMIT_USD_PER_ARM
 MAXIMUM_PAID_SECONDS = 20 * 60
 MAXIMUM_CLEANUP_SETTLE_SECONDS = 60
-MAXIMUM_MODAL_COST_USD = 2.50
-MAXIMUM_TOTAL_COST_USD = KEY_LIMIT_USD + MAXIMUM_MODAL_COST_USD
-PREVIOUS_CONSERVATIVE_USD = 90.864463066383
-AUTHORIZED_CUMULATIVE_USD = 134.31282402
-TRAINING_STAGE = "openrouter_kv_cache_agt016"
+TRAINING_STAGE = "openrouter_kv_cache_agt017"
 BENCHMARK = Path(__file__).with_name("openrouter_kv_cache_benchmark.py")
 
 
@@ -79,7 +82,7 @@ def _verify_authority(semantic_root: Path) -> None:
         ("authorization", AUTHORIZATION_COMMIT),
     ):
         if len(commit) != GIT_SHA_LENGTH:
-            raise RuntimeError(f"AGT016 {name} authority is source-closed")
+            raise RuntimeError(f"AGT017 {name} authority is source-closed")
         support._git(
             semantic_root,
             "merge-base",
@@ -87,11 +90,7 @@ def _verify_authority(semantic_root: Path) -> None:
             commit,
             "HEAD",
         )
-    if (
-        PREVIOUS_CONSERVATIVE_USD + 2 * MAXIMUM_TOTAL_COST_USD
-        > AUTHORIZED_CUMULATIVE_USD
-    ):
-        raise RuntimeError("AGT016 conservative envelope exceeds user authority")
+    matched_budget_receipt()
 
 
 def _register_context(
@@ -99,7 +98,7 @@ def _register_context(
 ) -> None:
     os.environ["MODAL_ENVIRONMENT"] = environment["MODAL_ENVIRONMENT"]
     context = {
-        "schema_version": "rayline-router.modal-native-agt016.v1",
+        "schema_version": "rayline-router.modal-native-agt017.v1",
         "router_config_text": config_text,
         "router_config_text_sha256": hashlib.sha256(config_text.encode()).hexdigest(),
         "decision_log": f"/artifacts/{DECISION_LOG_REMOTE_PATH}",
@@ -126,7 +125,7 @@ def _prepare(
     )
     output_dir = semantic_root / ".agent-harness/rayline-kv-cache" / RUN_ID
     if output_dir.exists():
-        raise RuntimeError("AGT016 output directory already exists")
+        raise RuntimeError("AGT017 output directory already exists")
     output_dir.mkdir(parents=True)
     environment = support._deploy_environment(os.environ.copy())
     support._assert_resources_absent(
@@ -155,8 +154,8 @@ def _measure(
 ) -> dict[str, Any]:
     config_text = router_config_text(
         training_stage=TRAINING_STAGE,
-        max_completion_tokens=24,
-        app_title="Rayline AGT016",
+        max_completion_tokens=MAX_COMPLETION_TOKENS,
+        app_title="Rayline AGT017",
     )
     _register_context(
         token=router_token,
@@ -259,7 +258,7 @@ def _execute(
     key_hash: str,
     router_token: str,
 ) -> float:
-    with tempfile.TemporaryDirectory(prefix="rayline-agt016-") as temporary_name:
+    with tempfile.TemporaryDirectory(prefix="rayline-agt017-") as temporary_name:
         temporary = Path(temporary_name)
         checkpoint_path = temporary / "native-openrouter-kv-cache.pt"
         checkpoint = build_checkpoint(context.pathfinder_root, checkpoint_path)
@@ -353,12 +352,12 @@ def _validate_completion(
     cleanup_error: Exception | None,
 ) -> None:
     if time.perf_counter() - paid_started > MAXIMUM_PAID_SECONDS:
-        raise RuntimeError("AGT016 exceeded its paid wall-time ceiling")
+        raise RuntimeError("AGT017 exceeded its paid wall-time ceiling")
     if usage > KEY_LIMIT_USD:
-        raise RuntimeError("AGT016 native OpenRouter key exceeded its hard limit")
+        raise RuntimeError("AGT017 native OpenRouter key exceeded its hard limit")
     if primary_error is not None:
         if cleanup_error is not None:
-            primary_error.add_note("AGT016 cleanup also failed")
+            primary_error.add_note("AGT017 cleanup also failed")
         raise primary_error
     if cleanup_error is not None:
         raise cleanup_error

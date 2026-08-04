@@ -7,12 +7,23 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from openrouter_kv_cache_matched_contract import (
+    AUTHORIZATION_COMMIT as AGT017_AUTHORIZATION_COMMIT,
+)
+from openrouter_kv_cache_matched_contract import (
+    PREREGISTRATION_COMMIT as AGT017_PREREGISTRATION_COMMIT,
+)
+
 GIT_SHA1_HEX_LENGTH = 40
 SOURCE_REMOTE_REF = "atlasfutures/codex/rayline-remote-mvp"
 AUTHORITY_PINS = {
     "agentic": ("", ""),
     "agentic-stage": ("", ""),
     "kv-cache": ("", ""),
+    "kv-cache-flashinfer": (
+        AGT017_PREREGISTRATION_COMMIT,
+        AGT017_AUTHORIZATION_COMMIT,
+    ),
     "gateway-shape": ("", ""),
     "gateway-prime": ("", ""),
 }

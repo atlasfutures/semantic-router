@@ -33,12 +33,12 @@ from openrouter_agentic_stage_metrics import (
 from openrouter_agentic_workload import WORKERS
 from openrouter_agentic_workload import candidate_case as _candidate_case
 from openrouter_fullstack_canary import _attempt_count, _http_error
+from openrouter_kv_cache_matched_contract import MAX_COMPLETION_TOKENS
 
 HTTP_OK = 200
 EPISODES = 2
 STEPS = 3
 MODES = ("retained", "replay")
-MAX_COMPLETION_TOKENS = 24
 EXPECTED_REQUESTS = EPISODES * STEPS * len(MODES)
 APPEND_LINES = 120
 

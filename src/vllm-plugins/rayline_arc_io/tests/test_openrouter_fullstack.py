@@ -331,6 +331,7 @@ def test_self_hosted_worker_routes_do_not_retry_backpressure() -> None:
 
 def test_openrouter_launcher_uses_ephemeral_limited_key_and_exact_cleanup() -> None:
     launcher_source = (SCRIPT_DIR / "run_openrouter_fullstack.py").read_text()
+    encoder_runtime_source = (SCRIPT_DIR / "openrouter_encoder_runtime.py").read_text()
     key_source = (SCRIPT_DIR / "openrouter_key_management.py").read_text()
 
     assert "OPENROUTER_KEY_LIMIT_USD = 0.25" in launcher_source
@@ -352,7 +353,8 @@ def test_openrouter_launcher_uses_ephemeral_limited_key_and_exact_cleanup() -> N
     assert "1ff4ee4d7a22cc1d74c0cdb0352d3f76f5081b7201fa63e7f8f3dd10af246afd" in (
         launcher_source
     )
-    assert '"container", "stop", container_id, "--yes"' in launcher_source
+    assert '"container", "stop", container_id, "--yes"' in encoder_runtime_source
+    assert "cleanup_encoder(" in launcher_source
     assert "manager.delete(proxy_token.token_id)" in launcher_source
     assert "_wait_arc_component_ready(METRICS_URL)" in launcher_source
     execution_source = launcher_source.split("def _execute_runtime(", maxsplit=1)[
@@ -364,12 +366,17 @@ def test_openrouter_launcher_uses_ephemeral_limited_key_and_exact_cleanup() -> N
     assert execution_source.index("_run_transport_preflight(") < execution_source.index(
         "_activate_protected_encoder("
     )
-    main_source = launcher_source.split("def main() -> None:", maxsplit=1)[1]
-    assert main_source.index("_verify_encoder_deployment(") < main_source.index(
-        "_encoder_containers("
+    prepare_source = launcher_source.split("def _prepare_encoder_runtime(", maxsplit=1)[
+        1
+    ].split("def _collect_evidence_safely(", maxsplit=1)[0]
+    assert prepare_source.index("verify_encoder_deployment(") < prepare_source.index(
+        "encoder_containers("
     )
-    assert main_source.index("_collect_post_run_evidence(") < main_source.index(
-        "_cleanup_runtime("
+    launch_source = launcher_source.split("def _launch_packet(", maxsplit=1)[1].split(
+        "def _raise_outcome(", maxsplit=1
+    )[0]
+    assert launch_source.index("_collect_evidence_safely(") < launch_source.index(
+        "_cleanup_safely("
     )
     assert "execute-paid-1000" not in launcher_source
 

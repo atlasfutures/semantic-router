@@ -112,8 +112,18 @@ def test_session_service_confines_perf030_backends_to_exact_app_names() -> None:
     assert '"rayline-arc-session-encoder-flashinfer-perf030": "flashinfer"' in (
         service_source
     )
-    assert 'PERF030_APP_PROFILES.get(APP_NAME, "torch_reference")' in service_source
-    assert "if APP_NAME in PERF030_APP_PROFILES" in service_source
+    assert 'EXPERIMENT_APP_PROFILES.get(APP_NAME, "torch_reference")' in service_source
+    assert "if APP_NAME in EXPERIMENT_APP_PROFILES" in service_source
     assert '"RAYLINE_ARC_SESSION_APP_NAME": APP_NAME' in service_source
     assert "runtime_backend, runtime_build_id = _runtime_profile()" in service_source
     assert "SessionAPIMetadata(engine_build_id=runtime_build_id)" in service_source
+
+
+def test_session_service_confines_agt017_flashinfer_to_its_exact_app_name() -> None:
+    service_source = source()
+
+    assert (
+        '"rayline-arc-session-encoder-flashinfer-agt017": "flashinfer"'
+        in service_source
+    )
+    assert "EXPERIMENT_APP_PROFILES =" in service_source

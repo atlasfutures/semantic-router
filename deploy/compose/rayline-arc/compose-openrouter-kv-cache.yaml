@@ -1,0 +1,10 @@
+name: rayline-arc-openrouter-kv-cache
+
+services:
+  artifact-init:
+    command:
+      - sh
+      - -ceu
+      - |
+        python /app/openrouter_kv_cache_artifact_fixture.py /artifact
+        chmod -R a=rX /artifact

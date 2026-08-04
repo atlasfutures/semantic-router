@@ -3365,6 +3365,49 @@ public Modal HTTP boundary with a region-local/internal transport. Promotion to
 the protected default must wait for that end-to-end result; the production
 default therefore remains `torch_reference` at this checkpoint.
 
+### AGT017 Matched FlashInfer End-to-End Packet
+
+AGT017 is the first real-provider successor to PERF030. It repeats AGT016's
+public synthetic retained/replay history exactly: two episodes, three growing
+states, retained and fresh-replay modes, and twelve requests per deployment.
+The native Pathfinder H100 router and the remote Semantic Router plus vLLM H100
+encoder run serially against the same OpenRouter pool: DeepSeek V4 Flash,
+Xiaomi MiMo V2.5, and Tencent HY3. No 1,000-case qualification is released.
+
+The remote arm uses a new exact-name ephemeral Modal app and must attest
+`flashinfer` plus build
+`vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca+gdn-flashinfer-eager`.
+The protected default remains deployed and idle on `torch_reference`. A new
+ARC artifact revision freezes both minimum and maximum completion tokens at
+`24`, matching the native configuration and removing AGT016's `24` versus `96`
+protocol deviation. Both apps, both `$0.05` OpenRouter keys, the proxy token,
+Compose state, and all containers are exact-name cleanup obligations.
+
+Acceptance requires 24/24 successful provider requests with selection parity,
+matched completion policy, no external retries, and exact deployment
+attestation. The steady retained token-work saving must be at least `40%`
+native and `55%` remote. The FlashInfer remote steady retained router mean must
+be at most `0.80x` AGT016's `1.2457s` reference-vLLM mean. Native-versus-remote
+router, end-to-end, observed-first-token, and serial request-rate ratios are
+reported, but are not parity gates because the independent Modal HTTP boundary
+remains in the remote architecture and provider latency is external.
+
+Two complete H100 resource envelopes are `$9.0308736`; two provider keys add a
+maximum `$0.10`. Charging the full `$9.1308736` packet raises conservative
+cumulative accounting from `$123.957083866383` to `$133.087957466383`, leaving
+at least `$1.224866553617` under the existing `$134.31282402` authority.
+
+- [ ] AGT017a: Pass focused and repository gates, push the signed source-closed
+  preregistration checkpoint, then bind a separate authorization checkpoint.
+- [ ] AGT017b: Execute the native and FlashInfer remote arms once each and
+  verify exact cleanup before interpreting measurements.
+- [ ] AGT017c: Build the aggregate-only receipt, enforce the frozen acceptance
+  gates, persist private evidence, close authority, and record the next action.
+
+The region-local/internal transport comparison remains the next separate
+packet. It must not be folded into AGT017 or used to reinterpret this public
+HTTP result.
+
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
 continues to reject cached-prefix tokens. The separate session v1 wire reports
