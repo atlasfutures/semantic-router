@@ -737,6 +737,17 @@ the native prompt-discovery part of TD051 but not cross-architecture parity.
 The vLLM-hosted encoder must reproduce all nine states before routed provider
 measurement.
 
+That successor seam is implemented source-closed. The protected encoder probe
+runs after activation and before routed traffic, checks exact session
+create/append revisions and retained-prefix accounting, evaluates the nine
+embeddings without persisting them, and closes every probe session on success or
+failure. The paired v3 reporter requires the offline and remote traces to equal
+the frozen trace, joins every native decision, validates all retained/replay
+cells, and emits aggregate whole-run, per-history, and per-model latency, first-
+token, router/encoder, token-work, throughput, retry, provider, and cost
+evidence. Empty authority pins plus zero key/time ceilings remain mandatory
+until a separately reviewed budget checkpoint replaces them.
+
 The source-closed successor is
 `rayline-openrouter-kv-cache-agt018-20260804`, artifact
 `public-rayline-arc-openrouter-kv-cache-v3`, report schema

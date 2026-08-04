@@ -2,8 +2,9 @@
 
 ## Status
 
-Open — AGT018 now has exact native offline three-worker coverage, but the
-vLLM-hosted encoder has not yet reproduced the frozen trace.
+Open — AGT018 now has exact native offline three-worker coverage and a
+source-closed vLLM parity gate, but the vLLM-hosted encoder has not yet executed
+the frozen trace.
 
 ## Owner Plan
 
@@ -52,6 +53,11 @@ measurement.
 - `openrouter_kv_cache_workload_contract.py` requires natural three-worker
   coverage for AGT018 while keeping stratified static dispatch inadmissible for
   semantic-selection claims.
+- The AGT018 remote launch path now evaluates those same nine states directly
+  against the protected vLLM encoder before any routed provider measurement,
+  enforces the score-margin and retained-prefix contracts, and feeds aggregate-
+  only evidence into the v3 reporter. The launch remains source-closed, so this
+  is implementation coverage rather than an executed cross-architecture proof.
 
 ## Why It Matters
 

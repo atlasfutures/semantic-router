@@ -95,7 +95,7 @@ routing:
         on_error: fail_closed
         rayline_arc:
           artifact_dir: /var/lib/vllm-sr/rayline-arc
-          artifact_revision: public-rayline-arc-openrouter-kv-cache-v2
+          artifact_revision: ${RAYLINE_ARC_ARTIFACT_REVISION}
           encoder:
             base_url: ${RAYLINE_ARC_ENCODER_BASE_URL}
             model: Qwen/Qwen3.5-0.8B

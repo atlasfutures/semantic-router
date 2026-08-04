@@ -55,14 +55,13 @@ from openrouter_key_management import (
 )
 from openrouter_kv_cache_deployment_evidence import persist as persist_kv_evidence
 from openrouter_kv_cache_matched_contract import (
-    AGT017_RESOURCE_BUDGET,
     FLASHINFER_APP_NAME,
     FLASHINFER_CLASS_NAME,
     FLASHINFER_ENGINE_BUILD_ID,
     matched_budget_receipt,
 )
-from openrouter_kv_cache_matched_contract import (
-    RUN_ID as AGT017_RUN_ID,
+from openrouter_kv_cache_successor_contract import (
+    REMOTE_APP_NAME as AGT018_REMOTE_APP_NAME,
 )
 from openrouter_launch_authority import verify_source_authority
 from openrouter_provider_preflight import run_preflight as run_provider_preflight
@@ -122,12 +121,22 @@ FLASHINFER_ENCODER = EncoderDeployment(
     deploy_service_path=SESSION_SERVICE_PATH,
     ephemeral=True,
 )
+AGT018_FLASHINFER_ENCODER = EncoderDeployment(
+    app_name=AGT018_REMOTE_APP_NAME,
+    class_name=FLASHINFER_CLASS_NAME,
+    build_id=FLASHINFER_ENGINE_BUILD_ID,
+    deployment_source_commit="runtime-attested-launch-source",
+    plugin_source_digest="runtime-attested-launch-source",
+    deploy_service_path=SESSION_SERVICE_PATH,
+    ephemeral=True,
+)
 
 
 PACKETS = packet_catalog(
     REPO_ROOT,
     DEFAULT_ENCODER,
     FLASHINFER_ENCODER,
+    AGT018_FLASHINFER_ENCODER,
     canary_key_limit_usd=OPENROUTER_KEY_LIMIT_USD,
     maximum_canary_seconds=MAX_CANARY_SECONDS,
 )
@@ -308,6 +317,8 @@ def _runtime_environment(
             "RAYLINE_ARC_E2E_ENVOY_CONFIG_PATH": str(OPENROUTER_ENVOY_FILE),
         }
     )
+    if packet.artifact_revision:
+        environment["RAYLINE_ARC_E2E_ARTIFACT_REVISION"] = packet.artifact_revision
     use_protected_encoder = (
         packet.protected_encoder if protected_encoder is None else protected_encoder
     )
@@ -535,10 +546,14 @@ def _execute_runtime(
 def _initial_context(
     args: argparse.Namespace, packet: RunPacket
 ) -> tuple[str, list[str], dict[str, str], Any, RuntimeState]:
+    if packet.expected_run_id and args.run_id != packet.expected_run_id:
+        raise SystemExit(f"{args.mode} launcher only permits {packet.expected_run_id}")
     if args.mode == "kv-cache-flashinfer":
-        if args.run_id != AGT017_RUN_ID:
-            raise SystemExit("FlashInfer launcher only permits the AGT017 run ID")
         matched_budget_receipt()
+    environment = os.environ.copy()
+    if packet.modal_environment:
+        environment["MODAL_ENVIRONMENT"] = packet.modal_environment
+    verify_source_authority(args.mode, environment, repo_root=REPO_ROOT)
     if packet.protected_encoder and modal.__version__ != REQUIRED_MODAL_VERSION:
         raise SystemExit(
             f"Modal SDK {REQUIRED_MODAL_VERSION} is required; found {modal.__version__}"
@@ -547,10 +562,6 @@ def _initial_context(
     if not management_key:
         raise SystemExit("OPENROUTER_MANAGEMENT_KEY is required")
     modal_command = [sys.executable, "-m", "modal"]
-    environment = os.environ.copy()
-    if args.mode == "kv-cache-flashinfer":
-        environment["MODAL_ENVIRONMENT"] = "dev"
-    verify_source_authority(args.mode, environment, repo_root=REPO_ROOT)
     manager = (
         modal.Workspace.from_context().proxy_tokens
         if packet.protected_encoder
@@ -709,7 +720,7 @@ def _launch_packet(
             previous_alarm_handler = signal.signal(signal.SIGALRM, _paid_wall_timeout)
             signal.setitimer(
                 signal.ITIMER_REAL,
-                AGT017_RESOURCE_BUDGET.maximum_paid_wall_seconds,
+                packet.maximum_seconds,
             )
         _prepare_encoder_runtime(packet, modal_command, environment, state)
         _execute_runtime(
@@ -736,15 +747,17 @@ def _launch_packet(
     return outcome
 
 
-def _raise_outcome(outcome: LaunchOutcome, state: RuntimeState) -> None:
+def _raise_outcome(
+    outcome: LaunchOutcome,
+    state: RuntimeState,
+    packet: RunPacket,
+) -> None:
     if (
         outcome.paid_elapsed is not None
-        and outcome.paid_elapsed > AGT017_RESOURCE_BUDGET.maximum_paid_wall_seconds
+        and outcome.paid_elapsed > packet.maximum_seconds
         and outcome.run_failure is None
     ):
-        outcome.run_failure = RuntimeError(
-            "AGT017 remote arm exceeded its paid wall ceiling"
-        )
+        outcome.run_failure = RuntimeError("remote arm exceeded its paid wall ceiling")
     if outcome.run_failure is not None:
         if (
             state.provider_preflight is not None
@@ -792,7 +805,7 @@ def main() -> None:
         manager,
         state,
     )
-    _raise_outcome(outcome, state)
+    _raise_outcome(outcome, state, packet)
 
 
 if __name__ == "__main__":

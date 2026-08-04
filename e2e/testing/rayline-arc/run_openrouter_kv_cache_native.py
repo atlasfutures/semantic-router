@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 
-"""Deploy, measure, and remove the one-shot AGT017 native Modal router."""
+"""Deploy, measure, and remove a one-shot native Modal KV router."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from openrouter_key_management import (
     ephemeral_key_usage,
 )
 from openrouter_kv_cache_matched_contract import (
+    ARTIFACT_REVISION,
     AUTHORIZATION_COMMIT,
     MAX_COMPLETION_TOKENS,
     NATIVE_APP_NAME,
@@ -33,6 +34,37 @@ from openrouter_kv_cache_matched_contract import (
     RUN_ID,
     SEMANTIC_BRANCH,
     matched_budget_receipt,
+)
+from openrouter_kv_cache_successor_contract import (
+    ARTIFACT_REVISION as AGT018_ARTIFACT_REVISION,
+)
+from openrouter_kv_cache_successor_contract import (
+    AUTHORIZATION_COMMIT as AGT018_AUTHORIZATION_COMMIT,
+)
+from openrouter_kv_cache_successor_contract import (
+    MAX_COMPLETION_TOKENS as AGT018_MAX_COMPLETION_TOKENS,
+)
+from openrouter_kv_cache_successor_contract import (
+    NATIVE_APP_NAME as AGT018_NATIVE_APP_NAME,
+)
+from openrouter_kv_cache_successor_contract import (
+    NATIVE_WEBHOOK_LABEL as AGT018_NATIVE_WEBHOOK_LABEL,
+)
+from openrouter_kv_cache_successor_contract import (
+    PATHFINDER_BRANCH as AGT018_PATHFINDER_BRANCH,
+)
+from openrouter_kv_cache_successor_contract import (
+    PREREGISTRATION_COMMIT as AGT018_PREREGISTRATION_COMMIT,
+)
+from openrouter_kv_cache_successor_contract import RUN_ID as AGT018_RUN_ID
+from openrouter_kv_cache_successor_contract import (
+    SEMANTIC_BRANCH as AGT018_SEMANTIC_BRANCH,
+)
+from openrouter_kv_cache_successor_contract import (
+    SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM as AGT018_KEY_LIMIT_USD,
+)
+from openrouter_kv_cache_successor_contract import (
+    SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS as AGT018_MAXIMUM_PAID_SECONDS,
 )
 from openrouter_modal_native_fixture import (
     DECISION_LOG_REMOTE_PATH,
@@ -59,11 +91,99 @@ MAXIMUM_PAID_SECONDS = 20 * 60
 MAXIMUM_CLEANUP_SETTLE_SECONDS = 60
 TRAINING_STAGE = "openrouter_kv_cache_agt017"
 BENCHMARK = Path(__file__).with_name("openrouter_kv_cache_benchmark.py")
+APP_TITLE = "Rayline AGT017"
+CONTEXT_SCHEMA_VERSION = "rayline-router.modal-native-agt017.v1"
+RUN_LABEL = "AGT017"
+AGT017_APP_NAME = APP_NAME
+AGT017_WEBHOOK_LABEL = WEBHOOK_LABEL
+AGT017_RUN_ID = RUN_ID
+AGT017_PREREGISTRATION_COMMIT = PREREGISTRATION_COMMIT
+AGT017_AUTHORIZATION_COMMIT = AUTHORIZATION_COMMIT
+AGT017_MAX_COMPLETION_TOKENS = MAX_COMPLETION_TOKENS
+AGT017_PATHFINDER_BRANCH = PATHFINDER_BRANCH
+AGT017_SEMANTIC_BRANCH = SEMANTIC_BRANCH
+AGT017_ARTIFACT_REVISION = ARTIFACT_REVISION
+AGT017_KEY_LIMIT_USD = KEY_LIMIT_USD
+AGT017_MAXIMUM_PAID_SECONDS = MAXIMUM_PAID_SECONDS
+
+
+def _configure_generation(generation: str) -> None:
+    if generation not in {"agt017", "agt018"}:
+        raise ValueError(f"unknown native KV generation {generation!r}")
+    global APP_NAME
+    global WEBHOOK_LABEL
+    global ARTIFACT_VOLUME
+    global CONTEXT_DICT
+    global REGISTRATION_RECEIPTS_DICT
+    global OPENROUTER_SECRET
+    global ROUTER_URL
+    global KEY_LIMIT_USD
+    global MAXIMUM_PAID_SECONDS
+    global TRAINING_STAGE
+    global BENCHMARK
+    global APP_TITLE
+    global CONTEXT_SCHEMA_VERSION
+    global RUN_LABEL
+    global RUN_ID
+    global PREREGISTRATION_COMMIT
+    global AUTHORIZATION_COMMIT
+    global MAX_COMPLETION_TOKENS
+    global PATHFINDER_BRANCH
+    global SEMANTIC_BRANCH
+    global ARTIFACT_REVISION
+
+    is_successor = generation == "agt018"
+    APP_NAME = AGT018_NATIVE_APP_NAME if is_successor else AGT017_APP_NAME
+    WEBHOOK_LABEL = (
+        AGT018_NATIVE_WEBHOOK_LABEL if is_successor else AGT017_WEBHOOK_LABEL
+    )
+    ARTIFACT_VOLUME = APP_NAME
+    CONTEXT_DICT = APP_NAME
+    REGISTRATION_RECEIPTS_DICT = f"{CONTEXT_DICT}-registration-receipts"
+    OPENROUTER_SECRET = APP_NAME
+    ROUTER_URL = f"https://atlasfutures-dev--{WEBHOOK_LABEL}.modal.run"
+    KEY_LIMIT_USD = AGT018_KEY_LIMIT_USD if is_successor else AGT017_KEY_LIMIT_USD
+    MAXIMUM_PAID_SECONDS = (
+        AGT018_MAXIMUM_PAID_SECONDS if is_successor else AGT017_MAXIMUM_PAID_SECONDS
+    )
+    TRAINING_STAGE = (
+        "openrouter_kv_cache_agt018" if is_successor else "openrouter_kv_cache_agt017"
+    )
+    BENCHMARK = Path(__file__).with_name(
+        "openrouter_kv_cache_successor_benchmark.py"
+        if is_successor
+        else "openrouter_kv_cache_benchmark.py"
+    )
+    APP_TITLE = "Rayline AGT018" if is_successor else "Rayline AGT017"
+    CONTEXT_SCHEMA_VERSION = (
+        "rayline-router.modal-native-agt018.v1"
+        if is_successor
+        else "rayline-router.modal-native-agt017.v1"
+    )
+    RUN_LABEL = "AGT018" if is_successor else "AGT017"
+    RUN_ID = AGT018_RUN_ID if is_successor else AGT017_RUN_ID
+    PREREGISTRATION_COMMIT = (
+        AGT018_PREREGISTRATION_COMMIT if is_successor else AGT017_PREREGISTRATION_COMMIT
+    )
+    AUTHORIZATION_COMMIT = (
+        AGT018_AUTHORIZATION_COMMIT if is_successor else AGT017_AUTHORIZATION_COMMIT
+    )
+    MAX_COMPLETION_TOKENS = (
+        AGT018_MAX_COMPLETION_TOKENS if is_successor else AGT017_MAX_COMPLETION_TOKENS
+    )
+    PATHFINDER_BRANCH = (
+        AGT018_PATHFINDER_BRANCH if is_successor else AGT017_PATHFINDER_BRANCH
+    )
+    SEMANTIC_BRANCH = AGT018_SEMANTIC_BRANCH if is_successor else AGT017_SEMANTIC_BRANCH
+    ARTIFACT_REVISION = (
+        AGT018_ARTIFACT_REVISION if is_successor else AGT017_ARTIFACT_REVISION
+    )
 
 
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-id", default=RUN_ID)
+    parser.add_argument("--generation", choices=("agt017", "agt018"), default="agt017")
+    parser.add_argument("--run-id", default="")
     parser.add_argument("--pathfinder-root", required=True)
     parser.add_argument("--timeout-seconds", type=float, default=180.0)
     return parser.parse_args()
@@ -86,7 +206,7 @@ def _verify_authority(semantic_root: Path) -> None:
         ("authorization", AUTHORIZATION_COMMIT),
     ):
         if len(commit) != GIT_SHA_LENGTH:
-            raise RuntimeError(f"AGT017 {name} authority is source-closed")
+            raise RuntimeError(f"{RUN_LABEL} {name} authority is source-closed")
         support._git(
             semantic_root,
             "merge-base",
@@ -94,7 +214,10 @@ def _verify_authority(semantic_root: Path) -> None:
             commit,
             "HEAD",
         )
-    matched_budget_receipt()
+    if RUN_LABEL == "AGT017":
+        matched_budget_receipt()
+    elif KEY_LIMIT_USD <= 0 or MAXIMUM_PAID_SECONDS <= 0:
+        raise RuntimeError("AGT018 budget authority is source-closed")
 
 
 def _register_context(
@@ -102,7 +225,7 @@ def _register_context(
 ) -> None:
     os.environ["MODAL_ENVIRONMENT"] = environment["MODAL_ENVIRONMENT"]
     context = {
-        "schema_version": "rayline-router.modal-native-agt017.v1",
+        "schema_version": CONTEXT_SCHEMA_VERSION,
         "router_config_text": config_text,
         "router_config_text_sha256": hashlib.sha256(config_text.encode()).hexdigest(),
         "decision_log": f"/artifacts/{DECISION_LOG_REMOTE_PATH}",
@@ -120,7 +243,6 @@ def _prepare(
     semantic_root = Path(__file__).resolve().parents[3]
     pathfinder_root = Path(args.pathfinder_root).resolve()
     pathfinder_python = pathfinder_root / ".venv/bin/python"
-    _verify_authority(semantic_root)
     semantic_head = support._verify_source(
         semantic_root, SEMANTIC_BRANCH, "atlasfutures"
     )
@@ -129,7 +251,7 @@ def _prepare(
     )
     output_dir = semantic_root / ".agent-harness/rayline-kv-cache" / RUN_ID
     if output_dir.exists():
-        raise RuntimeError("AGT017 output directory already exists")
+        raise RuntimeError(f"{RUN_LABEL} output directory already exists")
     output_dir.mkdir(parents=True)
     environment = support._deploy_environment(os.environ.copy())
     support._assert_resources_absent(
@@ -159,7 +281,7 @@ def _measure(
     config_text = router_config_text(
         training_stage=TRAINING_STAGE,
         max_completion_tokens=MAX_COMPLETION_TOKENS,
-        app_title="Rayline AGT017",
+        app_title=APP_TITLE,
     )
     _register_context(
         token=router_token,
@@ -284,10 +406,16 @@ def _execute(
     key_hash: str,
     router_token: str,
 ) -> float:
-    with tempfile.TemporaryDirectory(prefix="rayline-agt017-") as temporary_name:
+    with tempfile.TemporaryDirectory(
+        prefix=f"rayline-{RUN_LABEL.lower()}-"
+    ) as temporary_name:
         temporary = Path(temporary_name)
         checkpoint_path = temporary / "native-openrouter-kv-cache.pt"
-        checkpoint = build_checkpoint(context.pathfinder_root, checkpoint_path)
+        checkpoint = build_checkpoint(
+            context.pathfinder_root,
+            checkpoint_path,
+            artifact_id=ARTIFACT_REVISION,
+        )
         app = support._deploy_router(
             context,
             checkpoint_path=checkpoint_path,
@@ -381,12 +509,12 @@ def _validate_completion(
         paid_started is not None
         and time.perf_counter() - paid_started > MAXIMUM_PAID_SECONDS
     ):
-        raise RuntimeError("AGT017 exceeded its paid wall-time ceiling")
+        raise RuntimeError(f"{RUN_LABEL} exceeded its paid wall-time ceiling")
     if usage > KEY_LIMIT_USD:
-        raise RuntimeError("AGT017 native OpenRouter key exceeded its hard limit")
+        raise RuntimeError(f"{RUN_LABEL} native OpenRouter key exceeded its hard limit")
     if primary_error is not None:
         if cleanup_error is not None:
-            primary_error.add_note("AGT017 cleanup also failed")
+            primary_error.add_note(f"{RUN_LABEL} cleanup also failed")
         raise primary_error
     if cleanup_error is not None:
         raise cleanup_error
@@ -394,8 +522,13 @@ def _validate_completion(
 
 def main() -> None:
     args = _args()
-    if args.run_id != RUN_ID:
+    _configure_generation(args.generation)
+    requested_run_id = args.run_id or RUN_ID
+    if requested_run_id != RUN_ID:
         raise SystemExit(f"launcher only permits {RUN_ID}")
+    args.run_id = requested_run_id
+    semantic_root = Path(__file__).resolve().parents[3]
+    _verify_authority(semantic_root)
     if modal.__version__ != REQUIRED_MODAL_VERSION:
         raise SystemExit(
             f"Modal SDK {REQUIRED_MODAL_VERSION} required; found {modal.__version__}"

@@ -35,6 +35,9 @@ class RunPacket:
     preflight_driver: Path | None = None
     provider_preflight: bool = False
     encoder: EncoderDeployment | None = None
+    expected_run_id: str = ""
+    modal_environment: str = ""
+    artifact_revision: str = ""
 
 
 @dataclass
@@ -63,4 +66,4 @@ class LaunchOutcome:
 
 
 def paid_wall_timeout(_signal_number: int, _frame: Any) -> None:
-    raise TimeoutError("AGT017 remote arm reached its maximum paid wall time")
+    raise TimeoutError("remote arm reached its maximum paid wall time")

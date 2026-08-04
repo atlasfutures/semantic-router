@@ -11,6 +11,15 @@ from openrouter_fullstack_state import EncoderDeployment, RunPacket
 from openrouter_kv_cache_matched_contract import (
     AGT017_RESOURCE_BUDGET,
     OPENROUTER_KEY_LIMIT_USD_PER_ARM,
+    RUN_ID as AGT017_RUN_ID,
+)
+from openrouter_kv_cache_successor_contract import (
+    ARTIFACT_REVISION as AGT018_ARTIFACT_REVISION,
+    RUN_ID as AGT018_RUN_ID,
+)
+from openrouter_kv_cache_successor_contract import (
+    SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM,
+    SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS,
 )
 
 
@@ -39,6 +48,7 @@ def packet_catalog(
     repo_root: Path,
     default_encoder: EncoderDeployment,
     flashinfer_encoder: EncoderDeployment,
+    successor_encoder: EncoderDeployment,
     *,
     canary_key_limit_usd: float,
     maximum_canary_seconds: int,
@@ -90,6 +100,23 @@ def packet_catalog(
             protected_encoder=True,
             provider_preflight=True,
             encoder=flashinfer_encoder,
+            expected_run_id=AGT017_RUN_ID,
+            modal_environment="dev",
+            artifact_revision="public-rayline-arc-openrouter-kv-cache-v2",
+        ),
+        "kv-cache-flashinfer-agt018": RunPacket(
+            compose_override=deploy_root / "compose-openrouter-kv-cache.yaml",
+            config=deploy_root / "config-openrouter-kv-cache.yaml",
+            driver=script_root / "openrouter_kv_cache_successor_remote.py",
+            project_name="rayline-arc-openrouter-kv-cache-flashinfer-agt018",
+            key_limit_usd=SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM,
+            maximum_seconds=SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS,
+            protected_encoder=True,
+            provider_preflight=True,
+            encoder=successor_encoder,
+            expected_run_id=AGT018_RUN_ID,
+            modal_environment="dev",
+            artifact_revision=AGT018_ARTIFACT_REVISION,
         ),
         "gateway-shape": RunPacket(
             compose_override=agentic_override,

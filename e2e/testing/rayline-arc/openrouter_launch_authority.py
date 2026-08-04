@@ -13,6 +13,12 @@ from openrouter_kv_cache_matched_contract import (
 from openrouter_kv_cache_matched_contract import (
     PREREGISTRATION_COMMIT as AGT017_PREREGISTRATION_COMMIT,
 )
+from openrouter_kv_cache_successor_contract import (
+    AUTHORIZATION_COMMIT as AGT018_AUTHORIZATION_COMMIT,
+)
+from openrouter_kv_cache_successor_contract import (
+    PREREGISTRATION_COMMIT as AGT018_PREREGISTRATION_COMMIT,
+)
 
 GIT_SHA1_HEX_LENGTH = 40
 SOURCE_REMOTE_REF = "atlasfutures/codex/rayline-remote-mvp"
@@ -23,6 +29,10 @@ AUTHORITY_PINS = {
     "kv-cache-flashinfer": (
         AGT017_PREREGISTRATION_COMMIT,
         AGT017_AUTHORIZATION_COMMIT,
+    ),
+    "kv-cache-flashinfer-agt018": (
+        AGT018_PREREGISTRATION_COMMIT,
+        AGT018_AUTHORIZATION_COMMIT,
     ),
     "gateway-shape": ("", ""),
     "gateway-prime": ("", ""),

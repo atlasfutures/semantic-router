@@ -60,7 +60,12 @@ def _model_meta(model_meta_type: Any) -> list[Any]:
     ]
 
 
-def build_checkpoint(pathfinder_root: Path, output: Path) -> dict[str, Any]:
+def build_checkpoint(
+    pathfinder_root: Path,
+    output: Path,
+    *,
+    artifact_id: str = "",
+) -> dict[str, Any]:
     torch, config_type, estimator_type, model_meta_type = _load_pathfinder(
         pathfinder_root
     )
@@ -114,7 +119,7 @@ def build_checkpoint(pathfinder_root: Path, output: Path) -> dict[str, Any]:
             case["selected_index"]
         ):
             raise RuntimeError("native checkpoint changed the ARC selection")
-    return {
+    receipt = {
         "checkpoint_sha256": digest,
         "golden_cases": len(golden["cases"]),
         "worker_pool": [str(worker["id"]) for worker in WORKERS],
@@ -123,6 +128,9 @@ def build_checkpoint(pathfinder_root: Path, output: Path) -> dict[str, Any]:
         "serialization": SERIALIZER,
         "pooling": "masked_mean",
     }
+    if artifact_id:
+        receipt["artifact_id"] = artifact_id
+    return receipt
 
 
 def router_config_text(

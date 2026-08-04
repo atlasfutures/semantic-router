@@ -115,12 +115,19 @@ class CanaryClient:
         )
 
     def close(self, episode_id: str) -> None:
+        if not self.close_if_present(episode_id):
+            raise RuntimeError("retained session did not close cleanly")
+
+    def close_if_present(self, episode_id: str) -> bool:
+        """Idempotently close a session that may have failed during creation."""
+
         response, _elapsed = self.request(
             "DELETE",
             f"/v1/rayline/arc/session/{episode_id}",
         )
-        if response != {"closed": True}:
-            raise RuntimeError("retained session did not close cleanly")
+        if set(response) != {"closed"} or not isinstance(response["closed"], bool):
+            raise RuntimeError("retained session close response was malformed")
+        return bool(response["closed"])
 
 
 def _validate_response(

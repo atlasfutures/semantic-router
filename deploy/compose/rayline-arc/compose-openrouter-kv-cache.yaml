@@ -2,6 +2,8 @@ name: rayline-arc-openrouter-kv-cache
 
 services:
   artifact-init:
+    environment:
+      RAYLINE_ARC_ARTIFACT_REVISION: ${RAYLINE_ARC_E2E_ARTIFACT_REVISION:-public-rayline-arc-openrouter-kv-cache-v2}
     command:
       - sh
       - -ceu

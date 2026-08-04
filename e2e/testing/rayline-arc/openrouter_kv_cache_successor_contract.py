@@ -29,6 +29,10 @@ REMOTE_APP_NAME = "rayline-arc-session-encoder-flashinfer-agt018"
 REMOTE_CLASS_NAME = "SessionEncoder"
 ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v3"
 MAX_COMPLETION_TOKENS = 24
+# Fail-closed packet placeholders. A reviewed budget contract must replace both
+# values in the same checkpoint that opens the two source-authority pins.
+SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM = 0.0
+SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS = 0
 
 PROVIDER_PREFLIGHT_REQUESTS_PER_DEPLOYMENT = 3
 DEPLOYMENTS = 2
@@ -68,6 +72,11 @@ def validate() -> dict[str, Any]:
         or MAXIMUM_EXTERNAL_ATTEMPTS != EXPECTED_MAXIMUM_EXTERNAL_ATTEMPTS
     ):
         raise RuntimeError("AGT018 provider request or attempt envelope diverged")
+    if (
+        SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM != 0
+        or SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS != 0
+    ):
+        raise RuntimeError("AGT018 source-closed resource envelope diverged")
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": RUN_ID,

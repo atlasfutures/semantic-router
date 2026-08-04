@@ -13,7 +13,8 @@ from pathlib import Path
 from openrouter_encoder_runtime import packet_encoder, plugin_source_digest
 from openrouter_fullstack_state import RunPacket, RuntimeState
 
-KV_MODES = frozenset({"kv-cache", "kv-cache-flashinfer"})
+KV_MODES = frozenset({"kv-cache", "kv-cache-flashinfer", "kv-cache-flashinfer-agt018"})
+FLASHINFER_KV_MODES = frozenset({"kv-cache-flashinfer", "kv-cache-flashinfer-agt018"})
 
 
 def _source_commit(repo_root: Path) -> str:
@@ -60,7 +61,7 @@ def persist(
         "encoder_gpu": "H100",
         "encoder_build_id": encoder.build_id,
         "encoder_gdn_prefill_backend": (
-            "flashinfer" if mode == "kv-cache-flashinfer" else "torch_reference"
+            "flashinfer" if mode in FLASHINFER_KV_MODES else "torch_reference"
         ),
         "encoder_deployment_source_commit": (
             source_commit if encoder.ephemeral else encoder.deployment_source_commit
@@ -73,6 +74,8 @@ def persist(
         "encoder_ephemeral": encoder.ephemeral,
         "semantic_router_commit": source_commit,
     }
+    if packet.artifact_revision:
+        deployment["artifact_revision"] = packet.artifact_revision
     (output_dir / "remote-deployment.json").write_text(
         json.dumps(deployment, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",

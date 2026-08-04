@@ -3517,13 +3517,35 @@ score gap is `0.0019787615092044693`, above the frozen `0.0015` gate. No
 OpenRouter, Modal, or external GPU call was made, and no prompt or raw embedding
 was emitted in the aggregate result.
 
+AGT018c source preparation is now wired end to end without opening launch
+authority. The native launcher has an `agt018` generation that atomically
+switches the run, app, webhook, context, artifact, training-stage, and benchmark
+identities while reusing the established exact cleanup path. The remote
+launcher has a distinct `kv-cache-flashinfer-agt018` packet and injects artifact
+revision v3 into both artifact generation and router startup. Both paths retain
+zero key/time ceilings and empty authority pins, and authority is checked before
+credentials or paid resources are requested.
+
+The remote benchmark calls the protected vLLM encoder directly for all nine
+frozen states after encoder activation and before the first routed provider
+request. It requires the exact `C/C/C`, `A/A/A`, and `B/B/B` traces, the frozen
+score-margin floor, created/append revision order, exact retained prefixes, and
+explicit cleanup of all three probe sessions. Its aggregate evidence contains
+no prompts or embeddings. The v3 reporter joins all 36 native decisions,
+validates 36 remote cells, permits at most one server-owned retry per measured
+request, and reports whole-run plus per-sequence and per-model latency, observed
+first-token time, router/encoder time, token work, output-token throughput,
+retry, provider, and cost aggregates. Synthetic contract tests cover the full
+78-request evidence shape; no provider or GPU request was made during this
+source-only step.
+
 - [x] AGT018a: Add crash-durable request evidence, pre-GPU provider
   availability, matched server-owned 429/503 retry, and semantic/static claim
   separation without reopening AGT017.
 - [x] AGT018b: Freeze and exact-native-verify a realistic three-worker growing
   history suite, new run/app/artifact/report identities, 78-request and
   156-attempt maxima, and source-closed acceptance gates.
-- [ ] AGT018c: Wire the successor workload and v3 reporter into new launch
+- [x] AGT018c: Wire the successor workload and v3 reporter into new launch
   modes. After GPU activation but before routed provider measurement, require
   the vLLM-hosted encoder to reproduce all nine selected-worker states and the
   minimum score-margin gate; abort and clean up on divergence.
