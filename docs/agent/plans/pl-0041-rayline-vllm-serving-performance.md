@@ -3306,7 +3306,7 @@ allowlist, and requires a new source/authorization chain. Charging its complete
 `$9.0308736` envelope would raise cumulative conservative accounting to
 `$123.957083866383` and leave `$10.355740153617` under current authority.
 
-- [ ] PERF030a: Validate and push the source-closed runtime-identity fix.
+- [x] PERF030a: Validate and push the source-closed runtime-identity fix.
 - [ ] PERF030b: Bind separate authorization and execute the two exact apps once.
 - [ ] PERF030c: Verify exact cleanup, persist aggregate evidence, permanently
   close authority, and act only on a frozen accepted/rejected candidate result.
