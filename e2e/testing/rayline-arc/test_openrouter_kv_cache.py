@@ -204,6 +204,32 @@ def test_report_enforces_a_smaller_retained_token_work_envelope() -> None:
         assert deployment["paths"]["replay"]["retries"] == 0
 
 
+def test_incomplete_report_preserves_remote_metrics_after_native_429() -> None:
+    remote = _remote_client()
+    report = reporting.build_incomplete_report(
+        native_failure={
+            "run_id": RUN_ID,
+            "deployment": "native_modal",
+            "http_status": 429,
+        },
+        remote=copy.deepcopy(remote),
+        remote_deployment=_remote_deployment(),
+        native_key_usage=0.002,
+        remote_key_usage=0.005,
+        cleanup_receipt={"passed": True},
+    )
+    assert report["status"] == "failed_incomplete"
+    assert report["acceptance"]["passed"] is False
+    assert report["acceptance"]["gates"]["native_arm_complete"] is False
+    assert report["acceptance"]["gates"]["flashinfer_retained_token_saving"] is True
+    assert report["deployments"]["remote_vllm"]["paths"]["retained"]["retries"] == 0
+    assert (
+        report["completed_provider_requests"]["remote_vllm"]
+        == EXPECTED_REQUESTS_PER_DEPLOYMENT
+    )
+    assert report["cleanup"] == {"passed": True}
+
+
 def test_report_marks_a_completion_policy_deviation() -> None:
     native, decisions = _native_client()
     remote = _remote_client()
@@ -267,10 +293,10 @@ def _remote_deployment() -> dict[str, object]:
     }
 
 
-def test_paid_remote_launch_is_bound_to_pushed_authority() -> None:
+def test_paid_remote_launch_is_permanently_source_closed() -> None:
     preregistration, authorization = authority.AUTHORITY_PINS["kv-cache-flashinfer"]
-    assert preregistration == "b827fdafeae14ee0699107e74ac3c870d33f3388"
-    assert authorization == "eee540c80a3650e805a8c68c1576376739898913"
+    assert preregistration == ""
+    assert authorization == ""
 
 
 def test_matched_artifact_freezes_the_24_token_worker_contract(tmp_path) -> None:

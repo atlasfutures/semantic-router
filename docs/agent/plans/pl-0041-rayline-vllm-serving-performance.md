@@ -3399,14 +3399,65 @@ at least `$1.224866553617` under the existing `$134.31282402` authority.
 
 - [x] AGT017a: Pass focused and repository gates, push the signed source-closed
   preregistration checkpoint, then bind a separate authorization checkpoint.
-- [ ] AGT017b: Execute the native and FlashInfer remote arms once each and
+- [x] AGT017b: Execute the native and FlashInfer remote arms once each and
   verify exact cleanup before interpreting measurements.
-- [ ] AGT017c: Build the aggregate-only receipt, enforce the frozen acceptance
+- [x] AGT017c: Build the aggregate-only receipt, enforce the frozen acceptance
   gates, persist private evidence, close authority, and record the next action.
 
 The region-local/internal transport comparison remains the next separate
 packet. It must not be folded into AGT017 or used to reinterpret this public
 HTTP result.
+
+#### AGT017 Result
+
+AGT017 is a valid failed-incomplete experiment, not a native-versus-remote
+parity result. The native Pathfinder arm reached the real-provider workload
+but OpenRouter returned HTTP 429 before a complete client/decision pair was
+durably written. The frozen zero-retry rule stopped the arm rather than hiding
+the provider failure. Its final management-key observation was `$0.002755288`.
+No native latency, throughput, cache-effect, completion-parity, or selection-
+parity claim is made.
+
+The FlashInfer Semantic Router plus vLLM arm completed 12/12 requests in
+`26.4416s`, exactly one external attempt per request and zero retries, for
+`0.45383` serial request/s. All requests selected worker-a,
+`deepseek/deepseek-v4-flash`, through its allowed Baidu provider; MiMo V2.5
+and HY3 therefore remained configured but unobserved in this workload.
+Management-key usage was `$0.00543308`, bringing exact observed provider-key
+usage to `$0.008188368` across both arms.
+
+In steady episode 1, retained vLLM sessions reduced encoder token work from
+`53,922` to `20,788` (`61.448%`). Retained versus replay router mean was
+`0.28695s` versus `0.37389s`, and encoder mean was `0.28114s` versus
+`0.36822s`. End-to-end mean was `1.64269s` retained versus `1.56902s` replay,
+so provider variance outweighed the router saving in that small three-request
+cell. Observed-first-token mean was `1.33064s` retained versus `1.36744s`
+replay. The remote router sub-gate passed: `0.28695s` is `0.23035x` AGT016's
+`1.2457s` reference-vLLM mean, about `4.34x` faster. This is evidence that the
+FlashInfer/GDN change removes most of the prior encoder bottleneck, but AGT016
+had a different completion policy and AGT017 lacks a completed native arm, so
+it is not end-to-end parity evidence.
+
+Cleanup passed. The native exact-name app-owned resources and key are absent.
+The FlashInfer candidate app is stopped with zero tasks, Compose state and its
+key/proxy token are absent, and the protected reference app remains deployed
+with zero tasks. Charging the full frozen `$9.1308736` envelope bounds
+cumulative accounting at `$133.087957466383`, leaving
+`$1.224866553617` under authority. The 1,000-case qualification remains held.
+
+The aggregate-only failure receipt is private at
+`rayline-ai/router-artifacts/runs/rayline-openrouter-kv-cache-agt017-20260804`,
+revision `0c8af7341dcb45140764f0f6459d8c712aa76629`, SHA-256
+`415bffd57abbd4f1f0f754db93f72f0f10c7ade3690ac120560f2bbf69e0f778`.
+It passed credential and prompt-marker scans, round-tripped byte-exactly, and
+returned HTTP 401 without authentication. Both AGT017 source pins are closed.
+
+Before the separate internal-transport packet, the next real-provider packet
+should add per-request durable journaling, a provider-availability gate before
+paid GPU launch, and a matched bounded 429 policy for both architectures. Its
+public synthetic cases must preregister and offline-prove coverage of all three
+configured workers; AGT017 showed that one realistic history shape alone does
+not exercise a three-model pool.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
