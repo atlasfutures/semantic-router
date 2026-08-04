@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import itertools
 import importlib.machinery
 import importlib.util
+import itertools
 import json
 import math
 import sys
@@ -18,14 +18,15 @@ if "modal" not in sys.modules and importlib.util.find_spec("modal") is None:
     modal_stub.__spec__ = importlib.machinery.ModuleSpec("modal", loader=None)
     sys.modules["modal"] = modal_stub
 
+import openrouter_agentic_stage_metrics as stage_metrics
+import openrouter_kv_cache_artifact_fixture as artifact_fixture
 import openrouter_kv_cache_successor_benchmark as successor_benchmark
 import openrouter_kv_cache_successor_contract as successor_contract
 import openrouter_kv_cache_successor_remote_gate as remote_gate
 import openrouter_kv_cache_successor_workload as workload
 import openrouter_launch_authority as launch_authority
-import openrouter_kv_cache_artifact_fixture as artifact_fixture
-import run_openrouter_kv_cache_native as native_launcher
 import pytest
+import run_openrouter_kv_cache_native as native_launcher
 import yaml
 from openrouter_agentic_workload import WORKERS
 from openrouter_fullstack_packets import packet_catalog
@@ -33,6 +34,9 @@ from openrouter_fullstack_state import EncoderDeployment
 
 EXPECTED_REQUESTS_PER_DEPLOYMENT = 36
 EXPECTED_MAXIMUM_EXTERNAL_ATTEMPTS = 156
+EXPECTED_ENCODER_STATES = len(workload.SEQUENCE_IDS) * workload.STEPS
+EXPECTED_PROBE_SESSIONS = len(workload.SEQUENCE_IDS)
+EXPECTED_STARTED_SESSIONS_ON_FAILURE = 2
 
 
 def _embedding(axis: float) -> tuple[float, ...]:
@@ -176,8 +180,7 @@ def test_successor_remote_packet_is_source_closed_before_resource_use(tmp_path) 
     packet = packet_catalog(
         tmp_path,
         encoder,
-        encoder,
-        encoder,
+        tmp_path / "service.py",
         canary_key_limit_usd=0.25,
         maximum_canary_seconds=60,
     )["kv-cache-flashinfer-agt018"]
@@ -219,6 +222,26 @@ def test_successor_native_mode_switches_identity_and_stays_source_closed(
         native_launcher._configure_generation("agt017")
 
 
+def test_successor_remote_client_requires_the_flashinfer_build(monkeypatch) -> None:
+    monkeypatch.setenv(stage_metrics.ENCODER_BASE_URL_ENV, "https://encoder.invalid")
+    monkeypatch.setenv(stage_metrics.ENCODER_KEY_ENV, "test-key")
+    monkeypatch.setenv(stage_metrics.ENCODER_SECRET_ENV, "test-secret")
+    monkeypatch.setenv(
+        stage_metrics.ENCODER_BUILD_ID_ENV,
+        successor_contract.REMOTE_ENGINE_BUILD_ID,
+    )
+    client = stage_metrics.encoder_client_from_environment(1.0)
+    assert client.expected_engine_build_id == successor_contract.REMOTE_ENGINE_BUILD_ID
+
+
+def test_successor_modal_app_is_registered_as_flashinfer() -> None:
+    service = (
+        Path(__file__).resolve().parents[3]
+        / "src/vllm-plugins/rayline_arc_io/modal_session_service.py"
+    ).read_text()
+    assert f'"{successor_contract.REMOTE_APP_NAME}": "flashinfer"' in service
+
+
 def test_successor_artifact_revision_flows_through_fixture_and_config(
     tmp_path,
 ) -> None:
@@ -242,10 +265,10 @@ def test_remote_encoder_gate_covers_nine_states_and_emits_no_payloads() -> None:
     report = remote_gate.verify_remote_encoder(client, successor_contract.RUN_ID)
 
     assert report["status"] == "passed"
-    assert report["states"] == 9
-    assert report["sessions_closed"] == 3
+    assert report["states"] == EXPECTED_ENCODER_STATES
+    assert report["sessions_closed"] == EXPECTED_PROBE_SESSIONS
     assert report["selected_workers"] == sorted(WORKERS)
-    assert len(client.closed) == 3
+    assert len(client.closed) == EXPECTED_PROBE_SESSIONS
     encoded = json.dumps(report)
     assert '"embedding":' not in encoded
     assert '"messages":' not in encoded
@@ -256,7 +279,7 @@ def test_remote_encoder_gate_closes_started_sessions_after_failure() -> None:
     client = _ParityClient(fail_at=4)
     with pytest.raises(RuntimeError, match="synthetic parity failure"):
         remote_gate.verify_remote_encoder(client, successor_contract.RUN_ID)
-    assert len(client.closed) == 2
+    assert len(client.closed) == EXPECTED_STARTED_SESSIONS_ON_FAILURE
 
 
 def _args(deployment: str) -> Namespace:

@@ -9,14 +9,16 @@ from collections import Counter
 from typing import Any
 
 import openrouter_kv_cache_reporting as legacy
-from modal_session_canary import ENGINE_BUILD_ID
 from openrouter_agentic_workload import PROVIDER_NAMES, WORKERS
 from openrouter_kv_cache_successor_contract import (
     ARTIFACT_REVISION,
+    MAX_COMPLETION_TOKENS,
     MAXIMUM_EXTERNAL_ATTEMPTS,
     MAXIMUM_LOGICAL_PROVIDER_REQUESTS,
     NATIVE_APP_NAME,
     REMOTE_APP_NAME,
+    REMOTE_ENGINE_BUILD_ID,
+    REMOTE_GDN_PREFILL_BACKEND,
     REPORT_SCHEMA_VERSION,
     RUN_ID,
 )
@@ -26,14 +28,21 @@ from openrouter_kv_cache_successor_workload import (
     EXPECTED_REQUESTS_PER_DEPLOYMENT,
     EXPECTED_SELECTION_TRACES,
     MINIMUM_TOP_TWO_SCORE_GAP,
-    OFFLINE_REPORT_SCHEMA_VERSION,
-    SCHEMA_VERSION as WORKLOAD_SCHEMA_VERSION,
-    SEQUENCE_IDS,
     MODES,
+    OFFLINE_REPORT_SCHEMA_VERSION,
+    SEQUENCE_IDS,
     STEPS,
+)
+from openrouter_kv_cache_successor_workload import (
+    SCHEMA_VERSION as WORKLOAD_SCHEMA_VERSION,
 )
 from openrouter_modal_native_benchmark import _decision_cost
 from openrouter_provider_preflight_contract import validate_report as validate_preflight
+
+EXPECTED_ENCODER_STATES = len(SEQUENCE_IDS) * STEPS
+EXPECTED_PROBE_SESSIONS = len(SEQUENCE_IDS)
+MAXIMUM_ATTEMPTS_PER_MEASURED_REQUEST = 2
+EXPECTED_MODES_PER_CELL = len(MODES)
 
 
 def _cell_key(row: dict[str, Any]) -> tuple[str, str, int, int]:
@@ -70,7 +79,7 @@ def _validate_encoder_gates(offline: dict[str, Any], remote: dict[str, Any]) -> 
         or offline.get("encoder", {}).get("artifact_id") != ENCODER_ARTIFACT_ID
         or offline.get("all_workers_covered") is not True
         or not isinstance(offline_observations, list)
-        or len(offline_observations) != 9
+        or len(offline_observations) != EXPECTED_ENCODER_STATES
         or float(offline.get("minimum_top_two_score_gap") or 0)
         < MINIMUM_TOP_TWO_SCORE_GAP
         or offline.get("prompt_text_emitted") is not False
@@ -81,12 +90,12 @@ def _validate_encoder_gates(offline: dict[str, Any], remote: dict[str, Any]) -> 
     if (
         not isinstance(parity, dict)
         or parity.get("status") != "passed"
-        or parity.get("states") != 9
-        or len(parity.get("observations") or []) != 9
+        or parity.get("states") != EXPECTED_ENCODER_STATES
+        or len(parity.get("observations") or []) != EXPECTED_ENCODER_STATES
         or float(parity.get("minimum_top_two_score_gap") or 0)
         < MINIMUM_TOP_TWO_SCORE_GAP
         or parity.get("provider_calls") != 0
-        or parity.get("sessions_closed") != 3
+        or parity.get("sessions_closed") != EXPECTED_PROBE_SESSIONS
         or parity.get("prompt_text_emitted") is not False
         or parity.get("raw_embeddings_emitted") is not False
     ):
@@ -168,7 +177,7 @@ def _validate_client(client: dict[str, Any], deployment: str) -> None:
         ):
             raise RuntimeError("AGT018 natural selection trace diverged")
         attempts = int(result.get("external_attempts") or 0)
-        if not 1 <= attempts <= 2:
+        if not 1 <= attempts <= MAXIMUM_ATTEMPTS_PER_MEASURED_REQUEST:
             raise RuntimeError("AGT018 measured request attempt envelope diverged")
     expected_cells = {
         (sequence_id, mode, episode, step)
@@ -194,7 +203,7 @@ def _validate_pairing(client: dict[str, Any]) -> None:
         raise RuntimeError("AGT018 retained/replay cell envelope diverged")
     for pair in grouped.values():
         if (
-            len(pair) != 2
+            len(pair) != EXPECTED_MODES_PER_CELL
             or {row["mode"] for row in pair} != {"retained", "replay"}
             or len({int(row["completion_tokens"]) for row in pair}) != 1
         ):
@@ -262,8 +271,8 @@ def _validate_identity(
     expected_remote = {
         "encoder_app_name": REMOTE_APP_NAME,
         "encoder_gpu": "H100",
-        "encoder_build_id": ENGINE_BUILD_ID,
-        "encoder_gdn_prefill_backend": "flashinfer",
+        "encoder_build_id": REMOTE_ENGINE_BUILD_ID,
+        "encoder_gdn_prefill_backend": REMOTE_GDN_PREFILL_BACKEND,
         "encoder_ephemeral": True,
         "artifact_revision": ARTIFACT_REVISION,
     }
@@ -298,17 +307,51 @@ def _completion_contract(
     }
     matched = values["native_modal"] == values["remote_vllm"]
     within_cap = (
-        requested == {24}
-        and max((*values["native_modal"], *values["remote_vllm"]), default=0) <= 24
+        requested == {MAX_COMPLETION_TOKENS}
+        and max((*values["native_modal"], *values["remote_vllm"]), default=0)
+        <= MAX_COMPLETION_TOKENS
     )
     return {
-        "requested_max_tokens": 24,
+        "requested_max_tokens": MAX_COMPLETION_TOKENS,
         "native_observed_completion_token_values": values["native_modal"],
         "remote_observed_completion_token_values": values["remote_vllm"],
         "within_deployment_retained_replay_parity": True,
         "cross_deployment_matched": matched,
         "within_requested_cap": within_cap,
         "cross_deployment_e2e_comparable": matched and within_cap,
+    }
+
+
+def _acceptance_gates(
+    *,
+    deployments: dict[str, Any],
+    identity: dict[str, bool],
+    completion: dict[str, Any],
+    attempts_passed: bool,
+    budget_passed: bool,
+    cleanup_passed: bool,
+) -> dict[str, bool]:
+    return {
+        "exact_source_and_artifact_identity": all(identity.values()),
+        "provider_preflight_all_three_models": True,
+        "native_offline_three_worker_coverage": True,
+        "remote_encoder_trace_matches_offline_trace": True,
+        "native_remote_selected_worker_trace_parity": True,
+        "native_retained_token_saving": (
+            deployments["native_modal"]["steady_state"]["comparison"][
+                "retained_token_work_saved_fraction"
+            ]
+            > 0
+        ),
+        "remote_retained_token_saving": (
+            deployments["remote_vllm"]["steady_state"]["comparison"][
+                "retained_token_work_saved_fraction"
+            ]
+            > 0
+        ),
+        "matched_completion_policy": completion["cross_deployment_e2e_comparable"],
+        "request_attempt_and_cost_envelopes": attempts_passed and budget_passed,
+        "privacy_and_cleanup": cleanup_passed,
     }
 
 
@@ -350,33 +393,16 @@ def build_report(
     budget_passed = provider_spend <= float(
         budget_receipt["maximum_provider_spend_usd"]
     )
-    attempts_passed = (
-        actual_attempts <= MAXIMUM_EXTERNAL_ATTEMPTS
-        and MAXIMUM_LOGICAL_PROVIDER_REQUESTS == 78
-    )
+    attempts_passed = actual_attempts <= MAXIMUM_EXTERNAL_ATTEMPTS
     cleanup_passed = cleanup_receipt.get("passed") is True
-    gates = {
-        "exact_source_and_artifact_identity": all(identity.values()),
-        "provider_preflight_all_three_models": True,
-        "native_offline_three_worker_coverage": True,
-        "remote_encoder_trace_matches_offline_trace": True,
-        "native_remote_selected_worker_trace_parity": True,
-        "native_retained_token_saving": (
-            deployments["native_modal"]["steady_state"]["comparison"][
-                "retained_token_work_saved_fraction"
-            ]
-            > 0
-        ),
-        "remote_retained_token_saving": (
-            deployments["remote_vllm"]["steady_state"]["comparison"][
-                "retained_token_work_saved_fraction"
-            ]
-            > 0
-        ),
-        "matched_completion_policy": completion["cross_deployment_e2e_comparable"],
-        "request_attempt_and_cost_envelopes": attempts_passed and budget_passed,
-        "privacy_and_cleanup": cleanup_passed,
-    }
+    gates = _acceptance_gates(
+        deployments=deployments,
+        identity=identity,
+        completion=completion,
+        attempts_passed=attempts_passed,
+        budget_passed=budget_passed,
+        cleanup_passed=cleanup_passed,
+    )
     return {
         "schema_version": REPORT_SCHEMA_VERSION,
         "run_id": RUN_ID,

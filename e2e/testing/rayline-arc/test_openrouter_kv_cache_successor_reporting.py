@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import itertools
 
 import openrouter_kv_cache_successor_reporting as reporting
 import pytest
@@ -17,97 +18,91 @@ from openrouter_kv_cache_successor_workload import (
     ENCODER_ARTIFACT_ID,
     EXPECTED_SELECTION_TRACES,
     OFFLINE_REPORT_SCHEMA_VERSION,
-    SCHEMA_VERSION as WORKLOAD_SCHEMA_VERSION,
     SEQUENCE_IDS,
 )
+from openrouter_kv_cache_successor_workload import (
+    SCHEMA_VERSION as WORKLOAD_SCHEMA_VERSION,
+)
 from openrouter_provider_preflight_contract import REPORT_SCHEMA
+
+EXPECTED_LOGICAL_PROVIDER_REQUESTS = 78
+EXPECTED_NO_RETRY_EXTERNAL_ATTEMPTS = 78
+EXPECTED_ONE_RETRY_EXTERNAL_ATTEMPTS = 79
+EXPECTED_REMOTE_TO_NATIVE_THROUGHPUT_RATIO = 2.0
 
 
 def _client(deployment: str) -> tuple[dict[str, object], list[dict[str, object]]]:
     results: list[dict[str, object]] = []
     decisions: list[dict[str, object]] = []
     serialized = [100, 150, 200]
-    for sequence_id in SEQUENCE_IDS:
-        for episode in range(2):
-            for step in range(3):
-                worker = EXPECTED_SELECTION_TRACES[sequence_id][step]
-                for mode in ("retained", "replay"):
-                    request_id = f"{deployment}-{sequence_id}-{episode}-{step}-{mode}"
-                    common = {
-                        "sequence_id": sequence_id,
-                        "mode": mode,
-                        "episode": episode,
-                        "step": step,
-                        "request_id": request_id,
-                        "selected_worker": worker,
-                        "expected_worker": worker,
-                        "total_seconds": 1.0,
-                        "first_token_seconds": 0.8,
-                        "external_attempts": 1,
-                        "cost_usd": 0.001,
-                        "completion_tokens": 24,
-                    }
-                    if deployment == "remote_vllm":
-                        work = (
-                            50 if mode == "retained" and step > 0 else serialized[step]
-                        )
-                        common.update(
-                            {
-                                "session_action": (
-                                    "appended"
-                                    if mode == "retained" and step > 0
-                                    else "created"
-                                ),
-                                "provider": PROVIDER_NAMES[worker][0],
-                                "prompt_tokens": serialized[step],
-                                "router_stage": {
-                                    "mean_decomposition": {
-                                        "router_seconds": 0.2,
-                                        "encoder_seconds": 0.19,
-                                        "router_non_encoder_seconds": 0.01,
-                                    }
-                                },
-                                "encoder_stage": {
-                                    "coordinator": {
-                                        "backend_appended_tokens": work,
-                                    }
-                                },
-                            }
-                        )
-                    results.append(common)
-                    if deployment == "native_modal":
-                        cached = (
-                            serialized[step] - 50
-                            if mode == "retained" and step > 0
-                            else 0
-                        )
-                        decisions.append(
-                            {
-                                "request_id": request_id,
-                                "error": "",
-                                "selected_worker": worker,
-                                "served_model": WORKERS[worker],
-                                "served_provider": PROVIDER_NAMES[worker][0],
-                                "decision_latency_ms": 100,
-                                "features": {
-                                    "serialized_tokens": serialized[step],
-                                    "cached_prefix_tokens": cached,
-                                    "encode_mode": (
-                                        "delta"
-                                        if mode == "retained" and step > 0
-                                        else "prefill"
-                                    ),
-                                    "embedding_latency_ms": 90,
-                                    "q_latency_ms": 10,
-                                },
-                                "transport": {"attempts": [{"status": "success"}]},
-                                "settlement_cost_basis": {
-                                    "provider_charged_usd": 0.001,
-                                },
-                                "input_tokens": serialized[step],
-                                "output_tokens": 24,
-                            }
-                        )
+    cells = itertools.product(
+        SEQUENCE_IDS,
+        range(2),
+        range(3),
+        ("retained", "replay"),
+    )
+    for sequence_id, episode, step, mode in cells:
+        worker = EXPECTED_SELECTION_TRACES[sequence_id][step]
+        request_id = f"{deployment}-{sequence_id}-{episode}-{step}-{mode}"
+        common = {
+            "sequence_id": sequence_id,
+            "mode": mode,
+            "episode": episode,
+            "step": step,
+            "request_id": request_id,
+            "selected_worker": worker,
+            "expected_worker": worker,
+            "total_seconds": 1.0,
+            "first_token_seconds": 0.8,
+            "external_attempts": 1,
+            "cost_usd": 0.001,
+            "completion_tokens": 24,
+        }
+        if deployment == "remote_vllm":
+            work = 50 if mode == "retained" and step > 0 else serialized[step]
+            common.update(
+                {
+                    "session_action": (
+                        "appended" if mode == "retained" and step > 0 else "created"
+                    ),
+                    "provider": PROVIDER_NAMES[worker][0],
+                    "prompt_tokens": serialized[step],
+                    "router_stage": {
+                        "mean_decomposition": {
+                            "router_seconds": 0.2,
+                            "encoder_seconds": 0.19,
+                            "router_non_encoder_seconds": 0.01,
+                        }
+                    },
+                    "encoder_stage": {"coordinator": {"backend_appended_tokens": work}},
+                }
+            )
+        results.append(common)
+        if deployment == "native_modal":
+            cached = serialized[step] - 50 if mode == "retained" and step > 0 else 0
+            decisions.append(
+                {
+                    "request_id": request_id,
+                    "error": "",
+                    "selected_worker": worker,
+                    "served_model": WORKERS[worker],
+                    "served_provider": PROVIDER_NAMES[worker][0],
+                    "decision_latency_ms": 100,
+                    "features": {
+                        "serialized_tokens": serialized[step],
+                        "cached_prefix_tokens": cached,
+                        "encode_mode": (
+                            "delta" if mode == "retained" and step > 0 else "prefill"
+                        ),
+                        "embedding_latency_ms": 90,
+                        "q_latency_ms": 10,
+                    },
+                    "transport": {"attempts": [{"status": "success"}]},
+                    "settlement_cost_basis": {"provider_charged_usd": 0.001},
+                    "input_tokens": serialized[step],
+                    "output_tokens": 24,
+                }
+            )
     return (
         {
             "schema_version": "rayline.openrouter-kv-cache-client.v2",
@@ -191,7 +186,9 @@ def _inputs() -> dict[str, object]:
         "remote_deployment": {
             "encoder_app_name": REMOTE_APP_NAME,
             "encoder_gpu": "H100",
-            "encoder_build_id": "vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca",
+            "encoder_build_id": (
+                "vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca" "+gdn-flashinfer-eager"
+            ),
             "encoder_gdn_prefill_backend": "flashinfer",
             "encoder_ephemeral": True,
             "artifact_revision": ARTIFACT_REVISION,
@@ -222,13 +219,15 @@ def test_v3_report_aggregates_each_natural_model_and_architecture() -> None:
 
     assert report["schema_version"] == "rayline.openrouter-kv-cache-comparison.v3"
     assert report["status"] == "passed"
-    assert report["actual_logical_provider_requests"] == 78
-    assert report["actual_external_attempts"] == 78
+    assert (
+        report["actual_logical_provider_requests"] == EXPECTED_LOGICAL_PROVIDER_REQUESTS
+    )
+    assert report["actual_external_attempts"] == EXPECTED_NO_RETRY_EXTERNAL_ATTEMPTS
     assert report["acceptance"]["passed"] is True
     assert report["cross_deployment"]["selection_parity"] is True
     assert (
         report["cross_deployment"]["vllm_to_native_serial_request_throughput_ratio"]
-        == 2.0
+        == EXPECTED_REMOTE_TO_NATIVE_THROUGHPUT_RATIO
     )
     for deployment in report["deployments"].values():
         assert deployment["natural_worker_mix"] == {
@@ -255,5 +254,5 @@ def test_v3_report_keeps_one_server_retry_inside_the_attempt_envelope() -> None:
     inputs["remote"]["results"][0]["external_attempts"] = 2
     report = reporting.build_report(**inputs)
     assert report["status"] == "passed"
-    assert report["actual_external_attempts"] == 79
+    assert report["actual_external_attempts"] == EXPECTED_ONE_RETRY_EXTERNAL_ATTEMPTS
     assert report["deployments"]["remote_vllm"]["paths"]["retained"]["retries"] == 1

@@ -127,3 +127,13 @@ def test_session_service_confines_agt017_flashinfer_to_its_exact_app_name() -> N
         in service_source
     )
     assert "EXPERIMENT_APP_PROFILES =" in service_source
+
+
+def test_session_service_confines_agt018_flashinfer_to_its_exact_app_name() -> None:
+    service_source = source()
+
+    assert (
+        '"rayline-arc-session-encoder-flashinfer-agt018": "flashinfer"'
+        in service_source
+    )
+    assert "**AGT018_APP_PROFILES" in service_source

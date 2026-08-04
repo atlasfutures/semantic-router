@@ -10,11 +10,27 @@ from pathlib import Path
 from openrouter_fullstack_state import EncoderDeployment, RunPacket
 from openrouter_kv_cache_matched_contract import (
     AGT017_RESOURCE_BUDGET,
+    FLASHINFER_APP_NAME,
+    FLASHINFER_CLASS_NAME,
+    FLASHINFER_ENGINE_BUILD_ID,
     OPENROUTER_KEY_LIMIT_USD_PER_ARM,
+)
+from openrouter_kv_cache_matched_contract import (
     RUN_ID as AGT017_RUN_ID,
 )
 from openrouter_kv_cache_successor_contract import (
     ARTIFACT_REVISION as AGT018_ARTIFACT_REVISION,
+)
+from openrouter_kv_cache_successor_contract import (
+    REMOTE_APP_NAME as AGT018_REMOTE_APP_NAME,
+)
+from openrouter_kv_cache_successor_contract import (
+    REMOTE_CLASS_NAME as AGT018_REMOTE_CLASS_NAME,
+)
+from openrouter_kv_cache_successor_contract import (
+    REMOTE_ENGINE_BUILD_ID as AGT018_REMOTE_ENGINE_BUILD_ID,
+)
+from openrouter_kv_cache_successor_contract import (
     RUN_ID as AGT018_RUN_ID,
 )
 from openrouter_kv_cache_successor_contract import (
@@ -44,11 +60,49 @@ def _agentic_packet(
     )
 
 
+def _ephemeral_encoder(
+    *,
+    app_name: str,
+    class_name: str,
+    build_id: str,
+    service_path: Path,
+) -> EncoderDeployment:
+    return EncoderDeployment(
+        app_name=app_name,
+        class_name=class_name,
+        build_id=build_id,
+        deployment_source_commit="runtime-attested-launch-source",
+        plugin_source_digest="runtime-attested-launch-source",
+        deploy_service_path=service_path,
+        ephemeral=True,
+    )
+
+
+def _successor_packet(
+    deploy_root: Path,
+    script_root: Path,
+    encoder: EncoderDeployment,
+) -> RunPacket:
+    return RunPacket(
+        compose_override=deploy_root / "compose-openrouter-kv-cache.yaml",
+        config=deploy_root / "config-openrouter-kv-cache.yaml",
+        driver=script_root / "openrouter_kv_cache_successor_remote.py",
+        project_name="rayline-arc-openrouter-kv-cache-flashinfer-agt018",
+        key_limit_usd=SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM,
+        maximum_seconds=SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS,
+        protected_encoder=True,
+        provider_preflight=True,
+        encoder=encoder,
+        expected_run_id=AGT018_RUN_ID,
+        modal_environment="dev",
+        artifact_revision=AGT018_ARTIFACT_REVISION,
+    )
+
+
 def packet_catalog(
     repo_root: Path,
     default_encoder: EncoderDeployment,
-    flashinfer_encoder: EncoderDeployment,
-    successor_encoder: EncoderDeployment,
+    session_service_path: Path,
     *,
     canary_key_limit_usd: float,
     maximum_canary_seconds: int,
@@ -57,6 +111,18 @@ def packet_catalog(
     script_root = Path(__file__).resolve().parent
     agentic_override = deploy_root / "compose-openrouter-agentic.yaml"
     agentic_config = deploy_root / "config-openrouter-agentic.yaml"
+    flashinfer_encoder = _ephemeral_encoder(
+        app_name=FLASHINFER_APP_NAME,
+        class_name=FLASHINFER_CLASS_NAME,
+        build_id=FLASHINFER_ENGINE_BUILD_ID,
+        service_path=session_service_path,
+    )
+    successor_encoder = _ephemeral_encoder(
+        app_name=AGT018_REMOTE_APP_NAME,
+        class_name=AGT018_REMOTE_CLASS_NAME,
+        build_id=AGT018_REMOTE_ENGINE_BUILD_ID,
+        service_path=session_service_path,
+    )
     return {
         "canary": RunPacket(
             compose_override=deploy_root / "compose-openrouter.yaml",
@@ -104,19 +170,10 @@ def packet_catalog(
             modal_environment="dev",
             artifact_revision="public-rayline-arc-openrouter-kv-cache-v2",
         ),
-        "kv-cache-flashinfer-agt018": RunPacket(
-            compose_override=deploy_root / "compose-openrouter-kv-cache.yaml",
-            config=deploy_root / "config-openrouter-kv-cache.yaml",
-            driver=script_root / "openrouter_kv_cache_successor_remote.py",
-            project_name="rayline-arc-openrouter-kv-cache-flashinfer-agt018",
-            key_limit_usd=SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM,
-            maximum_seconds=SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS,
-            protected_encoder=True,
-            provider_preflight=True,
-            encoder=successor_encoder,
-            expected_run_id=AGT018_RUN_ID,
-            modal_environment="dev",
-            artifact_revision=AGT018_ARTIFACT_REVISION,
+        "kv-cache-flashinfer-agt018": _successor_packet(
+            deploy_root,
+            script_root,
+            successor_encoder,
         ),
         "gateway-shape": RunPacket(
             compose_override=agentic_override,

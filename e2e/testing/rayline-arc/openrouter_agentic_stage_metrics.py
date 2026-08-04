@@ -30,6 +30,7 @@ from modal_session_canary import CanaryClient
 ENCODER_BASE_URL_ENV = "RAYLINE_ARC_E2E_ENCODER_BASE_URL"
 ENCODER_KEY_ENV = "RAYLINE_ARC_E2E_MODAL_KEY"
 ENCODER_SECRET_ENV = "RAYLINE_ARC_E2E_MODAL_SECRET"
+ENCODER_BUILD_ID_ENV = "RAYLINE_ARC_E2E_ENCODER_BUILD_ID"
 COUNT_TOLERANCE = 1e-9
 
 
@@ -38,6 +39,7 @@ def encoder_client_from_environment(timeout_seconds: float) -> CanaryClient:
         "base_url": os.environ.get(ENCODER_BASE_URL_ENV, ""),
         "modal_key": os.environ.get(ENCODER_KEY_ENV, ""),
         "modal_secret": os.environ.get(ENCODER_SECRET_ENV, ""),
+        "expected_engine_build_id": os.environ.get(ENCODER_BUILD_ID_ENV, ""),
     }
     if not all(values.values()):
         raise ValueError("protected encoder metrics configuration is incomplete")

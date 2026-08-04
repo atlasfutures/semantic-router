@@ -55,13 +55,7 @@ from openrouter_key_management import (
 )
 from openrouter_kv_cache_deployment_evidence import persist as persist_kv_evidence
 from openrouter_kv_cache_matched_contract import (
-    FLASHINFER_APP_NAME,
-    FLASHINFER_CLASS_NAME,
-    FLASHINFER_ENGINE_BUILD_ID,
     matched_budget_receipt,
-)
-from openrouter_kv_cache_successor_contract import (
-    REMOTE_APP_NAME as AGT018_REMOTE_APP_NAME,
 )
 from openrouter_launch_authority import verify_source_authority
 from openrouter_provider_preflight import run_preflight as run_provider_preflight
@@ -112,31 +106,10 @@ DEFAULT_ENCODER = EncoderDeployment(
     deployment_source_commit=ENCODER_DEPLOYMENT_SOURCE_COMMIT,
     plugin_source_digest=ENCODER_PLUGIN_SOURCE_DIGEST,
 )
-FLASHINFER_ENCODER = EncoderDeployment(
-    app_name=FLASHINFER_APP_NAME,
-    class_name=FLASHINFER_CLASS_NAME,
-    build_id=FLASHINFER_ENGINE_BUILD_ID,
-    deployment_source_commit="runtime-attested-launch-source",
-    plugin_source_digest="runtime-attested-launch-source",
-    deploy_service_path=SESSION_SERVICE_PATH,
-    ephemeral=True,
-)
-AGT018_FLASHINFER_ENCODER = EncoderDeployment(
-    app_name=AGT018_REMOTE_APP_NAME,
-    class_name=FLASHINFER_CLASS_NAME,
-    build_id=FLASHINFER_ENGINE_BUILD_ID,
-    deployment_source_commit="runtime-attested-launch-source",
-    plugin_source_digest="runtime-attested-launch-source",
-    deploy_service_path=SESSION_SERVICE_PATH,
-    ephemeral=True,
-)
-
-
 PACKETS = packet_catalog(
     REPO_ROOT,
     DEFAULT_ENCODER,
-    FLASHINFER_ENCODER,
-    AGT018_FLASHINFER_ENCODER,
+    SESSION_SERVICE_PATH,
     canary_key_limit_usd=OPENROUTER_KEY_LIMIT_USD,
     maximum_canary_seconds=MAX_CANARY_SECONDS,
 )

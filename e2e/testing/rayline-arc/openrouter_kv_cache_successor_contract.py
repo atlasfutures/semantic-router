@@ -27,6 +27,9 @@ NATIVE_APP_NAME = "rayline-router-openrouter-agt018"
 NATIVE_WEBHOOK_LABEL = "router-openrouter-agt018"
 REMOTE_APP_NAME = "rayline-arc-session-encoder-flashinfer-agt018"
 REMOTE_CLASS_NAME = "SessionEncoder"
+VLLM_COMMIT = "9f5ea81ca0aa570aea46baf82311a1139c1267ca"
+REMOTE_ENGINE_BUILD_ID = f"vllm@{VLLM_COMMIT}+gdn-flashinfer-eager"
+REMOTE_GDN_PREFILL_BACKEND = "flashinfer"
 ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v3"
 MAX_COMPLETION_TOKENS = 24
 # Fail-closed packet placeholders. A reviewed budget contract must replace both
