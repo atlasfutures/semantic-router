@@ -39,6 +39,10 @@ from openrouter_modal_native_fixture import (
     build_checkpoint,
     router_config_text,
 )
+from openrouter_provider_preflight import run_preflight as run_provider_preflight
+from openrouter_provider_preflight_contract import (
+    encode_report as encode_provider_preflight,
+)
 
 GIT_SHA_LENGTH = 40
 REQUIRED_MODAL_VERSION = "1.5.1"
@@ -168,49 +172,71 @@ def _measure(
         f"{ROUTER_URL}/healthz", timeout=context.timeout_seconds
     )
     client_path = context.output_dir / "native-client.json"
+    journal_path = context.output_dir / "native-journal.jsonl"
     benchmark_environment = {
         **context.environment,
         "OPENROUTER_EPHEMERAL_API_KEY": ephemeral_key,
         "RAYLINE_MODAL_NATIVE_ROUTER_TOKEN": router_token,
     }
-    support._run(
-        [
-            str(context.pathfinder_python),
-            str(BENCHMARK),
-            "--deployment",
-            "native_modal",
-            "--base-url",
-            ROUTER_URL,
-            "--run-id",
-            RUN_ID,
-            "--output",
-            str(client_path),
-            "--timeout-seconds",
-            str(context.timeout_seconds),
-        ],
-        cwd=context.semantic_root,
-        environment=benchmark_environment,
-        timeout=MAXIMUM_PAID_SECONDS,
-        capture=False,
-    )
-    flush = support._flush(ROUTER_URL, router_token, context.timeout_seconds)
     decisions_path = context.output_dir / "native-decisions.jsonl"
-    support._run(
-        [
-            str(context.pathfinder_python),
-            "-m",
-            "modal",
-            "volume",
-            "get",
-            ARTIFACT_VOLUME,
-            DECISION_LOG_REMOTE_PATH,
-            str(decisions_path),
-            "--force",
-        ],
-        cwd=context.pathfinder_root,
-        environment=context.environment,
-        timeout=180,
-    )
+    benchmark_error: Exception | None = None
+    evidence_error: Exception | None = None
+    flush: dict[str, Any] | None = None
+    try:
+        support._run(
+            [
+                str(context.pathfinder_python),
+                str(BENCHMARK),
+                "--deployment",
+                "native_modal",
+                "--base-url",
+                ROUTER_URL,
+                "--run-id",
+                RUN_ID,
+                "--output",
+                str(client_path),
+                "--journal",
+                str(journal_path),
+                "--timeout-seconds",
+                str(context.timeout_seconds),
+            ],
+            cwd=context.semantic_root,
+            environment=benchmark_environment,
+            timeout=MAXIMUM_PAID_SECONDS,
+            capture=False,
+        )
+    except Exception as error:
+        benchmark_error = error
+    try:
+        flush = support._flush(ROUTER_URL, router_token, context.timeout_seconds)
+        support._run(
+            [
+                str(context.pathfinder_python),
+                "-m",
+                "modal",
+                "volume",
+                "get",
+                ARTIFACT_VOLUME,
+                DECISION_LOG_REMOTE_PATH,
+                str(decisions_path),
+                "--force",
+            ],
+            cwd=context.pathfinder_root,
+            environment=context.environment,
+            timeout=180,
+        )
+    except Exception as error:
+        evidence_error = error
+    if benchmark_error is not None:
+        if evidence_error is not None:
+            benchmark_error.add_note(
+                "native decision evidence recovery also failed after the workload"
+            )
+        raise benchmark_error
+    if evidence_error is not None:
+        raise evidence_error
+    if flush is None:
+        raise RuntimeError("native decision log flush evidence was unavailable")
     return {
         "ready": ready,
         "health": health,
@@ -346,12 +372,15 @@ def _cleanup(
 
 def _validate_completion(
     *,
-    paid_started: float,
+    paid_started: float | None,
     usage: float,
     primary_error: Exception | None,
     cleanup_error: Exception | None,
 ) -> None:
-    if time.perf_counter() - paid_started > MAXIMUM_PAID_SECONDS:
+    if (
+        paid_started is not None
+        and time.perf_counter() - paid_started > MAXIMUM_PAID_SECONDS
+    ):
         raise RuntimeError("AGT017 exceeded its paid wall-time ceiling")
     if usage > KEY_LIMIT_USD:
         raise RuntimeError("AGT017 native OpenRouter key exceeded its hard limit")
@@ -376,7 +405,7 @@ def main() -> None:
         raise SystemExit("OPENROUTER_MANAGEMENT_KEY is required")
     _configure_support()
     context = _prepare(args)
-    paid_started = time.perf_counter()
+    paid_started: float | None = None
     ephemeral_key = ""
     key_hash = ""
     router_token = secrets.token_urlsafe(32)
@@ -386,6 +415,24 @@ def main() -> None:
         ephemeral_key, key_hash = create_ephemeral_key(
             management_key, RUN_ID, KEY_LIMIT_USD
         )
+        provider_preflight = run_provider_preflight(
+            openrouter_key=ephemeral_key,
+            run_id=RUN_ID,
+            timeout_seconds=args.timeout_seconds,
+        )
+        encode_provider_preflight(provider_preflight, ephemeral_key)
+        (context.output_dir / "native-provider-preflight.json").write_text(
+            json.dumps(provider_preflight, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        if provider_preflight["status"] != "passed":
+            worker = provider_preflight["failed_worker"]
+            status = provider_preflight.get("http_status")
+            raise RuntimeError(
+                "OpenRouter provider availability preflight failed: "
+                f"worker={worker}; HTTP {status or 'transport'}"
+            )
+        paid_started = time.perf_counter()
         usage = _execute(
             context,
             management_key=management_key,

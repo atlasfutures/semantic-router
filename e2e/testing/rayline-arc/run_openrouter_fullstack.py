@@ -31,7 +31,6 @@ from openrouter_encoder_runtime import (
     encoder_containers,
     packet_encoder,
     pin_encoder_singleton,
-    plugin_source_digest,
     verify_encoder_deployment,
     wait_protected_encoder,
 )
@@ -42,6 +41,9 @@ from openrouter_fullstack_state import (
     RunPacket,
     RuntimeState,
 )
+from openrouter_fullstack_state import (
+    paid_wall_timeout as _paid_wall_timeout,
+)
 from openrouter_key_management import (
     create_ephemeral_key as _create_ephemeral_key,
 )
@@ -51,6 +53,7 @@ from openrouter_key_management import (
 from openrouter_key_management import (
     ephemeral_key_usage as _ephemeral_key_usage,
 )
+from openrouter_kv_cache_deployment_evidence import persist as persist_kv_evidence
 from openrouter_kv_cache_matched_contract import (
     AGT017_RESOURCE_BUDGET,
     FLASHINFER_APP_NAME,
@@ -62,6 +65,10 @@ from openrouter_kv_cache_matched_contract import (
     RUN_ID as AGT017_RUN_ID,
 )
 from openrouter_launch_authority import verify_source_authority
+from openrouter_provider_preflight import run_preflight as run_provider_preflight
+from openrouter_provider_preflight_contract import (
+    encode_report as encode_provider_preflight,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = REPO_ROOT / "deploy/compose/rayline-arc/compose.yaml"
@@ -115,10 +122,6 @@ FLASHINFER_ENCODER = EncoderDeployment(
     deploy_service_path=SESSION_SERVICE_PATH,
     ephemeral=True,
 )
-
-
-def _paid_wall_timeout(_signal_number: int, _frame: Any) -> None:
-    raise TimeoutError("AGT017 remote arm reached its maximum paid wall time")
 
 
 PACKETS = packet_catalog(
@@ -224,8 +227,10 @@ def _collect_post_run_evidence(
     management_key: str,
     key_hash: str,
     packet: RunPacket,
+    scan_compose_logs: bool = True,
 ) -> float:
-    _scan_logs(packet, environment, protected_values)
+    if scan_compose_logs:
+        _scan_logs(packet, environment, protected_values)
     if not key_hash:
         print(
             "OpenRouter ephemeral key was not created",
@@ -360,10 +365,6 @@ def _compose_service_container_id(
     return container_id
 
 
-def _validate_transport_preflight(report: Any) -> dict[str, Any]:
-    return validate_report(report, require_reuse=False)
-
-
 def _run_transport_preflight(
     *, args: argparse.Namespace, packet: RunPacket, state: RuntimeState
 ) -> dict[str, Any]:
@@ -390,7 +391,7 @@ def _run_transport_preflight(
         raise RuntimeError(
             "agentic transport preflight emitted invalid JSON"
         ) from error
-    return _validate_transport_preflight(decoded)
+    return validate_report(decoded, require_reuse=False)
 
 
 def _activate_protected_encoder(
@@ -447,52 +448,6 @@ def _activate_protected_encoder(
     )
 
 
-def _persist_kv_evidence(
-    args: argparse.Namespace,
-    usage: float,
-    packet: RunPacket,
-    state: RuntimeState,
-) -> None:
-    if args.mode not in {"kv-cache", "kv-cache-flashinfer"}:
-        return
-    encoder = packet_encoder(packet)
-    output_dir = REPO_ROOT / ".agent-harness/rayline-kv-cache" / args.run_id
-    output_dir.mkdir(parents=True, exist_ok=True)
-    source_commit = _run(
-        ["git", "rev-parse", "HEAD"],
-        environment=os.environ.copy(),
-        capture_output=True,
-    ).stdout.strip()
-    (output_dir / "remote-key-usage.json").write_text(
-        json.dumps({"usage_usd": usage}, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    deployment = {
-        "architecture": "semantic-router with retained remote vLLM encoder",
-        "encoder_app_id": state.encoder_app_id,
-        "encoder_app_name": encoder.app_name,
-        "encoder_gpu": "H100",
-        "encoder_build_id": encoder.build_id,
-        "encoder_gdn_prefill_backend": (
-            "flashinfer" if args.mode == "kv-cache-flashinfer" else "torch_reference"
-        ),
-        "encoder_deployment_source_commit": (
-            source_commit if encoder.ephemeral else encoder.deployment_source_commit
-        ),
-        "encoder_plugin_source_digest": (
-            plugin_source_digest(REPO_ROOT)
-            if encoder.ephemeral
-            else encoder.plugin_source_digest
-        ),
-        "encoder_ephemeral": encoder.ephemeral,
-        "semantic_router_commit": source_commit,
-    }
-    (output_dir / "remote-deployment.json").write_text(
-        json.dumps(deployment, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", required=True)
@@ -510,9 +465,10 @@ def _execute_runtime(
     state: RuntimeState,
 ) -> None:
     if packet.preflight_driver is not None:
-        state.ephemeral_key, state.key_hash = _create_ephemeral_key(
-            management_key, args.run_id, packet.key_limit_usd
-        )
+        if not state.ephemeral_key:
+            state.ephemeral_key, state.key_hash = _create_ephemeral_key(
+                management_key, args.run_id, packet.key_limit_usd
+            )
         state.environment = _runtime_environment(
             openrouter_key=state.ephemeral_key,
             modal_key="",
@@ -521,6 +477,7 @@ def _execute_runtime(
             protected_encoder=False,
         )
         _start_compose(packet, state.environment)
+        state.compose_started = True
         state.transport_preflight = _run_transport_preflight(
             args=args,
             packet=packet,
@@ -540,9 +497,10 @@ def _execute_runtime(
             pin_encoder_singleton(packet, state)
             state.proxy_token = manager.create()
             wait_protected_encoder(state, state.proxy_token)
-        state.ephemeral_key, state.key_hash = _create_ephemeral_key(
-            management_key, args.run_id, packet.key_limit_usd
-        )
+        if not state.ephemeral_key:
+            state.ephemeral_key, state.key_hash = _create_ephemeral_key(
+                management_key, args.run_id, packet.key_limit_usd
+            )
         state.environment = _runtime_environment(
             openrouter_key=state.ephemeral_key,
             modal_key=(
@@ -555,6 +513,7 @@ def _execute_runtime(
             encoder_base_url=state.encoder_base_url,
         )
         _start_compose(packet, state.environment)
+        state.compose_started = True
     _run(
         [
             sys.executable,
@@ -632,6 +591,39 @@ def _prepare_encoder_runtime(
         raise RuntimeError("protected encoder already has a running container")
 
 
+def _prepare_provider_preflight(
+    args: argparse.Namespace,
+    packet: RunPacket,
+    management_key: str,
+    state: RuntimeState,
+) -> None:
+    if not packet.provider_preflight:
+        return
+    state.ephemeral_key, state.key_hash = _create_ephemeral_key(
+        management_key, args.run_id, packet.key_limit_usd
+    )
+    state.environment = _runtime_environment(
+        openrouter_key=state.ephemeral_key,
+        modal_key="",
+        modal_secret="",
+        packet=packet,
+        protected_encoder=False,
+    )
+    state.provider_preflight = run_provider_preflight(
+        openrouter_key=state.ephemeral_key,
+        run_id=args.run_id,
+        timeout_seconds=args.timeout_seconds,
+    )
+    encode_provider_preflight(state.provider_preflight, state.ephemeral_key)
+    if state.provider_preflight["status"] != "passed":
+        worker = state.provider_preflight["failed_worker"]
+        status = state.provider_preflight.get("http_status")
+        raise RuntimeError(
+            "OpenRouter provider availability preflight failed: "
+            f"worker={worker}; HTTP {status or 'transport'}"
+        )
+
+
 def _collect_evidence_safely(
     args: argparse.Namespace,
     packet: RunPacket,
@@ -655,8 +647,16 @@ def _collect_evidence_safely(
             management_key=management_key,
             key_hash=state.key_hash,
             packet=packet,
+            scan_compose_logs=state.compose_started,
         )
-        _persist_kv_evidence(args, key_usage, packet, state)
+        persist_kv_evidence(
+            repo_root=REPO_ROOT,
+            mode=args.mode,
+            run_id=args.run_id,
+            usage=key_usage,
+            packet=packet,
+            state=state,
+        )
     except Exception as error:
         print(
             "OpenRouter post-run evidence collection failed",
@@ -702,14 +702,15 @@ def _launch_packet(
     outcome = LaunchOutcome()
     paid_started = None
     previous_alarm_handler = None
-    if packet.encoder is not None and packet.encoder.ephemeral:
-        paid_started = time.monotonic()
-        previous_alarm_handler = signal.signal(signal.SIGALRM, _paid_wall_timeout)
-        signal.setitimer(
-            signal.ITIMER_REAL,
-            AGT017_RESOURCE_BUDGET.maximum_paid_wall_seconds,
-        )
     try:
+        _prepare_provider_preflight(args, packet, management_key, state)
+        if packet.encoder is not None and packet.encoder.ephemeral:
+            paid_started = time.monotonic()
+            previous_alarm_handler = signal.signal(signal.SIGALRM, _paid_wall_timeout)
+            signal.setitimer(
+                signal.ITIMER_REAL,
+                AGT017_RESOURCE_BUDGET.maximum_paid_wall_seconds,
+            )
         _prepare_encoder_runtime(packet, modal_command, environment, state)
         _execute_runtime(
             args=args,
@@ -745,6 +746,14 @@ def _raise_outcome(outcome: LaunchOutcome, state: RuntimeState) -> None:
             "AGT017 remote arm exceeded its paid wall ceiling"
         )
     if outcome.run_failure is not None:
+        if (
+            state.provider_preflight is not None
+            and state.provider_preflight.get("status") == "failed"
+        ):
+            print(
+                json.dumps(state.provider_preflight, indent=2, sort_keys=True),
+                flush=True,
+            )
         if (
             state.transport_preflight is not None
             and state.transport_preflight.get("status") == "failed"

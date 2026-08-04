@@ -28,6 +28,7 @@ def main() -> None:
         / args.run_id
     )
     output_dir.mkdir(parents=True, exist_ok=True)
+    args.journal = str(output_dir / "remote-journal.jsonl")
     report = run(args)
     encoded = json.dumps(report, indent=2, sort_keys=True)
     for name in (

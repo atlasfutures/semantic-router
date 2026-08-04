@@ -33,6 +33,7 @@ class RunPacket:
     maximum_seconds: int
     protected_encoder: bool
     preflight_driver: Path | None = None
+    provider_preflight: bool = False
     encoder: EncoderDeployment | None = None
 
 
@@ -45,6 +46,8 @@ class RuntimeState:
     encoder_instance: Any = None
     encoder_autoscaler_pinned: bool = False
     transport_preflight: dict[str, Any] | None = None
+    provider_preflight: dict[str, Any] | None = None
+    compose_started: bool = False
     encoder_app_id: str = ""
     encoder_base_url: str = ""
     encoder_deployed: bool = False
@@ -57,3 +60,7 @@ class LaunchOutcome:
     evidence_failure: Exception | None = None
     cleanup_failure: Exception | None = None
     paid_elapsed: float | None = None
+
+
+def paid_wall_timeout(_signal_number: int, _frame: Any) -> None:
+    raise TimeoutError("AGT017 remote arm reached its maximum paid wall time")

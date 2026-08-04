@@ -158,6 +158,7 @@ docs:
 - docs/agent/tech-debt/td-048-rayline-vllm-selection-stability-gap.md
 - docs/agent/tech-debt/td-049-openrouter-transient-retry-ownership-gap.md
 - docs/agent/tech-debt/td-050-rayline-arc-replica-failover-gap.md
+- docs/agent/tech-debt/td-051-rayline-agentic-worker-coverage-gap.md
 local_agent_rules:
 - path: src/vllm-sr/cli/AGENTS.md
   scope: src/vllm-sr/cli/**
@@ -349,6 +350,9 @@ doc_governance:
   - path: docs/agent/tech-debt/td-050-rayline-arc-replica-failover-gap.md
     steward: router-core
     freshness: update when the TD050 debt record changes materially
+  - path: docs/agent/tech-debt/td-051-rayline-agentic-worker-coverage-gap.md
+    steward: router-core
+    freshness: update when the TD051 debt record changes materially
 skills:
 - tools/agent/skills/config-platform-change/SKILL.md
 - tools/agent/skills/cross-stack-bugfix/SKILL.md

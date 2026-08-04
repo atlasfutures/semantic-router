@@ -3,14 +3,32 @@
 from __future__ import annotations
 
 import copy
+import importlib.machinery
+import importlib.util
 import itertools
 import json
+import sys
+import types
+from argparse import Namespace
+from pathlib import Path
+from typing import Any
+
+if "modal" not in sys.modules and importlib.util.find_spec("modal") is None:
+    modal_stub = types.ModuleType("modal")
+    modal_stub.__spec__ = importlib.machinery.ModuleSpec("modal", loader=None)
+    sys.modules["modal"] = modal_stub
 
 import openrouter_encoder_runtime as encoder_runtime
 import openrouter_kv_cache_artifact_fixture as artifact_fixture
 import openrouter_kv_cache_benchmark as benchmark
+import openrouter_kv_cache_journal as journal
 import openrouter_kv_cache_reporting as reporting
+import openrouter_kv_cache_workload_contract as workload_contract
 import openrouter_launch_authority as authority
+import openrouter_provider_preflight as provider_preflight
+import pytest
+import run_openrouter_kv_cache_native as native_launcher
+import run_openrouter_modal_native as native_support
 import yaml
 from openrouter_agentic_workload import PROVIDER_NAMES, WORKERS
 from openrouter_fullstack_state import EncoderDeployment, RunPacket, RuntimeState
@@ -31,6 +49,10 @@ EXPECTED_COMPLETION_LIMIT = 24
 EXPECTED_STEPS = 3
 EXPECTED_THROUGHPUT_RATIO = 0.5
 MAXIMUM_EXPECTED_PACKET_USD = 9.14
+HTTP_TOO_MANY_REQUESTS = 429
+PARTIAL_FAILURE_ORDINAL = 3
+PROVIDER_FAILURE_ORDINAL = 2
+EXPECTED_PREFLIGHT_FAILURE_ATTEMPTS = 3
 
 
 def test_history_states_are_strict_growing_prefixes() -> None:
@@ -321,6 +343,233 @@ def test_native_request_uses_session_identity_for_kv_isolation(monkeypatch) -> N
     headers = benchmark._request_headers("native_modal", "episode-1")
     assert headers["x-rayline-episode-id"] == "episode-1"
     assert headers["x-rayline-session"] == "episode-1"
+
+
+def test_kv_journal_survives_a_partial_failed_run(tmp_path, monkeypatch) -> None:
+    calls = 0
+
+    def fake_request(**_kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        if calls == PARTIAL_FAILURE_ORDINAL:
+            raise benchmark.OpenRouterHTTPError(
+                endpoint="test",
+                status_code=HTTP_TOO_MANY_REQUESTS,
+                retry_after_seconds=1,
+                error_type="rate_limit",
+                provider_code="429",
+                external_attempts=2,
+            )
+        return {
+            "selected_worker": "worker-a",
+            "client_attempts": 1,
+            "external_attempts": 1,
+        }
+
+    journal_path = tmp_path / "native-journal.jsonl"
+    monkeypatch.setattr(benchmark, "_request", fake_request)
+    args = Namespace(
+        deployment="native_modal",
+        base_url="http://native.invalid",
+        metrics_url="",
+        run_id="public-journal-test",
+        timeout_seconds=1,
+        journal=str(journal_path),
+    )
+
+    with pytest.raises(benchmark.OpenRouterHTTPError, match="HTTP 429"):
+        benchmark.run(args)
+
+    events = journal.read(journal_path)
+    assert [event["event"] for event in events] == [
+        "request_succeeded",
+        "request_succeeded",
+        "request_failed",
+    ]
+    assert events[-1]["ordinal"] == PARTIAL_FAILURE_ORDINAL
+    assert events[-1]["error"] == {
+        "client_attempts": 1,
+        "error_category": "",
+        "error_class": "OpenRouterHTTPError",
+        "error_type": "rate_limit",
+        "external_attempts": 2,
+        "http_status": HTTP_TOO_MANY_REQUESTS,
+        "provider_code": "429",
+        "retry_statuses": [],
+    }
+    assert "message" not in json.dumps(events)
+
+
+def test_kv_journal_rejects_request_content(tmp_path: Path) -> None:
+    journal_path = tmp_path / "private.jsonl"
+    journal.initialize(journal_path)
+    with pytest.raises(RuntimeError, match="request content"):
+        journal.append(
+            journal_path,
+            {"event": "request_failed", "messages": [{"content": "private"}]},
+        )
+
+
+def test_kv_journal_recovers_fsynced_prefix_from_a_truncated_tail(
+    tmp_path: Path,
+) -> None:
+    journal_path = tmp_path / "partial.jsonl"
+    journal.initialize(journal_path)
+    journal.append(journal_path, {"event": "request_succeeded", "ordinal": 1})
+    with journal_path.open("ab") as output:
+        output.write(b'{"event":"request_failed"')
+
+    assert journal.read(journal_path) == [
+        {
+            "schema_version": journal.SCHEMA_VERSION,
+            "event": "request_succeeded",
+            "ordinal": 1,
+        }
+    ]
+
+
+def test_kv_journal_rejects_a_complete_corrupt_tail(tmp_path: Path) -> None:
+    journal_path = tmp_path / "corrupt.jsonl"
+    journal.initialize(journal_path)
+    with journal_path.open("ab") as output:
+        output.write(b'{"event":"request_failed"\n')
+
+    with pytest.raises(RuntimeError, match="corrupted before its tail"):
+        journal.read(journal_path)
+
+
+def test_native_failure_still_flushes_and_downloads_decisions(
+    tmp_path: Path, monkeypatch
+) -> None:
+    context = native_support.LaunchContext(
+        semantic_root=tmp_path,
+        pathfinder_root=tmp_path,
+        pathfinder_python=tmp_path / "python",
+        output_dir=tmp_path,
+        environment={},
+        semantic_head="semantic",
+        pathfinder_head="pathfinder",
+        timeout_seconds=1,
+    )
+    calls: list[str] = []
+
+    monkeypatch.setattr(native_launcher, "_register_context", lambda **_kwargs: None)
+    monkeypatch.setattr(native_support, "_wait_ready", lambda *_args: {"ready": True})
+    monkeypatch.setattr(native_support, "_request_json", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        native_support,
+        "_flush",
+        lambda *_args: calls.append("flush") or {"flushed": True},
+    )
+
+    def fake_run(command: list[str], **_kwargs: Any) -> None:
+        if str(native_launcher.BENCHMARK) in command:
+            calls.append("benchmark")
+            raise RuntimeError("workload failed")
+        if "volume" in command and "get" in command:
+            calls.append("decisions")
+            return
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(native_support, "_run", fake_run)
+    with pytest.raises(RuntimeError, match="workload failed"):
+        native_launcher._measure(
+            context,
+            ephemeral_key="ephemeral-key",
+            router_token="router-token",
+        )
+
+    assert calls == ["benchmark", "flush", "decisions"]
+
+
+def test_provider_preflight_covers_every_worker_without_gpu(monkeypatch) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def fake_stream(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        worker = kwargs["expected_worker"]
+        return {
+            "response_model": WORKERS[worker],
+            "provider": PROVIDER_NAMES[worker][0],
+            "completion_tokens": 1,
+            "client_attempts": 1,
+            "external_attempts": 1,
+            "cost_usd": 0.00001,
+        }
+
+    monkeypatch.setattr(provider_preflight, "_stream_request", fake_stream)
+    report = provider_preflight.run_preflight(
+        openrouter_key="test-key",
+        run_id="public-provider-preflight",
+        timeout_seconds=1,
+    )
+
+    assert report["status"] == "passed"
+    assert list(report["workers"]) == list(WORKERS)
+    assert [call["expected_worker"] for call in calls] == list(WORKERS)
+    assert all(call["path"] == "direct" for call in calls)
+    assert all(call["max_completion_tokens"] == 1 for call in calls)
+
+
+def test_provider_preflight_preserves_sanitized_429_evidence(monkeypatch) -> None:
+    calls = 0
+
+    def fake_stream(**kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        worker = kwargs["expected_worker"]
+        if calls == PROVIDER_FAILURE_ORDINAL:
+            raise benchmark.OpenRouterHTTPError(
+                endpoint="test",
+                status_code=HTTP_TOO_MANY_REQUESTS,
+                retry_after_seconds=1,
+                error_type="rate_limit",
+                provider_code="429",
+                error_category="rate_limited",
+                external_attempts=2,
+            )
+        return {
+            "response_model": WORKERS[worker],
+            "provider": PROVIDER_NAMES[worker][0],
+            "completion_tokens": 1,
+            "client_attempts": 1,
+            "external_attempts": 1,
+            "cost_usd": 0.00001,
+        }
+
+    monkeypatch.setattr(provider_preflight, "_stream_request", fake_stream)
+    report = provider_preflight.run_preflight(
+        openrouter_key="test-key",
+        run_id="public-provider-preflight",
+        timeout_seconds=1,
+    )
+
+    assert report["status"] == "failed"
+    assert report["failed_worker"] == "worker-b"
+    assert report["http_status"] == HTTP_TOO_MANY_REQUESTS
+    assert report["external_attempts"] == EXPECTED_PREFLIGHT_FAILURE_ATTEMPTS
+    assert "message" not in report
+
+
+def test_workload_contract_separates_semantic_and_static_coverage() -> None:
+    contract = workload_contract.validate()
+    semantic = contract["semantic_cache_lane"]
+    static = contract["stratified_serving_lane"]
+
+    assert semantic["routing"] == "natural_rayline_selection"
+    assert semantic["three_worker_coverage_required"] is False
+    assert {cell["worker"] for cell in static["cells"]} == set(WORKERS)
+    assert static["semantic_selection_claim_admissible"] is False
+    assert contract["retry_policy"] == {
+        "owner": {
+            "native_modal": "Pathfinder OpenRouter worker transport",
+            "remote_vllm": "Envoy OpenRouter route",
+        },
+        "retryable_statuses": [429, 503],
+        "maximum_retries": 1,
+        "benchmark_client_retries": 0,
+        "reason": "keep retries below one semantic selection transaction",
+    }
 
 
 def _ephemeral_packet(tmp_path) -> RunPacket:

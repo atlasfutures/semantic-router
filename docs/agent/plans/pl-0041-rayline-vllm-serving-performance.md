@@ -3459,6 +3459,51 @@ public synthetic cases must preregister and offline-prove coverage of all three
 configured workers; AGT017 showed that one realistic history shape alone does
 not exercise a three-model pool.
 
+### AGT018 Source-Closed Resilience Preparation
+
+The non-paid AGT018 preparation is implemented without opening a new launch
+identity or spending authority. It corrects the AGT017 evidence and startup
+order while keeping the historical AGT017 result and closed source pins
+immutable.
+
+- Every native or remote KV request now appends and `fsync`s one privacy-safe
+  JSONL success or failure event before the next logical request begins. A
+  failed process therefore preserves the exact completed prefix, bounded HTTP
+  metadata, and attempt counts without storing prompts, tools, error messages,
+  credentials, episode IDs, or timestamps. The native launcher also attempts
+  to flush and retrieve its decision journal after a benchmark failure instead
+  of deleting the Modal volume first.
+- A shared three-request, one-output-token direct OpenRouter gate checks DS4
+  Flash, MiMo V2.5, and HY3 before either launcher begins its paid GPU timer or
+  deploys/activates the H100. It permits one direct 429/503 retry, emits only
+  bounded model/provider/status/attempt/cost evidence, and is explicitly
+  inadmissible for performance inference.
+- Measured semantic requests retain production retry ownership below one
+  selection transaction: Pathfinder's OpenRouter transport owns native retry
+  and Envoy owns remote retry. Both signed worker contracts permit one retry
+  for 429/503. The benchmark client does not replay a routed request, because
+  doing so would create a second Rayline decision, alter session-action metrics,
+  and make the native decision join ambiguous.
+- The workload contract now separates a natural semantic-cache lane from a
+  stratified static serving lane. The latter proves that all three endpoints
+  are available but cannot be cited as three-worker classifier coverage.
+  [TD051](../tech-debt/td-051-rayline-agentic-worker-coverage-gap.md) owns the
+  remaining absence of natural MiMo/worker-b share.
+
+Focused offline tests prove partial-journal recovery, privacy rejection,
+structured provider-gate success and 429 failure, exact three-worker endpoint
+coverage, preflight-before-paid-launch ordering, key reuse, and the semantic
+versus static claim boundary. The dormant AGT017 launch modes remain
+source-closed, so these seams cannot spend or reinterpret AGT017.
+
+Before a paid AGT018 run, freeze a new run ID, app names, artifact revision,
+provider/request/attempt maxima, report schema, acceptance gates, budget, and
+distinct authorization chain. Offline prompt discovery must either produce a
+realistic natural worker-b share that closes TD051 or preregister the narrower
+semantic claim plus separate static serving results. Do not consume the
+remaining `$1.224866553617` reserve or release the 1,000-case qualification as
+part of this preparation.
+
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
 continues to reject cached-prefix tokens. The separate session v1 wire reports

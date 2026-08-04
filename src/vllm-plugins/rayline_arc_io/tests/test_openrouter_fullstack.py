@@ -331,6 +331,7 @@ def test_self_hosted_worker_routes_do_not_retry_backpressure() -> None:
 
 def test_openrouter_launcher_uses_ephemeral_limited_key_and_exact_cleanup() -> None:
     launcher_source = (SCRIPT_DIR / "run_openrouter_fullstack.py").read_text()
+    packet_source = (SCRIPT_DIR / "openrouter_fullstack_packets.py").read_text()
     encoder_runtime_source = (SCRIPT_DIR / "openrouter_encoder_runtime.py").read_text()
     key_source = (SCRIPT_DIR / "openrouter_key_management.py").read_text()
 
@@ -357,6 +358,7 @@ def test_openrouter_launcher_uses_ephemeral_limited_key_and_exact_cleanup() -> N
     assert "cleanup_encoder(" in launcher_source
     assert "manager.delete(proxy_token.token_id)" in launcher_source
     assert "_wait_arc_component_ready(METRICS_URL)" in launcher_source
+    assert "provider_preflight=True" in packet_source
     execution_source = launcher_source.split("def _execute_runtime(", maxsplit=1)[
         1
     ].split("def main() -> None:", maxsplit=1)[0]
@@ -375,6 +377,12 @@ def test_openrouter_launcher_uses_ephemeral_limited_key_and_exact_cleanup() -> N
     launch_source = launcher_source.split("def _launch_packet(", maxsplit=1)[1].split(
         "def _raise_outcome(", maxsplit=1
     )[0]
+    assert launch_source.index("_prepare_provider_preflight(") < launch_source.index(
+        "paid_started = time.monotonic()"
+    )
+    assert launch_source.index("_prepare_provider_preflight(") < launch_source.index(
+        "_prepare_encoder_runtime("
+    )
     assert launch_source.index("_collect_evidence_safely(") < launch_source.index(
         "_cleanup_safely("
     )

@@ -32,7 +32,13 @@ from openrouter_agentic_stage_metrics import (
 )
 from openrouter_agentic_workload import WORKERS
 from openrouter_agentic_workload import candidate_case as _candidate_case
-from openrouter_fullstack_canary import _attempt_count, _http_error
+from openrouter_fullstack_canary import (
+    OpenRouterHTTPError,
+    _attempt_count,
+    _http_error,
+)
+from openrouter_kv_cache_journal import append as append_journal
+from openrouter_kv_cache_journal import initialize as initialize_journal
 from openrouter_kv_cache_matched_contract import MAX_COMPLETION_TOKENS
 
 HTTP_OK = 200
@@ -52,6 +58,7 @@ def _args() -> argparse.Namespace:
     parser.add_argument("--metrics-url", default="")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--journal", required=True)
     parser.add_argument("--timeout-seconds", type=float, default=180.0)
     return parser.parse_args()
 
@@ -174,16 +181,16 @@ def _read_stream(connection: Any, response: Any, started: float) -> dict[str, An
     }
 
 
-def _request(
+def _request_once(
     *,
     deployment: str,
     base_url: str,
     case: dict[str, Any],
     episode_id: str,
     timeout_seconds: float,
+    started: float,
 ) -> dict[str, Any]:
     headers = _request_headers(deployment, episode_id)
-    started = time.perf_counter()
     connection, response = request_following_result_redirects(
         connection_factory=_connection,
         method="POST",
@@ -208,6 +215,7 @@ def _request(
             status_code=response.status,
             body=body,
             retry_after=retry_after,
+            external_attempts=_attempt_count(attempt_header),
         )
     stream = _read_stream(connection, response, started)
     if selected_worker not in WORKERS:
@@ -237,6 +245,27 @@ def _request(
             float(upstream_millis) / 1000 if upstream_millis else None
         ),
     }
+
+
+def _request(
+    *,
+    deployment: str,
+    base_url: str,
+    case: dict[str, Any],
+    episode_id: str,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    result = _request_once(
+        deployment=deployment,
+        base_url=base_url,
+        case=case,
+        episode_id=episode_id,
+        timeout_seconds=timeout_seconds,
+        started=started,
+    )
+    result["client_attempts"] = 1
+    return result
 
 
 def _action_delta(before: str, after: str) -> str:
@@ -291,53 +320,144 @@ def _expected_action(deployment: str, mode: str, step: int) -> str | None:
     return "appended" if mode == "retained" and step > 0 else "created"
 
 
-def run(args: argparse.Namespace) -> dict[str, Any]:
-    if args.deployment == "remote_vllm" and not args.metrics_url:
-        raise RuntimeError("remote vLLM comparison requires the router metrics URL")
-    encoder_client = (
-        encoder_client_from_environment(args.timeout_seconds)
-        if args.deployment == "remote_vllm"
-        else None
+def _journal_path(args: argparse.Namespace) -> Path | None:
+    raw = getattr(args, "journal", "")
+    return Path(raw) if raw else None
+
+
+def _journal_failure(error: Exception) -> dict[str, Any]:
+    report: dict[str, Any] = {"error_class": type(error).__name__}
+    if isinstance(error, OpenRouterHTTPError):
+        report.update(
+            {
+                "http_status": error.status_code,
+                "error_category": error.error_category,
+                "error_type": error.error_type,
+                "provider_code": error.provider_code,
+                "external_attempts": error.external_attempts,
+                "client_attempts": int(getattr(error, "client_attempts", 1)),
+                "retry_statuses": list(getattr(error, "retry_statuses", ())),
+            }
+        )
+    return report
+
+
+def _run_cell(
+    *,
+    args: argparse.Namespace,
+    encoder_client: Any,
+    case: dict[str, Any],
+    episode_id: str,
+    mode: str,
+    episode: int,
+    step: int,
+) -> dict[str, Any]:
+    result = (
+        _remote_request(
+            args=args,
+            encoder_client=encoder_client,
+            case=case,
+            episode_id=episode_id,
+        )
+        if encoder_client is not None
+        else _request(
+            deployment=args.deployment,
+            base_url=args.base_url,
+            case=case,
+            episode_id=episode_id,
+            timeout_seconds=args.timeout_seconds,
+        )
     )
-    states = history_states()
+    expected = _expected_action(args.deployment, mode, step)
+    if expected is not None and result["session_action"] != expected:
+        raise RuntimeError("remote vLLM session action diverged")
+    result.update(
+        {
+            "mode": mode,
+            "episode": episode,
+            "step": step,
+            "case_id": case["case_id"],
+        }
+    )
+    return result
+
+
+def _run_workload(
+    *,
+    args: argparse.Namespace,
+    encoder_client: Any,
+    journal_path: Path | None,
+) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    started = time.perf_counter()
+    states = history_states()
     for episode in range(EPISODES):
         for step, case in enumerate(states):
             mode_order = MODES if (episode + step) % 2 == 0 else tuple(reversed(MODES))
             for mode in mode_order:
-                label = f"{args.deployment}:{mode}:episode-{episode}"
-                if mode == "replay":
-                    label += f":step-{step}"
-                episode_id = _episode_id(args.run_id, label)
-                result = (
-                    _remote_request(
+                results.append(
+                    _run_recorded_cell(
                         args=args,
                         encoder_client=encoder_client,
+                        journal_path=journal_path,
                         case=case,
-                        episode_id=episode_id,
-                    )
-                    if encoder_client is not None
-                    else _request(
-                        deployment=args.deployment,
-                        base_url=args.base_url,
-                        case=case,
-                        episode_id=episode_id,
-                        timeout_seconds=args.timeout_seconds,
+                        mode=mode,
+                        episode=episode,
+                        step=step,
+                        ordinal=len(results) + 1,
                     )
                 )
-                expected = _expected_action(args.deployment, mode, step)
-                if expected is not None and result["session_action"] != expected:
-                    raise RuntimeError("remote vLLM session action diverged")
-                result.update(
-                    {
-                        "mode": mode,
-                        "episode": episode,
-                        "step": step,
-                        "case_id": case["case_id"],
-                    }
-                )
-                results.append(result)
+    return results
+
+
+def _run_recorded_cell(
+    *,
+    args: argparse.Namespace,
+    encoder_client: Any,
+    journal_path: Path | None,
+    case: dict[str, Any],
+    mode: str,
+    episode: int,
+    step: int,
+    ordinal: int,
+) -> dict[str, Any]:
+    label = f"{args.deployment}:{mode}:episode-{episode}"
+    if mode == "replay":
+        label += f":step-{step}"
+    cell = {
+        "ordinal": ordinal,
+        "deployment": args.deployment,
+        "run_id": args.run_id,
+        "mode": mode,
+        "episode": episode,
+        "step": step,
+        "case_id": case["case_id"],
+    }
+    try:
+        result = _run_cell(
+            args=args,
+            encoder_client=encoder_client,
+            case=case,
+            episode_id=_episode_id(args.run_id, label),
+            mode=mode,
+            episode=episode,
+            step=step,
+        )
+    except Exception as error:
+        if journal_path is not None:
+            append_journal(
+                journal_path,
+                {**cell, "event": "request_failed", "error": _journal_failure(error)},
+            )
+        raise
+    if journal_path is not None:
+        append_journal(
+            journal_path,
+            {**cell, "event": "request_succeeded", "result": result},
+        )
+    return result
+
+
+def _validate_results(results: list[dict[str, Any]]) -> None:
     if len(results) != EXPECTED_REQUESTS:
         raise RuntimeError("KV comparison request envelope diverged")
     for episode in range(EPISODES):
@@ -352,6 +472,26 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 or len({r["selected_worker"] for r in pair}) != 1
             ):
                 raise RuntimeError("retained/replay selection parity failed")
+
+
+def run(args: argparse.Namespace) -> dict[str, Any]:
+    if args.deployment == "remote_vllm" and not args.metrics_url:
+        raise RuntimeError("remote vLLM comparison requires the router metrics URL")
+    encoder_client = (
+        encoder_client_from_environment(args.timeout_seconds)
+        if args.deployment == "remote_vllm"
+        else None
+    )
+    journal_path = _journal_path(args)
+    if journal_path is not None:
+        initialize_journal(journal_path)
+    started = time.perf_counter()
+    results = _run_workload(
+        args=args,
+        encoder_client=encoder_client,
+        journal_path=journal_path,
+    )
+    _validate_results(results)
     return {
         "schema_version": "rayline.openrouter-kv-cache-client.v1",
         "run_id": args.run_id,

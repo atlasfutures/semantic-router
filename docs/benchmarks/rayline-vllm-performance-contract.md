@@ -699,6 +699,41 @@ aggregate evidence is pinned at `rayline-ai/router-artifacts`, revision
 `6039a41b8902445ef2ddf5f944cf3b2a60b4b544`, SHA-256
 `0c2a6492e981e6c61915e686974ab062084badea7ffbbb232d24f6b848da6d31`.
 
+### Retained-KV successor resilience contract
+
+The next native-versus-vLLM retained-KV packet must preserve evidence and stop
+unavailable-provider runs before GPU launch. Each measured logical request has
+one crash-durable JSONL outcome. Successful events contain only routing identity
+and numeric performance/usage evidence; failed events contain only bounded
+status/category/type/code and attempt counts. Prompt, tool, response/error text,
+credential, raw episode identity, and timestamps are forbidden.
+
+Before either H100 paid timer begins, one shared direct OpenRouter gate sends a
+one-output-token request to each exact model/provider order. It may retry one
+pre-response 429/503 and must prove DS4 Flash, MiMo V2.5, and HY3 identity. This
+gate establishes availability only; its latency and throughput are not
+admissible performance evidence.
+
+Measured routed traffic does not gain a client-owned retry loop. Native
+Pathfinder and remote Envoy each own one bounded 429/503 retry below a single
+Rayline selection transaction. Client replay would repeat semantic selection
+and invalidate the session-action and decision-join evidence. Reports must keep
+logical routed requests, server-owned provider attempts, and direct-preflight
+attempts distinct.
+
+The workload has two explicitly different coverage claims:
+
+- the natural semantic-cache lane supports retained-versus-replay and
+  cross-architecture selection claims only for workers it actually selects;
+- the stratified static serving lane must reach all three models but is never
+  evidence that the semantic classifier naturally covers those workers.
+
+TD051 owns the current zero natural share for MiMo/worker-b. A paid successor
+must either close that gap offline with a public realistic prompt set or
+preregister the narrower semantic claim. A new run ID, report schema, request
+and attempt envelope, budget, and launch authorization are required; AGT017
+cannot be retried.
+
 ## Evidence Lineage
 
 The frozen choices build on:

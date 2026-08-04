@@ -88,6 +88,7 @@ def packet_catalog(
             key_limit_usd=OPENROUTER_KEY_LIMIT_USD_PER_ARM,
             maximum_seconds=AGT017_RESOURCE_BUDGET.maximum_paid_wall_seconds,
             protected_encoder=True,
+            provider_preflight=True,
             encoder=flashinfer_encoder,
         ),
         "gateway-shape": RunPacket(

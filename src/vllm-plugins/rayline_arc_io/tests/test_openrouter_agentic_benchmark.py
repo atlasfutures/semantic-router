@@ -29,6 +29,7 @@ if "modal" not in sys.modules and importlib.util.find_spec("modal") is None:
     modal_stub.__spec__ = importlib.machinery.ModuleSpec("modal", loader=None)
     sys.modules["modal"] = modal_stub
 launcher = importlib.import_module("run_openrouter_fullstack")
+launch_authority = importlib.import_module("openrouter_launch_authority")
 encoder_runtime = importlib.import_module("openrouter_encoder_runtime")
 EXPECTED_MAX_COMPLETION_TOKENS = 96
 EXPECTED_MAX_MEASURED_REQUESTS = 72
@@ -693,12 +694,9 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
     assert "fireworks/fast" not in config
     assert launcher.PACKETS["agentic"].key_limit_usd == EXPECTED_EPHEMERAL_KEY_LIMIT_USD
     assert launcher.PACKETS["agentic"].maximum_seconds == 30 * 60
-    assert launcher.AGT011_PREREGISTRATION_COMMIT == ""
-    assert launcher.AGT011_AUTHORIZATION_COMMIT == ""
-    assert launcher.DGN003_PREREGISTRATION_COMMIT == ""
-    assert launcher.DGN003_AUTHORIZATION_COMMIT == ""
-    assert launcher.DGN004_PREREGISTRATION_COMMIT == ""
-    assert launcher.DGN004_AUTHORIZATION_COMMIT == ""
+    assert launch_authority.AUTHORITY_PINS["agentic"] == ("", "")
+    assert launch_authority.AUTHORITY_PINS["gateway-shape"] == ("", "")
+    assert launch_authority.AUTHORITY_PINS["gateway-prime"] == ("", "")
     gateway_packet = launcher.PACKETS["gateway-shape"]
     assert gateway_packet.key_limit_usd == EXPECTED_DIAGNOSTIC_KEY_LIMIT_USD
     assert gateway_packet.maximum_seconds == 5 * 60
