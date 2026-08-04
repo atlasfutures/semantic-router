@@ -2,8 +2,8 @@
 
 ## Status
 
-Open — endpoint coverage is explicit, but the current public semantic prompt
-distribution has no natural MiMo/worker-b share.
+Open — AGT018 now has exact native offline three-worker coverage, but the
+vLLM-hosted encoder has not yet reproduced the frozen trace.
 
 ## Owner Plan
 
@@ -27,11 +27,14 @@ entry. They remain valid serving checks when labeled as such.
 
 ## Summary
 
-The frozen 24-case agentic discovery set selects DS4 Flash and HY3 but has not
-selected MiMo V2.5. The retained/replay KV packet is narrower still: its one
-realistic history shape selected DS4 Flash for every completed request. A new
-workload contract therefore separates the natural semantic-cache lane from an
-explicitly stratified three-worker serving lane.
+The historical 24-case agentic discovery set selected DS4 Flash and HY3 but no
+MiMo V2.5, while AGT017's one retained/replay history selected only DS4 Flash.
+AGT018 replaces that narrow workload with three public, model-agnostic growing
+agentic histories. Exact native encoder evaluation now selects worker-c for
+the code sequence, worker-a for research, and worker-b for incident/source
+correlation across all three KV states. TD051 stays open until the pinned
+vLLM-hosted encoder reproduces the same trace before routed provider
+measurement.
 
 ## Evidence
 
@@ -39,8 +42,16 @@ explicitly stratified three-worker serving lane.
   and worker-c. Its static preflight still reached all three endpoints.
 - AGT017's completed FlashInfer arm selected worker-a for all 12 requests; its
   MiMo and HY3 endpoints remained configured but unobserved in that lane.
-- `openrouter_kv_cache_workload_contract.py` marks stratified static coverage
-  as inadmissible for semantic-selection claims.
+- The pinned native Metal runtime, manifest SHA-256
+  `05e1a23105ec9d537d6cc5b1da7a06b01c7536b6c773d119d967d397bb95e043`,
+  reproduced natural traces `C/C/C`, `A/A/A`, and `B/B/B` for the three AGT018
+  histories. Serialized lengths range from `8,194` to `16,204` tokens; every
+  first state is a prefill and every append is a delta with an `8,192`-token
+  retained prefix. The minimum head top-two score gap is
+  `0.0019787615092044693`, above the frozen `0.0015` gate.
+- `openrouter_kv_cache_workload_contract.py` requires natural three-worker
+  coverage for AGT018 while keeping stratified static dispatch inadmissible for
+  semantic-selection claims.
 
 ## Why It Matters
 
@@ -58,9 +69,10 @@ dispatch remains a separate serving control.
 
 ## Exit Criteria
 
-- Offline discovery proves every configured worker has the preregistered
-  minimum natural share on the exact pinned artifact and encoder revision.
-- The prompt suite remains realistic and public; it does not use forced model
-  IDs, controlled embeddings, routing-only headers, or model-specific anchors.
+- [x] Offline native discovery proves every configured worker has the frozen
+  minimum margin on the exact pinned artifact and encoder revision.
+- [x] The prompt suite remains realistic and public; it does not use forced
+  model IDs, controlled embeddings, routing-only headers, or model-specific
+  anchors.
 - Native and remote Rayline produce the same selected-worker trace.
 - The real-provider report labels semantic and static coverage separately.

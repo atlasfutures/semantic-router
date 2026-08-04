@@ -723,16 +723,27 @@ attempts distinct.
 
 The workload has two explicitly different coverage claims:
 
-- the natural semantic-cache lane supports retained-versus-replay and
-  cross-architecture selection claims only for workers it actually selects;
+- the AGT018 natural semantic-cache lane requires the frozen public code,
+  research, and incident/source-correlation histories to select worker-c,
+  worker-a, and worker-b across all three growing states under both encoder
+  architectures;
 - the stratified static serving lane must reach all three models but is never
   evidence that the semantic classifier naturally covers those workers.
 
-TD051 owns the current zero natural share for MiMo/worker-b. A paid successor
-must either close that gap offline with a public realistic prompt set or
-preregister the narrower semantic claim. A new run ID, report schema, request
-and attempt envelope, budget, and launch authorization are required; AGT017
-cannot be retried.
+Exact native offline evaluation passed with traces `C/C/C`, `A/A/A`, and
+`B/B/B`, serialized histories from `8,194` through `16,204` tokens, and minimum
+top-two score gap `0.0019787615092044693` against a `0.0015` gate. This closes
+the native prompt-discovery part of TD051 but not cross-architecture parity.
+The vLLM-hosted encoder must reproduce all nine states before routed provider
+measurement.
+
+The source-closed successor is
+`rayline-openrouter-kv-cache-agt018-20260804`, artifact
+`public-rayline-arc-openrouter-kv-cache-v3`, report schema
+`rayline.openrouter-kv-cache-comparison.v3`. It bounds 36 routed requests per
+deployment plus six total direct availability probes: 78 logical provider
+requests and 156 worst-case external attempts. It has no launch pins or budget
+authority. AGT017 remains historical and cannot be retried or reinterpreted.
 
 ## Evidence Lineage
 

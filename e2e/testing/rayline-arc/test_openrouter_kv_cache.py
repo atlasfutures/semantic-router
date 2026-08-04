@@ -557,7 +557,15 @@ def test_workload_contract_separates_semantic_and_static_coverage() -> None:
     static = contract["stratified_serving_lane"]
 
     assert semantic["routing"] == "natural_rayline_selection"
-    assert semantic["three_worker_coverage_required"] is False
+    assert semantic["three_worker_coverage_required"] is True
+    assert {
+        worker
+        for trace in semantic["expected_selection_traces"].values()
+        for worker in trace
+    } == set(WORKERS)
+    assert (
+        semantic["remote_encoder_parity_required_before_provider_measurement"] is True
+    )
     assert {cell["worker"] for cell in static["cells"]} == set(WORKERS)
     assert static["semantic_selection_claim_admissible"] is False
     assert contract["retry_policy"] == {

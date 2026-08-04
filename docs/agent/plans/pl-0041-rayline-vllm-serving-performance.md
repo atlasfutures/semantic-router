@@ -3488,7 +3488,7 @@ immutable.
   stratified static serving lane. The latter proves that all three endpoints
   are available but cannot be cited as three-worker classifier coverage.
   [TD051](../tech-debt/td-051-rayline-agentic-worker-coverage-gap.md) owns the
-  remaining absence of natural MiMo/worker-b share.
+  remaining cross-architecture proof.
 
 Focused offline tests prove partial-journal recovery, privacy rejection,
 structured provider-gate success and 429 failure, exact three-worker endpoint
@@ -3496,13 +3496,43 @@ coverage, preflight-before-paid-launch ordering, key reuse, and the semantic
 versus static claim boundary. The dormant AGT017 launch modes remain
 source-closed, so these seams cannot spend or reinterpret AGT017.
 
-Before a paid AGT018 run, freeze a new run ID, app names, artifact revision,
-provider/request/attempt maxima, report schema, acceptance gates, budget, and
-distinct authorization chain. Offline prompt discovery must either produce a
-realistic natural worker-b share that closes TD051 or preregister the narrower
-semantic claim plus separate static serving results. Do not consume the
-remaining `$1.224866553617` reserve or release the 1,000-case qualification as
-part of this preparation.
+AGT018 now has a distinct source-closed identity:
+`rayline-openrouter-kv-cache-agt018-20260804`, native app
+`rayline-router-openrouter-agt018`, remote app
+`rayline-arc-session-encoder-flashinfer-agt018`, artifact revision
+`public-rayline-arc-openrouter-kv-cache-v3`, and report schema
+`rayline.openrouter-kv-cache-comparison.v3`. Its three natural histories,
+three KV states, two episodes, and retained/replay pairing produce 36 routed
+requests per deployment. With three direct availability probes per deployment,
+the packet has at most 78 logical provider requests and 156 external attempts
+under one 429/503 retry below each selection. Both launch pins are empty and a
+new budget authority is explicitly required.
+
+The exact pinned native Metal encoder completed the no-provider coverage gate.
+The public code, research, and incident/source-correlation histories produced
+stable `C/C/C`, `A/A/A`, and `B/B/B` traces. Their serialized histories span
+`8,194` to `16,204` tokens; every first state is a prefill and every following
+state is a delta retaining `8,192` tokens. The smallest public-head top-two
+score gap is `0.0019787615092044693`, above the frozen `0.0015` gate. No
+OpenRouter, Modal, or external GPU call was made, and no prompt or raw embedding
+was emitted in the aggregate result.
+
+- [x] AGT018a: Add crash-durable request evidence, pre-GPU provider
+  availability, matched server-owned 429/503 retry, and semantic/static claim
+  separation without reopening AGT017.
+- [x] AGT018b: Freeze and exact-native-verify a realistic three-worker growing
+  history suite, new run/app/artifact/report identities, 78-request and
+  156-attempt maxima, and source-closed acceptance gates.
+- [ ] AGT018c: Wire the successor workload and v3 reporter into new launch
+  modes. After GPU activation but before routed provider measurement, require
+  the vLLM-hosted encoder to reproduce all nine selected-worker states and the
+  minimum score-margin gate; abort and clean up on divergence.
+- [ ] AGT018d: Obtain a new budget and distinct preregistration/authorization
+  commits, run each architecture once, publish the aggregate-only receipt, and
+  close TD051 only if the remote trace and real-provider report pass.
+
+Do not consume the remaining `$1.224866553617` reserve or release the
+1,000-case qualification as part of source preparation.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
