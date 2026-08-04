@@ -8,6 +8,7 @@ drift metrics only; prompt text and embedding values are never emitted.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import math
@@ -23,6 +24,7 @@ from modal_session_qualification import (
     _vector_metrics,
 )
 from modal_vllm_profile_contract import (
+    BOOTSTRAP_REQUESTS_PER_PROFILE,
     CANDIDATE_LABEL,
     EPISODES,
     MAX_ABSOLUTE_DRIFT,
@@ -72,16 +74,33 @@ def benchmark_turn_states() -> list[list[dict[str, str]]]:
             turns.append({"role": role, "text": text})
         result.append(turns)
     if len(result) != STEPS:
-        raise RuntimeError("PERF028 history-state count diverged")
+        raise RuntimeError("PERF029 history-state count diverged")
     for left, right in pairwise(result):
         if right[: len(left)] != left:
-            raise RuntimeError("PERF028 histories are not strict turn prefixes")
+            raise RuntimeError("PERF029 histories are not strict turn prefixes")
     return result
+
+
+def bootstrap_turn_states() -> list[list[dict[str, str]]]:
+    """Prime cold JIT paths before presenting the first realistic history."""
+    states: list[list[dict[str, str]]] = []
+    turns: list[dict[str, str]] = []
+    for step, repetitions in enumerate((1, 64, 256)):
+        turns.append(
+            {
+                "role": "user" if step % 2 == 0 else "assistant",
+                "text": (f"Public staged kernel bootstrap {step}. " * repetitions),
+            }
+        )
+        states.append(list(turns))
+    if len(states) != BOOTSTRAP_REQUESTS_PER_PROFILE:
+        raise RuntimeError("PERF029 bootstrap-state count diverged")
+    return states
 
 
 def _mean(values: Sequence[float]) -> float:
     if not values:
-        raise RuntimeError("PERF028 cannot summarize an empty sample")
+        raise RuntimeError("PERF029 cannot summarize an empty sample")
     return math.fsum(values) / len(values)
 
 
@@ -152,14 +171,14 @@ def _parity_summary(
 def _expect_action(summary: Mapping[str, Any], expected: str) -> None:
     if summary.get("action") != expected:
         raise RuntimeError(
-            f"PERF028 expected session action {expected}, got {summary.get('action')}"
+            f"PERF029 expected session action {expected}, got {summary.get('action')}"
         )
 
 
 def _health_is_empty(client: CanaryClient) -> None:
     health, _elapsed = client.request("GET", "/health")
     if health.get("resident_sessions") != 0 or health.get("resident_tokens") != 0:
-        raise RuntimeError("PERF028 retained-session cleanup is not empty")
+        raise RuntimeError("PERF029 retained-session cleanup is not empty")
 
 
 def _close_if_present(client: CanaryClient, episode_id: str) -> None:
@@ -167,7 +186,20 @@ def _close_if_present(client: CanaryClient, episode_id: str) -> None:
         "DELETE", f"/v1/rayline/arc/session/{episode_id}"
     )
     if not isinstance(response.get("closed"), bool):
-        raise TypeError("PERF028 session close response omitted boolean status")
+        raise TypeError("PERF029 session close response omitted boolean status")
+
+
+def _close_after_phase(
+    client: CanaryClient,
+    episode_id: str,
+    *,
+    phase_completed: bool,
+) -> None:
+    if phase_completed:
+        _close_if_present(client, episode_id)
+        return
+    with contextlib.suppress(BaseException):
+        _close_if_present(client, episode_id)
 
 
 def _warm_profile(
@@ -175,14 +207,17 @@ def _warm_profile(
     client: CanaryClient,
     states: Sequence[list[dict[str, str]]],
     run_id: str,
+    phase: str,
 ) -> None:
-    episode_id = _episode_hash(f"{run_id}:warmup:{label}")
+    episode_id = _episode_hash(f"{run_id}:warmup:{phase}:{label}")
+    phase_completed = False
     try:
         for step, turns in enumerate(states):
             summary = client.encode(episode_id, turns)
             _expect_action(summary, "created" if step == 0 else "appended")
+        phase_completed = True
     finally:
-        _close_if_present(client, episode_id)
+        _close_after_phase(client, episode_id, phase_completed=phase_completed)
     _health_is_empty(client)
 
 
@@ -241,6 +276,7 @@ def _measure_profiles(
     vectors: dict[tuple[str, int, int, str], tuple[float, ...]] = {}
     cell = 0
     for episode in range(EPISODES):
+        phase_completed = False
         retained_ids = {
             label: _episode_hash(f"{run_id}:{label}:retained:{episode}")
             for label in PROFILE_LABELS
@@ -266,9 +302,14 @@ def _measure_profiles(
                         vectors=vectors,
                     )
                     cell += 1
+            phase_completed = True
         finally:
             for label in PROFILE_LABELS:
-                _close_if_present(clients[label], retained_ids[label])
+                _close_after_phase(
+                    clients[label],
+                    retained_ids[label],
+                    phase_completed=phase_completed,
+                )
     return samples, vectors
 
 
@@ -320,6 +361,7 @@ def _timing_reports(
 def _build_report(
     *,
     run_id: str,
+    bootstrap_states: Sequence[list[dict[str, str]]],
     states: Sequence[list[dict[str, str]]],
     samples: Mapping[str, list[dict[str, Any]]],
     vectors: Mapping[tuple[str, int, int, str], tuple[float, ...]],
@@ -333,7 +375,7 @@ def _build_report(
         "engine_inference_mean_seconds"
     ]
     if reference_engine <= 0:
-        raise RuntimeError("PERF028 reference engine timing is not positive")
+        raise RuntimeError("PERF029 reference engine timing is not positive")
     engine_ratio = candidate_engine / reference_engine
     correctness_passed = (
         all(report["passed"] for report in within_profile.values())
@@ -359,6 +401,10 @@ def _build_report(
         },
         "workload": {
             "sha256": workload_digest,
+            "bootstrap_sha256": hashlib.sha256(
+                _stable_json(bootstrap_states).encode()
+            ).hexdigest(),
+            "bootstrap_history_states": len(bootstrap_states),
             "episodes": EPISODES,
             "history_states_per_episode": STEPS,
             "modes": list(MODES),
@@ -393,18 +439,21 @@ def run_comparison(
     run_id: str,
 ) -> dict[str, Any]:
     if tuple(clients) != PROFILE_LABELS:
-        raise RuntimeError("PERF028 clients are not in the frozen profile order")
+        raise RuntimeError("PERF029 clients are not in the frozen profile order")
+    bootstrap_states = bootstrap_turn_states()
     states = benchmark_turn_states()
     for label in PROFILE_LABELS:
-        _warm_profile(label, clients[label], states, run_id)
+        _warm_profile(label, clients[label], bootstrap_states, run_id, "bootstrap")
+        _warm_profile(label, clients[label], states, run_id, "exact-shape")
 
     samples, vectors = _measure_profiles(clients, states, run_id)
     for label in PROFILE_LABELS:
         if len(samples[label]) != MEASURED_REQUESTS_PER_PROFILE:
-            raise RuntimeError("PERF028 measured request count diverged")
+            raise RuntimeError("PERF029 measured request count diverged")
         _health_is_empty(clients[label])
     return _build_report(
         run_id=run_id,
+        bootstrap_states=bootstrap_states,
         states=states,
         samples=samples,
         vectors=vectors,

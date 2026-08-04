@@ -10,11 +10,15 @@ E2E_DIR = Path(__file__).resolve().parents[4] / "e2e/testing/rayline-arc"
 sys.path.insert(0, str(E2E_DIR))
 
 import modal_vllm_profile_comparator as comparator  # noqa: E402
-from modal_vllm_profile_comparator import benchmark_turn_states  # noqa: E402
+from modal_vllm_profile_comparator import (  # noqa: E402
+    benchmark_turn_states,
+    bootstrap_turn_states,
+)
 from modal_vllm_profile_contract import (  # noqa: E402
+    BOOTSTRAP_REQUESTS_PER_PROFILE,
     MAXIMUM_POOLING_REQUESTS,
     MEASURED_REQUESTS_PER_PROFILE,
-    PERF028_BUDGET,
+    PERF029_BUDGET,
     PROFILE_LABELS,
     PROFILES,
     STEPS,
@@ -25,8 +29,9 @@ from rayline_three_arm_budget import budget_receipt  # noqa: E402
 EXPECTED_CANDIDATE_RATIO = 0.5
 
 
-def test_perf028_history_states_are_strict_public_turn_prefixes() -> None:
+def test_perf029_history_states_are_strict_public_turn_prefixes() -> None:
     states = benchmark_turn_states()
+    bootstrap = bootstrap_turn_states()
 
     assert len(states) == STEPS
     assert all(
@@ -35,17 +40,20 @@ def test_perf028_history_states_are_strict_public_turn_prefixes() -> None:
     assert states[1][: len(states[0])] == states[0]
     assert states[2][: len(states[1])] == states[1]
     assert all("text" in turn for turns in states for turn in turns)
+    assert len(bootstrap) == BOOTSTRAP_REQUESTS_PER_PROFILE
+    assert bootstrap[1][: len(bootstrap[0])] == bootstrap[0]
+    assert bootstrap[2][: len(bootstrap[1])] == bootstrap[1]
 
 
-def test_perf028_contract_is_bounded_and_profiles_only_one_backend_axis() -> None:
-    receipt = budget_receipt(PERF028_BUDGET)
+def test_perf029_contract_is_bounded_and_profiles_only_one_backend_axis() -> None:
+    receipt = budget_receipt(PERF029_BUDGET)
 
     assert (
         len(PROFILE_LABELS)
         * (WARMUP_REQUESTS_PER_PROFILE + MEASURED_REQUESTS_PER_PROFILE)
         == MAXIMUM_POOLING_REQUESTS
     )
-    assert receipt["maximum_resource_envelope_usd"] < PERF028_BUDGET.packet_ceiling_usd
+    assert receipt["maximum_resource_envelope_usd"] < PERF029_BUDGET.packet_ceiling_usd
     assert receipt["provider_spend_usd"] == 0.0
     assert {profile.gdn_prefill_backend for profile in PROFILES.values()} == {
         "torch_reference",
@@ -96,7 +104,7 @@ class FakeClient:
         }, 0.0
 
 
-def test_perf028_full_comparator_accepts_a_faster_parity_candidate(
+def test_perf029_full_comparator_accepts_a_faster_parity_candidate(
     monkeypatch: Any,
 ) -> None:
     clients = {label: FakeClient(label) for label in PROFILE_LABELS}
@@ -127,7 +135,7 @@ def test_perf028_full_comparator_accepts_a_faster_parity_candidate(
         }
 
     monkeypatch.setattr(comparator, "encoder_stage_delta", stage_delta)
-    report = comparator.run_comparison(clients, "test-perf028")
+    report = comparator.run_comparison(clients, "test-perf029")
 
     assert report["status"] == "passed"
     assert report["candidate_decision"] == "accepted"

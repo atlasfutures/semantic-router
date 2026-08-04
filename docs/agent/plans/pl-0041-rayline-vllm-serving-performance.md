@@ -3222,13 +3222,56 @@ held 1,000-case qualification. Its full two-H100 resource envelope is
 
 - [x] PERF028a: Validate and push the signed source-closed implementation and
   frozen preregistration checkpoint.
-- [ ] PERF028b: Bind and push the separate launch-authorization checkpoint,
+- [x] PERF028b: Bind and push the separate launch-authorization checkpoint,
   then run the two exact Modal apps once.
-- [ ] PERF028c: Stop both apps, delete the proxy credential, verify exact-name
+- [x] PERF028c: Stop both apps, delete the proxy credential, verify exact-name
   zero, persist the aggregate-only receipt, and close both authority pins.
-- [ ] PERF028d: If and only if the candidate is accepted, run the next matched
-  native-versus-vLLM end-to-end packet with FlashInfer; otherwise retain the
-  reference backend and attack the measured service-boundary residual.
+- [x] PERF028d: Treat the pre-measurement cold-warmup failure as an integrity
+  result and preregister an identity-equivalent staged-warmup successor.
+
+#### PERF028 Failed Warmup
+
+PERF028 reached both empty health gates, but the first realistic-history
+warmup was also the reference container's first inference. The
+`torch_reference` engine JIT-compiled zero-block, slot-mapping, and causal-conv
+kernels, then its engine worker disappeared after `119.2s`; the pooling request
+returned HTTP 500. The best-effort session close returned 409 because the
+failed call still owned the episode. FlashInfer had initialized successfully
+but received no pooling request, so PERF028 contains no comparison and no
+candidate verdict.
+
+This is a workload-order failure, not evidence that either backend is faster
+or correct. Earlier successful long-history packets prime the protected engine
+with small requests before the realistic workload. PERF028 did not. Both exact
+apps stopped with zero tasks and containers, the proxy token was deleted,
+provider calls remained zero, and the launcher-window resource upper estimate
+was `$1.6294931056407562`. Conservative program accounting nevertheless charges
+the full `$9.0308736` PERF028 envelope, raising the bound to
+`$105.895336666383`. PERF028 cannot retry.
+
+### PERF029 Staged-Warmup Successor
+
+PERF029 preserves PERF028's model, revision, vLLM source, H100, eager mode,
+backend axis, exact-shape warmup, measured workload, alternating profile order,
+correctness thresholds, performance threshold, privacy rules, and cleanup
+contract. The only experimental correction is a frozen three-request
+append-only bootstrap at small, medium, and larger public synthetic shapes
+before the existing three realistic-history warmups. This moves cold kernel
+initialization outside the first long request without adding a measured sample
+or changing the A/B axis. Each profile now receives six warmups and twelve
+measured calls, 36 pooling calls total.
+
+PERF029 uses new exact app names and a new run namespace; PERF028's app names
+are no longer accepted by the service. Its two-H100 envelope remains
+`$9.0308736`. Charging both full envelopes would raise cumulative conservative
+accounting to `$114.926210266383` and leave `$19.386613753617` under current
+authority. The source remains closed until a new signed preregistration and
+separate authorization chain are pushed.
+
+- [ ] PERF029a: Validate and push the source-closed staged-warmup successor.
+- [ ] PERF029b: Bind a separate authorization commit and execute PERF029 once.
+- [ ] PERF029c: Verify exact cleanup, persist the aggregate-only receipt, close
+  launch authority, and choose the next path from the frozen candidate verdict.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin

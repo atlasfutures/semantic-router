@@ -103,14 +103,14 @@ def test_session_service_allows_only_the_frozen_scaleout_app_names() -> None:
     assert "unsupported Rayline ARC session app name" in service_source
 
 
-def test_session_service_confines_perf028_backends_to_exact_app_names() -> None:
+def test_session_service_confines_perf029_backends_to_exact_app_names() -> None:
     service_source = source()
 
-    assert '"rayline-arc-session-encoder-reference-perf028": "torch_reference"' in (
+    assert '"rayline-arc-session-encoder-reference-perf029": "torch_reference"' in (
         service_source
     )
-    assert '"rayline-arc-session-encoder-flashinfer-perf028": "flashinfer"' in (
+    assert '"rayline-arc-session-encoder-flashinfer-perf029": "flashinfer"' in (
         service_source
     )
-    assert 'PERF028_APP_PROFILES.get(APP_NAME, "torch_reference")' in service_source
-    assert "if APP_NAME in PERF028_APP_PROFILES" in service_source
+    assert 'PERF029_APP_PROFILES.get(APP_NAME, "torch_reference")' in service_source
+    assert "if APP_NAME in PERF029_APP_PROFILES" in service_source
