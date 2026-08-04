@@ -3307,9 +3307,63 @@ allowlist, and requires a new source/authorization chain. Charging its complete
 `$123.957083866383` and leave `$10.355740153617` under current authority.
 
 - [x] PERF030a: Validate and push the source-closed runtime-identity fix.
-- [ ] PERF030b: Bind separate authorization and execute the two exact apps once.
-- [ ] PERF030c: Verify exact cleanup, persist aggregate evidence, permanently
+- [x] PERF030b: Bind separate authorization and execute the two exact apps once.
+- [x] PERF030c: Verify exact cleanup, persist aggregate evidence, permanently
   close authority, and act only on a frozen accepted/rejected candidate result.
+
+#### PERF030 Result
+
+PERF030 passed all integrity, correctness, performance, privacy, budget, and
+cleanup gates. Both runtime profiles attested their exact app name, vLLM source,
+engine build ID, eager mode, and GDN backend. All 36 pooling calls completed:
+six unmeasured warmups and twelve measured retained/replay calls per profile on
+15,310-20,938-token serialized histories. Provider calls and 1,000-case release
+qualification calls remained zero.
+
+FlashInfer is accepted by the frozen gate. Across all twelve measured calls per
+profile, mean engine inference fell from `1.151185s` on `torch_reference` to
+`0.116770s` on FlashInfer, a `0.101435x` ratio or `9.8586x` speedup. Mean
+protected-client latency fell from `1.836310s` to `0.809441s`, a `0.440798x`
+ratio or `2.2686x` speedup. The retained-only engine result was `0.671963s`
+versus `0.076982s` (`0.114562x`), while retained protected-client latency was
+`1.355158s` versus `0.755174s` (`0.557259x`). Retained execution appended
+41,876 tokens versus 108,744 replay tokens, retaining the expected `61.491%`
+token-work saving.
+
+Correctness remained inside every threshold. Cross-profile minimum cosine was
+`0.999989306`, maximum absolute drift was `0.000512179`, maximum L2 drift was
+`0.004624778`, maximum synthetic score drift was `0.000118929`, and synthetic
+selection flips were zero. Retained/replay parity also passed independently in
+both profiles, with minimum cosines above `0.99999972` and zero flips.
+
+The remaining bottleneck is no longer vLLM inference. In the retained
+FlashInfer arm, protected-client mean was `0.755174s`, coordinator mean was
+`0.080592s`, engine inference was `0.076982s`, and tokenization was `0.037767s`.
+Client minus coordinator and tokenization was about `0.636815s`; the same
+quantity was about `0.643784s` on the reference arm. This backend-independent
+service/transport boundary accounts for most of the optimized request and is
+consistent with earlier placement work ruling out scheduler queueing and simple
+region distance as the primary cause. FlashInfer makes the internal execution
+competitive, but the current independent Modal HTTP endpoint still does not
+reach the warmed native router's `0.1455s` encoder-stage latency.
+
+Both PERF030 apps are stopped at zero tasks, no matching containers remain,
+the proxy credential is deleted, and the protected default encoder remains
+deployed at zero tasks. The launcher-window infrastructure upper estimate is
+`$1.3128833055550602`; conservative accounting remains bounded by the full
+program maximum of `$123.957083866383`, leaving `$10.355740153617` under
+authority. The aggregate PERF028-PERF030 receipts are private and byte-verified
+at `rayline-ai/router-artifacts@7c834cb2402daebe40f011f6fe606f2cb7a28f7e`;
+PERF030 SHA-256 is
+`e5f0c4c1fc26191f4ecf5816430711c1f1cdce92d2ed7713efdac4b88f6c4d0a`.
+Unauthenticated artifact access returned HTTP 401. PERF030 launch authority is
+closed and cannot retry.
+
+The next evidence packet should keep FlashInfer experimental, run the matched
+native-versus-vLLM end-to-end agentic workload once, and separately compare the
+public Modal HTTP boundary with a region-local/internal transport. Promotion to
+the protected default must wait for that end-to-end result; the production
+default therefore remains `torch_reference` at this checkpoint.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
