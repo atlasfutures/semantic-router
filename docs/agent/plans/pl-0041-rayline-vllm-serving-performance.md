@@ -3170,6 +3170,66 @@ Credential and prompt-marker scans passed, the receipt round-tripped
 byte-exactly, and unauthenticated access returned HTTP 401. Both AGT016 source
 pins are closed, and the 1,000-case qualification remains held.
 
+### PERF028 vLLM GDN Backend Isolation
+
+AGT016's steady retained request is now decomposed rather than attributed to
+"vLLM" as one opaque stage. Its mean encoder call was `1.2402s`, while Semantic
+Router's non-encoder work was about `0.0054s`. Protected vLLM telemetry reports
+about `0.6669s` of engine inference, `0.00004s` of engine queueing, and
+`0.0376s` of tokenization per request. The remaining roughly `0.531s` is
+coordinator/backend and service-boundary time. This rules out scheduler queue
+contention as the serial-path cause and makes the engine backend the first
+controlled axis to test. Native Pathfinder's warmed encoder mean was
+`0.1455s`; its first episode also paid a separate `50.5s` first-shape Torch
+compile, so neither implementation should be characterized from cold start
+alone.
+
+The protected vLLM service currently forces `gdn_prefill_backend` to
+`torch_reference`. That backend was selected to align the causal-MEAN port with
+the Transformers reference path; vLLM's optimized H100 path is FlashInfer.
+PERF028 is therefore a provider-free, same-source, same-model, same-revision,
+same-H100 A/B between only those two GDN backends. Both retain `enforce_eager`,
+the 8,192-token chunk schedule, explicit session pooling, and automatic prefix
+caching disabled. The production/default and existing scale-out app names
+remain pinned to `torch_reference`; only two exact PERF028 app names can select
+the experimental profiles.
+
+Both apps are hydrated before measurement and then receive the same public
+synthetic, progressively growing three-state agent history. Each profile runs
+three warmup requests followed by two episodes of retained and fresh-replay
+requests at every state: 15 pooling requests per profile and 30 total. Profile
+order alternates per cell. Every measured request is bracketed by protected
+engine telemetry, so the primary performance gate uses internal vLLM inference
+time; client HTTP latency is reported as diagnostic evidence and is not an
+acceptance gate.
+
+FlashInfer is accepted only if all of the following frozen conditions hold:
+
+- retained versus replay parity passes independently inside both profiles;
+- cross-profile cosine similarity is at least `0.9999`, maximum absolute
+  embedding drift is at most `0.01`, maximum synthetic policy-score drift is at
+  most `0.005`, and synthetic worker-selection flips are zero; and
+- FlashInfer mean engine inference time is at most `0.80x` the reference mean.
+
+A correctness or performance miss records a valid `rejected` candidate result;
+it is not reinterpreted as a failed launch. Metadata, action, token-accounting,
+metrics, session-empty, source, budget, and exact cleanup violations remain
+integrity failures. The packet makes no provider calls and does not execute the
+held 1,000-case qualification. Its full two-H100 resource envelope is
+`$9.0308736`, bringing the cumulative conservative bound to
+`$105.895336666383` and leaving `$28.417487353617` under the existing
+`$134.31282402` authority.
+
+- [ ] PERF028a: Validate and push the signed source-closed implementation and
+  frozen preregistration checkpoint.
+- [ ] PERF028b: Bind and push the separate launch-authorization checkpoint,
+  then run the two exact Modal apps once.
+- [ ] PERF028c: Stop both apps, delete the proxy credential, verify exact-name
+  zero, persist the aggregate-only receipt, and close both authority pins.
+- [ ] PERF028d: If and only if the candidate is accepted, run the next matched
+  native-versus-vLLM end-to-end packet with FlashInfer; otherwise retain the
+  reference backend and attack the measured service-boundary residual.
+
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
 continues to reject cached-prefix tokens. The separate session v1 wire reports

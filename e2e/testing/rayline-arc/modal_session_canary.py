@@ -46,6 +46,7 @@ class CanaryClient:
     modal_key: str
     modal_secret: str
     timeout_seconds: float
+    expected_engine_build_id: str = ENGINE_BUILD_ID
 
     def request(
         self,
@@ -107,7 +108,11 @@ class CanaryClient:
                 "turns": turns,
             },
         )
-        return _validate_response(response, elapsed)
+        return _validate_response(
+            response,
+            elapsed,
+            expected_engine_build_id=self.expected_engine_build_id,
+        )
 
     def close(self, episode_id: str) -> None:
         response, _elapsed = self.request(
@@ -121,13 +126,15 @@ class CanaryClient:
 def _validate_response(
     response: dict[str, Any],
     elapsed: float,
+    *,
+    expected_engine_build_id: str = ENGINE_BUILD_ID,
 ) -> tuple[dict[str, Any], tuple[float, ...]]:
     expected = {
         "schema_version": RESPONSE_SCHEMA,
         "serializer_version": SERIALIZER_VERSION,
         "model": MODEL_ID,
         "model_revision": MODEL_REVISION,
-        "engine_build_id": ENGINE_BUILD_ID,
+        "engine_build_id": expected_engine_build_id,
         "io_plugin_version": PLUGIN_VERSION,
         "pooling_capabilities": CAPABILITIES,
     }

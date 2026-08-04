@@ -79,7 +79,7 @@ def test_session_service_freezes_the_proven_retained_vllm_runtime() -> None:
         "python3 -m py_compile",
         "enable_prefix_caching=False",
         "enable_logging_iteration_details=True",
-        'gdn_prefill_backend="torch_reference"',
+        "gdn_prefill_backend=GDN_PREFILL_BACKEND",
         "VLLMRetainedPoolingBackendFactory",
         "VLLMSessionEngineMetricsProvider",
         "self._engine.get_scheduler_load",
@@ -101,3 +101,16 @@ def test_session_service_allows_only_the_frozen_scaleout_app_names() -> None:
         service_source
     )
     assert "unsupported Rayline ARC session app name" in service_source
+
+
+def test_session_service_confines_perf028_backends_to_exact_app_names() -> None:
+    service_source = source()
+
+    assert '"rayline-arc-session-encoder-reference-perf028": "torch_reference"' in (
+        service_source
+    )
+    assert '"rayline-arc-session-encoder-flashinfer-perf028": "flashinfer"' in (
+        service_source
+    )
+    assert 'PERF028_APP_PROFILES.get(APP_NAME, "torch_reference")' in service_source
+    assert "if APP_NAME in PERF028_APP_PROFILES" in service_source

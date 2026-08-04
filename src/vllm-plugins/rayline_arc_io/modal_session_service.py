@@ -21,8 +21,12 @@ SCALEOUT_APP_NAMES = (
     "rayline-arc-session-encoder-b",
     "rayline-arc-session-encoder-c",
 )
+PERF028_APP_PROFILES = {
+    "rayline-arc-session-encoder-reference-perf028": "torch_reference",
+    "rayline-arc-session-encoder-flashinfer-perf028": "flashinfer",
+}
 APP_NAME = os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", DEFAULT_APP_NAME)
-if APP_NAME not in (DEFAULT_APP_NAME, *SCALEOUT_APP_NAMES):
+if APP_NAME not in (DEFAULT_APP_NAME, *SCALEOUT_APP_NAMES, *PERF028_APP_PROFILES):
     raise RuntimeError("unsupported Rayline ARC session app name")
 MODEL_ID = "Qwen/Qwen3.5-0.8B"
 MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
@@ -35,7 +39,13 @@ VLLM_COMMIT = "9f5ea81ca0aa570aea46baf82311a1139c1267ca"
 VLLM_VERSION = "0.26.1rc1.dev36+g98e91a960"
 VLLM_WHEEL_INDEX = f"https://wheels.vllm.ai/{VLLM_BASE_WHEEL_COMMIT}/cu130"
 VLLM_REPOSITORY = "https://github.com/atlasfutures/vllm.git"
-ENGINE_BUILD_ID = f"vllm@{VLLM_COMMIT}"
+BASE_ENGINE_BUILD_ID = f"vllm@{VLLM_COMMIT}"
+GDN_PREFILL_BACKEND = PERF028_APP_PROFILES.get(APP_NAME, "torch_reference")
+ENGINE_BUILD_ID = (
+    f"{BASE_ENGINE_BUILD_ID}+gdn-{GDN_PREFILL_BACKEND.replace('_', '-')}-eager"
+    if APP_NAME in PERF028_APP_PROFILES
+    else BASE_ENGINE_BUILD_ID
+)
 
 GPU_TYPE = "H100"
 MODAL_REGION = "us-east"
@@ -200,7 +210,7 @@ class SessionEncoder:
             enable_prefix_caching=False,
             gpu_memory_utilization=0.92,
             enforce_eager=True,
-            gdn_prefill_backend="torch_reference",
+            gdn_prefill_backend=GDN_PREFILL_BACKEND,
             pooler_config=PoolerConfig(
                 task="embed",
                 pooling_type="MEAN",
