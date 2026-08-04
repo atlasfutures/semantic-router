@@ -267,10 +267,10 @@ def _remote_deployment() -> dict[str, object]:
     }
 
 
-def test_paid_remote_launch_starts_source_closed() -> None:
+def test_paid_remote_launch_is_bound_to_pushed_authority() -> None:
     preregistration, authorization = authority.AUTHORITY_PINS["kv-cache-flashinfer"]
-    assert preregistration == ""
-    assert authorization == ""
+    assert preregistration == "b827fdafeae14ee0699107e74ac3c870d33f3388"
+    assert authorization == "eee540c80a3650e805a8c68c1576376739898913"
 
 
 def test_matched_artifact_freezes_the_24_token_worker_contract(tmp_path) -> None:

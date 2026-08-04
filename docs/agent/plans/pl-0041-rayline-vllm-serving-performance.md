@@ -3397,7 +3397,7 @@ maximum `$0.10`. Charging the full `$9.1308736` packet raises conservative
 cumulative accounting from `$123.957083866383` to `$133.087957466383`, leaving
 at least `$1.224866553617` under the existing `$134.31282402` authority.
 
-- [ ] AGT017a: Pass focused and repository gates, push the signed source-closed
+- [x] AGT017a: Pass focused and repository gates, push the signed source-closed
   preregistration checkpoint, then bind a separate authorization checkpoint.
 - [ ] AGT017b: Execute the native and FlashInfer remote arms once each and
   verify exact cleanup before interpreting measurements.
