@@ -21,12 +21,13 @@ SCALEOUT_APP_NAMES = (
     "rayline-arc-session-encoder-b",
     "rayline-arc-session-encoder-c",
 )
-PERF029_APP_PROFILES = {
-    "rayline-arc-session-encoder-reference-perf029": "torch_reference",
-    "rayline-arc-session-encoder-flashinfer-perf029": "flashinfer",
+PERF030_APP_PROFILES = {
+    "rayline-arc-session-encoder-reference-perf030": "torch_reference",
+    "rayline-arc-session-encoder-flashinfer-perf030": "flashinfer",
 }
+ALLOWED_APP_NAMES = (DEFAULT_APP_NAME, *SCALEOUT_APP_NAMES, *PERF030_APP_PROFILES)
 APP_NAME = os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", DEFAULT_APP_NAME)
-if APP_NAME not in (DEFAULT_APP_NAME, *SCALEOUT_APP_NAMES, *PERF029_APP_PROFILES):
+if APP_NAME not in ALLOWED_APP_NAMES:
     raise RuntimeError("unsupported Rayline ARC session app name")
 MODEL_ID = "Qwen/Qwen3.5-0.8B"
 MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
@@ -40,12 +41,28 @@ VLLM_VERSION = "0.26.1rc1.dev36+g98e91a960"
 VLLM_WHEEL_INDEX = f"https://wheels.vllm.ai/{VLLM_BASE_WHEEL_COMMIT}/cu130"
 VLLM_REPOSITORY = "https://github.com/atlasfutures/vllm.git"
 BASE_ENGINE_BUILD_ID = f"vllm@{VLLM_COMMIT}"
-GDN_PREFILL_BACKEND = PERF029_APP_PROFILES.get(APP_NAME, "torch_reference")
+GDN_PREFILL_BACKEND = PERF030_APP_PROFILES.get(APP_NAME, "torch_reference")
 ENGINE_BUILD_ID = (
     f"{BASE_ENGINE_BUILD_ID}+gdn-{GDN_PREFILL_BACKEND.replace('_', '-')}-eager"
-    if APP_NAME in PERF029_APP_PROFILES
+    if APP_NAME in PERF030_APP_PROFILES
     else BASE_ENGINE_BUILD_ID
 )
+
+
+def _runtime_profile() -> tuple[str, str]:
+    runtime_app_name = os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", "")
+    if runtime_app_name not in ALLOWED_APP_NAMES or runtime_app_name != APP_NAME:
+        raise RuntimeError("Rayline ARC runtime app identity diverged")
+    backend = PERF030_APP_PROFILES.get(runtime_app_name, "torch_reference")
+    build_id = (
+        f"{BASE_ENGINE_BUILD_ID}+gdn-{backend.replace('_', '-')}-eager"
+        if runtime_app_name in PERF030_APP_PROFILES
+        else BASE_ENGINE_BUILD_ID
+    )
+    if os.environ.get("RAYLINE_ARC_ENGINE_BUILD_ID") != build_id:
+        raise RuntimeError("Rayline ARC runtime engine identity diverged")
+    return backend, build_id
+
 
 GPU_TYPE = "H100"
 MODAL_REGION = "us-east"
@@ -124,6 +141,7 @@ image = (
             "TOKENIZERS_PARALLELISM": "false",
             "VLLM_CACHE_ROOT": "/root/.cache/vllm",
             "VLLM_LOGGING_LEVEL": "WARNING",
+            "RAYLINE_ARC_SESSION_APP_NAME": APP_NAME,
             "RAYLINE_ARC_ENGINE_BUILD_ID": ENGINE_BUILD_ID,
             "RAYLINE_ARC_PLUGIN_SOURCE_DIGEST": PLUGIN_SOURCE_DIGEST,
         }
@@ -190,6 +208,7 @@ class SessionEncoder:
         expected_digest = os.environ["RAYLINE_ARC_PLUGIN_SOURCE_DIGEST"]
         if installed_source_digest() != expected_digest:
             raise RuntimeError("installed ARC plugin source digest diverged")
+        runtime_backend, runtime_build_id = _runtime_profile()
 
         tokenizer = AutoTokenizer.from_pretrained(
             MODEL_ID,
@@ -210,7 +229,7 @@ class SessionEncoder:
             enable_prefix_caching=False,
             gpu_memory_utilization=0.92,
             enforce_eager=True,
-            gdn_prefill_backend=GDN_PREFILL_BACKEND,
+            gdn_prefill_backend=runtime_backend,
             pooler_config=PoolerConfig(
                 task="embed",
                 pooling_type="MEAN",
@@ -230,7 +249,7 @@ class SessionEncoder:
         self._web_app = create_session_app(
             self._coordinator,
             TokenBlockSerializer(tokenizer),
-            SessionAPIMetadata(engine_build_id=ENGINE_BUILD_ID),
+            SessionAPIMetadata(engine_build_id=runtime_build_id),
             VLLMSessionEngineMetricsProvider(
                 self._engine.get_scheduler_load,
                 self._coordinator.append_metrics_snapshot,

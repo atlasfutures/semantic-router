@@ -3269,9 +3269,47 @@ authority. The source remains closed until a new signed preregistration and
 separate authorization chain are pushed.
 
 - [x] PERF029a: Validate and push the source-closed staged-warmup successor.
-- [ ] PERF029b: Bind a separate authorization commit and execute PERF029 once.
-- [ ] PERF029c: Verify exact cleanup, persist the aggregate-only receipt, close
+- [x] PERF029b: Bind a separate authorization commit and execute PERF029 once.
+- [x] PERF029c: Verify exact cleanup, persist the aggregate-only receipt, close
   launch authority, and choose the next path from the frozen candidate verdict.
+
+#### PERF029 Runtime-Identity Failure
+
+PERF029 reached both health gates and the reference profile completed the first
+tiny bootstrap inference, proving the staged warmup avoided PERF028's immediate
+long-request crash. The response then failed the frozen `engine_build_id`
+attestation before another pooling request was sent. Modal's image logs show
+the correct profile-specific engine IDs were built, but the service did not
+persist `RAYLINE_ARC_SESSION_APP_NAME` into the runtime image environment. A
+container-side module import could consequently resolve the default profile,
+making both response identity and the candidate GDN backend ambiguous.
+
+No timing or correctness comparison is valid. Both PERF029 apps stopped with
+zero tasks and containers, the proxy token was deleted, provider calls remained
+zero, and the launcher-window resource upper estimate was
+`$0.9479392309141873`. Conservative accounting charges PERF029's full
+`$9.0308736` envelope, raising the program bound to `$114.926210266383`.
+PERF029 cannot retry.
+
+### PERF030 Runtime-Attested Successor
+
+PERF030 preserves PERF029's staged warmup and all frozen A/B inputs and gates.
+Its only correction is deployment identity propagation: the exact app name is
+embedded in the Modal image, and `SessionEncoder.start()` resolves the runtime
+app name, GDN backend, and engine build ID together. Startup fails before model
+use if the app name is not exact, differs from the deployed module identity, or
+does not match the image-owned engine ID. Both engine construction and response
+metadata consume those runtime-attested values.
+
+PERF030 uses new exact app names, removes the PERF029 names from the service
+allowlist, and requires a new source/authorization chain. Charging its complete
+`$9.0308736` envelope would raise cumulative conservative accounting to
+`$123.957083866383` and leave `$10.355740153617` under current authority.
+
+- [ ] PERF030a: Validate and push the source-closed runtime-identity fix.
+- [ ] PERF030b: Bind separate authorization and execute the two exact apps once.
+- [ ] PERF030c: Verify exact cleanup, persist aggregate evidence, permanently
+  close authority, and act only on a frozen accepted/rejected candidate result.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin

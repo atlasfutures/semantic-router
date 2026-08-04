@@ -74,10 +74,10 @@ def benchmark_turn_states() -> list[list[dict[str, str]]]:
             turns.append({"role": role, "text": text})
         result.append(turns)
     if len(result) != STEPS:
-        raise RuntimeError("PERF029 history-state count diverged")
+        raise RuntimeError("PERF030 history-state count diverged")
     for left, right in pairwise(result):
         if right[: len(left)] != left:
-            raise RuntimeError("PERF029 histories are not strict turn prefixes")
+            raise RuntimeError("PERF030 histories are not strict turn prefixes")
     return result
 
 
@@ -94,13 +94,13 @@ def bootstrap_turn_states() -> list[list[dict[str, str]]]:
         )
         states.append(list(turns))
     if len(states) != BOOTSTRAP_REQUESTS_PER_PROFILE:
-        raise RuntimeError("PERF029 bootstrap-state count diverged")
+        raise RuntimeError("PERF030 bootstrap-state count diverged")
     return states
 
 
 def _mean(values: Sequence[float]) -> float:
     if not values:
-        raise RuntimeError("PERF029 cannot summarize an empty sample")
+        raise RuntimeError("PERF030 cannot summarize an empty sample")
     return math.fsum(values) / len(values)
 
 
@@ -171,14 +171,14 @@ def _parity_summary(
 def _expect_action(summary: Mapping[str, Any], expected: str) -> None:
     if summary.get("action") != expected:
         raise RuntimeError(
-            f"PERF029 expected session action {expected}, got {summary.get('action')}"
+            f"PERF030 expected session action {expected}, got {summary.get('action')}"
         )
 
 
 def _health_is_empty(client: CanaryClient) -> None:
     health, _elapsed = client.request("GET", "/health")
     if health.get("resident_sessions") != 0 or health.get("resident_tokens") != 0:
-        raise RuntimeError("PERF029 retained-session cleanup is not empty")
+        raise RuntimeError("PERF030 retained-session cleanup is not empty")
 
 
 def _close_if_present(client: CanaryClient, episode_id: str) -> None:
@@ -186,7 +186,7 @@ def _close_if_present(client: CanaryClient, episode_id: str) -> None:
         "DELETE", f"/v1/rayline/arc/session/{episode_id}"
     )
     if not isinstance(response.get("closed"), bool):
-        raise TypeError("PERF029 session close response omitted boolean status")
+        raise TypeError("PERF030 session close response omitted boolean status")
 
 
 def _close_after_phase(
@@ -375,7 +375,7 @@ def _build_report(
         "engine_inference_mean_seconds"
     ]
     if reference_engine <= 0:
-        raise RuntimeError("PERF029 reference engine timing is not positive")
+        raise RuntimeError("PERF030 reference engine timing is not positive")
     engine_ratio = candidate_engine / reference_engine
     correctness_passed = (
         all(report["passed"] for report in within_profile.values())
@@ -439,7 +439,7 @@ def run_comparison(
     run_id: str,
 ) -> dict[str, Any]:
     if tuple(clients) != PROFILE_LABELS:
-        raise RuntimeError("PERF029 clients are not in the frozen profile order")
+        raise RuntimeError("PERF030 clients are not in the frozen profile order")
     bootstrap_states = bootstrap_turn_states()
     states = benchmark_turn_states()
     for label in PROFILE_LABELS:
@@ -449,7 +449,7 @@ def run_comparison(
     samples, vectors = _measure_profiles(clients, states, run_id)
     for label in PROFILE_LABELS:
         if len(samples[label]) != MEASURED_REQUESTS_PER_PROFILE:
-            raise RuntimeError("PERF029 measured request count diverged")
+            raise RuntimeError("PERF030 measured request count diverged")
         _health_is_empty(clients[label])
     return _build_report(
         run_id=run_id,

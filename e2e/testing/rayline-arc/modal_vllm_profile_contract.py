@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""Frozen authority and acceptance contract for the PERF029 GDN A/B."""
+"""Frozen authority and acceptance contract for the PERF030 GDN A/B."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ from dataclasses import dataclass
 
 from rayline_three_arm_budget import BudgetContract
 
-RUN_ID = "rayline-vllm-gdn-perf029-20260804"
+RUN_ID = "rayline-vllm-gdn-perf030-20260804"
 SEMANTIC_BRANCH = "codex/rayline-remote-mvp"
 SEMANTIC_REMOTE_REF = f"atlasfutures/{SEMANTIC_BRANCH}"
-PREREGISTRATION_COMMIT = "dbcaf022ab0ce8c66029414d63da88423ed7bc00"
-AUTHORIZATION_COMMIT = "548423db5a2f8188abfd0e6c01c44cddd03086c4"
+PREREGISTRATION_COMMIT = ""
+AUTHORIZATION_COMMIT = ""
 REQUIRED_MODAL_VERSION = "1.5.1"
 MODAL_ENVIRONMENT = "dev"
 VLLM_COMMIT = "9f5ea81ca0aa570aea46baf82311a1139c1267ca"
@@ -48,24 +48,24 @@ class Profile:
 PROFILES = {
     REFERENCE_LABEL: Profile(
         label=REFERENCE_LABEL,
-        app_name="rayline-arc-session-encoder-reference-perf029",
+        app_name="rayline-arc-session-encoder-reference-perf030",
         gdn_prefill_backend="torch_reference",
         engine_build_id=f"vllm@{VLLM_COMMIT}+gdn-torch-reference-eager",
     ),
     CANDIDATE_LABEL: Profile(
         label=CANDIDATE_LABEL,
-        app_name="rayline-arc-session-encoder-flashinfer-perf029",
+        app_name="rayline-arc-session-encoder-flashinfer-perf030",
         gdn_prefill_backend="flashinfer",
         engine_build_id=f"vllm@{VLLM_COMMIT}+gdn-flashinfer-eager",
     ),
 }
 
-PERF029_BUDGET = BudgetContract(
+PERF030_BUDGET = BudgetContract(
     run_id=RUN_ID,
-    previous_conservative_usd=105.895336666383,
+    previous_conservative_usd=114.926210266383,
     authorized_cumulative_usd=134.31282402,
     packet_ceiling_usd=10.0,
-    required_reserve_usd=15.0,
+    required_reserve_usd=5.0,
     maximum_paid_wall_seconds=20 * 60,
     encoder_replicas=2,
 )

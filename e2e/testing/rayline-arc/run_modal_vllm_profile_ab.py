@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 
-"""Deploy, measure, and exactly clean up the one-shot PERF029 GDN A/B."""
+"""Deploy, measure, and exactly clean up the one-shot PERF030 GDN A/B."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from modal_vllm_profile_comparator import run_comparison
 from modal_vllm_profile_contract import (
     AUTHORIZATION_COMMIT,
     MODAL_ENVIRONMENT,
-    PERF029_BUDGET,
+    PERF030_BUDGET,
     PREREGISTRATION_COMMIT,
     PROFILE_LABELS,
     PROFILES,
@@ -44,7 +44,7 @@ CLEANUP_DEADLINE_SECONDS = 5 * 60
 
 
 def _paid_wall_timeout(_signal_number: int, _frame: Any) -> None:
-    raise TimeoutError("PERF029 reached its maximum paid wall time")
+    raise TimeoutError("PERF030 reached its maximum paid wall time")
 
 
 @dataclass(frozen=True)
@@ -99,7 +99,7 @@ def _verify_source_authority() -> str:
         ("authorization", AUTHORIZATION_COMMIT),
     ):
         if len(commit) != GIT_SHA_LENGTH:
-            raise RuntimeError(f"PERF029 {label} authority is source-closed")
+            raise RuntimeError(f"PERF030 {label} authority is source-closed")
         result = subprocess.run(
             ["git", "merge-base", "--is-ancestor", commit, "HEAD"],
             cwd=REPO_ROOT,
@@ -107,14 +107,14 @@ def _verify_source_authority() -> str:
             check=False,
         )
         if result.returncode != 0:
-            raise RuntimeError(f"PERF029 {label} commit is not in launch source")
+            raise RuntimeError(f"PERF030 {label} commit is not in launch source")
     if _git("branch", "--show-current") != SEMANTIC_BRANCH:
-        raise RuntimeError("PERF029 semantic branch identity differs")
+        raise RuntimeError("PERF030 semantic branch identity differs")
     if _git("status", "--porcelain"):
-        raise RuntimeError("PERF029 requires a clean semantic source checkpoint")
+        raise RuntimeError("PERF030 requires a clean semantic source checkpoint")
     head = _git("rev-parse", "HEAD")
     if _git("rev-parse", SEMANTIC_REMOTE_REF) != head:
-        raise RuntimeError("PERF029 semantic source is not remote-visible")
+        raise RuntimeError("PERF030 semantic source is not remote-visible")
     return head
 
 
@@ -165,7 +165,7 @@ def _assert_no_active_resources(
         if row.get("state") != "stopped" or str(row.get("tasks")) != "0"
     ]
     if active or _named_containers(modal_python, environment):
-        raise RuntimeError("a PERF029 Modal resource is already active")
+        raise RuntimeError("a PERF030 Modal resource is already active")
 
 
 def _deploy(
@@ -184,7 +184,7 @@ def _deploy(
         check=False,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"PERF029 deployment failed for {app_name}")
+        raise RuntimeError(f"PERF030 deployment failed for {app_name}")
 
 
 def _wait_ready(client: CanaryClient) -> None:
@@ -202,7 +202,7 @@ def _wait_ready(client: CanaryClient) -> None:
         except (OSError, RuntimeError, json.JSONDecodeError) as error:
             last_error = error
         time.sleep(2)
-    raise RuntimeError("PERF029 protected encoder readiness timed out") from last_error
+    raise RuntimeError("PERF030 protected encoder readiness timed out") from last_error
 
 
 def _stop_apps(modal_python: Path, environment: dict[str, str]) -> None:
@@ -235,21 +235,21 @@ def _wait_cleanup(modal_python: Path, environment: dict[str, str]) -> None:
         if apps_stopped and not _named_containers(modal_python, environment):
             return
         if time.monotonic() >= deadline:
-            raise RuntimeError("PERF029 exact-name cleanup did not reach zero")
+            raise RuntimeError("PERF030 exact-name cleanup did not reach zero")
         time.sleep(1)
 
 
 def _prepare(args: argparse.Namespace) -> LaunchContext:
     if args.run_id != RUN_ID:
-        raise RuntimeError("PERF029 only permits its preregistered run ID")
-    budget_receipt(PERF029_BUDGET)
+        raise RuntimeError("PERF030 only permits its preregistered run ID")
+    budget_receipt(PERF030_BUDGET)
     semantic_head = _verify_source_authority()
     pathfinder_root = args.pathfinder_root.resolve()
     modal_python = pathfinder_root / ".venv/bin/python"
     if not modal_python.is_file():
         raise RuntimeError("Pathfinder .venv Python is required for Modal 1.5.1")
     if Path(sys.executable).resolve() != modal_python.resolve():
-        raise RuntimeError("run PERF029 with the Pathfinder .venv Python")
+        raise RuntimeError("run PERF030 with the Pathfinder .venv Python")
     modal = importlib.import_module("modal")
     if modal.__version__ != REQUIRED_MODAL_VERSION:
         raise RuntimeError(
@@ -258,7 +258,7 @@ def _prepare(args: argparse.Namespace) -> LaunchContext:
 
     output_dir = REPO_ROOT / ".agent-harness/rayline-vllm-profile" / RUN_ID
     if output_dir.exists():
-        raise RuntimeError("PERF029 output directory already exists")
+        raise RuntimeError("PERF030 output directory already exists")
     environment = {**os.environ, "MODAL_ENVIRONMENT": MODAL_ENVIRONMENT}
     for name in NON_RUNTIME_SECRET_NAMES:
         environment.pop(name, None)
@@ -285,7 +285,7 @@ def _profile_clients(context: LaunchContext, proxy: Any) -> dict[str, CanaryClie
         )
         url = cls().web.get_web_url()
         if not url:
-            raise RuntimeError(f"PERF029 {label} web URL is unavailable")
+            raise RuntimeError(f"PERF030 {label} web URL is unavailable")
         clients[label] = CanaryClient(
             base_url=url.rstrip("/"),
             modal_key=proxy.token_id,
@@ -328,7 +328,7 @@ def _write_receipt(
         "failure_type": failure_type,
         "semantic_head": context.semantic_head,
         "comparison": result,
-        "budget": budget_receipt(PERF029_BUDGET, elapsed),
+        "budget": budget_receipt(PERF030_BUDGET, elapsed),
         "cleanup": cleanup,
         "provider_calls": 0,
         "release_qualification_1000_executed": False,
@@ -373,7 +373,7 @@ def _launch(context: LaunchContext) -> dict[str, Any]:
 
     started = time.monotonic()
     previous_alarm_handler = signal.signal(signal.SIGALRM, _paid_wall_timeout)
-    signal.setitimer(signal.ITIMER_REAL, PERF029_BUDGET.maximum_paid_wall_seconds)
+    signal.setitimer(signal.ITIMER_REAL, PERF030_BUDGET.maximum_paid_wall_seconds)
     result: dict[str, Any] | None = None
     failure_type: str | None = None
     cleanup = {
@@ -383,7 +383,7 @@ def _launch(context: LaunchContext) -> dict[str, Any]:
     }
     try:
         for label in PROFILE_LABELS:
-            print(f"PERF029 deploy {label}: starting", file=sys.stderr, flush=True)
+            print(f"PERF030 deploy {label}: starting", file=sys.stderr, flush=True)
             _deploy(
                 context.modal_python,
                 context.environment,
@@ -408,7 +408,7 @@ def _launch(context: LaunchContext) -> dict[str, Any]:
             cleanup=cleanup,
         )
     if result is None:
-        raise RuntimeError("PERF029 completed without a comparison result")
+        raise RuntimeError("PERF030 completed without a comparison result")
     return result
 
 
