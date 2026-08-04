@@ -3220,7 +3220,7 @@ held 1,000-case qualification. Its full two-H100 resource envelope is
 `$105.895336666383` and leaving `$28.417487353617` under the existing
 `$134.31282402` authority.
 
-- [ ] PERF028a: Validate and push the signed source-closed implementation and
+- [x] PERF028a: Validate and push the signed source-closed implementation and
   frozen preregistration checkpoint.
 - [ ] PERF028b: Bind and push the separate launch-authorization checkpoint,
   then run the two exact Modal apps once.
