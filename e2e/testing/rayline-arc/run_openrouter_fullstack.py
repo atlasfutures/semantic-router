@@ -85,7 +85,10 @@ GATEWAY_URL = "http://127.0.0.1:18888"
 ROUTER_HEALTH_URL = "http://127.0.0.1:18082/health"
 METRICS_URL = "http://127.0.0.1:19190/metrics"
 ARC_READY_METRIC = 'llm_rayline_arc_component_ready{component="artifact_head_encoder"}'
-MAX_STARTUP_SECONDS = 240
+# 240s missed marginally when a compose --build rebuild let the pre-readied
+# Modal encoder scale down, forcing the router's first encoder call to absorb
+# a fresh H100 cold boot. 600s stays well inside the 1200s paid wall.
+MAX_STARTUP_SECONDS = 600
 MAX_CANARY_SECONDS = 15 * 60
 HTTP_OK = 200
 REQUIRED_MODAL_VERSION = "1.5.1"
