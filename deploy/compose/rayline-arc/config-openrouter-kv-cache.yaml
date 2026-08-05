@@ -14,11 +14,14 @@ providers:
       provider_model_id: deepseek/deepseek-v4-flash
       api_format: openai
       pricing:
+        # Conservative maximum rates across the 2026-08-05 re-vetted provider
+        # order (Baidu/GMICloud/SiliconFlow); must equal artifact v4 pricing
+        # or the router's price-identity gate fails closed.
         currency: USD
-        prompt_per_1m: 0.09
-        cached_input_per_1m: 0.09
-        cache_write_per_1m: 0.09
-        completion_per_1m: 0.18
+        prompt_per_1m: 0.13
+        cached_input_per_1m: 0.13
+        cache_write_per_1m: 0.13
+        completion_per_1m: 0.28
       backend_refs:
         - name: openrouter
           endpoint: openrouter.ai:443
