@@ -3584,6 +3584,18 @@ and c, and the nine-state encoder gate unchanged. The amendment is bound by a
 fresh preregistration/authorization pair under the same `$10` authority; no
 paid request preceded it.
 
+The first amended native launch passed the availability preflight through the
+re-vetted order, deployed, and completed 33 of 36 measured requests before
+OpenRouter returned HTTP 402 on request 35 with only `$0.025302124` settled
+key usage — the limit check counts in-flight pre-authorization holds, so the
+AGT017-era `$0.05` per-arm key limit cannot host the 36-request, 8-16k-token
+successor workload. Cleanup verified all Modal resources and the disposable
+key absent; the journal preserved the exact completed prefix. The second
+amendment raises the per-arm key limit to `$0.15` (total provider spend
+`$0.30`, complete packet maximum `$9.3308736`, reserve after the complete
+envelope `$1.893992953617`), leaving every other frozen value unchanged. The
+402-failure evidence is archived beside the availability aborts.
+
 Do not release the 1,000-case qualification as part of budget preparation.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed

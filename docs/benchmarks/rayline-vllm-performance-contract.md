@@ -747,8 +747,11 @@ cells, and emits aggregate whole-run, per-history, and per-model latency, first-
 token, router/encoder, token-work, throughput, retry, provider, and cost
 evidence. Empty authority pins plus zero key/time ceilings remained mandatory
 until the reviewed 2026-08-05 budget checkpoints bound both pins and replaced
-the ceilings with the authorized `$0.05` per-arm key limit and 20-minute paid
-wall under fresh `$10` user authority.
+the ceilings with authorized per-arm key limits and a 20-minute paid wall
+under fresh `$10` user authority. The per-arm key limit is `$0.15`: the
+AGT017-era `$0.05` proved unable to host the successor workload because
+OpenRouter's limit check counts in-flight pre-authorization holds and returned
+HTTP 402 at request 35 of 36 with only `$0.025` settled usage.
 
 The successor is
 `rayline-openrouter-kv-cache-agt018-20260804`, artifact

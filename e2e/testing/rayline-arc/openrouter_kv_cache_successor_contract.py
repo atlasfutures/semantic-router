@@ -38,7 +38,11 @@ MAX_COMPLETION_TOKENS = 24
 # The user approved fresh $10 authority on 2026-08-05, raising cumulative
 # authority from the AGT017-era $134.31282402 to $144.31282402. AGT017's
 # complete envelope was already charged in full at $133.087957466383.
-AUTHORIZED_KEY_LIMIT_USD_PER_ARM = 0.05
+# $0.05 per arm (the AGT017 value) proved too tight on 2026-08-05: OpenRouter
+# returned HTTP 402 at request 35 of 36 with only $0.025 settled usage, because
+# its limit check counts in-flight pre-authorization holds. $0.15 per arm
+# gives the 36-request, 8-16k-token workload roughly 3x settled-cost headroom.
+AUTHORIZED_KEY_LIMIT_USD_PER_ARM = 0.15
 AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS = 20 * 60
 MAXIMUM_PROVIDER_SPEND_USD = 2 * AUTHORIZED_KEY_LIMIT_USD_PER_ARM
 REQUIRED_FINAL_RESERVE_USD = 1.20
@@ -53,8 +57,8 @@ AGT018_RESOURCE_BUDGET = BudgetContract(
     previous_conservative_usd=133.087957466383,
     authorized_cumulative_usd=144.31282402,
     packet_ceiling_usd=9.1,
-    # The provider limits are accounted separately below. Reserving $1.30 at
-    # this layer guarantees at least $1.20 after both $0.05 keys are exhausted.
+    # The provider limits are accounted separately below. Reserving $1.50 at
+    # this layer guarantees at least $1.20 after both $0.15 keys are exhausted.
     required_reserve_usd=REQUIRED_FINAL_RESERVE_USD + MAXIMUM_PROVIDER_SPEND_USD,
     maximum_paid_wall_seconds=AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS,
     encoder_replicas=2,
