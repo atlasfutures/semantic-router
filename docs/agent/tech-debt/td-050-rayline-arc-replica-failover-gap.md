@@ -21,9 +21,16 @@ fleet provisioning remains an external operator responsibility.
 
 - optional dynamic discovery beyond the implemented static replica set;
 - controller-owned active/draining publication and drain completion;
-- automated removal only after the episode idle-TTL boundary; and
+- automated removal only after the episode idle-TTL boundary;
 - preservation of the implemented affinity, health, close, privacy, and
-  observability semantics during dynamic rollout.
+  observability semantics during dynamic rollout; and
+- the parked multi-instance performance qualification: a preregistered
+  PL-0041-style packet measuring pooled-encoder throughput/latency scaling
+  against the single pinned replica used by AGT017/AGT018, affinity hit
+  rates, and drain-under-load behavior, with its own budget contract. Parked
+  on 2026-08-03 by an explicit decision to qualify single-encoder end-to-end
+  serving first; GitHub issues are disabled on the fork, so this ledger entry
+  is the system of record.
 
 Shared KV storage and Pathfinder's pending-transaction journal are out of
 scope. The latter remains tracked by TD046.
