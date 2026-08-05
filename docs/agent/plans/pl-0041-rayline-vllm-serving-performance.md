@@ -3692,9 +3692,15 @@ checkpoint that opens the pins.
 
 - [x] AGT019a: policy engine, fail-closed contract, and focused tests without
   opening launch authority.
-- [ ] AGT019b: wire the v4 reporter (matched-pair lanes replacing the
+- [x] AGT019b: wire the v4 reporter (matched-pair lanes replacing the
   whole-set completion gate) and launcher generation identities,
-  source-closed.
+  source-closed. The v4 reporter and its CLI entrypoint reuse the AGT018
+  workload, selection traces, and encoder gates verbatim and gate
+  comparability on the matched-pair lanes ANDed with the per-request
+  completion cap. Both arms now carry AGT019 identities — the remote
+  packet and the native `--generation agt019` switch — while empty pins,
+  zero ceilings, and the absent budget contract keep every launch path
+  fail-closed.
 - [ ] AGT019c: obtain fresh budget authority, bind preregistration and
   authorization pins, run each arm once, and close TD051 only if the v4
   report passes.
