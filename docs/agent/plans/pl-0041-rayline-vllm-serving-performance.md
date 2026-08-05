@@ -3653,6 +3653,52 @@ to `$142.418831066383`, leaving `$1.893992953617` under the `$144.31282402`
 authority. Both authority pins are permanently closed with this record; the
 1,000-case qualification remains held.
 
+### AGT019 Matched-Pair Successor Preparation
+
+AGT019 preregisters the comparability policy that AGT018d lacked. A pair is
+*fully matched* when the two arms' identical measurement cell — same
+`sequence_id`, `mode`, `episode`, and `step` — was served by the same provider
+and returned the same completion token count. Cross-deployment E2E and
+first-token claims are admissible only over fully matched pairs. Admissibility
+is decided per worker with a minimum of `1` fully matched pair; a worker below
+that minimum is labeled inadmissible in the report, never silently dropped,
+and never fails the run. The policy gate
+`matched_pair_comparability_policy` checks only that every cell was paired,
+recorded, and honestly labeled — it never requires providers to agree, because
+the pinned multi-provider fallthrough that produces disagreement is also what
+kept AGT018d alive under upstream saturation. Missing provider or completion
+evidence, unpaired cells, duplicated cells, and selection divergence stay hard
+errors. Selection-trace parity, both per-arm retained-token-saving gates, and
+the router and encoder comparisons remain unconditional gates unaffected by
+this policy.
+
+The successor identities are run id
+`rayline-openrouter-kv-cache-agt019-20260805`, native app
+`rayline-router-openrouter-agt019` with webhook label
+`router-openrouter-agt019`, remote app
+`rayline-arc-session-encoder-flashinfer-agt019`, report schema
+`rayline.openrouter-kv-cache-comparison.v4`, and the unchanged v4 artifact
+`public-rayline-arc-openrouter-kv-cache-v4` reused verbatim. The source and
+engine pins carry over from AGT018: `vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca+gdn-flashinfer-eager`
+with the `flashinfer` GDN prefill backend.
+
+Both authority pins are empty, both resource ceilings are `0`, and the
+contract deliberately declares no budget contract. AGT018's conservative
+accounting closed at `$142.418831066383` of the `$144.31282402` authority,
+leaving `$1.893992953617` — about `$0.69` above the `$1.20` required final
+reserve, which cannot fund two H100 arms plus two provider keys. A fresh user
+budget authority is required before any AGT019 paid launch, bound in the same
+checkpoint that opens the pins.
+
+- [x] AGT019a: policy engine, fail-closed contract, and focused tests without
+  opening launch authority.
+- [ ] AGT019b: wire the v4 reporter (matched-pair lanes replacing the
+  whole-set completion gate) and launcher generation identities,
+  source-closed.
+- [ ] AGT019c: obtain fresh budget authority, bind preregistration and
+  authorization pins, run each arm once, and close TD051 only if the v4
+  report passes.
+
 Do not release the 1,000-case qualification as part of budget preparation.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
