@@ -14,13 +14,22 @@ WORKERS = {
     "worker-b": "xiaomi/mimo-v2.5",
     "worker-c": "tencent/hy3",
 }
+# Re-vetted 2026-08-05 for AGT018d: StreamLake and DeepInfra no longer pass
+# the frozen require_parameters filter for DS4 Flash (OpenRouter returns 404
+# "No endpoints found"), leaving Baidu as the only effective provider, and
+# Baidu's shared upstream pool intermittently returns tpm_rate_limit_exceeded.
+# GMICloud and SiliconFlow (both fp8, like the Baidu endpoint) passed the
+# byte-exact frozen payload, and OpenRouter falls through a rate-limited
+# provider to the next entry within the pinned order even with fallbacks
+# disabled. All launchable legacy packets are pin-closed, so this table only
+# governs AGT018 runtime and validation.
 PROVIDER_SLUGS = {
-    "worker-a": ("baidu", "streamlake", "deepinfra"),
+    "worker-a": ("baidu", "gmicloud", "siliconflow"),
     "worker-b": ("xiaomi", "parasail", "venice", "novita"),
     "worker-c": ("tencent", "deepinfra", "novita"),
 }
 PROVIDER_NAMES = {
-    "worker-a": ("Baidu", "StreamLake", "DeepInfra"),
+    "worker-a": ("Baidu", "GMICloud", "SiliconFlow"),
     "worker-b": ("Xiaomi", "Parasail", "Venice", "Novita"),
     "worker-c": ("Tencent", "DeepInfra", "Novita"),
 }

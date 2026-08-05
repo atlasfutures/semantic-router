@@ -32,7 +32,7 @@ REMOTE_CLASS_NAME = "SessionEncoder"
 VLLM_COMMIT = "9f5ea81ca0aa570aea46baf82311a1139c1267ca"
 REMOTE_ENGINE_BUILD_ID = f"vllm@{VLLM_COMMIT}+gdn-flashinfer-eager"
 REMOTE_GDN_PREFILL_BACKEND = "flashinfer"
-ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v3"
+ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v4"
 MAX_COMPLETION_TOKENS = 24
 
 # The user approved fresh $10 authority on 2026-08-05, raising cumulative

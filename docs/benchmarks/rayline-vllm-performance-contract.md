@@ -745,16 +745,32 @@ failure. The paired v3 reporter requires the offline and remote traces to equal
 the frozen trace, joins every native decision, validates all retained/replay
 cells, and emits aggregate whole-run, per-history, and per-model latency, first-
 token, router/encoder, token-work, throughput, retry, provider, and cost
-evidence. Empty authority pins plus zero key/time ceilings remain mandatory
-until a separately reviewed budget checkpoint replaces them.
+evidence. Empty authority pins plus zero key/time ceilings remained mandatory
+until the reviewed 2026-08-05 budget checkpoints bound both pins and replaced
+the ceilings with the authorized `$0.05` per-arm key limit and 20-minute paid
+wall under fresh `$10` user authority.
 
-The source-closed successor is
+The successor is
 `rayline-openrouter-kv-cache-agt018-20260804`, artifact
-`public-rayline-arc-openrouter-kv-cache-v3`, report schema
+`public-rayline-arc-openrouter-kv-cache-v4`, report schema
 `rayline.openrouter-kv-cache-comparison.v3`. It bounds 36 routed requests per
 deployment plus six total direct availability probes: 78 logical provider
-requests and 156 worst-case external attempts. It has no launch pins or budget
-authority. AGT017 remains historical and cannot be retried or reinterpreted.
+requests and 156 worst-case external attempts. AGT017 remains historical and
+cannot be retried or reinterpreted.
+
+On 2026-08-05 three consecutive AGT018 availability preflights failed on
+worker-a with upstream HTTP 429 before any GPU or measured spend. Diagnostic
+probes with the byte-exact frozen payload showed the frozen worker-a order
+Baidu/StreamLake/DeepInfra had collapsed to Baidu alone (the other two return
+404 under `require_parameters`) while Baidu's shared upstream pool reported
+`tpm_rate_limit_exceeded` intermittently. Artifact v3, which carried that
+order, was retired without ever being deployed. Artifact v4 re-vets worker-a
+to Baidu/GMICloud/SiliconFlow — both alternates are fp8 endpoints that passed
+the byte-exact frozen payload, and OpenRouter falls through a rate-limited
+provider to the next pinned entry with fallbacks still disabled — and adopts
+conservative maximum-rate pricing across the amended order. Workers b and c,
+the workload, the request envelope, both retry policies, and the nine-state
+encoder gate are unchanged.
 
 ## Evidence Lineage
 

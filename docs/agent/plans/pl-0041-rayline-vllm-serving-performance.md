@@ -3568,6 +3568,22 @@ preregistration `3dcfabcbb2f59bb4c31f065f49569dc6d3353dd9` and authorization
 `b85c2b9ccefe87bfad84fba75cb6c21bbe5d8c22`. The packet permits exactly one
 launch of each architecture arm.
 
+After binding, three consecutive native availability preflights failed on
+worker-a with upstream HTTP 429 at zero measured cost and zero GPU spend; each
+abort is archived beside the run directory. Byte-exact diagnostic probes
+showed the frozen worker-a provider order had collapsed to Baidu alone —
+StreamLake and DeepInfra no longer pass `require_parameters` for DS4 Flash —
+and Baidu's shared upstream pool intermittently returns
+`tpm_rate_limit_exceeded`, the same failure that ended AGT017's native series.
+The 2026-08-05 amendment re-vets worker-a to Baidu/GMICloud/SiliconFlow (both
+alternates fp8, verified against the byte-exact frozen payload, with in-order
+fallthrough on 429 confirmed while fallbacks stay disabled), retires the
+never-deployed v3 artifact in favor of v4 with conservative maximum-rate
+pricing, and leaves the workload, request envelope, retry policies, workers b
+and c, and the nine-state encoder gate unchanged. The amendment is bound by a
+fresh preregistration/authorization pair under the same `$10` authority; no
+paid request preceded it.
+
 Do not release the 1,000-case qualification as part of budget preparation.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
