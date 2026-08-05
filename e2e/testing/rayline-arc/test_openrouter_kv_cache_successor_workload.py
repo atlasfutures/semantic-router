@@ -7,6 +7,7 @@ import importlib.util
 import itertools
 import json
 import math
+import subprocess
 import sys
 import types
 from argparse import Namespace
@@ -163,11 +164,17 @@ def test_successor_budget_preserves_the_frozen_reserve() -> None:
     )
 
 
-def test_successor_contract_is_source_closed_and_exactly_bounded() -> None:
+def test_successor_contract_is_bound_to_pushed_authority_and_exactly_bounded() -> None:
     contract = successor_contract.validate()
-    assert contract["source_closed"] is True
-    assert contract["launch_authorized"] is False
-    assert contract["requires_new_budget_authority"] is True
+    assert successor_contract.PREREGISTRATION_COMMIT == (
+        "3dcfabcbb2f59bb4c31f065f49569dc6d3353dd9"
+    )
+    assert successor_contract.AUTHORIZATION_COMMIT == (
+        "b85c2b9ccefe87bfad84fba75cb6c21bbe5d8c22"
+    )
+    assert contract["source_closed"] is False
+    assert contract["launch_authorized"] is True
+    assert contract["requires_new_budget_authority"] is False
     assert contract["logical_provider_requests"] == {
         "provider_preflight": 6,
         "semantic_cache_measurement": 72,
@@ -180,7 +187,7 @@ def test_successor_contract_is_source_closed_and_exactly_bounded() -> None:
     assert "remote_encoder_trace_matches_offline_trace" in contract["acceptance_gates"]
 
 
-def test_successor_remote_packet_is_source_closed_before_resource_use(tmp_path) -> None:
+def test_successor_remote_packet_carries_bound_authority_limits(tmp_path) -> None:
     encoder = EncoderDeployment(
         app_name="test-encoder",
         class_name="SessionEncoder",
@@ -197,15 +204,17 @@ def test_successor_remote_packet_is_source_closed_before_resource_use(tmp_path) 
     )["kv-cache-flashinfer-agt018"]
 
     assert packet.expected_run_id == successor_contract.RUN_ID
-    assert packet.key_limit_usd == 0
-    assert packet.maximum_seconds == 0
+    assert packet.key_limit_usd == (successor_contract.AUTHORIZED_KEY_LIMIT_USD_PER_ARM)
+    assert packet.maximum_seconds == (
+        successor_contract.AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS
+    )
     assert packet.driver.name == "openrouter_kv_cache_successor_remote.py"
     assert packet.artifact_revision == successor_contract.ARTIFACT_REVISION
     assert (
         artifact_fixture.SUCCESSOR_ARTIFACT_REVISION
         == successor_contract.ARTIFACT_REVISION
     )
-    with pytest.raises(SystemExit, match="source-closed"):
+    with pytest.raises(subprocess.CalledProcessError):
         launch_authority.verify_source_authority(
             "kv-cache-flashinfer-agt018",
             {},
@@ -213,7 +222,7 @@ def test_successor_remote_packet_is_source_closed_before_resource_use(tmp_path) 
         )
 
 
-def test_successor_native_mode_switches_identity_and_stays_source_closed(
+def test_successor_native_mode_switches_identity_with_bound_authority(
     tmp_path,
 ) -> None:
     try:
@@ -225,9 +234,13 @@ def test_successor_native_mode_switches_identity_and_stays_source_closed(
             native_launcher.BENCHMARK.name
             == "openrouter_kv_cache_successor_benchmark.py"
         )
-        assert native_launcher.KEY_LIMIT_USD == 0
-        assert native_launcher.MAXIMUM_PAID_SECONDS == 0
-        with pytest.raises(RuntimeError, match="authority is source-closed"):
+        assert native_launcher.KEY_LIMIT_USD == (
+            successor_contract.AUTHORIZED_KEY_LIMIT_USD_PER_ARM
+        )
+        assert native_launcher.MAXIMUM_PAID_SECONDS == (
+            successor_contract.AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS
+        )
+        with pytest.raises(subprocess.CalledProcessError):
             native_launcher._verify_authority(tmp_path)
     finally:
         native_launcher._configure_generation("agt017")

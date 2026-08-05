@@ -3562,8 +3562,11 @@ two disposable `$0.05` provider keys bound the complete packet at
 `$9.1308736`. Charging the complete envelope raises conservative cumulative
 accounting from `$133.087957466383` to `$142.218831066383`, leaving at least
 `$2.093992953617` under the new authority — above the frozen `$1.20` final
-reserve. The authorized key/time values replace the source-closed zero
-placeholders only in the same checkpoint that binds both authority pins.
+reserve. The authorized key/time values replaced the source-closed zero
+placeholders in the same checkpoint that bound both authority pins:
+preregistration `3dcfabcbb2f59bb4c31f065f49569dc6d3353dd9` and authorization
+`b85c2b9ccefe87bfad84fba75cb6c21bbe5d8c22`. The packet permits exactly one
+launch of each architecture arm.
 
 Do not release the 1,000-case qualification as part of budget preparation.
 
