@@ -176,9 +176,13 @@ def _modal_app(environment: dict[str, str], python: Path, root: Path) -> dict[st
         timeout=60,
     )
     matches = [
-        row for row in json.loads(result.stdout) if row.get("description") == APP_NAME
+        row
+        for row in json.loads(result.stdout)
+        if row.get("description") == APP_NAME and row.get("state") == "deployed"
     ]
-    if len(matches) != 1 or matches[0].get("state") != "deployed":
+    if len(matches) != 1:
+        # Stopped apps from prior stopped attempts stay in Modal's listing
+        # until they age out, so identity requires exactly one DEPLOYED app.
         raise RuntimeError("native Modal app deployment identity is ambiguous")
     return matches[0]
 
