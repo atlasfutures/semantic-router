@@ -97,10 +97,10 @@ def test_agt019_contract_is_bound_with_the_matched_pair_gate() -> None:
     contract = agt019_contract.validate()
 
     assert agt019_contract.PREREGISTRATION_COMMIT == (
-        "23c02f943018c078ccad69ba09d582b3cf7435b2"
+        "2b8a39b129a36a6b2e79aeb765195937ba7643f3"
     )
     assert agt019_contract.AUTHORIZATION_COMMIT == (
-        "176940a4e2956c0e90b4e14af3f958e3c70d8a82"
+        "91af3bb17441bdd0c540f3d54b0217e43c82852d"
     )
     assert agt019_contract.SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM == (
         agt019_contract.AUTHORIZED_KEY_LIMIT_USD_PER_ARM

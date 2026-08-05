@@ -32,8 +32,8 @@ PATHFINDER_BRANCH = "codex/rayline-vsr-mvp"
 # Authority bound 2026-08-05 to the pushed AGT019 preregistration and
 # authorization checkpoints; launch stays impossible outside a clean, pushed
 # checkout of the semantic remote ref below.
-PREREGISTRATION_COMMIT = "23c02f943018c078ccad69ba09d582b3cf7435b2"
-AUTHORIZATION_COMMIT = "176940a4e2956c0e90b4e14af3f958e3c70d8a82"
+PREREGISTRATION_COMMIT = "2b8a39b129a36a6b2e79aeb765195937ba7643f3"
+AUTHORIZATION_COMMIT = "91af3bb17441bdd0c540f3d54b0217e43c82852d"
 GIT_SHA1_HEX_LENGTH = 40
 NATIVE_APP_NAME = "rayline-router-openrouter-agt019"
 NATIVE_WEBHOOK_LABEL = "router-openrouter-agt019"
