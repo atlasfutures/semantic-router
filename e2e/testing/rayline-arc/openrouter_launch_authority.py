@@ -7,6 +7,12 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from openrouter_kv_cache_agt019_contract import (
+    AUTHORIZATION_COMMIT as AGT019_AUTHORIZATION_COMMIT,
+)
+from openrouter_kv_cache_agt019_contract import (
+    PREREGISTRATION_COMMIT as AGT019_PREREGISTRATION_COMMIT,
+)
 from openrouter_kv_cache_matched_contract import (
     AUTHORIZATION_COMMIT as AGT017_AUTHORIZATION_COMMIT,
 )
@@ -33,6 +39,10 @@ AUTHORITY_PINS = {
     "kv-cache-flashinfer-agt018": (
         AGT018_PREREGISTRATION_COMMIT,
         AGT018_AUTHORIZATION_COMMIT,
+    ),
+    "kv-cache-flashinfer-agt019": (
+        AGT019_PREREGISTRATION_COMMIT,
+        AGT019_AUTHORIZATION_COMMIT,
     ),
     "gateway-shape": ("", ""),
     "gateway-prime": ("", ""),

@@ -22,6 +22,37 @@ from openrouter_key_management import (
     delete_ephemeral_key,
     ephemeral_key_usage,
 )
+from openrouter_kv_cache_agt019_contract import (
+    ARTIFACT_REVISION as AGT019_ARTIFACT_REVISION,
+)
+from openrouter_kv_cache_agt019_contract import (
+    AUTHORIZATION_COMMIT as AGT019_AUTHORIZATION_COMMIT,
+)
+from openrouter_kv_cache_agt019_contract import (
+    MAX_COMPLETION_TOKENS as AGT019_MAX_COMPLETION_TOKENS,
+)
+from openrouter_kv_cache_agt019_contract import (
+    NATIVE_APP_NAME as AGT019_NATIVE_APP_NAME,
+)
+from openrouter_kv_cache_agt019_contract import (
+    NATIVE_WEBHOOK_LABEL as AGT019_NATIVE_WEBHOOK_LABEL,
+)
+from openrouter_kv_cache_agt019_contract import (
+    PATHFINDER_BRANCH as AGT019_PATHFINDER_BRANCH,
+)
+from openrouter_kv_cache_agt019_contract import (
+    PREREGISTRATION_COMMIT as AGT019_PREREGISTRATION_COMMIT,
+)
+from openrouter_kv_cache_agt019_contract import RUN_ID as AGT019_RUN_ID
+from openrouter_kv_cache_agt019_contract import (
+    SEMANTIC_BRANCH as AGT019_SEMANTIC_BRANCH,
+)
+from openrouter_kv_cache_agt019_contract import (
+    SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM as AGT019_KEY_LIMIT_USD,
+)
+from openrouter_kv_cache_agt019_contract import (
+    SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS as AGT019_MAXIMUM_PAID_SECONDS,
+)
 from openrouter_kv_cache_matched_contract import (
     ARTIFACT_REVISION,
     AUTHORIZATION_COMMIT,
@@ -110,8 +141,68 @@ AGT017_KEY_LIMIT_USD = KEY_LIMIT_USD
 AGT017_MAXIMUM_PAID_SECONDS = MAXIMUM_PAID_SECONDS
 
 
+GENERATIONS: dict[str, dict[str, Any]] = {
+    "agt017": {
+        "app_name": AGT017_APP_NAME,
+        "webhook_label": AGT017_WEBHOOK_LABEL,
+        "key_limit_usd": AGT017_KEY_LIMIT_USD,
+        "maximum_paid_seconds": AGT017_MAXIMUM_PAID_SECONDS,
+        "training_stage": "openrouter_kv_cache_agt017",
+        "benchmark": "openrouter_kv_cache_benchmark.py",
+        "app_title": "Rayline AGT017",
+        "context_schema_version": "rayline-router.modal-native-agt017.v1",
+        "run_label": "AGT017",
+        "run_id": AGT017_RUN_ID,
+        "preregistration_commit": AGT017_PREREGISTRATION_COMMIT,
+        "authorization_commit": AGT017_AUTHORIZATION_COMMIT,
+        "max_completion_tokens": AGT017_MAX_COMPLETION_TOKENS,
+        "pathfinder_branch": AGT017_PATHFINDER_BRANCH,
+        "semantic_branch": AGT017_SEMANTIC_BRANCH,
+        "artifact_revision": AGT017_ARTIFACT_REVISION,
+    },
+    "agt018": {
+        "app_name": AGT018_NATIVE_APP_NAME,
+        "webhook_label": AGT018_NATIVE_WEBHOOK_LABEL,
+        "key_limit_usd": AGT018_KEY_LIMIT_USD,
+        "maximum_paid_seconds": AGT018_MAXIMUM_PAID_SECONDS,
+        "training_stage": "openrouter_kv_cache_agt018",
+        "benchmark": "openrouter_kv_cache_successor_benchmark.py",
+        "app_title": "Rayline AGT018",
+        "context_schema_version": "rayline-router.modal-native-agt018.v1",
+        "run_label": "AGT018",
+        "run_id": AGT018_RUN_ID,
+        "preregistration_commit": AGT018_PREREGISTRATION_COMMIT,
+        "authorization_commit": AGT018_AUTHORIZATION_COMMIT,
+        "max_completion_tokens": AGT018_MAX_COMPLETION_TOKENS,
+        "pathfinder_branch": AGT018_PATHFINDER_BRANCH,
+        "semantic_branch": AGT018_SEMANTIC_BRANCH,
+        "artifact_revision": AGT018_ARTIFACT_REVISION,
+    },
+    "agt019": {
+        "app_name": AGT019_NATIVE_APP_NAME,
+        "webhook_label": AGT019_NATIVE_WEBHOOK_LABEL,
+        "key_limit_usd": AGT019_KEY_LIMIT_USD,
+        "maximum_paid_seconds": AGT019_MAXIMUM_PAID_SECONDS,
+        "training_stage": "openrouter_kv_cache_agt019",
+        # AGT019 reuses the AGT018 workload verbatim; only comparability moved.
+        "benchmark": "openrouter_kv_cache_successor_benchmark.py",
+        "app_title": "Rayline AGT019",
+        "context_schema_version": "rayline-router.modal-native-agt019.v1",
+        "run_label": "AGT019",
+        "run_id": AGT019_RUN_ID,
+        "preregistration_commit": AGT019_PREREGISTRATION_COMMIT,
+        "authorization_commit": AGT019_AUTHORIZATION_COMMIT,
+        "max_completion_tokens": AGT019_MAX_COMPLETION_TOKENS,
+        "pathfinder_branch": AGT019_PATHFINDER_BRANCH,
+        "semantic_branch": AGT019_SEMANTIC_BRANCH,
+        "artifact_revision": AGT019_ARTIFACT_REVISION,
+    },
+}
+
+
 def _configure_generation(generation: str) -> None:
-    if generation not in {"agt017", "agt018"}:
+    identity = GENERATIONS.get(generation)
+    if identity is None:
         raise ValueError(f"unknown native KV generation {generation!r}")
     global APP_NAME
     global WEBHOOK_LABEL
@@ -135,57 +226,36 @@ def _configure_generation(generation: str) -> None:
     global SEMANTIC_BRANCH
     global ARTIFACT_REVISION
 
-    is_successor = generation == "agt018"
-    APP_NAME = AGT018_NATIVE_APP_NAME if is_successor else AGT017_APP_NAME
-    WEBHOOK_LABEL = (
-        AGT018_NATIVE_WEBHOOK_LABEL if is_successor else AGT017_WEBHOOK_LABEL
-    )
+    APP_NAME = identity["app_name"]
+    WEBHOOK_LABEL = identity["webhook_label"]
     ARTIFACT_VOLUME = APP_NAME
     CONTEXT_DICT = APP_NAME
     REGISTRATION_RECEIPTS_DICT = f"{CONTEXT_DICT}-registration-receipts"
     OPENROUTER_SECRET = APP_NAME
     ROUTER_URL = f"https://atlasfutures-dev--{WEBHOOK_LABEL}.modal.run"
-    KEY_LIMIT_USD = AGT018_KEY_LIMIT_USD if is_successor else AGT017_KEY_LIMIT_USD
-    MAXIMUM_PAID_SECONDS = (
-        AGT018_MAXIMUM_PAID_SECONDS if is_successor else AGT017_MAXIMUM_PAID_SECONDS
-    )
-    TRAINING_STAGE = (
-        "openrouter_kv_cache_agt018" if is_successor else "openrouter_kv_cache_agt017"
-    )
-    BENCHMARK = Path(__file__).with_name(
-        "openrouter_kv_cache_successor_benchmark.py"
-        if is_successor
-        else "openrouter_kv_cache_benchmark.py"
-    )
-    APP_TITLE = "Rayline AGT018" if is_successor else "Rayline AGT017"
-    CONTEXT_SCHEMA_VERSION = (
-        "rayline-router.modal-native-agt018.v1"
-        if is_successor
-        else "rayline-router.modal-native-agt017.v1"
-    )
-    RUN_LABEL = "AGT018" if is_successor else "AGT017"
-    RUN_ID = AGT018_RUN_ID if is_successor else AGT017_RUN_ID
-    PREREGISTRATION_COMMIT = (
-        AGT018_PREREGISTRATION_COMMIT if is_successor else AGT017_PREREGISTRATION_COMMIT
-    )
-    AUTHORIZATION_COMMIT = (
-        AGT018_AUTHORIZATION_COMMIT if is_successor else AGT017_AUTHORIZATION_COMMIT
-    )
-    MAX_COMPLETION_TOKENS = (
-        AGT018_MAX_COMPLETION_TOKENS if is_successor else AGT017_MAX_COMPLETION_TOKENS
-    )
-    PATHFINDER_BRANCH = (
-        AGT018_PATHFINDER_BRANCH if is_successor else AGT017_PATHFINDER_BRANCH
-    )
-    SEMANTIC_BRANCH = AGT018_SEMANTIC_BRANCH if is_successor else AGT017_SEMANTIC_BRANCH
-    ARTIFACT_REVISION = (
-        AGT018_ARTIFACT_REVISION if is_successor else AGT017_ARTIFACT_REVISION
-    )
+    KEY_LIMIT_USD = identity["key_limit_usd"]
+    MAXIMUM_PAID_SECONDS = identity["maximum_paid_seconds"]
+    TRAINING_STAGE = identity["training_stage"]
+    BENCHMARK = Path(__file__).with_name(identity["benchmark"])
+    APP_TITLE = identity["app_title"]
+    CONTEXT_SCHEMA_VERSION = identity["context_schema_version"]
+    RUN_LABEL = identity["run_label"]
+    RUN_ID = identity["run_id"]
+    PREREGISTRATION_COMMIT = identity["preregistration_commit"]
+    AUTHORIZATION_COMMIT = identity["authorization_commit"]
+    MAX_COMPLETION_TOKENS = identity["max_completion_tokens"]
+    PATHFINDER_BRANCH = identity["pathfinder_branch"]
+    SEMANTIC_BRANCH = identity["semantic_branch"]
+    ARTIFACT_REVISION = identity["artifact_revision"]
 
 
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--generation", choices=("agt017", "agt018"), default="agt017")
+    parser.add_argument(
+        "--generation",
+        choices=("agt017", "agt018", "agt019"),
+        default="agt017",
+    )
     parser.add_argument("--run-id", default="")
     parser.add_argument("--pathfinder-root", required=True)
     parser.add_argument("--timeout-seconds", type=float, default=180.0)
@@ -220,9 +290,11 @@ def _verify_authority(semantic_root: Path) -> None:
     if RUN_LABEL == "AGT017":
         matched_budget_receipt()
     elif KEY_LIMIT_USD <= 0 or MAXIMUM_PAID_SECONDS <= 0:
-        raise RuntimeError("AGT018 budget authority is source-closed")
-    else:
+        raise RuntimeError(f"{RUN_LABEL} budget authority is source-closed")
+    elif RUN_LABEL == "AGT018":
         successor_budget_receipt()
+    else:
+        raise RuntimeError(f"{RUN_LABEL} budget authority is unbound")
 
 
 def _register_context(

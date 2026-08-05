@@ -15,7 +15,11 @@ if "modal" not in sys.modules and importlib.util.find_spec("modal") is None:
 
 import openrouter_kv_cache_agt019_contract as agt019_contract
 import openrouter_kv_cache_matched_pair as matched_pair
+import openrouter_launch_authority as launch_authority
 import pytest
+import run_openrouter_kv_cache_native as native_launcher
+from openrouter_fullstack_packets import packet_catalog
+from openrouter_fullstack_state import EncoderDeployment
 
 EXPECTED_REQUESTS_PER_DEPLOYMENT = 36
 EXPECTED_PREFLIGHT_REQUESTS = 6
@@ -190,6 +194,64 @@ def test_selection_divergence_is_rejected() -> None:
     remote[0] = {**remote[0], "selected_worker": "worker-c"}
     with pytest.raises(RuntimeError, match="selection divergence"):
         matched_pair.pair_cells(_arm_rows(seconds=NATIVE_SECONDS), remote)
+
+
+def test_agt019_remote_packet_is_staged_source_closed(tmp_path) -> None:
+    encoder = EncoderDeployment(
+        app_name="test-encoder",
+        class_name="SessionEncoder",
+        build_id="test-build",
+        deployment_source_commit="test-source",
+        plugin_source_digest="test-plugin",
+    )
+    packet = packet_catalog(
+        tmp_path,
+        encoder,
+        tmp_path / "service.py",
+        canary_key_limit_usd=0.25,
+        maximum_canary_seconds=60,
+    )["kv-cache-flashinfer-agt019"]
+
+    assert packet.expected_run_id == agt019_contract.RUN_ID
+    assert packet.key_limit_usd == 0
+    assert packet.maximum_seconds == 0
+    assert packet.driver.name == "openrouter_kv_cache_successor_remote.py"
+    assert packet.artifact_revision == agt019_contract.ARTIFACT_REVISION
+    assert packet.encoder is not None
+    assert packet.encoder.app_name == agt019_contract.REMOTE_APP_NAME
+    with pytest.raises(SystemExit, match="source-closed"):
+        launch_authority.verify_source_authority(
+            "kv-cache-flashinfer-agt019",
+            {},
+            repo_root=tmp_path,
+        )
+
+
+def test_agt019_native_mode_switches_identity_and_stays_source_closed(
+    tmp_path,
+) -> None:
+    try:
+        native_launcher._configure_generation("agt019")
+        assert native_launcher.RUN_ID == agt019_contract.RUN_ID
+        assert native_launcher.APP_NAME == agt019_contract.NATIVE_APP_NAME
+        assert native_launcher.WEBHOOK_LABEL == (agt019_contract.NATIVE_WEBHOOK_LABEL)
+        assert native_launcher.ARTIFACT_REVISION == (agt019_contract.ARTIFACT_REVISION)
+        assert native_launcher.RUN_LABEL == "AGT019"
+        assert native_launcher.TRAINING_STAGE == "openrouter_kv_cache_agt019"
+        assert native_launcher.APP_TITLE == "Rayline AGT019"
+        assert native_launcher.CONTEXT_SCHEMA_VERSION == (
+            "rayline-router.modal-native-agt019.v1"
+        )
+        assert (
+            native_launcher.BENCHMARK.name
+            == "openrouter_kv_cache_successor_benchmark.py"
+        )
+        assert native_launcher.KEY_LIMIT_USD == 0
+        assert native_launcher.MAXIMUM_PAID_SECONDS == 0
+        with pytest.raises(RuntimeError, match="source-closed"):
+            native_launcher._verify_authority(tmp_path)
+    finally:
+        native_launcher._configure_generation("agt017")
 
 
 def test_dishonest_labeling_fails_the_policy_gate() -> None:

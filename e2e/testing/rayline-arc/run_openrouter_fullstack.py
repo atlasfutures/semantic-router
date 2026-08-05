@@ -531,6 +531,12 @@ def _initial_context(
         matched_budget_receipt()
     elif args.mode == "kv-cache-flashinfer-agt018":
         successor_budget_receipt()
+    elif args.mode == "kv-cache-flashinfer-agt019":
+        # AGT019 declares no budget contract: the AGT018 authority closed with
+        # too little reserve to fund two H100 arms plus two provider keys.
+        raise SystemExit(
+            "kv-cache-flashinfer-agt019 requires a bound AGT019 budget contract"
+        )
     environment = os.environ.copy()
     if packet.modal_environment:
         environment["MODAL_ENVIRONMENT"] = packet.modal_environment
