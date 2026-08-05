@@ -5,19 +5,27 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 from typing import Any
 
-from modal_fullstack_canary import _episode_id
 from openrouter_kv_cache_successor_workload import (
     EXPECTED_SELECTION_TRACES,
-    SCHEMA_VERSION as WORKLOAD_SCHEMA_VERSION,
     evaluate_embeddings,
     history_sequences,
     normalized_turns,
 )
+from openrouter_kv_cache_successor_workload import (
+    SCHEMA_VERSION as WORKLOAD_SCHEMA_VERSION,
+)
 
 SCHEMA_VERSION = "rayline.openrouter-kv-cache-remote-parity.v1"
+
+
+def _parity_session_id(run_id: str, sequence_id: str) -> str:
+    """Return the 64-hex episode hash the session API's schema requires."""
+
+    return hashlib.sha256(f"{run_id}:agt018-parity:{sequence_id}".encode()).hexdigest()
 
 
 def _validate_transition(
@@ -56,7 +64,7 @@ def verify_remote_encoder(client: Any, run_id: str) -> dict[str, Any]:
     try:
         for sequence in history_sequences():
             sequence_id = str(sequence["sequence_id"])
-            session_id = _episode_id(run_id, f"agt018-parity:{sequence_id}")
+            session_id = _parity_session_id(run_id, sequence_id)
             session_ids.append(session_id)
             previous_serialized_tokens = None
             for step, case in enumerate(sequence["states"]):
@@ -83,12 +91,14 @@ def verify_remote_encoder(client: Any, run_id: str) -> dict[str, Any]:
                 client.close_if_present(session_id)
             except Exception as error:
                 cleanup_failures.append(error)
+    if failure is not None:
+        # The parity divergence is the primary evidence; cleanup failures
+        # must not mask it.
+        raise failure
     if cleanup_failures:
         raise RuntimeError(
             "remote encoder parity sessions did not close cleanly"
         ) from cleanup_failures[0]
-    if failure is not None:
-        raise failure
 
     evaluated = evaluate_embeddings(embeddings)
     observations = []

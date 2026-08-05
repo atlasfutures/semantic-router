@@ -7,6 +7,7 @@ import importlib.util
 import itertools
 import json
 import math
+import re
 import subprocess
 import sys
 import types
@@ -293,6 +294,11 @@ def test_remote_encoder_gate_covers_nine_states_and_emits_no_payloads() -> None:
     assert report["sessions_closed"] == EXPECTED_PROBE_SESSIONS
     assert report["selected_workers"] == sorted(WORKERS)
     assert len(client.closed) == EXPECTED_PROBE_SESSIONS
+    # The session API's EpisodeIDHash schema rejects anything that is not a
+    # 64-hex digest with HTTP 422, so the gate must only emit that shape.
+    assert all(
+        re.fullmatch(r"[0-9a-f]{64}", session_id) for session_id in client.closed
+    )
     encoded = json.dumps(report)
     assert '"embedding":' not in encoded
     assert '"messages":' not in encoded
