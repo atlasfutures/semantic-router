@@ -34,11 +34,14 @@ providers:
       provider_model_id: xiaomi/mimo-v2.5
       api_format: openai
       pricing:
+        # Conservative maximum rates across the 2026-08-05b re-vetted provider
+        # order (Xiaomi/Parasail/Venice/Novita/DeepInfra); must equal artifact
+        # v5 pricing or the router's price-identity gate fails closed.
         currency: USD
-        prompt_per_1m: 0.168
-        cached_input_per_1m: 0.168
-        cache_write_per_1m: 0.168
-        completion_per_1m: 0.336
+        prompt_per_1m: 0.4
+        cached_input_per_1m: 0.4
+        cache_write_per_1m: 0.4
+        completion_per_1m: 2.0
       backend_refs:
         - name: openrouter
           endpoint: openrouter.ai:443

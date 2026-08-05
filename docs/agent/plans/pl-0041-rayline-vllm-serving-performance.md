@@ -3703,6 +3703,34 @@ authority pins: preregistration `25069d43b0d4a538ab9eb19992ce66189c4c060c` and
 authorization `0b52103c79db75d15a2226c6434162e0ac36101d`. The packet permits
 exactly one launch of each architecture arm.
 
+After binding, the paid launch was blocked on worker-b. Three consecutive
+availability preflights aborted at `$0` on Venice's shared pool, which flaps
+sub-minute; each abort is archived beside the run directory. Diagnostic probes
+with the byte-exact frozen payload showed worker-b's frozen order had
+collapsed to Venice alone — Xiaomi, Parasail, GMICloud and Novita were all
+filtered out by `require_parameters` at re-vet time — while the original four
+flap in and out of eligibility rather than disappearing (Xiaomi and Venice
+each served full runs the same morning). The 2026-08-05b amendment therefore
+removes nothing and appends `deepinfra`, verified against the byte-exact
+frozen payload, as a fifth last-resort entry:
+Xiaomi/Parasail/Venice/Novita/DeepInfra, with in-order fallthrough on 429
+already proven by the worker-a re-vetting while fallbacks stay disabled. It
+adopts conservative maximum-rate pricing across the widened order — DeepInfra
+bf16 sets the new maxima at `$0.40/M` prompt and `$2.00/M` completion — and
+raises the per-arm key limit from `$0.15` to `$0.25`, because OpenRouter's
+limit check counts in-flight pre-authorization holds (the AGT018 HTTP 402
+lesson) and the widened order prices higher per request. The complete packet
+becomes `$9.0308736` resources plus `$0.50` provider keys = `$9.5308736`,
+raising conservative cumulative accounting from `$142.418831066383` to
+`$151.949704666383` and leaving `$2.363119353617` under the unchanged
+`$154.31282402` authority — no new money is requested. Artifact
+`public-rayline-arc-openrouter-kv-cache-v5` supersedes the v4 binding, which
+AGT019 never deployed; AGT018's v4 artifact is untouched and remains
+historical and regenerable. Workers a and c, the workload, the request
+envelope, both retry policies, the matched-pair policy, and every acceptance
+gate are unchanged. A fresh preregistration/authorization pair binds the
+amendment under the same `$10` authority; no paid request preceded it.
+
 - [x] AGT019a: policy engine, fail-closed contract, and focused tests without
   opening launch authority.
 - [x] AGT019b: wire the v4 reporter (matched-pair lanes replacing the

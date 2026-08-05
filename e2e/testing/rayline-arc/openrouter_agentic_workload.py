@@ -23,14 +23,24 @@ WORKERS = {
 # provider to the next entry within the pinned order even with fallbacks
 # disabled. All launchable legacy packets are pin-closed, so this table only
 # governs AGT018 runtime and validation.
+#
+# Re-vetted again 2026-08-05 for AGT019: worker-b's frozen order collapsed to
+# Venice alone under the same require_parameters filter (Xiaomi, Parasail,
+# GMICloud and Novita were all filtered out at re-vet time), and Venice's
+# shared pool flaps sub-minute — three availability preflights aborted at $0.
+# The original four flap in and out of eligibility rather than disappearing
+# (Xiaomi and Venice each served full runs the same morning), so none are
+# removed; DeepInfra is appended as a fifth last-resort entry after passing
+# the byte-exact frozen payload. In-order 429 fallthrough with fallbacks
+# disabled is already proven by the worker-a re-vetting above.
 PROVIDER_SLUGS = {
     "worker-a": ("baidu", "gmicloud", "siliconflow"),
-    "worker-b": ("xiaomi", "parasail", "venice", "novita"),
+    "worker-b": ("xiaomi", "parasail", "venice", "novita", "deepinfra"),
     "worker-c": ("tencent", "deepinfra", "novita"),
 }
 PROVIDER_NAMES = {
     "worker-a": ("Baidu", "GMICloud", "SiliconFlow"),
-    "worker-b": ("Xiaomi", "Parasail", "Venice", "Novita"),
+    "worker-b": ("Xiaomi", "Parasail", "Venice", "Novita", "DeepInfra"),
     "worker-c": ("Tencent", "DeepInfra", "Novita"),
 }
 

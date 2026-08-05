@@ -42,20 +42,26 @@ REMOTE_CLASS_NAME = "SessionEncoder"
 VLLM_COMMIT = "9f5ea81ca0aa570aea46baf82311a1139c1267ca"
 REMOTE_ENGINE_BUILD_ID = f"vllm@{VLLM_COMMIT}+gdn-flashinfer-eager"
 REMOTE_GDN_PREFILL_BACKEND = "flashinfer"
-# The v4 artifact content is unchanged and reused verbatim from AGT018.
-ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v4"
+# v5 amends v4's worker-b row only: the frozen order collapsed to Venice
+# alone under `require_parameters` and Venice's shared pool flaps sub-minute,
+# so DeepInfra is appended as a fifth last-resort entry with conservative
+# maximum-rate pricing across the widened order. AGT018's v4 artifact is
+# untouched and remains historical and regenerable.
+ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v5"
 MAX_COMPLETION_TOKENS = 24
 
 # AGT018's conservative accounting closed at $142.418831066383 against the
 # $144.31282402 authority, leaving $1.893992953617 — only about $0.69 of packet
 # headroom above the $1.20 required final reserve, which cannot fund two H100
 # arms plus two provider keys. The user approved fresh $10 authority on
-# 2026-08-05, raising cumulative authority to $154.31282402. The $0.15 per-arm
-# key limit is the AGT018-proven value: $0.05 hit OpenRouter's HTTP 402 at
-# request 35 of 36 because its limit check counts in-flight pre-authorization
-# holds, while $0.15 gives the 36-request workload roughly 3x settled-cost
-# headroom.
-AUTHORIZED_KEY_LIMIT_USD_PER_ARM = 0.15
+# 2026-08-05, raising cumulative authority to $154.31282402. The per-arm key
+# limit rises from the AGT018-proven $0.15 to $0.25 with the worker-b
+# re-vetting: OpenRouter's limit check counts in-flight pre-authorization
+# holds (the AGT018 402 lesson, where $0.05 aborted at request 35 of 36), and
+# worker-b's widened order now prices at up to $0.40/M prompt and $2.00/M
+# completion, so the same 36-request workload needs a proportionally larger
+# hold headroom.
+AUTHORIZED_KEY_LIMIT_USD_PER_ARM = 0.25
 AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS = 20 * 60
 MAXIMUM_PROVIDER_SPEND_USD = 2 * AUTHORIZED_KEY_LIMIT_USD_PER_ARM
 REQUIRED_FINAL_RESERVE_USD = 1.20
@@ -70,8 +76,8 @@ AGT019_RESOURCE_BUDGET = BudgetContract(
     previous_conservative_usd=142.418831066383,
     authorized_cumulative_usd=154.31282402,
     packet_ceiling_usd=9.1,
-    # The provider limits are accounted separately below. Reserving $1.50 at
-    # this layer guarantees at least $1.20 after both $0.15 keys are exhausted.
+    # The provider limits are accounted separately below. Reserving $1.70 at
+    # this layer guarantees at least $1.20 after both $0.25 keys are exhausted.
     required_reserve_usd=REQUIRED_FINAL_RESERVE_USD + MAXIMUM_PROVIDER_SPEND_USD,
     maximum_paid_wall_seconds=AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS,
     encoder_replicas=2,

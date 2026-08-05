@@ -23,7 +23,17 @@ EXPECTED_ARGUMENT_COUNT = 2
 # maximum-rate pricing across the amended order; workers b and c are
 # unchanged.
 SUCCESSOR_ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v4"
-ALLOWED_ARTIFACT_REVISIONS = frozenset({ARTIFACT_REVISION, SUCCESSOR_ARTIFACT_REVISION})
+# v4 carries the AGT018 worker-a re-vetting and is retained verbatim as the
+# historical (regenerable) AGT018 artifact. v5 supersedes it for AGT019 only:
+# worker-b's frozen order collapsed to Venice alone under require_parameters
+# and Venice's shared pool flaps sub-minute, so DeepInfra is appended as a
+# fifth last-resort entry with conservative maximum-rate pricing across the
+# widened order (DeepInfra bf16 sets the new maxima). Worker-a and worker-c
+# are unchanged from v4.
+AGT019_ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v5"
+ALLOWED_ARTIFACT_REVISIONS = frozenset(
+    {ARTIFACT_REVISION, SUCCESSOR_ARTIFACT_REVISION, AGT019_ARTIFACT_REVISION}
+)
 SUCCESSOR_WORKERS = tuple(
     (
         {
@@ -40,25 +50,45 @@ SUCCESSOR_WORKERS = tuple(
     )
     for worker in WORKERS
 )
+AGT019_WORKERS = tuple(
+    (
+        {
+            **worker,
+            "provider_order": ["xiaomi", "parasail", "venice", "novita", "deepinfra"],
+            "pricing_source": "openrouter-bounded-provider-order-2026-08-05b",
+            "prompt_cost": 0.0000004,
+            "cache_read_cost": 0.0000004,
+            "cache_write_cost": 0.0000004,
+            "completion_cost": 0.000002,
+        }
+        if worker["id"] == "worker-b"
+        else worker
+    )
+    for worker in SUCCESSOR_WORKERS
+)
 
 
 def generate(output_dir: Path, artifact_revision: str = ARTIFACT_REVISION) -> None:
     if artifact_revision not in ALLOWED_ARTIFACT_REVISIONS:
         raise RuntimeError("KV cache artifact revision is not source-registered")
-    successor = artifact_revision == SUCCESSOR_ARTIFACT_REVISION
+    if artifact_revision == AGT019_ARTIFACT_REVISION:
+        workers = AGT019_WORKERS
+        pricing_snapshot = "openrouter-bounded-provider-orders-2026-08-05b"
+    elif artifact_revision == SUCCESSOR_ARTIFACT_REVISION:
+        workers = SUCCESSOR_WORKERS
+        pricing_snapshot = "openrouter-bounded-provider-orders-2026-08-05"
+    else:
+        workers = WORKERS
+        pricing_snapshot = "openrouter-bounded-provider-orders-2026-08-03"
     generate_contract(
         output_dir,
         artifact_id=artifact_revision,
-        workers=SUCCESSOR_WORKERS if successor else WORKERS,
+        workers=workers,
         capability_tag="public-openrouter-kv-cache-benchmark",
         max_completion_tokens=MAX_COMPLETION_TOKENS,
         created_at="2026-08-04T00:00:00Z",
         exporter_commit="public-openrouter-kv-cache-exporter-v2",
-        pricing_snapshot=(
-            "openrouter-bounded-provider-orders-2026-08-05"
-            if successor
-            else "openrouter-bounded-provider-orders-2026-08-03"
-        ),
+        pricing_snapshot=pricing_snapshot,
     )
 
 
