@@ -106,6 +106,9 @@ max-nested-blocks = 4
   "N812",     # torch.nn.functional as F is the PyTorch convention
   "PLR0915",  # pre-existing main() size; not expanded by the import fix
 ]
+"e2e/testing/rayline-arc/run_openrouter_kv_cache_native.py" = [
+  "PLW0603",  # AGT018 generation switch atomically rebinds module identities
+]
 "src/vllm-sr/tests/test_hybrid_validator.py" = ["I001"]
 "src/vllm-sr/tests/test_latency_validation.py" = ["I001"]
 "src/vllm-sr/tests/test_plugin_parsing.py" = ["I001", "RUF043"]

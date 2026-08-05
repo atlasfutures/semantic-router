@@ -34,6 +34,8 @@ from openrouter_fullstack_state import EncoderDeployment
 
 EXPECTED_REQUESTS_PER_DEPLOYMENT = 36
 EXPECTED_MAXIMUM_EXTERNAL_ATTEMPTS = 156
+EXPECTED_AUTHORIZED_CUMULATIVE_USD = 144.31282402
+MAXIMUM_EXPECTED_PACKET_USD = 9.14
 EXPECTED_ENCODER_STATES = len(workload.SEQUENCE_IDS) * workload.STEPS
 EXPECTED_PROBE_SESSIONS = len(workload.SEQUENCE_IDS)
 EXPECTED_STARTED_SESSIONS_ON_FAILURE = 2
@@ -149,6 +151,15 @@ def test_axis_classifier_covers_all_workers_with_margin() -> None:
     assert all(
         gap > workload.MINIMUM_TOP_TWO_SCORE_GAP
         for _selected, gap in observations.values()
+    )
+
+
+def test_successor_budget_preserves_the_frozen_reserve() -> None:
+    receipt = successor_contract.successor_budget_receipt()
+    assert receipt["authorized_cumulative_usd"] == (EXPECTED_AUTHORIZED_CUMULATIVE_USD)
+    assert receipt["maximum_complete_packet_usd"] < MAXIMUM_EXPECTED_PACKET_USD
+    assert receipt["reserve_after_complete_envelope_usd"] >= (
+        successor_contract.REQUIRED_FINAL_RESERVE_USD
     )
 
 

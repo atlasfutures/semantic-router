@@ -13,6 +13,7 @@ from openrouter_kv_cache_successor_workload import (
 from openrouter_kv_cache_successor_workload import (
     SCHEMA_VERSION as WORKLOAD_SCHEMA_VERSION,
 )
+from rayline_three_arm_budget import BudgetContract, budget_receipt
 
 SCHEMA_VERSION = "rayline.openrouter-kv-cache-successor-contract.v1"
 REPORT_SCHEMA_VERSION = "rayline.openrouter-kv-cache-comparison.v3"
@@ -32,10 +33,51 @@ REMOTE_ENGINE_BUILD_ID = f"vllm@{VLLM_COMMIT}+gdn-flashinfer-eager"
 REMOTE_GDN_PREFILL_BACKEND = "flashinfer"
 ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v3"
 MAX_COMPLETION_TOKENS = 24
-# Fail-closed packet placeholders. A reviewed budget contract must replace both
-# values in the same checkpoint that opens the two source-authority pins.
+# Fail-closed packet placeholders. The reviewed authorized values below replace
+# both placeholders in the same checkpoint that opens the two source-authority
+# pins.
 SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM = 0.0
 SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS = 0
+
+# The user approved fresh $10 authority on 2026-08-05, raising cumulative
+# authority from the AGT017-era $134.31282402 to $144.31282402. AGT017's
+# complete envelope was already charged in full at $133.087957466383.
+AUTHORIZED_KEY_LIMIT_USD_PER_ARM = 0.05
+AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS = 20 * 60
+MAXIMUM_PROVIDER_SPEND_USD = 2 * AUTHORIZED_KEY_LIMIT_USD_PER_ARM
+REQUIRED_FINAL_RESERVE_USD = 1.20
+
+AGT018_RESOURCE_BUDGET = BudgetContract(
+    run_id=RUN_ID,
+    previous_conservative_usd=133.087957466383,
+    authorized_cumulative_usd=144.31282402,
+    packet_ceiling_usd=9.1,
+    # The provider limits are accounted separately below. Reserving $1.30 at
+    # this layer guarantees at least $1.20 after both $0.05 keys are exhausted.
+    required_reserve_usd=REQUIRED_FINAL_RESERVE_USD + MAXIMUM_PROVIDER_SPEND_USD,
+    maximum_paid_wall_seconds=AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS,
+    encoder_replicas=2,
+)
+
+
+def successor_budget_receipt() -> dict[str, Any]:
+    """Return the complete two-H100 plus two-provider-key envelope."""
+
+    receipt = budget_receipt(AGT018_RESOURCE_BUDGET)
+    cumulative = receipt["cumulative_if_full_envelope_usd"] + MAXIMUM_PROVIDER_SPEND_USD
+    reserve = AGT018_RESOURCE_BUDGET.authorized_cumulative_usd - cumulative
+    if reserve < REQUIRED_FINAL_RESERVE_USD:
+        raise RuntimeError("AGT018 complete envelope exceeds user authority")
+    return {
+        **receipt,
+        "maximum_provider_spend_usd": MAXIMUM_PROVIDER_SPEND_USD,
+        "maximum_complete_packet_usd": (
+            receipt["maximum_resource_envelope_usd"] + MAXIMUM_PROVIDER_SPEND_USD
+        ),
+        "cumulative_if_complete_envelope_usd": cumulative,
+        "reserve_after_complete_envelope_usd": reserve,
+    }
+
 
 PROVIDER_PREFLIGHT_REQUESTS_PER_DEPLOYMENT = 3
 DEPLOYMENTS = 2
@@ -80,6 +122,7 @@ def validate() -> dict[str, Any]:
         or SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS != 0
     ):
         raise RuntimeError("AGT018 source-closed resource envelope diverged")
+    receipt = successor_budget_receipt()
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": RUN_ID,
@@ -102,4 +145,13 @@ def validate() -> dict[str, Any]:
         "maximum_completion_tokens": MAX_COMPLETION_TOKENS,
         "acceptance_gates": list(ACCEPTANCE_GATES),
         "release_qualification_1000_executed": False,
+        "budget": {
+            "authorized_cumulative_usd": (
+                AGT018_RESOURCE_BUDGET.authorized_cumulative_usd
+            ),
+            "maximum_complete_packet_usd": receipt["maximum_complete_packet_usd"],
+            "reserve_after_complete_envelope_usd": (
+                receipt["reserve_after_complete_envelope_usd"]
+            ),
+        },
     }

@@ -66,6 +66,9 @@ from openrouter_kv_cache_successor_contract import (
 from openrouter_kv_cache_successor_contract import (
     SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS as AGT018_MAXIMUM_PAID_SECONDS,
 )
+from openrouter_kv_cache_successor_contract import (
+    successor_budget_receipt,
+)
 from openrouter_modal_native_fixture import (
     DECISION_LOG_REMOTE_PATH,
     build_checkpoint,
@@ -218,6 +221,8 @@ def _verify_authority(semantic_root: Path) -> None:
         matched_budget_receipt()
     elif KEY_LIMIT_USD <= 0 or MAXIMUM_PAID_SECONDS <= 0:
         raise RuntimeError("AGT018 budget authority is source-closed")
+    else:
+        successor_budget_receipt()
 
 
 def _register_context(

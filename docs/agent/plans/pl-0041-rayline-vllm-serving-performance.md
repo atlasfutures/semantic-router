@@ -3553,8 +3553,19 @@ source-only step.
   commits, run each architecture once, publish the aggregate-only receipt, and
   close TD051 only if the remote trace and real-provider report pass.
 
-Do not consume the remaining `$1.224866553617` reserve or release the
-1,000-case qualification as part of source preparation.
+The user approved fresh `$10` authority on 2026-08-05, raising cumulative
+authority from `$134.31282402` to `$144.31282402`. The frozen AGT018 packet
+reuses the AGT017 envelope shape: two H100 encoder-replica deployments with a
+`20`-minute paid wall plus `31`-minute orphan and `5`-minute scaledown
+allowances bound resources at `$9.0308736` under a `$9.1` packet ceiling, and
+two disposable `$0.05` provider keys bound the complete packet at
+`$9.1308736`. Charging the complete envelope raises conservative cumulative
+accounting from `$133.087957466383` to `$142.218831066383`, leaving at least
+`$2.093992953617` under the new authority — above the frozen `$1.20` final
+reserve. The authorized key/time values replace the source-closed zero
+placeholders only in the same checkpoint that binds both authority pins.
+
+Do not release the 1,000-case qualification as part of budget preparation.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
 receipt; it is not renamed or reinterpreted after the fact. The v1 plugin

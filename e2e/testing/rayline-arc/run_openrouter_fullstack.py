@@ -57,6 +57,9 @@ from openrouter_kv_cache_deployment_evidence import persist as persist_kv_eviden
 from openrouter_kv_cache_matched_contract import (
     matched_budget_receipt,
 )
+from openrouter_kv_cache_successor_contract import (
+    successor_budget_receipt,
+)
 from openrouter_launch_authority import verify_source_authority
 from openrouter_provider_preflight import run_preflight as run_provider_preflight
 from openrouter_provider_preflight_contract import (
@@ -523,6 +526,8 @@ def _initial_context(
         raise SystemExit(f"{args.mode} launcher only permits {packet.expected_run_id}")
     if args.mode == "kv-cache-flashinfer":
         matched_budget_receipt()
+    elif args.mode == "kv-cache-flashinfer-agt018":
+        successor_budget_receipt()
     environment = os.environ.copy()
     if packet.modal_environment:
         environment["MODAL_ENVIRONMENT"] = packet.modal_environment
