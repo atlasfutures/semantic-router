@@ -709,7 +709,9 @@ status/category/type/code and attempt counts. Prompt, tool, response/error text,
 credential, raw episode identity, and timestamps are forbidden.
 
 Before either H100 paid timer begins, one shared direct OpenRouter gate sends a
-one-output-token request to each exact model/provider order. It may retry one
+bounded eight-output-token request to each exact model/provider order (one
+token false-negatived on serving stacks whose first streamed delta carries no
+content). It may retry one
 pre-response 429/503 and must prove DS4 Flash, MiMo V2.5, and HY3 identity. This
 gate establishes availability only; its latency and throughput are not
 admissible performance evidence.

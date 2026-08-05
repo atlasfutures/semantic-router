@@ -508,7 +508,10 @@ def test_provider_preflight_covers_every_worker_without_gpu(monkeypatch) -> None
     assert list(report["workers"]) == list(WORKERS)
     assert [call["expected_worker"] for call in calls] == list(WORKERS)
     assert all(call["path"] == "direct" for call in calls)
-    assert all(call["max_completion_tokens"] == 1 for call in calls)
+    assert all(
+        call["max_completion_tokens"] == provider_preflight.MAX_COMPLETION_TOKENS
+        for call in calls
+    )
 
 
 def test_provider_preflight_preserves_sanitized_429_evidence(monkeypatch) -> None:

@@ -26,7 +26,12 @@ from openrouter_provider_preflight_contract import (
     validate_report,
 )
 
-MAX_COMPLETION_TOKENS = 1
+# One token proved to be a false-negative availability signal: DeepInfra's
+# MiMo stack spends the first streamed delta on non-content, so the stream
+# validator's content-token requirement failed an available provider. Eight
+# tokens keeps the probe negligible and inadmissible for performance while
+# giving every vetted serving stack room to emit content.
+MAX_COMPLETION_TOKENS = 8
 
 
 def _failure(
