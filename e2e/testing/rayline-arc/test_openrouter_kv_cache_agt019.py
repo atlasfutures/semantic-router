@@ -27,6 +27,8 @@ EXPECTED_MEASUREMENT_REQUESTS = 72
 EXPECTED_MAXIMUM_LOGICAL_PROVIDER_REQUESTS = 78
 EXPECTED_MAXIMUM_EXTERNAL_ATTEMPTS = 156
 EXPECTED_MAXIMUM_COMPLETION_TOKENS = 24
+EXPECTED_AUTHORIZED_CUMULATIVE_USD = 154.31282402
+MAXIMUM_EXPECTED_PACKET_USD = 9.34
 
 SEQUENCE_WORKERS = (
     ("code_patch", "worker-a"),
@@ -117,7 +119,19 @@ def test_agt019_contract_is_source_closed_with_the_matched_pair_gate() -> None:
         agt019_contract.EXPECTED_SEMANTIC_REQUESTS_PER_DEPLOYMENT
         == EXPECTED_REQUESTS_PER_DEPLOYMENT
     )
-    assert "budget" not in contract
+    assert contract["budget"]["authorized_cumulative_usd"] == (
+        EXPECTED_AUTHORIZED_CUMULATIVE_USD
+    )
+
+
+def test_agt019_budget_preserves_the_frozen_reserve() -> None:
+    receipt = agt019_contract.agt019_budget_receipt()
+
+    assert receipt["authorized_cumulative_usd"] == EXPECTED_AUTHORIZED_CUMULATIVE_USD
+    assert receipt["maximum_complete_packet_usd"] < MAXIMUM_EXPECTED_PACKET_USD
+    assert receipt["reserve_after_complete_envelope_usd"] >= (
+        agt019_contract.REQUIRED_FINAL_RESERVE_USD
+    )
 
 
 def test_identical_arms_are_fully_matched_everywhere() -> None:

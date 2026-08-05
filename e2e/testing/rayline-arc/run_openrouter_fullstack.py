@@ -53,6 +53,9 @@ from openrouter_key_management import (
 from openrouter_key_management import (
     ephemeral_key_usage as _ephemeral_key_usage,
 )
+from openrouter_kv_cache_agt019_contract import (
+    agt019_budget_receipt,
+)
 from openrouter_kv_cache_deployment_evidence import persist as persist_kv_evidence
 from openrouter_kv_cache_matched_contract import (
     matched_budget_receipt,
@@ -532,11 +535,7 @@ def _initial_context(
     elif args.mode == "kv-cache-flashinfer-agt018":
         successor_budget_receipt()
     elif args.mode == "kv-cache-flashinfer-agt019":
-        # AGT019 declares no budget contract: the AGT018 authority closed with
-        # too little reserve to fund two H100 arms plus two provider keys.
-        raise SystemExit(
-            "kv-cache-flashinfer-agt019 requires a bound AGT019 budget contract"
-        )
+        agt019_budget_receipt()
     environment = os.environ.copy()
     if packet.modal_environment:
         environment["MODAL_ENVIRONMENT"] = packet.modal_environment

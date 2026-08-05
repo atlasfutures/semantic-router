@@ -53,6 +53,9 @@ from openrouter_kv_cache_agt019_contract import (
 from openrouter_kv_cache_agt019_contract import (
     SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS as AGT019_MAXIMUM_PAID_SECONDS,
 )
+from openrouter_kv_cache_agt019_contract import (
+    agt019_budget_receipt,
+)
 from openrouter_kv_cache_matched_contract import (
     ARTIFACT_REVISION,
     AUTHORIZATION_COMMIT,
@@ -293,6 +296,8 @@ def _verify_authority(semantic_root: Path) -> None:
         raise RuntimeError(f"{RUN_LABEL} budget authority is source-closed")
     elif RUN_LABEL == "AGT018":
         successor_budget_receipt()
+    elif RUN_LABEL == "AGT019":
+        agt019_budget_receipt()
     else:
         raise RuntimeError(f"{RUN_LABEL} budget authority is unbound")
 
