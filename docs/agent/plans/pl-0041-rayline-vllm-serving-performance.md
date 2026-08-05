@@ -3731,6 +3731,37 @@ envelope, both retry policies, the matched-pair policy, and every acceptance
 gate are unchanged. A fresh preregistration/authorization pair binds the
 amendment under the same `$10` authority; no paid request preceded it.
 
+That amendment was wrong and is corrected here. Streaming diagnosis of
+DeepInfra's MiMo endpoint under the frozen payload showed it emits only
+empty-content deltas and closes with `finish_reason=length`: the model spends
+the entire completion budget on a hidden reasoning phase on that stack, so it
+can never satisfy the benchmark's content-token requirement at the `24`-token
+cap. The vetting probe that admitted it observed only a non-streaming HTTP
+`200`, which is too shallow a signal — provider vetting now requires a
+streaming probe that observes at least one content token, not an endpoint
+status code. A related false negative in the opposite direction had already
+been fixed: the one-token availability preflight failed a healthy provider
+whose first delta carries no content, so `12b59d43` raised the probe budget to
+`8` tokens, which stays negligible and inadmissible for performance while
+giving every vetted serving stack room to emit content.
+
+The 2026-08-05c correction therefore retracts `deepinfra` and restores
+worker-b's frozen order to Xiaomi/Parasail/Venice/Novita with its v4
+Novita-maxima pricing (`$0.168/M` prompt, `$0.336/M` completion). Artifact
+`public-rayline-arc-openrouter-kv-cache-v5` is retired unpublished — no
+deployment ever consumed it, exactly as with v3 — and
+`public-rayline-arc-openrouter-kv-cache-v6` supersedes it. The per-arm key
+limit stays at the already-authorized `$0.25`; it caps spend rather than
+committing it, so the complete packet stays at `$9.5308736`, cumulative
+accounting at `$151.949704666383`, and the reserve at `$2.363119353617` under
+the unchanged `$154.31282402` authority. No new money is requested. Workers a
+and c, the workload, the request envelope, both retry policies, the
+matched-pair policy, and every acceptance gate remain unchanged, and a fresh
+preregistration/authorization pair rebinds the correction; no paid request
+preceded it. Worker-b's underlying problem is unchanged: its eligible
+providers flap, and the run depends on at least one of the frozen four being
+live at launch.
+
 - [x] AGT019a: policy engine, fail-closed contract, and focused tests without
   opening launch authority.
 - [x] AGT019b: wire the v4 reporter (matched-pair lanes replacing the

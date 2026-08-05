@@ -24,13 +24,14 @@ EXPECTED_ARGUMENT_COUNT = 2
 # unchanged.
 SUCCESSOR_ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v4"
 # v4 carries the AGT018 worker-a re-vetting and is retained verbatim as the
-# historical (regenerable) AGT018 artifact. v5 supersedes it for AGT019 only:
-# worker-b's frozen order collapsed to Venice alone under require_parameters
-# and Venice's shared pool flaps sub-minute, so DeepInfra is appended as a
-# fifth last-resort entry with conservative maximum-rate pricing across the
-# widened order (DeepInfra bf16 sets the new maxima). Worker-a and worker-c
-# are unchanged from v4.
-AGT019_ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v5"
+# historical (regenerable) AGT018 artifact. v5 appended DeepInfra to worker-b
+# and was retired unpublished, exactly as v3 was: streaming diagnosis showed
+# DeepInfra's MiMo endpoint emits only empty-content deltas and closes with
+# finish_reason=length under the frozen payload, so it can never satisfy the
+# benchmark's content-token requirement at the 24-token cap. v6 restores
+# worker-b's frozen four-provider order and its v4 Novita-maxima pricing;
+# worker-a and worker-c are unchanged from v4. No deployment consumed v5.
+AGT019_ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v6"
 ALLOWED_ARTIFACT_REVISIONS = frozenset(
     {ARTIFACT_REVISION, SUCCESSOR_ARTIFACT_REVISION, AGT019_ARTIFACT_REVISION}
 )
@@ -54,12 +55,12 @@ AGT019_WORKERS = tuple(
     (
         {
             **worker,
-            "provider_order": ["xiaomi", "parasail", "venice", "novita", "deepinfra"],
-            "pricing_source": "openrouter-bounded-provider-order-2026-08-05b",
-            "prompt_cost": 0.0000004,
-            "cache_read_cost": 0.0000004,
-            "cache_write_cost": 0.0000004,
-            "completion_cost": 0.000002,
+            "provider_order": ["xiaomi", "parasail", "venice", "novita"],
+            "pricing_source": "openrouter-bounded-provider-order-2026-08-05c",
+            "prompt_cost": 0.000000168,
+            "cache_read_cost": 0.000000168,
+            "cache_write_cost": 0.000000168,
+            "completion_cost": 0.000000336,
         }
         if worker["id"] == "worker-b"
         else worker
@@ -73,7 +74,7 @@ def generate(output_dir: Path, artifact_revision: str = ARTIFACT_REVISION) -> No
         raise RuntimeError("KV cache artifact revision is not source-registered")
     if artifact_revision == AGT019_ARTIFACT_REVISION:
         workers = AGT019_WORKERS
-        pricing_snapshot = "openrouter-bounded-provider-orders-2026-08-05b"
+        pricing_snapshot = "openrouter-bounded-provider-orders-2026-08-05c"
     elif artifact_revision == SUCCESSOR_ARTIFACT_REVISION:
         workers = SUCCESSOR_WORKERS
         pricing_snapshot = "openrouter-bounded-provider-orders-2026-08-05"

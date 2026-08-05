@@ -42,12 +42,13 @@ REMOTE_CLASS_NAME = "SessionEncoder"
 VLLM_COMMIT = "9f5ea81ca0aa570aea46baf82311a1139c1267ca"
 REMOTE_ENGINE_BUILD_ID = f"vllm@{VLLM_COMMIT}+gdn-flashinfer-eager"
 REMOTE_GDN_PREFILL_BACKEND = "flashinfer"
-# v5 amends v4's worker-b row only: the frozen order collapsed to Venice
-# alone under `require_parameters` and Venice's shared pool flaps sub-minute,
-# so DeepInfra is appended as a fifth last-resort entry with conservative
-# maximum-rate pricing across the widened order. AGT018's v4 artifact is
-# untouched and remains historical and regenerable.
-ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v5"
+# v5 appended DeepInfra to worker-b and was retired unpublished: streaming
+# diagnosis showed its MiMo endpoint emits only empty-content deltas and
+# closes with finish_reason=length under the frozen payload, so it can never
+# meet the content-token requirement at the 24-token cap. v6 restores
+# worker-b's frozen four-provider order and its v4 pricing. AGT018's v4
+# artifact is untouched and remains historical and regenerable.
+ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v6"
 MAX_COMPLETION_TOKENS = 24
 
 # AGT018's conservative accounting closed at $142.418831066383 against the
@@ -55,12 +56,12 @@ MAX_COMPLETION_TOKENS = 24
 # headroom above the $1.20 required final reserve, which cannot fund two H100
 # arms plus two provider keys. The user approved fresh $10 authority on
 # 2026-08-05, raising cumulative authority to $154.31282402. The per-arm key
-# limit rises from the AGT018-proven $0.15 to $0.25 with the worker-b
-# re-vetting: OpenRouter's limit check counts in-flight pre-authorization
-# holds (the AGT018 402 lesson, where $0.05 aborted at request 35 of 36), and
-# worker-b's widened order now prices at up to $0.40/M prompt and $2.00/M
-# completion, so the same 36-request workload needs a proportionally larger
-# hold headroom.
+# limit was raised from the AGT018-proven $0.15 to $0.25 to cover worker-b's
+# briefly widened order, and stays at $0.25 now that the order is restored:
+# OpenRouter's limit check counts in-flight pre-authorization holds (the
+# AGT018 402 lesson, where $0.05 aborted at request 35 of 36), so the extra
+# headroom is already authorized, accounted for in the receipt below, and
+# harmless — it caps spend, it does not commit it.
 AUTHORIZED_KEY_LIMIT_USD_PER_ARM = 0.25
 AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS = 20 * 60
 MAXIMUM_PROVIDER_SPEND_USD = 2 * AUTHORIZED_KEY_LIMIT_USD_PER_ARM

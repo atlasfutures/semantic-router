@@ -30,17 +30,25 @@ WORKERS = {
 # shared pool flaps sub-minute — three availability preflights aborted at $0.
 # The original four flap in and out of eligibility rather than disappearing
 # (Xiaomi and Venice each served full runs the same morning), so none are
-# removed; DeepInfra is appended as a fifth last-resort entry after passing
-# the byte-exact frozen payload. In-order 429 fallthrough with fallbacks
-# disabled is already proven by the worker-a re-vetting above.
+# removed and the order is left at its frozen four.
+#
+# DeepInfra was briefly appended as a fifth last-resort entry and is now
+# retracted (2026-08-05c). Streaming diagnosis showed its MiMo endpoint emits
+# only empty-content deltas and closes with finish_reason=length under the
+# frozen payload — the model spends the whole completion budget on a hidden
+# reasoning phase there — so it can never satisfy the benchmark's
+# content-token requirement at the 24-token cap. The earlier probe accepted it
+# on a non-streaming HTTP 200, which is too shallow: provider vetting now
+# requires a streaming probe that observes at least one content token, not an
+# endpoint status code.
 PROVIDER_SLUGS = {
     "worker-a": ("baidu", "gmicloud", "siliconflow"),
-    "worker-b": ("xiaomi", "parasail", "venice", "novita", "deepinfra"),
+    "worker-b": ("xiaomi", "parasail", "venice", "novita"),
     "worker-c": ("tencent", "deepinfra", "novita"),
 }
 PROVIDER_NAMES = {
     "worker-a": ("Baidu", "GMICloud", "SiliconFlow"),
-    "worker-b": ("Xiaomi", "Parasail", "Venice", "Novita", "DeepInfra"),
+    "worker-b": ("Xiaomi", "Parasail", "Venice", "Novita"),
     "worker-c": ("Tencent", "DeepInfra", "Novita"),
 }
 
