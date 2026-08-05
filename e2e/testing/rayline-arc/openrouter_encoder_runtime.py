@@ -88,15 +88,19 @@ def verify_encoder_deployment(
         cwd=cwd,
     )
     apps = json.loads(result.stdout)
-    matching = [app for app in apps if app.get("description") == encoder.app_name]
+    matching = [
+        app
+        for app in apps
+        if app.get("description") == encoder.app_name and app.get("state") == "deployed"
+    ]
     if len(matching) != 1:
+        # Stopped apps from prior stopped attempts stay in Modal's listing
+        # until they age out, so identity requires exactly one DEPLOYED app.
         raise RuntimeError("protected encoder deployment identity is ambiguous")
     app = matching[0]
-    if (
-        (encoder.app_id and app.get("app_id") != encoder.app_id)
-        or app.get("state") != "deployed"
-        or str(app.get("tasks")) != "0"
-    ):
+    if (encoder.app_id and app.get("app_id") != encoder.app_id) or str(
+        app.get("tasks")
+    ) != "0":
         raise RuntimeError("protected encoder deployment is not the frozen idle app")
     modal = importlib.import_module("modal")
     instance = modal.Cls.from_name(
