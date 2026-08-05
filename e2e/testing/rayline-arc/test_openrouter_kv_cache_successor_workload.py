@@ -167,10 +167,10 @@ def test_successor_budget_preserves_the_frozen_reserve() -> None:
 def test_successor_contract_is_bound_to_pushed_authority_and_exactly_bounded() -> None:
     contract = successor_contract.validate()
     assert successor_contract.PREREGISTRATION_COMMIT == (
-        "5319d7d7ba7780a53cda8f7631e8abeeb802e95e"
+        "a4d61aa0862e69fc965438a3945641b6410125f8"
     )
     assert successor_contract.AUTHORIZATION_COMMIT == (
-        "cb4c6993f514f1fbd804e4ac03488994df049020"
+        "c9fe9221f5cdc549594a1347e04a7f2f65fe6c9e"
     )
     assert contract["source_closed"] is False
     assert contract["launch_authorized"] is True
