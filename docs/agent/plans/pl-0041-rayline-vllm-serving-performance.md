@@ -3682,11 +3682,11 @@ The successor identities are run id
 engine pins carry over from AGT018: `vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca+gdn-flashinfer-eager`
 with the `flashinfer` GDN prefill backend.
 
-Both authority pins are empty and both resource ceilings are `0` until a
-checkpoint binds them. AGT018's conservative accounting closed at
-`$142.418831066383` of the `$144.31282402` authority, leaving
-`$1.893992953617` — about `$0.69` above the `$1.20` required final reserve,
-which cannot fund two H100 arms plus two provider keys.
+AGT018's conservative accounting closed at `$142.418831066383` of the
+`$144.31282402` authority, leaving `$1.893992953617` — about `$0.69` above the
+`$1.20` required final reserve, which cannot fund two H100 arms plus two
+provider keys, so AGT019 staged with empty pins and zero ceilings until fresh
+authority existed.
 
 The user approved fresh `$10` authority on 2026-08-05, raising cumulative
 authority from `$144.31282402` to `$154.31282402`. The frozen AGT019 packet
@@ -3697,9 +3697,11 @@ two disposable `$0.15` provider keys — the AGT018-proven limit — bound the
 complete packet at `$9.3308736`. Charging the complete envelope raises
 conservative cumulative accounting from `$142.418831066383` to
 `$151.749704666383`, leaving `$2.563119353617` under the new authority — above
-the frozen `$1.20` final reserve. The authorized key/time values replace the
-source-closed zero placeholders only in the same checkpoint that binds both
-authority pins.
+the frozen `$1.20` final reserve. The authorized key/time values replaced the
+source-closed zero placeholders in the same checkpoint that bound both
+authority pins: preregistration `25069d43b0d4a538ab9eb19992ce66189c4c060c` and
+authorization `0b52103c79db75d15a2226c6434162e0ac36101d`. The packet permits
+exactly one launch of each architecture arm.
 
 - [x] AGT019a: policy engine, fail-closed contract, and focused tests without
   opening launch authority.

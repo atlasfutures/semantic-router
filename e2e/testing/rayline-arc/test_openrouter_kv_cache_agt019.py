@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import subprocess
 import sys
 import types
 from typing import Any
@@ -92,16 +93,24 @@ def _arm_rows(
     return rows
 
 
-def test_agt019_contract_is_source_closed_with_the_matched_pair_gate() -> None:
+def test_agt019_contract_is_bound_with_the_matched_pair_gate() -> None:
     contract = agt019_contract.validate()
 
-    assert agt019_contract.PREREGISTRATION_COMMIT == ""
-    assert agt019_contract.AUTHORIZATION_COMMIT == ""
-    assert agt019_contract.SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM == 0
-    assert agt019_contract.SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS == 0
-    assert contract["source_closed"] is True
-    assert contract["launch_authorized"] is False
-    assert contract["requires_new_budget_authority"] is True
+    assert agt019_contract.PREREGISTRATION_COMMIT == (
+        "25069d43b0d4a538ab9eb19992ce66189c4c060c"
+    )
+    assert agt019_contract.AUTHORIZATION_COMMIT == (
+        "0b52103c79db75d15a2226c6434162e0ac36101d"
+    )
+    assert agt019_contract.SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM == (
+        agt019_contract.AUTHORIZED_KEY_LIMIT_USD_PER_ARM
+    )
+    assert agt019_contract.SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS == (
+        agt019_contract.AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS
+    )
+    assert contract["source_closed"] is False
+    assert contract["launch_authorized"] is True
+    assert contract["requires_new_budget_authority"] is False
     assert contract["run_id"] == "rayline-openrouter-kv-cache-agt019-20260805"
     assert contract["report_schema_version"] == (
         "rayline.openrouter-kv-cache-comparison.v4"
@@ -210,7 +219,7 @@ def test_selection_divergence_is_rejected() -> None:
         matched_pair.pair_cells(_arm_rows(seconds=NATIVE_SECONDS), remote)
 
 
-def test_agt019_remote_packet_is_staged_source_closed(tmp_path) -> None:
+def test_agt019_remote_packet_carries_bound_authority_limits(tmp_path) -> None:
     encoder = EncoderDeployment(
         app_name="test-encoder",
         class_name="SessionEncoder",
@@ -227,13 +236,15 @@ def test_agt019_remote_packet_is_staged_source_closed(tmp_path) -> None:
     )["kv-cache-flashinfer-agt019"]
 
     assert packet.expected_run_id == agt019_contract.RUN_ID
-    assert packet.key_limit_usd == 0
-    assert packet.maximum_seconds == 0
+    assert packet.key_limit_usd == (agt019_contract.AUTHORIZED_KEY_LIMIT_USD_PER_ARM)
+    assert packet.maximum_seconds == (
+        agt019_contract.AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS
+    )
     assert packet.driver.name == "openrouter_kv_cache_successor_remote.py"
     assert packet.artifact_revision == agt019_contract.ARTIFACT_REVISION
     assert packet.encoder is not None
     assert packet.encoder.app_name == agt019_contract.REMOTE_APP_NAME
-    with pytest.raises(SystemExit, match="source-closed"):
+    with pytest.raises(subprocess.CalledProcessError):
         launch_authority.verify_source_authority(
             "kv-cache-flashinfer-agt019",
             {},
@@ -241,7 +252,7 @@ def test_agt019_remote_packet_is_staged_source_closed(tmp_path) -> None:
         )
 
 
-def test_agt019_native_mode_switches_identity_and_stays_source_closed(
+def test_agt019_native_mode_switches_identity_with_bound_authority(
     tmp_path,
 ) -> None:
     try:
@@ -260,9 +271,13 @@ def test_agt019_native_mode_switches_identity_and_stays_source_closed(
             native_launcher.BENCHMARK.name
             == "openrouter_kv_cache_successor_benchmark.py"
         )
-        assert native_launcher.KEY_LIMIT_USD == 0
-        assert native_launcher.MAXIMUM_PAID_SECONDS == 0
-        with pytest.raises(RuntimeError, match="source-closed"):
+        assert native_launcher.KEY_LIMIT_USD == (
+            agt019_contract.AUTHORIZED_KEY_LIMIT_USD_PER_ARM
+        )
+        assert native_launcher.MAXIMUM_PAID_SECONDS == (
+            agt019_contract.AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS
+        )
+        with pytest.raises(subprocess.CalledProcessError):
             native_launcher._verify_authority(tmp_path)
     finally:
         native_launcher._configure_generation("agt017")

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 
-"""Identity, budget authority, and request envelope for AGT019, source-closed.
+"""Bound identity, budget authority, and request envelope for AGT019.
 
 AGT019 succeeds AGT018d, whose only failing gate was whole-set completion
 matching: pinned multi-provider fallthrough legally served worker-b from
@@ -29,11 +29,11 @@ SEMANTIC_BRANCH = "codex/rayline-remote-mvp"
 SEMANTIC_REMOTE_REF = f"atlasfutures/{SEMANTIC_BRANCH}"
 PATHFINDER_BRANCH = "codex/rayline-vsr-mvp"
 
-# AGT019 is staged source-closed: the policy engine, contract, and tests land
-# before any launch authority exists. Both pins stay empty until a checkpoint
-# binds a fresh preregistration and authorization commit.
-PREREGISTRATION_COMMIT = ""
-AUTHORIZATION_COMMIT = ""
+# Authority bound 2026-08-05 to the pushed AGT019 preregistration and
+# authorization checkpoints; launch stays impossible outside a clean, pushed
+# checkout of the semantic remote ref below.
+PREREGISTRATION_COMMIT = "25069d43b0d4a538ab9eb19992ce66189c4c060c"
+AUTHORIZATION_COMMIT = "0b52103c79db75d15a2226c6434162e0ac36101d"
 GIT_SHA1_HEX_LENGTH = 40
 NATIVE_APP_NAME = "rayline-router-openrouter-agt019"
 NATIVE_WEBHOOK_LABEL = "router-openrouter-agt019"
@@ -60,10 +60,10 @@ AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS = 20 * 60
 MAXIMUM_PROVIDER_SPEND_USD = 2 * AUTHORIZED_KEY_LIMIT_USD_PER_ARM
 REQUIRED_FINAL_RESERVE_USD = 1.20
 
-# Fail-closed packet placeholders. The authorized values above replace both
-# zeros in the same checkpoint that opens the two source-authority pins.
-SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM = 0.0
-SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS = 0
+# Authority bound 2026-08-05: the authorized values replaced the fail-closed
+# zero placeholders in the same checkpoint that opened both authority pins.
+SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM = AUTHORIZED_KEY_LIMIT_USD_PER_ARM
+SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS = AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS
 
 AGT019_RESOURCE_BUDGET = BudgetContract(
     run_id=RUN_ID,
@@ -124,8 +124,9 @@ ACCEPTANCE_GATES = (
 
 
 def validate() -> dict[str, Any]:
-    if PREREGISTRATION_COMMIT or AUTHORIZATION_COMMIT:
-        raise RuntimeError("AGT019 launch authority is not yet bound")
+    bound_pins = (PREREGISTRATION_COMMIT, AUTHORIZATION_COMMIT)
+    if any(len(pin) != GIT_SHA1_HEX_LENGTH for pin in bound_pins):
+        raise RuntimeError("AGT019 launch authority pins are not bound")
     if EXPECTED_REQUESTS_PER_DEPLOYMENT != EXPECTED_SEMANTIC_REQUESTS_PER_DEPLOYMENT:
         raise RuntimeError("AGT019 semantic workload request envelope diverged")
     if (
@@ -134,17 +135,18 @@ def validate() -> dict[str, Any]:
     ):
         raise RuntimeError("AGT019 provider request or attempt envelope diverged")
     if (
-        SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM != 0
-        or SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS != 0
+        SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM != AUTHORIZED_KEY_LIMIT_USD_PER_ARM
+        or SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS
+        != AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS
     ):
-        raise RuntimeError("AGT019 source-closed resource envelope diverged")
+        raise RuntimeError("AGT019 authorized resource envelope diverged")
     receipt = agt019_budget_receipt()
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": RUN_ID,
-        "source_closed": True,
-        "launch_authorized": False,
-        "requires_new_budget_authority": True,
+        "source_closed": False,
+        "launch_authorized": True,
+        "requires_new_budget_authority": False,
         "workload_schema_version": WORKLOAD_SCHEMA_VERSION,
         "report_schema_version": REPORT_SCHEMA_VERSION,
         "artifact_revision": ARTIFACT_REVISION,
