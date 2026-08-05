@@ -8,7 +8,6 @@ import itertools
 import json
 import math
 import re
-import subprocess
 import sys
 import types
 from argparse import Namespace
@@ -165,17 +164,13 @@ def test_successor_budget_preserves_the_frozen_reserve() -> None:
     )
 
 
-def test_successor_contract_is_bound_to_pushed_authority_and_exactly_bounded() -> None:
+def test_successor_contract_is_permanently_source_closed_after_the_run() -> None:
     contract = successor_contract.validate()
-    assert successor_contract.PREREGISTRATION_COMMIT == (
-        "a4d61aa0862e69fc965438a3945641b6410125f8"
-    )
-    assert successor_contract.AUTHORIZATION_COMMIT == (
-        "c9fe9221f5cdc549594a1347e04a7f2f65fe6c9e"
-    )
-    assert contract["source_closed"] is False
-    assert contract["launch_authorized"] is True
-    assert contract["requires_new_budget_authority"] is False
+    assert successor_contract.PREREGISTRATION_COMMIT == ""
+    assert successor_contract.AUTHORIZATION_COMMIT == ""
+    assert contract["source_closed"] is True
+    assert contract["launch_authorized"] is False
+    assert contract["requires_new_budget_authority"] is True
     assert contract["logical_provider_requests"] == {
         "provider_preflight": 6,
         "semantic_cache_measurement": 72,
@@ -205,17 +200,15 @@ def test_successor_remote_packet_carries_bound_authority_limits(tmp_path) -> Non
     )["kv-cache-flashinfer-agt018"]
 
     assert packet.expected_run_id == successor_contract.RUN_ID
-    assert packet.key_limit_usd == (successor_contract.AUTHORIZED_KEY_LIMIT_USD_PER_ARM)
-    assert packet.maximum_seconds == (
-        successor_contract.AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS
-    )
+    assert packet.key_limit_usd == 0
+    assert packet.maximum_seconds == 0
     assert packet.driver.name == "openrouter_kv_cache_successor_remote.py"
     assert packet.artifact_revision == successor_contract.ARTIFACT_REVISION
     assert (
         artifact_fixture.SUCCESSOR_ARTIFACT_REVISION
         == successor_contract.ARTIFACT_REVISION
     )
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(SystemExit, match="source-closed"):
         launch_authority.verify_source_authority(
             "kv-cache-flashinfer-agt018",
             {},
@@ -223,7 +216,7 @@ def test_successor_remote_packet_carries_bound_authority_limits(tmp_path) -> Non
         )
 
 
-def test_successor_native_mode_switches_identity_with_bound_authority(
+def test_successor_native_mode_switches_identity_and_stays_source_closed(
     tmp_path,
 ) -> None:
     try:
@@ -235,13 +228,9 @@ def test_successor_native_mode_switches_identity_with_bound_authority(
             native_launcher.BENCHMARK.name
             == "openrouter_kv_cache_successor_benchmark.py"
         )
-        assert native_launcher.KEY_LIMIT_USD == (
-            successor_contract.AUTHORIZED_KEY_LIMIT_USD_PER_ARM
-        )
-        assert native_launcher.MAXIMUM_PAID_SECONDS == (
-            successor_contract.AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS
-        )
-        with pytest.raises(subprocess.CalledProcessError):
+        assert native_launcher.KEY_LIMIT_USD == 0
+        assert native_launcher.MAXIMUM_PAID_SECONDS == 0
+        with pytest.raises(RuntimeError, match="authority is source-closed"):
             native_launcher._verify_authority(tmp_path)
     finally:
         native_launcher._configure_generation("agt017")

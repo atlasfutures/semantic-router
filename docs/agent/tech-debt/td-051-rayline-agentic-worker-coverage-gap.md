@@ -2,9 +2,16 @@
 
 ## Status
 
-Open — AGT018 now has exact native offline three-worker coverage and a
-source-closed vLLM parity gate, but the vLLM-hosted encoder has not yet executed
-the frozen trace.
+Open — the 2026-08-05 AGT018d execution proved the cross-architecture
+selection claim: the vLLM-hosted encoder reproduced all nine frozen states
+before routed measurement, and both arms selected `C/C/C`, `A/A/A`, and
+`B/B/B` with exact selected-worker trace parity across `36/36` routed requests
+each. The report nonetheless recorded `failed_acceptance` because
+`matched_completion_policy` failed (worker-b served by Xiaomi natively but by
+Venice remotely, producing different completion token sets), so the plan's
+closure condition — a fully passing real-provider report — is not met. A
+successor packet must reconcile multi-provider fallthrough with completion
+matching before this entry can close.
 
 ## Owner Plan
 

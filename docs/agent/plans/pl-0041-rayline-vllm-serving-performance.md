@@ -3549,9 +3549,11 @@ source-only step.
   modes. After GPU activation but before routed provider measurement, require
   the vLLM-hosted encoder to reproduce all nine selected-worker states and the
   minimum score-margin gate; abort and clean up on divergence.
-- [ ] AGT018d: Obtain a new budget and distinct preregistration/authorization
+- [x] AGT018d: Obtain a new budget and distinct preregistration/authorization
   commits, run each architecture once, publish the aggregate-only receipt, and
-  close TD051 only if the remote trace and real-provider report pass.
+  close TD051 only if the remote trace and real-provider report pass. Executed
+  2026-08-05: the report failed acceptance on exactly one gate, so TD051 stays
+  open (see the result record below).
 
 The user approved fresh `$10` authority on 2026-08-05, raising cumulative
 authority from `$134.31282402` to `$144.31282402`. The frozen AGT018 packet
@@ -3595,6 +3597,61 @@ amendment raises the per-arm key limit to `$0.15` (total provider spend
 `$0.30`, complete packet maximum `$9.3308736`, reserve after the complete
 envelope `$1.893992953617`), leaving every other frozen value unchanged. The
 402-failure evidence is archived beside the availability aborts.
+
+### AGT018d Result (2026-08-05)
+
+Both architecture arms executed the amended v4 protocol once under the frozen
+budget. Two additional infrastructure defects were found and fixed at zero or
+near-zero measured cost before the valid runs: Modal keeps stopped apps in its
+listing until they age out, so both deployment-identity checks now count only
+deployed apps; and the parity gate sent a `real-workers-<32 hex>` episode ID
+that the session API's 64-hex `EpisodeIDHash` schema rejected with HTTP 422 —
+the gate now hashes to the full 64-hex form, the fake-client test pins the
+format, and a primary parity failure can no longer be masked by a cleanup
+failure. The router's price-identity gate also required the compose config to
+carry the v4 conservative rates, which a free local fake-encoder repro
+isolated. The first otherwise-valid native run used the stale legacy provider
+table through the native fixture and was archived as protocol-invalid; the
+fixture now serves the re-vetted successor worker table.
+
+The valid runs: the native arm completed `36/36` requests (worker-a via
+GMICloud, worker-b Xiaomi, worker-c Tencent; key usage `$0.01288378`), and the
+remote FlashInfer arm passed the nine-state encoder parity gate and completed
+`36/36` (worker-a GMICloud, worker-b Venice, worker-c Tencent; key usage
+`$0.02156365`). The v3 report joined all 36 native decisions and validated all
+36 remote cells: `9/10` acceptance gates passed, including exact
+selected-worker trace parity, both retained-token-saving gates
+(native `44.6%`, remote `59.0%` retained token-work saved), preflight,
+envelopes, and privacy/cleanup. Headline steady-state comparisons: the vLLM
+remote arm ran `1.60x` native serial request throughput, `0.75x` native
+observed first-token time, and `0.82x` native retained E2E latency, while the
+native router remained about `2.46x` faster than the remote router path per
+decision.
+
+`matched_completion_policy` failed, so the run is recorded as
+`failed_acceptance` and is not reinterpreted: worker-b was served by Xiaomi on
+the native arm but fell through to Venice on the remote arm — legal within the
+pinned order, but the differing serving stacks produced different completion
+token sets (`[2, 17, 18, 24]` native versus `[1, 2, 11, 17, 18, 24]` remote),
+so strict cross-deployment E2E comparability was not established. The
+multi-provider fallthrough that made the runs survivable under Baidu/Xiaomi
+saturation is exactly what a successor packet must reconcile with completion
+matching — for example by recording and requiring per-request served-provider
+agreement between arms, or by preregistering a completion-agnostic E2E
+comparability policy.
+
+The aggregate-only receipt is local at
+`.agent-harness/rayline-kv-cache/rayline-openrouter-kv-cache-agt018-20260804/report.json`,
+SHA-256 `143fb629205775dc7b5f28591fbc93ccd1e4c9aa0ed72dc154fadf0d5214fdd6`;
+private-volume publication follows the AGT017 flow when next authorized. All
+abort and superseded evidence is archived beside the run directory. Measured
+provider spend across both valid arms was `$0.03444743` with `78` logical
+provider requests against the per-report `156`-attempt ceiling. Conservative
+accounting charges the complete frozen envelope: `$9.0308736` resources plus
+`$0.30` provider keys raises cumulative accounting from `$133.087957466383`
+to `$142.418831066383`, leaving `$1.893992953617` under the `$144.31282402`
+authority. Both authority pins are permanently closed with this record; the
+1,000-case qualification remains held.
 
 Do not release the 1,000-case qualification as part of budget preparation.
 

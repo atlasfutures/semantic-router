@@ -22,8 +22,11 @@ SEMANTIC_BRANCH = "codex/rayline-remote-mvp"
 SEMANTIC_REMOTE_REF = f"atlasfutures/{SEMANTIC_BRANCH}"
 PATHFINDER_BRANCH = "codex/rayline-vsr-mvp"
 
-PREREGISTRATION_COMMIT = "a4d61aa0862e69fc965438a3945641b6410125f8"
-AUTHORIZATION_COMMIT = "c9fe9221f5cdc549594a1347e04a7f2f65fe6c9e"
+# AGT018d executed once per arm on 2026-08-05 under pins a4d61aa0 (amended
+# preregistration) and c9fe9221 (authorization); the pins are permanently
+# closed with the recorded result and cannot be reopened for this run ID.
+PREREGISTRATION_COMMIT = ""
+AUTHORIZATION_COMMIT = ""
 GIT_SHA1_HEX_LENGTH = 40
 NATIVE_APP_NAME = "rayline-router-openrouter-agt018"
 NATIVE_WEBHOOK_LABEL = "router-openrouter-agt018"
@@ -47,10 +50,10 @@ AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS = 20 * 60
 MAXIMUM_PROVIDER_SPEND_USD = 2 * AUTHORIZED_KEY_LIMIT_USD_PER_ARM
 REQUIRED_FINAL_RESERVE_USD = 1.20
 
-# Authority bound 2026-08-05: the authorized values replaced the fail-closed
-# zero placeholders in the same checkpoint that opened both authority pins.
-SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM = AUTHORIZED_KEY_LIMIT_USD_PER_ARM
-SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS = AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS
+# Closed again with the recorded 2026-08-05 result. A future packet must
+# replace both zeros in the same checkpoint that binds fresh authority pins.
+SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM = 0.0
+SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS = 0
 
 AGT018_RESOURCE_BUDGET = BudgetContract(
     run_id=RUN_ID,
@@ -111,9 +114,8 @@ ACCEPTANCE_GATES = (
 
 
 def validate() -> dict[str, Any]:
-    bound_pins = (PREREGISTRATION_COMMIT, AUTHORIZATION_COMMIT)
-    if any(len(pin) != GIT_SHA1_HEX_LENGTH for pin in bound_pins):
-        raise RuntimeError("AGT018 launch authority pins are not bound")
+    if PREREGISTRATION_COMMIT or AUTHORIZATION_COMMIT:
+        raise RuntimeError("AGT018 launch authority must stay permanently closed")
     if EXPECTED_REQUESTS_PER_DEPLOYMENT != EXPECTED_SEMANTIC_REQUESTS_PER_DEPLOYMENT:
         raise RuntimeError("AGT018 semantic workload request envelope diverged")
     if (
@@ -122,18 +124,17 @@ def validate() -> dict[str, Any]:
     ):
         raise RuntimeError("AGT018 provider request or attempt envelope diverged")
     if (
-        SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM != AUTHORIZED_KEY_LIMIT_USD_PER_ARM
-        or SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS
-        != AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS
+        SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM != 0
+        or SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS != 0
     ):
-        raise RuntimeError("AGT018 authorized resource envelope diverged")
+        raise RuntimeError("AGT018 source-closed resource envelope diverged")
     receipt = successor_budget_receipt()
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": RUN_ID,
-        "source_closed": False,
-        "launch_authorized": True,
-        "requires_new_budget_authority": False,
+        "source_closed": True,
+        "launch_authorized": False,
+        "requires_new_budget_authority": True,
         "workload_schema_version": WORKLOAD_SCHEMA_VERSION,
         "report_schema_version": REPORT_SCHEMA_VERSION,
         "artifact_revision": ARTIFACT_REVISION,

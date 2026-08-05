@@ -775,6 +775,20 @@ conservative maximum-rate pricing across the amended order. Workers b and c,
 the workload, the request envelope, both retry policies, and the nine-state
 encoder gate are unchanged.
 
+AGT018d executed both arms once on 2026-08-05. The vLLM-hosted encoder
+reproduced all nine frozen states before routed measurement and both arms
+completed `36/36` requests with exact selected-worker trace parity. Nine of
+ten acceptance gates passed; `matched_completion_policy` failed because
+worker-b was served by Xiaomi natively but fell through to Venice remotely,
+yielding different completion token sets, so the run is recorded as
+`failed_acceptance` and strict cross-deployment E2E comparability is not
+claimed. Retained token-work savings were `44.6%` native and `59.0%` remote;
+the remote arm ran `1.60x` native serial throughput with `0.75x` observed
+first-token time, while the native router stayed about `2.46x` faster per
+decision. Both authority pins are permanently closed with the recorded
+result; a successor packet must reconcile multi-provider fallthrough with
+completion matching.
+
 ## Evidence Lineage
 
 The frozen choices build on:
