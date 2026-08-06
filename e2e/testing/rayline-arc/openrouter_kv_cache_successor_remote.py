@@ -10,8 +10,7 @@ import json
 import os
 from pathlib import Path
 
-from openrouter_kv_cache_successor_benchmark import run
-from openrouter_kv_cache_successor_contract import RUN_ID
+from openrouter_kv_cache_successor_benchmark import ALLOWED_RUN_IDS, run
 
 
 def main() -> None:
@@ -21,8 +20,8 @@ def main() -> None:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--timeout-seconds", type=float, default=180.0)
     args = parser.parse_args()
-    if args.run_id != RUN_ID:
-        raise SystemExit(f"AGT018 driver only permits {RUN_ID}")
+    if args.run_id not in ALLOWED_RUN_IDS:
+        raise SystemExit("KV successor driver run identity diverged")
     args.deployment = "remote_vllm"
     args.base_url = args.gateway_url
     output_dir = (

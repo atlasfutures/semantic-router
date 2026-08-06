@@ -17,7 +17,12 @@ from modal_fullstack_canary import _episode_id
 from openrouter_agentic_stage_metrics import encoder_client_from_environment
 from openrouter_kv_cache_journal import append as append_journal
 from openrouter_kv_cache_journal import initialize as initialize_journal
+from openrouter_kv_cache_agt019_contract import RUN_ID as AGT019_RUN_ID
 from openrouter_kv_cache_successor_contract import MAX_COMPLETION_TOKENS, RUN_ID
+
+# The AGT018 workload is reused verbatim by AGT019; only the run identity
+# differs, so the driver admits exactly the two registered run IDs.
+ALLOWED_RUN_IDS = frozenset({RUN_ID, AGT019_RUN_ID})
 from openrouter_kv_cache_successor_remote_gate import verify_remote_encoder
 from openrouter_kv_cache_successor_workload import (
     EPISODES,
@@ -170,8 +175,8 @@ def _validate_results(results: list[dict[str, Any]]) -> None:
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
-    if args.run_id != RUN_ID:
-        raise RuntimeError("AGT018 run identity diverged")
+    if args.run_id not in ALLOWED_RUN_IDS:
+        raise RuntimeError("KV successor run identity diverged")
     if args.deployment == "remote_vllm" and not args.metrics_url:
         raise RuntimeError("remote vLLM comparison requires the router metrics URL")
     encoder_client = (
