@@ -7,6 +7,7 @@ import importlib.util
 import subprocess
 import sys
 import types
+from pathlib import Path
 from typing import Any
 
 if "modal" not in sys.modules and importlib.util.find_spec("modal") is None:
@@ -297,3 +298,11 @@ def test_dishonest_labeling_fails_the_policy_gate() -> None:
     undercounted["total_pairs"] = EXPECTED_TOTAL_PAIRS - 1
 
     assert matched_pair.policy_gate(undercounted, EXPECTED_TOTAL_PAIRS) is False
+
+
+def test_agt019_modal_app_is_registered_as_flashinfer() -> None:
+    service = (
+        Path(__file__).resolve().parents[3]
+        / "src/vllm-plugins/rayline_arc_io/modal_session_service.py"
+    ).read_text()
+    assert f'"{agt019_contract.REMOTE_APP_NAME}": "flashinfer"' in service

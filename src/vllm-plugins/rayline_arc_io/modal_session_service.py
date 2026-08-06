@@ -31,10 +31,14 @@ AGT017_APP_PROFILES = {
 AGT018_APP_PROFILES = {
     "rayline-arc-session-encoder-flashinfer-agt018": "flashinfer",
 }
+AGT019_APP_PROFILES = {
+    "rayline-arc-session-encoder-flashinfer-agt019": "flashinfer",
+}
 EXPERIMENT_APP_PROFILES = {
     **PERF030_APP_PROFILES,
     **AGT017_APP_PROFILES,
     **AGT018_APP_PROFILES,
+    **AGT019_APP_PROFILES,
 }
 ALLOWED_APP_NAMES = (DEFAULT_APP_NAME, *SCALEOUT_APP_NAMES, *EXPERIMENT_APP_PROFILES)
 APP_NAME = os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", DEFAULT_APP_NAME)
