@@ -111,7 +111,17 @@ def _verify_source(root: Path, branch: str, remote: str) -> str:
         raise RuntimeError(f"{root.name} is not on {branch}")
     if _git(root, "status", "--porcelain"):
         raise RuntimeError(f"{root.name} source is not clean")
-    if _git(root, "rev-parse", f"{remote}/{branch}") != head:
+    pushed = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", head, f"{remote}/{branch}"],
+        cwd=root,
+        capture_output=True,
+        check=False,
+    )
+    if pushed.returncode != 0:
+        # Remote-visibility means the launched commit is contained in the
+        # remote branch; the branch tip may legitimately have moved past the
+        # frozen local checkout, and the launched head stays pinned in the
+        # deployment evidence.
         raise RuntimeError(f"{root.name} source is not pushed")
     return head
 
