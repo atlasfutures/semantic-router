@@ -52,6 +52,24 @@ PROVIDER_NAMES = {
     "worker-c": ("Tencent", "DeepInfra", "Novita"),
 }
 
+
+def pinned_provider_payload(
+    payload: dict[str, Any], expected_worker: str
+) -> dict[str, Any]:
+    """Pin a non-ARC payload to its worker's frozen provider order.
+
+    The ARC path carries no provider block: both arms' routers pin those
+    requests from the worker manifest instead.
+    """
+
+    payload["provider"] = {
+        "order": list(PROVIDER_SLUGS[expected_worker]),
+        "allow_fallbacks": False,
+        "require_parameters": True,
+    }
+    payload["reasoning"] = {"enabled": False, "effort": "none"}
+    return payload
+
 MODAL_REFERENCE = {
     "description": (
         "Qwen3.5-0.8B generation on two Modal L4 workers with the same "

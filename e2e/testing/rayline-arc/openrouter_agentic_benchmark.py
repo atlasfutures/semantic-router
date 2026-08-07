@@ -39,9 +39,9 @@ from openrouter_agentic_reporting import (
 )
 from openrouter_agentic_workload import (
     PROVIDER_NAMES,
-    PROVIDER_SLUGS,
     SCENARIOS,
     WORKERS,
+    pinned_provider_payload,
 )
 from openrouter_agentic_workload import candidate_case as _candidate_case
 from openrouter_fullstack_canary import (
@@ -121,16 +121,7 @@ def _request_payload(
         "stream_options": {"include_usage": True},
     }
     if path != "arc":
-        payload.update(
-            {
-                "provider": {
-                    "order": list(PROVIDER_SLUGS[expected_worker]),
-                    "allow_fallbacks": False,
-                    "require_parameters": True,
-                },
-                "reasoning": {"enabled": False, "effort": "none"},
-            }
-        )
+        payload = pinned_provider_payload(payload, expected_worker)
     return payload
 
 
