@@ -19,16 +19,18 @@ from openrouter_agentic_artifact_fixture import (
 from openrouter_artifact_fixture import _golden, _tensors
 
 # The only launchable consumer of this fixture is the AGT019 native arm, and
-# its preregistered protocol is the 2026-08-05c worker-b vetting correction.
-# Legacy packets are pin-closed, so they cannot observe this table.
+# its preregistered protocol is the 2026-08-07 luna worker-b amendment, which
+# replaces MiMo with `openai/gpt-5.6-luna` on a single pinned OpenAI provider.
+# Legacy packets are pin-closed, so they cannot observe this table. Both arms
+# must read the same worker set or the artifact identity gate fails closed.
 from openrouter_kv_cache_artifact_fixture import (
-    AGT019_WORKERS as WORKERS,
+    AGT019_LUNA_WORKERS as WORKERS,
 )
 
 ENCODER_MODEL = "Qwen/Qwen3.5-0.8B"
 CHECKPOINT_REMOTE_PATH = "agt014/native-openrouter-agentic.pt"
 DECISION_LOG_REMOTE_PATH = "agt014/native-openrouter-decisions.jsonl"
-PRICING_SNAPSHOT = "openrouter-bounded-provider-orders-2026-08-05c"
+PRICING_SNAPSHOT = "openrouter-bounded-provider-orders-2026-08-07"
 GOLDEN_TOLERANCE = 0.001
 CLI_ARGUMENT_COUNT = 3
 

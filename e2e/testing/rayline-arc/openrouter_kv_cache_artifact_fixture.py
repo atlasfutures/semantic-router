@@ -32,8 +32,27 @@ SUCCESSOR_ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v4"
 # worker-b's frozen four-provider order and its v4 Novita-maxima pricing;
 # worker-a and worker-c are unchanged from v4. No deployment consumed v5.
 AGT019_ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v6"
+# v7 replaces worker-b's lane outright (AGT019 luna amendment, 2026-08-07).
+# MiMo's whole four-provider pool stayed unhealthy for more than 21 hours —
+# three providers dropped out of OpenRouter's routing pool entirely and Venice
+# returned upstream 429s — so the benchmark's two-of-four depth gate was never
+# satisfiable and no provider remained to widen to. worker-b is now
+# `openai/gpt-5.6-luna` pinned to the single OpenAI provider, priced at the
+# per-field maxima across OpenAI's three endpoint tags (openai, openai/flex,
+# openai/priority) so the rate can only be over-stated, never under-stated.
+# Unlike the other workers OpenAI prices cache reads and writes separately, so
+# the three input rates are no longer flat. worker-b declares no temperature:
+# gpt-5.6-luna does not advertise the parameter and `require_parameters` would
+# otherwise filter out every OpenAI endpoint. v6 is untouched and remains the
+# historical, regenerable revision consumed by the banked native arm.
+AGT019_LUNA_ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v7"
 ALLOWED_ARTIFACT_REVISIONS = frozenset(
-    {ARTIFACT_REVISION, SUCCESSOR_ARTIFACT_REVISION, AGT019_ARTIFACT_REVISION}
+    {
+        ARTIFACT_REVISION,
+        SUCCESSOR_ARTIFACT_REVISION,
+        AGT019_ARTIFACT_REVISION,
+        AGT019_LUNA_ARTIFACT_REVISION,
+    }
 )
 SUCCESSOR_WORKERS = tuple(
     (
@@ -67,12 +86,38 @@ AGT019_WORKERS = tuple(
     )
     for worker in SUCCESSOR_WORKERS
 )
+AGT019_LUNA_WORKERS = tuple(
+    (
+        {
+            **worker,
+            "model": "openai/gpt-5.6-luna",
+            "provider_slug": "openai",
+            "provider_name": "OpenAI",
+            "provider_order": ["openai"],
+            "pricing_source": "openrouter-openai-endpoint-maxima-2026-08-07",
+            "prompt_cost": 0.0000002,
+            "cache_read_cost": 0.00000002,
+            "cache_write_cost": 0.00000025,
+            "completion_cost": 0.0000012,
+            # gpt-5.6-luna does not advertise `temperature`; a None temperature
+            # makes `_worker_contract` omit the key entirely, which both arms'
+            # routers read as "do not send one".
+            "temperature": None,
+        }
+        if worker["id"] == "worker-b"
+        else worker
+    )
+    for worker in AGT019_WORKERS
+)
 
 
 def generate(output_dir: Path, artifact_revision: str = ARTIFACT_REVISION) -> None:
     if artifact_revision not in ALLOWED_ARTIFACT_REVISIONS:
         raise RuntimeError("KV cache artifact revision is not source-registered")
-    if artifact_revision == AGT019_ARTIFACT_REVISION:
+    if artifact_revision == AGT019_LUNA_ARTIFACT_REVISION:
+        workers = AGT019_LUNA_WORKERS
+        pricing_snapshot = "openrouter-bounded-provider-orders-2026-08-07"
+    elif artifact_revision == AGT019_ARTIFACT_REVISION:
         workers = AGT019_WORKERS
         pricing_snapshot = "openrouter-bounded-provider-orders-2026-08-05c"
     elif artifact_revision == SUCCESSOR_ARTIFACT_REVISION:

@@ -11,7 +11,7 @@ from modal_fullstack_inputs import CANDIDATE_PROMPTS
 
 WORKERS = {
     "worker-a": "deepseek/deepseek-v4-flash",
-    "worker-b": "xiaomi/mimo-v2.5",
+    "worker-b": "openai/gpt-5.6-luna",
     "worker-c": "tencent/hy3",
 }
 # Re-vetted 2026-08-05 for AGT018d: StreamLake and DeepInfra no longer pass
@@ -41,15 +41,47 @@ WORKERS = {
 # on a non-streaming HTTP 200, which is too shallow: provider vetting now
 # requires a streaming probe that observes at least one content token, not an
 # endpoint status code.
+#
+# Worker-b was replaced wholesale on 2026-08-07 (AGT019 luna amendment). MiMo's
+# entire four-provider pool stayed unusable for more than 21 hours: Xiaomi,
+# Parasail and Novita were dropped from OpenRouter's routing pool altogether
+# (single-provider pins return 404 "No endpoints found" rather than 429) while
+# Venice returned upstream 429s, so the two-of-four depth gate this benchmark
+# requires was never satisfiable. MiMo's registered endpoints never delisted —
+# they simply never became healthy again — and there was nothing left to widen
+# to, DeepInfra having already been retracted above. Worker-b is therefore now
+# `openai/gpt-5.6-luna` pinned to the single OpenAI provider.
+#
+# gpt-5.6-luna does not advertise `temperature`, so the frozen payload must not
+# send it: under `require_parameters` OpenRouter filters out every OpenAI
+# endpoint and returns the same 404 "No endpoints found that can handle the
+# requested parameters" (verified live 2026-08-07 against all three OpenAI
+# tags). Suppression is per worker and data-driven, never global — workers a
+# and c keep `temperature: 0`:
+#   * on the measured ARC path both routers drive temperature from the worker
+#     manifest, so the artifact simply declares worker-b's temperature as None
+#     (`_worker_contract` omits the key; the Go dispatch deletes the client's
+#     value when the manifest carries none, and the native router's
+#     `apply_worker_temperature` treats None as a no-op);
+#   * on the direct path the benchmark payload drops the parameters listed in
+#     UNSUPPORTED_REQUEST_PARAMETERS below.
+# `require_parameters` stays True for every worker on every path — nothing is
+# weakened to accommodate the new lane.
 PROVIDER_SLUGS = {
     "worker-a": ("baidu", "gmicloud", "siliconflow"),
-    "worker-b": ("xiaomi", "parasail", "venice", "novita"),
+    "worker-b": ("openai",),
     "worker-c": ("tencent", "deepinfra", "novita"),
 }
 PROVIDER_NAMES = {
     "worker-a": ("Baidu", "GMICloud", "SiliconFlow"),
-    "worker-b": ("Xiaomi", "Parasail", "Venice", "Novita"),
+    "worker-b": ("OpenAI",),
     "worker-c": ("Tencent", "DeepInfra", "Novita"),
+}
+# Request parameters the pinned model does not advertise, dropped per worker
+# from the direct-path payload so the frozen `require_parameters` filter can
+# still be enforced. Empty/absent means "send the payload unchanged".
+UNSUPPORTED_REQUEST_PARAMETERS = {
+    "worker-b": ("temperature",),
 }
 
 
@@ -58,8 +90,12 @@ def pinned_provider_payload(
 ) -> dict[str, Any]:
     """Pin a non-ARC payload to its worker's frozen provider order.
 
-    The ARC path carries no provider block: both arms' routers pin those
-    requests from the worker manifest instead.
+    `require_parameters` makes OpenRouter reject the whole request when the
+    pinned provider does not advertise a supplied parameter, so a worker whose
+    model lacks one must not send it at all. Dropping the parameter keeps the
+    filter strict rather than relaxing it to accommodate the worker. The ARC
+    path carries no provider block: both arms' routers pin those requests from
+    the worker manifest instead, and drive temperature from it too.
     """
 
     payload["provider"] = {
@@ -68,7 +104,10 @@ def pinned_provider_payload(
         "require_parameters": True,
     }
     payload["reasoning"] = {"enabled": False, "effort": "none"}
+    for parameter in UNSUPPORTED_REQUEST_PARAMETERS.get(expected_worker, ()):
+        payload.pop(parameter, None)
     return payload
+
 
 MODAL_REFERENCE = {
     "description": (

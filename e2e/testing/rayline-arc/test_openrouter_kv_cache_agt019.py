@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import json
 import subprocess
 import sys
 import types
@@ -16,10 +17,14 @@ if "modal" not in sys.modules and importlib.util.find_spec("modal") is None:
     sys.modules["modal"] = modal_stub
 
 import openrouter_kv_cache_agt019_contract as agt019_contract
+import openrouter_kv_cache_artifact_fixture as artifact_fixture
 import openrouter_kv_cache_matched_pair as matched_pair
 import openrouter_launch_authority as launch_authority
+import openrouter_modal_native_fixture as native_fixture
 import pytest
 import run_openrouter_kv_cache_native as native_launcher
+import yaml
+from openrouter_agentic_workload import PROVIDER_NAMES, PROVIDER_SLUGS, WORKERS
 from openrouter_fullstack_packets import packet_catalog
 from openrouter_fullstack_state import EncoderDeployment
 
@@ -31,6 +36,11 @@ EXPECTED_MAXIMUM_EXTERNAL_ATTEMPTS = 156
 EXPECTED_MAXIMUM_COMPLETION_TOKENS = 24
 EXPECTED_AUTHORIZED_CUMULATIVE_USD = 154.31282402
 MAXIMUM_EXPECTED_PACKET_USD = 9.54
+LUNA_PROMPT_COST = 0.0000002
+LUNA_CACHE_READ_COST = 0.00000002
+LUNA_CACHE_WRITE_COST = 0.00000025
+LUNA_COMPLETION_COST = 0.0000012
+TOKEN_SCALE = 1_000_000
 
 SEQUENCE_WORKERS = (
     ("code_patch", "worker-a"),
@@ -41,9 +51,12 @@ STEPS_PER_SEQUENCE = 2
 MODE = "retained"
 EPISODE = 0
 
-DIVERGED_WORKER = "worker-b"
-BASE_PROVIDER = "GMICloud"
-DIVERGED_REMOTE_PROVIDER = "Venice"
+# Since the 2026-08-07 luna amendment, worker-b is pinned to OpenAI alone and
+# can no longer be served by different providers on the two arms. The policy is
+# therefore exercised through worker-c, whose frozen order still holds three.
+DIVERGED_WORKER = "worker-c"
+BASE_PROVIDER = "Tencent"
+DIVERGED_REMOTE_PROVIDER = "Novita"
 BASE_COMPLETION_TOKENS = 18
 DIVERGED_REMOTE_COMPLETION_TOKENS = 11
 NATIVE_SECONDS = 2.0
@@ -306,3 +319,74 @@ def test_agt019_modal_app_is_registered_as_flashinfer() -> None:
         / "src/vllm-plugins/rayline_arc_io/modal_session_service.py"
     ).read_text()
     assert f'"{agt019_contract.REMOTE_APP_NAME}": "flashinfer"' in service
+
+
+def test_v7_artifact_pins_the_luna_lane_to_a_single_openai_provider(
+    tmp_path,
+) -> None:
+    artifact_fixture.generate(tmp_path, artifact_fixture.AGT019_LUNA_ARTIFACT_REVISION)
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    workers = {worker["id"]: worker for worker in manifest["workers"]}
+    luna = workers["worker-b"]
+
+    assert manifest["artifact_id"] == agt019_contract.ARTIFACT_REVISION
+    assert luna["model"] == "openai/gpt-5.6-luna"
+    assert luna["openrouter_provider_order"] == ["openai"]
+    assert luna["openrouter_provider_name"] == "OpenAI"
+    assert luna["openrouter_allow_fallbacks"] is False
+    # Nothing is relaxed to accommodate the new lane: the capability filter
+    # stays on, and the unsupported parameter is omitted instead.
+    assert luna["openrouter_require_parameters"] is True
+    assert "temperature" not in luna
+    # Per-field maxima across OpenAI's three gpt-5.6-luna endpoint tags, so the
+    # rate can only be over-stated. Unlike the other workers OpenAI prices
+    # cache reads and writes separately, so these are not flat.
+    assert luna["estimated_input_cost_per_token"] == LUNA_PROMPT_COST
+    assert luna["estimated_cache_read_cost_per_token"] == LUNA_CACHE_READ_COST
+    assert luna["estimated_cache_write_cost_per_token"] == LUNA_CACHE_WRITE_COST
+    assert luna["estimated_output_cost_per_token"] == LUNA_COMPLETION_COST
+    # The other two lanes are untouched by the amendment.
+    assert workers["worker-a"]["temperature"] == 0
+    assert workers["worker-c"]["temperature"] == 0
+
+
+def test_compose_pricing_matches_the_v7_artifact(tmp_path) -> None:
+    """The router's price-identity gate fails closed on any mismatch here.
+
+    Without this check a divergence between the compose config and the artifact
+    is only discovered by a paid launch aborting mid-flight.
+    """
+
+    artifact_fixture.generate(tmp_path, artifact_fixture.AGT019_LUNA_ARTIFACT_REVISION)
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    artifact_workers = {worker["id"]: worker for worker in manifest["workers"]}
+    config = yaml.safe_load(
+        (
+            Path(__file__).resolve().parents[3]
+            / "deploy/compose/rayline-arc/config-openrouter-kv-cache.yaml"
+        ).read_text()
+    )
+
+    for model in config["providers"]["models"]:
+        worker = artifact_workers[model["name"]]
+        pricing = model["pricing"]
+        assert model["provider_model_id"] == worker["model"]
+        assert pricing["prompt_per_1m"] == pytest.approx(
+            worker["estimated_input_cost_per_token"] * TOKEN_SCALE
+        )
+        assert pricing["cached_input_per_1m"] == pytest.approx(
+            worker["estimated_cache_read_cost_per_token"] * TOKEN_SCALE
+        )
+        assert pricing["cache_write_per_1m"] == pytest.approx(
+            worker["estimated_cache_write_cost_per_token"] * TOKEN_SCALE
+        )
+        assert pricing["completion_per_1m"] == pytest.approx(
+            worker["estimated_output_cost_per_token"] * TOKEN_SCALE
+        )
+
+
+def test_both_arms_read_the_same_luna_worker_set() -> None:
+    assert native_fixture.WORKERS is artifact_fixture.AGT019_LUNA_WORKERS
+    assert WORKERS["worker-b"] == "openai/gpt-5.6-luna"
+    assert PROVIDER_SLUGS["worker-b"] == ("openai",)
+    assert PROVIDER_NAMES["worker-b"] == ("OpenAI",)

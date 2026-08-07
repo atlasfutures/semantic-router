@@ -272,7 +272,7 @@ def test_agentic_paths_preserve_one_payload_and_change_only_routing() -> None:
     )
     arc = benchmark._request_payload(path="arc", case=case, expected_worker="worker-b")
 
-    assert direct["model"] == "xiaomi/mimo-v2.5"
+    assert direct["model"] == "openai/gpt-5.6-luna"
     assert static["model"] == "worker-b"
     assert arc["model"] == "auto"
     assert direct["messages"] == static["messages"] == arc["messages"]
@@ -281,12 +281,18 @@ def test_agentic_paths_preserve_one_payload_and_change_only_routing() -> None:
         direct["provider"]
         == static["provider"]
         == {
-            "order": ["xiaomi", "parasail", "venice", "novita"],
+            "order": ["openai"],
             "allow_fallbacks": False,
             "require_parameters": True,
         }
     )
     assert "provider" not in arc
+    # gpt-5.6-luna does not advertise `temperature`, so the provider-pinned
+    # paths drop it rather than relaxing `require_parameters`. The ARC path
+    # keeps the client value because the worker manifest governs it there.
+    assert "temperature" not in direct
+    assert "temperature" not in static
+    assert arc["temperature"] == 0
     assert all(payload["stream"] is True for payload in (direct, static, arc))
 
 

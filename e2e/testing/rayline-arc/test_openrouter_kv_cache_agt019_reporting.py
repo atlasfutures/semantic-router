@@ -31,7 +31,12 @@ EXPECTED_NO_RETRY_EXTERNAL_ATTEMPTS = 78
 EXPECTED_REQUESTS_PER_DEPLOYMENT = 36
 EXPECTED_COMPLETION_TOKENS = 24
 OVER_CAP_COMPLETION_TOKENS = 25
-DIVERGED_WORKER = "worker-b"
+# Provider divergence between the two arms can only be simulated on a worker
+# whose frozen order holds more than one provider. Since the 2026-08-07 luna
+# amendment worker-b is pinned to OpenAI alone and can no longer diverge — the
+# structural reason AGT018d's whole-set completion gate failed is gone for that
+# lane — so the policy is exercised through worker-c instead.
+DIVERGED_WORKER = "worker-c"
 DIVERGED_REMOTE_PROVIDER_INDEX = 2
 DIVERGED_REMOTE_COMPLETION_TOKENS = 11
 EXPECTED_WORKER_CELLS = 12

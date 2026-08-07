@@ -48,7 +48,17 @@ REMOTE_GDN_PREFILL_BACKEND = "flashinfer"
 # meet the content-token requirement at the 24-token cap. v6 restores
 # worker-b's frozen four-provider order and its v4 pricing. AGT018's v4
 # artifact is untouched and remains historical and regenerable.
-ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v6"
+#
+# v7 (2026-08-07 luna amendment) replaces worker-b's lane entirely with
+# `openai/gpt-5.6-luna` pinned to the single OpenAI provider. MiMo's four
+# providers stayed unusable for more than 21 hours — three had dropped out of
+# OpenRouter's routing pool and Venice returned upstream 429s — so the
+# two-of-four depth gate this benchmark requires could not be satisfied and no
+# untried provider remained. Because the served model changes, the v6 native
+# evidence banked under this run id is no longer comparable and both arms must
+# be re-measured; the `exact_source_and_artifact_identity` gate enforces that
+# by refusing to mix a v6 arm with a v7 arm.
+ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v7"
 MAX_COMPLETION_TOKENS = 24
 
 # AGT018's conservative accounting closed at $142.418831066383 against the

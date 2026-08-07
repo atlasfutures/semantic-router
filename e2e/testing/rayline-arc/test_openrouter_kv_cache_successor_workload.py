@@ -122,7 +122,7 @@ def test_successor_prompts_have_no_model_specific_routing_anchors() -> None:
         *[worker.lower() for worker in WORKERS],
         *[model.lower() for model in WORKERS.values()],
         "deepseek-v4",
-        "mimo-v2.5",
+        "gpt-5.6-luna",
         "tencent/hy3",
     ]
     assert not any(value in encoded for value in forbidden)
