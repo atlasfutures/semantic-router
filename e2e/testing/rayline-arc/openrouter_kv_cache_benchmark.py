@@ -111,13 +111,22 @@ def history_states() -> list[dict[str, Any]]:
 
 
 def _payload(deployment: str, case: dict[str, Any]) -> dict[str, Any]:
+    # This builds the measured requests for both arms, and deliberately carries
+    # no `temperature`. Each arm's router already pins temperature per worker
+    # from the manifest — the Go dispatch sets it from the manifest or deletes
+    # it, and the native adapter applies the worker spec — so a client value is
+    # redundant here. It is also unsuppressable: the native router forwards a
+    # request temperature verbatim and treats a manifest `None` as a no-op, so
+    # a worker whose model does not advertise the parameter (worker-b's
+    # gpt-5.6-luna) would fail 404 "No endpoints found" under
+    # `require_parameters`. Workers a and c are unchanged on the wire; their
+    # manifests still pin 0.
     return {
         "model": "rayline/router" if deployment == "native_modal" else "auto",
         "messages": case["messages"],
         "tools": case["tools"],
         "tool_choice": "none",
         "max_tokens": MAX_COMPLETION_TOKENS,
-        "temperature": 0,
         "stream": True,
         "stream_options": {"include_usage": True},
     }

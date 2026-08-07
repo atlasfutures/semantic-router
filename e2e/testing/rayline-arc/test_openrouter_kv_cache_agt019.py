@@ -19,6 +19,7 @@ if "modal" not in sys.modules and importlib.util.find_spec("modal") is None:
 
 import openrouter_kv_cache_agt019_contract as agt019_contract
 import openrouter_kv_cache_artifact_fixture as artifact_fixture
+import openrouter_kv_cache_benchmark as kv_benchmark
 import openrouter_kv_cache_matched_pair as matched_pair
 import openrouter_launch_authority as launch_authority
 import openrouter_modal_native_fixture as native_fixture
@@ -42,6 +43,10 @@ LUNA_CACHE_READ_COST = 0.00000002
 LUNA_CACHE_WRITE_COST = 0.00000025
 LUNA_COMPLETION_COST = 0.0000012
 TOKEN_SCALE = 1_000_000
+# Verified live 2026-08-07 against the pinned OpenAI endpoint: each of these
+# turns the request into 404 "No endpoints found that can handle the requested
+# parameters", while `usage`, `include_reasoning` and `seed` are accepted.
+LUNA_REJECTED_PARAMETERS = ("temperature", "top_p", "stop")
 PRICE_FIELDS = (
     ("prompt_per_1m", "estimated_input_cost_per_token"),
     ("cached_input_per_1m", "estimated_cache_read_cost_per_token"),
@@ -400,6 +405,27 @@ def test_compose_pricing_matches_the_v7_artifact(tmp_path) -> None:
             assert _router_price_equal(
                 pricing[configured_key], worker[artifact_key] * TOKEN_SCALE
             ), f"{model['name']}.{configured_key} diverges from the artifact"
+
+
+def test_measured_payload_omits_parameters_the_luna_lane_cannot_accept() -> None:
+    """Both arms' measured requests come from this one builder.
+
+    gpt-5.6-luna advertises none of these parameters, and under
+    `require_parameters` OpenRouter answers any of them with 404 "No endpoints
+    found" (verified live 2026-08-07). Neither router can strip them for us:
+    the native one forwards a request value verbatim and treats a manifest
+    `None` as a no-op. Temperature belongs to the worker manifest on this path,
+    not to the client.
+    """
+
+    case = {"messages": [{"role": "user", "content": "x"}], "tools": []}
+    for deployment in ("native_modal", "remote_vllm"):
+        payload = kv_benchmark._payload(deployment, case)
+        for parameter in LUNA_REJECTED_PARAMETERS:
+            assert parameter not in payload, (
+                f"{deployment} measured payload sends {parameter}, which the "
+                "worker-b lane cannot accept"
+            )
 
 
 def test_both_arms_read_the_same_luna_worker_set() -> None:
