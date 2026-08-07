@@ -20,6 +20,7 @@ if "modal" not in sys.modules and importlib.util.find_spec("modal") is None:
 import openrouter_kv_cache_agt019_contract as agt019_contract
 import openrouter_kv_cache_artifact_fixture as artifact_fixture
 import openrouter_kv_cache_benchmark as kv_benchmark
+import openrouter_kv_cache_deployment_evidence as evidence
 import openrouter_kv_cache_matched_pair as matched_pair
 import openrouter_launch_authority as launch_authority
 import openrouter_modal_native_fixture as native_fixture
@@ -405,6 +406,39 @@ def test_compose_pricing_matches_the_v7_artifact(tmp_path) -> None:
             assert _router_price_equal(
                 pricing[configured_key], worker[artifact_key] * TOKEN_SCALE
             ), f"{model['name']}.{configured_key} diverges from the artifact"
+
+
+def test_every_kv_packet_mode_persists_deployment_evidence(tmp_path) -> None:
+    """A mode missing from KV_MODES bills a full arm and leaves no receipt.
+
+    `persist` returns early for an unregistered mode, so the run measures and
+    charges normally but writes no remote-deployment, remote-provider-preflight
+    or remote-key-usage file, and the reporter cannot be assembled. Derive the
+    expectation from the packet catalog so a future generation cannot be staged
+    without being registered here.
+    """
+
+    encoder = EncoderDeployment(
+        app_name="test-encoder",
+        class_name="SessionEncoder",
+        build_id="test-build",
+        deployment_source_commit="test-source",
+        plugin_source_digest="test-plugin",
+    )
+    catalog = packet_catalog(
+        tmp_path,
+        encoder,
+        tmp_path / "service.py",
+        canary_key_limit_usd=0.25,
+        maximum_canary_seconds=60,
+    )
+
+    kv_modes = [mode for mode in catalog if mode.startswith("kv-cache")]
+    assert kv_modes, "expected at least one KV packet mode in the catalog"
+    for mode in kv_modes:
+        assert (
+            mode in evidence.KV_MODES
+        ), f"{mode} is launchable but unregistered for deployment evidence"
 
 
 def test_measured_payload_omits_parameters_the_luna_lane_cannot_accept() -> None:

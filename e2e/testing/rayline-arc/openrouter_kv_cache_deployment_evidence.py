@@ -13,8 +13,26 @@ from pathlib import Path
 from openrouter_encoder_runtime import packet_encoder, plugin_source_digest
 from openrouter_fullstack_state import RunPacket, RuntimeState
 
-KV_MODES = frozenset({"kv-cache", "kv-cache-flashinfer", "kv-cache-flashinfer-agt018"})
-FLASHINFER_KV_MODES = frozenset({"kv-cache-flashinfer", "kv-cache-flashinfer-agt018"})
+# Every launchable KV packet mode must appear here or `persist` returns before
+# writing any deployment evidence, so the arm completes and bills but leaves no
+# receipt for the reporter. AGT019 was staged without being registered and its
+# first remote arm measured 36/36 while emitting no remote-deployment,
+# remote-provider-preflight or remote-key-usage file.
+KV_MODES = frozenset(
+    {
+        "kv-cache",
+        "kv-cache-flashinfer",
+        "kv-cache-flashinfer-agt018",
+        "kv-cache-flashinfer-agt019",
+    }
+)
+FLASHINFER_KV_MODES = frozenset(
+    {
+        "kv-cache-flashinfer",
+        "kv-cache-flashinfer-agt018",
+        "kv-cache-flashinfer-agt019",
+    }
+)
 
 
 def _source_commit(repo_root: Path) -> str:
