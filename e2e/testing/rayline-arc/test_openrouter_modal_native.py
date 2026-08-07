@@ -12,6 +12,7 @@ from openrouter_modal_native_fixture import (
     DECISION_LOG_REMOTE_PATH,
     router_config_text,
 )
+from openrouter_modal_native_fixture import WORKERS as NATIVE_WORKERS
 
 EXPECTED_COMPLETION_LIMIT = 96
 EXPECTED_NATIVE_REQUESTS = 63
@@ -41,6 +42,32 @@ def test_native_config_is_the_agt013_pool_with_local_kv_encoding() -> None:
         worker["max_completion_tokens"] == EXPECTED_COMPLETION_LIMIT
         for worker in config["workers"]
     )
+
+
+def test_native_config_temperature_mirrors_the_artifact_per_worker() -> None:
+    """The native config must not invent a temperature the artifact omits.
+
+    This generator hardcoded `temperature: 0` for every worker, so a worker
+    whose model does not advertise the parameter still had it sent, and
+    `require_parameters` turned that into a 404 "No endpoints found" on the
+    measured path. The provider preflight cannot catch it — that path builds
+    its payload from the benchmark client rather than from this config — so
+    the mismatch is only observable by a paid arm aborting mid-run.
+    """
+
+    config = yaml.safe_load(router_config_text())
+    configured = {worker["id"]: worker for worker in config["workers"]}
+
+    for worker in NATIVE_WORKERS:
+        declared = worker["temperature"]
+        emitted = configured[worker["id"]]
+        if declared is None:
+            assert "temperature" not in emitted, (
+                f"{worker['id']} declares no temperature but the native config "
+                "sends one"
+            )
+        else:
+            assert emitted["temperature"] == declared
 
 
 def test_native_benchmark_has_a_fixed_small_request_envelope() -> None:

@@ -149,36 +149,44 @@ def router_config_text(
 ) -> str:
     workers = []
     for worker in WORKERS:
-        workers.append(
-            {
-                "id": worker["id"],
-                "backend": "openrouter",
-                "model": worker["model"],
-                "api_key_env": "OPENROUTER_API_KEY",
-                "estimated_input_cost_per_token": worker["prompt_cost"],
-                "estimated_cache_read_cost_per_token": worker["cache_read_cost"],
-                "estimated_cache_write_cost_per_token": worker["cache_write_cost"],
-                "estimated_output_cost_per_token": worker["completion_cost"],
-                "latency_ms": 1000,
-                "capability_tags": ["public-openrouter-agentic-benchmark"],
-                "openrouter_provider_slug": worker["provider_slug"],
-                "openrouter_provider_name": worker["provider_name"],
-                "openrouter_provider_order": worker["provider_order"],
-                "openrouter_allow_fallbacks": False,
-                "openrouter_require_parameters": True,
-                "openrouter_pricing_source": worker["pricing_source"],
-                "thinking_mode": "disabled",
-                "reasoning_budget_tokens": 0,
-                "minimum_completion_tokens": max_completion_tokens,
-                "max_completion_tokens": max_completion_tokens,
-                "temperature": 0,
-                "extra_body": {"reasoning": {"enabled": False, "effort": "none"}},
-                "openrouter_max_retries": 1,
-                "openrouter_retry_base_seconds": 2.0,
-                "openrouter_retry_cap_seconds": 30.0,
-                "attempt_deadline_seconds": 120,
-            }
-        )
+        worker_config = {
+            "id": worker["id"],
+            "backend": "openrouter",
+            "model": worker["model"],
+            "api_key_env": "OPENROUTER_API_KEY",
+            "estimated_input_cost_per_token": worker["prompt_cost"],
+            "estimated_cache_read_cost_per_token": worker["cache_read_cost"],
+            "estimated_cache_write_cost_per_token": worker["cache_write_cost"],
+            "estimated_output_cost_per_token": worker["completion_cost"],
+            "latency_ms": 1000,
+            "capability_tags": ["public-openrouter-agentic-benchmark"],
+            "openrouter_provider_slug": worker["provider_slug"],
+            "openrouter_provider_name": worker["provider_name"],
+            "openrouter_provider_order": worker["provider_order"],
+            "openrouter_allow_fallbacks": False,
+            "openrouter_require_parameters": True,
+            "openrouter_pricing_source": worker["pricing_source"],
+            "thinking_mode": "disabled",
+            "reasoning_budget_tokens": 0,
+            "minimum_completion_tokens": max_completion_tokens,
+            "max_completion_tokens": max_completion_tokens,
+            "extra_body": {"reasoning": {"enabled": False, "effort": "none"}},
+            "openrouter_max_retries": 1,
+            "openrouter_retry_base_seconds": 2.0,
+            "openrouter_retry_cap_seconds": 30.0,
+            "attempt_deadline_seconds": 120,
+        }
+        # Temperature is per worker here, exactly as in `_worker_contract`: a
+        # worker whose model does not advertise the parameter declares None and
+        # the key is omitted, leaving the native router's
+        # `apply_worker_temperature` a no-op. Hardcoding 0 sent `temperature`
+        # for every worker regardless of what the artifact declared, which made
+        # gpt-5.6-luna fail 404 "No endpoints found" under `require_parameters`
+        # on the measured path. The provider preflight cannot catch that: it
+        # builds its payload from the benchmark client, not from this config.
+        if worker["temperature"] is not None:
+            worker_config["temperature"] = worker["temperature"]
+        workers.append(worker_config)
     config = {
         "router": {
             "policy": "mtrouter",
