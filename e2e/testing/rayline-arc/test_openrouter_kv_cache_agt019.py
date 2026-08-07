@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import json
+import math
 import subprocess
 import sys
 import types
@@ -41,6 +42,27 @@ LUNA_CACHE_READ_COST = 0.00000002
 LUNA_CACHE_WRITE_COST = 0.00000025
 LUNA_COMPLETION_COST = 0.0000012
 TOKEN_SCALE = 1_000_000
+PRICE_FIELDS = (
+    ("prompt_per_1m", "estimated_input_cost_per_token"),
+    ("cached_input_per_1m", "estimated_cache_read_cost_per_token"),
+    ("cache_write_per_1m", "estimated_cache_write_cost_per_token"),
+    ("completion_per_1m", "estimated_output_cost_per_token"),
+)
+# raylineARCPriceEqual's tolerance, mirrored exactly. pytest.approx defaults to
+# a relative 1e-6, which is a thousand times looser than the router allows and
+# would let a config drift past this test but still fail the gate closed.
+PRICE_ABSOLUTE_FLOOR = 1e-12
+PRICE_RELATIVE_TOLERANCE = 1e-9
+
+
+def _router_price_equal(configured: float, artifact: float) -> bool:
+    """Replicate `raylineARCPriceEqual` in rayline_arc_readiness.go."""
+
+    if not (math.isfinite(configured) and math.isfinite(artifact)):
+        return False
+    tolerance = max(PRICE_ABSOLUTE_FLOOR, abs(artifact) * PRICE_RELATIVE_TOLERANCE)
+    return abs(configured - artifact) <= tolerance
+
 
 SEQUENCE_WORKERS = (
     ("code_patch", "worker-a"),
@@ -371,18 +393,13 @@ def test_compose_pricing_matches_the_v7_artifact(tmp_path) -> None:
         worker = artifact_workers[model["name"]]
         pricing = model["pricing"]
         assert model["provider_model_id"] == worker["model"]
-        assert pricing["prompt_per_1m"] == pytest.approx(
-            worker["estimated_input_cost_per_token"] * TOKEN_SCALE
-        )
-        assert pricing["cached_input_per_1m"] == pytest.approx(
-            worker["estimated_cache_read_cost_per_token"] * TOKEN_SCALE
-        )
-        assert pricing["cache_write_per_1m"] == pytest.approx(
-            worker["estimated_cache_write_cost_per_token"] * TOKEN_SCALE
-        )
-        assert pricing["completion_per_1m"] == pytest.approx(
-            worker["estimated_output_cost_per_token"] * TOKEN_SCALE
-        )
+        # The gate also refuses anything that is not USD or omits cache-write.
+        assert pricing["currency"] == "USD"
+        assert "cache_write_per_1m" in pricing
+        for configured_key, artifact_key in PRICE_FIELDS:
+            assert _router_price_equal(
+                pricing[configured_key], worker[artifact_key] * TOKEN_SCALE
+            ), f"{model['name']}.{configured_key} diverges from the artifact"
 
 
 def test_both_arms_read_the_same_luna_worker_set() -> None:
