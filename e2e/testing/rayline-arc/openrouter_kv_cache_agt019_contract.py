@@ -29,13 +29,15 @@ SEMANTIC_BRANCH = "codex/rayline-remote-mvp"
 SEMANTIC_REMOTE_REF = f"atlasfutures/{SEMANTIC_BRANCH}"
 PATHFINDER_BRANCH = "codex/rayline-vsr-mvp"
 
-# Authority rebound 2026-08-07 to the pushed AGT019d luna-amendment
-# preregistration and authorization checkpoints; launch stays impossible
-# outside a clean, pushed checkout of the semantic remote ref below. The only
-# launchable AGT019 protocol is now the artifact v7 packet whose worker-b lane
-# is `openai/gpt-5.6-luna` pinned to the single OpenAI provider.
-PREREGISTRATION_COMMIT = "f957bb81e2cbe01a232fe64dbdf58cc51d30cb52"
-AUTHORIZATION_COMMIT = "a54b19e8548a55ba8a3f5ec7fd64fe4414ad252e"
+# Authority permanently closed 2026-08-07 with the recorded AGT019d result.
+# Both arms executed the artifact v7 protocol once and the v4 report passed all
+# ten acceptance gates (SHA-256
+# 4f33b50e59977d2bbdf32616d41770ef9e564bca75507f787afa6111ddc3292f), closing
+# TD051. The pins were bound to f957bb81 (preregistration) and a54b19e8
+# (authorization) for that execution and are now empty: AGT019 is historical
+# and no further launch is possible from this contract.
+PREREGISTRATION_COMMIT = ""
+AUTHORIZATION_COMMIT = ""
 GIT_SHA1_HEX_LENGTH = 40
 NATIVE_APP_NAME = "rayline-router-openrouter-agt019"
 NATIVE_WEBHOOK_LABEL = "router-openrouter-agt019"
@@ -79,10 +81,12 @@ AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS = 20 * 60
 MAXIMUM_PROVIDER_SPEND_USD = 2 * AUTHORIZED_KEY_LIMIT_USD_PER_ARM
 REQUIRED_FINAL_RESERVE_USD = 1.20
 
-# Authority bound 2026-08-05: the authorized values replaced the fail-closed
-# zero placeholders in the same checkpoint that opened both authority pins.
-SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM = AUTHORIZED_KEY_LIMIT_USD_PER_ARM
-SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS = AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS
+# Source-closed again 2026-08-07 with the recorded result: the fail-closed zero
+# placeholders replace the authorized values in the same checkpoint that closes
+# both authority pins. The authorized figures above are retained as the
+# historical record of what was executed.
+SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM = 0.0
+SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS = 0
 
 AGT019_RESOURCE_BUDGET = BudgetContract(
     run_id=RUN_ID,
@@ -143,9 +147,8 @@ ACCEPTANCE_GATES = (
 
 
 def validate() -> dict[str, Any]:
-    bound_pins = (PREREGISTRATION_COMMIT, AUTHORIZATION_COMMIT)
-    if any(len(pin) != GIT_SHA1_HEX_LENGTH for pin in bound_pins):
-        raise RuntimeError("AGT019 launch authority pins are not bound")
+    if PREREGISTRATION_COMMIT or AUTHORIZATION_COMMIT:
+        raise RuntimeError("AGT019 launch authority must stay permanently closed")
     if EXPECTED_REQUESTS_PER_DEPLOYMENT != EXPECTED_SEMANTIC_REQUESTS_PER_DEPLOYMENT:
         raise RuntimeError("AGT019 semantic workload request envelope diverged")
     if (
@@ -154,18 +157,17 @@ def validate() -> dict[str, Any]:
     ):
         raise RuntimeError("AGT019 provider request or attempt envelope diverged")
     if (
-        SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM != AUTHORIZED_KEY_LIMIT_USD_PER_ARM
-        or SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS
-        != AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS
+        SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM != 0
+        or SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS != 0
     ):
-        raise RuntimeError("AGT019 authorized resource envelope diverged")
+        raise RuntimeError("AGT019 source-closed resource envelope diverged")
     receipt = agt019_budget_receipt()
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": RUN_ID,
-        "source_closed": False,
-        "launch_authorized": True,
-        "requires_new_budget_authority": False,
+        "source_closed": True,
+        "launch_authorized": False,
+        "requires_new_budget_authority": True,
         "workload_schema_version": WORKLOAD_SCHEMA_VERSION,
         "report_schema_version": REPORT_SCHEMA_VERSION,
         "artifact_revision": ARTIFACT_REVISION,

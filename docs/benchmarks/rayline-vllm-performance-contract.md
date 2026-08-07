@@ -791,6 +791,40 @@ decision. Both authority pins are permanently closed with the recorded
 result; a successor packet must reconcile multi-provider fallthrough with
 completion matching.
 
+AGT019d executed both arms once on 2026-08-07 and passed. Worker-b's lane was
+replaced beforehand: MiMo's four pinned providers stayed unusable for more
+than twenty-one hours — three had dropped out of OpenRouter's routing pool
+entirely, returning `404 "No endpoints found"` rather than `429`, while Venice
+returned upstream `429`s — so the benchmark's two-of-four depth requirement was
+never satisfiable and no untried provider remained. Worker-b is therefore
+`openai/gpt-5.6-luna` pinned to the single OpenAI provider, carried by artifact
+`public-rayline-arc-openrouter-kv-cache-v7` at per-field maxima across OpenAI's
+three endpoint tags (`$0.20/M` prompt, `$0.02/M` cache read, `$0.25/M` cache
+write, `$1.20/M` completion). That model does not advertise `temperature`, so
+the frozen payload omits it per worker rather than relaxing
+`require_parameters`; workers a and c keep `temperature: 0` from their
+manifests and are unchanged on the wire.
+
+Both arms completed `36/36` on an identical provider set (worker-a Baidu,
+worker-b OpenAI, worker-c Tencent) with exact selected-worker trace parity, and
+**all ten acceptance gates passed** — report SHA-256
+`4f33b50e59977d2bbdf32616d41770ef9e564bca75507f787afa6111ddc3292f`, status
+`passed`. `matched_pair_comparability_policy` passed with no inadmissible
+worker: 28 of 36 pairs fully matched (`0.7778` coverage), worker-b and worker-c
+each `12/12`. Retained token-work savings were unchanged at `44.6%` native and
+`59.0%` remote, confirming the lane swap did not move the cache result; the
+remote arm ran `1.74x` native serial throughput with `0.64x` observed
+first-token time and `0.73x` retained E2E latency, while the native router
+stayed about `3.00x` faster per decision. Provider spend was `$0.025315713`
+against the `$0.50` envelope. Both authority pins are closed with this result.
+
+A caveat is recorded rather than resolved: workers a and c occasionally return
+a two- or three-token completion in place of a full one at `temperature: 0`,
+and neither Baidu nor Tencent advertises `seed`, so the report's
+retained-versus-replay completion parity check is luck-dependent for those two
+lanes and may need re-drawing. Worker-b's single-provider pin removes both the
+divergence exposure and, with it, any in-order fallthrough for that lane.
+
 ## Evidence Lineage
 
 The frozen choices build on:

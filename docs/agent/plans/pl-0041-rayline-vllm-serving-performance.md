@@ -3843,6 +3843,61 @@ three OpenAI tags in the provider order would restore redundancy without
 disturbing the price-identity gate, since the pricing already sits at the
 `openai/priority` maximum; it was offered and declined for now.
 
+### AGT019d Result (2026-08-07) — TD051 closed
+
+Both architecture arms executed the amended v7 protocol once under the frozen
+budget, and the v4 report passed **all ten acceptance gates**. Report SHA-256
+`4f33b50e59977d2bbdf32616d41770ef9e564bca75507f787afa6111ddc3292f`.
+
+Four defects were found and fixed before the valid runs, each at near-zero
+measured cost. Three were the same parameter reaching OpenRouter from three
+different builders: the native router config hardcoded `temperature: 0` for
+every worker regardless of the artifact (`f6ea91a6`); the agentic ARC payload
+carried a client temperature that the native router forwards verbatim and a
+manifest `None` cannot suppress (`15491265`); and the measured KV payload —
+the builder both arms actually use — hardcoded it too (`30e5a64f`). Live
+parameter isolation against the pinned OpenAI endpoint established the true
+rejected set for this lane: `temperature`, `top_p` and `stop` each return 404
+"No endpoints found", while `usage`, `include_reasoning` and `seed` are
+accepted. The fourth defect was a fail-closed registry omission of the same
+class as `cd58233f`: the AGT019 mode was absent from `KV_MODES`, so `persist`
+returned early and a complete remote arm billed normally while emitting no
+deployment, preflight or key-usage receipt (`b01a0375`).
+
+Two further remote arms and one native arm were re-drawn, not re-fixed. The
+reporter requires retained and replay to return identical completion-token
+counts for all eighteen cells of each arm, measured after `_enrich_native`
+substitutes the router's own token accounting. Workers a and c occasionally
+emit a two- or three-token completion in place of a full one at temperature 0,
+and neither Baidu nor Tencent advertises `seed`, so determinism cannot be
+forced without changing providers. The draw is therefore luck-dependent; it
+came clean on the first native re-draw.
+
+The valid runs: the native arm completed `36/36` (worker-a via Baidu, worker-b
+via OpenAI, worker-c via Tencent; key usage `$0.015308436`), and the remote
+FlashInfer arm completed `36/36` on the identical provider set (key usage
+`$0.010007277`). Total provider spend was `$0.025315713` against the `$0.50`
+envelope, leaving the conservative cumulative at `$151.949704666383` and the
+reserve at `$2.3631193536169803` under the unchanged `$154.31282402` authority.
+
+`matched_pair_comparability_policy` passed with **no inadmissible worker**: 28
+of 36 pairs were fully matched (`0.7778` coverage), and the worker whose lane
+was replaced matched perfectly — worker-b `12/12` and worker-c `12/12`, with
+worker-a at `4/12` on its generation variance but still admissible. The
+single-provider pin makes worker-b structurally incapable of the cross-arm
+provider divergence that failed AGT018d's whole-set completion gate.
+
+Headline steady-state comparisons: the vLLM remote arm ran `1.74x` native
+serial request throughput, `0.64x` native observed first-token time and
+`0.73x` native retained E2E latency, while the native router stayed about
+`3.00x` faster than the remote router path per decision. Both
+retained-token-saving gates held at the AGT018d levels — native `44.6%`,
+remote `59.0%` retained token-work saved — confirming the lane swap did not
+move the cache result.
+
+TD051 is closed on this report. The AGT019 authority pins are closed in the
+same checkpoint.
+
 Do not release the 1,000-case qualification as part of budget preparation.
 
 The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed

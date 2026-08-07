@@ -6,7 +6,6 @@ import importlib.machinery
 import importlib.util
 import json
 import math
-import subprocess
 import sys
 import types
 from pathlib import Path
@@ -135,24 +134,19 @@ def _arm_rows(
     return rows
 
 
-def test_agt019_contract_is_bound_with_the_matched_pair_gate() -> None:
+def test_agt019_contract_is_closed_with_the_matched_pair_gate() -> None:
     contract = agt019_contract.validate()
 
-    assert agt019_contract.PREREGISTRATION_COMMIT == (
-        "f957bb81e2cbe01a232fe64dbdf58cc51d30cb52"
-    )
-    assert agt019_contract.AUTHORIZATION_COMMIT == (
-        "a54b19e8548a55ba8a3f5ec7fd64fe4414ad252e"
-    )
-    assert agt019_contract.SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM == (
-        agt019_contract.AUTHORIZED_KEY_LIMIT_USD_PER_ARM
-    )
-    assert agt019_contract.SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS == (
-        agt019_contract.AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS
-    )
-    assert contract["source_closed"] is False
-    assert contract["launch_authorized"] is True
-    assert contract["requires_new_budget_authority"] is False
+    # Closed 2026-08-07 with the recorded AGT019d result. The pins were bound
+    # to f957bb81/a54b19e8 for that single execution; AGT019 is now historical
+    # and no further launch is possible from this contract.
+    assert agt019_contract.PREREGISTRATION_COMMIT == ""
+    assert agt019_contract.AUTHORIZATION_COMMIT == ""
+    assert agt019_contract.SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM == 0
+    assert agt019_contract.SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS == 0
+    assert contract["source_closed"] is True
+    assert contract["launch_authorized"] is False
+    assert contract["requires_new_budget_authority"] is True
     assert contract["run_id"] == "rayline-openrouter-kv-cache-agt019-20260805"
     assert contract["report_schema_version"] == (
         "rayline.openrouter-kv-cache-comparison.v4"
@@ -261,7 +255,7 @@ def test_selection_divergence_is_rejected() -> None:
         matched_pair.pair_cells(_arm_rows(seconds=NATIVE_SECONDS), remote)
 
 
-def test_agt019_remote_packet_carries_bound_authority_limits(tmp_path) -> None:
+def test_agt019_remote_packet_is_source_closed_after_the_result(tmp_path) -> None:
     encoder = EncoderDeployment(
         app_name="test-encoder",
         class_name="SessionEncoder",
@@ -278,15 +272,15 @@ def test_agt019_remote_packet_carries_bound_authority_limits(tmp_path) -> None:
     )["kv-cache-flashinfer-agt019"]
 
     assert packet.expected_run_id == agt019_contract.RUN_ID
-    assert packet.key_limit_usd == (agt019_contract.AUTHORIZED_KEY_LIMIT_USD_PER_ARM)
-    assert packet.maximum_seconds == (
-        agt019_contract.AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS
-    )
+    # Source-closed with the recorded result: the packet carries the
+    # fail-closed zeros, so it cannot spend even if it were dispatched.
+    assert packet.key_limit_usd == 0
+    assert packet.maximum_seconds == 0
     assert packet.driver.name == "openrouter_kv_cache_successor_remote.py"
     assert packet.artifact_revision == agt019_contract.ARTIFACT_REVISION
     assert packet.encoder is not None
     assert packet.encoder.app_name == agt019_contract.REMOTE_APP_NAME
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(SystemExit, match="source-closed"):
         launch_authority.verify_source_authority(
             "kv-cache-flashinfer-agt019",
             {},
@@ -294,7 +288,7 @@ def test_agt019_remote_packet_carries_bound_authority_limits(tmp_path) -> None:
         )
 
 
-def test_agt019_native_mode_switches_identity_with_bound_authority(
+def test_agt019_native_mode_switches_identity_and_stays_source_closed(
     tmp_path,
 ) -> None:
     try:
@@ -313,13 +307,11 @@ def test_agt019_native_mode_switches_identity_with_bound_authority(
             native_launcher.BENCHMARK.name
             == "openrouter_kv_cache_successor_benchmark.py"
         )
-        assert native_launcher.KEY_LIMIT_USD == (
-            agt019_contract.AUTHORIZED_KEY_LIMIT_USD_PER_ARM
-        )
-        assert native_launcher.MAXIMUM_PAID_SECONDS == (
-            agt019_contract.AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS
-        )
-        with pytest.raises(subprocess.CalledProcessError):
+        # Source-closed with the recorded result: the launcher reads the
+        # fail-closed zeros, so switching generation cannot spend.
+        assert native_launcher.KEY_LIMIT_USD == 0
+        assert native_launcher.MAXIMUM_PAID_SECONDS == 0
+        with pytest.raises(RuntimeError, match="source-closed"):
             native_launcher._verify_authority(tmp_path)
     finally:
         native_launcher._configure_generation("agt017")

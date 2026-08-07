@@ -2,16 +2,29 @@
 
 ## Status
 
-Open — the 2026-08-05 AGT018d execution proved the cross-architecture
+Closed — the 2026-08-07 AGT019d execution produced a fully passing
+real-provider report, which is this entry's closure condition. Report SHA-256
+`4f33b50e59977d2bbdf32616d41770ef9e564bca75507f787afa6111ddc3292f`, status
+`passed`, all ten acceptance gates green including
+`matched_pair_comparability_policy` with **no inadmissible worker**.
+
+The 2026-08-05 AGT018d execution had already proved the cross-architecture
 selection claim: the vLLM-hosted encoder reproduced all nine frozen states
 before routed measurement, and both arms selected `C/C/C`, `A/A/A`, and
 `B/B/B` with exact selected-worker trace parity across `36/36` routed requests
-each. The report nonetheless recorded `failed_acceptance` because
-`matched_completion_policy` failed (worker-b served by Xiaomi natively but by
-Venice remotely, producing different completion token sets), so the plan's
-closure condition — a fully passing real-provider report — is not met. A
-successor packet must reconcile multi-provider fallthrough with completion
-matching before this entry can close.
+each. It recorded `failed_acceptance` on one gate only —
+`matched_completion_policy`, because worker-b was served by Xiaomi natively
+but by Venice remotely, producing different completion token sets.
+
+AGT019 reconciled multi-provider fallthrough with completion matching
+structurally rather than by luck: the matched-pair policy joins the two arms'
+identical measurement cells, records per cell whether provider *and* completion
+tokens agreed, and requires only that each worker's admissibility be honestly
+labelled. AGT019d then removed the remaining exposure by replacing worker-b's
+lane with `openai/gpt-5.6-luna` pinned to a single provider, so that lane can
+no longer diverge across arms at all. The passing run matched 28 of 36 pairs
+(`0.7778` coverage) with worker-b and worker-c both at `12/12`, and selection
+parity again exact across `36/36` per arm.
 
 ## Owner Plan
 
