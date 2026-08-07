@@ -3776,6 +3776,72 @@ live at launch.
 - [ ] AGT019c: obtain fresh budget authority, bind preregistration and
   authorization pins, run each arm once, and close TD051 only if the v4
   report passes.
+- [ ] AGT019d: re-measure both arms under the 2026-08-07 worker-b luna
+  amendment preregistered below, then close TD051 only if the v4 report
+  passes.
+
+### AGT019d Worker-b Luna Amendment (preregistered 2026-08-07)
+
+Worker-b's dependence on at least one of its frozen four being live at launch,
+noted immediately above, is what finally broke the run. MiMo's entire provider
+pool stayed unusable for more than twenty-one hours: Xiaomi, Parasail and
+Novita were dropped from OpenRouter's routing pool altogether — a
+single-provider pin returns `404 "No endpoints found"` rather than a `429`,
+because an unhealthy endpoint leaves the routing pool entirely when fallbacks
+are disabled — while Venice returned upstream `429`s. The registered endpoints
+never delisted; `GET /api/v1/models/xiaomi/mimo-v2.5/endpoints` reported all
+four at `status=0` throughout. They simply never became healthy. The
+two-of-four depth gate the run requires was never satisfiable across that
+window, the best single observation being one live provider (Venice, briefly)
+before it dropped again, and nothing remained to widen to with `deepinfra`
+already retracted above.
+
+The amendment therefore replaces the lane rather than waiting on it: worker-b
+becomes `openai/gpt-5.6-luna` pinned to the single `openai` provider, carried
+by artifact `public-rayline-arc-openrouter-kv-cache-v7`. Artifact v6 is
+untouched and stays historical and regenerable as the revision the banked
+native arm was measured under.
+
+`gpt-5.6-luna` does not advertise `temperature`. Sending it under
+`require_parameters` makes OpenRouter filter out every OpenAI endpoint and
+return the same `404 "No endpoints found that can handle the requested
+parameters"`, verified live against all three OpenAI tags before the lane was
+bound. The parameter is therefore suppressed per worker rather than relaxing
+the filter: the artifact declares worker-b's temperature as `None`, which
+`_worker_contract` omits entirely, and both arms already drive temperature
+from the worker manifest — the Go dispatch deletes a client-supplied value
+when the manifest carries none, and the native router's
+`apply_worker_temperature` treats `None` as a no-op. No router change is
+required, workers a and c keep `temperature: 0`, and
+`openrouter_require_parameters` stays `true` for every worker on every path.
+
+Pricing is the per-field maxima across OpenAI's three `gpt-5.6-luna` endpoint
+tags (`openai`, `openai/flex`, `openai/priority`): `$0.20/M` prompt,
+`$0.02/M` cache read, `$0.25/M` cache write, `$1.20/M` completion, so the rate
+can only be over-stated. OpenAI prices cache reads and writes separately, so
+worker-b is the first worker whose three input rates are not flat. The
+budget is unchanged and no new money is requested — the complete packet stays
+at `$9.5308736` and the reserve at `$2.363119353617` under the same
+`$154.31282402` authority.
+
+Because the served model changes, the banked v6 native evidence is no longer
+comparable and both arms must be re-measured. Two mechanisms enforce this
+rather than trusting discipline: `exact_source_and_artifact_identity` refuses
+to mix a v6 arm with a v7 arm, and the native launcher refuses to start when
+its run directory already exists, so the `20260805` directory must be archived
+before AGT019d rather than being overwritten.
+
+One consequence is structural and favourable: worker-b now pins a single
+provider and can no longer be served by different providers on the two arms,
+which is precisely the divergence that failed AGT018d's whole-set completion
+gate. The matched-pair policy is consequently exercised through worker-c,
+whose frozen order still holds three providers. One consequence is adverse and
+accepted by the user: that lane now has no in-order fallthrough at all, so a
+single upstream `429` anywhere in worker-b's twelve requests aborts the run
+the way the previous remote attempt died at request 32 of 36. Listing the
+three OpenAI tags in the provider order would restore redundancy without
+disturbing the price-identity gate, since the pricing already sits at the
+`openai/priority` maximum; it was offered and declined for now.
 
 Do not release the 1,000-case qualification as part of budget preparation.
 
