@@ -29,11 +29,13 @@ SEMANTIC_BRANCH = "codex/rayline-remote-mvp"
 SEMANTIC_REMOTE_REF = f"atlasfutures/{SEMANTIC_BRANCH}"
 PATHFINDER_BRANCH = "codex/rayline-vsr-mvp"
 
-# Authority bound 2026-08-05 to the pushed AGT019 preregistration and
-# authorization checkpoints; launch stays impossible outside a clean, pushed
-# checkout of the semantic remote ref below.
-PREREGISTRATION_COMMIT = "2b8a39b129a36a6b2e79aeb765195937ba7643f3"
-AUTHORIZATION_COMMIT = "91af3bb17441bdd0c540f3d54b0217e43c82852d"
+# Authority rebound 2026-08-07 to the pushed AGT019d luna-amendment
+# preregistration and authorization checkpoints; launch stays impossible
+# outside a clean, pushed checkout of the semantic remote ref below. The only
+# launchable AGT019 protocol is now the artifact v7 packet whose worker-b lane
+# is `openai/gpt-5.6-luna` pinned to the single OpenAI provider.
+PREREGISTRATION_COMMIT = "f957bb81e2cbe01a232fe64dbdf58cc51d30cb52"
+AUTHORIZATION_COMMIT = "a54b19e8548a55ba8a3f5ec7fd64fe4414ad252e"
 GIT_SHA1_HEX_LENGTH = 40
 NATIVE_APP_NAME = "rayline-router-openrouter-agt019"
 NATIVE_WEBHOOK_LABEL = "router-openrouter-agt019"
