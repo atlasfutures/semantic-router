@@ -289,10 +289,12 @@ def test_agentic_paths_preserve_one_payload_and_change_only_routing() -> None:
     assert "provider" not in arc
     # gpt-5.6-luna does not advertise `temperature`, so the provider-pinned
     # paths drop it rather than relaxing `require_parameters`. The ARC path
-    # keeps the client value because the worker manifest governs it there.
+    # never carries one: both routers pin it per worker from the manifest, and
+    # the native router copies a client-sent value verbatim, which would make
+    # it unsuppressable for this worker.
     assert "temperature" not in direct
     assert "temperature" not in static
-    assert arc["temperature"] == 0
+    assert "temperature" not in arc
     assert all(payload["stream"] is True for payload in (direct, static, arc))
 
 

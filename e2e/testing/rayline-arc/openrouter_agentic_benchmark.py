@@ -116,10 +116,16 @@ def _request_payload(
         "tools": case["tools"],
         "tool_choice": "none",
         "max_tokens": max_completion_tokens,
-        "temperature": 0,
         "stream": True,
         "stream_options": {"include_usage": True},
     }
+    # Temperature is deliberately absent on the ARC path. Both arms' routers
+    # already pin it per worker from the manifest, so a client-sent value is
+    # redundant there — and worse, it is unsuppressable: the native router
+    # copies request temperature verbatim and treats a manifest `None` as a
+    # no-op, so a worker whose model does not advertise the parameter could
+    # never avoid sending it. Workers a and c are unaffected on the wire; their
+    # manifests still pin 0.
     if path != "arc":
         payload = pinned_provider_payload(payload, expected_worker)
     return payload

@@ -83,6 +83,12 @@ PROVIDER_NAMES = {
 UNSUPPORTED_REQUEST_PARAMETERS = {
     "worker-b": ("temperature",),
 }
+# The frozen sampling temperature for the provider-pinned paths. The ARC path
+# does not carry it: both arms' routers pin temperature per worker from the
+# manifest there, and the native router copies a client-sent value verbatim
+# while treating a manifest `None` as a no-op — so a client-sent temperature
+# on that path is not merely redundant, it is unsuppressable.
+FROZEN_TEMPERATURE = 0
 
 
 def pinned_provider_payload(
@@ -104,6 +110,7 @@ def pinned_provider_payload(
         "require_parameters": True,
     }
     payload["reasoning"] = {"enabled": False, "effort": "none"}
+    payload["temperature"] = FROZEN_TEMPERATURE
     for parameter in UNSUPPORTED_REQUEST_PARAMETERS.get(expected_worker, ()):
         payload.pop(parameter, None)
     return payload
