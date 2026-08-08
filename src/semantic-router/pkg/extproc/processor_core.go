@@ -71,7 +71,8 @@ func (r *OpenAIRouter) Process(stream ext_proc.ExternalProcessor_ProcessServer) 
 	logging.Debugf("Processing at stage [init]")
 
 	return r.processWithContext(stream, &RequestContext{
-		Headers: make(map[string]string),
+		Headers:      make(map[string]string),
+		TraceContext: stream.Context(),
 	})
 }
 

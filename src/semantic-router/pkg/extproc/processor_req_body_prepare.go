@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -105,20 +106,27 @@ func (r *OpenAIRouter) runRequestPreRoutingStages(
 	r.resolveEntrypointForRequest(originalModel, ctx)
 	populatePinnedSessionFromHeaders(ctx)
 	history := signalConversationHistoryFromFastExtract(fast)
-	decisionName, _, reasoningDecision, selectedModel, authzErr := r.performDecisionEvaluation(
+	decisionName, _, reasoningDecision, selectedModel, decisionErr := r.performDecisionEvaluation(
 		originalModel,
 		history,
 		ctx,
 	)
-	if authzErr != nil {
+	if decisionErr != nil {
+		// Authoritative-selector failures must be classified before the generic
+		// cancellation check, or a Rayline fail-closed error is misreported as a
+		// client cancellation.
 		if response, handled := r.decisionEvaluationErrorResponse(
-			authzErr,
+			decisionErr,
 			ctx,
 		); handled {
 			return requestDecisionState{}, response
 		}
-		logging.Errorf("[Request Body] Authz evaluation failed: %v", authzErr)
-		return requestDecisionState{}, r.createErrorResponse(403, authzErr.Error())
+		if errors.Is(decisionErr, context.Canceled) ||
+			errors.Is(decisionErr, context.DeadlineExceeded) {
+			return requestDecisionState{}, r.createErrorResponse(499, "request canceled")
+		}
+		logging.Errorf("[Request Body] Authz evaluation failed: %v", decisionErr)
+		return requestDecisionState{}, r.createErrorResponse(403, decisionErr.Error())
 	}
 
 	metrics.RecordModelRequest(selectedModel)
@@ -128,6 +136,12 @@ func (r *OpenAIRouter) runRequestPreRoutingStages(
 		ctx.InflightToken = 0
 		r.startRouterReplay(ctx, originalModel, selectedModel, decisionName)
 		r.updateRouterReplayStatus(ctx, 200, false)
+		r.attachRouterReplayResponse(
+			ctx,
+			resp.GetImmediateResponse().GetBody(),
+			true,
+		)
+		addRouterReplayHeaderToImmediateResponse(resp, ctx.RouterReplayID)
 		finalizeSelectionAbort(ctx, "immediate_response")
 		return requestDecisionState{}, resp
 	}

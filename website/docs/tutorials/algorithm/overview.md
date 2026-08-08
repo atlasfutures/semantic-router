@@ -67,6 +67,7 @@ The repo now keeps one tutorial page per algorithm.
 | **[SVM](./selection/svm)** | ML (Rust) | No (offline) | No | — | Decision boundary classification |
 | **[MLP](./selection/mlp)** | ML (GPU) | No (offline) | No | — | Non-linear neural network routing |
 | **[Latency Aware](./selection/latency-aware)** | Metrics | No | No | — | Fastest model selection by TPOT/TTFT |
+| **[Prompt](./selection/prompt)** | LLM policy | No | No | — | Qualitative selection among bounded candidates |
 | **[Rayline ARC](./selection/rayline-arc)** | Artifact policy | No | No | — | Switch-aware, cache-cost-aware orchestration with vLLM encoder inference |
 | **[Rayline Remote](./selection/rayline-remote)** | Remote policy | No | No | — | Transactional episode-aware selection owned by Pathfinder |
 
@@ -121,6 +122,7 @@ decision algorithm. See [Protection](../learning/protection). There is no
 - [Latency Aware](./selection/latency-aware)
 - [MLP](./selection/mlp)
 - [Multi Factor](./selection/multi-factor)
+- [Prompt](./selection/prompt)
 - [Rayline ARC](./selection/rayline-arc)
 - [Rayline Remote](./selection/rayline-remote)
 - [Router DC](./selection/router-dc)

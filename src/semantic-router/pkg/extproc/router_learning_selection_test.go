@@ -17,6 +17,7 @@ limitations under the License.
 package extproc
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -75,6 +76,46 @@ func TestRouterLearningProtectionKeepsCurrentModelAcrossDecisionCandidates(t *te
 	}
 	if ctx.VSRLearningSessionID != "session-a/conversation-a" {
 		t.Fatalf("expected conversation memory key, got %q", ctx.VSRLearningSessionID)
+	}
+}
+
+func TestRouterLearningProtectionAppliesToSelectorFallback(t *testing.T) {
+	sessiontelemetry.ResetRouterSessionMemoryForTesting()
+	t.Cleanup(sessiontelemetry.ResetRouterSessionMemoryForTesting)
+	sessiontelemetry.RecordSessionDecision(sessiontelemetry.SessionDecisionParams{
+		SessionID:      "session-a/conversation-a",
+		SelectedModel:  "frontier",
+		DecisionName:   "complex-code",
+		TurnIndex:      2,
+		ActiveToolLoop: true,
+		Timestamp:      time.Now(),
+	})
+	registry := selection.NewRegistry()
+	registry.Register(selection.MethodStatic, selectionResultSelector{
+		err: errors.New("selector unavailable"),
+	})
+	router := &OpenAIRouter{
+		Config:        routerLearningTestConfig(config.RouterLearningScopeConversation),
+		ModelSelector: registry,
+	}
+	ctx := routerLearningRequestContext("session-a", "conversation-a")
+	ctx.VSRSelectedDecision = &config.Decision{Name: "simple-followup"}
+	ctx.VSRConversationFacts = classification.ConversationFacts{
+		LastMessageToolResult: true,
+	}
+
+	selected, _, _ := router.selectModelFromCandidates(
+		&selection.SelectionContext{
+			SessionID:       "session-a",
+			DecisionName:    "simple-followup",
+			CandidateModels: []config.ModelRef{{Model: "cheap"}, {Model: "backup"}},
+		},
+		nil,
+		ctx,
+	)
+
+	if selected == nil || selected.Model != "frontier" {
+		t.Fatalf("fallback bypassed learning protection: %#v", selected)
 	}
 }
 

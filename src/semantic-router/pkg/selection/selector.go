@@ -96,6 +96,10 @@ const (
 	// weighted score with optional SLO ceilings. Issue #37.
 	MethodMultiFactor SelectionMethod = "multi_factor"
 
+	// MethodPrompt uses a concrete helper LLM to choose one declared candidate
+	// through a runtime-owned structured output contract.
+	MethodPrompt SelectionMethod = "prompt"
+
 	// MethodRaylineARC uses the artifact-verified Rayline ARC orchestrator.
 	// The encoder is served by a dedicated vLLM pooling deployment.
 	MethodRaylineARC SelectionMethod = "rayline_arc"
@@ -168,6 +172,11 @@ type SelectionContext struct {
 
 	// DecisionName is the name of the matched decision for category-specific selection
 	DecisionName string
+
+	// RecipeName identifies the isolated routing profile that owns DecisionName.
+	// Selectors are instantiated per recipe; shared learning/lookup components
+	// use both fields as their state namespace.
+	RecipeName config.RecipeName
 
 	// CategoryName is the detected domain category (e.g., "physics", "math")
 	// Used by ML selectors to create feature vectors with category one-hot encoding
@@ -277,6 +286,24 @@ type RaylineRemoteTrace struct {
 	SelectionLatency time.Duration
 }
 
+// ScopedRoutingName namespaces recipe-local task-family names for shared
+// lookup-table state while keeping default-recipe keys unscoped.
+func (c *SelectionContext) ScopedRoutingName(localName string) string {
+	if c == nil {
+		return ""
+	}
+	return config.RoutingNamespaceKey(c.RecipeName, localName)
+}
+
+// RoutingScope returns the lookup-table namespace for this recipe. The
+// default recipe keeps unscoped keys.
+func (c *SelectionContext) RoutingScope() string {
+	if c == nil {
+		return ""
+	}
+	return config.RoutingNamespaceScope(c.RecipeName)
+}
+
 // SelectionResult contains the result of a model selection decision
 type SelectionResult struct {
 	// SelectedModel is the name of the selected model
@@ -302,6 +329,13 @@ type SelectionResult struct {
 
 	// AllScores maps each candidate model to its computed score
 	AllScores map[string]float64
+
+	// Prompt-helper telemetry is populated only by MethodPrompt.
+	HelperModel            string
+	HelperPromptTokens     int64
+	HelperCompletionTokens int64
+	HelperTotalTokens      int64
+	HelperLatencyMs        int64
 
 	// SessionPolicy records the session-aware stay/switch policy trace when
 	// Method is session_aware.

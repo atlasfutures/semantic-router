@@ -15,13 +15,61 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
-func createModelSelectorRegistry(
-	cfg *config.RouterConfig,
-	replayReader store.Reader,
-) (
+func createModelSelectorRegistries(cfg *config.RouterConfig, replayReader store.Reader) (
+	map[config.RecipeName]*selection.Registry,
 	*selection.Registry,
 	lookuptable.LookupTableStorage,
 	func(),
+	raylinearc.EpisodeStore,
+	func() error,
+	raylineARCSessionCloseFunc,
+) {
+	lt, cancel := buildLookupTable(cfg, replayReader)
+	embed := resolveSelectionEmbeddingFunc(cfg)
+	registries := make(map[config.RecipeName]*selection.Registry)
+
+	if len(cfg.Recipes) == 0 {
+		registry, episodeStore, closeEpisodeStore, closeEncoderSession := createModelSelectorRegistry(cfg, lt, embed, true)
+		registries[config.DefaultRecipeName] = registry
+		selection.GlobalRegistry = registry
+		return registries, registry, lt, cancel, episodeStore, closeEpisodeStore, closeEncoderSession
+	}
+
+	var (
+		episodeStore        raylinearc.EpisodeStore
+		closeEpisodeStore   func() error
+		closeEncoderSession raylineARCSessionCloseFunc
+	)
+	for i := range cfg.Recipes {
+		recipe := &cfg.Recipes[i]
+		scopedConfig := cfg.ConfigForRecipe(recipe)
+		// The Rayline selectors own process-wide resources (an episode store
+		// and an encoder session) that the router closes exactly once, so they
+		// are built for the default recipe only. Registering them per recipe
+		// would discard every non-default recipe's episode store and leak its
+		// close funcs. Multi-recipe Rayline is deferred until those resources
+		// are recipe-scoped.
+		isDefaultRecipe := recipe.Name == config.DefaultRecipeName
+		registry, arcStore, arcStoreClose, arcSessionClose := createModelSelectorRegistry(scopedConfig, lt, embed, isDefaultRecipe)
+		registries[recipe.Name] = registry
+		if isDefaultRecipe {
+			episodeStore = arcStore
+			closeEpisodeStore = arcStoreClose
+			closeEncoderSession = arcSessionClose
+		}
+	}
+	defaultRegistry := registries[config.DefaultRecipeName]
+	selection.GlobalRegistry = defaultRegistry
+	return registries, defaultRegistry, lt, cancel, episodeStore, closeEpisodeStore, closeEncoderSession
+}
+
+func createModelSelectorRegistry(
+	cfg *config.RouterConfig,
+	lt lookuptable.LookupTableStorage,
+	embed func(string) ([]float32, error),
+	withRaylineSelectors bool,
+) (
+	*selection.Registry,
 	raylinearc.EpisodeStore,
 	func() error,
 	raylineARCSessionCloseFunc,
@@ -36,14 +84,45 @@ func createModelSelectorRegistry(
 	if len(cfg.Categories) > 0 {
 		selectionFactory = selectionFactory.WithCategories(cfg.Categories)
 	}
-	selectionFactory = selectionFactory.WithEmbeddingFunc(resolveSelectionEmbeddingFunc(cfg))
-
-	lt, cancel := buildLookupTable(cfg, replayReader)
+	selectionFactory = selectionFactory.WithEmbeddingFunc(embed)
 	if lt != nil {
 		selectionFactory = selectionFactory.WithLookupTable(lt)
 	}
 
 	registry := selectionFactory.CreateAll()
+
+	var (
+		episodeStore        raylinearc.EpisodeStore
+		closeEpisodeStore   func() error
+		closeEncoderSession raylineARCSessionCloseFunc
+	)
+	if withRaylineSelectors {
+		episodeStore, closeEpisodeStore, closeEncoderSession = registerRaylineSelectors(cfg, registry)
+	}
+
+	// Collect algorithm methods actually configured in decisions
+	configuredMethods := collectConfiguredAlgorithmMethods(cfg)
+
+	// Warn about experimental algorithms and check dependency health
+	selection.WarnExperimentalAlgorithms(registry, configuredMethods)
+	selection.CheckDependencyHealth(registry, configuredMethods)
+
+	logging.ComponentEvent("extproc", "model_selection_registry_initialized", map[string]interface{}{
+		"mode": "per_decision_algorithm_config",
+	})
+	return registry, episodeStore, closeEpisodeStore, closeEncoderSession
+}
+
+// registerRaylineSelectors installs the Rayline ARC and Remote selectors on a
+// registry and returns the process-wide ARC resources the router must close.
+func registerRaylineSelectors(
+	cfg *config.RouterConfig,
+	registry *selection.Registry,
+) (
+	raylinearc.EpisodeStore,
+	func() error,
+	raylineARCSessionCloseFunc,
+) {
 	arcSelector, episodeStore, closeEpisodeStore, closeEncoderSession, readinessFailure := createRaylineARCSelector(cfg)
 	if arcSelector != nil {
 		registry.Register(selection.MethodRaylineARC, arcSelector)
@@ -97,19 +176,8 @@ func createModelSelectorRegistry(
 			)
 		}
 	}
-	selection.GlobalRegistry = registry
 
-	// Collect algorithm methods actually configured in decisions
-	configuredMethods := collectConfiguredAlgorithmMethods(cfg)
-
-	// Warn about experimental algorithms and check dependency health
-	selection.WarnExperimentalAlgorithms(registry, configuredMethods)
-	selection.CheckDependencyHealth(registry, configuredMethods)
-
-	logging.ComponentEvent("extproc", "model_selection_registry_initialized", map[string]interface{}{
-		"mode": "per_decision_algorithm_config",
-	})
-	return registry, lt, cancel, episodeStore, closeEpisodeStore, closeEncoderSession
+	return episodeStore, closeEpisodeStore, closeEncoderSession
 }
 
 func resolveSelectionEmbeddingFunc(cfg *config.RouterConfig) func(string) ([]float32, error) {
@@ -207,25 +275,23 @@ func buildModelSelectionConfig(cfg *config.RouterConfig) *selection.ModelSelecti
 	modelSelectionCfg.AutoMix = buildAutoMixSelectionConfig(cfg)
 	modelSelectionCfg.Hybrid = buildHybridSelectionConfig(cfg, nil)
 	modelSelectionCfg.ML = buildMLSelectionConfig(cfg)
-	modelSelectionCfg.MultiFactor = buildMultiFactorSelectionConfig(decisionCfgs.multiFactor)
+	modelSelectionCfg.MultiFactor = buildMultiFactorSelectionConfig(nil)
 	modelSelectionCfg.RLDriven = buildRLDrivenSelectionConfig(decisionCfgs.rlDriven)
 	modelSelectionCfg.GMTRouter = buildGMTRouterSelectionConfig(decisionCfgs.gmtRouter)
 	return modelSelectionCfg
 }
 
 type decisionScopedSelectionConfigs struct {
-	elo         *config.EloSelectionConfig
-	routerDC    *config.RouterDCSelectionConfig
-	rlDriven    *config.RLDrivenSelectionConfig
-	gmtRouter   *config.GMTRouterSelectionConfig
-	multiFactor *config.MultiFactorSelectionConfig
+	elo       *config.EloSelectionConfig
+	routerDC  *config.RouterDCSelectionConfig
+	rlDriven  *config.RLDrivenSelectionConfig
+	gmtRouter *config.GMTRouterSelectionConfig
 }
 
 func findDecisionScopedSelectionConfigs(cfg *config.RouterConfig) decisionScopedSelectionConfigs {
-	intelligentRouting := cfg.IntelligentRouting
 	var result decisionScopedSelectionConfigs
 
-	for _, decision := range intelligentRouting.Decisions {
+	for _, decision := range cfg.AllRoutingDecisions() {
 		if decision.Algorithm == nil {
 			continue
 		}
@@ -248,11 +314,6 @@ func findDecisionScopedSelectionConfigs(cfg *config.RouterConfig) decisionScoped
 			decision.Algorithm.GMTRouter != nil &&
 			result.gmtRouter == nil {
 			result.gmtRouter = decision.Algorithm.GMTRouter
-		}
-		if decision.Algorithm.Type == "multi_factor" &&
-			decision.Algorithm.MultiFactor != nil &&
-			result.multiFactor == nil {
-			result.multiFactor = decision.Algorithm.MultiFactor
 		}
 	}
 

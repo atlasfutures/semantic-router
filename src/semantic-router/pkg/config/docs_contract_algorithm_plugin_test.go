@@ -18,14 +18,15 @@ var algorithmTutorialBuckets = map[string]string{
 	"latency-aware":  "selection",
 	"mlp":            "selection",
 	"multi-factor":   "selection",
-	"rayline-arc":    "selection",
-	"rayline-remote": "selection",
 	"ratings":        "looper",
 	"remom":          "looper",
 	"router-dc":      "selection",
 	"static":         "selection",
 	"svm":            "selection",
 	"workflows":      "looper",
+	"prompt":         "selection",
+	"rayline-arc":    "selection",
+	"rayline-remote": "selection",
 }
 
 var retiredAlgorithmTutorialDocs = []string{

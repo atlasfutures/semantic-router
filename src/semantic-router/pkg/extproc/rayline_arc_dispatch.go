@@ -71,6 +71,7 @@ func (r *OpenAIRouter) modifyRequestBodyForRaylineARC(
 			ctx.VSRSelectedDecision,
 			modifiedBody,
 			profile,
+			ctx.Routing.RecipeName(),
 		)
 		if err != nil {
 			return nil, errors.New("apply ARC request parameters")

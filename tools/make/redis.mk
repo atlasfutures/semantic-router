@@ -45,7 +45,7 @@ redis-status: ## Show status of Redis container
 clean-redis: stop-redis ## Clean up Redis data
 	@$(LOG_TARGET)
 	@echo "Cleaning up Redis data..."
-	@sudo rm -rf /tmp/redis-data || rm -rf /tmp/redis-data
+	@rm -rf /tmp/redis-data 2>/dev/null || sudo -n rm -rf /tmp/redis-data
 	@echo "Redis data directory cleaned"
 
 # Test semantic cache with Redis backend
@@ -72,7 +72,7 @@ run-redis-example: start-redis rust ## Run the Redis cache example
 	@echo "Running Redis cache example..."
 	@cd src/semantic-router && \
 		export LD_LIBRARY_PATH=$${PWD}/../../candle-binding/target/release:$${PWD}/../../nlp-binding/target/release && \
-		go run ../../deploy/addons/redis/redis-cache.go
+		go run ../../tools/redis/redis-cache.go
 	@echo ""
 	@echo "Example complete! Check Redis using:"
 	@echo "  • redis-cli (command line)"
