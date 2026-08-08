@@ -3773,10 +3773,10 @@ live at launch.
   packet and the native `--generation agt019` switch — while empty pins,
   zero ceilings, and the absent budget contract keep every launch path
   fail-closed.
-- [ ] AGT019c: obtain fresh budget authority, bind preregistration and
+- [x] AGT019c: obtain fresh budget authority, bind preregistration and
   authorization pins, run each arm once, and close TD051 only if the v4
   report passes.
-- [ ] AGT019d: re-measure both arms under the 2026-08-07 worker-b luna
+- [x] AGT019d: re-measure both arms under the 2026-08-07 worker-b luna
   amendment preregistered below, then close TD051 only if the v4 report
   passes.
 
