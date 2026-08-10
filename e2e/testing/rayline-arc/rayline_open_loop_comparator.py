@@ -8,11 +8,17 @@ from __future__ import annotations
 import argparse
 import json
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from rayline_open_loop_packet import MEASUREMENT_SCOPE, OFFERED_RATES, rate_label
+from rayline_open_loop_packet import (
+    MEASUREMENT_SCOPE,
+    OFFERED_RATES,
+    OpenLoopPacketError,
+    rate_label,
+    resolve_offered_rates,
+)
 from rayline_open_loop_probe import INPUT_SCHEMA, ProbeError, validate_receipt
 from rayline_parity_comparator import IDENTITY_FIELDS
 
@@ -101,19 +107,39 @@ def _diagnostic(receipt: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _resolve_rungs(offered_rates: Sequence[float] | None) -> tuple[float, ...]:
+    """Resolve the rung set this comparison is being held to.
+
+    `None` means the frozen PERF020/PERF021 ladder, so callers that predate
+    parameterised rungs keep byte-identical behaviour. The packet module owns
+    what makes a rung set well-formed, so validation is deferred to it rather
+    than duplicated here — a second copy is exactly how the ladder and the
+    comparison drifted apart in the first place.
+    """
+
+    try:
+        return resolve_offered_rates(offered_rates)
+    except OpenLoopPacketError as error:
+        raise OpenLoopComparisonError(str(error)) from error
+
+
 def _validate_cells(
     raw_cells: Mapping[str, Mapping[str, Mapping[str, Any]]],
+    offered_rates: Sequence[float] | None = None,
 ) -> tuple[
     tuple[str, ...],
     dict[str, dict[str, dict[str, Any]]],
     dict[str, dict[str, bool]],
 ]:
-    expected_labels = tuple(rate_label(rate) for rate in OFFERED_RATES)
+    rungs = _resolve_rungs(offered_rates)
+    expected_labels = tuple(rate_label(rate) for rate in rungs)
     if set(raw_cells) != set(expected_labels):
-        raise OpenLoopComparisonError("open-loop cells differ from frozen rates")
+        raise OpenLoopComparisonError(
+            "open-loop cells differ from the contracted rates"
+        )
     cells: dict[str, dict[str, dict[str, Any]]] = {}
     integrity: dict[str, dict[str, bool]] = {}
-    for label, rate in zip(expected_labels, OFFERED_RATES, strict=True):
+    for label, rate in zip(expected_labels, rungs, strict=True):
         raw_receipts = raw_cells[label]
         if set(raw_receipts) != set(OPEN_LOOP_ARMS):
             raise OpenLoopComparisonError(f"{label} arms differ")
@@ -194,8 +220,18 @@ def _trace_summary(
 
 def compare_open_loop(
     raw_cells: Mapping[str, Mapping[str, Mapping[str, Any]]],
+    offered_rates: Sequence[float] | None = None,
 ) -> dict[str, Any]:
-    expected_labels, cells, integrity = _validate_cells(raw_cells)
+    """Compare one open-loop sweep's receipts against the rungs it contracted for.
+
+    `offered_rates` is the run's own ladder. It defaults to the frozen
+    PERF020/PERF021 tuple so those closed runs compare exactly as they did,
+    but a caller that ran a different ladder must say so: validating a
+    four-rung run against a three-rung module default rejects a sweep that
+    executed correctly.
+    """
+
+    expected_labels, cells, integrity = _validate_cells(raw_cells, offered_rates)
 
     trace_digests, distinct_traces, cross_cell_trace_match = _trace_summary(
         labels=expected_labels, cells=cells
@@ -244,29 +280,59 @@ def compare_open_loop(
     }
 
 
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    for rate in OFFERED_RATES:
+def _parse_rate_list(raw: str) -> tuple[float, ...]:
+    try:
+        return tuple(float(part) for part in raw.split(",") if part.strip())
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def _parse_args() -> tuple[argparse.Namespace, tuple[float, ...]]:
+    """Build the per-cell receipt flags from the rung set being compared.
+
+    The flags cannot be fixed at import time, because which cells exist is a
+    property of the run, not of this module. `--offered-rates` is therefore
+    read first and the receipt flags are derived from it.
+    """
+
+    rate_parser = argparse.ArgumentParser(add_help=False)
+    rate_parser.add_argument(
+        "--offered-rates",
+        type=_parse_rate_list,
+        default=None,
+        help=(
+            "Ascending comma-separated offered arrival rates in requests per "
+            "second, matching the rungs the run contracted for. Defaults to "
+            f"the frozen {','.join(str(rate) for rate in OFFERED_RATES)} ladder."
+        ),
+    )
+    known, _ = rate_parser.parse_known_args()
+    rungs = _resolve_rungs(known.offered_rates)
+    parser = argparse.ArgumentParser(parents=[rate_parser])
+    for rate in rungs:
         label = rate_label(rate)
         for arm in OPEN_LOOP_ARMS:
             parser.add_argument(
                 f"--{label}-{arm.replace('_', '-')}", required=True, type=Path
             )
     parser.add_argument("--output", required=True, type=Path)
-    return parser.parse_args()
+    return parser.parse_args(), rungs
 
 
 def main() -> None:
-    args = _parse_args()
+    try:
+        args, rungs = _parse_args()
+    except OpenLoopComparisonError as error:
+        raise SystemExit(f"invalid open-loop sweep: {error}") from error
     raw_cells = {
         rate_label(rate): {
             arm: json.loads(getattr(args, f"{rate_label(rate)}_{arm}").read_text())
             for arm in OPEN_LOOP_ARMS
         }
-        for rate in OFFERED_RATES
+        for rate in rungs
     }
     try:
-        report = compare_open_loop(raw_cells)
+        report = compare_open_loop(raw_cells, rungs)
     except (OSError, json.JSONDecodeError, OpenLoopComparisonError) as error:
         raise SystemExit(f"invalid open-loop sweep: {error}") from error
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
 import json
 import os
@@ -28,13 +29,12 @@ from rayline_concurrency_launcher import (
     _start_encoder,
     _start_local,
 )
-from rayline_concurrency_state import assert_encoder_empty
+from rayline_concurrency_state import StateResetError, assert_encoder_empty
 from rayline_open_loop_comparator import compare_open_loop
 from rayline_open_loop_contract import (
     MEASURED_CASES,
     MEASURED_EPISODES,
     OPEN_LOOP_ARMS,
-    PATHFINDER_AUTHORIZATION_COMMIT,
     PERF021_RUN_ID,
     WARMUP_CASES,
     WARMUP_EPISODES,
@@ -44,6 +44,12 @@ from rayline_open_loop_contract import (
 )
 from rayline_open_loop_probe import load_open_loop_packet
 from rayline_parity_http_probe import PROTOCOL_BY_ARM
+from rayline_saturation_knee_contract import (
+    resolve_launch_contract as resolve_saturation_knee_contract,
+)
+from rayline_saturation_ladder_contract import (
+    resolve_launch_contract as resolve_saturation_ladder_contract,
+)
 from rayline_three_arm_budget import budget_receipt
 from rayline_three_arm_contract import IDENTITY
 from rayline_three_arm_launcher import (
@@ -57,6 +63,8 @@ from rayline_three_arm_launcher import (
 from rayline_three_arm_telemetry import capture_arc_telemetry
 
 EXPECTED_ARC_REQUESTS = MEASURED_CASES + WARMUP_CASES
+DEPLOYMENT_EVIDENCE_SCHEMA = "rayline.vllm.open-loop-deployment-evidence.v1"
+ENCODER_GPU = "H100"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -120,8 +128,32 @@ def _validate_packet(contract: OpenLoopRunContract, packet_dir: Path) -> list[st
     return list(map(str, topology["canonical_workers"]))
 
 
+def _resolve_contract(run_id: str) -> OpenLoopRunContract:
+    """Resolve across every registry this launcher serves.
+
+    Each registry independently refuses when nothing in it is launchable, so a
+    launcher that serves several must try them all before failing closed. A
+    new packet is not launchable until its registry is listed here, which is
+    deliberate: adding a contract module must be an explicit act, not an
+    implicit one. The failure is loud and costs nothing, because it lands in
+    preflight before anything deploys.
+    """
+
+    for resolve in (
+        resolve_launch_contract,
+        resolve_saturation_ladder_contract,
+        resolve_saturation_knee_contract,
+    ):
+        with contextlib.suppress(ValueError):
+            return resolve(run_id)
+    raise ValueError(
+        "no Rayline open-loop sweep, saturation ladder arm or saturation knee "
+        "run is currently launchable"
+    )
+
+
 def _preflight(args: argparse.Namespace) -> SweepContext:
-    contract = resolve_launch_contract(args.run_id)
+    contract = _resolve_contract(args.run_id)
     budget_receipt(contract.budget)
     semantic_root = Path(__file__).resolve().parents[3]
     pathfinder_root = args.pathfinder_root.resolve()
@@ -136,8 +168,8 @@ def _preflight(args: argparse.Namespace) -> SweepContext:
     pathfinder_head = _assert_pushed(
         pathfinder_root, IDENTITY.pathfinder_branch, "origin", contract.run_id
     )
-    if pathfinder_head != PATHFINDER_AUTHORIZATION_COMMIT:
-        raise LaunchError("Pathfinder PERF020 authorization head differs")
+    if pathfinder_head != contract.pathfinder_authorization_commit:
+        raise LaunchError("Pathfinder authorization head differs")
     worker_ids = _validate_packet(contract, packet_dir)
     _run(["docker", "image", "inspect", args.router_image], cwd=semantic_root)
     _run(
@@ -155,7 +187,12 @@ def _preflight(args: argparse.Namespace) -> SweepContext:
         **os.environ,
         "MODAL_ENVIRONMENT": IDENTITY.modal_environment,
     }
-    if _modal_containers(pathfinder_python, pathfinder_root, base_environment):
+    if _modal_containers(
+        pathfinder_python,
+        pathfinder_root,
+        base_environment,
+        contract.encoder_app_name,
+    ):
         raise LaunchError("protected encoder already has a running container")
     for cell in contract.cells:
         compose_project = f"{contract.compose_project_prefix}-{cell.label}"
@@ -205,6 +242,44 @@ def _preflight(args: argparse.Namespace) -> SweepContext:
         modal=modal,
         yaml=yaml,
     )
+
+
+def _write_deployment_evidence(
+    context: SweepContext, encoder: EncoderOwnership
+) -> dict[str, Any]:
+    """Record what was actually deployed, before any measured cell runs.
+
+    The engine sizing comes from vLLM's own startup logging rather than from
+    reading vLLM source. An encoder that captured nothing reports
+    `startup_log_captured: false`; that is deliberately not an error, because
+    the launcher must not turn a missing observation into a claimed one.
+    """
+
+    try:
+        startup = encoder.client.request("GET", "/v1/rayline/arc/session/startup-log")
+    except StateResetError as error:
+        raise LaunchError("encoder startup-log evidence is unavailable") from error
+    if startup.get("engine_build_id") != context.contract.encoder_build_id:
+        raise LaunchError("deployed encoder build id differs from the contract")
+    lines = startup.get("lines")
+    if not isinstance(lines, list) or not all(isinstance(line, str) for line in lines):
+        raise LaunchError("encoder startup-log evidence is malformed")
+    evidence = {
+        "schema_version": DEPLOYMENT_EVIDENCE_SCHEMA,
+        "run_id": context.contract.run_id,
+        "encoder_app_name": encoder.app_name,
+        "encoder_base_url": encoder.base_url,
+        "encoder_gpu": ENCODER_GPU,
+        "engine_build_id": context.contract.encoder_build_id,
+        "gdn_prefill_backend": context.contract.encoder_gdn_prefill_backend,
+        "plugin_version": IDENTITY.plugin_version,
+        "startup_log_captured": bool(startup.get("captured")) and bool(lines),
+        "startup_log": list(lines),
+    }
+    (context.output_dir / "deployment-evidence.json").write_text(
+        json.dumps(evidence, indent=2, sort_keys=True) + "\n"
+    )
+    return evidence
 
 
 def _probe_cell(
@@ -263,7 +338,13 @@ def _run_cell(
     work: Path,
     paid_started: float,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
-    prepared = _prepare_cell(context, cell, work)
+    prepared = _prepare_cell(
+        context,
+        cell,
+        work,
+        encoder_base_url=encoder.base_url,
+        encoder_build_id=context.contract.encoder_build_id,
+    )
     ports = {
         name: _free_port() for name in ("pathfinder", "envoy", "router", "metrics")
     }
@@ -350,7 +431,9 @@ def _write_manifest(
         "source": {
             "semantic_router_commit": context.semantic_head,
             "pathfinder_commit": context.pathfinder_head,
-            "engine_build_id": IDENTITY.engine_build_id,
+            "encoder_app_name": context.contract.encoder_app_name,
+            "engine_build_id": context.contract.encoder_build_id,
+            "gdn_prefill_backend": context.contract.encoder_gdn_prefill_backend,
             "plugin_version": IDENTITY.plugin_version,
             "packet_manifest_sha256": context.contract.packet_manifest_sha256,
             "router_image_id": _run(
@@ -381,10 +464,11 @@ def _write_manifest(
 def main() -> None:
     context = _preflight(_parse_args())
     paid_started = time.perf_counter()
-    encoder = _start_encoder(context)
+    encoder = _start_encoder(context, app_name=context.contract.encoder_app_name)
     raw_cells: dict[str, dict[str, dict[str, Any]]] = {}
     cell_cleanup: dict[str, Any] = {}
     try:
+        _write_deployment_evidence(context, encoder)
         with tempfile.TemporaryDirectory(
             prefix=context.contract.temporary_prefix
         ) as temp_name:
@@ -397,7 +481,10 @@ def main() -> None:
                     temp_root / cell.label,
                     paid_started,
                 )
-        comparison = compare_open_loop(raw_cells)
+        comparison = compare_open_loop(
+            raw_cells,
+            tuple(cell.offered_rate_rps for cell in context.contract.cells),
+        )
         (context.output_dir / "comparison.json").write_text(
             json.dumps(comparison, indent=2, sort_keys=True) + "\n"
         )

@@ -100,6 +100,10 @@ class EncoderOwnership:
             "encoder_containers_remaining": None,
         }
     )
+    # Which encoder app this ownership actually deployed, so cleanup addresses
+    # the deployed app rather than assuming the default one.
+    app_name: str = IDENTITY.encoder_app_name
+    base_url: str = IDENTITY.encoder_url
 
 
 @dataclass(frozen=True)
@@ -277,7 +281,31 @@ def _preflight(args: argparse.Namespace) -> SweepContext:
     )
 
 
-def _start_encoder(context: SweepContext) -> EncoderOwnership:
+def _deployed_encoder_url(context: SweepContext, app_name: str) -> str:
+    cls = context.modal.Cls.from_name(
+        app_name,
+        "SessionEncoder",
+        environment_name=IDENTITY.modal_environment,
+    )
+    url = cls().web.get_web_url()
+    if not url:
+        raise LaunchError("encoder replica web URL is unavailable")
+    return url.rstrip("/")
+
+
+def _start_encoder(
+    context: SweepContext,
+    *,
+    app_name: str = IDENTITY.encoder_app_name,
+    encoder_url: str | None = None,
+) -> EncoderOwnership:
+    """Deploy and warm one protected encoder app.
+
+    The defaults reproduce the historical single-app behaviour exactly. A run
+    that owns an experiment-profile app names it here; its URL is then resolved
+    from the deployment rather than read from the frozen default identity.
+    """
+
     manager = context.modal.Workspace.from_context().proxy_tokens
     proxy = manager.create()
     service_environment = context.base_environment.copy()
@@ -290,13 +318,20 @@ def _start_encoder(context: SweepContext) -> EncoderOwnership:
             "TOKENIZERS_PARALLELISM": "false",
         }
     )
-    client = ProtectedEncoderClient(
-        IDENTITY.encoder_url,
-        proxy.token_id,
-        proxy.token_secret,
-        timeout_seconds=30.0,
+    if app_name != IDENTITY.encoder_app_name:
+        service_environment["RAYLINE_ARC_SESSION_APP_NAME"] = app_name
+    ownership = EncoderOwnership(
+        manager,
+        proxy,
+        service_environment,
+        ProtectedEncoderClient(
+            IDENTITY.encoder_url,
+            proxy.token_id,
+            proxy.token_secret,
+            timeout_seconds=30.0,
+        ),
+        app_name=app_name,
     )
-    ownership = EncoderOwnership(manager, proxy, service_environment, client)
     try:
         _run(
             [
@@ -314,11 +349,25 @@ def _start_encoder(context: SweepContext) -> EncoderOwnership:
             timeout=15 * 60,
             capture=False,
         )
+        # The default app's URL stays the frozen literal so PERF020/PERF021
+        # replay byte-identically; any other app must be resolved post-deploy.
+        resolved = encoder_url or (
+            IDENTITY.encoder_url
+            if app_name == IDENTITY.encoder_app_name
+            else _deployed_encoder_url(context, app_name)
+        )
+        ownership.base_url = resolved
+        ownership.client = ProtectedEncoderClient(
+            resolved,
+            proxy.token_id,
+            proxy.token_secret,
+            timeout_seconds=30.0,
+        )
         deadline = time.monotonic() + 15 * 60
         last_error: StateResetError | None = None
         while time.monotonic() < deadline:
             try:
-                assert_encoder_empty(client.request)
+                assert_encoder_empty(ownership.client.request)
                 break
             except StateResetError as error:
                 last_error = error
@@ -337,7 +386,17 @@ def _prepare_cell(
     work: Path,
     *,
     encoder_base_url: str = IDENTITY.encoder_url,
+    encoder_build_id: str = IDENTITY.engine_build_id,
 ) -> PreparedCell:
+    """Stage one cell's Pathfinder config, bundle, and ARC config.
+
+    The encoder override must reach BOTH configs. The ARC arm reads it from
+    the semantic-router ARC config; the `pathfinder_transaction` arms read it
+    from the Pathfinder router config, which has no environment override. A
+    run whose encoder differs from the frozen default is a split brain if only
+    one of the two is told.
+    """
+
     work.mkdir(parents=True)
     config_path = work / "pathfinder.yaml"
     base = context.yaml.safe_load(
@@ -349,6 +408,8 @@ def _prepare_cell(
         decision_log=work / "pathfinder-decisions.jsonl",
         worker_ids=context.worker_ids,
         worker_model_prefix="mock/perf017",
+        encoder_base_url=encoder_base_url,
+        encoder_build_id=encoder_build_id,
     )
     config_path.write_text(context.yaml.safe_dump(config, sort_keys=False))
     bundle = work / "bundle"
@@ -389,7 +450,7 @@ def _prepare_cell(
             "--encoder-base-url",
             encoder_base_url,
             "--encoder-build-id",
-            IDENTITY.engine_build_id,
+            encoder_build_id,
             "--encoder-plugin-version",
             IDENTITY.plugin_version,
         ],
@@ -591,7 +652,13 @@ def _run_cell(
     work: Path,
     paid_started: float,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
-    prepared = _prepare_cell(context, cell, work)
+    prepared = _prepare_cell(
+        context,
+        cell,
+        work,
+        encoder_base_url=encoder.base_url,
+        encoder_build_id=context.contract.encoder_build_id,
+    )
     ports = {
         name: _free_port() for name in ("pathfinder", "envoy", "router", "metrics")
     }
@@ -680,11 +747,13 @@ def _cleanup_encoder(context: SweepContext, encoder: EncoderOwnership) -> None:
             context.pathfinder_root,
             encoder.service_environment,
             context.contract.run_id,
+            encoder.app_name,
         )
     remaining = _modal_containers(
         context.pathfinder_python,
         context.pathfinder_root,
         encoder.service_environment,
+        encoder.app_name,
     )
     encoder.cleanup["encoder_containers_remaining"] = len(remaining)
 
@@ -702,7 +771,10 @@ def _write_manifest(
         "source": {
             "semantic_router_commit": context.semantic_head,
             "pathfinder_commit": context.pathfinder_head,
-            "engine_build_id": IDENTITY.engine_build_id,
+            "engine_build_id": context.contract.encoder_build_id,
+            # The plugin version is a property of the pinned Rayline IO
+            # plugin, not of the encoder app, so no contract overrides it and
+            # the frozen literal is the truthful value on every run.
             "plugin_version": IDENTITY.plugin_version,
             "packet_manifest_sha256": context.contract.packet_manifest_sha256,
             "router_image_id": _run(

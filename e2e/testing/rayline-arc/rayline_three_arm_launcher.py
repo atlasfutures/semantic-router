@@ -96,6 +96,18 @@ class OwnedResources:
     )
 
 
+CHILD_OUTPUT_TAIL_CHARS = 4000
+
+
+def _tail(stream: str | None, label: str) -> str:
+    if not stream:
+        return f"{label}: <empty>"
+    text = stream.strip()
+    if len(text) > CHILD_OUTPUT_TAIL_CHARS:
+        text = "...\n" + text[-CHILD_OUTPUT_TAIL_CHARS:]
+    return f"{label}:\n{text}"
+
+
 def _run(
     command: list[str],
     *,
@@ -105,15 +117,28 @@ def _run(
     check: bool = True,
     capture: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        command,
-        cwd=cwd,
-        env=dict(environment) if environment is not None else None,
-        text=True,
-        capture_output=capture,
-        timeout=timeout,
-        check=check,
-    )
+    try:
+        return subprocess.run(
+            command,
+            cwd=cwd,
+            env=dict(environment) if environment is not None else None,
+            text=True,
+            capture_output=capture,
+            timeout=timeout,
+            check=check,
+        )
+    except subprocess.CalledProcessError as error:
+        # `capture_output=True` swallows the child's diagnosis, and
+        # CalledProcessError's own message names only the command and the
+        # exit code. A probe or bundle-build failure then surfaced as a
+        # traceback with no cause, which cost real diagnostic cycles. The
+        # environment is never echoed, so no secret reaches this message.
+        raise LaunchError(
+            f"{command[0]} exited {error.returncode}\n"
+            f"command: {' '.join(command)}\n"
+            f"{_tail(error.stderr, 'stderr')}\n"
+            f"{_tail(error.stdout, 'stdout')}"
+        ) from error
 
 
 def _git(root: Path, *args: str) -> str:
@@ -152,7 +177,23 @@ def derive_pathfinder_config(
     decision_log: Path,
     worker_ids: list[str],
     worker_model_prefix: str = "mock/perf015",
+    encoder_base_url: str = IDENTITY.encoder_url,
+    encoder_build_id: str = IDENTITY.engine_build_id,
 ) -> dict[str, Any]:
+    """Derive the local Pathfinder router config for one cell.
+
+    The encoder is a parameter because the Pathfinder router resolves its
+    encoder ONLY from ``router.mtrouter_vllm_base_url`` in this file -- it
+    reads no environment override -- so the `pathfinder_transaction` arms
+    reach the encoder through here, not through the ARC config. A run that
+    owns an experiment-profile app, or that fronts the encoder with a local
+    affinity proxy, must say so here or its local router would silently talk
+    to the default frozen app while ARC talked to the run's own.
+
+    The defaults are PERF020/PERF021's frozen identity, so a run that does not
+    override the encoder derives a byte-identical config.
+    """
+
     derived = copy.deepcopy(dict(base))
     router = derived.get("router")
     workers = derived.get("workers")
@@ -168,8 +209,8 @@ def derive_pathfinder_config(
             "mtrouter_device": "cpu",
             "mtrouter_incremental_encode": False,
             "mtrouter_encoder_backend": "vllm",
-            "mtrouter_vllm_base_url": IDENTITY.encoder_url,
-            "mtrouter_vllm_expected_build_id": IDENTITY.engine_build_id,
+            "mtrouter_vllm_base_url": encoder_base_url,
+            "mtrouter_vllm_expected_build_id": encoder_build_id,
             "mtrouter_vllm_expected_plugin_version": IDENTITY.plugin_version,
             "mtrouter_vllm_timeout_s": 180.0,
             "mtrouter_vllm_connect_timeout_s": 10.0,
@@ -200,7 +241,10 @@ def derive_pathfinder_config(
 
 
 def _modal_containers(
-    python: Path, root: Path, environment: Mapping[str, str]
+    python: Path,
+    root: Path,
+    environment: Mapping[str, str],
+    app_name: str = IDENTITY.encoder_app_name,
 ) -> list[str]:
     result = _run(
         [str(python), "-m", "modal", "container", "list", "--json"],
@@ -211,13 +255,21 @@ def _modal_containers(
     return sorted(
         str(row["container_id"])
         for row in json.loads(result.stdout)
-        if row.get("app_name") == IDENTITY.encoder_app_name
+        if row.get("app_name") == app_name
     )
 
 
 def _stop_modal_encoder(
-    python: Path, root: Path, environment: Mapping[str, str], run_id: str
+    python: Path,
+    root: Path,
+    environment: Mapping[str, str],
+    run_id: str,
+    app_name: str = IDENTITY.encoder_app_name,
 ) -> None:
+    # The app name is a parameter because a run may own an experiment-profile
+    # encoder app. Stopping and counting must address the app that was
+    # actually deployed, or a profiled run would leak a live H100 while
+    # reporting the default app clean.
     _run(
         [
             str(python),
@@ -225,7 +277,7 @@ def _stop_modal_encoder(
             "modal",
             "app",
             "stop",
-            IDENTITY.encoder_app_name,
+            app_name,
             "--yes",
         ],
         cwd=root,
@@ -236,7 +288,7 @@ def _stop_modal_encoder(
     deadline = time.monotonic() + MAX_CLEANUP_SECONDS
     zero_since: float | None = None
     while time.monotonic() < deadline:
-        containers = _modal_containers(python, root, environment)
+        containers = _modal_containers(python, root, environment, app_name)
         if containers:
             zero_since = None
             for container in containers:

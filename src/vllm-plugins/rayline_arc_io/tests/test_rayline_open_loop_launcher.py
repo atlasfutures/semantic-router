@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -80,3 +81,98 @@ def test_probe_cell_can_share_session_namespace_without_changing_receipt_arm(
     assert seen[seen.index("--run-id") + 1] == "run:r030:shared-affinity"
     assert (output_dir / "treatment.json").exists()
     assert receipt == {"status": "ok"}
+
+
+def _evidence_context(tmp_path: Path, contract: SimpleNamespace) -> SimpleNamespace:
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    return SimpleNamespace(contract=contract, output_dir=output_dir)
+
+
+def _flashinfer_contract() -> SimpleNamespace:
+    return SimpleNamespace(
+        run_id="run",
+        encoder_app_name="rayline-arc-session-encoder-flashinfer-perf031",
+        encoder_build_id=(
+            "vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca+gdn-flashinfer-eager"
+        ),
+        encoder_gdn_prefill_backend="flashinfer",
+    )
+
+
+def _encoder(contract: SimpleNamespace, response: dict[str, object]) -> SimpleNamespace:
+    return SimpleNamespace(
+        app_name=contract.encoder_app_name,
+        base_url="https://encoder.test",
+        client=SimpleNamespace(request=lambda _method, _path: response),
+    )
+
+
+def test_deployment_evidence_records_the_observed_engine_sizing(
+    tmp_path: Path,
+) -> None:
+    contract = _flashinfer_contract()
+    context = _evidence_context(tmp_path, contract)
+    lines = ["Setting attention block size to 544 tokens"]
+    encoder = _encoder(
+        contract,
+        {
+            "schema_version": "rayline.arc.session-startup-log-response.v1",
+            "engine_build_id": contract.encoder_build_id,
+            "captured": True,
+            "lines": lines,
+        },
+    )
+
+    evidence = launcher._write_deployment_evidence(context, encoder)
+
+    written = json.loads((context.output_dir / "deployment-evidence.json").read_text())
+    assert written == evidence
+    assert evidence["gdn_prefill_backend"] == "flashinfer"
+    assert evidence["encoder_app_name"] == contract.encoder_app_name
+    assert evidence["startup_log_captured"] is True
+    assert evidence["startup_log"] == lines
+
+
+def test_deployment_evidence_never_claims_an_uncaptured_startup_log(
+    tmp_path: Path,
+) -> None:
+    contract = _flashinfer_contract()
+    context = _evidence_context(tmp_path, contract)
+    encoder = _encoder(
+        contract,
+        {
+            "schema_version": "rayline.arc.session-startup-log-response.v1",
+            "engine_build_id": contract.encoder_build_id,
+            "captured": False,
+            "lines": [],
+        },
+    )
+
+    evidence = launcher._write_deployment_evidence(context, encoder)
+
+    # An empty capture is evidence that nothing was observed, not evidence that
+    # the engine reported nothing. It must not stop the run either.
+    assert evidence["startup_log_captured"] is False
+    assert evidence["startup_log"] == []
+
+
+def test_deployment_evidence_fails_closed_on_a_divergent_engine_identity(
+    tmp_path: Path,
+) -> None:
+    contract = _flashinfer_contract()
+    context = _evidence_context(tmp_path, contract)
+    encoder = _encoder(
+        contract,
+        {
+            "schema_version": "rayline.arc.session-startup-log-response.v1",
+            "engine_build_id": "vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca",
+            "captured": True,
+            "lines": [],
+        },
+    )
+
+    with pytest.raises(launcher.LaunchError, match="build id differs"):
+        launcher._write_deployment_evidence(context, encoder)
+
+    assert not (context.output_dir / "deployment-evidence.json").exists()

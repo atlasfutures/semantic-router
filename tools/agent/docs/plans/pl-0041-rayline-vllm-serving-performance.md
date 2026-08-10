@@ -3914,6 +3914,530 @@ different episodes may overlap only when the concrete policy opts in. The
 legacy eager route still has a one-thread `AsyncStateCoordinator` segment, but
 it is a separate follow-up rather than the current `/v1/route/prepare` blocker.
 
+## PERF031 Single-Encoder Saturation Ladder (preregistered 2026-08-10)
+
+FlashInfer's `9.8586x` engine-inference speedup (`11,117` versus `115,764`
+tokens per second, PERF030) is measured on 12-36 **strictly serial** pooling
+calls, and every FlashInfer packet since — PERF030, AGT017, AGT018, AGT019 —
+ships the same disclaimer: it does not establish concurrency saturation
+throughput. Every saturation measurement that does exist, PERF015 through
+PERF027, ran on `torch_reference`. The two have never met, so the deployed
+FlashInfer encoder's capacity is unknown: the capacity model predicts roughly
+`3.9x`, bounded by the backend-independent transport floor, but that is a
+property of the model and not a result.
+
+PERF031 is the smallest experiment that answers it. Two **sequential runs**
+replay the frozen PERF021 packet — same 42k-token corpus digest, same packet
+manifest, same topology, same `r015`/`r030`/`r045` rungs, nothing regenerated
+— and the **only** variable is the GDN prefill backend:
+
+```text
+PERF031A  rayline-saturation-ladder-perf031a-20260810
+          negative control, gdn_prefill_backend = torch_reference
+          app rayline-arc-session-encoder (the DEFAULT app)
+          engine vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca
+
+PERF031B  rayline-saturation-ladder-perf031b-20260810
+          treatment, gdn_prefill_backend = flashinfer
+          app rayline-arc-session-encoder-flashinfer-perf031
+          engine vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca
+                 +gdn-flashinfer-eager
+```
+
+These two run IDs are the packet's arms. They are not the repo's existing
+`rayline_remote`/`rayline_arc` arms, which continue to exist *within* each
+run and are unchanged; each run therefore still produces six receipts across
+three rungs.
+
+Arm 0 deliberately deploys the **default, unprofiled app**. Registering a
+`-reference-perf031` profile would stamp the engine build id
+`...+gdn-torch-reference-eager`, whereas PERF021's recorded
+`source.engine_build_id` is the bare `vllm@9f5ea81c...`. A profiled control
+would not be identity-matched to the run it exists to reproduce and would be
+worthless as a control.
+
+### The knee arm 0 must reproduce
+
+PERF021 places the first overloaded single-H100 cell at `r030`. Arm 0 passes
+its control gate only if it reproduces exactly that:
+
+| Quantity | Required |
+| --- | --- |
+| `first_overloaded_cell` | `r030` |
+| `realized_arrival_rate_rps`, not overloaded | `0.1862` |
+| `realized_arrival_rate_rps`, overloaded | `0.3724` |
+
+The realized arrival rate is derived from the frozen schedule span, so it is a
+property of the packet rather than of the run and is identical in both arms.
+
+### Risk: PERF021 was measured with the region pin that no longer exists
+
+**Recorded prominently because it is the first thing to suspect, not the
+last.** PERF021 ran with Modal `region="us-east"` pinned. Commit `902c4ab4`
+removed that pin — on this repo's own evidence, since PERF011/PERF014
+measured pinning as *slower* (`1.042x` the PERF009 prepare p50, `0.994x` its
+throughput, neither placement gate passed) at a `1.75x` narrow-region cost
+multiplier. **Unpinned placement has never been deployed or measured.**
+
+If arm 0 fails to reproduce the knee above, the unpin is the **first suspect**
+and the correct reading is a placement effect, not a regression in the packet,
+the launcher, or the encoder. In that case arm 1 is not admissible as a
+backend comparison at all, because the two arms would no longer differ in one
+variable. Diagnose the control before spending arm 1.
+
+### Gates
+
+The run is evidence-integrity gated, exactly as PERF020/PERF021 were. Reported
+throughput and latency remain diagnostic; PERF031 invents no production SLO.
+
+- Both arms complete `32/32` measured turns in every cell of every arm with
+  zero failures and zero provider calls.
+- Selected-worker trace digests match within each cell and across cells.
+- ARC telemetry records exactly 36 session actions per cell, and every cell
+  starts and ends at zero resident sessions and tokens.
+- Every arm's deployed engine build id equals its contract's, checked from the
+  encoder itself before the first measured cell; a mismatch aborts.
+- Arm 0 reproduces the knee in the table above. It is the control: if it does
+  not, no cross-arm backend claim is admissible.
+- Local, encoder, proxy-token and Modal-app cleanup all reach zero.
+
+### Deployment evidence
+
+Each arm writes `<run-id>/deployment-evidence.json` before its first measured
+cell, carrying the app name, resolved URL, engine build id, GDN backend, and
+vLLM's own engine-sizing lines captured from the engine build. This exists
+because the 544-token attention block size, the mamba page padding, the KV
+cache size and the maximum concurrency are all read out of vLLM source and
+have never been observed on a deployment — `.agent-harness/` holds 250 `.json`
+and 28 `.jsonl` files and **zero** `.log` or `.txt`.
+
+An encoder that captures nothing records `startup_log_captured: false` and
+does **not** fail the run. vLLM v1 may build its engine core in a child
+process whose log records never reach the service's logging tree; in that case
+the sizing figures simply stay derived, and the flag says so rather than
+letting an empty list read as an observation.
+
+### Budget
+
+Each arm's complete envelope is the unchanged PERF021 shape: 2,400 seconds
+paid wall, 2,460 seconds for one orphaned request, and 300 seconds scale-down
+= 5,160 resource-seconds on one H100 with 8 cores and 64 GiB. At the pinned
+`modal-on-demand-2026-07-31-h100-cpu-memory` snapshot rate of
+`$0.00134388`/s that is **`$6.9344208` per arm**, `$13.8688416` for both.
+
+The arms are sequential runs, so arm 1 charges arm 0's complete envelope first
+whatever arm 0 actually consumed:
+
+| | Arm 0 (PERF031A) | Arm 1 (PERF031B) |
+| --- | ---: | ---: |
+| Previous conservative | `$151.749704666383` | `$158.684125466383` |
+| Packet envelope | `$6.9344208` | `$6.9344208` |
+| Cumulative if full | `$158.684125466383` | `$165.618546266383` |
+| Reserve after full | `$15.628698553617` | `$8.694277753617` |
+| Packet ceiling | `$7.00` | `$7.00` |
+| Required reserve | `$3.00` | `$3.00` |
+
+The pre-existing position was `$151.749704666383` conservative of
+`$154.31282402` authorized against a `$3.00` required reserve — `$2.5631`
+headroom, which cannot fund one arm let alone two. The **minimum** fresh
+authority for both arms was therefore `$14.305722246383`. The user approved
+**`$20` on 2026-08-10**, raising cumulative authority from `$154.31282402` to
+**`$174.31282402`** and leaving `$8.694277753617` after both complete
+envelopes. Provider spend is zero in both arms; there is no whole-run retry.
+
+### TD048 ruling (decided 2026-08-10)
+
+`td-048:26-27` reads *"Cross-request KV ownership and throughput are out of
+scope until this gap is closed."* Read as a gate it would block this packet;
+read as scoping it is inert. **The user ruled on 2026-08-10 that it is a scope
+note, not a gate, and that PERF031 proceeds.** The rationale of record: the
+sentence means TD048 does not itself cover throughput, and that reading is
+what established practice already assumes — PERF015 through PERF027 all
+measured throughput while TD048 was open.
+
+The ruling is deliberately narrow. It permits this single-encoder packet. It
+does not close TD048, and it does not unpark TD050's pooled-encoder work.
+
+TD050 never blocked PERF031: it parks the *multi-instance* qualification, and
+its stated reason is "an explicit decision to qualify single-encoder
+end-to-end serving first". PERF031 is single-encoder, so TD050 prescribes it
+rather than blocking it, and no unpark is required.
+
+### Contract version
+
+`rayline-vllm-perf.v1`'s own rule requires a new contract version before a
+measured run with a changed identity, and arm 1 changes the GDN prefill
+backend identity. `rayline-vllm-perf.v2` is that version: identity only, with
+no threshold moved. See `docs/benchmarks/rayline-vllm-performance-contract.md`.
+
+### What is not yet bound
+
+The source is prepared and fail-closed. `LAUNCHABLE_CONTRACT` is `None` in
+`rayline_saturation_ladder_contract.py`, and both arms pin their Pathfinder
+authorization commit to the literal `PENDING`, which no commit can equal. The
+launcher refuses on either.
+
+- [x] PERF031a: register the confined FlashInfer app profile, capture vLLM's
+  engine-sizing lines on a read-only route, and teach the open-loop launcher
+  to resolve its encoder, cleanup and authorization pin per run contract,
+  with PERF020/PERF021 behaviour unchanged.
+- [x] PERF031b: preregister both arms over the frozen PERF021 packet, publish
+  `rayline-vllm-perf.v2`, and record the TD048 ruling and the region-unpin
+  risk — all without opening launch authority.
+- [x] PERF031c: bind the Pathfinder preregistration, self-attestation and
+  distinct authorization commits, and open exactly one arm at a time.
+- [x] PERF031d: run arm 0 once. If it does not reproduce the `r030` /
+  `0.1862`-to-`0.3724` knee, diagnose placement before arm 1 rather than
+  spending it.
+- [x] PERF031e: run arm 1 once, report the backend saturation comparison as
+  diagnostic evidence, and close both authority pins with the result.
+
+### PERF031 Result (2026-08-10) — both arms closed
+
+Both arms executed once, sequentially, and both passed every integrity gate.
+Each reports `comparison_status: passed`, `32/32` measured turns in all three
+cells of both sub-arms, zero failures, zero provider calls, and no 1,000-case
+qualification release. One selected-worker trace digest,
+`d9e93cf0f4c636a3838e41938d2ef3ff6e1d66a60860922f84771b3fa5158ac9`, is shared
+by every cell of both arms, so `cross_cell_trace_match` holds across the
+backend change as well as within it. ARC telemetry records exactly 36 session
+actions per cell in all six cells — `9` created, `27` appended, zero rebuilt,
+zero reused — and every cell ended at zero resident sessions and tokens with
+its eight measured sessions closed. Cleanup reached exact zero on both arms:
+`encoder_containers_remaining: 0`, `proxy_token_deleted: true`, Compose removed
+and Pathfinder stopped in every cell.
+
+Launcher-window resource upper estimates were `$1.9439033119294202` for arm 0
+and `$1.3832867562970312` for arm 1. Conservative accounting charges both
+complete `$6.9344208` envelopes, leaving the cumulative at `$165.618546266383`
+and `$8.694277753617` under the `$174.31282402` authority. Provider spend was
+`$0.00` in both arms.
+
+#### Arm 0 reproduced the knee, so the region unpin is cleared
+
+PERF031A ran the default app on the bare `vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca`
+build with `torch_reference`, and reproduced PERF021's knee exactly:
+`first_overloaded_cell` is `r030` on both the `rayline_arc` and the
+`rayline_remote` sub-arm, `0.18620038690915786` realized arrivals per second is
+not overloaded at `r015`, and `0.3724007738183157` is overloaded at `r030`.
+Backlog at final arrival was `5`/`8`/`8` and drain after final arrival was
+`42.17367092303999`s, `59.96750825349275`s and `65.19987908632206`s on the ARC
+sub-arm.
+
+Absolute throughput also lands where PERF021 left it. ARC completion throughput
+was `0.15335881737320642`, `0.22344627468642875` and `0.26512969582559437`
+decisions per second against PERF021's `0.14855814`, `0.20782364` and
+`0.24704390` — `1.0323x`, `1.0752x` and `1.0732x`. The largest of those, `7.5%`
+at `r030`, is inside the spread this repo has already measured for the same
+single-encoder cell across independent runs: `0.20782364` (PERF021),
+`0.21221971` (PERF023 `arc_single`), `0.21330897` (PERF024 `arc_single`) and now
+`0.22344627`, a total band width of `7.5%`. The two scale-out points traverse
+an affinity proxy and so are not byte-identical topology, but they bracket the
+same quantity and no point in that band changes which cell overloads.
+
+This is the answer to the risk recorded above. Commit `902c4ab4` removed
+PERF021's `region="us-east"` pin and unpinned placement had never been deployed
+or measured; arm 0 is the first measurement of it, and the unpin did not move
+the knee. The two PERF031 arms are therefore identity-comparable to PERF021 and
+to each other, and arm 1 is admissible as a one-variable backend comparison.
+
+#### Arm 1 never saturated: the ladder ran out of rungs
+
+PERF031B ran `rayline-arc-session-encoder-flashinfer-perf031` on
+`vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca+gdn-flashinfer-eager` with
+`flashinfer`. `first_overloaded_cell` is `null` on **both** sub-arms: no cell
+was `overloaded`, every cell kept `final_arrival_backlog_bounded` true, and
+completion tracked the offered rate at every rung. ARC completion throughput was
+`0.19016101811414332`, `0.37817180485303253` and `0.5518306368768308` against
+realized arrival rates of `0.18620`, `0.37240` and `0.55860` — `1.0213x`,
+`1.0155x` and `0.9879x` of offered. Backlog at final arrival stayed `1`, `2`,
+`3` where the control reached `5`, `8`, `8`, and drain after final arrival was
+`1.791141007031058`s, `1.3739742114817375`s and `2.4930392113531994`s against
+the control's `42.174`s, `59.968`s and `65.200`s — `0.0425x`, `0.0229x` and
+`0.0382x`. ARC p95 service latency fell to `0.1200x`, `0.0757x` and `0.0681x` of
+control.
+
+Ratios per rung, ARC completion throughput, treatment over control: `1.2400x`
+at `r015`, `1.6925x` at `r030`, `2.0814x` at `r045`. The `rayline_remote`
+sub-arm agrees at `1.3191x`, `1.8535x` and `2.2809x`.
+
+**Those ratios are a lower bound, not a value.** The control is saturated from
+`r030` onward, so its completion throughput is its capacity, whereas the
+treatment is still keeping up at every rung and its capacity is somewhere above
+the top of the ladder. The measured ratio therefore grows purely because the
+control falls further behind — it says nothing about where FlashInfer stops.
+The admissible claim from this packet is exactly:
+
+> The FlashInfer knee lies above `0.5586011607274736` realized decisions per
+> second on one H100. Its location is unknown.
+
+`2.0814x` is not the FlashInfer speedup and must not be quoted as one.
+
+#### The frozen ladder is now too small
+
+The `r015`/`r030`/`r045` rungs were frozen for PERF021, whose subject saturates
+at `0.3724`. Reusing them verbatim is what made arm 0 a valid control, and it is
+also why arm 1 is unresolved: the top rung offers `0.45` rps, realized
+`0.5586`, and FlashInfer absorbed it with a backlog of three. Locating the
+FlashInfer knee needs a ladder built for FlashInfer, which is a different packet
+under a different ID — this one cannot be extended after the fact without
+destroying the control that justifies it. As a sizing input, matching the
+capacity model's FlashInfer prediction below would need a rung at roughly `0.92`
+offered rps, about double the current top.
+
+#### The capacity model: one branch matched, the other untested
+
+The handoff capacity model
+(`docs/agent/handoff_rayline_serving_cost_20260810.md` §2.2) predicts a
+transport-bound `1.055 / (0.637 + 2.979) = 0.2917` dec/s for `torch_reference`
+and `1.055 / (0.637 + 0.286) = 1.143` dec/s for FlashInfer, the `3.9x` this
+section preregistered.
+
+The `torch_reference` branch is a reasonable match: measured control completion
+throughput was `0.2234`-`0.2651` dec/s at the two saturated rungs, and the
+measured knee brackets the prediction with `0.1862` not overloaded and `0.3724`
+overloaded.
+
+The FlashInfer branch is **neither confirmed nor contradicted**. The ladder
+topped out at `0.5586` realized, less than half the predicted `1.143`, so the
+run never applied enough load to test the prediction at all. Do not read
+`2.0814x` as evidence for or against `3.9x`.
+
+#### Startup-log capture returned empty on both arms
+
+Both arms wrote `deployment-evidence.json` before their first measured cell with
+the app name, resolved URL, engine build id and GDN backend, and both recorded
+`startup_log: []` with `startup_log_captured: false`. This is the bounded
+outcome this section preregistered, not a run failure: vLLM v1 most likely
+builds its engine core in a child process whose log records never reach the
+service's logging tree. The consequence is unchanged from the preregistration —
+the 544-token attention block size, the mamba page padding, the KV cache size
+and the maximum concurrency stay **derived from vLLM source and never
+observed**, and the flag says so rather than letting an empty list read as an
+observation. `.agent-harness/` still holds zero `.log` or `.txt` files.
+
+#### Defects this packet exposed, all fixed before the valid runs
+
+PERF031B's first attempt crashed at `r015` and is preserved unaltered at
+`.agent-harness/rayline-parity/rayline-saturation-ladder-perf031b-20260810.attempt1-probefail`,
+whose `r015/state-reset.json` shows `measured_sessions_missing: 8` — the run's
+own encoder never saw the episodes. The cause was `derive_pathfinder_config`
+pinning `IDENTITY.encoder_url` and `IDENTITY.engine_build_id` as literals: a
+cell starts two routers, and only the ARC one takes `--encoder-base-url`, so
+whenever an arm overrode the app the `pathfinder_transaction` sub-arm dialled the
+frozen default encoder instead. PERF031A could not expose it because its
+per-arm URL equals the default. `a9ca206f` makes the encoder a parameter that
+defaults to the frozen identity, so unoverridden runs derive a byte-identical
+config; the same defect silently affected the scaleout, failover, replica-stop
+and dynamic-stop families, which were already handing `_prepare_cell` a proxy
+URL the Pathfinder config then discarded.
+
+Two supporting fixes landed in the same sequence. `8b32063b` makes the
+concurrency sweep manifest report its contract's engine build id rather than the
+frozen literal, so a profile-owning run cannot attribute its numbers to the
+default build — the manifest is a run's only durable statement of what was
+measured. `cea8b55f` makes the launcher's one `subprocess` helper raise a
+`LaunchError` carrying the command, exit code and a bounded tail of the child's
+stderr; every launcher shells out through it with `capture_output=True`, and a
+bare `CalledProcessError` had already cost two diagnostic cycles that day. Arm 0
+also has a preserved failed attempt at
+`...-20260810.attempt2-bundlefail`, which stopped at bundle build before any
+measured cell.
+
+Both PERF031 launch authority pins are closed:
+`LAUNCHABLE_CONTRACT` is back to `None` in
+`rayline_saturation_ladder_contract.py`. `PATHFINDER_AUTHORIZATION_COMMIT`
+stays at the real `fb78b2fbbd579d10cd14a78ce71af7c0e9216306` as the record of
+what ran, exactly as the closed PERF020/PERF021 contract keeps `b53434ab`.
+Neither arm can retry. TD048 and TD050 are unchanged by this result; the TD048
+ruling above remains narrow to this single-encoder packet.
+
+## PERF032 FlashInfer Saturation Knee (preregistered 2026-08-10)
+
+PERF031B left one number and it is a bound, not a value: **the FlashInfer knee
+lies above `0.5586011607274736` realized decisions per second on one H100, and
+its location is unknown.** The frozen `r015`/`r030`/`r045` ladder was built for
+a subject that saturates at `0.3724`; FlashInfer absorbed its top rung with a
+backlog of three and drained in `2.5` seconds. PERF032 is the packet that finds
+the knee.
+
+Its `2.0814x` predecessor ratio cannot be quoted as a speedup and PERF032 does
+not try to improve it. A ratio against a saturated control grows purely because
+the control falls further behind. Only a rung where FlashInfer *itself*
+overloads produces a capacity number.
+
+### One arm, because the control is already measured
+
+```text
+PERF032   rayline-saturation-knee-perf032-20260810
+          single arm, gdn_prefill_backend = flashinfer
+          app rayline-arc-session-encoder-flashinfer-perf031
+          engine vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca
+                 +gdn-flashinfer-eager
+```
+
+There is deliberately **no `torch_reference` arm**. PERF031A reproduced
+PERF021's `r030` knee exactly, so a control re-run above `r045` would measure
+nothing that is not already recorded while doubling the spend. PERF032's
+comparison is against PERF031's closed numbers.
+
+The app is PERF031B's, reused verbatim. It is already registered in
+`EXPERIMENT_APP_PROFILES`, so PERF032 needs **no new profile and no allowlist
+change**, and the engine identity stays byte-identical to the unsaturated run
+it extends. The `rayline_remote`/`rayline_arc` sub-arms are unchanged and still
+run within the arm, so PERF032 produces eight receipts across four rungs.
+
+### The rungs, and why each one exists
+
+| Rung | Offered rps | Expected realized rps | Why it is in the packet |
+| --- | ---: | ---: | --- |
+| `r045` | `0.45` | `0.5586011607274736` | Negative control: PERF031B's top rung |
+| `r060` | `0.60` | `0.7448015476366314` | First rung past the known-unsaturated point |
+| `r090` | `0.90` | `1.1172023214549471` | Below the predicted knee; must hold |
+| `r120` | `1.20` | `1.4896030952732628` | Above the predicted knee; must overload |
+
+The realized rates are exact, not estimates. `poisson_schedule` draws from
+`rng.expovariate(offered_rate_rps)` on the frozen seed, so the whole schedule
+scales as `1/rate` and the realized rate scales linearly with the offered rate
+at PERF031's measured `1.241335912727719x`. As in every prior open-loop packet
+this is a property of the packet, not of the run.
+
+### `r045` is the anchor, and it is what invalidates the packet
+
+`r045` is a deliberate overlap with PERF031B, not padding. Its `workload.json`
+and `identity.json` digests are **byte-identical** to PERF020's `r045` cell —
+the same document PERF031B measured — because a rung's workload derives only
+from the rate, the seed and the frozen constants.
+
+PERF031B measured that cell as `0.5518306368768308` completion throughput
+against `0.5586011607274736` offered, `first_overloaded_cell: null`, backlog
+`3`, drain `2.4930392113531994`s.
+
+> **If PERF032's `r045` does not reproduce an unsaturated cell, the packet is
+> wrong and `r060`, `r090` and `r120` are uninterpretable.** Diagnose the
+> anchor before reading any higher rung, exactly as PERF031A's control gate
+> governed PERF031B.
+
+### The falsifiable prediction
+
+The handoff capacity model
+(`docs/agent/handoff_rayline_serving_cost_20260810.md` §2.2) puts the
+FlashInfer transport-bound capacity at `1.055 / (0.637 + 0.286) = 1.143` dec/s.
+PERF031B topped out at less than half of that and so never tested it. PERF032
+preregisters the prediction so the run can **prove it wrong**:
+
+- **Predicted:** `r090` completes unsaturated; `r120` overloads;
+  `first_overloaded_cell` is `r120`.
+- **Falsified low** if `r060` or `r090` overloads — capacity is below `1.117`
+  and the model overstates FlashInfer.
+- **Falsified high** if `r120` does not overload — capacity exceeds `1.490`,
+  the model understates it, and PERF032 has again run out of rungs. That
+  outcome is a bound, reported as one, and needs a successor packet rather
+  than a post-hoc extension.
+
+Any of the three is a result. The packet exists to distinguish them, not to
+confirm the first.
+
+### The packet
+
+Regenerated from the same PERF017 source packet that produced PERF020, so the
+corpus, the topology, the seed and the source identity are unchanged and only
+the rung set is new. `rayline_open_loop_packet.py` now takes `--offered-rates`;
+invoked with no flags it still emits the frozen `0.15,0.30,0.45` ladder
+byte-for-byte, which is what keeps PERF020/PERF021 reproducible from the same
+script.
+
+| Digest | Value |
+| --- | --- |
+| `packet_manifest_sha256` | `eeb1c69f57ae964b238c7763ff87abf2dc727ba94b757c45e24aa2e013b08fed` |
+| `corpus_sha256` | `72bbb22c6a8673d78cb4eadbce46ffd88f882f91f1880b4163e117f4679b1105` (unchanged) |
+| `worker_topology_sha256` | `ad0970c68d2e6b035c187d193f3da8ca49f48a68267bd323e0d66c9d44bcfddd` (unchanged) |
+
+| Rung | `workload_sha256` | `identity_sha256` |
+| --- | --- | --- |
+| `r045` | `4f396a19f2f35dd00379a262b0cad5e3871c14210fa80c30f3e3b01cb2cafc2e` | `131d1d70a05463871ab1f40572f0f53e26cdb0c9ce6d44407570729bb48d4073` |
+| `r060` | `d701ad4add973abf69b8a930c52984c050019edbc75ee96deff871c2316d6d94` | `28fc634bb35affa7bd47e7da828ecf383729be036cefd5271d10c07fe3b8e1ec` |
+| `r090` | `f37e0a1d09b1be7dfb5d2e1e40164a12c636d1ba40c2f3e3439758d030e631af` | `f54bc060795a0f800ed6362eacf99bfd7814bf97dd699dcdcb90b7809b80180b` |
+| `r120` | `8990bbe3b27b5d848b22d116d26c2f1d50d325ac9e5e9dbf2280b9d5590dcb92` | `29a2cbc24842397fb47a14a66ca25d4c031453d8daa5d1982559e235ca1c3bd0` |
+
+The `r045` pair is PERF020's `r045` pair verbatim. That is the anchor property,
+not a coincidence.
+
+### Gates
+
+Evidence-integrity gated exactly as PERF020/PERF021/PERF031 were. Reported
+throughput and latency stay diagnostic; PERF032 invents no production SLO.
+
+- `32/32` measured turns in every cell of every sub-arm, zero failures, zero
+  provider calls.
+- Selected-worker trace digests match within each cell and across cells.
+- ARC telemetry records exactly 36 session actions per cell, and every cell
+  starts and ends at zero resident sessions and tokens.
+- The deployed engine build id equals the contract's, checked from the encoder
+  itself before the first measured cell; a mismatch aborts.
+- `r045` reproduces an unsaturated cell. It is the control: if it does not, no
+  knee claim is admissible from any rung.
+- Local, encoder, proxy-token and Modal-app cleanup all reach zero.
+
+**`startup_log_captured: false` is expected to repeat and is not a failure
+condition.** Both PERF031 arms recorded it, and the reading is unchanged: vLLM
+v1 most likely builds its engine core in a child process whose log records
+never reach the service's logging tree, so the attention block size, mamba page
+padding, KV cache size and maximum concurrency stay derived from vLLM source
+and never observed. The flag says so. A run that captures nothing here still
+passes.
+
+### Budget
+
+The envelope is the unchanged PERF021 shape: 2,400 seconds paid wall, 2,460
+seconds for one orphaned request and 300 seconds scale-down = 5,160
+resource-seconds on one H100 with 8 cores and 64 GiB, `$6.9344208` at the
+pinned `modal-on-demand-2026-07-31-h100-cpu-memory` rate. Four rungs do not
+grow it: PERF032's *slowest* rung is PERF031's *fastest*, so every arrival
+schedule is shorter than the ones that fit inside 2,400 seconds twice already.
+
+| | PERF032 |
+| --- | ---: |
+| Previous conservative | `$165.618546266383` |
+| Packet envelope | `$6.9344208` |
+| Cumulative if full | `$172.552967066383` |
+| Reserve after full | `$1.759856953617` |
+| Packet ceiling | `$7.00` |
+| Required reserve | `$3.00` |
+
+`$1.759856953617` is **below** the `$3.00` floor, so `budget_receipt` raises
+`BudgetError` and PERF032 cannot run. This is the prepared state, not a defect.
+
+### What is not yet bound
+
+The source is prepared and fail-closed on **two** independent gates, and
+preparation may move neither.
+
+1. **Budget.** `AUTHORIZED_CUMULATIVE_USD` in
+   `rayline_saturation_knee_contract.py` is still PERF031's `$174.31282402`,
+   which fails the reserve check above. The **minimum** fresh authority is
+   **`$1.2401430463829968`**, taking cumulative authority to
+   `$175.552967066383` and landing the reserve on exactly `$3.00`. No figure
+   is assumed here; a human must grant one.
+2. **Pathfinder pin.** `PATHFINDER_AUTHORIZATION_COMMIT` is the literal
+   `PENDING`, which no commit can equal and which `_assert_pushed` compares
+   HEAD against.
+
+`LAUNCHABLE_CONTRACT` is `None`, so `resolve_launch_contract` refuses the arm
+regardless of either gate. Provider spend is zero; there is no whole-run retry.
+
+- [x] PERF032a: make the open-loop packet's rung set a parameter, defaulting to
+  the frozen ladder so PERF020/PERF021 stay reproducible byte-for-byte, and
+  generate the four-rung PERF032 packet.
+- [x] PERF032b: preregister the single FlashInfer arm, its anchor rung, its
+  falsifiable capacity prediction and its real packet digests — without
+  opening launch authority or assuming a budget grant.
+- [ ] PERF032c: on a human budget grant, set `AUTHORIZED_CUMULATIVE_USD`, bind
+  the Pathfinder authorization commit to a real pushed head, and open the arm.
+- [ ] PERF032d: run the arm once. If `r045` does not reproduce an unsaturated
+  cell, diagnose the anchor before reading any higher rung. Report the knee, or
+  report the new bound if `r120` also holds.
+
 ## Operating Rules
 
 - Use the repo's normal local image flow; do not invent another Semantic Router

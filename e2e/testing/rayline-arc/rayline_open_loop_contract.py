@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from rayline_three_arm_budget import BudgetContract
+from rayline_three_arm_contract import IDENTITY
 
 PERF020_RUN_ID = "rayline-open-loop-sweep-perf020-20260802"
 PERF021_RUN_ID = "rayline-open-loop-sweep-perf021-20260802"
@@ -50,6 +51,16 @@ class OpenLoopRunContract:
     compose_project_prefix: str
     temporary_prefix: str
     budget: BudgetContract
+    # The encoder a run owns. The defaults are PERF020/PERF021's exact frozen
+    # identity, so an existing contract keeps its recorded engine build id and
+    # its pinned URL; only a run that deliberately deploys an experiment-profile
+    # app carries a different backend.
+    encoder_app_name: str = IDENTITY.encoder_app_name
+    encoder_build_id: str = IDENTITY.engine_build_id
+    encoder_gdn_prefill_backend: str = "torch_reference"
+    # The Pathfinder head this run's authority is pinned to. A successor packet
+    # gets its own pin; without this it would silently inherit PERF020's.
+    pathfinder_authorization_commit: str = PATHFINDER_AUTHORIZATION_COMMIT
 
 
 PERF020 = OpenLoopRunContract(

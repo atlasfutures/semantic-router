@@ -130,6 +130,7 @@ docs:
 - tools/agent/docs/architecture/rayline-vllm-parity-design.md
 - tools/agent/docs/architecture/rayline-vllm-serving-boundary.md
 - tools/agent/docs/benchmarks/rayline-vllm-performance-contract.md
+- tools/agent/docs/handoff_rayline_serving_cost_20260810.md
 - tools/agent/docs/change-surfaces.md
 - tools/agent/docs/environments.md
 - tools/agent/docs/feature-complete-checklist.md
@@ -273,6 +274,9 @@ doc_governance:
   - path: tools/agent/docs/benchmarks/rayline-vllm-performance-contract.md
     steward: router-core
     freshness: update when the Rayline vLLM performance qualification contract or its thresholds change
+  - path: tools/agent/docs/handoff_rayline_serving_cost_20260810.md
+    steward: router-core
+    freshness: update when the Rayline ARC encoder serving-cost model or its measured figures change
   - path: tools/agent/docs/change-surfaces.md
     steward: agent-contract
     freshness: update when surfaces or their mappings change

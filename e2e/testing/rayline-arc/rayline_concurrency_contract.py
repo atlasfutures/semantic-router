@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from rayline_three_arm_budget import BudgetContract
+from rayline_three_arm_contract import IDENTITY
 
 PERF017_RUN_ID = "rayline-concurrency-sweep-perf017-20260802"
 PERF018_RUN_ID = "rayline-concurrency-sweep-perf018-20260802"
@@ -37,6 +38,13 @@ class ConcurrencyRunContract:
     compose_project_prefix: str
     temporary_prefix: str
     budget: BudgetContract
+    # The engine build the run's encoder actually serves. The default is
+    # PERF017/PERF018/PERF019's exact frozen identity, so those closed runs
+    # keep their recorded build id; only a run that deliberately deploys an
+    # experiment-profile engine carries a different one. The manifest reports
+    # this rather than the frozen literal, so a profiled run cannot write a
+    # receipt claiming the default engine.
+    encoder_build_id: str = IDENTITY.engine_build_id
 
 
 SWEEP_CELLS = (

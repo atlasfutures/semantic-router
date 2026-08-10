@@ -75,13 +75,15 @@ def _receipt(label: str, rate: float, arm: str) -> dict[str, object]:
     }
 
 
-def _cells() -> dict[str, dict[str, dict[str, object]]]:
+def _cells(
+    rates: tuple[float, ...] = packet.OFFERED_RATES,
+) -> dict[str, dict[str, dict[str, object]]]:
     return {
         packet.rate_label(rate): {
             arm: _receipt(packet.rate_label(rate), rate, arm)
             for arm in comparator.OPEN_LOOP_ARMS
         }
-        for rate in packet.OFFERED_RATES
+        for rate in rates
     }
 
 
@@ -118,3 +120,50 @@ def test_open_loop_comparison_rejects_cross_arm_identity_mismatch() -> None:
 
     with pytest.raises(comparator.OpenLoopComparisonError, match="identities differ"):
         comparator.compare_open_loop(broken)
+
+
+# PERF032 ran a legitimately parameterised four-rung ladder and the comparator
+# rejected it, because it validated against the packet module's frozen default
+# instead of the rungs the run contracted for. The rung set is a property of the
+# run; the default is only a convenience for the two closed runs that predate it.
+PERF032_RATES = (0.45, 0.60, 0.90, 1.20)
+
+
+def test_open_loop_comparison_accepts_a_contracted_four_rung_ladder() -> None:
+    cells = _cells(PERF032_RATES)
+
+    result = comparator.compare_open_loop(cells, PERF032_RATES)
+
+    assert result["status"] == "passed"
+    assert tuple(result["arc_vs_remote"]) == ("r045", "r060", "r090", "r120")
+    assert tuple(result["load_diagnostics"]["rayline_arc"]) == (
+        "r045",
+        "r060",
+        "r090",
+        "r120",
+    )
+
+
+def test_open_loop_comparison_defaults_to_the_frozen_three_rung_ladder() -> None:
+    result = comparator.compare_open_loop(_cells())
+
+    assert result["status"] == "passed"
+    assert tuple(result["arc_vs_remote"]) == ("r015", "r030", "r045")
+    assert comparator.compare_open_loop(_cells(), packet.OFFERED_RATES) == result
+
+
+def test_open_loop_comparison_rejects_cells_that_are_not_the_contracted_rungs() -> None:
+    with pytest.raises(
+        comparator.OpenLoopComparisonError, match="differ from the contracted rates"
+    ):
+        comparator.compare_open_loop(_cells(PERF032_RATES))
+
+    with pytest.raises(
+        comparator.OpenLoopComparisonError, match="differ from the contracted rates"
+    ):
+        comparator.compare_open_loop(_cells(), PERF032_RATES)
+
+
+def test_open_loop_comparison_rejects_a_malformed_rung_set() -> None:
+    with pytest.raises(comparator.OpenLoopComparisonError, match="must ascend"):
+        comparator.compare_open_loop(_cells(), (0.45, 0.30))

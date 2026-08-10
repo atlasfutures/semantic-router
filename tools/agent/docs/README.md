@@ -71,6 +71,7 @@ make agent-ci-gate CHANGED_FILES="..."
 - [architecture/rayline-vllm-parity-design.md](architecture/rayline-vllm-parity-design.md)
 - [architecture/rayline-vllm-serving-boundary.md](architecture/rayline-vllm-serving-boundary.md)
 - [benchmarks/rayline-vllm-performance-contract.md](benchmarks/rayline-vllm-performance-contract.md)
+- [handoff_rayline_serving_cost_20260810.md](handoff_rayline_serving_cost_20260810.md)
 - [openai-api-contracts.md](openai-api-contracts.md)
 - [glossary.md](glossary.md)
 - [amd-local.md](amd-local.md)

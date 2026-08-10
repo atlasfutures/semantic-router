@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from rayline_arc_io.constants import MAX_SERIALIZED_TOKENS
 from rayline_arc_io.integrity import compute_source_digest, installed_source_digest
+from rayline_arc_io.startup_log import capture_startup_log
 
 DEFAULT_APP_NAME = "rayline-arc-session-encoder"
 SCALEOUT_APP_NAMES = (
@@ -34,11 +35,20 @@ AGT018_APP_PROFILES = {
 AGT019_APP_PROFILES = {
     "rayline-arc-session-encoder-flashinfer-agt019": "flashinfer",
 }
+# PERF031 arm 1 only. Arm 0 is the negative control and deliberately has no
+# profile: it must deploy DEFAULT_APP_NAME so its ENGINE_BUILD_ID stays the bare
+# `vllm@9f5ea81c...`, byte-identical to PERF021's recorded engine identity. A
+# `-reference-perf031` profile would stamp `+gdn-torch-reference-eager` and stop
+# the control from being identity-matched to the run it must reproduce.
+PERF031_APP_PROFILES = {
+    "rayline-arc-session-encoder-flashinfer-perf031": "flashinfer",
+}
 EXPERIMENT_APP_PROFILES = {
     **PERF030_APP_PROFILES,
     **AGT017_APP_PROFILES,
     **AGT018_APP_PROFILES,
     **AGT019_APP_PROFILES,
+    **PERF031_APP_PROFILES,
 }
 ALLOWED_APP_NAMES = (DEFAULT_APP_NAME, *SCALEOUT_APP_NAMES, *EXPERIMENT_APP_PROFILES)
 APP_NAME = os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", DEFAULT_APP_NAME)
@@ -80,7 +90,13 @@ def _runtime_profile() -> tuple[str, str]:
 
 
 GPU_TYPE = "H100"
-MODAL_REGION = "us-east"
+# Deliberately unpinned. The former region="us-east" pin cost a 1.75x Modal
+# narrow-region multiplier while PERF011/PERF014 measured it as worse, not
+# better: pinning produced 1.042x the PERF009 prepare p50 and 0.994x its
+# throughput, and neither preregistered placement gate passed. The measured
+# ~0.637s service/transport floor is backend- and region-independent, and
+# earlier placement work ruled out simple region distance as its cause.
+# Re-pin only with a measurement that clears a placement gate.
 MAX_SESSIONS = 8
 MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS
 IDLE_TTL_SECONDS = 5 * 60
@@ -183,7 +199,6 @@ vllm_cache = modal.Volume.from_name("rayline-vllm-cache", create_if_missing=True
 @app.cls(
     image=image,
     gpu=GPU_TYPE,
-    region=MODAL_REGION,
     cpu=8.0,
     memory=65_536,
     timeout=31 * 60,
@@ -254,7 +269,13 @@ class SessionEncoder:
             enable_logging_iteration_details=True,
             enable_log_requests=False,
         )
-        self._engine = AsyncLLM.from_engine_args(engine_args)
+        # Retains vLLM's own engine-sizing lines so the attention-block, mamba
+        # page, KV-cache and concurrency figures become deployment-observed
+        # instead of source-derived. An empty capture stays empty; the read-only
+        # route reports it as `captured: false` rather than as an observation.
+        with capture_startup_log() as startup_capture:
+            self._engine = AsyncLLM.from_engine_args(engine_args)
+        self._startup_log = tuple(startup_capture.lines)
         self._coordinator = SessionCoordinator(
             VLLMRetainedPoolingBackendFactory(self._engine),
             max_sessions=MAX_SESSIONS,
@@ -264,7 +285,10 @@ class SessionEncoder:
         self._web_app = create_session_app(
             self._coordinator,
             TokenBlockSerializer(tokenizer),
-            SessionAPIMetadata(engine_build_id=runtime_build_id),
+            SessionAPIMetadata(
+                engine_build_id=runtime_build_id,
+                startup_log=self._startup_log,
+            ),
             VLLMSessionEngineMetricsProvider(
                 self._engine.get_scheduler_load,
                 self._coordinator.append_metrics_snapshot,
