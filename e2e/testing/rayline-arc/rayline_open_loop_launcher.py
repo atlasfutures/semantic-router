@@ -45,6 +45,9 @@ from rayline_parity_http_probe import PROTOCOL_BY_ARM
 from rayline_saturation_knee_contract import (
     resolve_launch_contract as resolve_saturation_knee_contract,
 )
+from rayline_saturation_knee_v2_contract import (
+    resolve_launch_contract as resolve_saturation_knee_v2_contract,
+)
 from rayline_saturation_ladder_contract import (
     resolve_launch_contract as resolve_saturation_ladder_contract,
 )
@@ -149,6 +152,7 @@ def _resolve_contract(run_id: str) -> OpenLoopRunContract:
         resolve_launch_contract,
         resolve_saturation_ladder_contract,
         resolve_saturation_knee_contract,
+        resolve_saturation_knee_v2_contract,
     ):
         with contextlib.suppress(ValueError):
             return resolve(run_id)
