@@ -116,7 +116,12 @@ SATURATION_LADDER_ARMS = (PERF031A, PERF031B)
 # Binding an arm is a separate, human-gated step. Preparation never opens
 # launch authority: only a reviewed authorization checkpoint may set this, and
 # it opens exactly one run id at a time.
-LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF031B
+#
+# PERF031A and PERF031B are closed after their one authorized executions.
+# `PATHFINDER_AUTHORIZATION_COMMIT` above stays at the real head deliberately:
+# it is the record of what the closed runs were measured against, not an open
+# door, and the launcher is shut by this being `None`.
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
 
 
 def resolve_launch_contract(run_id: str) -> OpenLoopRunContract:

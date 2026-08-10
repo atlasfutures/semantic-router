@@ -82,24 +82,35 @@ def test_the_sequential_two_arm_envelope_fits_the_authorized_ceiling() -> None:
     assert treatment["provider_spend_usd"] == 0.0
 
 
+def _is_real_head(pin: str) -> bool:
+    return len(pin) == 40 and set(pin) <= set("0123456789abcdef")
+
+
 def test_launch_authority_opens_at_most_one_arm_and_fails_closed() -> None:
     """Binding is deliberate and authorized; the invariant is that it stays narrow.
 
-    Preparation leaves the ladder unbound against a `PENDING` pin that no
-    commit can equal. An authorization checkpoint may open exactly one run id
-    against a real pushed Pathfinder head, and every other arm must still
-    refuse. Both states are legitimate, so this asserts the invariant rather
-    than either snapshot -- otherwise binding would require editing the very
-    test that guards it.
+    The ladder has three legitimate lifetime states and only
+    `LAUNCHABLE_CONTRACT` separates them: prepared (unbound against the
+    `PENDING` pin no commit can equal), open (exactly one run id bound against
+    a real pushed Pathfinder head), and closed after execution (unbound again,
+    but keeping the real pin as the record of what was measured, exactly as the
+    closed PERF020/PERF021 open-loop contract does). This asserts the invariant
+    that spans all three rather than any one snapshot -- otherwise binding or
+    closing would require editing the very test that guards it.
     """
 
     bound = ladder.LAUNCHABLE_CONTRACT
     pin = ladder.PATHFINDER_AUTHORIZATION_COMMIT
 
+    # The pin is a property of the packet, never of the bound arm.
+    for arm in ladder.SATURATION_LADDER_ARMS:
+        assert arm.pathfinder_authorization_commit == pin
+
     if bound is None:
-        assert pin == "PENDING"
+        # Prepared or closed. The pin distinguishes them for the reader, but
+        # neither can launch: `resolve_launch_contract` refuses every arm.
+        assert pin == "PENDING" or _is_real_head(pin)
         for arm in ladder.SATURATION_LADDER_ARMS:
-            assert arm.pathfinder_authorization_commit == "PENDING"
             with pytest.raises(ValueError, match="no Rayline saturation ladder"):
                 ladder.resolve_launch_contract(arm.run_id)
         return
@@ -107,13 +118,10 @@ def test_launch_authority_opens_at_most_one_arm_and_fails_closed() -> None:
     assert bound in ladder.SATURATION_LADDER_ARMS
     # A bound ladder may never carry the placeholder: `_assert_pushed` forces
     # the Pathfinder HEAD to equal this, so it must be a real 40-char head.
-    assert pin != "PENDING"
-    assert len(pin) == 40
-    assert set(pin) <= set("0123456789abcdef")
+    assert _is_real_head(pin)
     assert ladder.resolve_launch_contract(bound.run_id) is bound
 
     for arm in ladder.SATURATION_LADDER_ARMS:
-        assert arm.pathfinder_authorization_commit == pin
         if arm is not bound:
             with pytest.raises(ValueError, match="only permits preregistered run id"):
                 ladder.resolve_launch_contract(arm.run_id)
