@@ -120,6 +120,16 @@ def _validate_packet(contract: OpenLoopRunContract, packet_dir: Path) -> list[st
             )
             if workload["offered_rate_rps"] != cell.offered_rate_rps:
                 raise LaunchError(f"open-loop {cell.label} rate differs")
+            # The comparator decides saturation against the contract's lane
+            # count but never sees the packet, so the equality it depends on
+            # is asserted here, where the packet is in hand and nothing has
+            # been paid for yet.
+            if (
+                contract.saturation is not None
+                and workload["max_episode_lanes"]
+                != contract.saturation.episode_lanes
+            ):
+                raise LaunchError(f"open-loop {cell.label} episode lanes differ")
     topology = json.loads((packet_dir / "topology.json").read_text())
     return list(map(str, topology["canonical_workers"]))
 
@@ -495,6 +505,7 @@ def main() -> None:
             raw_cells,
             tuple(cell.offered_rate_rps for cell in context.contract.cells),
             context.contract.measured_cases,
+            context.contract.saturation,
         )
         (context.output_dir / "comparison.json").write_text(
             json.dumps(comparison, indent=2, sort_keys=True) + "\n"

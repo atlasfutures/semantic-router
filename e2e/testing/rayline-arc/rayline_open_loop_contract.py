@@ -32,6 +32,35 @@ DEFAULT_ENCODER_GPU = "H100"
 
 
 @dataclass(frozen=True)
+class SaturationCriterion:
+    """How one run decides that a cell saturated.
+
+    This rig has exactly one capacity to exhaust: concurrent in-flight
+    requests. `poisson_schedule` groups the corpus by episode and the probe
+    runs one thread per episode, so at most `episode_lanes` requests are ever
+    outstanding, and the encoder is sized to the same number
+    (`MAX_SESSIONS == max_num_seqs == 8`). A cell has therefore saturated when
+    peak occupancy reaches that ceiling: offering more load past that point
+    cannot raise concurrency, so it cannot raise throughput.
+
+    `episode_lanes` is carried here rather than read from a module constant
+    because the comparator sees only receipts. It never wrote the lane count
+    and so may not assume it; the run that generated the packet states it, and
+    the launcher checks the packet's own `max_episode_lanes` against it before
+    any paid second elapses.
+    """
+
+    episode_lanes: int
+    occupancy_ratio: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.episode_lanes < 1:
+            raise ValueError("episode lanes must be positive")
+        if not 0.0 < self.occupancy_ratio <= 1.0:
+            raise ValueError("occupancy ratio must fall in (0, 1]")
+
+
+@dataclass(frozen=True)
 class OpenLoopCell:
     label: str
     offered_rate_rps: float
@@ -71,6 +100,10 @@ class OpenLoopRunContract:
     # mid-run failure after paid GPU time.
     measured_cases: int = MEASURED_CASES
     warmup_cases: int = WARMUP_CASES
+    # How this run decides saturation. `None` is the frozen PERF020/PERF021
+    # behaviour: the legacy `overloaded` predicate alone, and a report that is
+    # byte-identical to the ones those closed runs recorded.
+    saturation: SaturationCriterion | None = None
     # The Pathfinder head this run's authority is pinned to. A successor packet
     # gets its own pin; without this it would silently inherit PERF020's.
     pathfinder_authorization_commit: str = PATHFINDER_AUTHORIZATION_COMMIT

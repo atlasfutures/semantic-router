@@ -12,6 +12,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from rayline_open_loop_contract import SaturationCriterion
 from rayline_open_loop_packet import (
     MEASUREMENT_SCOPE,
     OFFERED_RATES,
@@ -23,6 +24,7 @@ from rayline_open_loop_probe import INPUT_SCHEMA, ProbeError, validate_receipt
 from rayline_parity_comparator import IDENTITY_FIELDS
 
 REPORT_SCHEMA = "rayline.vllm.open-loop-comparison.v2"
+SATURATION_REPORT_SCHEMA = "rayline.vllm.open-loop-comparison.v3"
 OPEN_LOOP_ARMS = ("rayline_remote", "rayline_arc")
 DEFAULT_MEASURED_CASES = 32
 FINAL_BACKLOG_KNEE = 8
@@ -104,6 +106,49 @@ def _diagnostic(receipt: Mapping[str, Any]) -> dict[str, Any]:
             > results["service_latency_seconds"]["p95"]
         ),
         "overloaded": not maintained or not bounded,
+    }
+
+
+def _saturation(
+    receipt: Mapping[str, Any], criterion: SaturationCriterion
+) -> dict[str, Any]:
+    """Decide whether one cell ran out of the only capacity this rig has.
+
+    The deciding term is peak lane occupancy. Everything else here is recorded
+    and deliberately does not vote.
+
+    `completion_ratio` in particular must not decide. It is
+    `completed / duration` over `(scheduled - 1) / span`, and `duration` is
+    `span + drain` where `drain` is never smaller than the service time of the
+    last request to finish. So the ratio falls as the offered rate rises even
+    when nothing queues at all: shrinking the arrival span raises the weight of
+    a fixed service tail. `unqueued_completion_ratio` is what that same cell
+    would report with zero queueing, given its own measured tail, and it is
+    recorded next to the observed ratio so the two can be read together
+    instead of the observed one being mistaken for a deficit.
+    """
+
+    results = receipt["results"]
+    peak = results["max_client_backlog"] / criterion.episode_lanes
+    tail = float(results["service_latency_seconds"]["p95"])
+    span = float(results["scheduled_span_seconds"])
+    completed = int(results["completed"])
+    finite_sample_gain = completed / (completed - 1) if completed > 1 else 1.0
+    return {
+        "peak_lane_occupancy": peak,
+        "terminal_lane_occupancy": (
+            results["backlog_at_final_arrival"] / criterion.episode_lanes
+        ),
+        "episode_lanes": criterion.episode_lanes,
+        "completion_ratio": _ratio(
+            results["completion_throughput_rps"],
+            results["realized_arrival_rate_rps"],
+        ),
+        "unqueued_completion_ratio": finite_sample_gain * _ratio(span, span + tail),
+        "drain_service_tail_multiple": _ratio(
+            results["drain_seconds_after_final_arrival"], tail
+        ),
+        "saturated": peak >= criterion.occupancy_ratio,
     }
 
 
@@ -223,6 +268,7 @@ def compare_open_loop(
     raw_cells: Mapping[str, Mapping[str, Mapping[str, Any]]],
     offered_rates: Sequence[float] | None = None,
     case_count: int = DEFAULT_MEASURED_CASES,
+    saturation: SaturationCriterion | None = None,
 ) -> dict[str, Any]:
     """Compare one open-loop sweep's receipts against the rungs it contracted for.
 
@@ -264,7 +310,7 @@ def compare_open_loop(
         all(all(cell.values()) for cell in integrity.values())
         and cross_cell_trace_match
     )
-    return {
+    report: dict[str, Any] = {
         "schema_version": REPORT_SCHEMA,
         "status": "passed" if passed else "failed",
         "passed": passed,
@@ -287,6 +333,34 @@ def compare_open_loop(
         "load_diagnostics": diagnostics,
         "first_overloaded_cell": first_overloaded,
     }
+    if saturation is None:
+        return report
+    saturation_cells = {
+        arm: {
+            label: _saturation(cells[label][arm], saturation)
+            for label in expected_labels
+        }
+        for arm in OPEN_LOOP_ARMS
+    }
+    report["schema_version"] = SATURATION_REPORT_SCHEMA
+    report["saturation"] = saturation_cells
+    report["saturation_criterion"] = {
+        "episode_lanes": saturation.episode_lanes,
+        "occupancy_ratio": saturation.occupancy_ratio,
+    }
+    report["first_saturated_cell"] = {
+        arm: next(
+            (
+                label
+                for label in expected_labels
+                if saturation_cells[arm][label]["saturated"]
+            ),
+            None,
+        )
+        for arm in OPEN_LOOP_ARMS
+    }
+    return report
+
 
 def _parse_rate_list(raw: str) -> tuple[float, ...]:
     try:
@@ -324,6 +398,17 @@ def _parse_args() -> tuple[argparse.Namespace, tuple[float, ...]]:
                 f"--{label}-{arm.replace('_', '-')}", required=True, type=Path
             )
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--episode-lanes",
+        type=int,
+        default=None,
+        help=(
+            "The packet's concurrent episode lane count. Supplying it enables "
+            "the saturation criterion and the v3 report; omitting it keeps the "
+            "frozen v2 report the closed runs recorded."
+        ),
+    )
+    parser.add_argument("--occupancy-ratio", type=float, default=1.0)
     parser.add_argument("--case-count", type=int, default=DEFAULT_MEASURED_CASES)
     return parser.parse_args(), rungs
 
@@ -341,7 +426,15 @@ def main() -> None:
         for rate in rungs
     }
     try:
-        report = compare_open_loop(raw_cells, rungs, args.case_count)
+        criterion = (
+            None
+            if args.episode_lanes is None
+            else SaturationCriterion(
+                episode_lanes=args.episode_lanes,
+                occupancy_ratio=args.occupancy_ratio,
+            )
+        )
+        report = compare_open_loop(raw_cells, rungs, args.case_count, criterion)
     except (
         OSError,
         json.JSONDecodeError,
