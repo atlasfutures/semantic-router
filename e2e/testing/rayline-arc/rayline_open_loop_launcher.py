@@ -481,7 +481,10 @@ def main() -> None:
                     temp_root / cell.label,
                     paid_started,
                 )
-        comparison = compare_open_loop(raw_cells)
+        comparison = compare_open_loop(
+            raw_cells,
+            tuple(cell.offered_rate_rps for cell in context.contract.cells),
+        )
         (context.output_dir / "comparison.json").write_text(
             json.dumps(comparison, indent=2, sort_keys=True) + "\n"
         )
