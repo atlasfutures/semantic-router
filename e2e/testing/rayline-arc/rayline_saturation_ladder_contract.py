@@ -37,9 +37,19 @@ from rayline_three_arm_contract import IDENTITY
 PERF031A_RUN_ID = "rayline-saturation-ladder-perf031a-20260810"
 PERF031B_RUN_ID = "rayline-saturation-ladder-perf031b-20260810"
 
-# Both arms stay fail-closed until a human binds a real Pathfinder
-# authorization head. No commit equals this literal, so `_preflight` refuses.
-PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
+# Pathfinder head both arms run against, pinned at the authorization
+# checkpoint. This is `origin/codex/rayline-vsr-mvp`, which `_assert_pushed`
+# forces HEAD to equal, so it cannot be pinned to PERF021's older head.
+#
+# The measured path is unchanged since PERF021's b53434ab despite 529
+# intervening commits: policy_selection, selection_transactions,
+# selection_transaction_{http,contract} and the whole parity tree all diff
+# empty. The four files that did change are provider-response conversion
+# (PR #602), which an open-loop sweep never exercises at provider_calls=0,
+# plus an additive opt-in RAYLINE_ROUTER_DECISION_ONLY data-plane guard in
+# app.py that leaves /v1/route alone. Arm 0 therefore remains a reproduction
+# of PERF021's knee rather than merely a contemporaneous control.
+PATHFINDER_AUTHORIZATION_COMMIT = "fb78b2fbbd579d10cd14a78ce71af7c0e9216306"
 
 FLASHINFER_APP_NAME = "rayline-arc-session-encoder-flashinfer-perf031"
 FLASHINFER_BUILD_ID = f"{IDENTITY.engine_build_id}+gdn-flashinfer-eager"
@@ -106,7 +116,7 @@ SATURATION_LADDER_ARMS = (PERF031A, PERF031B)
 # Binding an arm is a separate, human-gated step. Preparation never opens
 # launch authority: only a reviewed authorization checkpoint may set this, and
 # it opens exactly one run id at a time.
-LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF031A
 
 
 def resolve_launch_contract(run_id: str) -> OpenLoopRunContract:

@@ -82,14 +82,41 @@ def test_the_sequential_two_arm_envelope_fits_the_authorized_ceiling() -> None:
     assert treatment["provider_spend_usd"] == 0.0
 
 
-def test_launch_authority_is_unbound_and_fails_closed() -> None:
-    assert ladder.LAUNCHABLE_CONTRACT is None
-    assert ladder.PATHFINDER_AUTHORIZATION_COMMIT == "PENDING"
+def test_launch_authority_opens_at_most_one_arm_and_fails_closed() -> None:
+    """Binding is deliberate and authorized; the invariant is that it stays narrow.
+
+    Preparation leaves the ladder unbound against a `PENDING` pin that no
+    commit can equal. An authorization checkpoint may open exactly one run id
+    against a real pushed Pathfinder head, and every other arm must still
+    refuse. Both states are legitimate, so this asserts the invariant rather
+    than either snapshot -- otherwise binding would require editing the very
+    test that guards it.
+    """
+
+    bound = ladder.LAUNCHABLE_CONTRACT
+    pin = ladder.PATHFINDER_AUTHORIZATION_COMMIT
+
+    if bound is None:
+        assert pin == "PENDING"
+        for arm in ladder.SATURATION_LADDER_ARMS:
+            assert arm.pathfinder_authorization_commit == "PENDING"
+            with pytest.raises(ValueError, match="no Rayline saturation ladder"):
+                ladder.resolve_launch_contract(arm.run_id)
+        return
+
+    assert bound in ladder.SATURATION_LADDER_ARMS
+    # A bound ladder may never carry the placeholder: `_assert_pushed` forces
+    # the Pathfinder HEAD to equal this, so it must be a real 40-char head.
+    assert pin != "PENDING"
+    assert len(pin) == 40
+    assert set(pin) <= set("0123456789abcdef")
+    assert ladder.resolve_launch_contract(bound.run_id) is bound
 
     for arm in ladder.SATURATION_LADDER_ARMS:
-        assert arm.pathfinder_authorization_commit == "PENDING"
-        with pytest.raises(ValueError, match="no Rayline saturation ladder"):
-            ladder.resolve_launch_contract(arm.run_id)
+        assert arm.pathfinder_authorization_commit == pin
+        if arm is not bound:
+            with pytest.raises(ValueError, match="only permits preregistered run id"):
+                ladder.resolve_launch_contract(arm.run_id)
 
 
 def test_each_arm_owns_a_distinct_run_and_resource_namespace() -> None:
