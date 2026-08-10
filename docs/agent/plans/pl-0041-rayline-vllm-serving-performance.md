@@ -4252,6 +4252,192 @@ what ran, exactly as the closed PERF020/PERF021 contract keeps `b53434ab`.
 Neither arm can retry. TD048 and TD050 are unchanged by this result; the TD048
 ruling above remains narrow to this single-encoder packet.
 
+## PERF032 FlashInfer Saturation Knee (preregistered 2026-08-10)
+
+PERF031B left one number and it is a bound, not a value: **the FlashInfer knee
+lies above `0.5586011607274736` realized decisions per second on one H100, and
+its location is unknown.** The frozen `r015`/`r030`/`r045` ladder was built for
+a subject that saturates at `0.3724`; FlashInfer absorbed its top rung with a
+backlog of three and drained in `2.5` seconds. PERF032 is the packet that finds
+the knee.
+
+Its `2.0814x` predecessor ratio cannot be quoted as a speedup and PERF032 does
+not try to improve it. A ratio against a saturated control grows purely because
+the control falls further behind. Only a rung where FlashInfer *itself*
+overloads produces a capacity number.
+
+### One arm, because the control is already measured
+
+```text
+PERF032   rayline-saturation-knee-perf032-20260810
+          single arm, gdn_prefill_backend = flashinfer
+          app rayline-arc-session-encoder-flashinfer-perf031
+          engine vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca
+                 +gdn-flashinfer-eager
+```
+
+There is deliberately **no `torch_reference` arm**. PERF031A reproduced
+PERF021's `r030` knee exactly, so a control re-run above `r045` would measure
+nothing that is not already recorded while doubling the spend. PERF032's
+comparison is against PERF031's closed numbers.
+
+The app is PERF031B's, reused verbatim. It is already registered in
+`EXPERIMENT_APP_PROFILES`, so PERF032 needs **no new profile and no allowlist
+change**, and the engine identity stays byte-identical to the unsaturated run
+it extends. The `rayline_remote`/`rayline_arc` sub-arms are unchanged and still
+run within the arm, so PERF032 produces eight receipts across four rungs.
+
+### The rungs, and why each one exists
+
+| Rung | Offered rps | Expected realized rps | Why it is in the packet |
+| --- | ---: | ---: | --- |
+| `r045` | `0.45` | `0.5586011607274736` | Negative control: PERF031B's top rung |
+| `r060` | `0.60` | `0.7448015476366314` | First rung past the known-unsaturated point |
+| `r090` | `0.90` | `1.1172023214549471` | Below the predicted knee; must hold |
+| `r120` | `1.20` | `1.4896030952732628` | Above the predicted knee; must overload |
+
+The realized rates are exact, not estimates. `poisson_schedule` draws from
+`rng.expovariate(offered_rate_rps)` on the frozen seed, so the whole schedule
+scales as `1/rate` and the realized rate scales linearly with the offered rate
+at PERF031's measured `1.241335912727719x`. As in every prior open-loop packet
+this is a property of the packet, not of the run.
+
+### `r045` is the anchor, and it is what invalidates the packet
+
+`r045` is a deliberate overlap with PERF031B, not padding. Its `workload.json`
+and `identity.json` digests are **byte-identical** to PERF020's `r045` cell —
+the same document PERF031B measured — because a rung's workload derives only
+from the rate, the seed and the frozen constants.
+
+PERF031B measured that cell as `0.5518306368768308` completion throughput
+against `0.5586011607274736` offered, `first_overloaded_cell: null`, backlog
+`3`, drain `2.4930392113531994`s.
+
+> **If PERF032's `r045` does not reproduce an unsaturated cell, the packet is
+> wrong and `r060`, `r090` and `r120` are uninterpretable.** Diagnose the
+> anchor before reading any higher rung, exactly as PERF031A's control gate
+> governed PERF031B.
+
+### The falsifiable prediction
+
+The handoff capacity model
+(`docs/agent/handoff_rayline_serving_cost_20260810.md` §2.2) puts the
+FlashInfer transport-bound capacity at `1.055 / (0.637 + 0.286) = 1.143` dec/s.
+PERF031B topped out at less than half of that and so never tested it. PERF032
+preregisters the prediction so the run can **prove it wrong**:
+
+- **Predicted:** `r090` completes unsaturated; `r120` overloads;
+  `first_overloaded_cell` is `r120`.
+- **Falsified low** if `r060` or `r090` overloads — capacity is below `1.117`
+  and the model overstates FlashInfer.
+- **Falsified high** if `r120` does not overload — capacity exceeds `1.490`,
+  the model understates it, and PERF032 has again run out of rungs. That
+  outcome is a bound, reported as one, and needs a successor packet rather
+  than a post-hoc extension.
+
+Any of the three is a result. The packet exists to distinguish them, not to
+confirm the first.
+
+### The packet
+
+Regenerated from the same PERF017 source packet that produced PERF020, so the
+corpus, the topology, the seed and the source identity are unchanged and only
+the rung set is new. `rayline_open_loop_packet.py` now takes `--offered-rates`;
+invoked with no flags it still emits the frozen `0.15,0.30,0.45` ladder
+byte-for-byte, which is what keeps PERF020/PERF021 reproducible from the same
+script.
+
+| Digest | Value |
+| --- | --- |
+| `packet_manifest_sha256` | `eeb1c69f57ae964b238c7763ff87abf2dc727ba94b757c45e24aa2e013b08fed` |
+| `corpus_sha256` | `72bbb22c6a8673d78cb4eadbce46ffd88f882f91f1880b4163e117f4679b1105` (unchanged) |
+| `worker_topology_sha256` | `ad0970c68d2e6b035c187d193f3da8ca49f48a68267bd323e0d66c9d44bcfddd` (unchanged) |
+
+| Rung | `workload_sha256` | `identity_sha256` |
+| --- | --- | --- |
+| `r045` | `4f396a19f2f35dd00379a262b0cad5e3871c14210fa80c30f3e3b01cb2cafc2e` | `131d1d70a05463871ab1f40572f0f53e26cdb0c9ce6d44407570729bb48d4073` |
+| `r060` | `d701ad4add973abf69b8a930c52984c050019edbc75ee96deff871c2316d6d94` | `28fc634bb35affa7bd47e7da828ecf383729be036cefd5271d10c07fe3b8e1ec` |
+| `r090` | `f37e0a1d09b1be7dfb5d2e1e40164a12c636d1ba40c2f3e3439758d030e631af` | `f54bc060795a0f800ed6362eacf99bfd7814bf97dd699dcdcb90b7809b80180b` |
+| `r120` | `8990bbe3b27b5d848b22d116d26c2f1d50d325ac9e5e9dbf2280b9d5590dcb92` | `29a2cbc24842397fb47a14a66ca25d4c031453d8daa5d1982559e235ca1c3bd0` |
+
+The `r045` pair is PERF020's `r045` pair verbatim. That is the anchor property,
+not a coincidence.
+
+### Gates
+
+Evidence-integrity gated exactly as PERF020/PERF021/PERF031 were. Reported
+throughput and latency stay diagnostic; PERF032 invents no production SLO.
+
+- `32/32` measured turns in every cell of every sub-arm, zero failures, zero
+  provider calls.
+- Selected-worker trace digests match within each cell and across cells.
+- ARC telemetry records exactly 36 session actions per cell, and every cell
+  starts and ends at zero resident sessions and tokens.
+- The deployed engine build id equals the contract's, checked from the encoder
+  itself before the first measured cell; a mismatch aborts.
+- `r045` reproduces an unsaturated cell. It is the control: if it does not, no
+  knee claim is admissible from any rung.
+- Local, encoder, proxy-token and Modal-app cleanup all reach zero.
+
+**`startup_log_captured: false` is expected to repeat and is not a failure
+condition.** Both PERF031 arms recorded it, and the reading is unchanged: vLLM
+v1 most likely builds its engine core in a child process whose log records
+never reach the service's logging tree, so the attention block size, mamba page
+padding, KV cache size and maximum concurrency stay derived from vLLM source
+and never observed. The flag says so. A run that captures nothing here still
+passes.
+
+### Budget
+
+The envelope is the unchanged PERF021 shape: 2,400 seconds paid wall, 2,460
+seconds for one orphaned request and 300 seconds scale-down = 5,160
+resource-seconds on one H100 with 8 cores and 64 GiB, `$6.9344208` at the
+pinned `modal-on-demand-2026-07-31-h100-cpu-memory` rate. Four rungs do not
+grow it: PERF032's *slowest* rung is PERF031's *fastest*, so every arrival
+schedule is shorter than the ones that fit inside 2,400 seconds twice already.
+
+| | PERF032 |
+| --- | ---: |
+| Previous conservative | `$165.618546266383` |
+| Packet envelope | `$6.9344208` |
+| Cumulative if full | `$172.552967066383` |
+| Reserve after full | `$1.759856953617` |
+| Packet ceiling | `$7.00` |
+| Required reserve | `$3.00` |
+
+`$1.759856953617` is **below** the `$3.00` floor, so `budget_receipt` raises
+`BudgetError` and PERF032 cannot run. This is the prepared state, not a defect.
+
+### What is not yet bound
+
+The source is prepared and fail-closed on **two** independent gates, and
+preparation may move neither.
+
+1. **Budget.** `AUTHORIZED_CUMULATIVE_USD` in
+   `rayline_saturation_knee_contract.py` is still PERF031's `$174.31282402`,
+   which fails the reserve check above. The **minimum** fresh authority is
+   **`$1.2401430463829968`**, taking cumulative authority to
+   `$175.552967066383` and landing the reserve on exactly `$3.00`. No figure
+   is assumed here; a human must grant one.
+2. **Pathfinder pin.** `PATHFINDER_AUTHORIZATION_COMMIT` is the literal
+   `PENDING`, which no commit can equal and which `_assert_pushed` compares
+   HEAD against.
+
+`LAUNCHABLE_CONTRACT` is `None`, so `resolve_launch_contract` refuses the arm
+regardless of either gate. Provider spend is zero; there is no whole-run retry.
+
+- [x] PERF032a: make the open-loop packet's rung set a parameter, defaulting to
+  the frozen ladder so PERF020/PERF021 stay reproducible byte-for-byte, and
+  generate the four-rung PERF032 packet.
+- [x] PERF032b: preregister the single FlashInfer arm, its anchor rung, its
+  falsifiable capacity prediction and its real packet digests — without
+  opening launch authority or assuming a budget grant.
+- [ ] PERF032c: on a human budget grant, set `AUTHORIZED_CUMULATIVE_USD`, bind
+  the Pathfinder authorization commit to a real pushed head, and open the arm.
+- [ ] PERF032d: run the arm once. If `r045` does not reproduce an unsaturated
+  cell, diagnose the anchor before reading any higher rung. Report the knee, or
+  report the new bound if `r120` also holds.
+
 ## Operating Rules
 
 - Use the repo's normal local image flow; do not invent another Semantic Router
