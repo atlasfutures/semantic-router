@@ -34,11 +34,20 @@ AGT018_APP_PROFILES = {
 AGT019_APP_PROFILES = {
     "rayline-arc-session-encoder-flashinfer-agt019": "flashinfer",
 }
+# PERF031 arm 1 only. Arm 0 is the negative control and deliberately has no
+# profile: it must deploy DEFAULT_APP_NAME so its ENGINE_BUILD_ID stays the bare
+# `vllm@9f5ea81c...`, byte-identical to PERF021's recorded engine identity. A
+# `-reference-perf031` profile would stamp `+gdn-torch-reference-eager` and stop
+# the control from being identity-matched to the run it must reproduce.
+PERF031_APP_PROFILES = {
+    "rayline-arc-session-encoder-flashinfer-perf031": "flashinfer",
+}
 EXPERIMENT_APP_PROFILES = {
     **PERF030_APP_PROFILES,
     **AGT017_APP_PROFILES,
     **AGT018_APP_PROFILES,
     **AGT019_APP_PROFILES,
+    **PERF031_APP_PROFILES,
 }
 ALLOWED_APP_NAMES = (DEFAULT_APP_NAME, *SCALEOUT_APP_NAMES, *EXPERIMENT_APP_PROFILES)
 APP_NAME = os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", DEFAULT_APP_NAME)

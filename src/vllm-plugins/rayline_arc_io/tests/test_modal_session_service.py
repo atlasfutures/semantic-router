@@ -139,3 +139,49 @@ def test_session_service_confines_agt018_flashinfer_to_its_exact_app_name() -> N
         in service_source
     )
     assert "**AGT018_APP_PROFILES" in service_source
+
+
+def test_session_service_confines_agt019_flashinfer_to_its_exact_app_name() -> None:
+    service_source = source()
+
+    assert (
+        '"rayline-arc-session-encoder-flashinfer-agt019": "flashinfer"'
+        in service_source
+    )
+    assert "**AGT019_APP_PROFILES" in service_source
+
+
+def test_session_service_confines_perf031_flashinfer_to_its_exact_app_name() -> None:
+    service_source = source()
+
+    assert (
+        '"rayline-arc-session-encoder-flashinfer-perf031": "flashinfer"'
+        in service_source
+    )
+    assert "**PERF031_APP_PROFILES" in service_source
+    # PERF031 arm 0 is the negative control and must stay unprofiled so its
+    # engine build id remains PERF021's bare `vllm@...` identity.
+    assert '"rayline-arc-session-encoder-reference-perf031"' not in service_source
+
+
+def test_allowed_app_names_extend_with_every_registered_experiment() -> None:
+    module = ast.parse(source())
+    allowed = next(
+        node.value
+        for node in module.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "ALLOWED_APP_NAMES"
+            for target in node.targets
+        )
+    )
+    starred = {
+        ast.unparse(element.value)
+        for element in allowed.elts  # type: ignore[attr-defined]
+        if isinstance(element, ast.Starred)
+    }
+
+    # A new experiment profile must become launchable by registration alone;
+    # nothing may have to remember to also edit the allow-list.
+    assert "EXPERIMENT_APP_PROFILES" in starred
+    assert "SCALEOUT_APP_NAMES" in starred
