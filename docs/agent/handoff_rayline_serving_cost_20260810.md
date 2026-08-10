@@ -372,5 +372,38 @@ will overstate the trough.
 5. **Authorize the two cheap experiments?** — (a) capture the vLLM startup log to
    convert the whole 544-token block derivation from derived to observed; (b) run
    one PERF021-style ladder on a FlashInfer app, since every saturation number in
-   existence is `torch_reference`-only. Both are blocked behind TD050's explicit
-   parking decision, which is why they are listed here rather than as agent work.
+   existence is `torch_reference`-only.
+
+   **CORRECTION (2026-08-10, same day): TD050 does NOT block these.** An earlier
+   draft of this handoff said both were "blocked behind TD050's explicit parking
+   decision". That is wrong. TD050 parks the **multi-instance / pooled-encoder**
+   qualification, and its stated reason is *"an explicit decision to qualify
+   single-encoder end-to-end serving first"*
+   (`docs/agent/tech-debt/td-050-rayline-arc-replica-failover-gap.md:27-33`).
+   Both experiments are single-encoder, so TD050 prescribes them rather than
+   blocking them. No unpark is needed.
+
+   What actually gates them:
+   - **Pushing this branch.** `rayline_open_loop_launcher.py:133-140`
+     `_assert_pushed` fails closed on an unpushed checkout, so §10.1 is a hard
+     prerequisite for any measured run, not a preference.
+   - **Budget.** Position is $151.749704666383 conservative of $154.31282402
+     authorized = **$2.56 headroom against a $3.00 required reserve**. Nothing
+     can be funded today; a fresh grant is needed, and only a human can author
+     the authorization commit (it is an empty commit whose body records what the
+     human said).
+   - **A TD048 ruling.** `td-048:26-27` says *"Cross-request KV ownership and
+     throughput are out of scope until this gap is closed."* Read as scoping it
+     is inert; read as a gate it blocks throughput work. PERF015-027 all measured
+     throughput while TD048 was open, so practice says inert — but the sentence
+     is real and needs one line of human ruling in the preregistration.
+   - **Contract version.** The contract's own rule
+     (`rayline-vllm-performance-contract.md:50-54`) is that *"A changed identity
+     requires a new contract version before a measured run."* A FlashInfer arm
+     changes the GDN-backend identity, so `rayline-vllm-perf.v1` must be
+     superseded first.
+
+   **Also note an interaction created by `902c4ab4`**: PERF021 was measured with
+   `region="us-east"` pinned. That pin is now gone and unpinned placement has
+   never been measured, so if a negative-control arm fails to reproduce the
+   0.1862-0.3724 knee, **unpinning is the first suspect, not a regression.**
