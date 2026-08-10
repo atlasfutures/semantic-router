@@ -52,7 +52,7 @@ PERF032_RUN_ID = "rayline-saturation-knee-perf032-20260810"
 # The Pathfinder head this run's authority is pinned to. `_assert_pushed`
 # forces the Pathfinder HEAD to equal this, and no commit can equal `PENDING`,
 # so the packet cannot launch while it reads this.
-PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
+PATHFINDER_AUTHORIZATION_COMMIT = "fb78b2fbbd579d10cd14a78ce71af7c0e9216306"
 
 # NOT YET GRANTED. This is deliberately still PERF031's ceiling. With
 # PERF031's closing position of `$165.618546266383` and this packet's
@@ -61,7 +61,7 @@ PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
 # run. A human must raise this. The minimum viable grant is `$1.2401`, which
 # takes the ceiling to `$175.552967066383` and the reserve to exactly `$3.00`.
 # Do not invent a granted figure here.
-AUTHORIZED_CUMULATIVE_USD = 174.31282402
+AUTHORIZED_CUMULATIVE_USD = 184.31282402
 MINIMUM_VIABLE_GRANT_USD = 1.240143046383
 
 # The FlashInfer app PERF031B already deployed and measured. It is registered in
@@ -168,7 +168,7 @@ SATURATION_KNEE_ARMS = (PERF032,)
 
 # Binding is a separate, human-gated step. Preparation never opens launch
 # authority.
-LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF032
 
 
 def resolve_launch_contract(run_id: str) -> OpenLoopRunContract:

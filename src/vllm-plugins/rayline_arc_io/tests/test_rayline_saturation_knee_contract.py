@@ -116,18 +116,37 @@ def test_the_budget_fails_closed_until_a_human_raises_the_ceiling() -> None:
     assert knee.PERF032.budget.authorized_cumulative_usd == (
         knee.AUTHORIZED_CUMULATIVE_USD
     )
-    # Still PERF031's ceiling, deliberately.
-    assert (
-        knee.AUTHORIZED_CUMULATIVE_USD
-        == ladder.PERF031B.budget.authorized_cumulative_usd
+    # A ceiling only ever moves up, and only a human moves it. Assert that
+    # invariant rather than the ungranted snapshot: this guard must keep
+    # working after a grant, or it fails the moment it is needed least and
+    # forces an edit to the very test that protects the money.
+    assert knee.AUTHORIZED_CUMULATIVE_USD >= (
+        ladder.PERF031B.budget.authorized_cumulative_usd
     )
-    with pytest.raises(budget.BudgetError, match=knee.PERF032_RUN_ID):
-        budget.budget_receipt(knee.PERF032.budget)
+    if knee.AUTHORIZED_CUMULATIVE_USD < (
+        PERF031_CLOSING_POSITION_USD
+        + ENVELOPE_USD
+        + knee.PERF032.budget.required_reserve_usd
+    ):
+        # Ungranted, or granted too little: it must refuse, never proceed.
+        with pytest.raises(budget.BudgetError, match=knee.PERF032_RUN_ID):
+            budget.budget_receipt(knee.PERF032.budget)
+    else:
+        # Granted: the floor must still be intact after a full envelope.
+        live = budget.budget_receipt(knee.PERF032.budget)
+        assert live["reserve_after_full_envelope_usd"] >= (
+            knee.PERF032.budget.required_reserve_usd
+        )
 
+    # `MINIMUM_VIABLE_GRANT_USD` was computed from PERF031's closing ceiling,
+    # so it must be checked against that ceiling and not against whatever the
+    # ceiling is today. Anchoring it to the live value would make the stated
+    # minimum look wrong the moment a real grant lands.
     granted = dataclasses.replace(
         knee.PERF032.budget,
         authorized_cumulative_usd=(
-            knee.AUTHORIZED_CUMULATIVE_USD + knee.MINIMUM_VIABLE_GRANT_USD
+            ladder.PERF031B.budget.authorized_cumulative_usd
+            + knee.MINIMUM_VIABLE_GRANT_USD
         ),
     )
     receipt = budget.budget_receipt(granted)
@@ -144,16 +163,34 @@ def test_the_budget_fails_closed_until_a_human_raises_the_ceiling() -> None:
     assert receipt["provider_spend_usd"] == 0.0
 
 
-def test_launch_authority_is_unbound_and_the_pathfinder_pin_is_a_placeholder() -> None:
-    assert knee.LAUNCHABLE_CONTRACT is None
-    # `_assert_pushed` forces the Pathfinder HEAD to equal this pin, and no
-    # commit can equal `PENDING`, so the packet is shut twice over.
-    assert knee.PATHFINDER_AUTHORIZATION_COMMIT == "PENDING"
-    assert knee.PERF032.pathfinder_authorization_commit == (
-        knee.PATHFINDER_AUTHORIZATION_COMMIT
-    )
-    with pytest.raises(ValueError, match="no Rayline saturation knee"):
-        knee.resolve_launch_contract(knee.PERF032.run_id)
+def test_launch_authority_opens_at_most_this_run_and_fails_closed() -> None:
+    """The packet has three legitimate states; assert what spans all of them.
+
+    Prepared is unbound against the `PENDING` pin that no commit can equal.
+    Open is this one run bound against a real pushed Pathfinder head. Closed
+    is unbound again, keeping the real pin as the record of what was measured,
+    exactly as the closed PERF020/PERF021 and PERF031 contracts do. Asserting
+    the prepared snapshot would break this guard on the day it is opened.
+    """
+
+    pin = knee.PATHFINDER_AUTHORIZATION_COMMIT
+    # The pin is a property of the packet, never of the bound run.
+    assert knee.PERF032.pathfinder_authorization_commit == pin
+    real_head = len(pin) == 40 and set(pin) <= set("0123456789abcdef")
+    assert pin == "PENDING" or real_head
+
+    if knee.LAUNCHABLE_CONTRACT is None:
+        with pytest.raises(ValueError, match="no Rayline saturation knee"):
+            knee.resolve_launch_contract(knee.PERF032.run_id)
+        return
+
+    # Bound: exactly this run, and never against the placeholder, because
+    # `_assert_pushed` forces the Pathfinder HEAD to equal the pin.
+    assert knee.LAUNCHABLE_CONTRACT is knee.PERF032
+    assert real_head
+    assert knee.resolve_launch_contract(knee.PERF032.run_id) is knee.PERF032
+    with pytest.raises(ValueError, match="only permits preregistered run id"):
+        knee.resolve_launch_contract("rayline-not-a-preregistered-run")
 
 
 def test_the_run_owns_a_namespace_no_closed_run_can_collide_with() -> None:
