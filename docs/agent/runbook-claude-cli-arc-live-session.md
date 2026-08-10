@@ -9,9 +9,10 @@ record of each routing decision, and tear the whole thing down with proof.
 anything else. Companion script for every cost-bearing action:
 `e2e/testing/rayline-arc/live_session_ops.sh`.
 
-Written 2026-08-10 against branch `codex/rayline-remote-mvp` @ `553ddf6f`.
-Facts marked **CONFIRM AT RUN TIME** were not verifiable statically; §10 lists
-them all in one place.
+Written 2026-08-10 against branch `codex/rayline-remote-mvp`, current through
+`cba30c0f` (which moved the packet's episode header and auto-model list onto the
+Claude Code contract — see §4.0). Facts marked **CONFIRM AT RUN TIME** were not
+verifiable statically; §10 lists them all in one place.
 
 ---
 
@@ -132,16 +133,18 @@ ls -l ~/.local/bin/claude && ~/.local/bin/claude --version    # 2.1.226 confirme
 
 Not on `PATH` in non-login shells — use the absolute path or a login shell.
 
-### 1.6 The two config/fixture facts you must verify first
+### 1.6 The two artifact facts you must verify first
 
-Both are **currently broken on this branch** and another agent is fixing them in
-parallel. Do not bring the stack up until both pass.
+Both are **still open as of `cba30c0f`** and are being worked in parallel. Do
+not bring the stack up until both pass. (The two *config* prerequisites —
+episode header and auto-model list — already landed; they are verified in
+[§4.0](#40-config-for-the-live-session--verify-do-not-change).)
 
 **(a) Pricing identity.** `raylineARCPriceIdentityMatches`
 (`rayline_arc_readiness.go:299-333`) requires the four price legs in
 `deploy/compose/rayline-arc/config-openrouter-agentic.yaml` to equal the
 artifact manifest's per-token costs × 1e6, to a relative tolerance of 1e-9. As
-of `553ddf6f` they do not:
+of `cba30c0f` they do not:
 
 | worker | config `provider_model_id` / prices | fixture `model` / prices |
 |---|---|---|
@@ -399,15 +402,15 @@ curl -s -o /dev/null -w '%{http_code}\n' \
 
 ## 4. Bring-up sequence
 
-### 4.0 Config for the live session — episode identity
+### 4.0 Config for the live session — verify, do not change
 
-This is the single change that makes a Claude Code conversation into an ARC
-episode. It requires a run-local config copy; **do not edit
-`config-openrouter-agentic.yaml` in place.**
+Two settings decide whether a Claude Code request is routed at all. **Both
+already landed in `cba30c0f`** ("feat(rayline): let the Claude Code CLI drive
+the agentic ARC packet"); this section is now a verification step, not an edit.
 
-`buildRaylineARCSelectionContext` (`rayline_arc_context.go:45-52`) reads the
-episode id from exactly one place — the configured header — and nothing maps
-`x-claude-code-session-id` into it:
+**(a) Episode identity.** `buildRaylineARCSelectionContext`
+(`rayline_arc_context.go:45-52`) reads the episode id from exactly one place —
+the configured header — and nothing maps `x-claude-code-session-id` into it:
 
 ```go
 rawEpisodeID := strings.TrimSpace(reqCtx.Headers[algorithm.RaylineARC.Episode.IDHeader])
@@ -417,37 +420,39 @@ if rawEpisodeID == "" {
 }
 ```
 
-The shipped config sets `id_header: x-rayline-episode-id`
-(`config-openrouter-agentic.yaml:120`). The `claude` CLI cannot send that
-header by default, but it *always* sends `X-Claude-Code-Session-Id`, stable for
-the whole session ([§5](#5-pointing-claude-at-it)).
+`config-openrouter-agentic.yaml` now sets
+`id_header: x-claude-code-session-id`, which is the one header the CLI always
+sends and keeps stable for the whole session ([§5](#5-pointing-claude-at-it)).
+One conversation = one episode, with no operator bookkeeping.
 
-**Preferred: point the router at the header the CLI already sends.**
+**(b) Auto-model admission.** `global.router.auto_model_names` now lists
+`vllm-sr/auto`, `auto`, `MoM` plus the Claude Code ids `claude-opus-5`,
+`claude-sonnet-5`, `claude-sonnet-4-6`, `claude-haiku-4-5`. Naming the list at
+all *replaces* the built-in defaults, which is why the first three are carried
+over for the benchmark driver.
+
+Verify both:
 
 ```bash
-mkdir -p /tmp/rayline-live
-sed 's/^\( *id_header: \).*/\1x-claude-code-session-id/' \
-  deploy/compose/rayline-arc/config-openrouter-agentic.yaml \
-  > /tmp/rayline-live/config-live.yaml
-grep -n 'id_header' /tmp/rayline-live/config-live.yaml   # expect x-claude-code-session-id
-export RAYLINE_ARC_E2E_CONFIG_PATH=/tmp/rayline-live/config-live.yaml
+grep -n 'id_header' deploy/compose/rayline-arc/config-openrouter-agentic.yaml
+# expect: id_header: x-claude-code-session-id
+grep -n -A8 'auto_model_names' deploy/compose/rayline-arc/config-openrouter-agentic.yaml
 ```
 
-Validation only requires a nonempty lowercase HTTP field name
-(`rayline_arc_config.go:309-311`), and `ctx.Headers` is populated lowercased
-(`processor_req_header.go:94`), so this is legal and exact. One conversation =
-one episode, automatically, with no operator bookkeeping.
+> **Side effect you must know about.** `id_header` holds a single name, so this
+> packet has moved *off* `x-rayline-episode-id`. `openrouter_agentic_benchmark.py:141`
+> and the canary drivers hardcode the old name and will now fail closed with
+> `missing_episode_id` against this config. Do not mix the two.
 
-**Fallback, if you must leave the config untouched:** `claude` supports
-`ANTHROPIC_CUSTOM_HEADERS` (newline-separated `Name: value`), so you can inject
-the header the shipped config expects:
+**Fallback, only if someone reverts (a):** `claude` supports
+`ANTHROPIC_CUSTOM_HEADERS` (newline-separated `Name: value`), so the old header
+can be injected instead:
 
 ```bash
 export ANTHROPIC_CUSTOM_HEADERS="x-rayline-episode-id: $(uuidgen | tr 'A-Z' 'a-z')"
-export RAYLINE_ARC_E2E_CONFIG_PATH="$PWD/deploy/compose/rayline-arc/config-openrouter-agentic.yaml"
 ```
 
-This works but decouples the episode from the CLI's own session id — you must
+That works but decouples the episode from the CLI's own session id — you must
 re-export a fresh UUID for every new conversation or episodes will collide.
 
 ### 4.1 Environment
@@ -457,7 +462,8 @@ cd /Users/chilang/code/semantic-router
 
 export LIVE_PROJECT=rayline-arc-live-claude
 export RAYLINE_ARC_E2E_ENVOY_CONFIG_PATH="$PWD/deploy/compose/rayline-arc/envoy-openrouter.yaml"
-# RAYLINE_ARC_E2E_CONFIG_PATH set in §4.0
+export RAYLINE_ARC_E2E_CONFIG_PATH="$PWD/deploy/compose/rayline-arc/config-openrouter-agentic.yaml"
+mkdir -p /tmp/rayline-live
 
 # Provider credential -> SYNTHETIC_API_KEY in the router container
 export RAYLINE_ARC_E2E_PROVIDER_KEY="<ephemeral key from §2.2>"
@@ -637,17 +643,43 @@ the `/v1/messages` path prefix; `normalizeRequestPath` strips `?beta=true`;
 (`processor_res_body_pipeline.go:79-86`) and Anthropic SSE
 (`processor_res_body_streaming_anthropic_client.go`).
 
-### 5.2 The model name must be an auto alias
+### 5.2 The model name must be on the auto list
 
-`handleSpecifiedModelRouting` rejects unconfigured model names with
-**400 `model "…" is not available`** (`processor_req_body.go:428-435`), and ARC
-selection is skipped entirely for any non-auto name
-(`req_filter_classification_runtime.go:212-219`). The accepted set is
-`{"vllm-sr/auto", "auto", "MoM"}` (`config/helper.go:11-15,88-107`); the agentic
-config sets no `auto_model_names` override.
+Only a name on `global.router.auto_model_names` reaches ARC. Anything else takes
+the specified-model path, which looks the name up in `providers.models`, finds
+nothing, and answers **400 `model "…" is not available`**
+(`processor_req_body.go:428-435`) — and ARC selection is skipped entirely for a
+non-auto name (`req_filter_classification_runtime.go:212-219`). That path also
+forwards the Anthropic body to the OpenAI upstream *untranslated*, because only
+the auto path re-serializes the parsed IR, so the list is what puts Claude Code
+on the translated path at all.
 
-So `ANTHROPIC_MODEL=auto` is **mandatory**, and the small/fast tier must be
-overridden too or a background haiku call will 400.
+`cba30c0f` added the Claude Code ids to that list (§4.0b), so the CLI's own
+model names now work. Two caveats:
+
+- The CLI resolves aliases (`opus`, `sonnet[1m]`, …) **client-side** and strips
+  the `[1m]` marker before building the body, so what arrives is a plain id.
+  The resolved id depends on the account's entitlements and on the
+  `ANTHROPIC_DEFAULT_*_MODEL` variables — the list is a wire capture from
+  2.1.226, not an exhaustive contract.
+- The CLI uses **two** model slots per session: a main model and a small/fast
+  one. Pin both, or a background call can arrive as an unlisted id and 400
+  mid-session.
+
+Deterministic option — force both slots onto a name that cannot drift:
+
+```bash
+export ANTHROPIC_MODEL=auto
+export ANTHROPIC_DEFAULT_HAIKU_MODEL=auto
+export ANTHROPIC_SMALL_FAST_MODEL=auto     # legacy name; takes precedence
+```
+
+Either way, read the first request's model id out of the router log before
+trusting the list:
+
+```bash
+grep -m3 -o '"model":"[^"]*"' /tmp/rayline-live/router.log
+```
 
 ### 5.3 Multi-turn session continuity — the crux
 
@@ -1054,12 +1086,24 @@ new key with a higher limit, and restart the router with the new
 **Symptom.** `claude` reports an API error on the very first turn; the router
 returns 400.
 
-**Cause.** `ANTHROPIC_MODEL` was not set to an auto alias, so the CLI sent a real
-Claude model name, which `processor_req_body.go:428-435` rejects.
+**Cause.** The id the CLI sent is not on `global.router.auto_model_names`, so
+`processor_req_body.go:428-435` rejected it. The list is a wire capture from
+2.1.226 and the resolved id depends on account entitlements — a different
+account, a newer CLI, or an `ANTHROPIC_DEFAULT_*_MODEL` override can all produce
+an id that is not listed.
 
-**Fix.** Export `ANTHROPIC_MODEL=auto` **and**
-`ANTHROPIC_DEFAULT_HAIKU_MODEL=auto` / `ANTHROPIC_SMALL_FAST_MODEL=auto` (§5.2).
-A 400 that appears only occasionally, mid-session, is the small/fast tier.
+**Fix.** Read the offending id out of the router log, then either add it to
+`auto_model_names` or pin both slots onto `auto`:
+
+```bash
+export ANTHROPIC_MODEL=auto
+export ANTHROPIC_DEFAULT_HAIKU_MODEL=auto
+export ANTHROPIC_SMALL_FAST_MODEL=auto
+```
+
+A 400 that appears only occasionally, mid-session, is the small/fast tier —
+`ANTHROPIC_SMALL_FAST_MODEL` is the legacy name and takes precedence over
+`ANTHROPIC_DEFAULT_HAIKU_MODEL`, so set both.
 
 ### 8.8 `404` on `/v1/messages/count_tokens`
 
@@ -1114,21 +1158,26 @@ Everything below could not be settled from source and must be checked live.
    404 there is fatal or degrades to local estimation.** A single-turn `-p` run
    against a fake server showed only `/v1/messages?beta=true`, but that run had
    no tools and one turn.
-4. **Whether a small/fast-model request appears at all.** None was observed in a
-   minimal `-p` run even with non-essential traffic enabled; title generation
-   looks interactive-only. Set the haiku overrides anyway.
-5. **Whether the three OpenRouter models handle Claude Code's tool schemas.**
+4. **Whether a small/fast-model request appears at all, and under which id.**
+   None was observed in a minimal `-p` run even with non-essential traffic
+   enabled; title generation looks interactive-only. Set the haiku overrides
+   anyway.
+5. **Whether the ids in `auto_model_names` match what this account actually
+   sends.** The list in `cba30c0f` is a wire capture from CLI 2.1.226 and the
+   resolved id depends on entitlements. Read the first request's `model` from
+   the router log before assuming the list is complete (§5.2).
+6. **Whether the three OpenRouter models handle Claude Code's tool schemas.**
    `tools` / `tool_choice` are passed through `materializeARCTools`; whether
    `deepseek/deepseek-v4-flash`, the worker-b model, and `tencent/hy3` produce
    usable tool calls at these context sizes is untested here.
-6. **Actual settled spend for an interactive session.** No receipt of this shape
+7. **Actual settled spend for an interactive session.** No receipt of this shape
    exists — every recorded arm ran with the 96-token cap. Read `key-usage` and
    record it; that number is what should replace the §2.2 estimate next time.
-7. **Whether a single episode stays inside the encoder's 262,144-token resident
+8. **Whether a single episode stays inside the encoder's 262,144-token resident
    budget** over a long Claude Code conversation. `MAX_SERIALIZED_TOKENS` is
    per-session; exceeding it raises a capacity error, surfacing as
    `encoder_status` → 503.
-8. **Whether the router's `x-api-key`/`authorization` passthrough matters.** On
+9. **Whether the router's `x-api-key`/`authorization` passthrough matters.** On
    the OpenAI-upstream path the client's inbound auth headers are not stripped,
    and the non-ARC injection uses Envoy's default append action. With ARC armed
    the credential is written with `OVERWRITE_IF_EXISTS_OR_ADD`
