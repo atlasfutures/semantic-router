@@ -28,6 +28,9 @@ MAXIMUM_RESOURCE_SECONDS = (
 )
 
 
+DEFAULT_ENCODER_GPU = "H100"
+
+
 @dataclass(frozen=True)
 class OpenLoopCell:
     label: str
@@ -58,6 +61,16 @@ class OpenLoopRunContract:
     encoder_app_name: str = IDENTITY.encoder_app_name
     encoder_build_id: str = IDENTITY.engine_build_id
     encoder_gdn_prefill_backend: str = "torch_reference"
+    # The GPU class this run's evidence may claim. It was an assertion-free
+    # launcher constant, so a non-H100 successor would have written deployment
+    # evidence claiming H100 without anything rejecting it.
+    encoder_gpu: str = DEFAULT_ENCODER_GPU
+    # The case counts this run's packet must carry. The launcher validates the
+    # packet manifest against these in preflight and derives its expected ARC
+    # telemetry count from them, so a count mismatch can no longer surface as a
+    # mid-run failure after paid GPU time.
+    measured_cases: int = MEASURED_CASES
+    warmup_cases: int = WARMUP_CASES
     # The Pathfinder head this run's authority is pinned to. A successor packet
     # gets its own pin; without this it would silently inherit PERF020's.
     pathfinder_authorization_commit: str = PATHFINDER_AUTHORIZATION_COMMIT

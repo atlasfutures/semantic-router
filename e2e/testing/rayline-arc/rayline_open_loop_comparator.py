@@ -24,7 +24,7 @@ from rayline_parity_comparator import IDENTITY_FIELDS
 
 REPORT_SCHEMA = "rayline.vllm.open-loop-comparison.v2"
 OPEN_LOOP_ARMS = ("rayline_remote", "rayline_arc")
-MEASURED_CASES = 32
+DEFAULT_MEASURED_CASES = 32
 FINAL_BACKLOG_KNEE = 8
 START_RATE_FLOOR_RATIO = 0.90
 CELL_IDENTITY_FIELDS = tuple(
@@ -126,6 +126,7 @@ def _resolve_rungs(offered_rates: Sequence[float] | None) -> tuple[float, ...]:
 def _validate_cells(
     raw_cells: Mapping[str, Mapping[str, Mapping[str, Any]]],
     offered_rates: Sequence[float] | None = None,
+    case_count: int = DEFAULT_MEASURED_CASES,
 ) -> tuple[
     tuple[str, ...],
     dict[str, dict[str, dict[str, Any]]],
@@ -153,7 +154,7 @@ def _validate_cells(
                 receipt["schema_version"] != INPUT_SCHEMA
                 or receipt["arm"] != arm
                 or receipt["identity"]["measurement_scope"] != MEASUREMENT_SCOPE
-                or receipt["identity"]["case_count"] != MEASURED_CASES
+                or receipt["identity"]["case_count"] != case_count
                 or not math.isclose(
                     receipt["results"]["offered_rate_rps"], rate, rel_tol=1e-12
                 )
@@ -167,7 +168,7 @@ def _validate_cells(
             raise OpenLoopComparisonError(f"{label} identities differ")
         integrity[label] = {
             "all_completed": all(
-                receipt["results"]["completed"] == MEASURED_CASES
+                receipt["results"]["completed"] == case_count
                 and receipt["results"]["failed"] == 0
                 for receipt in cells[label].values()
             ),
@@ -221,17 +222,25 @@ def _trace_summary(
 def compare_open_loop(
     raw_cells: Mapping[str, Mapping[str, Mapping[str, Any]]],
     offered_rates: Sequence[float] | None = None,
+    case_count: int = DEFAULT_MEASURED_CASES,
 ) -> dict[str, Any]:
     """Compare one open-loop sweep's receipts against the rungs it contracted for.
 
-    `offered_rates` is the run's own ladder. It defaults to the frozen
-    PERF020/PERF021 tuple so those closed runs compare exactly as they did,
-    but a caller that ran a different ladder must say so: validating a
-    four-rung run against a three-rung module default rejects a sweep that
-    executed correctly.
+    `offered_rates` and `case_count` are the run's own ladder and corpus size.
+    They default to the frozen PERF020/PERF021 shape so those closed runs
+    compare exactly as they did, but a caller that ran something else must say
+    so: validating a four-rung run against a three-rung module default rejects
+    a sweep that executed correctly, and a module case count writes
+    `passed: False` over a run that completed every case it had.
+
+    `saturation` is the run's saturation criterion. `None` keeps the frozen
+    report shape byte-for-byte, which is what lets the closed runs' receipts
+    still replay into the reports they recorded.
     """
 
-    expected_labels, cells, integrity = _validate_cells(raw_cells, offered_rates)
+    expected_labels, cells, integrity = _validate_cells(
+        raw_cells, offered_rates, case_count
+    )
 
     trace_digests, distinct_traces, cross_cell_trace_match = _trace_summary(
         labels=expected_labels, cells=cells
@@ -279,7 +288,6 @@ def compare_open_loop(
         "first_overloaded_cell": first_overloaded,
     }
 
-
 def _parse_rate_list(raw: str) -> tuple[float, ...]:
     try:
         return tuple(float(part) for part in raw.split(",") if part.strip())
@@ -316,6 +324,7 @@ def _parse_args() -> tuple[argparse.Namespace, tuple[float, ...]]:
                 f"--{label}-{arm.replace('_', '-')}", required=True, type=Path
             )
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--case-count", type=int, default=DEFAULT_MEASURED_CASES)
     return parser.parse_args(), rungs
 
 
@@ -332,8 +341,13 @@ def main() -> None:
         for rate in rungs
     }
     try:
-        report = compare_open_loop(raw_cells, rungs)
-    except (OSError, json.JSONDecodeError, OpenLoopComparisonError) as error:
+        report = compare_open_loop(raw_cells, rungs, args.case_count)
+    except (
+        OSError,
+        json.JSONDecodeError,
+        OpenLoopComparisonError,
+        ValueError,
+    ) as error:
         raise SystemExit(f"invalid open-loop sweep: {error}") from error
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
 

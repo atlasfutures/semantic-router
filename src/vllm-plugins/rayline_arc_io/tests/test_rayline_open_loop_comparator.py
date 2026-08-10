@@ -167,3 +167,20 @@ def test_open_loop_comparison_rejects_cells_that_are_not_the_contracted_rungs() 
 def test_open_loop_comparison_rejects_a_malformed_rung_set() -> None:
     with pytest.raises(comparator.OpenLoopComparisonError, match="must ascend"):
         comparator.compare_open_loop(_cells(), (0.45, 0.30))
+
+
+def test_comparison_case_count_comes_from_the_caller_not_the_module() -> None:
+    """A comparator constant must not decide whether a run passed.
+
+    `MEASURED_CASES = 32` was read here and written by the packet builder, so
+    a sweep over any other corpus size would have been recorded as
+    `passed: False` having completed every case it had. The count now arrives
+    from the contract the packet was built and validated against.
+    """
+
+    cells = _cells()
+
+    with pytest.raises(comparator.OpenLoopComparisonError):
+        comparator.compare_open_loop(cells, None, 31)
+
+    assert comparator.compare_open_loop(cells, None, 32)["status"] == "passed"
