@@ -4438,6 +4438,336 @@ regardless of either gate. Provider spend is zero; there is no whole-run retry.
   cell, diagnose the anchor before reading any higher rung. Report the knee, or
   report the new bound if `r120` also holds.
 
+## PERF033 Saturation Instrument Validation (preregistered 2026-08-10)
+
+PERF032's decision rule did not fire. `first_overloaded_cell` was `null` on
+both sub-arms at every rung, which the preregistration had labelled "falsified
+high -- capacity exceeds `1.490`". That reading is correct. The reasoning
+offered for it at the time was not, and the difference is what this packet is
+about.
+
+**PERF033's primary purpose is instrument validation. The knee measurement is
+the vehicle.** Every future open-loop packet inherits whatever criterion this
+run establishes, so the criterion is the deliverable and the capacity number
+is the by-product. The `1.155` decisions per second PERF032 recorded is
+already known to within one percent of a preregistered prediction; measuring
+it again would buy nothing.
+
+### What PERF032's receipts actually show
+
+The continuous series that looked like saturation was completion throughput
+rolling off monotonically against realized arrivals -- `98.6`, `94.7`, `86.4`,
+`77.5` percent -- with backlog `3/3/5/7` and drain `2.6/3.8/5.4/6.9`s. Read
+alone it says the system was 22.5% underwater at `r120`. Read against the rest
+of the same receipts it says nothing of the kind.
+
+| Rung | Realized arrivals | Completion | Completion ÷ arrivals | Service p50 | Service p95 | Drain | Drain ÷ p95 | Peak backlog | Start lag p99 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `r045` | `0.5586` | `0.5505` | `0.986` | `0.674` | `5.480` | `2.632` | `0.480` | `3` | `0.005` |
+| `r060` | `0.7448` | `0.7050` | `0.947` | `0.507` | `4.655` | `3.770` | `0.810` | `3` | `0.005` |
+| `r090` | `1.1172` | `0.9650` | `0.864` | `0.521` | `5.407` | `5.411` | `1.001` | `5` | `0.005` |
+| `r120` | `1.4896` | `1.1548` | `0.775` | `0.512` | `6.899` | `6.901` | `1.000` | `7` | `0.006` |
+
+Three things follow, and each is fatal to the completion-throughput reading.
+
+- **Nothing queued at any rung.** `start_lag` is the interval between a
+  request's scheduled arrival and its actual dispatch. Its p99 is five to six
+  milliseconds in every cell of both sub-arms, so no request ever waited for a
+  lane.
+- **Service latency did not degrade.** Median service time is `0.674`,
+  `0.507`, `0.521`, `0.512` seconds across a `2.67x` range of offered rate. A
+  server at its knee does not hold its median service time constant.
+- **The drain never exceeded one long request.** `drain ÷ service p95` is at
+  most `1.001`. The entire post-arrival tail is the last request finishing,
+  not a backlog being worked off.
+
+The rolloff is arithmetic. `completion_throughput_rps` is
+`completed / duration`; `duration` is `span + drain`; `span` is
+`(n - 1) / arrival_rate` and so shrinks as `1 / rate` while the service tail
+does not. A fixed tail therefore takes a monotonically larger share of the run
+as the rate rises, **with zero queueing anywhere**. Reconstructing each cell as
+if it had been served with no queueing at all, charging it exactly one
+service-p95 request of drain, reproduces the observed ratio at `r090` and
+`r120` to within one part in a thousand. There is nothing left over for
+saturation to explain.
+
+That is also why no completion-ratio floor can be chosen. PERF020's `r015` ARC
+cell offered `0.186` decisions per second, peaked at four of eight lanes and
+is as far from loaded as this rig gets; its completion ratio is `0.886`. A
+`0.90` floor calls it saturated and a `0.95` floor calls PERF032's anchor
+saturated. The quantity is not a monotone function of load alone, so no
+threshold on it is a saturation test.
+
+### The criterion
+
+The rig has exactly one capacity to exhaust. `poisson_schedule` groups the
+corpus by episode and the probe runs one thread per episode, so at most
+`max_episode_lanes` requests are ever outstanding. A cell has saturated when
+peak occupancy reaches that ceiling: past that point more offered load cannot
+raise concurrency, so it cannot raise throughput.
+
+```text
+peak_lane_occupancy(cell) = max_client_backlog / episode_lanes
+
+saturated(cell) <=> peak_lane_occupancy(cell) >= occupancy_ratio
+```
+
+with `episode_lanes = 8` and `occupancy_ratio = 1.0` for PERF033.
+
+`FINAL_BACKLOG_KNEE = 8` was measuring this quantity and PERF032's
+`overloaded: false` was the right answer. What the predicate lacked was
+resolution: a hard `backlog_at_final_arrival < 8` boolean on one instantaneous
+sample cannot distinguish a cell at `7/8` from one at `1/8`, and a reader of
+`false` cannot tell a near miss from a wide one. The criterion keeps the
+quantity, takes the maximum over all 32 arrival instants instead of the last
+one, normalises by the lane count the packet actually declares, and records
+the approach.
+
+Two figures are recorded per cell and deliberately do not vote.
+
+```text
+completion_ratio(cell)          = completion_throughput_rps / realized_arrival_rate_rps
+unqueued_completion_ratio(cell) = (n / (n - 1)) * span / (span + service_p95)
+drain_service_tail_multiple     = drain_seconds_after_final_arrival / service_p95
+```
+
+`unqueued_completion_ratio` is what the same cell would have reported with no
+queueing at all, given its own measured tail. Printing it beside the observed
+ratio is what stops the observed one being mistaken for a deficit again.
+
+The other candidate signals were considered and rejected on this repo's own
+receipts. Start lag cannot work: the corpus is multi-turn, an episode's last
+turn carries the largest accumulated context and is therefore its slowest
+case, so the slow cases never block a lane behind them. Start lag p99 stays
+under `0.011`s even in PERF021's heavily saturated cells. Drain time cannot
+carry the decision either: with 32 cases at eightfold concurrency, draining
+the entire corpus takes about one service-p95 request, so the saturated and
+unsaturated cells separate by only three to seven percent of a percentile
+estimated from 32 samples.
+
+### The criterion is validated against closed runs, not against PERF033
+
+This is the part that makes PERF033 an instrument-validation packet rather
+than another capacity guess. The criterion is checked against every open-loop
+run this repo has closed, before PERF033 runs at all.
+
+| Run | Recorded knee | Criterion's first saturated cell |
+| --- | --- | --- |
+| PERF021 (`torch_reference`) | `r030` | `r030` on both sub-arms |
+| PERF031A (`torch_reference` control) | `r030` | `r030` on both sub-arms |
+| PERF031B (FlashInfer) | none | none |
+| PERF032 (FlashInfer) | none | none, peaking at `0.875` |
+
+PERF021's receipts replay byte-identically into the report PERF021 recorded,
+because the criterion is contract-supplied and absent by default. A closed run
+whose recorded verdict silently changes shape is a closed run whose evidence
+can no longer be checked.
+
+### Why the lane count cannot simply be raised
+
+It was the obvious alternative and it is not admissible.
+
+`MAX_EPISODE_LANES` is the probe's thread count and equals the eight measured
+episodes in the frozen corpus; more lanes needs a different corpus, which
+changes `corpus_sha256` and breaks the identity every open-loop run since
+PERF020 has shared. Independently, `MAX_SESSIONS` and `max_num_seqs` in
+`modal_session_service.py` are both eight, and a ninth concurrent retained
+episode raises `SessionCapacityError`, which `session_api.py` maps to HTTP
+`429`, which the encoder failover contract does not treat as retriable and
+which fails closed to a `503`. That records a failed case, and the integrity
+gate requires `failed == 0`. A wider packet could not pass its own gate.
+
+The lane count is a correctness constraint, so the criterion has to carry the
+weight -- which is exactly why it is stated as an occupancy ratio against a
+declared ceiling rather than as a raw backlog threshold, and why the launcher
+now asserts the packet's own `max_episode_lanes` against the contract's before
+any paid second elapses.
+
+### The rungs
+
+```text
+PERF033   rayline-saturation-knee-perf033-20260810
+          single arm, gdn_prefill_backend = flashinfer
+          app rayline-arc-session-encoder-flashinfer-perf031
+          engine vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca
+                 +gdn-flashinfer-eager
+```
+
+| Rung | Offered rps | Realized rps | Arrival span | Why it is in the packet |
+| --- | ---: | ---: | ---: | --- |
+| `r120` | `1.20` | `1.4896030952732628` | `20.81`s | Anchor: PERF032's top rung, verbatim |
+| `r160` | `1.60` | `1.9861374603643505` | `15.61`s | First rung past the extrapolated ceiling crossing |
+| `r220` | `2.20` | `2.7309390080009823` | `11.35`s | `1.83x` the anchor; must saturate under any model |
+| `r320` | `3.20` | `3.9722749207287010` | `7.80`s | `2.67x` the anchor; the far end |
+
+The realized rates are exact, not estimates. `poisson_schedule` draws from
+`rng.expovariate(offered_rate_rps)` on the frozen seed, so the schedule scales
+as `1 / rate` and the realized rate scales linearly with the offered rate at
+PERF031's measured `1.241335912727719x`.
+
+`3.20` is the top rung on purpose. At that rate the arrival span is `7.80`
+seconds, barely longer than a single service-p95 request, so the cell is a
+burst rather than a sustained load and a higher rung would measure the corpus
+rather than the encoder. That is the stated resolution limit of a 32-case
+packet, and a successor that needs to look higher needs more cases, not more
+rate.
+
+### `r120` is the anchor, and it is what invalidates the packet
+
+`r120` re-offers PERF032's top rung. Its `workload.json` and `identity.json`
+digests are **byte-identical** to PERF032's `r120`, because a rung's documents
+derive only from the rate, the seed and the frozen constants. It is the same
+document PERF032 measured, not merely one offering the same rate.
+
+PERF032 measured that cell as `1.1547543726851863` completion throughput
+against `1.4896030952732628` realized arrivals, peak backlog `7`, drain
+`6.900608240123923`s, service p95 `6.899`s, start lag p99 `0.006`s.
+
+> **If PERF033's `r120` does not reproduce an unsaturated cell at
+> `0.875` peak occupancy, the packet is measuring a different system and
+> `r160`, `r220` and `r320` are uninterpretable.** Diagnose the anchor before
+> reading any higher rung, exactly as PERF032's `r045` anchor governed its
+> ladder.
+
+### The falsifiable predictions
+
+Peak occupancy rose `3`, `3`, `5`, `7` against realized arrivals of `0.559`,
+`0.745`, `1.117`, `1.490`. The linear fit through the top two points crosses
+eight lanes at about `1.72` realized decisions per second.
+
+- **Predicted:** `r120` reproduces `0.875` peak occupancy and is unsaturated;
+  `r160` reaches `1.0` and saturates; `first_saturated_cell` is `r160`.
+- **Falsified low** if `r120` saturates. The anchor gate fires first and no
+  capacity claim is admissible from the packet.
+- **Falsified high** if `r320` does not saturate. Peak occupancy is not
+  approximately linear in arrival rate, the FlashInfer encoder sustains more
+  than `3.97` realized decisions per second on one H100, and the result is a
+  bound rather than a knee.
+- **Instrument falsified** if any cell reports `saturated: true` while its
+  start lag p99 stays under `0.05`s, its median service time is within `20%`
+  of the anchor's and its drain does not exceed `1.1` service-p95 requests.
+  That combination is the signature of an unloaded cell, and a criterion that
+  fires on it is the failure PERF033 exists to prevent, not a capacity result.
+
+Any of the four is a result. The packet exists to distinguish them.
+
+### The packet
+
+Regenerated from the same PERF017 source packet that produced PERF020 and
+PERF032, so the corpus, the topology, the seed and the source identity are
+unchanged and only the rung set is new.
+
+| Digest | Value |
+| --- | --- |
+| `packet_manifest_sha256` | `8c2a5d5e10acad92db0975c694e48b035a7b7354f40e6c5e4e521ae2175e2d63` |
+| `corpus_sha256` | `72bbb22c6a8673d78cb4eadbce46ffd88f882f91f1880b4163e117f4679b1105` (unchanged) |
+| `worker_topology_sha256` | `ad0970c68d2e6b035c187d193f3da8ca49f48a68267bd323e0d66c9d44bcfddd` (unchanged) |
+
+| Rung | `workload_sha256` | `identity_sha256` |
+| --- | --- | --- |
+| `r120` | `8990bbe3b27b5d848b22d116d26c2f1d50d325ac9e5e9dbf2280b9d5590dcb92` | `29a2cbc24842397fb47a14a66ca25d4c031453d8daa5d1982559e235ca1c3bd0` |
+| `r160` | `20fbd23fd970e8e13472eac8b8041f499d94e8ec680b8f972156c6bf640b27d6` | `837c73cf3c30757ecdbb9d476ce579d519229e428b278caf4fb872229aa9f057` |
+| `r220` | `42b1dbc36fe26eb9f41e3c6be97fe2ab63d77be53c885952fab515e746615648` | `5067a46b5a493e4c2265f8b885483b9d1709cd4669f67b6f963c26db59abc26d` |
+| `r320` | `de0720c033debf81a661c0880c3d4e85ed9911307637709fbf65525e54c88d64` | `0f677bd408facddc0c3f585c6ef640e95f79bd4020742321ad576b4136468c64` |
+
+The `r120` pair is PERF032's `r120` pair verbatim. That is the anchor
+property, not a coincidence.
+
+### Constants that decided runs, and where they went
+
+PERF032's verdict was decided by `FINAL_BACKLOG_KNEE = 8`, a comparator
+constant describing a lane count the comparator never wrote and cannot see.
+The governing rule is that **a validator may read a module constant only if
+the same module also wrote the value being validated**. Four live violations
+that PERF033 depends on are routed through the contract instead.
+
+| Constant | Was | Now |
+| --- | --- | --- |
+| `FINAL_BACKLOG_KNEE` | comparator constant, decided PERF032 | `SaturationCriterion.episode_lanes`, asserted against the packet's own `max_episode_lanes` in preflight |
+| `MEASURED_CASES` (comparator) | wrote `passed: False` over a run that completed every case | `case_count` from the contract |
+| `EXPECTED_ARC_REQUESTS` | raised `LaunchError` mid-run after paid GPU time | derived from the contract's case counts, which preflight already checked against the packet manifest |
+| `ENCODER_GPU` | never rejected, only asserted; a non-H100 successor would have written evidence claiming H100 | `OpenLoopRunContract.encoder_gpu` |
+
+`CONCURRENCY_CELLS = (1, 4, 8)` in `rayline_concurrency_comparator.py` is
+deliberately left. It is the same defect in the sibling PERF017 family,
+together with a hardcoded `cells[1]` baseline that raises `KeyError`, but
+PERF033 runs none of it and fixing it here would put an unrelated family's
+closed receipts at risk in a packet whose whole point is that closed receipts
+must keep validating.
+
+### Gates
+
+Evidence-integrity gated exactly as PERF020/PERF021/PERF031/PERF032 were.
+Reported throughput and latency stay diagnostic; PERF033 invents no production
+SLO.
+
+- `32/32` measured turns in every cell of every sub-arm, zero failures, zero
+  provider calls.
+- Selected-worker trace digests match within each cell and across cells.
+- ARC telemetry records exactly 36 session actions per cell, and every cell
+  starts and ends at zero resident sessions and tokens.
+- The deployed engine build id equals the contract's, checked from the encoder
+  itself before the first measured cell; a mismatch aborts.
+- Every cell's `max_episode_lanes` equals the contract's `episode_lanes`,
+  checked in preflight before any paid second.
+- `r120` reproduces an unsaturated cell at `0.875` peak occupancy. It is the
+  control: if it does not, no knee claim is admissible from any rung.
+- Local, encoder, proxy-token and Modal-app cleanup all reach zero.
+
+`startup_log_captured: false` is expected to repeat and is not a failure
+condition, for the reason PERF031 and PERF032 both recorded.
+
+### Budget
+
+The envelope is the unchanged PERF021 shape: 2,400 seconds paid wall, 2,460
+seconds for one orphaned request and 300 seconds scale-down = 5,160
+resource-seconds on one H100 with 8 cores and 64 GiB, `$6.9344208` at the
+pinned `modal-on-demand-2026-07-31-h100-cpu-memory` rate. Four rungs do not
+grow it: PERF033's slowest rung is PERF032's fastest, so every arrival
+schedule here is shorter than one that already fit inside 2,400 seconds twice
+over.
+
+| | PERF033 |
+| --- | ---: |
+| Previous conservative | `$172.552967066383` |
+| Packet envelope | `$6.9344208` |
+| Cumulative if full | `$179.487387866383` |
+| Reserve after full | `$4.825436153617` |
+| Packet ceiling | `$7.00` |
+| Required reserve | `$3.00` |
+
+`$4.825436153617` clears the `$3.00` floor, so **PERF033 fits inside the
+existing authority and needs no further grant.** `budget_receipt` passes on
+arithmetic alone; no figure is assumed and none is invented.
+
+### What is not yet bound
+
+The budget gate is satisfied, so the source is prepared and fail-closed on the
+two gates that remain, and preparation may move neither.
+
+1. **Launch authority.** `LAUNCHABLE_CONTRACT` in
+   `rayline_saturation_knee_v2_contract.py` is `None`, so
+   `resolve_launch_contract` refuses the arm.
+2. **Pathfinder pin.** `PATHFINDER_AUTHORIZATION_COMMIT` is the literal
+   `PENDING`, which no commit can equal and which `_assert_pushed` compares
+   HEAD against.
+
+Provider spend is zero; there is no whole-run retry.
+
+- [x] PERF033a: establish the saturation criterion against every closed
+  open-loop run, and prove PERF021's receipts still replay byte-identically
+  into the report PERF021 recorded.
+- [x] PERF033b: route the four run-deciding constants through the contract and
+  register the new contract with the launcher.
+- [x] PERF033c: preregister the single FlashInfer arm, its anchor rung, its
+  falsifiable predictions and its real packet digests -- without opening launch
+  authority.
+- [ ] PERF033d: bind the Pathfinder authorization commit to a real pushed head
+  and open the arm.
+- [ ] PERF033e: run the arm once. If `r120` does not reproduce an unsaturated
+  cell at `0.875` peak occupancy, diagnose the anchor before reading any higher
+  rung. Report the knee, or report the new bound if `r320` also holds.
+
 ## Operating Rules
 
 - Use the repo's normal local image flow; do not invent another Semantic Router
