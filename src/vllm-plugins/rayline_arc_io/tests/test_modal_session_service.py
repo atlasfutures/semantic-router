@@ -47,7 +47,6 @@ def test_session_service_is_authenticated_and_bounded() -> None:
 
     assert {
         "gpu",
-        "region",
         "cpu",
         "memory",
         "timeout",
@@ -58,6 +57,10 @@ def test_session_service_is_authenticated_and_bounded() -> None:
     function_keyword_values = {
         keyword.arg: keyword.value for keyword in function.keywords
     }
+    # The encoder is deliberately unpinned: a region= pin costs a 1.75x Modal
+    # narrow-region multiplier and PERF011/PERF014 measured it as slower, not
+    # faster. Re-pin only with a measurement that clears a placement gate.
+    assert "region" not in function_keywords
     assert ast.literal_eval(function_keyword_values["max_containers"]) == MAX_CONTAINERS
     assert ast.literal_eval(concurrency_keywords["max_inputs"]) == MAX_CONCURRENT_INPUTS
     assert ast.literal_eval(web_keywords["requires_proxy_auth"]) is True
@@ -69,7 +72,6 @@ def test_session_service_freezes_the_proven_retained_vllm_runtime() -> None:
         'VLLM_COMMIT = "9f5ea81ca0aa570aea46baf82311a1139c1267ca"',
         'VLLM_REPOSITORY = "https://github.com/atlasfutures/vllm.git"',
         'GPU_TYPE = "H100"',
-        'MODAL_REGION = "us-east"',
         "MAX_SESSIONS = 8",
         "MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS",
         "IDLE_TTL_SECONDS = 5 * 60",

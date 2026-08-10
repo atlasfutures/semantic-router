@@ -80,7 +80,13 @@ def _runtime_profile() -> tuple[str, str]:
 
 
 GPU_TYPE = "H100"
-MODAL_REGION = "us-east"
+# Deliberately unpinned. The former region="us-east" pin cost a 1.75x Modal
+# narrow-region multiplier while PERF011/PERF014 measured it as worse, not
+# better: pinning produced 1.042x the PERF009 prepare p50 and 0.994x its
+# throughput, and neither preregistered placement gate passed. The measured
+# ~0.637s service/transport floor is backend- and region-independent, and
+# earlier placement work ruled out simple region distance as its cause.
+# Re-pin only with a measurement that clears a placement gate.
 MAX_SESSIONS = 8
 MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS
 IDLE_TTL_SECONDS = 5 * 60
@@ -183,7 +189,6 @@ vllm_cache = modal.Volume.from_name("rayline-vllm-cache", create_if_missing=True
 @app.cls(
     image=image,
     gpu=GPU_TYPE,
-    region=MODAL_REGION,
     cpu=8.0,
     memory=65_536,
     timeout=31 * 60,
