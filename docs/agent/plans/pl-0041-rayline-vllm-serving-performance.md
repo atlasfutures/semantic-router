@@ -3914,6 +3914,184 @@ different episodes may overlap only when the concrete policy opts in. The
 legacy eager route still has a one-thread `AsyncStateCoordinator` segment, but
 it is a separate follow-up rather than the current `/v1/route/prepare` blocker.
 
+## PERF031 Single-Encoder Saturation Ladder (preregistered 2026-08-10)
+
+FlashInfer's `9.8586x` engine-inference speedup (`11,117` versus `115,764`
+tokens per second, PERF030) is measured on 12-36 **strictly serial** pooling
+calls, and every FlashInfer packet since — PERF030, AGT017, AGT018, AGT019 —
+ships the same disclaimer: it does not establish concurrency saturation
+throughput. Every saturation measurement that does exist, PERF015 through
+PERF027, ran on `torch_reference`. The two have never met, so the deployed
+FlashInfer encoder's capacity is unknown: the capacity model predicts roughly
+`3.9x`, bounded by the backend-independent transport floor, but that is a
+property of the model and not a result.
+
+PERF031 is the smallest experiment that answers it. Two **sequential runs**
+replay the frozen PERF021 packet — same 42k-token corpus digest, same packet
+manifest, same topology, same `r015`/`r030`/`r045` rungs, nothing regenerated
+— and the **only** variable is the GDN prefill backend:
+
+```text
+PERF031A  rayline-saturation-ladder-perf031a-20260810
+          negative control, gdn_prefill_backend = torch_reference
+          app rayline-arc-session-encoder (the DEFAULT app)
+          engine vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca
+
+PERF031B  rayline-saturation-ladder-perf031b-20260810
+          treatment, gdn_prefill_backend = flashinfer
+          app rayline-arc-session-encoder-flashinfer-perf031
+          engine vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca
+                 +gdn-flashinfer-eager
+```
+
+These two run IDs are the packet's arms. They are not the repo's existing
+`rayline_remote`/`rayline_arc` arms, which continue to exist *within* each
+run and are unchanged; each run therefore still produces six receipts across
+three rungs.
+
+Arm 0 deliberately deploys the **default, unprofiled app**. Registering a
+`-reference-perf031` profile would stamp the engine build id
+`...+gdn-torch-reference-eager`, whereas PERF021's recorded
+`source.engine_build_id` is the bare `vllm@9f5ea81c...`. A profiled control
+would not be identity-matched to the run it exists to reproduce and would be
+worthless as a control.
+
+### The knee arm 0 must reproduce
+
+PERF021 places the first overloaded single-H100 cell at `r030`. Arm 0 passes
+its control gate only if it reproduces exactly that:
+
+| Quantity | Required |
+| --- | --- |
+| `first_overloaded_cell` | `r030` |
+| `realized_arrival_rate_rps`, not overloaded | `0.1862` |
+| `realized_arrival_rate_rps`, overloaded | `0.3724` |
+
+The realized arrival rate is derived from the frozen schedule span, so it is a
+property of the packet rather than of the run and is identical in both arms.
+
+### Risk: PERF021 was measured with the region pin that no longer exists
+
+**Recorded prominently because it is the first thing to suspect, not the
+last.** PERF021 ran with Modal `region="us-east"` pinned. Commit `902c4ab4`
+removed that pin — on this repo's own evidence, since PERF011/PERF014
+measured pinning as *slower* (`1.042x` the PERF009 prepare p50, `0.994x` its
+throughput, neither placement gate passed) at a `1.75x` narrow-region cost
+multiplier. **Unpinned placement has never been deployed or measured.**
+
+If arm 0 fails to reproduce the knee above, the unpin is the **first suspect**
+and the correct reading is a placement effect, not a regression in the packet,
+the launcher, or the encoder. In that case arm 1 is not admissible as a
+backend comparison at all, because the two arms would no longer differ in one
+variable. Diagnose the control before spending arm 1.
+
+### Gates
+
+The run is evidence-integrity gated, exactly as PERF020/PERF021 were. Reported
+throughput and latency remain diagnostic; PERF031 invents no production SLO.
+
+- Both arms complete `32/32` measured turns in every cell of every arm with
+  zero failures and zero provider calls.
+- Selected-worker trace digests match within each cell and across cells.
+- ARC telemetry records exactly 36 session actions per cell, and every cell
+  starts and ends at zero resident sessions and tokens.
+- Every arm's deployed engine build id equals its contract's, checked from the
+  encoder itself before the first measured cell; a mismatch aborts.
+- Arm 0 reproduces the knee in the table above. It is the control: if it does
+  not, no cross-arm backend claim is admissible.
+- Local, encoder, proxy-token and Modal-app cleanup all reach zero.
+
+### Deployment evidence
+
+Each arm writes `<run-id>/deployment-evidence.json` before its first measured
+cell, carrying the app name, resolved URL, engine build id, GDN backend, and
+vLLM's own engine-sizing lines captured from the engine build. This exists
+because the 544-token attention block size, the mamba page padding, the KV
+cache size and the maximum concurrency are all read out of vLLM source and
+have never been observed on a deployment — `.agent-harness/` holds 250 `.json`
+and 28 `.jsonl` files and **zero** `.log` or `.txt`.
+
+An encoder that captures nothing records `startup_log_captured: false` and
+does **not** fail the run. vLLM v1 may build its engine core in a child
+process whose log records never reach the service's logging tree; in that case
+the sizing figures simply stay derived, and the flag says so rather than
+letting an empty list read as an observation.
+
+### Budget
+
+Each arm's complete envelope is the unchanged PERF021 shape: 2,400 seconds
+paid wall, 2,460 seconds for one orphaned request, and 300 seconds scale-down
+= 5,160 resource-seconds on one H100 with 8 cores and 64 GiB. At the pinned
+`modal-on-demand-2026-07-31-h100-cpu-memory` snapshot rate of
+`$0.00134388`/s that is **`$6.9344208` per arm**, `$13.8688416` for both.
+
+The arms are sequential runs, so arm 1 charges arm 0's complete envelope first
+whatever arm 0 actually consumed:
+
+| | Arm 0 (PERF031A) | Arm 1 (PERF031B) |
+| --- | ---: | ---: |
+| Previous conservative | `$151.749704666383` | `$158.684125466383` |
+| Packet envelope | `$6.9344208` | `$6.9344208` |
+| Cumulative if full | `$158.684125466383` | `$165.618546266383` |
+| Reserve after full | `$15.628698553617` | `$8.694277753617` |
+| Packet ceiling | `$7.00` | `$7.00` |
+| Required reserve | `$3.00` | `$3.00` |
+
+The pre-existing position was `$151.749704666383` conservative of
+`$154.31282402` authorized against a `$3.00` required reserve — `$2.5631`
+headroom, which cannot fund one arm let alone two. The **minimum** fresh
+authority for both arms was therefore `$14.305722246383`. The user approved
+**`$20` on 2026-08-10**, raising cumulative authority from `$154.31282402` to
+**`$174.31282402`** and leaving `$8.694277753617` after both complete
+envelopes. Provider spend is zero in both arms; there is no whole-run retry.
+
+### TD048 ruling (decided 2026-08-10)
+
+`td-048:26-27` reads *"Cross-request KV ownership and throughput are out of
+scope until this gap is closed."* Read as a gate it would block this packet;
+read as scoping it is inert. **The user ruled on 2026-08-10 that it is a scope
+note, not a gate, and that PERF031 proceeds.** The rationale of record: the
+sentence means TD048 does not itself cover throughput, and that reading is
+what established practice already assumes — PERF015 through PERF027 all
+measured throughput while TD048 was open.
+
+The ruling is deliberately narrow. It permits this single-encoder packet. It
+does not close TD048, and it does not unpark TD050's pooled-encoder work.
+
+TD050 never blocked PERF031: it parks the *multi-instance* qualification, and
+its stated reason is "an explicit decision to qualify single-encoder
+end-to-end serving first". PERF031 is single-encoder, so TD050 prescribes it
+rather than blocking it, and no unpark is required.
+
+### Contract version
+
+`rayline-vllm-perf.v1`'s own rule requires a new contract version before a
+measured run with a changed identity, and arm 1 changes the GDN prefill
+backend identity. `rayline-vllm-perf.v2` is that version: identity only, with
+no threshold moved. See `docs/benchmarks/rayline-vllm-performance-contract.md`.
+
+### What is not yet bound
+
+The source is prepared and fail-closed. `LAUNCHABLE_CONTRACT` is `None` in
+`rayline_saturation_ladder_contract.py`, and both arms pin their Pathfinder
+authorization commit to the literal `PENDING`, which no commit can equal. The
+launcher refuses on either.
+
+- [x] PERF031a: register the confined FlashInfer app profile, capture vLLM's
+  engine-sizing lines on a read-only route, and teach the open-loop launcher
+  to resolve its encoder, cleanup and authorization pin per run contract,
+  with PERF020/PERF021 behaviour unchanged.
+- [x] PERF031b: preregister both arms over the frozen PERF021 packet, publish
+  `rayline-vllm-perf.v2`, and record the TD048 ruling and the region-unpin
+  risk — all without opening launch authority.
+- [ ] PERF031c: bind the Pathfinder preregistration, self-attestation and
+  distinct authorization commits, and open exactly one arm at a time.
+- [ ] PERF031d: run arm 0 once. If it does not reproduce the `r030` /
+  `0.1862`-to-`0.3724` knee, diagnose placement before arm 1 rather than
+  spending it.
+- [ ] PERF031e: run arm 1 once, report the backend saturation comparison as
+  diagnostic evidence, and close both authority pins with the result.
+
 ## Operating Rules
 
 - Use the repo's normal local image flow; do not invent another Semantic Router
