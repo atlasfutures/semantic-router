@@ -321,7 +321,7 @@ func (r *OpenAIRouter) resolveAutoRoutingTarget(
 		if ctx.SelectionTransaction != nil {
 			return "", "", nil, r.selectionDispatchFailureResponseFor(
 				ctx,
-				"dispatch_mapping",
+				"mapping",
 			), nil
 		}
 		return "", "", nil, nil, fmt.Errorf("auto routing: %w", backendErr)
