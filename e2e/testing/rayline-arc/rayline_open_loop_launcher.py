@@ -44,6 +44,9 @@ from rayline_open_loop_contract import (
 )
 from rayline_open_loop_probe import load_open_loop_packet
 from rayline_parity_http_probe import PROTOCOL_BY_ARM
+from rayline_saturation_knee_contract import (
+    resolve_launch_contract as resolve_saturation_knee_contract,
+)
 from rayline_saturation_ladder_contract import (
     resolve_launch_contract as resolve_saturation_ladder_contract,
 )
@@ -129,14 +132,23 @@ def _resolve_contract(run_id: str) -> OpenLoopRunContract:
     """Resolve across every registry this launcher serves.
 
     Each registry independently refuses when nothing in it is launchable, so a
-    launcher that serves two must try both before failing closed.
+    launcher that serves several must try them all before failing closed. A
+    new packet is not launchable until its registry is listed here, which is
+    deliberate: adding a contract module must be an explicit act, not an
+    implicit one. The failure is loud and costs nothing, because it lands in
+    preflight before anything deploys.
     """
 
-    for resolve in (resolve_launch_contract, resolve_saturation_ladder_contract):
+    for resolve in (
+        resolve_launch_contract,
+        resolve_saturation_ladder_contract,
+        resolve_saturation_knee_contract,
+    ):
         with contextlib.suppress(ValueError):
             return resolve(run_id)
     raise ValueError(
-        "no Rayline open-loop sweep or saturation ladder arm is currently launchable"
+        "no Rayline open-loop sweep, saturation ladder arm or saturation knee "
+        "run is currently launchable"
     )
 
 
