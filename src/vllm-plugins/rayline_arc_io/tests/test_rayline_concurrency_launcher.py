@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 import importlib
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -182,3 +184,42 @@ def test_prepare_cell_defaults_stay_the_frozen_perf020_identity(
 
     assert derived["encoder_base_url"] == launcher.IDENTITY.encoder_url
     assert derived["encoder_build_id"] == launcher.IDENTITY.engine_build_id
+
+
+def test_manifest_reports_the_contracts_engine_build_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A run that deploys an experiment-profile engine must not write a receipt
+    # claiming the default build. The manifest is the run's only durable
+    # statement of what was measured.
+    profiled = dataclasses.replace(
+        contract.PERF019,
+        encoder_build_id=f"{launcher.IDENTITY.engine_build_id}+gdn-flashinfer-eager",
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_run",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout="sha256:image\n"),
+    )
+    context = SimpleNamespace(
+        contract=profiled,
+        semantic_head="semantic",
+        pathfinder_head="pathfinder",
+        router_image="router:test",
+        semantic_root=REPO_ROOT,
+        output_dir=tmp_path,
+    )
+
+    manifest = launcher._write_manifest(context, {"status": "pass"}, {}, {}, 1.0)
+
+    assert manifest["source"]["engine_build_id"] == profiled.encoder_build_id
+    assert manifest["source"]["engine_build_id"] != launcher.IDENTITY.engine_build_id
+    # The plugin version is a property of the pinned IO plugin, not the app.
+    assert manifest["source"]["plugin_version"] == launcher.IDENTITY.plugin_version
+    written = json.loads((tmp_path / "run-manifest.json").read_text())
+    assert written == manifest
+
+
+def test_closed_concurrency_contracts_keep_the_frozen_engine_build_id() -> None:
+    for closed in (contract.PERF017, contract.PERF018, contract.PERF019):
+        assert closed.encoder_build_id == launcher.IDENTITY.engine_build_id

@@ -652,7 +652,13 @@ def _run_cell(
     work: Path,
     paid_started: float,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
-    prepared = _prepare_cell(context, cell, work)
+    prepared = _prepare_cell(
+        context,
+        cell,
+        work,
+        encoder_base_url=encoder.base_url,
+        encoder_build_id=context.contract.encoder_build_id,
+    )
     ports = {
         name: _free_port() for name in ("pathfinder", "envoy", "router", "metrics")
     }
@@ -765,7 +771,10 @@ def _write_manifest(
         "source": {
             "semantic_router_commit": context.semantic_head,
             "pathfinder_commit": context.pathfinder_head,
-            "engine_build_id": IDENTITY.engine_build_id,
+            "engine_build_id": context.contract.encoder_build_id,
+            # The plugin version is a property of the pinned Rayline IO
+            # plugin, not of the encoder app, so no contract overrides it and
+            # the frozen literal is the truthful value on every run.
             "plugin_version": IDENTITY.plugin_version,
             "packet_manifest_sha256": context.contract.packet_manifest_sha256,
             "router_image_id": _run(
