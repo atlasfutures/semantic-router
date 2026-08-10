@@ -176,6 +176,28 @@ class ArcSessionHealthResponse(BaseModel):
     pooling_capabilities: list[str]
 
 
+class ArcSessionStartupLogResponse(BaseModel):
+    """Engine-sizing lines retained verbatim from vLLM's own startup logging.
+
+    Read-only deployment evidence. It carries no session, prompt, credential,
+    or episode content: only the small set of engine-configuration lines the
+    service was built to retain.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    schema_version: Literal["rayline.arc.session-startup-log-response.v1"]
+    engine_build_id: str
+    captured: bool
+    lines: list[str]
+
+    @model_validator(mode="after")
+    def validate_capture(self) -> "ArcSessionStartupLogResponse":
+        if self.captured != bool(self.lines):
+            raise ValueError("startup log capture flag diverged from lines")
+        return self
+
+
 class ArcSessionCoordinatorMetrics(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 

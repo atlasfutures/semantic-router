@@ -74,6 +74,7 @@ def plugin_request_body(turns: list[dict[str, str]]) -> dict:
 
 def build_client(
     engine_metrics_provider=None,
+    startup_log: tuple[str, ...] = (),
 ) -> tuple[TestClient, FakeFactory]:
     factory = FakeFactory()
     coordinator = SessionCoordinator(
@@ -85,7 +86,10 @@ def build_client(
     app = create_session_app(
         coordinator,
         TokenBlockSerializer(TinyTokenizer(), max_tokens=4096),
-        SessionAPIMetadata(engine_build_id="vllm@retained-session-test"),
+        SessionAPIMetadata(
+            engine_build_id="vllm@retained-session-test",
+            startup_log=startup_log,
+        ),
         engine_metrics_provider,
     )
     return TestClient(app), factory
@@ -323,6 +327,56 @@ def test_metrics_endpoint_includes_curated_engine_snapshot() -> None:
         "prompt_token_observations": 3,
         "prompt_tokens_total": 96.0,
     }
+
+
+def test_startup_log_route_reports_observed_engine_sizing_lines() -> None:
+    captured = (
+        "Setting attention block size to 544 tokens",
+        "GPU KV cache size: 4,455,808 tokens",
+    )
+    client, _factory = build_client(startup_log=captured)
+
+    response = client.get("/v1/rayline/arc/session/startup-log")
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json() == {
+        "schema_version": "rayline.arc.session-startup-log-response.v1",
+        "engine_build_id": "vllm@retained-session-test",
+        "captured": True,
+        "lines": list(captured),
+    }
+
+
+def test_startup_log_route_reports_an_empty_capture_as_not_captured() -> None:
+    client, _factory = build_client()
+
+    body = client.get("/v1/rayline/arc/session/startup-log").json()
+
+    # "not observed" must never be readable as "observed nothing".
+    assert body["captured"] is False
+    assert body["lines"] == []
+
+
+def test_startup_log_route_is_read_only_and_leaks_no_session_state() -> None:
+    client, _factory = build_client(startup_log=("GPU KV cache size: 12 tokens",))
+    secret_text = "startup-log-response-must-not-echo-this"
+    assert (
+        client.post(
+            "/v1/rayline/arc/session/pooling",
+            json=request_body([{"role": "user", "text": secret_text}]),
+        ).status_code
+        == HTTPStatus.OK
+    )
+
+    response = client.get("/v1/rayline/arc/session/startup-log")
+    health = client.get("/health")
+
+    assert secret_text not in response.text
+    # A read-only route must not disturb residency.
+    assert health.json()["resident_sessions"] == 1
+    assert client.post("/v1/rayline/arc/session/startup-log").status_code == (
+        HTTPStatus.METHOD_NOT_ALLOWED
+    )
 
 
 def test_request_schema_remains_compatible_with_arc_turn_model() -> None:

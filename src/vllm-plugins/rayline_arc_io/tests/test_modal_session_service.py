@@ -92,6 +92,20 @@ def test_session_service_freezes_the_proven_retained_vllm_runtime() -> None:
         assert expected in service_source
 
 
+def test_session_service_captures_engine_sizing_around_the_engine_build() -> None:
+    service_source = source()
+
+    # The capture must wrap exactly the engine build; sizing lines are emitted
+    # nowhere else, and a wider scope would retain unrelated request logging.
+    assert "with capture_startup_log() as startup_capture:" in service_source
+    assert (
+        "            self._engine = AsyncLLM.from_engine_args(engine_args)"
+        in service_source
+    )
+    assert "self._startup_log = tuple(startup_capture.lines)" in service_source
+    assert "startup_log=self._startup_log," in service_source
+
+
 def test_session_service_allows_only_the_frozen_scaleout_app_names() -> None:
     service_source = source()
 
@@ -118,7 +132,7 @@ def test_session_service_confines_perf030_backends_to_exact_app_names() -> None:
     assert "if APP_NAME in EXPERIMENT_APP_PROFILES" in service_source
     assert '"RAYLINE_ARC_SESSION_APP_NAME": APP_NAME' in service_source
     assert "runtime_backend, runtime_build_id = _runtime_profile()" in service_source
-    assert "SessionAPIMetadata(engine_build_id=runtime_build_id)" in service_source
+    assert "engine_build_id=runtime_build_id," in service_source
 
 
 def test_session_service_confines_agt017_flashinfer_to_its_exact_app_name() -> None:

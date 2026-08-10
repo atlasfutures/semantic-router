@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from rayline_arc_io.constants import MAX_SERIALIZED_TOKENS
 from rayline_arc_io.integrity import compute_source_digest, installed_source_digest
+from rayline_arc_io.startup_log import capture_startup_log
 
 DEFAULT_APP_NAME = "rayline-arc-session-encoder"
 SCALEOUT_APP_NAMES = (
@@ -268,7 +269,13 @@ class SessionEncoder:
             enable_logging_iteration_details=True,
             enable_log_requests=False,
         )
-        self._engine = AsyncLLM.from_engine_args(engine_args)
+        # Retains vLLM's own engine-sizing lines so the attention-block, mamba
+        # page, KV-cache and concurrency figures become deployment-observed
+        # instead of source-derived. An empty capture stays empty; the read-only
+        # route reports it as `captured: false` rather than as an observation.
+        with capture_startup_log() as startup_capture:
+            self._engine = AsyncLLM.from_engine_args(engine_args)
+        self._startup_log = tuple(startup_capture.lines)
         self._coordinator = SessionCoordinator(
             VLLMRetainedPoolingBackendFactory(self._engine),
             max_sessions=MAX_SESSIONS,
@@ -278,7 +285,10 @@ class SessionEncoder:
         self._web_app = create_session_app(
             self._coordinator,
             TokenBlockSerializer(tokenizer),
-            SessionAPIMetadata(engine_build_id=runtime_build_id),
+            SessionAPIMetadata(
+                engine_build_id=runtime_build_id,
+                startup_log=self._startup_log,
+            ),
             VLLMSessionEngineMetricsProvider(
                 self._engine.get_scheduler_load,
                 self._coordinator.append_metrics_snapshot,

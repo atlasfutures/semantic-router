@@ -36,6 +36,7 @@ from .schemas import (
     ArcSessionMetricsResponse,
     ArcSessionPoolingRequest,
     ArcSessionPoolingResponse,
+    ArcSessionStartupLogResponse,
     EpisodeIDHash,
 )
 from .serializer import TokenBlockSerializer, TokenizationResult
@@ -51,10 +52,17 @@ from .session_metrics import (
     SessionEngineMetricsSnapshot,
 )
 
+STARTUP_LOG_SCHEMA_VERSION = "rayline.arc.session-startup-log-response.v1"
+
 
 @dataclass(frozen=True)
 class SessionAPIMetadata:
     engine_build_id: str
+    # Engine-sizing lines the deployment retained while building the engine.
+    # Empty is a legitimate state and is reported as `captured: false` rather
+    # than as an error, so a caller can never mistake "not observed" for
+    # "observed nothing".
+    startup_log: tuple[str, ...] = ()
 
 
 def _validation_details(error: RequestValidationError) -> list[dict[str, str]]:
@@ -251,6 +259,18 @@ def create_session_app(
     )
     async def metrics() -> ArcSessionMetricsResponse:
         return _metrics_response(coordinator, engine_metrics_provider)
+
+    @app.get(
+        "/v1/rayline/arc/session/startup-log",
+        response_model=ArcSessionStartupLogResponse,
+    )
+    async def startup_log() -> ArcSessionStartupLogResponse:
+        return ArcSessionStartupLogResponse(
+            schema_version=STARTUP_LOG_SCHEMA_VERSION,
+            engine_build_id=metadata.engine_build_id,
+            captured=bool(metadata.startup_log),
+            lines=list(metadata.startup_log),
+        )
 
     _register_stateless_pooling_route(app, coordinator, serializer, metadata)
 
