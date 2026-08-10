@@ -8,7 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +21,9 @@ MEASUREMENT_SCOPE = "architecture_decision_open_loop_sweep"
 MEASURED_CASES = 32
 WARMUP_CASES = 4
 MAX_EPISODE_LANES = 8
+# The frozen PERF020/PERF021 ladder. It is the default so that re-running this
+# script with no flags still reproduces that packet byte-for-byte; a successor
+# packet passes its own rungs rather than editing this tuple.
 OFFERED_RATES = (0.15, 0.30, 0.45)
 ARRIVAL_PROCESS = "seeded_poisson"
 COORDINATED_OMISSION_POLICY = "scheduled_arrival"
@@ -57,9 +60,27 @@ def _write_json(path: Path, value: Mapping[str, Any]) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
+def resolve_offered_rates(rates: Sequence[float] | None) -> tuple[float, ...]:
+    """Validate a rung set, defaulting to the frozen PERF020/PERF021 ladder."""
+
+    resolved = tuple(OFFERED_RATES if rates is None else rates)
+    if not resolved:
+        raise OpenLoopPacketError("at least one offered rate is required")
+    labels = [rate_label(rate) for rate in resolved]
+    if len(set(labels)) != len(labels):
+        raise OpenLoopPacketError("offered rates must be distinct")
+    if list(resolved) != sorted(resolved):
+        raise OpenLoopPacketError("offered rates must ascend")
+    return resolved
+
+
 def build_open_loop_packet(
-    *, source_packet_dir: Path, output_dir: Path
+    *,
+    source_packet_dir: Path,
+    output_dir: Path,
+    offered_rates: Sequence[float] | None = None,
 ) -> dict[str, Any]:
+    rungs = resolve_offered_rates(offered_rates)
     if output_dir.exists():
         raise OpenLoopPacketError("output directory already exists")
     source_cell = source_packet_dir / "cells/c8"
@@ -96,7 +117,7 @@ def build_open_loop_packet(
     _write_json(corpus_path, corpus)
     _write_json(topology_path, topology)
     cells: dict[str, Any] = {}
-    for offered_rate in OFFERED_RATES:
+    for offered_rate in rungs:
         label = rate_label(offered_rate)
         cell_dir = output_dir / "cells" / label
         workload_path = cell_dir / "workload.json"
@@ -149,10 +170,27 @@ def build_open_loop_packet(
     return receipt
 
 
+def _parse_rate_list(raw: str) -> tuple[float, ...]:
+    try:
+        return tuple(float(part) for part in raw.split(",") if part.strip())
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-packet-dir", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument(
+        "--offered-rates",
+        type=_parse_rate_list,
+        default=None,
+        help=(
+            "Ascending comma-separated offered arrival rates in requests per "
+            "second, two-decimal precision. Defaults to the frozen "
+            f"{','.join(str(rate) for rate in OFFERED_RATES)} ladder."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -162,6 +200,7 @@ def main() -> None:
         receipt = build_open_loop_packet(
             source_packet_dir=args.source_packet_dir,
             output_dir=args.output_dir,
+            offered_rates=args.offered_rates,
         )
     except (OSError, KeyError, TypeError, ValueError) as error:
         raise SystemExit(f"cannot build open-loop packet: {error}") from error
