@@ -116,7 +116,7 @@ SATURATION_LADDER_ARMS = (PERF031A, PERF031B)
 # Binding an arm is a separate, human-gated step. Preparation never opens
 # launch authority: only a reviewed authorization checkpoint may set this, and
 # it opens exactly one run id at a time.
-LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF031A
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF031B
 
 
 def resolve_launch_contract(run_id: str) -> OpenLoopRunContract:
