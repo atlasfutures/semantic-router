@@ -1,11 +1,55 @@
 # Rayline vLLM Performance Qualification Contract
 
-Contract version: `rayline-vllm-perf.v1`  
-Frozen: 2026-07-30 for PL-0041 RSP-001
+Contract version: `rayline-vllm-perf.v2`  
+Frozen: 2026-07-30 for PL-0041 RSP-001 as `rayline-vllm-perf.v1`  
+Amended: 2026-08-10 to `rayline-vllm-perf.v2`, identity only
 
 This contract freezes the inputs and pass/fail interpretation before the
 PL-0041 measured runs. A measured result may reject the design or motivate a
 new, explicitly versioned contract. It must not silently move these thresholds.
+
+## Contract Versions
+
+The version is bumped in place rather than forked into a second file. This
+document is amended in place already — every PERF015 through AGT019 result was
+appended to it while it was labelled `v1` and "frozen 2026-07-30" — so in-place
+is the established practice here, and git preserves the exact v1 text. A second
+file would either duplicate 800 lines that then drift apart, or become a delta
+a reader has to find before knowing what governs; both make it likelier that a
+measured run is judged against the wrong text.
+
+| Version | Date | Change |
+| --- | --- | --- |
+| `rayline-vllm-perf.v1` | 2026-07-30 | Original freeze for RSP-001. |
+| `rayline-vllm-perf.v2` | 2026-08-10 | Identity only: records the deployed retained-session engine, the GDN prefill backend as a first-class identity axis, and H100 as the measured GPU. |
+
+**No threshold moves in v2.** Every target, gate, ladder, latency bound,
+completion bound, cache bound and statistical rule below is unchanged from v1
+and is still binding. v2 exists because the contract's own rule — "A changed
+identity requires a new contract version before a measured run" — is triggered
+by the PERF031 FlashInfer arm, which changes the GDN prefill backend identity.
+
+### v2 identity amendments
+
+Three identity facts drifted away from this document while it stayed at v1.
+They are recorded here rather than corrected silently:
+
+1. **Deployed engine.** The v1 table pins the causal-MEAN baseline
+   `davidvgilmore/vllm@162bcefe...`. Every run since PERF015 has used the
+   retained-session engine `atlasfutures/vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca`
+   built on the `98e91a96` wheel. Both are now listed; the v1 row remains as
+   the causal-MEAN provenance it always was.
+2. **GDN prefill backend.** This axis did not exist in v1 and was never
+   recorded, yet it is the single variable of the PERF031 ladder. It is now an
+   identity pin. `torch_reference` is the default and the backend of every
+   saturation result to date; `flashinfer` stamps the engine build id
+   `...+gdn-flashinfer-eager` and is confined to explicitly registered
+   experiment app names.
+3. **Measured GPU.** v1 names L40S primary and H100 a sensitivity rerun. The
+   vLLM encoder has never run on any GPU but H100; every run since PERF015 is
+   H100. H100 is therefore recorded as the measured GPU. The L40S target is
+   *not* deleted and *not* met — it remains an unmeasured qualification target,
+   and no L40S claim may be made from TFLOPS scaling.
 
 ## Product and Headroom Targets
 
@@ -31,6 +75,8 @@ capacity envelope.
 | Semantic Router protocol baseline | `atlasfutures/semantic-router@33716d1106f42cf38565a296cd71c338f89a959c` |
 | Pathfinder protocol baseline | `atlasfutures/pathfinder@5eeed94cf7bf3d5c1d79407f56d84e5af173a33b` |
 | vLLM causal-MEAN baseline | `davidvgilmore/vllm@162bcefe1b41c5bb35eccc2f2219ea39e2c74bb7` |
+| Deployed retained-session engine (v2) | `atlasfutures/vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca`, wheel base `98e91a9600eb75b2de14ef27f13b10088d1a1279` |
+| GDN prefill backend (v2) | `torch_reference` default; `flashinfer` stamps `+gdn-flashinfer-eager` and is confined to a registered experiment app name |
 | Rayline encoder | `Qwen/Qwen3.5-0.8B@2fc06364715b967f1860aea9cf38778875588b17` |
 | C82 policy package | private `rayline-ai/mtrouter-c82@a06a4cc194761cfb39f92549ba305b0a8173a3d4` |
 | C82 checkpoint | `provenance/source/mtrouter_estimator.pt`, LFS SHA256 `c2b0e63216c11f1496b47b22dff9f6c83baa6ef065e205a34897deff7493920f` |
@@ -39,8 +85,9 @@ capacity envelope.
 | Encoder execution | BF16, 262,144-token maximum, 8,192-token chunk grid |
 | Self-hosted worker model | `Qwen/Qwen3-8B@b968826d9c46dd6066d109eabc6255188de91218` |
 | Worker topology | two independent vLLM engines, identical model pin, distinct endpoints and served identities |
-| Primary GPU | NVIDIA L40S 48 GB for each Rayline encoder and worker process |
+| Primary GPU (v1 target, unmeasured) | NVIDIA L40S 48 GB for each Rayline encoder and worker process |
 | Reference GPU | NVIDIA H100 80 GB encoder rerun for hardware sensitivity only |
+| Measured GPU (v2) | NVIDIA H100 80 GB. The vLLM encoder has never run on another GPU; no L40S encoder claim may be derived by TFLOPS scaling |
 
 The two self-hosted workers deliberately use the same model and hardware. Their
 routing identities remain distinct from their backend served-model identities.
