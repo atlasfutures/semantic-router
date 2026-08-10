@@ -125,8 +125,14 @@ func (r *OpenAIRouter) startRouterReplay(
 	}
 }
 
+// shouldStartRouterReplay is the single chokepoint for every startRouterReplay
+// call site, so both rayline selection paths are excluded here rather than at
+// each caller. Neither may be captured: RaylineARCDispatch is an
+// artifact-owned upstream contract and VSRRaylineRemote is a bounded policy
+// trace, and a replay record persists the full plaintext episode around them.
 func shouldStartRouterReplay(ctx *RequestContext) bool {
 	if ctx == nil ||
+		ctx.RaylineARCDispatch != nil ||
 		ctx.VSRRaylineRemote != nil ||
 		ctx.RouterReplayPluginConfig == nil ||
 		!ctx.RouterReplayPluginConfig.Enabled {
