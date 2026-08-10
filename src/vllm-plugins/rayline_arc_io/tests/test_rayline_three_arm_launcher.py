@@ -96,6 +96,40 @@ def test_pathfinder_config_uses_same_workers_and_protected_encoder(
     assert all(worker["api_key_env"] == "" for worker in config["workers"])
 
 
+def test_pathfinder_config_carries_the_runs_own_encoder(tmp_path: Path) -> None:
+    # The Pathfinder router resolves its encoder only from this config key --
+    # there is no environment override -- so a run that owns an
+    # experiment-profile app must reach the `pathfinder_transaction` arms
+    # through here. PERF031B deployed a FlashInfer app at its own URL and the
+    # local router still dialled the frozen default before this was a
+    # parameter.
+    flashinfer_url = (
+        "https://atlasfutures-dev--rayline-arc-session-encoder-flashinfer-"
+        "bc2d60.modal.run"
+    )
+    flashinfer_build_id = f"{contract.IDENTITY.engine_build_id}+gdn-flashinfer-eager"
+
+    config = launcher.derive_pathfinder_config(
+        _base(),
+        checkpoint=tmp_path / "checkpoint.pt",
+        decision_log=tmp_path / "decisions.jsonl",
+        worker_ids=["worker-a", "worker-b"],
+        encoder_base_url=flashinfer_url,
+        encoder_build_id=flashinfer_build_id,
+    )
+
+    router = config["router"]
+    assert router["mtrouter_vllm_base_url"] == flashinfer_url
+    assert router["mtrouter_vllm_expected_build_id"] == flashinfer_build_id
+    assert router["mtrouter_vllm_base_url"] != contract.IDENTITY.encoder_url
+    # The plugin version is a property of the pinned IO plugin, not of the
+    # encoder app, so it stays the frozen literal on every arm.
+    assert (
+        router["mtrouter_vllm_expected_plugin_version"]
+        == contract.IDENTITY.plugin_version
+    )
+
+
 def test_pathfinder_worker_order_mismatch_fails_closed(tmp_path: Path) -> None:
     with pytest.raises(launcher.LaunchError, match="frozen topology"):
         launcher.derive_pathfinder_config(

@@ -152,7 +152,23 @@ def derive_pathfinder_config(
     decision_log: Path,
     worker_ids: list[str],
     worker_model_prefix: str = "mock/perf015",
+    encoder_base_url: str = IDENTITY.encoder_url,
+    encoder_build_id: str = IDENTITY.engine_build_id,
 ) -> dict[str, Any]:
+    """Derive the local Pathfinder router config for one cell.
+
+    The encoder is a parameter because the Pathfinder router resolves its
+    encoder ONLY from ``router.mtrouter_vllm_base_url`` in this file -- it
+    reads no environment override -- so the `pathfinder_transaction` arms
+    reach the encoder through here, not through the ARC config. A run that
+    owns an experiment-profile app, or that fronts the encoder with a local
+    affinity proxy, must say so here or its local router would silently talk
+    to the default frozen app while ARC talked to the run's own.
+
+    The defaults are PERF020/PERF021's frozen identity, so a run that does not
+    override the encoder derives a byte-identical config.
+    """
+
     derived = copy.deepcopy(dict(base))
     router = derived.get("router")
     workers = derived.get("workers")
@@ -168,8 +184,8 @@ def derive_pathfinder_config(
             "mtrouter_device": "cpu",
             "mtrouter_incremental_encode": False,
             "mtrouter_encoder_backend": "vllm",
-            "mtrouter_vllm_base_url": IDENTITY.encoder_url,
-            "mtrouter_vllm_expected_build_id": IDENTITY.engine_build_id,
+            "mtrouter_vllm_base_url": encoder_base_url,
+            "mtrouter_vllm_expected_build_id": encoder_build_id,
             "mtrouter_vllm_expected_plugin_version": IDENTITY.plugin_version,
             "mtrouter_vllm_timeout_s": 180.0,
             "mtrouter_vllm_connect_timeout_s": 10.0,

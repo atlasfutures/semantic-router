@@ -388,6 +388,15 @@ def _prepare_cell(
     encoder_base_url: str = IDENTITY.encoder_url,
     encoder_build_id: str = IDENTITY.engine_build_id,
 ) -> PreparedCell:
+    """Stage one cell's Pathfinder config, bundle, and ARC config.
+
+    The encoder override must reach BOTH configs. The ARC arm reads it from
+    the semantic-router ARC config; the `pathfinder_transaction` arms read it
+    from the Pathfinder router config, which has no environment override. A
+    run whose encoder differs from the frozen default is a split brain if only
+    one of the two is told.
+    """
+
     work.mkdir(parents=True)
     config_path = work / "pathfinder.yaml"
     base = context.yaml.safe_load(
@@ -399,6 +408,8 @@ def _prepare_cell(
         decision_log=work / "pathfinder-decisions.jsonl",
         worker_ids=context.worker_ids,
         worker_model_prefix="mock/perf017",
+        encoder_base_url=encoder_base_url,
+        encoder_build_id=encoder_build_id,
     )
     config_path.write_text(context.yaml.safe_dump(config, sort_keys=False))
     bundle = work / "bundle"

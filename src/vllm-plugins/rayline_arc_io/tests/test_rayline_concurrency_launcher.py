@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -99,3 +100,85 @@ def test_default_encoder_ownership_stays_the_frozen_perf021_identity() -> None:
 
     assert ownership.app_name == "rayline-arc-session-encoder"
     assert ownership.base_url == launcher.IDENTITY.encoder_url
+
+
+def _prepare_cell_context(tmp_path: Path) -> SimpleNamespace:
+    configs = tmp_path / "pathfinder/configs"
+    configs.mkdir(parents=True)
+    (configs / "live_gap_c82_coldswitch.yaml").write_text("router: {}\n")
+    return SimpleNamespace(
+        contract=SimpleNamespace(run_id="run"),
+        semantic_root=REPO_ROOT,
+        pathfinder_root=tmp_path / "pathfinder",
+        pathfinder_python=tmp_path / "python",
+        runtime_dir=tmp_path / "runtime",
+        checkpoint=tmp_path / "checkpoint.pt",
+        worker_ids=["worker-a"],
+        yaml=SimpleNamespace(
+            safe_load=lambda _text: {"router": {}},
+            safe_dump=lambda _config, **_kwargs: "router: {}\n",
+        ),
+    )
+
+
+def test_prepare_cell_gives_both_routers_the_same_encoder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A run whose encoder differs from the frozen default is a split brain if
+    # only the ARC config is told: the `pathfinder_transaction` arms reach the
+    # encoder through the Pathfinder config, which has no environment
+    # override. PERF031B crashed on exactly this divergence.
+    flashinfer_url = (
+        "https://atlasfutures-dev--rayline-arc-session-encoder-flashinfer-"
+        "bc2d60.modal.run"
+    )
+    flashinfer_build_id = f"{launcher.IDENTITY.engine_build_id}+gdn-flashinfer-eager"
+    derived: dict[str, object] = {}
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        launcher,
+        "derive_pathfinder_config",
+        lambda _base, **kwargs: derived.update(kwargs) or {"router": {}},
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_run",
+        lambda command, **_kwargs: commands.append(command),
+    )
+
+    launcher._prepare_cell(
+        _prepare_cell_context(tmp_path),
+        SimpleNamespace(concurrency=8),
+        tmp_path / "work",
+        encoder_base_url=flashinfer_url,
+        encoder_build_id=flashinfer_build_id,
+    )
+
+    assert derived["encoder_base_url"] == flashinfer_url
+    assert derived["encoder_build_id"] == flashinfer_build_id
+    arc_command = commands[-1]
+    assert arc_command[arc_command.index("--encoder-base-url") + 1] == flashinfer_url
+    assert (
+        arc_command[arc_command.index("--encoder-build-id") + 1] == flashinfer_build_id
+    )
+
+
+def test_prepare_cell_defaults_stay_the_frozen_perf020_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    derived: dict[str, object] = {}
+    monkeypatch.setattr(
+        launcher,
+        "derive_pathfinder_config",
+        lambda _base, **kwargs: derived.update(kwargs) or {"router": {}},
+    )
+    monkeypatch.setattr(launcher, "_run", lambda _command, **_kwargs: None)
+
+    launcher._prepare_cell(
+        _prepare_cell_context(tmp_path),
+        SimpleNamespace(concurrency=8),
+        tmp_path / "work",
+    )
+
+    assert derived["encoder_base_url"] == launcher.IDENTITY.encoder_url
+    assert derived["encoder_build_id"] == launcher.IDENTITY.engine_build_id
