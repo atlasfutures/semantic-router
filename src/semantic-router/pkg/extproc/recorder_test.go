@@ -377,9 +377,18 @@ func TestShouldStartRouterReplayExcludesBothRaylineSelectionPaths(t *testing.T) 
 		t.Fatal("baseline: replay must start when no rayline selection is armed")
 	}
 
-	arc := replayEnabled()
-	arc.RaylineARCDispatch = &raylinearc.WorkerManifest{ID: "worker-1"}
-	if shouldStartRouterReplay(arc) {
+	arcTrace := replayEnabled()
+	arcTrace.VSRRaylineARC = &selection.RaylineARCTrace{}
+	if shouldStartRouterReplay(arcTrace) {
+		t.Fatal("a rayline ARC selection trace must not start a router replay")
+	}
+
+	// Independent of the trace: a bound dispatch contract must close the guard
+	// on its own, because VSRRaylineARC stays nil when the selection result
+	// carried no trace.
+	arcDispatch := replayEnabled()
+	arcDispatch.RaylineARCDispatch = &raylinearc.WorkerManifest{ID: "worker-1"}
+	if shouldStartRouterReplay(arcDispatch) {
 		t.Fatal("an armed rayline ARC dispatch must not start a router replay")
 	}
 
