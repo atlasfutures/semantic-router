@@ -56,3 +56,16 @@ def test_perf020_and_perf021_launch_authority_is_closed() -> None:
         contract.resolve_launch_contract(contract.PERF020_RUN_ID)
     with pytest.raises(ValueError, match="no Rayline open-loop sweep"):
         contract.resolve_launch_contract(contract.PERF021_RUN_ID)
+
+
+def test_perf020_and_perf021_keep_the_frozen_default_encoder_identity() -> None:
+    identity = importlib.import_module("rayline_three_arm_contract").IDENTITY
+
+    for run in (contract.PERF020, contract.PERF021):
+        # PERF021's recorded source.engine_build_id is the bare vLLM commit.
+        # Any successor that wants to be identity-matched to it must deploy the
+        # default, unprofiled app.
+        assert run.encoder_app_name == "rayline-arc-session-encoder"
+        assert run.encoder_app_name == identity.encoder_app_name
+        assert run.encoder_build_id == ("vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca")
+        assert run.encoder_gdn_prefill_backend == "torch_reference"

@@ -27,6 +27,7 @@ from rayline_concurrency_launcher import (
     SweepContext,
     _cell_episode_ids,
     _cleanup_local,
+    _deployed_encoder_url,
     _local_cell,
     _prepare_cell,
     _reset_encoder_after_cell,
@@ -332,18 +333,6 @@ def _warm_replica(base_url: str, key: str, secret: str, label: str) -> None:
         closed = client.delete(f"/v1/rayline/arc/session/{episode_hash}")
         if closed.status_code != HTTP_OK or closed.json().get("closed") is not True:
             raise LaunchError("encoder replica warmup cleanup failed")
-
-
-def _deployed_encoder_url(context: SweepContext, app_name: str) -> str:
-    cls = context.modal.Cls.from_name(
-        app_name,
-        "SessionEncoder",
-        environment_name=IDENTITY.modal_environment,
-    )
-    url = cls().web.get_web_url()
-    if not url:
-        raise LaunchError("encoder replica web URL is unavailable")
-    return url.rstrip("/")
 
 
 def _start_encoder_pair(context: SweepContext) -> EncoderPairOwnership:

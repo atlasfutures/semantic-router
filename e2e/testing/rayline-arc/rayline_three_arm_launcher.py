@@ -200,7 +200,10 @@ def derive_pathfinder_config(
 
 
 def _modal_containers(
-    python: Path, root: Path, environment: Mapping[str, str]
+    python: Path,
+    root: Path,
+    environment: Mapping[str, str],
+    app_name: str = IDENTITY.encoder_app_name,
 ) -> list[str]:
     result = _run(
         [str(python), "-m", "modal", "container", "list", "--json"],
@@ -211,13 +214,21 @@ def _modal_containers(
     return sorted(
         str(row["container_id"])
         for row in json.loads(result.stdout)
-        if row.get("app_name") == IDENTITY.encoder_app_name
+        if row.get("app_name") == app_name
     )
 
 
 def _stop_modal_encoder(
-    python: Path, root: Path, environment: Mapping[str, str], run_id: str
+    python: Path,
+    root: Path,
+    environment: Mapping[str, str],
+    run_id: str,
+    app_name: str = IDENTITY.encoder_app_name,
 ) -> None:
+    # The app name is a parameter because a run may own an experiment-profile
+    # encoder app. Stopping and counting must address the app that was
+    # actually deployed, or a profiled run would leak a live H100 while
+    # reporting the default app clean.
     _run(
         [
             str(python),
@@ -225,7 +236,7 @@ def _stop_modal_encoder(
             "modal",
             "app",
             "stop",
-            IDENTITY.encoder_app_name,
+            app_name,
             "--yes",
         ],
         cwd=root,
@@ -236,7 +247,7 @@ def _stop_modal_encoder(
     deadline = time.monotonic() + MAX_CLEANUP_SECONDS
     zero_since: float | None = None
     while time.monotonic() < deadline:
-        containers = _modal_containers(python, root, environment)
+        containers = _modal_containers(python, root, environment, app_name)
         if containers:
             zero_since = None
             for container in containers:
