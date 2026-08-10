@@ -96,6 +96,18 @@ class OwnedResources:
     )
 
 
+CHILD_OUTPUT_TAIL_CHARS = 4000
+
+
+def _tail(stream: str | None, label: str) -> str:
+    if not stream:
+        return f"{label}: <empty>"
+    text = stream.strip()
+    if len(text) > CHILD_OUTPUT_TAIL_CHARS:
+        text = "...\n" + text[-CHILD_OUTPUT_TAIL_CHARS:]
+    return f"{label}:\n{text}"
+
+
 def _run(
     command: list[str],
     *,
@@ -105,15 +117,28 @@ def _run(
     check: bool = True,
     capture: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        command,
-        cwd=cwd,
-        env=dict(environment) if environment is not None else None,
-        text=True,
-        capture_output=capture,
-        timeout=timeout,
-        check=check,
-    )
+    try:
+        return subprocess.run(
+            command,
+            cwd=cwd,
+            env=dict(environment) if environment is not None else None,
+            text=True,
+            capture_output=capture,
+            timeout=timeout,
+            check=check,
+        )
+    except subprocess.CalledProcessError as error:
+        # `capture_output=True` swallows the child's diagnosis, and
+        # CalledProcessError's own message names only the command and the
+        # exit code. A probe or bundle-build failure then surfaced as a
+        # traceback with no cause, which cost real diagnostic cycles. The
+        # environment is never echoed, so no secret reaches this message.
+        raise LaunchError(
+            f"{command[0]} exited {error.returncode}\n"
+            f"command: {' '.join(command)}\n"
+            f"{_tail(error.stderr, 'stderr')}\n"
+            f"{_tail(error.stdout, 'stdout')}"
+        ) from error
 
 
 def _git(root: Path, *args: str) -> str:

@@ -145,3 +145,39 @@ def test_launcher_has_no_release_qualification_switch() -> None:
 
     assert "execute-paid-1000" not in source
     assert '"release_qualification_1000_executed": False' in source
+
+
+def test_child_failure_surfaces_the_childs_stderr(tmp_path: Path) -> None:
+    # `capture_output=True` swallows the child's diagnosis and
+    # CalledProcessError names only the command and the exit code, so a probe
+    # failure used to print a traceback with no cause.
+    script = "import sys; sys.stderr.write('probe refused: no such cell\\n'); "
+    script += "sys.stdout.write('partial receipt\\n'); sys.exit(3)"
+
+    with pytest.raises(launcher.LaunchError) as failure:
+        launcher._run([sys.executable, "-c", script], cwd=tmp_path)
+
+    message = str(failure.value)
+    assert "probe refused: no such cell" in message
+    assert "partial receipt" in message
+    assert "exited 3" in message
+    assert isinstance(failure.value.__cause__, launcher.subprocess.CalledProcessError)
+
+
+def test_child_failure_message_stays_bounded(tmp_path: Path) -> None:
+    script = "import sys; sys.stderr.write('x' * 40000); sys.exit(1)"
+
+    with pytest.raises(launcher.LaunchError) as failure:
+        launcher._run([sys.executable, "-c", script], cwd=tmp_path)
+
+    assert len(str(failure.value)) < 3 * launcher.CHILD_OUTPUT_TAIL_CHARS
+
+
+def test_tolerated_child_failure_is_still_returned(tmp_path: Path) -> None:
+    result = launcher._run(
+        [sys.executable, "-c", "raise SystemExit(4)"],
+        cwd=tmp_path,
+        check=False,
+    )
+
+    assert result.returncode == 4
