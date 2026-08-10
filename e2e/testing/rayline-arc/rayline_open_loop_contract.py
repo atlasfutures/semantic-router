@@ -58,6 +58,9 @@ class OpenLoopRunContract:
     encoder_app_name: str = IDENTITY.encoder_app_name
     encoder_build_id: str = IDENTITY.engine_build_id
     encoder_gdn_prefill_backend: str = "torch_reference"
+    # The Pathfinder head this run's authority is pinned to. A successor packet
+    # gets its own pin; without this it would silently inherit PERF020's.
+    pathfinder_authorization_commit: str = PATHFINDER_AUTHORIZATION_COMMIT
 
 
 PERF020 = OpenLoopRunContract(

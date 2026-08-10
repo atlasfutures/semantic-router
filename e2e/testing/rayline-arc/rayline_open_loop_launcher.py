@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
 import json
 import os
@@ -34,7 +35,6 @@ from rayline_open_loop_contract import (
     MEASURED_CASES,
     MEASURED_EPISODES,
     OPEN_LOOP_ARMS,
-    PATHFINDER_AUTHORIZATION_COMMIT,
     PERF021_RUN_ID,
     WARMUP_CASES,
     WARMUP_EPISODES,
@@ -44,6 +44,9 @@ from rayline_open_loop_contract import (
 )
 from rayline_open_loop_probe import load_open_loop_packet
 from rayline_parity_http_probe import PROTOCOL_BY_ARM
+from rayline_saturation_ladder_contract import (
+    resolve_launch_contract as resolve_saturation_ladder_contract,
+)
 from rayline_three_arm_budget import budget_receipt
 from rayline_three_arm_contract import IDENTITY
 from rayline_three_arm_launcher import (
@@ -122,8 +125,23 @@ def _validate_packet(contract: OpenLoopRunContract, packet_dir: Path) -> list[st
     return list(map(str, topology["canonical_workers"]))
 
 
+def _resolve_contract(run_id: str) -> OpenLoopRunContract:
+    """Resolve across every registry this launcher serves.
+
+    Each registry independently refuses when nothing in it is launchable, so a
+    launcher that serves two must try both before failing closed.
+    """
+
+    for resolve in (resolve_launch_contract, resolve_saturation_ladder_contract):
+        with contextlib.suppress(ValueError):
+            return resolve(run_id)
+    raise ValueError(
+        "no Rayline open-loop sweep or saturation ladder arm is currently launchable"
+    )
+
+
 def _preflight(args: argparse.Namespace) -> SweepContext:
-    contract = resolve_launch_contract(args.run_id)
+    contract = _resolve_contract(args.run_id)
     budget_receipt(contract.budget)
     semantic_root = Path(__file__).resolve().parents[3]
     pathfinder_root = args.pathfinder_root.resolve()
@@ -138,8 +156,8 @@ def _preflight(args: argparse.Namespace) -> SweepContext:
     pathfinder_head = _assert_pushed(
         pathfinder_root, IDENTITY.pathfinder_branch, "origin", contract.run_id
     )
-    if pathfinder_head != PATHFINDER_AUTHORIZATION_COMMIT:
-        raise LaunchError("Pathfinder PERF020 authorization head differs")
+    if pathfinder_head != contract.pathfinder_authorization_commit:
+        raise LaunchError("Pathfinder authorization head differs")
     worker_ids = _validate_packet(contract, packet_dir)
     _run(["docker", "image", "inspect", args.router_image], cwd=semantic_root)
     _run(
