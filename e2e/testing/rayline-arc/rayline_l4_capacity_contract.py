@@ -103,11 +103,10 @@ PERF035_RUN_ID = "rayline-l4-capacity-perf035-20260811"
 # either one; only a reviewed authorization checkpoint may.
 # ---------------------------------------------------------------------------
 
-# The Pathfinder head this run's authority will be pinned to. `PENDING` is not
-# a commit and cannot become one, so `_assert_pushed` -- which compares the
-# Pathfinder HEAD against this -- rejects every launch until a reviewed
-# authorization checkpoint replaces it with a real pushed head.
-PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
+# The Pathfinder head this run's authority is pinned to: the pushed
+# codex/rayline-vsr-mvp head whose registry entry records the confirmed
+# grant. `_assert_pushed` forces the Pathfinder HEAD to equal this.
+PATHFINDER_AUTHORIZATION_COMMIT = "511760abd07a978802bbfc2065dac19e2062f050"
 
 # GRANTED 2026-08-11. The user approved the run in-session with the words
 # "I approve the run. anything under $10. just do it." Per the family's
@@ -284,10 +283,10 @@ PERF035 = OpenLoopRunContract(
 
 L4_CAPACITY_ARMS = (PERF035,)
 
-# Prepared, not launchable. Binding this to `PERF035` is the second half of the
-# authorization act; the first half is a real Pathfinder pin above, and neither
-# is preparation's to perform.
-LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
+# Bound 2026-08-11 as the second half of the authorization act; the first
+# half is the real Pathfinder pin above. This opens exactly one run id to
+# the launcher, for exactly one execution.
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF035
 
 
 def resolve_launch_contract(run_id: str) -> OpenLoopRunContract:
