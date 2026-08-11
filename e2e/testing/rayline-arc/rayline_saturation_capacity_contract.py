@@ -224,10 +224,12 @@ PERF034 = OpenLoopRunContract(
 
 SATURATION_CAPACITY_ARMS = (PERF034,)
 
-# Bound 2026-08-11 against authorize commit e282f16c and the pushed
-# Pathfinder head above, for exactly one execution. The close commit
-# returns this to None.
-LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF034
+# Closed 2026-08-11 after the one authorized execution. All four cells
+# measured cleanly (failed=0, traces match); the run then raised
+# StateResetError on an HTTP 502 during the final post-r645 state reset,
+# which under the registry's no-retry clause closes this ID for good.
+# The pin above stays as the record of what was measured.
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
 
 
 def resolve_launch_contract(run_id: str) -> OpenLoopRunContract:
