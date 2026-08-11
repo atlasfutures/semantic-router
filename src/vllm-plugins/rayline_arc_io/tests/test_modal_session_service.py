@@ -6,7 +6,6 @@ import ast
 from pathlib import Path
 
 SERVICE_PATH = Path(__file__).resolve().parents[1] / "modal_session_service.py"
-MAX_CONCURRENT_INPUTS = 32
 MAX_CONTAINERS = 1
 
 
@@ -62,7 +61,9 @@ def test_session_service_is_authenticated_and_bounded() -> None:
     # faster. Re-pin only with a measurement that clears a placement gate.
     assert "region" not in function_keywords
     assert ast.literal_eval(function_keyword_values["max_containers"]) == MAX_CONTAINERS
-    assert ast.literal_eval(concurrency_keywords["max_inputs"]) == MAX_CONCURRENT_INPUTS
+    # The ingress cap is app-conditional (PERF034 widens it), so the decorator
+    # must reference the module constant whose definition the freeze test pins.
+    assert ast.unparse(concurrency_keywords["max_inputs"]) == "MAX_CONCURRENT_INPUTS"
     assert ast.literal_eval(web_keywords["requires_proxy_auth"]) is True
 
 
@@ -72,7 +73,8 @@ def test_session_service_freezes_the_proven_retained_vllm_runtime() -> None:
         'VLLM_COMMIT = "9f5ea81ca0aa570aea46baf82311a1139c1267ca"',
         'VLLM_REPOSITORY = "https://github.com/atlasfutures/vllm.git"',
         'GPU_TYPE = "H100"',
-        "MAX_SESSIONS = 8",
+        "MAX_SESSIONS = 32 if APP_NAME in PERF034_APP_PROFILES else 8",
+        "MAX_CONCURRENT_INPUTS = 64 if APP_NAME in PERF034_APP_PROFILES else 32",
         "MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS",
         "IDLE_TTL_SECONDS = 5 * 60",
         '"vllm/outputs.py"',
@@ -176,6 +178,24 @@ def test_session_service_confines_perf031_flashinfer_to_its_exact_app_name() -> 
     # PERF031 arm 0 is the negative control and must stay unprofiled so its
     # engine build id remains PERF021's bare `vllm@...` identity.
     assert '"rayline-arc-session-encoder-reference-perf031"' not in service_source
+
+
+def test_session_service_confines_perf034_cap_raise_to_its_exact_app_name() -> None:
+    service_source = source()
+
+    assert (
+        '"rayline-arc-session-encoder-flashinfer-perf034": "flashinfer"'
+        in service_source
+    )
+    assert "**PERF034_APP_PROFILES" in service_source
+    # The cap raise is scoped to the PERF034 app: every other app, including
+    # the default live encoder, must keep 8 sessions and 32 ingress inputs.
+    assert "MAX_SESSIONS = 32 if APP_NAME in PERF034_APP_PROFILES else 8" in (
+        service_source
+    )
+    assert "MAX_CONCURRENT_INPUTS = 64 if APP_NAME in PERF034_APP_PROFILES else 32" in (
+        service_source
+    )
 
 
 def test_allowed_app_names_extend_with_every_registered_experiment() -> None:
