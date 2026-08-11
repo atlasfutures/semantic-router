@@ -5496,6 +5496,147 @@ The arm cannot retry: the 502 was a launched failure, and any successor —
 including one that only wants the missing `r645` state-reset receipt or the
 trace-prefix check — needs a new registry ID and fresh human authorization.
 
+### PERF035 Result (2026-08-11) — the L4 saturates from the first rung, and the TFLOPS extrapolation is falsified
+
+The question was the deployment's, not the family's: GCP Cloud Run with GPU
+sells exactly one card Modal also rents — the 24 GB L4 — and every recorded
+Rayline capacity number was measured on an H100. PERF035 re-ran PERF033's
+exact eight-lane, 32-case packet on an L4
+(`rayline-arc-session-encoder-flashinfer-perf035-l4`, same vLLM `9f5ea81c`
+`gdn-flashinfer-eager` build, same Qwen3.5-0.8B `2fc06364`, FlashInfer) with
+the card as the only variable moved. The preregistered prediction was the
+calculator's TFLOPS extrapolation: `0.4014` decisions per second, with a
+stated `±30%` validation band of `0.2809`–`0.5218` that is explicitly a
+target and not an integrity gate. The chain ran as written: authorize
+`62c8d8f2` recorded the human's grant (`$2.4194208` minimum-viable against
+the "anything under `$10`" bound, ceiling to `$191.841229466383`), the
+Pathfinder registry head `511760ab` carried the authorization, bind
+`aff63344` opened exactly this run, and the arm executed once.
+
+It is the family's first launched run that closed with no in-run anomaly.
+The launcher wrote `comparison.json` itself — `status: passed`, with
+`all_completed`, `provider_calls_zero` and `trace_match` true at every rung —
+where PERF034 needed an offline derivation and PERF032 before it. All eight
+arm-cells completed `32/32` with `failed: 0` and `provider_calls: 0`; the
+selected-worker trace sha256 equals PERF020's recorded
+`d9e93cf0f4c636a3838e41938d2ef3ff6e1d66a60860922f84771b3fa5158ac9` **exactly**
+in every cell — this being the same 32-case corpus, continuity here is exact
+equality, not PERF034's unverifiable prefix property. All four state-reset
+receipts exist and record `8/8` measured sessions closed with exact zeros for
+resident sessions and tokens. ARC telemetry is byte-identical across the four
+cells: `36` session actions (`9` created, `27` appended, zero rebuilt, zero
+reused), `cache_miss_tokens` sum exactly zero, zero truncations, `1,235,801`
+appended tokens and `308,144` retained tokens per cell. The identity docs
+carry the frozen family label `gpu_class: NVIDIA H100 80GB` by byte-pinned
+lineage; the actual card is attested where the preregistration said it would
+be, in `deployment-evidence.json` (`"encoder_gpu": "L4"`, the perf035 app
+name, the engine build id).
+
+#### What the four rungs measured
+
+ARC sub-arm, at full receipt precision where it matters:
+
+| Rung | Realized arrivals | Completion throughput | Peak occupancy | Saturated | Marginal gain | Plateaued |
+| --- | ---: | ---: | ---: | :-: | ---: | :-: |
+| `r016` | `0.1986` | `0.1267535599322920` | `1.0` | **yes** | — | no |
+| `r032` | `0.3972` | `0.1651960199614078` | `1.0` | yes | `0.1936` | **yes** |
+| `r048` | `0.5958` | `0.1824534930884859` | `1.0` | yes | `0.0869` | yes |
+| `r072` | `0.8938` | `0.1976547216213381` | `1.0` | yes | `0.0510` | yes |
+
+Remote sub-arm:
+
+| Rung | Realized arrivals | Completion throughput | Peak occupancy | Saturated | Marginal gain | Plateaued |
+| --- | ---: | ---: | ---: | :-: | ---: | :-: |
+| `r016` | `0.1986` | `0.1220556638168625` | `1.0` | **yes** | — | no |
+| `r032` | `0.3972` | `0.1572359819546513` | `1.0` | yes | `0.1771` | **yes** |
+| `r048` | `0.5958` | `0.1735490282425835` | `1.0` | yes | `0.0821` | yes |
+| `r072` | `0.8938` | `0.1847654720958659` | `1.0` | yes | `0.0376` | yes |
+
+The arrival plumbing behaved exactly as designed this time: the
+realized-per-offered ratio landed at the `1.2413` the ladder was built with
+(realized `0.1986 / 0.3972 / 0.5958 / 0.8938` against offered
+`0.16 / 0.32 / 0.48 / 0.72`), where PERF034's measured `1.0432`. And every
+rung of both sub-arms reports `overloaded: true` with the offered rate
+maintained — on this card even `0.199` realized arrivals per second exceeds
+what the encoder completes.
+
+#### Occupancy fired first, and the drain clause voids the plateau
+
+`first_saturated_cell` is `r016` on **both** sub-arms: peak lane occupancy
+reached `1.0` of the eight declared lanes at the very first rung — and stayed
+pinned there, peak and terminal, at every rung of both sub-arms.
+`first_throughput_plateau_cell` is `r032` on both sub-arms. But the
+preregistered falsification clause fires at the plateau's firing rung: the
+drain-corrected marginal gains are `0.9525` (arc `r032`) and `0.9495` (remote
+`r032`) — inside the `10%`-of-`1.0` band — with implied residence deltas
+negative (`−4.58`s and `−4.78`s; in fact negative at every rung of both
+sub-arms), which is PERF032's recorded signature of finite-corpus drain
+arithmetic. The plateau verdicts are therefore voided, and the recorded
+result is **occupancy-first: the rig bound, again** — the outcome the
+preregistration reserved for it, "even an eighth of the compute cannot
+exhaust eight lanes of this corpus." The expected plateau-first separation,
+the direct proof of encoder binding four H100 packets could not produce, did
+not happen on the L4 either. Separating the encoder needs a wider corpus,
+not a smaller card.
+
+The saturated-pipeline arithmetic is exact: implied per-decision residence
+falls `63.11 → 48.43 → 43.85 → 40.47` seconds on arc across the rungs, and
+at every rung completion throughput equals `8 lanes ÷ residence` to the
+receipt's precision — throughput above `r016` grows only because queueing
+compresses residence, not because the card finds capacity. The supporting
+evidence holds on its preregistered terms: completion ratio falls
+monotonically with load on both sub-arms (`0.64 → 0.42 → 0.31 → 0.22` on
+arc), `drain_service_tail_multiple` is above one in all eight cells
+(`1.014`–`1.063`), and arc ran slightly faster than remote at every rung
+(throughput ratios `1.039`–`1.070`).
+
+#### The anchor prediction failed, the band was missed, and both are results
+
+The preregistration placed `r016` at `0.49×` the predicted ceiling — "well
+inside where the encoder cannot bind — so it measures the arrival plumbing,
+not the card." That prediction failed outright: `r016` saturated and
+overloaded immediately, with a service p50 of `0.808` seconds against a p95
+of `95.0` seconds and a `96.4`-second drain after the final arrival. The
+card's own claim then lands below the band: the measured ceiling is
+`0.1977` decisions per second (arc `r072`; remote `0.1848`) against the
+`0.2809` band floor — which, per the preregistered `tolerance_rationale`,
+**falsifies the L4 TFLOPS extrapolation and is a result, not a voided arm**.
+The cross-check the registry dismissed — naive scaling of PERF033's measured
+`1.7651` dps by the TFLOPS ratio, `0.216` dps, "wrong because it also scales
+the non-GPU serial time" — landed within `9%` of measured, evidence that at
+this scale the workload is GPU-bound nearly end to end and the serial time
+the calculator protected does not dominate.
+
+For the deployment question that motivated the run: one L4 sustains about
+`0.198` decisions per second under this eight-lane shape, `0.88×` the `0.225`
+reference production rate — a single Cloud Run L4 instance does not carry the
+reference rate, where the 32-lane H100 measured `2.13`–`2.31`. The
+deployment plan needs more than one L4 instance or the RTX PRO 6000 class,
+and either measurement needs a new registry ID.
+
+#### Budget
+
+The paid launcher window measured `2292.06` seconds against the
+`2,400`-second envelope — the `paid_wall_check` had warned that only a card
+slower than `~0.17` dps would breach it, and at `0.198` dps the margin held —
+for a measured resource upper bound of `$1.0747` against the `$2.4194208`
+envelope. Conservative accounting charges the full envelope regardless,
+taking the cumulative to `$188.841229466383` and leaving the reserve at
+exactly `$3.00` under the `$191.841229466383` authority — the preregistered
+arithmetic, landed to the digit. `provider_spend_usd` is `$0.00` and
+`provider_calls` is zero in every cell.
+
+Cleanup ran inside the launcher — the L4 app stopped at `17:55:34`, the
+ephemeral proxy token deleted, `encoder_containers_remaining: 0` — and a
+fresh inventory afterwards independently reconfirmed zero Rayline containers
+on Modal. PERF035's launch authority is closed: `LAUNCHABLE_CONTRACT` is back
+to `None` in `rayline_l4_capacity_contract.py` after its one authorized
+execution (`1d66ba9a`), with `PATHFINDER_AUTHORIZATION_COMMIT` staying at the
+real `511760abd07a978802bbfc2065dac19e2062f050` as the record of what ran.
+Receipts are uploaded to `router-artifacts` at revision
+`2714e487016238a2325a7b61516665e39f89b2af` (19 files). The 1,000-case
+release qualification stays held.
+
 ## Operating Rules
 
 - Use the repo's normal local image flow; do not invent another Semantic Router
