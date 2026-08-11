@@ -40,6 +40,9 @@ from rayline_open_loop_contract import (
 )
 from rayline_open_loop_probe import load_open_loop_packet
 from rayline_parity_http_probe import PROTOCOL_BY_ARM
+from rayline_saturation_capacity_contract import (
+    resolve_launch_contract as resolve_saturation_capacity_contract,
+)
 from rayline_saturation_knee_contract import (
     resolve_launch_contract as resolve_saturation_knee_contract,
 )
@@ -151,12 +154,13 @@ def _resolve_contract(run_id: str) -> OpenLoopRunContract:
         resolve_saturation_ladder_contract,
         resolve_saturation_knee_contract,
         resolve_saturation_knee_v2_contract,
+        resolve_saturation_capacity_contract,
     ):
         with contextlib.suppress(ValueError):
             return resolve(run_id)
     raise ValueError(
-        "no Rayline open-loop sweep, saturation ladder arm or saturation knee "
-        "run is currently launchable"
+        "no Rayline open-loop sweep, saturation ladder arm, saturation knee "
+        "or saturation capacity run is currently launchable"
     )
 
 
