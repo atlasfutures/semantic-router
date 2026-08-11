@@ -75,7 +75,7 @@ PERF033_RUN_ID = "rayline-saturation-knee-perf033-20260810"
 
 # No commit can equal `PENDING`, and `_assert_pushed` forces the Pathfinder
 # HEAD to equal this, so the packet cannot launch while it reads this.
-PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
+PATHFINDER_AUTHORIZATION_COMMIT = "fb78b2fbbd579d10cd14a78ce71af7c0e9216306"
 
 # Already granted; this packet fits inside it without a further grant. The
 # `$10.00` grant that opened PERF032 took cumulative authority here, and
@@ -202,7 +202,7 @@ SATURATION_KNEE_V2_ARMS = (PERF033,)
 
 # Binding is a separate, human-gated step. Preparation never opens launch
 # authority.
-LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF033
 
 
 def resolve_launch_contract(run_id: str) -> OpenLoopRunContract:

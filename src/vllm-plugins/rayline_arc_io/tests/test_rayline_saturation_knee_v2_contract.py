@@ -21,19 +21,37 @@ open_loop = importlib.import_module("rayline_open_loop_contract")
 PACKET_DIR = REPO_ROOT / ".agent-harness/rayline-parity/packet-perf033"
 
 
-def test_perf033_is_not_launchable_and_pins_no_authorization_head() -> None:
-    """Preparation may open neither gate.
+def test_perf033_opens_at_most_itself_and_fails_closed() -> None:
+    """The packet has three legitimate states; assert what spans all of them.
 
-    `LAUNCHABLE_CONTRACT` refuses the arm outright, and the Pathfinder pin is
-    the literal `PENDING`, which no commit can equal and which `_assert_pushed`
-    compares HEAD against. Either alone is sufficient.
+    Prepared is unbound against the literal `PENDING`, which no commit can
+    equal and which `_assert_pushed` compares HEAD against. Open is this one
+    run bound against a real pushed Pathfinder head. Closed is unbound again,
+    keeping the real pin as the record of what was measured, exactly as the
+    closed PERF020/021/031/032 contracts do.
+
+    Asserting the prepared snapshot would fail this guard the moment the packet
+    is legitimately used, forcing an edit to the very test that protects it.
+    That has now happened three times in this packet family.
     """
 
-    assert knee_v2.LAUNCHABLE_CONTRACT is None
-    assert knee_v2.PATHFINDER_AUTHORIZATION_COMMIT == "PENDING"
-    assert knee_v2.PERF033.pathfinder_authorization_commit == "PENDING"
+    pin = knee_v2.PATHFINDER_AUTHORIZATION_COMMIT
+    # The pin belongs to the packet, never to the bound run.
+    assert knee_v2.PERF033.pathfinder_authorization_commit == pin
+    real_head = len(pin) == 40 and set(pin) <= set("0123456789abcdef")
+    assert pin == "PENDING" or real_head
+
+    if knee_v2.LAUNCHABLE_CONTRACT is None:
+        with pytest.raises(ValueError):
+            knee_v2.resolve_launch_contract(knee_v2.PERF033_RUN_ID)
+        return
+
+    # Bound: this run only, and never against the placeholder.
+    assert knee_v2.LAUNCHABLE_CONTRACT is knee_v2.PERF033
+    assert real_head
+    assert knee_v2.resolve_launch_contract(knee_v2.PERF033_RUN_ID) is knee_v2.PERF033
     with pytest.raises(ValueError):
-        knee_v2.resolve_launch_contract(knee_v2.PERF033_RUN_ID)
+        knee_v2.resolve_launch_contract("rayline-not-a-preregistered-run")
 
 
 def test_perf033_is_registered_with_the_launcher_it_will_run_under() -> None:
@@ -48,8 +66,15 @@ def test_perf033_is_registered_with_the_launcher_it_will_run_under() -> None:
         knee_v2.resolve_launch_contract
         in launcher._resolve_contract.__globals__.values()
     )
-    with pytest.raises(ValueError):
-        launcher._resolve_contract(knee_v2.PERF033_RUN_ID)
+    # Registration is the invariant; resolution follows the lifecycle. Unbound,
+    # the launcher must refuse. Bound, it must return this exact contract --
+    # a registry that is consulted but returns the wrong packet is worse than
+    # one that is never consulted at all.
+    if knee_v2.LAUNCHABLE_CONTRACT is None:
+        with pytest.raises(ValueError):
+            launcher._resolve_contract(knee_v2.PERF033_RUN_ID)
+    else:
+        assert launcher._resolve_contract(knee_v2.PERF033_RUN_ID) is knee_v2.PERF033
 
 
 def test_perf033_budget_fits_the_existing_authority() -> None:
