@@ -54,6 +54,13 @@ PERF034_APP_PROFILES = {
 PERF035_APP_PROFILES = {
     "rayline-arc-session-encoder-flashinfer-perf035-l4": "flashinfer",
 }
+# PERF036 is the RTX PRO 6000 capacity arm: identical engine profile and
+# identical 8/32 caps to PERF033 and PERF035, but this app name alone deploys
+# on the 96 GB RTX PRO 6000 (below), Cloud Run's other GPU class and the first
+# card whose prediction scales from a measured cross-GPU anchor (PERF035).
+PERF036_APP_PROFILES = {
+    "rayline-arc-session-encoder-flashinfer-perf036-rtx6000": "flashinfer",
+}
 EXPERIMENT_APP_PROFILES = {
     **PERF030_APP_PROFILES,
     **AGT017_APP_PROFILES,
@@ -62,6 +69,7 @@ EXPERIMENT_APP_PROFILES = {
     **PERF031_APP_PROFILES,
     **PERF034_APP_PROFILES,
     **PERF035_APP_PROFILES,
+    **PERF036_APP_PROFILES,
 }
 ALLOWED_APP_NAMES = (DEFAULT_APP_NAME, *SCALEOUT_APP_NAMES, *EXPERIMENT_APP_PROFILES)
 APP_NAME = os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", DEFAULT_APP_NAME)
@@ -110,11 +118,17 @@ def _runtime_profile() -> tuple[str, str]:
 # earlier placement work ruled out simple region distance as its cause.
 # Re-pin only with a measurement that clears a placement gate.
 # Every recorded run is an H100 run and stays one. PERF035 alone deploys on a
-# 24 GB L4, because the deployment target (GCP Cloud Run with GPU) offers no
-# other card Modal also sells, and a capacity claim for that target has to be
-# measured on that silicon. Scoped to the exact app name so no closed run's
-# evidence can change class underneath it.
-GPU_TYPE = "L4" if APP_NAME in PERF035_APP_PROFILES else "H100"
+# 24 GB L4 and PERF036 alone on a 96 GB RTX PRO 6000, because those are the
+# two GPU classes the deployment target (GCP Cloud Run with GPU) sells and a
+# capacity claim for that target has to be measured on that silicon. Scoped to
+# the exact app names so no closed run's evidence can change class underneath
+# it.
+if APP_NAME in PERF035_APP_PROFILES:
+    GPU_TYPE = "L4"
+elif APP_NAME in PERF036_APP_PROFILES:
+    GPU_TYPE = "RTX-PRO-6000"
+else:
+    GPU_TYPE = "H100"
 # The historical 8 was committed without rationale (4f14763b) and predates the
 # frozen corpus's 8 episodes; it is retained for every non-PERF034 app because
 # the live stack sizes around it. PERF034 raises its own app to 32 to locate

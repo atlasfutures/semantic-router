@@ -232,7 +232,10 @@ def test_perf035_owns_its_l4_encoder_app() -> None:
 
     source = SESSION_SERVICE.read_text()
     assert f'"{l4.PERF035_APP_NAME}": "flashinfer"' in source
-    assert 'GPU_TYPE = "L4" if APP_NAME in PERF035_APP_PROFILES else "H100"' in source
+    # The routing became a three-way when PERF036 added the RTX PRO 6000, but
+    # the PERF035 branch is unchanged: this app name, and only this one,
+    # deploys on an L4.
+    assert "if APP_NAME in PERF035_APP_PROFILES:\n    GPU_TYPE = \"L4\"\n" in source
     # A 24 GB card cannot hold the 32-lane corpus, so the cap raise must not
     # follow the L4 app.
     assert "MAX_SESSIONS = 32 if APP_NAME in PERF034_APP_PROFILES else 8" in source
