@@ -48,16 +48,31 @@ class SaturationCriterion:
     and so may not assume it; the run that generated the packet states it, and
     the launcher checks the packet's own `max_episode_lanes` against it before
     any paid second elapses.
+
+    `throughput_plateau_gain` arms a second, independent firing point. The
+    occupancy criterion can only see the rig's ceiling; a run whose encoder
+    binds below that ceiling plateaus in throughput while occupancy still has
+    headroom, and the occupancy criterion stays silent -- correctly, and
+    uselessly. The gain is the marginal-throughput floor: the first rung that
+    converts less than this fraction of its additional realized arrival rate
+    into additional completed throughput is the plateau. `None` is the frozen
+    PERF033 behaviour -- occupancy only, and a v3 report byte-identical to the
+    one that closed run recorded.
     """
 
     episode_lanes: int
     occupancy_ratio: float = 1.0
+    throughput_plateau_gain: float | None = None
 
     def __post_init__(self) -> None:
         if self.episode_lanes < 1:
             raise ValueError("episode lanes must be positive")
         if not 0.0 < self.occupancy_ratio <= 1.0:
             raise ValueError("occupancy ratio must fall in (0, 1]")
+        if self.throughput_plateau_gain is not None and not (
+            0.0 < self.throughput_plateau_gain < 1.0
+        ):
+            raise ValueError("throughput plateau gain must fall in (0, 1)")
 
 
 @dataclass(frozen=True)

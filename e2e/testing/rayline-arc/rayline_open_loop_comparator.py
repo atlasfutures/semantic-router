@@ -25,6 +25,7 @@ from rayline_parity_comparator import IDENTITY_FIELDS
 
 REPORT_SCHEMA = "rayline.vllm.open-loop-comparison.v2"
 SATURATION_REPORT_SCHEMA = "rayline.vllm.open-loop-comparison.v3"
+PLATEAU_REPORT_SCHEMA = "rayline.vllm.open-loop-comparison.v4"
 OPEN_LOOP_ARMS = ("rayline_remote", "rayline_arc")
 DEFAULT_MEASURED_CASES = 32
 FINAL_BACKLOG_KNEE = 8
@@ -150,6 +151,97 @@ def _saturation(
         ),
         "saturated": peak >= criterion.occupancy_ratio,
     }
+
+
+def _unqueued_throughput_rps(results: Mapping[str, Any]) -> float:
+    """The completion throughput this cell's own drain arithmetic predicts.
+
+    Same model as `unqueued_completion_ratio` in `_saturation`, expressed as a
+    throughput: the rate a cell with zero queueing and this cell's measured
+    service tail would have reported.
+    """
+
+    tail = float(results["service_latency_seconds"]["p95"])
+    span = float(results["scheduled_span_seconds"])
+    completed = int(results["completed"])
+    finite_sample_gain = completed / (completed - 1) if completed > 1 else 1.0
+    return (
+        finite_sample_gain
+        * _ratio(span, span + tail)
+        * results["realized_arrival_rate_rps"]
+    )
+
+
+def _throughput_plateau(
+    ordered_receipts: Sequence[Mapping[str, Any]], gain_floor: float
+) -> list[dict[str, Any]]:
+    """Locate the rung where added offered load stops becoming added throughput.
+
+    The deciding term is the raw marginal gain: the change in
+    `completion_throughput_rps` per unit change in realized arrival rate
+    between adjacent rungs. Its floor cannot sit at the intuitive `0.5`,
+    because `completion_throughput_rps` divides a fixed corpus by
+    `span + drain` and the shrinking span alone depresses the marginal gain
+    with zero queueing anywhere: PERF032's provably unqueued top rung reads
+    `0.51`/`0.46` on its two sub-arms. On every receipt this repo has
+    recorded, unqueued cells read `0.46` or above while rungs past a known
+    capacity knee read `0.32` or below (PERF021 `r030`/`r045`, PERF033
+    `r220`/`r320`), so a floor of one third sits inside the measured gap with
+    margin on both sides. The contract carries the floor; this function never
+    assumes one.
+
+    Two companions are recorded and deliberately do not vote. The
+    drain-corrected gain re-derives the slope after dividing out each cell's
+    own unqueued expectation: near `1.0` it says the raw drop is the drain
+    arithmetic, not the encoder -- but it cannot decide, because a saturated
+    cell's inflated service tail feeds the same correction and pulls it back
+    to `1.0` there too (PERF021's saturated rungs read `0.93`-`0.95`).
+    Implied residence -- peak in-flight requests over completion throughput --
+    falls while capacity remains and turns up when it does not, but its
+    rung-to-rung sign flips on recorded unqueued cells, so it corroborates
+    rather than decides.
+
+    The first rung is the anchor: a slope needs two points, so it records
+    `None` marginals and cannot plateau. A rung that fails to realize more
+    arrivals than its predecessor converts nothing, and records a gain of
+    zero.
+    """
+
+    plateau: list[dict[str, Any]] = []
+    previous: tuple[float, float, float, float] | None = None
+    for receipt in ordered_receipts:
+        results = receipt["results"]
+        throughput = float(results["completion_throughput_rps"])
+        realized = float(results["realized_arrival_rate_rps"])
+        corrected = _ratio(throughput, _unqueued_throughput_rps(results)) * realized
+        residence = _ratio(float(results["max_client_backlog"]), throughput)
+        cell: dict[str, Any] = {
+            "completion_throughput_rps": throughput,
+            "realized_arrival_rate_rps": realized,
+            "marginal_throughput_gain": None,
+            "drain_corrected_marginal_gain": None,
+            "implied_residence_seconds": residence,
+            "implied_residence_delta_seconds": None,
+            "plateaued": False,
+        }
+        if previous is not None:
+            prior_realized, prior_throughput, prior_corrected, prior_residence = (
+                previous
+            )
+            realized_delta = realized - prior_realized
+            if realized_delta > 0:
+                gain = (throughput - prior_throughput) / realized_delta
+                corrected_gain = (corrected - prior_corrected) / realized_delta
+            else:
+                gain = 0.0
+                corrected_gain = 0.0
+            cell["marginal_throughput_gain"] = gain
+            cell["drain_corrected_marginal_gain"] = corrected_gain
+            cell["implied_residence_delta_seconds"] = residence - prior_residence
+            cell["plateaued"] = gain < gain_floor
+        plateau.append(cell)
+        previous = (realized, throughput, corrected, residence)
+    return plateau
 
 
 def _resolve_rungs(offered_rates: Sequence[float] | None) -> tuple[float, ...]:
@@ -359,6 +451,40 @@ def compare_open_loop(
         )
         for arm in OPEN_LOOP_ARMS
     }
+    if saturation.throughput_plateau_gain is None:
+        return report
+    # The two firing points are deliberately independent, because which one
+    # fires first is the run's diagnosis: occupancy first means the rig bound,
+    # plateau first means the encoder did.
+    plateau_cells = {
+        arm: dict(
+            zip(
+                expected_labels,
+                _throughput_plateau(
+                    [cells[label][arm] for label in expected_labels],
+                    saturation.throughput_plateau_gain,
+                ),
+                strict=True,
+            )
+        )
+        for arm in OPEN_LOOP_ARMS
+    }
+    report["schema_version"] = PLATEAU_REPORT_SCHEMA
+    report["throughput_plateau"] = plateau_cells
+    report["saturation_criterion"]["throughput_plateau_gain"] = (
+        saturation.throughput_plateau_gain
+    )
+    report["first_throughput_plateau_cell"] = {
+        arm: next(
+            (
+                label
+                for label in expected_labels
+                if plateau_cells[arm][label]["plateaued"]
+            ),
+            None,
+        )
+        for arm in OPEN_LOOP_ARMS
+    }
     return report
 
 
@@ -409,6 +535,15 @@ def _parse_args() -> tuple[argparse.Namespace, tuple[float, ...]]:
         ),
     )
     parser.add_argument("--occupancy-ratio", type=float, default=1.0)
+    parser.add_argument(
+        "--throughput-plateau-gain",
+        type=float,
+        default=None,
+        help=(
+            "Marginal-throughput floor arming the plateau firing point and "
+            "the v4 report; omitting it keeps the occupancy-only v3 report."
+        ),
+    )
     parser.add_argument("--case-count", type=int, default=DEFAULT_MEASURED_CASES)
     return parser.parse_args(), rungs
 
@@ -432,6 +567,7 @@ def main() -> None:
             else SaturationCriterion(
                 episode_lanes=args.episode_lanes,
                 occupancy_ratio=args.occupancy_ratio,
+                throughput_plateau_gain=args.throughput_plateau_gain,
             )
         )
         report = compare_open_loop(raw_cells, rungs, args.case_count, criterion)
