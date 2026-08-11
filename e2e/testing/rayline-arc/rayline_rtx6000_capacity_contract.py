@@ -102,7 +102,7 @@ PERF036_RUN_ID = "rayline-rtx6000-capacity-perf036-20260811"
 # The Pathfinder head this run's authority is pinned to: the pushed
 # codex/rayline-vsr-mvp head whose registry entry records the confirmed
 # grant. `_assert_pushed` forces the Pathfinder HEAD to equal this.
-PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
+PATHFINDER_AUTHORIZATION_COMMIT = "ed8a52cccb8980d6f03334d768de43c51fefa189"
 
 # GRANTED 2026-08-11. The user approved the run in-session with the words
 # "i approve", clarified as "the rtx bench". Per the family's precedent the
@@ -269,10 +269,10 @@ PERF036 = OpenLoopRunContract(
 
 RTX6000_CAPACITY_ARMS = (PERF036,)
 
-# Deliberately None: prepared is not launchable. Binding this name to PERF036
-# is the launch-authorization act and needs the registry entry's confirmed
-# grant plus the Pathfinder pin above replaced with a real pushed head.
-LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
+# Bound 2026-08-11 as the second half of the authorization act; the first
+# half is the real Pathfinder pin above. This opens exactly one run id to
+# the launcher, for exactly one execution.
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF036
 
 # Re-exported so the cross-GPU sanity check the pin test walks through stays
 # importable from one place.
