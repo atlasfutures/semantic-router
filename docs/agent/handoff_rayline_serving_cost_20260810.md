@@ -4,6 +4,15 @@ Status as of 2026-08-10, 14:10Z. Read this before touching
 `src/vllm-plugins/rayline_arc_io/modal_session_service.py`, the Modal
 deployment, or any cost figure quoted for the Rayline ARC encoder.
 
+> **Corrections, 2026-08-11** (see
+> `handoff_rayline_perf036_20260811.md`): three claims below are stale.
+> (1) `902c4ab4` has long since been pushed; the branch is ahead 0.
+> (2) The encoder has now run on the L4 (PERF035) and the RTX PRO 6000
+> (PERF036), not only the H100.
+> (3) FlashInfer has been load-tested end-to-end — PERF033–036 ran the
+> `gdn-flashinfer-eager` engine build under load.
+> The KV memory model and the 24/7 traffic finding stand.
+
 ## TL;DR
 
 - **One commit exists and is NOT pushed**: `902c4ab4` on
