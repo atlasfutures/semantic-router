@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import importlib
 import json
 import sys
@@ -77,26 +76,23 @@ def test_perf034_is_registered_with_the_launcher_it_will_run_under() -> None:
         )
 
 
-def test_perf034_budget_fails_closed_until_a_human_raises_the_ceiling() -> None:
-    """No grant has been recorded, and the arithmetic refuses, not a comment.
+def test_perf034_budget_fits_exactly_the_confirmed_grant() -> None:
+    """The 2026-08-11 grant is the minimum viable amount, and no more.
 
-    PERF033 charged its full envelope, leaving `$1.825` of usable slack over
-    the `$3.00` floor -- less than one envelope -- so `budget_receipt` must
-    raise today. The minimum viable grant is the constant the contract
-    carries: applied to the ceiling, it leaves the reserve at exactly the
-    floor, with the envelope itself unchanged because the cap raise moves
-    session-service constants, not container resources.
+    The user confirmed the spend without naming a figure, so authorize
+    commit e282f16c records the contract's own minimum: the ceiling is the
+    old authority plus exactly `MINIMUM_VIABLE_GRANT_USD`, the envelope is
+    unchanged from PERF033 because the cap raise moves session-service
+    constants rather than container resources, and the reserve after a full
+    envelope sits at exactly the `$3.00` floor. Any regression that widens
+    the envelope or shrinks the grant turns this back into a raise.
     """
 
-    with pytest.raises(budget.BudgetError):
-        budget.budget_receipt(capacity.PERF034.budget)
-
-    granted = dataclasses.replace(
-        capacity.PERF034.budget,
-        authorized_cumulative_usd=capacity.AUTHORIZED_CUMULATIVE_USD
-        + capacity.MINIMUM_VIABLE_GRANT_USD,
+    assert capacity.AUTHORIZED_CUMULATIVE_USD == pytest.approx(
+        184.31282402 + capacity.MINIMUM_VIABLE_GRANT_USD
     )
-    receipt = budget.budget_receipt(granted)
+
+    receipt = budget.budget_receipt(capacity.PERF034.budget)
 
     assert receipt["maximum_resource_envelope_usd"] == pytest.approx(6.9344208)
     assert receipt["cumulative_if_full_envelope_usd"] == pytest.approx(
@@ -104,6 +100,10 @@ def test_perf034_budget_fails_closed_until_a_human_raises_the_ceiling() -> None:
     )
     assert receipt["reserve_after_full_envelope_usd"] == pytest.approx(
         3.0, abs=1e-9
+    )
+    assert (
+        receipt["reserve_after_full_envelope_usd"]
+        >= capacity.PERF034.budget.required_reserve_usd
     )
 
 

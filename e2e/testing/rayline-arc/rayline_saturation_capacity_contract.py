@@ -60,20 +60,18 @@ PERF034_RUN_ID = "rayline-saturation-capacity-perf034-20260811"
 # either one; only a reviewed authorization checkpoint may.
 # ---------------------------------------------------------------------------
 
-# The Pathfinder head this run's authority will be pinned to. `_assert_pushed`
-# forces the Pathfinder HEAD to equal this, and no commit can equal `PENDING`,
-# so the packet cannot launch while it reads this.
-PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
+# The Pathfinder head this run's authority is pinned to: the pushed
+# codex/rayline-vsr-mvp head whose registry entry records the confirmed
+# grant. `_assert_pushed` forces the Pathfinder HEAD to equal this.
+PATHFINDER_AUTHORIZATION_COMMIT = "da85e1045a92aa3d6aa6d765a2dc2f5257e1d31d"
 
-# NOT YET GRANTED. This is deliberately still PERF033's ceiling. PERF033
-# charged its complete `$6.9344208` envelope, leaving the conservative
-# position at `$179.487387866383` against the `$184.31282402` authority --
-# `$1.825436153617` of usable slack over the `$3.00` floor, which is less than
-# one envelope, so `budget_receipt` raises `BudgetError` and PERF034 cannot
-# run. A human must raise this. The minimum viable grant for this one arm is
-# `$5.108984646383`, which takes the ceiling to `$189.421808666383` and the
-# reserve to exactly `$3.00`. Do not invent a granted figure here.
-AUTHORIZED_CUMULATIVE_USD = 184.31282402
+# GRANTED 2026-08-11. The user approved the spend without naming a figure,
+# so the ceiling moves by exactly the minimum viable grant recorded in
+# authorize commit e282f16c: `$184.31282402` plus `$5.108984646383`. Against
+# the `$179.487387866383` conservative position and the unchanged
+# `$6.9344208` envelope, this leaves the reserve at exactly the `$3.00`
+# floor.
+AUTHORIZED_CUMULATIVE_USD = 189.421808666383
 PREVIOUS_CONSERVATIVE_USD = 179.487387866383
 MINIMUM_VIABLE_GRANT_USD = 5.108984646383
 
@@ -226,9 +224,10 @@ PERF034 = OpenLoopRunContract(
 
 SATURATION_CAPACITY_ARMS = (PERF034,)
 
-# Binding is a separate, human-gated step. Preparation never opens launch
-# authority.
-LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
+# Bound 2026-08-11 against authorize commit e282f16c and the pushed
+# Pathfinder head above, for exactly one execution. The close commit
+# returns this to None.
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF034
 
 
 def resolve_launch_contract(run_id: str) -> OpenLoopRunContract:
