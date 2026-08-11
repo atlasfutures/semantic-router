@@ -5637,6 +5637,143 @@ Receipts are uploaded to `router-artifacts` at revision
 `2714e487016238a2325a7b61516665e39f89b2af` (19 files). The 1,000-case
 release qualification stays held.
 
+### PERF036 Result (2026-08-11) — the RTX PRO 6000 lands inside the band, and measured-anchor TFLOPS scaling survives its first cross-GPU hop
+
+PERF035 falsified the token-model calculator but left one method standing:
+naive scaling of a measured ceiling by the dense-FP16 TFLOPS ratio, which
+had reproduced the L4's number within `9.2%` when run from PERF033's H100
+anchor. PERF036 tested that surviving method prospectively on GCP Cloud
+Run's other GPU class — the 96 GB RTX PRO 6000, on Modal since April 2026 —
+by re-running the same eight-lane, 32-case packet
+(`rayline-arc-session-encoder-flashinfer-perf036-rtx6000`, same vLLM
+`9f5ea81c` `gdn-flashinfer-eager` build, same Qwen3.5-0.8B `2fc06364`,
+FlashInfer) with the card as the only variable moved and a four-rung ladder
+scaled up for the faster card (offered `0.32 / 0.64 / 0.96 / 1.44`, with
+`r032` byte-identical to PERF035's `r032` as the cross-run anchor). The
+preregistered prediction scaled PERF035's measured `0.1977` dps by
+`480/121`: `0.7843` decisions per second, band `0.5490`–`1.0195`, a
+validation target and explicitly not an integrity gate. The chain ran as
+written: authorize `fee6176e` recorded the human's grant (`$5.6186208`
+minimum-viable against the under-`$10` approval, ceiling to
+`$197.459850266383`), the Pathfinder registry head `ed8a52cc` carried the
+authorization, bind `fcc1fc7d` opened exactly this run, and the arm
+executed once.
+
+**The headline: the measured ceiling is `0.8877` decisions per second (arc
+`r144`; remote `0.8441`), inside the preregistered band and `13.2%` above
+the point prediction.** Measured-anchor TFLOPS scaling is now validated on
+its first true cross-GPU hop (L4 → RTX PRO 6000, Ada to Blackwell), where
+the token-model calculator it replaced had missed the L4 by `2.03×`. For
+the deployment question that motivated the family: one RTX PRO 6000
+sustains `3.95×` the `0.225` reference production rate under this
+eight-lane shape — the single-instance Cloud Run deployment the L4 could
+not carry (`0.88×`), this card carries with nearly fourfold headroom.
+
+#### What the four rungs measured
+
+ARC sub-arm, at full receipt precision where it matters:
+
+| Rung | Realized arrivals | Completion throughput | Peak occupancy | Saturated | Marginal gain | Plateaued |
+| --- | ---: | ---: | ---: | :-: | ---: | :-: |
+| `r032` | `0.3972` | `0.3765813234487028` | `0.375` | no | — | no |
+| `r064` | `0.7945` | `0.6082146256068232` | `0.875` | no | `0.5831` | no |
+| `r096` | `1.1917` | `0.7472059583005314` | `1.0` | **yes** | `0.3499` | no |
+| `r144` | `1.7875` | `0.8877486456148235` | `1.0` | yes | `0.2359` | **yes** |
+
+Remote sub-arm:
+
+| Rung | Realized arrivals | Completion throughput | Peak occupancy | Saturated | Marginal gain | Plateaued |
+| --- | ---: | ---: | ---: | :-: | ---: | :-: |
+| `r032` | `0.3972` | `0.3743563562117826` | `0.375` | no | — | no |
+| `r064` | `0.7945` | `0.5772243128224220` | `0.875` | no | `0.5107` | no |
+| `r096` | `1.1917` | `0.7208324179423778` | `1.0` | **yes** | `0.3615` | no |
+| `r144` | `1.7875` | `0.8441019084741728` | `1.0` | yes | `0.2069` | **yes** |
+
+For the first time in this family, the low rungs ran genuinely unsaturated:
+peak lane occupancy `0.375` at `r032` and `0.875` at `r064`, `overloaded:
+false` on both sub-arms, completion ratios `0.95` and `0.77`, and a service
+p50 of `0.53` seconds at the anchor rung. The anchor gate landed exactly:
+`r032`'s realized arrival rate equals PERF035's `r032` to the last digit
+(`0.39722749207287017`), the realized-per-offered ratio is the ladder's
+designed `1.2413` at every rung, and on the workload that pinned the L4 at
+occupancy `1.0` from its first rung, this card completed `2.28×` the
+throughput while three-eighths busy.
+
+#### Occupancy still fired first, and the drain clause voids the plateau again
+
+The preregistered expectation — plateau first with occupancy short of the
+ceiling, the direct encoder-bound signature — did not materialize.
+`first_saturated_cell` is `r096` on both sub-arms;
+`first_throughput_plateau_cell` is `r144` on both. And at the plateau's
+firing rung the preregistered falsification clause fires a third time: the
+drain-corrected marginal gains are `0.9581` (arc `r144`) and `0.9558`
+(remote `r144`) — inside the `10%`-of-`1.0` band — with implied residence
+deltas negative (`−1.69`s and `−1.62`s), PERF032's recorded signature of
+finite-corpus drain arithmetic. The `r144` plateau verdicts are voided, and
+the structural result is **occupancy-first: the rig bound, a third time** —
+though no longer PERF035's degenerate everywhere-pinned form. The saturated
+arithmetic is exact where it applies: at `r096` and `r144` completion
+throughput equals `8 lanes ÷ implied residence` to the receipt's precision
+(`8 ÷ 10.71 = 0.747`, `8 ÷ 9.01 = 0.888`), so throughput above `r096` grows
+only because queueing compresses residence. The measured `0.8877` is
+therefore the eight-lane rig's number on this card, a floor on the
+encoder's own ceiling rather than the ceiling itself; separating the
+encoder still needs a wider corpus or more lanes, on any card. The
+supporting evidence holds on its preregistered terms: completion ratio
+falls monotonically with load on both sub-arms (`0.95 → 0.77 → 0.63 →
+0.50` on arc), and arc ran faster than remote at every rung (throughput
+ratios `1.006`–`1.054`, service p50 ratios `0.60`–`0.80`).
+
+#### Integrity, identity, and the run that almost wasn't
+
+All eight arm-cells completed `32/32` with `failed: 0` and
+`provider_calls: 0`; `comparison.json` was written by the launcher itself
+with `status: passed` and `all_completed`, `provider_calls_zero`, and
+`trace_match` true at every rung. The selected-worker trace sha256 equals
+PERF020's recorded
+`d9e93cf0f4c636a3838e41938d2ef3ff6e1d66a60860922f84771b3fa5158ac9`
+**exactly** in every cell. ARC telemetry is byte-identical across the four
+cells and — being the same corpus — byte-identical to PERF035's: `36`
+session actions (`9` created, `27` appended, zero rebuilt, zero reused),
+`cache_miss_tokens` sum exactly zero, zero truncations, `1,235,801`
+appended and `308,144` retained tokens per cell. All four state-reset
+receipts record `8/8` measured sessions closed with exact zeros for
+resident sessions and tokens. The identity docs carry the frozen family
+label `gpu_class: NVIDIA H100 80GB` by byte-pinned lineage; the actual card
+is attested where the preregistration said it would be, in
+`deployment-evidence.json` (`"encoder_gpu": "RTX-PRO-6000"`, the perf036
+app name, the engine build id). The first launch attempt deployed the app
+(`137.2`s) and then aborted before any cell, warmup, or GPU-seconds were
+requested — the local Docker daemon was down, `docker compose up` failed,
+and the launcher's own handler stopped the Modal app. Nothing was measured,
+so under the no-retry clause this was an environment failure before launch
+substance, not a launched failure; the evidence directory is preserved and
+uploaded as `...-aborted-docker-down`, and the packet-frozen run then
+executed once (deploy `62.7`s, cached).
+
+#### Budget
+
+The paid launcher window measured `878.02` seconds against the
+`2,400`-second envelope — a third of PERF035's window, on a card charged
+`2.6×` the rate — for a measured resource upper bound of `$0.9561` against
+the `$5.6186208` envelope. Conservative accounting charges the full
+envelope regardless, taking the cumulative to `$194.459850266383` and
+leaving the reserve at exactly `$3.00` under the `$197.459850266383`
+authority — the preregistered arithmetic, landed to the digit.
+`provider_spend_usd` is `$0.00` and `provider_calls` is zero in every cell.
+
+Cleanup ran inside the launcher — the app stopped, the ephemeral proxy
+token deleted, `encoder_containers_remaining: 0` — and a fresh inventory
+afterwards independently reconfirmed zero Rayline encoder containers on
+Modal. PERF036's launch authority is closed: `LAUNCHABLE_CONTRACT` is back
+to `None` in `rayline_rtx6000_capacity_contract.py` after its one
+authorized execution (`d277497d`), with `PATHFINDER_AUTHORIZATION_COMMIT`
+staying at the real `ed8a52cccb8980d6f03334d768de43c51fefa189` as the
+record of what ran. Receipts are uploaded to `router-artifacts` at revision
+`7d62eae9ce10656c37055e35fe676b0262122fcb` (19 files, plus the aborted
+attempt's evidence at `44483196`). The 1,000-case release qualification
+stays held.
+
 ## Operating Rules
 
 - Use the repo's normal local image flow; do not invent another Semantic Router
