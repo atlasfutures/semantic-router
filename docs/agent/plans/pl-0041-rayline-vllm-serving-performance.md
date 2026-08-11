@@ -5245,6 +5245,119 @@ as the closed PERF020/PERF021, PERF031 and PERF032 contracts keep theirs. The
 arm cannot retry. PERF032's own pins are untouched by this record and are
 tracked separately; PERF033 closes only its own.
 
+### PERF034 preregistration: the 32-lane saturation-capacity packet, fail-closed
+
+PERF033's conclusion demanded a different experimental design, and PERF034 is
+that design, preregistered in `rayline_saturation_capacity_contract.py` with
+both human gates shut. It removes the rig's ceiling instead of inferring past
+it: 32 lanes, a ladder to the predicted knee, and a second firing point so the
+receipts say *which* resource bound.
+
+#### One of PERF033's three blockers was already solved, and one was never real
+
+The "different experimental design" list above named a wider corpus as a new
+packet family that "ends the identity chain". That was wrong in the way that
+matters: the 128-case directional corpus already exists with 32 episodes of
+four decisions each, and the 32-case corpus every open-loop run since PERF020
+shared is a *selection* from it, not a sibling. `corpus_sha256` changes to
+`5e4edcbcb44be32818f9b8e855e38a5d84e3b3a8358781ce4d228e6266ce54f3`, but the
+identity chain survives as a prefix property: the sha256 of the new trace's
+first 32 `[case_id, canonical]` entries must equal PERF020's recorded
+`selected_worker_trace_sha256`
+(`d9e93cf0f4c636a3838e41938d2ef3ff6e1d66a60860922f84771b3fa5158ac9`), pinned
+by test against PERF033's own receipts. The topology is unchanged.
+
+The encoder-profile blocker dissolved on inspection of its origin.
+`MAX_SESSIONS = 8` entered the repo in `4f14763b` ("Add bounded Rayline
+retained-session gateway") as a bare constant with no derivation, no comment
+and no sizing argument; `MAX_RESIDENT_TOKENS` is *derived from it*, not the
+other way around. The eight-lane ceiling that bounded four packet families was
+an unexplained initial choice, not a measured limit. The raise is still scoped
+as if the evidence depended on it, because it does: the PERF034 profile lives
+under the distinct app name `rayline-arc-session-encoder-flashinfer-perf034`,
+and every app the closed runs' evidence names keeps `8 / 32` forever
+(`f26dc967`). Same engine build, same image, same prefill backend; only the
+session-service caps move, so the container's 8 cores and 64 GiB — and
+therefore the `$6.9344208` envelope — are unchanged.
+
+The third blocker (more cases per rung) is met by the same corpus: 128
+measured cases keep the arrival span long relative to a service-p95 request at
+the rates where the encoder is actually loaded.
+
+#### Where the knee is predicted, and why occupancy alone would go silent
+
+The derived GPU-busy fraction at eight fully saturated lanes was `0.53`, which
+extrapolates to a compute knee near 15 lanes with about 2x uncertainty either
+way. That is occupancy `~0.5` of this packet's 32 lanes, so the occupancy
+criterion — correct at PERF033's ceiling — would stay silent while the encoder
+saturates. The contract therefore arms a second, independent firing point:
+`throughput_plateau_gain`, the marginal-throughput floor. The first rung
+converting less than the floor of its additional realized arrivals into
+completed throughput is the plateau. The diagnosis is in which criterion fires
+first: occupancy first means the rig bound again (and that outcome, not a
+wider packet, is the recorded result — 32 lanes is the whole corpus); plateau
+first with occupancy short of the ceiling is direct proof the encoder bound.
+
+The floor is `1/3`, calibrated on every recorded open-loop receipt rather than
+chosen by intuition. The intuitive `0.5` false-fires on PERF032's provably
+unqueued top rung, whose raw marginal gains of `0.51` / `0.46` are the drain
+arithmetic this plan already dissected, not load. The drain-corrected slope
+cannot decide at all — the inflated service tail feeds the correction, so it
+reads `0.93`–`1.0` even on PERF021's saturated rungs — and the implied
+residence delta sign-flips on unqueued cells. One third sits inside the
+measured gap: unqueued cells convert at least `0.46` of added arrivals, rungs
+past a known knee at most `0.32`, giving `~28%` margin on both sides. Replayed
+from the recorded receipts: PERF032 never fires; PERF021 fires at `r030` on
+both arms, the same rung occupancy pins; PERF033 fires at `r220` after
+occupancy's `r160`, which reads correctly as "the rig bound first".
+
+#### The falsification clause, rewritten in the terms PERF033 demanded
+
+PERF033 recorded that its inherited instrument-falsification clause fires on
+the correct answer and must be rewritten before a successor inherits it. The
+rewrite: **a plateau verdict is falsified at any rung that fires while its
+drain-corrected marginal gain stays within `10%` of `1.0` and its implied
+residence delta is non-positive.** That pair is PERF032's recorded signature
+of finite-corpus drain arithmetic, and both quantities are carried per rung in
+the v4 report as non-voting evidence, so the check is against numbers the
+receipts already print. The old clause's start-lag and drain conjuncts are
+dropped for the reason PERF033 proved: they hold in known-saturated cells and
+discriminate nothing. The occupancy verdict keeps the evidence terms PERF033's
+stood on — peak and terminal occupancy at the declared ceiling, a
+completion-ratio shortfall against the unqueued reconstruction that is
+monotone in load, and a `drain_service_tail_multiple` above one.
+
+Memory is preregistered as a cliff, not a curve. Worst case at 32 lanes is
+`8,388,608` resident tokens against a `~70` GiB pool, but the frozen corpus
+peaks at `4,261,735` tokens — `51%` of the derived cap — so the packet is safe
+by corpus construction, not by headroom at the limit. If memory does bind, the
+coordinator's `SessionCapacityError` becomes a failed case and the
+`failed == 0` gate voids the arm; `cache_miss_tokens` and
+`session_actions.rebuilt` must stay exactly zero. `CHUNK_SCHEDULE_TOKENS` and
+`enforce_eager` are held fixed from PERF033 and are the first suspects if
+throughput plateaus below the predicted knee.
+
+#### Ladder, anchor, and gates
+
+Realized targets of roughly `1.5 / 3 / 5 / 8` decisions per second at the
+measured `1.2413` realized-per-offered ratio give offered rungs
+`1.20 / 2.40 / 4.00 / 6.45`. The anchor `r120` re-offers PERF033's rate but is
+deliberately *not* byte-identical to its cell — a rung's workload document
+carries the lane count and case counts — so for the first time in this packet
+family the anchor property is a measured quantity rather than a digest: at
+`1.20` offered, an unconstrained encoder must reproduce PERF033's
+`1.1547543726851863` decisions per second, which eight lanes already carried.
+
+Both gates ship shut. The Pathfinder pin is the literal `PENDING`, no contract
+is launchable, and the budget fails closed by arithmetic: the authority still
+reads PERF033's `$184.31282402` ceiling, under which the conservative
+cumulative-if-full of `$186.421808666383` makes `budget_receipt` raise. The
+minimum viable grant for this one arm is `$5.108984646383`, which takes the
+ceiling to `$189.421808666383` and leaves the reserve at exactly the `$3.00`
+floor. No granted figure is recorded anywhere in the repo; only a human may
+raise the ceiling, and the authorize → bind → launch → close sequence applies
+unchanged.
+
 ## Operating Rules
 
 - Use the repo's normal local image flow; do not invent another Semantic Router
