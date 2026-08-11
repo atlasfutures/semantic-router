@@ -5358,6 +5358,144 @@ floor. No granted figure is recorded anywhere in the repo; only a human may
 raise the ceiling, and the authorize → bind → launch → close sequence applies
 unchanged.
 
+### PERF034 Result (2026-08-11) — both criteria fired together, at twice PERF033's throughput
+
+The grant arrived and the sequence ran as written: authorize `e282f16c`
+recorded the human's confirmation and its minimum-grant interpretation, the
+Pathfinder registry head `da85e104` carried the granted figure, bind
+`dcb1e819` moved the ceiling to `$189.421808666383` and opened exactly this
+run, and the arm executed once. All eight arm-cells measured cleanly:
+`128/128` completed in every cell, `failed: 0` and `provider_calls: 0`
+everywhere, and one selected-worker trace digest
+`7fed5d061b60f72a7efda5d51c2e3640d8c9caf85dc9e6dc902d6261137013d8` shared by
+every cell of both sub-arms, so `cross_cell_trace_match` holds. ARC telemetry
+is byte-identical across all four cells: `136` session actions (`34` created,
+`102` appended, zero rebuilt, zero reused), `cache_miss_tokens` sum exactly
+zero, zero truncations, and `4,497,623` appended tokens per cell. The memory
+cliff stayed distant: `1,205,793` retained tokens against the `~4.26M` the
+corpus was preregistered to peak at. The three state-reset receipts that
+exist (`r120`, `r240`, `r400`) all record `32/32` measured sessions closed,
+`measured_sessions_missing: 0`, and exact zeros for resident sessions and
+tokens after cleanup.
+
+The fourth state-reset receipt does not exist, and that is how the run ended:
+after `r645`'s both sub-arms completed and wrote their receipts, the
+post-cell state reset got HTTP 502 from the protected encoder and the
+launcher raised `StateResetError` before writing `comparison.json`. The
+`finally` cleanup ran — proxy token deleted, app stopped,
+`encoder_containers_remaining: 0`, independently reconfirmed by a fresh
+inventory afterwards — and under the registry's no-retry clause that launched
+failure closes the PERF034 ID for good. The comparison below is derived
+offline from the eight receipts by the comparator CLI with the contract's
+criterion verbatim (`episode_lanes: 32`, `occupancy_ratio: 1.0`,
+`throughput_plateau_gain: 1/3`, `case_count: 128`), the exact
+`comparison-derived-offline.json` precedent PERF032 set. Its `status` is
+`passed` with `all_completed`, `provider_calls_zero` and `trace_match` true
+at every rung.
+
+#### What the four rungs measured
+
+ARC sub-arm, at full receipt precision where it matters:
+
+| Rung | Realized arrivals | Completion throughput | Peak backlog | Peak occupancy | Saturated | Marginal gain | Plateaued |
+| --- | ---: | ---: | ---: | ---: | :-: | ---: | :-: |
+| `r120` | `1.2518` | `1.0721298521209137` | `15` | `0.46875` | no | — | no |
+| `r240` | `2.5036` | `1.3381459770827528` | `33` | `1.03125` | **yes** | `0.2125` | **yes** |
+| `r400` | `4.1727` | `1.9075689750820500` | `28` | `0.87500` | no | `0.3412` | no |
+| `r645` | `6.7285` | `2.3061533124360074` | `31` | `0.96875` | no | `0.1560` | yes |
+
+Remote sub-arm:
+
+| Rung | Realized arrivals | Completion throughput | Peak backlog | Peak occupancy | Saturated | Marginal gain | Plateaued |
+| --- | ---: | ---: | ---: | ---: | :-: | ---: | :-: |
+| `r120` | `1.2518` | `1.0284163272054432` | `17` | `0.53125` | no | — | no |
+| `r240` | `2.5036` | `1.5131281562594237` | `25` | `0.78125` | no | `0.3872` | no |
+| `r400` | `4.1727` | `1.8423191772364715` | `32` | `1.00000` | **yes** | `0.1972` | **yes** |
+| `r645` | `6.7285` | `2.1262018706449126` | `30` | `0.93750` | no | `0.1111` | yes |
+
+Two design inputs shifted under the run and both are visible above. The
+realized-per-offered ratio measured `1.0432`, not the `1.2413` the ladder was
+designed with, so the realized targets landed at `1.25 / 2.50 / 4.17 / 6.73`
+rather than the intended `1.5 / 3 / 5 / 8`. And every rung — including the
+anchor — reports `overloaded: true` with an unbounded final-arrival backlog,
+because at 128 cases even `1.25` realized arrivals per second exceeds what
+this encoder completes.
+
+#### The two criteria fired at the same rung, so the encoder is not isolated
+
+`first_saturated_cell` and `first_throughput_plateau_cell` are the **same
+rung on both sub-arms**: `r240` for `rayline_arc` (peak occupancy `1.03125`)
+and `r400` for `rayline_remote` (peak occupancy exactly `1.0`). The
+preregistered diagnosis rule was written for a separation that did not
+happen: plateau-first-with-occupancy-short would have proved the encoder
+bound, occupancy-first would have meant the rig bound again. With both firing
+together, the recorded result is the one the preregistration reserved for
+occupancy reaching the ceiling: **the corpus ran out of lanes again**, this
+time at its absolute limit — 32 lanes is every episode the corpus has, so no
+wider packet over this corpus can exist.
+
+The knee-near-15-lanes prediction is not confirmed. Occupancy blew through
+`0.5` and pinned at the firing rungs, which the `0.53` GPU-busy
+extrapolation said should not happen. What the prediction got right is
+scale: the cap raise roughly **doubled** the family's recorded ceiling, from
+PERF033's `1.15` decisions per second to `2.13` (remote) and `2.31` (arc) at
+`r645` — and the top rung is non-voting evidence that the encoder's own limit
+is finally nearby, because there occupancy sits *below* the pin
+(`0.94`–`0.97`) while marginal gains of `0.111`–`0.156` convert barely a
+tenth of added arrivals into completions.
+
+The rewritten falsification clause does not fire. At the firing rungs the
+drain-corrected marginal gains are `0.8983` (arc `r240`) and `0.8631`
+(remote `r400`) — both outside the `10%`-of-`1.0` band — and the implied
+residence deltas are positive (`+10.67`s and `+0.85`s), so neither rung
+shows PERF032's drain-arithmetic signature. The occupancy verdicts stand on
+their preregistered evidence terms: terminal occupancy equals peak occupancy
+at both firing rungs, the completion ratio falls monotonically with load on
+both sub-arms (`0.86 → 0.53 → 0.46 → 0.34` on arc), and
+`drain_service_tail_multiple` is above one in all eight cells.
+
+#### The anchor did not reproduce, and the higher rungs are qualified by it
+
+`r120` on arc returned `1.0721298521209137` completion throughput against
+the required `1.1547543726851863` — `7.15%` short, where PERF033's own
+anchor reproduced within `1.34%`. No tolerance was preregistered, so the
+anchor gate is recorded as **not held**. The likely mechanism is the corpus
+change itself: this anchor is overloaded (`overloaded: true`, backlog
+unbounded) where PERF033's 32-case anchor was not, because quadrupling the
+measured span at the same offered rate gives the backlog four times as long
+to accumulate against a capacity of `~1.07` completions per second. That is
+a hypothesis, not a receipt. What the miss qualifies is the absolute
+throughput figures above; the criterion verdicts compare rungs within this
+run and do not rest on PERF033's scale.
+
+One preregistered analysis-time check cannot be run: the PERF020 trace-prefix
+property. The probe hashes the selected-worker trace without persisting its
+entries, so the sha256 of the first 32 `[case_id, canonical]` pairs is not
+recomputable from any receipt. The within-run chain is intact — one digest
+across all eight cells, `corpus_sha256` and `topology_sha256` equal to the
+contract's — but continuity to PERF020's recorded digest is unverified, and a
+successor that wants it must first make the probe persist the trace.
+
+#### Budget
+
+Receipts span `845` seconds from `deployment-evidence.json` to the final
+`r645` telemetry write, after a `~133`-second image deploy; the paid window
+stayed near `1,000` seconds against the `2,400`-second envelope, an upper
+estimate of roughly `$2.9` at the envelope's rate. Conservative accounting
+charges the complete `$6.9344208` envelope regardless, taking the cumulative
+to `$186.421808666383` and leaving the reserve at exactly `$3.00` under the
+`$189.421808666383` authority — the preregistered arithmetic, landed to the
+digit. `provider_spend_usd` is `$0.00` and `provider_calls` is zero in every
+cell.
+
+PERF034's launch authority is closed: `LAUNCHABLE_CONTRACT` is back to `None`
+in `rayline_saturation_capacity_contract.py` after its one authorized
+execution (`ad65afa3`), and `PATHFINDER_AUTHORIZATION_COMMIT` stays at the
+real `da85e1045a92aa3d6aa6d765a2dc2f5257e1d31d` as the record of what ran.
+The arm cannot retry: the 502 was a launched failure, and any successor —
+including one that only wants the missing `r645` state-reset receipt or the
+trace-prefix check — needs a new registry ID and fresh human authorization.
+
 ## Operating Rules
 
 - Use the repo's normal local image flow; do not invent another Semantic Router
