@@ -192,7 +192,7 @@ def _validate_cells(
         cells[label] = {}
         for arm in OPEN_LOOP_ARMS:
             try:
-                receipt = validate_receipt(raw_receipts[arm])
+                receipt = validate_receipt(raw_receipts[arm], case_count=case_count)
             except ProbeError as error:
                 raise OpenLoopComparisonError(str(error)) from error
             if (

@@ -32,10 +32,8 @@ from rayline_concurrency_launcher import (
 from rayline_concurrency_state import StateResetError, assert_encoder_empty
 from rayline_open_loop_comparator import compare_open_loop
 from rayline_open_loop_contract import (
-    MEASURED_EPISODES,
     OPEN_LOOP_ARMS,
     PERF021_RUN_ID,
-    WARMUP_EPISODES,
     OpenLoopCell,
     OpenLoopRunContract,
     resolve_launch_contract,
@@ -99,8 +97,8 @@ def _validate_packet(contract: OpenLoopRunContract, packet_dir: Path) -> list[st
     if (
         manifest.get("measured_cases") != contract.measured_cases
         or manifest.get("warmup_cases") != contract.warmup_cases
-        or manifest.get("measured_episodes") != MEASURED_EPISODES
-        or manifest.get("warmup_episodes") != WARMUP_EPISODES
+        or manifest.get("measured_episodes") != contract.measured_episodes
+        or manifest.get("warmup_episodes") != contract.warmup_episodes
         or set(manifest.get("cells", {})) != {cell.label for cell in contract.cells}
     ):
         raise LaunchError("open-loop packet shape differs")

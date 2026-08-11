@@ -84,13 +84,25 @@ DIRECTIONAL_WORKLOAD = WorkloadContract(
     measured_cases=EXPECTED_MEASURED_CASES,
 )
 SWEEP_WORKLOADS = {
-    concurrency: WorkloadContract(
-        profile=f"sweep-32-c{concurrency}",
-        concurrency=concurrency,
-        warmup_cases=4,
-        measured_cases=32,
-    )
-    for concurrency in (1, 4, 8)
+    **{
+        concurrency: WorkloadContract(
+            profile=f"sweep-32-c{concurrency}",
+            concurrency=concurrency,
+            warmup_cases=4,
+            measured_cases=32,
+        )
+        for concurrency in (1, 4, 8)
+    },
+    # The PERF034 cap-raise cell: every lane of the full 128-case directional
+    # corpus, one lane per measured episode. The 32-case sweep cells above are
+    # a strict prefix of the same corpus, which is what keeps the identity
+    # chain to PERF020 checkable after the digests change.
+    32: WorkloadContract(
+        profile="sweep-128-c32",
+        concurrency=32,
+        warmup_cases=8,
+        measured_cases=128,
+    ),
 }
 WORKLOAD_PROFILES = {
     contract.profile: contract

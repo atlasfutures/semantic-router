@@ -65,7 +65,27 @@ def _complete_episode_subset(cases: object, count: int, label: str) -> list[Any]
     return selected
 
 
-def build_sweep_packet(*, source_packet_dir: Path, output_dir: Path) -> dict[str, Any]:
+def build_sweep_packet(
+    *,
+    source_packet_dir: Path,
+    output_dir: Path,
+    measured_cases: int = MEASURED_CASES,
+    warmup_cases: int = WARMUP_CASES,
+) -> dict[str, Any]:
+    # A packet only carries the cells registered for its exact case counts, so
+    # the no-flag invocation still reproduces PERF017's c1/c4/c8 packet
+    # byte-for-byte while the 128-case counts select only the c32 cell.
+    selected = {
+        concurrency: contract
+        for concurrency, contract in SWEEP_WORKLOADS.items()
+        if contract.measured_cases == measured_cases
+        and contract.warmup_cases == warmup_cases
+    }
+    if not selected:
+        raise SweepPacketError(
+            f"no registered sweep workload has {measured_cases} measured and "
+            f"{warmup_cases} warmup cases"
+        )
     if output_dir.exists():
         raise SweepPacketError("output directory already exists")
     source_paths = {
@@ -85,10 +105,10 @@ def build_sweep_packet(*, source_packet_dir: Path, output_dir: Path) -> dict[str
     source_identity = _read_object(source_paths["identity"], "source identity")
     topology = _read_object(source_paths["topology"], "source topology")
     measured = _complete_episode_subset(
-        source_corpus.get("measured"), MEASURED_CASES, "measured"
+        source_corpus.get("measured"), measured_cases, "measured"
     )
     warmup = _complete_episode_subset(
-        source_corpus.get("warmup"), WARMUP_CASES, "warmup"
+        source_corpus.get("warmup"), warmup_cases, "warmup"
     )
     measured_episodes = {str(case["episode_id"]) for case in measured}
     warmup_episodes = {str(case["episode_id"]) for case in warmup}
@@ -113,7 +133,7 @@ def build_sweep_packet(*, source_packet_dir: Path, output_dir: Path) -> dict[str
     _write_json(topology_path, topology)
 
     cells: dict[str, Any] = {}
-    for concurrency, contract in SWEEP_WORKLOADS.items():
+    for concurrency, contract in selected.items():
         cell_dir = output_dir / "cells" / f"c{concurrency}"
         workload_path = cell_dir / "workload.json"
         identity_path = cell_dir / "identity.json"
@@ -122,8 +142,8 @@ def build_sweep_packet(*, source_packet_dir: Path, output_dir: Path) -> dict[str
             {
                 "schema_version": WORKLOAD_SCHEMA,
                 "concurrency": concurrency,
-                "warmup_cases": WARMUP_CASES,
-                "measured_cases": MEASURED_CASES,
+                "warmup_cases": warmup_cases,
+                "measured_cases": measured_cases,
                 "seed": int(source_identity["seed"]),
             },
         )
@@ -131,7 +151,7 @@ def build_sweep_packet(*, source_packet_dir: Path, output_dir: Path) -> dict[str
         identity.update(
             {
                 "measurement_scope": "architecture_decision_concurrency_sweep",
-                "case_count": MEASURED_CASES,
+                "case_count": measured_cases,
                 "corpus_sha256": _sha256(corpus_path),
                 "workload_sha256": _sha256(workload_path),
                 "worker_topology_sha256": _sha256(topology_path),
@@ -148,8 +168,8 @@ def build_sweep_packet(*, source_packet_dir: Path, output_dir: Path) -> dict[str
     receipt = {
         "schema_version": PACKET_SCHEMA,
         "source": {name: _sha256(path) for name, path in source_paths.items()},
-        "measured_cases": MEASURED_CASES,
-        "warmup_cases": WARMUP_CASES,
+        "measured_cases": measured_cases,
+        "warmup_cases": warmup_cases,
         "measured_episodes": len(measured_episodes),
         "warmup_episodes": len(warmup_episodes),
         "input_token_buckets": dict(sorted(bucket_counts.items())),
@@ -165,6 +185,21 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-packet-dir", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument(
+        "--measured-cases",
+        type=int,
+        default=MEASURED_CASES,
+        help=(
+            "Measured-case count selecting which registered sweep cells the "
+            f"packet carries. Defaults to the frozen PERF017 {MEASURED_CASES}."
+        ),
+    )
+    parser.add_argument(
+        "--warmup-cases",
+        type=int,
+        default=WARMUP_CASES,
+        help=f"Warmup-case count. Defaults to the frozen PERF017 {WARMUP_CASES}.",
+    )
     return parser.parse_args()
 
 
@@ -174,6 +209,8 @@ def main() -> None:
         receipt = build_sweep_packet(
             source_packet_dir=args.source_packet_dir,
             output_dir=args.output_dir,
+            measured_cases=args.measured_cases,
+            warmup_cases=args.warmup_cases,
         )
     except (OSError, KeyError, TypeError, ValueError, SweepPacketError) as error:
         raise SystemExit(f"cannot build concurrency packet: {error}") from error

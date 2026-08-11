@@ -100,6 +100,11 @@ class OpenLoopRunContract:
     # mid-run failure after paid GPU time.
     measured_cases: int = MEASURED_CASES
     warmup_cases: int = WARMUP_CASES
+    # The episode counts behind those cases. They were launcher module
+    # constants, which silently pinned every successor packet to PERF020's
+    # 8-episode corpus shape.
+    measured_episodes: int = MEASURED_EPISODES
+    warmup_episodes: int = WARMUP_EPISODES
     # How this run decides saturation. `None` is the frozen PERF020/PERF021
     # behaviour: the legacy `overloaded` predicate alone, and a report that is
     # byte-identical to the ones those closed runs recorded.

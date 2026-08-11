@@ -50,8 +50,12 @@ def test_sweep_packet_preserves_episodes_buckets_and_frozen_cells(
     )
     assert set(receipt["input_token_buckets"]) == set(probe.INPUT_TOKEN_BUCKET_NAMES)
     assert sum(receipt["input_token_buckets"].values()) == sweep.MEASURED_CASES
-    for concurrency, contract in probe.SWEEP_WORKLOADS.items():
-        cell = output / "cells" / f"c{concurrency}"
+    # The registry also carries cells for other case counts (the PERF034 c32
+    # cell); the default build must produce exactly the frozen PERF017 trio.
+    assert set(receipt["cells"]) == {"c1", "c4", "c8"}
+    for label in receipt["cells"]:
+        contract = probe.SWEEP_WORKLOADS[int(label.removeprefix("c"))]
+        cell = output / "cells" / label
         warmup, measured, identity, _worker_map = probe.load_packet(
             arm="rayline_arc",
             corpus_path=output / "corpus.json",
@@ -63,6 +67,59 @@ def test_sweep_packet_preserves_episodes_buckets_and_frozen_cells(
         assert len(warmup) == sweep.WARMUP_CASES
         assert len(measured) == sweep.MEASURED_CASES
         assert identity["measurement_scope"].endswith("concurrency_sweep")
+
+
+def test_cap_raise_counts_select_only_the_c32_cell(tmp_path: Path) -> None:
+    """The 128-case build carries every lane of the directional corpus.
+
+    The full-corpus counts must select exactly the PERF034 c32 cell: the
+    32-case cells cannot coexist with it in one packet because a packet has
+    one corpus, and the corpus either is or is not the full 128 cases.
+    """
+
+    source = _directional_packet(tmp_path)
+    output = tmp_path / "sweep-c32"
+
+    receipt = sweep.build_sweep_packet(
+        source_packet_dir=source,
+        output_dir=output,
+        measured_cases=128,
+        warmup_cases=8,
+    )
+
+    assert set(receipt["cells"]) == {"c32"}
+    assert receipt["measured_cases"] == 128
+    assert receipt["warmup_cases"] == 8
+    assert receipt["measured_episodes"] == 128 // sweep.DECISIONS_PER_EPISODE
+    assert receipt["warmup_episodes"] == 8 // sweep.DECISIONS_PER_EPISODE
+    assert sum(receipt["input_token_buckets"].values()) == 128
+    cell = output / "cells/c32"
+    warmup, measured, identity, _worker_map = probe.load_packet(
+        arm="rayline_arc",
+        corpus_path=output / "corpus.json",
+        workload_path=cell / "workload.json",
+        topology_path=output / "topology.json",
+        identity_path=cell / "identity.json",
+        workload_contract=probe.SWEEP_WORKLOADS[32],
+    )
+    assert len(warmup) == 8
+    assert len(measured) == 128
+    assert identity["case_count"] == 128
+
+
+def test_unregistered_case_counts_are_refused_before_any_write(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "sweep"
+
+    with pytest.raises(sweep.SweepPacketError, match="no registered sweep workload"):
+        sweep.build_sweep_packet(
+            source_packet_dir=tmp_path,
+            output_dir=output,
+            measured_cases=64,
+            warmup_cases=4,
+        )
+    assert not output.exists()
 
 
 def test_directional_profile_rejects_a_sweep_cell(tmp_path: Path) -> None:
