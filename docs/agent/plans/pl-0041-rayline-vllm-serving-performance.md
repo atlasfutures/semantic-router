@@ -4647,8 +4647,12 @@ about.
 the vehicle.** Every future open-loop packet inherits whatever criterion this
 run establishes, so the criterion is the deliverable and the capacity number
 is the by-product. The `1.155` decisions per second PERF032 recorded is
-already known to within one percent of a preregistered prediction; measuring
-it again would buy nothing.
+a measurement at an unsaturated rung, not a ceiling: the encoder was still
+tracking arrivals there, so re-measuring the same rung would buy nothing. Its
+numerical proximity to a preregistered prediction is a coincidence of where
+the ladder happened to stop, and must not be read as confirming that
+prediction — the model's FlashInfer branch remains neither confirmed nor
+contradicted.
 
 ### What PERF032's receipts actually show
 
