@@ -73,8 +73,10 @@ PERF033_RUN_ID = "rayline-saturation-knee-perf033-20260810"
 # reviewed authorization checkpoint may.
 # ---------------------------------------------------------------------------
 
-# No commit can equal `PENDING`, and `_assert_pushed` forces the Pathfinder
-# HEAD to equal this, so the packet cannot launch while it reads this.
+# The real pushed head PERF033 was measured against, and the head PERF031 and
+# PERF032 ran against before it. `_assert_pushed` forces the Pathfinder HEAD to
+# equal this. It stays here now the run is closed because it is the record of
+# what was measured; the gate that is shut is `LAUNCHABLE_CONTRACT` below.
 PATHFINDER_AUTHORIZATION_COMMIT = "fb78b2fbbd579d10cd14a78ce71af7c0e9216306"
 
 # Already granted; this packet fits inside it without a further grant. The
@@ -202,7 +204,16 @@ SATURATION_KNEE_V2_ARMS = (PERF033,)
 
 # Binding is a separate, human-gated step. Preparation never opens launch
 # authority.
-LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF033
+#
+# CLOSED. PERF033 executed once on 2026-08-11 and its result is recorded in
+# `pl-0041`: the occupancy criterion fired at `r160` on both sub-arms, exactly
+# as preregistered, and the anchor reproduced at `0.875`. One authorized
+# execution is all this packet ever had, so the arm is unbound again. The
+# Pathfinder pin above deliberately stays at the real head: it is the record of
+# what ran, not an open door, and `resolve_launch_contract` refuses the arm
+# regardless of it. Reopening this is a fresh human authorization checkpoint on
+# a fresh run id, never an edit here.
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
 
 
 def resolve_launch_contract(run_id: str) -> OpenLoopRunContract:
