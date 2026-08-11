@@ -104,15 +104,14 @@ PERF036_RUN_ID = "rayline-rtx6000-capacity-perf036-20260811"
 # grant. `_assert_pushed` forces the Pathfinder HEAD to equal this.
 PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
 
-# NOT GRANTED. `AUTHORIZED_CUMULATIVE_USD` is deliberately left where
-# PERF035's grant put it. PERF035's grant landed the reserve at exactly the
-# `$3.00` floor, so against the `$188.841229466383` conservative position this
-# packet's `$5.6186208` RTX PRO 6000 envelope would leave a reserve of
-# `-$2.6186208` -- below the floor by the whole envelope -- and
-# `budget_receipt` raises `BudgetError`, making a launch arithmetically
-# impossible. The minimum viable grant therefore equals the envelope exactly.
-# Moving this number is the authorization act; preparation may not do it.
-AUTHORIZED_CUMULATIVE_USD = 191.841229466383
+# GRANTED 2026-08-11. The user approved the run in-session with the words
+# "i approve", clarified as "the rtx bench". Per the family's precedent the
+# ceiling moves by exactly the minimum viable grant -- `$191.841229466383`
+# plus `$5.6186208`, the RTX PRO 6000 envelope itself, because PERF035's
+# grant left the reserve exactly on the `$3.00` floor. The reserve after a
+# full envelope is again exactly `$3.00`. The authorization checkpoint is
+# the Pathfinder commit whose registry entry records the confirmed grant.
+AUTHORIZED_CUMULATIVE_USD = 197.459850266383
 PREVIOUS_CONSERVATIVE_USD = 188.841229466383
 MINIMUM_VIABLE_GRANT_USD = 5.6186208
 

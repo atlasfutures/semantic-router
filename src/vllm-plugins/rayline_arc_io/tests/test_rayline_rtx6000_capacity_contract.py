@@ -71,14 +71,13 @@ def test_perf036_is_registered_with_the_launcher_it_will_run_under() -> None:
         assert launcher._resolve_contract(rtx.PERF036_RUN_ID) is rtx.PERF036
 
 
-def test_perf036_budget_is_priced_on_rtx6000_seconds_and_is_not_yet_granted() -> None:
-    """The envelope is real, and the authority for it does not yet exist.
+def test_perf036_budget_is_priced_on_rtx6000_seconds_and_granted_minimally() -> None:
+    """The envelope is real, and the authority for it moved by exactly that.
 
-    PERF035's grant landed the reserve at exactly the `$3.00` floor, so a new
-    envelope has no headroom at all: the receipt must refuse by exactly the
-    envelope, which is why the minimum viable grant equals it. This test is
-    the refusal's pin; the authorization checkpoint replaces it with the
-    receipt's.
+    PERF035's grant landed the reserve at exactly the `$3.00` floor, so the
+    minimum viable grant equals the envelope. The 2026-08-11 authorization
+    moved the ceiling by precisely that amount, so the reserve after a full
+    envelope lands on the floor again, exactly.
     """
 
     contract = rtx.PERF036.budget
@@ -91,23 +90,21 @@ def test_perf036_budget_is_priced_on_rtx6000_seconds_and_is_not_yet_granted() ->
     envelope = 5160 * rate
     assert envelope == pytest.approx(5.6186208)
 
-    # Not granted: the arithmetic refuses before any launch gate is consulted.
-    with pytest.raises(budget.BudgetError):
-        budget.budget_receipt(contract)
-
-    # And it refuses by exactly the envelope: PERF035 left the reserve on the
-    # floor, so the shortfall is the whole packet, which is the minimum
-    # viable grant the registry entry must record.
+    # Granted minimally: the receipt exists and the reserve after a full
+    # envelope is exactly the floor, to the cent and beyond.
+    receipt = budget.budget_receipt(contract)
+    assert receipt["maximum_resource_envelope_usd"] == pytest.approx(5.6186208)
     reserve = contract.authorized_cumulative_usd - (
         contract.previous_conservative_usd + envelope
     )
-    shortfall = contract.required_reserve_usd - reserve
-    assert shortfall == pytest.approx(rtx.MINIMUM_VIABLE_GRANT_USD)
+    assert reserve == pytest.approx(contract.required_reserve_usd)
     assert rtx.MINIMUM_VIABLE_GRANT_USD == pytest.approx(envelope)
 
-    # The authority line has not moved: it is exactly where PERF035's grant
-    # put it, and the conservative position is PERF035's full-envelope close.
-    assert rtx.AUTHORIZED_CUMULATIVE_USD == pytest.approx(l4.AUTHORIZED_CUMULATIVE_USD)
+    # The authority line moved by exactly the grant above PERF035's ceiling,
+    # and the conservative position is PERF035's full-envelope close.
+    assert rtx.AUTHORIZED_CUMULATIVE_USD == pytest.approx(
+        l4.AUTHORIZED_CUMULATIVE_USD + rtx.MINIMUM_VIABLE_GRANT_USD
+    )
     assert rtx.PREVIOUS_CONSERVATIVE_USD == pytest.approx(188.841229466383)
     assert rtx.PREVIOUS_CONSERVATIVE_USD == pytest.approx(
         l4.PREVIOUS_CONSERVATIVE_USD + l4.MINIMUM_VIABLE_GRANT_USD
