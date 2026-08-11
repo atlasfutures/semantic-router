@@ -30,6 +30,9 @@ from rayline_concurrency_launcher import (
     _start_local,
 )
 from rayline_concurrency_state import StateResetError, assert_encoder_empty
+from rayline_l4_capacity_contract import (
+    resolve_launch_contract as resolve_l4_capacity_contract,
+)
 from rayline_open_loop_comparator import compare_open_loop
 from rayline_open_loop_contract import (
     OPEN_LOOP_ARMS,
@@ -155,12 +158,13 @@ def _resolve_contract(run_id: str) -> OpenLoopRunContract:
         resolve_saturation_knee_contract,
         resolve_saturation_knee_v2_contract,
         resolve_saturation_capacity_contract,
+        resolve_l4_capacity_contract,
     ):
         with contextlib.suppress(ValueError):
             return resolve(run_id)
     raise ValueError(
-        "no Rayline open-loop sweep, saturation ladder arm, saturation knee "
-        "or saturation capacity run is currently launchable"
+        "no Rayline open-loop sweep, saturation ladder arm, saturation knee, "
+        "saturation capacity or L4 capacity run is currently launchable"
     )
 
 
