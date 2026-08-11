@@ -283,10 +283,14 @@ PERF035 = OpenLoopRunContract(
 
 L4_CAPACITY_ARMS = (PERF035,)
 
-# Bound 2026-08-11 as the second half of the authorization act; the first
-# half is the real Pathfinder pin above. This opens exactly one run id to
-# the launcher, for exactly one execution.
-LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF035
+# Closed 2026-08-11 after the one authorized execution. All four cells
+# measured cleanly (failed=0, traces exactly equal to the PERF020 digest,
+# comparison passed) and the run closed normally, cleanup included. The L4
+# saturated from the first rung: occupancy pinned at 1.0 on every cell and
+# the plateau criterion fired at r032 on both arms, topping out near
+# 0.198 dps -- about half the TFLOPS-scaled prediction, outside its
+# preregistered +/-30% validation band. The pin above stays as the record.
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
 
 
 def resolve_launch_contract(run_id: str) -> OpenLoopRunContract:
