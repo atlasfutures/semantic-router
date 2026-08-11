@@ -72,7 +72,7 @@ def test_session_service_freezes_the_proven_retained_vllm_runtime() -> None:
     for expected in (
         'VLLM_COMMIT = "9f5ea81ca0aa570aea46baf82311a1139c1267ca"',
         'VLLM_REPOSITORY = "https://github.com/atlasfutures/vllm.git"',
-        'GPU_TYPE = "H100"',
+        'GPU_TYPE = "L4" if APP_NAME in PERF035_APP_PROFILES else "H100"',
         "MAX_SESSIONS = 32 if APP_NAME in PERF034_APP_PROFILES else 8",
         "MAX_CONCURRENT_INPUTS = 64 if APP_NAME in PERF034_APP_PROFILES else 32",
         "MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS",
@@ -195,6 +195,35 @@ def test_session_service_confines_perf034_cap_raise_to_its_exact_app_name() -> N
     )
     assert "MAX_CONCURRENT_INPUTS = 64 if APP_NAME in PERF034_APP_PROFILES else 32" in (
         service_source
+    )
+
+
+def test_session_service_confines_perf035_l4_to_its_exact_app_name() -> None:
+    """The GPU class is per-app, because every closed run's evidence claims H100.
+
+    PERF035 measures the deployment target's silicon, so its app -- and only
+    its app -- deploys on an L4. The cap raise must not follow it: a 24 GB card
+    cannot hold the 32-lane corpus at all, so PERF035 stays on the 8/32 caps
+    every non-PERF034 app keeps.
+    """
+
+    service_source = source()
+
+    assert (
+        '"rayline-arc-session-encoder-flashinfer-perf035-l4": "flashinfer"'
+        in service_source
+    )
+    assert "**PERF035_APP_PROFILES" in service_source
+    assert (
+        'GPU_TYPE = "L4" if APP_NAME in PERF035_APP_PROFILES else "H100"'
+        in service_source
+    )
+    # The L4 app is not in the cap-raise profile set, so the conditionals the
+    # PERF034 test pins already hold it at 8 sessions and 32 ingress inputs.
+    assert "PERF035" not in service_source.split("MAX_SESSIONS = ")[1].split("\n")[0]
+    assert (
+        "PERF035"
+        not in service_source.split("MAX_CONCURRENT_INPUTS = ")[1].split("\n")[0]
     )
 
 

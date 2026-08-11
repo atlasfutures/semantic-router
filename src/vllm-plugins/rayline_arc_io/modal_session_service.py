@@ -48,6 +48,12 @@ PERF031_APP_PROFILES = {
 PERF034_APP_PROFILES = {
     "rayline-arc-session-encoder-flashinfer-perf034": "flashinfer",
 }
+# PERF035 is the L4 capacity arm: identical engine profile and identical 8/32
+# caps to PERF033, but this app name alone deploys on a 24 GB L4 (below), the
+# only GPU class both Modal and the GCP Cloud Run deployment target sell.
+PERF035_APP_PROFILES = {
+    "rayline-arc-session-encoder-flashinfer-perf035-l4": "flashinfer",
+}
 EXPERIMENT_APP_PROFILES = {
     **PERF030_APP_PROFILES,
     **AGT017_APP_PROFILES,
@@ -55,6 +61,7 @@ EXPERIMENT_APP_PROFILES = {
     **AGT019_APP_PROFILES,
     **PERF031_APP_PROFILES,
     **PERF034_APP_PROFILES,
+    **PERF035_APP_PROFILES,
 }
 ALLOWED_APP_NAMES = (DEFAULT_APP_NAME, *SCALEOUT_APP_NAMES, *EXPERIMENT_APP_PROFILES)
 APP_NAME = os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", DEFAULT_APP_NAME)
@@ -102,14 +109,22 @@ def _runtime_profile() -> tuple[str, str]:
 # ~0.637s service/transport floor is backend- and region-independent, and
 # earlier placement work ruled out simple region distance as its cause.
 # Re-pin only with a measurement that clears a placement gate.
-GPU_TYPE = "H100"
+# Every recorded run is an H100 run and stays one. PERF035 alone deploys on a
+# 24 GB L4, because the deployment target (GCP Cloud Run with GPU) offers no
+# other card Modal also sells, and a capacity claim for that target has to be
+# measured on that silicon. Scoped to the exact app name so no closed run's
+# evidence can change class underneath it.
+GPU_TYPE = "L4" if APP_NAME in PERF035_APP_PROFILES else "H100"
 # The historical 8 was committed without rationale (4f14763b) and predates the
 # frozen corpus's 8 episodes; it is retained for every non-PERF034 app because
 # the live stack sizes around it. PERF034 raises its own app to 32 to locate
 # the encoder's saturation knee. 32 lanes on the frozen packet-v3 corpus peaks
 # at 4,261,735 resident tokens (~51% of the ~70 GiB pool); the worst case
 # implied by MAX_RESIDENT_TOKENS (96 GiB) does NOT fit and is excluded only by
-# the corpus, a bound preregistered in the PERF034 contract.
+# the corpus, a bound preregistered in the PERF034 contract. PERF035 keeps 8
+# deliberately: on its 24 GB L4 the 32-lane corpus peak alone is ~49 GiB, and
+# even 8 lanes only fit by corpus construction (12.92 GiB against a ~19 GiB
+# pool), a bound preregistered in the PERF035 contract.
 MAX_SESSIONS = 32 if APP_NAME in PERF034_APP_PROFILES else 8
 MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS
 IDLE_TTL_SECONDS = 5 * 60
