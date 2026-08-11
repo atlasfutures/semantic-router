@@ -14,6 +14,11 @@ H100_USD_PER_SECOND = 0.001097
 # is the only GPU class GCP Cloud Run offers that Modal also sells, so it is
 # the only silicon on which a Cloud Run capacity claim can be measured.
 L4_USD_PER_SECOND = 0.000222
+# Modal on-demand RTX PRO 6000. Read from https://modal.com/pricing on
+# 2026-08-11: `$0.000842 / s`, the `$3.0312/hr` the published table quotes.
+# It is the second of GCP Cloud Run's two GPU classes, so pricing it makes the
+# deployment target's remaining silicon measurable on Modal at all.
+RTX_PRO_6000_USD_PER_SECOND = 0.000842
 CPU_CORE_USD_PER_SECOND = 0.0000131
 MEMORY_GIB_USD_PER_SECOND = 0.00000222
 ENCODER_CPU_CORES = 8.0
@@ -24,6 +29,7 @@ DEFAULT_ENCODER_GPU = "H100"
 GPU_USD_PER_SECOND = {
     "H100": H100_USD_PER_SECOND,
     "L4": L4_USD_PER_SECOND,
+    "RTX-PRO-6000": RTX_PRO_6000_USD_PER_SECOND,
 }
 # The H100 snapshot keeps its exact recorded name so every closed packet's
 # receipt stays byte-identical to what it recorded.
@@ -31,6 +37,7 @@ PRICING_SNAPSHOT = "modal-on-demand-2026-07-31-h100-cpu-memory"
 PRICING_SNAPSHOTS = {
     "H100": PRICING_SNAPSHOT,
     "L4": "modal-on-demand-2026-08-11-l4-cpu-memory",
+    "RTX-PRO-6000": "modal-on-demand-2026-08-11-rtx6000-cpu-memory",
 }
 
 
