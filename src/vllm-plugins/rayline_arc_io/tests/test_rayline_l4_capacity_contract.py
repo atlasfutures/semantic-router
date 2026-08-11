@@ -66,14 +66,14 @@ def test_perf035_is_registered_with_the_launcher_it_will_run_under() -> None:
         assert launcher._resolve_contract(l4.PERF035_RUN_ID) is l4.PERF035
 
 
-def test_perf035_budget_is_priced_on_l4_seconds_and_is_not_yet_granted() -> None:
-    """The envelope is real; the authority for it is not.
+def test_perf035_budget_is_priced_on_l4_seconds_and_granted_minimally() -> None:
+    """The envelope is real, and the authority for it moved by exactly that.
 
-    PERF034's grant left the reserve at exactly the `$3.00` floor, so any new
-    envelope at all is unaffordable until the ceiling moves. That is the whole
-    point of leaving `AUTHORIZED_CUMULATIVE_USD` where PERF034 put it: the
-    arithmetic itself refuses, before any gate is consulted. The minimum viable
-    grant therefore equals the envelope exactly.
+    PERF034's grant left the reserve at exactly the `$3.00` floor, so the
+    minimum viable grant equals the envelope. The 2026-08-11 authorization
+    moved the ceiling by precisely that amount -- not by the `$10` bound the
+    approval named -- so the reserve after a full envelope lands on the floor
+    again, exactly.
     """
 
     contract = l4.PERF035.budget
@@ -85,18 +85,19 @@ def test_perf035_budget_is_priced_on_l4_seconds_and_is_not_yet_granted() -> None
     envelope = 5160 * rate
     assert envelope == pytest.approx(2.4194208)
 
-    # Not granted: the reserve after a full envelope is below the floor, so the
-    # receipt refuses to be produced at all.
-    with pytest.raises(budget.BudgetError):
-        budget.budget_receipt(contract)
-
-    shortfall = contract.required_reserve_usd - (
-        contract.authorized_cumulative_usd
-        - (contract.previous_conservative_usd + envelope)
+    # Granted minimally: the receipt exists and the reserve after a full
+    # envelope is exactly the floor, to the cent and beyond.
+    receipt = budget.budget_receipt(contract)
+    assert receipt["maximum_resource_envelope_usd"] == pytest.approx(2.4194208)
+    reserve = contract.authorized_cumulative_usd - (
+        contract.previous_conservative_usd + envelope
     )
-    assert shortfall == pytest.approx(l4.MINIMUM_VIABLE_GRANT_USD)
+    assert reserve == pytest.approx(contract.required_reserve_usd)
+
     assert l4.MINIMUM_VIABLE_GRANT_USD == pytest.approx(envelope)
-    assert l4.AUTHORIZED_CUMULATIVE_USD == capacity.AUTHORIZED_CUMULATIVE_USD
+    assert l4.AUTHORIZED_CUMULATIVE_USD == pytest.approx(
+        capacity.AUTHORIZED_CUMULATIVE_USD + l4.MINIMUM_VIABLE_GRANT_USD
+    )
     assert l4.PREVIOUS_CONSERVATIVE_USD == pytest.approx(186.421808666383)
     # The ceiling is a real bound on an L4 packet, not one inherited from a
     # card that costs five times as much.

@@ -109,14 +109,14 @@ PERF035_RUN_ID = "rayline-l4-capacity-perf035-20260811"
 # authorization checkpoint replaces it with a real pushed head.
 PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
 
-# NOT GRANTED. `AUTHORIZED_CUMULATIVE_USD` is deliberately left where PERF034's
-# grant put it. Against the `$186.421808666383` conservative position and this
-# packet's `$2.4194208` L4 envelope, the reserve would be `$0.5805792` -- below
-# the `$3.00` floor -- so `budget_receipt` raises `BudgetError` and no launch
-# is arithmetically possible. PERF034's grant landed the reserve at exactly the
-# floor, which is why any new envelope at all needs new authority. Moving this
-# number is the authorization act; preparation may not do it.
-AUTHORIZED_CUMULATIVE_USD = 189.421808666383
+# GRANTED 2026-08-11. The user approved the run in-session with the words
+# "I approve the run. anything under $10. just do it." Per the family's
+# precedent the ceiling moves by exactly the minimum viable grant --
+# `$189.421808666383` plus `$2.4194208`, the L4 envelope itself, because
+# PERF034's grant left the reserve exactly on the `$3.00` floor. The reserve
+# after a full envelope is again exactly `$3.00`. The authorization checkpoint
+# is Pathfinder commit 511760ab (registry entry records the confirmed grant).
+AUTHORIZED_CUMULATIVE_USD = 191.841229466383
 PREVIOUS_CONSERVATIVE_USD = 186.421808666383
 MINIMUM_VIABLE_GRANT_USD = 2.4194208
 
