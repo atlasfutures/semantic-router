@@ -269,10 +269,15 @@ PERF036 = OpenLoopRunContract(
 
 RTX6000_CAPACITY_ARMS = (PERF036,)
 
-# Bound 2026-08-11 as the second half of the authorization act; the first
-# half is the real Pathfinder pin above. This opens exactly one run id to
-# the launcher, for exactly one execution.
-LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF036
+# Closed 2026-08-11 after the one authorized execution. The run completed
+# with comparison status "passed": the arc arm plateaued at r144 with a
+# measured ceiling of 0.8877 dps (remote 0.8441), inside the preregistered
+# band 0.5490-1.0195 and 13.2% above the 0.7843 TFLOPS-scaled prediction.
+# Both arms saturated at r096 (occupancy 8/8) and plateaued at r144, the
+# encoder-bound signature PERF035 predicted. Paid window 878.0 s against
+# the 5160 s envelope; measured resource upper bound $0.9561 of the
+# $5.6186208 grant. Cleanup verified: zero encoder containers remaining.
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
 
 # Re-exported so the cross-GPU sanity check the pin test walks through stays
 # importable from one place.
