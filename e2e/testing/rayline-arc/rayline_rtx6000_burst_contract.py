@@ -125,7 +125,7 @@ PERF037_RUN_ID = "rayline-rtx6000-burst-perf037-20260812"
 # codex/rayline-vsr-mvp head whose registry entry records the confirmed
 # grant. `_assert_pushed` forces the Pathfinder HEAD to equal this, and the
 # literal below can never equal a commit.
-PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
+PATHFINDER_AUTHORIZATION_COMMIT = "e3d684ee82b3fb570a833cd40789bdc09a2df8e8"
 
 # GRANTED 2026-08-12. The human operator approved the run in the live session
 # and named the figure: raise the cumulative authority from
@@ -397,10 +397,10 @@ PERF037 = OpenLoopRunContract(
 
 RTX6000_BURST_ARMS = (PERF037,)
 
-# Prepared, not launchable. Only a reviewed authorization checkpoint, against
-# a fresh human grant and a Pathfinder registry entry recording it, may bind
-# this to the contract above.
-LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
+# Bound 2026-08-12 as the second half of the authorization act; the first half
+# is the real Pathfinder pin above. This opens exactly one run id to the
+# launcher, for exactly one execution.
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF037
 
 __all__ = [
     "ABSORPTION_COMPLETION_RATIO_FLOOR",
