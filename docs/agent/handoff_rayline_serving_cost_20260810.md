@@ -12,6 +12,12 @@ deployment, or any cost figure quoted for the Rayline ARC encoder.
 > (3) FlashInfer has been load-tested end-to-end — PERF033–036 ran the
 > `gdn-flashinfer-eager` engine build under load.
 > The KV memory model and the 24/7 traffic finding stand.
+>
+> **Correction, 2026-08-12**: §7's "second worktree" entry is stale.
+> `codex/rayline-main-reconcile` moved from `bfd0cc0e` to `e2cc0e17`, a merge
+> of the pinned tip `553ddf6f` that carried the region-pin removal across.
+> `modal_session_service.py` on that branch is now deliberately unpinned, with
+> a comment recording why. The reconcile lane no longer needs that change.
 
 ## TL;DR
 
