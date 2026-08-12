@@ -2,8 +2,9 @@ algorithm:
   type: rayline_remote
   on_error: fail_closed
   rayline_remote:
-    base_url: http://rayline-router:8000
+    base_url: https://rayline-router:8443
     bundle_version: mtrouter-example-immutable-revision
+    allow_insecure_transport: false
     api_key_env: RAYLINE_API_KEY
     episode_id_header: x-rayline-episode-id
     episode_hmac_key_env: RAYLINE_EPISODE_HMAC_KEY

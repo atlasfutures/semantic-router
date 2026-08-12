@@ -100,6 +100,13 @@ var remoteConfigInvalidCases = []remoteConfigInvalidCase{
 		wantErr: "cannot contain credentials",
 	},
 	{
+		name: "plaintext base_url without opt-in",
+		mutate: func(decision *Decision) {
+			decision.Algorithm.RaylineRemote.BaseURL = "http://rayline-router:8000"
+		},
+		wantErr: "allow_insecure_transport",
+	},
+	{
 		name: "invalid secret reference",
 		mutate: func(decision *Decision) {
 			decision.Algorithm.RaylineRemote.APIKeyEnv = "literal-secret!"
@@ -184,6 +191,37 @@ func TestValidateRaylineRemoteAlgorithmConfigRejectsInvalidContracts(
 	}
 }
 
+// Prompt bodies and tool schemas cross this hop verbatim, so a plaintext hop
+// has to be a deliberate, written-down operator choice rather than a default.
+func TestValidateRaylineRemoteAlgorithmConfigAllowsOptedInPlaintextTransport(
+	t *testing.T,
+) {
+	decision := validRaylineRemoteDecision()
+	decision.Algorithm.RaylineRemote.BaseURL = "http://rayline-router:8000"
+	decision.Algorithm.RaylineRemote.AllowInsecureTransport = true
+	if err := validateDecisionAlgorithmConfig(
+		decision.Name,
+		decision.ModelRefs,
+		decision.Algorithm,
+	); err != nil {
+		t.Fatalf("opted-in plaintext remote config rejected: %v", err)
+	}
+}
+
+func TestValidateRaylineRemoteAlgorithmConfigIgnoresOptInForTLSTransport(
+	t *testing.T,
+) {
+	decision := validRaylineRemoteDecision()
+	decision.Algorithm.RaylineRemote.AllowInsecureTransport = true
+	if err := validateDecisionAlgorithmConfig(
+		decision.Name,
+		decision.ModelRefs,
+		decision.Algorithm,
+	); err != nil {
+		t.Fatalf("https remote config with opt-in rejected: %v", err)
+	}
+}
+
 func TestValidateRaylineRemoteDecisionRejectsLearningReplayAndAutoAlias(
 	t *testing.T,
 ) {
@@ -254,7 +292,7 @@ func validRaylineRemoteDecision() Decision {
 			Type:    RaylineRemoteAlgorithmType,
 			OnError: "fail_closed",
 			RaylineRemote: &RaylineRemoteAlgorithmConfig{
-				BaseURL:           "http://rayline-router:8000",
+				BaseURL:           "https://rayline-router:8443",
 				BundleVersion:     "bundle.test.v1",
 				APIKeyEnv:         "RAYLINE_API_KEY",
 				EpisodeIDHeader:   "x-rayline-episode-id",

@@ -101,8 +101,9 @@ routing:
         type: rayline_remote
         on_error: fail_closed
         rayline_remote:
-          base_url: http://rayline-router:8000
+          base_url: https://rayline-router:8443
           bundle_version: mtrouter-example-immutable-revision
+          allow_insecure_transport: false
           api_key_env: RAYLINE_API_KEY
           episode_id_header: x-rayline-episode-id
           episode_hmac_key_env: RAYLINE_EPISODE_HMAC_KEY
@@ -117,6 +118,14 @@ routing:
             - id: mock-b
               model: model-b
 ```
+
+## Transport
+
+The prepare call sends the full chat `messages` array and the `tools` array to
+Pathfinder. `base_url` must therefore use `https`. A plaintext `http` endpoint
+is a startup error unless the decision also sets
+`allow_insecure_transport: true`. Use that flag only for a hermetic local
+stack, never for a hop that crosses a host or a network boundary.
 
 Set the two referenced environment variables in the Semantic Router process.
 Treat the episode header as an authenticated caller contract: reject requests

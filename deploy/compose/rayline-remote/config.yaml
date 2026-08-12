@@ -75,6 +75,9 @@ routing:
         rayline_remote:
           base_url: http://fake-rayline:8090
           bundle_version: rayline-remote-e2e-bundle-v1
+          # Hermetic single-host compose stack; the plaintext hop never
+          # leaves the compose network.
+          allow_insecure_transport: true
           api_key_env: RAYLINE_REMOTE_API_KEY
           episode_id_header: x-rayline-episode-id
           episode_hmac_key_env: RAYLINE_REMOTE_EPISODE_HMAC_KEY

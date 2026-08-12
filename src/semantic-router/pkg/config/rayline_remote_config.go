@@ -27,17 +27,21 @@ var raylineRemoteWorkerIDPattern = regexp.MustCompile(
 // Credential fields name environment variables; secret values are never part
 // of the canonical configuration.
 type RaylineRemoteAlgorithmConfig struct {
-	BaseURL           string                      `yaml:"base_url"`
-	BundleVersion     string                      `yaml:"bundle_version"`
-	APIKeyEnv         string                      `yaml:"api_key_env"`
-	EpisodeIDHeader   string                      `yaml:"episode_id_header"`
-	EpisodeHMACKeyEnv string                      `yaml:"episode_hmac_key_env"`
-	DecisionIDHeader  string                      `yaml:"decision_id_header"`
-	ConnectTimeoutMS  int                         `yaml:"connect_timeout_ms"`
-	RequestTimeoutMS  int                         `yaml:"request_timeout_ms"`
-	LeaseTTLSeconds   int                         `yaml:"lease_ttl_seconds"`
-	MaxRetries        int                         `yaml:"max_retries"`
-	Workers           []RaylineRemoteWorkerConfig `yaml:"workers"`
+	BaseURL       string `yaml:"base_url"`
+	BundleVersion string `yaml:"bundle_version"`
+	// AllowInsecureTransport opts a decision into a plaintext base_url. The
+	// hop carries the full prompt body and tool schemas, so http:// stays a
+	// startup error until an operator writes this flag down.
+	AllowInsecureTransport bool                        `yaml:"allow_insecure_transport"`
+	APIKeyEnv              string                      `yaml:"api_key_env"`
+	EpisodeIDHeader        string                      `yaml:"episode_id_header"`
+	EpisodeHMACKeyEnv      string                      `yaml:"episode_hmac_key_env"`
+	DecisionIDHeader       string                      `yaml:"decision_id_header"`
+	ConnectTimeoutMS       int                         `yaml:"connect_timeout_ms"`
+	RequestTimeoutMS       int                         `yaml:"request_timeout_ms"`
+	LeaseTTLSeconds        int                         `yaml:"lease_ttl_seconds"`
+	MaxRetries             int                         `yaml:"max_retries"`
+	Workers                []RaylineRemoteWorkerConfig `yaml:"workers"`
 }
 
 // RaylineRemoteWorkerConfig is the one-to-one worker-to-ModelRef dispatch map.
@@ -56,6 +60,9 @@ func validateRaylineRemoteAlgorithmConfig(
 	if err := validateRaylineARCBaseURL(cfg.BaseURL); err != nil {
 		return err
 	}
+	if err := validateRaylineRemoteTransport(cfg); err != nil {
+		return err
+	}
 	if err := validateImmutableRaylineARCPin(
 		"bundle_version",
 		cfg.BundleVersion,
@@ -72,6 +79,26 @@ func validateRaylineRemoteAlgorithmConfig(
 		return err
 	}
 	return validateRaylineRemoteWorkers(cfg.Workers, modelRefs)
+}
+
+// validateRaylineRemoteTransport keeps the prompt-carrying hop encrypted
+// unless the decision opts in. base_url has already been parsed as an
+// absolute http or https URL by this point.
+func validateRaylineRemoteTransport(
+	cfg *RaylineRemoteAlgorithmConfig,
+) error {
+	if cfg.AllowInsecureTransport {
+		return nil
+	}
+	if strings.HasPrefix(
+		strings.ToLower(strings.TrimSpace(cfg.BaseURL)),
+		"http://",
+	) {
+		return fmt.Errorf(
+			"base_url must use https; plaintext requires allow_insecure_transport: true",
+		)
+	}
+	return nil
 }
 
 func validateRaylineRemoteAuth(cfg *RaylineRemoteAlgorithmConfig) error {

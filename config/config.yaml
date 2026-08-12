@@ -752,8 +752,11 @@ routing:
         type: rayline_remote
         on_error: fail_closed
         rayline_remote:
-          base_url: http://rayline-router:8000
+          base_url: https://rayline-router:8443
           bundle_version: public-synthetic-remote-v1
+          # The prepare hop carries the full prompt body and tool schemas.
+          # Set this to true only for a trusted plaintext hop you control.
+          allow_insecure_transport: false
           api_key_env: RAYLINE_API_KEY
           episode_id_header: x-rayline-episode-id
           episode_hmac_key_env: RAYLINE_EPISODE_HMAC_KEY
