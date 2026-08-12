@@ -17,6 +17,10 @@ const (
 	PermDataRead       RoutePermission = "data.read"
 	PermDataWrite      RoutePermission = "data.write"
 	PermMetricsRead    RoutePermission = "metrics.read"
+	// PermRouteDecision gates decision-only routing. It is deliberately absent
+	// from the built-in viewer and operator roles: the caller is a trusted
+	// proxy, not a console user, so a deployment must grant it on purpose.
+	PermRouteDecision RoutePermission = "route.decision"
 )
 
 // RouteSensitivity classifies response risk for inventory and policy.
