@@ -397,10 +397,12 @@ PERF037 = OpenLoopRunContract(
 
 RTX6000_BURST_ARMS = (PERF037,)
 
-# Bound 2026-08-12 as the second half of the authorization act; the first half
-# is the real Pathfinder pin above. This opens exactly one run id to the
-# launcher, for exactly one execution.
-LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF037
+# Closed 2026-08-12 after PERF037's one authorized execution. The Pathfinder
+# pin above stays at the real head as the record of what ran; this name going
+# back to None is what makes the packet unlaunchable again. Re-opening it would
+# need a fresh human grant and a new registry ID -- the no-retry clause closes
+# this ID for good.
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
 
 __all__ = [
     "ABSORPTION_COMPLETION_RATIO_FLOOR",
