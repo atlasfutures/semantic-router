@@ -262,15 +262,35 @@ funded — the harness work comes first.
 
 ## 8. Where things are
 
-- **semantic-router**: this worktree, branch `worktree-agent-a99d6770882aaee16`
-  off `codex/rayline-remote-mvp` at `96d614f5`. Five commits, local, unpushed.
+- **semantic-router**: this worktree, branch `codex/rayline-perf037-prep` off
+  `codex/rayline-remote-mvp` at `96d614f5`, pushed to `atlasfutures`. Corrected
+  2026-08-12: an earlier draft named the branch
+  `worktree-agent-a99d6770882aaee16` and called the commits local and unpushed.
+  Set upstream tracking once with
+  `git push -u atlasfutures codex/rayline-perf037-prep` -- a missing upstream is
+  a known collector trap in this lane.
 - **Contract**: `e2e/testing/rayline-arc/rayline_rtx6000_burst_contract.py`
 - **Tests**: `src/vllm-plugins/rayline_arc_io/tests/test_rayline_rtx6000_burst_contract.py`
-  (18 tests) and `.../test_rayline_three_arm_budget.py` (5 tests)
+  (19 tests) and `.../test_rayline_three_arm_budget.py` (5 tests)
 - **Encoder app**: `rayline-arc-session-encoder-flashinfer-perf037-rtx6000-32lane`,
   the only app in both `RTX6000_APP_PROFILES` and `CAP_RAISED_APP_PROFILES`
 - **Packet**: `.agent-harness/rayline-parity/packet-perf034`, unchanged, all
-  eleven digests re-verified 2026-08-12
+  eleven digests re-verified 2026-08-12. **Corrected 2026-08-12**: that path
+  resolves inside the *main checkout*, not this worktree. `.agent-harness/` is
+  gitignored (`.gitignore:150`), so a fresh worktree has no packet at all, and
+  the two tests that pin packet byte-identity to PERF034 -- the whole cross-GPU
+  claim, and a voiding gate under §3 -- **skip silently** when it is missing.
+  A run that trusts a green `21 passed, 2 skipped` has not verified its packet.
+  Copy it in before doing anything else:
+
+  ```bash
+  mkdir -p .agent-harness/rayline-parity
+  cp -R /Users/chilang/code/semantic-router/.agent-harness/rayline-parity/packet-perf034 \
+    .agent-harness/rayline-parity/
+  ```
+
+  The suite must then report **24 passed, 0 skipped**. Treat any skip as a
+  failed preflight.
 - **Pathfinder**: untouched. The registry entry belongs to authorization time.
 
 Resume command:
