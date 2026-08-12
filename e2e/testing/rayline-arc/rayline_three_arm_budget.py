@@ -77,6 +77,40 @@ def resource_rate_usd_per_second(encoder_gpu: str = DEFAULT_ENCODER_GPU) -> floa
     )
 
 
+def minimum_viable_grant_usd(contract: BudgetContract) -> float:
+    """How far the authority ceiling must move before this packet may run.
+
+    A prepared packet ships fail-closed by arithmetic: its envelope breaches
+    the reserve floor under the standing authority, so `budget_receipt`
+    refuses it. Every contract so far restated that shortfall as a hand-typed
+    `MINIMUM_VIABLE_GRANT_USD`, which is the figure a human is asked to grant
+    -- so it is the one number in the packet that most deserves to be computed
+    rather than typed. A granted packet returns exactly `0.0`, because this
+    family grants the minimum and nothing more.
+
+    The envelope arithmetic is repeated from `budget_receipt` rather than
+    shared, because `budget_receipt` needs the parts as well as the total and
+    the two must not drift; a test pins them equal instead.
+    """
+
+    if contract.encoder_replicas <= 0:
+        raise BudgetError("encoder replica count must be positive")
+    resource_seconds = (
+        contract.maximum_paid_wall_seconds
+        + contract.maximum_orphan_request_seconds
+        + contract.maximum_scaledown_seconds
+    )
+    rate = resource_rate_usd_per_second(contract.encoder_gpu)
+    envelope = resource_seconds * rate * contract.encoder_replicas
+    shortfall = (
+        contract.previous_conservative_usd
+        + envelope
+        + contract.required_reserve_usd
+        - contract.authorized_cumulative_usd
+    )
+    return max(0.0, shortfall)
+
+
 def budget_receipt(
     contract: BudgetContract, elapsed_seconds: float | None = None
 ) -> dict[str, Any]:
