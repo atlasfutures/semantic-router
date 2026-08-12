@@ -32,6 +32,17 @@ launcher = importlib.import_module("run_openrouter_fullstack")
 launch_authority = importlib.import_module("openrouter_launch_authority")
 encoder_runtime = importlib.import_module("openrouter_encoder_runtime")
 EXPECTED_MAX_COMPLETION_TOKENS = 96
+# The benchmark keeps its own 96-token cap; the artifact the compose packet
+# serves has to leave room for an interactive agent's tool calls.
+EXPECTED_ARTIFACT_MAX_COMPLETION_TOKENS = 4096
+EXPECTED_ARTIFACT_MINIMUM_COMPLETION_TOKENS = 16
+AGENTIC_TOKEN_SCALE = 1_000_000
+AGENTIC_PRICE_FIELDS = (
+    ("prompt_per_1m", "estimated_input_cost_per_token"),
+    ("cached_input_per_1m", "estimated_cache_read_cost_per_token"),
+    ("cache_write_per_1m", "estimated_cache_write_cost_per_token"),
+    ("completion_per_1m", "estimated_output_cost_per_token"),
+)
 EXPECTED_MAX_MEASURED_REQUESTS = 72
 EXPECTED_BENCHMARK_PROVIDER_REQUESTS = 100
 EXPECTED_BENCHMARK_EXTERNAL_ATTEMPTS = 203
@@ -52,33 +63,44 @@ def test_agentic_artifact_uses_the_requested_low_cost_pool(tmp_path: Path) -> No
     artifact.generate(tmp_path)
     manifest = json.loads((tmp_path / "manifest.json").read_text())
 
-    assert manifest["artifact_id"] == "public-rayline-arc-openrouter-agentic-v1"
+    assert manifest["artifact_id"] == "public-rayline-arc-openrouter-agentic-v2"
+    # The artifact is not allowed its own copy of the pool: the router refuses
+    # to serve when the manifest and the frozen workload table disagree, and
+    # that is exactly how the 2026-08-07 luna amendment silently pin-closed
+    # this packet.
+    worker_ids = ["worker-a", "worker-b", "worker-c"]
+    assert [worker["id"] for worker in manifest["workers"]] == worker_ids
     assert [worker["model"] for worker in manifest["workers"]] == [
-        "deepseek/deepseek-v4-flash",
-        "xiaomi/mimo-v2.5",
-        "tencent/hy3",
+        workload.WORKERS[worker_id] for worker_id in worker_ids
+    ]
+    assert [worker["openrouter_provider_order"] for worker in manifest["workers"]] == [
+        list(workload.PROVIDER_SLUGS[worker_id]) for worker_id in worker_ids
     ]
     assert [worker["openrouter_provider_slug"] for worker in manifest["workers"]] == [
-        "baidu",
-        "xiaomi",
-        "tencent",
+        workload.PROVIDER_SLUGS[worker_id][0] for worker_id in worker_ids
     ]
     assert [worker["openrouter_provider_name"] for worker in manifest["workers"]] == [
-        "Baidu",
-        "Xiaomi",
-        "Tencent",
+        workload.PROVIDER_NAMES[worker_id][0] for worker_id in worker_ids
+    ]
+    # gpt-5.6-luna does not advertise `temperature`, so worker-b must carry no
+    # temperature at all rather than a suppressed-looking zero.
+    assert [("temperature" in worker) for worker in manifest["workers"]] == [
+        True,
+        False,
+        True,
     ]
     for worker in manifest["workers"]:
         assert worker["capability_tags"] == ["public-openrouter-agentic-benchmark"]
-        assert worker["max_completion_tokens"] == EXPECTED_MAX_COMPLETION_TOKENS
+        assert (
+            worker["max_completion_tokens"] == EXPECTED_ARTIFACT_MAX_COMPLETION_TOKENS
+        )
+        assert (
+            worker["minimum_completion_tokens"]
+            == EXPECTED_ARTIFACT_MINIMUM_COMPLETION_TOKENS
+        )
         assert worker["openrouter_allow_fallbacks"] is False
         assert worker["openrouter_max_retries"] == 1
         assert worker["thinking_mode"] == "off"
-    assert [worker["openrouter_provider_order"] for worker in manifest["workers"]] == [
-        ["baidu", "streamlake", "deepinfra"],
-        ["xiaomi", "parasail", "venice", "novita"],
-        ["tencent", "deepinfra", "novita"],
-    ]
 
 
 def test_agentic_workload_is_bounded_realistic_and_balanced() -> None:
@@ -686,6 +708,83 @@ def test_agentic_launcher_reuses_envoy_and_key_across_encoder_activation(
     assert persisted["ephemeral_key_reused"] is True
 
 
+def _configured_provider_models(config: str) -> dict[str, dict[str, Any]]:
+    """Read providers.models out of the compose config without a YAML parser.
+
+    This suite deliberately carries no YAML dependency, and the pricing floats
+    cannot be compared as text: 2e-07 scaled to per-1M renders as
+    0.19999999999999998, not the 0.2 the config declares.
+    """
+
+    # providers.models entries sit at exactly this indent; listener and
+    # backend_ref entries reuse `- name:` at other depths.
+    model_prefix = "    - name: "
+    models: dict[str, dict[str, Any]] = {}
+    current: dict[str, Any] | None = None
+    in_pricing = False
+    for raw in config.splitlines():
+        line = raw.strip()
+        if models and line and not raw[0].isspace():
+            # routing.modelCards repeats these names at the same depth.
+            break
+        if raw.startswith(model_prefix):
+            current = {"pricing": {}}
+            models[raw.removeprefix(model_prefix).strip()] = current
+            in_pricing = False
+        elif current is None or not line or line.startswith("#"):
+            continue
+        elif line == "pricing:":
+            in_pricing = True
+        elif line.startswith("provider_model_id: "):
+            current["provider_model_id"] = line.removeprefix("provider_model_id: ")
+            in_pricing = False
+        elif line.startswith("backend_refs:"):
+            in_pricing = False
+        elif in_pricing and ": " in line:
+            key, _, value = line.partition(": ")
+            current["pricing"][key] = value
+    # Only provider entries declare an upstream model; modelCards reuse the
+    # same names at the same depth.
+    return {
+        name: model for name, model in models.items() if "provider_model_id" in model
+    }
+
+
+def test_agentic_compose_config_matches_the_artifact(tmp_path: Path) -> None:
+    """The router's price-identity gate fails closed on any mismatch here.
+
+    The 2026-08-07 luna amendment moved this config's worker-b without moving
+    the artifact, which left the packet unable to reach readiness at all — a
+    divergence otherwise only visible as a launch that never becomes ready.
+    """
+
+    artifact.generate(tmp_path)
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    artifact_workers = {worker["id"]: worker for worker in manifest["workers"]}
+    config = (DEPLOY_DIR / "config-openrouter-agentic.yaml").read_text()
+    assert f"artifact_revision: {manifest['artifact_id']}" in config
+
+    models = _configured_provider_models(config)
+    assert set(models) == set(artifact_workers)
+    for name, model in models.items():
+        worker = artifact_workers[name]
+        pricing = model["pricing"]
+        assert model["provider_model_id"] == worker["model"]
+        # The gate also refuses anything that is not USD or omits cache-write.
+        assert pricing["currency"] == "USD"
+        assert "cache_write_per_1m" in pricing
+        for configured_key, artifact_key in AGENTIC_PRICE_FIELDS:
+            configured = float(pricing[configured_key])
+            expected = worker[artifact_key] * AGENTIC_TOKEN_SCALE
+            # raylineARCPriceEqual's tolerance, mirrored exactly. pytest.approx
+            # defaults a thousand times looser and would let a config drift
+            # past this test while still failing the router gate closed.
+            tolerance = max(1e-12, abs(expected) * 1e-9)
+            assert abs(configured - expected) <= tolerance, (
+                f"{name}.{configured_key} diverges from the artifact"
+            )
+
+
 def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
     config = (DEPLOY_DIR / "config-openrouter-agentic.yaml").read_text()
     override = (DEPLOY_DIR / "compose-openrouter-agentic.yaml").read_text()
@@ -694,7 +793,7 @@ def test_agentic_compose_config_and_launcher_are_source_bounded() -> None:
     for worker, model in benchmark.WORKERS.items():
         assert f"name: {worker}" in config
         assert f"provider_model_id: {model}" in config
-    assert "public-rayline-arc-openrouter-agentic-v1" in config
+    assert "public-rayline-arc-openrouter-agentic-v2" in config
     assert "openrouter_agentic_artifact_fixture.py" in override
     assert "openrouter_agentic_artifact_fixture.py" in dockerfile
     assert "moonshotai/kimi" not in config

@@ -4396,35 +4396,46 @@ pinned `modal-on-demand-2026-07-31-h100-cpu-memory` rate. Four rungs do not
 grow it: PERF032's *slowest* rung is PERF031's *fastest*, so every arrival
 schedule is shorter than the ones that fit inside 2,400 seconds twice already.
 
-| | PERF032 |
-| --- | ---: |
-| Previous conservative | `$165.618546266383` |
-| Packet envelope | `$6.9344208` |
-| Cumulative if full | `$172.552967066383` |
-| Reserve after full | `$1.759856953617` |
-| Packet ceiling | `$7.00` |
-| Required reserve | `$3.00` |
+| | PERF032, as prepared | PERF032, after the grant |
+| --- | ---: | ---: |
+| Previous conservative | `$165.618546266383` | `$165.618546266383` |
+| Packet envelope | `$6.9344208` | `$6.9344208` |
+| Cumulative if full | `$172.552967066383` | `$172.552967066383` |
+| Authorized cumulative | `$174.31282402` | `$184.31282402` |
+| Reserve after full | `$1.759856953617` | `$11.759856953617` |
+| Packet ceiling | `$7.00` | `$7.00` |
+| Required reserve | `$3.00` | `$3.00` |
 
-`$1.759856953617` is **below** the `$3.00` floor, so `budget_receipt` raises
-`BudgetError` and PERF032 cannot run. This is the prepared state, not a defect.
+As prepared, `$1.759856953617` was **below** the `$3.00` floor, so
+`budget_receipt` raised `BudgetError` and PERF032 could not run. That was the
+prepared state, not a defect.
 
-### What is not yet bound
+### The two gates, and the grant that opened them
 
-The source is prepared and fail-closed on **two** independent gates, and
-preparation may move neither.
+The source was prepared fail-closed on **two** independent gates, and
+preparation moved neither. Both were opened by a reviewed authorization
+checkpoint on 2026-08-10.
 
 1. **Budget.** `AUTHORIZED_CUMULATIVE_USD` in
-   `rayline_saturation_knee_contract.py` is still PERF031's `$174.31282402`,
-   which fails the reserve check above. The **minimum** fresh authority is
-   **`$1.2401430463829968`**, taking cumulative authority to
-   `$175.552967066383` and landing the reserve on exactly `$3.00`. No figure
-   is assumed here; a human must grant one.
-2. **Pathfinder pin.** `PATHFINDER_AUTHORIZATION_COMMIT` is the literal
+   `rayline_saturation_knee_contract.py` was PERF031's `$174.31282402`, which
+   fails the reserve check above. The **minimum** fresh authority was
+   **`$1.240143046383`**, taking cumulative authority to `$175.552967066383`
+   and landing the reserve on exactly `$3.00`. The human grant was **`$10.00`**
+   (`24bd8573`), not the minimum, deliberately: `$184.31282402` leaves
+   `$11.759856953617` of reserve after a full envelope, which keeps **one**
+   re-execution possible without a further grant. That mattered because the
+   `r045` anchor could have failed to reproduce, and distinguishing a bad
+   packet from a real change would then have needed exactly one retry.
+2. **Pathfinder pin.** `PATHFINDER_AUTHORIZATION_COMMIT` was the literal
    `PENDING`, which no commit can equal and which `_assert_pushed` compares
-   HEAD against.
+   HEAD against. It is now the real pushed head
+   `fb78b2fbbd579d10cd14a78ce71af7c0e9216306` (`00381f05`), the same head
+   PERF031 ran against.
 
-`LAUNCHABLE_CONTRACT` is `None`, so `resolve_launch_contract` refuses the arm
-regardless of either gate. Provider spend is zero; there is no whole-run retry.
+`LAUNCHABLE_CONTRACT` was `None`, so `resolve_launch_contract` refused the arm
+regardless of either gate; `00381f05` bound it to `PERF032` and `d2417480`
+registered the contract with the launcher. Provider spend is zero; there is no
+whole-run retry.
 
 - [x] PERF032a: make the open-loop packet's rung set a parameter, defaulting to
   the frozen ladder so PERF020/PERF021 stay reproducible byte-for-byte, and
@@ -4432,11 +4443,1336 @@ regardless of either gate. Provider spend is zero; there is no whole-run retry.
 - [x] PERF032b: preregister the single FlashInfer arm, its anchor rung, its
   falsifiable capacity prediction and its real packet digests — without
   opening launch authority or assuming a budget grant.
-- [ ] PERF032c: on a human budget grant, set `AUTHORIZED_CUMULATIVE_USD`, bind
+- [x] PERF032c: on a human budget grant, set `AUTHORIZED_CUMULATIVE_USD`, bind
   the Pathfinder authorization commit to a real pushed head, and open the arm.
-- [ ] PERF032d: run the arm once. If `r045` does not reproduce an unsaturated
+- [x] PERF032d: run the arm once. If `r045` does not reproduce an unsaturated
   cell, diagnose the anchor before reading any higher rung. Report the knee, or
   report the new bound if `r120` also holds.
+
+### PERF032 Result (2026-08-10) — the ladder ran out of rungs again
+
+The arm executed once and every measured cell completed. All four rungs report
+`all_completed: true`, `provider_calls_zero: true` and `trace_match: true`;
+`32/32` measured turns in all eight cells across both sub-arms, `failed: 0` and
+`provider_calls: 0` everywhere. The one selected-worker trace digest
+`d9e93cf0f4c636a3838e41938d2ef3ff6e1d66a60860922f84771b3fa5158ac9` is shared by
+every cell of both sub-arms — the same digest PERF020, PERF021 and both PERF031
+arms carry — so `cross_cell_trace_match` holds. ARC telemetry records exactly
+`36` session actions in every cell (`9` created, `27` appended, zero rebuilt,
+zero reused) and every cell closed its eight measured sessions and ended at zero
+resident sessions and tokens.
+
+**The outcome is the third branch of the preregistered prediction: falsified
+high.** `first_overloaded_cell` is `null` on **both** the `rayline_arc` and the
+`rayline_remote` sub-arm at every rung; no cell reports `overloaded: true`, and
+every cell keeps `final_arrival_backlog_bounded`, `offered_rate_maintained` and
+a false `queue_latency_dominates_service_p95`. `r120` was preregistered as the
+rung that must overload, and it did not.
+
+#### The anchor reproduced, so the higher rungs are readable
+
+`r045` re-offered exactly the cell PERF031B measured and returned
+`0.550508384859422` completion throughput against PERF031B's
+`0.5518306368768308` — a reproduction within `0.24%`, on byte-identical
+`workload_sha256` and `identity_sha256` documents, with backlog `3` and drain
+`2.6323210432677584`s against PERF031B's backlog `3` and
+`2.4930392113531994`s. The anchor gate holds, so nothing below invalidates the
+packet.
+
+#### What the four rungs measured
+
+ARC sub-arm, at full receipt precision:
+
+| Rung | Realized arrivals | Completion throughput | Peak backlog | Drain | Service p50 | Service p95 | Start lag p99 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `r045` | `0.5586011607274736` | `0.550508384859422` | `3` | `2.6323210432677584` | `0.674246291979216` | `5.480072750011459` | `0.0050211253019014634` |
+| `r060` | `0.7448015476366314` | `0.7049711873967881` | `3` | `3.7701006061818276` | `0.5073020829586312` | `4.654947250033729` | `0.005022244229301975` |
+| `r090` | `1.1172023214549471` | `0.965043949352505` | `5` | `5.411227960128759` | `0.521253583021462` | `5.40659999998752` | `0.005039932772429978` |
+| `r120` | `1.4896030952732628` | `1.1547543726851863` | `7` | `6.900608240123923` | `0.5123024160275236` | `6.898598000057973` | `0.0061730140240703335` |
+
+The `rayline_remote` sub-arm agrees in shape and is uniformly slightly slower:
+completion `0.5420973309031613`, `0.6818144658576408`, `0.9274611008132237`,
+`1.100264477195747`, peak backlog `4`/`5`/`6`/`7`. ARC over remote completion
+throughput is `1.0155x`, `1.0340x`, `1.0405x`, `1.0495x`, and
+`achieved_start_rate_ratio` is within `1.7e-4` of unity at every rung, so the
+two sub-arms were offered the same load.
+
+#### The rolloff is finite-N tail bias, not saturation
+
+Completion throughput divided by realized arrivals falls monotonically —
+`0.9855`, `0.9465`, `0.8638`, `0.7752` on the ARC sub-arm. **That series is not
+evidence of saturation and must not be read as capacity.** The same receipts
+refute the reading three separate ways.
+
+- **Nothing ever queued.** `start_lag` p99 is `0.0050`–`0.0062`s in all eight
+  cells. Every request was dispatched within six milliseconds of its scheduled
+  arrival, at every rung, on both sub-arms.
+- **Service latency did not degrade.** ARC median service time is `0.674`,
+  `0.507`, `0.521`, `0.512` seconds across a `2.67x` range of offered rate. A
+  server at its knee does not hold its median flat.
+- **The drain is one request, not a backlog.** `drain ÷ service p95` is
+  `0.480`, `0.810`, `1.001`, `1.000` on the ARC sub-arm. The entire
+  post-arrival tail at the top two rungs is the last request finishing.
+
+The rolloff is arithmetic. `completion_throughput_rps` is
+`completed / duration`, `duration` is `span + drain`, and `span` is
+`(n - 1) / arrival_rate`, so the span shrinks as `1 / rate` while the service
+tail does not — a fixed tail takes a monotonically larger share of a shorter
+run with **zero queueing anywhere**. Reconstructing each cell as if it had been
+served with no queueing at all, charged exactly one service-p95 request of
+drain, gives `0.863925` against the observed `0.863804` at ARC `r090` and
+`0.775266` against `0.775209` at ARC `r120`; the `rayline_remote` cells agree
+to the same tolerance. Both top rungs are reproduced to better than `2e-4`
+relative, so there is nothing left over for saturation to explain. The two
+bottom rungs are the ones the reconstruction *under*-predicts, which is the
+opposite of a system that is falling behind.
+
+No completion-ratio floor can rescue the reading either, for the reason
+recorded under PERF033 below: PERF020's `r015` ARC cell, the most idle cell in
+this repo's receipts, peaked at four of eight lanes and still reported a
+completion ratio under `0.89`. Any floor that would call PERF032 saturated
+would call that cell saturated too.
+
+**The admissible claim from this packet is exactly:**
+
+> The FlashInfer knee lies above `1.4896030952732628` realized decisions per
+> second on one H100. Its location is unknown.
+
+`1.1547543726851863` decisions per second is a *measured completion rate at an
+unsaturated rung*, not a ceiling, and the capacity model's `1.143` dec/s
+prediction is **not** confirmed by its proximity to that number. PERF031's
+FlashInfer branch was untested because the ladder was too short; PERF032's is
+untested because the run never loaded the system to its limit either. The
+model's FlashInfer branch remains neither confirmed nor contradicted.
+
+#### `FINAL_BACKLOG_KNEE` measured the right thing without enough resolution
+
+`overloaded: false` was the **correct** verdict at every rung, and the
+predicate that produced it — `backlog_at_final_arrival < 8` against the eight
+episode lanes — was measuring the right quantity: the rig has exactly one
+capacity to exhaust, and it is lane occupancy. What it lacked was resolution. A
+hard boolean on one instantaneous sample cannot separate a cell at `7/8` from
+one at `1/8`, and a reader of `false` cannot tell a near miss from a wide one.
+On this run peak occupancy was `0.375`, `0.375`, `0.625`, `0.875` on the ARC
+sub-arm and `0.500`, `0.625`, `0.750`, `0.875` on `rayline_remote` — an
+approach the recorded verdict could not express. PERF033 keeps backlog as the
+primary signal and changes only how it is read: maximum over all 32 arrival
+instants rather than the last one, normalised by a contract-declared lane
+count, with the approach recorded.
+
+#### The comparison was derived offline, and the artifact says so
+
+No comparison was produced in-run. The launcher executed all four rungs and
+wrote every per-cell receipt, then aborted in `_validate_cells` because the
+comparator validated the sweep against `rayline_open_loop_packet.OFFERED_RATES`
+— the module's frozen three-rung PERF020/PERF021 default — instead of the four
+rungs PERF032 contracted for. `bcdc7989` had made the rung set a parameter of
+the packet builder without making it a parameter of the comparator. `12287b1a`
+fixes it in all three places that had the fault, and `553ddf6f` pins the
+behaviour with a four-rung regression.
+
+The comparison was therefore recomputed after the run from the receipts alone,
+and is deliberately **not** filed under the canonical `comparison.json` name:
+
+| Property | Value |
+| --- | --- |
+| Artifact | `comparison-derived-offline.json` |
+| `schema_version` | `rayline.vllm.open-loop-comparison-derived.v1` |
+| `derived_offline` | `true` |
+| `produced_by` | `rayline_open_loop_comparator.compare_open_loop` |
+| `run_manifest_present` | `false` |
+
+`compare_open_loop` imports no clock, RNG, environment or I/O, so its output is
+a function of the receipts alone; the artifact carries a sha256 for each of the
+eight source receipts, each `state-reset.json` and each ARC telemetry document,
+plus the `deployment-evidence.json` digest
+`d64732b3fae6f526d6ada49588dfb415eca5f93c8081aec97e02b70f2cde8909`, so the
+derivation can be re-checked against unaltered inputs. The contract digests were
+re-verified against the on-disk packet: `packet_manifest_sha256`
+`eeb1c69f57ae964b238c7763ff87abf2dc727ba94b757c45e24aa2e013b08fed`, the
+unchanged `corpus_sha256` and `topology_sha256`, and every receipt's identity
+block against its cell's packet identity document. The embedded `comparison`
+block is `rayline.vllm.open-loop-comparison.v2`, byte-shaped exactly as an
+in-run one, and `status: passed`.
+
+#### What the receipts cannot attest
+
+**No `run-manifest.json` was written and none was fabricated.** A manifest
+carries in-run state that cannot be recovered afterwards — elapsed paid wall
+seconds and its budget receipt, the local Compose and encoder cleanup booleans,
+and the router image id resolved at launch — all of which existed only in
+launcher memory when the run aborted. Reconstructing any of it would be
+assertion, not evidence.
+
+Three consequences follow and are recorded rather than papered over.
+
+- **Cleanup is unevidenced by artifact.** Unlike PERF031, this result cannot
+  quote `encoder_containers_remaining: 0`, `proxy_token_deleted: true` or
+  Compose teardown. What the receipts *do* attest is per-cell state reset:
+  `resident_sessions_after_cleanup: 0` and `resident_tokens_after_cleanup: 0`
+  in all four cells, with `measured_sessions_closed: 8` and
+  `measured_sessions_missing: 0`. That is the in-cell reset, not the app
+  teardown, and it is not a substitute for it.
+- **Actual spend is unmeasured, so conservative accounting stands.** The run is
+  charged its complete `$6.9344208` envelope, leaving the cumulative at
+  `$172.552967066383` and `$11.759856953617` of reserve under the granted
+  `$184.31282402`. Provider spend was `$0.00`: `provider_calls` is zero in every
+  cell.
+- **`startup_log_captured: false` again.** `deployment-evidence.json` was
+  written before the first measured cell with the app name
+  `rayline-arc-session-encoder-flashinfer-perf031`, the resolved encoder URL,
+  `engine_build_id`
+  `vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca+gdn-flashinfer-eager`,
+  `gdn_prefill_backend: flashinfer` and `encoder_gpu: H100` — and
+  `startup_log: []`. This is the preregistered bounded outcome, not a failure,
+  and it is the third arm in a row to record it. The 544-token attention block
+  size, the mamba page padding, the KV cache size and the maximum concurrency
+  therefore stay **derived from vLLM source and never observed**.
+
+The deployed build id matches the contract's, so the engine identity is
+byte-identical to PERF031B's, and the two runs are directly comparable.
+
+PERF032's launch authority pins are **not** closed by this record. The
+successor packet and its criterion are preregistered as PERF033 below.
+
+## PERF033 Saturation Instrument Validation (preregistered 2026-08-10)
+
+PERF032's decision rule did not fire. `first_overloaded_cell` was `null` on
+both sub-arms at every rung, which the preregistration had labelled "falsified
+high -- capacity exceeds `1.490`". That reading is correct. The reasoning
+offered for it at the time was not, and the difference is what this packet is
+about.
+
+**PERF033's primary purpose is instrument validation. The knee measurement is
+the vehicle.** Every future open-loop packet inherits whatever criterion this
+run establishes, so the criterion is the deliverable and the capacity number
+is the by-product. The `1.155` decisions per second PERF032 recorded is
+a measurement at an unsaturated rung, not a ceiling: the encoder was still
+tracking arrivals there, so re-measuring the same rung would buy nothing. Its
+numerical proximity to a preregistered prediction is a coincidence of where
+the ladder happened to stop, and must not be read as confirming that
+prediction — the model's FlashInfer branch remains neither confirmed nor
+contradicted.
+
+### What PERF032's receipts actually show
+
+The continuous series that looked like saturation was completion throughput
+rolling off monotonically against realized arrivals -- `98.6`, `94.7`, `86.4`,
+`77.5` percent -- with backlog `3/3/5/7` and drain `2.6/3.8/5.4/6.9`s. Read
+alone it says the system was 22.5% underwater at `r120`. Read against the rest
+of the same receipts it says nothing of the kind.
+
+| Rung | Realized arrivals | Completion | Completion ÷ arrivals | Service p50 | Service p95 | Drain | Drain ÷ p95 | Peak backlog | Start lag p99 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `r045` | `0.5586` | `0.5505` | `0.986` | `0.674` | `5.480` | `2.632` | `0.480` | `3` | `0.005` |
+| `r060` | `0.7448` | `0.7050` | `0.947` | `0.507` | `4.655` | `3.770` | `0.810` | `3` | `0.005` |
+| `r090` | `1.1172` | `0.9650` | `0.864` | `0.521` | `5.407` | `5.411` | `1.001` | `5` | `0.005` |
+| `r120` | `1.4896` | `1.1548` | `0.775` | `0.512` | `6.899` | `6.901` | `1.000` | `7` | `0.006` |
+
+Three things follow, and each is fatal to the completion-throughput reading.
+
+- **Nothing queued at any rung.** `start_lag` is the interval between a
+  request's scheduled arrival and its actual dispatch. Its p99 is five to six
+  milliseconds in every cell of both sub-arms, so no request ever waited for a
+  lane.
+- **Service latency did not degrade.** Median service time is `0.674`,
+  `0.507`, `0.521`, `0.512` seconds across a `2.67x` range of offered rate. A
+  server at its knee does not hold its median service time constant.
+- **The drain never exceeded one long request.** `drain ÷ service p95` is at
+  most `1.001`. The entire post-arrival tail is the last request finishing,
+  not a backlog being worked off.
+
+The rolloff is arithmetic. `completion_throughput_rps` is
+`completed / duration`; `duration` is `span + drain`; `span` is
+`(n - 1) / arrival_rate` and so shrinks as `1 / rate` while the service tail
+does not. A fixed tail therefore takes a monotonically larger share of the run
+as the rate rises, **with zero queueing anywhere**. Reconstructing each cell as
+if it had been served with no queueing at all, charging it exactly one
+service-p95 request of drain, reproduces the observed ratio at `r090` and
+`r120` to within one part in a thousand. There is nothing left over for
+saturation to explain.
+
+That is also why no completion-ratio floor can be chosen. PERF020's `r015` ARC
+cell offered `0.186` decisions per second, peaked at four of eight lanes and
+is as far from loaded as this rig gets; its completion ratio is `0.886`. A
+`0.90` floor calls it saturated and a `0.95` floor calls PERF032's anchor
+saturated. The quantity is not a monotone function of load alone, so no
+threshold on it is a saturation test.
+
+### The criterion
+
+The rig has exactly one capacity to exhaust. `poisson_schedule` groups the
+corpus by episode and the probe runs one thread per episode, so at most
+`max_episode_lanes` requests are ever outstanding. A cell has saturated when
+peak occupancy reaches that ceiling: past that point more offered load cannot
+raise concurrency, so it cannot raise throughput.
+
+```text
+peak_lane_occupancy(cell) = max_client_backlog / episode_lanes
+
+saturated(cell) <=> peak_lane_occupancy(cell) >= occupancy_ratio
+```
+
+with `episode_lanes = 8` and `occupancy_ratio = 1.0` for PERF033.
+
+`FINAL_BACKLOG_KNEE = 8` was measuring this quantity and PERF032's
+`overloaded: false` was the right answer. What the predicate lacked was
+resolution: a hard `backlog_at_final_arrival < 8` boolean on one instantaneous
+sample cannot distinguish a cell at `7/8` from one at `1/8`, and a reader of
+`false` cannot tell a near miss from a wide one. The criterion keeps the
+quantity, takes the maximum over all 32 arrival instants instead of the last
+one, normalises by the lane count the packet actually declares, and records
+the approach.
+
+Two figures are recorded per cell and deliberately do not vote.
+
+```text
+completion_ratio(cell)          = completion_throughput_rps / realized_arrival_rate_rps
+unqueued_completion_ratio(cell) = (n / (n - 1)) * span / (span + service_p95)
+drain_service_tail_multiple     = drain_seconds_after_final_arrival / service_p95
+```
+
+`unqueued_completion_ratio` is what the same cell would have reported with no
+queueing at all, given its own measured tail. Printing it beside the observed
+ratio is what stops the observed one being mistaken for a deficit again.
+
+The other candidate signals were considered and rejected on this repo's own
+receipts. Start lag cannot work: the corpus is multi-turn, an episode's last
+turn carries the largest accumulated context and is therefore its slowest
+case, so the slow cases never block a lane behind them. Start lag p99 stays
+under `0.011`s even in PERF021's heavily saturated cells. Drain time cannot
+carry the decision either: with 32 cases at eightfold concurrency, draining
+the entire corpus takes about one service-p95 request, so the saturated and
+unsaturated cells separate by only three to seven percent of a percentile
+estimated from 32 samples.
+
+### The criterion is validated against closed runs, not against PERF033
+
+This is the part that makes PERF033 an instrument-validation packet rather
+than another capacity guess. The criterion is checked against every open-loop
+run this repo has closed, before PERF033 runs at all.
+
+| Run | Recorded knee | Criterion's first saturated cell |
+| --- | --- | --- |
+| PERF021 (`torch_reference`) | `r030` | `r030` on both sub-arms |
+| PERF031A (`torch_reference` control) | `r030` | `r030` on both sub-arms |
+| PERF031B (FlashInfer) | none | none |
+| PERF032 (FlashInfer) | none | none, peaking at `0.875` |
+
+PERF021's receipts replay byte-identically into the report PERF021 recorded,
+because the criterion is contract-supplied and absent by default. A closed run
+whose recorded verdict silently changes shape is a closed run whose evidence
+can no longer be checked.
+
+### Why the lane count cannot simply be raised
+
+It was the obvious alternative and it is not admissible.
+
+`MAX_EPISODE_LANES` is the probe's thread count and equals the eight measured
+episodes in the frozen corpus; more lanes needs a different corpus, which
+changes `corpus_sha256` and breaks the identity every open-loop run since
+PERF020 has shared. Independently, `MAX_SESSIONS` and `max_num_seqs` in
+`modal_session_service.py` are both eight, and a ninth concurrent retained
+episode raises `SessionCapacityError`, which `session_api.py` maps to HTTP
+`429`, which the encoder failover contract does not treat as retriable and
+which fails closed to a `503`. That records a failed case, and the integrity
+gate requires `failed == 0`. A wider packet could not pass its own gate.
+
+The lane count is a correctness constraint, so the criterion has to carry the
+weight -- which is exactly why it is stated as an occupancy ratio against a
+declared ceiling rather than as a raw backlog threshold, and why the launcher
+now asserts the packet's own `max_episode_lanes` against the contract's before
+any paid second elapses.
+
+### The rungs
+
+```text
+PERF033   rayline-saturation-knee-perf033-20260810
+          single arm, gdn_prefill_backend = flashinfer
+          app rayline-arc-session-encoder-flashinfer-perf031
+          engine vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca
+                 +gdn-flashinfer-eager
+```
+
+| Rung | Offered rps | Realized rps | Arrival span | Why it is in the packet |
+| --- | ---: | ---: | ---: | --- |
+| `r120` | `1.20` | `1.4896030952732628` | `20.81`s | Anchor: PERF032's top rung, verbatim |
+| `r160` | `1.60` | `1.9861374603643505` | `15.61`s | First rung past the extrapolated ceiling crossing |
+| `r220` | `2.20` | `2.7309390080009823` | `11.35`s | `1.83x` the anchor; must saturate under any model |
+| `r320` | `3.20` | `3.9722749207287010` | `7.80`s | `2.67x` the anchor; the far end |
+
+The realized rates are exact, not estimates. `poisson_schedule` draws from
+`rng.expovariate(offered_rate_rps)` on the frozen seed, so the schedule scales
+as `1 / rate` and the realized rate scales linearly with the offered rate at
+PERF031's measured `1.241335912727719x`.
+
+`3.20` is the top rung on purpose. At that rate the arrival span is `7.80`
+seconds, barely longer than a single service-p95 request, so the cell is a
+burst rather than a sustained load and a higher rung would measure the corpus
+rather than the encoder. That is the stated resolution limit of a 32-case
+packet, and a successor that needs to look higher needs more cases, not more
+rate.
+
+### `r120` is the anchor, and it is what invalidates the packet
+
+`r120` re-offers PERF032's top rung. Its `workload.json` and `identity.json`
+digests are **byte-identical** to PERF032's `r120`, because a rung's documents
+derive only from the rate, the seed and the frozen constants. It is the same
+document PERF032 measured, not merely one offering the same rate.
+
+PERF032 measured that cell as `1.1547543726851863` completion throughput
+against `1.4896030952732628` realized arrivals, peak backlog `7`, drain
+`6.900608240123923`s, service p95 `6.899`s, start lag p99 `0.006`s.
+
+> **If PERF033's `r120` does not reproduce an unsaturated cell at
+> `0.875` peak occupancy, the packet is measuring a different system and
+> `r160`, `r220` and `r320` are uninterpretable.** Diagnose the anchor before
+> reading any higher rung, exactly as PERF032's `r045` anchor governed its
+> ladder.
+
+### The falsifiable predictions
+
+Peak occupancy rose `3`, `3`, `5`, `7` against realized arrivals of `0.559`,
+`0.745`, `1.117`, `1.490`. The linear fit through the top two points crosses
+eight lanes at about `1.72` realized decisions per second.
+
+- **Predicted:** `r120` reproduces `0.875` peak occupancy and is unsaturated;
+  `r160` reaches `1.0` and saturates; `first_saturated_cell` is `r160`.
+- **Falsified low** if `r120` saturates. The anchor gate fires first and no
+  capacity claim is admissible from the packet.
+- **Falsified high** if `r320` does not saturate. Peak occupancy is not
+  approximately linear in arrival rate, the FlashInfer encoder sustains more
+  than `3.97` realized decisions per second on one H100, and the result is a
+  bound rather than a knee.
+- **Instrument falsified** if any cell reports `saturated: true` while its
+  start lag p99 stays under `0.05`s, its median service time is within `20%`
+  of the anchor's and its drain does not exceed `1.1` service-p95 requests.
+  That combination is the signature of an unloaded cell, and a criterion that
+  fires on it is the failure PERF033 exists to prevent, not a capacity result.
+
+Any of the four is a result. The packet exists to distinguish them.
+
+### The packet
+
+Regenerated from the same PERF017 source packet that produced PERF020 and
+PERF032, so the corpus, the topology, the seed and the source identity are
+unchanged and only the rung set is new.
+
+| Digest | Value |
+| --- | --- |
+| `packet_manifest_sha256` | `8c2a5d5e10acad92db0975c694e48b035a7b7354f40e6c5e4e521ae2175e2d63` |
+| `corpus_sha256` | `72bbb22c6a8673d78cb4eadbce46ffd88f882f91f1880b4163e117f4679b1105` (unchanged) |
+| `worker_topology_sha256` | `ad0970c68d2e6b035c187d193f3da8ca49f48a68267bd323e0d66c9d44bcfddd` (unchanged) |
+
+| Rung | `workload_sha256` | `identity_sha256` |
+| --- | --- | --- |
+| `r120` | `8990bbe3b27b5d848b22d116d26c2f1d50d325ac9e5e9dbf2280b9d5590dcb92` | `29a2cbc24842397fb47a14a66ca25d4c031453d8daa5d1982559e235ca1c3bd0` |
+| `r160` | `20fbd23fd970e8e13472eac8b8041f499d94e8ec680b8f972156c6bf640b27d6` | `837c73cf3c30757ecdbb9d476ce579d519229e428b278caf4fb872229aa9f057` |
+| `r220` | `42b1dbc36fe26eb9f41e3c6be97fe2ab63d77be53c885952fab515e746615648` | `5067a46b5a493e4c2265f8b885483b9d1709cd4669f67b6f963c26db59abc26d` |
+| `r320` | `de0720c033debf81a661c0880c3d4e85ed9911307637709fbf65525e54c88d64` | `0f677bd408facddc0c3f585c6ef640e95f79bd4020742321ad576b4136468c64` |
+
+The `r120` pair is PERF032's `r120` pair verbatim. That is the anchor
+property, not a coincidence.
+
+### Constants that decided runs, and where they went
+
+PERF032's verdict was decided by `FINAL_BACKLOG_KNEE = 8`, a comparator
+constant describing a lane count the comparator never wrote and cannot see.
+The governing rule is that **a validator may read a module constant only if
+the same module also wrote the value being validated**. Four live violations
+that PERF033 depends on are routed through the contract instead.
+
+| Constant | Was | Now |
+| --- | --- | --- |
+| `FINAL_BACKLOG_KNEE` | comparator constant, decided PERF032 | `SaturationCriterion.episode_lanes`, asserted against the packet's own `max_episode_lanes` in preflight |
+| `MEASURED_CASES` (comparator) | wrote `passed: False` over a run that completed every case | `case_count` from the contract |
+| `EXPECTED_ARC_REQUESTS` | raised `LaunchError` mid-run after paid GPU time | derived from the contract's case counts, which preflight already checked against the packet manifest |
+| `ENCODER_GPU` | never rejected, only asserted; a non-H100 successor would have written evidence claiming H100 | `OpenLoopRunContract.encoder_gpu` |
+
+`CONCURRENCY_CELLS = (1, 4, 8)` in `rayline_concurrency_comparator.py` is
+deliberately left. It is the same defect in the sibling PERF017 family,
+together with a hardcoded `cells[1]` baseline that raises `KeyError`, but
+PERF033 runs none of it and fixing it here would put an unrelated family's
+closed receipts at risk in a packet whose whole point is that closed receipts
+must keep validating.
+
+### Gates
+
+Evidence-integrity gated exactly as PERF020/PERF021/PERF031/PERF032 were.
+Reported throughput and latency stay diagnostic; PERF033 invents no production
+SLO.
+
+- `32/32` measured turns in every cell of every sub-arm, zero failures, zero
+  provider calls.
+- Selected-worker trace digests match within each cell and across cells.
+- ARC telemetry records exactly 36 session actions per cell, and every cell
+  starts and ends at zero resident sessions and tokens.
+- The deployed engine build id equals the contract's, checked from the encoder
+  itself before the first measured cell; a mismatch aborts.
+- Every cell's `max_episode_lanes` equals the contract's `episode_lanes`,
+  checked in preflight before any paid second.
+- `r120` reproduces an unsaturated cell at `0.875` peak occupancy. It is the
+  control: if it does not, no knee claim is admissible from any rung.
+- Local, encoder, proxy-token and Modal-app cleanup all reach zero.
+
+`startup_log_captured: false` is expected to repeat and is not a failure
+condition, for the reason PERF031 and PERF032 both recorded.
+
+### Budget
+
+The envelope is the unchanged PERF021 shape: 2,400 seconds paid wall, 2,460
+seconds for one orphaned request and 300 seconds scale-down = 5,160
+resource-seconds on one H100 with 8 cores and 64 GiB, `$6.9344208` at the
+pinned `modal-on-demand-2026-07-31-h100-cpu-memory` rate. Four rungs do not
+grow it: PERF033's slowest rung is PERF032's fastest, so every arrival
+schedule here is shorter than one that already fit inside 2,400 seconds twice
+over.
+
+| | PERF033 |
+| --- | ---: |
+| Previous conservative | `$172.552967066383` |
+| Packet envelope | `$6.9344208` |
+| Cumulative if full | `$179.487387866383` |
+| Reserve after full | `$4.825436153617` |
+| Packet ceiling | `$7.00` |
+| Required reserve | `$3.00` |
+
+`$4.825436153617` clears the `$3.00` floor, so **PERF033 fits inside the
+existing authority and needs no further grant.** `budget_receipt` passes on
+arithmetic alone; no figure is assumed and none is invented.
+
+### What is not yet bound
+
+The budget gate is satisfied, so the source is prepared and fail-closed on the
+two gates that remain, and preparation may move neither.
+
+1. **Launch authority.** `LAUNCHABLE_CONTRACT` in
+   `rayline_saturation_knee_v2_contract.py` is `None`, so
+   `resolve_launch_contract` refuses the arm.
+2. **Pathfinder pin.** `PATHFINDER_AUTHORIZATION_COMMIT` is the literal
+   `PENDING`, which no commit can equal and which `_assert_pushed` compares
+   HEAD against.
+
+Provider spend is zero; there is no whole-run retry.
+
+- [x] PERF033a: establish the saturation criterion against every closed
+  open-loop run, and prove PERF021's receipts still replay byte-identically
+  into the report PERF021 recorded.
+- [x] PERF033b: route the four run-deciding constants through the contract and
+  register the new contract with the launcher.
+- [x] PERF033c: preregister the single FlashInfer arm, its anchor rung, its
+  falsifiable predictions and its real packet digests -- without opening launch
+  authority.
+- [x] PERF033d: bind the Pathfinder authorization commit to a real pushed head
+  and open the arm.
+- [x] PERF033e: run the arm once. If `r120` does not reproduce an unsaturated
+  cell at `0.875` peak occupancy, diagnose the anchor before reading any higher
+  rung. Report the knee, or report the new bound if `r320` also holds.
+
+### PERF033 Result (2026-08-11) — the criterion fired, and it fired on the rig
+
+The arm executed once, inside a `591.3705452920403`-second launcher window, and
+every measured cell completed. `comparison_status` is `passed`; all four rungs
+report `all_completed: true`, `provider_calls_zero: true` and
+`trace_match: true`; `32/32` measured turns in all eight cells across both
+sub-arms, `failed: 0` and `provider_calls: 0` everywhere. The one
+selected-worker trace digest
+`d9e93cf0f4c636a3838e41938d2ef3ff6e1d66a60860922f84771b3fa5158ac9` is shared by
+every cell of both sub-arms — the same digest PERF020, PERF021, both PERF031
+arms and PERF032 carry — so `cross_cell_trace_match` holds. ARC telemetry
+records exactly `36` session actions in every cell (`9` created, `27` appended,
+zero rebuilt, zero reused); every cell closed its eight measured sessions with
+`measured_sessions_missing: 0` and ended at `resident_sessions_after_cleanup: 0`
+and `resident_tokens_after_cleanup: 0`. Cleanup reached exact zero:
+`encoder_containers_remaining: 0`, `proxy_token_deleted: true`, Compose removed
+and Pathfinder stopped in all four cells. The deployed
+`vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca+gdn-flashinfer-eager` build on
+`rayline-arc-session-encoder-flashinfer-perf031` equals the contract's, so the
+engine identity is byte-identical to PERF031B's and PERF032's.
+
+#### The criterion fired exactly where it was preregistered to fire
+
+**This is the packet's primary result, and it is the one PERF033 existed to
+produce.** `first_saturated_cell` is `r160` on **both** the `rayline_arc` and
+the `rayline_remote` sub-arm — the preregistered prediction verbatim, including
+which rung. `peak_lane_occupancy` is `0.875` at `r120` and `1.0` at `r160`,
+`r220` and `r320` on both sub-arms, and `terminal_lane_occupancy` equals
+`peak_lane_occupancy` in all eight cells, so the ceiling was held at the final
+arrival rather than touched once in passing. The comparison records the
+criterion it applied, `episode_lanes: 8` and `occupancy_ratio: 1.0`, beside the
+verdict.
+
+The predicate it replaces agrees. `first_overloaded_cell` is also `r160` on
+both sub-arms, from `final_arrival_backlog_bounded: false` at `r160` onward.
+The criterion did not overturn `FINAL_BACKLOG_KNEE`; it returned the same
+verdict with the resolution PERF032 lacked. Where PERF032 could only publish
+two indistinguishable `false`s, `0.875` against `1.000` now separates a near
+miss from a hit, and the eight-lane ceiling is a contract-declared number the
+launcher asserted against the packet's own `max_episode_lanes` before any paid
+second elapsed.
+
+Neither of the two capacity falsification branches fired: `r120` did not
+saturate, so the anchor gate held, and `r320` did saturate, so the packet did
+not run out of ladder the way PERF031B and PERF032 did. The instrument branch
+is a separate matter and is recorded below.
+
+#### The anchor reproduced, so the higher rungs are readable
+
+`r120` re-offered exactly the cell PERF032 measured — `workload_sha256`
+`8990bbe3b27b5d848b22d116d26c2f1d50d325ac9e5e9dbf2280b9d5590dcb92`, the same
+document, not merely the same rate — and returned `1.1392950369109431`
+completion throughput against PERF032's `1.1547543726851863`. That is a
+reproduction within `1.34%`, at the same peak backlog `7`, the same
+`peak_lane_occupancy: 0.875` and the same `saturated: false`. The anchor gate
+required an unsaturated cell at `0.875` and got one, so nothing below
+invalidates the packet.
+
+One anchor figure did not reproduce and it matters later: median service time
+was `0.3015642079990357`s here against PERF032's `0.5123024160275236`s on the
+byte-identical cell, a `41%` move between two runs of the same document. The
+median is a noisy quantity in this rig, and a verdict must not rest on it.
+
+#### What the four rungs measured
+
+ARC sub-arm, at full receipt precision:
+
+| Rung | Realized arrivals | Completion throughput | Peak backlog | Peak occupancy | Saturated | Service p50 | Service p95 | Drain |
+| --- | ---: | ---: | ---: | ---: | :-: | ---: | ---: | ---: |
+| `r120` | `1.4896030952732628` | `1.1392950369109431` | `7` | `0.875` | no | `0.3015642079990357` | `7.271725958096795` | `7.27663174011753` |
+| `r160` | `1.9861374603643502` | `1.3297264272949245` | `8` | `1.0` | yes | `0.3172379999887198` | `8.422372959088534` | `8.456915878604693` |
+| `r220` | `2.730939008000981` | `1.541710300680092` | `8` | `1.0` | yes | `0.2983986670151353` | `9.16321308305487` | `9.40476235489196` |
+| `r320` | `3.9722749207287005` | `1.7651070629332493` | `8` | `1.0` | yes | `0.2906020419904962` | `9.906671416945755` | `10.325119647736459` |
+
+The `rayline_remote` sub-arm agrees in shape and is uniformly slightly slower:
+completion `1.0887292940271942`, `1.2749088914353695`, `1.4697845566251178`,
+`1.687767203270508`, with the identical peak backlog `7`/`8`/`8`/`8` and the
+identical `first_saturated_cell`. ARC over remote completion throughput is
+`1.04644473439004`, `1.042997218254426`, `1.0489362496909944` and
+`1.0458237720894648`, and `achieved_start_rate_ratio` is within `1.93e-4` of
+unity at every rung, so both sub-arms were offered the same load and the
+saturation verdict replicates across a transport change.
+
+#### What saturated is the rig, not the encoder
+
+This is the finding, and collapsing it into "the knee is `1.99` decisions per
+second" would be wrong. Three independent readings of the same receipts say the
+eight concurrent lanes are what ran out.
+
+- **Median service time is flat across the whole ladder.**
+  `0.3015642079990357`, `0.3172379999887198`, `0.2983986670151353`,
+  `0.2906020419904962` seconds over a `2.67x` range of offered rate, and the
+  trend is very slightly *down*. An encoder at its own knee does not do that.
+- **Completion throughput keeps rising past the saturation point.**
+  `1.1392950369109431` → `1.3297264272949245` → `1.541710300680092` →
+  `1.7651070629332493`, a `1.55x` climb across three rungs that the criterion
+  calls saturated. Saturating the lanes puts more work in flight
+  simultaneously, vLLM batches it better, and aggregate throughput improves
+  even though every lane is busy. A server at its throughput ceiling cannot
+  produce that series.
+- **Implied residence falls as load rises.** By Little's Law, holding all eight
+  lanes busy implies a mean residence of `8 / throughput`: `7.021886`,
+  `6.016275`, `5.189042` and `4.532303` seconds. This is an upper bound on mean
+  residence in each cell — `r120` never reached eight lanes — and it falls
+  monotonically. Work is spending *less* time in the system per decision as the
+  offered rate rises, which is the opposite of a queue building at a fixed
+  service rate.
+
+Service p95 does rise, `7.271725958096795` → `9.906671416945755` seconds,
+while p50 stays flat. That is what a bounded-concurrency rig does when arrivals
+compress against a fixed lane count. These receipts cannot separate lane wait
+from longer service under heavier simultaneous batching — `start_lag` p99 is
+`0.0050`s in every cell and `queue_latency_dominates_service_p95` is `false`
+everywhere, and neither instrument can see a wait inside a busy lane — but the
+distinction does not change the conclusion, because both are consequences of
+the lane count binding first.
+
+The small real deficit that *does* appear is visible only against the unqueued
+reconstruction, and it is two orders of magnitude smaller than a naive reading
+of the completion ratio would claim:
+
+| Rung | `completion_ratio` | `unqueued_completion_ratio` | Shortfall | `drain_service_tail_multiple` |
+| --- | ---: | ---: | ---: | ---: |
+| `r120` | `0.764831276550176` | `0.7649648856304584` | `0.02%` | `1.0006746379125127` |
+| `r160` | `0.6695037246067503` | `0.6704661081584959` | `0.14%` | `1.0041013286497702` |
+| `r220` | `0.5645348710327325` | `0.5711819835257331` | `1.16%` | `1.0263607611923569` |
+| `r320` | `0.4443567220693391` | `0.4548554384140957` | `2.31%` | `1.0422390339983347` |
+
+Both series are monotone in load and both are tiny. The observed completion
+ratio falls to `0.444` at `r320`, which read alone would say the system was
+`55.6%` underwater; the unqueued reconstruction accounts for all but `2.31%` of
+that, exactly as PERF032's did. Printing the two together is what stops the
+observed ratio being mistaken for a deficit, which is what it was preregistered
+to do.
+
+**So: the rig's eight concurrent lanes are what saturated. The encoder was
+never the binding constraint on throughput at any rung tested.**
+
+#### The instrument-falsification clause also evaluates true, and that is a defect in the clause
+
+Recorded plainly because it is preregistered and it fires. The clause reads:
+instrument falsified if any cell reports `saturated: true` while its start lag
+p99 stays under `0.05`s, its median service time is within `20%` of the
+anchor's and its drain does not exceed `1.1` service-p95 requests. At `r160`
+all three hold — start lag p99 `0.005019662751934106`s, median
+`0.3172379999887198`s against the anchor's `0.3015642079990357`s (`+5.2%`),
+`drain_service_tail_multiple` `1.0041013286497702` — and they hold at `r220`
+(`-1.05%`, `1.0263607611923569`) and `r320` (`-3.64%`, `1.0422390339983347`)
+too. On a literal reading, the packet's own instrument branch is satisfied by
+every saturated cell.
+
+The clause is wrong, and the same preregistration contains the proof. It
+rejected start lag as a saturation signal because p99 stays under `0.011`s even
+in PERF021's heavily saturated cells, and it rejected drain because at
+eightfold concurrency the whole corpus drains in about one service-p95 request,
+separating saturated from unsaturated cells by three to seven percent. Two of
+the clause's three conjuncts are therefore conditions the same section had
+already shown hold in known-saturated cells, so they discriminate nothing and
+the conjunction reduces to its median term. That term is a statement about
+per-request service time, not about concurrency — the precise conflation this
+packet exists to separate — and the anchor's own `41%` run-to-run median move
+shows it is not stable enough to carry a verdict in either direction.
+
+The occupancy criterion's verdict stands on evidence the clause does not touch:
+peak *and* terminal occupancy at the declared ceiling in three rungs on both
+sub-arms, a completion-ratio shortfall against the unqueued reconstruction that
+is monotone in load, and a `drain_service_tail_multiple` that rises above one
+for the first time in this repo's receipts. **A successor packet must rewrite
+the clause in those terms before inheriting it.** Recording a falsification
+branch that fires on the correct answer is worse than recording none, because
+the next reader cannot tell which of the two the receipts support.
+
+#### The admissible claim, and why a taller ladder cannot improve it
+
+> FlashInfer single-H100 decision capacity is **at least `1.7651070629332493`
+> realized decisions per second and still climbing at the top rung. Its
+> location remains unknown.**
+
+The bound now comes from the harness rather than from the ladder's height, and
+that is the difference from PERF031B and PERF032. Raising the rungs again would
+not find the knee: the lane cap binds first, `MAX_EPISODE_LANES = 8` is the
+probe's thread count and equals the eight measured episodes in the frozen
+corpus, and the encoder's `MAX_SESSIONS` and `max_num_seqs` are both eight, so
+a ninth concurrent retained episode raises `SessionCapacityError` → HTTP `429`
+→ a non-retriable `503` → a failed case → a violated `failed == 0` gate. A
+wider packet could not pass its own gate, which is why the lane count is a
+correctness constraint and not a knob.
+
+`r320` also crossed the resolution limit the preregistration stated. Its
+arrival span is `7.804092269201034`s against a measured service p95 of
+`9.906671416945755`s, so the burst is now *shorter* than one slow request; the
+preregistration expected the span to be "barely longer" than a p95 request
+using PERF032's `6.899`s figure. The floor above is quoted from `r320` because
+it is the highest measured completion rate and every integrity gate passed
+there, but `r220`'s `1.541710300680092`, whose `11.351406937019688`s span still
+exceeds its own p95, is the highest rung fully inside the packet's stated
+resolution. Both exceed everything below.
+
+Locating the encoder's own knee needs a different experimental design, not a
+taller ladder. Concretely it needs all three of:
+
+- **A corpus with more measured episodes**, since lanes are episodes. That
+  changes `corpus_sha256` and ends the identity chain
+  `72bbb22c6a8673d78cb4eadbce46ffd88f882f91f1880b4163e117f4679b1105` that every
+  open-loop run since PERF020 shares, so it is a new packet family, not a new
+  rung set.
+- **An encoder profile whose `MAX_SESSIONS` and `max_num_seqs` exceed eight**,
+  with KV capacity sized for it, because otherwise the extra lanes convert
+  directly into failed cases.
+- **More cases per rung**, so the arrival span stays long relative to a single
+  service-p95 request at the rates where the encoder is actually loaded. Thirty
+  two cases have run out of span, not out of rate.
+
+Until such a packet exists, the FlashInfer knee is bounded from below and
+unlocated, and this repo should stop quoting completion rates from lane-capped
+cells as if they were capacities.
+
+#### The capacity model is contradicted from below, not confirmed
+
+The handoff capacity model
+(`docs/agent/handoff_rayline_serving_cost_20260810.md` §2.2) predicts a
+transport-bound `1.055 / (0.637 + 0.286) = 1.143` dec/s for FlashInfer. The
+measured floor is `1.7651070629332493` with the encoder unsaturated, `1.54x`
+the prediction, so **the prediction is contradicted from below: the encoder is
+faster than the model said.** PERF031B's and PERF032's "neither confirmed nor
+contradicted" is superseded, and PERF032's warning against reading its
+`1.1547543726851863` as confirmation of `1.143` is now settled by measurement
+rather than by argument. Falsifying a prediction is the more useful outcome
+here, because a number that merely sat near `1.143` fitted the model without
+testing it.
+
+Be exact about *which* assumption breaks. The branch is
+`effective_concurrency / (transport + compute)` with an assumed effective
+concurrency of `1.055`. The ladder demonstrates concurrency of `8` — declared,
+asserted in preflight, and observed at both peak and terminal occupancy in
+three rungs of both sub-arms — which is `7.58x` the assumption. That is the
+assumption the data breaks. The per-decision cost assumption breaks in the
+opposite direction: at concurrency `8` and a `0.923`s per-decision cost the
+model would predict `8.67` dec/s, and the implied mean residence at full
+occupancy is `4.532303`s, `4.91x` the assumed `0.923`s. The two errors are
+compensating, which is exactly why the model's *output* landed within `1.54x`
+while both of its *inputs* are wrong by a factor of five to eight. The model's
+arithmetic is not validated by the proximity of PERF032's number, and its
+transport-bound structure is not validated by this result either; what the
+receipts establish is that its concurrency term does not describe this rig.
+
+#### `startup_log_captured: false` again, as preregistered
+
+`deployment-evidence.json` was written before the first measured cell with the
+app name `rayline-arc-session-encoder-flashinfer-perf031`, the resolved encoder
+URL, `engine_build_id`
+`vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca+gdn-flashinfer-eager`,
+`gdn_prefill_backend: flashinfer`, `encoder_gpu: H100` — and `startup_log: []`
+with `startup_log_captured: false`. This is the preregistered bounded outcome
+and the fourth arm in a row to record it. The 544-token attention block size,
+the mamba page padding, the KV cache size and the maximum concurrency stay
+**derived from vLLM source and never observed**.
+
+#### Budget
+
+The launcher window's resource upper estimate was `$0.7947310484070672` over
+`591.3705452920403` seconds. Conservative accounting charges the complete
+`$6.9344208` envelope regardless, taking the cumulative to
+`$179.487387866383` and leaving `$4.825436153617005` of reserve under the
+`$184.31282402` authority, clear of the `$3.00` floor. `provider_spend_usd` is
+`$0.00` and `provider_calls` is zero in every cell, as
+`release_qualification_1000_executed: false` requires.
+
+PERF033's launch authority is closed: `LAUNCHABLE_CONTRACT` is back to `None`
+in `rayline_saturation_knee_v2_contract.py` after its one authorized execution.
+`PATHFINDER_AUTHORIZATION_COMMIT` stays at the real
+`fb78b2fbbd579d10cd14a78ce71af7c0e9216306` as the record of what ran, exactly
+as the closed PERF020/PERF021, PERF031 and PERF032 contracts keep theirs. The
+arm cannot retry. PERF032's own pins are untouched by this record and are
+tracked separately; PERF033 closes only its own.
+
+### PERF034 preregistration: the 32-lane saturation-capacity packet, fail-closed
+
+PERF033's conclusion demanded a different experimental design, and PERF034 is
+that design, preregistered in `rayline_saturation_capacity_contract.py` with
+both human gates shut. It removes the rig's ceiling instead of inferring past
+it: 32 lanes, a ladder to the predicted knee, and a second firing point so the
+receipts say *which* resource bound.
+
+#### One of PERF033's three blockers was already solved, and one was never real
+
+The "different experimental design" list above named a wider corpus as a new
+packet family that "ends the identity chain". That was wrong in the way that
+matters: the 128-case directional corpus already exists with 32 episodes of
+four decisions each, and the 32-case corpus every open-loop run since PERF020
+shared is a *selection* from it, not a sibling. `corpus_sha256` changes to
+`5e4edcbcb44be32818f9b8e855e38a5d84e3b3a8358781ce4d228e6266ce54f3`, but the
+identity chain survives as a prefix property: the sha256 of the new trace's
+first 32 `[case_id, canonical]` entries must equal PERF020's recorded
+`selected_worker_trace_sha256`
+(`d9e93cf0f4c636a3838e41938d2ef3ff6e1d66a60860922f84771b3fa5158ac9`), pinned
+by test against PERF033's own receipts. The topology is unchanged.
+
+The encoder-profile blocker dissolved on inspection of its origin.
+`MAX_SESSIONS = 8` entered the repo in `4f14763b` ("Add bounded Rayline
+retained-session gateway") as a bare constant with no derivation, no comment
+and no sizing argument; `MAX_RESIDENT_TOKENS` is *derived from it*, not the
+other way around. The eight-lane ceiling that bounded four packet families was
+an unexplained initial choice, not a measured limit. The raise is still scoped
+as if the evidence depended on it, because it does: the PERF034 profile lives
+under the distinct app name `rayline-arc-session-encoder-flashinfer-perf034`,
+and every app the closed runs' evidence names keeps `8 / 32` forever
+(`f26dc967`). Same engine build, same image, same prefill backend; only the
+session-service caps move, so the container's 8 cores and 64 GiB — and
+therefore the `$6.9344208` envelope — are unchanged.
+
+The third blocker (more cases per rung) is met by the same corpus: 128
+measured cases keep the arrival span long relative to a service-p95 request at
+the rates where the encoder is actually loaded.
+
+#### Where the knee is predicted, and why occupancy alone would go silent
+
+The derived GPU-busy fraction at eight fully saturated lanes was `0.53`, which
+extrapolates to a compute knee near 15 lanes with about 2x uncertainty either
+way. That is occupancy `~0.5` of this packet's 32 lanes, so the occupancy
+criterion — correct at PERF033's ceiling — would stay silent while the encoder
+saturates. The contract therefore arms a second, independent firing point:
+`throughput_plateau_gain`, the marginal-throughput floor. The first rung
+converting less than the floor of its additional realized arrivals into
+completed throughput is the plateau. The diagnosis is in which criterion fires
+first: occupancy first means the rig bound again (and that outcome, not a
+wider packet, is the recorded result — 32 lanes is the whole corpus); plateau
+first with occupancy short of the ceiling is direct proof the encoder bound.
+
+The floor is `1/3`, calibrated on every recorded open-loop receipt rather than
+chosen by intuition. The intuitive `0.5` false-fires on PERF032's provably
+unqueued top rung, whose raw marginal gains of `0.51` / `0.46` are the drain
+arithmetic this plan already dissected, not load. The drain-corrected slope
+cannot decide at all — the inflated service tail feeds the correction, so it
+reads `0.93`–`1.0` even on PERF021's saturated rungs — and the implied
+residence delta sign-flips on unqueued cells. One third sits inside the
+measured gap: unqueued cells convert at least `0.46` of added arrivals, rungs
+past a known knee at most `0.32`, giving `~28%` margin on both sides. Replayed
+from the recorded receipts: PERF032 never fires; PERF021 fires at `r030` on
+both arms, the same rung occupancy pins; PERF033 fires at `r220` after
+occupancy's `r160`, which reads correctly as "the rig bound first".
+
+#### The falsification clause, rewritten in the terms PERF033 demanded
+
+PERF033 recorded that its inherited instrument-falsification clause fires on
+the correct answer and must be rewritten before a successor inherits it. The
+rewrite: **a plateau verdict is falsified at any rung that fires while its
+drain-corrected marginal gain stays within `10%` of `1.0` and its implied
+residence delta is non-positive.** That pair is PERF032's recorded signature
+of finite-corpus drain arithmetic, and both quantities are carried per rung in
+the v4 report as non-voting evidence, so the check is against numbers the
+receipts already print. The old clause's start-lag and drain conjuncts are
+dropped for the reason PERF033 proved: they hold in known-saturated cells and
+discriminate nothing. The occupancy verdict keeps the evidence terms PERF033's
+stood on — peak and terminal occupancy at the declared ceiling, a
+completion-ratio shortfall against the unqueued reconstruction that is
+monotone in load, and a `drain_service_tail_multiple` above one.
+
+Memory is preregistered as a cliff, not a curve. Worst case at 32 lanes is
+`8,388,608` resident tokens against a `~70` GiB pool, but the frozen corpus
+peaks at `4,261,735` tokens — `51%` of the derived cap — so the packet is safe
+by corpus construction, not by headroom at the limit. If memory does bind, the
+coordinator's `SessionCapacityError` becomes a failed case and the
+`failed == 0` gate voids the arm; `cache_miss_tokens` and
+`session_actions.rebuilt` must stay exactly zero. `CHUNK_SCHEDULE_TOKENS` and
+`enforce_eager` are held fixed from PERF033 and are the first suspects if
+throughput plateaus below the predicted knee.
+
+#### Ladder, anchor, and gates
+
+Realized targets of roughly `1.5 / 3 / 5 / 8` decisions per second at the
+measured `1.2413` realized-per-offered ratio give offered rungs
+`1.20 / 2.40 / 4.00 / 6.45`. The anchor `r120` re-offers PERF033's rate but is
+deliberately *not* byte-identical to its cell — a rung's workload document
+carries the lane count and case counts — so for the first time in this packet
+family the anchor property is a measured quantity rather than a digest: at
+`1.20` offered, an unconstrained encoder must reproduce PERF033's
+`1.1547543726851863` decisions per second, which eight lanes already carried.
+
+Both gates ship shut. The Pathfinder pin is the literal `PENDING`, no contract
+is launchable, and the budget fails closed by arithmetic: the authority still
+reads PERF033's `$184.31282402` ceiling, under which the conservative
+cumulative-if-full of `$186.421808666383` makes `budget_receipt` raise. The
+minimum viable grant for this one arm is `$5.108984646383`, which takes the
+ceiling to `$189.421808666383` and leaves the reserve at exactly the `$3.00`
+floor. No granted figure is recorded anywhere in the repo; only a human may
+raise the ceiling, and the authorize → bind → launch → close sequence applies
+unchanged.
+
+### PERF034 Result (2026-08-11) — both criteria fired together, at twice PERF033's throughput
+
+The grant arrived and the sequence ran as written: authorize `e282f16c`
+recorded the human's confirmation and its minimum-grant interpretation, the
+Pathfinder registry head `da85e104` carried the granted figure, bind
+`dcb1e819` moved the ceiling to `$189.421808666383` and opened exactly this
+run, and the arm executed once. All eight arm-cells measured cleanly:
+`128/128` completed in every cell, `failed: 0` and `provider_calls: 0`
+everywhere, and one selected-worker trace digest
+`7fed5d061b60f72a7efda5d51c2e3640d8c9caf85dc9e6dc902d6261137013d8` shared by
+every cell of both sub-arms, so `cross_cell_trace_match` holds. ARC telemetry
+is byte-identical across all four cells: `136` session actions (`34` created,
+`102` appended, zero rebuilt, zero reused), `cache_miss_tokens` sum exactly
+zero, zero truncations, and `4,497,623` appended tokens per cell. The memory
+cliff stayed distant: `1,205,793` retained tokens against the `~4.26M` the
+corpus was preregistered to peak at. The three state-reset receipts that
+exist (`r120`, `r240`, `r400`) all record `32/32` measured sessions closed,
+`measured_sessions_missing: 0`, and exact zeros for resident sessions and
+tokens after cleanup.
+
+The fourth state-reset receipt does not exist, and that is how the run ended:
+after `r645`'s both sub-arms completed and wrote their receipts, the
+post-cell state reset got HTTP 502 from the protected encoder and the
+launcher raised `StateResetError` before writing `comparison.json`. The
+`finally` cleanup ran — proxy token deleted, app stopped,
+`encoder_containers_remaining: 0`, independently reconfirmed by a fresh
+inventory afterwards — and under the registry's no-retry clause that launched
+failure closes the PERF034 ID for good. The comparison below is derived
+offline from the eight receipts by the comparator CLI with the contract's
+criterion verbatim (`episode_lanes: 32`, `occupancy_ratio: 1.0`,
+`throughput_plateau_gain: 1/3`, `case_count: 128`), the exact
+`comparison-derived-offline.json` precedent PERF032 set. Its `status` is
+`passed` with `all_completed`, `provider_calls_zero` and `trace_match` true
+at every rung.
+
+#### What the four rungs measured
+
+ARC sub-arm, at full receipt precision where it matters:
+
+| Rung | Realized arrivals | Completion throughput | Peak backlog | Peak occupancy | Saturated | Marginal gain | Plateaued |
+| --- | ---: | ---: | ---: | ---: | :-: | ---: | :-: |
+| `r120` | `1.2518` | `1.0721298521209137` | `15` | `0.46875` | no | — | no |
+| `r240` | `2.5036` | `1.3381459770827528` | `33` | `1.03125` | **yes** | `0.2125` | **yes** |
+| `r400` | `4.1727` | `1.9075689750820500` | `28` | `0.87500` | no | `0.3412` | no |
+| `r645` | `6.7285` | `2.3061533124360074` | `31` | `0.96875` | no | `0.1560` | yes |
+
+Remote sub-arm:
+
+| Rung | Realized arrivals | Completion throughput | Peak backlog | Peak occupancy | Saturated | Marginal gain | Plateaued |
+| --- | ---: | ---: | ---: | ---: | :-: | ---: | :-: |
+| `r120` | `1.2518` | `1.0284163272054432` | `17` | `0.53125` | no | — | no |
+| `r240` | `2.5036` | `1.5131281562594237` | `25` | `0.78125` | no | `0.3872` | no |
+| `r400` | `4.1727` | `1.8423191772364715` | `32` | `1.00000` | **yes** | `0.1972` | **yes** |
+| `r645` | `6.7285` | `2.1262018706449126` | `30` | `0.93750` | no | `0.1111` | yes |
+
+Two design inputs shifted under the run and both are visible above. The
+realized-per-offered ratio measured `1.0432`, not the `1.2413` the ladder was
+designed with, so the realized targets landed at `1.25 / 2.50 / 4.17 / 6.73`
+rather than the intended `1.5 / 3 / 5 / 8`. And every rung — including the
+anchor — reports `overloaded: true` with an unbounded final-arrival backlog,
+because at 128 cases even `1.25` realized arrivals per second exceeds what
+this encoder completes.
+
+#### The two criteria fired at the same rung, so the encoder is not isolated
+
+`first_saturated_cell` and `first_throughput_plateau_cell` are the **same
+rung on both sub-arms**: `r240` for `rayline_arc` (peak occupancy `1.03125`)
+and `r400` for `rayline_remote` (peak occupancy exactly `1.0`). The
+preregistered diagnosis rule was written for a separation that did not
+happen: plateau-first-with-occupancy-short would have proved the encoder
+bound, occupancy-first would have meant the rig bound again. With both firing
+together, the recorded result is the one the preregistration reserved for
+occupancy reaching the ceiling: **the corpus ran out of lanes again**, this
+time at its absolute limit — 32 lanes is every episode the corpus has, so no
+wider packet over this corpus can exist.
+
+The knee-near-15-lanes prediction is not confirmed. Occupancy blew through
+`0.5` and pinned at the firing rungs, which the `0.53` GPU-busy
+extrapolation said should not happen. What the prediction got right is
+scale: the cap raise roughly **doubled** the family's recorded ceiling, from
+PERF033's `1.15` decisions per second to `2.13` (remote) and `2.31` (arc) at
+`r645` — and the top rung is non-voting evidence that the encoder's own limit
+is finally nearby, because there occupancy sits *below* the pin
+(`0.94`–`0.97`) while marginal gains of `0.111`–`0.156` convert barely a
+tenth of added arrivals into completions.
+
+The rewritten falsification clause does not fire. At the firing rungs the
+drain-corrected marginal gains are `0.8983` (arc `r240`) and `0.8631`
+(remote `r400`) — both outside the `10%`-of-`1.0` band — and the implied
+residence deltas are positive (`+10.67`s and `+0.85`s), so neither rung
+shows PERF032's drain-arithmetic signature. The occupancy verdicts stand on
+their preregistered evidence terms: terminal occupancy equals peak occupancy
+at both firing rungs, the completion ratio falls monotonically with load on
+both sub-arms (`0.86 → 0.53 → 0.46 → 0.34` on arc), and
+`drain_service_tail_multiple` is above one in all eight cells.
+
+#### The anchor did not reproduce, and the higher rungs are qualified by it
+
+`r120` on arc returned `1.0721298521209137` completion throughput against
+the required `1.1547543726851863` — `7.15%` short, where PERF033's own
+anchor reproduced within `1.34%`. No tolerance was preregistered, so the
+anchor gate is recorded as **not held**. The likely mechanism is the corpus
+change itself: this anchor is overloaded (`overloaded: true`, backlog
+unbounded) where PERF033's 32-case anchor was not, because quadrupling the
+measured span at the same offered rate gives the backlog four times as long
+to accumulate against a capacity of `~1.07` completions per second. That is
+a hypothesis, not a receipt. What the miss qualifies is the absolute
+throughput figures above; the criterion verdicts compare rungs within this
+run and do not rest on PERF033's scale.
+
+One preregistered analysis-time check cannot be run: the PERF020 trace-prefix
+property. The probe hashes the selected-worker trace without persisting its
+entries, so the sha256 of the first 32 `[case_id, canonical]` pairs is not
+recomputable from any receipt. The within-run chain is intact — one digest
+across all eight cells, `corpus_sha256` and `topology_sha256` equal to the
+contract's — but continuity to PERF020's recorded digest is unverified, and a
+successor that wants it must first make the probe persist the trace.
+
+#### Budget
+
+Receipts span `845` seconds from `deployment-evidence.json` to the final
+`r645` telemetry write, after a `~133`-second image deploy; the paid window
+stayed near `1,000` seconds against the `2,400`-second envelope, an upper
+estimate of roughly `$2.9` at the envelope's rate. Conservative accounting
+charges the complete `$6.9344208` envelope regardless, taking the cumulative
+to `$186.421808666383` and leaving the reserve at exactly `$3.00` under the
+`$189.421808666383` authority — the preregistered arithmetic, landed to the
+digit. `provider_spend_usd` is `$0.00` and `provider_calls` is zero in every
+cell.
+
+PERF034's launch authority is closed: `LAUNCHABLE_CONTRACT` is back to `None`
+in `rayline_saturation_capacity_contract.py` after its one authorized
+execution (`ad65afa3`), and `PATHFINDER_AUTHORIZATION_COMMIT` stays at the
+real `da85e1045a92aa3d6aa6d765a2dc2f5257e1d31d` as the record of what ran.
+The arm cannot retry: the 502 was a launched failure, and any successor —
+including one that only wants the missing `r645` state-reset receipt or the
+trace-prefix check — needs a new registry ID and fresh human authorization.
+
+### PERF035 Result (2026-08-11) — the L4 saturates from the first rung, and the TFLOPS extrapolation is falsified
+
+The question was the deployment's, not the family's: GCP Cloud Run with GPU
+sells exactly one card Modal also rents — the 24 GB L4 — and every recorded
+Rayline capacity number was measured on an H100. PERF035 re-ran PERF033's
+exact eight-lane, 32-case packet on an L4
+(`rayline-arc-session-encoder-flashinfer-perf035-l4`, same vLLM `9f5ea81c`
+`gdn-flashinfer-eager` build, same Qwen3.5-0.8B `2fc06364`, FlashInfer) with
+the card as the only variable moved. The preregistered prediction was the
+calculator's TFLOPS extrapolation: `0.4014` decisions per second, with a
+stated `±30%` validation band of `0.2809`–`0.5218` that is explicitly a
+target and not an integrity gate. The chain ran as written: authorize
+`62c8d8f2` recorded the human's grant (`$2.4194208` minimum-viable against
+the "anything under `$10`" bound, ceiling to `$191.841229466383`), the
+Pathfinder registry head `511760ab` carried the authorization, bind
+`aff63344` opened exactly this run, and the arm executed once.
+
+It is the family's first launched run that closed with no in-run anomaly.
+The launcher wrote `comparison.json` itself — `status: passed`, with
+`all_completed`, `provider_calls_zero` and `trace_match` true at every rung —
+where PERF034 needed an offline derivation and PERF032 before it. All eight
+arm-cells completed `32/32` with `failed: 0` and `provider_calls: 0`; the
+selected-worker trace sha256 equals PERF020's recorded
+`d9e93cf0f4c636a3838e41938d2ef3ff6e1d66a60860922f84771b3fa5158ac9` **exactly**
+in every cell — this being the same 32-case corpus, continuity here is exact
+equality, not PERF034's unverifiable prefix property. All four state-reset
+receipts exist and record `8/8` measured sessions closed with exact zeros for
+resident sessions and tokens. ARC telemetry is byte-identical across the four
+cells: `36` session actions (`9` created, `27` appended, zero rebuilt, zero
+reused), `cache_miss_tokens` sum exactly zero, zero truncations, `1,235,801`
+appended tokens and `308,144` retained tokens per cell. The identity docs
+carry the frozen family label `gpu_class: NVIDIA H100 80GB` by byte-pinned
+lineage; the actual card is attested where the preregistration said it would
+be, in `deployment-evidence.json` (`"encoder_gpu": "L4"`, the perf035 app
+name, the engine build id).
+
+#### What the four rungs measured
+
+ARC sub-arm, at full receipt precision where it matters:
+
+| Rung | Realized arrivals | Completion throughput | Peak occupancy | Saturated | Marginal gain | Plateaued |
+| --- | ---: | ---: | ---: | :-: | ---: | :-: |
+| `r016` | `0.1986` | `0.1267535599322920` | `1.0` | **yes** | — | no |
+| `r032` | `0.3972` | `0.1651960199614078` | `1.0` | yes | `0.1936` | **yes** |
+| `r048` | `0.5958` | `0.1824534930884859` | `1.0` | yes | `0.0869` | yes |
+| `r072` | `0.8938` | `0.1976547216213381` | `1.0` | yes | `0.0510` | yes |
+
+Remote sub-arm:
+
+| Rung | Realized arrivals | Completion throughput | Peak occupancy | Saturated | Marginal gain | Plateaued |
+| --- | ---: | ---: | ---: | :-: | ---: | :-: |
+| `r016` | `0.1986` | `0.1220556638168625` | `1.0` | **yes** | — | no |
+| `r032` | `0.3972` | `0.1572359819546513` | `1.0` | yes | `0.1771` | **yes** |
+| `r048` | `0.5958` | `0.1735490282425835` | `1.0` | yes | `0.0821` | yes |
+| `r072` | `0.8938` | `0.1847654720958659` | `1.0` | yes | `0.0376` | yes |
+
+The arrival plumbing behaved exactly as designed this time: the
+realized-per-offered ratio landed at the `1.2413` the ladder was built with
+(realized `0.1986 / 0.3972 / 0.5958 / 0.8938` against offered
+`0.16 / 0.32 / 0.48 / 0.72`), where PERF034's measured `1.0432`. And every
+rung of both sub-arms reports `overloaded: true` with the offered rate
+maintained — on this card even `0.199` realized arrivals per second exceeds
+what the encoder completes.
+
+#### Occupancy fired first, and the drain clause voids the plateau
+
+`first_saturated_cell` is `r016` on **both** sub-arms: peak lane occupancy
+reached `1.0` of the eight declared lanes at the very first rung — and stayed
+pinned there, peak and terminal, at every rung of both sub-arms.
+`first_throughput_plateau_cell` is `r032` on both sub-arms. But the
+preregistered falsification clause fires at the plateau's firing rung: the
+drain-corrected marginal gains are `0.9525` (arc `r032`) and `0.9495` (remote
+`r032`) — inside the `10%`-of-`1.0` band — with implied residence deltas
+negative (`−4.58`s and `−4.78`s; in fact negative at every rung of both
+sub-arms), which is PERF032's recorded signature of finite-corpus drain
+arithmetic. The plateau verdicts are therefore voided, and the recorded
+result is **occupancy-first: the rig bound, again** — the outcome the
+preregistration reserved for it, "even an eighth of the compute cannot
+exhaust eight lanes of this corpus." The expected plateau-first separation,
+the direct proof of encoder binding four H100 packets could not produce, did
+not happen on the L4 either. Separating the encoder needs a wider corpus,
+not a smaller card.
+
+The saturated-pipeline arithmetic is exact: implied per-decision residence
+falls `63.11 → 48.43 → 43.85 → 40.47` seconds on arc across the rungs, and
+at every rung completion throughput equals `8 lanes ÷ residence` to the
+receipt's precision — throughput above `r016` grows only because queueing
+compresses residence, not because the card finds capacity. The supporting
+evidence holds on its preregistered terms: completion ratio falls
+monotonically with load on both sub-arms (`0.64 → 0.42 → 0.31 → 0.22` on
+arc), `drain_service_tail_multiple` is above one in all eight cells
+(`1.014`–`1.063`), and arc ran slightly faster than remote at every rung
+(throughput ratios `1.039`–`1.070`).
+
+#### The anchor prediction failed, the band was missed, and both are results
+
+The preregistration placed `r016` at `0.49×` the predicted ceiling — "well
+inside where the encoder cannot bind — so it measures the arrival plumbing,
+not the card." That prediction failed outright: `r016` saturated and
+overloaded immediately, with a service p50 of `0.808` seconds against a p95
+of `95.0` seconds and a `96.4`-second drain after the final arrival. The
+card's own claim then lands below the band: the measured ceiling is
+`0.1977` decisions per second (arc `r072`; remote `0.1848`) against the
+`0.2809` band floor — which, per the preregistered `tolerance_rationale`,
+**falsifies the L4 TFLOPS extrapolation and is a result, not a voided arm**.
+The cross-check the registry dismissed — naive scaling of PERF033's measured
+`1.7651` dps by the TFLOPS ratio, `0.216` dps, "wrong because it also scales
+the non-GPU serial time" — landed within `9%` of measured, evidence that at
+this scale the workload is GPU-bound nearly end to end and the serial time
+the calculator protected does not dominate.
+
+For the deployment question that motivated the run: one L4 sustains about
+`0.198` decisions per second under this eight-lane shape, `0.88×` the `0.225`
+reference production rate — a single Cloud Run L4 instance does not carry the
+reference rate, where the 32-lane H100 measured `2.13`–`2.31`. The
+deployment plan needs more than one L4 instance or the RTX PRO 6000 class,
+and either measurement needs a new registry ID.
+
+#### Budget
+
+The paid launcher window measured `2292.06` seconds against the
+`2,400`-second envelope — the `paid_wall_check` had warned that only a card
+slower than `~0.17` dps would breach it, and at `0.198` dps the margin held —
+for a measured resource upper bound of `$1.0747` against the `$2.4194208`
+envelope. Conservative accounting charges the full envelope regardless,
+taking the cumulative to `$188.841229466383` and leaving the reserve at
+exactly `$3.00` under the `$191.841229466383` authority — the preregistered
+arithmetic, landed to the digit. `provider_spend_usd` is `$0.00` and
+`provider_calls` is zero in every cell.
+
+Cleanup ran inside the launcher — the L4 app stopped at `17:55:34`, the
+ephemeral proxy token deleted, `encoder_containers_remaining: 0` — and a
+fresh inventory afterwards independently reconfirmed zero Rayline containers
+on Modal. PERF035's launch authority is closed: `LAUNCHABLE_CONTRACT` is back
+to `None` in `rayline_l4_capacity_contract.py` after its one authorized
+execution (`1d66ba9a`), with `PATHFINDER_AUTHORIZATION_COMMIT` staying at the
+real `511760abd07a978802bbfc2065dac19e2062f050` as the record of what ran.
+Receipts are uploaded to `router-artifacts` at revision
+`2714e487016238a2325a7b61516665e39f89b2af` (19 files). The 1,000-case
+release qualification stays held.
+
+### PERF036 Result (2026-08-11) — the RTX PRO 6000 lands inside the band, and measured-anchor TFLOPS scaling survives its first cross-GPU hop
+
+PERF035 falsified the token-model calculator but left one method standing:
+naive scaling of a measured ceiling by the dense-FP16 TFLOPS ratio, which
+had reproduced the L4's number within `9.2%` when run from PERF033's H100
+anchor. PERF036 tested that surviving method prospectively on GCP Cloud
+Run's other GPU class — the 96 GB RTX PRO 6000, on Modal since April 2026 —
+by re-running the same eight-lane, 32-case packet
+(`rayline-arc-session-encoder-flashinfer-perf036-rtx6000`, same vLLM
+`9f5ea81c` `gdn-flashinfer-eager` build, same Qwen3.5-0.8B `2fc06364`,
+FlashInfer) with the card as the only variable moved and a four-rung ladder
+scaled up for the faster card (offered `0.32 / 0.64 / 0.96 / 1.44`, with
+`r032` byte-identical to PERF035's `r032` as the cross-run anchor). The
+preregistered prediction scaled PERF035's measured `0.1977` dps by
+`480/121`: `0.7843` decisions per second, band `0.5490`–`1.0195`, a
+validation target and explicitly not an integrity gate. The chain ran as
+written: authorize `fee6176e` recorded the human's grant (`$5.6186208`
+minimum-viable against the under-`$10` approval, ceiling to
+`$197.459850266383`), the Pathfinder registry head `ed8a52cc` carried the
+authorization, bind `fcc1fc7d` opened exactly this run, and the arm
+executed once.
+
+**The headline: the measured ceiling is `0.8877` decisions per second (arc
+`r144`; remote `0.8441`), inside the preregistered band and `13.2%` above
+the point prediction.** Measured-anchor TFLOPS scaling is now validated on
+its first true cross-GPU hop (L4 → RTX PRO 6000, Ada to Blackwell), where
+the token-model calculator it replaced had missed the L4 by `2.03×`. For
+the deployment question that motivated the family: one RTX PRO 6000
+sustains `3.95×` the `0.225` reference production rate under this
+eight-lane shape — the single-instance Cloud Run deployment the L4 could
+not carry (`0.88×`), this card carries with nearly fourfold headroom.
+
+#### What the four rungs measured
+
+ARC sub-arm, at full receipt precision where it matters:
+
+| Rung | Realized arrivals | Completion throughput | Peak occupancy | Saturated | Marginal gain | Plateaued |
+| --- | ---: | ---: | ---: | :-: | ---: | :-: |
+| `r032` | `0.3972` | `0.3765813234487028` | `0.375` | no | — | no |
+| `r064` | `0.7945` | `0.6082146256068232` | `0.875` | no | `0.5831` | no |
+| `r096` | `1.1917` | `0.7472059583005314` | `1.0` | **yes** | `0.3499` | no |
+| `r144` | `1.7875` | `0.8877486456148235` | `1.0` | yes | `0.2359` | **yes** |
+
+Remote sub-arm:
+
+| Rung | Realized arrivals | Completion throughput | Peak occupancy | Saturated | Marginal gain | Plateaued |
+| --- | ---: | ---: | ---: | :-: | ---: | :-: |
+| `r032` | `0.3972` | `0.3743563562117826` | `0.375` | no | — | no |
+| `r064` | `0.7945` | `0.5772243128224220` | `0.875` | no | `0.5107` | no |
+| `r096` | `1.1917` | `0.7208324179423778` | `1.0` | **yes** | `0.3615` | no |
+| `r144` | `1.7875` | `0.8441019084741728` | `1.0` | yes | `0.2069` | **yes** |
+
+For the first time in this family, the low rungs ran genuinely unsaturated:
+peak lane occupancy `0.375` at `r032` and `0.875` at `r064`, `overloaded:
+false` on both sub-arms, completion ratios `0.95` and `0.77`, and a service
+p50 of `0.53` seconds at the anchor rung. The anchor gate landed exactly:
+`r032`'s realized arrival rate equals PERF035's `r032` to the last digit
+(`0.39722749207287017`), the realized-per-offered ratio is the ladder's
+designed `1.2413` at every rung, and on the workload that pinned the L4 at
+occupancy `1.0` from its first rung, this card completed `2.28×` the
+throughput while three-eighths busy.
+
+#### Occupancy still fired first, and the drain clause voids the plateau again
+
+The preregistered expectation — plateau first with occupancy short of the
+ceiling, the direct encoder-bound signature — did not materialize.
+`first_saturated_cell` is `r096` on both sub-arms;
+`first_throughput_plateau_cell` is `r144` on both. And at the plateau's
+firing rung the preregistered falsification clause fires a third time: the
+drain-corrected marginal gains are `0.9581` (arc `r144`) and `0.9558`
+(remote `r144`) — inside the `10%`-of-`1.0` band — with implied residence
+deltas negative (`−1.69`s and `−1.62`s), PERF032's recorded signature of
+finite-corpus drain arithmetic. The `r144` plateau verdicts are voided, and
+the structural result is **occupancy-first: the rig bound, a third time** —
+though no longer PERF035's degenerate everywhere-pinned form. The saturated
+arithmetic is exact where it applies: at `r096` and `r144` completion
+throughput equals `8 lanes ÷ implied residence` to the receipt's precision
+(`8 ÷ 10.71 = 0.747`, `8 ÷ 9.01 = 0.888`), so throughput above `r096` grows
+only because queueing compresses residence. The measured `0.8877` is
+therefore the eight-lane rig's number on this card, a floor on the
+encoder's own ceiling rather than the ceiling itself; separating the
+encoder still needs a wider corpus or more lanes, on any card. The
+supporting evidence holds on its preregistered terms: completion ratio
+falls monotonically with load on both sub-arms (`0.95 → 0.77 → 0.63 →
+0.50` on arc), and arc ran faster than remote at every rung (throughput
+ratios `1.006`–`1.054`, service p50 ratios `0.60`–`0.80`).
+
+#### Integrity, identity, and the run that almost wasn't
+
+All eight arm-cells completed `32/32` with `failed: 0` and
+`provider_calls: 0`; `comparison.json` was written by the launcher itself
+with `status: passed` and `all_completed`, `provider_calls_zero`, and
+`trace_match` true at every rung. The selected-worker trace sha256 equals
+PERF020's recorded
+`d9e93cf0f4c636a3838e41938d2ef3ff6e1d66a60860922f84771b3fa5158ac9`
+**exactly** in every cell. ARC telemetry is byte-identical across the four
+cells and — being the same corpus — byte-identical to PERF035's: `36`
+session actions (`9` created, `27` appended, zero rebuilt, zero reused),
+`cache_miss_tokens` sum exactly zero, zero truncations, `1,235,801`
+appended and `308,144` retained tokens per cell. All four state-reset
+receipts record `8/8` measured sessions closed with exact zeros for
+resident sessions and tokens. The identity docs carry the frozen family
+label `gpu_class: NVIDIA H100 80GB` by byte-pinned lineage; the actual card
+is attested where the preregistration said it would be, in
+`deployment-evidence.json` (`"encoder_gpu": "RTX-PRO-6000"`, the perf036
+app name, the engine build id). The first launch attempt deployed the app
+(`137.2`s) and then aborted before any cell, warmup, or GPU-seconds were
+requested — the local Docker daemon was down, `docker compose up` failed,
+and the launcher's own handler stopped the Modal app. Nothing was measured,
+so under the no-retry clause this was an environment failure before launch
+substance, not a launched failure; the evidence directory is preserved and
+uploaded as `...-aborted-docker-down`, and the packet-frozen run then
+executed once (deploy `62.7`s, cached).
+
+#### Budget
+
+The paid launcher window measured `878.02` seconds against the
+`2,400`-second envelope — a third of PERF035's window, on a card charged
+`2.6×` the rate — for a measured resource upper bound of `$0.9561` against
+the `$5.6186208` envelope. Conservative accounting charges the full
+envelope regardless, taking the cumulative to `$194.459850266383` and
+leaving the reserve at exactly `$3.00` under the `$197.459850266383`
+authority — the preregistered arithmetic, landed to the digit.
+`provider_spend_usd` is `$0.00` and `provider_calls` is zero in every cell.
+
+Cleanup ran inside the launcher — the app stopped, the ephemeral proxy
+token deleted, `encoder_containers_remaining: 0` — and a fresh inventory
+afterwards independently reconfirmed zero Rayline encoder containers on
+Modal. PERF036's launch authority is closed: `LAUNCHABLE_CONTRACT` is back
+to `None` in `rayline_rtx6000_capacity_contract.py` after its one
+authorized execution (`d277497d`), with `PATHFINDER_AUTHORIZATION_COMMIT`
+staying at the real `ed8a52cccb8980d6f03334d768de43c51fefa189` as the
+record of what ran. Receipts are uploaded to `router-artifacts` at revision
+`7d62eae9ce10656c37055e35fe676b0262122fcb` (19 files, plus the aborted
+attempt's evidence at `44483196`). The 1,000-case release qualification
+stays held.
 
 ## Operating Rules
 

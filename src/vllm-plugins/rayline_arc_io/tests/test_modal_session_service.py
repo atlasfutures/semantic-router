@@ -6,8 +6,18 @@ import ast
 from pathlib import Path
 
 SERVICE_PATH = Path(__file__).resolve().parents[1] / "modal_session_service.py"
-MAX_CONCURRENT_INPUTS = 32
 MAX_CONTAINERS = 1
+# The complete GPU routing, frozen as one block so no branch can move without
+# this file noticing. PERF035 and PERF036 each own exactly one card; every
+# other app name, including every closed run's, stays H100.
+GPU_TYPE_CONDITIONAL = (
+    "if APP_NAME in PERF035_APP_PROFILES:\n"
+    '    GPU_TYPE = "L4"\n'
+    "elif APP_NAME in PERF036_APP_PROFILES:\n"
+    '    GPU_TYPE = "RTX-PRO-6000"\n'
+    "else:\n"
+    '    GPU_TYPE = "H100"'
+)
 
 
 def source() -> str:
@@ -62,7 +72,9 @@ def test_session_service_is_authenticated_and_bounded() -> None:
     # faster. Re-pin only with a measurement that clears a placement gate.
     assert "region" not in function_keywords
     assert ast.literal_eval(function_keyword_values["max_containers"]) == MAX_CONTAINERS
-    assert ast.literal_eval(concurrency_keywords["max_inputs"]) == MAX_CONCURRENT_INPUTS
+    # The ingress cap is app-conditional (PERF034 widens it), so the decorator
+    # must reference the module constant whose definition the freeze test pins.
+    assert ast.unparse(concurrency_keywords["max_inputs"]) == "MAX_CONCURRENT_INPUTS"
     assert ast.literal_eval(web_keywords["requires_proxy_auth"]) is True
 
 
@@ -71,8 +83,9 @@ def test_session_service_freezes_the_proven_retained_vllm_runtime() -> None:
     for expected in (
         'VLLM_COMMIT = "9f5ea81ca0aa570aea46baf82311a1139c1267ca"',
         'VLLM_REPOSITORY = "https://github.com/atlasfutures/vllm.git"',
-        'GPU_TYPE = "H100"',
-        "MAX_SESSIONS = 8",
+        GPU_TYPE_CONDITIONAL,
+        "MAX_SESSIONS = 32 if APP_NAME in PERF034_APP_PROFILES else 8",
+        "MAX_CONCURRENT_INPUTS = 64 if APP_NAME in PERF034_APP_PROFILES else 32",
         "MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS",
         "IDLE_TTL_SECONDS = 5 * 60",
         '"vllm/outputs.py"',
@@ -176,6 +189,76 @@ def test_session_service_confines_perf031_flashinfer_to_its_exact_app_name() -> 
     # PERF031 arm 0 is the negative control and must stay unprofiled so its
     # engine build id remains PERF021's bare `vllm@...` identity.
     assert '"rayline-arc-session-encoder-reference-perf031"' not in service_source
+
+
+def test_session_service_confines_perf034_cap_raise_to_its_exact_app_name() -> None:
+    service_source = source()
+
+    assert (
+        '"rayline-arc-session-encoder-flashinfer-perf034": "flashinfer"'
+        in service_source
+    )
+    assert "**PERF034_APP_PROFILES" in service_source
+    # The cap raise is scoped to the PERF034 app: every other app, including
+    # the default live encoder, must keep 8 sessions and 32 ingress inputs.
+    assert "MAX_SESSIONS = 32 if APP_NAME in PERF034_APP_PROFILES else 8" in (
+        service_source
+    )
+    assert "MAX_CONCURRENT_INPUTS = 64 if APP_NAME in PERF034_APP_PROFILES else 32" in (
+        service_source
+    )
+
+
+def test_session_service_confines_perf035_l4_to_its_exact_app_name() -> None:
+    """The GPU class is per-app, because every closed run's evidence claims H100.
+
+    PERF035 measures the deployment target's silicon, so its app -- and only
+    its app -- deploys on an L4. The cap raise must not follow it: a 24 GB card
+    cannot hold the 32-lane corpus at all, so PERF035 stays on the 8/32 caps
+    every non-PERF034 app keeps.
+    """
+
+    service_source = source()
+
+    assert (
+        '"rayline-arc-session-encoder-flashinfer-perf035-l4": "flashinfer"'
+        in service_source
+    )
+    assert "**PERF035_APP_PROFILES" in service_source
+    assert GPU_TYPE_CONDITIONAL in service_source
+    # The L4 app is not in the cap-raise profile set, so the conditionals the
+    # PERF034 test pins already hold it at 8 sessions and 32 ingress inputs.
+    assert "PERF035" not in service_source.split("MAX_SESSIONS = ")[1].split("\n")[0]
+    assert (
+        "PERF035"
+        not in service_source.split("MAX_CONCURRENT_INPUTS = ")[1].split("\n")[0]
+    )
+
+
+def test_session_service_confines_perf036_rtx6000_to_its_exact_app_name() -> None:
+    """The RTX PRO 6000 arm owns one app name, and the caps do not follow it.
+
+    PERF036 measures Cloud Run's other GPU class, so its app -- and only its
+    app -- deploys on the 96 GB card. Unlike the L4, eight lanes fit this card
+    by the derived cap alone (24 GiB worst case against a ~87 GB pool), but
+    the caps still stay at 8/32: the packet's one variable is the silicon.
+    """
+
+    service_source = source()
+
+    assert (
+        '"rayline-arc-session-encoder-flashinfer-perf036-rtx6000": "flashinfer"'
+        in service_source
+    )
+    assert "**PERF036_APP_PROFILES" in service_source
+    assert GPU_TYPE_CONDITIONAL in service_source
+    # Not in the cap-raise profile set, so the conditionals the PERF034 test
+    # pins already hold it at 8 sessions and 32 ingress inputs.
+    assert "PERF036" not in service_source.split("MAX_SESSIONS = ")[1].split("\n")[0]
+    assert (
+        "PERF036"
+        not in service_source.split("MAX_CONCURRENT_INPUTS = ")[1].split("\n")[0]
+    )
 
 
 def test_allowed_app_names_extend_with_every_registered_experiment() -> None:

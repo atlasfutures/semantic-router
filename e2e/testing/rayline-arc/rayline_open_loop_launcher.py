@@ -30,22 +30,30 @@ from rayline_concurrency_launcher import (
     _start_local,
 )
 from rayline_concurrency_state import StateResetError, assert_encoder_empty
+from rayline_l4_capacity_contract import (
+    resolve_launch_contract as resolve_l4_capacity_contract,
+)
 from rayline_open_loop_comparator import compare_open_loop
 from rayline_open_loop_contract import (
-    MEASURED_CASES,
-    MEASURED_EPISODES,
     OPEN_LOOP_ARMS,
     PERF021_RUN_ID,
-    WARMUP_CASES,
-    WARMUP_EPISODES,
     OpenLoopCell,
     OpenLoopRunContract,
     resolve_launch_contract,
 )
 from rayline_open_loop_probe import load_open_loop_packet
 from rayline_parity_http_probe import PROTOCOL_BY_ARM
+from rayline_rtx6000_capacity_contract import (
+    resolve_launch_contract as resolve_rtx6000_capacity_contract,
+)
+from rayline_saturation_capacity_contract import (
+    resolve_launch_contract as resolve_saturation_capacity_contract,
+)
 from rayline_saturation_knee_contract import (
     resolve_launch_contract as resolve_saturation_knee_contract,
+)
+from rayline_saturation_knee_v2_contract import (
+    resolve_launch_contract as resolve_saturation_knee_v2_contract,
 )
 from rayline_saturation_ladder_contract import (
     resolve_launch_contract as resolve_saturation_ladder_contract,
@@ -62,9 +70,7 @@ from rayline_three_arm_launcher import (
 )
 from rayline_three_arm_telemetry import capture_arc_telemetry
 
-EXPECTED_ARC_REQUESTS = MEASURED_CASES + WARMUP_CASES
 DEPLOYMENT_EVIDENCE_SCHEMA = "rayline.vllm.open-loop-deployment-evidence.v1"
-ENCODER_GPU = "H100"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -98,10 +104,10 @@ def _validate_packet(contract: OpenLoopRunContract, packet_dir: Path) -> list[st
         raise LaunchError("open-loop topology digest differs")
     manifest = json.loads((packet_dir / "manifest.json").read_text())
     if (
-        manifest.get("measured_cases") != MEASURED_CASES
-        or manifest.get("warmup_cases") != WARMUP_CASES
-        or manifest.get("measured_episodes") != MEASURED_EPISODES
-        or manifest.get("warmup_episodes") != WARMUP_EPISODES
+        manifest.get("measured_cases") != contract.measured_cases
+        or manifest.get("warmup_cases") != contract.warmup_cases
+        or manifest.get("measured_episodes") != contract.measured_episodes
+        or manifest.get("warmup_episodes") != contract.warmup_episodes
         or set(manifest.get("cells", {})) != {cell.label for cell in contract.cells}
     ):
         raise LaunchError("open-loop packet shape differs")
@@ -124,6 +130,16 @@ def _validate_packet(contract: OpenLoopRunContract, packet_dir: Path) -> list[st
             )
             if workload["offered_rate_rps"] != cell.offered_rate_rps:
                 raise LaunchError(f"open-loop {cell.label} rate differs")
+            # The comparator decides saturation against the contract's lane
+            # count but never sees the packet, so the equality it depends on
+            # is asserted here, where the packet is in hand and nothing has
+            # been paid for yet.
+            if (
+                contract.saturation is not None
+                and workload["max_episode_lanes"]
+                != contract.saturation.episode_lanes
+            ):
+                raise LaunchError(f"open-loop {cell.label} episode lanes differ")
     topology = json.loads((packet_dir / "topology.json").read_text())
     return list(map(str, topology["canonical_workers"]))
 
@@ -143,13 +159,30 @@ def _resolve_contract(run_id: str) -> OpenLoopRunContract:
         resolve_launch_contract,
         resolve_saturation_ladder_contract,
         resolve_saturation_knee_contract,
+        resolve_saturation_knee_v2_contract,
+        resolve_saturation_capacity_contract,
+        resolve_l4_capacity_contract,
+        resolve_rtx6000_capacity_contract,
     ):
         with contextlib.suppress(ValueError):
             return resolve(run_id)
     raise ValueError(
-        "no Rayline open-loop sweep, saturation ladder arm or saturation knee "
-        "run is currently launchable"
+        "no Rayline open-loop sweep, saturation ladder arm, saturation knee, "
+        "saturation capacity, L4 capacity or RTX PRO 6000 capacity run is "
+        "currently launchable"
     )
+
+
+def _expected_arc_requests(contract: OpenLoopRunContract) -> int:
+    """The ARC session actions one cell must record.
+
+    Derived from the contract the packet was validated against in preflight,
+    not from a module constant. The count is only ever read after a cell has
+    already burned paid GPU time, so a number this launcher merely assumed
+    would abort the run at the most expensive possible moment.
+    """
+
+    return contract.measured_cases + contract.warmup_cases
 
 
 def _preflight(args: argparse.Namespace) -> SweepContext:
@@ -269,7 +302,7 @@ def _write_deployment_evidence(
         "run_id": context.contract.run_id,
         "encoder_app_name": encoder.app_name,
         "encoder_base_url": encoder.base_url,
-        "encoder_gpu": ENCODER_GPU,
+        "encoder_gpu": context.contract.encoder_gpu,
         "engine_build_id": context.contract.encoder_build_id,
         "gdn_prefill_backend": context.contract.encoder_gdn_prefill_backend,
         "plugin_version": IDENTITY.plugin_version,
@@ -380,14 +413,16 @@ def _run_cell(
             )
             if arm == "rayline_arc":
                 arc_completed = (
-                    receipts[arm]["results"]["completed"] == MEASURED_CASES
+                    receipts[arm]["results"]["completed"]
+                    == context.contract.measured_cases
                     and receipts[arm]["results"]["failed"] == 0
                 )
         telemetry = capture_arc_telemetry(
             f"http://127.0.0.1:{ports['metrics']}/metrics",
             cell_output / "rayline_arc_telemetry.json",
         )
-        if sum(telemetry["session_actions"].values()) != EXPECTED_ARC_REQUESTS:
+        expected_arc_requests = _expected_arc_requests(context.contract)
+        if sum(telemetry["session_actions"].values()) != expected_arc_requests:
             raise LaunchError("ARC telemetry count differs from open-loop packet")
     except BaseException as error:
         failure = error
@@ -484,6 +519,8 @@ def main() -> None:
         comparison = compare_open_loop(
             raw_cells,
             tuple(cell.offered_rate_rps for cell in context.contract.cells),
+            context.contract.measured_cases,
+            context.contract.saturation,
         )
         (context.output_dir / "comparison.json").write_text(
             json.dumps(comparison, indent=2, sort_keys=True) + "\n"

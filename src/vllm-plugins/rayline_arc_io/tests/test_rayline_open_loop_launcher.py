@@ -97,6 +97,7 @@ def _flashinfer_contract() -> SimpleNamespace:
             "vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca+gdn-flashinfer-eager"
         ),
         encoder_gdn_prefill_backend="flashinfer",
+        encoder_gpu="H100",
     )
 
 
@@ -176,3 +177,19 @@ def test_deployment_evidence_fails_closed_on_a_divergent_engine_identity(
         launcher._write_deployment_evidence(context, encoder)
 
     assert not (context.output_dir / "deployment-evidence.json").exists()
+
+
+def test_expected_arc_requests_comes_from_the_contract() -> None:
+    """The count that aborts a cell must not be a launcher constant.
+
+    `EXPECTED_ARC_REQUESTS` was `MEASURED_CASES + WARMUP_CASES` read from a
+    module the launcher does not write, and it is only ever compared after a
+    cell has already burned paid GPU time. A packet with any other corpus size
+    would have aborted the run at the most expensive possible moment. The
+    count now comes from the contract whose packet preflight already checked.
+    """
+
+    contract = SimpleNamespace(measured_cases=12, warmup_cases=3)
+
+    assert launcher._expected_arc_requests(contract) == 15
+    assert not hasattr(launcher, "EXPECTED_ARC_REQUESTS")

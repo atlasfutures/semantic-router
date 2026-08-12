@@ -21,10 +21,8 @@ from typing import Any
 from rayline_open_loop_packet import (
     ARRIVAL_PROCESS,
     COORDINATED_OMISSION_POLICY,
-    MAX_EPISODE_LANES,
     MEASURED_CASES,
     MEASUREMENT_SCOPE,
-    WARMUP_CASES,
     WORKLOAD_SCHEMA,
 )
 from rayline_parity_comparator import ARMS, IDENTITY_FIELDS
@@ -107,14 +105,16 @@ def _validate_latency(raw: object, label: str) -> dict[str, float]:
     return latency
 
 
-def _validate_identity(identity_raw: object) -> dict[str, Any]:
+def _validate_identity(
+    identity_raw: object, case_count: int = MEASURED_CASES
+) -> dict[str, Any]:
     if not isinstance(identity_raw, Mapping):
         raise ProbeError("identity must be an object")
     _exact_keys(identity_raw, set(IDENTITY_FIELDS), "identity")
     identity = dict(identity_raw)
     if identity["measurement_scope"] != MEASUREMENT_SCOPE:
         raise ProbeError("identity measurement scope differs")
-    if identity["case_count"] != MEASURED_CASES:
+    if identity["case_count"] != case_count:
         raise ProbeError("identity case count differs")
     return identity
 
@@ -192,7 +192,16 @@ def _validate_results(
     return results
 
 
-def validate_receipt(raw: Mapping[str, Any]) -> dict[str, Any]:
+def validate_receipt(
+    raw: Mapping[str, Any], *, case_count: int = MEASURED_CASES
+) -> dict[str, Any]:
+    """Validate one open-loop receipt against the run's corpus size.
+
+    `case_count` defaults to the frozen PERF020 corpus so the closed runs'
+    comparators keep rejecting exactly what they always rejected; a run that
+    contracted a different corpus passes its own count.
+    """
+
     _exact_keys(
         raw, {"schema_version", "arm", "run_id", "identity", "results"}, "receipt"
     )
@@ -205,7 +214,7 @@ def validate_receipt(raw: Mapping[str, Any]) -> dict[str, Any]:
     run_id = str(raw["run_id"])
     if not run_id or len(run_id) > RUN_ID_MAX_LENGTH:
         raise ProbeError("run_id must contain 1 to 128 characters")
-    identity = _validate_identity(raw["identity"])
+    identity = _validate_identity(raw["identity"], case_count)
     results = _validate_results(
         raw["results"],
         case_count=int(identity["case_count"]),
@@ -244,15 +253,17 @@ def load_open_loop_packet(
         },
         "workload",
     )
+    # The probe checks the packet against itself: the lane count and case
+    # counts must describe the corpus the packet actually carries. Which lane
+    # count a run is allowed to use is the launcher's contract check, not ours.
     if (
         workload["schema_version"] != WORKLOAD_SCHEMA
         or workload["arrival_process"] != ARRIVAL_PROCESS
         or workload["coordinated_omission_policy"] != COORDINATED_OMISSION_POLICY
-        or workload["max_episode_lanes"] != MAX_EPISODE_LANES
+        or workload["max_episode_lanes"]
+        != len({case.episode_id for case in measured})
         or workload["warmup_cases"] != len(warmup)
-        or len(warmup) != WARMUP_CASES
         or workload["measured_cases"] != len(measured)
-        or len(measured) != MEASURED_CASES
     ):
         raise ProbeError("open-loop workload contract differs")
     _finite(workload["offered_rate_rps"], "workload.offered_rate_rps", positive=True)
@@ -400,8 +411,10 @@ def _execute_open_loop(
         return outcomes
 
     outcomes: dict[str, dict[str, Any]] = {}
+    # One thread per lane: anything fewer would serialize lanes and manufacture
+    # client-side queueing the packet's schedule never asked for.
     with concurrent.futures.ThreadPoolExecutor(
-        max_workers=MAX_EPISODE_LANES
+        max_workers=len(lanes) or 1
     ) as executor:
         futures = [executor.submit(run_lane, lane) for lane in lanes.values()]
         for future in concurrent.futures.as_completed(futures):
@@ -476,7 +489,9 @@ def _render_receipt(
             "provider_calls": 0,
         },
     }
-    return validate_receipt(receipt)
+    # Self-check against the corpus this run actually carried; the frozen
+    # default would reject a correct receipt from any other corpus size.
+    return validate_receipt(receipt, case_count=len(measured))
 
 
 def _warm_selector(

@@ -28,10 +28,10 @@ providers:
           provider: openai
           api_key_env: SYNTHETIC_API_KEY
     - name: worker-b
-      # This packet is pin-closed and cannot launch, but it shares the frozen
-      # model pool in openrouter_agentic_workload, so it follows the 2026-08-07
-      # luna worker-b amendment rather than drifting away from it. Rates are
-      # the per-field maxima across OpenAI's three gpt-5.6-luna endpoint tags.
+      # Shares the frozen model pool in openrouter_agentic_workload and follows
+      # the 2026-08-07 luna worker-b amendment. Rates are the per-field maxima
+      # across OpenAI's three gpt-5.6-luna endpoint tags, and must stay equal to
+      # openrouter_agentic_artifact_fixture: readiness fails closed otherwise.
       provider_model_id: openai/gpt-5.6-luna
       api_format: openai
       pricing:
@@ -99,7 +99,7 @@ routing:
         on_error: fail_closed
         rayline_arc:
           artifact_dir: /var/lib/vllm-sr/rayline-arc
-          artifact_revision: public-rayline-arc-openrouter-agentic-v1
+          artifact_revision: public-rayline-arc-openrouter-agentic-v2
           encoder:
             base_url: ${RAYLINE_ARC_ENCODER_BASE_URL}
             model: Qwen/Qwen3.5-0.8B
@@ -117,7 +117,12 @@ routing:
             total_timeout_seconds: 180
             max_retries: 0
           episode:
-            id_header: x-rayline-episode-id
+            # The Claude Code CLI emits one stable UUID per chat thread on this
+            # header, which is exactly an ARC episode. `id_header` is a single
+            # name and ARC fails closed on `missing_episode_id`, so pointing it
+            # here also means any other driver of this packet must send this
+            # header rather than `x-rayline-episode-id`.
+            id_header: x-claude-code-session-id
             backend: redis
             key_prefix: "vsr:rayline-arc-openrouter-agentic:"
             acquire_timeout_seconds: 5
@@ -132,6 +137,30 @@ routing:
               pool_size: 16
 
 global:
+  router:
+    # Only a name on this list reaches ARC. Anything else takes the
+    # specified-model path, which looks the model up in `providers.models`,
+    # finds nothing, and answers 400 "model ... is not available" — so every
+    # id the client can emit has to be listed. Naming the list at all replaces
+    # the built-in defaults, hence the first three: the ARC benchmark driver
+    # sends `auto`.
+    #
+    # The Claude Code entries are the ids captured on the wire from CLI
+    # 2.1.226: the alias (`opus`, `sonnet[1m]`, ...) is resolved client-side
+    # and the `[1m]` marker stripped, so the body carries a plain id. The CLI
+    # uses two slots per session — a main model and a small/fast one — and the
+    # resolved ids depend on the account's entitlements and on
+    # ANTHROPIC_DEFAULT_*_MODEL, so pin both slots explicitly with
+    # ANTHROPIC_MODEL and ANTHROPIC_DEFAULT_HAIKU_MODEL and confirm the first
+    # request's id from the router log before assuming this list is complete.
+    auto_model_names:
+      - vllm-sr/auto
+      - auto
+      - MoM
+      - claude-opus-5
+      - claude-sonnet-5
+      - claude-sonnet-4-6
+      - claude-haiku-4-5
   stores:
     semantic_cache:
       enabled: false

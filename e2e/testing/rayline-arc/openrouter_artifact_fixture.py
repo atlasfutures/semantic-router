@@ -173,7 +173,16 @@ def _worker_contract(
     *,
     capability_tag: str = "public-openrouter-canary",
     max_completion_tokens: int = MAX_COMPLETION_TOKENS,
+    minimum_completion_tokens: int | None = None,
 ) -> dict[str, object]:
+    # `applyARCExecutionLimits` computes max(client max_tokens, minimum) and
+    # then clamps to the maximum, so a minimum equal to the maximum pins every
+    # reply to one fixed budget regardless of what the caller asked for. That
+    # is what a frozen benchmark wants; callers that must honour a real
+    # client's own budget pass a lower floor. Defaulting to the maximum keeps
+    # every existing packet byte-identical.
+    if minimum_completion_tokens is None:
+        minimum_completion_tokens = max_completion_tokens
     contract: dict[str, object] = {
         "id": worker["id"],
         "model": worker["model"],
@@ -194,7 +203,7 @@ def _worker_contract(
         "openrouter_pricing_source": worker["pricing_source"],
         "thinking_mode": "off",
         "reasoning_budget_tokens": 0,
-        "minimum_completion_tokens": max_completion_tokens,
+        "minimum_completion_tokens": minimum_completion_tokens,
         "max_completion_tokens": max_completion_tokens,
         "supports_output_effort": False,
         "extra_body": {"reasoning": {"enabled": False, "effort": "none"}},
@@ -216,6 +225,7 @@ def _manifest(
     workers: tuple[dict[str, object], ...] = WORKERS,
     capability_tag: str = "public-openrouter-canary",
     max_completion_tokens: int = MAX_COMPLETION_TOKENS,
+    minimum_completion_tokens: int | None = None,
     created_at: str = "2026-08-01T00:00:00Z",
     exporter_commit: str = "public-openrouter-canary-exporter-v2",
     pricing_snapshot: str = "openrouter-pinned-endpoints-2026-08-01",
@@ -285,6 +295,7 @@ def _manifest(
                 worker,
                 capability_tag=capability_tag,
                 max_completion_tokens=max_completion_tokens,
+                minimum_completion_tokens=minimum_completion_tokens,
             )
             for worker in workers
         ],
@@ -315,6 +326,7 @@ def generate_contract(
     created_at: str,
     exporter_commit: str,
     pricing_snapshot: str,
+    minimum_completion_tokens: int | None = None,
 ) -> None:
     if [worker.get("id") for worker in workers] != [
         "worker-a",
@@ -324,6 +336,15 @@ def generate_contract(
         raise ValueError("OpenRouter artifact requires the exact three worker IDs")
     if max_completion_tokens <= 0:
         raise ValueError("OpenRouter maximum completion tokens must be positive")
+    if minimum_completion_tokens is not None and not (
+        0 < minimum_completion_tokens <= max_completion_tokens
+    ):
+        # A zero floor would let `applyARCExecutionLimits` delete `max_tokens`
+        # outright for a caller that sends none, which uncaps provider spend.
+        raise ValueError(
+            "OpenRouter minimum completion tokens must be positive and "
+            "no greater than the maximum"
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
     weights = _encode_safetensors(_tensors())
     checkpoint_sha256 = hashlib.sha256(
@@ -338,6 +359,7 @@ def generate_contract(
             workers=workers,
             capability_tag=capability_tag,
             max_completion_tokens=max_completion_tokens,
+            minimum_completion_tokens=minimum_completion_tokens,
             created_at=created_at,
             exporter_commit=exporter_commit,
             pricing_snapshot=pricing_snapshot,

@@ -43,12 +43,33 @@ AGT019_APP_PROFILES = {
 PERF031_APP_PROFILES = {
     "rayline-arc-session-encoder-flashinfer-perf031": "flashinfer",
 }
+# PERF034 is the saturation cap-raise arm: identical engine profile to PERF033,
+# but MAX_SESSIONS and the ingress cap widen for this app name only (below).
+PERF034_APP_PROFILES = {
+    "rayline-arc-session-encoder-flashinfer-perf034": "flashinfer",
+}
+# PERF035 is the L4 capacity arm: identical engine profile and identical 8/32
+# caps to PERF033, but this app name alone deploys on a 24 GB L4 (below), the
+# only GPU class both Modal and the GCP Cloud Run deployment target sell.
+PERF035_APP_PROFILES = {
+    "rayline-arc-session-encoder-flashinfer-perf035-l4": "flashinfer",
+}
+# PERF036 is the RTX PRO 6000 capacity arm: identical engine profile and
+# identical 8/32 caps to PERF033 and PERF035, but this app name alone deploys
+# on the 96 GB RTX PRO 6000 (below), Cloud Run's other GPU class and the first
+# card whose prediction scales from a measured cross-GPU anchor (PERF035).
+PERF036_APP_PROFILES = {
+    "rayline-arc-session-encoder-flashinfer-perf036-rtx6000": "flashinfer",
+}
 EXPERIMENT_APP_PROFILES = {
     **PERF030_APP_PROFILES,
     **AGT017_APP_PROFILES,
     **AGT018_APP_PROFILES,
     **AGT019_APP_PROFILES,
     **PERF031_APP_PROFILES,
+    **PERF034_APP_PROFILES,
+    **PERF035_APP_PROFILES,
+    **PERF036_APP_PROFILES,
 }
 ALLOWED_APP_NAMES = (DEFAULT_APP_NAME, *SCALEOUT_APP_NAMES, *EXPERIMENT_APP_PROFILES)
 APP_NAME = os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", DEFAULT_APP_NAME)
@@ -89,18 +110,43 @@ def _runtime_profile() -> tuple[str, str]:
     return backend, build_id
 
 
-GPU_TYPE = "H100"
-# Deliberately unpinned. The former region="us-east" pin cost a 1.75x Modal
-# narrow-region multiplier while PERF011/PERF014 measured it as worse, not
-# better: pinning produced 1.042x the PERF009 prepare p50 and 0.994x its
-# throughput, and neither preregistered placement gate passed. The measured
+# Placement is deliberately unpinned. The former region="us-east" pin cost a
+# 1.75x Modal narrow-region multiplier while PERF011/PERF014 measured it as
+# worse, not better: pinning produced 1.042x the PERF009 prepare p50 and 0.994x
+# its throughput, and neither preregistered placement gate passed. The measured
 # ~0.637s service/transport floor is backend- and region-independent, and
 # earlier placement work ruled out simple region distance as its cause.
 # Re-pin only with a measurement that clears a placement gate.
-MAX_SESSIONS = 8
+# Every recorded run is an H100 run and stays one. PERF035 alone deploys on a
+# 24 GB L4 and PERF036 alone on a 96 GB RTX PRO 6000, because those are the
+# two GPU classes the deployment target (GCP Cloud Run with GPU) sells and a
+# capacity claim for that target has to be measured on that silicon. Scoped to
+# the exact app names so no closed run's evidence can change class underneath
+# it.
+if APP_NAME in PERF035_APP_PROFILES:
+    GPU_TYPE = "L4"
+elif APP_NAME in PERF036_APP_PROFILES:
+    GPU_TYPE = "RTX-PRO-6000"
+else:
+    GPU_TYPE = "H100"
+# The historical 8 was committed without rationale (4f14763b) and predates the
+# frozen corpus's 8 episodes; it is retained for every non-PERF034 app because
+# the live stack sizes around it. PERF034 raises its own app to 32 to locate
+# the encoder's saturation knee. 32 lanes on the frozen packet-v3 corpus peaks
+# at 4,261,735 resident tokens (~51% of the ~70 GiB pool); the worst case
+# implied by MAX_RESIDENT_TOKENS (96 GiB) does NOT fit and is excluded only by
+# the corpus, a bound preregistered in the PERF034 contract. PERF035 keeps 8
+# deliberately: on its 24 GB L4 the 32-lane corpus peak alone is ~49 GiB, and
+# even 8 lanes only fit by corpus construction (12.92 GiB against a ~19 GiB
+# pool), a bound preregistered in the PERF035 contract.
+MAX_SESSIONS = 32 if APP_NAME in PERF034_APP_PROFILES else 8
 MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS
 IDLE_TTL_SECONDS = 5 * 60
 CHUNK_SCHEDULE_TOKENS = 8_192
+# At 32 lanes every in-flight request would exactly hit a 32-input ingress cap,
+# and queueing there is invisible to start_lag; 64 keeps ingress unbound so the
+# PERF034 sweep measures the encoder, not the front door.
+MAX_CONCURRENT_INPUTS = 64 if APP_NAME in PERF034_APP_PROFILES else 32
 
 _THIS_DIR = Path(__file__).resolve().parent
 _REMOTE_PLUGIN_DIR = "/opt/rayline_arc_io"
@@ -209,7 +255,7 @@ vllm_cache = modal.Volume.from_name("rayline-vllm-cache", create_if_missing=True
         "/root/.cache/vllm": vllm_cache,
     },
 )
-@modal.concurrent(max_inputs=32)
+@modal.concurrent(max_inputs=MAX_CONCURRENT_INPUTS)
 class SessionEncoder:
     @modal.enter()
     def start(self) -> None:

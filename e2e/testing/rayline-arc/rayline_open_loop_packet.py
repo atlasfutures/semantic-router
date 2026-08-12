@@ -79,11 +79,22 @@ def build_open_loop_packet(
     source_packet_dir: Path,
     output_dir: Path,
     offered_rates: Sequence[float] | None = None,
+    episode_lanes: int = MAX_EPISODE_LANES,
 ) -> dict[str, Any]:
     rungs = resolve_offered_rates(offered_rates)
+    # The lane count selects which registered sweep cell seeds the packet, and
+    # the case counts come from that same contract, so a packet can never mix
+    # one cell's lanes with another cell's corpus slice.
+    contract = SWEEP_WORKLOADS.get(episode_lanes)
+    if contract is None:
+        raise OpenLoopPacketError(
+            f"no registered sweep workload has {episode_lanes} lanes"
+        )
+    measured_cases = contract.measured_cases
+    warmup_cases = contract.warmup_cases
     if output_dir.exists():
         raise OpenLoopPacketError("output directory already exists")
-    source_cell = source_packet_dir / "cells/c8"
+    source_cell = source_packet_dir / f"cells/c{episode_lanes}"
     source_paths = {
         "manifest": source_packet_dir / "manifest.json",
         "corpus": source_packet_dir / "corpus.json",
@@ -98,17 +109,17 @@ def build_open_loop_packet(
             workload_path=source_paths["workload"],
             topology_path=source_paths["topology"],
             identity_path=source_paths["identity"],
-            workload_contract=SWEEP_WORKLOADS[8],
+            workload_contract=contract,
         )
     source_manifest = _read_object(source_paths["manifest"], "source manifest")
     source_identity = _read_object(source_paths["identity"], "source identity")
     corpus = _read_object(source_paths["corpus"], "source corpus")
     topology = _read_object(source_paths["topology"], "source topology")
     if (
-        source_manifest.get("measured_cases") != MEASURED_CASES
-        or source_manifest.get("warmup_cases") != WARMUP_CASES
-        or len(corpus.get("measured", [])) != MEASURED_CASES
-        or len(corpus.get("warmup", [])) != WARMUP_CASES
+        source_manifest.get("measured_cases") != measured_cases
+        or source_manifest.get("warmup_cases") != warmup_cases
+        or len(corpus.get("measured", [])) != measured_cases
+        or len(corpus.get("warmup", [])) != warmup_cases
     ):
         raise OpenLoopPacketError("source packet counts differ")
 
@@ -129,9 +140,9 @@ def build_open_loop_packet(
                 "arrival_process": ARRIVAL_PROCESS,
                 "coordinated_omission_policy": COORDINATED_OMISSION_POLICY,
                 "offered_rate_rps": offered_rate,
-                "max_episode_lanes": MAX_EPISODE_LANES,
-                "warmup_cases": WARMUP_CASES,
-                "measured_cases": MEASURED_CASES,
+                "max_episode_lanes": episode_lanes,
+                "warmup_cases": warmup_cases,
+                "measured_cases": measured_cases,
                 "seed": int(source_identity["seed"]),
             },
         )
@@ -139,7 +150,7 @@ def build_open_loop_packet(
         identity.update(
             {
                 "measurement_scope": MEASUREMENT_SCOPE,
-                "case_count": MEASURED_CASES,
+                "case_count": measured_cases,
                 "corpus_sha256": _sha256(corpus_path),
                 "workload_sha256": _sha256(workload_path),
                 "worker_topology_sha256": _sha256(topology_path),
@@ -155,8 +166,8 @@ def build_open_loop_packet(
     receipt = {
         "schema_version": PACKET_SCHEMA,
         "source": {name: _sha256(path) for name, path in source_paths.items()},
-        "measured_cases": MEASURED_CASES,
-        "warmup_cases": WARMUP_CASES,
+        "measured_cases": measured_cases,
+        "warmup_cases": warmup_cases,
         "measured_episodes": source_manifest["measured_episodes"],
         "warmup_episodes": source_manifest["warmup_episodes"],
         "input_token_buckets": source_manifest["input_token_buckets"],
@@ -191,6 +202,15 @@ def _parse_args() -> argparse.Namespace:
             f"{','.join(str(rate) for rate in OFFERED_RATES)} ladder."
         ),
     )
+    parser.add_argument(
+        "--episode-lanes",
+        type=int,
+        default=MAX_EPISODE_LANES,
+        help=(
+            "Lane count naming the registered sweep cell the packet derives "
+            f"from. Defaults to the frozen PERF020 {MAX_EPISODE_LANES}."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -201,6 +221,7 @@ def main() -> None:
             source_packet_dir=args.source_packet_dir,
             output_dir=args.output_dir,
             offered_rates=args.offered_rates,
+            episode_lanes=args.episode_lanes,
         )
     except (OSError, KeyError, TypeError, ValueError) as error:
         raise SystemExit(f"cannot build open-loop packet: {error}") from error

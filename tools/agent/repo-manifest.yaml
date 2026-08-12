@@ -131,6 +131,10 @@ docs:
 - tools/agent/docs/architecture/rayline-vllm-serving-boundary.md
 - tools/agent/docs/benchmarks/rayline-vllm-performance-contract.md
 - tools/agent/docs/handoff_rayline_serving_cost_20260810.md
+- tools/agent/docs/handoff_rayline_perf036_20260811.md
+- tools/agent/docs/runbook-claude-cli-arc-live-session.md
+- tools/agent/docs/live-claude-cli-e2e-20260811.md
+- tools/agent/docs/night-shift-20260810.md
 - tools/agent/docs/change-surfaces.md
 - tools/agent/docs/environments.md
 - tools/agent/docs/feature-complete-checklist.md
@@ -277,6 +281,18 @@ doc_governance:
   - path: tools/agent/docs/handoff_rayline_serving_cost_20260810.md
     steward: router-core
     freshness: update when the Rayline ARC encoder serving-cost model or its measured figures change
+  - path: tools/agent/docs/handoff_rayline_perf036_20260811.md
+    steward: router-core
+    freshness: update when the Rayline capacity-measurement lane reopens or a new PERF run supersedes PERF036
+  - path: tools/agent/docs/runbook-claude-cli-arc-live-session.md
+    steward: router-core
+    freshness: update when the live claude CLI ARC bring-up path or its cost-bearing steps change
+  - path: tools/agent/docs/live-claude-cli-e2e-20260811.md
+    steward: router-core
+    freshness: update when a later live claude CLI end-to-end session supersedes the 2026-08-11 record
+  - path: tools/agent/docs/night-shift-20260810.md
+    steward: router-core
+    freshness: update when the 2026-08-10 night-shift blockers are resolved or the record is superseded
   - path: tools/agent/docs/change-surfaces.md
     steward: agent-contract
     freshness: update when surfaces or their mappings change

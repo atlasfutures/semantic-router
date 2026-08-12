@@ -12,6 +12,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from rayline_open_loop_contract import SaturationCriterion
 from rayline_open_loop_packet import (
     MEASUREMENT_SCOPE,
     OFFERED_RATES,
@@ -23,8 +24,10 @@ from rayline_open_loop_probe import INPUT_SCHEMA, ProbeError, validate_receipt
 from rayline_parity_comparator import IDENTITY_FIELDS
 
 REPORT_SCHEMA = "rayline.vllm.open-loop-comparison.v2"
+SATURATION_REPORT_SCHEMA = "rayline.vllm.open-loop-comparison.v3"
+PLATEAU_REPORT_SCHEMA = "rayline.vllm.open-loop-comparison.v4"
 OPEN_LOOP_ARMS = ("rayline_remote", "rayline_arc")
-MEASURED_CASES = 32
+DEFAULT_MEASURED_CASES = 32
 FINAL_BACKLOG_KNEE = 8
 START_RATE_FLOOR_RATIO = 0.90
 CELL_IDENTITY_FIELDS = tuple(
@@ -107,6 +110,140 @@ def _diagnostic(receipt: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _saturation(
+    receipt: Mapping[str, Any], criterion: SaturationCriterion
+) -> dict[str, Any]:
+    """Decide whether one cell ran out of the only capacity this rig has.
+
+    The deciding term is peak lane occupancy. Everything else here is recorded
+    and deliberately does not vote.
+
+    `completion_ratio` in particular must not decide. It is
+    `completed / duration` over `(scheduled - 1) / span`, and `duration` is
+    `span + drain` where `drain` is never smaller than the service time of the
+    last request to finish. So the ratio falls as the offered rate rises even
+    when nothing queues at all: shrinking the arrival span raises the weight of
+    a fixed service tail. `unqueued_completion_ratio` is what that same cell
+    would report with zero queueing, given its own measured tail, and it is
+    recorded next to the observed ratio so the two can be read together
+    instead of the observed one being mistaken for a deficit.
+    """
+
+    results = receipt["results"]
+    peak = results["max_client_backlog"] / criterion.episode_lanes
+    tail = float(results["service_latency_seconds"]["p95"])
+    span = float(results["scheduled_span_seconds"])
+    completed = int(results["completed"])
+    finite_sample_gain = completed / (completed - 1) if completed > 1 else 1.0
+    return {
+        "peak_lane_occupancy": peak,
+        "terminal_lane_occupancy": (
+            results["backlog_at_final_arrival"] / criterion.episode_lanes
+        ),
+        "episode_lanes": criterion.episode_lanes,
+        "completion_ratio": _ratio(
+            results["completion_throughput_rps"],
+            results["realized_arrival_rate_rps"],
+        ),
+        "unqueued_completion_ratio": finite_sample_gain * _ratio(span, span + tail),
+        "drain_service_tail_multiple": _ratio(
+            results["drain_seconds_after_final_arrival"], tail
+        ),
+        "saturated": peak >= criterion.occupancy_ratio,
+    }
+
+
+def _unqueued_throughput_rps(results: Mapping[str, Any]) -> float:
+    """The completion throughput this cell's own drain arithmetic predicts.
+
+    Same model as `unqueued_completion_ratio` in `_saturation`, expressed as a
+    throughput: the rate a cell with zero queueing and this cell's measured
+    service tail would have reported.
+    """
+
+    tail = float(results["service_latency_seconds"]["p95"])
+    span = float(results["scheduled_span_seconds"])
+    completed = int(results["completed"])
+    finite_sample_gain = completed / (completed - 1) if completed > 1 else 1.0
+    return (
+        finite_sample_gain
+        * _ratio(span, span + tail)
+        * results["realized_arrival_rate_rps"]
+    )
+
+
+def _throughput_plateau(
+    ordered_receipts: Sequence[Mapping[str, Any]], gain_floor: float
+) -> list[dict[str, Any]]:
+    """Locate the rung where added offered load stops becoming added throughput.
+
+    The deciding term is the raw marginal gain: the change in
+    `completion_throughput_rps` per unit change in realized arrival rate
+    between adjacent rungs. Its floor cannot sit at the intuitive `0.5`,
+    because `completion_throughput_rps` divides a fixed corpus by
+    `span + drain` and the shrinking span alone depresses the marginal gain
+    with zero queueing anywhere: PERF032's provably unqueued top rung reads
+    `0.51`/`0.46` on its two sub-arms. On every receipt this repo has
+    recorded, unqueued cells read `0.46` or above while rungs past a known
+    capacity knee read `0.32` or below (PERF021 `r030`/`r045`, PERF033
+    `r220`/`r320`), so a floor of one third sits inside the measured gap with
+    margin on both sides. The contract carries the floor; this function never
+    assumes one.
+
+    Two companions are recorded and deliberately do not vote. The
+    drain-corrected gain re-derives the slope after dividing out each cell's
+    own unqueued expectation: near `1.0` it says the raw drop is the drain
+    arithmetic, not the encoder -- but it cannot decide, because a saturated
+    cell's inflated service tail feeds the same correction and pulls it back
+    to `1.0` there too (PERF021's saturated rungs read `0.93`-`0.95`).
+    Implied residence -- peak in-flight requests over completion throughput --
+    falls while capacity remains and turns up when it does not, but its
+    rung-to-rung sign flips on recorded unqueued cells, so it corroborates
+    rather than decides.
+
+    The first rung is the anchor: a slope needs two points, so it records
+    `None` marginals and cannot plateau. A rung that fails to realize more
+    arrivals than its predecessor converts nothing, and records a gain of
+    zero.
+    """
+
+    plateau: list[dict[str, Any]] = []
+    previous: tuple[float, float, float, float] | None = None
+    for receipt in ordered_receipts:
+        results = receipt["results"]
+        throughput = float(results["completion_throughput_rps"])
+        realized = float(results["realized_arrival_rate_rps"])
+        corrected = _ratio(throughput, _unqueued_throughput_rps(results)) * realized
+        residence = _ratio(float(results["max_client_backlog"]), throughput)
+        cell: dict[str, Any] = {
+            "completion_throughput_rps": throughput,
+            "realized_arrival_rate_rps": realized,
+            "marginal_throughput_gain": None,
+            "drain_corrected_marginal_gain": None,
+            "implied_residence_seconds": residence,
+            "implied_residence_delta_seconds": None,
+            "plateaued": False,
+        }
+        if previous is not None:
+            prior_realized, prior_throughput, prior_corrected, prior_residence = (
+                previous
+            )
+            realized_delta = realized - prior_realized
+            if realized_delta > 0:
+                gain = (throughput - prior_throughput) / realized_delta
+                corrected_gain = (corrected - prior_corrected) / realized_delta
+            else:
+                gain = 0.0
+                corrected_gain = 0.0
+            cell["marginal_throughput_gain"] = gain
+            cell["drain_corrected_marginal_gain"] = corrected_gain
+            cell["implied_residence_delta_seconds"] = residence - prior_residence
+            cell["plateaued"] = gain < gain_floor
+        plateau.append(cell)
+        previous = (realized, throughput, corrected, residence)
+    return plateau
+
+
 def _resolve_rungs(offered_rates: Sequence[float] | None) -> tuple[float, ...]:
     """Resolve the rung set this comparison is being held to.
 
@@ -126,6 +263,7 @@ def _resolve_rungs(offered_rates: Sequence[float] | None) -> tuple[float, ...]:
 def _validate_cells(
     raw_cells: Mapping[str, Mapping[str, Mapping[str, Any]]],
     offered_rates: Sequence[float] | None = None,
+    case_count: int = DEFAULT_MEASURED_CASES,
 ) -> tuple[
     tuple[str, ...],
     dict[str, dict[str, dict[str, Any]]],
@@ -146,14 +284,14 @@ def _validate_cells(
         cells[label] = {}
         for arm in OPEN_LOOP_ARMS:
             try:
-                receipt = validate_receipt(raw_receipts[arm])
+                receipt = validate_receipt(raw_receipts[arm], case_count=case_count)
             except ProbeError as error:
                 raise OpenLoopComparisonError(str(error)) from error
             if (
                 receipt["schema_version"] != INPUT_SCHEMA
                 or receipt["arm"] != arm
                 or receipt["identity"]["measurement_scope"] != MEASUREMENT_SCOPE
-                or receipt["identity"]["case_count"] != MEASURED_CASES
+                or receipt["identity"]["case_count"] != case_count
                 or not math.isclose(
                     receipt["results"]["offered_rate_rps"], rate, rel_tol=1e-12
                 )
@@ -167,7 +305,7 @@ def _validate_cells(
             raise OpenLoopComparisonError(f"{label} identities differ")
         integrity[label] = {
             "all_completed": all(
-                receipt["results"]["completed"] == MEASURED_CASES
+                receipt["results"]["completed"] == case_count
                 and receipt["results"]["failed"] == 0
                 for receipt in cells[label].values()
             ),
@@ -221,17 +359,26 @@ def _trace_summary(
 def compare_open_loop(
     raw_cells: Mapping[str, Mapping[str, Mapping[str, Any]]],
     offered_rates: Sequence[float] | None = None,
+    case_count: int = DEFAULT_MEASURED_CASES,
+    saturation: SaturationCriterion | None = None,
 ) -> dict[str, Any]:
     """Compare one open-loop sweep's receipts against the rungs it contracted for.
 
-    `offered_rates` is the run's own ladder. It defaults to the frozen
-    PERF020/PERF021 tuple so those closed runs compare exactly as they did,
-    but a caller that ran a different ladder must say so: validating a
-    four-rung run against a three-rung module default rejects a sweep that
-    executed correctly.
+    `offered_rates` and `case_count` are the run's own ladder and corpus size.
+    They default to the frozen PERF020/PERF021 shape so those closed runs
+    compare exactly as they did, but a caller that ran something else must say
+    so: validating a four-rung run against a three-rung module default rejects
+    a sweep that executed correctly, and a module case count writes
+    `passed: False` over a run that completed every case it had.
+
+    `saturation` is the run's saturation criterion. `None` keeps the frozen
+    report shape byte-for-byte, which is what lets the closed runs' receipts
+    still replay into the reports they recorded.
     """
 
-    expected_labels, cells, integrity = _validate_cells(raw_cells, offered_rates)
+    expected_labels, cells, integrity = _validate_cells(
+        raw_cells, offered_rates, case_count
+    )
 
     trace_digests, distinct_traces, cross_cell_trace_match = _trace_summary(
         labels=expected_labels, cells=cells
@@ -255,7 +402,7 @@ def compare_open_loop(
         all(all(cell.values()) for cell in integrity.values())
         and cross_cell_trace_match
     )
-    return {
+    report: dict[str, Any] = {
         "schema_version": REPORT_SCHEMA,
         "status": "passed" if passed else "failed",
         "passed": passed,
@@ -278,6 +425,67 @@ def compare_open_loop(
         "load_diagnostics": diagnostics,
         "first_overloaded_cell": first_overloaded,
     }
+    if saturation is None:
+        return report
+    saturation_cells = {
+        arm: {
+            label: _saturation(cells[label][arm], saturation)
+            for label in expected_labels
+        }
+        for arm in OPEN_LOOP_ARMS
+    }
+    report["schema_version"] = SATURATION_REPORT_SCHEMA
+    report["saturation"] = saturation_cells
+    report["saturation_criterion"] = {
+        "episode_lanes": saturation.episode_lanes,
+        "occupancy_ratio": saturation.occupancy_ratio,
+    }
+    report["first_saturated_cell"] = {
+        arm: next(
+            (
+                label
+                for label in expected_labels
+                if saturation_cells[arm][label]["saturated"]
+            ),
+            None,
+        )
+        for arm in OPEN_LOOP_ARMS
+    }
+    if saturation.throughput_plateau_gain is None:
+        return report
+    # The two firing points are deliberately independent, because which one
+    # fires first is the run's diagnosis: occupancy first means the rig bound,
+    # plateau first means the encoder did.
+    plateau_cells = {
+        arm: dict(
+            zip(
+                expected_labels,
+                _throughput_plateau(
+                    [cells[label][arm] for label in expected_labels],
+                    saturation.throughput_plateau_gain,
+                ),
+                strict=True,
+            )
+        )
+        for arm in OPEN_LOOP_ARMS
+    }
+    report["schema_version"] = PLATEAU_REPORT_SCHEMA
+    report["throughput_plateau"] = plateau_cells
+    report["saturation_criterion"]["throughput_plateau_gain"] = (
+        saturation.throughput_plateau_gain
+    )
+    report["first_throughput_plateau_cell"] = {
+        arm: next(
+            (
+                label
+                for label in expected_labels
+                if plateau_cells[arm][label]["plateaued"]
+            ),
+            None,
+        )
+        for arm in OPEN_LOOP_ARMS
+    }
+    return report
 
 
 def _parse_rate_list(raw: str) -> tuple[float, ...]:
@@ -316,6 +524,27 @@ def _parse_args() -> tuple[argparse.Namespace, tuple[float, ...]]:
                 f"--{label}-{arm.replace('_', '-')}", required=True, type=Path
             )
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--episode-lanes",
+        type=int,
+        default=None,
+        help=(
+            "The packet's concurrent episode lane count. Supplying it enables "
+            "the saturation criterion and the v3 report; omitting it keeps the "
+            "frozen v2 report the closed runs recorded."
+        ),
+    )
+    parser.add_argument("--occupancy-ratio", type=float, default=1.0)
+    parser.add_argument(
+        "--throughput-plateau-gain",
+        type=float,
+        default=None,
+        help=(
+            "Marginal-throughput floor arming the plateau firing point and "
+            "the v4 report; omitting it keeps the occupancy-only v3 report."
+        ),
+    )
+    parser.add_argument("--case-count", type=int, default=DEFAULT_MEASURED_CASES)
     return parser.parse_args(), rungs
 
 
@@ -332,8 +561,22 @@ def main() -> None:
         for rate in rungs
     }
     try:
-        report = compare_open_loop(raw_cells, rungs)
-    except (OSError, json.JSONDecodeError, OpenLoopComparisonError) as error:
+        criterion = (
+            None
+            if args.episode_lanes is None
+            else SaturationCriterion(
+                episode_lanes=args.episode_lanes,
+                occupancy_ratio=args.occupancy_ratio,
+                throughput_plateau_gain=args.throughput_plateau_gain,
+            )
+        )
+        report = compare_open_loop(raw_cells, rungs, args.case_count, criterion)
+    except (
+        OSError,
+        json.JSONDecodeError,
+        OpenLoopComparisonError,
+        ValueError,
+    ) as error:
         raise SystemExit(f"invalid open-loop sweep: {error}") from error
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
 

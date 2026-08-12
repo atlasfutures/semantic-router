@@ -168,7 +168,12 @@ SATURATION_KNEE_ARMS = (PERF032,)
 
 # Binding is a separate, human-gated step. Preparation never opens launch
 # authority.
-LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = PERF032
+# PERF032 is closed after its one authorized execution on 2026-08-10. The
+# Pathfinder pin above stays at the real head deliberately: it records what the
+# closed run was measured against, and the launcher is shut by this being
+# `None`. Leaving it bound would let the run repeat against budget accounting
+# that has already counted it once.
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
 
 
 def resolve_launch_contract(run_id: str) -> OpenLoopRunContract:

@@ -28,6 +28,53 @@ MAXIMUM_RESOURCE_SECONDS = (
 )
 
 
+DEFAULT_ENCODER_GPU = "H100"
+
+
+@dataclass(frozen=True)
+class SaturationCriterion:
+    """How one run decides that a cell saturated.
+
+    This rig has exactly one capacity to exhaust: concurrent in-flight
+    requests. `poisson_schedule` groups the corpus by episode and the probe
+    runs one thread per episode, so at most `episode_lanes` requests are ever
+    outstanding, and the encoder is sized to the same number
+    (`MAX_SESSIONS == max_num_seqs == 8`). A cell has therefore saturated when
+    peak occupancy reaches that ceiling: offering more load past that point
+    cannot raise concurrency, so it cannot raise throughput.
+
+    `episode_lanes` is carried here rather than read from a module constant
+    because the comparator sees only receipts. It never wrote the lane count
+    and so may not assume it; the run that generated the packet states it, and
+    the launcher checks the packet's own `max_episode_lanes` against it before
+    any paid second elapses.
+
+    `throughput_plateau_gain` arms a second, independent firing point. The
+    occupancy criterion can only see the rig's ceiling; a run whose encoder
+    binds below that ceiling plateaus in throughput while occupancy still has
+    headroom, and the occupancy criterion stays silent -- correctly, and
+    uselessly. The gain is the marginal-throughput floor: the first rung that
+    converts less than this fraction of its additional realized arrival rate
+    into additional completed throughput is the plateau. `None` is the frozen
+    PERF033 behaviour -- occupancy only, and a v3 report byte-identical to the
+    one that closed run recorded.
+    """
+
+    episode_lanes: int
+    occupancy_ratio: float = 1.0
+    throughput_plateau_gain: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.episode_lanes < 1:
+            raise ValueError("episode lanes must be positive")
+        if not 0.0 < self.occupancy_ratio <= 1.0:
+            raise ValueError("occupancy ratio must fall in (0, 1]")
+        if self.throughput_plateau_gain is not None and not (
+            0.0 < self.throughput_plateau_gain < 1.0
+        ):
+            raise ValueError("throughput plateau gain must fall in (0, 1)")
+
+
 @dataclass(frozen=True)
 class OpenLoopCell:
     label: str
@@ -58,6 +105,25 @@ class OpenLoopRunContract:
     encoder_app_name: str = IDENTITY.encoder_app_name
     encoder_build_id: str = IDENTITY.engine_build_id
     encoder_gdn_prefill_backend: str = "torch_reference"
+    # The GPU class this run's evidence may claim. It was an assertion-free
+    # launcher constant, so a non-H100 successor would have written deployment
+    # evidence claiming H100 without anything rejecting it.
+    encoder_gpu: str = DEFAULT_ENCODER_GPU
+    # The case counts this run's packet must carry. The launcher validates the
+    # packet manifest against these in preflight and derives its expected ARC
+    # telemetry count from them, so a count mismatch can no longer surface as a
+    # mid-run failure after paid GPU time.
+    measured_cases: int = MEASURED_CASES
+    warmup_cases: int = WARMUP_CASES
+    # The episode counts behind those cases. They were launcher module
+    # constants, which silently pinned every successor packet to PERF020's
+    # 8-episode corpus shape.
+    measured_episodes: int = MEASURED_EPISODES
+    warmup_episodes: int = WARMUP_EPISODES
+    # How this run decides saturation. `None` is the frozen PERF020/PERF021
+    # behaviour: the legacy `overloaded` predicate alone, and a report that is
+    # byte-identical to the ones those closed runs recorded.
+    saturation: SaturationCriterion | None = None
     # The Pathfinder head this run's authority is pinned to. A successor packet
     # gets its own pin; without this it would silently inherit PERF020's.
     pathfinder_authorization_commit: str = PATHFINDER_AUTHORIZATION_COMMIT
