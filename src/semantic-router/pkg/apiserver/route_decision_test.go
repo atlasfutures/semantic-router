@@ -360,6 +360,65 @@ func TestRouteDecisionIsServedAtTheLiteralClientPath(t *testing.T) {
 	}
 }
 
+// Default-deny. The caller is a trusted proxy, not a console user, so no
+// built-in role reaches this route: a bearer deployment must grant
+// route.decision on purpose.
+func TestRouteDecisionDeniesBuiltInRolesUnderBearerAuth(t *testing.T) {
+	for _, role := range []string{"viewer", "operator"} {
+		t.Run(role, func(t *testing.T) {
+			const token = "route-decision-token"
+			t.Setenv("VSR_ROUTE_DECISION_TOKEN", token)
+			server := routeDecisionTestServer(okRouteDecisionRuntime())
+			server.config = &config.RouterConfig{
+				ManagementAPI: config.ManagementAPIConfig{
+					Auth: config.ManagementAPIAuthConfig{
+						Mode:   config.ManagementAuthModeBearer,
+						Tokens: []config.ManagementAPITokenRef{{Env: "VSR_ROUTE_DECISION_TOKEN", Role: role}},
+						Roles:  config.DefaultManagementAPIRoles(),
+					},
+				},
+			}
+			mux := server.setupRoutes()
+
+			request := routeDecisionRequest(routeDecisionTestBody, nil)
+			request.Header.Set("Authorization", "Bearer "+token)
+			recorder := httptest.NewRecorder()
+			mux.ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403 for role %q", recorder.Code, role)
+			}
+		})
+	}
+}
+
+func TestRouteDecisionAllowsAGrantedRoleUnderBearerAuth(t *testing.T) {
+	const token = "route-decision-token"
+	t.Setenv("VSR_ROUTE_DECISION_TOKEN", token)
+	roles := config.DefaultManagementAPIRoles()
+	roles["router-proxy"] = []string{string(PermRouteDecision)}
+	server := routeDecisionTestServer(okRouteDecisionRuntime())
+	server.config = &config.RouterConfig{
+		ManagementAPI: config.ManagementAPIConfig{
+			Auth: config.ManagementAPIAuthConfig{
+				Mode:   config.ManagementAuthModeBearer,
+				Tokens: []config.ManagementAPITokenRef{{Env: "VSR_ROUTE_DECISION_TOKEN", Role: "router-proxy"}},
+				Roles:  roles,
+			},
+		},
+	}
+	mux := server.setupRoutes()
+
+	request := routeDecisionRequest(routeDecisionTestBody, nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%s)", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestRouteDecisionRouteCarriesItsOwnPermission(t *testing.T) {
 	for _, route := range apiRoutes() {
 		if route.Path != routeDecisionPath {
