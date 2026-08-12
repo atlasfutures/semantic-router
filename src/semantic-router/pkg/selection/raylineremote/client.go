@@ -36,14 +36,17 @@ type WorkerPrices struct {
 }
 
 type ClientConfig struct {
-	BaseURL        string
-	BundleVersion  string
-	APIKey         string
-	ConnectTimeout time.Duration
-	RequestTimeout time.Duration
-	LeaseTTL       time.Duration
-	MaxRetries     int
-	Workers        []WorkerContract
+	BaseURL       string
+	BundleVersion string
+	// AllowInsecureTransport permits a plaintext BaseURL. Prepare sends the
+	// caller's whole message and tool set, so http is refused by default.
+	AllowInsecureTransport bool
+	APIKey                 string
+	ConnectTimeout         time.Duration
+	RequestTimeout         time.Duration
+	LeaseTTL               time.Duration
+	MaxRetries             int
+	Workers                []WorkerContract
 }
 
 type Client struct {
@@ -64,7 +67,10 @@ func newClient(
 	config ClientConfig,
 	httpClient *http.Client,
 ) (*Client, error) {
-	baseURL, err := parseBaseURL(config.BaseURL)
+	baseURL, err := parseBaseURL(
+		config.BaseURL,
+		config.AllowInsecureTransport,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +86,10 @@ func newClient(
 	}, nil
 }
 
-func parseBaseURL(raw string) (*url.URL, error) {
+func parseBaseURL(
+	raw string,
+	allowInsecureTransport bool,
+) (*url.URL, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" ||
 		(parsed.Scheme != "http" && parsed.Scheme != "https") ||
@@ -92,6 +101,9 @@ func parseBaseURL(raw string) (*url.URL, error) {
 			"invalid_base_url",
 			0,
 		)
+	}
+	if parsed.Scheme == "http" && !allowInsecureTransport {
+		return nil, initializeFailure("insecure_base_url")
 	}
 	return parsed, nil
 }

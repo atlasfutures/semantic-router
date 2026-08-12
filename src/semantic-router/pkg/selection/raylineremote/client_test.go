@@ -539,15 +539,43 @@ func (fixture *protocolFixture) serveHTTP(
 	}
 }
 
+// The client is the last seam before prompt bodies leave the process, so it
+// refuses a plaintext endpoint on its own rather than trusting the caller to
+// have validated the config.
+func TestNewClientRefusesPlaintextBaseURLWithoutOptIn(t *testing.T) {
+	config := validClientConfig("http://rayline-router:8000")
+	config.AllowInsecureTransport = false
+	client, err := NewClient(config)
+	if client != nil {
+		t.Fatal("plaintext base URL produced a usable client")
+	}
+	var failure *Failure
+	if !errors.As(err, &failure) ||
+		failure.Code != "insecure_base_url" {
+		t.Fatalf("error = %v, want failure code insecure_base_url", err)
+	}
+}
+
+func TestNewClientAcceptsTLSBaseURLWithoutOptIn(t *testing.T) {
+	config := validClientConfig("https://rayline-router:8443")
+	config.AllowInsecureTransport = false
+	if _, err := NewClient(config); err != nil {
+		t.Fatalf("https base URL rejected: %v", err)
+	}
+}
+
 func validClientConfig(baseURL string) ClientConfig {
 	return ClientConfig{
-		BaseURL:        baseURL,
-		BundleVersion:  "bundle-test-v1",
-		APIKey:         "test-api-key",
-		ConnectTimeout: 100 * time.Millisecond,
-		RequestTimeout: time.Second,
-		LeaseTTL:       30 * time.Second,
-		MaxRetries:     1,
+		BaseURL: baseURL,
+		// httptest serves plaintext on loopback, which is exactly the
+		// hermetic case the opt-in exists for.
+		AllowInsecureTransport: true,
+		BundleVersion:          "bundle-test-v1",
+		APIKey:                 "test-api-key",
+		ConnectTimeout:         100 * time.Millisecond,
+		RequestTimeout:         time.Second,
+		LeaseTTL:               30 * time.Second,
+		MaxRetries:             1,
 		Workers: []WorkerContract{
 			{
 				ID:           "worker-a",

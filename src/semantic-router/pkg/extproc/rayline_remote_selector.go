@@ -92,9 +92,10 @@ func createRaylineRemoteRuntime(
 	}
 	client, err := raylineremote.NewClient(
 		raylineremote.ClientConfig{
-			BaseURL:       remoteConfig.BaseURL,
-			BundleVersion: remoteConfig.BundleVersion,
-			APIKey:        apiKey,
+			BaseURL:                remoteConfig.BaseURL,
+			BundleVersion:          remoteConfig.BundleVersion,
+			AllowInsecureTransport: remoteConfig.AllowInsecureTransport,
+			APIKey:                 apiKey,
 			ConnectTimeout: time.Duration(
 				remoteConfig.ConnectTimeoutMS,
 			) * time.Millisecond,
