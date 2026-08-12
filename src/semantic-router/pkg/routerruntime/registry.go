@@ -20,6 +20,7 @@ type Registry struct {
 	vectorStore           *VectorStoreRuntime
 	modelSelector         *selection.Registry
 	learningRuntime       LearningRuntime
+	routeDecisionRuntime  RouteDecisionRuntime
 }
 
 // LearningRuntime is the narrow API-server seam for Router Learning state.
@@ -138,6 +139,27 @@ func (r *Registry) SetLearningRuntime(runtime LearningRuntime) {
 	}
 	r.mu.Lock()
 	r.learningRuntime = runtime
+	r.mu.Unlock()
+}
+
+// RouteDecisionRuntime returns nil until the router publishes itself. The
+// management listener starts before the router exists, so every reader must
+// treat "not published yet" as a normal state rather than a fault.
+func (r *Registry) RouteDecisionRuntime() RouteDecisionRuntime {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.routeDecisionRuntime
+}
+
+func (r *Registry) SetRouteDecisionRuntime(runtime RouteDecisionRuntime) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.routeDecisionRuntime = runtime
 	r.mu.Unlock()
 }
 
