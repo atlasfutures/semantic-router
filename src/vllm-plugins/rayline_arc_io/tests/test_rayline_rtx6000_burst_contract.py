@@ -464,6 +464,31 @@ def test_perf037_states_what_teardown_must_show() -> None:
     assert any("32/32 measured sessions" in line for line in requirements)
 
 
+def test_perf037_independent_teardown_check_is_app_scoped() -> None:
+    """The second instrument measures this run's leak, not the environment's.
+
+    The `dev` environment is shared with foreign lanes this experiment cannot
+    stop, so an environment-wide emptiness gate would be unsatisfiable by a
+    perfect run and would reward stopping another lane's work. The gate is
+    scoped to this packet's own app -- the same filter the launcher applies --
+    and the evidence bar rises to a full quoted listing instead.
+    """
+
+    independent = [
+        line for line in burst.TEARDOWN_REQUIREMENTS if "modal container list" in line
+    ]
+    assert len(independent) == 1
+    requirement = independent[0]
+    # App-scoped, not environment-scoped.
+    assert "PERF037_APP_NAME" in requirement
+    assert "returns empty" not in requirement
+    # The compensating evidence bar is preregistered, not left to judgement.
+    assert "pre-run and post-teardown" in requirement
+    # The launcher's own check filters on exactly this name, so the two
+    # instruments measure the same thing by two routes.
+    assert burst.PERF037.encoder_app_name == burst.PERF037_APP_NAME
+
+
 def test_perf037_inherits_perf034s_unrunnable_continuity_check() -> None:
     """A check that cannot run is recorded as such, not quietly dropped.
 

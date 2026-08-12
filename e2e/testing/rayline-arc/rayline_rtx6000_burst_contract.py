@@ -258,12 +258,28 @@ TRACE_PREFIX_CHECK_IS_RUNNABLE = False
 # it is listed because it is the one an agent is most likely to skip -- PERF036
 # ran it and found zero, which is why its cleanup claim stands on two
 # independent readings rather than the launcher's own.
+#
+# AMENDED 2026-08-12, before this packet carried any authority. The fifth
+# requirement read "returns empty", which scoped it to the whole `dev`
+# environment. That environment is shared: foreign lanes
+# (`rayline-tbench-mtrouter`, `rayline-router-tbench-dev`, `memex-agent`) were
+# live at authorization time, none of them this experiment's to start or stop.
+# An environment-wide emptiness gate therefore could not be satisfied by a
+# perfect run, and passing it would have required stopping another lane's work.
+# The gate exists to detect THIS run's leaked spend, so it is now app-scoped,
+# exactly like the launcher's own `_modal_containers` filter. The evidence bar
+# rises to compensate: the full listing is quoted both before the run and after
+# teardown, foreign rows visible, so a reader can audit what was excluded rather
+# than trust a bare "empty". Amended before the authorize and bind commits, so
+# no armed preregistration was re-scoped.
 TEARDOWN_REQUIREMENTS = (
     "the launcher stops the encoder app and deletes the proxy token",
     "the run manifest records encoder_containers_remaining exactly 0",
     "every cell's state reset closes 32/32 measured sessions with exact zeros",
     "every local compose project is removed -- cell_cleanup all true",
-    "an independent `modal container list` in the dev environment returns empty",
+    "an independent `modal container list` in the dev environment shows zero "
+    "rows whose App Name is PERF037_APP_NAME, with the full listing quoted "
+    "pre-run and post-teardown so foreign lanes stay visible",
 )
 
 
