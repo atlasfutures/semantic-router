@@ -229,6 +229,30 @@ func TestRouteDecisionRejectsMalformedRequests(t *testing.T) {
 	}
 }
 
+// Every failure this endpoint reports uses one shape, including the ones the
+// generic body reader raises. The caller reads them against one contract.
+func TestRouteDecisionReportsOversizedBodiesInItsOwnErrorShape(t *testing.T) {
+	runtime := okRouteDecisionRuntime()
+	server := routeDecisionTestServer(runtime)
+	oversized := `{"messages":[{"role":"user","content":"` +
+		strings.Repeat("x", int(routeDecisionBodyLimit)) + `"}]}`
+
+	recorder, decoded := postRouteDecision(t, server, oversized, nil)
+
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", recorder.Code)
+	}
+	if detail, ok := decoded["detail"].(string); !ok || detail == "" {
+		t.Fatalf("body = %#v, want this endpoint's detail shape", decoded)
+	}
+	if _, present := decoded["error"]; present {
+		t.Fatalf("body used the management envelope: %#v", decoded)
+	}
+	if len(runtime.requests) != 0 {
+		t.Fatalf("oversized request still reached the runtime: %+v", runtime.requests)
+	}
+}
+
 func TestRouteDecisionAcceptsWellFormedRouteIDs(t *testing.T) {
 	for _, routeID := range []string{"rt_0a1b2c3d", "rt_ml_0a1b2c3d", "rt_0A1B-2C3D", "rt_a"} {
 		t.Run(routeID, func(t *testing.T) {

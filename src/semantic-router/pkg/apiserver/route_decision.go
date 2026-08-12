@@ -4,6 +4,7 @@ package apiserver
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"net/textproto"
@@ -79,7 +80,14 @@ func (s *ClassificationAPIServer) handleRouteDecision(w http.ResponseWriter, r *
 
 	body, err := readJSONRequestBody(r, routeDecisionBodyLimit)
 	if err != nil {
-		s.writeJSONRequestError(w, err)
+		// This endpoint's failures are read against the reference decision
+		// server's shape, so an oversized body reports like every other
+		// rejection here rather than in the management envelope.
+		if errors.Is(err, errRequestBodyTooLarge) {
+			s.writeRouteDecisionError(w, http.StatusRequestEntityTooLarge, "request body is too large")
+			return
+		}
+		s.writeRouteDecisionError(w, http.StatusBadRequest, "request body could not be read")
 		return
 	}
 	if detail := validateRouteDecisionBody(body); detail != "" {
