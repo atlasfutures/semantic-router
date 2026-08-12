@@ -5774,6 +5774,124 @@ record of what ran. Receipts are uploaded to `router-artifacts` at revision
 attempt's evidence at `44483196`). The 1,000-case release qualification
 stays held.
 
+### PERF037 Result (2026-08-12) — the burst is not absorbed, and the deployment absorbs about 38 seconds of it
+
+PERF037 ran once on 2026-08-12 from bind commit `1bab501e`, executing
+PERF034's packet byte for byte on PERF036's card at 32 lanes — every episode
+the frozen 128-case corpus has. All eleven packet digests were re-verified
+against the contract before the paid window opened, so the cross-GPU claim
+rests on byte-identity rather than on a regenerated packet.
+
+**The predicted outcome held.** No cell absorbed its burst. The preregistered
+predicate needs all three of realized arrivals at least `2.33` dec/s,
+completion throughput at least `0.95x` realized, and peak backlog no greater
+than 32; every cell failed the second condition by a wide margin, and the
+verdict is the same on both arms.
+
+| Rung | Realized dec/s | Completion dec/s (arc) | Peak backlog | Occupancy | Absorbs |
+| --- | ---: | ---: | ---: | ---: | :---: |
+| `r120` | `1.2518` | `0.7967` | 25 | `0.781` | no |
+| `r240` | `2.5036` | `1.0494` | 30 | `0.938` | no |
+| `r400` | `4.1727` | `1.2159` | 32 | `1.000` | no |
+| `r645` | `6.7285` | `1.3098` | 32 | `1.000` | no |
+
+**The measured ceiling is `1.3098` dec/s** (`r645`, ARC arm; Remote `1.2119`),
+inside the preregistered `0.7835`–`1.4550` band and `17.0%` above the
+`1.1193` point prediction. Measured-anchor TFLOPS scaling therefore survives
+its **second** cross-GPU hop, and its first at a lane count other than eight.
+It survives conservatively in the same direction as before: the card returned
+`0.568` of the H100's 32-lane figure (Remote `0.570`) against a dense-FP16
+TFLOPS ratio of `0.4853`, so the naive method under-predicts this card by a
+consistent margin at both lane counts rather than by a lane-count-dependent
+one. The two arms agreeing to within `0.002` on that ratio is the strongest
+form the cross-check has taken.
+
+**What the run was bought for.** The verdict was already implied by
+arithmetic; the purchase was the degradation shape. At the measured ceiling
+the worst recorded production burst of `2.33` dec/s is `1.78x` the encoder's
+capacity, and `absorbable_burst_seconds` — backlog accumulating at
+`burst − ceiling` and clearing at `ceiling`, against the 30-second recovery
+budget — is **`38.52` seconds**, against `27.7` at the point prediction and
+`15.2` at the band floor. The sentence a deployment decision can use is: *this
+single-instance deployment absorbs a 2.33 dec/s burst lasting about 38
+seconds, and queues beyond it.*
+
+**Occupancy and the plateau.** Peak lane occupancy reached `1.0` at `r400` and
+stayed there at `r645`, so the rig went over-full at the top two rungs; the
+completion ratio fell monotonically from `0.6365` at `r120` to `0.1947` at
+`r645`. The plateau criterion fired at `r240` on both arms. Unlike PERF032,
+PERF034 and PERF036, the preregistered drain clause does **not** falsify it
+here: the clause needs the drain-corrected marginal gain to sit within `10%`
+of `1.0` while the implied residence delta is non-positive, and although every
+residence delta is negative, the drain-corrected gains are `0.868`, `0.848`
+and `0.688` (ARC) and `0.869`, `0.842` and `0.842` (Remote) — all outside the
+window. This is the first time in the family the plateau verdict survives its
+own drain clause. It changes nothing about this packet's result, because
+PERF037 preregistered the plateau as non-voting corroboration carried from
+PERF034 and read absorption and the ceiling off directly measured quantities
+within a single cell (`DRAIN_CLAUSE_VOIDS_ABSORPTION_VERDICT = False`,
+`DRAIN_CLAUSE_VOIDS_CEILING_MEASUREMENT = False`). It is recorded because a
+successor asking about the encoder's true ceiling now has one surviving
+plateau to reason from.
+
+**Integrity.** All eight arm-cells scheduled and completed 128 of 128 measured
+turns with `failed: 0` and `provider_calls: 0`. `cache_miss_tokens` sums to
+zero and `session_actions.rebuilt` is zero in every cell. One selected-worker
+trace digest, `7fed5d06…`, is identical across all four cells and both arms,
+and `cross_cell_trace_match` is true. Every cell's state reset closed 32 of 32
+measured sessions with zero missing and zero resident tokens, and every local
+compose project was removed. `comparison.json` reports `status: passed`. The
+inherited PERF020 32-case prefix check remains unrunnable
+(`TRACE_PREFIX_CHECK_IS_RUNNABLE = False`) because the probe still hashes the
+trace without persisting its entries; the within-run chain is what stands.
+
+**A reader trap worth naming.** Every cell receipt records
+`identity.gpu_class: NVIDIA H100 80GB`. That is *not* the silicon this run
+used. `gpu_class` is a frozen field inside PERF034's packet, and byte-identity
+to PERF034 is the whole cross-GPU claim — had it read `RTX-PRO-6000` the
+digests would have differed and the arm would be void. The silicon is attested
+in `deployment-evidence.json` (`encoder_gpu: RTX-PRO-6000`) and enforced in
+`modal_session_service.py`, where `GPU_TYPE` resolves to `RTX-PRO-6000` for
+apps in `RTX6000_APP_PROFILES`, scoped to the exact app name so no closed
+run's evidence can change class underneath it.
+
+**Cost.** The paid window ran `2006.44` of the `2400` envelope seconds, so the
+wall held with about `16%` margin — thinner than PERF036's because the encoder
+image rebuilt and the deploy alone took `435` seconds against PERF036's `137`.
+The measured resource upper bound is **`$2.1848`** against the `$5.6186208`
+envelope. Conservative accounting charges the full envelope regardless, taking
+the cumulative to **`$200.078471066383`** and leaving the reserve at exactly
+**`$3.00`** under the granted `$203.078471066383` authority — the
+preregistered arithmetic, landed to the digit. `provider_spend_usd` is `$0.00`
+and `provider_calls` is zero in every cell.
+
+Cleanup ran inside the launcher — the app stopped, the ephemeral proxy token
+deleted, `encoder_containers_remaining: 0` — and an independent
+`modal container list` in the `dev` environment afterwards showed zero rows
+for `rayline-arc-session-encoder-flashinfer-perf037-rtx6000-32lane`. That
+second instrument is app-scoped rather than environment-scoped, amended in
+`ec7ad968` before this packet carried any authority: the `dev` environment is
+shared with foreign lanes (`rayline-tbench-mtrouter`,
+`rayline-router-tbench-dev`, `memex-agent`) that this experiment neither
+started nor may stop, so an environment-wide emptiness gate could not have
+been satisfied by a perfect run. The evidence bar rose to compensate, and the
+full listing is quoted in the run record both pre-run and post-teardown with
+the foreign rows visible. PERF037's launch authority is closed:
+`LAUNCHABLE_CONTRACT` is back to `None` in
+`rayline_rtx6000_burst_contract.py` after its one authorized execution, with
+`PATHFINDER_AUTHORIZATION_COMMIT` staying at the real
+`e3d684ee82b3fb570a833cd40789bdc09a2df8e8` as the record of what ran. The
+1,000-case release qualification stays held.
+
+**What this did not measure**, unchanged from the preregistration: the rig
+produces one homogeneous seeded-Poisson pulse per cell, so this is a finite
+burst-grade pulse against an empty rig, not a baseline → spike → baseline
+profile. The `38.52` second figure is therefore a conservative sizing number —
+a real burst arriving on top of a warm baseline with existing backlog absorbs
+less. Building the baseline-plus-spike shape needs a new `arrival_process`, an
+`open-loop-workload.v2` schema, a second schedule function and a new
+packet-builder path, none of which exists.
+
 ## Operating Rules
 
 - Use the repo's normal local image flow; do not invent another Semantic Router
