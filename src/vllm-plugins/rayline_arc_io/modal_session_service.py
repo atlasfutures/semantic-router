@@ -61,6 +61,17 @@ PERF035_APP_PROFILES = {
 PERF036_APP_PROFILES = {
     "rayline-arc-session-encoder-flashinfer-perf036-rtx6000": "flashinfer",
 }
+# The standing dev encoder. It is not a packet and closes no run, but it is a
+# profile because a profile is the only thing that carries an engine identity:
+# a name outside EXPERIMENT_APP_PROFILES gets `torch_reference` and the bare
+# `vllm@<sha>` build id, and the router's expected_build_id would then differ
+# from every arm PERF033-037 measured. It takes flashinfer for that parity,
+# and an L4 (below) because dev consults sit far under the 0.1977 decisions/s
+# PERF035 measured on that card. That number is also why this app is evidence
+# for nothing: the L4 does not carry the production rate.
+DEV_APP_PROFILES = {
+    "rayline-arc-session-encoder-dev": "flashinfer",
+}
 EXPERIMENT_APP_PROFILES = {
     **PERF030_APP_PROFILES,
     **AGT017_APP_PROFILES,
@@ -70,6 +81,7 @@ EXPERIMENT_APP_PROFILES = {
     **PERF034_APP_PROFILES,
     **PERF035_APP_PROFILES,
     **PERF036_APP_PROFILES,
+    **DEV_APP_PROFILES,
 }
 ALLOWED_APP_NAMES = (DEFAULT_APP_NAME, *SCALEOUT_APP_NAMES, *EXPERIMENT_APP_PROFILES)
 APP_NAME = os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", DEFAULT_APP_NAME)
@@ -122,11 +134,14 @@ def _runtime_profile() -> tuple[str, str]:
 # two GPU classes the deployment target (GCP Cloud Run with GPU) sells and a
 # capacity claim for that target has to be measured on that silicon. Scoped to
 # the exact app names so no closed run's evidence can change class underneath
-# it.
+# it. The standing dev app takes the L4 for cost, not for evidence, and so
+# gets its own branch rather than joining PERF035's.
 if APP_NAME in PERF035_APP_PROFILES:
     GPU_TYPE = "L4"
 elif APP_NAME in PERF036_APP_PROFILES:
     GPU_TYPE = "RTX-PRO-6000"
+elif APP_NAME in DEV_APP_PROFILES:
+    GPU_TYPE = "L4"
 else:
     GPU_TYPE = "H100"
 # The historical 8 was committed without rationale (4f14763b) and predates the
@@ -138,7 +153,10 @@ else:
 # the corpus, a bound preregistered in the PERF034 contract. PERF035 keeps 8
 # deliberately: on its 24 GB L4 the 32-lane corpus peak alone is ~49 GiB, and
 # even 8 lanes only fit by corpus construction (12.92 GiB against a ~19 GiB
-# pool), a bound preregistered in the PERF035 contract.
+# pool), a bound preregistered in the PERF035 contract. The dev app shares that
+# card and inherits the same 8, but not the corpus that makes 8 safe: the
+# coordinator admits in tokens, not GiB, so eight live dev sessions can ask the
+# L4 for more than it has.
 MAX_SESSIONS = 32 if APP_NAME in PERF034_APP_PROFILES else 8
 MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS
 IDLE_TTL_SECONDS = 5 * 60

@@ -8,13 +8,17 @@ from pathlib import Path
 SERVICE_PATH = Path(__file__).resolve().parents[1] / "modal_session_service.py"
 MAX_CONTAINERS = 1
 # The complete GPU routing, frozen as one block so no branch can move without
-# this file noticing. PERF035 and PERF036 each own exactly one card; every
-# other app name, including every closed run's, stays H100.
+# this file noticing. PERF035, PERF036 and the standing dev app each own
+# exactly one card; every other app name, including every closed run's, stays
+# H100. The dev app's branch is separate from PERF035's on purpose -- the same
+# card for a different reason, so neither can be widened by editing the other.
 GPU_TYPE_CONDITIONAL = (
     "if APP_NAME in PERF035_APP_PROFILES:\n"
     '    GPU_TYPE = "L4"\n'
     "elif APP_NAME in PERF036_APP_PROFILES:\n"
     '    GPU_TYPE = "RTX-PRO-6000"\n'
+    "elif APP_NAME in DEV_APP_PROFILES:\n"
+    '    GPU_TYPE = "L4"\n'
     "else:\n"
     '    GPU_TYPE = "H100"'
 )
@@ -257,6 +261,33 @@ def test_session_service_confines_perf036_rtx6000_to_its_exact_app_name() -> Non
     assert "PERF036" not in service_source.split("MAX_SESSIONS = ")[1].split("\n")[0]
     assert (
         "PERF036"
+        not in service_source.split("MAX_CONCURRENT_INPUTS = ")[1].split("\n")[0]
+    )
+
+
+def test_session_service_confines_the_standing_dev_app_to_its_exact_app_name() -> None:
+    """The one app name here that closes no run, pinned like the ones that do.
+
+    It is a profile only because a profile carries the engine identity: the
+    dev app must present the same `+gdn-flashinfer-eager` build id every arm
+    PERF033-037 measured, and nothing outside EXPERIMENT_APP_PROFILES can. It
+    takes an L4 for cost and keeps the 8/32 caps, so no closed run's card, cap
+    or engine identity moves when this app does.
+    """
+
+    service_source = source()
+
+    assert '"rayline-arc-session-encoder-dev": "flashinfer"' in service_source
+    # Registration in the experiment profiles is what allowlists the name AND
+    # what stamps the flashinfer build id; a bare allowlist entry would deploy
+    # with the torch_reference identity the router does not expect.
+    assert "**DEV_APP_PROFILES" in service_source
+    assert GPU_TYPE_CONDITIONAL in service_source
+    # Not in the cap-raise profile set, so the conditionals the PERF034 test
+    # pins already hold it at 8 sessions and 32 ingress inputs.
+    assert "DEV_APP" not in service_source.split("MAX_SESSIONS = ")[1].split("\n")[0]
+    assert (
+        "DEV_APP"
         not in service_source.split("MAX_CONCURRENT_INPUTS = ")[1].split("\n")[0]
     )
 
