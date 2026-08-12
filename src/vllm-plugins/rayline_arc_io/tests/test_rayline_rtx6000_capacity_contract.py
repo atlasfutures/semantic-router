@@ -284,14 +284,19 @@ def test_perf036_owns_its_rtx6000_encoder_app() -> None:
 
     source = SESSION_SERVICE.read_text()
     assert f'"{rtx.PERF036_APP_NAME}": "flashinfer"' in source
-    # This app name, and only this one, deploys on the RTX PRO 6000.
+    # The RTX PRO 6000 branch became a named set when PERF037 joined the card,
+    # so what this run needs pinned is membership, not the branch text: this
+    # app deploys on the card, and it is the PERF036 profile that puts it there.
     assert (
-        "elif APP_NAME in PERF036_APP_PROFILES:\n"
+        "elif APP_NAME in RTX6000_APP_PROFILES:\n"
         '    GPU_TYPE = "RTX-PRO-6000"\n' in source
     )
-    # The cap raise stays PERF034's: eight lanes and 32 ingress inputs here,
+    card_set = source.split("RTX6000_APP_PROFILES = ")[1].split("\n")[0]
+    assert "PERF036_APP_PROFILES" in card_set
+    # The cap raise does not follow: eight lanes and 32 ingress inputs here,
     # because the packet's one variable is the silicon.
-    assert "MAX_SESSIONS = 32 if APP_NAME in PERF034_APP_PROFILES else 8" in source
+    assert "MAX_SESSIONS = 32 if APP_NAME in CAP_RAISED_APP_PROFILES else 8" in source
+    assert "PERF036" not in source.split("CAP_RAISED_APP_PROFILES = ")[1].split("\n")[0]
 
 
 def test_perf036_memory_is_safe_by_the_derived_cap_for_the_first_time() -> None:

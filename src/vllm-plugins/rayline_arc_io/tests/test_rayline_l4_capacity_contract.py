@@ -237,8 +237,10 @@ def test_perf035_owns_its_l4_encoder_app() -> None:
     # deploys on an L4.
     assert "if APP_NAME in PERF035_APP_PROFILES:\n    GPU_TYPE = \"L4\"\n" in source
     # A 24 GB card cannot hold the 32-lane corpus, so the cap raise must not
-    # follow the L4 app.
-    assert "MAX_SESSIONS = 32 if APP_NAME in PERF034_APP_PROFILES else 8" in source
+    # follow the L4 app. The raised set is named rather than listed, so the
+    # check that matters is that PERF035 is not in it.
+    assert "MAX_SESSIONS = 32 if APP_NAME in CAP_RAISED_APP_PROFILES else 8" in source
+    assert "PERF035" not in source.split("CAP_RAISED_APP_PROFILES = ")[1].split("\n")[0]
 
 
 def test_perf035_memory_is_safe_only_by_corpus_construction() -> None:

@@ -193,8 +193,12 @@ def test_perf034_owns_its_cap_raised_encoder_app() -> None:
 
     source = SESSION_SERVICE.read_text()
     assert f'"{capacity.PERF034_APP_NAME}": "flashinfer"' in source
-    assert "32 if APP_NAME in PERF034_APP_PROFILES else 8" in source
-    assert "64 if APP_NAME in PERF034_APP_PROFILES else 32" in source
+    # The raised set became a name when PERF037 joined it, so what this run
+    # needs pinned is that the PERF034 profile is what puts its app in the set.
+    assert "32 if APP_NAME in CAP_RAISED_APP_PROFILES else 8" in source
+    assert "64 if APP_NAME in CAP_RAISED_APP_PROFILES else 32" in source
+    cap_set = source.split("CAP_RAISED_APP_PROFILES = ")[1].split("\n")[0]
+    assert "PERF034_APP_PROFILES" in cap_set
 
 
 def test_perf034_trace_prefix_is_the_recorded_perf020_trace() -> None:

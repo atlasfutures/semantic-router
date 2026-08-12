@@ -61,6 +61,21 @@ PERF035_APP_PROFILES = {
 PERF036_APP_PROFILES = {
     "rayline-arc-session-encoder-flashinfer-perf036-rtx6000": "flashinfer",
 }
+# PERF037 is the burst-absorption arm, and it is the first app to need two
+# earlier packets' deviations at once: PERF034's 32/64 cap raise and PERF036's
+# card. A burst claim for the deployment target has to be measured on the
+# target's silicon, at the widest rig the frozen corpus can express -- eight
+# lanes cannot even offer the burst, because eight is the most that can ever be
+# in flight there.
+PERF037_APP_PROFILES = {
+    "rayline-arc-session-encoder-flashinfer-perf037-rtx6000-32lane": "flashinfer",
+}
+# The two cross-cutting sets the card and the caps key off. Membership is by
+# exact app name in both, so no closed run's app can change class or cap
+# underneath it, and a new packet joins one, the other, or both by naming
+# itself here rather than by editing a conditional.
+RTX6000_APP_PROFILES = {**PERF036_APP_PROFILES, **PERF037_APP_PROFILES}
+CAP_RAISED_APP_PROFILES = {**PERF034_APP_PROFILES, **PERF037_APP_PROFILES}
 EXPERIMENT_APP_PROFILES = {
     **PERF030_APP_PROFILES,
     **AGT017_APP_PROFILES,
@@ -70,6 +85,7 @@ EXPERIMENT_APP_PROFILES = {
     **PERF034_APP_PROFILES,
     **PERF035_APP_PROFILES,
     **PERF036_APP_PROFILES,
+    **PERF037_APP_PROFILES,
 }
 ALLOWED_APP_NAMES = (DEFAULT_APP_NAME, *SCALEOUT_APP_NAMES, *EXPERIMENT_APP_PROFILES)
 APP_NAME = os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", DEFAULT_APP_NAME)
@@ -118,35 +134,39 @@ def _runtime_profile() -> tuple[str, str]:
 # earlier placement work ruled out simple region distance as its cause.
 # Re-pin only with a measurement that clears a placement gate.
 # Every recorded run is an H100 run and stays one. PERF035 alone deploys on a
-# 24 GB L4 and PERF036 alone on a 96 GB RTX PRO 6000, because those are the
-# two GPU classes the deployment target (GCP Cloud Run with GPU) sells and a
-# capacity claim for that target has to be measured on that silicon. Scoped to
-# the exact app names so no closed run's evidence can change class underneath
-# it.
+# 24 GB L4 and the RTX PRO 6000 set (PERF036, PERF037) on a 96 GB RTX PRO 6000,
+# because those are the two GPU classes the deployment target (GCP Cloud Run
+# with GPU) sells and a capacity claim for that target has to be measured on
+# that silicon. Scoped to the exact app names so no closed run's evidence can
+# change class underneath it.
 if APP_NAME in PERF035_APP_PROFILES:
     GPU_TYPE = "L4"
-elif APP_NAME in PERF036_APP_PROFILES:
+elif APP_NAME in RTX6000_APP_PROFILES:
     GPU_TYPE = "RTX-PRO-6000"
 else:
     GPU_TYPE = "H100"
 # The historical 8 was committed without rationale (4f14763b) and predates the
 # frozen corpus's 8 episodes; it is retained for every non-PERF034 app because
 # the live stack sizes around it. PERF034 raises its own app to 32 to locate
-# the encoder's saturation knee. 32 lanes on the frozen packet-v3 corpus peaks
-# at 4,261,735 resident tokens (~51% of the ~70 GiB pool); the worst case
-# implied by MAX_RESIDENT_TOKENS (96 GiB) does NOT fit and is excluded only by
-# the corpus, a bound preregistered in the PERF034 contract. PERF035 keeps 8
-# deliberately: on its 24 GB L4 the 32-lane corpus peak alone is ~49 GiB, and
-# even 8 lanes only fit by corpus construction (12.92 GiB against a ~19 GiB
-# pool), a bound preregistered in the PERF035 contract.
-MAX_SESSIONS = 32 if APP_NAME in PERF034_APP_PROFILES else 8
+# the encoder's saturation knee, and PERF037 inherits the raise because its
+# burst question cannot even be offered at eight lanes. 32 lanes on the frozen
+# packet-v3 corpus peaks at 4,261,735 resident tokens (~51% of the H100's
+# ~70 GiB pool, ~60% of the RTX PRO 6000's ~81 GiB one); the worst case implied
+# by MAX_RESIDENT_TOKENS (96 GiB) does NOT fit either card and is excluded only
+# by the corpus, a bound preregistered in the PERF034 and PERF037 contracts.
+# PERF035 and PERF036 keep 8 deliberately: PERF036 because its packet's one
+# variable is the silicon, and PERF035 because on its 24 GB L4 the 32-lane
+# corpus peak alone is ~49 GiB, and even 8 lanes only fit by corpus
+# construction (12.92 GiB against a ~19 GiB pool).
+MAX_SESSIONS = 32 if APP_NAME in CAP_RAISED_APP_PROFILES else 8
 MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS
 IDLE_TTL_SECONDS = 5 * 60
 CHUNK_SCHEDULE_TOKENS = 8_192
 # At 32 lanes every in-flight request would exactly hit a 32-input ingress cap,
-# and queueing there is invisible to start_lag; 64 keeps ingress unbound so the
-# PERF034 sweep measures the encoder, not the front door.
-MAX_CONCURRENT_INPUTS = 64 if APP_NAME in PERF034_APP_PROFILES else 32
+# and queueing there is invisible to start_lag; 64 keeps ingress unbound so a
+# 32-lane sweep measures the encoder, not the front door. That matters most for
+# PERF037, whose whole subject is where an unabsorbed burst queues.
+MAX_CONCURRENT_INPUTS = 64 if APP_NAME in CAP_RAISED_APP_PROFILES else 32
 
 _THIS_DIR = Path(__file__).resolve().parent
 _REMOTE_PLUGIN_DIR = "/opt/rayline_arc_io"
