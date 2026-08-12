@@ -127,15 +127,28 @@ PERF037_RUN_ID = "rayline-rtx6000-burst-perf037-20260812"
 # literal below can never equal a commit.
 PATHFINDER_AUTHORIZATION_COMMIT = "PENDING"
 
-# NOT GRANTED. The authority still reads where PERF036's grant left it, and
-# PERF036 closed on the reserve floor exactly: `$194.459850266383` conservative
-# under a `$197.459850266383` ceiling is `$3.00`, all of it reserve. This
-# packet's `$5.6186208` envelope therefore breaches the floor by exactly
-# itself, and `budget_receipt` refuses. The minimum viable grant is the whole
-# envelope -- there is no partial headroom to draw on first -- which takes the
-# ceiling to `$203.078471066383` and leaves the reserve at exactly `$3.00`
-# again. Only a human may move it, at a reviewed authorization checkpoint.
-AUTHORIZED_CUMULATIVE_USD = 197.459850266383
+# GRANTED 2026-08-12. The human operator approved the run in the live session
+# and named the figure: raise the cumulative authority from
+# `$197.459850266383` to `$203.078471066383`, a `$5.6186208` grant, for run id
+# `rayline-rtx6000-burst-perf037-20260812`, with the reserve staying at
+# `$3.00`. The grant covers exactly ONE execution of PERF037 and nothing else.
+#
+# The raise had to be the whole envelope. PERF036 closed on the reserve floor
+# exactly -- `$194.459850266383` conservative under a `$197.459850266383`
+# ceiling is `$3.00`, all of it reserve -- so there was no partial headroom to
+# draw on first and the minimum viable grant equals the envelope itself. The
+# reserve after a full envelope lands on exactly `$3.00` again. This is the
+# family's minimum-viable-grant precedent, and it is computed rather than
+# typed: `minimum_viable_grant_usd(PERF037.budget)` returns it.
+#
+# The prep document's two open questions were answered as part of the grant.
+# The purchase is the degradation shape -- `absorbable_burst_seconds` -- not
+# the not-absorbed verdict, which arithmetic already implies. The 2,400-second
+# wall stands, with abort-not-extend rather than paying for a wider one.
+#
+# The authorization checkpoint is the Pathfinder commit whose registry entry
+# records the confirmed grant.
+AUTHORIZED_CUMULATIVE_USD = 203.078471066383
 PREVIOUS_CONSERVATIVE_USD = 194.459850266383
 MINIMUM_VIABLE_GRANT_USD = 5.6186208
 GRANTED_CUMULATIVE_WOULD_BE_USD = 203.078471066383

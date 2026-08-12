@@ -74,14 +74,14 @@ def test_perf037_is_registered_with_the_launcher_it_will_run_under() -> None:
         assert launcher._resolve_contract(burst.PERF037_RUN_ID) is burst.PERF037
 
 
-def test_perf037_is_ungranted_and_needs_its_whole_envelope() -> None:
-    """Nothing is left to spend, so the raise is the envelope, exactly.
+def test_perf037_is_granted_its_whole_envelope_and_no_more() -> None:
+    """The raise was the envelope exactly, so the reserve lands on the floor.
 
-    PERF036 closed on the reserve floor: its full-envelope cumulative is the
-    conservative position here, and the standing ceiling is exactly `$3.00`
-    above it, all of it reserve. So this packet cannot draw on partial
-    headroom -- there is none -- and `budget_receipt` refuses until a human
-    moves the ceiling by the whole `$5.6186208`.
+    PERF036 closed on the reserve floor, so this packet could not draw on
+    partial headroom -- there was none -- and the minimum viable grant equals
+    the envelope. The 2026-08-12 authorization moved the ceiling by precisely
+    that, so a receipt now exists and a full envelope leaves exactly the
+    `$3.00` floor behind it.
     """
 
     contract = burst.PERF037.budget
@@ -95,30 +95,29 @@ def test_perf037_is_ungranted_and_needs_its_whole_envelope() -> None:
     assert envelope == pytest.approx(5.6186208)
     assert envelope < contract.packet_ceiling_usd == 6.0
 
-    # Fail-closed by arithmetic, not by a flag: the reserve is short by the
-    # whole envelope, so no receipt for this packet exists at all.
-    with pytest.raises(budget.BudgetError):
-        budget.budget_receipt(contract)
-    assert budget.minimum_viable_grant_usd(contract) == pytest.approx(
-        burst.MINIMUM_VIABLE_GRANT_USD
-    )
+    # Granted minimally: the receipt exists and the envelope it prices is the
+    # one the grant was computed from.
+    receipt = budget.budget_receipt(contract)
+    assert receipt["maximum_resource_envelope_usd"] == pytest.approx(5.6186208)
     assert burst.MINIMUM_VIABLE_GRANT_USD == pytest.approx(envelope)
+    # Granted exactly, so nothing further is owed on this packet.
+    assert budget.minimum_viable_grant_usd(contract) == 0.0
 
-    # The standing position is PERF036's close, to the digit, and the grant
-    # this packet needs lands the reserve back on the floor.
+    # The ceiling moved by exactly the grant above PERF036's, and the
+    # conservative position is PERF036's full-envelope close.
     assert burst.AUTHORIZED_CUMULATIVE_USD == pytest.approx(
-        rtx.AUTHORIZED_CUMULATIVE_USD
+        rtx.AUTHORIZED_CUMULATIVE_USD + burst.MINIMUM_VIABLE_GRANT_USD
+    )
+    assert burst.AUTHORIZED_CUMULATIVE_USD == pytest.approx(
+        burst.GRANTED_CUMULATIVE_WOULD_BE_USD
     )
     assert burst.PREVIOUS_CONSERVATIVE_USD == pytest.approx(
         rtx.PREVIOUS_CONSERVATIVE_USD + rtx.MINIMUM_VIABLE_GRANT_USD
     )
-    assert burst.GRANTED_CUMULATIVE_WOULD_BE_USD == pytest.approx(
-        burst.AUTHORIZED_CUMULATIVE_USD + burst.MINIMUM_VIABLE_GRANT_USD
-    )
-    reserve_if_granted = burst.GRANTED_CUMULATIVE_WOULD_BE_USD - (
+    reserve = burst.AUTHORIZED_CUMULATIVE_USD - (
         burst.PREVIOUS_CONSERVATIVE_USD + envelope
     )
-    assert reserve_if_granted == pytest.approx(contract.required_reserve_usd)
+    assert reserve == pytest.approx(contract.required_reserve_usd)
 
 
 def test_perf037_leaves_every_recorded_packet_priced_exactly_as_recorded() -> None:
