@@ -242,7 +242,12 @@ func (r *OpenAIRouter) decisionOnlyRoutingTarget() (
 	var target *config.Decision
 	for index := range r.Config.Decisions {
 		decision := &r.Config.Decisions[index]
-		if !raylineARCSelection(decision.Algorithm) {
+		// The algorithm block, not just the type name. A decision can name
+		// rayline_arc without carrying its configuration; config validation
+		// normally catches that, but this path answers over the network and
+		// must not turn a bad config into a crashed router.
+		if !raylineARCSelection(decision.Algorithm) ||
+			decision.Algorithm.RaylineARC == nil {
 			continue
 		}
 		if target != nil {

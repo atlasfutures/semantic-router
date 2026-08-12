@@ -339,6 +339,22 @@ func TestRouteDecisionFailsClosedWithoutAConfiguredDecision(t *testing.T) {
 	}
 }
 
+// A decision can name the algorithm without carrying its configuration. Config
+// validation normally catches that, but the management listener answers over
+// the network and must not turn a bad config into a crashed router.
+func TestRouteDecisionFailsClosedOnAlgorithmWithoutConfiguration(t *testing.T) {
+	selector := &stubARCSelector{arm: 0, workers: decisionServiceWorkers()}
+	router := decisionServiceRouter(t, selector)
+	router.Config.Decisions[0].Algorithm.RaylineARC = nil
+
+	if _, err := router.routeDecisionRuntimeState().RouteDecision(
+		context.Background(),
+		routerruntime.RouteDecisionRequest{Body: anthropicBody("hello")},
+	); err == nil {
+		t.Fatal("RouteDecision() error = nil, want a failure when the algorithm carries no configuration")
+	}
+}
+
 // Two candidate decisions make the choice ambiguous. Guessing one would route
 // live traffic through a policy nobody selected.
 func TestRouteDecisionFailsClosedOnAmbiguousDecisions(t *testing.T) {
