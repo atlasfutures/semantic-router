@@ -64,6 +64,7 @@ def test_session_service_is_authenticated_and_bounded() -> None:
         "cpu",
         "memory",
         "timeout",
+        "min_containers",
         "scaledown_window",
         "max_containers",
         "volumes",
@@ -75,6 +76,7 @@ def test_session_service_is_authenticated_and_bounded() -> None:
     # narrow-region multiplier and PERF011/PERF014 measured it as slower, not
     # faster. Re-pin only with a measurement that clears a placement gate.
     assert "region" not in function_keywords
+    assert ast.unparse(function_keyword_values["min_containers"]) == "MIN_CONTAINERS"
     assert ast.literal_eval(function_keyword_values["max_containers"]) == MAX_CONTAINERS
     # The ingress cap is app-conditional (PERF034 widens it), so the decorator
     # must reference the module constant whose definition the freeze test pins.
@@ -134,6 +136,15 @@ def test_session_service_allows_only_the_frozen_scaleout_app_names() -> None:
         service_source
     )
     assert "unsupported Rayline ARC session app name" in service_source
+
+
+def test_session_service_keeps_only_the_production_app_warm() -> None:
+    service_source = source()
+
+    assert "MIN_CONTAINERS = 1 if APP_NAME == DEFAULT_APP_NAME else 0" in (
+        service_source
+    )
+    assert "min_containers=MIN_CONTAINERS" in service_source
 
 
 def test_session_service_confines_perf030_backends_to_exact_app_names() -> None:

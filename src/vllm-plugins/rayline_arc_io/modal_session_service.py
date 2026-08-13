@@ -87,6 +87,10 @@ ALLOWED_APP_NAMES = (DEFAULT_APP_NAME, *SCALEOUT_APP_NAMES, *EXPERIMENT_APP_PROF
 APP_NAME = os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", DEFAULT_APP_NAME)
 if APP_NAME not in ALLOWED_APP_NAMES:
     raise RuntimeError("unsupported Rayline ARC session app name")
+# The default app is the production endpoint and keeps one encoder warm. The
+# explicitly named dev and experiment apps remain scale-to-zero so benchmark
+# and development deployments do not acquire an accidental standing cost.
+MIN_CONTAINERS = 1 if APP_NAME == DEFAULT_APP_NAME else 0
 MODEL_ID = "Qwen/Qwen3.5-0.8B"
 MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
 CUDA_BASE_IMAGE = (
@@ -266,6 +270,7 @@ vllm_cache = modal.Volume.from_name("rayline-vllm-cache", create_if_missing=True
     cpu=8.0,
     memory=65_536,
     timeout=31 * 60,
+    min_containers=MIN_CONTAINERS,
     scaledown_window=300,
     max_containers=1,
     volumes={
