@@ -17,8 +17,11 @@ import (
 )
 
 const (
-	apiReadTimeout  = 30 * time.Second
-	apiWriteTimeout = 2 * time.Minute
+	apiReadTimeout = 30 * time.Second
+	// Route decisions can legitimately wait through a ten-minute retained
+	// encoder cold start. Keep the server's response budget wider than that
+	// internal deadline so the handler can return its completed decision.
+	apiWriteTimeout = 11 * time.Minute
 	apiIdleTimeout  = 60 * time.Second
 )
 
