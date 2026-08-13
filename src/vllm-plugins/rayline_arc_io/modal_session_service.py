@@ -73,8 +73,8 @@ DEV_APP_PROFILES = {
     "rayline-arc-session-encoder-dev": "flashinfer",
 }
 # The standing production encoder takes the proven FlashInfer engine identity
-# on the default H100 placement. It has its own name so the historical default
-# app remains the byte-identical torch-reference arm recorded by closed runs.
+# on an L40S placement. It has its own name so the historical default app
+# remains the byte-identical torch-reference arm recorded by closed runs.
 PROD_APP_PROFILES = {
     "rayline-arc-session-encoder-prod": "flashinfer",
 }
@@ -94,10 +94,10 @@ ALLOWED_APP_NAMES = (DEFAULT_APP_NAME, *SCALEOUT_APP_NAMES, *EXPERIMENT_APP_PROF
 APP_NAME = os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", DEFAULT_APP_NAME)
 if APP_NAME not in ALLOWED_APP_NAMES:
     raise RuntimeError("unsupported Rayline ARC session app name")
-# Only the explicitly named production endpoint keeps one encoder warm. The
-# historical default, dev, and experiment apps remain scale-to-zero so frozen
-# benchmark and development deployments do not acquire a standing cost.
-MIN_CONTAINERS = 1 if APP_NAME in PROD_APP_PROFILES else 0
+# All encoder deployments scale to zero. Shadow processing tolerates the cold
+# start, and its caller owns a bounded completion timeout rather than paying a
+# standing GPU cost between recordings.
+MIN_CONTAINERS = 0
 MODEL_ID = "Qwen/Qwen3.5-0.8B"
 MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
 CUDA_BASE_IMAGE = (
@@ -145,14 +145,16 @@ def _runtime_profile() -> tuple[str, str]:
 # two GPU classes the deployment target (GCP Cloud Run with GPU) sells and a
 # capacity claim for that target has to be measured on that silicon. Scoped to
 # the exact app names so no closed run's evidence can change class underneath
-# it. The standing dev app takes the L4 for cost, not for evidence, and so
-# gets its own branch rather than joining PERF035's.
+# it. The standing dev app takes the L4 for cost, while the standing production
+# app takes an L40S; neither is benchmark evidence, so each gets its own branch.
 if APP_NAME in PERF035_APP_PROFILES:
     GPU_TYPE = "L4"
 elif APP_NAME in PERF036_APP_PROFILES:
     GPU_TYPE = "RTX-PRO-6000"
 elif APP_NAME in DEV_APP_PROFILES:
     GPU_TYPE = "L4"
+elif APP_NAME in PROD_APP_PROFILES:
+    GPU_TYPE = "L40S"
 else:
     GPU_TYPE = "H100"
 # The historical 8 was committed without rationale (4f14763b) and predates the
@@ -167,7 +169,8 @@ else:
 # pool), a bound preregistered in the PERF035 contract. The dev app shares that
 # card and inherits the same 8, but not the corpus that makes 8 safe: the
 # coordinator admits in tokens, not GiB, so eight live dev sessions can ask the
-# L4 for more than it has.
+# L4 for more than it has. The production L40S also keeps 8/32; its 48 GB card
+# has room for the derived eight-session resident-token bound.
 MAX_SESSIONS = 32 if APP_NAME in PERF034_APP_PROFILES else 8
 MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS
 IDLE_TTL_SECONDS = 5 * 60
