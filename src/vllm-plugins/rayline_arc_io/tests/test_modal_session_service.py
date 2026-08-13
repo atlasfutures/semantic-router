@@ -157,7 +157,9 @@ def test_session_service_snapshots_only_the_production_gpu() -> None:
     assert "@modal.enter(snap=GPU_SNAPSHOT_ENABLED)" in service_source
     assert "enable_sleep_mode=GPU_SNAPSHOT_ENABLED" in service_source
     assert "asyncio.run(self._engine.sleep(level=1))" in service_source
+    assert "asyncio.run(self._engine.checkpoint_prepare())" in service_source
     assert "@modal.enter(snap=False)" in service_source
+    assert "asyncio.run(self._engine.checkpoint_restore())" in service_source
     assert "asyncio.run(self._engine.wake_up())" in service_source
 
 

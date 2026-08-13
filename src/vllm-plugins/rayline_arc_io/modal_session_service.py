@@ -380,10 +380,16 @@ class SessionEncoder:
         )
         if GPU_SNAPSHOT_ENABLED:
             asyncio.run(self._engine.sleep(level=1))
+            # The pinned vLLM fork exposes process-checkpoint hooks for GPU
+            # communicator state. Modal snapshots the entire engine process,
+            # so prepare it only after vLLM has released its tracked GPU
+            # allocations and immediately before Modal captures the process.
+            asyncio.run(self._engine.checkpoint_prepare())
 
     @modal.enter(snap=False)
     def restore(self) -> None:
         if GPU_SNAPSHOT_ENABLED:
+            asyncio.run(self._engine.checkpoint_restore())
             asyncio.run(self._engine.wake_up())
 
     @modal.exit()
