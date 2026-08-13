@@ -5,7 +5,7 @@
 #
 # This script owns exactly the three things that cost money outside Docker:
 #   - the OpenRouter ephemeral key (hard server-side spend cap)
-#   - the Modal encoder autoscaler floor (min_containers, ~$4.838/hr while >0)
+#   - the Modal dev encoder autoscaler floor (min_containers, ~$1.69/hr while >0)
 #   - the Modal proxy token that authenticates the router to that encoder
 #
 # It is a thin, auditable wrapper over the same calls the frozen E2E launchers
@@ -152,8 +152,9 @@ print(f"min_containers={sys.argv[1]}")
 PY
 }
 
-# encoder-pin: hold one warm H100 so a think-gap over the 300s scaledown window
-# does not pay a 78.9-96.9s cold start. BILLS CONTINUOUSLY at ~$4.838/hr.
+# encoder-pin: hold the standing dev L4 warm so a think-gap over the 300s
+# scaledown window does not pay another cold start. BILLS CONTINUOUSLY at
+# about $1.69/hr including the deployed CPU and memory shape.
 cmd_encoder_pin() { _autoscale 1; }
 
 # encoder-unpin: release the floor. This is the single most important teardown
@@ -320,7 +321,7 @@ Modal proxy auth:
   token-mint                      prints token_id then token_secret
   token-delete <token-id>
 
-Modal encoder (~\$4.838/hr while pinned):
+Modal dev encoder (~\$1.69/hr while pinned):
   encoder-pin                     min_containers=1  (warm floor, BILLING)
   encoder-unpin                   min_containers=0  (stops the burn)
   encoder-url                     resolve deployed web URL
