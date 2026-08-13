@@ -8,19 +8,16 @@ from pathlib import Path
 SERVICE_PATH = Path(__file__).resolve().parents[1] / "modal_session_service.py"
 MAX_CONTAINERS = 1
 # The complete GPU routing, frozen as one block so no branch can move without
-# this file noticing. PERF035, PERF036, and the standing dev and production
-# apps each own exactly one card; every other app name, including every closed
-# run's, stays H100. Standing apps have separate branches so none can widen a
-# closed benchmark arm by editing the other.
+# this file noticing. PERF035 and PERF036 each own exactly one card, while the
+# standing dev and production apps share an L4 branch isolated from PERF035;
+# every other app name, including every closed run's, stays H100.
 GPU_TYPE_CONDITIONAL = (
     "if APP_NAME in PERF035_APP_PROFILES:\n"
     '    GPU_TYPE = "L4"\n'
     "elif APP_NAME in PERF036_APP_PROFILES:\n"
     '    GPU_TYPE = "RTX-PRO-6000"\n'
-    "elif APP_NAME in DEV_APP_PROFILES:\n"
+    "elif APP_NAME in DEV_APP_PROFILES or APP_NAME in PROD_APP_PROFILES:\n"
     '    GPU_TYPE = "L4"\n'
-    "elif APP_NAME in PROD_APP_PROFILES:\n"
-    '    GPU_TYPE = "L40S"\n'
     "else:\n"
     '    GPU_TYPE = "H100"'
 )

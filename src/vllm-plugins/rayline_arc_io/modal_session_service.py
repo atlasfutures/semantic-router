@@ -73,7 +73,7 @@ DEV_APP_PROFILES = {
     "rayline-arc-session-encoder-dev": "flashinfer",
 }
 # The standing production encoder takes the proven FlashInfer engine identity
-# on an L40S placement. It has its own name so the historical default app
+# on an L4 placement. It has its own name so the historical default app
 # remains the byte-identical torch-reference arm recorded by closed runs.
 PROD_APP_PROFILES = {
     "rayline-arc-session-encoder-prod": "flashinfer",
@@ -145,16 +145,14 @@ def _runtime_profile() -> tuple[str, str]:
 # two GPU classes the deployment target (GCP Cloud Run with GPU) sells and a
 # capacity claim for that target has to be measured on that silicon. Scoped to
 # the exact app names so no closed run's evidence can change class underneath
-# it. The standing dev app takes the L4 for cost, while the standing production
-# app takes an L40S; neither is benchmark evidence, so each gets its own branch.
+# it. The standing dev and production apps take L4s for cost; neither is
+# benchmark evidence, so they share a branch isolated from PERF035.
 if APP_NAME in PERF035_APP_PROFILES:
     GPU_TYPE = "L4"
 elif APP_NAME in PERF036_APP_PROFILES:
     GPU_TYPE = "RTX-PRO-6000"
-elif APP_NAME in DEV_APP_PROFILES:
+elif APP_NAME in DEV_APP_PROFILES or APP_NAME in PROD_APP_PROFILES:
     GPU_TYPE = "L4"
-elif APP_NAME in PROD_APP_PROFILES:
-    GPU_TYPE = "L40S"
 else:
     GPU_TYPE = "H100"
 # The historical 8 was committed without rationale (4f14763b) and predates the
@@ -166,11 +164,10 @@ else:
 # the corpus, a bound preregistered in the PERF034 contract. PERF035 keeps 8
 # deliberately: on its 24 GB L4 the 32-lane corpus peak alone is ~49 GiB, and
 # even 8 lanes only fit by corpus construction (12.92 GiB against a ~19 GiB
-# pool), a bound preregistered in the PERF035 contract. The dev app shares that
-# card and inherits the same 8, but not the corpus that makes 8 safe: the
-# coordinator admits in tokens, not GiB, so eight live dev sessions can ask the
-# L4 for more than it has. The production L40S also keeps 8/32; its 48 GB card
-# has room for the derived eight-session resident-token bound.
+# pool), a bound preregistered in the PERF035 contract. The standing dev and
+# production apps share that GPU class and inherit the same 8, but not the
+# corpus that makes 8 safe: the coordinator admits in tokens, not GiB, so eight
+# maximum-sized live sessions can ask an L4 for more than it has.
 MAX_SESSIONS = 32 if APP_NAME in PERF034_APP_PROFILES else 8
 MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS
 IDLE_TTL_SECONDS = 5 * 60
