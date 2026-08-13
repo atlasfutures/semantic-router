@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -98,6 +99,7 @@ if APP_NAME not in ALLOWED_APP_NAMES:
 # start, and its caller owns a bounded completion timeout rather than paying a
 # standing GPU cost between recordings.
 MIN_CONTAINERS = 0
+GPU_SNAPSHOT_ENABLED = APP_NAME in PROD_APP_PROFILES
 MODEL_ID = "Qwen/Qwen3.5-0.8B"
 MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
 CUDA_BASE_IMAGE = (
@@ -245,6 +247,7 @@ image = (
             "HF_HUB_CACHE": "/root/.cache/huggingface/hub",
             "HF_XET_HIGH_PERFORMANCE": "1",
             "TOKENIZERS_PARALLELISM": "false",
+            "TORCHINDUCTOR_COMPILE_THREADS": "1",
             "VLLM_CACHE_ROOT": "/root/.cache/vllm",
             "VLLM_LOGGING_LEVEL": "WARNING",
             "RAYLINE_ARC_SESSION_APP_NAME": APP_NAME,
@@ -280,6 +283,10 @@ vllm_cache = modal.Volume.from_name("rayline-vllm-cache", create_if_missing=True
     min_containers=MIN_CONTAINERS,
     scaledown_window=300,
     max_containers=1,
+    enable_memory_snapshot=GPU_SNAPSHOT_ENABLED,
+    experimental_options=(
+        {"enable_gpu_snapshot": True} if GPU_SNAPSHOT_ENABLED else {}
+    ),
     volumes={
         "/root/.cache/huggingface": hf_cache,
         "/root/.cache/vllm": vllm_cache,
@@ -287,7 +294,7 @@ vllm_cache = modal.Volume.from_name("rayline-vllm-cache", create_if_missing=True
 )
 @modal.concurrent(max_inputs=MAX_CONCURRENT_INPUTS)
 class SessionEncoder:
-    @modal.enter()
+    @modal.enter(snap=GPU_SNAPSHOT_ENABLED)
     def start(self) -> None:
         from rayline_arc_io.processor import (  # noqa: PLC0415
             RaylineArcIOProcessor,
@@ -333,6 +340,7 @@ class SessionEncoder:
             max_num_seqs=MAX_SESSIONS,
             enable_chunked_prefill=True,
             enable_prefix_caching=False,
+            enable_sleep_mode=GPU_SNAPSHOT_ENABLED,
             gpu_memory_utilization=0.92,
             enforce_eager=True,
             gdn_prefill_backend=runtime_backend,
@@ -370,6 +378,13 @@ class SessionEncoder:
                 self._coordinator.append_metrics_snapshot,
             ),
         )
+        if GPU_SNAPSHOT_ENABLED:
+            asyncio.run(self._engine.sleep(level=1))
+
+    @modal.enter(snap=False)
+    def restore(self) -> None:
+        if GPU_SNAPSHOT_ENABLED:
+            asyncio.run(self._engine.wake_up())
 
     @modal.exit()
     async def stop(self) -> None:

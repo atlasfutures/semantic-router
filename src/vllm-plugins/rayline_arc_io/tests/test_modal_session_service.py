@@ -66,6 +66,8 @@ def test_session_service_is_authenticated_and_bounded() -> None:
         "min_containers",
         "scaledown_window",
         "max_containers",
+        "enable_memory_snapshot",
+        "experimental_options",
         "volumes",
     } <= function_keywords
     function_keyword_values = {
@@ -142,6 +144,21 @@ def test_session_service_scales_every_app_to_zero() -> None:
 
     assert "MIN_CONTAINERS = 0" in service_source
     assert "min_containers=MIN_CONTAINERS" in service_source
+
+
+def test_session_service_snapshots_only_the_production_gpu() -> None:
+    service_source = source()
+
+    assert "GPU_SNAPSHOT_ENABLED = APP_NAME in PROD_APP_PROFILES" in service_source
+    assert "enable_memory_snapshot=GPU_SNAPSHOT_ENABLED" in service_source
+    assert '{"enable_gpu_snapshot": True} if GPU_SNAPSHOT_ENABLED else {}' in (
+        service_source
+    )
+    assert "@modal.enter(snap=GPU_SNAPSHOT_ENABLED)" in service_source
+    assert "enable_sleep_mode=GPU_SNAPSHOT_ENABLED" in service_source
+    assert "asyncio.run(self._engine.sleep(level=1))" in service_source
+    assert "@modal.enter(snap=False)" in service_source
+    assert "asyncio.run(self._engine.wake_up())" in service_source
 
 
 def test_session_service_confines_perf030_backends_to_exact_app_names() -> None:
