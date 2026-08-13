@@ -72,6 +72,12 @@ PERF036_APP_PROFILES = {
 DEV_APP_PROFILES = {
     "rayline-arc-session-encoder-dev": "flashinfer",
 }
+# The standing production encoder takes the proven FlashInfer engine identity
+# on the default H100 placement. It has its own name so the historical default
+# app remains the byte-identical torch-reference arm recorded by closed runs.
+PROD_APP_PROFILES = {
+    "rayline-arc-session-encoder-prod": "flashinfer",
+}
 EXPERIMENT_APP_PROFILES = {
     **PERF030_APP_PROFILES,
     **AGT017_APP_PROFILES,
@@ -82,15 +88,16 @@ EXPERIMENT_APP_PROFILES = {
     **PERF035_APP_PROFILES,
     **PERF036_APP_PROFILES,
     **DEV_APP_PROFILES,
+    **PROD_APP_PROFILES,
 }
 ALLOWED_APP_NAMES = (DEFAULT_APP_NAME, *SCALEOUT_APP_NAMES, *EXPERIMENT_APP_PROFILES)
 APP_NAME = os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", DEFAULT_APP_NAME)
 if APP_NAME not in ALLOWED_APP_NAMES:
     raise RuntimeError("unsupported Rayline ARC session app name")
-# The default app is the production endpoint and keeps one encoder warm. The
-# explicitly named dev and experiment apps remain scale-to-zero so benchmark
-# and development deployments do not acquire an accidental standing cost.
-MIN_CONTAINERS = 1 if APP_NAME == DEFAULT_APP_NAME else 0
+# Only the explicitly named production endpoint keeps one encoder warm. The
+# historical default, dev, and experiment apps remain scale-to-zero so frozen
+# benchmark and development deployments do not acquire a standing cost.
+MIN_CONTAINERS = 1 if APP_NAME in PROD_APP_PROFILES else 0
 MODEL_ID = "Qwen/Qwen3.5-0.8B"
 MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
 CUDA_BASE_IMAGE = (

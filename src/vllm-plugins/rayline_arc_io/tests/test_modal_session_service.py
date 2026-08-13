@@ -141,7 +141,7 @@ def test_session_service_allows_only_the_frozen_scaleout_app_names() -> None:
 def test_session_service_keeps_only_the_production_app_warm() -> None:
     service_source = source()
 
-    assert "MIN_CONTAINERS = 1 if APP_NAME == DEFAULT_APP_NAME else 0" in (
+    assert "MIN_CONTAINERS = 1 if APP_NAME in PROD_APP_PROFILES else 0" in (
         service_source
     )
     assert "min_containers=MIN_CONTAINERS" in service_source
@@ -301,6 +301,21 @@ def test_session_service_confines_the_standing_dev_app_to_its_exact_app_name() -
         "DEV_APP"
         not in service_source.split("MAX_CONCURRENT_INPUTS = ")[1].split("\n")[0]
     )
+
+
+def test_session_service_confines_the_standing_prod_app_to_its_exact_app_name() -> None:
+    """Production gets the proven engine without mutating a frozen app."""
+
+    service_source = source()
+
+    assert '"rayline-arc-session-encoder-prod": "flashinfer"' in service_source
+    assert "**PROD_APP_PROFILES" in service_source
+    assert "MIN_CONTAINERS = 1 if APP_NAME in PROD_APP_PROFILES else 0" in (
+        service_source
+    )
+    # No production-specific GPU branch: it intentionally takes the H100
+    # fallback while the standing dev app alone takes the cheaper L4 branch.
+    assert "elif APP_NAME in PROD_APP_PROFILES" not in service_source
 
 
 def test_allowed_app_names_extend_with_every_registered_experiment() -> None:
