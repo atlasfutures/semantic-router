@@ -37,9 +37,10 @@ const (
 	executedModelHeader = "x-rayline-executed-model"
 )
 
-// routeDecisionBodyLimit bounds one Anthropic Messages payload. The body is a
-// conversation, not an upload, so it stays well under the generic JSON limit.
-const routeDecisionBodyLimit int64 = 4 * 1024 * 1024
+// routeDecisionBodyLimit keeps decision-only requests on the same bounded JSON
+// contract as the rest of the management API. Real conversation envelopes can
+// exceed 4 MiB before ARC normalization removes non-text content.
+const routeDecisionBodyLimit int64 = defaultJSONRequestBodyLimit
 
 var (
 	// routeIDPattern matches the caller's minted route id, case-insensitively,

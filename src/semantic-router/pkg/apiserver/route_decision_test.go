@@ -234,10 +234,17 @@ func TestRouteDecisionRejectsMalformedRequests(t *testing.T) {
 func TestRouteDecisionReportsOversizedBodiesInItsOwnErrorShape(t *testing.T) {
 	runtime := okRouteDecisionRuntime()
 	server := routeDecisionTestServer(runtime)
+	mux := server.setupRoutes()
 	oversized := `{"messages":[{"role":"user","content":"` +
 		strings.Repeat("x", int(routeDecisionBodyLimit)) + `"}]}`
 
-	recorder, decoded := postRouteDecision(t, server, oversized, nil)
+	request := routeDecisionRequest(oversized, nil)
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, request)
+	decoded := map[string]interface{}{}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("response body is not a JSON object: %v (body=%q)", err, recorder.Body.String())
+	}
 
 	if recorder.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 413", recorder.Code)
@@ -250,6 +257,26 @@ func TestRouteDecisionReportsOversizedBodiesInItsOwnErrorShape(t *testing.T) {
 	}
 	if len(runtime.requests) != 0 {
 		t.Fatalf("oversized request still reached the runtime: %+v", runtime.requests)
+	}
+}
+
+func TestRouteDecisionAcceptsConversationAboveFormerFourMiBLimit(t *testing.T) {
+	runtime := okRouteDecisionRuntime()
+	server := routeDecisionTestServer(runtime)
+	mux := server.setupRoutes()
+	body := `{"messages":[{"role":"user","content":"` +
+		strings.Repeat("x", 5_500_000) + `"}]}`
+
+	request := routeDecisionRequest(body, nil)
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for a 5.5 MB conversation (body=%s)",
+			recorder.Code, recorder.Body.String())
+	}
+	if len(runtime.requests) != 1 {
+		t.Fatalf("runtime saw %d requests, want 1", len(runtime.requests))
 	}
 }
 
