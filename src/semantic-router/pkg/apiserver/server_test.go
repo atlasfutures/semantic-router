@@ -4,10 +4,23 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/services"
 )
+
+func TestAPIWriteTimeoutCoversColdRouterDecisionBudget(t *testing.T) {
+	const coldRouterDecisionBudget = 10 * time.Minute
+
+	if apiWriteTimeout <= coldRouterDecisionBudget {
+		t.Fatalf(
+			"API write timeout %s must exceed cold router decision budget %s",
+			apiWriteTimeout,
+			coldRouterDecisionBudget,
+		)
+	}
+}
 
 // TestSetupRoutesConfigEndpoints verifies the config API surface exposed by setupRoutes.
 func TestSetupRoutesConfigEndpoints(t *testing.T) {

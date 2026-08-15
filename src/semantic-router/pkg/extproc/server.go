@@ -364,6 +364,7 @@ func publishRouterState(
 		runtimeRegistry.PublishRouterRuntime(cfg, router.ClassificationService, router.MemoryStore)
 		runtimeRegistry.SetModelSelector(router.ModelSelector)
 		runtimeRegistry.SetLearningRuntime(router.routerLearningRuntimeState())
+		runtimeRegistry.SetRouteDecisionRuntime(router.routeDecisionRuntimeState())
 		return
 	}
 	services.SetGlobalClassificationService(router.ClassificationService)

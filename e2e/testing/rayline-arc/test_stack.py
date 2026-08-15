@@ -23,6 +23,7 @@ ENCODER_B_PORT = int(os.getenv("RAYLINE_ARC_E2E_ENCODER_B_PORT", "18083"))
 PROVIDER_PORT = int(os.getenv("RAYLINE_ARC_E2E_PROVIDER_PORT", "18081"))
 REDIS_PORT = int(os.getenv("RAYLINE_ARC_E2E_REDIS_PORT", "16379"))
 METRICS_PORT = int(os.getenv("RAYLINE_ARC_E2E_METRICS_PORT", "19190"))
+ROUTER_API_PORT = int(os.getenv("RAYLINE_ARC_E2E_ROUTER_API_PORT", "18082"))
 REDIS_PASSWORD = os.getenv(
     "RAYLINE_ARC_E2E_REDIS_PASSWORD",
     "public-e2e-redis-secret",
@@ -58,6 +59,7 @@ def _json_request(
     *,
     method: str = "GET",
     body: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
     timeout: float = 10,
 ) -> tuple[int, dict[str, Any], dict[str, str]]:
     payload = None if body is None else json.dumps(body).encode()
@@ -65,7 +67,7 @@ def _json_request(
         _url(port, path),
         data=payload,
         method=method,
-        headers={"content-type": "application/json"},
+        headers={"content-type": "application/json", **(headers or {})},
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:

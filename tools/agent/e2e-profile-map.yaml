@@ -283,6 +283,10 @@ workflow_suite_rules:
       - src/semantic-router/pkg/extproc/processor_res_header.go
       - src/semantic-router/pkg/extproc/req_filter_classification.go
       - src/semantic-router/pkg/extproc/router_selection.go
+      - src/semantic-router/pkg/apiserver/route_decision.go
+      - src/semantic-router/pkg/apiserver/route_policy.go
+      - src/semantic-router/pkg/apiserver/routes.go
+      - src/semantic-router/pkg/routerruntime/**
       - src/semantic-router/pkg/selection/raylinearc/**
       - src/vllm-plugins/rayline_arc_io/**
       - tools/make/e2e.mk

@@ -92,6 +92,7 @@ python3 "${repo_root}/e2e/testing/rayline-arc/test_stack.py" \
   --phase initial \
   --receipt "${receipt}"
 python3 "${repo_root}/e2e/testing/rayline-arc/replica_contract.py"
+python3 "${repo_root}/e2e/testing/rayline-arc/route_decision_contract.py"
 
 compose restart router
 wait_http "http://127.0.0.1:${RAYLINE_ARC_E2E_ROUTER_API_PORT:-18082}/health"

@@ -207,7 +207,74 @@ These require the corresponding service to be enabled; otherwise the API returns
 | `DELETE` | `/v1/files/{id}` | Delete a file |
 | `GET` | `/v1/files/{id}/content` | Download file content |
 
+### Decision-only routing
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/v1/route` | Choose a worker for one request without executing it |
+
 ## Worked examples
+
+### Decision-only routing
+
+`POST /v1/route` answers one routing consult and stops before dispatch. The
+caller sends the request body it intends to run, reads back the chosen worker,
+and executes that worker itself. The router never calls the provider and never
+sees the response.
+
+The endpoint needs a decision whose `algorithm.type` is `rayline_arc`. Exactly
+one such decision may be configured; with none or with several, the endpoint
+returns `503`.
+
+Send the request body verbatim:
+
+```bash
+curl -sS http://localhost:8080/v1/route \
+  -H 'Content-Type: application/json' \
+  -H 'x-rayline-route-id: rt_0a1b2c3d' \
+  -H 'x-rayline-session: session-42' \
+  -d '{"model":"claude-sonnet-4","messages":[{"role":"user","content":"hello"}]}'
+```
+
+```json
+{
+  "decision_id": "rt_0a1b2c3d",
+  "selected_worker": "worker-b",
+  "worker_model": "vendor/model-b",
+  "provider": "vendor-slug",
+  "decision_latency_ms": 12.481
+}
+```
+
+Request headers:
+
+| Header | Required | Meaning |
+| --- | --- | --- |
+| `x-rayline-route-id` | no | The caller's own route id. The router adopts it as `decision_id` and echoes it, so one id spans the caller's records and the router's. A malformed or duplicated value is a `400`; an absent one is minted. |
+| `x-rayline-session` | no | Session identity. It keys the routing episode, so turns in one session score against one trajectory. Without it each consult gets a fresh episode. |
+| `x-rayline-executed-model` | no | What the caller actually ran last turn. Record-only: it reaches logs and traces, never the routing state. |
+
+`selected_worker` and `worker_model` are always present in a `200`. `provider`
+is present only when the worker declares one. Fields the router cannot source
+are omitted rather than zero-filled.
+
+Failures are fail-closed. A malformed request is a `400` with a `detail`
+string, and a failed selection is a `503`: the router never answers with a
+default worker.
+
+The route is gated by the `route.decision` permission, which no built-in role
+carries. Under bearer auth, grant it explicitly:
+
+```yaml
+global:
+  services:
+    management_api:
+      auth:
+        mode: bearer
+        roles:
+          router-proxy:
+            - route.decision
+```
 
 ### Health, readiness, and startup
 
