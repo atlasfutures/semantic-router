@@ -62,6 +62,7 @@ func TestRaylineARCSelectorMapsArtifactArmWithoutMutatingState(t *testing.T) {
 	selector := newRaylineARCSelector(
 		scorer,
 		encoder,
+		nil,
 		"artifact-revision",
 	)
 	selectionContext := validARCSelectionContext(state)
@@ -136,6 +137,7 @@ func TestRaylineARCSelectorRejectsCandidateOrderDriftBeforeEncoding(t *testing.T
 	selector := newRaylineARCSelector(
 		&fakeARCScorer{workerIDs: []string{"worker-a", "worker-b"}},
 		encoder,
+		nil,
 		"artifact-revision",
 	)
 	selectionContext := validARCSelectionContext(state)
@@ -163,6 +165,7 @@ func TestRaylineARCSelectorRejectsPreparationFailure(t *testing.T) {
 	selector := newRaylineARCSelector(
 		&fakeARCScorer{workerIDs: []string{"worker-a", "worker-b"}},
 		encoder,
+		nil,
 		"artifact-revision",
 	)
 	selectionContext := validARCSelectionContext(state)
