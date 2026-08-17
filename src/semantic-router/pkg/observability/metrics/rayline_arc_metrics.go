@@ -32,6 +32,31 @@ var (
 		},
 		[]string{"class"},
 	)
+	// RaylineARCEncoderAdmissions counts admission-gate outcomes. A shed is a
+	// deliberate capacity decision, so it is never folded into the encoder
+	// failure counters: admitted + shed is the offered decision rate, which is
+	// the only production measurement of arrival rate the router can take.
+	RaylineARCEncoderAdmissions = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_rayline_arc_encoder_admissions_total",
+			Help: "Rayline ARC encoder admission outcomes (admitted or shed).",
+		},
+		[]string{"outcome"},
+	)
+	RaylineARCEncoderInflight = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "llm_rayline_arc_encoder_inflight",
+			Help: "Rayline ARC encoder calls currently holding an admission slot.",
+		},
+	)
+	// RaylineARCEncoderInflightHighWater only rises. Compared against the
+	// configured cap it shows whether the cap has ever bound.
+	RaylineARCEncoderInflightHighWater = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "llm_rayline_arc_encoder_inflight_high_water",
+			Help: "Largest concurrent Rayline ARC encoder call count seen since start.",
+		},
+	)
 	RaylineARCEncoderLatency = promauto.NewHistogram(
 		prometheus.HistogramOpts{
 			Name:    "llm_rayline_arc_encoder_latency_seconds",
@@ -135,6 +160,30 @@ var (
 
 func RecordRaylineARCFailure(class string) {
 	RaylineARCSelectionFailures.WithLabelValues(class).Inc()
+}
+
+// RecordRaylineARCEncoderAdmission records one admission-gate outcome together
+// with the gate's own occupancy. Callers pass the counts they read from the
+// gate so that this package stays free of any dependency on the encoder.
+func RecordRaylineARCEncoderAdmission(
+	admitted bool,
+	inflight int,
+	highWater int,
+) {
+	outcome := "shed"
+	if admitted {
+		outcome = "admitted"
+	}
+	RaylineARCEncoderAdmissions.WithLabelValues(outcome).Inc()
+	SetRaylineARCEncoderInflight(inflight)
+	RaylineARCEncoderInflightHighWater.Set(float64(highWater))
+}
+
+// SetRaylineARCEncoderInflight publishes current admission occupancy. Callers
+// also call it when a slot is released, so the gauge falls back to zero once a
+// burst ends instead of holding the last admitted value until the next call.
+func SetRaylineARCEncoderInflight(inflight int) {
+	RaylineARCEncoderInflight.Set(float64(inflight))
 }
 
 func RecordRaylineARCSelection(
