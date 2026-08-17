@@ -671,6 +671,13 @@ routing:
             connect_timeout_seconds: 5
             total_timeout_seconds: 180
             max_retries: 1
+            # Cap concurrent encoder calls per router process and shed the
+            # surplus immediately instead of queueing it inside the encoder.
+            # 0 disables admission control, which is the default. Size it from
+            # a measured concurrency level the encoder sustains inside the
+            # decision latency budget, and never above the encoder's own
+            # ingress cap.
+            max_inflight_encoder_calls: 0
           episode:
             id_header: x-rayline-episode-id
             close_header: ""

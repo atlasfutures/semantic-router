@@ -129,6 +129,23 @@ func TestValidateRaylineARCAlgorithmConfigRejectsInvalidContracts(t *testing.T) 
 			},
 			wantErr: "redis.address",
 		},
+		{
+			name: "negative inflight encoder cap",
+			mutate: func(decision *Decision) {
+				decision.Algorithm.RaylineARC.Encoder.MaxInflightEncoderCalls = -1
+			},
+			wantErr: "max_inflight_encoder_calls must be between",
+		},
+		{
+			// A router cap above the encoder ingress cap cannot protect the
+			// encoder: the surplus queues where the router cannot see it.
+			name: "inflight encoder cap above encoder ingress",
+			mutate: func(decision *Decision) {
+				decision.Algorithm.RaylineARC.Encoder.MaxInflightEncoderCalls =
+					maxRaylineARCInflightEncoderCalls + 1
+			},
+			wantErr: "max_inflight_encoder_calls must be between",
+		},
 	}
 
 	for _, test := range tests {
@@ -140,6 +157,23 @@ func TestValidateRaylineARCAlgorithmConfigRejectsInvalidContracts(t *testing.T) 
 				t.Fatalf("error = %v, want substring %q", err, test.wantErr)
 			}
 		})
+	}
+}
+
+// The knob must stay optional. Every deployment that predates admission
+// control leaves it unset, and an unset cap means "no admission control", not
+// "shed everything".
+func TestValidateRaylineARCAlgorithmConfigAcceptsInflightEncoderCap(t *testing.T) {
+	for _, cap := range []int{0, 1, 4, maxRaylineARCInflightEncoderCalls} {
+		decision := validRaylineARCDecision()
+		decision.Algorithm.RaylineARC.Encoder.MaxInflightEncoderCalls = cap
+		if err := validateDecisionAlgorithmConfig(
+			decision.Name,
+			decision.ModelRefs,
+			decision.Algorithm,
+		); err != nil {
+			t.Fatalf("max_inflight_encoder_calls=%d error = %v", cap, err)
+		}
 	}
 }
 
