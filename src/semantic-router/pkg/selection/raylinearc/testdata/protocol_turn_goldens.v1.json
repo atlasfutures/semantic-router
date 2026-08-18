@@ -402,6 +402,193 @@
         ]
       },
       "error_code": "unknown_item"
+    },
+    {
+      "id": "anthropic_compaction_summary",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "compaction",
+                "content": "Earlier: the user asked for a parser audit."
+              },
+              {
+                "type": "text",
+                "text": "continue"
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "Earlier: the user asked for a parser audit.\ncontinue"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_compaction_failed_is_empty",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "compaction",
+                "content": null
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": ""
+        }
+      ]
+    },
+    {
+      "id": "anthropic_server_tool_families_drop_as_pairs",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "searching"
+              },
+              {
+                "type": "mcp_tool_use",
+                "id": "mcptoolu_1",
+                "name": "read_file",
+                "server_name": "fs",
+                "input": {
+                  "path": "a.go"
+                }
+              },
+              {
+                "type": "server_tool_use",
+                "id": "srvtoolu_1",
+                "name": "tool_search",
+                "input": {}
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "mcp_tool_result",
+                "tool_use_id": "mcptoolu_1",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "file body"
+                  }
+                ]
+              },
+              {
+                "type": "tool_search_tool_result",
+                "tool_use_id": "srvtoolu_1",
+                "content": {
+                  "type": "tool_search_result",
+                  "tools": []
+                }
+              },
+              {
+                "type": "text",
+                "text": "thanks"
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "assistant",
+          "text": "searching"
+        },
+        {
+          "role": "user",
+          "text": "thanks"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_tool_reference_in_result",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_grep",
+                "name": "grep",
+                "input": {
+                  "q": "x"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_grep",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "3 hits"
+                  },
+                  {
+                    "type": "tool_reference",
+                    "tool_name": "grep"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "assistant",
+          "text": "[tool_call grep] {\"q\": \"x\"}"
+        },
+        {
+          "role": "user",
+          "text": "[tool_result grep]\n3 hits"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_tool_reference_rejected_at_top_level",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_reference",
+                "tool_name": "grep"
+              }
+            ]
+          }
+        ]
+      },
+      "error_code": "unknown_item"
     }
   ]
 }
