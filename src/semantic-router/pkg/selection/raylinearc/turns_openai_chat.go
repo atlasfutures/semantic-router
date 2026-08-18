@@ -91,9 +91,10 @@ func appendOpenAIChatMessage(
 		}
 		return appendOpenAIChatToolResult(turns, text), nil
 	default:
-		return nil, turnError(
+		return nil, turnErrorWithDetail(
 			"unknown_item",
 			path+".role",
+			role,
 			"unsupported Chat Completions role %q",
 			role,
 		)
@@ -167,9 +168,10 @@ func renderOpenAIChatToolCall(
 		return "", err
 	}
 	if callType != "function" {
-		return "", turnError(
+		return "", turnErrorWithDetail(
 			"unknown_item",
 			path+".type",
+			callType,
 			"unsupported Chat Completions tool type %q",
 			callType,
 		)
@@ -262,9 +264,10 @@ func openAIContentText(value any, path string) (string, error) {
 			}
 		default:
 			if !openAIDroppedContentTypes[blockType] {
-				return "", turnError(
+				return "", turnErrorWithDetail(
 					"unknown_item",
 					blockPath+".type",
+					blockType,
 					"unsupported OpenAI content type %q",
 					blockType,
 				)

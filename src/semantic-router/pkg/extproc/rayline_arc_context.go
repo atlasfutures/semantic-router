@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -74,12 +75,35 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		if code == "" {
 			code = "invalid_turns"
 		}
+		logRaylineARCTurnRejection(err, code)
 		result.PreparationFailure = "turns_" + code
 		r.finalizeRaylineARCAbort(reqCtx, result.PreparationFailure)
 		return result
 	}
 	result.Turns = turns
 	return result
+}
+
+// logRaylineARCTurnRejection records why an episode could not be prepared.
+// The failure class alone is a bounded metric label and cannot name the
+// offending construct, so the discriminator and its request path are emitted
+// here instead. Neither carries request content.
+func logRaylineARCTurnRejection(err error, code string) {
+	fields := map[string]interface{}{
+		"outcome":       "turns_rejected",
+		"failure_class": code,
+	}
+	if path := raylinearc.TurnNormalizationErrorPath(err); path != "" {
+		fields["request_path"] = path
+	}
+	if detail := raylinearc.TurnNormalizationErrorDetail(err); detail != "" {
+		fields["detail"] = detail
+	}
+	logging.ComponentErrorEvent(
+		"extproc",
+		"rayline_arc_turn_normalize",
+		fields,
+	)
 }
 
 func parseRaylineARCCloseRequest(

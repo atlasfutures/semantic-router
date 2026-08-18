@@ -137,9 +137,10 @@ func renderAnthropicAssistant(
 			parts = append(parts, rendered)
 		default:
 			if !anthropicDroppedBlockTypes[blockType] {
-				return "", turnError(
+				return "", turnErrorWithDetail(
 					"unknown_item",
 					blockPath+".type",
+					blockType,
 					"unsupported Anthropic block type %q",
 					blockType,
 				)
@@ -210,9 +211,10 @@ func renderAnthropicUser(
 			results = append(results, result)
 		default:
 			if !anthropicDroppedBlockTypes[blockType] {
-				return "", turnError(
+				return "", turnErrorWithDetail(
 					"unknown_item",
 					blockPath+".type",
+					blockType,
 					"unsupported Anthropic block type %q",
 					blockType,
 				)
@@ -293,9 +295,10 @@ func toolResultBlockText(value any, path string) (string, bool, error) {
 		openAIDroppedContentTypes[blockType] {
 		return "", false, nil
 	}
-	return "", false, turnError(
+	return "", false, turnErrorWithDetail(
 		"unknown_item",
 		path+".type",
+		blockType,
 		"unsupported result content type %q",
 		blockType,
 	)
