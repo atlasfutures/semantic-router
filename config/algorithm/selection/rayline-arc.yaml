@@ -4,6 +4,10 @@ algorithm:
   rayline_arc:
     artifact_dir: /var/lib/vllm-sr/rayline-arc
     artifact_revision: ${RAYLINE_ARC_ARTIFACT_REVISION}
+    # Fold system-prompt text into the user turn it governs instead of
+    # discarding it before the selector sees the conversation. Off by default:
+    # it changes what the trained selector is asked.
+    include_system_text: false
     encoder:
       base_url: http://rayline-arc-encoder:8000
       model: Qwen/Qwen3.5-0.8B

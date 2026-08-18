@@ -690,6 +690,10 @@ routing:
         rayline_arc:
           artifact_dir: /var/lib/vllm-sr/rayline-arc
           artifact_revision: public-synthetic-v1
+          # Fold system-prompt text into the user turn it governs instead of
+          # discarding it before the selector sees the conversation. Off by
+          # default: it changes what the trained selector is asked.
+          include_system_text: false
           encoder:
             base_url: http://rayline-arc-encoder:8000
             # Set base_url to empty and populate replicas + failover to opt

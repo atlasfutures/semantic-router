@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 type InputProtocol string
@@ -92,18 +93,41 @@ func TurnNormalizationErrorPath(err error) string {
 	return ""
 }
 
-func NormalizeTurns(protocol InputProtocol, requestBody []byte) ([]Turn, error) {
+// TurnOptions controls what the normalizer shows the selector.
+type TurnOptions struct {
+	// IncludeSystemText folds system-prompt text into the user turn it
+	// governs instead of discarding it.
+	//
+	// The default is false, which discards it. That is what every deployment
+	// did before this option existed, and it is what the trained selector has
+	// been consulted with to date, so it stays the default until measurement
+	// says otherwise.
+	//
+	// Turning it on cannot add a turn and cannot add a role. The encoder wire
+	// schema pins ArcTurn.role to user or assistant, and the serializer writes
+	// the role string into the token stream, so a third role would emit tokens
+	// the trained checkpoint has never been shown. Folding the text into an
+	// existing user turn keeps the turn count, the role alternation, and the
+	// token shapes as they are. Only the turn text gets longer.
+	IncludeSystemText bool
+}
+
+func NormalizeTurns(
+	protocol InputProtocol,
+	requestBody []byte,
+	options TurnOptions,
+) ([]Turn, error) {
 	request, err := decodeRequestObject(requestBody)
 	if err != nil {
 		return nil, err
 	}
 	switch protocol {
 	case ProtocolAnthropicMessages:
-		return normalizeAnthropicTurns(request)
+		return normalizeAnthropicTurns(request, options)
 	case ProtocolOpenAIChat:
-		return normalizeOpenAIChatTurns(request)
+		return normalizeOpenAIChatTurns(request, options)
 	case ProtocolOpenAIResponses:
-		return normalizeOpenAIResponsesTurns(request)
+		return normalizeOpenAIResponsesTurns(request, options)
 	default:
 		return nil, turnError(
 			"unsupported_protocol",
@@ -251,5 +275,71 @@ func turnErrorWithDetail(
 		Path:   path,
 		Detail: detail,
 		Err:    fmt.Errorf(format, arguments...),
+	}
+}
+
+// systemTextBuffer holds system-prompt text until a user turn can carry it.
+//
+// System text cannot become a turn of its own: the wire contract has only two
+// roles. So it is folded into the next user turn, which is the turn it
+// governs. A request that opens with a system prompt therefore lands that text
+// at the front of the first user turn, which the serializer renders as the
+// episode's [Task] block.
+//
+// The buffer is inert when the option is off. That keeps the call sites free
+// of conditionals and makes the disabled path identical to the behaviour that
+// shipped before the option existed.
+type systemTextBuffer struct {
+	enabled bool
+	pending []string
+}
+
+func newSystemTextBuffer(options TurnOptions) systemTextBuffer {
+	return systemTextBuffer{enabled: options.IncludeSystemText}
+}
+
+func (buffer *systemTextBuffer) add(text string) {
+	if !buffer.enabled || text == "" {
+		return
+	}
+	buffer.pending = append(buffer.pending, text)
+}
+
+// take returns the buffered text and empties the buffer.
+func (buffer *systemTextBuffer) take() string {
+	if len(buffer.pending) == 0 {
+		return ""
+	}
+	text := strings.Join(buffer.pending, "\n\n")
+	buffer.pending = nil
+	return text
+}
+
+// flushTrailing attaches text still buffered after the last message to the
+// final turn. A system message with no user turn after it still governs the
+// reply being routed, so its text belongs on the turn nearest to it rather
+// than discarded. Requests almost always end on a user turn, so this is the
+// same destination the ordinary path would have chosen.
+func (buffer *systemTextBuffer) flushTrailing(turns []Turn) []Turn {
+	text := buffer.take()
+	if text == "" || len(turns) == 0 {
+		return turns
+	}
+	last := &turns[len(turns)-1]
+	last.Text = joinSystemText(text, last.Text)
+	return turns
+}
+
+// joinSystemText puts system text in front of the text it governs. The
+// separator is a blank line and nothing else: a marker token would be a
+// sequence the trained selector has never been shown.
+func joinSystemText(system string, text string) string {
+	switch {
+	case system == "":
+		return text
+	case text == "":
+		return system
+	default:
+		return system + "\n\n" + text
 	}
 }

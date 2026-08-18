@@ -31,11 +31,15 @@ var openAIDroppedContentTypes = map[string]bool{
 	"refusal":      true,
 }
 
-func normalizeOpenAIChatTurns(request map[string]any) ([]Turn, error) {
+func normalizeOpenAIChatTurns(
+	request map[string]any,
+	options TurnOptions,
+) ([]Turn, error) {
 	messages, err := requiredArray(request, "messages", "request")
 	if err != nil {
 		return nil, err
 	}
+	systemText := newSystemTextBuffer(options)
 	turns := make([]Turn, 0, len(messages))
 	toolNames := make(map[string]string)
 	for index, value := range messages {
@@ -54,12 +58,13 @@ func normalizeOpenAIChatTurns(request map[string]any) ([]Turn, error) {
 			role,
 			toolNames,
 			path,
+			&systemText,
 		)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return turns, nil
+	return systemText.flushTrailing(turns), nil
 }
 
 func appendOpenAIChatMessage(
@@ -68,16 +73,34 @@ func appendOpenAIChatMessage(
 	role string,
 	toolNames map[string]string,
 	path string,
+	systemText *systemTextBuffer,
 ) ([]Turn, error) {
 	switch role {
 	case "system", "developer":
+		// Read the content only when it is wanted. Parsing it when the option
+		// is off would let a malformed system message start failing requests
+		// that succeed today, which is a behaviour change the option is
+		// supposed to gate.
+		if !systemText.enabled {
+			return turns, nil
+		}
+		text, err := openAIContentText(message["content"], path+".content")
+		if err != nil {
+			return nil, err
+		}
+		systemText.add(text)
 		return turns, nil
 	case "user":
 		text, err := openAIContentText(message["content"], path+".content")
 		if err != nil {
 			return nil, err
 		}
-		return append(turns, Turn{Role: role, Text: text}), nil
+		// take() empties the buffer, so each stretch of system text lands on
+		// the first user turn that follows it -- the turn it governs.
+		return append(
+			turns,
+			Turn{Role: role, Text: joinSystemText(systemText.take(), text)},
+		), nil
 	case "assistant":
 		text, err := renderOpenAIChatAssistant(message, toolNames, path)
 		if err != nil {

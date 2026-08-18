@@ -79,7 +79,7 @@ func assertProtocolGoldenCase(
 		t.Fatalf("fixture case ID is empty or duplicated: %q", test.ID)
 	}
 	seen[test.ID] = true
-	turns, normalizeErr := NormalizeTurns(test.Protocol, test.Request)
+	turns, normalizeErr := NormalizeTurns(test.Protocol, test.Request, TurnOptions{})
 	if test.ErrorCode != "" {
 		if got := TurnNormalizationErrorCode(normalizeErr); got != test.ErrorCode {
 			t.Fatalf(
@@ -143,7 +143,7 @@ func TestCrossProtocolToolGoldenCasesAreIdentical(t *testing.T) {
 		ProtocolOpenAIChat,
 		ProtocolOpenAIResponses,
 	} {
-		turns, err := NormalizeTurns(protocol, []byte(requests[protocol]))
+		turns, err := NormalizeTurns(protocol, []byte(requests[protocol]), TurnOptions{})
 		if err != nil {
 			t.Fatalf("%s normalization failed: %v", protocol, err)
 		}
@@ -191,6 +191,6 @@ func TestNormalizeTurnsRejectsUnsupportedProtocolAndTrailingJSON(t *testing.T) {
 }
 
 func mustNormalizeError(protocol InputProtocol, body string) error {
-	_, err := NormalizeTurns(protocol, []byte(body))
+	_, err := NormalizeTurns(protocol, []byte(body), TurnOptions{})
 	return err
 }

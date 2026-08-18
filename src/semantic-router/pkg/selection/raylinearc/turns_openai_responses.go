@@ -61,7 +61,10 @@ type responseTurnPart struct {
 	result bool
 }
 
-func normalizeOpenAIResponsesTurns(request map[string]any) ([]Turn, error) {
+func normalizeOpenAIResponsesTurns(
+	request map[string]any,
+	options TurnOptions,
+) ([]Turn, error) {
 	input, ok := request["input"]
 	if !ok {
 		return nil, turnError(
@@ -70,8 +73,25 @@ func normalizeOpenAIResponsesTurns(request map[string]any) ([]Turn, error) {
 			"field is required",
 		)
 	}
+	// The Responses API carries its standing system prompt in this top-level
+	// field. Nothing read it before, so like the Anthropic system field it was
+	// never dropped at the parser -- it was never looked at.
+	systemText := newSystemTextBuffer(options)
+	if options.IncludeSystemText {
+		instructions, instructionsErr := responsesInstructionsText(
+			request["instructions"],
+			"request.instructions",
+		)
+		if instructionsErr != nil {
+			return nil, instructionsErr
+		}
+		systemText.add(instructions)
+	}
 	if text, isText := input.(string); isText {
-		return []Turn{{Role: "user", Text: text}}, nil
+		return []Turn{{
+			Role: "user",
+			Text: joinSystemText(systemText.take(), text),
+		}}, nil
 	}
 	items, ok := input.([]any)
 	if !ok {
@@ -89,19 +109,43 @@ func normalizeOpenAIResponsesTurns(request map[string]any) ([]Turn, error) {
 		if err != nil {
 			return nil, err
 		}
-		itemParts, err := normalizeResponseItem(item, toolNames, path)
+		itemParts, err := normalizeResponseItem(
+			item,
+			toolNames,
+			path,
+			&systemText,
+		)
 		if err != nil {
 			return nil, err
 		}
 		parts = append(parts, itemParts...)
 	}
-	return coalesceResponseTurnParts(parts), nil
+	turns := coalesceResponseTurnParts(parts)
+	return systemText.flushTrailing(turns), nil
+}
+
+// responsesInstructionsText reads the top-level instructions field, which the
+// API declares as a plain string.
+func responsesInstructionsText(value any, path string) (string, error) {
+	if value == nil {
+		return "", nil
+	}
+	text, ok := value.(string)
+	if !ok {
+		return "", turnError(
+			"invalid_field",
+			path,
+			"instructions must be a string",
+		)
+	}
+	return text, nil
 }
 
 func normalizeResponseItem(
 	item map[string]any,
 	toolNames map[string]string,
 	path string,
+	systemText *systemTextBuffer,
 ) ([]responseTurnPart, error) {
 	itemType, err := requiredString(item, "type", path)
 	if err != nil {
@@ -109,7 +153,7 @@ func normalizeResponseItem(
 	}
 	switch itemType {
 	case "message":
-		return normalizeResponseMessage(item, path)
+		return normalizeResponseMessage(item, path, systemText)
 	case "function_call":
 		part, callErr := normalizeResponseFunctionCall(item, toolNames, path)
 		return singletonResponsePart(part, callErr)
@@ -147,12 +191,26 @@ func singletonResponsePart(
 func normalizeResponseMessage(
 	item map[string]any,
 	path string,
+	systemText *systemTextBuffer,
 ) ([]responseTurnPart, error) {
 	role, err := requiredString(item, "role", path)
 	if err != nil {
 		return nil, err
 	}
 	if role == "system" || role == "developer" {
+		// Read the content only when it is wanted, so that a malformed system
+		// message cannot start failing requests that succeed today.
+		if !systemText.enabled {
+			return nil, nil
+		}
+		text, systemErr := openAIContentText(
+			item["content"],
+			path+".content",
+		)
+		if systemErr != nil {
+			return nil, systemErr
+		}
+		systemText.add(text)
 		return nil, nil
 	}
 	if role != "user" && role != "assistant" {
@@ -167,6 +225,11 @@ func normalizeResponseMessage(
 	text, err := openAIContentText(item["content"], path+".content")
 	if err != nil {
 		return nil, err
+	}
+	if role == "user" {
+		// take() empties the buffer, so each stretch of system text lands on
+		// the first user turn that follows it.
+		text = joinSystemText(systemText.take(), text)
 	}
 	return []responseTurnPart{{role: role, text: text}}, nil
 }

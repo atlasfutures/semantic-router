@@ -48,6 +48,16 @@ type RaylineARCAlgorithmConfig struct {
 	ArtifactRevision string                  `yaml:"artifact_revision"`
 	Encoder          RaylineARCEncoderConfig `yaml:"encoder"`
 	Episode          RaylineARCEpisodeConfig `yaml:"episode"`
+	// IncludeSystemText shows the selector the system-prompt text instead of
+	// discarding it. The text is folded into the user turn it governs, which
+	// leaves the turn count, the roles, and the encoder wire contract
+	// untouched.
+	//
+	// Off by default. Every consultation the trained selector has served to
+	// date was made without system text, so turning this on changes what the
+	// model is asked, and that belongs behind a deliberate opt-in until a
+	// measurement says which way is better.
+	IncludeSystemText bool `yaml:"include_system_text,omitempty"`
 }
 
 // RaylineARCEncoderConfig pins the dedicated vLLM pooling service contract.

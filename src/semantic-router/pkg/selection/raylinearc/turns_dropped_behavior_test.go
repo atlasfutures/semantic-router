@@ -137,11 +137,11 @@ func assertDropCases(
 	t.Helper()
 	for _, test := range cases {
 		t.Run(typeName+"/"+test.name, func(t *testing.T) {
-			want, err := NormalizeTurns(protocol, []byte(test.baseline))
+			want, err := NormalizeTurns(protocol, []byte(test.baseline), TurnOptions{})
 			if err != nil {
 				t.Fatalf("baseline normalization failed: %v", err)
 			}
-			got, err := NormalizeTurns(protocol, []byte(test.variant))
+			got, err := NormalizeTurns(protocol, []byte(test.variant), TurnOptions{})
 			if err != nil {
 				t.Fatalf("%q must drop, got error: %v", typeName, err)
 			}
@@ -212,7 +212,7 @@ func TestUnknownTypesStillFailClosed(t *testing.T) {
 	}
 	for _, test := range unknown {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := NormalizeTurns(test.protocol, []byte(test.request))
+			_, err := NormalizeTurns(test.protocol, []byte(test.request), TurnOptions{})
 			if code := TurnNormalizationErrorCode(err); code != "unknown_item" {
 				t.Fatalf("error code = %q (%v), want unknown_item", code, err)
 			}
