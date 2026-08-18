@@ -21,23 +21,34 @@ import (
 	"strings"
 )
 
-// anthropicDroppedBlockTypes lists the blocks that carry no text for the
-// selector. Server-executed tool calls and their results are dropped as a
-// pair: the call never records a tool name, so its result never has to resolve
-// one. Rich and binary payloads are dropped because Rayline drops them.
+// anthropicDroppedBlockTypes lists the blocks that contribute no turn text.
+// Server-executed tool calls and their results are dropped as a pair: the call
+// never records a tool name, so its result never has to resolve one. Rich and
+// binary payloads are dropped because Rayline drops them. Two entries drop text
+// they do carry, for parity rather than for lack of content: mid_conv_system is
+// the system prompt relocated into the message list, and Rayline shows the
+// selector no system text from any position; fallback is documented as never
+// rendered into the prompt.
 //
 // This table plus the rendered cases must cover the whole Anthropic request
 // block union. A type in neither fails the episode closed, which is
 // deliberate: the selector is a trained artifact, so showing it a silently
 // truncated conversation is worse than refusing to route.
+//
+// Verified complete against anthropic-sdk-python 0.109.1: the GA and beta
+// request unions, plus the response-side unions those accept back for
+// round-tripping. Widen it from the union, not from a failure report.
 var anthropicDroppedBlockTypes = map[string]bool{
+	"advisor_tool_result":                    true,
 	"bash_code_execution_tool_result":        true,
 	"code_execution_tool_result":             true,
 	"container_upload":                       true,
 	"document":                               true,
+	"fallback":                               true,
 	"image":                                  true,
 	"mcp_tool_result":                        true,
 	"mcp_tool_use":                           true,
+	"mid_conv_system":                        true,
 	"redacted_thinking":                      true,
 	"search_result":                          true,
 	"server_tool_use":                        true,

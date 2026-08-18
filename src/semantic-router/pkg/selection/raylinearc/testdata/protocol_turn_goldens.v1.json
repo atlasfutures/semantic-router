@@ -589,6 +589,88 @@
         ]
       },
       "error_code": "unknown_item"
+    },
+    {
+      "id": "anthropic_mid_conv_system_drops",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "mid_conv_system",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Be terse from now on."
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "text": "summarize"
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "summarize"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_advisor_and_fallback_drop",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "switching model"
+              },
+              {
+                "type": "fallback",
+                "from": {
+                  "model": "claude-opus-4-5"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "advisor_tool_result",
+                "tool_use_id": "srvtoolu_adv",
+                "content": {
+                  "type": "text",
+                  "text": "advice"
+                }
+              },
+              {
+                "type": "text",
+                "text": "go on"
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "assistant",
+          "text": "switching model"
+        },
+        {
+          "role": "user",
+          "text": "go on"
+        }
+      ]
     }
   ]
 }
