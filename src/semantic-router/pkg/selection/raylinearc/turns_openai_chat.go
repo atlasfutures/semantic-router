@@ -77,18 +77,18 @@ func appendOpenAIChatMessage(
 ) ([]Turn, error) {
 	switch role {
 	case "system", "developer":
-		// Read the content only when it is wanted. Parsing it when the option
-		// is off would let a malformed system message start failing requests
-		// that succeed today, which is a behaviour change the option is
-		// supposed to gate.
-		if !systemText.enabled {
-			return turns, nil
-		}
-		text, err := openAIContentText(message["content"], path+".content")
-		if err != nil {
+		// The leading run of system messages is the conversation-opening
+		// prompt. Once a turn exists, a system message arrived
+		// mid-conversation instead, and the two scopes are configured apart.
+		// collect reads the content only for a scope that wants it, so a
+		// malformed system message cannot start failing requests that succeed
+		// today.
+		scope := systemTextScopeAt(len(turns) > 0)
+		if err := systemText.collect(scope, func() (string, error) {
+			return openAIContentText(message["content"], path+".content")
+		}); err != nil {
 			return nil, err
 		}
-		systemText.add(text)
 		return turns, nil
 	case "user":
 		text, err := openAIContentText(message["content"], path+".content")

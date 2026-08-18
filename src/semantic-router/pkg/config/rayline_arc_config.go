@@ -48,16 +48,27 @@ type RaylineARCAlgorithmConfig struct {
 	ArtifactRevision string                  `yaml:"artifact_revision"`
 	Encoder          RaylineARCEncoderConfig `yaml:"encoder"`
 	Episode          RaylineARCEpisodeConfig `yaml:"episode"`
-	// IncludeSystemText shows the selector the system-prompt text instead of
-	// discarding it. The text is folded into the user turn it governs, which
-	// leaves the turn count, the roles, and the encoder wire contract
-	// untouched.
+	// IncludeSystemText shows the selector the conversation-opening system
+	// prompt instead of discarding it: the Anthropic system field, the
+	// Responses instructions field, and the leading run of system or developer
+	// messages. The text is folded into the user turn it governs, which leaves
+	// the turn count, the roles, and the encoder wire contract untouched.
 	//
 	// Off by default. Every consultation the trained selector has served to
-	// date was made without system text, so turning this on changes what the
-	// model is asked, and that belongs behind a deliberate opt-in until a
-	// measurement says which way is better.
+	// date was made without the opening prompt, so turning this on changes
+	// what the model is asked, and that belongs behind a deliberate opt-in
+	// until a measurement says which way is better.
 	IncludeSystemText bool `yaml:"include_system_text,omitempty"`
+	// DropMidConversationSystemText discards system text that arrives after
+	// the conversation has started: an Anthropic mid_conv_system block, or a
+	// system or developer message that follows a user or assistant message.
+	//
+	// Off by default, so that text reaches the selector. It is a correction
+	// aimed at the very next reply, which is the signal the router exists to
+	// read, and it is short enough that folding it in barely moves the token
+	// count. This field is the kill switch for that, worded as a negative so
+	// the zero value keeps the text.
+	DropMidConversationSystemText bool `yaml:"drop_mid_conversation_system_text,omitempty"`
 }
 
 // RaylineARCEncoderConfig pins the dedicated vLLM pooling service contract.

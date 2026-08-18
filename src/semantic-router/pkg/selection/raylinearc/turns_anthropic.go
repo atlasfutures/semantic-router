@@ -27,10 +27,13 @@ import (
 // binary payloads are dropped because Rayline drops them. fallback drops text
 // it does carry, because it is documented as never rendered into the prompt.
 //
-// mid_conv_system is listed here but is not unconditional. It is the system
-// prompt relocated into the message list, so TurnOptions.IncludeSystemText
-// decides its fate: off, it drops with the rest of the system text; on, it
-// renders in place, which is where it already sits.
+// mid_conv_system is listed here but is not unconditional. It is a system
+// instruction relocated into the message list, so it is mid-conversation text
+// by construction and the mid-conversation scope decides its fate: included by
+// default, it renders in place, which is where it already sits; dropped by
+// TurnOptions.DropMidConversationSystemText, it falls back to this table. The
+// entry also still carries the block when it appears inside tool_result
+// content, which no scope reaches.
 //
 // This table plus the rendered cases must cover the whole Anthropic request
 // block union. A type in neither fails the episode closed, which is
@@ -70,18 +73,17 @@ func normalizeAnthropicTurns(
 		return nil, err
 	}
 	// Anthropic has no system role for input messages, so the standing system
-	// prompt arrives only in this top-level field. Nothing read it before, so
+	// prompt arrives only in this top-level field. That makes it the
+	// conversation-opening prompt by construction. Nothing read it before, so
 	// it was not merely dropped at the parser: it was never looked at.
 	systemText := newSystemTextBuffer(options)
-	if options.IncludeSystemText {
-		text, systemErr := anthropicSystemText(
-			request["system"],
-			"request.system",
-		)
-		if systemErr != nil {
-			return nil, systemErr
-		}
-		systemText.add(text)
+	if err := systemText.collect(
+		systemTextOriginal,
+		func() (string, error) {
+			return anthropicSystemText(request["system"], "request.system")
+		},
+	); err != nil {
+		return nil, err
 	}
 	turns := make([]Turn, 0, len(messages))
 	toolNames := make(map[string]string)
@@ -104,7 +106,7 @@ func normalizeAnthropicTurns(
 				blocks,
 				toolNames,
 				path+".content",
-				options.IncludeSystemText,
+				systemText.includeMidConversation,
 			)
 			if renderErr != nil {
 				return nil, renderErr
@@ -116,7 +118,7 @@ func normalizeAnthropicTurns(
 			blocks,
 			toolNames,
 			path+".content",
-			options.IncludeSystemText,
+			systemText.includeMidConversation,
 		)
 		if renderErr != nil {
 			return nil, renderErr
@@ -248,7 +250,7 @@ func anthropicSharedBlockText(
 	block map[string]any,
 	blockType string,
 	blockPath string,
-	includeSystem bool,
+	includeMidConversationSystem bool,
 ) (string, error) {
 	if blockType == "text" {
 		return requiredString(block, "text", blockPath)
@@ -257,9 +259,16 @@ func anthropicSharedBlockText(
 		return compactionText(block, blockPath)
 	}
 	// Rendered in place rather than buffered: the block already sits at the
-	// position it governs, inside a turn that will carry it.
-	if blockType == "mid_conv_system" && includeSystem {
-		return midConvSystemText(block, blockPath)
+	// position it governs, inside a turn that will carry it. It is
+	// mid-conversation text by construction, and unreadable content there
+	// contributes nothing rather than failing an episode that routes today.
+	if blockType == "mid_conv_system" {
+		return midConversationSystemText(
+			includeMidConversationSystem,
+			func() (string, error) {
+				return midConvSystemText(block, blockPath)
+			},
+		), nil
 	}
 	if anthropicDroppedBlockTypes[blockType] {
 		return "", nil
@@ -299,7 +308,7 @@ func renderAnthropicAssistant(
 	blocks []any,
 	toolNames map[string]string,
 	path string,
-	includeSystem bool,
+	includeMidConversationSystem bool,
 ) (string, error) {
 	parts := make([]string, 0, len(blocks))
 	for index, value := range blocks {
@@ -324,7 +333,7 @@ func renderAnthropicAssistant(
 			block,
 			blockType,
 			blockPath,
-			includeSystem,
+			includeMidConversationSystem,
 		)
 		if textErr != nil {
 			return "", textErr
@@ -363,7 +372,7 @@ func renderAnthropicUser(
 	blocks []any,
 	toolNames map[string]string,
 	path string,
-	includeSystem bool,
+	includeMidConversationSystem bool,
 ) (string, error) {
 	texts := make([]string, 0, len(blocks))
 	results := make([]string, 0, len(blocks))
@@ -389,7 +398,7 @@ func renderAnthropicUser(
 			block,
 			blockType,
 			blockPath,
-			includeSystem,
+			includeMidConversationSystem,
 		)
 		if textErr != nil {
 			return "", textErr

@@ -690,10 +690,20 @@ routing:
         rayline_arc:
           artifact_dir: /var/lib/vllm-sr/rayline-arc
           artifact_revision: public-synthetic-v1
-          # Fold system-prompt text into the user turn it governs instead of
-          # discarding it before the selector sees the conversation. Off by
-          # default: it changes what the trained selector is asked.
+          # System text is folded into the user turn it governs, never into a
+          # turn of its own: the encoder wire contract has only two roles.
+          #
+          # include_system_text covers the conversation-opening prompt: the
+          # Anthropic system field, the Responses instructions field, and the
+          # leading run of system/developer messages. Off by default, because
+          # it changes what the trained selector is asked.
           include_system_text: false
+          # drop_mid_conversation_system_text is the kill switch for the other
+          # scope: a mid_conv_system block, or a system/developer message that
+          # follows a user or assistant message. False by default, so that
+          # text does reach the selector -- it is a correction aimed at the
+          # very next reply, which is the signal the router exists to read.
+          drop_mid_conversation_system_text: false
           encoder:
             base_url: http://rayline-arc-encoder:8000
             # Set base_url to empty and populate replicas + failover to opt

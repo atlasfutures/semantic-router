@@ -73,6 +73,8 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		reqCtx,
 		raylinearc.TurnOptions{
 			IncludeSystemText: algorithm.RaylineARC.IncludeSystemText,
+			DropMidConversationSystemText: algorithm.RaylineARC.
+				DropMidConversationSystemText,
 		},
 	)
 	if err != nil {

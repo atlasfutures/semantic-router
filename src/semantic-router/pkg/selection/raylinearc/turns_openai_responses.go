@@ -74,18 +74,20 @@ func normalizeOpenAIResponsesTurns(
 		)
 	}
 	// The Responses API carries its standing system prompt in this top-level
-	// field. Nothing read it before, so like the Anthropic system field it was
-	// never dropped at the parser -- it was never looked at.
+	// field, which makes it the conversation-opening prompt by construction.
+	// Nothing read it before, so like the Anthropic system field it was never
+	// dropped at the parser -- it was never looked at.
 	systemText := newSystemTextBuffer(options)
-	if options.IncludeSystemText {
-		instructions, instructionsErr := responsesInstructionsText(
-			request["instructions"],
-			"request.instructions",
-		)
-		if instructionsErr != nil {
-			return nil, instructionsErr
-		}
-		systemText.add(instructions)
+	if err := systemText.collect(
+		systemTextOriginal,
+		func() (string, error) {
+			return responsesInstructionsText(
+				request["instructions"],
+				"request.instructions",
+			)
+		},
+	); err != nil {
+		return nil, err
 	}
 	if text, isText := input.(string); isText {
 		return []Turn{{
@@ -114,6 +116,7 @@ func normalizeOpenAIResponsesTurns(
 			toolNames,
 			path,
 			&systemText,
+			len(parts) > 0,
 		)
 		if err != nil {
 			return nil, err
@@ -146,6 +149,7 @@ func normalizeResponseItem(
 	toolNames map[string]string,
 	path string,
 	systemText *systemTextBuffer,
+	conversationStarted bool,
 ) ([]responseTurnPart, error) {
 	itemType, err := requiredString(item, "type", path)
 	if err != nil {
@@ -153,7 +157,12 @@ func normalizeResponseItem(
 	}
 	switch itemType {
 	case "message":
-		return normalizeResponseMessage(item, path, systemText)
+		return normalizeResponseMessage(
+			item,
+			path,
+			systemText,
+			conversationStarted,
+		)
 	case "function_call":
 		part, callErr := normalizeResponseFunctionCall(item, toolNames, path)
 		return singletonResponsePart(part, callErr)
@@ -192,25 +201,23 @@ func normalizeResponseMessage(
 	item map[string]any,
 	path string,
 	systemText *systemTextBuffer,
+	conversationStarted bool,
 ) ([]responseTurnPart, error) {
 	role, err := requiredString(item, "role", path)
 	if err != nil {
 		return nil, err
 	}
 	if role == "system" || role == "developer" {
-		// Read the content only when it is wanted, so that a malformed system
+		// The leading run is the conversation-opening prompt; a system item
+		// that follows a turn arrived mid-conversation. collect reads the
+		// content only for a scope that wants it, so a malformed system
 		// message cannot start failing requests that succeed today.
-		if !systemText.enabled {
-			return nil, nil
+		scope := systemTextScopeAt(conversationStarted)
+		if err := systemText.collect(scope, func() (string, error) {
+			return openAIContentText(item["content"], path+".content")
+		}); err != nil {
+			return nil, err
 		}
-		text, systemErr := openAIContentText(
-			item["content"],
-			path+".content",
-		)
-		if systemErr != nil {
-			return nil, systemErr
-		}
-		systemText.add(text)
 		return nil, nil
 	}
 	if role != "user" && role != "assistant" {
