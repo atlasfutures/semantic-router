@@ -671,6 +671,71 @@
           "text": "go on"
         }
       ]
+    },
+    {
+      "id": "responses_host_tool_items_drop",
+      "protocol": "openai_responses",
+      "request": {
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": "patch it"
+          },
+          {
+            "type": "apply_patch_call",
+            "call_id": "ap_1",
+            "status": "completed",
+            "operation": {
+              "type": "update_file",
+              "path": "a.go",
+              "diff": "@@"
+            }
+          },
+          {
+            "type": "apply_patch_call_output",
+            "call_id": "ap_1",
+            "status": "completed",
+            "output": "ok"
+          },
+          {
+            "type": "shell_call",
+            "call_id": "sh_1",
+            "status": "completed",
+            "action": {
+              "type": "exec",
+              "commands": [
+                "go build ./..."
+              ]
+            }
+          },
+          {
+            "type": "shell_call_output",
+            "call_id": "sh_1",
+            "output": []
+          },
+          {
+            "type": "mcp_list_tools",
+            "server_label": "fs",
+            "tools": []
+          },
+          {
+            "type": "message",
+            "role": "assistant",
+            "content": "done"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "patch it"
+        },
+        {
+          "role": "assistant",
+          "text": "done"
+        }
+      ]
     }
   ]
 }
