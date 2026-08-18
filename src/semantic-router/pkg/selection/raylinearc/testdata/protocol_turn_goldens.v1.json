@@ -736,6 +736,492 @@
           "text": "done"
         }
       ]
+    },
+    {
+      "id": "anthropic_system_role_message_drops_whole",
+      "protocol": "anthropic_messages",
+      "request": {
+        "system": "top level",
+        "messages": [
+          {
+            "role": "system",
+            "content": [
+              {
+                "type": "mid_conv_system",
+                "text": "relocated"
+              },
+              {
+                "type": "text",
+                "text": "also system"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": "ask"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "ask"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_unknown_role_drops_whole",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "developer",
+            "content": "tooling note"
+          },
+          {
+            "role": "user",
+            "content": "ask"
+          },
+          {
+            "role": "tool",
+            "content": "stray"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "ask"
+        }
+      ]
+    },
+    {
+      "id": "responses_system_and_developer_roles_drop",
+      "protocol": "openai_responses",
+      "request": {
+        "input": [
+          {
+            "type": "message",
+            "role": "system",
+            "content": "sys"
+          },
+          {
+            "type": "message",
+            "role": "developer",
+            "content": "dev"
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": "ask"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "ask"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_null_content_is_empty_turn",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": null
+          },
+          {
+            "role": "assistant",
+            "content": "hi"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": ""
+        },
+        {
+          "role": "assistant",
+          "text": "hi"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_absent_content_is_empty_turn",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user"
+          },
+          {
+            "role": "assistant",
+            "content": "hi"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": ""
+        },
+        {
+          "role": "assistant",
+          "text": "hi"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_empty_content_array_is_empty_turn",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": []
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": ""
+        }
+      ]
+    },
+    {
+      "id": "responses_empty_input_is_no_turns",
+      "protocol": "openai_responses",
+      "request": {
+        "input": []
+      },
+      "turns": []
+    },
+    {
+      "id": "anthropic_all_blocks_dropped_is_empty_turn",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image",
+                "source": {
+                  "type": "base64",
+                  "media_type": "image/png",
+                  "data": "iVBOR"
+                }
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "secret",
+                "signature": "s"
+              },
+              {
+                "type": "redacted_thinking",
+                "data": "enc"
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": ""
+        },
+        {
+          "role": "assistant",
+          "text": ""
+        }
+      ]
+    },
+    {
+      "id": "anthropic_interleaved_rich_blocks_keep_order",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "a"
+              },
+              {
+                "type": "image",
+                "source": {
+                  "type": "url",
+                  "url": "https://example.test/y.png"
+                }
+              },
+              {
+                "type": "text",
+                "text": "b"
+              },
+              {
+                "type": "document",
+                "source": {
+                  "type": "text",
+                  "media_type": "text/plain",
+                  "data": "d"
+                }
+              },
+              {
+                "type": "text",
+                "text": "c"
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "a\nb\nc"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_consecutive_same_role_stay_separate",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "one"
+          },
+          {
+            "role": "user",
+            "content": "two"
+          },
+          {
+            "role": "assistant",
+            "content": "three"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "one"
+        },
+        {
+          "role": "user",
+          "text": "two"
+        },
+        {
+          "role": "assistant",
+          "text": "three"
+        }
+      ]
+    },
+    {
+      "id": "responses_dropped_item_keeps_same_role_coalescing",
+      "protocol": "openai_responses",
+      "request": {
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": "one"
+          },
+          {
+            "type": "reasoning",
+            "id": "r1",
+            "summary": []
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": "two"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "one\ntwo"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_tool_result_string_content",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "c1",
+                "name": "grep",
+                "input": {
+                  "q": "x"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "c1",
+                "content": "3 hits"
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "assistant",
+          "text": "[tool_call grep] {\"q\": \"x\"}"
+        },
+        {
+          "role": "user",
+          "text": "[tool_result grep]\n3 hits"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_tool_result_empty_content_with_error",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "c1",
+                "name": "grep",
+                "input": {}
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "c1",
+                "content": [],
+                "is_error": true
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "assistant",
+          "text": "[tool_call grep] {}"
+        },
+        {
+          "role": "user",
+          "text": "[tool_result grep] [tool error]\n"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_text_and_tool_result_in_one_message",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "c1",
+                "name": "grep",
+                "input": {}
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "before"
+              },
+              {
+                "type": "tool_result",
+                "tool_use_id": "c1",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "out"
+                  }
+                ]
+              },
+              {
+                "type": "image",
+                "source": {
+                  "type": "url",
+                  "url": "https://example.test/y.png"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "assistant",
+          "text": "[tool_call grep] {}"
+        },
+        {
+          "role": "user",
+          "text": "before\n\n[tool_result grep]\nout"
+        }
+      ]
+    },
+    {
+      "id": "responses_message_content_parts_drop_non_text",
+      "protocol": "openai_responses",
+      "request": {
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "a"
+              },
+              {
+                "type": "input_image",
+                "image_url": "https://example.test/y.png"
+              },
+              {
+                "type": "input_text",
+                "text": "b"
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "a\nb"
+        }
+      ]
     }
   ]
 }
