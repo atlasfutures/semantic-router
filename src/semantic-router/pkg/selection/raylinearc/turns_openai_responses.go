@@ -108,9 +108,10 @@ func normalizeResponseItem(
 		if droppedResponsesItemTypes[itemType] {
 			return nil, nil
 		}
-		return nil, turnError(
+		return nil, turnErrorWithDetail(
 			"unknown_item",
 			path+".type",
+			itemType,
 			"unsupported Responses item type %q",
 			itemType,
 		)
@@ -139,9 +140,10 @@ func normalizeResponseMessage(
 		return nil, nil
 	}
 	if role != "user" && role != "assistant" {
-		return nil, turnError(
+		return nil, turnErrorWithDetail(
 			"unknown_item",
 			path+".role",
+			role,
 			"unsupported Responses message role %q",
 			role,
 		)
