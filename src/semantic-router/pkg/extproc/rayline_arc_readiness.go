@@ -56,6 +56,7 @@ func createRaylineARCSelector(
 		return newRaylineARCSelector(
 			nil,
 			nil,
+			nil,
 			arcConfig.ArtifactRevision,
 		), nil, nil, nil, class
 	}
@@ -113,6 +114,7 @@ func createRaylineARCSelector(
 	return newRaylineARCSelector(
 		&runtimeARCScorer{runtime: runtime, policy: runtime.Policy()},
 		encoder,
+		raylinearc.NewAdmissionGate(arcConfig.Encoder.MaxInflightEncoderCalls),
 		arcConfig.ArtifactRevision,
 	), episodeStore, closeResources, closeSession, ""
 }

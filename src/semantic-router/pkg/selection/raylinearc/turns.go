@@ -40,7 +40,12 @@ type Turn struct {
 type TurnNormalizationError struct {
 	Code string
 	Path string
-	Err  error
+	// Detail is a bounded, non-sensitive discriminator for the failure, such
+	// as the unrecognised block type. It never carries request content, so it
+	// is safe to log. Keep it out of metric labels: it is unbounded in
+	// cardinality even though it is bounded in sensitivity.
+	Detail string
+	Err    error
 }
 
 func (err *TurnNormalizationError) Error() string {
@@ -63,6 +68,26 @@ func TurnNormalizationErrorCode(err error) string {
 	var normalizationError *TurnNormalizationError
 	if errors.As(err, &normalizationError) {
 		return normalizationError.Code
+	}
+	return ""
+}
+
+// TurnNormalizationErrorDetail returns the bounded discriminator for a
+// normalization failure, or the empty string when the failure carries none.
+func TurnNormalizationErrorDetail(err error) string {
+	var normalizationError *TurnNormalizationError
+	if errors.As(err, &normalizationError) {
+		return normalizationError.Detail
+	}
+	return ""
+}
+
+// TurnNormalizationErrorPath returns the request path that failed to
+// normalize, or the empty string when the failure is not path-scoped.
+func TurnNormalizationErrorPath(err error) string {
+	var normalizationError *TurnNormalizationError
+	if errors.As(err, &normalizationError) {
+		return normalizationError.Path
 	}
 	return ""
 }
@@ -208,5 +233,23 @@ func turnError(
 		Code: code,
 		Path: path,
 		Err:  fmt.Errorf(format, arguments...),
+	}
+}
+
+// turnErrorWithDetail is turnError plus a bounded discriminator that survives
+// into logs. Use it wherever the failure names something the caller cannot
+// otherwise recover, such as an unrecognised block type.
+func turnErrorWithDetail(
+	code string,
+	path string,
+	detail string,
+	format string,
+	arguments ...any,
+) error {
+	return &TurnNormalizationError{
+		Code:   code,
+		Path:   path,
+		Detail: detail,
+		Err:    fmt.Errorf(format, arguments...),
 	}
 }

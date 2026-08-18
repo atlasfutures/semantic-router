@@ -20,7 +20,20 @@ import (
 	"fmt"
 )
 
+// droppedResponsesItemTypes lists the input items that contribute no turn text.
+// Only plain messages and function calls reach the selector: every other tool
+// family is a built-in whose call and output are dropped as a pair, so no
+// output ever has to resolve a tool name its call never recorded.
+//
+// This table plus the rendered cases must cover the whole Responses input item
+// union. An item type in neither fails the episode closed, on the same
+// reasoning as the Anthropic table: a silently shortened conversation routes
+// worse than a refused one.
+//
+// Verified complete against openai-python 2.24.0.
 var droppedResponsesItemTypes = map[string]bool{
+	"apply_patch_call":        true,
+	"apply_patch_call_output": true,
 	"code_interpreter_call":   true,
 	"compaction":              true,
 	"computer_call":           true,
@@ -35,7 +48,10 @@ var droppedResponsesItemTypes = map[string]bool{
 	"mcp_approval_request":    true,
 	"mcp_approval_response":   true,
 	"mcp_call":                true,
+	"mcp_list_tools":          true,
 	"reasoning":               true,
+	"shell_call":              true,
+	"shell_call_output":       true,
 	"web_search_call":         true,
 }
 
@@ -108,9 +124,10 @@ func normalizeResponseItem(
 		if droppedResponsesItemTypes[itemType] {
 			return nil, nil
 		}
-		return nil, turnError(
+		return nil, turnErrorWithDetail(
 			"unknown_item",
 			path+".type",
+			itemType,
 			"unsupported Responses item type %q",
 			itemType,
 		)
@@ -139,9 +156,10 @@ func normalizeResponseMessage(
 		return nil, nil
 	}
 	if role != "user" && role != "assistant" {
-		return nil, turnError(
+		return nil, turnErrorWithDetail(
 			"unknown_item",
 			path+".role",
+			role,
 			"unsupported Responses message role %q",
 			role,
 		)

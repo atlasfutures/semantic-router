@@ -265,7 +265,7 @@ func TestSelectModelFromCandidatesBindsPrivateARCDispatchContract(t *testing.T) 
 	registry := selection.NewRegistry()
 	registry.Register(
 		selection.MethodRaylineARC,
-		newRaylineARCSelector(scorer, encoder, "revision"),
+		newRaylineARCSelector(scorer, encoder, nil, "revision"),
 	)
 	router := &OpenAIRouter{ModelSelector: registry}
 	requestContext := &RequestContext{}
