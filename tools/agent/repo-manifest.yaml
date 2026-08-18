@@ -132,6 +132,7 @@ docs:
 - tools/agent/docs/benchmarks/rayline-vllm-performance-contract.md
 - tools/agent/docs/handoff_rayline_serving_cost_20260810.md
 - tools/agent/docs/handoff_rayline_perf036_20260811.md
+- tools/agent/docs/prep_rayline_perf037_20260812.md
 - tools/agent/docs/runbook-claude-cli-arc-live-session.md
 - tools/agent/docs/live-claude-cli-e2e-20260811.md
 - tools/agent/docs/night-shift-20260810.md
@@ -284,6 +285,9 @@ doc_governance:
   - path: tools/agent/docs/handoff_rayline_perf036_20260811.md
     steward: router-core
     freshness: update when the Rayline capacity-measurement lane reopens or a new PERF run supersedes PERF036
+  - path: tools/agent/docs/prep_rayline_perf037_20260812.md
+    steward: router-core
+    freshness: update when a later PERF run supersedes PERF037's measured burst-absorption ceiling
   - path: tools/agent/docs/runbook-claude-cli-arc-live-session.md
     steward: router-core
     freshness: update when the live claude CLI ARC bring-up path or its cost-bearing steps change

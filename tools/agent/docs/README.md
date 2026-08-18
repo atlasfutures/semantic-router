@@ -73,6 +73,7 @@ make agent-ci-gate CHANGED_FILES="..."
 - [benchmarks/rayline-vllm-performance-contract.md](benchmarks/rayline-vllm-performance-contract.md)
 - [handoff_rayline_serving_cost_20260810.md](handoff_rayline_serving_cost_20260810.md)
 - [handoff_rayline_perf036_20260811.md](handoff_rayline_perf036_20260811.md)
+- [prep_rayline_perf037_20260812.md](prep_rayline_perf037_20260812.md)
 - [runbook-claude-cli-arc-live-session.md](runbook-claude-cli-arc-live-session.md)
 - [live-claude-cli-e2e-20260811.md](live-claude-cli-e2e-20260811.md)
 - [night-shift-20260810.md](night-shift-20260810.md)
