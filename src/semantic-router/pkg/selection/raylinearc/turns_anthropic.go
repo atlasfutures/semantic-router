@@ -100,6 +100,44 @@ func anthropicContentBlocks(value any, path string) ([]any, error) {
 	return blocks, nil
 }
 
+// anthropicBlockType reads the discriminator every content block must carry.
+func anthropicBlockType(value any, path string) (map[string]any, string, error) {
+	block, err := requiredObject(value, path)
+	if err != nil {
+		return nil, "", err
+	}
+	blockType, err := requiredString(block, "type", path)
+	if err != nil {
+		return nil, "", err
+	}
+	return block, blockType, nil
+}
+
+// anthropicSharedBlockText renders the blocks that mean the same thing in
+// either role, and decides the fate of every block neither renderer claims.
+// Blocks with a Rayline-defined drop behavior contribute no text; anything
+// else fails the episode closed. Keeping that decision in one place is what
+// makes the set of accepted block types auditable.
+func anthropicSharedBlockText(
+	block map[string]any,
+	blockType string,
+	blockPath string,
+) (string, error) {
+	if blockType == "text" {
+		return requiredString(block, "text", blockPath)
+	}
+	if anthropicDroppedBlockTypes[blockType] {
+		return "", nil
+	}
+	return "", turnErrorWithDetail(
+		"unknown_item",
+		blockPath+".type",
+		blockType,
+		"unsupported Anthropic block type %q",
+		blockType,
+	)
+}
+
 func renderAnthropicAssistant(
 	blocks []any,
 	toolNames map[string]string,
@@ -108,24 +146,11 @@ func renderAnthropicAssistant(
 	parts := make([]string, 0, len(blocks))
 	for index, value := range blocks {
 		blockPath := fmt.Sprintf("%s[%d]", path, index)
-		block, err := requiredObject(value, blockPath)
+		block, blockType, err := anthropicBlockType(value, blockPath)
 		if err != nil {
 			return "", err
 		}
-		blockType, err := requiredString(block, "type", blockPath)
-		if err != nil {
-			return "", err
-		}
-		switch blockType {
-		case "text":
-			text, textErr := requiredString(block, "text", blockPath)
-			if textErr != nil {
-				return "", textErr
-			}
-			if text != "" {
-				parts = append(parts, text)
-			}
-		case "tool_use":
+		if blockType == "tool_use" {
 			rendered, renderErr := renderAnthropicToolUse(
 				block,
 				toolNames,
@@ -135,16 +160,14 @@ func renderAnthropicAssistant(
 				return "", renderErr
 			}
 			parts = append(parts, rendered)
-		default:
-			if !anthropicDroppedBlockTypes[blockType] {
-				return "", turnErrorWithDetail(
-					"unknown_item",
-					blockPath+".type",
-					blockType,
-					"unsupported Anthropic block type %q",
-					blockType,
-				)
-			}
+			continue
+		}
+		text, textErr := anthropicSharedBlockText(block, blockType, blockPath)
+		if textErr != nil {
+			return "", textErr
+		}
+		if text != "" {
+			parts = append(parts, text)
 		}
 	}
 	return strings.Join(parts, "\n"), nil
@@ -182,24 +205,11 @@ func renderAnthropicUser(
 	results := make([]string, 0, len(blocks))
 	for index, value := range blocks {
 		blockPath := fmt.Sprintf("%s[%d]", path, index)
-		block, err := requiredObject(value, blockPath)
+		block, blockType, err := anthropicBlockType(value, blockPath)
 		if err != nil {
 			return "", err
 		}
-		blockType, err := requiredString(block, "type", blockPath)
-		if err != nil {
-			return "", err
-		}
-		switch blockType {
-		case "text":
-			text, textErr := requiredString(block, "text", blockPath)
-			if textErr != nil {
-				return "", textErr
-			}
-			if text != "" {
-				texts = append(texts, text)
-			}
-		case "tool_result":
+		if blockType == "tool_result" {
 			result, resultErr := renderAnthropicToolResult(
 				block,
 				toolNames,
@@ -209,16 +219,14 @@ func renderAnthropicUser(
 				return "", resultErr
 			}
 			results = append(results, result)
-		default:
-			if !anthropicDroppedBlockTypes[blockType] {
-				return "", turnErrorWithDetail(
-					"unknown_item",
-					blockPath+".type",
-					blockType,
-					"unsupported Anthropic block type %q",
-					blockType,
-				)
-			}
+			continue
+		}
+		text, textErr := anthropicSharedBlockText(block, blockType, blockPath)
+		if textErr != nil {
+			return "", textErr
+		}
+		if text != "" {
+			texts = append(texts, text)
 		}
 	}
 	return joinUserTextAndResults(texts, results), nil
@@ -278,11 +286,7 @@ func toolResultText(value any, path string) (string, error) {
 }
 
 func toolResultBlockText(value any, path string) (string, bool, error) {
-	block, err := requiredObject(value, path)
-	if err != nil {
-		return "", false, err
-	}
-	blockType, err := requiredString(block, "type", path)
+	block, blockType, err := anthropicBlockType(value, path)
 	if err != nil {
 		return "", false, err
 	}
