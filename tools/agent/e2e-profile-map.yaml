@@ -291,6 +291,8 @@ workflow_suite_rules:
       - src/vllm-plugins/rayline_arc_io/**
       - tools/make/e2e.mk
       - tools/agent/e2e-profile-map.yaml
+      - tools/agent/scripts/verify_sdk_unions.py
+      - tools/agent/requirements-sdk-drift.txt
       - .github/workflows/integration-test-rayline-arc.yml
   vllm-sr-cli-integration:
     owner: vllm-sr-cli
