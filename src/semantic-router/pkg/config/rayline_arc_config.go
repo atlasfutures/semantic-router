@@ -29,6 +29,10 @@ const (
 	maxRaylineARCConfigStringLength   = 512
 	maxRaylineARCRequiredCapability   = 8
 	maxNetworkPort                    = 65535
+	// A router cap above the encoder's own ingress cap cannot protect it: the
+	// surplus simply queues inside the encoder container where the router
+	// cannot see it, which is the condition this knob exists to remove.
+	maxRaylineARCInflightEncoderCalls = 32
 )
 
 var (
@@ -64,6 +68,11 @@ type RaylineARCEncoderConfig struct {
 	ConnectTimeoutSeconds int                               `yaml:"connect_timeout_seconds"`
 	TotalTimeoutSeconds   int                               `yaml:"total_timeout_seconds"`
 	MaxRetries            int                               `yaml:"max_retries"`
+	// MaxInflightEncoderCalls caps concurrent encoder calls per router process
+	// and sheds the surplus immediately rather than queueing it. Zero, the
+	// default, leaves admission control off so that existing deployments keep
+	// their current behaviour until an operator opts in.
+	MaxInflightEncoderCalls int `yaml:"max_inflight_encoder_calls,omitempty"`
 }
 
 // RaylineARCEpisodeConfig configures serialized, fenced episode state.
@@ -228,6 +237,13 @@ func validateRaylineARCEncoderTimeouts(cfg RaylineARCEncoderConfig) error {
 	}
 	if cfg.MaxRetries < 0 || cfg.MaxRetries > maxRaylineARCEncoderRetries {
 		return fmt.Errorf("max_retries must be between 0 and %d", maxRaylineARCEncoderRetries)
+	}
+	if cfg.MaxInflightEncoderCalls < 0 ||
+		cfg.MaxInflightEncoderCalls > maxRaylineARCInflightEncoderCalls {
+		return fmt.Errorf(
+			"max_inflight_encoder_calls must be between 0 and %d",
+			maxRaylineARCInflightEncoderCalls,
+		)
 	}
 	return nil
 }

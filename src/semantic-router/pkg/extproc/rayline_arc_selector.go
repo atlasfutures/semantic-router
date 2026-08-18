@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -104,6 +105,7 @@ func (scorer *runtimeARCScorer) Select(
 type raylineARCSelector struct {
 	scorer           raylineARCScorer
 	encoder          raylineARCEncoder
+	admission        *raylinearc.AdmissionGate
 	artifactRevision string
 	now              func() time.Time
 }
@@ -116,14 +118,19 @@ func (failure *raylineARCSelectionFailure) Error() string {
 	return fmt.Sprintf("Rayline ARC selection failed (class=%s)", failure.class)
 }
 
+// newRaylineARCSelector takes the admission gate explicitly. A nil gate leaves
+// admission control off, which is the behaviour of every deployment that has
+// not set max_inflight_encoder_calls.
 func newRaylineARCSelector(
 	scorer raylineARCScorer,
 	encoder raylineARCEncoder,
+	admission *raylinearc.AdmissionGate,
 	artifactRevision string,
 ) *raylineARCSelector {
 	return &raylineARCSelector{
 		scorer:           scorer,
 		encoder:          encoder,
+		admission:        admission,
 		artifactRevision: artifactRevision,
 		now:              time.Now,
 	}
@@ -221,6 +228,18 @@ func (selector *raylineARCSelector) encode(
 	arcContext *selection.RaylineARCSelectionContext,
 	state *raylinearc.EpisodeState,
 ) (*raylinearc.EncoderResult, time.Duration, error) {
+	// Admission is checked after the episode lease and before any encoder work,
+	// so a shed request never opens a session and never occupies the encoder.
+	release, admitErr := selector.admission.Acquire()
+	if admitErr != nil {
+		selector.recordAdmission(false)
+		return nil, 0, boundedARCEncoderFailure(admitErr)
+	}
+	defer func() {
+		release()
+		metrics.SetRaylineARCEncoderInflight(selector.admission.Inflight())
+	}()
+	selector.recordAdmission(true)
 	started := selector.now()
 	var encoded *raylinearc.EncoderResult
 	var err error
@@ -246,6 +265,14 @@ func (selector *raylineARCSelector) encode(
 		return nil, encoderLatency, boundedARCEncoderFailure(err)
 	}
 	return encoded, encoderLatency, nil
+}
+
+func (selector *raylineARCSelector) recordAdmission(admitted bool) {
+	metrics.RecordRaylineARCEncoderAdmission(
+		admitted,
+		selector.admission.Inflight(),
+		selector.admission.HighWater(),
+	)
 }
 
 func boundedARCEncoderFailure(err error) error {

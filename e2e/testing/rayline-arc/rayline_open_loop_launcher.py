@@ -43,6 +43,9 @@ from rayline_open_loop_contract import (
 )
 from rayline_open_loop_probe import load_open_loop_packet
 from rayline_parity_http_probe import PROTOCOL_BY_ARM
+from rayline_rtx6000_burst_contract import (
+    resolve_launch_contract as resolve_rtx6000_burst_contract,
+)
 from rayline_rtx6000_capacity_contract import (
     resolve_launch_contract as resolve_rtx6000_capacity_contract,
 )
@@ -163,13 +166,14 @@ def _resolve_contract(run_id: str) -> OpenLoopRunContract:
         resolve_saturation_capacity_contract,
         resolve_l4_capacity_contract,
         resolve_rtx6000_capacity_contract,
+        resolve_rtx6000_burst_contract,
     ):
         with contextlib.suppress(ValueError):
             return resolve(run_id)
     raise ValueError(
         "no Rayline open-loop sweep, saturation ladder arm, saturation knee, "
-        "saturation capacity, L4 capacity or RTX PRO 6000 capacity run is "
-        "currently launchable"
+        "saturation capacity, L4 capacity, RTX PRO 6000 capacity or RTX PRO "
+        "6000 burst run is currently launchable"
     )
 
 
