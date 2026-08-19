@@ -77,10 +77,7 @@ func (service *raylineARCDecisionService) RouteDecision(
 	)
 	if failure := selectionContext.RaylineARC.PreparationFailure; failure != "" {
 		service.router.finalizeRaylineARCAbort(requestContext, failure)
-		return routerruntime.RouteDecision{}, fmt.Errorf(
-			"decision-only routing could not prepare the episode: %s",
-			failure,
-		)
+		return routerruntime.RouteDecision{}, prepareFailureError(failure)
 	}
 
 	worker, err := service.selectWorker(ctx, algorithm, selectionContext, requestContext)
@@ -267,4 +264,23 @@ func (r *OpenAIRouter) decisionOnlyRoutingTarget() (
 		)
 	}
 	return target, target.Algorithm, nil
+}
+
+// prepareFailureError classifies a preparation failure for the caller.
+//
+// Contention failures are wrapped so the adapter can answer 429: the router is
+// healthy and the request is well formed, the session's episode was simply
+// already in use or the store was full. Every other failure stays a plain
+// error and reads as 503, because waiting will not fix it.
+func prepareFailureError(failure string) error {
+	base := fmt.Errorf(
+		"decision-only routing could not prepare the episode: %s",
+		failure,
+	)
+	switch failure {
+	case "episode_timeout", "episode_capacity":
+		return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionContended, base)
+	default:
+		return base
+	}
 }
