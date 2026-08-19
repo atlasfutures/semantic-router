@@ -13,6 +13,7 @@ target/
 __pycache__/
 .venv/
 .venv-agent/
+.venv-sdk-drift/
 pii_env/
 
 # Python build artifacts

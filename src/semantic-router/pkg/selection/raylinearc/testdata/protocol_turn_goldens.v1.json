@@ -591,7 +591,7 @@
       "error_code": "unknown_item"
     },
     {
-      "id": "anthropic_mid_conv_system_drops",
+      "id": "anthropic_mid_conv_system_folds",
       "protocol": "anthropic_messages",
       "request": {
         "messages": [
@@ -618,7 +618,7 @@
       "turns": [
         {
           "role": "user",
-          "text": "summarize"
+          "text": "Be terse from now on.\nsummarize"
         }
       ]
     },

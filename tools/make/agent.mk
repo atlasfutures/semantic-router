@@ -24,10 +24,16 @@ AGENT_VENV ?= $(CURDIR)/.venv-agent
 AGENT_PYTHON ?= $(AGENT_VENV)/bin/python
 AGENT_PRE_COMMIT ?= $(AGENT_VENV)/bin/pre-commit
 
+# Separate venv for the vendor SDKs the drift check parses. Kept apart from
+# $(AGENT_VENV) so an SDK dependency can never perturb the harness tooling.
+AGENT_SDK_VENV ?= $(CURDIR)/.venv-sdk-drift
+AGENT_SDK_PYTHON ?= $(AGENT_SDK_VENV)/bin/python
+
 agent-help: ## Show help for agent-specific targets
 	@echo "Agent commands:"
 	@echo "  make agent-bootstrap"
 	@echo "  make agent-validate"
+	@echo "  make agent-sdk-drift"
 	@echo "  make agent-scorecard"
 	@echo "  make agent-ci-lint CHANGED_FILES=\"...\""
 	@echo "  make agent-docs-ci-gate CHANGED_FILES=\"...\""
@@ -72,6 +78,15 @@ agent-bootstrap: agent-venv-install ## Install agent validation tooling
 agent-validate: agent-bootstrap ## Validate the shared agent harness manifests and docs
 	@$(LOG_TARGET)
 	@"$(AGENT_PYTHON)" tools/agent/scripts/agent_gate.py validate
+
+agent-sdk-drift: ## Check the ARC turn parser tables against the vendor SDK unions
+	@$(LOG_TARGET)
+	@if [ ! -x "$(AGENT_SDK_PYTHON)" ]; then \
+		echo "Creating $(AGENT_SDK_VENV)..."; \
+		python3 -m venv "$(AGENT_SDK_VENV)"; \
+	fi
+	@"$(AGENT_SDK_PYTHON)" -m pip install -q -r tools/agent/requirements-sdk-drift.txt
+	@"$(AGENT_SDK_PYTHON)" tools/agent/scripts/verify_sdk_unions.py
 
 agent-scorecard: agent-bootstrap ## Show the current harness governance scorecard
 	@$(LOG_TARGET)
@@ -291,5 +306,5 @@ agent-feature-gate: ## Run lint, targeted tests, local smoke, and a final report
 	"$(AGENT_PYTHON)" tools/agent/scripts/agent_gate.py report --env "$(ENV)" --base-ref "$(AGENT_BASE_REF)" --changed-files "$(CHANGED_FILES)" --changed-files-path "$(AGENT_CHANGED_FILES_PATH)"
 
 .PHONY: agent-help agent-venv-install agent-bootstrap agent-ci-lint agent-docs-ci-gate agent-dev agent-serve-local agent-stop-local \
-	agent-validate agent-lint agent-fast-gate agent-report agent-ci-gate agent-smoke-local agent-e2e-affected \
+	agent-validate agent-sdk-drift agent-lint agent-fast-gate agent-report agent-ci-gate agent-smoke-local agent-e2e-affected \
 	test-and-build-local agent-pr-gate agent-feature-gate

@@ -31,11 +31,15 @@ var openAIDroppedContentTypes = map[string]bool{
 	"refusal":      true,
 }
 
-func normalizeOpenAIChatTurns(request map[string]any) ([]Turn, error) {
+func normalizeOpenAIChatTurns(
+	request map[string]any,
+	options TurnOptions,
+) ([]Turn, error) {
 	messages, err := requiredArray(request, "messages", "request")
 	if err != nil {
 		return nil, err
 	}
+	systemText := newSystemTextBuffer(options)
 	turns := make([]Turn, 0, len(messages))
 	toolNames := make(map[string]string)
 	for index, value := range messages {
@@ -54,12 +58,13 @@ func normalizeOpenAIChatTurns(request map[string]any) ([]Turn, error) {
 			role,
 			toolNames,
 			path,
+			&systemText,
 		)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return turns, nil
+	return systemText.flushTrailing(turns), nil
 }
 
 func appendOpenAIChatMessage(
@@ -68,16 +73,34 @@ func appendOpenAIChatMessage(
 	role string,
 	toolNames map[string]string,
 	path string,
+	systemText *systemTextBuffer,
 ) ([]Turn, error) {
 	switch role {
 	case "system", "developer":
+		// The leading run of system messages is the conversation-opening
+		// prompt. Once a turn exists, a system message arrived
+		// mid-conversation instead, and the two scopes are configured apart.
+		// collect reads the content only for a scope that wants it, so a
+		// malformed system message cannot start failing requests that succeed
+		// today.
+		scope := systemTextScopeAt(len(turns) > 0)
+		if err := systemText.collect(scope, func() (string, error) {
+			return openAIContentText(message["content"], path+".content")
+		}); err != nil {
+			return nil, err
+		}
 		return turns, nil
 	case "user":
 		text, err := openAIContentText(message["content"], path+".content")
 		if err != nil {
 			return nil, err
 		}
-		return append(turns, Turn{Role: role, Text: text}), nil
+		// take() empties the buffer, so each stretch of system text lands on
+		// the first user turn that follows it -- the turn it governs.
+		return append(
+			turns,
+			Turn{Role: role, Text: joinSystemText(systemText.take(), text)},
+		), nil
 	case "assistant":
 		text, err := renderOpenAIChatAssistant(message, toolNames, path)
 		if err != nil {

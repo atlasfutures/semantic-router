@@ -27,6 +27,8 @@ on:
       - 'src/vllm-plugins/rayline_arc_io/**'
       - 'tools/make/e2e.mk'
       - 'tools/agent/e2e-profile-map.yaml'
+      - 'tools/agent/scripts/verify_sdk_unions.py'
+      - 'tools/agent/requirements-sdk-drift.txt'
       - '.github/workflows/integration-test-rayline-arc.yml'
 
   push:
@@ -52,6 +54,8 @@ on:
       - 'src/vllm-plugins/rayline_arc_io/**'
       - 'tools/make/e2e.mk'
       - 'tools/agent/e2e-profile-map.yaml'
+      - 'tools/agent/scripts/verify_sdk_unions.py'
+      - 'tools/agent/requirements-sdk-drift.txt'
       - '.github/workflows/integration-test-rayline-arc.yml'
 
 concurrency:
@@ -59,6 +63,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  sdk-union-drift:
+    name: Parser tables vs vendor SDK unions
+    # Deliberately not pinned to the upstream repository. The turn parser is
+    # fail-closed, so an unhandled SDK block type is a 503 in whichever fork
+    # deploys it, and this job is the cheap way to catch that at build time.
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Check the parser tables against the vendor SDK unions
+        run: make agent-sdk-drift
+
   rayline-arc:
     name: Hermetic full-stack acceptance
     if: github.repository == 'vllm-project/semantic-router' && !github.event.pull_request.draft

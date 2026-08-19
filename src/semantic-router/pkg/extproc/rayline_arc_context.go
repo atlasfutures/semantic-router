@@ -69,7 +69,14 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		return result
 	}
 	result.State = state
-	turns, err := normalizeRaylineARCTurns(reqCtx)
+	turns, err := normalizeRaylineARCTurns(
+		reqCtx,
+		raylinearc.TurnOptions{
+			IncludeSystemText: algorithm.RaylineARC.IncludeSystemText,
+			DropMidConversationSystemText: algorithm.RaylineARC.
+				DropMidConversationSystemText,
+		},
+	)
 	if err != nil {
 		code := raylinearc.TurnNormalizationErrorCode(err)
 		if code == "" {
@@ -176,6 +183,7 @@ func (r *OpenAIRouter) prepareRaylineARCTransaction(
 
 func normalizeRaylineARCTurns(
 	reqCtx *RequestContext,
+	options raylinearc.TurnOptions,
 ) ([]raylinearc.Turn, error) {
 	protocol := raylinearc.ProtocolOpenAIChat
 	switch {
@@ -188,6 +196,7 @@ func normalizeRaylineARCTurns(
 	return raylinearc.NormalizeTurns(
 		protocol,
 		reqCtx.OriginalRequestBody,
+		options,
 	)
 }
 
