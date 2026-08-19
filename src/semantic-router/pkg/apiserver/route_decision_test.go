@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -363,6 +364,52 @@ func TestRouteDecisionFailsClosedOnSelectionFailure(t *testing.T) {
 	}
 	if _, present := decoded["selected_worker"]; present {
 		t.Fatalf("failed consult still published a worker: %#v", decoded["selected_worker"])
+	}
+}
+
+// Contention is not unavailability. A 503 sends the caller into fallback and
+// reads as an outage; a contended consult is a healthy router that is already
+// busy with this session, so it must answer 429 and say when to come back.
+func TestRouteDecisionReportsContentionAsBackPressure(t *testing.T) {
+	for name, failure := range map[string]string{
+		"lease wait timed out": "episode_timeout",
+		"store at capacity":    "episode_capacity",
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := routeDecisionTestServer(&fakeRouteDecisionRuntime{
+				err: fmt.Errorf("%w: could not prepare the episode: %s",
+					routerruntime.ErrRouteDecisionContended, failure),
+			})
+
+			recorder, decoded := postRouteDecision(t, server, routeDecisionTestBody, nil)
+
+			if recorder.Code != http.StatusTooManyRequests {
+				t.Fatalf("status = %d, want 429 (body=%s)", recorder.Code, recorder.Body.String())
+			}
+			if retryAfter := recorder.Header().Get("Retry-After"); retryAfter == "" {
+				t.Fatal("contended consult carried no Retry-After")
+			}
+			if _, present := decoded["selected_worker"]; present {
+				t.Fatalf("contended consult still published a worker: %#v", decoded["selected_worker"])
+			}
+		})
+	}
+}
+
+// Every other failure keeps its 503: the caller cannot fix it by waiting, so
+// inviting a retry would turn one broken consult into a retry storm.
+func TestRouteDecisionKeepsUnavailableForNonContendedFailures(t *testing.T) {
+	server := routeDecisionTestServer(&fakeRouteDecisionRuntime{
+		err: errors.New("decision-only routing could not prepare the episode: episode_store"),
+	})
+
+	recorder, _ := postRouteDecision(t, server, routeDecisionTestBody, nil)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (body=%s)", recorder.Code, recorder.Body.String())
+	}
+	if retryAfter := recorder.Header().Get("Retry-After"); retryAfter != "" {
+		t.Fatalf("non-contended failure invited a retry: Retry-After=%q", retryAfter)
 	}
 }
 

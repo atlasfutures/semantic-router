@@ -24,6 +24,12 @@ import (
 // this router, not a choice it gets to make.
 const routeDecisionPath = "/v1/route"
 
+// routeDecisionRetryAfterSeconds is the Retry-After a contended consult
+// carries. One second is deliberately short: the holder of a session's episode
+// is usually one consult ahead, not minutes away, and a caller that waits
+// longer than its own request budget would drop the turn instead of retrying.
+const routeDecisionRetryAfterSeconds = "1"
+
 const (
 	// routeIDHeader carries the caller's own route id. This adapter adopts it
 	// as the decision id and echoes it, so one id spans the caller's durable
@@ -126,10 +132,27 @@ func (s *ClassificationAPIServer) handleRouteDecision(w http.ResponseWriter, r *
 		// Fail closed. The algorithm owns the choice and has no fallback
 		// worker, so answering with a default here would silently replace a
 		// policy decision with this adapter's guess.
+		//
+		// Contention is reported separately. A 503 says this router is
+		// unavailable, which sends a caller into fallback and reads as an
+		// outage in its dashboards; a contended consult is neither. It is
+		// back-pressure from a healthy router that is already busy with this
+		// session, so it answers 429 and names when to come back.
+		contended := errors.Is(err, routerruntime.ErrRouteDecisionContended)
 		logging.ComponentErrorEvent("apiserver", "route_decision_failed", map[string]interface{}{
 			"decision_id": decisionID,
 			"error":       err.Error(),
+			"contended":   contended,
 		})
+		if contended {
+			w.Header().Set("Retry-After", routeDecisionRetryAfterSeconds)
+			s.writeRouteDecisionError(
+				w,
+				http.StatusTooManyRequests,
+				"route decision contended: this session is already being served",
+			)
+			return
+		}
 		s.writeRouteDecisionError(w, http.StatusServiceUnavailable, "route decision failed")
 		return
 	}

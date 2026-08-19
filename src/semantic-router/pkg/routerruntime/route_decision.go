@@ -1,6 +1,9 @@
 package routerruntime
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // RouteDecisionRequest is one decision-only route consult.
 //
@@ -63,3 +66,13 @@ type RouteDecision struct {
 type RouteDecisionRuntime interface {
 	RouteDecision(context.Context, RouteDecisionRequest) (RouteDecision, error)
 }
+
+// ErrRouteDecisionContended marks a consult that could not start because the
+// router was already busy with this session's episode, or because the episode
+// store was at capacity. It is contention, not a fault: the request was well
+// formed and the router is healthy, so the caller may retry.
+//
+// Implementations wrap it; the adapter matches with errors.Is and answers 429
+// instead of 503. Every other failure stays 503, because the caller cannot
+// fix it by waiting.
+var ErrRouteDecisionContended = errors.New("route decision contended")
