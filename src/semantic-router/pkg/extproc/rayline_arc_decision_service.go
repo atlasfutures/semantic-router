@@ -141,7 +141,7 @@ func (service *raylineARCDecisionService) resolveWorker(
 	}
 	result, err := selector.Select(ctx, selectionContext)
 	if err != nil {
-		return raylinearc.WorkerManifest{}, "selection_failed", err
+		return raylinearc.WorkerManifest{}, "selection_failed", selectionFailureError(err)
 	}
 	if err := selection.ValidateSelectionResult(selectionContext, result); err != nil {
 		return raylinearc.WorkerManifest{}, "invalid_result", err
@@ -272,6 +272,21 @@ func (r *OpenAIRouter) decisionOnlyRoutingTarget() (
 // healthy and the request is well formed, the session's episode was simply
 // already in use or the store was full. Every other failure stays a plain
 // error and reads as 503, because waiting will not fix it.
+// selectionFailureError classifies a selection failure for the caller.
+//
+// An admission shed is the same back-pressure as a contended lease: the router
+// is healthy and the request is well formed, the encoder's in-flight cap is
+// simply spent. It escaped prepareFailureError because it surfaces during
+// selection, not episode preparation. Every other selection failure stays a
+// plain error and reads as 503, because waiting will not fix it.
+func selectionFailureError(err error) error {
+	var failure *raylineARCSelectionFailure
+	if errors.As(err, &failure) && failure.contended() {
+		return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionContended, err)
+	}
+	return err
+}
+
 func prepareFailureError(failure string) error {
 	base := fmt.Errorf(
 		"decision-only routing could not prepare the episode: %s",

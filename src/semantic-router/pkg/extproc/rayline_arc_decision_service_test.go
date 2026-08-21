@@ -392,3 +392,75 @@ func TestRouteDecisionRejectsUnnormalizableBodies(t *testing.T) {
 		t.Fatalf("selector ran on an unnormalizable body: %+v", selector.contexts)
 	}
 }
+
+// An admission shed is deliberate back-pressure, not breakage: the gate's own
+// documentation calls it "a deliberate capacity decision, never an encoder
+// error". It must classify as contended so the adapter answers 429. It escaped
+// the contended classification because it surfaces as a selection failure
+// rather than an episode-preparation one, and a 503 here sends callers into
+// fallback during exactly the bursts the gate exists to absorb.
+func TestRouteDecisionClassifiesAdmissionShedAsContended(t *testing.T) {
+	selector := &stubARCSelector{
+		arm:     0,
+		workers: decisionServiceWorkers(),
+		// Exactly the error the real selector returns when the gate sheds,
+		// built by the same function, so the classifier and the producer
+		// cannot drift apart without this test noticing.
+		err: boundedARCEncoderFailure(&raylinearc.EncoderFailure{
+			Class: raylinearc.EncoderFailureAdmission,
+		}),
+	}
+	router := decisionServiceRouter(t, selector)
+
+	_, err := router.routeDecisionRuntimeState().RouteDecision(
+		context.Background(),
+		routerruntime.RouteDecisionRequest{Body: anthropicBody("hello"), SessionID: "session-shed"},
+	)
+	if err == nil {
+		t.Fatal("RouteDecision() succeeded, want an admission-shed error")
+	}
+	if !errors.Is(err, routerruntime.ErrRouteDecisionContended) {
+		t.Fatalf("shed error = %v, want it to classify as contended (429), not 503", err)
+	}
+
+	// The shed must not strand the lease: the whole point of answering 429 is
+	// that the caller can come back, so coming back has to work.
+	selector.err = nil
+	if _, err := router.routeDecisionRuntimeState().RouteDecision(
+		context.Background(),
+		routerruntime.RouteDecisionRequest{Body: anthropicBody("hello"), SessionID: "session-shed"},
+	); err != nil {
+		t.Fatalf("consult after a shed error = %v, want the lease released", err)
+	}
+}
+
+// Only the shed converts. Every other encoder failure class means waiting will
+// not help, so it must keep reading as 503 rather than inviting a retry storm
+// against a broken encoder.
+func TestRouteDecisionKeepsEncoderBreakageUncontended(t *testing.T) {
+	for name, cause := range map[string]error{
+		"transport": &raylinearc.EncoderFailure{Class: raylinearc.EncoderFailureTransport},
+		"timeout":   &raylinearc.EncoderFailure{Class: raylinearc.EncoderFailureTimeout},
+		"unclassed": errors.New("encoder fell over"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			selector := &stubARCSelector{
+				arm:     0,
+				workers: decisionServiceWorkers(),
+				err:     boundedARCEncoderFailure(cause),
+			}
+			router := decisionServiceRouter(t, selector)
+
+			_, err := router.routeDecisionRuntimeState().RouteDecision(
+				context.Background(),
+				routerruntime.RouteDecisionRequest{Body: anthropicBody("hello"), SessionID: "session-broken"},
+			)
+			if err == nil {
+				t.Fatal("RouteDecision() succeeded, want an encoder failure")
+			}
+			if errors.Is(err, routerruntime.ErrRouteDecisionContended) {
+				t.Fatalf("encoder breakage %v classified as contended; a 429 would invite retries against a broken encoder", err)
+			}
+		})
+	}
+}
