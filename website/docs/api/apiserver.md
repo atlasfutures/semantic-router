@@ -259,8 +259,13 @@ is present only when the worker declares one. Fields the router cannot source
 are omitted rather than zero-filled.
 
 Failures are fail-closed. A malformed request is a `400` with a `detail`
-string, and a failed selection is a `503`: the router never answers with a
-default worker.
+string. A failed selection is a `503`: the router never answers with a default
+worker.
+
+Temporary routing contention returns `429` with `Retry-After: 1`. Contention
+includes a busy session lease, a full episode store, or a saturated encoder
+admission gate. The caller may retry after the stated delay. Other selection
+failures remain `503` because waiting cannot repair them.
 
 The route is gated by the `route.decision` permission, which no built-in role
 carries. Under bearer auth, grant it explicitly:

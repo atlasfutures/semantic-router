@@ -150,7 +150,7 @@ func (s *ClassificationAPIServer) handleRouteDecision(w http.ResponseWriter, r *
 			s.writeRouteDecisionError(
 				w,
 				http.StatusTooManyRequests,
-				"route decision contended: the session or the encoder is briefly at capacity",
+				"route decision contended: routing capacity is briefly exhausted",
 			)
 			return
 		}

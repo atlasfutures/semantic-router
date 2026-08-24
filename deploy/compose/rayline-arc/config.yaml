@@ -101,6 +101,9 @@ routing:
             connect_timeout_seconds: 5
             total_timeout_seconds: 10
             max_retries: 0
+            # Keep the hermetic stack's two-request concurrency contract, then
+            # prove that a third simultaneous decision is shed at the API.
+            max_inflight_encoder_calls: 2
           episode:
             id_header: x-rayline-episode-id
             close_header: x-rayline-episode-close
