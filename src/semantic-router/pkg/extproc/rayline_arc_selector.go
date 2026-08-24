@@ -118,6 +118,14 @@ func (failure *raylineARCSelectionFailure) Error() string {
 	return fmt.Sprintf("Rayline ARC selection failed (class=%s)", failure.class)
 }
 
+// contended reports whether this failure is deliberate back-pressure rather
+// than breakage. Only the admission shed qualifies: the gate documents a shed
+// as "a deliberate capacity decision, never an encoder error", so a caller can
+// fix it by waiting. Every other class means waiting will not help.
+func (failure *raylineARCSelectionFailure) contended() bool {
+	return failure.class == arcEncoderFailureClass(raylinearc.EncoderFailureAdmission)
+}
+
 // newRaylineARCSelector takes the admission gate explicitly. A nil gate leaves
 // admission control off, which is the behaviour of every deployment that has
 // not set max_inflight_encoder_calls.
@@ -279,10 +287,17 @@ func boundedARCEncoderFailure(err error) error {
 	var encoderFailure *raylinearc.EncoderFailure
 	if errors.As(err, &encoderFailure) {
 		return arcSelectionFailure(
-			"encoder_" + string(encoderFailure.Class),
+			arcEncoderFailureClass(encoderFailure.Class),
 		)
 	}
 	return arcSelectionFailure("encoder")
+}
+
+// arcEncoderFailureClass is the one place an encoder failure class becomes a
+// selection failure class. The contended predicate matches against it, so
+// building the string anywhere else would let producer and classifier drift.
+func arcEncoderFailureClass(class raylinearc.EncoderFailureClass) string {
+	return "encoder_" + string(class)
 }
 
 func validARCDecision(

@@ -136,8 +136,9 @@ func (s *ClassificationAPIServer) handleRouteDecision(w http.ResponseWriter, r *
 		// Contention is reported separately. A 503 says this router is
 		// unavailable, which sends a caller into fallback and reads as an
 		// outage in its dashboards; a contended consult is neither. It is
-		// back-pressure from a healthy router that is already busy with this
-		// session, so it answers 429 and names when to come back.
+		// back-pressure from a healthy router -- already busy with this
+		// session, or at its encoder admission cap -- so it answers 429 and
+		// names when to come back.
 		contended := errors.Is(err, routerruntime.ErrRouteDecisionContended)
 		logging.ComponentErrorEvent("apiserver", "route_decision_failed", map[string]interface{}{
 			"decision_id": decisionID,
@@ -149,7 +150,7 @@ func (s *ClassificationAPIServer) handleRouteDecision(w http.ResponseWriter, r *
 			s.writeRouteDecisionError(
 				w,
 				http.StatusTooManyRequests,
-				"route decision contended: this session is already being served",
+				"route decision contended: routing capacity is briefly exhausted",
 			)
 			return
 		}
