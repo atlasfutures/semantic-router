@@ -138,3 +138,18 @@ config:
       vector_store:
         embedding_model: mmbert
     integrations: {}
+
+# The chart default cannot be relied on here. deploy/helm/semantic-router/values.yaml
+# carries 15 top-level `resources:` blocks across 40 YAML documents, so the last one
+# wins and the effective default is 2Gi/1Gi - not the 7Gi/3Gi documented at its
+# line 109. 2Gi OOMKilled this router (exit 137, confirmed via lastState) while it
+# downloaded and loaded the local mmbert embedding model at startup, the same trap
+# recorded in jailbreak-onerror/values.yaml. Every profile that runs sets this
+# explicitly; these values match anthropic-shim, the reference profile for this one.
+resources:
+  limits:
+    cpu: 2000m
+    memory: 8Gi
+  requests:
+    cpu: 500m
+    memory: 2Gi
