@@ -75,8 +75,20 @@ spec:
             - type: Exact
               name: x-ai-eg-model
               value: conformance-messages-model
+      # Deliberately the OpenAI-schema backend, not conformance-fixture-anthropic.
+      # Envoy-mediated router egress is always OpenAI Chat today: an Anthropic
+      # ingress is normalized to /v1/chat/completions with an OpenAI body (the
+      # router says so itself via x-vsr-upstream-protocol: openai), and Envoy AI
+      # Gateway v0.4.0 reaches its Anthropic translator only from the
+      # /anthropic/v1/messages processor. Pointing this rule at the Anthropic
+      # backend therefore fails inside the gateway with an opaque 500 and zero
+      # recorded requests, which hides the divergence instead of measuring it.
+      # Routed here, the fixture records what the router really emitted and
+      # refuses it with 597, so the case fails at the provider boundary with the
+      # exact diff. Flip back to conformance-fixture-anthropic once the router
+      # gains native Anthropic egress.
       backendRefs:
-        - name: conformance-fixture-anthropic
+        - name: conformance-fixture-openai
       timeouts:
         request: 120s
         backendRequest: 120s

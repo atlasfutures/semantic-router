@@ -117,6 +117,13 @@ config:
       clear_route_cache: true
       strategy: priority
     services:
+      # /v1/responses is 404 unless the Response API is enabled; the seed-03
+      # Responses ingress case cannot reach the router without it.
+      response_api:
+        enabled: true
+        store_backend: memory
+        ttl_seconds: 86400
+        max_responses: 1000
       observability:
         metrics:
           enabled: true
