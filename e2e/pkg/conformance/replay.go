@@ -64,7 +64,11 @@ type ReplayStep struct {
 	Millis int `json:"millis"`
 }
 
-func parseReplayScript(raw []byte, dir string) (*ReplayScript, error) {
+// ParseReplayScript parses and validates one replay.yaml for the case directory
+// dir, which its file references resolve against. The loader calls it while reading
+// a case; the provider fixture calls it when a script arrives over its control
+// endpoint, so a malformed script is rejected in both paths by the same rules.
+func ParseReplayScript(raw []byte, dir string) (*ReplayScript, error) {
 	var script ReplayScript
 	if err := yaml.UnmarshalStrict(raw, &script); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", fileReplayScript, err)

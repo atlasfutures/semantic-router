@@ -25,9 +25,9 @@ steps:
   - {kind: disconnect}
 `
 
-	got, err := parseReplayScript([]byte(script), dir)
+	got, err := ParseReplayScript([]byte(script), dir)
 	if err != nil {
-		t.Fatalf("parseReplayScript() error = %v", err)
+		t.Fatalf("ParseReplayScript() error = %v", err)
 	}
 	if got.Expect.Headers["anthropic-version"] != "2023-06-01" {
 		t.Errorf("expect.headers = %v", got.Expect.Headers)
@@ -121,9 +121,9 @@ func TestParseReplayScriptFailures(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := parseReplayScript([]byte(tt.script), dir)
+			_, err := ParseReplayScript([]byte(tt.script), dir)
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-				t.Fatalf("parseReplayScript() error = %v, want it to contain %q", err, tt.wantErr)
+				t.Fatalf("ParseReplayScript() error = %v, want it to contain %q", err, tt.wantErr)
 			}
 		})
 	}

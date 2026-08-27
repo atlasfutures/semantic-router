@@ -262,7 +262,7 @@ func loadCaseScripts(dir string, f *Fixtures) error {
 		return nil
 	}
 
-	script, err := parseReplayScript(raw, dir)
+	script, err := ParseReplayScript(raw, dir)
 	if err != nil {
 		return err
 	}
