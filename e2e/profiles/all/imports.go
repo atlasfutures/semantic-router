@@ -19,6 +19,7 @@ import (
 	multiendpoint "github.com/vllm-project/semantic-router/e2e/profiles/multi-endpoint"
 	multimodalrouting "github.com/vllm-project/semantic-router/e2e/profiles/multimodal-routing"
 	productionstack "github.com/vllm-project/semantic-router/e2e/profiles/production-stack"
+	protocolconformance "github.com/vllm-project/semantic-router/e2e/profiles/protocol-conformance"
 	raghybridsearch "github.com/vllm-project/semantic-router/e2e/profiles/rag-hybrid-search"
 	remoteembedding "github.com/vllm-project/semantic-router/e2e/profiles/remote-embedding"
 	responseapi "github.com/vllm-project/semantic-router/e2e/profiles/response-api"
@@ -88,6 +89,11 @@ func init() {
 	register("multi-endpoint", func() framework.Profile { return multiendpoint.NewProfile() }, framework.ProfileCapabilities{})
 	register("multimodal-routing", func() framework.Profile { return multimodalrouting.NewProfile() }, framework.ProfileCapabilities{})
 	register("production-stack", func() framework.Profile { return productionstack.NewProfile() }, framework.ProfileCapabilities{})
+	register(
+		"protocol-conformance",
+		func() framework.Profile { return protocolconformance.NewProfile() },
+		framework.ProfileCapabilities{LocalImages: protocolconformance.LocalImages()},
+	)
 	register("rag-hybrid-search", func() framework.Profile { return raghybridsearch.NewProfile() }, framework.ProfileCapabilities{})
 	register(
 		"response-api",

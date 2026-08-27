@@ -1,0 +1,147 @@
+# Protocol-Conformance Provider Fixture
+#
+# Deploys the programmable provider fixture (e2e/cmd/conformance-fixture) and
+# exposes it to Envoy AI Gateway as the only backend the router can reach.
+#
+# The fixture answers all three provider paths, records every inbound request byte
+# for byte, and replays whatever the running case's replay.yaml declares. The
+# testcase drives it over the same Service: POST /reset installs a script and GET
+# /observed returns what the provider saw.
+
+# -- Namespace ---------------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: conformance-fixture-system
+---
+# -- Deployment --------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: conformance-fixture
+  namespace: conformance-fixture-system
+  labels:
+    app: conformance-fixture
+    app.kubernetes.io/name: conformance-fixture
+    app.kubernetes.io/part-of: semantic-router-workspaces
+spec:
+  # One replica only. The fixture holds the active script and the observed
+  # requests in memory, so a second replica would split the evidence a case
+  # asserts on.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: conformance-fixture
+      app.kubernetes.io/name: conformance-fixture
+  template:
+    metadata:
+      labels:
+        app: conformance-fixture
+        app.kubernetes.io/name: conformance-fixture
+        app.kubernetes.io/part-of: semantic-router-workspaces
+    spec:
+      securityContext:
+        runAsUser: 65532
+        runAsNonRoot: true
+      containers:
+        - name: conformance-fixture
+          image: ghcr.io/vllm-project/semantic-router/conformance-fixture:e2e-test
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: fixture
+              containerPort: 8080
+              protocol: TCP
+          # /observed is a plain read of recorded state, so it doubles as the
+          # health signal without a second endpoint.
+          livenessProbe:
+            httpGet:
+              path: /observed
+              port: fixture
+            initialDelaySeconds: 5
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /observed
+              port: fixture
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+---
+# -- Service -----------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: conformance-fixture
+  namespace: conformance-fixture-system
+  labels:
+    app: conformance-fixture
+    app.kubernetes.io/name: conformance-fixture
+    app.kubernetes.io/part-of: semantic-router-workspaces
+spec:
+  type: ClusterIP
+  selector:
+    app: conformance-fixture
+    app.kubernetes.io/name: conformance-fixture
+  ports:
+    - name: http
+      port: 8080
+      targetPort: fixture
+      protocol: TCP
+---
+# -- Envoy AI Gateway backends -----------------------------------------------
+# One Envoy Gateway Backend, two AIServiceBackends. The schema is what makes the
+# same fixture observable as an OpenAI-shaped or an Anthropic-shaped provider, so
+# a case that declares an Anthropic provider is routed through the Anthropic one.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: Backend
+metadata:
+  name: conformance-fixture
+  namespace: default
+spec:
+  endpoints:
+    - fqdn:
+        hostname: conformance-fixture.conformance-fixture-system.svc.cluster.local
+        port: 8080
+---
+apiVersion: aigateway.envoyproxy.io/v1alpha1
+kind: AIServiceBackend
+metadata:
+  name: conformance-fixture-openai
+  namespace: default
+spec:
+  schema:
+    name: OpenAI
+  backendRef:
+    name: conformance-fixture
+    kind: Backend
+    group: gateway.envoyproxy.io
+---
+apiVersion: aigateway.envoyproxy.io/v1alpha1
+kind: AIServiceBackend
+metadata:
+  name: conformance-fixture-anthropic
+  namespace: default
+spec:
+  schema:
+    name: Anthropic
+  backendRef:
+    name: conformance-fixture
+    kind: Backend
+    group: gateway.envoyproxy.io

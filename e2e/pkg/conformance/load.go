@@ -14,13 +14,18 @@ import (
 // CasesFile is the inventory filename inside a version root.
 const CasesFile = "cases.yaml"
 
+// ReplayFile is the per-case replay script filename. A driver that runs the provider
+// fixture out of process has to post these raw bytes to the fixture control endpoint,
+// so the name is part of the package contract rather than a loader detail.
+const ReplayFile = "replay.yaml"
+
 // Conventional per-case artifact filenames. A case directory that exists must
 // contain the files its client mode and comparison modes require; see SCHEMA.md.
 const (
 	fileClientRequest      = "client-request.json"
 	fileProviderRequest    = "expected-provider-request.json"
 	fileCompareTuning      = "compare.yaml"
-	fileReplayScript       = "replay.yaml"
+	fileReplayScript       = ReplayFile
 	baseProviderResponse   = "provider-response"
 	baseClientResponse     = "expected-client-response"
 	extJSON                = ".json"

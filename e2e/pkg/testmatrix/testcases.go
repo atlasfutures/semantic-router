@@ -90,6 +90,13 @@ var AnthropicShimContract = []string{
 	"protocol-codec-anthropic-backend-midstream-error-matrix",
 }
 
+// ProtocolConformanceContract is the corpus-driven contract owned by the
+// protocol-conformance profile. It needs the programmable provider fixture as the
+// only backend, so it cannot be folded into a profile that routes at a real model.
+var ProtocolConformanceContract = []string{
+	"protocol-conformance-first-six",
+}
+
 // Combine preserves order while removing duplicate testcase names.
 func Combine(groups ...[]string) []string {
 	size := 0

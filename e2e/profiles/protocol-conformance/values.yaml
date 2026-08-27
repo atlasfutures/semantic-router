@@ -1,0 +1,140 @@
+replicaCount: 1
+image:
+  repository: ghcr.io/vllm-project/semantic-router/extproc
+  pullPolicy: Never
+  tag: e2e-test
+service:
+  type: ClusterIP
+  port: 8080
+config:
+  version: v0.3
+  listeners: []
+  providers:
+    defaults:
+      default_model: conformance-chat-model
+    models:
+      # Three aliases, one fixture. The alias is what selects the provider wire
+      # protocol and dialect a case declares, and it is the name each case's
+      # expected-provider-request.json carries in /model.
+      - name: conformance-chat-model
+        backend_refs:
+          - name: conformance-fixture
+            endpoint: conformance-fixture.conformance-fixture-system.svc.cluster.local:8080
+            weight: 1
+            type: openai
+      - name: conformance-messages-model
+        backend_refs:
+          - name: conformance-fixture
+            endpoint: conformance-fixture.conformance-fixture-system.svc.cluster.local:8080
+            weight: 1
+            type: anthropic
+      - name: conformance-openrouter-model
+        backend_refs:
+          - name: conformance-fixture
+            endpoint: conformance-fixture.conformance-fixture-system.svc.cluster.local:8080
+            weight: 1
+            type: openai
+  routing:
+    decisions:
+      # Every seed case sends model "auto", so the decision layer is what picks
+      # the provider. The keywords are the discriminating words of each case's
+      # prompt; see the profile README for the authoring contract this creates
+      # between a case's client-request.json and this file.
+      - name: route_to_messages_provider
+        description: Cases whose provider speaks Anthropic Messages
+        priority: 70
+        rules:
+          operator: OR
+          conditions:
+            - type: keyword
+              name: conformance_messages_case
+        modelRefs:
+          - model: conformance-messages-model
+            use_reasoning: false
+      - name: route_to_openrouter_provider
+        description: Cases whose provider is the OpenRouter dialect
+        priority: 60
+        rules:
+          operator: OR
+          conditions:
+            - type: keyword
+              name: conformance_openrouter_case
+        modelRefs:
+          - model: conformance-openrouter-model
+            use_reasoning: false
+      - name: route_to_chat_provider
+        description: Catch-all; the Chat provider is the corpus default
+        priority: 50
+        rules:
+          operator: OR
+          conditions:
+            - type: keyword
+              name: conformance_any_case
+        modelRefs:
+          - model: conformance-chat-model
+            use_reasoning: false
+    signals:
+      keywords:
+        - name: conformance_messages_case
+          operator: OR
+          keywords:
+            - pixel
+            - hello
+          case_sensitive: false
+        - name: conformance_openrouter_case
+          operator: OR
+          keywords:
+            - five
+          case_sensitive: false
+        - name: conformance_any_case
+          operator: OR
+          keywords:
+            # Catch-all; the AIGatewayRoute also carries a bare fallback rule.
+            - ""
+    modelCards:
+      - name: conformance-chat-model
+        param_size: 0.5b
+        description: Provider fixture answering the OpenAI Chat Completions path
+        capabilities:
+          - chat
+        quality_score: 0.5
+      - name: conformance-messages-model
+        param_size: 0.5b
+        description: Provider fixture answering the Anthropic Messages path
+        capabilities:
+          - chat
+        quality_score: 0.5
+      - name: conformance-openrouter-model
+        param_size: 0.5b
+        description: Provider fixture answering the OpenRouter Chat dialect
+        capabilities:
+          - chat
+        quality_score: 0.5
+  global:
+    model_catalog:
+      kbs: []
+    router:
+      clear_route_cache: true
+      strategy: priority
+    services:
+      observability:
+        metrics:
+          enabled: true
+        tracing:
+          enabled: false
+      api:
+        batch_classification:
+          max_batch_size: 100
+          concurrency_threshold: 5
+          max_concurrency: 8
+    stores:
+      # The corpus asserts on exact wire artifacts, so a cache that answered a
+      # second case from a first case's response would hide a real divergence.
+      response_cache:
+        enabled: false
+        embedding_model: mmbert
+      memory:
+        embedding_model: mmbert
+      vector_store:
+        embedding_model: mmbert
+    integrations: {}
