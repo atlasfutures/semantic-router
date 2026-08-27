@@ -196,13 +196,20 @@ func printConformanceOutcomes(outcomes []caseOutcome) {
 }
 
 // conformanceVerdict fails the testcase when any case that ran diverged. Skipped
-// cases never fail the run: an unauthored case has nothing to assert.
+// cases never fail the run individually — an unauthored case has nothing to
+// assert — but a run where every case skipped asserted nothing and must fail
+// rather than report green.
 func conformanceVerdict(outcomes []caseOutcome) error {
 	var failed []string
 	lines := []string{}
+	ran := 0
 
 	for _, outcome := range outcomes {
-		if outcome.Skipped || outcome.Passed() {
+		if outcome.Skipped {
+			continue
+		}
+		ran++
+		if outcome.Passed() {
 			continue
 		}
 		failed = append(failed, outcome.ID)
@@ -210,6 +217,9 @@ func conformanceVerdict(outcomes []caseOutcome) error {
 		for _, failure := range outcome.Failures {
 			lines = append(lines, "  "+failure)
 		}
+	}
+	if ran == 0 && len(outcomes) > 0 {
+		return fmt.Errorf("all %d conformance case(s) skipped; the run asserted nothing", len(outcomes))
 	}
 	if len(failed) == 0 {
 		return nil

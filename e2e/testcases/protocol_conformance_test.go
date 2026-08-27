@@ -53,7 +53,7 @@ func TestProtocolConformanceTrancheAgainstTheRealTree(t *testing.T) {
 func TestPassthroughRouterSatisfiesASameProtocolCase(t *testing.T) {
 	c := findCaseForTest(t, "seed-02-anthropic-native-request-capture")
 	if !c.Loaded() {
-		t.Skip("seed-02 payloads are not authored yet")
+		t.Fatal("seed-02 payloads must be authored; they are part of the committed seed tranche")
 	}
 
 	server := startFixtureForTest(t)
@@ -74,7 +74,7 @@ func TestPassthroughRouterSatisfiesASameProtocolCase(t *testing.T) {
 func TestALostFieldFailsTheProviderBoundary(t *testing.T) {
 	c := findCaseForTest(t, "seed-02-anthropic-native-request-capture")
 	if !c.Loaded() {
-		t.Skip("seed-02 payloads are not authored yet")
+		t.Fatal("seed-02 payloads must be authored; they are part of the committed seed tranche")
 	}
 
 	server := startFixtureForTest(t)
@@ -95,7 +95,7 @@ func TestALostFieldFailsTheProviderBoundary(t *testing.T) {
 func TestPreStreamErrorRelaysStatusAndHeader(t *testing.T) {
 	c := findCaseForTest(t, "seed-05-chat-prestream-rate-limit")
 	if !c.Loaded() {
-		t.Skip("seed-05 payloads are not authored yet")
+		t.Fatal("seed-05 payloads must be authored; they are part of the committed seed tranche")
 	}
 
 	server := startFixtureForTest(t)
@@ -125,7 +125,7 @@ func TestPreStreamErrorRelaysStatusAndHeader(t *testing.T) {
 func TestRelayFailuresNameTheStatusAndHeaderThatWereNotRelayed(t *testing.T) {
 	c := findCaseForTest(t, "seed-05-chat-prestream-rate-limit")
 	if !c.Loaded() {
-		t.Skip("seed-05 payloads are not authored yet")
+		t.Fatal("seed-05 payloads must be authored; they are part of the committed seed tranche")
 	}
 
 	failures := relayFailures(c, conformanceResponse{Status: http.StatusOK, Headers: http.Header{}})
@@ -147,7 +147,7 @@ func TestRelayFailuresNameTheStatusAndHeaderThatWereNotRelayed(t *testing.T) {
 func TestMidStreamTruncationDispatchesExactlyOnce(t *testing.T) {
 	c := findCaseForTest(t, "seed-06-anthropic-openrouter-midstream-truncation")
 	if !c.Loaded() {
-		t.Skip("seed-06 payloads are not authored yet")
+		t.Fatal("seed-06 payloads must be authored; they are part of the committed seed tranche")
 	}
 
 	server := startFixtureForTest(t)
