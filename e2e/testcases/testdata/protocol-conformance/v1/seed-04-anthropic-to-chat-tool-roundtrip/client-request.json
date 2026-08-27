@@ -1,0 +1,46 @@
+{
+  "model": "auto",
+  "max_tokens": 256,
+  "tools": [
+    {
+      "name": "calculate_sum",
+      "description": "Add two integers and return the sum.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "a": {"type": "integer", "description": "First addend."},
+          "b": {"type": "integer", "description": "Second addend."}
+        },
+        "required": ["a", "b"]
+      }
+    }
+  ],
+  "tool_choice": {"type": "tool", "name": "calculate_sum"},
+  "messages": [
+    {
+      "role": "user",
+      "content": [{"type": "text", "text": "Add 2 and 3."}]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_seed04aaaaaaaaaaaaaaaa",
+          "name": "calculate_sum",
+          "input": {"a": 2, "b": 3}
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_seed04aaaaaaaaaaaaaaaa",
+          "content": [{"type": "text", "text": "5"}]
+        }
+      ]
+    }
+  ]
+}

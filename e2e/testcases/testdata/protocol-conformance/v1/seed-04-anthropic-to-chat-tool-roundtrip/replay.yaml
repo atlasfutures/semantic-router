@@ -1,0 +1,13 @@
+# seed-04: Messages ingress translated onto a Chat backend. Buffered on both sides,
+# so the script only has to answer once.
+schema_version: protocol-conformance-replay-v1
+
+expect:
+  method: POST
+  path: /v1/chat/completions
+  headers:
+    content-type: application/json
+
+steps:
+  - {kind: status, status: 200, headers: {content-type: application/json}}
+  - {kind: body, file: provider-response.json}

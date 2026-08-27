@@ -1,0 +1,4 @@
+# The Messages envelope is minted by the router from an OpenRouter generation id,
+# so its value is nondeterministic while its presence is not.
+volatile:
+  - /message/id

@@ -1,0 +1,12 @@
+{
+  "id": "msg_seed04aaaaaaaaaaaaaaaa",
+  "type": "message",
+  "role": "assistant",
+  "model": "conformance-chat-model",
+  "content": [
+    {"type": "text", "text": "The sum is 5."}
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {"input_tokens": 61, "output_tokens": 6}
+}

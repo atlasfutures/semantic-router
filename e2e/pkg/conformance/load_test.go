@@ -33,8 +33,17 @@ func TestLoadFrozenInventory(t *testing.T) {
 	if got, want := seed.Expectation.Fidelity["/model"], ActionPatched; got != want {
 		t.Errorf("seed-01 fidelity /model = %q, want %q", got, want)
 	}
-	if seed.Loaded() {
-		t.Error("seed-01 reports loaded fixtures, but DPC-104 has not authored its directory yet")
+	if !seed.Loaded() {
+		t.Error("seed-01 reports no fixtures, but its case directory is authored")
+	}
+
+	// The whole promoted tranche is authored, so every one of its cases must carry
+	// artifacts. A case that silently lost its directory would otherwise be reported
+	// as a skip by the runner rather than as the regression it is.
+	for _, c := range inv.Tranche("first-six") {
+		if !c.Loaded() {
+			t.Errorf("case %q reports no fixtures, but the first-six tranche is authored", c.ID)
+		}
 	}
 }
 

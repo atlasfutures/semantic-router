@@ -1,0 +1,4 @@
+data: {"id":"gen-seed06aaaaaaaa","object":"chat.completion.chunk","created":1735689600,"model":"conformance-openrouter-model","provider":"conformance-provider-a","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"gen-seed06aaaaaaaa","object":"chat.completion.chunk","created":1735689600,"model":"conformance-openrouter-model","provider":"conformance-provider-a","choices":[{"index":0,"delta":{"content":"one two"},"finish_reason":null}]}
+

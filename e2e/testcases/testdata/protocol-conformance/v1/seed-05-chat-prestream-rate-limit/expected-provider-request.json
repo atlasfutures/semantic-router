@@ -1,0 +1,9 @@
+{
+  "model": "conformance-chat-model",
+  "messages": [
+    {"role": "user", "content": "Summarize the rate limit contract in one line."}
+  ],
+  "stream": true,
+  "stream_options": {"include_usage": true},
+  "max_tokens": 64
+}

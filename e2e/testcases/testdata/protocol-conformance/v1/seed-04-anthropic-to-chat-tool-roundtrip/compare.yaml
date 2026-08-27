@@ -1,0 +1,6 @@
+# Chat has no Messages identifier to carry over, so the router mints the response
+# id. Its type is pinned; its value is not. The tool_use id is deliberately NOT
+# volatile: /tool_use/id and /tool_result/tool_use_id are declared preserved, and
+# tool-id-pairing is the invariant this case exists to hold.
+volatile:
+  - /id

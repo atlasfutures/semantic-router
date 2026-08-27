@@ -1,0 +1,18 @@
+# seed-03: Responses ingress over an Anthropic Messages backend.
+#
+# chunk_bytes is deliberately unaligned to the SSE event grammar. It splits the
+# provider stream inside event names, inside JSON values, and inside the blank-line
+# terminators, which proves the client-side sequence is rebuilt from dispatched
+# events rather than from provider write boundaries.
+schema_version: protocol-conformance-replay-v1
+
+expect:
+  method: POST
+  path: /v1/messages
+  headers:
+    content-type: application/json
+    anthropic-version: "2023-06-01"
+
+steps:
+  - {kind: status, status: 200, headers: {content-type: text/event-stream}}
+  - {kind: sse, file: provider-response.sse, chunk_bytes: 17}

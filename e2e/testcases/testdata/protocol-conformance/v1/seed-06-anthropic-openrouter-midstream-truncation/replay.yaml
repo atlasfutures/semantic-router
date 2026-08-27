@@ -1,0 +1,20 @@
+# seed-06: mid-stream truncation after commit.
+#
+# status 200 is step 0, so the response is committed before the fault. The sse step
+# writes a prefix that has no finish_reason and no terminal sentinel, the delay lets
+# the router observe the stream as live, and disconnect closes the connection with
+# no terminal event at all. The fault is in the script, not in the payload file: the
+# provider stream is well formed for as far as it goes.
+schema_version: protocol-conformance-replay-v1
+
+expect:
+  method: POST
+  path: /v1/chat/completions
+  headers:
+    content-type: application/json
+
+steps:
+  - {kind: status, status: 200, headers: {content-type: text/event-stream}}
+  - {kind: sse, file: provider-response.sse, chunk_bytes: 29}
+  - {kind: delay, millis: 25}
+  - {kind: disconnect}

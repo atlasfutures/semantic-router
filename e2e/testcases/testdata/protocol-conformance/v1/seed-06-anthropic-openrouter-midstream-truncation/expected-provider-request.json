@@ -1,0 +1,9 @@
+{
+  "model": "conformance-openrouter-model",
+  "max_tokens": 64,
+  "messages": [
+    {"role": "user", "content": "Count from one to five."}
+  ],
+  "stream": true,
+  "provider": {"order": ["conformance-provider-a"], "allow_fallbacks": false}
+}
