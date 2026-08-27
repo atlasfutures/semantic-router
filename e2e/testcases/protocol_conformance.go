@@ -15,8 +15,14 @@ import (
 	pkgtestcases "github.com/vllm-project/semantic-router/e2e/pkg/testcases"
 )
 
-// protocolConformanceTestCase is the registered name of the first-slice run.
-const protocolConformanceTestCase = "protocol-conformance-first-six"
+const (
+	// protocolConformanceTestCase is the registered name of the full first-slice
+	// run. It is what nightly CI runs.
+	protocolConformanceTestCase = "protocol-conformance-first-six"
+	// protocolConformanceSmokeTestCase is the registered name of the compact
+	// all-protocol subset. It is what the PR gate runs.
+	protocolConformanceSmokeTestCase = "protocol-conformance-smoke"
+)
 
 const (
 	// conformanceTreeV1 is the versioned fixture tree, relative to the repository
@@ -24,7 +30,9 @@ const (
 	conformanceTreeV1 = "e2e/testcases/testdata/protocol-conformance/v1"
 	// conformanceTranche is the promoted tranche. The deferred import-* tranche is
 	// contract-only until its own plan slice lands, so this testcase never runs it.
-	conformanceTranche = "first-six"
+	conformanceTranche = conformance.PromotedTranche
+	// conformanceSmokeSelection labels the smoke_tier subset in the test report.
+	conformanceSmokeSelection = "smoke"
 )
 
 // The provider fixture the profile deploys beside the router. The case root is the
@@ -45,8 +53,31 @@ func init() {
 	pkgtestcases.Register(protocolConformanceTestCase, pkgtestcases.TestCase{
 		Description: "Run the promoted protocol-conformance corpus against both wire boundaries of the router",
 		Tags:        []string{"conformance", "protocol", "functional"},
-		Fn:          testProtocolConformance,
+		Fn:          runConformanceSelection(conformanceTranche, promotedTrancheCases),
 	})
+	pkgtestcases.Register(protocolConformanceSmokeTestCase, pkgtestcases.TestCase{
+		Description: "Run the compact all-protocol protocol-conformance smoke tier against both wire boundaries of the router",
+		Tags:        []string{"conformance", "protocol", "functional", "smoke"},
+		Fn:          runConformanceSelection(conformanceSmokeSelection, (*conformance.Inventory).Smoke),
+	})
+}
+
+// promotedTrancheCases selects the whole promoted tranche.
+func promotedTrancheCases(inv *conformance.Inventory) []*conformance.Case {
+	return inv.Tranche(conformanceTranche)
+}
+
+// runConformanceSelection binds one corpus selection to a registered testcase.
+// The selection is named so the report says which subset ran, and the two
+// registered names are the only tier knob CI needs: the PR gate asks for the
+// smoke name, nightly asks for the full one.
+func runConformanceSelection(
+	selection string,
+	pick func(*conformance.Inventory) []*conformance.Case,
+) func(context.Context, *kubernetes.Clientset, pkgtestcases.TestCaseOptions) error {
+	return func(ctx context.Context, client *kubernetes.Clientset, opts pkgtestcases.TestCaseOptions) error {
+		return testProtocolConformance(ctx, client, opts, selection, pick)
+	}
 }
 
 // testProtocolConformance runs every promoted conformance case through the router.
@@ -56,14 +87,20 @@ func init() {
 // observed plus the response the router returned are compared against what the case
 // declares. A case whose payloads are not authored yet is reported as skipped with
 // its reason; it is neither failed nor dropped from the report.
-func testProtocolConformance(ctx context.Context, client *kubernetes.Clientset, opts pkgtestcases.TestCaseOptions) error {
+func testProtocolConformance(
+	ctx context.Context,
+	client *kubernetes.Clientset,
+	opts pkgtestcases.TestCaseOptions,
+	selection string,
+	pick func(*conformance.Inventory) []*conformance.Case,
+) error {
 	inventory, err := conformance.Load(conformanceTreeV1)
 	if err != nil {
 		return err
 	}
-	cases := inventory.Tranche(conformanceTranche)
+	cases := pick(inventory)
 	if len(cases) == 0 {
-		return fmt.Errorf("conformance tranche %q declares no cases", conformanceTranche)
+		return fmt.Errorf("conformance selection %q declares no cases", selection)
 	}
 
 	routerSession, err := fixtures.OpenServiceSession(ctx, client, opts)
@@ -86,7 +123,7 @@ func testProtocolConformance(ctx context.Context, client *kubernetes.Clientset, 
 		newRemoteConformanceProvider(fixtureSession.BaseURL(), conformanceFixtureCaseRoot, httpClient),
 	)
 
-	reportConformanceOutcomes(outcomes, opts)
+	reportConformanceOutcomes(outcomes, opts, selection)
 	return conformanceVerdict(outcomes)
 }
 
@@ -105,7 +142,7 @@ func conformanceFixtureOptions(opts pkgtestcases.TestCaseOptions) pkgtestcases.T
 // reportConformanceOutcomes publishes the per-case picture. Skips carry their reason
 // and failures carry every mismatch, so a report reader never has to guess whether a
 // case passed, was not authored, or genuinely diverged.
-func reportConformanceOutcomes(outcomes []caseOutcome, opts pkgtestcases.TestCaseOptions) {
+func reportConformanceOutcomes(outcomes []caseOutcome, opts pkgtestcases.TestCaseOptions, selection string) {
 	skipped := map[string]string{}
 	failures := map[string][]string{}
 	passed, ledgers := 0, 0
@@ -131,7 +168,7 @@ func reportConformanceOutcomes(outcomes []caseOutcome, opts pkgtestcases.TestCas
 		return
 	}
 	opts.SetDetails(map[string]interface{}{
-		"tranche":                  conformanceTranche,
+		"selection":                selection,
 		"cases_total":              len(outcomes),
 		"cases_passed":             passed,
 		"cases_failed":             len(failures),

@@ -57,6 +57,15 @@ normative_sources:
   vsr_3035: https://github.com/vllm-project/semantic-router/pull/3035
   agentgateway_goldens: https://github.com/agentgateway/agentgateway/blob/main/crates/llm/src/golden_tests.rs
 
+# The compact smoke tier CI runs on pull requests. It is the smallest subset of
+# the promoted tranche that still exercises every ingress protocol the router
+# accepts (openai-chat, anthropic-messages, openai-responses) and both client
+# modes (buffered, streaming). The full tranche runs nightly.
+smoke_tier:
+  - seed-01-chat-identity-model-patch
+  - seed-02-anthropic-native-request-capture
+  - seed-03-responses-to-anthropic-stream
+
 cases:
   - id: seed-01-chat-identity-model-patch
     tranche: first-six

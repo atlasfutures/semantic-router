@@ -114,6 +114,7 @@ validation:
     - envoy-ai-gateway
     - dashboard
     - remote-embedding
+    - protocol-conformance
 docs:
 - AGENTS.md
 - tools/agent/docs/README.md

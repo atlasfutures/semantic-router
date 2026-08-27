@@ -7,6 +7,13 @@ on:
         description: JSON array of E2E profile names.
         required: true
         type: string
+      cadence:
+        description: >-
+          CI cadence that selects how much of each profile runs. The test case
+          subset itself lives in e2e/pkg/testmatrix, not in this workflow.
+        required: false
+        default: nightly
+        type: string
 
 permissions:
   contents: read
@@ -117,6 +124,8 @@ jobs:
           TMPDIR: /mnt/tmp
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HUGGINGFACE_HUB_TOKEN: ${{ secrets.HF_TOKEN }}
+          E2E_CADENCE: ${{ inputs.cadence }}
+          E2E_PROFILE_NAME: ${{ matrix.profile }}
         run: |
           bash ./e2e/testing/stream_semantic_router_logs.sh &
           ROUTER_LOG_STREAM_PID=$!
@@ -129,18 +138,14 @@ jobs:
           }
           trap cleanup_router_log_stream EXIT
 
-          set +e
-          if [ "${{ matrix.profile }}" = "envoy-ai-gateway" ]; then
-            # Temporarily skip the stress / pressure coverage until the suite is stable again.
-            ENVOY_AI_GATEWAY_CI_TESTS="chat-completions-request,apiserver-runtime-config-endpoints,domain-classify,semantic-cache,semantic-cache-polarity,pii-detection,jailbreak-detection,decision-priority-selection,plugin-chain-execution,tool-selection,rule-condition-logic,decision-fallback-behavior,plugin-config-variations"
-            make e2e-test E2E_PROFILE=${{ matrix.profile }} E2E_TESTS="${ENVOY_AI_GATEWAY_CI_TESTS}" E2E_VERBOSE=true E2E_KEEP_CLUSTER=false
-            TEST_EXIT_CODE=$?
-            set -e
-            echo "test_exit_code=${TEST_EXIT_CODE}" >> $GITHUB_OUTPUT
-            exit ${TEST_EXIT_CODE}
-          fi
+          # The cadence subset is derived from e2e/pkg/testmatrix rather than
+          # repeated here, so the workflow and the profile map cannot drift.
+          # An empty result means this cadence runs the profile's whole list.
+          SELECTED_TESTS="$(./bin/e2e -profile "${E2E_PROFILE_NAME}" -list-tests "${E2E_CADENCE}")"
+          echo "Cadence ${E2E_CADENCE} selects: ${SELECTED_TESTS:-<profile default>}"
 
-          make e2e-test E2E_PROFILE=${{ matrix.profile }} E2E_VERBOSE=true E2E_KEEP_CLUSTER=false
+          set +e
+          make e2e-test E2E_PROFILE="${E2E_PROFILE_NAME}" E2E_TESTS="${SELECTED_TESTS}" E2E_VERBOSE=true E2E_KEEP_CLUSTER=false
           TEST_EXIT_CODE=$?
           set -e
           echo "test_exit_code=${TEST_EXIT_CODE}" >> $GITHUB_OUTPUT

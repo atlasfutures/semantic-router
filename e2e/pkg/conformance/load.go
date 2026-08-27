@@ -11,6 +11,10 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+// PromotedTranche is the only tranche whose cases are authored and runnable. The
+// deferred import-* tranche is contract-only until its own plan slice lands.
+const PromotedTranche = "first-six"
+
 // CasesFile is the inventory filename inside a version root.
 const CasesFile = "cases.yaml"
 
@@ -86,6 +90,8 @@ func Load(dir string) (*Inventory, error) {
 		c.Fixtures = fixtures
 	}
 
+	problems = append(problems, validateSmokeTier(&inv)...)
+
 	sortErrors(problems)
 	if err := errors.Join(problems...); err != nil {
 		return nil, fmt.Errorf("conformance: invalid fixture tree at %s:\n%w", dir, err)
@@ -103,6 +109,24 @@ func (inv *Inventory) Case(id string) (*Case, bool) {
 	return nil, false
 }
 
+// Smoke returns the cases named by smoke_tier, in declaration order. Load has
+// already checked that every named case exists and is promoted, so an empty
+// result means the inventory declares no smoke tier.
+func (inv *Inventory) Smoke() []*Case {
+	named := make(map[string]struct{}, len(inv.SmokeTier))
+	for _, id := range inv.SmokeTier {
+		named[id] = struct{}{}
+	}
+
+	var out []*Case
+	for i := range inv.Cases {
+		if _, ok := named[inv.Cases[i].ID]; ok {
+			out = append(out, &inv.Cases[i])
+		}
+	}
+	return out
+}
+
 // Tranche returns the cases belonging to one tranche, in declaration order.
 func (inv *Inventory) Tranche(name string) []*Case {
 	var out []*Case
@@ -112,6 +136,34 @@ func (inv *Inventory) Tranche(name string) []*Case {
 		}
 	}
 	return out
+}
+
+// validateSmokeTier keeps the PR-gate subset honest: every named case must exist
+// and must belong to the promoted tranche, so the gate can never silently point at
+// a contract-only case that has nothing to assert.
+func validateSmokeTier(inv *Inventory) []error {
+	var problems []error
+	seen := make(map[string]struct{}, len(inv.SmokeTier))
+
+	for _, id := range inv.SmokeTier {
+		if _, dup := seen[id]; dup {
+			problems = append(problems, fmt.Errorf("smoke_tier lists case %q twice", id))
+			continue
+		}
+		seen[id] = struct{}{}
+
+		c, ok := inv.Case(id)
+		if !ok {
+			problems = append(problems, fmt.Errorf("smoke_tier names unknown case %q", id))
+			continue
+		}
+		if c.Tranche != PromotedTranche {
+			problems = append(problems, fmt.Errorf(
+				"smoke_tier names case %q from tranche %q; only the %q tranche is promoted",
+				id, c.Tranche, PromotedTranche))
+		}
+	}
+	return problems
 }
 
 func validateCase(c *Case, inv *Inventory) []error {

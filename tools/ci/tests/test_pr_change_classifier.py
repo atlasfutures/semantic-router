@@ -160,7 +160,12 @@ class PRChangeClassifierTests(unittest.TestCase):
         self.assertIn("recipe-conformance", result.selected_jobs)
         self.assertEqual(
             result.profiles,
-            ("envoy-ai-gateway", "dashboard", "remote-embedding"),
+            (
+                "envoy-ai-gateway",
+                "dashboard",
+                "remote-embedding",
+                "protocol-conformance",
+            ),
         )
 
     def test_generated_api_docs_select_core_tests(self) -> None:

@@ -92,7 +92,13 @@ type Inventory struct {
 	ComparisonModes   map[Mode]string   `json:"comparison_modes"`
 	FidelityActions   []FidelityAction  `json:"fidelity_actions"`
 	NormativeSources  map[string]string `json:"normative_sources"`
-	Cases             []Case            `json:"cases"`
+
+	// SmokeTier names the promoted cases that CI runs on pull requests. It is the
+	// smallest subset that still covers every ingress protocol and both client
+	// modes; the loader rejects a tier that names an unknown or unpromoted case.
+	SmokeTier []string `json:"smoke_tier"`
+
+	Cases []Case `json:"cases"`
 }
 
 // Case is one conformance contract: a client protocol, a provider route, and the

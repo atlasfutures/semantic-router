@@ -43,6 +43,29 @@ cd e2e && go test ./testcases/ -run Conformance
 Those tests drive the same per-case loop against an in-process fixture and a fake
 router, so a change to the loop fails fast without a Kind cluster.
 
+## Which cases CI runs
+
+The profile registers two test cases. Both drive the same per-case loop; they
+differ only in which corpus selection they run.
+
+| Test case | Selection | Cadence |
+| --- | --- | --- |
+| `protocol-conformance-smoke` | `smoke_tier` in `cases.yaml` | Pull requests |
+| `protocol-conformance-first-six` | The whole `first-six` tranche | Nightly |
+
+`smoke_tier` is the compact all-protocol gate: the fewest promoted cases that
+still reach every ingress protocol the router accepts (OpenAI Chat, Anthropic
+Messages, OpenAI Responses) and both buffered and streaming client modes. A unit
+test in `e2e/pkg/conformance` fails if the tier stops covering that, so the gate
+cannot be narrowed into a false pass.
+
+CI never names these test cases in workflow YAML. `e2e/pkg/testmatrix` maps a
+profile and cadence onto the subset, and the workflow asks the E2E binary for it:
+
+```bash
+./bin/e2e -profile protocol-conformance -list-tests pr
+```
+
 ## The authoring contract this profile creates
 
 Two things in `values.yaml` are coupled to the corpus. A fixture author has to

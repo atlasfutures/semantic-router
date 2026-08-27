@@ -10,6 +10,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/e2e/pkg/banner"
 	"github.com/vllm-project/semantic-router/e2e/pkg/framework"
+	"github.com/vllm-project/semantic-router/e2e/pkg/testmatrix"
 	_ "github.com/vllm-project/semantic-router/e2e/profiles/all"
 )
 
@@ -26,6 +27,7 @@ func main() {
 		verbose            = flag.Bool("verbose", false, "Enable verbose logging")
 		parallel           = flag.Bool("parallel", false, "Run tests in parallel")
 		testCases          = flag.String("tests", "", "Comma-separated list of test cases to run (empty means all)")
+		listTests          = flag.String("list-tests", "", "Print the test cases CI runs for -profile at this cadence (pr, nightly) and exit")
 		setupOnly          = flag.Bool("setup-only", false, "Only setup the profile without running tests")
 		skipSetup          = flag.Bool("skip-setup", false, "Skip profile setup and only run tests (assumes environment is already deployed)")
 		useWorkspaceModels = flag.Bool(
@@ -36,6 +38,18 @@ func main() {
 	)
 
 	flag.Parse()
+
+	// Resolve the CI tier without touching a cluster. CI uses this instead of
+	// repeating test case names in workflow YAML.
+	if *listTests != "" {
+		cadence := testmatrix.Cadence(*listTests)
+		if !cadence.Valid() {
+			fmt.Fprintf(os.Stderr, "Error: unknown cadence %q\n", *listTests)
+			os.Exit(1)
+		}
+		fmt.Println(testmatrix.CITierArg(*profile, cadence))
+		return
+	}
 
 	// Show banner
 	if isInteractive() {

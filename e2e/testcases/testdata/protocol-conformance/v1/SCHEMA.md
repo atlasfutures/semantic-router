@@ -61,6 +61,17 @@ A case with no directory on disk is contract-only: the loader returns it with
 `Case.Loaded() == false`, and the comparators refuse to run on it. That is the
 state of all 31 cases until DPC-104 authors fixtures.
 
+Alongside `cases`, the file declares one top-level list:
+
+| Field | Meaning |
+| --- | --- |
+| `smoke_tier` | Case IDs the pull-request gate runs |
+
+`smoke_tier` is the compact subset CI runs on every pull request. It names the
+fewest promoted cases that still reach every ingress protocol the router accepts
+and both buffered and streaming client modes. The whole promoted tranche runs
+nightly. `Inventory.Smoke()` returns the named cases in declaration order.
+
 ## Case directory
 
 A directory that exists must be complete. A partially authored case is a load
@@ -250,6 +261,8 @@ one pass so an author sees the whole picture:
 - A case directory that exists but is missing a required artifact.
 - A body that declares both `.json` and `.sse`.
 - A `replay.yaml` that breaks any rule in [Replay script](#replay-script).
+- A `smoke_tier` entry that is duplicated, names an unknown case, or names a case
+  outside the promoted tranche.
 
 ## Provenance
 
