@@ -437,7 +437,9 @@ func (r *OpenAIRouter) applyRoutingPathHeader(
 	if chatPath == "" && ctx.ClientProtocol == config.ClientProtocolAnthropic {
 		chatPath = "/v1/chat/completions"
 	}
-	if chatPath != "" {
+	// Avoid a redundant body-phase routing-header mutation when the selected
+	// backend already uses the inbound path.
+	if chatPath != "" && chatPath != ctx.Headers[":path"] {
 		state.setHeaders = append(state.setHeaders, &core.HeaderValueOption{
 			Header: &core.HeaderValue{
 				Key:      ":path",

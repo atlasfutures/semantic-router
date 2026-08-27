@@ -177,6 +177,64 @@ func TestSpecifiedModelBodyMutationUsesWorkingRequest(t *testing.T) {
 	}
 }
 
+func TestApplyRoutingPathHeaderSkipsIdenticalProviderPath(t *testing.T) {
+	state := &routeHeaderState{
+		profile: &config.ProviderProfile{
+			Type:     "openai",
+			ChatPath: "/v1/chat/completions",
+		},
+	}
+	ctx := &RequestContext{Headers: map[string]string{
+		":path": "/v1/chat/completions",
+	}}
+
+	pathMutatesBody, errorResponse := (&OpenAIRouter{}).applyRoutingPathHeader(
+		state,
+		"openai",
+		ctx,
+		true,
+	)
+
+	if errorResponse != nil {
+		t.Fatalf("applyRoutingPathHeader returned error response: %v", errorResponse)
+	}
+	if pathMutatesBody {
+		t.Fatal("identical provider path unexpectedly required a body mutation")
+	}
+	if _, found := headerValuesByName(state.setHeaders)[":path"]; found {
+		t.Fatal("identical provider path emitted a redundant :path mutation")
+	}
+}
+
+func TestApplyRoutingPathHeaderPreservesDifferentProviderPathRewrite(t *testing.T) {
+	state := &routeHeaderState{
+		profile: &config.ProviderProfile{
+			Type:     "openai",
+			ChatPath: "/api/v1/chat/completions",
+		},
+	}
+	ctx := &RequestContext{Headers: map[string]string{
+		":path": "/v1/chat/completions",
+	}}
+
+	pathMutatesBody, errorResponse := (&OpenAIRouter{}).applyRoutingPathHeader(
+		state,
+		"openai",
+		ctx,
+		true,
+	)
+
+	if errorResponse != nil {
+		t.Fatalf("applyRoutingPathHeader returned error response: %v", errorResponse)
+	}
+	if pathMutatesBody {
+		t.Fatal("provider path rewrite unexpectedly required a body mutation")
+	}
+	if got := headerValuesByName(state.setHeaders)[":path"]; got != "/api/v1/chat/completions" {
+		t.Fatalf("upstream path = %q, want /api/v1/chat/completions", got)
+	}
+}
+
 func TestSpecifiedOpenAIModelTranslatesNativeAnthropicRequest(t *testing.T) {
 	cfg := &config.RouterConfig{
 		BackendModels: config.BackendModels{
