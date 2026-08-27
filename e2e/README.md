@@ -8,11 +8,13 @@ A profile owns environment setup and a list of tests. A test case owns one
 externally visible contract and can be reused by several profiles.
 
 ```text
-e2e/cmd/e2e             command-line entry point
-e2e/pkg/framework       cluster, profile lifecycle, execution, and reports
-e2e/pkg/testcases       reusable test implementations and registry
-e2e/profiles            deployment-specific profile implementations
-e2e/config              focused Router configs for profiles and smoke tests
+e2e/cmd/e2e                  command-line entry point
+e2e/cmd/conformance-fixture  standalone programmable provider fixture
+e2e/pkg/framework            cluster, profile lifecycle, execution, and reports
+e2e/pkg/testcases            reusable test implementations and registry
+e2e/pkg/conformance          protocol-conformance corpus, comparators, and fixture
+e2e/profiles                 deployment-specific profile implementations
+e2e/config                   focused Router configs for profiles and smoke tests
 ```
 
 The scripts under [`testing/`](testing/) are older or specialized manual
