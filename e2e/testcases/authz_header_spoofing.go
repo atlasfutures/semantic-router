@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -130,16 +131,23 @@ func testAuthzHeaderSpoofing(ctx context.Context, client *kubernetes.Clientset, 
 			correctTests, totalTests, successRate)
 	}
 
-	// Return error if all tests failed
-	if correctTests == 0 {
-		return fmt.Errorf("authz header spoofing test failed: 0%% success rate (0/%d correct)", totalTests)
-	}
-
-	// Warn if success rate is low (but don't fail)
-	if successRate < 100 {
-		if opts.Verbose {
-			fmt.Printf("[Test] Warning: Some tests failed. Success rate: %.2f%%\n", successRate)
+	// Header stripping is deterministic, so every case must pass. A single correct
+	// case previously satisfied the whole test, which let a spoofing bypass on the
+	// remaining cases ship green.
+	if correctTests != totalTests {
+		var failures []string
+		for _, r := range results {
+			if !r.Correct {
+				detail := fmt.Sprintf("%s: expected model %q, got %q",
+					r.Description, r.ExpectedModel, r.ActualModel)
+				if r.Error != "" {
+					detail += fmt.Sprintf(" (%s)", r.Error)
+				}
+				failures = append(failures, detail)
+			}
 		}
+		return fmt.Errorf("authz header spoofing: %d/%d cases failed (%.2f%% correct):\n  %s",
+			totalTests-correctTests, totalTests, successRate, strings.Join(failures, "\n  "))
 	}
 
 	return nil
@@ -179,7 +187,10 @@ func testSingleAuthzSpoofing(ctx context.Context, testCase AuthzSpoofingTestCase
 	}
 
 	actualModel := result.ActualModel
-	result.Correct = (actualModel == testCase.ExpectedModel || (actualModel == "" && testCase.ExpectedModel != ""))
+	// Every spoofing case expects a specific non-empty model, so an unextractable
+	// model is a failure to prove the header was stripped, not a pass. Treating it
+	// as correct let any response-shape drift satisfy the whole security check.
+	result.Correct = (actualModel == testCase.ExpectedModel)
 
 	if verbose {
 		printAuthzSpoofingTestResult(testCase.Description, result, testCase.ExpectedModel, actualModel)

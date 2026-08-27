@@ -108,10 +108,14 @@ func testMCPFallbackBehavior(ctx context.Context, client *kubernetes.Clientset, 
 			fallbackCount, recoveryCount)
 	}
 
-	// Note: For fallback tests, we accept lower accuracy since we're testing
-	// graceful degradation rather than perfect classification
-	if totalTests > 0 && successfulTests == 0 {
-		return fmt.Errorf("mcp fallback behavior test failed: no successful requests")
+	// Fallback tests accept lower accuracy than classification tests, because
+	// they exercise graceful degradation rather than perfect classification.
+	// That tolerance is now a stated number instead of an unwritten one, and an
+	// empty case list no longer passes: the previous bar required
+	// totalTests > 0, so an unreadable case file reported success.
+	if err := requireAccuracyFloor("mcp fallback behavior", successfulTests, totalTests,
+		minMCPFallbackAccuracy); err != nil {
+		return err
 	}
 
 	return nil

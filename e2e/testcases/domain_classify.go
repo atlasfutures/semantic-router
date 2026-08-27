@@ -92,9 +92,12 @@ func testDomainClassify(ctx context.Context, client *kubernetes.Clientset, opts 
 			correctTests, totalTests, accuracy)
 	}
 
-	// Return error if accuracy is 0%
-	if correctTests == 0 {
-		return fmt.Errorf("domain classification test failed: 0%% accuracy (0/%d correct)", totalTests)
+	// The floor is the calibrated value from pkg/testcases/acceptance_contracts.go,
+	// applied here so it binds every profile, not only the one that declares the
+	// contract. The previous bar passed on a single correct case out of 261.
+	if err := requireAccuracyFloor("domain classification", correctTests, totalTests,
+		pkgtestcases.MinBaselineDomainClassificationAccuracy); err != nil {
+		return err
 	}
 
 	return nil

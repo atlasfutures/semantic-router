@@ -101,9 +101,12 @@ func testPIIDetection(ctx context.Context, client *kubernetes.Clientset, opts pk
 			correctTests, totalTests, detectionRate)
 	}
 
-	// Return error if detection rate is 0%
-	if correctTests == 0 {
-		return fmt.Errorf("PII detection test failed: 0%% accuracy (0/%d correct)", totalTests)
+	// The floor is the calibrated value from pkg/testcases/acceptance_contracts.go,
+	// applied here so it binds every profile that runs this testcase. A safety
+	// check must not pass because one case out of N detected its PII.
+	if err := requireAccuracyFloor("PII detection", correctTests, totalTests,
+		pkgtestcases.MinBaselinePIIDetectionRate); err != nil {
+		return err
 	}
 
 	return nil

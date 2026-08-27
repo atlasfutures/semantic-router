@@ -78,10 +78,12 @@ func testStreamingKeywordRouting(ctx context.Context, client *kubernetes.Clients
 	}
 
 	passed := 0
+	var failures []string
 	for _, tc := range cases {
 		resp, err := sendNonStreamingRequest(ctx, tc.query, "MoM", localPort)
 		if err != nil {
 			fmt.Printf("[Streaming] FAIL %s: %v\n", tc.name, err)
+			failures = append(failures, fmt.Sprintf("%s: request failed: %v", tc.name, err))
 			continue
 		}
 		resp.Body.Close()
@@ -94,6 +96,8 @@ func testStreamingKeywordRouting(ctx context.Context, client *kubernetes.Clients
 			if opts.Verbose {
 				fmt.Printf("  Headers: %s", formatResponseHeaders(resp.Header))
 			}
+			failures = append(failures,
+				fmt.Sprintf("%s: decision=%q, want %q", tc.name, actualDec, tc.wantDec))
 			continue
 		}
 
@@ -105,12 +109,16 @@ func testStreamingKeywordRouting(ctx context.Context, client *kubernetes.Clients
 
 	if opts.SetDetails != nil {
 		opts.SetDetails(map[string]interface{}{
-			"total": len(cases), "passed": passed,
+			"total": len(cases), "passed": passed, "failed": len(failures),
 		})
 	}
 
-	if passed == 0 {
-		return fmt.Errorf("streaming keyword routing: 0/%d passed", len(cases))
+	// Each case pins a distinct keyword matcher (BM25 and n-gram). Accepting a
+	// single pass let either matcher regress completely while the other carried
+	// the test, so every case must now route to its expected decision.
+	if len(failures) > 0 {
+		return fmt.Errorf("streaming keyword routing: %d/%d cases failed:\n  %s",
+			len(failures), len(cases), strings.Join(failures, "\n  "))
 	}
 	return nil
 }
