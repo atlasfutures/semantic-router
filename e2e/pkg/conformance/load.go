@@ -206,6 +206,8 @@ func validateCase(c *Case, inv *Inventory) []error {
 
 	problems = append(problems, validateFidelity(c)...)
 	problems = append(problems, validateRejectShape(c)...)
+	problems = append(problems, validateInvariants(c)...)
+	problems = append(problems, validateExpectedOutcome(c)...)
 	return problems
 }
 

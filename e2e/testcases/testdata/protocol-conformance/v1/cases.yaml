@@ -115,6 +115,16 @@ cases:
         /anthropic-beta: preserved
       loss: none
       dispatch_attempts: 1
+    expected_outcome:
+      status: fail
+      reference: PL-0042#seed-02-anthropic-egress
+      reason: >-
+        The router has no native Anthropic egress. It reserializes a Messages
+        request through the OpenAI intermediate representation, so it posts
+        /v1/chat/completions and folds /system into messages as a system role.
+      signature:
+        - 'path "/v1/chat/completions", want "/v1/messages"'
+        - "provider-request /system: field missing"
     provenance:
       origin: public-regression-seed
       sources: [anthropic_messages, anthropic_caching]
@@ -143,6 +153,16 @@ cases:
         /response.completed: synthesized
       loss: none
       dispatch_attempts: 1
+    expected_outcome:
+      status: fail
+      reference: vllm-project/semantic-router#3013
+      reason: >-
+        Responses ingress short-circuits onto the Chat path instead of the
+        selected Messages backend, so the client never receives a Responses SSE
+        sequence. No configuration key changes it.
+      signature:
+        - 'path "/v1/chat/completions", want "/v1/messages"'
+        - "body encoding differs (want sse, got json)"
     provenance:
       origin: public-accepted-bug-seed
       sources: [openai_responses_streaming, anthropic_streaming, vsr_3013]
@@ -164,7 +184,12 @@ cases:
       outcome: supported
       provider_request: semantic
       client_response: semantic
-      invariants: [tool-id-pairing, argument-json-equivalence, ordered-blocks]
+      invariants:
+        - tool-id-pairing
+        - argument-json-equivalence
+        - ordered-blocks
+        - content-encoding-equivalence
+        - null-vs-omitted-equivalence
       fidelity:
         /tools: mapped
         /tool_choice: mapped
@@ -227,6 +252,16 @@ cases:
         /terminal-state: synthesized
       loss: provider-terminal-state-unavailable
       dispatch_attempts: 1
+    expected_outcome:
+      status: fail
+      reference: PL-0042#seed-06-terminal-event-after-disconnect
+      reason: >-
+        After the provider disconnects mid-stream the router synthesizes no
+        terminal event, so the client stream ends on the last content delta
+        instead of on an Anthropic error event.
+      signature:
+        - "client-response events: event count differs"
+        - "vs [message_start content_block_start content_block_delta]"
     provenance:
       origin: public-regression-seed
       sources: [anthropic_streaming, openrouter_routing]

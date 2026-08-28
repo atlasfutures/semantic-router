@@ -4,3 +4,16 @@
 # tool-id-pairing is the invariant this case exists to hold.
 volatile:
   - /id
+
+# Two notes on the authored artifacts, which JSON cannot carry itself:
+#
+#   expected-provider-request.json is written in one of the encodings the OpenAI
+#   Chat contract permits. The case declares content-encoding-equivalence,
+#   null-vs-omitted-equivalence, and argument-json-equivalence, so a router that
+#   picks the other legal encoding of the same content still satisfies it. Every
+#   value is still compared; only the encoding is relaxed. See SCHEMA.md.
+#
+#   expected-client-response.json carries cache_creation_input_tokens and
+#   cache_read_input_tokens at zero. They are standard Anthropic Messages usage
+#   fields, so a Messages client sees them on every response, cache or no cache.
+#   The Chat provider has no cache accounting to map from, which is why both are 0.

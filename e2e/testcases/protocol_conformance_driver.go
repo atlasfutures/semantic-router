@@ -54,8 +54,8 @@ type conformanceProvider interface {
 	Observed(ctx context.Context) ([]fixture.ObservedRequest, error)
 }
 
-// caseOutcome is one case's verdict. A case is skipped, passed, or failed; a
-// skipped case always carries the reason it could not run.
+// caseOutcome is one case's verdict. A case is skipped, passed, expected-failed,
+// or failed; a skipped case always carries the reason it could not run.
 type caseOutcome struct {
 	ID       string
 	Skipped  bool
@@ -65,10 +65,19 @@ type caseOutcome struct {
 	// against. A case with a declared ledger and no emitted one is not a failure
 	// yet, so the count is reported instead of asserted.
 	FidelityChecked bool
+	// ExpectedFailure is true when the case carries an expected_outcome marker and
+	// failed with every signature substring the marker names. Failures still holds
+	// what diverged, so the report shows the known gap rather than hiding it.
+	ExpectedFailure bool
+	// Reference is the marker's reference, carried so the report names the gap.
+	Reference string
 }
 
-// Passed reports whether the case ran and matched every expectation.
-func (o caseOutcome) Passed() bool { return !o.Skipped && len(o.Failures) == 0 }
+// Passed reports whether the case ran and matched every expectation. An expected
+// failure is not a pass: it proved a known gap is still there.
+func (o caseOutcome) Passed() bool {
+	return !o.Skipped && !o.ExpectedFailure && len(o.Failures) == 0
+}
 
 // runConformanceTranche runs every case in order and returns one outcome per case.
 // A failing case never stops the run: the point of the corpus is the whole picture.
@@ -118,6 +127,40 @@ func runConformanceCase(
 	outcome.Failures = append(outcome.Failures, clientBoundaryFailures(c, resp)...)
 	outcome.Failures = append(outcome.Failures, relayFailures(c, resp)...)
 	outcome.Failures = append(outcome.Failures, fidelityFailures(c, resp)...)
+	return applyExpectedOutcome(c, outcome)
+}
+
+// applyExpectedOutcome reads the case's expected_outcome marker over the failures
+// the comparators produced.
+//
+// Three answers, and only one of them is quiet. A marked case that failed with
+// every signature substring present is the known gap, reported as an expected
+// failure. A marked case that passed is news: the gap may be fixed, so the run
+// fails until someone looks. A marked case that failed some other way is also
+// news, and the run fails with both the marker and the actual failures, because
+// the marker is what a reader would otherwise trust.
+func applyExpectedOutcome(c *conformance.Case, outcome caseOutcome) caseOutcome {
+	if !c.ExpectsFailure() || outcome.Skipped {
+		return outcome
+	}
+	marker := c.ExpectedOutcome
+	outcome.Reason, outcome.Reference = marker.Reason, marker.Reference
+
+	if len(outcome.Failures) == 0 {
+		outcome.Failures = []string{fmt.Sprintf(
+			"unexpectedly passed: the case is marked an expected failure against %s (%s); the gap may be fixed, so update or remove the marker",
+			marker.Reference, marker.Reason)}
+		return outcome
+	}
+
+	missing := marker.UnmatchedSignature(outcome.Failures)
+	if len(missing) == 0 {
+		outcome.ExpectedFailure = true
+		return outcome
+	}
+	outcome.Failures = append([]string{fmt.Sprintf(
+		"failed, but not with the known failure against %s (%s): signature %q is absent from every failure below",
+		marker.Reference, marker.Reason, strings.Join(missing, " | "))}, outcome.Failures...)
 	return outcome
 }
 

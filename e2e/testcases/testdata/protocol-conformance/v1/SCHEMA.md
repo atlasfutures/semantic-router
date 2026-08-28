@@ -54,6 +54,7 @@ The file is the contract vocabulary. It declares, per case:
 | `features` | Feature axes the case exercises |
 | `synthetic_shape` | What a fixture author must generate, in prose |
 | `expectation` | Both comparators, allowed patches, invariants, fidelity ledger, loss, dispatch count |
+| `expected_outcome` | Optional. Marks the case a known failure; see [Expected outcome](#expected-outcome) |
 | `provenance` | Origin, normative sources, private behavior reference |
 | `ownership` | Primary Workgroup, reviewers, upstream issues |
 
@@ -170,6 +171,89 @@ Composing the fault families PL-0042 requires:
 - arbitrary chunk boundaries, including a split inside a UTF-8 sequence: `sse`
   with a `chunk_bytes` that does not align to the event grammar.
 
+## Invariants
+
+`expectation.invariants` names the equivalences and properties one case's
+contract turns on. The vocabulary is closed: a name outside it is a load error.
+Before v1 gained this section an unrecognized name was silently inert.
+
+Each name is held one of three ways.
+
+| Support | Meaning | Who may declare it |
+| --- | --- | --- |
+| `enforced` | The comparator normalizes both sides for it before diffing | Any case |
+| `covered` | The case's authored artifacts already assert it under its declared comparison modes | Any case |
+| `deferred` | Recognized, but nothing asserts it yet | Only a case outside the promoted tranche |
+
+The promoted tranche may not declare a `deferred` name. That is the whole point
+of the split: a case that gates CI can never carry an invariant that does
+nothing. Promoting a deferred case means either implementing its invariant or
+proving the authored artifacts already cover it, and moving the name.
+
+### Enforced invariants
+
+Three names describe encodings a public API contract declares interchangeable, so
+a structural diff would otherwise report a difference that is not one. They are
+opt-in per case, never a global loosening, and they relax the encoding only:
+every value is still compared.
+
+| Name | What it accepts | Scope |
+| --- | --- | --- |
+| `argument-json-equivalence` | A tool-call `arguments` string is compared as parsed JSON, so spacing and key order inside it do not fail | Every OpenAI `function` object carrying a string `arguments`, wherever a request, response, or stream delta puts it |
+| `content-encoding-equivalence` | An OpenAI Chat message `content` written as a bare string equals the single text part it expands to | `messages[*].content` and `choices[*].message.content` only, so an Anthropic block list is untouched |
+| `null-vs-omitted-equivalence` | A field carrying an explicit `null` equals the same field omitted, in either direction | Any field. Only a `null` is ever reconciled away, so a dropped value is still a failure |
+
+`content-encoding-equivalence` expands rather than collapses: a part carrying
+anything beyond `type` and `text`, such as a `cache_control` marker, is not
+equivalent to a string and still differs.
+
+An enforced invariant relaxes the structural comparison, so it applies to an
+`exact-except` or `semantic` boundary. `exact` asserts byte identity and admits
+no relaxation.
+
+`e2e/pkg/conformance/invariant.go` owns the vocabulary and the three rules.
+
+## Expected outcome
+
+A case may declare that it is known to fail against a named router gap:
+
+```yaml
+expected_outcome:
+  status: fail
+  reference: vllm-project/semantic-router#3013
+  reason: >-
+    Responses ingress short-circuits onto the Chat path instead of the selected
+    Messages backend.
+  signature:
+    - 'path "/v1/chat/completions", want "/v1/messages"'
+    - "body encoding differs (want sse, got json)"
+```
+
+| Field | Meaning |
+| --- | --- |
+| `status` | Always `fail` in v1. A case expected to pass carries no marker at all |
+| `reference` | The gap: an upstream issue, or a stable plan-document token such as `PL-0042#seed-02-anthropic-egress` when no upstream issue covers it |
+| `reason` | One sentence on what the router does instead |
+| `signature` | Substrings that must **all** appear among the case's failure messages for the failure to count as the known one |
+
+The runner reads the marker over the failures the comparators produced, and there
+are three answers:
+
+- **Failed with every signature substring present.** Reported as an expected
+  failure. It does not fail the run, and it is counted apart from passes as
+  `cases_expected_failures`, so a green run still says what it proved.
+- **Passed.** Fails the run. The gap may be fixed, and a stale marker is the one
+  thing a reader would wrongly trust.
+- **Failed some other way.** Fails the run, with the marker context and every
+  actual failure, because a different regression must not hide behind the marker.
+
+A skipped case is never reclassified by its marker. The all-skip guard is
+unchanged: a run in which every case skipped asserted nothing and still fails.
+
+The signature is what keeps the marker honest, so make it tight. Name the
+pointer, path, or event sequence the gap actually produces, not a phrase any
+failure would contain.
+
 ## Fidelity tiers
 
 Every ledger entry in `cases.yaml` carries one of seven fidelity actions. Each
@@ -223,6 +307,8 @@ Shared rules:
   A volatile field that disappears is still a failure. Do not broadly delete
   fields before comparison.
 - `exact` admits no exclusions. A boundary that needs one is `exact-except`.
+- An enforced invariant the case declares normalizes both sides before the
+  structural diff runs. See [Invariants](#invariants).
 
 Stream rules, shared by every mode that parses events:
 
@@ -255,6 +341,10 @@ one pass so an author sees the whole picture:
 - A comparison mode that is not `exact`, `exact-except`, `semantic`, or
   `reject`, or one that `comparison_modes` does not declare.
 - A fidelity action outside the seven declared actions.
+- An `expectation.invariants` entry outside the closed vocabulary, or a
+  `deferred` entry on a case in the promoted tranche.
+- An `expected_outcome` whose `status` is not `fail`, or that names no
+  `reference`, no `reason`, no `signature`, or an empty signature entry.
 - A `stateful-or-unsupported` entry with no declared loss and no rejection.
 - An inconsistent rejection: `mutation_mode`, `provider_request`,
   `client_response`, and `dispatch_attempts: 0` must agree.

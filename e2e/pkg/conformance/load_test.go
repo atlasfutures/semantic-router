@@ -149,6 +149,41 @@ func TestLoadValidationFailures(t *testing.T) {
 			cases:   caseYAML(map[string]string{"__extra": "surprise: true"}),
 			wantErr: "unknown field",
 		},
+		{
+			name:    "unknown invariant",
+			cases:   caseYAML(map[string]string{"invariants": "[tool-id-pairing, argument-json-equivalance]"}),
+			wantErr: `declares unknown invariant "argument-json-equivalance"`,
+		},
+		{
+			name:    "deferred invariant on a promoted case",
+			cases:   caseYAML(map[string]string{"invariants": "[cache-read-preserved]"}),
+			wantErr: `invariant "cache-read-preserved" is recognized but not asserted yet`,
+		},
+		{
+			name:    "expected_outcome with no reference",
+			cases:   caseYAML(map[string]string{"__extra": markerYAML("", "a reason", "[sig]")}),
+			wantErr: "expected_outcome names no reference",
+		},
+		{
+			name:    "expected_outcome with no reason",
+			cases:   caseYAML(map[string]string{"__extra": markerYAML("issue#1", "", "[sig]")}),
+			wantErr: "expected_outcome names no reason",
+		},
+		{
+			name:    "expected_outcome with no signature",
+			cases:   caseYAML(map[string]string{"__extra": markerYAML("issue#1", "a reason", "[]")}),
+			wantErr: "expected_outcome names no signature",
+		},
+		{
+			name:    "expected_outcome with an empty signature entry",
+			cases:   caseYAML(map[string]string{"__extra": markerYAML("issue#1", "a reason", `["", "sig"]`)}),
+			wantErr: "expected_outcome signature entry 0 is empty",
+		},
+		{
+			name:    "expected_outcome with an undeclared status",
+			cases:   caseYAML(map[string]string{"__extra": "expected_outcome: {status: flaky, reference: i, reason: r, signature: [s]}"}),
+			wantErr: `expected_outcome status is "flaky"`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -237,7 +272,7 @@ func caseYAML(override map[string]string) string {
 
 	body := `
   - id: unit-01
-    tranche: first-six
+    tranche: ` + field("tranche", "first-six") + `
     contract: A unit fixture.
     client: {protocol: openai-chat, path: /v1/chat/completions, mode: buffered}
     provider: {protocol: openai-chat, dialect: openai}
@@ -249,6 +284,7 @@ func caseYAML(override map[string]string) string {
       provider_request: ` + field("provider_request", "exact-except") + `
       client_response: ` + field("client_response", "exact-except") + `
       allowed_patches: [/model]
+      invariants: ` + field("invariants", "[]") + `
       fidelity: ` + field("fidelity", "{/model: patched}") + `
       loss: none
       dispatch_attempts: 1
@@ -292,4 +328,10 @@ func write(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// markerYAML renders one expected_outcome block for the caseYAML "__extra" slot.
+func markerYAML(reference, reason, signature string) string {
+	return "expected_outcome: {status: fail, reference: \"" + reference +
+		"\", reason: \"" + reason + "\", signature: " + signature + "}"
 }

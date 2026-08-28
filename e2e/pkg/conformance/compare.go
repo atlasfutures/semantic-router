@@ -45,6 +45,11 @@ type Comparison struct {
 	Volatile []string
 	// Reject is the expected rejection. It is required by ModeReject and unused otherwise.
 	Reject RejectSpec
+	// Invariants are the enforced equivalences the case opted into. Each one
+	// normalizes both sides before the structural diff runs; see invariant.go.
+	// They apply to the modes that diff structure, not to ModeExact, which asserts
+	// byte identity and admits no relaxation.
+	Invariants []Invariant
 }
 
 // RejectSpec is the typed rejection a ModeReject boundary must produce.
@@ -106,7 +111,7 @@ func (c *Case) Comparison(boundary Boundary) (Comparison, error) {
 		return Comparison{}, fmt.Errorf("case %q: boundary %s has unknown mode %q", c.ID, boundary, mode)
 	}
 
-	cmp := Comparison{Mode: mode}
+	cmp := Comparison{Mode: mode, Invariants: enforcedInvariants(c.Expectation.Invariants)}
 	tuning := CompareTuning{}
 	if c.Fixtures != nil {
 		tuning = c.Fixtures.Compare

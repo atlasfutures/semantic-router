@@ -139,18 +139,22 @@ func conformanceFixtureOptions(opts pkgtestcases.TestCaseOptions) pkgtestcases.T
 	return fixtureOpts
 }
 
-// reportConformanceOutcomes publishes the per-case picture. Skips carry their reason
-// and failures carry every mismatch, so a report reader never has to guess whether a
-// case passed, was not authored, or genuinely diverged.
+// reportConformanceOutcomes publishes the per-case picture. Skips carry their reason,
+// failures carry every mismatch, and expected failures are counted apart from passes,
+// so a report reader never has to guess whether a case passed, was not authored,
+// genuinely diverged, or is a known gap the corpus is holding in place.
 func reportConformanceOutcomes(outcomes []caseOutcome, opts pkgtestcases.TestCaseOptions, selection string) {
 	skipped := map[string]string{}
 	failures := map[string][]string{}
+	expected := map[string]string{}
 	passed, ledgers := 0, 0
 
 	for _, outcome := range outcomes {
 		switch {
 		case outcome.Skipped:
 			skipped[outcome.ID] = outcome.Reason
+		case outcome.ExpectedFailure:
+			expected[outcome.ID] = fmt.Sprintf("%s: %s", outcome.Reference, outcome.Reason)
 		case outcome.Passed():
 			passed++
 		default:
@@ -173,8 +177,10 @@ func reportConformanceOutcomes(outcomes []caseOutcome, opts pkgtestcases.TestCas
 		"cases_passed":             passed,
 		"cases_failed":             len(failures),
 		"cases_skipped":            len(skipped),
+		"cases_expected_failures":  len(expected),
 		"skipped":                  skipped,
 		"failures":                 failures,
+		"expected_failures":        expected,
 		"fidelity_ledgers_checked": ledgers,
 	})
 }
@@ -184,6 +190,11 @@ func printConformanceOutcomes(outcomes []caseOutcome) {
 		switch {
 		case outcome.Skipped:
 			fmt.Printf("[Conformance] ⏭️  %s skipped: %s\n", outcome.ID, outcome.Reason)
+		case outcome.ExpectedFailure:
+			fmt.Printf("[Conformance] ⚠️  %s failed as expected (%s: %s)\n", outcome.ID, outcome.Reference, outcome.Reason)
+			for _, failure := range outcome.Failures {
+				fmt.Printf("[Conformance]      %s\n", failure)
+			}
 		case outcome.Passed():
 			fmt.Printf("[Conformance] ✅ %s\n", outcome.ID)
 		default:
@@ -199,6 +210,10 @@ func printConformanceOutcomes(outcomes []caseOutcome) {
 // cases never fail the run individually — an unauthored case has nothing to
 // assert — but a run where every case skipped asserted nothing and must fail
 // rather than report green.
+//
+// An expected failure does not fail the run: it ran, and it proved the gap its
+// marker names is still exactly that gap. A marked case that passed, or that failed
+// some other way, is already carrying failures by the time it reaches here.
 func conformanceVerdict(outcomes []caseOutcome) error {
 	var failed []string
 	lines := []string{}
@@ -209,7 +224,7 @@ func conformanceVerdict(outcomes []caseOutcome) error {
 			continue
 		}
 		ran++
-		if outcome.Passed() {
+		if outcome.Passed() || outcome.ExpectedFailure {
 			continue
 		}
 		failed = append(failed, outcome.ID)

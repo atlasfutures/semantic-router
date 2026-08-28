@@ -9,7 +9,10 @@
 // server and does not drive the router; DPC-101 and DPC-103 own those.
 package conformance
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // SchemaVersion is the only cases.yaml schema_version this loader accepts.
 const SchemaVersion = "dpc-003-inventory-v1alpha1"
@@ -116,6 +119,11 @@ type Case struct {
 	Provenance     Provenance  `json:"provenance"`
 	Ownership      Ownership   `json:"ownership"`
 
+	// ExpectedOutcome marks the case as a known failure against a named router
+	// gap. Absent means the case is expected to pass, which is every case that
+	// does not name one.
+	ExpectedOutcome *ExpectedOutcome `json:"expected_outcome,omitempty"`
+
 	// Fixtures holds the per-case artifact files. It is nil until DPC-104 authors
 	// the case directory; Loaded reports which state a case is in.
 	Fixtures *Fixtures `json:"-"`
@@ -124,6 +132,89 @@ type Case struct {
 // Loaded reports whether the case directory exists and its fixtures were read.
 // Cases in the frozen inventory that have no directory yet are contract-only.
 func (c *Case) Loaded() bool { return c.Fixtures != nil }
+
+// OutcomeFail is the only expected_outcome status v1 declares. A case that is
+// expected to pass says so by carrying no marker at all.
+const OutcomeFail = "fail"
+
+// ExpectedOutcome records that a case is known to fail, why, and how the failure
+// is recognized.
+//
+// The marker exists so a green run stays honest. A run that reports a marked case
+// as an expected failure has still proved something: the gap is exactly the one
+// the marker names. A marked case that passes, or that fails some other way, fails
+// the run, because either is news.
+type ExpectedOutcome struct {
+	// Status is always OutcomeFail in v1.
+	Status string `json:"status"`
+	// Reference identifies the gap: an upstream issue, or a stable plan-document
+	// token when no upstream issue covers it yet.
+	Reference string `json:"reference"`
+	// Reason is one sentence on what the router does instead.
+	Reason string `json:"reason"`
+	// Signature holds substrings that must ALL appear among the case's failure
+	// messages for the failure to count as the known one. It is what keeps a
+	// different regression from hiding behind the marker.
+	Signature []string `json:"signature"`
+}
+
+// ExpectsFailure reports whether the case carries an expected-failure marker.
+func (c *Case) ExpectsFailure() bool {
+	return c.ExpectedOutcome != nil && c.ExpectedOutcome.Status == OutcomeFail
+}
+
+// UnmatchedSignature returns the signature substrings that no failure message
+// contains. An empty result means the observed failure is the known one.
+func (e *ExpectedOutcome) UnmatchedSignature(failures []string) []string {
+	var missing []string
+	for _, want := range e.Signature {
+		found := false
+		for _, failure := range failures {
+			if strings.Contains(failure, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missing = append(missing, want)
+		}
+	}
+	return missing
+}
+
+// validateExpectedOutcome keeps an expected-failure marker reviewable and tight.
+// A marker with no reference cannot be chased, a marker with no reason cannot be
+// reviewed, and a marker with no signature would let any regression hide behind it.
+func validateExpectedOutcome(c *Case) []error {
+	marker := c.ExpectedOutcome
+	if marker == nil {
+		return nil
+	}
+
+	var problems []error
+	fail := func(format string, args ...any) {
+		problems = append(problems, fmt.Errorf("case %q: expected_outcome "+format, append([]any{c.ID}, args...)...))
+	}
+
+	if marker.Status != OutcomeFail {
+		fail("status is %q; the only status v1 declares is %q, and an expected pass carries no marker", marker.Status, OutcomeFail)
+	}
+	if strings.TrimSpace(marker.Reference) == "" {
+		fail("names no reference; cite the upstream issue or a stable plan-document token")
+	}
+	if strings.TrimSpace(marker.Reason) == "" {
+		fail("names no reason; say in one sentence what the router does instead")
+	}
+	if len(marker.Signature) == 0 {
+		fail("names no signature; without one any regression would count as the known failure")
+	}
+	for i, entry := range marker.Signature {
+		if strings.TrimSpace(entry) == "" {
+			fail("signature entry %d is empty", i)
+		}
+	}
+	return problems
+}
 
 // ClientSpec is the inbound half of a case.
 type ClientSpec struct {
@@ -144,7 +235,7 @@ type Expectation struct {
 	ProviderRequest  Mode                      `json:"provider_request"`
 	ClientResponse   Mode                      `json:"client_response"`
 	AllowedPatches   []string                  `json:"allowed_patches"`
-	Invariants       []string                  `json:"invariants"`
+	Invariants       []Invariant               `json:"invariants"`
 	Fidelity         map[string]FidelityAction `json:"fidelity"`
 	Loss             string                    `json:"loss"`
 	DispatchAttempts int                       `json:"dispatch_attempts"`

@@ -47,13 +47,16 @@ func TestProtocolConformanceTrancheAgainstTheRealTree(t *testing.T) {
 
 // TestPassthroughRouterSatisfiesASameProtocolCase pins the whole loop against a
 // real case: program the fixture, send the client request, read what the provider
-// observed, and compare both boundaries. seed-02 is a same-protocol capture whose
+// observed, and compare both boundaries. seed-01 is a same-protocol capture whose
 // only allowed patches are the model and provider credentials, so a router that
 // forwards the request unchanged satisfies it.
+//
+// seed-01 rather than seed-02 because seed-02 now carries an expected-failure
+// marker: an ideal router makes it fail the run, which the next test asserts.
 func TestPassthroughRouterSatisfiesASameProtocolCase(t *testing.T) {
-	c := findCaseForTest(t, "seed-02-anthropic-native-request-capture")
+	c := findCaseForTest(t, "seed-01-chat-identity-model-patch")
 	if !c.Loaded() {
-		t.Fatal("seed-02 payloads must be authored; they are part of the committed seed tranche")
+		t.Fatal("seed-01 payloads must be authored; they are part of the committed seed tranche")
 	}
 
 	server := startFixtureForTest(t)
@@ -61,31 +64,10 @@ func TestPassthroughRouterSatisfiesASameProtocolCase(t *testing.T) {
 
 	outcome := runConformanceCase(context.Background(), c, newHTTPConformanceIngress(router, http.DefaultClient), &inProcessConformanceProvider{server: server})
 	if outcome.Skipped {
-		t.Fatalf("seed-02 was skipped: %s", outcome.Reason)
+		t.Fatalf("seed-01 was skipped: %s", outcome.Reason)
 	}
 	if !outcome.Passed() {
 		t.Fatalf("a passthrough router must satisfy a same-protocol capture, got %v", outcome.Failures)
-	}
-}
-
-// TestALostFieldFailsTheProviderBoundary is the negative half: a router that drops a
-// client-authored field must fail the case at the provider boundary, naming the
-// field it lost.
-func TestALostFieldFailsTheProviderBoundary(t *testing.T) {
-	c := findCaseForTest(t, "seed-02-anthropic-native-request-capture")
-	if !c.Loaded() {
-		t.Fatal("seed-02 payloads must be authored; they are part of the committed seed tranche")
-	}
-
-	server := startFixtureForTest(t)
-	router := startRouterForTest(t, fakeRouter{providerURL: server.URL(), mutate: func(body map[string]any) { delete(body, "system") }})
-
-	outcome := runConformanceCase(context.Background(), c, newHTTPConformanceIngress(router, http.DefaultClient), &inProcessConformanceProvider{server: server})
-	if outcome.Passed() {
-		t.Fatal("a router that drops the system blocks must fail the provider boundary")
-	}
-	if !containsSubstring(outcome.Failures, "/system") {
-		t.Fatalf("the failure must name the lost field, got %v", outcome.Failures)
 	}
 }
 

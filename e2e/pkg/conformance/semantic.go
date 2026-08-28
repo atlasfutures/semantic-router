@@ -19,12 +19,13 @@ func compareSemantic(cmp Comparison, want, got Payload) ([]Mismatch, error) {
 
 	mismatches := compareStatus(want.Status, got.Status)
 	body, err := compareBodies(want, got, func(path string, wantValue, gotValue any, out *[]Mismatch) error {
+		applyInvariants(cmp.Invariants, wantValue, gotValue)
 		diffJSON(path, wantValue, gotValue, volatile, out)
 		return nil
 	}, func(wantEvent, gotEvent SSEEvent, coordinate string, out *[]Mismatch) {
 		// The SSE id field is reconnection transport metadata, not protocol
 		// semantics, so semantic mode ignores it. exact and exact-except still check it.
-		compareEventData(wantEvent, gotEvent, coordinate, volatile, out)
+		compareEventData(wantEvent, gotEvent, coordinate, volatile, cmp.Invariants, out)
 	})
 	if err != nil {
 		return nil, err

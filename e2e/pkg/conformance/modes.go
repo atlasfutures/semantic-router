@@ -44,10 +44,14 @@ func compareExactExcept(cmp Comparison, want, got Payload) ([]Mismatch, error) {
 				return err
 			}
 		}
+		applyInvariants(cmp.Invariants, wantValue, gotValue)
 		diffJSON(path, wantValue, gotValue, nil, out)
 		return nil
 	}, func(want, got SSEEvent, coordinate string, out *[]Mismatch) {
-		compareLiteralEventData(want, got, coordinate, out)
+		if want.ID != got.ID {
+			*out = append(*out, Mismatch{Path: coordinate + ".id", Want: want.ID, Got: got.ID, Reason: "event id differs"})
+		}
+		compareEventData(want, got, coordinate, nil, cmp.Invariants, out)
 	})
 	if err != nil {
 		return nil, err
@@ -143,17 +147,11 @@ func compareBodies(
 	return mismatches, nil
 }
 
-// compareLiteralEventData compares one event's data and id verbatim. Structural
-// identity of the data payload is still checked as JSON when both sides are JSON,
-// so key order and insignificant whitespace do not fail an unchanged stream.
-func compareLiteralEventData(want, got SSEEvent, coordinate string, out *[]Mismatch) {
-	if want.ID != got.ID {
-		*out = append(*out, Mismatch{Path: coordinate + ".id", Want: want.ID, Got: got.ID, Reason: "event id differs"})
-	}
-	compareEventData(want, got, coordinate, nil, out)
-}
-
-func compareEventData(want, got SSEEvent, coordinate string, volatile map[string]struct{}, out *[]Mismatch) {
+// compareEventData compares one event's data payload. Structural identity is
+// checked as JSON when both sides are JSON, so key order and insignificant
+// whitespace do not fail an unchanged stream. exact-except also compares the
+// event id; semantic does not, and passes it no volatile set.
+func compareEventData(want, got SSEEvent, coordinate string, volatile map[string]struct{}, invariants []Invariant, out *[]Mismatch) {
 	path := coordinate + ".data"
 	if !want.IsJSON() || !got.IsJSON() {
 		if want.Data != got.Data {
@@ -170,6 +168,8 @@ func compareEventData(want, got SSEEvent, coordinate string, volatile map[string
 		}
 		return
 	}
+
+	applyInvariants(invariants, wantValue, gotValue)
 
 	before := len(*out)
 	diffJSON("", wantValue, gotValue, volatile, out)
