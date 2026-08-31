@@ -4,7 +4,10 @@
   "role": "assistant",
   "model": "conformance-messages-model",
   "content": [
-    {"type": "text", "text": "The pixel is red."}
+    {
+      "type": "text",
+      "text": "The pixel is red."
+    }
   ],
   "stop_reason": "end_turn",
   "stop_sequence": null,
@@ -15,3 +18,4 @@
     "output_tokens": 6
   }
 }
+

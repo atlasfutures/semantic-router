@@ -1,9 +1,14 @@
 {
-  "model": "conformance-openrouter-model",
-  "max_tokens": 64,
+  "max_completion_tokens": 64,
   "messages": [
-    {"role": "user", "content": "Count from one to five."}
+    {
+      "role": "user",
+      "content": "Count from one to five."
+    }
   ],
+  "model": "conformance-openrouter-model",
   "stream": true,
-  "stream_options": {"include_usage": true}
+  "stream_options": {
+    "include_usage": true
+  }
 }

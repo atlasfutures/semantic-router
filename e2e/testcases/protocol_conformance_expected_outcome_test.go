@@ -1,8 +1,6 @@
 package testcases
 
 import (
-	"context"
-	"net/http"
 	"strings"
 	"testing"
 
@@ -53,20 +51,19 @@ func TestAKnownFailureIsReportedAsExpected(t *testing.T) {
 	}
 }
 
-// TestAMarkedCaseThatPassesFailsTheRun is the second answer, run against the real
-// corpus. seed-02 is marked an expected failure because the router has no native
-// Anthropic egress. A passthrough router does have one, so the case passes, and a
-// passing marked case must fail the run: the marker may be stale.
+// TestAMarkedCaseThatPassesFailsTheRun is the second answer: a marked case that
+// met every expectation must fail the run, because the marker may be stale.
+//
+// Synthetic rather than corpus-driven. Binding it to a real seed makes the test
+// assert today's router behavior twice over -- once in the seed's marker and
+// once here -- so the test breaks whenever the gap it borrowed gets fixed. That
+// already happened: this test used to drive seed-02, which a passthrough router
+// satisfied, and native Anthropic egress retired both the gap and the marker.
+// The deployed run is what proves the marker over the real router.
 func TestAMarkedCaseThatPassesFailsTheRun(t *testing.T) {
-	c := findCaseForTest(t, "seed-02-anthropic-native-request-capture")
-	if !c.ExpectsFailure() {
-		t.Fatal("seed-02 must carry an expected-failure marker")
-	}
+	c := markedCaseForTest()
+	outcome := applyExpectedOutcome(c, caseOutcome{ID: c.ID})
 
-	server := startFixtureForTest(t)
-	router := startRouterForTest(t, fakeRouter{providerURL: server.URL()})
-
-	outcome := runConformanceCase(context.Background(), c, newHTTPConformanceIngress(router, http.DefaultClient), &inProcessConformanceProvider{server: server})
 	if outcome.Passed() || outcome.ExpectedFailure {
 		t.Fatalf("a marked case that met every expectation must fail the run, got %+v", outcome)
 	}

@@ -139,6 +139,20 @@ func forwardedBody(r *http.Request, mutate func(body map[string]any)) ([]byte, e
 	return json.Marshal(decoded)
 }
 
+// canonicalizeChatMaxTokens is the one rewrite a same-protocol OpenAI Chat hop
+// still performs. The codec accepts either spelling of the output-token ceiling
+// and emits only the canonical one, so a fake router that forwarded max_tokens
+// untouched would model byte-level passthrough -- an identity the Chat contract
+// stopped having when the codec took ownership of the wire format.
+func canonicalizeChatMaxTokens(body map[string]any) {
+	value, ok := body["max_tokens"]
+	if !ok {
+		return
+	}
+	delete(body, "max_tokens")
+	body["max_completion_tokens"] = value
+}
+
 func containsSubstring(lines []string, want string) bool {
 	for _, line := range lines {
 		if strings.Contains(line, want) {

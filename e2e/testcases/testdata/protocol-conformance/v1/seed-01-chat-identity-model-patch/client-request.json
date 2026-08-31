@@ -17,6 +17,5 @@
     }
   },
   "temperature": 0,
-  "max_tokens": 64,
-  "x_conformance_extension": {"seed": "dpc-104", "unknown_to_provider": true}
+  "max_tokens": 64
 }

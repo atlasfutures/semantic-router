@@ -6,10 +6,19 @@
   "choices": [
     {
       "index": 0,
-      "message": {"role": "assistant", "content": "{\"sum\":5}", "refusal": null},
+      "message": {
+        "role": "assistant",
+        "content": "{\"sum\":5}",
+        "refusal": null
+      },
       "logprobs": null,
       "finish_reason": "stop"
     }
   ],
-  "usage": {"prompt_tokens": 27, "completion_tokens": 7, "total_tokens": 34}
+  "usage": {
+    "prompt_tokens": 27,
+    "completion_tokens": 7,
+    "total_tokens": 34
+  }
 }
+

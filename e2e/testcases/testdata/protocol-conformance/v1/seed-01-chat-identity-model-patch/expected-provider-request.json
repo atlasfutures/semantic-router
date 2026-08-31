@@ -1,22 +1,30 @@
 {
-  "model": "conformance-chat-model",
+  "max_completion_tokens": 64,
   "messages": [
-    {"role": "user", "content": "Return the sum of 2 and 3 as JSON."}
+    {
+      "role": "user",
+      "content": "Return the sum of 2 and 3 as JSON."
+    }
   ],
+  "model": "conformance-chat-model",
   "response_format": {
     "type": "json_schema",
     "json_schema": {
       "name": "sum_result",
-      "strict": true,
       "schema": {
         "type": "object",
-        "properties": {"sum": {"type": "integer"}},
-        "required": ["sum"],
+        "properties": {
+          "sum": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sum"
+        ],
         "additionalProperties": false
-      }
+      },
+      "strict": true
     }
   },
-  "temperature": 0,
-  "max_tokens": 64,
-  "x_conformance_extension": {"seed": "dpc-104", "unknown_to_provider": true}
+  "temperature": 0
 }

@@ -14,9 +14,13 @@ func TestFrozenInventoryExpectedOutcomes(t *testing.T) {
 		t.Fatalf("load frozen inventory: %v", err)
 	}
 
+	// seed-02 carried a marker until native Anthropic egress landed: the Router
+	// now dispatches api_format: anthropic to /v1/messages, so the case passes and
+	// keeping the marker would fail the run for passing unexpectedly. seed-03 kept
+	// its marker but changed cause -- the Chat short-circuit is gone and the
+	// missing provider version header is what remains.
 	want := map[string]string{
-		"seed-02-anthropic-native-request-capture":          "PL-0042#seed-02-anthropic-egress",
-		"seed-03-responses-to-anthropic-stream":             "vllm-project/semantic-router#3013",
+		"seed-03-responses-to-anthropic-stream":             "PL-0042#seed-03-cross-protocol-anthropic-version",
 		"seed-06-anthropic-openrouter-midstream-truncation": "PL-0042#seed-06-terminal-event-after-disconnect",
 	}
 

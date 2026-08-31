@@ -73,8 +73,8 @@ cases:
     client: {protocol: openai-chat, path: /v1/chat/completions, mode: buffered}
     provider: {protocol: openai-chat, dialect: openai}
     mutation_mode: patch
-    features: [strict-json-schema, unknown-field-survival, usage]
-    synthetic_shape: A text request with a small strict schema and one invented extension field.
+    features: [strict-json-schema, usage]
+    synthetic_shape: A text request with a small strict schema.
     expectation:
       outcome: supported
       provider_request: exact-except
@@ -83,13 +83,13 @@ cases:
       fidelity:
         /model: patched
         /response_format: preserved
-        /x_conformance_extension: preserved
+        /temperature: preserved
       loss: none
       dispatch_attempts: 1
     provenance:
       origin: public-regression-seed
       sources: [openai_chat, vsr_3024, vsr_3035]
-      note: Accepted issue 3024 and open PR 3035 make request-field survival a focused seed.
+      note: Accepted issue 3024 and open PR 3035 make request-field survival a focused seed. The unknown-field arm moved out when strict rejection landed.
     ownership:
       primary: Data Plane & Networking
       reviewers: [Evaluation & Quality]
@@ -115,16 +115,6 @@ cases:
         /anthropic-beta: preserved
       loss: none
       dispatch_attempts: 1
-    expected_outcome:
-      status: fail
-      reference: PL-0042#seed-02-anthropic-egress
-      reason: >-
-        The router has no native Anthropic egress. It reserializes a Messages
-        request through the OpenAI intermediate representation, so it posts
-        /v1/chat/completions and folds /system into messages as a system role.
-      signature:
-        - 'path "/v1/chat/completions", want "/v1/messages"'
-        - "provider-request /system: field missing"
     provenance:
       origin: public-regression-seed
       sources: [anthropic_messages, anthropic_caching]
@@ -155,18 +145,24 @@ cases:
       dispatch_attempts: 1
     expected_outcome:
       status: fail
-      reference: vllm-project/semantic-router#3013
+      reference: PL-0042#seed-03-cross-protocol-anthropic-version
       reason: >-
-        Responses ingress short-circuits onto the Chat path instead of the
-        selected Messages backend, so the client never receives a Responses SSE
-        sequence. No configuration key changes it.
+        Cross-protocol Anthropic egress carries no anthropic-version header. The
+        Router dispatches to /v1/messages with an Anthropic body, but the version
+        header only ever reaches the provider when a same-protocol client sent it,
+        and nothing synthesizes it here. Declaring it as backend extra_headers is
+        not a workaround: that promotes the backend to a provider profile, which
+        then requires a base_url and takes endpoint ownership away from Envoy.
       signature:
-        - 'path "/v1/chat/completions", want "/v1/messages"'
-        - "body encoding differs (want sse, got json)"
+        - 'header anthropic-version = "", want "2023-06-01"'
     provenance:
       origin: public-accepted-bug-seed
       sources: [openai_responses_streaming, anthropic_streaming, vsr_3013]
-      note: Direct regression seed for accepted and in-progress issue 3013.
+      note: >-
+        Seeded from issue 3013, which is now closed: the Responses stream does
+        reach the Messages backend and comes back as a Responses SSE sequence.
+        The case still fails, at the provider header boundary instead, which is
+        what its expected_outcome now records.
     ownership:
       primary: Data Plane & Networking
       reviewers: [Evaluation & Quality]

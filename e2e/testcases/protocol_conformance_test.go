@@ -49,10 +49,10 @@ func TestProtocolConformanceTrancheAgainstTheRealTree(t *testing.T) {
 // real case: program the fixture, send the client request, read what the provider
 // observed, and compare both boundaries. seed-01 is a same-protocol capture whose
 // only allowed patches are the model and provider credentials, so a router that
-// forwards the request unchanged satisfies it.
+// forwards the request and canonicalizes nothing else satisfies it.
 //
-// seed-01 rather than seed-02 because seed-02 now carries an expected-failure
-// marker: an ideal router makes it fail the run, which the next test asserts.
+// seed-01 rather than seed-02 because seed-01 is the plain identity path; seed-02
+// asserts the Anthropic-native capture, which the next test pairs with a marker.
 func TestPassthroughRouterSatisfiesASameProtocolCase(t *testing.T) {
 	c := findCaseForTest(t, "seed-01-chat-identity-model-patch")
 	if !c.Loaded() {
@@ -60,7 +60,7 @@ func TestPassthroughRouterSatisfiesASameProtocolCase(t *testing.T) {
 	}
 
 	server := startFixtureForTest(t)
-	router := startRouterForTest(t, fakeRouter{providerURL: server.URL()})
+	router := startRouterForTest(t, fakeRouter{providerURL: server.URL(), mutate: canonicalizeChatMaxTokens})
 
 	outcome := runConformanceCase(context.Background(), c, newHTTPConformanceIngress(router, http.DefaultClient), &inProcessConformanceProvider{server: server})
 	if outcome.Skipped {
@@ -81,7 +81,7 @@ func TestPreStreamErrorRelaysStatusAndHeader(t *testing.T) {
 	}
 
 	server := startFixtureForTest(t)
-	router := startRouterForTest(t, fakeRouter{providerURL: server.URL()})
+	router := startRouterForTest(t, fakeRouter{providerURL: server.URL(), mutate: canonicalizeChatMaxTokens})
 
 	outcome := runConformanceCase(context.Background(), c, newHTTPConformanceIngress(router, http.DefaultClient), &inProcessConformanceProvider{server: server})
 	if outcome.Skipped {
