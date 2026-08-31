@@ -1,0 +1,10 @@
+name: rayline-arc-openrouter-agentic
+
+services:
+  artifact-init:
+    command:
+      - sh
+      - -ceu
+      - |
+        python /app/openrouter_agentic_artifact_fixture.py /artifact
+        chmod -R a=rX /artifact

@@ -1,0 +1,204 @@
+name: rayline-arc-e2e
+
+services:
+  artifact-init:
+    build:
+      context: ../../../e2e/testing/rayline-arc
+    user: "0:0"
+    command:
+      - sh
+      - -ceu
+      - |
+        python /app/artifact_fixture.py /artifact
+        chmod -R a=rX /artifact
+    environment:
+      RAYLINE_ARC_E2E_DISPATCH_BACKEND: ${RAYLINE_ARC_E2E_DISPATCH_BACKEND:-openrouter}
+      RAYLINE_ARC_E2E_WORKER_A_BASE_URL: ${RAYLINE_ARC_E2E_WORKER_A_BASE_URL:-https://openrouter.ai/api/v1}
+      RAYLINE_ARC_E2E_WORKER_B_BASE_URL: ${RAYLINE_ARC_E2E_WORKER_B_BASE_URL:-https://openrouter.ai/api/v1}
+    volumes:
+      - arc-artifact:/artifact
+    restart: "no"
+
+  fake-encoder:
+    build:
+      context: ../../../e2e/testing/rayline-arc
+    command: ["python", "/app/mock_servers.py", "encoder", "--port", "8080"]
+    environment:
+      RAYLINE_ARC_E2E_ENCODER_ID: encoder-a
+    ports:
+      - "${RAYLINE_ARC_E2E_ENCODER_PORT:-18080}:8080"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  fake-encoder-b:
+    build:
+      context: ../../../e2e/testing/rayline-arc
+    command: ["python", "/app/mock_servers.py", "encoder", "--port", "8080"]
+    environment:
+      RAYLINE_ARC_E2E_ENCODER_ID: encoder-b
+    ports:
+      - "${RAYLINE_ARC_E2E_ENCODER_B_PORT:-18083}:8080"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  fake-encoder-c:
+    build:
+      context: ../../../e2e/testing/rayline-arc
+    command: ["python", "/app/mock_servers.py", "encoder", "--port", "8080"]
+    environment:
+      RAYLINE_ARC_E2E_ENCODER_ID: encoder-c
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  fake-provider:
+    build:
+      context: ../../../e2e/testing/rayline-arc
+    command: ["python", "/app/mock_servers.py", "provider", "--port", "8081"]
+    ports:
+      - "${RAYLINE_ARC_E2E_PROVIDER_PORT:-18081}:8081"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=2)"
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    command:
+      - sh
+      - -ceu
+      - 'exec redis-server --save "" --appendonly no --requirepass "$$RAYLINE_ARC_REDIS_PASSWORD"'
+    environment:
+      RAYLINE_ARC_REDIS_PASSWORD: ${RAYLINE_ARC_E2E_REDIS_PASSWORD:-public-e2e-redis-secret}
+      REDISCLI_AUTH: ${RAYLINE_ARC_E2E_REDIS_PASSWORD:-public-e2e-redis-secret}
+    ports:
+      - "${RAYLINE_ARC_E2E_REDIS_PORT:-16379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  membership-init:
+    image: redis:7-alpine
+    command:
+      - sh
+      - -ceu
+      - >-
+        redis-cli -h redis --no-auth-warning -a "$$RAYLINE_ARC_E2E_REDIS_PASSWORD"
+        SET 'vsr:rayline-arc:encoder-membership'
+        '{"schema_version":"rayline.arc.encoder-membership.v1","revision":1,"replicas":[{"id":"encoder-a","base_url":"http://fake-encoder:8080","state":"active"},{"id":"encoder-b","base_url":"http://fake-encoder-b:8080","state":"active"}]}'
+    environment:
+      RAYLINE_ARC_E2E_REDIS_PASSWORD: ${RAYLINE_ARC_E2E_REDIS_PASSWORD:-public-e2e-redis-secret}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: "no"
+
+  membership-controller:
+    build:
+      context: ../../..
+      dockerfile: tools/docker/Dockerfile.rayline-arc-controller
+    image: ${RAYLINE_ARC_CONTROLLER_IMAGE:-rayline-arc-controller:e2e}
+    environment:
+      RAYLINE_ARC_CONTROLLER_CONFIG: /app/config/rayline-arc.yaml
+      RAYLINE_ARC_CONTROLLER_DECISION: rayline-arc-e2e
+      RAYLINE_ARC_CONTROLLER_PASSWORD_ENV: RAYLINE_ARC_CONTROLLER_REDIS_PASSWORD
+      RAYLINE_ARC_CONTROLLER_REDIS_PASSWORD: ${RAYLINE_ARC_E2E_REDIS_PASSWORD:-public-e2e-redis-secret}
+      RAYLINE_ARC_ENCODER_BUILD_ID: ${RAYLINE_ARC_E2E_ENCODER_BUILD_ID:-vllm@public-rayline-e2e-build}
+      RAYLINE_ARC_ARTIFACT_REVISION: ${RAYLINE_ARC_E2E_ARTIFACT_REVISION:-public-rayline-arc-openrouter-kv-cache-v2}
+      RAYLINE_ARC_WORKER_A_ENDPOINT: ${RAYLINE_ARC_E2E_WORKER_A_ENDPOINT:-fake-provider:8081}
+      RAYLINE_ARC_WORKER_A_PROTOCOL: ${RAYLINE_ARC_E2E_WORKER_A_PROTOCOL:-http}
+      RAYLINE_ARC_WORKER_A_BASE_URL: ${RAYLINE_ARC_E2E_WORKER_A_BASE_URL:-https://openrouter.ai/api/v1}
+      RAYLINE_ARC_WORKER_B_ENDPOINT: ${RAYLINE_ARC_E2E_WORKER_B_ENDPOINT:-fake-provider:8081}
+      RAYLINE_ARC_WORKER_B_PROTOCOL: ${RAYLINE_ARC_E2E_WORKER_B_PROTOCOL:-http}
+      RAYLINE_ARC_WORKER_B_BASE_URL: ${RAYLINE_ARC_E2E_WORKER_B_BASE_URL:-https://openrouter.ai/api/v1}
+    command: ["run", "--interval", "1s"]
+    volumes:
+      - ${RAYLINE_ARC_E2E_CONFIG_PATH:-./config.yaml}:/app/config/rayline-arc.yaml:ro
+    depends_on:
+      membership-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/rayline-arc-controller", "status"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  router:
+    image: ${RAYLINE_ARC_ROUTER_IMAGE:-ghcr.io/vllm-project/semantic-router/vllm-sr:latest}
+    pull_policy: never
+    environment:
+      SYNTHETIC_API_KEY: ${RAYLINE_ARC_E2E_PROVIDER_KEY:-public-e2e-provider-key}
+      RAYLINE_ARC_MODAL_KEY: ${RAYLINE_ARC_E2E_MODAL_KEY:-public-e2e-modal-key}
+      RAYLINE_ARC_MODAL_SECRET: ${RAYLINE_ARC_E2E_MODAL_SECRET:-public-e2e-modal-secret}
+      RAYLINE_ARC_REDIS_PASSWORD: ${RAYLINE_ARC_E2E_REDIS_PASSWORD:-public-e2e-redis-secret}
+      RAYLINE_ARC_ENCODER_BASE_URL: ${RAYLINE_ARC_E2E_ENCODER_BASE_URL:-http://fake-encoder:8080}
+      RAYLINE_ARC_ENCODER_B_BASE_URL: ${RAYLINE_ARC_E2E_ENCODER_B_BASE_URL:-http://fake-encoder-b:8080}
+      RAYLINE_ARC_ENCODER_BUILD_ID: ${RAYLINE_ARC_E2E_ENCODER_BUILD_ID:-vllm@public-rayline-e2e-build}
+      RAYLINE_ARC_ARTIFACT_REVISION: ${RAYLINE_ARC_E2E_ARTIFACT_REVISION:-public-rayline-arc-openrouter-kv-cache-v2}
+      RAYLINE_ARC_WORKER_A_ENDPOINT: ${RAYLINE_ARC_E2E_WORKER_A_ENDPOINT:-fake-provider:8081}
+      RAYLINE_ARC_WORKER_A_PROTOCOL: ${RAYLINE_ARC_E2E_WORKER_A_PROTOCOL:-http}
+      RAYLINE_ARC_WORKER_A_BASE_URL: ${RAYLINE_ARC_E2E_WORKER_A_BASE_URL:-https://openrouter.ai/api/v1}
+      RAYLINE_ARC_WORKER_B_ENDPOINT: ${RAYLINE_ARC_E2E_WORKER_B_ENDPOINT:-fake-provider:8081}
+      RAYLINE_ARC_WORKER_B_PROTOCOL: ${RAYLINE_ARC_E2E_WORKER_B_PROTOCOL:-http}
+      RAYLINE_ARC_WORKER_B_BASE_URL: ${RAYLINE_ARC_E2E_WORKER_B_BASE_URL:-https://openrouter.ai/api/v1}
+    command: ["/app/config/rayline-arc.yaml"]
+    volumes:
+      - ${RAYLINE_ARC_E2E_CONFIG_PATH:-./config.yaml}:/app/config/rayline-arc.yaml:ro
+      - arc-artifact:/var/lib/vllm-sr/rayline-arc:ro
+    ports:
+      - "${RAYLINE_ARC_E2E_ROUTER_API_PORT:-18082}:8080"
+      - "${RAYLINE_ARC_E2E_METRICS_PORT:-19190}:9190"
+    depends_on:
+      artifact-init:
+        condition: service_completed_successfully
+      fake-encoder:
+        condition: service_healthy
+      fake-encoder-b:
+        condition: service_healthy
+      fake-encoder-c:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      membership-init:
+        condition: service_completed_successfully
+
+  envoy:
+    image: envoyproxy/envoy:v1.34-latest
+    command: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "warning"]
+    volumes:
+      - ${RAYLINE_ARC_E2E_ENVOY_CONFIG_PATH:-./envoy.yaml}:/etc/envoy/envoy.yaml:ro
+    ports:
+      - "${RAYLINE_ARC_E2E_ENVOY_PORT:-18888}:8888"
+    depends_on:
+      - router
+      - fake-provider
+
+volumes:
+  arc-artifact:

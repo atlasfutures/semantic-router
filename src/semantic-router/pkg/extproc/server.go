@@ -43,9 +43,22 @@ var (
 		if router == nil {
 			return nil
 		}
-		_, err := modelruntime.WarmupToolsDatabase(context.Background(), state.ToolsReady, router.LoadToolsDatabase, modelruntime.WarmupToolsOptions{
+		_, err := modelruntime.WarmupRouter(context.Background(), []modelruntime.RouterWarmupTask{
+			{
+				Name:       "tools_database",
+				Ready:      state.ToolsReady,
+				SkipReason: "embedding_runtime_not_ready_for_tools",
+				Load:       router.LoadToolsDatabase,
+			},
+			{
+				Name:       "knowledge_bases",
+				Ready:      state.AnyReady,
+				SkipReason: "embedding_runtime_not_ready_for_knowledge_bases",
+				Load:       router.PreloadKnowledgeBases,
+			},
+		}, modelruntime.WarmupRouterOptions{
 			Component:      "extproc",
-			MaxParallelism: 1,
+			MaxParallelism: 2,
 			OnEvent:        logReloadRuntimeLifecycleEvent,
 		})
 		return err
@@ -219,8 +232,18 @@ func (rs *RouterService) GetRouter() *OpenAIRouter {
 
 // Process delegates to the current router.
 func (rs *RouterService) Process(stream ext_proc.ExternalProcessor_ProcessServer) error {
-	r := rs.current.Load()
-	return r.Process(stream)
+	// Register against the router before dispatching. A reload swaps routers
+	// and then closes the old one; acquiring the hold here (and retrying when
+	// that router is already closing) keeps a captured router's ARC episode
+	// store open for the life of this stream.
+	for {
+		r := rs.current.Load()
+		if !r.tryHoldRaylineARC() {
+			continue
+		}
+		defer r.releaseRaylineARCHold()
+		return r.Process(stream)
+	}
 }
 
 func (s *Server) reloadRouterFromFile(configPath string) error {
@@ -341,6 +364,7 @@ func publishRouterState(
 		runtimeRegistry.PublishRouterRuntime(cfg, router.ClassificationService, router.MemoryStore)
 		runtimeRegistry.SetModelSelector(router.ModelSelector)
 		runtimeRegistry.SetLearningRuntime(router.routerLearningRuntimeState())
+		runtimeRegistry.SetRouteDecisionRuntime(router.routeDecisionRuntimeState())
 		return
 	}
 	services.SetGlobalClassificationService(router.ClassificationService)

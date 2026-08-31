@@ -19,7 +19,7 @@ import (
 func (r *OpenAIRouter) logRoutingDecision(ctx *RequestContext, reasonCode string, originalModel string, selectedModel string, decisionName string, reasoningEnabled bool) {
 	effortForMetrics := ""
 	if reasoningEnabled && decisionName != "" {
-		effortForMetrics = r.getReasoningEffort(decisionName, selectedModel)
+		effortForMetrics = r.getReasoningEffort(ctx.VSRSelectedDecision, selectedModel)
 	}
 
 	logging.ComponentEvent("extproc", "routing_decision", map[string]interface{}{
@@ -51,8 +51,8 @@ func (r *OpenAIRouter) recordRoutingDecision(ctx *RequestContext, decisionName s
 		"decision_reason":   reasoningDecision.DecisionReason,
 	})
 
-	effortForMetrics := r.getReasoningEffort(decisionName, matchedModel)
-	metrics.RecordReasoningDecision(decisionName, matchedModel, useReasoning, effortForMetrics)
+	effortForMetrics := r.getReasoningEffort(ctx.VSRSelectedDecision, matchedModel)
+	metrics.RecordReasoningDecision(requestDecisionStateKey(ctx), matchedModel, useReasoning, effortForMetrics)
 
 	// Keep legacy attributes for backward compatibility
 	tracing.SetSpanAttributes(routingSpan,
@@ -113,7 +113,7 @@ func (r *OpenAIRouter) startRouterReplay(
 
 	populateReplaySessionIfNeeded(ctx)
 
-	recorder := r.resolveReplayRecorder(decisionName)
+	recorder := r.resolveReplayRecorder(ctx, decisionName)
 	if recorder == nil {
 		return
 	}
@@ -125,8 +125,24 @@ func (r *OpenAIRouter) startRouterReplay(
 	}
 }
 
+// shouldStartRouterReplay is the single chokepoint for every startRouterReplay
+// call site, so the rayline selection paths are excluded here rather than at
+// each caller. A replay record persists the full plaintext episode, which none
+// of these selections may have captured.
+//
+// ARC needs two conditions because neither field implies the other.
+// VSRRaylineARC is the exact analogue of VSRRaylineRemote — both are set in the
+// same selection function, in symmetric branches — but it stays nil when the
+// selection result carries no trace. RaylineARCDispatch is the artifact-owned
+// upstream contract, bound later and only once dispatch binding succeeds.
+// Checking both keeps the guard closed whichever one an armed request has.
 func shouldStartRouterReplay(ctx *RequestContext) bool {
-	if ctx == nil || ctx.RouterReplayPluginConfig == nil || !ctx.RouterReplayPluginConfig.Enabled {
+	if ctx == nil ||
+		ctx.VSRRaylineARC != nil ||
+		ctx.RaylineARCDispatch != nil ||
+		ctx.VSRRaylineRemote != nil ||
+		ctx.RouterReplayPluginConfig == nil ||
+		!ctx.RouterReplayPluginConfig.Enabled {
 		return false
 	}
 	return ctx.RouterReplayID == ""
@@ -159,8 +175,12 @@ func populateReplaySessionIfNeeded(ctx *RequestContext) {
 	populateSessionTransitionFields(ctx)
 }
 
-func (r *OpenAIRouter) resolveReplayRecorder(decisionName string) *routerreplay.Recorder {
-	recorder := r.ReplayRecorders[decisionName]
+func (r *OpenAIRouter) resolveReplayRecorder(ctx *RequestContext, decisionName string) *routerreplay.Recorder {
+	recipeName := config.DefaultRecipeName
+	if ctx != nil && ctx.Routing.RecipeName() != "" {
+		recipeName = ctx.Routing.RecipeName()
+	}
+	recorder := r.ReplayRecorders[config.RoutingDecisionKey(recipeName, decisionName)]
 	if recorder != nil {
 		return recorder
 	}
@@ -193,6 +213,7 @@ func buildReplayRoutingRecord(
 		SessionID:         ctx.SessionID,
 		TurnIndex:         ctx.TurnIndex,
 		Decision:          decisionName,
+		Recipe:            string(ctx.Routing.RecipeName()),
 		DecisionTier:      decisionTier,
 		DecisionPriority:  decisionPriority,
 		Category:          ctx.VSRSelectedCategory,
@@ -298,6 +319,8 @@ func replaySignalState(ctx *RequestContext) routerreplay.Signal {
 		KB:           ctx.VSRMatchedKB,
 		Conversation: ctx.VSRMatchedConversation,
 		Event:        ctx.VSRMatchedEvent,
+		Metadata:     ctx.VSRMatchedMetadata,
+		Classifier:   ctx.VSRMatchedClassifier,
 	}
 }
 

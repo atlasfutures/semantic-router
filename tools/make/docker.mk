@@ -40,6 +40,15 @@ docker-build-extproc-rocm:
 	@echo "Building extproc-rocm Docker image (x86_64 only, ROCm 7.0)..."
 	@$(CONTAINER_RUNTIME) build -f tools/docker/Dockerfile.extproc-rocm -t $(DOCKER_REGISTRY)/extproc-rocm:$(DOCKER_TAG) .
 
+# Build the standalone Rayline ARC membership controller image.
+docker-build-rayline-arc-controller: ## Build Rayline ARC membership controller image
+docker-build-rayline-arc-controller:
+	@$(LOG_TARGET)
+	@echo "Building Rayline ARC membership controller image..."
+	@$(CONTAINER_RUNTIME) build \
+		-f tools/docker/Dockerfile.rayline-arc-controller \
+		-t $(DOCKER_REGISTRY)/rayline-arc-controller:$(DOCKER_TAG) .
+
 
 # Build openvino-binding Docker image (OpenVINO inference backend, x86_64 only)
 docker-build-openvino-binding: ## Build openvino-binding Docker image

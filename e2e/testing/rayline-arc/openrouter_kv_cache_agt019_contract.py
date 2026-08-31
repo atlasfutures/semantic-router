@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+
+"""Bound identity, budget authority, and request envelope for AGT019.
+
+AGT019 succeeds AGT018d, whose only failing gate was whole-set completion
+matching: pinned multi-provider fallthrough legally served worker-b from
+different providers on the two arms. AGT019 replaces that gate with the
+matched-pair comparability policy in `openrouter_kv_cache_matched_pair`, and
+keeps every other acceptance gate unconditional.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from openrouter_kv_cache_successor_workload import (
+    EXPECTED_REQUESTS_PER_DEPLOYMENT,
+)
+from openrouter_kv_cache_successor_workload import (
+    SCHEMA_VERSION as WORKLOAD_SCHEMA_VERSION,
+)
+from rayline_three_arm_budget import BudgetContract, budget_receipt
+
+SCHEMA_VERSION = "rayline.openrouter-kv-cache-agt019-contract.v1"
+REPORT_SCHEMA_VERSION = "rayline.openrouter-kv-cache-comparison.v4"
+RUN_ID = "rayline-openrouter-kv-cache-agt019-20260805"
+SEMANTIC_BRANCH = "codex/rayline-remote-mvp"
+SEMANTIC_REMOTE_REF = f"atlasfutures/{SEMANTIC_BRANCH}"
+PATHFINDER_BRANCH = "codex/rayline-vsr-mvp"
+
+# Authority permanently closed 2026-08-07 with the recorded AGT019d result.
+# Both arms executed the artifact v7 protocol once and the v4 report passed all
+# ten acceptance gates (SHA-256
+# 4f33b50e59977d2bbdf32616d41770ef9e564bca75507f787afa6111ddc3292f), closing
+# TD051. The pins were bound to f957bb81 (preregistration) and a54b19e8
+# (authorization) for that execution and are now empty: AGT019 is historical
+# and no further launch is possible from this contract.
+PREREGISTRATION_COMMIT = ""
+AUTHORIZATION_COMMIT = ""
+GIT_SHA1_HEX_LENGTH = 40
+NATIVE_APP_NAME = "rayline-router-openrouter-agt019"
+NATIVE_WEBHOOK_LABEL = "router-openrouter-agt019"
+REMOTE_APP_NAME = "rayline-arc-session-encoder-flashinfer-agt019"
+REMOTE_CLASS_NAME = "SessionEncoder"
+VLLM_COMMIT = "9f5ea81ca0aa570aea46baf82311a1139c1267ca"
+REMOTE_ENGINE_BUILD_ID = f"vllm@{VLLM_COMMIT}+gdn-flashinfer-eager"
+REMOTE_GDN_PREFILL_BACKEND = "flashinfer"
+# v5 appended DeepInfra to worker-b and was retired unpublished: streaming
+# diagnosis showed its MiMo endpoint emits only empty-content deltas and
+# closes with finish_reason=length under the frozen payload, so it can never
+# meet the content-token requirement at the 24-token cap. v6 restores
+# worker-b's frozen four-provider order and its v4 pricing. AGT018's v4
+# artifact is untouched and remains historical and regenerable.
+#
+# v7 (2026-08-07 luna amendment) replaces worker-b's lane entirely with
+# `openai/gpt-5.6-luna` pinned to the single OpenAI provider. MiMo's four
+# providers stayed unusable for more than 21 hours — three had dropped out of
+# OpenRouter's routing pool and Venice returned upstream 429s — so the
+# two-of-four depth gate this benchmark requires could not be satisfied and no
+# untried provider remained. Because the served model changes, the v6 native
+# evidence banked under this run id is no longer comparable and both arms must
+# be re-measured; the `exact_source_and_artifact_identity` gate enforces that
+# by refusing to mix a v6 arm with a v7 arm.
+ARTIFACT_REVISION = "public-rayline-arc-openrouter-kv-cache-v7"
+MAX_COMPLETION_TOKENS = 24
+
+# AGT018's conservative accounting closed at $142.418831066383 against the
+# $144.31282402 authority, leaving $1.893992953617 — only about $0.69 of packet
+# headroom above the $1.20 required final reserve, which cannot fund two H100
+# arms plus two provider keys. The user approved fresh $10 authority on
+# 2026-08-05, raising cumulative authority to $154.31282402. The per-arm key
+# limit was raised from the AGT018-proven $0.15 to $0.25 to cover worker-b's
+# briefly widened order, and stays at $0.25 now that the order is restored:
+# OpenRouter's limit check counts in-flight pre-authorization holds (the
+# AGT018 402 lesson, where $0.05 aborted at request 35 of 36), so the extra
+# headroom is already authorized, accounted for in the receipt below, and
+# harmless — it caps spend, it does not commit it.
+AUTHORIZED_KEY_LIMIT_USD_PER_ARM = 0.25
+AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS = 20 * 60
+MAXIMUM_PROVIDER_SPEND_USD = 2 * AUTHORIZED_KEY_LIMIT_USD_PER_ARM
+REQUIRED_FINAL_RESERVE_USD = 1.20
+
+# Source-closed again 2026-08-07 with the recorded result: the fail-closed zero
+# placeholders replace the authorized values in the same checkpoint that closes
+# both authority pins. The authorized figures above are retained as the
+# historical record of what was executed.
+SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM = 0.0
+SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS = 0
+
+AGT019_RESOURCE_BUDGET = BudgetContract(
+    run_id=RUN_ID,
+    previous_conservative_usd=142.418831066383,
+    authorized_cumulative_usd=154.31282402,
+    packet_ceiling_usd=9.1,
+    # The provider limits are accounted separately below. Reserving $1.70 at
+    # this layer guarantees at least $1.20 after both $0.25 keys are exhausted.
+    required_reserve_usd=REQUIRED_FINAL_RESERVE_USD + MAXIMUM_PROVIDER_SPEND_USD,
+    maximum_paid_wall_seconds=AUTHORIZED_MAXIMUM_PAID_WALL_SECONDS,
+    encoder_replicas=2,
+)
+
+
+def agt019_budget_receipt() -> dict[str, Any]:
+    """Return the complete two-H100 plus two-provider-key envelope."""
+
+    receipt = budget_receipt(AGT019_RESOURCE_BUDGET)
+    cumulative = receipt["cumulative_if_full_envelope_usd"] + MAXIMUM_PROVIDER_SPEND_USD
+    reserve = AGT019_RESOURCE_BUDGET.authorized_cumulative_usd - cumulative
+    if reserve < REQUIRED_FINAL_RESERVE_USD:
+        raise RuntimeError("AGT019 complete envelope exceeds user authority")
+    return {
+        **receipt,
+        "maximum_provider_spend_usd": MAXIMUM_PROVIDER_SPEND_USD,
+        "maximum_complete_packet_usd": (
+            receipt["maximum_resource_envelope_usd"] + MAXIMUM_PROVIDER_SPEND_USD
+        ),
+        "cumulative_if_complete_envelope_usd": cumulative,
+        "reserve_after_complete_envelope_usd": reserve,
+    }
+
+
+PROVIDER_PREFLIGHT_REQUESTS_PER_DEPLOYMENT = 3
+DEPLOYMENTS = 2
+MAXIMUM_RETRIES_PER_REQUEST = 1
+MAXIMUM_LOGICAL_PROVIDER_REQUESTS = DEPLOYMENTS * (
+    PROVIDER_PREFLIGHT_REQUESTS_PER_DEPLOYMENT + EXPECTED_REQUESTS_PER_DEPLOYMENT
+)
+MAXIMUM_EXTERNAL_ATTEMPTS = MAXIMUM_LOGICAL_PROVIDER_REQUESTS * (
+    MAXIMUM_RETRIES_PER_REQUEST + 1
+)
+EXPECTED_SEMANTIC_REQUESTS_PER_DEPLOYMENT = 36
+EXPECTED_MAXIMUM_LOGICAL_PROVIDER_REQUESTS = 78
+EXPECTED_MAXIMUM_EXTERNAL_ATTEMPTS = 156
+ACCEPTANCE_GATES = (
+    "exact_source_and_artifact_identity",
+    "provider_preflight_all_three_models",
+    "native_offline_three_worker_coverage",
+    "remote_encoder_trace_matches_offline_trace",
+    "native_remote_selected_worker_trace_parity",
+    "native_retained_token_saving",
+    "remote_retained_token_saving",
+    "matched_pair_comparability_policy",
+    "request_attempt_and_cost_envelopes",
+    "privacy_and_cleanup",
+)
+
+
+def validate() -> dict[str, Any]:
+    if PREREGISTRATION_COMMIT or AUTHORIZATION_COMMIT:
+        raise RuntimeError("AGT019 launch authority must stay permanently closed")
+    if EXPECTED_REQUESTS_PER_DEPLOYMENT != EXPECTED_SEMANTIC_REQUESTS_PER_DEPLOYMENT:
+        raise RuntimeError("AGT019 semantic workload request envelope diverged")
+    if (
+        MAXIMUM_LOGICAL_PROVIDER_REQUESTS != EXPECTED_MAXIMUM_LOGICAL_PROVIDER_REQUESTS
+        or MAXIMUM_EXTERNAL_ATTEMPTS != EXPECTED_MAXIMUM_EXTERNAL_ATTEMPTS
+    ):
+        raise RuntimeError("AGT019 provider request or attempt envelope diverged")
+    if (
+        SOURCE_CLOSED_KEY_LIMIT_USD_PER_ARM != 0
+        or SOURCE_CLOSED_MAXIMUM_PAID_WALL_SECONDS != 0
+    ):
+        raise RuntimeError("AGT019 source-closed resource envelope diverged")
+    receipt = agt019_budget_receipt()
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "run_id": RUN_ID,
+        "source_closed": True,
+        "launch_authorized": False,
+        "requires_new_budget_authority": True,
+        "workload_schema_version": WORKLOAD_SCHEMA_VERSION,
+        "report_schema_version": REPORT_SCHEMA_VERSION,
+        "artifact_revision": ARTIFACT_REVISION,
+        "logical_provider_requests": {
+            "provider_preflight": (
+                DEPLOYMENTS * PROVIDER_PREFLIGHT_REQUESTS_PER_DEPLOYMENT
+            ),
+            "semantic_cache_measurement": (
+                DEPLOYMENTS * EXPECTED_REQUESTS_PER_DEPLOYMENT
+            ),
+            "maximum_total": MAXIMUM_LOGICAL_PROVIDER_REQUESTS,
+        },
+        "maximum_external_attempts": MAXIMUM_EXTERNAL_ATTEMPTS,
+        "maximum_completion_tokens": MAX_COMPLETION_TOKENS,
+        "acceptance_gates": list(ACCEPTANCE_GATES),
+        "release_qualification_1000_executed": False,
+        "budget": {
+            "authorized_cumulative_usd": (
+                AGT019_RESOURCE_BUDGET.authorized_cumulative_usd
+            ),
+            "maximum_complete_packet_usd": receipt["maximum_complete_packet_usd"],
+            "reserve_after_complete_envelope_usd": (
+                receipt["reserve_after_complete_envelope_usd"]
+            ),
+        },
+    }

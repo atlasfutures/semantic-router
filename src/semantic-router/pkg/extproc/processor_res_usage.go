@@ -17,11 +17,13 @@ import (
 
 type responseUsageMetrics struct {
 	promptTokens               int
+	promptTokensReported       bool
 	cachedPromptTokens         int
 	cachedPromptTokensReported bool
 	cacheWriteTokens           int
 	cacheWriteTokensReported   bool
 	completionTokens           int
+	completionTokensReported   bool
 }
 
 // =====================================================================
@@ -64,11 +66,13 @@ func parseResponseUsage(responseBody []byte, model string) responseUsageMetrics 
 
 	return normalizeResponseUsage(responseUsageMetrics{
 		promptTokens:               int(promptTokens.Int()),
+		promptTokensReported:       promptTokens.Exists(),
 		cachedPromptTokens:         int(cachedPromptTokens.Int()),
 		cachedPromptTokensReported: cachedPromptTokensReported,
 		cacheWriteTokens:           int(cacheWriteTokens.Int()),
 		cacheWriteTokensReported:   cacheWriteTokensReported,
 		completionTokens:           int(completionTokens.Int()),
+		completionTokensReported:   completionTokens.Exists(),
 	})
 }
 
@@ -134,7 +138,11 @@ func (r *OpenAIRouter) reportNonStreamingUsage(
 }
 
 func (r *OpenAIRouter) calibrateTokenEstimator(ctx *RequestContext, actualPromptTokens int) {
-	if r == nil || r.Classifier == nil || ctx == nil || actualPromptTokens <= 0 {
+	if r == nil || ctx == nil || actualPromptTokens <= 0 {
+		return
+	}
+	classifier := r.classifierForRequest(ctx)
+	if classifier == nil {
 		return
 	}
 	byteLen := tokenCalibrationByteLen(ctx)
@@ -142,9 +150,9 @@ func (r *OpenAIRouter) calibrateTokenEstimator(ctx *RequestContext, actualPrompt
 		return
 	}
 
-	r.Classifier.ObserveTokenUsage("", byteLen, actualPromptTokens)
+	classifier.ObserveTokenUsage("", byteLen, actualPromptTokens)
 	if category := tokenCalibrationCategory(ctx); category != "" {
-		r.Classifier.ObserveTokenUsage(category, byteLen, actualPromptTokens)
+		classifier.ObserveTokenUsage(category, byteLen, actualPromptTokens)
 	}
 }
 
@@ -228,16 +236,55 @@ func extractStreamingUsage(ctx *RequestContext) openai.CompletionUsage {
 		return usage
 	}
 
-	if promptTokens, ok := usageMap["prompt_tokens"].(float64); ok {
+	if promptTokens, ok := firstStreamingNumber(
+		usageMap,
+		"prompt_tokens",
+		"input_tokens",
+	); ok {
 		usage.PromptTokens = int64(promptTokens)
 	}
-	if completionTokens, ok := usageMap["completion_tokens"].(float64); ok {
+	if completionTokens, ok := firstStreamingNumber(
+		usageMap,
+		"completion_tokens",
+		"output_tokens",
+	); ok {
 		usage.CompletionTokens = int64(completionTokens)
 	}
 	if totalTokens, ok := usageMap["total_tokens"].(float64); ok {
 		usage.TotalTokens = int64(totalTokens)
 	}
 	return usage
+}
+
+func firstStreamingNumber(
+	usage map[string]interface{},
+	keys ...string,
+) (float64, bool) {
+	for _, key := range keys {
+		if value, ok := usage[key].(float64); ok {
+			return value, true
+		}
+	}
+	return 0, false
+}
+
+func streamingUsageFieldReported(
+	ctx *RequestContext,
+	keys ...string,
+) bool {
+	if ctx == nil || ctx.StreamingMetadata == nil {
+		return false
+	}
+	usage, ok := ctx.StreamingMetadata["usage"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	for _, key := range keys {
+		if _, exists := usage[key]; exists {
+			return true
+		}
+	}
+	return false
 }
 
 func streamingPromptTokenDetails(ctx *RequestContext, promptTokens int) (cached int, cachedReported bool, cacheWrite int, cacheWriteReported bool) {
@@ -310,13 +357,33 @@ func (r *OpenAIRouter) reportStreamingUsageMetrics(
 
 	cachedPromptTokens, cachedPromptTokensReported, cacheWriteTokens, cacheWriteTokensReported := streamingPromptTokenDetails(ctx, int(usage.PromptTokens))
 	responseUsage := responseUsageMetrics{
-		promptTokens:               int(usage.PromptTokens),
+		promptTokens: int(usage.PromptTokens),
+		promptTokensReported: streamingUsageFieldReported(
+			ctx,
+			"prompt_tokens",
+			"input_tokens",
+		),
 		cachedPromptTokens:         cachedPromptTokens,
 		cachedPromptTokensReported: cachedPromptTokensReported,
 		cacheWriteTokens:           cacheWriteTokens,
 		cacheWriteTokensReported:   cacheWriteTokensReported,
 		completionTokens:           int(usage.CompletionTokens),
+		completionTokensReported: streamingUsageFieldReported(
+			ctx,
+			"completion_tokens",
+			"output_tokens",
+		),
 	}
+	completionLatency := time.Duration(0)
+	if !ctx.StartTime.IsZero() {
+		completionLatency = time.Since(ctx.StartTime)
+	}
+	ctx.SelectionSettlement = r.selectionOutcomeForUsage(
+		ctx,
+		responseUsage,
+		completionLatency,
+		"success",
+	)
 	recordSessionTurnFromStreamingUsage(
 		ctx,
 		usage,
@@ -353,10 +420,6 @@ func (r *OpenAIRouter) reportStreamingUsageMetrics(
 		latency.UpdateTPOT(ctx.RequestModel, timePerToken)
 	}
 
-	completionLatency := time.Duration(0)
-	if !ctx.StartTime.IsZero() {
-		completionLatency = time.Since(ctx.StartTime)
-	}
 	replayUsage := r.recordResponseCost(ctx, completionLatency, responseUsage)
 	r.updateRouterReplayUsageCost(ctx, replayUsage)
 	r.observeRouterLearningUsageTelemetry(ctx, completionLatency, responseUsage, replayUsage)

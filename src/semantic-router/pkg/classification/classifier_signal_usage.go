@@ -6,18 +6,16 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 )
 
-// getUsedSignals analyzes the decisions of every routing recipe and returns
-// which signals (type:name) are actually used. This allows us to skip
-// evaluation of unused signals for performance optimization.
+// getUsedSignals analyzes this classifier's isolated routing profile and
+// returns which signals (type:name) are actually used. This allows us to skip
+// evaluation of unused local signals.
 // Returns a map with keys in format "type:name" (e.g., "keyword:math_keywords").
 func (c *Classifier) getUsedSignals() map[string]bool {
 	return c.getUsedSignalsForDecisions(c.Config.AllRoutingDecisions())
 }
 
-// getUsedSignalsForDecisions is the request-scoped variant of getUsedSignals:
-// it analyzes only the given candidate decisions, so signal gates that carry
-// enforcement semantics (authz) fire only for the routing profile the request
-// actually evaluates, not for every profile in the config.
+// getUsedSignalsForDecisions computes usage for an explicit local decision
+// subset, such as a direct-looper algorithm view.
 func (c *Classifier) getUsedSignalsForDecisions(decisions []config.Decision) map[string]bool {
 	usedSignals := make(map[string]bool)
 
@@ -59,6 +57,8 @@ func (c *Classifier) getAllSignalTypes() map[string]bool {
 	collectSignalKeys(allSignals, config.SignalTypeKB, c.Config.KBRules, func(r config.KBSignalRule) string { return r.Name })
 	collectSignalKeys(allSignals, config.SignalTypeConversation, c.Config.ConversationRules, func(r config.ConversationRule) string { return r.Name })
 	collectSignalKeys(allSignals, config.SignalTypeEvent, c.Config.EventRules, func(r config.EventRule) string { return r.Name })
+	collectSignalKeys(allSignals, config.SignalTypeMetadata, c.Config.MetadataRules, func(r config.MetadataRule) string { return r.Name })
+	collectSignalKeys(allSignals, config.SignalTypeClassifier, c.Config.ClassifierRules, func(r config.ClassifierSignalRule) string { return r.Name })
 	for _, mapping := range c.Config.Projections.Mappings {
 		for _, output := range mapping.Outputs {
 			allSignals[strings.ToLower(config.SignalTypeProjection+":"+output.Name)] = true

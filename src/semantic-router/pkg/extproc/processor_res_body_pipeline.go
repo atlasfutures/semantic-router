@@ -21,6 +21,16 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 ) *ext_proc.ProcessingResponse {
 	usage := parseResponseUsage(responseBody, ctx.RequestModel)
 	r.reportNonStreamingUsage(ctx, completionLatency, usage)
+	ctx.SelectionSettlement = r.selectionOutcomeForUsage(
+		ctx,
+		usage,
+		completionLatency,
+		"success",
+	)
+	finalizeSelectionSettlement(
+		ctx,
+		ctx.SelectionSettlement,
+	)
 	r.calibrateTokenEstimator(ctx, usage.promptTokens)
 	r.updateResponseCache(ctx, responseBody)
 

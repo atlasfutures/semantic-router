@@ -103,6 +103,18 @@ e2e-test-response-api-suite: build-e2e
 		E2E_SKIP_SETUP="$(E2E_SKIP_SETUP)" \
 		./e2e/testing/run_response_api_suite.sh
 
+# Run the hermetic Rayline ARC full-stack acceptance suite
+rayline-arc-test-integration: ## Run ARC routing, transaction, restart, and privacy acceptance
+rayline-arc-test-integration: vllm-sr-build
+	@$(LOG_TARGET)
+	@bash e2e/testing/rayline-arc/run.sh
+
+# Run the hermetic remote Rayline full-stack acceptance suite
+rayline-remote-test-integration: ## Run remote Rayline routing, lifecycle, failure, and privacy acceptance
+rayline-remote-test-integration: vllm-sr-build
+	@$(LOG_TARGET)
+	@bash e2e/testing/rayline-remote/run.sh
+
 # Clean up E2E test cluster
 e2e-cleanup: ## Clean up E2E test cluster
 	@$(LOG_TARGET)
@@ -154,6 +166,8 @@ e2e-help: ## Show help for E2E testing
 	@echo "  make e2e-test E2E_PROFILE=kubernetes             # Run default Kubernetes baseline tests"
 	@echo "  make e2e-test E2E_PROFILE=kubernetes E2E_USE_WORKSPACE_MODELS=true"
 	@echo "  make e2e-test-response-api-suite                 # Run response-api + Redis + Redis Cluster suite"
+	@echo "  make rayline-arc-test-integration                # Run hermetic Rayline ARC full-stack acceptance"
+	@echo "  make rayline-remote-test-integration             # Run hermetic remote Rayline full-stack acceptance"
 	@echo "  make e2e-test-dynamo                             # Run Dynamo tests (requires GPU)"
 	@echo "  make e2e-test-debug                              # Run tests and keep cluster + deployed profile"
 	@echo "  make e2e-test-specific E2E_TESTS=\"test1,test2\"   # Run specific tests"
@@ -169,3 +183,5 @@ e2e-help: ## Show help for E2E testing
 	@echo "  2. make e2e-test-only                            # Run all tests"
 	@echo "  3. make e2e-test-only E2E_TESTS=\"test1\"          # Run specific test"
 	@echo "  4. make e2e-cleanup                              # Clean up when done"
+
+.PHONY: rayline-arc-test-integration rayline-remote-test-integration

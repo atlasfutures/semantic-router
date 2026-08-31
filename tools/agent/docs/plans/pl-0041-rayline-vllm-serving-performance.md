@@ -1,0 +1,5937 @@
+# PL-0041 Rayline vLLM Serving and Performance Qualification
+
+## Goal
+
+Turn the completed PL-0040 protocol MVP into a production-shaped, measured
+Rayline serving design.
+
+The plan must answer four questions with runnable evidence:
+
+1. Can the Rayline backbone be hosted by vLLM while Pathfinder remains the
+   remote policy and episode-state authority?
+2. Can Rayline's existing cross-turn KV-delta behavior be preserved when model
+   execution moves out of the Pathfinder process?
+3. Does the complete path work against both self-hosted and external real LLM
+   endpoints?
+4. Under a realistic multi-episode workload, where do `rayline_arc` and
+   `rayline_remote` saturate, and what latency, throughput, memory, and
+   operational costs does each design impose?
+
+Status: active on 2026-08-02. The stateless end-to-end MVP parity gate, retained
+engine gate, versioned HTTP/client integration, and real-GPU concurrent gateway
+E2E pass. The explicit pinned-session design is selected, its 128-case
+development qualification passes, and the first bounded full-stack performance
+packet is complete. Its direct-only comparison was confounded by completion and
+time-order variance; the source-frozen static-gateway follow-up passes and
+isolates the protected encoder/session request as the dominant measured ARC
+cost. Two encoder-only concurrency packets prove eight-way admission and a
+complete 92-call workload, and the distinct eight-call PERF007 microprobe now
+proves multi-request vLLM scheduling with a pre-execution batch width of seven.
+PERF009 now closes the transaction-path concurrency gap with 128 capped
+prepare/abort transactions through Pathfinder and the protected encoder at
+`10.263 req/s`, Pathfinder in-flight `8`, encoder in-flight `7`, and vLLM
+scheduled batch width `6`. PERF011 completes the first placement comparison:
+pinning both components to Modal `us-east` did not improve p50 or throughput,
+and PERF014 removes the largest region confound: a London Pathfinder calling
+an explicitly `us-east` encoder reproduced PERF011's slower encoder time
+without colocation. PERF015 then completed the source-frozen three-interface
+packet with exact worker-trace parity and zero failures. ARC retained sessions
+improved throughput by 35.9% over eager and 26.4% over Remote, but every arm
+failed the immutable absolute SLO gates on 42k-token-average histories. The
+PERF016 repeat reproduced the ARC/Remote throughput direction at `1.256x`,
+localized the largest p95 wins to histories above 32k tokens, and proved 1.206M
+tokens were explicitly retained across 102 session appends. Its queued `<8k`
+tail regressed, so concurrency and service time still need separation. The
+PERF017 launch stopped before measurement when its first protected health
+request timed out during the Modal cold start and escaped the intended
+readiness loop. Cleanup left zero encoder tasks/containers, sweep processes,
+or new local stacks. The run is closed and conservatively charged USD
+0.29027808. PERF018 is the identity-equivalent retry: the 32-turn
+Remote-versus-ARC cells at concurrency `1`, `4`, and `8`, fresh
+Pathfinder/ARC/Redis state, packet, placement, and gates remain frozen; only
+the new run namespace and transient startup transport normalization change.
+The PERF017 failure receipt is privately round-trip verified. PERF018 then
+tolerated cold start and completed c1 Remote 32/32 at `0.314 rps`, but its
+pre-ARC state gate caught a retained session created by ARC startup readiness.
+The gate prevented a contaminated comparison; cleanup reached zero and the two
+aggregate receipts are privately pinned at
+`rayline-ai/router-artifacts@cb14a91e`. PERF019 fixed the production readiness
+probe and passed all six Remote/ARC receipts at concurrency `1`, `4`, and `8`.
+ARC throughput was `1.204x`, `1.209x`, and `1.207x` Remote while its p95 latency
+was `0.931x`, `0.871x`, and `0.774x`; both arms scaled only about `1.05-1.07x`
+from c1, exposing the shared single-encoder saturation boundary. All state and
+resource cleanup passed, provider calls stayed zero, and private receipts are
+pinned at `rayline-ai/router-artifacts@1bc01b2b`. The source interlock is closed
+after the one authorized execution. PERF020 is implemented and locally
+validated as the next bounded diagnostic: it replays the same 32 measured turns
+per arm under seeded-Poisson open-loop arrivals at `0.15`, `0.30`, and `0.45`
+decisions per second. It preserves per-episode ordering and fresh state per
+cell, and records scheduled-arrival latency, service latency, start lag,
+backlog, drain time, achieved start rate, and completion throughput. Its pass
+status is integrity-only; the first overloaded rate is a preregistered
+diagnostic, not a new production SLO. The complete 5,160-resource-second
+envelope is USD 6.9344208 and leaves USD 19.27874248 reserve under current
+authority. PERF020 completed once and failed integrity because Remote completed
+only 16/32 turns in every cell while ARC completed 32/32. The sparse schedule
+left 10.3-52.4 seconds between same-episode turns, beyond the direct Uvicorn
+idle keep-alive; every lane consequently alternated one successful fresh
+connection with one failed stale connection. ARC's Envoy boundary reconnected
+and passed. Cleanup reached zero throughout, provider spend was zero, and the
+observed infrastructure upper estimate was USD 1.63206983. The result also
+showed that this 32-sample Poisson seed realized 1.24 times each nominal rate,
+so successor knee logic must compare achieved starts with the realized
+schedule rate. PERF020's source interlock is closed; its evidence cannot support
+a Remote-versus-ARC capacity comparison. PERF021 is implemented locally as an
+identity-equivalent successor under a new namespace. Its direct and ARC clients
+close only the caller thread's connection after a complete routing decision,
+so Remote still keeps prepare/commit/settle on one connection but cannot reuse
+it after an idle server timeout. Strict v2 receipts now carry the realized
+arrival rate derived from the frozen schedule span; all six PERF020 v1 receipts
+remain replayable. The successor's USD 6.9344208 full envelope would bring the
+cumulative conservative maximum to USD 66.66615137 and leave USD 17.64667265
+reserve under the previous authority. The additional USD 50 authority raises
+that full-envelope reserve to USD 67.64667265. Its implementation is pushed at
+`7c685cca`, renewed authority at `8caf6b49`, immutable Pathfinder
+preregistration at `ae205109`, attestation at `86f43d09`, and authorization at
+`b53434ab`. PERF021 then passed its one execution: all six arms completed 32/32
+with zero failures and identical traces, all telemetry and state-reset gates
+reconciled, and cleanup reached zero. The source interlock is closed again.
+The realized single-H100 saturation knee is bracketed between `0.1862` and
+`0.3724` decisions per second; ARC throughput was 6.9%, 9.2%, and 13.5% above
+Remote at the three ordered cells. The
+independent endpoint therefore remains the MVP default while
+retained KV is a measured optimization, not a production-readiness claim. The
+separately held quality qualification and HA journal remain open; another
+transaction concurrency proof is not required. PERF022's exact preregistration,
+attestation, Pathfinder authorization, and source authorization are pushed at
+`edfb58a2`, `6bb425d7`, `24b4a3d6`, and `06a4ba4a`. Its one launch stopped
+before GPU hydration or measurement at Modal class-method endpoint lookup and
+is closed with complete exact-name cleanup. PERF023 completed its exact four
+arms and passed the performance comparator, but the launcher failed after both
+stops because Modal app state had not yet converged to zero. Independent
+cleanup verification reached exact zero; close PERF023 without retry and use
+its measurements only as diagnostic evidence. PERF024 is the
+identity-equivalent, cleanup-stabilized successor and passed, followed by the
+identity-corrected PERF026 forced-remap packet and PERF027 real-replica-stop
+packet. PERF027 proved the expected single-survivor capacity penalty: throughput
+fell to `0.5929x` control while p50 service latency rose to `3.1924x`.
+Semantic Router now implements the static `rayline.arc.encoder-failover.v1`
+production contract with active/draining membership, persisted v2 owner
+affinity, one explicitly status-gated remap, ambiguous-failure fail-closed
+behavior, aggregate metrics, and explicit final-turn close fanout. A
+two-encoder Envoy/Semantic Router/Redis integration stack exercises failover,
+recovery, restart, Redis loss, cleanup, and privacy without a GPU or provider
+call. The source-exact integration, IO-plugin tests, full serialized Semantic
+Router suite, and repository CI gate pass. DYN006 then exercised the production
+controller with three exact H100 encoder apps: both arms registered ready C as
+revision 2 and placed measured sessions `[2,3,3]`; treatment drained/stopped A,
+failed over exactly two sessions to `[0,4,4]`, and observed TTL removal at
+revision 4. Its capacity gate passed at `0.8668x` control throughput, `1.0785x`
+p50, and `1.4688x` p95 service latency. Cleanup reached stable zero and the
+aggregate-only evidence is privately pinned at
+`rayline-ai/router-artifacts@fb75f38d20c7fdd1a2565bce52b9dd094bc3285c`.
+The launcher-window infrastructure upper estimate was `$4.08003918826349`,
+bringing cumulative observed accounting to `$77.72054280274334` under the
+`$134.31282402` authority. Fleet provisioning/operator integration remains
+TD050; DYN006 cannot retry and the 1,000-case qualification remains held.
+The single-router OpenRouter agentic packets through AGT006 are also closed:
+AGT002 proved real ARC generation and a 16/0/8 natural DS4/MiMo/HY3 mix but
+stopped at an obsolete three-worker coverage gate; AGT003 and AGT004 stopped
+on the first static DS4 probe with a transient-looking HTTP 404. The zero-H100
+DGN001 follow-up then proved direct, pinned-static, and unpinned-static requests
+all succeed against the same real route, ruling out a deterministic model,
+provider, path, or credential rewrite bug. AGT005 exposed process-local Modal
+session affinity; DGN002 proved the singleton lifecycle correction. AGT006 then
+passed singleton warmup and direct DS4/Baidu key readiness but again received
+HTTP 404 on the first static gateway probe. It produced no performance result,
+all run authorities are closed, and the 1,000-case qualification remains held.
+Current published implementation heads:
+
+- Semantic Router
+  [`atlasfutures/semantic-router:codex/rayline-remote-mvp`](https://github.com/atlasfutures/semantic-router/tree/codex/rayline-remote-mvp)
+  contains the capability-gated
+  retained-session client, hermetic stack, bounded direct/static/ARC diagnostic,
+  fixed three-model OpenRouter transport and retry contracts, and mandatory ARC
+  readiness preflight. The protected session service explicitly enables vLLM
+  iteration-detail capture, the minimal batch probe, and protected stateless
+  pooling compatibility used by the Pathfinder transaction lane and an
+  explicit `us-east` placement pin for controlled comparison. It also contains
+  the static native-ARC replica membership, affinity, failover, close, metrics,
+  and two-encoder integration contract derived from PERF024/PERF026/PERF027.
+- Pathfinder
+  [`atlasfutures/pathfinder:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/pathfinder/tree/codex/rayline-vsr-mvp)
+  PERF016 launch source at `78b9310a4b5ef46353c88ee31a30d38bde475d94`
+  for the registered
+  retained-session, real-endpoint and OpenRouter canaries, plus the closed,
+  artifact-pinned direct/static/ARC stage, encoder diagnostics, PERF009 remote
+  transaction-capacity result, PERF011 placement comparator, and PERF014
+  explicitly region-pinned remote control, and the completed PERF015 result
+  with private aggregate receipts and app-owned cleanup.
+- vLLM integration
+  [`atlasfutures/vllm:codex/rayline-vsr-mvp`](https://github.com/atlasfutures/vllm/tree/codex/rayline-vsr-mvp)
+  at `9f5ea81ca0aa570aea46baf82311a1139c1267ca` for append-scoped
+  timing, process-lifetime scheduler occupancy, and pre-execution scheduled
+  batch-width telemetry.
+- David's reviewed vLLM causal-MEAN input
+  [`davidvgilmore/vllm:rayline/pl-0039-causal-mean`](https://github.com/davidvgilmore/vllm/tree/rayline/pl-0039-causal-mean)
+  at `162bcefe1b41c5bb35eccc2f2219ea39e2c74bb7`.
+
+## Scope
+
+### Parent and Child Architecture
+
+The transactional-routing architecture is the parent system contract. Semantic
+Router owns HTTP normalization, candidate gating, credentials, dispatch,
+streaming, and execution truth. Pathfinder owns the policy artifact, committed
+routing state, pending selection receipts, same-episode fencing, and worker
+choice. The vLLM parity and cache work is a child execution workstream that
+replaces only Pathfinder's encoder backend.
+
+Conversation history follows each prepare request. Semantic Router sends the
+complete current history to Pathfinder, and Pathfinder forwards its canonical
+form to the encoder alongside its committed routing facts. Pathfinder does not
+need to persist prompts to make cache loss reconstructible.
+
+The current OpenAI Chat MVP already has the required transaction seam. A
+broader public transactional-selector abstraction and OpenAI Responses or
+Anthropic Messages normalization are deferred until another protocol or
+selector requires them.
+
+### Recommended Deployment Boundary
+
+The default topology is a separate vLLM process integrated into the Rayline
+deployment, not an LLM engine embedded in the Semantic Router Go process:
+
+```text
+                                      decision plane
+                                +-----------------------+
+                                | Pathfinder            |
+Client                          | policy + transactions |
+  |                             | episode authority     |
+  v                             +-----------+-----------+
+Envoy -> Semantic Router ------------------>| prepare
+              |                             |
+              |                             v
+              |                   dedicated Rayline vLLM
+              |                   pooling/KV engine
+              |                             |
+              |<--------- selected worker --+
+              |
+              +--------> worker vLLM A / worker vLLM B / external provider
+                              data plane
+```
+
+For the first GPU MVP, use one Pathfinder replica and one dedicated Rayline
+encoder replica. They may be placed on the same node and communicate over the
+cluster network or localhost, but remain separate processes with separate
+health, resource, and rollout boundaries.
+
+This is still "hosted in the vLLM framework": the Rayline model uses vLLM's
+pooling runner, scheduler, model lifecycle, GPU memory manager, and IO processor
+plugin. Pathfinder calls that engine and retains the small policy head,
+transaction journal, and episode state. Semantic Router never loads Python,
+CUDA, model weights, or Rayline KV tensors.
+
+The Rayline encoder must not share one vLLM engine with a downstream worker
+model. They use different model identities, runner contracts, scaling signals,
+and cache lifetimes. A colocated-GPU experiment may be measured as a cost
+variant, but the default benchmark and deployment use dedicated engines so
+worker generation cannot evict or queue behind decision-plane state.
+
+### Why Not Put Everything in One vLLM Server?
+
+The existing IO plugin is a good seam for strict request serialization and
+pooling output. It is not the owner of:
+
+- prepare, renew, commit, abort, and settle transactions;
+- the worker allowlist and bundle contract;
+- durable episode state;
+- provider credentials or dispatch; or
+- fail-closed response lifecycle behavior.
+
+Moving those responsibilities into a vLLM plugin would couple policy releases,
+GPU scaling, transaction recovery, and provider semantics to an inference
+engine extension. It would also make a GPU process restart an authority change
+rather than a reconstructible cache miss.
+
+Two alternatives remain legitimate experiments:
+
+- **Pathfinder embeds `AsyncLLM`**: removes one local HTTP hop, but couples the
+  API and GPU engine failure domains and scales them together.
+- **Pathfinder and vLLM as containers in one Pod**: preserves process
+  separation and localhost latency, but forces 1:1 scaling and duplicates
+  weights when Pathfinder is replicated.
+
+The benchmark may measure these shapes, but neither replaces the default
+separate-service boundary without an explicit architecture decision.
+
+### The Existing Cache Implementations Are Different
+
+Pathfinder already has real cross-turn KV reuse:
+
+- `KVEncodeSession` retains `past_key_values`, a running FP32 hidden-state sum,
+  last hidden state, token prefix, and chunk-aligned resume position.
+- `KVSessionStore` serializes same-episode mutation, isolates service
+  incarnations, evicts whole sessions, and treats the cache as optional.
+- `KVMemoryBudget` is the process-global residency owner and bounds total
+  cached tokens.
+- Cache loss, replacement, truncation, and sub-chunk requests fall back to a
+  full encode; committed episode state remains authoritative.
+
+David's vLLM fork currently solves a different boundary:
+
+- it allows causal MEAN pooling to accumulate across scheduler chunks within
+  one long request;
+- its pooling state is cleaned when that request finishes; and
+- causal MEAN deliberately skips automatic prefix-cache reads, because a KV
+  hit would skip hidden states needed by the mean accumulator.
+
+The reference ARC deployment correspondingly runs with
+`--no-enable-prefix-caching`. Its `chunked_causal_mean` capability bounds one
+long prefill; it does not yet reuse an earlier turn's KV blocks on the next
+request.
+
+RSP-005 considered two vLLM cross-request designs:
+
+1. **Prefix-cache extension, rejected for the MVP.** Enable automatic prefix
+   caching and persist or reconstruct the causal-MEAN sum/count at the matched
+   block boundary. A hit restores both model cache state and pooling state;
+   restoring only KV is incorrect.
+2. **Pinned episode-session extension, selected.** Add an explicit, bounded session
+   contract that retains vLLM-owned cache state between pooling requests and
+   mirrors Pathfinder's existing prefix, rewind, eviction, and fallback
+   behavior.
+
+The prefix-cache variant was rejected because vLLM's block-cache lifecycle does
+not own the matching causal-MEAN sum/count. Restoring KV without that
+accumulator is numerically wrong; coupling two independently evicted state
+stores would add a second cache-lifecycle protocol before the MVP has a measured
+need for it.
+
+The selected variant keeps one live pooling request as the owner of both model
+KV/GDN state and the causal-MEAN accumulator. vLLM commit `b1049f6d` adds a
+strict one-append/one-output `AsyncPoolingSession`. A real NVIDIA L40S canary
+processed 3,072 session tokens versus 7,680 cumulative replay tokens, with
+minimum cosine `0.9999889556`, maximum absolute drift `0.0005071524`, and
+one-shot/session latency ratios of `1.27x` and `2.14x` on turns 2 and 3. The
+verified private evidence is pinned at
+`rayline-ai/router-artifacts@6e387884239951ff29f48363c1adcf6c49e74d67`.
+
+The Semantic Router checkpoints at `4f14763b` and `29219dd0` add the next
+lifecycle boundary: a separate authenticated ASGI endpoint, full-history
+exact-prefix validation, same-episode serialization, independent-session
+concurrency, identical-request reuse, mismatch rebuild, TTL/LRU eviction,
+global session/token residency bounds, explicit close/health APIs, and a
+capability-gated Go client with bounded metrics. The normal `/pooling` v1
+contract stays stateless. Capability `resumable_causal_mean` selects the
+session wire and requires `chunked_causal_mean`; automatic prefix caching
+remains disabled.
+
+The deployed H100 HTTP canary
+`rayline-arc-session-http-shp001-20260731` passed `created → appended → reused
+→ rebuilt`, retained the exact 11-token prefix while appending 35 tokens, and
+returned zero resident sessions after explicit cleanup. Two independent
+episodes overlapped in `0.775s` wall time versus individual request latencies
+of `0.661s` and `0.760s`. The real gateway canary
+`rayline-arc-modal-gateway-mgp003-20260731` then traversed Envoy, Semantic
+Router, the protected Modal ASGI endpoint, retained vLLM state, Rayline scoring,
+and the synthetic provider. Both requests returned HTTP 200 and selected
+`worker-b`; the warm end-to-end latencies were `0.337s` and `0.424s`. Router
+metrics recorded one `created`, one `appended`, and zero selection failures.
+The Modal service disables automatic prefix caching and has a five-minute
+scale-to-zero window. At the pinned H100/CPU/memory price snapshot, one entire
+31-minute single-container timeout envelope is about `$2.50`, below the `$20`
+cap; this canary used only a fraction of that envelope and made zero paid
+provider calls.
+
+### Cache and State Contract
+
+The target contract keeps correctness separate from acceleration:
+
+- The complete current request history supplied through Semantic Router and
+  Pathfinder's committed routing state are the reconstructible inputs.
+- vLLM's KV and pooling accumulator are reconstructible, non-durable
+  acceleration state.
+- Every encoder request is bound to the immutable model, tokenizer,
+  serializer, bundle, and policy revisions.
+- The cache identity is derived from the opaque episode key plus canonical
+  token-prefix identity; it never uses a raw user episode ID.
+- A cache hit reports the engine incarnation, matched prefix length, encode
+  mode, evictions, and rebuild reason using bounded telemetry.
+- A miss, eviction, engine restart, affinity miss, or rejected session rebuilds
+  from the complete current request and must preserve the same selection.
+- Same-episode concurrent requests are fenced before cache mutation.
+- GPU residency has one enforceable owner per engine and a measured bound.
+
+Horizontal scale requires cache-aware affinity for performance, not
+correctness. A request reaching another encoder replica may be slower because
+it rebuilds, but it must not make a different policy decision outside the
+frozen numeric tolerance.
+
+### PERF022 Bounded Affinity Scale-Out Phase
+
+PERF021 places the first overloaded single-H100 cell at a realized `0.3724`
+decisions per second and shows further backlog at `0.5586`. The next justified
+deployment experiment is therefore horizontal encoder scale-out, not a larger
+qualification packet or another transaction-concurrency proof.
+
+PERF022 keeps the frozen PERF021 corpus, seed, topology, model, artifact,
+serializer, worker trace, and `r030`/`r045` schedules. It compares only two ARC
+deployment shapes:
+
+```text
+arc_single
+Semantic Router -> local affinity proxy -> encoder A (one H100 container)
+
+arc_dual_affinity
+Semantic Router -> local affinity proxy -+-> encoder A (one H100 container)
+                                         +-> encoder B (one H100 container)
+```
+
+The two explicit Modal apps are
+`rayline-arc-session-encoder-a` and `rayline-arc-session-encoder-b`; each keeps
+the proven `max_containers=1` boundary. The proxy selects a replica from the
+first 64 bits of the opaque episode SHA-256 modulo the replica count. Pooling,
+subsequent appends, and explicit close for one episode therefore reach the same
+process-local retained session. Both arms traverse the proxy so its local hop
+is symmetric. The proxy records only bounded aggregate counts, never prompt
+content, raw episode IDs, credentials, or request paths.
+
+Each arm/cell owns a fresh Semantic Router, Pathfinder, Redis, Compose project,
+proxy, and retained-session namespace. The encoder pair remains fixed across
+the four arms so model hydration is outside the comparison, but every arm must
+start and finish with zero resident sessions and tokens. The run contains four
+receipts, 128 measured turns, 16 warmups, and zero provider or generation
+calls. It passes integrity only when all turns complete, worker traces match,
+provider calls stay zero, ARC telemetry records exactly 36 session actions per
+arm, nine sessions are closed, both treatment replicas receive at least one
+episode, and affinity mismatches remain zero. Reported throughput, service and
+scheduled latency, backlog, and drain ratios are diagnostic rather than a new
+production SLO.
+
+The launcher is fail-closed until its signed Semantic Router implementation,
+Pathfinder preregistration, self-attestation, and distinct authorization commit
+are all remote-visible. Its two-replica envelope is 5,160 resource-seconds per
+replica: 2,400 seconds paid wall time, 2,460 seconds for an orphaned request,
+and 300 seconds scale-down. At the pinned Modal price snapshot this is
+`$13.8688416`; added to the `$61.80928732218463` prior conservative total it
+would reach `$75.67812892218463`, leaving `$58.63469509781537` under the current
+`$134.31282402` authority. The launcher-window estimate also charges both
+replicas for all elapsed time. No whole-run retry exists, and the separately
+held 1,000-case qualification remains unreachable.
+
+PERF022 is deliberately an experiment-side deployment proof. It does not yet
+claim a production service directory, replica membership protocol, failover,
+rebalance, shared cache, or HA transaction journal. Those boundaries remain
+required before turning the local deterministic proxy into a supported public
+deployment mode.
+
+PERF022 launched once and stopped before GPU hydration or measurement. Modal
+SDK 1.5.1 rejected `Function.from_name("SessionEncoder.web")`: class methods
+must be resolved through `Cls.from_name("SessionEncoder")` and an instance.
+The cleanup path then exposed a second pre-measurement defect because
+`modal app stop` lacked `-y` and waited for confirmation until its timeout.
+Manual recovery stopped the exact app A, verified app B was never deployed,
+deleted the run's proxy token, and found zero named encoder containers, local
+containers, affinity proxies, provider calls, warmups, measured turns, or
+1,000-case qualification calls. The conservative launcher-to-verified-cleanup
+upper estimate is `$1.01328552`, bringing the observed cumulative upper to
+`$62.82257284218463`. PERF022 is closed without retry.
+
+PERF023 is the identity-equivalent successor. It changes only the run and
+resource namespaces, class-method endpoint lookup, noninteractive exact-app
+cleanup, and prior-cost basis. Its full two-replica envelope remains
+`$13.8688416`, which would bring the conservative cumulative maximum to
+`$76.69141444218463` and leave `$57.62140957781537` under current authority.
+Its corrected source is pushed at `dabac197`; immutable preregistration,
+attestation, and Pathfinder authorization are pushed at `bef9a117`, `01263c5d`,
+and `057f3d26`. Only the distinct signed source authorization checkpoint opens
+its one-shot resolver.
+
+PERF023 completed all four measurement arms and its strict comparison passed:
+128/128 measured turns, 16 warmups, zero failures or providers, one shared
+worker trace, zero affinity mismatches, exact 36-pooling/nine-close accounting
+per arm, and zero retained state after every arm. At `r030`, dual affinity
+improved completion throughput `1.3696x`, reduced p95 service latency to
+`0.3338x`, reduced drain to `0.3975x`, and lowered final-arrival backlog by two.
+At `r045`, the ratios were `1.3188x`, `0.5594x`, and `0.5740x`, with unchanged
+final backlog. Both treatment replicas received sessions.
+
+The packet is nevertheless not a pass: both exact app stops and token deletion
+succeeded, but the launcher immediately read Modal's still-converging app state
+and raised before writing its run manifest. Independent verification seconds
+later found both apps stopped with zero tasks, zero named containers, zero local
+containers or proxies, and no run token. The conservative 1,040-second upper is
+`$2.7952704`, bringing the observed cumulative upper to `$65.61784324218463`.
+PERF023 is closed without retry; its complete performance receipt is diagnostic.
+
+PERF024 preserves every measurement input and adds only a bounded stable-zero
+poll after noninteractive stop and token deletion. Its `$13.8688416` full
+envelope would bring the cumulative conservative maximum to
+`$79.48668484218463`, leaving `$54.82613917781537` under current authority. It
+is preregistered, self-attested, and externally authorized at `e5ba2084`,
+`a524d0d8`, and `739270a1`; only a distinct signed source checkpoint may open
+its one execution. PERF024 passed that execution: 128/128 measured turns and 16
+warmups completed with zero failures or providers, the worker trace and all
+affinity/telemetry/state-reset gates matched, and bounded cleanup reached exact
+zero. At `r030`, dual affinity improved throughput `1.1442x`, reduced p95
+service latency to `0.7209x`, reduced drain to `0.7169x`, and lowered final
+backlog by two. At `r045`, the ratios were `1.3990x`, `0.4849x`, and `0.5003x`,
+with final backlog lower by one. The conservative 1,013.995-second resource
+upper is `$2.725376389638886`, bringing the cumulative observed upper to
+`$68.343219631823516`. Source authority is closed; the 1,000-case qualification
+remains held.
+
+PERF025 is the next bounded deployment phase. It keeps the passed two-replica
+topology and exact `r030` packet, then compares dual sticky affinity with dual
+forced affinity loss. The treatment remaps every episode to its peer after two
+pooling calls: turn three must recreate from the supplied full history, turn
+four must append on the peer, and close must fan out to both visited replicas.
+Across the warmup plus eight measured episodes, the sticky arm must report nine
+creates and 27 appends; the treatment must report 18 creates, 18 appends, nine
+peer rebuild responses, 18 failover pooling requests, and 18 close attempts.
+Both arms must complete 32/32, preserve the exact selected-worker trace, and
+return both replicas to zero state. The comparator reports throughput, latency,
+drain, backlog, appended-token work, and retained-token ratios without adding
+an absolute SLO.
+
+This is controlled affinity-loss injection, not a claim of real outage
+detection, service discovery, membership, or ambiguous-transport retry. Those
+production gaps are tracked in TD050. PERF025 has one `r030` cell, no provider
+or generation path, no whole-run retry, and a `$7.4182176` full two-replica
+envelope. That would bring the cumulative conservative maximum to
+`$75.761437231823516` and leave `$58.551386788176484` under current authority.
+Its implementation was pushed source-closed at `c449a396`. The distinct
+Pathfinder preregistration, attestation, and authorization checkpoints are
+pushed at `652bc815`, `adc8965a`, and `c1b080f4`; only a separate signed source
+checkpoint may open its one execution.
+
+### ARC and Remote Comparison
+
+The experiment must not conflate policy placement with cache placement:
+
+| Variant | Policy/state owner | Encoder | Cross-turn cache today | Extra decision-plane hop |
+| --- | --- | --- | --- | --- |
+| Static route baseline | Semantic Router config | none | n/a | none |
+| `rayline_arc` current | Semantic Router | dedicated vLLM pooling | no; full history per request | VSR to encoder |
+| `rayline_arc` plus KV | Semantic Router | dedicated vLLM pooling | target experiment | VSR to encoder |
+| `rayline_remote` current | Pathfinder | in-process Transformers | yes; `KVEncodeSession` | VSR to Pathfinder |
+| `rayline_remote` vLLM bridge | Pathfinder | dedicated vLLM pooling | no; full history per request | VSR to Pathfinder to encoder |
+| `rayline_remote` vLLM plus KV | Pathfinder | dedicated vLLM pooling | target design | VSR to Pathfinder to encoder |
+
+The current trade is expected to be workload-dependent:
+
+- ARC has fewer network and transaction boundaries and a smaller failure
+  surface, but its current full-history encode cost grows with episode depth.
+- Remote adds prepare/renew/commit/settle work and another service to operate,
+  but its existing delta path makes steady-state encode cost depend mainly on
+  the new turn rather than the complete prefix.
+- Once both modes use the same vLLM KV primitive, the comparison isolates the
+  true cost of remote authority: network, transaction, state-store, cache
+  affinity, and independent scaling.
+
+The fair comparison pins the same encoder model/revision, tokenizer,
+serializer, policy artifact, worker order, price snapshot, request corpus,
+hardware class, worker endpoints, and warm/cold state.
+
+### End-to-End Test Rungs
+
+The work keeps deterministic tests and real endpoints as separate evidence:
+
+1. **Rung 0 — protocol fixture.** Existing Envoy + Semantic Router + fake
+   Rayline + fake providers receipt.
+2. **Rung 1 — actual Pathfinder.** Existing actual Pathfinder service + fake
+   providers receipt.
+3. **Rung 2 — real Rayline model.** Actual Pathfinder + actual Rayline encoder
+   on GPU + fake providers. This isolates decision latency, selection parity,
+   KV behavior, and memory at zero provider spend.
+4. **Rung 3 — self-hosted real workers.** Actual Pathfinder + actual Rayline
+   encoder + two actual OpenAI-compatible vLLM worker endpoints. This is the
+   reproducible end-to-end performance environment.
+5. **Rung 4 — external provider canary.** The same stack dispatches to two
+   frozen OpenAI-compatible external model IDs through VSR-owned credentials.
+   This proves live transport, usage, cost settlement, and provider failure
+   behavior; it is not used as the primary throughput benchmark.
+
+Rung 4 is explicit opt-in only. It requires a dedicated key with a provider
+spend limit, a test-level upper bound, frozen non-alias model IDs, small token
+limits, single concurrency, and a sanitized receipt. Baseline CI never needs a
+credential or paid call.
+
+### Performance Workload
+
+The benchmark has two layers:
+
+- **Router-only:** selected worker endpoints return an immediate synthetic 2xx.
+  This measures the maximum selection-plane throughput and decomposes VSR,
+  Pathfinder, encoder, policy-head, transaction, and state-store latency.
+- **Full stack:** selected workers are real vLLM generation endpoints. This
+  measures client-visible time to first token, inter-token latency, output
+  throughput, end-to-end request throughput, and whether the router starves
+  worker serving.
+
+Use both closed-loop multi-turn sessions and open-loop arrivals. The frozen
+workload matrix includes:
+
+- short, growing, large-tool-dump, near-maximum-context, and cache-replacement
+  episodes;
+- cold start, warm cache hit, cache miss, eviction, encoder restart, and
+  Pathfinder restart;
+- streaming and non-streaming Chat Completions;
+- incremental turn sizes such as small chat turns, ordinary tool results, and
+  a large tool dump;
+- episode concurrency at 1 and progressively higher levels until saturation;
+- uniform and skewed episode popularity to exercise affinity and eviction; and
+- a direct-to-worker baseline plus every applicable row in the ARC/Remote
+  variant table.
+
+Record at least:
+
+- client end-to-end latency, TTFT, inter-token latency, and errors;
+- accepted requests/second and output tokens/second;
+- prepare, encoder queue, tokenize, model forward, pool, policy-head,
+  renew/commit, provider, and settle latency at p50/p95/p99;
+- vLLM scheduler queue depth, prompt throughput, GPU utilization, allocated and
+  reserved memory, cache hit tokens, resident tokens, evictions, rebuilds, and
+  refusals;
+- selection parity, selected-worker distribution, state advancement, and
+  dispatch identity; and
+- the exact code, artifact, config, model, GPU, driver, and workload revisions.
+
+External-provider latency is reported separately from local vLLM performance so
+WAN and provider queue variance cannot be mistaken for router cost.
+
+### Frozen 128-Case Development Qualification
+
+The next paid rung is fixed at 128 public synthetic history states: four turns
+for eight episodes in each of `short`, `medium`, `tool_dump`, and `long`
+shapes. Every retained result is compared in memory with a fresh full-history
+replay through the same pinned H100 engine. The driver refuses any case count
+other than 128 and hard-caps the development surface at 200; it cannot launch
+the held 1,000-case release packet.
+
+The qualification passes only if all of these gates hold:
+
+- minimum retained/replay cosine similarity is at least `0.9999`;
+- maximum embedding absolute drift is at most `0.01`;
+- maximum four-arm synthetic-head score drift is at most `0.005`, with zero
+  selected-arm flips;
+- retained appended tokens are at most 75% of full-replay serialized tokens;
+- eight independent episodes overlap with wall time at most 85% of their
+  summed individual latencies;
+- identical same-episode requests produce exactly `created` plus `reused`;
+- the ninth resident episode evicts the LRU session and reconstructs with
+  parity;
+- explicit affinity loss reconstructs with parity; and
+- cleanup returns both resident sessions and resident tokens to zero.
+
+The Modal MVP is pinned to one container. This is an intentional deployment
+constraint: it makes cache affinity and the cost bound enforceable while
+`@modal.concurrent(max_inputs=32)` still permits cross-episode batching. The
+single-container 31-minute timeout envelope is about `$2.50` at the pinned
+price snapshot. Before a later multi-replica qualification, add cache-aware
+affinity or an explicit session directory and freeze a new cost envelope.
+
+#### Development Qualification Result — 2026-07-31
+
+Run `rayline-arc-session-qualification-sqp001-20260731` passed all frozen gates
+on one NVIDIA H100 with automatic prefix caching disabled:
+
+| Signal | Result | Gate |
+|---|---:|---:|
+| History states | 128 | exactly 128 |
+| Minimum cosine similarity | `0.9999814` | at least `0.9999` |
+| Maximum absolute drift | `0.0006667` | at most `0.01` |
+| Maximum synthetic score drift | `0.0002751` | at most `0.005` |
+| Synthetic selected-arm flips | `0` | `0` |
+| Retained/full-replay token ratio | `0.4004` | at most `0.75` |
+| Eight-way create/append wall-to-sum ratio | `0.1420` / `0.1388` | at most `0.85` |
+| Same-episode actions | `created`, `reused` | exact match |
+| LRU / affinity-loss rebuild cosine | `1.0` / `0.9999967` | at least `0.9999` |
+| Residency after cleanup | `0` sessions, `0` tokens | both `0` |
+
+Retained latency was `0.841` / `0.910` / `1.010` seconds at p50/p95/p99,
+versus `0.856` / `1.041` / `1.073` seconds for full replay. The retained path
+therefore saved 60% of serialized token work, but the client-visible latency
+benefit at this workload was modest: about 1.8% at p50, 12.6% at p95, and 5.8%
+at p99. The retained maximum of `96.892` seconds is the one cold-start request
+and is reported separately from the warm percentiles.
+
+The complete driver took `421.998` seconds (`0.303` history states/second).
+At the pinned combined H100/CPU/memory rate, client elapsed time represents
+about `$0.567`; including the configured five-minute idle scale-down window is
+a conservative `$0.970` attempt estimate, below the `$2.50` timeout envelope.
+Provider calls and provider spend were zero. The sanitized receipt is pinned at
+`rayline-ai/router-artifacts@4b8a0b308d7980b5782cb8b41ac454874e8c7e16`
+under `runs/rayline-arc-session-qualification-sqp001-20260731`.
+
+This closes the 100–200 case development rung, not release qualification. It
+does not prove multi-container affinity, real worker-generation throughput, or
+production traffic behavior. The separate 1,000-case packet was not executed
+and remains confirmation-gated.
+
+### Frozen Real-Worker Full-Stack Canary
+
+The next rung is a bounded self-hosted generation canary, not another parity
+qualification. It deploys two separate OpenAI-compatible vLLM endpoints on
+NVIDIA L4 containers, both serving the pinned `Qwen/Qwen3.5-0.8B` revision
+under the artifact's `synthetic/provider-a` and `synthetic/provider-b` model
+identities. The existing protected H100 session encoder remains the routing
+model. Semantic Router sends a generated bearer credential to the workers and
+Modal proxy credentials to the encoder; all credentials are deleted or made
+unreachable during cleanup.
+
+The fixed workload contains at most 37 generation requests:
+
+- one warm-up plus three measured direct requests to each real worker;
+- at most 24 public candidate prompts, stopping as soon as the gateway has
+  selected both workers;
+- four concurrent gateway requests split across both selected paths; and
+- one streaming gateway request that must reach `[DONE]`.
+
+The public synthetic artifact can raise gateway completion limits to 128
+tokens, so the gateway side is bounded to at most 3,712 generated tokens; the
+direct side adds at most 64. The driver does not accept a case-count argument
+and contains no path to the held 1,000-case packet. The launcher also applies
+a 15-minute whole-canary deadline around the driver; expiration enters the same
+unconditional credential, compose, and worker cleanup path.
+
+The canary passes only if:
+
+- both direct vLLM endpoints generate a valid OpenAI-compatible response;
+- the real encoder and policy route at least one request to each worker;
+- each gateway response's model identity matches its selected-worker header;
+- the four-request concurrent phase reaches both workers and reports its
+  wall-to-summed-latency ratio and requests/second;
+- the streaming phase emits at least one data event and terminates with
+  `[DONE]`;
+- router metrics report every session create and zero ARC selection failures;
+- compose logs contain none of the ephemeral credentials; and
+- cleanup removes the compose stack and volumes, deletes the Modal proxy
+  token, and stops both L4 workers.
+
+ARC worker artifacts now distinguish the legacy default `openrouter` dispatch
+from `openai_compatible`. The latter must pin its exact `provider_base_url`,
+cannot carry OpenRouter provider fields, omits the OpenRouter request payload,
+and owns `chat_template_kwargs.enable_thinking` in its signed `extra_body`.
+Startup fails closed if config URL, credential environment identity, model,
+pricing, reasoning mode, or auth shape diverges from that artifact contract.
+The real-worker launcher separately pins the protected encoder URL and exact
+`vllm@b1049f6d...` build identity, allows 180 seconds for its first retained
+probe through strictly numeric config, and leaves the hermetic fake URL/build
+as compose defaults. This separation was added after `rwe001` correctly failed readiness:
+that first packet switched only worker endpoints, so fresh Modal credentials
+were sent to the fake encoder and the real H100 service was never invoked.
+The follow-up `rwe002` reached and passed that protected encoder probe, but its
+launcher waited for `/health` on the Envoy generation listener. Envoy correctly
+returned `503` for that non-generation route while the router API health port
+was already `200`; the corrected launcher waits on the router API and still
+sends all measured generation requests through Envoy. `rwe003` passed both of
+those readiness boundaries and entered the direct-worker baseline, then Modal
+rejected worker hydration before vLLM started. The worker Secret existed in the
+local deploy graph only when the ephemeral key environment variable was set,
+while remote import reconstructed an empty conditional list. The resulting
+four-object-versus-three-dependency mismatch made no generation or provider
+call. The next packet makes that Secret dependency structurally unconditional
+across both import environments while retaining `server_command`'s fail-closed
+authentication check.
+
+`rwe004` validated that correction on both live L4 functions, then stopped at
+the next pre-generation boundary: the pinned vLLM build rejected the legacy
+`--disable-log-requests` flag. In this build request logging is already opt-in
+through `--enable-log-requests`. An exact-commit source audit found every other
+configured flag, including `--no-enable-prefix-caching`; the next packet removes
+only the unsupported flag. It also pins Modal SDK `1.5.1` and invokes its CLI
+through the same Python interpreter as the proxy-token API, eliminating a
+local-library/system-CLI version split observed during zero-cost preflight.
+
+`rwe005` then loaded the pinned model on both L4 workers. Its two cold direct
+requests crossed Modal Web Functions' documented 150-second synchronous HTTP
+window, which returns `303` while the original request continues. The canary's
+low-level client treated that continuation as terminal, so generation completion
+is recorded as unknown rather than zero. The next packet follows at most two
+same-origin result redirects using `GET`, and refuses to forward the worker
+bearer credential across origins.
+
+`rwe006` live-validated that continuation path and completed all eight direct
+OpenAI-compatible generations across both pinned L4 workers. The protected
+encoder and ARC selection then processed the first routed request, and ARC
+correctly replaced the public caller credential with the artifact-owned worker
+key. That exposed a fixture wiring error: both selected routes in the hermetic
+`envoy.yaml` still targeted `fake-provider`, which rejected the real-worker key
+with `401`. No routed request reached a real worker. Cleanup left zero compose
+containers or volumes and stopped both the generation app and exact H100
+encoder container. Its credential-scanned private receipt is pinned at
+`rayline-ai/router-artifacts@a76e51e5715df881fb4dea8641ee6c9f6b120294`;
+the conservative attempt estimate is `$0.632927`, bringing the session plus
+real-worker work to about `$2.632270`.
+
+The correction keeps the default hermetic Envoy fixture unchanged and adds a
+launcher-selected `envoy-real-workers.yaml`. It maps `worker-a` and `worker-b`
+to separate DNS/TLS Modal clusters with system-CA validation, exact SNI, and
+host rewrite, while ARC remains the sole owner of the upstream bearer
+mutation. The dedicated fixture contains no credential. Local tests validate the launch selection, route
+separation, absence of embedded authorization, compose interpolation, and
+Envoy v1.34 configuration. A new Pathfinder experiment ID and signed Semantic
+Router commit are required before that corrected path consumes paid resources.
+
+`rwe007` started that dedicated Envoy fixture and again passed all eight direct
+real-worker generations. Router startup had already warmed and validated the
+protected encoder, but the L4 cold baselines took about six minutes, exceeding
+the encoder's five-minute idle scale-down window. The first routed request then
+triggered a second H100 cold start and exhausted the 180-second end-to-end
+timeout before ARC produced a worker selection. No request reached either
+routed worker. Cleanup again reached zero local and Modal resources. The
+private receipt is pinned at
+`rayline-ai/router-artifacts@e4570094ec30d369d738ab6127e302cccdf68bc0`;
+its conservative `$1.144849` estimate brings session plus real-worker work to
+about `$3.777119`.
+
+The next packet adds one authenticated, continuation-aware `GET /health`
+against the exact protected encoder immediately after the direct baselines.
+It validates the retained pooling capability set, allocates no encoder session,
+adds no generation request or prompt, and reports its latency. This makes
+encoder residency at the start of routed measurement explicit without
+extending the deployed H100 idle window or weakening the routed timeout.
+
+`rwe008` validated that correction: both direct workers passed, the protected
+post-baseline warmup restored the encoder, and 24/24 routed requests completed
+through the protected H100 encoder, ARC, dedicated Envoy TLS route, and a real
+vLLM worker. All 24 selected the same arm, so the preregistered two-arm coverage
+gate correctly stopped before concurrency and streaming. This is a synthetic
+fixture-axis problem rather than another transport failure: the test head reads
+embedding coordinate zero, which did not separate the frozen public candidates.
+The private receipt is pinned at
+`rayline-ai/router-artifacts@5c2d4580caa4e7ff8e281dbd242207897e27fc36`;
+its conservative `$1.050590` estimate brings session plus real-worker work to
+about `$4.827709`.
+
+The next bounded packet is an H100-only candidate-axis probe over those exact
+24 public prompts. It ranks coordinates first by minority-sign count, then by
+minimum and median absolute normalized margin, with the lowest coordinate as
+the deterministic final tie-break. It requires at least six candidates on each
+side and a `0.0001` minimum absolute margin. Its receipt contains only the
+selected coordinate, sign counts, aggregate margins, timings, and cleanup—not
+prompt text or raw embeddings. A passing result may update only the public
+synthetic head and goldens on a new signed commit; the subsequent two-L4
+real-worker canary requires its own preregistration and must retain every
+coverage, concurrency, streaming, metrics, privacy, and cleanup gate.
+
+`cap001` passed that gate on coordinate 252. Its 24 protected real embeddings
+split 12/12 with zero exact ties; the minimum, median, and maximum absolute
+normalized margins were `0.00129066`, `0.00513827`, and `0.01461668`. The
+first attempt collected all embeddings but deferred session closes beyond the
+service's three-session residency, so the oldest close correctly returned
+`closed=false`; the non-material retry closed each session immediately and
+finished with zero residents and zero running H100 containers. Across both
+attempts, its conservative cost is `$0.193519`, bringing the session and
+real-worker work to about `$5.021228`. The aggregate-only private receipt is
+pinned at `rayline-ai/router-artifacts@e1cc725b829ec7fea88e708ee46e558cb56e0ef5`.
+The public synthetic fixture now reads coordinate 252 in both its signed head
+and hermetic fake encoder. This is deterministic deployment-test plumbing, not
+a learned policy or task-quality claim.
+
+`rwe009` then passed the complete bounded real-worker packet. Both direct L4
+vLLM workers returned all eight baseline generations; the protected H100
+encoder warmup passed; coordinate 252 reached both workers after four coverage
+requests; four concurrent routed requests reached both arms at `0.845 req/s`;
+and the routed stream emitted 34 data events before `[DONE]`. The router
+reported nine session creates and zero ARC selection failures. In total, 17
+real generation requests completed with zero provider calls. Compose and Modal
+prompt scans found no public prompt bodies, the exact credential scan passed,
+and cleanup left zero compose containers, volumes, L4 tasks, or H100/L4
+containers. The digest-verified private receipt is pinned at
+`rayline-ai/router-artifacts@2e76a0a7b4bb0d418c375c52d2bafd7c2d358992`.
+Its conservative `$0.809061` cost brings all session-probe and real-worker work
+to about `$5.830288`. This closes the real-endpoint MVP acceptance gate; it
+does not yet establish saturation capacity or task-quality generalization.
+
+The next self-hosted packet is frozen as a bounded first performance rung,
+separate from both `rwe009` and the held release corpus. It compares direct
+requests with the identical prompt/model distribution routed through ARC at
+client concurrency `1, 2, 4, 8`, with two fixed waves at each level. It then
+runs five ARC-only soak waves at concurrency four. Direct warmup and baseline
+use eight generation calls, prompt coverage stops by 24 calls, the measured
+ladder uses 60 calls, and the soak uses 20 calls: at most 112 real generations,
+with 80 in the measured packet and exactly 40 measured requests per worker.
+There is no duration-unbounded loop or case-count argument.
+
+The packet passes only if all 80 measured generations succeed, every frozen
+prompt keeps selecting its discovered worker, both workers are exercised at
+every balanced level, and the five-wave soak completes without an error. vLLM
+Prometheus counters must advance by exactly 40 successes per worker, prompt and
+generation tokens must advance, TTFT, E2E, and queue-time histogram counts must
+each advance by 40, and preemptions must remain zero. A background sampler
+records observed request concurrency, queue depth, and KV utilization without
+logging requests. The receipt reports per-wave p50/p95/max, throughput, direct
+versus ARC throughput and p95 ratios, router actions, and component metrics.
+It does not assign a production SLO or claim saturation from the maximum-eight
+ladder. The launcher enables vLLM metrics, retains disabled request-body
+logging and automatic prefix caching, refuses an already-running encoder, and
+requires zero exact encoder containers after cleanup.
+
+The self-hosted packet retains the established `$3.057473` maximum resource
+envelope. Added to observed spend through `rwe009`, its conservative cumulative
+envelope is `$8.887761`, below the `$20` cap. It requires a new signed Semantic
+Router implementation commit and Pathfinder preregistration under
+`rayline-arc-real-workers-perf001-20260731` before any Modal launch.
+
+The preregistered packet completed on the exact frozen implementation and
+passed every correctness, metrics, privacy, and cleanup gate. All 80 measured
+requests completed with balanced 40/40 worker selections, each worker advanced
+exactly 40 vLLM successes and latency-histogram observations, preemptions and
+router selection failures remained zero, and the live sampler observed no
+request queue. Four coverage requests plus eight direct setup/baseline calls
+brought total generations to 92, below the 112-call maximum. The private
+aggregate receipt round-trips byte-for-byte at
+`rayline-ai/router-artifacts@e6cf0245ec9f97f0626939ba7cc7826d67497363`.
+Cleanup independently found zero compose resources, generation-worker tasks or
+containers, and encoder containers.
+
+The performance result is a negative production-readiness signal. ARC/direct
+throughput ratios were `0.256`, `0.218`, `0.157`, and `0.083` at concurrency
+`1`, `2`, `4`, and `8`. At concurrency eight, maximum-wave p95 was `18.81s`
+through ARC versus `1.88s` direct. The subsequent concurrency-four ARC soak
+recovered to `1.70` requests per summed wave second with `2.59s` maximum-wave
+p95, so the bounded evidence points to variable decision-plane contention or
+queueing rather than a simple generation-worker saturation limit. Direct and
+ARC completion-token counts also differed, which prevents treating the ratios
+as a clean per-token service-capacity curve. The next self-hosted rung must add
+stage-level traces around Envoy, Semantic Router, Pathfinder policy execution,
+and the protected encoder, then isolate encoder concurrency and per-episode
+session scheduling before assigning an SLO or capacity number. Conservative
+span accounting charges `$0.926876` for this packet and brings cumulative
+observed upper-bound spend to `$6.757164`.
+
+The follow-up diagnostic is source-bounded before any new GPU launch. It adds
+a specified-model gateway control between direct vLLM and full ARC, and sends
+the same discovered prompt, 32-token limit, artifact-matching temperature,
+thinking flag, and fixed seed through all three paths. Two waves at concurrency
+one and four produce 30 measured generations, exactly 15 per worker, with at
+most 62 total generations including warmup and coverage. Every self-hosted
+gateway response must report exactly one Envoy attempt; local vLLM 429s remain
+backpressure and are not retried.
+
+The packet records client p50/p95/max and throughput, Envoy upstream service
+time, the explicitly approximate client-minus-upstream residual, Semantic
+Router routing and Rayline encoder histograms, and vLLM TTFT, E2E, queue,
+preemption, running, waiting, token, and KV-utilization metrics. Direct requests
+must add zero router observations, specified-model requests must add routing
+but zero encoder observations, and ARC requests must add both. Completion-token
+totals must match across all three paths per worker. This fixes the principal
+confounder in `perf001`; it remains a diagnostic at concurrency one and four,
+not a production saturation or SLO claim.
+
+The source-frozen packet completed once and passed all correctness, metrics,
+parity, privacy, and cleanup gates. It launched 42 self-hosted generations, 30
+measured and exactly 15 per worker, with zero retries, selection failures,
+preemptions, or worker queues. Execution fields and completion-token totals
+matched across direct, specified-model gateway, and ARC paths.
+
+The static-gateway arm is the causal baseline. ARC/static throughput was
+`0.748` at concurrency one and `0.755` at concurrency four; ARC added `0.351s`
+and `0.596s` to client p95. Static routing cost only `0.329ms` and `0.146ms`
+mean, while ARC routing mean was `0.367s` and `0.597s`. The protected encoder
+consumed `0.363s` and `0.595s`, more than 99% of the measured routing stage.
+Static and ARC worker E2E means were nearly identical at both levels, maximum
+worker queue depth remained zero, and maximum KV utilization was `0.00301`.
+The next self-hosted rung should therefore instrument protected-encoder
+in-flight and queue behavior directly, not increase packet size.
+
+The aggregate-only receipt and manifest are private and byte-for-byte verified
+at
+`rayline-ai/router-artifacts@9592cdc676fedcba1512e071772f2771285a8793`;
+Pathfinder closes the experiment at
+[`dc4abee9`](https://github.com/atlasfutures/pathfinder/commit/dc4abee91c794ca91742a7501fade97aefa485cb).
+Independent inventory found zero compose resources, zero generation-worker
+tasks, and zero protected-encoder tasks. There were zero provider calls and
+`$0` provider charge. Conservatively charging the full `$3.0574728` resource
+envelope yields a `$14.23246402` cumulative upper bound and `$5.76753598`
+headroom under the user cap. The held 1,000-case packet remains uninvoked.
+
+The encoder-only observability rung then added aggregate coordinator counters
+for tokenization, request and backend in-flight peaks, same-session lock
+contention, append latency, failures, and token work, plus a curated view of
+vLLM scheduler gauges and completed-request histograms. The implementation is
+source-frozen at
+[`83782ab9`](https://github.com/atlasfutures/semantic-router/commit/83782ab99316869b6eab47efc20dbc31a73a833a)
+after the first attempt exposed and fixed a launcher failure-visibility gap.
+
+The second source-frozen attempt failed at the first concurrency-one wave for
+a substantive lifecycle mismatch: one retained append and explicit close both
+returned HTTP 200, but vLLM's standard queue, inference, end-to-end, and
+prompt-token completed-request histogram deltas remained `0/0/0/0` throughout
+a ten-second settlement window. Those terminal-request histograms therefore do
+not describe retained-stream appends, or even advance on this close path in the
+exact pinned runtime. The packet stopped before accepting any throughput or
+concurrency result. Full Prometheus-registry reads also took roughly
+`165-230ms` at the warmed HTTP boundary, so they are too invasive for the
+planned `20ms` sampler.
+
+The aggregate-only failure receipt is private and byte-for-byte verified at
+`rayline-ai/router-artifacts@28a3f5cf5b82a20f7b6f93f245d825a70e7f5685`,
+path `runs/rayline-arc-encoder-service-perf004-20260801`. Both attempts deleted
+their proxy tokens and left zero protected-encoder containers. Conservative
+accounting charges both full H100 envelopes, bringing the cumulative ceiling
+to `$19.23169762` and leaving `$0.76830238` under the cap. No further
+full-envelope GPU packet may launch without renewed budget authority. The next
+implementation must add append-scoped retained telemetry inside the vLLM seam
+and serve cached aggregate snapshots before restoring the ladder.
+
+The user-requested realistic data-plane packet is a separate three-model
+OpenRouter canary, not an external-provider load test. A public synthetic
+three-arm head maps the protected real encoder's coordinate 252 into positive,
+near-zero, and negative regions. Its workers are pinned to:
+
+- `deepseek/deepseek-v4-flash`;
+- `moonshotai/kimi-k3`; and
+- `z-ai/glm-5.2`.
+
+All three OpenRouter arms pin the common `fireworks` provider, disable provider
+fallbacks and reasoning, require declared parameters, and cap each completion
+at eight tokens. This holds the hosting provider constant so observed model
+latency and dispatch behavior are not confounded by OpenRouter's own provider
+selection. Up to 24 routed public prompts may discover all three arms; one
+direct and one routed request then exercise each model, followed by one routed
+stream. The total is at most 31 paid model calls. Failure to cover all three
+arms stops the packet; it is not repaired by changing the head or prompt set
+after launch.
+
+The OpenRouter launcher requires a management credential supplied at runtime
+from 1Password. It creates a one-run API key with a server-enforced `$0.25`
+limit, passes only that ephemeral key to Semantic Router, reads sanitized key
+usage, scans compose logs for all credentials, and deletes both the OpenRouter
+key and Modal proxy token unconditionally. The receipt must report OpenRouter's
+per-response usage accounting and stay below a stricter `$0.10` aggregate
+cost gate. Every response must identify Fireworks and the selected model, ARC
+must cover all three workers without selection drift, streaming must reach
+`[DONE]`, router failures must remain zero, and the compose stack, credentials,
+and exact H100 encoder must all reach zero after cleanup.
+
+The external packet's conservative envelope is the established `$2.499617`
+protected-H100 timeout envelope plus the `$0.25` provider-key limit, or
+`$2.749617`. If both new packets consume their full envelopes, cumulative
+spend is bounded at `$11.637378`, leaving more than `$8.36` below the user cap.
+It requires its own Pathfinder preregistration under
+`rayline-arc-openrouter-orc001-20260731`. Neither packet executes or relaxes
+the held 1,000-case release qualification.
+
+ORC001 failed closed on its first coverage request with HTTP 503. Encoder
+health warmup passed, but the router made zero encoder pooling calls and no
+selected provider generation was observed. A zero-cost exact-config
+reproducer emitted `llm_rayline_arc_component_ready=0` with failure class
+`artifact_dispatch_contract`: the backend refs declared `provider=openrouter`,
+which changed the canonical transport profile type even though the artifact
+requires the OpenAI-compatible `openai` transport. Fireworks pinning remains
+in the artifact dispatch fields. Commit `7e4672ff` corrects all three profiles,
+adds a config-to-artifact contract test, and makes ARC component readiness a
+mandatory pre-provider launcher gate. The full Semantic Router suite, CI gate,
+and initial/resume/Redis-loss Rayline compose workflow pass.
+
+The failed aggregate receipt is privately pinned and byte-for-byte verified at
+`rayline-ai/router-artifacts@f8860b6b3ac12f45c1fb1965e39d199d8d21f156`.
+Cleanup removed every compose resource, deleted the one-run OpenRouter and
+Modal proxy credentials, and returned the exact encoder app to zero
+containers. Because cleanup deleted the ephemeral key before its usage read,
+provider spend is not asserted as zero; it is conservatively bounded at the
+key's `$0.25` hard limit. Together with a 90-second full-run H100 span estimate,
+the attempt upper bound is `$0.370949`, bringing observed cumulative
+upper-bound spend to `$7.128113`.
+
+The materially fixed retry is separately preregistered as
+`rayline-arc-openrouter-orc002-20260731` at Pathfinder `358c0eee`. Models,
+Fireworks pin, prompts, request and token limits, `$0.10` reported-cost gate,
+`$0.25` key limit, privacy rules, and cleanup contract are unchanged. Its new
+preflight must observe component readiness equal to one before any explicit
+warmup or provider request. Observed prior spend plus its full packet envelope
+is `$9.877730`; even the deliberately over-conservative all-rungs envelope is
+`$14.386995`, below the `$20` cap.
+
+Both permitted ORC002 attempts passed component readiness and completed the
+real encoder selection call, but the first coverage request returned HTTP 503.
+A hermetic three-arm request then reached its fake provider with the exact
+DeepSeek/Fireworks payload and HTTP 200. The same route using a fake encoder,
+real OpenRouter cluster, and intentionally invalid credential proved the 503
+was Envoy's local fallback: ext-proc resolves the provider profile into
+`/api/v1/chat/completions` and clears the route cache, but the Envoy worker
+routes rematched only `/v1/`. No external model generation was observed.
+
+Commit `db20cf48` changes all three matches to the resolved `/api/v1/` path and
+removes the duplicate prefix rewrite. The focused contract tests, CI gate, and
+three-phase Rayline compose workflow pass; the fixed zero-generation external
+probe reaches OpenRouter and returns the expected 401 for its invalid key,
+proving DNS, TLS, path rematching, auth forwarding, and upstream reachability.
+ORC002's aggregate two-attempt receipt is privately pinned at
+`rayline-ai/router-artifacts@49fdbe75edf9bb1bdd7d3031e8f12085f6f8d3e8`.
+Conservative accounting retains both deleted keys' full limits and a combined
+193-second H100 span, charging at most `$0.759371` and bringing cumulative
+upper-bound spend to `$7.887484`.
+
+The otherwise unchanged ORC003 packet is preregistered at Pathfinder
+`88524778`. Observed prior spend plus its full `$2.749617` packet envelope is
+`$10.637101`; the deliberately over-conservative all-rungs envelope is
+`$17.136611`, still below the `$20` cap. The held 1,000-case packet remains
+uninvoked.
+
+ORC003 passed component readiness, the real retained encoder, corrected route
+rematching, and three real Fireworks generations. Those successful coverage
+responses validated output, per-response usage, provider identity, selected
+worker, and selected model; two of three arms were covered. The fourth
+coverage call returned HTTP 429. The source-frozen driver discarded both
+`Retry-After` and structured provider error metadata and failed immediately,
+so this is a failed full packet after verified external dispatch rather than a
+router-path regression. Cleanup deleted the one-run OpenRouter key and Modal
+proxy credential, removed every compose resource, and returned the exact H100
+encoder app to zero containers.
+
+The aggregate-only ORC003 receipt is private and exact-round-trip verified at
+`rayline-ai/router-artifacts@e5ba12a8c5a031f46ca08e121c4488d17ce9e488`.
+Conservative accounting retains the deleted key's full `$0.25` limit and a
+108-second H100 span, charging at most `$0.395139` and bringing cumulative
+observed upper-bound spend to `$8.282623`.
+
+Commit `ecdb173a` adds diagnostic-canary resilience without claiming a
+production data-plane fix: sequential requests are paced by one second;
+pre-response HTTP 429 or 503 may retry once with the same Rayline episode ID;
+`Retry-After` is honored within a 1–30 second clamp with a two-second default;
+and no stream retries after HTTP 200. Error reporting emits only bounded type
+and provider-code tokens, never the raw provider message. The receipt records
+successful logical requests separately from external wire attempts, with hard
+limits of 31 and 62 respectively. TD049 tracks the remaining production retry
+ownership gap.
+
+The exact ORC004 packet is preregistered at Pathfinder `b39b5c2a`. Models,
+Fireworks pin, disabled fallback and reasoning, public prompts, eight-token
+limit, `$0.10` reported-cost gate, `$0.25` one-run key limit, privacy rules,
+and cleanup contract remain unchanged. The internal per-request retry is the
+only authorized retry; no whole-run retry is allowed. Observed prior spend plus
+the full packet envelope is `$11.032240`. The deliberately conservative
+all-rungs envelope is `$19.886228`, leaving `$0.113772` below the user cap, so
+any packet failure stops paid execution. The held 1,000-case packet remains
+uninvoked.
+
+ORC004 reproduced the same external limit after exercising the new boundary
+exactly as designed. Three coverage requests again completed verified
+Fireworks generations and covered two arms. Logical request four returned
+HTTP 429; the driver reused the same Rayline episode and request after its
+two-second default because no `Retry-After` header was present, and the second
+external attempt also returned 429. Thus four logical calls produced five wire
+attempts and three confirmed generations. The request pacing, retry limit,
+privacy-safe exception, and fail-closed behavior worked, but three-model
+coverage failed before the direct, routed-comparison, or streaming phases.
+
+The private aggregate receipt is exact-round-trip verified at
+`rayline-ai/router-artifacts@e060a95e4f1a03f1e369b31b271c9fc731c8ed24`;
+Pathfinder records the closed result at `02f23596`. Cleanup again removed all
+compose resources, deleted both transient credentials, and returned the exact
+encoder app to zero containers. Conservative accounting retains the deleted
+key's full `$0.25` limit and charges `$0.142707` for the 106.19-second H100
+span, bringing cumulative observed upper-bound spend to `$8.675330`.
+
+A zero-generation public endpoint inventory after the run gives a plausible,
+but not conclusive, provider-side explanation. The ordinary Fireworks Kimi K3
+endpoint reported degraded status `-2` and 93.91% trailing-30-minute uptime;
+its premium `fireworks/fast` endpoint reported status `0` and 97.47% uptime.
+The ordinary Fireworks endpoints for DeepSeek V4 Flash and GLM 5.2 reported
+status `0`. Because the failed driver's selected worker was not persisted, the
+Kimi correlation is an inference rather than a proven per-request attribution.
+
+Paid execution stops at this boundary. A future packet must choose its claim
+before changing transport policy:
+
+- pin `fireworks/fast` only for Kimi to preserve one provider family while
+  accepting a 50% higher Kimi token price and a non-identical service tier;
+- allow OpenRouter fallbacks to test realistic availability, while giving up a
+  controlled provider comparison; or
+- pin one currently healthy provider per model, which preserves reproducible
+  provider identity but measures a heterogeneous provider/model bundle.
+
+Any option requires a new immutable artifact revision, source-frozen driver,
+preregistration, and explicit bounded packet. At ORC004 closure the plan
+authorized no additional paid generation. The held 1,000-case packet remains
+uninvoked.
+
+On 2026-08-01 the user selected the third option and authorized one bounded
+continuation packet under the existing `$20` total cap. ORC005 replaces only
+the degraded Kimi arm with `openai/gpt-5.6-luna`; it does not select the
+premium Fireworks Fast endpoint. Every generation still traverses the
+OpenRouter API and ephemeral OpenRouter credential. The immutable artifact
+revision is `public-rayline-arc-openrouter-luna-v2`, with these execution
+contracts:
+
+- `worker-a`: `deepseek/deepseek-v4-flash`, pinned to standard provider slug
+  `fireworks`, with `temperature=0`;
+- `worker-b`: `openai/gpt-5.6-luna`, pinned to standard provider slug `openai`,
+  with the `temperature` parameter omitted because the pinned endpoint does
+  not advertise it; and
+- `worker-c`: `z-ai/glm-5.2`, pinned to standard provider slug `fireworks`,
+  with `temperature=0`.
+
+All three contracts keep provider fallbacks and reasoning disabled and require
+declared parameters. `fireworks/fast`, OpenAI Flex, and OpenAI Priority are not
+allowed. The source-frozen price snapshot records Luna at `$0.10` prompt,
+`$0.01` cache-read, `$0.125` cache-write, and `$0.60` completion per million
+tokens from the
+[OpenRouter Luna endpoint inventory](https://openrouter.ai/api/v1/models/openai/gpt-5.6-luna/endpoints).
+The DeepSeek and GLM prices remain pinned to their standard Fireworks endpoint
+snapshots. The compose backend profile remains the OpenAI-compatible transport
+to `https://openrouter.ai/api/v1` for every worker; artifact fields, not the
+transport profile name, own each downstream provider pin.
+
+ORC005 retains the 31-logical-call and 62-wire-attempt ceilings, one-second
+sequential pacing, one same-episode retry only for pre-response HTTP 429/503,
+eight-token completions, `$0.10` reported-cost gate, `$0.25` ephemeral-key hard
+limit, and exact cleanup/privacy gates. It must be preregistered against the
+signed Semantic Router implementation commit before one launch; there is no
+whole-packet retry. The `$2.749617` packet envelope added to the `$8.675330`
+cumulative observed upper bound yields `$11.424947`, leaving more than `$8.57`
+under the user cap. This authorization does not include the held 1,000-case
+qualification.
+
+ORC005 is now closed with no whole-packet retry. The protected encoder and
+component-readiness gates passed. Four routed coverage generations exercised
+all three workers for the first time and validated the exact
+DeepSeek/Fireworks, Luna/OpenAI, and GLM/Fireworks contracts through
+OpenRouter; a direct worker-a baseline also completed. The routed worker-a
+comparison then returned HTTP 429, reused the same episode for its one allowed
+retry after two seconds, and returned HTTP 429 again. Six logical requests
+therefore made seven wire attempts and produced five confirmed generations;
+the remaining comparisons and stream were not executed, so the full packet
+gate failed.
+
+OpenRouter's one-run key reported `$0.00004472` usage before deletion. The
+failed-run launcher did not persist exact wall timing, so final conservative
+accounting charges the full `$2.4996168` H100 timeout envelope rather than
+inventing an observed infrastructure amount. The resulting cumulative upper
+bound is `$11.17499122`, leaving more than `$8.82` under the user cap. The
+aggregate-only receipt and manifest are private and exact-round-trip verified
+at `rayline-ai/router-artifacts@ca708efafa93526c8f298a457ad7662fc737c9b7`;
+Pathfinder records closure at
+[`623933be`](https://github.com/atlasfutures/pathfinder/commit/623933be4008d180714a1be0091c6233f834747e).
+Cleanup found zero compose resources and zero protected encoder containers and
+deleted both transient credentials. This proves the OpenRouter-only Luna
+topology can reach every arm without Fireworks Fast; it does not establish a
+stable provider-throughput or latency result, and TD049 remains open.
+
+At the 2026-07-31 Modal rate snapshot, each 15-minute L4/4-CPU/16-GiB timeout
+envelope is `$0.278928`; both workers total `$0.557856`. Including the existing
+single-container H100 encoder's `$2.499617` timeout envelope gives a combined
+worst-case `$3.057473`, with zero external-provider spend. Normal success is
+expected to be much lower because the workers are stopped immediately and the
+encoder scales to zero. This rung measures actual generation and dispatch, but
+it remains a small canary rather than a saturation benchmark.
+
+### Scope Boundaries
+
+In scope:
+
+- a real vLLM-backed Pathfinder encoder seam;
+- a measured cross-request KV prototype and one selected implementation;
+- a local GPU composition with actual Rayline and worker models;
+- an opt-in external OpenAI-compatible provider canary;
+- a reproducible ARC-versus-Remote benchmark and recommendation;
+- failure, restart, eviction, privacy, and bounded-memory evidence; and
+- the config, metrics, docs, and receipts required to repeat the result.
+
+Not in scope:
+
+- making paid provider tests a PR merge gate;
+- treating external-provider throughput as a stable system benchmark;
+- sharing one vLLM engine between the Rayline model and worker models as the
+  production default;
+- online policy training or artifact promotion;
+- native Anthropic Messages or OpenAI Responses support;
+- production traffic rollout, SLO alerting, or autoscaling policy; and
+- silently resolving TD046. Durable, multi-replica pending transactions remain
+  a separate production requirement.
+
+## Exit Criteria
+
+- One reviewed architecture decision selects the Rayline model-hosting and
+  cache design, and records why the rejected designs lost.
+- Actual Pathfinder can use the frozen Rayline model through a pinned vLLM
+  build and strict readiness contract.
+- Cross-turn cache hits in the selected vLLM design restore both model KV and
+  causal-MEAN pooling state, or the design explicitly proves an equivalent
+  session mechanism.
+- Full encode, current Pathfinder KV, and vLLM KV select the same worker over
+  the fixed parity corpus: zero selection flips and adjusted top-two gap drift
+  within the existing `5e-3` gate.
+- Cache loss, eviction, affinity miss, and encoder restart rebuild correctly
+  from the complete current request supplied through Semantic Router.
+- GPU residency stays within the configured bound; OOM, unbounded session
+  growth, silent cache drift, and secret-bearing telemetry are release
+  blockers.
+- The complete local stack reaches two actual vLLM worker endpoints for both
+  streaming and non-streaming requests, commits only after first 2xx headers,
+  and settles actual usage.
+- The opt-in external-provider canary reaches two frozen real model IDs, stays
+  under its hard cost cap, and emits a credential-free receipt.
+- A versioned report compares every viable ARC/Remote row at identical
+  hardware, workload, and model pins, including cold/warm p50/p95/p99,
+  saturation throughput, TTFT impact, GPU memory, and cache effectiveness.
+- Before the measured run, RSP-001 freezes a numeric product latency budget and
+  target request-start rate. The report states whether the selection plane
+  sustains at least 2x that downstream start rate and stays inside the agreed
+  p95 TTFT budget.
+- The report ends with a concrete deployment recommendation, capacity envelope,
+  rollback trigger, and list of remaining production blockers.
+- Baseline CPU CI remains deterministic, credential-free, and passing.
+
+## Task List
+
+- [x] **RSP-001 — Freeze targets and experiment contract.** Record the target
+  request-start rate, TTFT budget, context/turn distributions, concurrency
+  ladder, GPU classes, model pins, cost ceiling, repetitions, warmup, and
+  statistical summary before measuring. Frozen as
+  `rayline-vllm-perf.v1` in
+  `tools/agent/docs/benchmarks/rayline-vllm-performance-contract.md`.
+- [ ] **RSP-002 — Decide the serving boundary.** Write the architecture
+  decision comparing a separate vLLM service, same-Pod sidecar, embedded
+  `AsyncLLM`, and current in-process Transformers execution. The detailed
+  boundary is drafted in
+  `tools/agent/docs/architecture/rayline-vllm-serving-boundary.md`; Pathfinder ADR 0059 is
+  proposed at
+  [`fb3a4b94`](https://github.com/atlasfutures/pathfinder/commit/fb3a4b9455653eb9f8e490ca414aaa90a24e0a55)
+  and still requires human acceptance.
+- [x] **RSP-003 — Extract Pathfinder's encoder seam.** Make local Transformers
+  and remote vLLM implementations satisfy one strict, artifact-bound interface
+  with identical canonical serialization and telemetry. Implemented in
+  [`atlasfutures/pathfinder@7f13de3d`](https://github.com/atlasfutures/pathfinder/commit/7f13de3d10855ea44245717f9ccb50d55ea40e93):
+  the local backend preserves the accepted Transformers/KV behavior, while the
+  remote backend loads only the C82 policy head and fails closed on encoder
+  identity drift.
+- [x] **RSP-004 — Build the stateless vLLM bridge and pass the MVP parity
+  smoke.** Reuse the pinned IO plugin
+  and causal-MEAN fork to serve full-history Pathfinder encodes; prove numeric
+  and selection parity before adding cross-request caching. Fork vLLM under
+  `atlasfutures` before publishing any new vLLM change. The strict client,
+  configuration, readiness probe, bounded response handling, and policy-head
+  integration landed with RSP-003 at `7f13de3d`. The deterministic exact-token
+  corpus, mode runner, strict comparator, and sanitized receipt landed at
+  [`f580f961`](https://github.com/atlasfutures/pathfinder/commit/f580f9618787b90b6d876c33d510b9505f084327).
+  The pinned L40S comparison completed on 2026-07-30 and **failed the strict
+  gate**: 1,000/1,000 decisions and exact token-count parity passed, maximum
+  adjusted top-two gap drift was `0.003936` against the `0.005` limit, but four
+  boundary decisions selected a different worker. Sequential diagnostic
+  runtime was 4,297.6 seconds locally and 1,203.2 seconds through vLLM
+  (`3.57x` faster); this is not a throughput claim. The run also exposed a
+  seam mismatch: local Transformers returns an unnormalized FP32 mean while
+  Rung B returns a normalized vector, although C82 normalizes both before
+  scoring. Evidence and private artifact pins are recorded in
+  [`atlasfutures/pathfinder@5295fdb5`](https://github.com/atlasfutures/pathfinder/commit/5295fdb57adece07d1a62c0aa447143c0e9f3224).
+  The first remediation rung is complete at
+  [`atlasfutures/pathfinder@b280b585`](https://github.com/atlasfutures/pathfinder/commit/b280b5856e71d0f5375eb0fc13920357ca4f1a50):
+  the encoder seam now declares `l2-normalized-fp32.v1`, the v2 comparator
+  rejects non-unit vectors, and a six-decision RSP-004S corpus contains all
+  four historical flips plus large-tool and near-maximum coverage. Offline
+  canonicalization reduced the meaningful embedding maximum absolute error to
+  `0.00112024`; explicit local pre-normalization changed C82 q-values by at
+  most `3.5763e-7` and changed zero raw argmax decisions. The original scale
+  mismatch was therefore a comparator defect, not the flip cause. Kernel
+  direction drift at policy boundaries remains open. The sanitized diagnostic
+  and smoke inputs are privately pinned at
+  `rayline-ai/router-artifacts@d73fae3a526ff4d350d462b93b453792099a08b9`.
+  No provider call or GPU spend was used for this remediation.
+  The bounded execution-alignment follow-up then isolated scheduler, eager,
+  Transformers model-implementation, GDN, Q/K projection, normalization,
+  FlexAttention, and Triton-attention variants. The first strict MVP pass uses
+  David's causal-MEAN path, Transformers-ordered Torch-reference GDN
+  preparation, memory-bounded Triton attention, and an exploratory global
+  cheap-default selection margin set to `0.002` on both local and remote
+  contracts. Its receipt passes all eight hard gates over six decisions and
+  426,979 tokens: zero selection flips, exact token-count and contract
+  identity, minimum embedding cosine `0.9999849695`, and maximum adjusted
+  top-two gap drift `0.0011914223` against the `0.005` gate. That guard changed
+  one local near-tie and zero remote decisions in the smoke, but later quality
+  evidence rejects it; this receipt remains historical execution evidence, not
+  an accepted policy contract.
+  Private artifacts are pinned at
+  `rayline-ai/router-artifacts@306ca8c40470820f36d3decb5bfd9414552b5b7a`.
+  The reproducible controller and result ledger are published at
+  [`atlasfutures/pathfinder@05c4f1df`](https://github.com/atlasfutures/pathfinder/commit/05c4f1df7e1654897fec291e338426b810b1af98).
+  Measured infrastructure spend across successful and preserved failed arms
+  was `$1.1961`; adding the conservative `$1` preflight/preemption reserve
+  yields `$2.1961`, below the `$20` cap. All fourteen Modal apps were verified
+  stopped with zero tasks.
+  The explicit `pre_stay` contract has now also passed the registered six-case
+  local/remote recanary. All eight hard gates passed with 0/6 selection flips,
+  exact token counts, maximum top-two-gap drift `0.001191`, and minimum
+  embedding cosine `0.99998497`. The remote arm ran in an isolated L40S
+  container, made zero provider calls, and its seven-file private bundle was
+  round-trip verified at
+  `rayline-ai/router-artifacts@b82e0afc2da53e6268dc72ba13a23df7e863e9c0`.
+  This closes the reordered-policy smoke only; it does not supply the missing
+  route-0 quality/regret evidence.
+  A subsequent 178-state, source-lineage-disjoint C9 route-0 screen rejects the
+  global `0.002` Flash-off default outright. It crossed model families on four
+  decisions; three scorable changes had mean reward delta `-0.1667` and worst
+  task delta `-0.5`, while one unscorable change failed closed. The replacement
+  rule is restricted to Flash thinking-on versus the same base model's
+  thinking-off arm within `0.0005`. It made zero cross-model changes and was
+  inert on both the 178-state screen and all 524 canonical C82 dev decisions,
+  preserving the historical 14 switches. Those are scope and compatibility
+  screens, not powered changed-action quality evidence. Both private offline
+  bundles are round-trip verified at
+  `rayline-ai/router-artifacts@d4a2d67b10b0e435c70de10a320c2b0590d520e8`.
+  The narrow-rule L40S recanary then passed all hard gates: 6/6 decisions, zero
+  flips, exact token counts, `0.0011912882` maximum gap drift, and
+  `0.9999849696` minimum embedding cosine. Its seven-file private bundle is
+  round-trip verified at
+  `rayline-ai/router-artifacts@b707b2715018edaa269e08e16f1755491d79fd06`;
+  measured infrastructure was `$0.155999`, provider calls were zero, and the
+  Modal app stopped with zero tasks.
+- [ ] **RSP-004Q — Complete production parity and stability qualification.**
+  The global `0.002` candidate is rejected. The selected qualification contract
+  is the `0.0005` same-model thinking tie-break, whose two offline screens are
+  compatible but underpowered because it fired zero times. The exact
+  1,000-decision, 41.2-million-token local and remote launch packet is now
+  frozen and registered at Pathfinder `63eead46`: source, input, model, plugin,
+  timeouts, acceptance gates, cleanup checks, and a cumulative conservative
+  `$14.484864` envelope are pinned against the `$20` cap. The launcher defaults
+  to packet-only mode and refuses Modal execution unless both
+  `--execute-paid-1000` and `RSP-004Q-1000-CONFIRMED` are supplied. Actual
+  1,000-decision arms launched: zero. Await fresh user confirmation before
+  either arm. TD048 remains open for both the held full-corpus parity result and
+  genuinely powered changed-action quality evidence (or an explicit reviewed
+  decision accepting the narrow same-model canonicalization without it).
+- [x] **RSP-004A — Enable cross-episode remote selection concurrency.** Add an
+  explicit policy thread-safety capability, allow immutable MTRouter remote
+  selections for different prepared episodes to overlap, retain the existing
+  same-episode transaction fence, and keep mutable policies serialized. Prove
+  the boundary with a blocking fake encoder before throughput or cache
+  qualification. Implemented at
+  [`atlasfutures/pathfinder@ce661e5f`](https://github.com/atlasfutures/pathfinder/commit/ce661e5ffe62301dcad307b9bc4b242324019497): undeclared and mutable policies
+  remain serialized, remote MTRouter declares concurrent safety, independent
+  episode prepares overlap, failures release capacity, and `/readyz` reports
+  bounded policy-selection in-flight and queue-wait metrics. PERF009 completes
+  the measured real-stack receipt with Pathfinder in-flight `8`, encoder
+  in-flight `7`, and vLLM scheduled batch width `6`.
+- [x] **RSP-005 — Prove the selected explicit session end to end.** The engine
+  gate, local HTTP lifecycle, capability-gated Go client, hermetic restart and
+  Redis-loss stack, and real-GPU HTTP/concurrency/rebuild canaries pass. The
+  automatic-prefix-cache design is rejected for the MVP. Record batching,
+  eviction, affinity, and restart behavior in the development qualification
+  before closing this rung. Closed by the 128-case development qualification:
+  retained/full replay parity, cross-episode overlap, LRU eviction, affinity
+  loss, restart/rebuild, and zero-residency cleanup all passed.
+- [x] **RSP-006 — Implement and harden vLLM KV reuse.** Add bounded cache
+  ownership, exact fallback, same-episode fencing, privacy-safe metrics, and
+  full-vs-incremental parity gates. Closed for the single-container MVP by the
+  explicit retained-session implementation and its development qualification;
+  multi-replica affinity remains production follow-up, not an unbounded cache
+  correctness dependency.
+- [ ] **RSP-007 — Add the production-shaped local stack.** Compose Envoy,
+  Semantic Router, Pathfinder, dedicated Rayline vLLM, state store, and two
+  worker vLLM endpoints through the normal local image flow.
+- [ ] **RSP-008 — Add the benchmark harness.** Drive frozen open- and
+  closed-loop workloads, collect synchronized client/component/GPU metrics, and
+  emit one versioned machine-readable receipt plus a human report. Do not start
+  the concurrency ladder until RSP-004A removes the transactional path's
+  process-wide policy-selection lock for concurrent-safe MTRouter execution;
+  otherwise encoder calls serialize before vLLM and the benchmark cannot
+  exercise continuous batching. The identity-locked comparator, deterministic
+  packet adapter, three protocol drivers, private runtime stager, generated ARC
+  config, and ARC Compose profile are implemented under
+  `e2e/testing/rayline-arc/` and `deploy/compose/rayline-arc/`. The packet
+  preserves 32 ordered four-turn episode lanes at concurrency eight. Its
+  Remote path commits and settles the synthetic 2xx result with the exact
+  serialized input-token count instead of aborting successful turns. The
+  private C82 runtime passes the real Go loader/golden preflight, and the ARC
+  local gateway reaches component readiness plus HTTP 200 through Envoy and a
+  worker double. The source/pin/budget fail-closed PERF015 launcher now owns one
+  protected H100 app, one local Pathfinder process, and one exact Compose
+  project, with a USD 10.1597328 worst-case resource envelope and 65-second
+  stable-zero cleanup. PERF015 completed all three 128-turn arms with exact
+  trace parity and zero failures. ARC achieved `0.318 rps` and
+  `9.09s/76.70s/98.72s` p50/p95/p99 versus Remote `0.251 rps` and
+  `14.09s/90.54s/99.92s`; relative gates passed, but every arm failed the
+  frozen 8 rps / 1s p95 / 2s p99 absolute gates. Receipts are pinned at
+  `rayline-ai/router-artifacts@6e391a8b`. The zero-spend follow-up implements
+  v2 arm receipts with four fixed input-length buckets and an aggregate ARC
+  telemetry sidecar captured before teardown; legacy v1 receipts remain
+  replayable, but mixed schemas fail closed. PERF016 completed that exact
+  repeat with trace parity, zero failures, all relative gates passing, and all
+  absolute gates failing. Its ARC/Remote throughput ratio was `1.256x`; ARC p95
+  ratios were `0.536x` from 32k to below 128k tokens and `0.499x` at or above
+  128k, but `1.116x` below 8k under the queued lane mix. Aggregate ARC telemetry
+  records 34 creates, 102 appends, zero rebuilds, and 1.206M retained tokens.
+  Receipts are pinned at `rayline-ai/router-artifacts@5bf052df`.
+  PERF017 derived eight complete measured episodes plus one disjoint warmup
+  episode into a 32-turn packet spanning all four length buckets. It runs only
+  Remote and ARC at concurrency 1, 4, and 8 against one warm encoder. Every
+  cell owns a fresh Pathfinder process and ARC Compose/Redis stack; Remote must
+  leave zero encoder residency before ARC, and exact namespaced ARC sessions
+  are deleted and verified empty before the next cell. Six v2 receipts must
+  complete 32/32 with zero provider calls and one shared worker trace. The
+  comparator reports per-cell ARC/Remote ratios and per-arm `c4/c1` and
+  `c8/c1` scaling without inventing a new absolute SLO. The 3,960-second full
+  resource envelope was USD 5.3217648. Its first cold-start health request
+  timed out before any cell ran, cleanup reached zero, and the one-shot ID is
+  closed with a conservative USD 0.29027808 charge. PERF018 preserved every
+  workload and acceptance detail under a new namespace and fixed only
+  transient readiness transport handling. It then completed c1 Remote 32/32 at
+  `0.314 rps` before its pre-ARC state gate found ARC startup readiness's
+  retained session still resident. Cleanup reached zero and receipts are
+  pinned at `rayline-ai/router-artifacts@cb14a91e`. PERF019 closed that
+  production readiness session after probing and passed the fixed six-arm
+  packet. ARC/Remote throughput was `1.204x`, `1.209x`, and `1.207x` at c1, c4,
+  and c8; ARC p95 ratios were `0.931x`, `0.871x`, and `0.774x`. Both arms gained
+  only about 5-7% throughput from c1 to c8, so the single remote encoder is
+  already the shared bottleneck. Cleanup reached stable zero and aggregate-only
+  receipts are privately pinned at `rayline-ai/router-artifacts@1bc01b2b`.
+  Close PERF019 without retry. PERF020 freezes the same 32-turn packet into
+  seeded-Poisson open-loop cells at `0.15`, `0.30`, and `0.45` decisions per
+  second, with queue-inclusive scheduled latency, start lag, client backlog,
+  and drain time separated from selector service time. Each rate gets fresh
+  Pathfinder/ARC/Redis state and both arms must complete 32/32 with zero
+  provider calls, matching worker traces, 36 ARC session actions, and empty
+  retained state after cleanup. Saturation-knee reporting is diagnostic; only
+  integrity controls pass/fail. The full USD 6.9344208 envelope is within the
+  current cumulative authority. PERF020 executed once and failed integrity:
+  Remote alternated fresh-connection success and stale-connection failure,
+  completing 16/32 in all three cells, while ARC completed every turn. The
+  10.3-52.4 second same-episode gaps exceed the direct server's idle keep-alive.
+  Cleanup passed with zero residents and containers; the launcher-window upper
+  estimate was USD 1.63206983 and providers remained unused. Close PERF020.
+  PERF021 must close a thread-local client connection only after each complete
+  decision transaction and compare achieved start rate with the schedule's
+  realized rate. PERF021 implements that narrow delta with replay compatibility
+  for all PERF020 v1 receipts. Its signed implementation, preregistration,
+  attestation, and registry authorization are remote-visible; the source
+  resolver pinned `b53434ab` for one execution. PERF021 passed with 192/192
+  measured turns, zero failures, exact trace and telemetry parity, zero
+  providers, and complete cleanup; close its source and registry authority.
+  PERF022 implements the resulting bounded scale-out experiment: one ARC
+  replica versus two explicit one-container ARC replicas behind the same
+  deterministic episode-affinity proxy at only `r030` and `r045`. The
+  one launch stopped at class-method endpoint lookup before GPU hydration or
+  measurement and is closed. Exact cleanup reached zero after noninteractive
+  manual recovery; its conservative upper is `$1.01328552`. PERF023 preserved
+  the packet and topology under a new namespace while correcting only
+  `Cls.from_name` endpoint resolution and `modal app stop -y`. All four arms
+  completed and the comparator passed, but the run failed after measurement
+  because exact-app stop state was checked before Modal's asynchronous state
+  transition converged. Independent verification reached stable zero and the
+  complete measurements remain diagnostic only. PERF024 preserved the exact
+  packet under a new namespace, changed only cleanup verification to poll for
+  bounded stable zero, and passed all 128 measured turns, comparison, and
+  cleanup gates. Its two-replica throughput gain was `1.1442x` at `r030` and
+  `1.3990x` at `r045`; private evidence is pinned at
+  `rayline-ai/router-artifacts@cd832e8d`. PERF025 is source-closed with one
+  `r030` sticky-versus-forced-remap cell to measure cross-replica rebuild and
+  cleanup cost. Providers, generation, runtime-added cells, whole-run retry,
+  and the 1,000-case qualification remain unreachable.
+- [ ] **RSP-009 — Run router-only qualification.** Find cold/warm latency,
+  cache break-even, saturation, memory envelope, and failure behavior without
+  provider spend.
+- [ ] **RSP-010 — Run self-hosted full-stack qualification.** Compare direct,
+  static, ARC, and Remote variants against identical real vLLM worker
+  endpoints.
+- [ ] **RSP-011 — Add the external-provider canary.** Use one dedicated,
+  spend-limited OpenAI-compatible key and two immutable low-cost model IDs;
+  validate dispatch, streaming, usage, cost, and sanitized logs.
+- [ ] **RSP-012 — Publish the comparison and next decision.** State whether the
+  design holds at the frozen target, choose the deployment shape, size the
+  capacity envelope, and route HA journal work to TD046 rather than hiding it
+  in benchmark notes.
+
+## Next Action
+
+The end-to-end stateless MVP is complete, the retained engine canary passes,
+RSP-004A's implementation boundary is landed, and RSP-004Q is fully prepared
+but held:
+
+1. Treat the original post-stay `0.002` guard as rejected. On 60 canonical C82
+   dev attempts it changed 40/524 decisions (`7.63%`) and increased switches
+   `14→30`, failing the frozen behavior gate. The sanitized replay is pinned at
+   `rayline-ai/router-artifacts@b947be95f9181058270b572d285c7efde5b5b074`.
+2. Retire the global rule rather than promoting its `pre_stay` ordering. The
+   targeted 178-state route-0 screen observed four cross-model changes, one
+   unscorable change, mean paired reward delta `-0.1667`, and worst delta
+   `-0.5`; it is rejected fail-closed. This screen excludes the C82 source
+   lineages but does not claim complete task-identity disjointness. Evidence is
+   pinned at
+   `rayline-ai/router-artifacts@d4a2d67b10b0e435c70de10a320c2b0590d520e8`.
+3. Use only the narrow `0.0005` same-model thinking tie-break. It changed 0/178
+   targeted route-0 states and 0/524 historical decisions, with zero cross-model
+   changes and switches preserved at 14. This establishes scope and historical
+   compatibility, not changed-action task quality.
+4. Treat the narrow-rule recanary as the final live readiness gate before the
+   full corpus: it passed 6/6 with zero flips, exact token counts, `0.001191`
+   maximum gap drift, `0.99998497` minimum embedding cosine, zero provider
+   calls, and stopped cleanup. Its bundle is pinned at
+   `rayline-ai/router-artifacts@b707b2715018edaa269e08e16f1755491d79fd06`.
+5. Keep the frozen **RSP-004Q** packet at Pathfinder `63eead46` held. It is
+   registered, digest-verified, dual-interlocked, and budgeted at a cumulative
+   conservative `$14.484864` against the `$20` cap. Actual 1,000-case arms
+   launched remain zero; only explicit user confirmation may change that.
+6. Treat the RSP-005 MVP path as end-to-end proven: the capability-gated client,
+   hermetic stack, protected H100 session endpoint, concurrent sessions,
+   rebuild path, and real Semantic Router gateway are green.
+7. Treat the 128-case development qualification as complete: parity, latency,
+   throughput, residency, eviction, affinity loss, restart, and cleanup passed
+   with zero selection flips and no provider calls. Keep stateless full-history
+   replay as the reconstructible fallback.
+8. Treat the bounded real-endpoint MVP gate as complete at `rwe009`: protected
+   retained H100 encoder, ARC, dedicated Envoy TLS routes, two real L4 vLLM
+   workers, concurrent routing, streaming, metrics, privacy, and cleanup pass.
+9. Treat the original direct-versus-ARC ladder as a confounded regression
+   baseline, not a capacity curve. The source-frozen static-control diagnostic
+   passed with exact token parity and measured ARC/static throughput ratios of
+   `0.748` and `0.755` at concurrency one and four. More than 99% of ARC routing
+   time was the protected encoder/session request, while generation-worker
+   queues stayed empty. The subsequent encoder-only work replaced vLLM
+   terminal-request histograms and hot Prometheus polling with append-scoped
+   timing plus cached scheduler peaks. PERF005 completed all 92 calls with
+   coordinator in-flight max `8`, but failed because its occupancy metric was
+   sampled after one-step pooling requests completed. PERF006 moved the
+   observation before output removal and emitted a complete failure receipt.
+   At concurrency eight, create and append reached `5.742` and `5.831 req/s`;
+   p95 latency was `1.407s` and `1.393s`; mean vLLM queue time was only
+   `0.030ms` and `0.044ms`; coordinator in-flight max was `8`; and all 92
+   requests passed. The engine reported waiting max `8` but scheduled max `0`,
+   which traced to `ObservabilityConfig.enable_logging_iteration_details=False`,
+   not proof of absent batching. Semantic Router `d70a35bd` enables that signal
+   while keeping request logging disabled. The distinct PERF007 microprobe
+   then passed one frozen eight-call wave: coordinator in-flight max `8`,
+   pre-execution scheduled max `7`, waiting max `8`, zero failures, `4.208
+   req/s`, `1.899s` p95, and `0.023ms` mean engine queue time. This accepts
+   batch existence, not saturation capacity or an SLO. The v4 plugin source
+   digest remains
+   `67a9015c0c0399d4846930a9836982dd62c4a42f537af9f6c8917eb3beed23e5`.
+   PERF005, PERF006, and PERF007 are privately pinned at
+   `rayline-ai/router-artifacts@462cc5cefdba03ceb66284611dfa1f4da1652b98`,
+   `rayline-ai/router-artifacts@67c44b5a188960a270756da3e62afc97f6d5d8be`,
+   and
+   `rayline-ai/router-artifacts@2ffc810d8494dd23e3811dff49b8cb2da7a4a014`.
+   PERF008 then stopped before its soak because the cold readiness call exceeded
+   Pathfinder's readiness TTL and the harness incorrectly required exactly two
+   encoder calls. It made zero soak prepares and was closed without retry.
+   PERF009 proved encoder metrics were zero before readiness and allowed the one
+   legitimate TTL refresh. It passed all 128 capped prepare/abort transactions
+   in `12.473s` at `10.263 req/s`; prepare latency was `0.721s` p50, `1.036s`
+   p95, and `1.484s` p99. Pathfinder in-flight reached `8`, encoder backend
+   in-flight reached `7`, vLLM scheduled batch width reached `6`, all 128
+   encoder calls succeeded, and final residency, provider calls, and provider
+   spend were zero. Mean encoder queue time was `0.013ms`, versus `196.347ms`
+   inference and `273.647ms` encoder e2e. The private receipt is pinned at
+   `rayline-ai/router-artifacts@f1fab622034e913400b6cc6962d020cbd7eeea98`.
+   Conservative accounting charges both full envelopes and is now
+   `$31.72978162`, leaving `$8.27021838` below the approved `$40` cap; the
+   PERF009 launcher-window upper estimate was `$0.217977`. No prior packet may
+   be retried or reinterpreted.
+   PERF010 then failed during local module import before its budget guard or any
+   external mutation; it created no app, credential, CPU/GPU resource, or cost
+   and was closed without retry. PERF011 added a detonated direct-script
+   regression test and completed the otherwise unchanged same-region packet.
+   All 128 transactions passed at `10.199 req/s`; prepare latency was `0.752s`
+   p50, `1.086s` p95, and `1.112s` p99. Pathfinder and encoder in-flight both
+   reached `8`, scheduled batch width reached `7`, every encoder call
+   succeeded, provider traffic was zero, and final residency was zero. Against
+   PERF009, p50 and throughput ratios were `1.042` and `0.994`, so neither
+   strong-placement threshold passed; p99 improved to `0.749x`, but mean
+   encoder inference/e2e grew to `2.377x/2.413x` while queue time remained only
+   `0.018ms`. This rejects colocation as an obvious p50/throughput win without
+   claiming a pure network cause. The immutable private receipt is pinned at
+   `rayline-ai/router-artifacts@02d01f19d6c481b5a2113ea8ece5065e0185a221`.
+   Conservative accounting is now `$34.31359042`, leaving `$5.68640958` below
+   the approved `$40` cap; the PERF011 launcher-window upper estimate was
+   `$0.448730`.
+   PERF012 then attempted the region-controlled remote topology: London
+   Pathfinder to an explicitly `us-east` encoder. Its first zero-metrics call
+   timed out at 90 seconds while vLLM was compiling the Qwen GDN Triton warmup
+   kernel, before any prepare or provider call. It is charged the full
+   `$2.4996168` envelope and was not retried. A disconnected Modal request
+   continued creating replacement containers after zero inventories; exact app
+   shutdown was required to cancel it. PERF013 failed closed at the existing-
+   container preflight before creating a token, deployment, or cost.
+   The separately preregistered PERF014 raised only the protected encoder
+   cold-start deadline to 240 seconds and made cleanup own the stable exact app
+   name across redeploy IDs. It passed 128/128 transactions in `14.623s` at
+   `8.753 req/s`; prepare p50/p95/p99 were `0.950s/1.286s/1.308s`, Pathfinder
+   and encoder in-flight both reached `8`, vLLM scheduled `7`, and failures,
+   contention, residency, provider calls, and provider spend were zero. Its
+   encoder inference/e2e means were `0.502s/0.614s`: `1.076x/0.930x` PERF011,
+   but `2.558x/2.244x` PERF009. Because the explicitly pinned remote run
+   reproduced the colocated encoder time without colocating Pathfinder,
+   region/host/warmup/batching variability is the stronger explanation for the
+   original encoder gap; one sample does not establish causality. End-to-end
+   p50 and throughput were worse than both prior samples, so the evidence does
+   not justify colocation.
+   The PERF014 receipt is privately pinned at
+   `rayline-ai/router-artifacts@81ab491a303c5e7b45e5706400fe748a1568ba50`.
+   Conservative accounting through PERF014 is `$39.31282402`; its launcher-
+   window upper estimate was `$0.330942`. Keep the independent endpoint as the
+   MVP default.
+   The user then authorized another `$20`, and PERF015 ran one exact
+   source-frozen 128-turn packet per arm against the same protected `us-east`
+   H100. Eager, Remote, and ARC each completed 128/128 with zero failures and
+   the same worker-trace digest. ARC reached `0.318 rps`, `9.09s` p50, `76.70s`
+   p95, and `98.72s` p99 versus Remote `0.251 rps`, `14.09s`, `90.54s`, and
+   `99.92s`, and eager `0.234 rps`, `15.82s`, `96.14s`, and `108.09s`.
+   Therefore every relative gate passed, including ARC/Remote throughput
+   `1.264x` and p95 `0.847x`, while all arms failed the frozen absolute 8 rps,
+   1s p95, and 2s p99 gates. This supports retained KV but rejects production
+   SLO qualification on histories averaging about 42k tokens and peaking near
+   248k. The observed launcher-window resource upper estimate was `$2.467912`,
+   providers were unused, cleanup reached 65 seconds of stable zero, and five
+   aggregate receipts are privately verified at
+   `rayline-ai/router-artifacts@6e391a8b77394d730af2117ccc79482dd45c65de`.
+   The cumulative full-envelope maximum is `$49.47255682` under the
+   `$59.31282402` authority, leaving `$9.8402672` conservative reserve. The
+   PERF016 then repeated the exact packet with v2 receipts. All arms completed
+   128/128 with the same worker trace, and all relative gates passed again. ARC
+   reached `0.349 rps` and `10.19s/63.07s/85.09s` p50/p95/p99 versus Remote
+   `0.277 rps` and `12.04s/82.42s/92.18s`. Its ARC/Remote throughput ratio
+   (`1.256x`) nearly duplicated PERF015 (`1.264x`). ARC explicitly retained
+   1,205,793 of 5,703,416 full-history tokens through 34 creates and 102 appends
+   with zero rebuilds. The p95 win concentrated above 32k tokens, while `<8k`
+   was `1.116x` Remote under the queued lane mix. The run used a `$2.268730`
+   launcher-window resource upper estimate, cleaned to stable zero, and is
+   privately pinned at
+   `rayline-ai/router-artifacts@5bf052dffeaa5ffbfb5cc333741e18aaba81c9e0`.
+   Close PERF016 without retry. Preregister a bounded concurrency sweep with
+   state isolation between cells before another launch; do not increase
+   qualification size opportunistically. That PERF017 implementation and exact
+   packet were ready, but PERF017 failed before measurement because the first
+   cold-start health read timed out outside the readiness loop. Its cleanup is
+   complete and the one-shot ID is closed. Normalize transient startup
+   transport failures, preregister the otherwise identity-equivalent PERF018,
+   and execute it once. PERF018 reached c1 Remote but correctly failed before
+   ARC when startup readiness's retained session violated the empty-state
+   gate. Close PERF018, make the production readiness probe close its session,
+   and preregister otherwise identical PERF019. The additional USD 20 authority
+   opened exactly one execution. PERF019 passed all six arms and cleanup gates;
+   close its source interlock without retry and keep the held 1,000-case
+   qualification closed. Implement and execute PERF020 exactly once after its
+   signed source and registry checkpoints are both remote-visible. Use no
+   provider or generation endpoint, do not add rate cells at runtime, and close
+   launch authority after success or failure. Use its scheduled-arrival
+   latency and final-arrival backlog to bracket the single-encoder knee before
+   considering a multi-replica affinity experiment. PERF020 failed exactly
+   once on direct-client stale idle connections and is closed. Prepare PERF021
+   under a new ID with transaction-boundary connection close and realized-rate
+   diagnostics; do not reinterpret the valid ARC-only curve as parity evidence.
+   PERF021 passed its one authorized run and is closed: 192/192 measured turns,
+   zero failures, exact trace/telemetry parity, complete cleanup, and zero
+   provider spend. Preregister the next bounded deployment phase from the
+   measured `0.1862`-to-`0.3724` single-H100 knee; do not reopen PERF021.
+   PERF022 was that phase but stopped before GPU hydration or measurement when
+   Modal rejected function-style lookup of a class web method; close it without
+   retry and privately verify its aggregate failure receipt. PERF023 completed
+   the identity-equivalent four-arm packet and its strict comparator passed,
+   but it failed after measurement because cleanup verification raced Modal's
+   asynchronous app-stop convergence. Close it without retry, privately verify
+   its complete aggregate evidence, and retain the results only as diagnostic.
+   PERF024 was the identity-equivalent successor and passed all four arms,
+   comparator, state-reset, and stable-zero cleanup gates. Its private aggregate
+   evidence is byte-verified at `rayline-ai/router-artifacts@cd832e8d`; close it
+   without retry. Implement PERF025 as one `r030` dual-sticky versus dual-forced-
+   remap cell. Remap every episode after its second pooling request, require the
+   peer to recreate from full history, preserve the exact selected-worker trace,
+   fan close out to both visited replicas, and report token-work plus latency
+   cost under a `$7.4182176` envelope. Keep source closed until distinct
+   Pathfinder preregistration, self-attestation, authorization, and source-pin
+   checkpoints are pushed; then execute it once and close authority after any
+   outcome. PERF025 completed 64/64 measured turns with zero failures or
+   provider calls, exact selected-worker trace parity, nine peer-created
+   responses, 18 fanout closes, and stable-zero cleanup. Its generated
+   comparator passed, but the independent preregistration audit found that
+   `_probe_cell` included the logical arm in the episode-hash namespace. The
+   sticky primary distribution was `[3,6]`; failover stats v1 exposed only the
+   treatment's visited distribution `[9,9]`, so it could not attest matching
+   primary placement. Close PERF025 without retry and retain only its
+   correctness, reconstruction, fanout, and cleanup evidence; its performance
+   ratios are confounded and inadmissible as a clean failover-cost estimate.
+   PERF026 is the identity-corrected successor. Give both logical arms the same
+   explicit `shared-affinity` probe/session namespace while retaining distinct
+   receipt names, emit failover-stats v2 with
+   `primary_sessions_by_replica`, and require that vector to exactly equal the
+   sticky arm's unique-session vector before computing performance ratios. Use
+   the same r030 packet, arm order, fault boundary, topology, and `$7.4182176`
+   envelope, with prior observed accounting `$70.1005119398672`; source-close
+   it until distinct Pathfinder preregistration, self-attestation,
+   authorization, and source-pin checkpoints are pushed. Execute it once after
+   those gates and close authority after any outcome. Do not interpret fault
+   injection as production membership or outage detection; keep TD050 and the
+   held 1,000-case qualification open.
+   PERF026 passed its one authorized execution and is closed: 64/64 measured
+   turns, zero failures or providers, exact selected-worker trace, nine peer
+   reconstructions, 18 fanout closes, stable-zero cleanup, and exact `[7,2]`
+   cross-arm primary-placement identity. Forced remap increased appended-token
+   work by `1.0575x` and p50 service latency by `1.1371x`; throughput was
+   `1.0176x`, p95 service latency `0.9533x`, drain `0.9524x`, and final backlog
+   unchanged. Treat the mixed latency/throughput direction as one bounded sample,
+   not a speedup claim. Its observed launcher-window resource upper estimate is
+   `$1.834964`, bringing cumulative observed accounting to
+   `$71.9354755968929`. Privately verify the aggregate packet before registry
+   closure. The next justified live phase is a staged real-replica-stop packet,
+   not another forced-remap sample: preload an identical bounded set of retained
+   sessions through two turns, stop one exact app only in treatment, require
+   bounded transport-failure detection and remap to the surviving replica, then
+   compare turns three and four against a no-stop control. Preregister a new ID,
+   frozen stop boundary, survivor capacity, retry/idempotency semantics,
+   aggregate failure/rebuild/fanout metrics, cleanup, and budget before opening
+   source. Keep production exposure blocked by TD050 and keep qualification held.
+   PERF027 is that source-closed staged packet. Use run ID
+   `rayline-replica-stop-perf027-20260803`, the shared
+   `shared-replica-stop` namespace, and the exact r030 corpus whose eight
+   measured episodes place `[4,4]` across replicas; the one warmup episode makes
+   the all-session vector `[5,4]`. In each arm, warm four turns and preload turns
+   one and two for all eight measured episodes before the boundary. The control
+   performs no stop. Treatment stops exact app
+   `rayline-arc-session-encoder-a`, waits for stopped/zero-container state while
+   encoder B remains deployed with one container, then measures only turns three
+   and four on the same seeded post-boundary schedule. The proxy may retry an
+   unavailable primary only after that orchestration proof, on explicit
+   404/410/502/503/504 or transport failure; cache the episode remap so exactly
+   four detections produce eight peer pooling calls and four created responses.
+   Require identical preload and post-boundary worker traces, `[5,4]` primary
+   identity, 16/16 post-boundary completions per arm, eight survivor closes,
+   five unavailable-owner close skips, survivor zero state, exact final app/
+   container zero, and aggregate-only evidence. The stop-convergence duration
+   is reported but excluded from request latency. Freeze the same `$7.4182176`
+   two-replica envelope from prior observed accounting `$71.9354755968929`;
+   keep providers, generation workers, whole-run retry, and qualification out.
+   PERF027 passed its one authorized launch and is closed. Both arms completed
+   16/16 preload and 16/16 post-boundary decisions with zero failures or
+   providers and exact preload/post-boundary worker traces. Treatment proved
+   app A stopped with zero containers while app B retained one container,
+   detected exactly four affected primaries through explicit HTTP failures,
+   rebuilt four sessions with eight failover pooling calls, closed all eight
+   measured sessions on the survivor, skipped five unavailable-owner closes,
+   and ended with zero retained sessions/tokens and stable-zero resources.
+   The real stop converged in `10.909s`, excluded from request latency. Under
+   the surviving single encoder, post-boundary throughput was `0.1371 rps`
+   versus control `0.2312 rps` (`0.5929x`), p50 service latency was `8.268s`
+   versus `2.590s` (`3.1924x`), p95 was `76.219s` versus `28.707s`
+   (`2.6551x`), and drain was `76.227s` versus `28.716s` (`2.6545x`). The
+   small one-schedule result is capacity-impact evidence, not an SLO or
+   variance claim. Treatment appended-token work was `1.0263x` control while
+   retained work was `0.8945x`. Observed launcher-window resource upper cost
+   was `$1.705028`, bringing cumulative observed accounting to
+   `$73.64050361447986`. The ten aggregate-only files are byte-for-byte
+   verified at
+   `rayline-ai/router-artifacts@2c38ad5760961b04f80c4d2c9d5c1bd85c78ae41`.
+   Stop further live expansion: use PERF024/PERF026/PERF027 to implement the
+   versioned production membership, health, idempotency, observability, close,
+   and rollout contract tracked by TD050. Keep the 1,000-case qualification
+   held. That static production contract is now implemented as
+   `rayline.arc.encoder-failover.v1`: two to eight stable replicas, explicit
+   active/draining state, deterministic new-episode affinity, persisted v2
+   owner/visited state, one status-gated remap, ambiguous-failure fail-closed,
+   concurrent close fanout, and low-cardinality metrics. The real Envoy,
+   Semantic Router, Redis, and two-fake-encoder integration passes failover,
+   survivor stickiness, cooldown recovery, router restart, Redis loss, cleanup,
+   and privacy. No GPU or provider was used and the implementation phase spent
+   `$0`, so cumulative observed accounting stays
+   `$73.64050361447986`; `$60.67232040552014` remains under the
+   `$134.31282402` cap before the required `$3` reserve. Do not add another paid
+   performance run from the present evidence: PERF027 already proves the
+   expected single-survivor capacity penalty. Reopen live measurement only
+   after a preregistered change to survivor capacity, automatic membership, or
+   another deployment variable capable of changing that boundary. Track
+   automatic provider/controller discovery under TD050 and keep the 1,000-case
+   qualification held.
+10. Treat ORC001 and ORC002 as closed local-contract failures and ORC003,
+    ORC004, and ORC005 as closed provider-limit failures, all with complete
+    cleanup and private aggregate receipts. ORC005 proves three-arm coverage
+    through OpenRouter with DeepSeek/GLM pinned to standard Fireworks and Luna
+    pinned to standard OpenAI, without Fireworks Fast or fallbacks; it still
+    fails the complete direct/routed/streaming gate after the routed worker-a
+    retry exhausts. Do not rerun it or interpret provider latency as a stable
+    throughput benchmark. Preregister a traced self-hosted diagnostic that
+    isolates the decision plane before another capacity packet.
+11. Treat the production retry ownership implementation as hermetically green:
+    Envoy retries one OpenRouter 429/503 below a single Rayline decision,
+    honors bounded `Retry-After`, reports logical and wire counts separately,
+    and never retries after HTTP 200. Self-hosted vLLM routes have no retry
+    policy. The external canary no longer retries, but TD049 remains pending
+    until a separately authorized real-provider confirmation passes.
+12. Keep the 1,000-case release qualification held until the user explicitly
+    confirms execution.
+
+## TD050 Dynamic Membership Continuation
+
+### Goal
+
+Replace the manual, static retained-encoder replica list with an optional,
+reviewed Redis membership source. The request contract remains
+`rayline.arc.encoder-failover.v1`: deterministic affinity, persisted owner and
+visited-owner state, one status-gated remap, ambiguous-failure fail-closed,
+and explicit close fanout do not change.
+
+### Task List
+
+- [x] DYN001: Add the versioned Redis membership document and a runtime
+  snapshot reader. Each router starts only after reading a valid two-to-eight
+  member document and atomically adopts newer revisions without replacing a
+  stable replica identity's endpoint.
+- [x] DYN002: Add controller-owned active-to-draining and drain-completion
+  operations. A controller must wait the idle boundary, prove no persisted
+  owner or visited-owner references remain, and use a compare-and-set revision
+  before removing a draining member.
+- [x] DYN003: Preserve close and failure safety across snapshot changes,
+  including retained clients for a removed owner until router shutdown and
+  fail-closed behavior for an invalid or unavailable membership source.
+- [x] DYN004: Add config/CLI parity, focused unit coverage, and the two-encoder
+  Envoy/Semantic Router/Redis integration case for active, draining, and
+  controller-confirmed removal.
+- [x] DYN005: Deliver a standalone least-privilege membership controller
+  command and image. `status`, `drain`, `reconcile`, and continuous `run`
+  consume the canonical router config, resolve the write credential only in
+  the controller process, emit privacy-safe JSON, and drive the Compose
+  active-to-draining-to-removed acceptance without fabricating those
+  revisions in the test harness.
+- [x] DYN006a: Add idempotent controller `register`, readiness-safe router
+  adoption of newly registered clients, controller-driven scale-out in the
+  hermetic E2E, and focused contract tests.
+- [x] DYN006b: Implement a source-closed three-encoder real-stop launcher,
+  strict comparator, aggregate dynamic lifecycle telemetry, exact-image pin,
+  and one-shot cleanup/budget interlocks.
+- [x] DYN006c: Push signed source and registry checkpoints, open the exact
+  one-shot authority, execute the preregistered cell once, privately verify
+  aggregate evidence, and close launch authority after success or failure.
+
+### DYN006 Result
+
+DYN006 passed its single authorized execution. Both arms completed 16/16
+preload and 16/16 post-boundary decisions with matching selected-worker traces,
+zero failures, and zero provider calls. Controller registration produced
+revision 2 and exact `[2,3,3]` placement in both arms. Treatment drain produced
+revision 3, exact app A stopped in `0.876s` and converged in `16.576s`, two
+affected sessions failed over to B/C, and the five-minute idle boundary ended
+at revision 4 with `[0,4,4]` ownership and active B/C only.
+
+Control completed at `0.2390 rps`, with `3.470s` p50 and `26.456s` p95 service
+latency. Treatment completed at `0.2072 rps`, with `3.743s` p50 and `38.859s`
+p95. Ratios were `0.8668x` throughput, `1.0785x` p50, and `1.4688x` p95, passing
+the frozen `>=0.75x` throughput and `<=2.0x` latency gates. All 94 gateway
+selections reconciled; treatment recorded exactly two failovers and two
+unavailable-owner closes. All apps, containers, local stacks, episode states,
+and the proxy token reached stable zero.
+
+The exact source authorization was `493b2149`, permanent source closure is
+`e260440d`, Pathfinder result closure is `028a37c6`, and the eight-file private
+aggregate bundle is byte-for-byte verified at
+`rayline-ai/router-artifacts@fb75f38d20c7fdd1a2565bce52b9dd094bc3285c`.
+The 1,000-case qualification was not executed.
+
+### Next Action
+
+Continue the single-router end-to-end serving proof below. Park
+multi-router transactional consistency in
+[GitHub issue #2756](https://github.com/vllm-project/semantic-router/issues/2756)
+and leave Kubernetes fleet provisioning under TD050. AGT001 through AGT006,
+DGN001, DGN002, and DYN006 are permanently closed; do not rerun them. AGT006
+passed direct key readiness but stopped on the first static gateway probe, so
+no serving-performance result is admissible. Diagnose that seam without
+reinterpreting the failed packet. Keep the 1,000-case qualification held until
+explicit user confirmation.
+
+### AGT001 OpenRouter Agentic Serving Diagnostic
+
+AGT001 answers one bounded deployment question: what client-visible throughput,
+TTFT, and end-to-end latency does the complete Rayline ARC serving path deliver
+for small realistic agentic requests when generation is provided by three real
+models through OpenRouter, and how much routing overhead does it add relative to
+both direct OpenRouter and a specified-model static gateway?
+
+The frozen generation pool is:
+
+- `deepseek/deepseek-v4-flash`, pinned through OpenRouter to standard Baidu;
+- `xiaomi/mimo-v2.5`, pinned through OpenRouter to standard Xiaomi; and
+- `tencent/hy3`, pinned through OpenRouter to standard Tencent.
+
+Provider fallback and reasoning are disabled, and Fireworks Fast, Kimi, GLM,
+and Luna are absent. The source snapshot records the 2026-08-03 endpoint prices
+and health contract. All requests carry public synthetic coding, research, or
+incident-triage histories with an assistant tool call, a bounded tool result,
+and a final synthesis turn. Output is streamed and capped at 96 tokens.
+
+The benchmark first discovers exactly two frozen cases per selected worker and
+requires all three workload shapes. It then compares the same six payloads
+through `direct`, `gateway_static`, and full `arc` paths at concurrency one and
+four. Two serial waves plus one doubled concurrency-four wave produce exactly
+72 measured generations; coverage stops by 24 generations. The source contains
+no request-count argument or duration-unbounded loop. The report includes:
+
+- completed requests/second and output tokens/second;
+- client TTFT and end-to-end p50/p95/max;
+- per-model/provider latency, tokens, and cost;
+- Envoy upstream service time, logical requests, external attempts, retries,
+  and retry exhaustion;
+- exact ARC selection coverage, session creates, failures, and cleanup; and
+- ARC/static throughput and latency deltas beside the existing pure-Modal
+  diagnostic reference (`0.748x`/`0.755x` throughput at c1/c4 and
+  `+0.351s`/`+0.596s` p95).
+
+The pure-Modal absolute throughput is not an interchangeable model benchmark:
+it used Qwen3.5-0.8B generation on two Modal L4 workers and shorter inputs. Only
+normalized ARC-versus-static overhead is compared directly. AGT001's absolute
+OpenRouter numbers describe the requested hybrid deployment: local
+Envoy/Semantic Router/Redis, the protected Modal H100 Rayline encoder, and real
+OpenRouter generation.
+
+The ephemeral OpenRouter key has a `$0.75` server-enforced limit and the report
+has a stricter `$0.50` provider-cost gate. The 30-minute protected-H100 ceiling
+is `$4.9992336`; the total full envelope is therefore `$5.7492336`. Added to
+the `$77.72054280274334` cumulative observed accounting, the conservative
+maximum is `$83.46977640274334`, below the existing `$134.31282402` authority.
+The launcher must delete both transient credentials, stop the exact encoder,
+remove Compose state, scan for credentials and public request bodies, and
+reach stable zero after success or failure.
+
+- [x] AGT001a: Freeze the requested model/provider pool, public tool-use
+  workload, three-path comparator, source bounds, and focused unit tests.
+- [x] AGT001b: Pass the source-exact artifact/config checks, focused Python
+  suite, Rayline Compose integration, and repository gates.
+- [x] AGT001c: Push the signed Semantic Router checkpoint, preregister and
+  authorize the exact one-shot packet in Pathfinder, then execute once.
+- [x] AGT001d: Privately pin the aggregate failure receipt, record that no
+  pure-Modal comparison is admissible, close authority, and verify stable zero
+  cleanup.
+
+#### AGT001 Result
+
+The single authorized AGT001 attempt closed during ARC startup on 2026-08-03,
+before workload discovery or any generation request. The configured protected
+encoder URL returned HTTP 404 and the Modal app recorded no request from the
+attempt, so the router marked `artifact_head_encoder` not ready. OpenRouter
+reported exactly `$0.00000000` of ephemeral-key usage. The launcher deleted the
+ephemeral key and Modal proxy token, removed the Compose stack, stopped the
+exact encoder container inventory to stable zero, and its signed source closure
+clears the authorization pin. No latency or throughput inference is admissible
+from AGT001 and it cannot be rerun.
+
+Use a new AGT002 registry ID to replace the stale deployed-endpoint assumption
+with an explicit source-pinned deployment of the current retained-session
+encoder before creating the OpenRouter key. Preserve the frozen models,
+providers, workloads, counts, metrics, cost gates, and pure-Modal comparison;
+only the encoder deployment lifecycle and resulting identity pins may change.
+
+### AGT002 Source-Pinned Encoder Retry
+
+AGT002 preserves AGT001's exact three OpenRouter models/providers, public
+agentic payloads, request counts, concurrency cells, output cap, direct/static/
+ARC paths, metrics, retry bounds, cost ceilings, privacy contract, and
+pure-Modal comparison doctrine. Its only experimental correction is the
+external encoder lifecycle.
+
+The retained-session encoder was explicitly deployed from Semantic Router
+`0e07fa25` with plugin source digest `1ff4ee4d7a22`, vLLM `9f5ea81c`, and Qwen
+revision `2fc06364`. Modal assigned deployed app
+`ap-XtsWCBEWdw1ncu9Kv12Chj`; its protected route returns HTTP 401 without a
+proxy token and its inventory is deployed with zero tasks. Before any
+OpenRouter key creation, the launcher must:
+
+1. attest that exact deployed app ID/name, zero-task state, protected route,
+   deployment-source commit, plugin digest, vLLM build, and model revision;
+2. refuse any pre-existing encoder container;
+3. create a transient Modal proxy token and obtain a healthy zero-session,
+   zero-token response from the protected endpoint, allowing the cold H100 to
+   initialize; and
+4. only then create the server-limited OpenRouter key and start Compose.
+
+If encoder initialization fails, no OpenRouter key or provider request may
+exist. Cleanup remains unconditional and stops the exact new app's container.
+The packet retains the `$0.75` OpenRouter hard limit, `$0.50` reported-cost
+gate, 30-minute H100 limit, `$5.7492336` total envelope, and existing
+`$134.31282402` authority. AGT001 used zero provider and GPU spend, so the
+conservative cumulative envelope remains `$83.46977640274334`.
+
+- [x] AGT002a: Deploy and attest the current zero-task protected encoder; move
+  encoder health before OpenRouter key creation; update exact cleanup ownership
+  and focused tests.
+- [x] AGT002b: Pass repository lint, focused tests, source-exact config startup,
+  and the hermetic Rayline Compose suite.
+- [x] AGT002c: Push the signed source checkpoint and complete distinct
+  preregistration, source attestation, authorization, and launch-pin commits.
+- [x] AGT002d: Execute once, privately pin the aggregate receipt, permanently
+  close authority, verify stable zero, and compare normalized ARC/static
+  overhead with the pure-Modal reference.
+
+AGT002's only authorized attempt failed its preregistered coverage gate before
+measurement. Across the maximum 24 discovery requests, C82 selected
+DeepSeek/Baidu 16 times, MiMo/Xiaomi zero times, and HY3/Tencent 8 times; the
+required two cases per worker therefore could not be frozen. No direct, static,
+or ARC measurement cell ran, so no TTFT, latency, throughput, retry, or
+pure-Modal performance comparison is admissible. OpenRouter charged
+`$0.01228052`; the full launch-wall H100 upper estimate is `$0.769326504`.
+Cleanup returned Compose and the encoder to stable zero, independently proved
+the ephemeral key absent, and closed source authority at Semantic Router
+`b8caee17`. The private aggregate failure receipt is pinned at
+`rayline-ai/router-artifacts@53c13911` with SHA-256 `d0d307920420847f7f1b267276c256b261d447001b6017efd97ad1df3b4b6024`;
+Pathfinder closes the packet at `6cdc1c4f`.
+
+The next packet must treat natural ARC model share as a result instead of a
+precondition: prove each native endpoint separately, allow a zero-share worker
+in the routed workload, and freeze each static control to ARC's observed
+assignment for the same request. That preserves a realistic model mix while
+still measuring direct, static, and ARC overhead. Any such change requires a
+new registry ID and authorization chain; AGT002 cannot retry.
+
+### AGT003 Natural-Mix Measurement
+
+AGT003 keeps the exact DS4 Flash/Baidu, MiMo V2.5/Xiaomi, and HY3/Tencent pool,
+provider pins, public agentic histories, 96-token cap, 24-request discovery,
+six-case and 72-request measured workload, concurrency cells, retry bounds,
+cost ceilings, protected encoder deployment, privacy contract, and cleanup.
+It changes only the failed coverage interpretation:
+
+1. issue one specified-model gateway reachability probe to each exact endpoint;
+2. run all 24 ARC discovery requests and report their natural model share;
+3. require at least two active workers and select six balanced cases spanning
+   all three scenario shapes, while allowing the third worker to have zero
+   natural share; and
+4. freeze direct and static controls to each selected case's observed ARC
+   worker, then run the unchanged direct/static/ARC measurement cells.
+
+The three reachability probes increase the logical provider ceiling from 96 to
+99 and the two-attempt wire ceiling from 192 to 198. The `$0.75` key limit,
+`$0.50` reported-cost gate, H100 limit, user budget, and held 1,000-case
+qualification do not change. A distinct AGT003 registration and authorization
+chain is required.
+
+- [x] AGT003a: Implement and validate endpoint probes, natural-share selection,
+  zero-share reporting, fixed request bounds, and aggregate-only evidence.
+- [x] AGT003b: Preregister and complete the distinct source-attestation,
+  authorization, and final launch-pin chain.
+- [x] AGT003c: Execute once, privately pin the aggregate result, permanently
+  close authority, verify stable zero, and compare normalized overhead with the
+  pure-Modal reference.
+
+AGT003's only authorized attempt failed its first specified-model gateway probe
+with HTTP 404 before a completed response. Natural ARC discovery and all
+measurement cells remained untouched, and OpenRouter recorded exactly `$0`
+usage. The launcher returned Compose and the encoder to stable zero, proved the
+ephemeral key absent, and closed source authority at `b1b291b2`. Its private
+aggregate receipt is pinned at `rayline-ai/router-artifacts@3402e2ce` with
+SHA-256 `bc655d826e1ba56d2d41ffe290ef4e0cc25c0d341b5c2c88aa454c43bdf2e920`;
+Pathfinder closes the packet at `65ed3832`.
+
+The specified-model control had supplied a public placeholder Authorization
+value. Unlike ARC dispatch, which explicitly overwrites caller authorization
+with its artifact-owned credential, specified-model routing uses the configured
+credential path and must receive no caller credential from this unauthenticated
+benchmark ingress. The hermetic stack already proves that a headerless static
+control becomes exactly one config-owned provider credential and rewrites
+`worker-a` to its external provider model ID.
+
+### AGT004 Config-Owned Static Credentials
+
+AGT004 removes caller Authorization from all gateway requests. Direct
+OpenRouter requests continue to use the ephemeral key; specified-model gateway
+requests rely on the router's config-owned credential; ARC requests rely on the
+artifact-owned credential. The exact AGT003 models, providers, endpoint probes,
+24-request natural-mix discovery, six selected cases, 72 measured requests,
+request/attempt bounds, retry policy, cost ceilings, protected encoder,
+privacy, cleanup, and pure-Modal comparison doctrine remain unchanged.
+
+- [x] AGT004a: Implement and validate path-specific credential ownership,
+  including the hermetic static-control provider-key and model-rewrite proof.
+- [x] AGT004b: Preregister and complete the distinct source-attestation,
+  authorization, and final launch-pin chain.
+- [x] AGT004c: Execute once, privately pin the aggregate result, permanently
+  close authority, verify stable zero, and compare normalized overhead with the
+  pure-Modal reference.
+
+AGT004's only attempt failed its first headerless worker-a static probe with
+HTTP 404, exactly as AGT003 had. It therefore produced no discovery or measured
+requests and OpenRouter usage remained `$0`. Cleanup returned the key, proxy,
+Compose, and encoder-container inventories to zero. The aggregate-only receipt
+is private and exact-round-trip verified at
+`rayline-ai/router-artifacts@1eb0037c` with SHA-256
+`8c647dd2010794c3da70356d4676cdd408e3f4706730cb486aceb21b756ab809`;
+Semantic Router `5c9f0e7a` and Pathfinder `4e6ab4dc` close the attempt. Removing
+caller Authorization consequently falsified the duplicate-credential theory,
+but the failure still did not identify the malformed seam.
+
+### DGN001 Real Static-Mutation Diagnostic
+
+DGN001 used the same agentic config, Envoy route, router image, and local
+contract-faithful encoder without starting Modal. Its one authorized packet
+sent three one-token DS4-Flash requests:
+
+1. direct OpenRouter with the Baidu pin;
+2. headerless worker-a static routing with the Baidu pin; and
+3. the same headerless worker-a static route without a provider pin.
+
+All three returned HTTP 200 and the external
+`deepseek/deepseek-v4-flash` model ID. The pinned static path used Baidu; the
+unpinned static path used Morph. This proves the real gateway rewrites the
+worker alias, provider model, path, and config-owned credential correctly. It
+falsifies a deterministic static-mutation defect, but the direct-first order
+does not distinguish transient endpoint availability from new-key or first-
+request propagation. No latency or throughput inference is admissible from
+three diagnostic calls. OpenRouter reported `$0`, no H100 started, and cleanup
+reached zero. The aggregate receipt is private and byte-verified at
+`rayline-ai/router-artifacts@86510f14` with SHA-256
+`40d7a444844ba024492acdeed7ed42d17603fc518b67778e52fd9ad21a3eb274`;
+Pathfinder closes DGN001 at `43d76aca`.
+
+### AGT005 Key-Ready Natural-Mix Measurement
+
+AGT005 preserves AGT004's exact model/provider pool, protected encoder,
+headerless gateway credential ownership, three static endpoint probes,
+24-request natural-mix discovery, six selected cases, 72 measured
+direct/static/ARC requests, concurrency-one and -four cells, 96-token measured
+cap, retry policy, metrics, privacy, cleanup, and normalized pure-Modal
+comparison. It adds only one direct DS4-Flash/Baidu readiness request with a
+one-token cap before the existing static probes.
+
+The readiness canary receives at most two attempts and may treat an initial
+HTTP 404, 429, or 503 as transient. All ordinary direct calls retain only the
+existing 429/503 retry set; gateway retries remain owned by Envoy. The packet
+therefore increases from 99 to 100 logical provider requests and from 198 to
+200 maximum external attempts, while measured traffic remains exactly 72
+requests. The `$0.75` key hard limit, `$0.50` reported-cost gate, 30-minute H100
+limit, and `$5.7492336` packet envelope do not change. Charging the observed
+AGT004 upper bound and DGN001's zero spend first gives a prior cumulative upper
+estimate of `$79.110389914743`; the full AGT005 envelope reaches
+`$84.859623514743`, leaving `$49.453200505257` under the current
+`$134.31282402` authority.
+
+- [x] AGT005a: Validate the one-token key-readiness probe, 100/200 request
+  bounds, aggregate v3 report, source-exact config startup, and hermetic ARC
+  stack; then push a signed source-closed checkpoint.
+- [x] AGT005b: Preregister AGT005 in Pathfinder and complete distinct source
+  attestation, one-attempt authorization, and final Semantic Router launch pin.
+- [x] AGT005c: Execute once, privately pin the aggregate receipt, permanently
+  close both authorities, prove stable-zero cleanup, and report real TTFT,
+  latency, throughput, retry, cost, natural mix, and normalized ARC/static
+  comparison. The 1,000-case qualification remains held.
+
+The signed source-closed implementation is `29eb128f`, Pathfinder
+preregistration is `9b115765`, the signed Semantic Router preregistration
+attestation is `e9aea88b`, the distinct Pathfinder authorization is
+`15657a24`, and its finalized registry attestation is `2b31fdcd`. The final
+source pin names only that last remote-visible registry state.
+
+AGT005's only attempt passed protected health, then failed before the direct
+key-readiness canary because ARC's retained-session startup probe was not
+transactionally affine. Modal's aggregate system log shows the probe `POST`
+returned HTTP 200 from one H100 container, while the required `DELETE`
+cold-started a second container and returned HTTP 200 after `78.9s`. The
+process-local session was absent there, so its bounded `{closed:false}`
+contract correctly left `artifact_head_encoder` not ready. OpenRouter usage
+was exactly `$0`; no discovery or measured request ran. Cleanup returned the
+key, proxy, Compose, volume, and encoder-container inventories to zero. The
+conservative 188-second H100 upper estimate is `$0.522142176`, bringing the
+cumulative observed upper estimate to `$79.632532090743`. The private failure
+receipt is byte-verified at `rayline-ai/router-artifacts@1086cddd` with
+SHA-256 `cbe8138dd8b7b95bfa247073f7d2098935766546c8fb7d275ba7b44dbf830170`;
+Semantic Router `5acb9406` and Pathfinder `70154044` close the run. No
+performance inference is admissible.
+
+### DGN002 Singleton Retained-Session Affinity
+
+DGN002 tests the deployment invariant exposed by AGT005 without creating an
+OpenRouter key or starting generation. The benchmark launcher temporarily
+overrides the exact deployed Modal class to `min_containers=1`,
+`max_containers=1`, `buffer_containers=0`, and a 300-second scale-down window
+before protected health. Unconditional cleanup restores `min_containers=0`
+with the source-frozen remaining settings, then stops the exact container and
+proves stable zero. This is not merely a warm-start optimization: the retained
+KV/session owner is process-local, so one live singleton is required for
+correctness during a run.
+
+The paid diagnostic will create one transient Modal proxy, require empty
+health, create and explicitly close one public synthetic retained session,
+require empty health again, restore scale-to-zero, delete the proxy, and stop
+the exact container. It records aggregate status, create/close success, token
+counts, and resource upper bound only. No OpenRouter credential, model route,
+prompt, embedding, raw episode ID, or timestamp may enter the receipt.
+
+- [x] DGN002a: Validate singleton pin/restore ownership, source-close the
+  launcher, and pass focused tests, repository lint, and hermetic ARC
+  acceptance.
+- [x] DGN002b: Preregister and execute one zero-provider retained-session
+  create/close diagnostic, privately pin the aggregate receipt, and prove
+  autoscaler plus container cleanup.
+- [x] DGN002c: If affinity passes, preregister AGT006 as AGT005's otherwise
+  unchanged full successor. If it fails, stop and redesign the state owner;
+  do not hide the result with request retries.
+
+DGN002 passed its only authorized attempt. With the exact Modal class pinned,
+one protected container created an 11-token session at revision 1 in `1.258s`,
+explicitly closed it in `0.456s`, and returned empty health in `0.441s`.
+Cleanup restored the zero-minimum autoscaler, deleted the transient proxy, and
+stopped the exact container with zero tasks. The 84-second conservative H100
+upper estimate is `$0.233297568`, bringing cumulative observed accounting to
+`$79.865829658743`; provider spend remained zero. The private aggregate
+receipt is byte-verified at `rayline-ai/router-artifacts@7c970c93` with
+SHA-256 `175267bb1da22c6970faf8dc6cb1197a322189b7430ca21e40ffca25bcb2ca14`;
+Pathfinder closes the diagnostic at `5246afce`. This proves lifecycle affinity,
+not throughput or high availability.
+
+### AGT006 Singleton-Pinned Natural-Mix Measurement
+
+AGT006 is AGT005 under a new run/state namespace with exactly one experimental
+correction: DGN002's benchmark-owned Modal singleton lifecycle surrounds the
+complete session-bearing window. The three OpenRouter models/providers,
+one-token direct key readiness, three static endpoint probes, 24 ARC discovery
+requests, natural-share case selection, six cases, 72 measured requests,
+direct/static/ARC paths, concurrency one and four, 96-token measured cap,
+100/200 request bounds, retry rules, aggregate metrics, privacy, and normalized
+pure-Modal comparison remain unchanged.
+
+Before proxy health, the launcher pins the exact deployed class to
+`min=1/max=1/buffer=0`; unconditional cleanup restores `min=0/max=1/buffer=0`,
+deletes credentials and Compose/Redis state, and stops the exact container.
+The `$0.75` OpenRouter hard limit, `$0.50` report gate, 30-minute H100 ceiling,
+and `$5.7492336` packet envelope are unchanged. Charging DGN002 first gives a
+prior cumulative observed upper estimate of `$79.865829658743`; a full AGT006
+envelope reaches `$85.615063258743`, leaving `$48.697760761257` under the
+current `$134.31282402` authority.
+
+- [x] AGT006a: Source-close and validate the singleton lifecycle, focused
+  benchmark tests, repository lint, hermetic full-stack acceptance, updated
+  performance contract, and execution plan.
+- [x] AGT006b: Preregister AGT006 and complete distinct Semantic Router
+  attestation, Pathfinder one-attempt authorization, registry attestation, and
+  final source launch pin.
+- [x] AGT006c: Execute once, privately pin the aggregate receipt, close both
+  authorities, prove autoscaler and resource cleanup, and report the real E2E
+  throughput, TTFT, latency, retry, cost, natural mix, and normalized
+  ARC/static comparison. The 1,000-case qualification remains held.
+
+The remote-visible launch chain is Pathfinder preregistration `25ef39da`,
+Semantic Router source attestation `eb33a209`, Pathfinder authorization
+`f97d502d`, and Pathfinder registry attestation `5df342cc`. The final signed
+Semantic Router source checkpoint pins both Pathfinder authorities and is the
+only checkpoint permitted to launch the one AGT006 attempt.
+
+AGT006's only attempt passed the singleton encoder warmup and one-token direct
+DS4/Baidu readiness, then the first specified-model static gateway request
+returned HTTP 404 before a completed streamed response. Discovery and all 72
+measured requests did not run, so there is no TTFT, latency, throughput,
+natural-mix, or ARC/static comparison. OpenRouter usage was zero. Cleanup
+restored the zero-minimum autoscaler, removed Compose and Redis state, deleted
+both transient credentials, and left the protected app deployed with zero
+tasks and containers. The 109-second H100 upper estimate is `$0.302731368`,
+bringing cumulative observed accounting to `$80.168561026743`. The private
+aggregate receipt is byte-verified at `rayline-ai/router-artifacts@ee2d6fc8`
+with SHA-256
+`d28b926c06cb94eddb56cab922376f233dee4e115aa94a68373de807a30bfc2b`.
+Semantic Router closes source authority at `ae323259`, and Pathfinder closes
+the registry at `e3908495`. The 1,000-case qualification remains held.
+
+### DGN003 Gateway-Shape Isolation
+
+DGN003 is a no-H100, six-request diagnostic for the remaining AGT006 failure
+seam. It uses the exact agentic config, Envoy route, router image, fake encoder
+contract, DS4/Baidu pin, and first public synthetic agentic case. In fixed
+order it sends direct/static requests at one token, then two interleaved
+direct/static pairs at the exact 96-token measured cap. It permits no
+client-owned retry; Envoy may make at most one existing 429/503 retry per
+gateway request. The packet therefore has six logical requests and twelve
+external attempts at most.
+
+The aggregate receipt records only path, token cap, status, bounded error
+category/type/code, response model/provider, completion tokens, and attempt
+count. It persists no request body, provider error message, credential,
+episode ID, latency, or timestamp. This packet cannot support performance
+inference. Its ephemeral OpenRouter key is hard-capped at `$0.05`; there is no
+Modal H100 or proxy token. Charging the complete envelope gives a cumulative
+upper bound of `$80.218561026743`, leaving `$54.094262993257` under the current
+`$134.31282402` authority.
+
+- [x] DGN003a: Source-close the local fake-encoder mode, six-request driver,
+  privacy-safe upstream classifier, and focused/hermetic validation.
+- [x] DGN003b: Preregister and authorize exactly one diagnostic attempt, then
+  pin the pushed registry authority in source.
+- [x] DGN003c: Execute once, privately pin and close the aggregate receipt,
+  prove key/Compose/Modal inventories at zero, and choose the AGT007 correction
+  from the observed direct/static and one/96-token matrix.
+
+If direct and static behave alike, treat AGT006 as an upstream transient and
+add only a bounded static readiness retry under a new full packet. If direct
+succeeds while static fails, inspect the sanitized upstream category and fix
+the gateway transport contract before another H100 run. If only 96-token calls
+fail, correct the provider/request-shape contract. In every branch, keep the
+1,000-case qualification held.
+
+The remote-visible DGN003 authority chain is Pathfinder preregistration
+`d40ffb74`, Pathfinder registry attestation `b87a602f`, and the final signed
+Semantic Router launch pin. It authorizes only the six-request, no-H100 packet.
+
+DGN003 passed its only attempt. Direct/static at one token and both repeated
+direct/static pairs at 96 tokens completed 6/6 with HTTP 200, exact DS4/Baidu
+identity, and one wire attempt each. Both static 96-token calls emitted all 96
+tokens. OpenRouter usage was `$0.00033251`; Modal usage was zero. Cleanup
+deleted the ephemeral key and Compose state while the protected app remained
+at zero tasks and containers. Cumulative observed accounting is now
+`$80.168893536743`. The private aggregate receipt is byte-verified at
+`rayline-ai/router-artifacts@03c76740` with SHA-256
+`dc1e8060f6bdd837f8bcec7e7afce49d0bb34f93ee92fbb68af0d13254c92d95`.
+
+The result rules out a deterministic gateway model rewrite and a 96-token
+agentic request-shape failure. AGT007 should preserve the 72 measured requests
+unchanged and add one client-owned HTTP 404 retry only to each static endpoint
+readiness probe. Envoy continues to own 429/503 retry; ordinary static and ARC
+measurement requests do not gain a 404 retry. DGN003 is permanently closed,
+and the 1,000-case qualification remains held.
+
+### AGT007 Readiness-Retry Natural-Mix Measurement
+
+AGT007 is AGT006 under a new run/state namespace with one transport correction
+supported by DGN003: each of the three static endpoint-readiness probes may
+retry one initial HTTP 404 after the bounded retry delay. That retry set is
+exactly `{404}`. Envoy remains the sole owner of 429/503 retries, and discovery
+plus all measured direct/static/ARC calls preserve their prior retry behavior.
+The external-attempt ceiling increases from 200 to 203 to cover the worst-case
+first 404 plus a second Envoy attempt pair for each readiness probe.
+
+Everything else is unchanged: the DS4/Baidu, MiMo/Xiaomi, and HY3/Tencent
+pool; fallback/reasoning disabled; one direct one-token key readiness call;
+three static probes; 24 natural-mix discovery calls; six selected cases across
+at least two active workers; 72 measured calls at concurrency one and four;
+96 output tokens; singleton protected encoder lifecycle; aggregate v3 report;
+privacy; cleanup; 100 logical request ceiling; `$0.75` key limit; `$0.50`
+report gate; and 30-minute H100 limit. The complete packet envelope remains
+`$5.7492336`. From `$80.168893536743`, the conservative cumulative envelope is
+`$85.918127136743`, leaving `$48.394696883257` under the current
+`$134.31282402` authority.
+
+- [x] AGT007a: Source-close the readiness-only 404 retry, accurate cumulative
+  wire-attempt accounting, focused tests, repository gates, and hermetic ARC
+  acceptance.
+- [x] AGT007b: Preregister the immutable packet and complete distinct source
+  attestation, one-attempt authorization, registry attestation, and final
+  launch pin.
+- [x] AGT007c: Execute once, privately pin the aggregate receipt, close both
+  authorities, prove stable-zero cleanup, and report real E2E throughput,
+  TTFT, latency, retry, cost, natural mix, and normalized ARC/static overhead.
+  The 1,000-case qualification remains held.
+
+The remote-visible AGT007 launch chain is Pathfinder preregistration
+`eeca56f4`, Semantic Router source attestation `62304e2a`, Pathfinder
+authorization `0f69f5c8`, and Pathfinder registry attestation `c4892e8d`. The
+final signed Semantic Router source checkpoint pins both Pathfinder authorities
+and is the only checkpoint permitted to launch the one AGT007 attempt.
+
+AGT007's only attempt passed singleton warmup and direct one-token DS4/Baidu
+readiness. Its first static 96-token DS4/Baidu probe then returned HTTP 404 on
+both permitted client attempts, with provider code `404`. Discovery and all 72
+measured requests did not run; OpenRouter usage remained zero. Cleanup restored
+scale-to-zero, removed both transient credentials and Compose state, and left
+the protected app deployed with zero tasks and containers. The 94-second H100
+upper estimate is `$0.261071088`, bringing cumulative observed accounting to
+`$80.429964624743`. The private receipt is byte-verified at
+`rayline-ai/router-artifacts@bc849b69` with SHA-256
+`0ec5f3ed4d4be625a8cbf9f8164fd5e0f06d0788358cd337a98602e4aa1fca48`.
+
+This falsifies the one-retry hypothesis but leaves a concrete sequencing
+difference: DGN003's first gateway request was a one-token static call, after
+which both static 96-token calls passed. Before another H100 run, a new no-H100
+diagnostic must use a fresh key and compare static-96-first against
+static-1-prime-then-static-96. AGT007 is permanently closed, and the 1,000-case
+qualification remains held.
+
+### DGN004 Fresh-Key Gateway Prime Sequence
+
+DGN004 is a four-request, no-H100 follow-up that corrects DGN003's sequencing
+blind spot. With one fresh `$0.05`-limited key and the exact agentic config,
+Envoy route, router image, fake encoder, first public synthetic case, and
+DS4/Baidu pin, it sends: static 96 tokens as the gateway's first request;
+static one token as an explicit gateway-local prime; static 96 tokens again;
+then direct 96 tokens as the host-path control. It permits no client retry;
+Envoy retains only its existing 429/503 retry, for four logical requests and
+at most eight wire attempts.
+
+The aggregate receipt records only status, bounded error metadata, exact
+model/provider identity, completion tokens, and attempts. It cannot support
+performance inference and persists no body, raw error, credential, episode,
+latency, or timestamp. From `$80.429964624743`, its full envelope reaches
+`$80.479964624743`, leaving `$53.832859395257` under the current
+`$134.31282402` authority.
+
+- [x] DGN004a: Source-close the fresh-key prime driver and local launcher mode;
+  pass focused tests, repository validation/lint, and hermetic ARC acceptance.
+- [x] DGN004b: Preregister and authorize exactly one attempt, then pin both
+  registry checkpoints in signed, pushed source.
+- [x] DGN004c: Execute once, privately pin and close the aggregate receipt,
+  prove all inventories at zero, and decide whether a gateway-local one-token
+  prime is justified before any new H100 packet.
+
+If static-96-first fails and post-prime static-96 succeeds, AGT008 may add one
+gateway-local one-token readiness call before the unchanged per-worker probes.
+If all calls pass, treat the 404 as unresolved intermittent edge behavior and
+do not spend another H100 packet without stronger observability. If both static
+96 calls fail while direct succeeds, fix the gateway transport seam. Keep the
+1,000-case qualification held in every branch.
+
+The remote-visible DGN004 authority chain is Pathfinder preregistration
+`063f68f3`, Pathfinder registry attestation `cc08ce90`, and the final signed
+Semantic Router launch pin. It authorizes only this four-request no-H100 packet.
+
+DGN004 passed its only attempt. Static 96 tokens as the first gateway request,
+static one token, static 96 tokens after that explicit prime, and the direct
+96-token control completed 4/4 with HTTP 200, exact DS4/Baidu identity, and one
+wire attempt each. The 96-token probes returned two completion tokens and the
+one-token probe returned one. OpenRouter and Modal both reported `$0`; cleanup
+deleted the ephemeral key and Compose state while the protected app remained at
+zero tasks and containers. Cumulative observed accounting remains
+`$80.429964624743`. The private aggregate receipt is byte-verified at
+`rayline-ai/router-artifacts@d971bbbb` with SHA-256
+`4acb2fca54d601fcb0ce02a45074f33be22d8c486aa27dccaee00a7587200589`.
+
+The result falsifies gateway-local priming as the explanation for AGT007's
+intermittent 404. Do not launch another H100 packet yet. First prove the same
+OpenRouter/Envoy endpoints before paid encoder startup, while preserving the
+gateway process and ephemeral key into the protected phase, or add privacy-safe
+full-stack edge observability that can distinguish the failing hop. DGN004 is
+permanently closed, and the 1,000-case qualification remains held.
+
+### AGT008 Transport-First Natural-Mix Measurement
+
+AGT008 preserves the requested DS4-Flash/Baidu, MiMo-v2.5/Xiaomi, and
+HY3/Tencent pool and all 72 measured direct/static/ARC calls. Before paid
+encoder startup, the same fresh key, Compose project, router image, config, and
+Envoy process run against the public fake encoder and must pass direct
+one-token DS4 readiness plus 96-token static reachability for all three
+workers. Only then may the launcher pin the singleton H100, create its proxy
+token, recreate only the router with the protected endpoint, and prove that
+the Envoy container and ephemeral key survived the transition.
+
+The new preflight plus the unchanged protected packet total at most 104 logical
+provider requests and 214 external attempts. Preflight cost is included in the
+aggregate v4 `$0.50` report gate and the existing `$0.75` key hard limit. The
+30-minute H100 bound and complete `$5.7492336` packet envelope do not increase.
+From `$80.429964624743`, the conservative cumulative envelope is
+`$86.179198224743`, leaving `$48.133625795257` under the current
+`$134.31282402` authority.
+
+- [x] AGT008a: Implement the fake-to-protected lifecycle, same-key/same-Envoy
+  interlocks, aggregate v4 accounting, focused tests, repository gates, and
+  hermetic ARC acceptance with launch authority empty.
+- [x] AGT008b: Preregister the immutable packet, attest the source, authorize
+  exactly one attempt, attest the registry, and pin both authorities in signed
+  pushed source.
+- [x] AGT008c: Execute once, privately pin the aggregate receipt, close both
+  authorities, prove stable-zero cleanup, and report real E2E throughput,
+  output throughput, TTFT, latency, retry, cost, natural mix, and normalized
+  ARC/static versus pure-Modal overhead.
+
+The preflight cannot support performance inference. If it fails, AGT008 stops
+with zero H100 exposure. If it passes but protected reachability still fails,
+the preserved Envoy/key evidence narrows the defect to the router transition or
+later full-stack state. If measurement completes, publish the requested E2E
+result. Keep the 1,000-case qualification held in every branch.
+
+AGT008's immutable no-authority Pathfinder preregistration is `2109c8fe`.
+Semantic Router source may attest that commit while keeping its distinct
+authorization pin empty; this attestation still cannot launch.
+
+The complete remote-visible launch chain is Pathfinder preregistration
+`2109c8fe`, Semantic Router source attestation `99dcea74`, Pathfinder
+authorization `9f208315`, and Pathfinder registry attestation `8bb0ad02`. The
+final signed Semantic Router checkpoint pins both registry authorities and is
+the only source permitted to launch AGT008's one attempt.
+
+AGT008 used its only attempt and stopped inside the four-request pre-encoder
+transport subprocess. The H100 was never pinned, OpenRouter reported `$0`, and
+no protected readiness, discovery, or measured request ran. Cleanup removed
+the key and Compose state while the deployed encoder remained at zero tasks and
+containers. Cumulative observed accounting therefore remains
+`$80.429964624743`. The private aggregate failure receipt is byte-verified at
+`rayline-ai/router-artifacts@b35e171c` with SHA-256
+`7aa0f616ed98c2a07015dc5013ccfbffb159c9585abf52e66a9901c24c4c881f`.
+
+The subprocess error stream was captured but not propagated, so the receipt
+cannot identify which preflight probe failed. Close AGT008 without retry. A
+successor must emit structured, privacy-safe preflight failure metadata while
+keeping the same zero-H100 stop, same-key/same-Envoy transition, exact
+three-model pool, unchanged 72 measured requests, and held 1,000-case path.
+
+### AGT009 Structured-Preflight Natural-Mix Measurement
+
+AGT009 is AGT008 with no experiment change except failure evidence. The
+preflight now emits one bounded JSON success or failure contract. Failure
+metadata is limited to stage, worker, HTTP status, error category/type/provider
+code, completed requests, external attempts, and completed cost. Compose build
+output is captured so stdout is machine-readable evidence. Raw provider text,
+prompts, tools, credentials, episode IDs, request assignments, and timestamps
+remain forbidden.
+
+The exact DS4/Baidu, MiMo/Xiaomi, and HY3/Tencent pool; same-key/same-Envoy
+transition; 104-request and 214-attempt maxima; original 72 measured calls;
+`$0.50` aggregate report gate; `$0.75` key limit; 30-minute H100 limit;
+`$5.7492336` envelope; cleanup; and held 1,000-case path are unchanged.
+
+- [x] AGT009a: Implement structured privacy-safe preflight failure evidence,
+  pure receipt stdout, narrow state/contract modules, focused tests, and repo
+  lint with both source authority pins empty.
+- [x] AGT009b: Preregister, attest, authorize exactly one attempt, attest the
+  registry, and pin both authorities in signed pushed source.
+- [x] AGT009c: Execute once and either publish the structured zero-H100 failure
+  receipt or the complete measured throughput, TTFT, latency, retry, cost,
+  natural-mix, and normalized pure-Modal comparison; then close all authority.
+
+AGT009 used its only attempt and stopped before H100 allocation. Direct DS4 key
+readiness and the DS4 static 96-token probe completed, then the MiMo v2.5
+(`worker-b`) static endpoint returned HTTP 404 `no_endpoints`. The bounded
+receipt records two completed provider requests and three external attempts,
+`$0.0003326904` completed cost, zero admissible performance inference, and no
+protected or measured requests. It is privately pinned at Hugging Face revision
+`79ef0dbb72e05539b2e3b4be541a2c52c607b448` with SHA-256
+`f04f1e2f587d2e14cdbdf94df91f64e24e0f059133d02ad6d761d0372cf0f28f`;
+the exact-byte round trip passed and unauthenticated retrieval returned 401.
+Cleanup proved zero transient keys, Compose containers and volumes, and Modal
+encoder containers; the protected app remained deployed at zero tasks. Both
+AGT009 source authority pins are cleared, so it cannot be rerun.
+
+Post-run source reconstruction found that the exhausted client-side 404 retry
+was not accumulated into the final exception, so the receipt's three attempts
+understate the actual minimum by one. AGT009 made four wire attempts - DS4
+direct, DS4 static, and two MiMo static attempts. The immutable receipt remains
+unchanged; successors accumulate prior attempts into the terminal error.
+
+### AGT010 Bounded OpenRouter Provider-Failover Measurement
+
+AGT010 keeps DS4 Flash, MiMo v2.5, and HY3 as the exact model identities but
+uses bounded OpenRouter provider orders instead of a single brittle endpoint.
+The preferred native hosts remain first. DS4 may use Baidu, StreamLake, or
+DeepInfra; MiMo may use Xiaomi, Parasail, Venice, or Novita; HY3 may use
+Tencent, DeepInfra, or Novita. OpenRouter fallback is enabled, every response
+must identify a provider in its model's order, and actual providers remain in
+the aggregate result. No model substitution or Fireworks Fast model is allowed.
+
+Conservative manifest/config pricing uses the highest prompt, cache, and output
+rate in each bounded order. The model pool, public agentic histories, selection
+logic, same-key/same-Envoy transition, 104-request and 214-attempt maxima,
+original 72 measurements, `$0.50` report gate, `$0.75` key limit, 30-minute H100
+limit, `$5.7492336` envelope, privacy, cleanup, and held 1,000-case path remain
+unchanged.
+
+- [x] AGT010a: Implement bounded provider orders, actual-provider validation and
+  reporting, conservative pricing, exhausted-retry accounting, focused tests,
+  repo gates, and hermetic Compose acceptance with authority pins empty.
+- [x] AGT010b: Preregister, attest, authorize one attempt, attest the registry,
+  and pin both authorities in signed pushed source.
+- [x] AGT010c: Execute once and publish either bounded preflight failure evidence
+  or the complete 72-request performance result, then close all authority.
+
+AGT010 used its only attempt and failed at fake-encoder router readiness before
+any OpenRouter or Modal H100 request. Rayline ARC's manifest contract requires
+one provider in the order and rejects `openrouter_allow_fallbacks=true`. Cost
+was zero. Cleanup proved zero transient keys, Compose state, and encoder
+containers; the deployed encoder remained at zero tasks. The private aggregate
+receipt is revision `0c1c8006ce6bcf3d225fc114842f5a137e10666c`, SHA-256
+`9bc0878b8c9bc290979b19f074c75a01ebd0e68b699bb366ea0597fc33bb081e`,
+with exact-byte round trip and unauthenticated HTTP 401. Source authority is
+cleared, so AGT010 cannot rerun.
+
+The successor must make the provider policy an explicit Rayline ARC contract:
+accept a non-empty, unique provider order whose first entry is the preferred
+provider, continue to reject OpenRouter automatic fallback, and send
+`allow_fallbacks=false`. This lets OpenRouter select an eligible provider from
+the bounded order while preserving router-controlled request retries and
+fail-closed model/provider validation.
+
+### AGT011 Bounded Provider-Order Measurement
+
+AGT011 implements that explicit contract. Rayline ARC accepts one or more
+unique, non-empty provider slugs only when the preferred manifest provider is
+first; it still rejects `openrouter_allow_fallbacks=true`. Direct, static, and
+ARC requests send the same bounded order with `allow_fallbacks=false`, require
+all parameters, keep the model fixed, validate the returned provider against
+the order, and report the actual provider. Conservative prices, retry bounds,
+workload, measurements, resource/cost limits, privacy, cleanup, and the held
+1,000-case path remain unchanged.
+
+- [x] AGT011a: Implement and test the multi-provider-order ARC contract, keep
+  automatic fallback disabled, run repo gates, and prove the exact agentic
+  config reaches fake-encoder router readiness before source freeze.
+- [x] AGT011b: Preregister, attest, authorize one attempt, attest the registry,
+  and pin both authorities in signed pushed source.
+- [x] AGT011c: Execute once and publish either bounded preflight failure evidence
+  or the complete 72-request performance result, then close all authority.
+
+#### AGT011 Result
+
+The single authorized AGT011 attempt passed end to end on 2026-08-03. Its
+transport-first gate completed direct DS4 readiness plus static DS4, MiMo, and
+HY3 probes 4/4 before H100 activation. Actual providers were Baidu, Venice, and
+Tencent respectively. OpenRouter automatic fallback remained disabled, the
+models remained fixed, and all 104 provider requests completed in 104 external
+attempts with zero retry, retry exhaustion, or ARC selection failure.
+
+ARC discovery routed the 24 synthetic agentic histories `16/0/8` across DS4,
+MiMo, and HY3. The frozen six-case measurement set therefore contained three
+DS4 and three HY3 cases spanning all three scenarios; MiMo was reachable but
+had no natural measured share. Each path completed 12 requests at concurrency
+one and 12 at concurrency four, for exactly 72 measured generations:
+
+| Path | C | RPS | Output tok/s | TTFT p50 / p95 | E2E p50 / p95 |
+|---|---:|---:|---:|---:|---:|
+| Direct OpenRouter | 1 | 0.379 | 27.84 | 1.415s / 1.971s | 2.261s / 3.922s |
+| Static gateway | 1 | 0.391 | 26.04 | 1.301s / 2.371s | 2.111s / 4.712s |
+| Rayline ARC | 1 | 0.298 | 19.85 | 2.091s / 2.993s | 3.363s / 4.720s |
+| Direct OpenRouter | 4 | 1.279 | 84.59 | 1.172s / 3.644s | 2.269s / 4.194s |
+| Static gateway | 4 | 1.459 | 97.27 | 1.030s / 1.664s | 2.245s / 3.932s |
+| Rayline ARC | 4 | 0.858 | 57.20 | 2.878s / 5.053s | 4.329s / 6.736s |
+
+Against the same-run static control, ARC delivered `0.762x` throughput at c1
+and `0.588x` at c4. ARC added `+0.622s` TTFT p95 and `+0.008s` E2E p95 at c1,
+then `+3.389s` TTFT p95 and `+2.804s` E2E p95 at c4. The old pure-Modal Qwen
+diagnostic recorded `0.748x`/`0.755x` throughput and `+0.351s`/`+0.596s` p95 at
+c1/c4. Thus c1 normalized throughput is similar, but the new real-generation
+c4 result is not parity. Absolute values cannot be compared because the Modal
+reference used shorter prompts and local Qwen targets; the small sample also
+shows provider-time variance, including static exceeding direct throughput.
+
+The aggregate v4 receipt is private at
+`rayline-ai/router-artifacts/runs/rayline-openrouter-agentic-agt011-20260803`,
+revision `6039a41b8902445ef2ddf5f944cf3b2a60b4b544`, SHA-256
+`0c2a6492e981e6c61915e686974ab062084badea7ffbbb232d24f6b848da6d31`.
+It round-tripped byte-exactly and returned HTTP 401 without authentication.
+Reported conservative provider cost was `$0.0289342564`; actual bounded-key
+usage was `$0.02824575`. The 364-second whole-process upper bound prices Modal
+at most `$1.010956128`, bringing cumulative conservative observed cost to
+`$81.470187699543` and leaving `$52.842636320457` under user authority.
+Cleanup independently verified zero transient OpenRouter keys, zero Compose
+state, and zero protected encoder containers. The 1,000-case qualification was
+not executed and remains held.
+
+### AGT012 c4 Stage Attribution and Stratified Model Control
+
+AGT011 established the real-generation symptom but did not isolate it: ARC
+throughput fell to `0.588x` static at c4 while the old pure-Modal diagnostic
+held `0.755x`. AGT012 is a single-router diagnostic that reuses the exact
+AGT011 config, provider orders, public agentic workload, protected H100
+encoder, and OpenRouter generation pool. It adds payload-free snapshots around
+each measured phase instead of changing request handling in production.
+
+The natural experiment repeats the six cases selected from a fresh 24-request
+ARC discovery twice. It measures 12 static and 12 ARC requests at c4 using
+identical payloads and the naturally selected model mix. For each phase it
+captures the router's routing and ARC-encoder histogram deltas and decomposes
+mean client E2E into OpenRouter upstream service time, gateway residual,
+router time, encoder time, router non-encoder time, and residual after routing.
+The ARC phase also snapshots the protected encoder's v4 metrics before and
+after the wave, requiring exactly 12 successful retained appends, zero failure
+or session-lock contention, and an idle encoder afterward. Coordinator,
+vLLM queue, inference, and retained-append E2E means are reported alongside
+process-lifetime scheduler peaks.
+
+Because AGT011's natural ARC mix selected no MiMo cases, AGT012 keeps a second
+claim surface explicitly separate. The stratified control binds the same two
+public cases to each of DS4 Flash, MiMo v2.5, and HY3, repeats each twice, and
+measures 12 direct plus 12 static requests at c4. This proves equal-model
+OpenRouter transport and gateway behavior only: it bypasses semantic ARC
+selection and must not be presented as a natural routing result.
+
+The packet is source-closed until its preregistration and authorization commits
+are pinned. It performs the unchanged four-request transport-first preflight
+before H100 activation, then one key-readiness request, three endpoint probes,
+24 discovery requests, and 48 measured requests. The exact bound is therefore
+80 provider requests and 166 external attempts, with a `$0.50` report gate, a
+`$0.75` ephemeral-key limit, and a 30-minute H100 wall limit. The conservative
+full resource envelope is `$5.7492336`: cumulative cost would be at most
+`$87.219421299543`, leaving `$47.093402720457` under the current
+`$134.31282402` user authority. The 1,000-case qualification remains held.
+
+- [x] AGT012a: Implement the aggregate-only stage snapshots, natural c4 cell,
+  stratified direct/static controls, exact request/cost gates, and source-closed
+  launcher; pass repo-native validation and fake-encoder integration.
+- [x] AGT012b: Preregister the frozen source, attest it in Pathfinder, authorize
+  one attempt, attest the registry, and pin both signed pushed authorities.
+- [x] AGT012c: Execute once, upload the private aggregate receipt byte-exactly,
+  compare the natural c4 decomposition with AGT011 and the pure-Modal stage
+  reference, verify cleanup, and permanently close launch authority.
+
+AGT012 passes only if all three requested models are reachable, natural
+static/ARC payloads are identical, every metric count equals its request cell,
+the encoder is idle with zero failures after measurement, the stratified
+surface is labelled non-semantic, no request payload or credential enters the
+receipt, cleanup returns keys/Compose/encoder containers to zero, and the
+source/registry authority chain is closed. It may produce diagnostic evidence
+without claiming parity; a throughput ratio alone is not a pass/fail gate.
+
+#### AGT012 Result
+
+The single authorized AGT012 attempt failed its strict protected-encoder idle
+gate on 2026-08-03, after the natural static and ARC c4 cells completed but
+before any stratified control ran. The four-request transport-first gate, key
+readiness, all three model reachability probes, 24-request discovery, 12 static
+requests, and 12 ARC requests completed. Natural selection reproduced AGT011
+exactly at `16/0/8` for DS4 Flash, MiMo v2.5, and HY3. The encoder had exactly
+12 successful retained-append observations, zero backend failures, and zero
+session-lock contention before the idle assertion failed. Consequently no
+latency, throughput, or stage-attribution inference is admissible.
+
+The defect was in the diagnostic contract, not evidence of a stuck live
+request. Coordinator current-state gauges and completed append counters are
+synchronous, but `VLLMSessionEngineMetricsProvider` exposes vLLM scheduler
+occupancy as the last reported scheduler snapshot. A final output can complete
+without another scheduler iteration publishing zero occupancy, so treating
+`requests_running` and `requests_waiting` as synchronous idle assertions was
+invalid. A successor must gate coordinator inflight/waiter/backend gauges and
+exact completed engine observations, while retaining scheduler occupancy only
+as explicitly labelled last-reported diagnostic context.
+
+The attempt completed 56 provider requests before stopping. External attempts
+and aggregate provider-reported cost were not persisted, so they remain
+unknown; actual ephemeral-key usage was `$0.01963979`. The 235-second
+whole-process upper bound prices Modal at most `$0.65267772`, bringing
+cumulative conservative observed cost to `$82.142505209543` and leaving
+`$52.170318810457` under user authority. Cleanup verified zero transient keys,
+zero Compose containers/volumes, and zero protected encoder containers; the
+deployed app remained at zero tasks.
+
+The private aggregate failure receipt is at
+`rayline-ai/router-artifacts/runs/rayline-openrouter-agentic-stage-agt012-20260803`,
+revision `22834bd349b88fa19a142db0c35e0aa89e2e3e4d`, SHA-256
+`6ecf338a3cfcc0bf253d094ee39d4358de8805340d933ed19aca5d3a27574961`.
+It round-tripped byte-exactly and returned HTTP 401 without authentication.
+Both AGT012 authority pins are permanently empty; the packet cannot rerun.
+The 1,000-case qualification remains held.
+
+### AGT013 Corrected Stage-Completion Contract
+
+AGT013 is a new one-attempt packet, not an AGT012 retry. It preserves the exact
+AGT012 source identities, provider policy, transport-first transition, natural
+and stratified request cells, privacy boundary, 80-request/166-attempt bounds,
+`$0.75` key, `$0.50` report gate, and 30-minute H100 limit. The only behavioral
+change is the completion contract and the report schema advances to v2.
+
+After each ARC cell, exact coordinator and engine cumulative deltas remain
+mandatory. The coordinator's current `requests_inflight`,
+`session_lock_waiters`, and `backend_inflight` gauges must all be zero. The
+vLLM `requests_running` and `requests_waiting` values remain in the receipt as
+`scheduler_last_reported_after`, together with an explicit warning that they
+describe the last scheduler update and are not synchronous idle gauges. This
+preserves useful scheduling evidence without repeating AGT012's invalid gate.
+
+The conservative full envelope would raise cumulative cost from
+`$82.142505209543` to `$87.891738809543`, leaving `$46.421085210457` under
+the current `$134.31282402` authority. The 1,000-case qualification stays held.
+
+- [x] AGT013a: Implement and test the corrected completion contract and v2
+  aggregate report, then pass focused, repository, and hermetic ARC gates.
+- [x] AGT013b: Freeze source and create the distinct signed, pushed
+  preregistration, authorization, registry-attestation, and source pins.
+- [x] AGT013c: Execute once, persist either a success or bounded failure receipt,
+  verify cleanup, compare admissible natural stage and stratified evidence if
+  available, and permanently close launch authority.
+
+AGT013 passes the same acceptance criteria as AGT012 except that scheduler
+occupancy is last-reported context rather than an idle assertion. No result is
+admissible unless exact 12-request routing and retained-append counts, zero
+coordinator failures/contention, coordinator idle, claim separation, privacy,
+cost/request bounds, and cleanup all pass.
+
+#### AGT013 Result
+
+The single authorized AGT013 attempt passed end to end on 2026-08-03. The
+transport-first gate, all three protected reachability probes, natural
+discovery, natural static/ARC c4 cells, and equal-model direct/static controls
+completed in exactly 80 provider requests and 80 external attempts, with zero
+retry, retry exhaustion, or selection failure. Providers were Baidu for DS4
+Flash, Venice for MiMo v2.5, and Tencent for HY3. Natural selection reproduced
+AGT011 and AGT012 at `16/0/8`; the six measured cases remained three DS4 and
+three HY3, while the separate control contributed four requests per path for
+each model.
+
+| Natural path | RPS | Output tok/s | TTFT p50 / p95 | E2E p50 / p95 |
+|---|---:|---:|---:|---:|
+| Static gateway c4 | 1.348 | 89.18 | 0.982s / 2.224s | 2.262s / 4.942s |
+| Rayline ARC c4 | 0.839 | 55.72 | 2.192s / 4.657s | 4.157s / 7.375s |
+
+ARC delivered `0.622x` static request throughput and `0.625x` output-token
+throughput. It added `+1.210s` TTFT p50, `+2.434s` TTFT p95, `+1.895s` E2E
+p50, and `+2.432s` E2E p95. AGT011's equivalent throughput ratio was `0.588x`;
+the small cells make that difference directional rather than a regression or
+improvement claim.
+
+The stage decomposition isolates the dominant seam:
+
+| Mean stage | Static | ARC |
+|---|---:|---:|
+| Client E2E | 2.757s | 4.170s |
+| OpenRouter upstream service | 1.277s | 1.343s |
+| Router total | 0.000837s | 1.490s |
+| Remote encoder inside router | 0s | 1.485s |
+| Router excluding encoder | 0.000837s | 0.00511s |
+| Residual after router | 1.479s | 1.337s |
+
+The encoder accounts for `99.66%` of ARC router time. Within the protected
+service, coordinator mean was `1.188s`, retained vLLM E2E mean `1.186s`,
+inference mean `0.790s`, and queue mean `0.190s`; each had exactly 12
+observations, zero failure/contention, and idle coordinator gauges afterward.
+The scheduler's last-reported state was running `0`, waiting `8`, demonstrating
+why it is context rather than synchronous liveness. ARC and static upstream
+means differed by only `+0.066s`, while post-router residual was lower for ARC,
+so OpenRouter transport does not explain the routing penalty in this cell.
+
+The prior pure-Modal diagnostic measured `0.595s` encoder and `0.597s` total
+ARC routing with `0.755x` ARC/static throughput. AGT013's encoder mean is
+`2.50x` that reference and its `0.622x` normalized throughput is only `82.4%`
+of the pure-Modal ratio. This is not parity. The evidence points to remote
+encoder work on the much longer agentic histories, including queue and model
+execution, rather than Semantic Router's non-encoder classifier/orchestration.
+Absolute latency remains non-comparable because pure Modal used shorter prompts
+and local Qwen generation targets.
+
+The separately labelled three-model control showed no systematic static gateway
+throughput penalty: direct was `1.602` RPS and static `1.702` RPS (`1.062x`).
+Direct/static E2E p50 was `0.960s/1.182s` for DS4, `1.160s/1.030s` for MiMo,
+and `2.601s/2.423s` for HY3. Each model/path cell has only four requests, so
+these are deployment-shape observations rather than model rankings or SLOs.
+
+The aggregate v2 receipt is private at
+`rayline-ai/router-artifacts/runs/rayline-openrouter-agentic-stage-agt013-20260803`,
+revision `6e1d3308bcb7a5de172651c04ac2b0f24b371d28`, SHA-256
+`f277ebd03a3af95870cda59373df0a6f0c8358ff87180b1e94aeb8b75e5b191b`.
+It round-tripped byte-exactly and returned HTTP 401 without authentication.
+Reported conservative provider cost was `$0.0246343188`; actual key usage was
+`$0.02388406`. The 241-second whole-process upper bound prices Modal at most
+`$0.669341832`, bringing cumulative conservative observed cost to
+`$82.835731101543` and leaving `$51.477092918457` under user authority.
+Cleanup verified zero transient keys, Compose state, and encoder containers;
+the app remains deployed at zero tasks. Both AGT013 authority pins are empty,
+and the 1,000-case qualification remains held.
+
+### AGT014 Native-Modal Apples-to-Apples Comparison
+
+AGT014 closes the comparison gap left by the old pure-Modal reference. It
+deploys Pathfinder's native Rayline HTTP service as one isolated Modal L40S
+container and changes no generation-side variable from AGT013: the same 24
+public synthetic agentic candidates, six-case natural selection rule, c4
+measurement, two repetitions, 96-token cap, and OpenRouter DS4 Flash, MiMo
+v2.5, and HY3 provider orders are used. The specified-model control uses the
+same Modal service with `rayline/<worker-id>` request pins, while the semantic
+arm uses `rayline/router`.
+
+The native Torch checkpoint is generated from the exact synthetic three-arm
+weights used by the AGT013 ARC artifact. Its tensor-name set must match the
+Pathfinder estimator exactly, all three head goldens must pass within `0.001`,
+and its encoder contract remains Qwen3.5-0.8B at revision `2fc06364`,
+`mtrouter-token-blocks-v2`, normalized masked-mean pooling. Unlike AGT013's
+remote retained-vLLM encoder, the native arm runs local CUDA encoding with
+incremental KV enabled. That makes encoder placement and implementation the
+intentional treatment while holding the policy head, workload, target models,
+providers, and request envelope fixed.
+
+The packet performs one direct key-readiness call, three Modal pinned-worker
+reachability calls, 24 native semantic coverage calls, 12 natural pinned calls,
+12 natural semantic calls, 12 stratified direct calls, and 12 stratified Modal
+pinned calls: exactly 76 provider requests, with no duration-unbounded loop.
+It joins client request IDs to the native decision log so provider identity,
+attempts/retries, token counts, charged or estimated cost, decision latency,
+embedding latency, q-head latency, serialized tokens, and encode modes are
+measured from the serving boundary rather than inferred.
+
+Native Modal currently awaits `RouterService.route()` before constructing its
+OpenAI `StreamingResponse`; the upstream completion is therefore buffered.
+Its observed first-token timestamp is explicitly labelled
+`observed_first_token_after_buffering` and is not compared with AGT013 TTFT.
+The admissible cross-deployment comparisons are E2E latency, throughput,
+output-token throughput, normalized semantic/static overhead, and server-side
+routing/encoder stages. Temporal OpenRouter variance remains a limitation and
+is bounded with the same-run direct and pinned controls.
+
+The ephemeral OpenRouter key has a `$0.75` server-enforced limit. The isolated
+single-L40S deployment has a conservative `$5.00` 30-minute envelope, for a
+`$5.75` packet maximum. Added to the `$82.835731101543` cumulative conservative
+accounting, the maximum becomes `$88.585731101543`, below the existing
+`$134.31282402` authority. The launcher must stop the exact app, delete the
+ephemeral OpenRouter key, Modal secret, Dicts, and Volume, scan aggregate output
+for credentials and public prompt markers, and leave no AGT014 container. The
+1,000-case qualification remains unreachable.
+
+- [x] AGT014a: Implement the exact policy converter, isolated Modal deployment,
+  bounded client/decision-log join, aggregate reporter, and focused tests.
+- [x] AGT014b: Freeze and push both signed source checkpoints, then pin the
+  preregistration and authorization commits.
+- [x] AGT014c: Execute the one authorized 76-request packet and verify cleanup.
+- [x] AGT014d: Persist the aggregate receipt, record the apples-to-apples
+  comparison and buffered-TTFT limitation, then permanently close authority.
+
+#### AGT014 Result
+
+The single authorized AGT014 attempt completed the fixed packet on 2026-08-03:
+76/76 provider requests and 76 external attempts, with zero retry or selection
+failure. Natural semantic coverage exactly reproduced AGT013 at `16/0/8`; the
+measured six-case set was three DS4 Flash and three HY3 cases. The deterministic
+native checkpoint SHA-256 was
+`e37b1d4313a7ab622e7049e3079542c2dfb2e707fb334b035b1627e7b960e834`.
+
+| Natural path | RPS | Output tok/s | Buffered first token p50 / p95 | E2E p50 / p95 |
+|---|---:|---:|---:|---:|
+| Native Modal static c4 | 0.296 | 28.06 | 12.654s / 16.556s | 12.751s / 16.659s |
+| Native Modal ARC c4 | 0.278 | 26.38 | 13.137s / 16.951s | 13.233s / 17.052s |
+
+ARC retained `0.939x` of its colocated static request throughput and `0.940x`
+of output-token throughput. It added `+0.482s` E2E p50 and `+0.393s` E2E p95.
+This is a much smaller normalized routing tax than AGT013's remote-vLLM
+`0.622x` result: the retained-throughput ratio is `1.509x` the remote result.
+
+The local classifier is correspondingly fast. Natural ARC mean router time was
+`0.1107s`, of which `0.1091s` was encoder work and `0.000892s` q-head work.
+Compared with AGT013's `1.490s` total and `1.485s` remote encoder means, the
+native router and encoder stages were `13.46x` and `13.62x` faster. Ten of 12
+calls used `full_sub_chunk_fallback` and two used `prefill`; this fixed workload
+assigns a distinct episode to each request, so it does not claim an incremental
+KV-cache hit.
+
+Absolute service throughput is nevertheless lower: native ARC delivered only
+`0.331x` AGT013 ARC RPS and native static only `0.219x` AGT013 static RPS. This
+is not caused by classification. The native Modal app holds its per-token lock
+across service lookup, the complete OpenRouter call, and state persistence, and
+the benchmark intentionally uses one token. It therefore serializes the c4
+workload. It also buffers the complete provider response before synthesizing
+SSE, so the displayed first-token values are time-to-buffered-response rather
+than real provider TTFT. In the same-run three-model control, direct OpenRouter
+delivered `1.343` RPS while Modal pinned routing delivered `0.433` RPS
+(`0.323x`); MiMo used Venice direct and Xiaomi through Modal, and completion
+counts differed, so that control describes the whole deployment path rather
+than an isolated gateway tax.
+
+The measurement itself passed, but the first aggregate finalizer rejected the
+downloaded sink because it contained 63 decision events and 63 colocated budget
+events. The repaired report filters only the declared
+`rayline-router.decision.v3` schema; it did not rerun or alter any measurement.
+The reader now has a regression test, and key usage is persisted before report
+assembly on future runs. Receipt-derived provider cost was `$0.02873196484`.
+The management API was observed before the join error, but its numeric result
+was not durably written, so no exact management-key usage value is claimed.
+Using the full `$5.00` Modal allowance with the receipt-derived provider cost
+bounds cumulative conservative observed cost at `$87.864463066383`, leaving at
+least `$46.448360953617` under the `$134.31282402` authority.
+
+The sanitized aggregate receipt is private at
+`rayline-ai/router-artifacts/runs/rayline-openrouter-modal-native-agt014-20260803`,
+revision `703a6278e7e7d13e63b16d57a747ea5efcf33cdd`, SHA-256
+`cd93529de754b8a9b474f4795215cbea166e743d315b94fff97924664f7a6464`.
+It round-tripped byte-exactly and returned HTTP 401 without authentication.
+
+The isolated Modal app stopped after 367 seconds with zero containers. The
+ephemeral OpenRouter key, Modal secret, Dicts, and Volume are absent. Aggregate
+credential and public-prompt-body scans passed. Both AGT014 authority pins are
+empty, and the 1,000-case qualification remains held.
+
+### AGT015 Retained-KV Cache Effect
+
+AGT015 measures the end-to-end effect of the two explicit retained-session
+implementations. It is a paired diagnostic, not a new throughput campaign. The
+native arm is Pathfinder's in-process chunk-grid KV session; the remote arm is
+Semantic Router plus the protected vLLM `AsyncPoolingSession` and causal-mean
+accumulator. vLLM automatic prefix caching remains disabled, so the result
+must not be described as an APC or provider prompt-cache measurement.
+
+Both deployments use one H100, the same Qwen3.5-0.8B revision, the same
+synthetic three-worker head/checkpoint, the same OpenRouter target models, and
+the same progressively growing public synthetic agent history. The base is
+`agentic-02`, whose serialized encoder input exceeds one 8,192-token native
+chunk. Two append-only evidence blocks create three exact-prefix history
+states. Each deployment runs two episodes and interleaves a retained episode
+with a fresh full-replay episode at every state: `2 episodes * 3 states * 2
+modes = 12` real provider requests per deployment, 24 total. Every completion
+is capped at 24 tokens. There is no readiness request that reaches a provider,
+no unbounded loop, and no 1,000-case path.
+
+The cache contract is checked from serving telemetry, not inferred from wall
+time. Native retained actions must be `prefill, delta, delta`, while every
+native replay is `prefill`; native token work is `serialized_tokens -
+cached_prefix_tokens`. Remote retained actions must be `created, appended,
+appended`, while every remote replay is `created`; remote token work is the
+protected encoder's `backend_appended_tokens` delta. Retained and replay
+selection must match for each state, and selections must also match across the
+two deployments. A passing packet requires fewer retained encoder-work tokens
+than replay tokens, exactly 24 external attempts, and zero retries.
+
+The primary comparisons are retained/replay encoder token-work, router mean,
+encoder mean, and end-to-end mean ratios within each deployment. These
+within-deployment ratios are the valid cache-effect comparison because the two
+systems retain state at different boundaries. Cross-deployment absolute
+router time is secondary. Native Modal still buffers the provider completion,
+so its observed first token remains explicitly non-comparable to true provider
+TTFT. Interleaving limits but cannot remove OpenRouter temporal variance.
+
+Each ephemeral OpenRouter key has a `$0.50` server-enforced limit. Each H100
+arm has a conservative `$2.50` 20-minute envelope, for a `$6.00` program
+maximum. Added to the `$87.864463066383` cumulative conservative observed
+bound, the maximum is `$93.864463066383`, below the existing
+`$134.31282402` authority. The native launcher must remove its exact app,
+secret, Dicts, Volume, and key. The remote launcher must remove Compose state
+and its key while leaving the already protected encoder deployed at zero
+containers. The aggregate receipt must be credential- and prompt-marker-free,
+round-trip byte-exactly through the private artifact store, and return HTTP 401
+without authentication. Paid launch stays source-closed until both signed
+source checkpoints are pushed and pinned.
+
+- [x] AGT015a: Implement the fixed retained/replay clients, native H100
+  launcher, remote packet, aggregate reporter, and focused tests.
+- [x] AGT015b: Pass the repo gates, push the signed preregistration checkpoint,
+  then pin and push the signed authorization checkpoint.
+- [x] AGT015c: Execute the native arm once, hold the remote arm when native
+  telemetry invalidates the replay control, and verify resource cleanup.
+- [x] AGT015d: Record the failed diagnostic and permanently close both
+  authority pins without reinterpreting its measurements.
+
+#### AGT015 Failed Diagnostic
+
+The native arm completed 12/12 provider requests in `106.235s` with exact
+OpenRouter key usage of `$0.005310378`. The selected worker/provider was
+consistently worker-a/Baidu. The downloaded sink contained 12 decision and 12
+budget events. Cleanup stopped app `ap-B9zFVjkEvLFEl3wa46CyVL` at zero tasks
+and removed the ephemeral key, secret, Dicts, Volume, and all app containers.
+The initial cleanup verifier incorrectly required Modal's stopped app-history
+row itself to disappear; its failure was a verification race, not live spend.
+
+The run is nevertheless invalid for the planned cache comparison. Native
+telemetry was `prefill, cached, delta, cached, delta, cached, rebuild, cached,
+delta, cached, delta, cached`, rather than fresh replay prefills. Pathfinder's
+native KV identity uses registered `run_id` as its root and includes
+`session_id`, but does not include `episode_id` when `run_id` is present. The
+benchmark supplied distinct `x-rayline-episode-id` values only, so retained
+and replay requests shared one KV session. The remote arm was not started and
+no cross-deployment claim is made. Charging the full `$3.00` native envelope
+bounds cumulative conservative observed cost at `$90.864463066383`, leaving
+at least `$43.448360953617` under current authority. Both AGT015 pins are
+closed, and the 1,000-case qualification remains held.
+
+### AGT016 Corrected Native Session Isolation
+
+AGT016 repeats the unchanged 24-request matched protocol with one correction:
+every native request sends the same derived identity in both
+`x-rayline-episode-id` and `x-rayline-session`. The latter is part of the
+current native KV key, so retained requests share only their intended episode
+and every replay state gets a fresh session. This preserves one registered
+run and one global router budget; it does not use per-request run IDs. Remote
+Semantic Router continues to use its native episode identity contract.
+
+The cleanup verifier now treats a stopped zero-task Modal app as inactive while
+still requiring its secret, Dicts, Volume, and containers to be absent. All
+other workload, model, provider, H100, token-work, selection, retry, latency,
+privacy, artifact, and source-closure gates remain identical to AGT015.
+
+The corrected attempt adds at most `$6.00` to the `$90.864463066383` bound,
+for `$96.864463066383` maximum cumulative cost and at least
+`$37.448360953617` remaining authority.
+
+- [x] AGT016a: Pass focused and repository gates, push the corrected
+  preregistration checkpoint, then bind the separate authorization commit.
+- [x] AGT016b: Execute the corrected native arm and the held remote-vLLM arm
+  once each, then verify exact cleanup.
+- [x] AGT016c: Build and validate the aggregate result, persist its private
+  receipt, record the measured cache effects, and permanently close authority.
+
+#### AGT016 Result
+
+AGT016 completed 24/24 real OpenRouter requests with exactly 24 external
+attempts, zero retries, and selection parity: every cell selected worker-a and
+its allowed Baidu provider. The native arm finished in `88.415s`; the remote
+vLLM arm finished in `52.532s`. These serial whole-run times include provider
+generation and are not throughput measurements.
+
+The steady-state second episode is the primary cache comparison because the
+first native episode includes Torch first-shape compilation. Pathfinder's
+native retained session reduced encoder token work from `53,922` to `29,346`
+(`45.58%`), router mean from `0.2198s` to `0.1475s` (`32.88%`), encoder mean
+from `0.2178s` to `0.1455s` (`33.17%`), and end-to-end mean from `2.1968s` to
+`1.9525s` (`11.12%`). The vLLM retained session reduced encoder token work
+from `53,922` to `20,788` (`61.45%`), router mean from `1.9905s` to `1.2457s`
+(`37.42%`), encoder mean from `1.9841s` to `1.2402s` (`37.49%`), and
+end-to-end mean from `3.8889s` to `3.3222s` (`14.57%`). vLLM saves more token
+work because it appends the exact suffix; the native implementation replays
+from its 8,192-token chunk-grid boundary.
+
+The cache-effect contracts pass, but the run has one explicit protocol
+deviation. Native honored the requested 24-token completion cap and observed
+`[18, 24]`; the remote ARC worker manifest raised the first two states to its
+96-token minimum and observed `[18, 96]`. Retained and replay completions match
+within every deployment/episode/state pair, so each within-deployment cache
+ratio remains valid. Absolute native-versus-vLLM end-to-end latency and cost
+are not apples-to-apples and are not used as parity evidence. Steady-state
+retained router time was `0.1475s` native versus `1.2457s` vLLM, making the
+native router stage about `8.45x` faster in this diagnostic; that comparison
+does not include a matched completion-policy claim.
+
+Exact AGT016 key usage was `$0.003960757` native and `$0.00567295` remote,
+`$0.009633707` total. Including AGT015's failed diagnostic, the full cache
+program used `$0.014944085` of OpenRouter key authority. Conservative
+cumulative accounting remains bounded at `$96.864463066383`, leaving at least
+`$37.448360953617`. Native apps `ap-B9zFVjkEvLFEl3wa46CyVL` and
+`ap-9wIXKM7wWAr5nsIFANjITn` are stopped with zero tasks; their exact secrets,
+Dicts, Volumes, containers, and ephemeral keys are absent. The protected vLLM
+encoder is deployed at zero containers, remote Compose state is absent, and
+its ephemeral key is deleted.
+
+The aggregate-only receipt is private at
+`rayline-ai/router-artifacts/runs/rayline-openrouter-kv-cache-agt016-20260803`,
+revision `5f11d0128337f05c050a8bc655a9616351cb14a2`, SHA-256
+`7bba3c294cd3bcf6a1f4af9ec78f0c7701815f214202c53135e75c20ded8cccc`.
+Credential and prompt-marker scans passed, the receipt round-tripped
+byte-exactly, and unauthenticated access returned HTTP 401. Both AGT016 source
+pins are closed, and the 1,000-case qualification remains held.
+
+### PERF028 vLLM GDN Backend Isolation
+
+AGT016's steady retained request is now decomposed rather than attributed to
+"vLLM" as one opaque stage. Its mean encoder call was `1.2402s`, while Semantic
+Router's non-encoder work was about `0.0054s`. Protected vLLM telemetry reports
+about `0.6669s` of engine inference, `0.00004s` of engine queueing, and
+`0.0376s` of tokenization per request. The remaining roughly `0.531s` is
+coordinator/backend and service-boundary time. This rules out scheduler queue
+contention as the serial-path cause and makes the engine backend the first
+controlled axis to test. Native Pathfinder's warmed encoder mean was
+`0.1455s`; its first episode also paid a separate `50.5s` first-shape Torch
+compile, so neither implementation should be characterized from cold start
+alone.
+
+The protected vLLM service currently forces `gdn_prefill_backend` to
+`torch_reference`. That backend was selected to align the causal-MEAN port with
+the Transformers reference path; vLLM's optimized H100 path is FlashInfer.
+PERF028 is therefore a provider-free, same-source, same-model, same-revision,
+same-H100 A/B between only those two GDN backends. Both retain `enforce_eager`,
+the 8,192-token chunk schedule, explicit session pooling, and automatic prefix
+caching disabled. The production/default and existing scale-out app names
+remain pinned to `torch_reference`; only two exact PERF028 app names can select
+the experimental profiles.
+
+Both apps are hydrated before measurement and then receive the same public
+synthetic, progressively growing three-state agent history. Each profile runs
+three warmup requests followed by two episodes of retained and fresh-replay
+requests at every state: 15 pooling requests per profile and 30 total. Profile
+order alternates per cell. Every measured request is bracketed by protected
+engine telemetry, so the primary performance gate uses internal vLLM inference
+time; client HTTP latency is reported as diagnostic evidence and is not an
+acceptance gate.
+
+FlashInfer is accepted only if all of the following frozen conditions hold:
+
+- retained versus replay parity passes independently inside both profiles;
+- cross-profile cosine similarity is at least `0.9999`, maximum absolute
+  embedding drift is at most `0.01`, maximum synthetic policy-score drift is at
+  most `0.005`, and synthetic worker-selection flips are zero; and
+- FlashInfer mean engine inference time is at most `0.80x` the reference mean.
+
+A correctness or performance miss records a valid `rejected` candidate result;
+it is not reinterpreted as a failed launch. Metadata, action, token-accounting,
+metrics, session-empty, source, budget, and exact cleanup violations remain
+integrity failures. The packet makes no provider calls and does not execute the
+held 1,000-case qualification. Its full two-H100 resource envelope is
+`$9.0308736`, bringing the cumulative conservative bound to
+`$105.895336666383` and leaving `$28.417487353617` under the existing
+`$134.31282402` authority.
+
+- [x] PERF028a: Validate and push the signed source-closed implementation and
+  frozen preregistration checkpoint.
+- [x] PERF028b: Bind and push the separate launch-authorization checkpoint,
+  then run the two exact Modal apps once.
+- [x] PERF028c: Stop both apps, delete the proxy credential, verify exact-name
+  zero, persist the aggregate-only receipt, and close both authority pins.
+- [x] PERF028d: Treat the pre-measurement cold-warmup failure as an integrity
+  result and preregister an identity-equivalent staged-warmup successor.
+
+#### PERF028 Failed Warmup
+
+PERF028 reached both empty health gates, but the first realistic-history
+warmup was also the reference container's first inference. The
+`torch_reference` engine JIT-compiled zero-block, slot-mapping, and causal-conv
+kernels, then its engine worker disappeared after `119.2s`; the pooling request
+returned HTTP 500. The best-effort session close returned 409 because the
+failed call still owned the episode. FlashInfer had initialized successfully
+but received no pooling request, so PERF028 contains no comparison and no
+candidate verdict.
+
+This is a workload-order failure, not evidence that either backend is faster
+or correct. Earlier successful long-history packets prime the protected engine
+with small requests before the realistic workload. PERF028 did not. Both exact
+apps stopped with zero tasks and containers, the proxy token was deleted,
+provider calls remained zero, and the launcher-window resource upper estimate
+was `$1.6294931056407562`. Conservative program accounting nevertheless charges
+the full `$9.0308736` PERF028 envelope, raising the bound to
+`$105.895336666383`. PERF028 cannot retry.
+
+### PERF029 Staged-Warmup Successor
+
+PERF029 preserves PERF028's model, revision, vLLM source, H100, eager mode,
+backend axis, exact-shape warmup, measured workload, alternating profile order,
+correctness thresholds, performance threshold, privacy rules, and cleanup
+contract. The only experimental correction is a frozen three-request
+append-only bootstrap at small, medium, and larger public synthetic shapes
+before the existing three realistic-history warmups. This moves cold kernel
+initialization outside the first long request without adding a measured sample
+or changing the A/B axis. Each profile now receives six warmups and twelve
+measured calls, 36 pooling calls total.
+
+PERF029 uses new exact app names and a new run namespace; PERF028's app names
+are no longer accepted by the service. Its two-H100 envelope remains
+`$9.0308736`. Charging both full envelopes would raise cumulative conservative
+accounting to `$114.926210266383` and leave `$19.386613753617` under current
+authority. The source remains closed until a new signed preregistration and
+separate authorization chain are pushed.
+
+- [x] PERF029a: Validate and push the source-closed staged-warmup successor.
+- [x] PERF029b: Bind a separate authorization commit and execute PERF029 once.
+- [x] PERF029c: Verify exact cleanup, persist the aggregate-only receipt, close
+  launch authority, and choose the next path from the frozen candidate verdict.
+
+#### PERF029 Runtime-Identity Failure
+
+PERF029 reached both health gates and the reference profile completed the first
+tiny bootstrap inference, proving the staged warmup avoided PERF028's immediate
+long-request crash. The response then failed the frozen `engine_build_id`
+attestation before another pooling request was sent. Modal's image logs show
+the correct profile-specific engine IDs were built, but the service did not
+persist `RAYLINE_ARC_SESSION_APP_NAME` into the runtime image environment. A
+container-side module import could consequently resolve the default profile,
+making both response identity and the candidate GDN backend ambiguous.
+
+No timing or correctness comparison is valid. Both PERF029 apps stopped with
+zero tasks and containers, the proxy token was deleted, provider calls remained
+zero, and the launcher-window resource upper estimate was
+`$0.9479392309141873`. Conservative accounting charges PERF029's full
+`$9.0308736` envelope, raising the program bound to `$114.926210266383`.
+PERF029 cannot retry.
+
+### PERF030 Runtime-Attested Successor
+
+PERF030 preserves PERF029's staged warmup and all frozen A/B inputs and gates.
+Its only correction is deployment identity propagation: the exact app name is
+embedded in the Modal image, and `SessionEncoder.start()` resolves the runtime
+app name, GDN backend, and engine build ID together. Startup fails before model
+use if the app name is not exact, differs from the deployed module identity, or
+does not match the image-owned engine ID. Both engine construction and response
+metadata consume those runtime-attested values.
+
+PERF030 uses new exact app names, removes the PERF029 names from the service
+allowlist, and requires a new source/authorization chain. Charging its complete
+`$9.0308736` envelope would raise cumulative conservative accounting to
+`$123.957083866383` and leave `$10.355740153617` under current authority.
+
+- [x] PERF030a: Validate and push the source-closed runtime-identity fix.
+- [x] PERF030b: Bind separate authorization and execute the two exact apps once.
+- [x] PERF030c: Verify exact cleanup, persist aggregate evidence, permanently
+  close authority, and act only on a frozen accepted/rejected candidate result.
+
+#### PERF030 Result
+
+PERF030 passed all integrity, correctness, performance, privacy, budget, and
+cleanup gates. Both runtime profiles attested their exact app name, vLLM source,
+engine build ID, eager mode, and GDN backend. All 36 pooling calls completed:
+six unmeasured warmups and twelve measured retained/replay calls per profile on
+15,310-20,938-token serialized histories. Provider calls and 1,000-case release
+qualification calls remained zero.
+
+FlashInfer is accepted by the frozen gate. Across all twelve measured calls per
+profile, mean engine inference fell from `1.151185s` on `torch_reference` to
+`0.116770s` on FlashInfer, a `0.101435x` ratio or `9.8586x` speedup. Mean
+protected-client latency fell from `1.836310s` to `0.809441s`, a `0.440798x`
+ratio or `2.2686x` speedup. The retained-only engine result was `0.671963s`
+versus `0.076982s` (`0.114562x`), while retained protected-client latency was
+`1.355158s` versus `0.755174s` (`0.557259x`). Retained execution appended
+41,876 tokens versus 108,744 replay tokens, retaining the expected `61.491%`
+token-work saving.
+
+Correctness remained inside every threshold. Cross-profile minimum cosine was
+`0.999989306`, maximum absolute drift was `0.000512179`, maximum L2 drift was
+`0.004624778`, maximum synthetic score drift was `0.000118929`, and synthetic
+selection flips were zero. Retained/replay parity also passed independently in
+both profiles, with minimum cosines above `0.99999972` and zero flips.
+
+The remaining bottleneck is no longer vLLM inference. In the retained
+FlashInfer arm, protected-client mean was `0.755174s`, coordinator mean was
+`0.080592s`, engine inference was `0.076982s`, and tokenization was `0.037767s`.
+Client minus coordinator and tokenization was about `0.636815s`; the same
+quantity was about `0.643784s` on the reference arm. This backend-independent
+service/transport boundary accounts for most of the optimized request and is
+consistent with earlier placement work ruling out scheduler queueing and simple
+region distance as the primary cause. FlashInfer makes the internal execution
+competitive, but the current independent Modal HTTP endpoint still does not
+reach the warmed native router's `0.1455s` encoder-stage latency.
+
+Both PERF030 apps are stopped at zero tasks, no matching containers remain,
+the proxy credential is deleted, and the protected default encoder remains
+deployed at zero tasks. The launcher-window infrastructure upper estimate is
+`$1.3128833055550602`; conservative accounting remains bounded by the full
+program maximum of `$123.957083866383`, leaving `$10.355740153617` under
+authority. The aggregate PERF028-PERF030 receipts are private and byte-verified
+at `rayline-ai/router-artifacts@7c834cb2402daebe40f011f6fe606f2cb7a28f7e`;
+PERF030 SHA-256 is
+`e5f0c4c1fc26191f4ecf5816430711c1f1cdce92d2ed7713efdac4b88f6c4d0a`.
+Unauthenticated artifact access returned HTTP 401. PERF030 launch authority is
+closed and cannot retry.
+
+The next evidence packet should keep FlashInfer experimental, run the matched
+native-versus-vLLM end-to-end agentic workload once, and separately compare the
+public Modal HTTP boundary with a region-local/internal transport. Promotion to
+the protected default must wait for that end-to-end result; the production
+default therefore remains `torch_reference` at this checkpoint.
+
+### AGT017 Matched FlashInfer End-to-End Packet
+
+AGT017 is the first real-provider successor to PERF030. It repeats AGT016's
+public synthetic retained/replay history exactly: two episodes, three growing
+states, retained and fresh-replay modes, and twelve requests per deployment.
+The native Pathfinder H100 router and the remote Semantic Router plus vLLM H100
+encoder run serially against the same OpenRouter pool: DeepSeek V4 Flash,
+Xiaomi MiMo V2.5, and Tencent HY3. No 1,000-case qualification is released.
+
+The remote arm uses a new exact-name ephemeral Modal app and must attest
+`flashinfer` plus build
+`vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca+gdn-flashinfer-eager`.
+The protected default remains deployed and idle on `torch_reference`. A new
+ARC artifact revision freezes both minimum and maximum completion tokens at
+`24`, matching the native configuration and removing AGT016's `24` versus `96`
+protocol deviation. Both apps, both `$0.05` OpenRouter keys, the proxy token,
+Compose state, and all containers are exact-name cleanup obligations.
+
+Acceptance requires 24/24 successful provider requests with selection parity,
+matched completion policy, no external retries, and exact deployment
+attestation. The steady retained token-work saving must be at least `40%`
+native and `55%` remote. The FlashInfer remote steady retained router mean must
+be at most `0.80x` AGT016's `1.2457s` reference-vLLM mean. Native-versus-remote
+router, end-to-end, observed-first-token, and serial request-rate ratios are
+reported, but are not parity gates because the independent Modal HTTP boundary
+remains in the remote architecture and provider latency is external.
+
+Two complete H100 resource envelopes are `$9.0308736`; two provider keys add a
+maximum `$0.10`. Charging the full `$9.1308736` packet raises conservative
+cumulative accounting from `$123.957083866383` to `$133.087957466383`, leaving
+at least `$1.224866553617` under the existing `$134.31282402` authority.
+
+- [x] AGT017a: Pass focused and repository gates, push the signed source-closed
+  preregistration checkpoint, then bind a separate authorization checkpoint.
+- [x] AGT017b: Execute the native and FlashInfer remote arms once each and
+  verify exact cleanup before interpreting measurements.
+- [x] AGT017c: Build the aggregate-only receipt, enforce the frozen acceptance
+  gates, persist private evidence, close authority, and record the next action.
+
+The region-local/internal transport comparison remains the next separate
+packet. It must not be folded into AGT017 or used to reinterpret this public
+HTTP result.
+
+#### AGT017 Result
+
+AGT017 is a valid failed-incomplete experiment, not a native-versus-remote
+parity result. The native Pathfinder arm reached the real-provider workload
+but OpenRouter returned HTTP 429 before a complete client/decision pair was
+durably written. The frozen zero-retry rule stopped the arm rather than hiding
+the provider failure. Its final management-key observation was `$0.002755288`.
+No native latency, throughput, cache-effect, completion-parity, or selection-
+parity claim is made.
+
+The FlashInfer Semantic Router plus vLLM arm completed 12/12 requests in
+`26.4416s`, exactly one external attempt per request and zero retries, for
+`0.45383` serial request/s. All requests selected worker-a,
+`deepseek/deepseek-v4-flash`, through its allowed Baidu provider; MiMo V2.5
+and HY3 therefore remained configured but unobserved in this workload.
+Management-key usage was `$0.00543308`, bringing exact observed provider-key
+usage to `$0.008188368` across both arms.
+
+In steady episode 1, retained vLLM sessions reduced encoder token work from
+`53,922` to `20,788` (`61.448%`). Retained versus replay router mean was
+`0.28695s` versus `0.37389s`, and encoder mean was `0.28114s` versus
+`0.36822s`. End-to-end mean was `1.64269s` retained versus `1.56902s` replay,
+so provider variance outweighed the router saving in that small three-request
+cell. Observed-first-token mean was `1.33064s` retained versus `1.36744s`
+replay. The remote router sub-gate passed: `0.28695s` is `0.23035x` AGT016's
+`1.2457s` reference-vLLM mean, about `4.34x` faster. This is evidence that the
+FlashInfer/GDN change removes most of the prior encoder bottleneck, but AGT016
+had a different completion policy and AGT017 lacks a completed native arm, so
+it is not end-to-end parity evidence.
+
+Cleanup passed. The native exact-name app-owned resources and key are absent.
+The FlashInfer candidate app is stopped with zero tasks, Compose state and its
+key/proxy token are absent, and the protected reference app remains deployed
+with zero tasks. Charging the full frozen `$9.1308736` envelope bounds
+cumulative accounting at `$133.087957466383`, leaving
+`$1.224866553617` under authority. The 1,000-case qualification remains held.
+
+The aggregate-only failure receipt is private at
+`rayline-ai/router-artifacts/runs/rayline-openrouter-kv-cache-agt017-20260804`,
+revision `0c8af7341dcb45140764f0f6459d8c712aa76629`, SHA-256
+`415bffd57abbd4f1f0f754db93f72f0f10c7ade3690ac120560f2bbf69e0f778`.
+It passed credential and prompt-marker scans, round-tripped byte-exactly, and
+returned HTTP 401 without authentication. Both AGT017 source pins are closed.
+
+Before the separate internal-transport packet, the next real-provider packet
+should add per-request durable journaling, a provider-availability gate before
+paid GPU launch, and a matched bounded 429 policy for both architectures. Its
+public synthetic cases must preregister and offline-prove coverage of all three
+configured workers; AGT017 showed that one realistic history shape alone does
+not exercise a three-model pool.
+
+### AGT018 Source-Closed Resilience Preparation
+
+The non-paid AGT018 preparation is implemented without opening a new launch
+identity or spending authority. It corrects the AGT017 evidence and startup
+order while keeping the historical AGT017 result and closed source pins
+immutable.
+
+- Every native or remote KV request now appends and `fsync`s one privacy-safe
+  JSONL success or failure event before the next logical request begins. A
+  failed process therefore preserves the exact completed prefix, bounded HTTP
+  metadata, and attempt counts without storing prompts, tools, error messages,
+  credentials, episode IDs, or timestamps. The native launcher also attempts
+  to flush and retrieve its decision journal after a benchmark failure instead
+  of deleting the Modal volume first.
+- A shared three-request, one-output-token direct OpenRouter gate checks DS4
+  Flash, MiMo V2.5, and HY3 before either launcher begins its paid GPU timer or
+  deploys/activates the H100. It permits one direct 429/503 retry, emits only
+  bounded model/provider/status/attempt/cost evidence, and is explicitly
+  inadmissible for performance inference.
+- Measured semantic requests retain production retry ownership below one
+  selection transaction: Pathfinder's OpenRouter transport owns native retry
+  and Envoy owns remote retry. Both signed worker contracts permit one retry
+  for 429/503. The benchmark client does not replay a routed request, because
+  doing so would create a second Rayline decision, alter session-action metrics,
+  and make the native decision join ambiguous.
+- The workload contract now separates a natural semantic-cache lane from a
+  stratified static serving lane. The latter proves that all three endpoints
+  are available but cannot be cited as three-worker classifier coverage.
+  [TD051](../tech-debt/td-051-rayline-agentic-worker-coverage-gap.md) owns the
+  remaining cross-architecture proof.
+
+Focused offline tests prove partial-journal recovery, privacy rejection,
+structured provider-gate success and 429 failure, exact three-worker endpoint
+coverage, preflight-before-paid-launch ordering, key reuse, and the semantic
+versus static claim boundary. The dormant AGT017 launch modes remain
+source-closed, so these seams cannot spend or reinterpret AGT017.
+
+AGT018 now has a distinct source-closed identity:
+`rayline-openrouter-kv-cache-agt018-20260804`, native app
+`rayline-router-openrouter-agt018`, remote app
+`rayline-arc-session-encoder-flashinfer-agt018`, artifact revision
+`public-rayline-arc-openrouter-kv-cache-v3`, and report schema
+`rayline.openrouter-kv-cache-comparison.v3`. Its three natural histories,
+three KV states, two episodes, and retained/replay pairing produce 36 routed
+requests per deployment. With three direct availability probes per deployment,
+the packet has at most 78 logical provider requests and 156 external attempts
+under one 429/503 retry below each selection. Both launch pins are empty and a
+new budget authority is explicitly required.
+
+The exact pinned native Metal encoder completed the no-provider coverage gate.
+The public code, research, and incident/source-correlation histories produced
+stable `C/C/C`, `A/A/A`, and `B/B/B` traces. Their serialized histories span
+`8,194` to `16,204` tokens; every first state is a prefill and every following
+state is a delta retaining `8,192` tokens. The smallest public-head top-two
+score gap is `0.0019787615092044693`, above the frozen `0.0015` gate. No
+OpenRouter, Modal, or external GPU call was made, and no prompt or raw embedding
+was emitted in the aggregate result.
+
+AGT018c source preparation is now wired end to end without opening launch
+authority. The native launcher has an `agt018` generation that atomically
+switches the run, app, webhook, context, artifact, training-stage, and benchmark
+identities while reusing the established exact cleanup path. The remote
+launcher has a distinct `kv-cache-flashinfer-agt018` packet and injects artifact
+revision v3 into both artifact generation and router startup. Both paths retain
+zero key/time ceilings and empty authority pins, and authority is checked before
+credentials or paid resources are requested.
+
+The remote benchmark calls the protected vLLM encoder directly for all nine
+frozen states after encoder activation and before the first routed provider
+request. It requires the exact `C/C/C`, `A/A/A`, and `B/B/B` traces, the frozen
+score-margin floor, created/append revision order, exact retained prefixes, and
+explicit cleanup of all three probe sessions. Its aggregate evidence contains
+no prompts or embeddings. The v3 reporter joins all 36 native decisions,
+validates 36 remote cells, permits at most one server-owned retry per measured
+request, and reports whole-run plus per-sequence and per-model latency, observed
+first-token time, router/encoder time, token work, output-token throughput,
+retry, provider, and cost aggregates. Synthetic contract tests cover the full
+78-request evidence shape; no provider or GPU request was made during this
+source-only step.
+
+- [x] AGT018a: Add crash-durable request evidence, pre-GPU provider
+  availability, matched server-owned 429/503 retry, and semantic/static claim
+  separation without reopening AGT017.
+- [x] AGT018b: Freeze and exact-native-verify a realistic three-worker growing
+  history suite, new run/app/artifact/report identities, 78-request and
+  156-attempt maxima, and source-closed acceptance gates.
+- [x] AGT018c: Wire the successor workload and v3 reporter into new launch
+  modes. After GPU activation but before routed provider measurement, require
+  the vLLM-hosted encoder to reproduce all nine selected-worker states and the
+  minimum score-margin gate; abort and clean up on divergence.
+- [x] AGT018d: Obtain a new budget and distinct preregistration/authorization
+  commits, run each architecture once, publish the aggregate-only receipt, and
+  close TD051 only if the remote trace and real-provider report pass. Executed
+  2026-08-05: the report failed acceptance on exactly one gate, so TD051 stays
+  open (see the result record below).
+
+The user approved fresh `$10` authority on 2026-08-05, raising cumulative
+authority from `$134.31282402` to `$144.31282402`. The frozen AGT018 packet
+reuses the AGT017 envelope shape: two H100 encoder-replica deployments with a
+`20`-minute paid wall plus `31`-minute orphan and `5`-minute scaledown
+allowances bound resources at `$9.0308736` under a `$9.1` packet ceiling, and
+two disposable `$0.05` provider keys bound the complete packet at
+`$9.1308736`. Charging the complete envelope raises conservative cumulative
+accounting from `$133.087957466383` to `$142.218831066383`, leaving at least
+`$2.093992953617` under the new authority — above the frozen `$1.20` final
+reserve. The authorized key/time values replaced the source-closed zero
+placeholders in the same checkpoint that bound both authority pins:
+preregistration `3dcfabcbb2f59bb4c31f065f49569dc6d3353dd9` and authorization
+`b85c2b9ccefe87bfad84fba75cb6c21bbe5d8c22`. The packet permits exactly one
+launch of each architecture arm.
+
+After binding, three consecutive native availability preflights failed on
+worker-a with upstream HTTP 429 at zero measured cost and zero GPU spend; each
+abort is archived beside the run directory. Byte-exact diagnostic probes
+showed the frozen worker-a provider order had collapsed to Baidu alone —
+StreamLake and DeepInfra no longer pass `require_parameters` for DS4 Flash —
+and Baidu's shared upstream pool intermittently returns
+`tpm_rate_limit_exceeded`, the same failure that ended AGT017's native series.
+The 2026-08-05 amendment re-vets worker-a to Baidu/GMICloud/SiliconFlow (both
+alternates fp8, verified against the byte-exact frozen payload, with in-order
+fallthrough on 429 confirmed while fallbacks stay disabled), retires the
+never-deployed v3 artifact in favor of v4 with conservative maximum-rate
+pricing, and leaves the workload, request envelope, retry policies, workers b
+and c, and the nine-state encoder gate unchanged. The amendment is bound by a
+fresh preregistration/authorization pair under the same `$10` authority; no
+paid request preceded it.
+
+The first amended native launch passed the availability preflight through the
+re-vetted order, deployed, and completed 33 of 36 measured requests before
+OpenRouter returned HTTP 402 on request 35 with only `$0.025302124` settled
+key usage — the limit check counts in-flight pre-authorization holds, so the
+AGT017-era `$0.05` per-arm key limit cannot host the 36-request, 8-16k-token
+successor workload. Cleanup verified all Modal resources and the disposable
+key absent; the journal preserved the exact completed prefix. The second
+amendment raises the per-arm key limit to `$0.15` (total provider spend
+`$0.30`, complete packet maximum `$9.3308736`, reserve after the complete
+envelope `$1.893992953617`), leaving every other frozen value unchanged. The
+402-failure evidence is archived beside the availability aborts.
+
+### AGT018d Result (2026-08-05)
+
+Both architecture arms executed the amended v4 protocol once under the frozen
+budget. Two additional infrastructure defects were found and fixed at zero or
+near-zero measured cost before the valid runs: Modal keeps stopped apps in its
+listing until they age out, so both deployment-identity checks now count only
+deployed apps; and the parity gate sent a `real-workers-<32 hex>` episode ID
+that the session API's 64-hex `EpisodeIDHash` schema rejected with HTTP 422 —
+the gate now hashes to the full 64-hex form, the fake-client test pins the
+format, and a primary parity failure can no longer be masked by a cleanup
+failure. The router's price-identity gate also required the compose config to
+carry the v4 conservative rates, which a free local fake-encoder repro
+isolated. The first otherwise-valid native run used the stale legacy provider
+table through the native fixture and was archived as protocol-invalid; the
+fixture now serves the re-vetted successor worker table.
+
+The valid runs: the native arm completed `36/36` requests (worker-a via
+GMICloud, worker-b Xiaomi, worker-c Tencent; key usage `$0.01288378`), and the
+remote FlashInfer arm passed the nine-state encoder parity gate and completed
+`36/36` (worker-a GMICloud, worker-b Venice, worker-c Tencent; key usage
+`$0.02156365`). The v3 report joined all 36 native decisions and validated all
+36 remote cells: `9/10` acceptance gates passed, including exact
+selected-worker trace parity, both retained-token-saving gates
+(native `44.6%`, remote `59.0%` retained token-work saved), preflight,
+envelopes, and privacy/cleanup. Headline steady-state comparisons: the vLLM
+remote arm ran `1.60x` native serial request throughput, `0.75x` native
+observed first-token time, and `0.82x` native retained E2E latency, while the
+native router remained about `2.46x` faster than the remote router path per
+decision.
+
+`matched_completion_policy` failed, so the run is recorded as
+`failed_acceptance` and is not reinterpreted: worker-b was served by Xiaomi on
+the native arm but fell through to Venice on the remote arm — legal within the
+pinned order, but the differing serving stacks produced different completion
+token sets (`[2, 17, 18, 24]` native versus `[1, 2, 11, 17, 18, 24]` remote),
+so strict cross-deployment E2E comparability was not established. The
+multi-provider fallthrough that made the runs survivable under Baidu/Xiaomi
+saturation is exactly what a successor packet must reconcile with completion
+matching — for example by recording and requiring per-request served-provider
+agreement between arms, or by preregistering a completion-agnostic E2E
+comparability policy.
+
+The aggregate-only receipt is local at
+`.agent-harness/rayline-kv-cache/rayline-openrouter-kv-cache-agt018-20260804/report.json`,
+SHA-256 `143fb629205775dc7b5f28591fbc93ccd1e4c9aa0ed72dc154fadf0d5214fdd6`;
+private-volume publication follows the AGT017 flow when next authorized. All
+abort and superseded evidence is archived beside the run directory. Measured
+provider spend across both valid arms was `$0.03444743` with `78` logical
+provider requests against the per-report `156`-attempt ceiling. Conservative
+accounting charges the complete frozen envelope: `$9.0308736` resources plus
+`$0.30` provider keys raises cumulative accounting from `$133.087957466383`
+to `$142.418831066383`, leaving `$1.893992953617` under the `$144.31282402`
+authority. Both authority pins are permanently closed with this record; the
+1,000-case qualification remains held.
+
+### AGT019 Matched-Pair Successor Preparation
+
+AGT019 preregisters the comparability policy that AGT018d lacked. A pair is
+*fully matched* when the two arms' identical measurement cell — same
+`sequence_id`, `mode`, `episode`, and `step` — was served by the same provider
+and returned the same completion token count. Cross-deployment E2E and
+first-token claims are admissible only over fully matched pairs. Admissibility
+is decided per worker with a minimum of `1` fully matched pair; a worker below
+that minimum is labeled inadmissible in the report, never silently dropped,
+and never fails the run. The policy gate
+`matched_pair_comparability_policy` checks only that every cell was paired,
+recorded, and honestly labeled — it never requires providers to agree, because
+the pinned multi-provider fallthrough that produces disagreement is also what
+kept AGT018d alive under upstream saturation. Missing provider or completion
+evidence, unpaired cells, duplicated cells, and selection divergence stay hard
+errors. Selection-trace parity, both per-arm retained-token-saving gates, and
+the router and encoder comparisons remain unconditional gates unaffected by
+this policy.
+
+The successor identities are run id
+`rayline-openrouter-kv-cache-agt019-20260805`, native app
+`rayline-router-openrouter-agt019` with webhook label
+`router-openrouter-agt019`, remote app
+`rayline-arc-session-encoder-flashinfer-agt019`, report schema
+`rayline.openrouter-kv-cache-comparison.v4`, and the unchanged v4 artifact
+`public-rayline-arc-openrouter-kv-cache-v4` reused verbatim. The source and
+engine pins carry over from AGT018: `vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca+gdn-flashinfer-eager`
+with the `flashinfer` GDN prefill backend.
+
+AGT018's conservative accounting closed at `$142.418831066383` of the
+`$144.31282402` authority, leaving `$1.893992953617` — about `$0.69` above the
+`$1.20` required final reserve, which cannot fund two H100 arms plus two
+provider keys, so AGT019 staged with empty pins and zero ceilings until fresh
+authority existed.
+
+The user approved fresh `$10` authority on 2026-08-05, raising cumulative
+authority from `$144.31282402` to `$154.31282402`. The frozen AGT019 packet
+reuses the AGT018 envelope shape: two H100 encoder-replica deployments with a
+`20`-minute paid wall plus `31`-minute orphan and `5`-minute scaledown
+allowances bound resources at `$9.0308736` under a `$9.1` packet ceiling, and
+two disposable `$0.15` provider keys — the AGT018-proven limit — bound the
+complete packet at `$9.3308736`. Charging the complete envelope raises
+conservative cumulative accounting from `$142.418831066383` to
+`$151.749704666383`, leaving `$2.563119353617` under the new authority — above
+the frozen `$1.20` final reserve. The authorized key/time values replaced the
+source-closed zero placeholders in the same checkpoint that bound both
+authority pins: preregistration `25069d43b0d4a538ab9eb19992ce66189c4c060c` and
+authorization `0b52103c79db75d15a2226c6434162e0ac36101d`. The packet permits
+exactly one launch of each architecture arm.
+
+After binding, the paid launch was blocked on worker-b. Three consecutive
+availability preflights aborted at `$0` on Venice's shared pool, which flaps
+sub-minute; each abort is archived beside the run directory. Diagnostic probes
+with the byte-exact frozen payload showed worker-b's frozen order had
+collapsed to Venice alone — Xiaomi, Parasail, GMICloud and Novita were all
+filtered out by `require_parameters` at re-vet time — while the original four
+flap in and out of eligibility rather than disappearing (Xiaomi and Venice
+each served full runs the same morning). The 2026-08-05b amendment therefore
+removes nothing and appends `deepinfra`, verified against the byte-exact
+frozen payload, as a fifth last-resort entry:
+Xiaomi/Parasail/Venice/Novita/DeepInfra, with in-order fallthrough on 429
+already proven by the worker-a re-vetting while fallbacks stay disabled. It
+adopts conservative maximum-rate pricing across the widened order — DeepInfra
+bf16 sets the new maxima at `$0.40/M` prompt and `$2.00/M` completion — and
+raises the per-arm key limit from `$0.15` to `$0.25`, because OpenRouter's
+limit check counts in-flight pre-authorization holds (the AGT018 HTTP 402
+lesson) and the widened order prices higher per request. The complete packet
+becomes `$9.0308736` resources plus `$0.50` provider keys = `$9.5308736`,
+raising conservative cumulative accounting from `$142.418831066383` to
+`$151.949704666383` and leaving `$2.363119353617` under the unchanged
+`$154.31282402` authority — no new money is requested. Artifact
+`public-rayline-arc-openrouter-kv-cache-v5` supersedes the v4 binding, which
+AGT019 never deployed; AGT018's v4 artifact is untouched and remains
+historical and regenerable. Workers a and c, the workload, the request
+envelope, both retry policies, the matched-pair policy, and every acceptance
+gate are unchanged. A fresh preregistration/authorization pair binds the
+amendment under the same `$10` authority; no paid request preceded it.
+
+That amendment was wrong and is corrected here. Streaming diagnosis of
+DeepInfra's MiMo endpoint under the frozen payload showed it emits only
+empty-content deltas and closes with `finish_reason=length`: the model spends
+the entire completion budget on a hidden reasoning phase on that stack, so it
+can never satisfy the benchmark's content-token requirement at the `24`-token
+cap. The vetting probe that admitted it observed only a non-streaming HTTP
+`200`, which is too shallow a signal — provider vetting now requires a
+streaming probe that observes at least one content token, not an endpoint
+status code. A related false negative in the opposite direction had already
+been fixed: the one-token availability preflight failed a healthy provider
+whose first delta carries no content, so `12b59d43` raised the probe budget to
+`8` tokens, which stays negligible and inadmissible for performance while
+giving every vetted serving stack room to emit content.
+
+The 2026-08-05c correction therefore retracts `deepinfra` and restores
+worker-b's frozen order to Xiaomi/Parasail/Venice/Novita with its v4
+Novita-maxima pricing (`$0.168/M` prompt, `$0.336/M` completion). Artifact
+`public-rayline-arc-openrouter-kv-cache-v5` is retired unpublished — no
+deployment ever consumed it, exactly as with v3 — and
+`public-rayline-arc-openrouter-kv-cache-v6` supersedes it. The per-arm key
+limit stays at the already-authorized `$0.25`; it caps spend rather than
+committing it, so the complete packet stays at `$9.5308736`, cumulative
+accounting at `$151.949704666383`, and the reserve at `$2.363119353617` under
+the unchanged `$154.31282402` authority. No new money is requested. Workers a
+and c, the workload, the request envelope, both retry policies, the
+matched-pair policy, and every acceptance gate remain unchanged, and a fresh
+preregistration/authorization pair rebinds the correction; no paid request
+preceded it. Worker-b's underlying problem is unchanged: its eligible
+providers flap, and the run depends on at least one of the frozen four being
+live at launch.
+
+- [x] AGT019a: policy engine, fail-closed contract, and focused tests without
+  opening launch authority.
+- [x] AGT019b: wire the v4 reporter (matched-pair lanes replacing the
+  whole-set completion gate) and launcher generation identities,
+  source-closed. The v4 reporter and its CLI entrypoint reuse the AGT018
+  workload, selection traces, and encoder gates verbatim and gate
+  comparability on the matched-pair lanes ANDed with the per-request
+  completion cap. Both arms now carry AGT019 identities — the remote
+  packet and the native `--generation agt019` switch — while empty pins,
+  zero ceilings, and the absent budget contract keep every launch path
+  fail-closed.
+- [x] AGT019c: obtain fresh budget authority, bind preregistration and
+  authorization pins, run each arm once, and close TD051 only if the v4
+  report passes.
+- [x] AGT019d: re-measure both arms under the 2026-08-07 worker-b luna
+  amendment preregistered below, then close TD051 only if the v4 report
+  passes.
+
+### AGT019d Worker-b Luna Amendment (preregistered 2026-08-07)
+
+Worker-b's dependence on at least one of its frozen four being live at launch,
+noted immediately above, is what finally broke the run. MiMo's entire provider
+pool stayed unusable for more than twenty-one hours: Xiaomi, Parasail and
+Novita were dropped from OpenRouter's routing pool altogether — a
+single-provider pin returns `404 "No endpoints found"` rather than a `429`,
+because an unhealthy endpoint leaves the routing pool entirely when fallbacks
+are disabled — while Venice returned upstream `429`s. The registered endpoints
+never delisted; `GET /api/v1/models/xiaomi/mimo-v2.5/endpoints` reported all
+four at `status=0` throughout. They simply never became healthy. The
+two-of-four depth gate the run requires was never satisfiable across that
+window, the best single observation being one live provider (Venice, briefly)
+before it dropped again, and nothing remained to widen to with `deepinfra`
+already retracted above.
+
+The amendment therefore replaces the lane rather than waiting on it: worker-b
+becomes `openai/gpt-5.6-luna` pinned to the single `openai` provider, carried
+by artifact `public-rayline-arc-openrouter-kv-cache-v7`. Artifact v6 is
+untouched and stays historical and regenerable as the revision the banked
+native arm was measured under.
+
+`gpt-5.6-luna` does not advertise `temperature`. Sending it under
+`require_parameters` makes OpenRouter filter out every OpenAI endpoint and
+return the same `404 "No endpoints found that can handle the requested
+parameters"`, verified live against all three OpenAI tags before the lane was
+bound. The parameter is therefore suppressed per worker rather than relaxing
+the filter: the artifact declares worker-b's temperature as `None`, which
+`_worker_contract` omits entirely, and both arms already drive temperature
+from the worker manifest — the Go dispatch deletes a client-supplied value
+when the manifest carries none, and the native router's
+`apply_worker_temperature` treats `None` as a no-op. No router change is
+required, workers a and c keep `temperature: 0`, and
+`openrouter_require_parameters` stays `true` for every worker on every path.
+
+Pricing is the per-field maxima across OpenAI's three `gpt-5.6-luna` endpoint
+tags (`openai`, `openai/flex`, `openai/priority`): `$0.20/M` prompt,
+`$0.02/M` cache read, `$0.25/M` cache write, `$1.20/M` completion, so the rate
+can only be over-stated. OpenAI prices cache reads and writes separately, so
+worker-b is the first worker whose three input rates are not flat. The
+budget is unchanged and no new money is requested — the complete packet stays
+at `$9.5308736` and the reserve at `$2.363119353617` under the same
+`$154.31282402` authority.
+
+Because the served model changes, the banked v6 native evidence is no longer
+comparable and both arms must be re-measured. Two mechanisms enforce this
+rather than trusting discipline: `exact_source_and_artifact_identity` refuses
+to mix a v6 arm with a v7 arm, and the native launcher refuses to start when
+its run directory already exists, so the `20260805` directory must be archived
+before AGT019d rather than being overwritten.
+
+One consequence is structural and favourable: worker-b now pins a single
+provider and can no longer be served by different providers on the two arms,
+which is precisely the divergence that failed AGT018d's whole-set completion
+gate. The matched-pair policy is consequently exercised through worker-c,
+whose frozen order still holds three providers. One consequence is adverse and
+accepted by the user: that lane now has no in-order fallthrough at all, so a
+single upstream `429` anywhere in worker-b's twelve requests aborts the run
+the way the previous remote attempt died at request 32 of 36. Listing the
+three OpenAI tags in the provider order would restore redundancy without
+disturbing the price-identity gate, since the pricing already sits at the
+`openai/priority` maximum; it was offered and declined for now.
+
+### AGT019d Result (2026-08-07) — TD051 closed
+
+Both architecture arms executed the amended v7 protocol once under the frozen
+budget, and the v4 report passed **all ten acceptance gates**. Report SHA-256
+`4f33b50e59977d2bbdf32616d41770ef9e564bca75507f787afa6111ddc3292f`.
+
+Four defects were found and fixed before the valid runs, each at near-zero
+measured cost. Three were the same parameter reaching OpenRouter from three
+different builders: the native router config hardcoded `temperature: 0` for
+every worker regardless of the artifact (`f6ea91a6`); the agentic ARC payload
+carried a client temperature that the native router forwards verbatim and a
+manifest `None` cannot suppress (`15491265`); and the measured KV payload —
+the builder both arms actually use — hardcoded it too (`30e5a64f`). Live
+parameter isolation against the pinned OpenAI endpoint established the true
+rejected set for this lane: `temperature`, `top_p` and `stop` each return 404
+"No endpoints found", while `usage`, `include_reasoning` and `seed` are
+accepted. The fourth defect was a fail-closed registry omission of the same
+class as `cd58233f`: the AGT019 mode was absent from `KV_MODES`, so `persist`
+returned early and a complete remote arm billed normally while emitting no
+deployment, preflight or key-usage receipt (`b01a0375`).
+
+Two further remote arms and one native arm were re-drawn, not re-fixed. The
+reporter requires retained and replay to return identical completion-token
+counts for all eighteen cells of each arm, measured after `_enrich_native`
+substitutes the router's own token accounting. Workers a and c occasionally
+emit a two- or three-token completion in place of a full one at temperature 0,
+and neither Baidu nor Tencent advertises `seed`, so determinism cannot be
+forced without changing providers. The draw is therefore luck-dependent; it
+came clean on the first native re-draw.
+
+The valid runs: the native arm completed `36/36` (worker-a via Baidu, worker-b
+via OpenAI, worker-c via Tencent; key usage `$0.015308436`), and the remote
+FlashInfer arm completed `36/36` on the identical provider set (key usage
+`$0.010007277`). Total provider spend was `$0.025315713` against the `$0.50`
+envelope, leaving the conservative cumulative at `$151.949704666383` and the
+reserve at `$2.3631193536169803` under the unchanged `$154.31282402` authority.
+
+`matched_pair_comparability_policy` passed with **no inadmissible worker**: 28
+of 36 pairs were fully matched (`0.7778` coverage), and the worker whose lane
+was replaced matched perfectly — worker-b `12/12` and worker-c `12/12`, with
+worker-a at `4/12` on its generation variance but still admissible. The
+single-provider pin makes worker-b structurally incapable of the cross-arm
+provider divergence that failed AGT018d's whole-set completion gate.
+
+Headline steady-state comparisons: the vLLM remote arm ran `1.74x` native
+serial request throughput, `0.64x` native observed first-token time and
+`0.73x` native retained E2E latency, while the native router stayed about
+`3.00x` faster than the remote router path per decision. Both
+retained-token-saving gates held at the AGT018d levels — native `44.6%`,
+remote `59.0%` retained token-work saved — confirming the lane swap did not
+move the cache result.
+
+TD051 is closed on this report. The AGT019 authority pins are closed in the
+same checkpoint.
+
+Do not release the 1,000-case qualification as part of budget preparation.
+
+The completed 2026-07-30 full run remains RSP-004Q attempt 1 and a failed
+receipt; it is not renamed or reinterpreted after the fact. The v1 plugin
+continues to reject cached-prefix tokens. The separate session v1 wire reports
+retained and appended tokens rather than mislabelling live-request reuse as an
+automatic prefix-cache hit. RSP-002 remains pending until a Pathfinder human
+accepts ADR 0064 (rayline-vllm-serving-boundary).
+
+RSP-004A now replaces the process-wide `_policy_select_lock` with a
+default-serialized executor and an explicit concurrency-safe capability. The
+transaction coordinator still rejects a second prepare for the same episode;
+different episodes may overlap only when the concrete policy opts in. The
+legacy eager route still has a one-thread `AsyncStateCoordinator` segment, but
+it is a separate follow-up rather than the current `/v1/route/prepare` blocker.
+
+## PERF031 Single-Encoder Saturation Ladder (preregistered 2026-08-10)
+
+FlashInfer's `9.8586x` engine-inference speedup (`11,117` versus `115,764`
+tokens per second, PERF030) is measured on 12-36 **strictly serial** pooling
+calls, and every FlashInfer packet since — PERF030, AGT017, AGT018, AGT019 —
+ships the same disclaimer: it does not establish concurrency saturation
+throughput. Every saturation measurement that does exist, PERF015 through
+PERF027, ran on `torch_reference`. The two have never met, so the deployed
+FlashInfer encoder's capacity is unknown: the capacity model predicts roughly
+`3.9x`, bounded by the backend-independent transport floor, but that is a
+property of the model and not a result.
+
+PERF031 is the smallest experiment that answers it. Two **sequential runs**
+replay the frozen PERF021 packet — same 42k-token corpus digest, same packet
+manifest, same topology, same `r015`/`r030`/`r045` rungs, nothing regenerated
+— and the **only** variable is the GDN prefill backend:
+
+```text
+PERF031A  rayline-saturation-ladder-perf031a-20260810
+          negative control, gdn_prefill_backend = torch_reference
+          app rayline-arc-session-encoder (the DEFAULT app)
+          engine vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca
+
+PERF031B  rayline-saturation-ladder-perf031b-20260810
+          treatment, gdn_prefill_backend = flashinfer
+          app rayline-arc-session-encoder-flashinfer-perf031
+          engine vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca
+                 +gdn-flashinfer-eager
+```
+
+These two run IDs are the packet's arms. They are not the repo's existing
+`rayline_remote`/`rayline_arc` arms, which continue to exist *within* each
+run and are unchanged; each run therefore still produces six receipts across
+three rungs.
+
+Arm 0 deliberately deploys the **default, unprofiled app**. Registering a
+`-reference-perf031` profile would stamp the engine build id
+`...+gdn-torch-reference-eager`, whereas PERF021's recorded
+`source.engine_build_id` is the bare `vllm@9f5ea81c...`. A profiled control
+would not be identity-matched to the run it exists to reproduce and would be
+worthless as a control.
+
+### The knee arm 0 must reproduce
+
+PERF021 places the first overloaded single-H100 cell at `r030`. Arm 0 passes
+its control gate only if it reproduces exactly that:
+
+| Quantity | Required |
+| --- | --- |
+| `first_overloaded_cell` | `r030` |
+| `realized_arrival_rate_rps`, not overloaded | `0.1862` |
+| `realized_arrival_rate_rps`, overloaded | `0.3724` |
+
+The realized arrival rate is derived from the frozen schedule span, so it is a
+property of the packet rather than of the run and is identical in both arms.
+
+### Risk: PERF021 was measured with the region pin that no longer exists
+
+**Recorded prominently because it is the first thing to suspect, not the
+last.** PERF021 ran with Modal `region="us-east"` pinned. Commit `902c4ab4`
+removed that pin — on this repo's own evidence, since PERF011/PERF014
+measured pinning as *slower* (`1.042x` the PERF009 prepare p50, `0.994x` its
+throughput, neither placement gate passed) at a `1.75x` narrow-region cost
+multiplier. **Unpinned placement has never been deployed or measured.**
+
+If arm 0 fails to reproduce the knee above, the unpin is the **first suspect**
+and the correct reading is a placement effect, not a regression in the packet,
+the launcher, or the encoder. In that case arm 1 is not admissible as a
+backend comparison at all, because the two arms would no longer differ in one
+variable. Diagnose the control before spending arm 1.
+
+### Gates
+
+The run is evidence-integrity gated, exactly as PERF020/PERF021 were. Reported
+throughput and latency remain diagnostic; PERF031 invents no production SLO.
+
+- Both arms complete `32/32` measured turns in every cell of every arm with
+  zero failures and zero provider calls.
+- Selected-worker trace digests match within each cell and across cells.
+- ARC telemetry records exactly 36 session actions per cell, and every cell
+  starts and ends at zero resident sessions and tokens.
+- Every arm's deployed engine build id equals its contract's, checked from the
+  encoder itself before the first measured cell; a mismatch aborts.
+- Arm 0 reproduces the knee in the table above. It is the control: if it does
+  not, no cross-arm backend claim is admissible.
+- Local, encoder, proxy-token and Modal-app cleanup all reach zero.
+
+### Deployment evidence
+
+Each arm writes `<run-id>/deployment-evidence.json` before its first measured
+cell, carrying the app name, resolved URL, engine build id, GDN backend, and
+vLLM's own engine-sizing lines captured from the engine build. This exists
+because the 544-token attention block size, the mamba page padding, the KV
+cache size and the maximum concurrency are all read out of vLLM source and
+have never been observed on a deployment — `.agent-harness/` holds 250 `.json`
+and 28 `.jsonl` files and **zero** `.log` or `.txt`.
+
+An encoder that captures nothing records `startup_log_captured: false` and
+does **not** fail the run. vLLM v1 may build its engine core in a child
+process whose log records never reach the service's logging tree; in that case
+the sizing figures simply stay derived, and the flag says so rather than
+letting an empty list read as an observation.
+
+### Budget
+
+Each arm's complete envelope is the unchanged PERF021 shape: 2,400 seconds
+paid wall, 2,460 seconds for one orphaned request, and 300 seconds scale-down
+= 5,160 resource-seconds on one H100 with 8 cores and 64 GiB. At the pinned
+`modal-on-demand-2026-07-31-h100-cpu-memory` snapshot rate of
+`$0.00134388`/s that is **`$6.9344208` per arm**, `$13.8688416` for both.
+
+The arms are sequential runs, so arm 1 charges arm 0's complete envelope first
+whatever arm 0 actually consumed:
+
+| | Arm 0 (PERF031A) | Arm 1 (PERF031B) |
+| --- | ---: | ---: |
+| Previous conservative | `$151.749704666383` | `$158.684125466383` |
+| Packet envelope | `$6.9344208` | `$6.9344208` |
+| Cumulative if full | `$158.684125466383` | `$165.618546266383` |
+| Reserve after full | `$15.628698553617` | `$8.694277753617` |
+| Packet ceiling | `$7.00` | `$7.00` |
+| Required reserve | `$3.00` | `$3.00` |
+
+The pre-existing position was `$151.749704666383` conservative of
+`$154.31282402` authorized against a `$3.00` required reserve — `$2.5631`
+headroom, which cannot fund one arm let alone two. The **minimum** fresh
+authority for both arms was therefore `$14.305722246383`. The user approved
+**`$20` on 2026-08-10**, raising cumulative authority from `$154.31282402` to
+**`$174.31282402`** and leaving `$8.694277753617` after both complete
+envelopes. Provider spend is zero in both arms; there is no whole-run retry.
+
+### TD048 ruling (decided 2026-08-10)
+
+`td-048:26-27` reads *"Cross-request KV ownership and throughput are out of
+scope until this gap is closed."* Read as a gate it would block this packet;
+read as scoping it is inert. **The user ruled on 2026-08-10 that it is a scope
+note, not a gate, and that PERF031 proceeds.** The rationale of record: the
+sentence means TD048 does not itself cover throughput, and that reading is
+what established practice already assumes — PERF015 through PERF027 all
+measured throughput while TD048 was open.
+
+The ruling is deliberately narrow. It permits this single-encoder packet. It
+does not close TD048, and it does not unpark TD050's pooled-encoder work.
+
+TD050 never blocked PERF031: it parks the *multi-instance* qualification, and
+its stated reason is "an explicit decision to qualify single-encoder
+end-to-end serving first". PERF031 is single-encoder, so TD050 prescribes it
+rather than blocking it, and no unpark is required.
+
+### Contract version
+
+`rayline-vllm-perf.v1`'s own rule requires a new contract version before a
+measured run with a changed identity, and arm 1 changes the GDN prefill
+backend identity. `rayline-vllm-perf.v2` is that version: identity only, with
+no threshold moved. See `docs/benchmarks/rayline-vllm-performance-contract.md`.
+
+### What is not yet bound
+
+The source is prepared and fail-closed. `LAUNCHABLE_CONTRACT` is `None` in
+`rayline_saturation_ladder_contract.py`, and both arms pin their Pathfinder
+authorization commit to the literal `PENDING`, which no commit can equal. The
+launcher refuses on either.
+
+- [x] PERF031a: register the confined FlashInfer app profile, capture vLLM's
+  engine-sizing lines on a read-only route, and teach the open-loop launcher
+  to resolve its encoder, cleanup and authorization pin per run contract,
+  with PERF020/PERF021 behaviour unchanged.
+- [x] PERF031b: preregister both arms over the frozen PERF021 packet, publish
+  `rayline-vllm-perf.v2`, and record the TD048 ruling and the region-unpin
+  risk — all without opening launch authority.
+- [x] PERF031c: bind the Pathfinder preregistration, self-attestation and
+  distinct authorization commits, and open exactly one arm at a time.
+- [x] PERF031d: run arm 0 once. If it does not reproduce the `r030` /
+  `0.1862`-to-`0.3724` knee, diagnose placement before arm 1 rather than
+  spending it.
+- [x] PERF031e: run arm 1 once, report the backend saturation comparison as
+  diagnostic evidence, and close both authority pins with the result.
+
+### PERF031 Result (2026-08-10) — both arms closed
+
+Both arms executed once, sequentially, and both passed every integrity gate.
+Each reports `comparison_status: passed`, `32/32` measured turns in all three
+cells of both sub-arms, zero failures, zero provider calls, and no 1,000-case
+qualification release. One selected-worker trace digest,
+`d9e93cf0f4c636a3838e41938d2ef3ff6e1d66a60860922f84771b3fa5158ac9`, is shared
+by every cell of both arms, so `cross_cell_trace_match` holds across the
+backend change as well as within it. ARC telemetry records exactly 36 session
+actions per cell in all six cells — `9` created, `27` appended, zero rebuilt,
+zero reused — and every cell ended at zero resident sessions and tokens with
+its eight measured sessions closed. Cleanup reached exact zero on both arms:
+`encoder_containers_remaining: 0`, `proxy_token_deleted: true`, Compose removed
+and Pathfinder stopped in every cell.
+
+Launcher-window resource upper estimates were `$1.9439033119294202` for arm 0
+and `$1.3832867562970312` for arm 1. Conservative accounting charges both
+complete `$6.9344208` envelopes, leaving the cumulative at `$165.618546266383`
+and `$8.694277753617` under the `$174.31282402` authority. Provider spend was
+`$0.00` in both arms.
+
+#### Arm 0 reproduced the knee, so the region unpin is cleared
+
+PERF031A ran the default app on the bare `vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca`
+build with `torch_reference`, and reproduced PERF021's knee exactly:
+`first_overloaded_cell` is `r030` on both the `rayline_arc` and the
+`rayline_remote` sub-arm, `0.18620038690915786` realized arrivals per second is
+not overloaded at `r015`, and `0.3724007738183157` is overloaded at `r030`.
+Backlog at final arrival was `5`/`8`/`8` and drain after final arrival was
+`42.17367092303999`s, `59.96750825349275`s and `65.19987908632206`s on the ARC
+sub-arm.
+
+Absolute throughput also lands where PERF021 left it. ARC completion throughput
+was `0.15335881737320642`, `0.22344627468642875` and `0.26512969582559437`
+decisions per second against PERF021's `0.14855814`, `0.20782364` and
+`0.24704390` — `1.0323x`, `1.0752x` and `1.0732x`. The largest of those, `7.5%`
+at `r030`, is inside the spread this repo has already measured for the same
+single-encoder cell across independent runs: `0.20782364` (PERF021),
+`0.21221971` (PERF023 `arc_single`), `0.21330897` (PERF024 `arc_single`) and now
+`0.22344627`, a total band width of `7.5%`. The two scale-out points traverse
+an affinity proxy and so are not byte-identical topology, but they bracket the
+same quantity and no point in that band changes which cell overloads.
+
+This is the answer to the risk recorded above. Commit `902c4ab4` removed
+PERF021's `region="us-east"` pin and unpinned placement had never been deployed
+or measured; arm 0 is the first measurement of it, and the unpin did not move
+the knee. The two PERF031 arms are therefore identity-comparable to PERF021 and
+to each other, and arm 1 is admissible as a one-variable backend comparison.
+
+#### Arm 1 never saturated: the ladder ran out of rungs
+
+PERF031B ran `rayline-arc-session-encoder-flashinfer-perf031` on
+`vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca+gdn-flashinfer-eager` with
+`flashinfer`. `first_overloaded_cell` is `null` on **both** sub-arms: no cell
+was `overloaded`, every cell kept `final_arrival_backlog_bounded` true, and
+completion tracked the offered rate at every rung. ARC completion throughput was
+`0.19016101811414332`, `0.37817180485303253` and `0.5518306368768308` against
+realized arrival rates of `0.18620`, `0.37240` and `0.55860` — `1.0213x`,
+`1.0155x` and `0.9879x` of offered. Backlog at final arrival stayed `1`, `2`,
+`3` where the control reached `5`, `8`, `8`, and drain after final arrival was
+`1.791141007031058`s, `1.3739742114817375`s and `2.4930392113531994`s against
+the control's `42.174`s, `59.968`s and `65.200`s — `0.0425x`, `0.0229x` and
+`0.0382x`. ARC p95 service latency fell to `0.1200x`, `0.0757x` and `0.0681x` of
+control.
+
+Ratios per rung, ARC completion throughput, treatment over control: `1.2400x`
+at `r015`, `1.6925x` at `r030`, `2.0814x` at `r045`. The `rayline_remote`
+sub-arm agrees at `1.3191x`, `1.8535x` and `2.2809x`.
+
+**Those ratios are a lower bound, not a value.** The control is saturated from
+`r030` onward, so its completion throughput is its capacity, whereas the
+treatment is still keeping up at every rung and its capacity is somewhere above
+the top of the ladder. The measured ratio therefore grows purely because the
+control falls further behind — it says nothing about where FlashInfer stops.
+The admissible claim from this packet is exactly:
+
+> The FlashInfer knee lies above `0.5586011607274736` realized decisions per
+> second on one H100. Its location is unknown.
+
+`2.0814x` is not the FlashInfer speedup and must not be quoted as one.
+
+#### The frozen ladder is now too small
+
+The `r015`/`r030`/`r045` rungs were frozen for PERF021, whose subject saturates
+at `0.3724`. Reusing them verbatim is what made arm 0 a valid control, and it is
+also why arm 1 is unresolved: the top rung offers `0.45` rps, realized
+`0.5586`, and FlashInfer absorbed it with a backlog of three. Locating the
+FlashInfer knee needs a ladder built for FlashInfer, which is a different packet
+under a different ID — this one cannot be extended after the fact without
+destroying the control that justifies it. As a sizing input, matching the
+capacity model's FlashInfer prediction below would need a rung at roughly `0.92`
+offered rps, about double the current top.
+
+#### The capacity model: one branch matched, the other untested
+
+The handoff capacity model
+(`docs/agent/handoff_rayline_serving_cost_20260810.md` §2.2) predicts a
+transport-bound `1.055 / (0.637 + 2.979) = 0.2917` dec/s for `torch_reference`
+and `1.055 / (0.637 + 0.286) = 1.143` dec/s for FlashInfer, the `3.9x` this
+section preregistered.
+
+The `torch_reference` branch is a reasonable match: measured control completion
+throughput was `0.2234`-`0.2651` dec/s at the two saturated rungs, and the
+measured knee brackets the prediction with `0.1862` not overloaded and `0.3724`
+overloaded.
+
+The FlashInfer branch is **neither confirmed nor contradicted**. The ladder
+topped out at `0.5586` realized, less than half the predicted `1.143`, so the
+run never applied enough load to test the prediction at all. Do not read
+`2.0814x` as evidence for or against `3.9x`.
+
+#### Startup-log capture returned empty on both arms
+
+Both arms wrote `deployment-evidence.json` before their first measured cell with
+the app name, resolved URL, engine build id and GDN backend, and both recorded
+`startup_log: []` with `startup_log_captured: false`. This is the bounded
+outcome this section preregistered, not a run failure: vLLM v1 most likely
+builds its engine core in a child process whose log records never reach the
+service's logging tree. The consequence is unchanged from the preregistration —
+the 544-token attention block size, the mamba page padding, the KV cache size
+and the maximum concurrency stay **derived from vLLM source and never
+observed**, and the flag says so rather than letting an empty list read as an
+observation. `.agent-harness/` still holds zero `.log` or `.txt` files.
+
+#### Defects this packet exposed, all fixed before the valid runs
+
+PERF031B's first attempt crashed at `r015` and is preserved unaltered at
+`.agent-harness/rayline-parity/rayline-saturation-ladder-perf031b-20260810.attempt1-probefail`,
+whose `r015/state-reset.json` shows `measured_sessions_missing: 8` — the run's
+own encoder never saw the episodes. The cause was `derive_pathfinder_config`
+pinning `IDENTITY.encoder_url` and `IDENTITY.engine_build_id` as literals: a
+cell starts two routers, and only the ARC one takes `--encoder-base-url`, so
+whenever an arm overrode the app the `pathfinder_transaction` sub-arm dialled the
+frozen default encoder instead. PERF031A could not expose it because its
+per-arm URL equals the default. `a9ca206f` makes the encoder a parameter that
+defaults to the frozen identity, so unoverridden runs derive a byte-identical
+config; the same defect silently affected the scaleout, failover, replica-stop
+and dynamic-stop families, which were already handing `_prepare_cell` a proxy
+URL the Pathfinder config then discarded.
+
+Two supporting fixes landed in the same sequence. `8b32063b` makes the
+concurrency sweep manifest report its contract's engine build id rather than the
+frozen literal, so a profile-owning run cannot attribute its numbers to the
+default build — the manifest is a run's only durable statement of what was
+measured. `cea8b55f` makes the launcher's one `subprocess` helper raise a
+`LaunchError` carrying the command, exit code and a bounded tail of the child's
+stderr; every launcher shells out through it with `capture_output=True`, and a
+bare `CalledProcessError` had already cost two diagnostic cycles that day. Arm 0
+also has a preserved failed attempt at
+`...-20260810.attempt2-bundlefail`, which stopped at bundle build before any
+measured cell.
+
+Both PERF031 launch authority pins are closed:
+`LAUNCHABLE_CONTRACT` is back to `None` in
+`rayline_saturation_ladder_contract.py`. `PATHFINDER_AUTHORIZATION_COMMIT`
+stays at the real `fb78b2fbbd579d10cd14a78ce71af7c0e9216306` as the record of
+what ran, exactly as the closed PERF020/PERF021 contract keeps `b53434ab`.
+Neither arm can retry. TD048 and TD050 are unchanged by this result; the TD048
+ruling above remains narrow to this single-encoder packet.
+
+## PERF032 FlashInfer Saturation Knee (preregistered 2026-08-10)
+
+PERF031B left one number and it is a bound, not a value: **the FlashInfer knee
+lies above `0.5586011607274736` realized decisions per second on one H100, and
+its location is unknown.** The frozen `r015`/`r030`/`r045` ladder was built for
+a subject that saturates at `0.3724`; FlashInfer absorbed its top rung with a
+backlog of three and drained in `2.5` seconds. PERF032 is the packet that finds
+the knee.
+
+Its `2.0814x` predecessor ratio cannot be quoted as a speedup and PERF032 does
+not try to improve it. A ratio against a saturated control grows purely because
+the control falls further behind. Only a rung where FlashInfer *itself*
+overloads produces a capacity number.
+
+### One arm, because the control is already measured
+
+```text
+PERF032   rayline-saturation-knee-perf032-20260810
+          single arm, gdn_prefill_backend = flashinfer
+          app rayline-arc-session-encoder-flashinfer-perf031
+          engine vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca
+                 +gdn-flashinfer-eager
+```
+
+There is deliberately **no `torch_reference` arm**. PERF031A reproduced
+PERF021's `r030` knee exactly, so a control re-run above `r045` would measure
+nothing that is not already recorded while doubling the spend. PERF032's
+comparison is against PERF031's closed numbers.
+
+The app is PERF031B's, reused verbatim. It is already registered in
+`EXPERIMENT_APP_PROFILES`, so PERF032 needs **no new profile and no allowlist
+change**, and the engine identity stays byte-identical to the unsaturated run
+it extends. The `rayline_remote`/`rayline_arc` sub-arms are unchanged and still
+run within the arm, so PERF032 produces eight receipts across four rungs.
+
+### The rungs, and why each one exists
+
+| Rung | Offered rps | Expected realized rps | Why it is in the packet |
+| --- | ---: | ---: | --- |
+| `r045` | `0.45` | `0.5586011607274736` | Negative control: PERF031B's top rung |
+| `r060` | `0.60` | `0.7448015476366314` | First rung past the known-unsaturated point |
+| `r090` | `0.90` | `1.1172023214549471` | Below the predicted knee; must hold |
+| `r120` | `1.20` | `1.4896030952732628` | Above the predicted knee; must overload |
+
+The realized rates are exact, not estimates. `poisson_schedule` draws from
+`rng.expovariate(offered_rate_rps)` on the frozen seed, so the whole schedule
+scales as `1/rate` and the realized rate scales linearly with the offered rate
+at PERF031's measured `1.241335912727719x`. As in every prior open-loop packet
+this is a property of the packet, not of the run.
+
+### `r045` is the anchor, and it is what invalidates the packet
+
+`r045` is a deliberate overlap with PERF031B, not padding. Its `workload.json`
+and `identity.json` digests are **byte-identical** to PERF020's `r045` cell —
+the same document PERF031B measured — because a rung's workload derives only
+from the rate, the seed and the frozen constants.
+
+PERF031B measured that cell as `0.5518306368768308` completion throughput
+against `0.5586011607274736` offered, `first_overloaded_cell: null`, backlog
+`3`, drain `2.4930392113531994`s.
+
+> **If PERF032's `r045` does not reproduce an unsaturated cell, the packet is
+> wrong and `r060`, `r090` and `r120` are uninterpretable.** Diagnose the
+> anchor before reading any higher rung, exactly as PERF031A's control gate
+> governed PERF031B.
+
+### The falsifiable prediction
+
+The handoff capacity model
+(`docs/agent/handoff_rayline_serving_cost_20260810.md` §2.2) puts the
+FlashInfer transport-bound capacity at `1.055 / (0.637 + 0.286) = 1.143` dec/s.
+PERF031B topped out at less than half of that and so never tested it. PERF032
+preregisters the prediction so the run can **prove it wrong**:
+
+- **Predicted:** `r090` completes unsaturated; `r120` overloads;
+  `first_overloaded_cell` is `r120`.
+- **Falsified low** if `r060` or `r090` overloads — capacity is below `1.117`
+  and the model overstates FlashInfer.
+- **Falsified high** if `r120` does not overload — capacity exceeds `1.490`,
+  the model understates it, and PERF032 has again run out of rungs. That
+  outcome is a bound, reported as one, and needs a successor packet rather
+  than a post-hoc extension.
+
+Any of the three is a result. The packet exists to distinguish them, not to
+confirm the first.
+
+### The packet
+
+Regenerated from the same PERF017 source packet that produced PERF020, so the
+corpus, the topology, the seed and the source identity are unchanged and only
+the rung set is new. `rayline_open_loop_packet.py` now takes `--offered-rates`;
+invoked with no flags it still emits the frozen `0.15,0.30,0.45` ladder
+byte-for-byte, which is what keeps PERF020/PERF021 reproducible from the same
+script.
+
+| Digest | Value |
+| --- | --- |
+| `packet_manifest_sha256` | `eeb1c69f57ae964b238c7763ff87abf2dc727ba94b757c45e24aa2e013b08fed` |
+| `corpus_sha256` | `72bbb22c6a8673d78cb4eadbce46ffd88f882f91f1880b4163e117f4679b1105` (unchanged) |
+| `worker_topology_sha256` | `ad0970c68d2e6b035c187d193f3da8ca49f48a68267bd323e0d66c9d44bcfddd` (unchanged) |
+
+| Rung | `workload_sha256` | `identity_sha256` |
+| --- | --- | --- |
+| `r045` | `4f396a19f2f35dd00379a262b0cad5e3871c14210fa80c30f3e3b01cb2cafc2e` | `131d1d70a05463871ab1f40572f0f53e26cdb0c9ce6d44407570729bb48d4073` |
+| `r060` | `d701ad4add973abf69b8a930c52984c050019edbc75ee96deff871c2316d6d94` | `28fc634bb35affa7bd47e7da828ecf383729be036cefd5271d10c07fe3b8e1ec` |
+| `r090` | `f37e0a1d09b1be7dfb5d2e1e40164a12c636d1ba40c2f3e3439758d030e631af` | `f54bc060795a0f800ed6362eacf99bfd7814bf97dd699dcdcb90b7809b80180b` |
+| `r120` | `8990bbe3b27b5d848b22d116d26c2f1d50d325ac9e5e9dbf2280b9d5590dcb92` | `29a2cbc24842397fb47a14a66ca25d4c031453d8daa5d1982559e235ca1c3bd0` |
+
+The `r045` pair is PERF020's `r045` pair verbatim. That is the anchor property,
+not a coincidence.
+
+### Gates
+
+Evidence-integrity gated exactly as PERF020/PERF021/PERF031 were. Reported
+throughput and latency stay diagnostic; PERF032 invents no production SLO.
+
+- `32/32` measured turns in every cell of every sub-arm, zero failures, zero
+  provider calls.
+- Selected-worker trace digests match within each cell and across cells.
+- ARC telemetry records exactly 36 session actions per cell, and every cell
+  starts and ends at zero resident sessions and tokens.
+- The deployed engine build id equals the contract's, checked from the encoder
+  itself before the first measured cell; a mismatch aborts.
+- `r045` reproduces an unsaturated cell. It is the control: if it does not, no
+  knee claim is admissible from any rung.
+- Local, encoder, proxy-token and Modal-app cleanup all reach zero.
+
+**`startup_log_captured: false` is expected to repeat and is not a failure
+condition.** Both PERF031 arms recorded it, and the reading is unchanged: vLLM
+v1 most likely builds its engine core in a child process whose log records
+never reach the service's logging tree, so the attention block size, mamba page
+padding, KV cache size and maximum concurrency stay derived from vLLM source
+and never observed. The flag says so. A run that captures nothing here still
+passes.
+
+### Budget
+
+The envelope is the unchanged PERF021 shape: 2,400 seconds paid wall, 2,460
+seconds for one orphaned request and 300 seconds scale-down = 5,160
+resource-seconds on one H100 with 8 cores and 64 GiB, `$6.9344208` at the
+pinned `modal-on-demand-2026-07-31-h100-cpu-memory` rate. Four rungs do not
+grow it: PERF032's *slowest* rung is PERF031's *fastest*, so every arrival
+schedule is shorter than the ones that fit inside 2,400 seconds twice already.
+
+| | PERF032, as prepared | PERF032, after the grant |
+| --- | ---: | ---: |
+| Previous conservative | `$165.618546266383` | `$165.618546266383` |
+| Packet envelope | `$6.9344208` | `$6.9344208` |
+| Cumulative if full | `$172.552967066383` | `$172.552967066383` |
+| Authorized cumulative | `$174.31282402` | `$184.31282402` |
+| Reserve after full | `$1.759856953617` | `$11.759856953617` |
+| Packet ceiling | `$7.00` | `$7.00` |
+| Required reserve | `$3.00` | `$3.00` |
+
+As prepared, `$1.759856953617` was **below** the `$3.00` floor, so
+`budget_receipt` raised `BudgetError` and PERF032 could not run. That was the
+prepared state, not a defect.
+
+### The two gates, and the grant that opened them
+
+The source was prepared fail-closed on **two** independent gates, and
+preparation moved neither. Both were opened by a reviewed authorization
+checkpoint on 2026-08-10.
+
+1. **Budget.** `AUTHORIZED_CUMULATIVE_USD` in
+   `rayline_saturation_knee_contract.py` was PERF031's `$174.31282402`, which
+   fails the reserve check above. The **minimum** fresh authority was
+   **`$1.240143046383`**, taking cumulative authority to `$175.552967066383`
+   and landing the reserve on exactly `$3.00`. The human grant was **`$10.00`**
+   (`24bd8573`), not the minimum, deliberately: `$184.31282402` leaves
+   `$11.759856953617` of reserve after a full envelope, which keeps **one**
+   re-execution possible without a further grant. That mattered because the
+   `r045` anchor could have failed to reproduce, and distinguishing a bad
+   packet from a real change would then have needed exactly one retry.
+2. **Pathfinder pin.** `PATHFINDER_AUTHORIZATION_COMMIT` was the literal
+   `PENDING`, which no commit can equal and which `_assert_pushed` compares
+   HEAD against. It is now the real pushed head
+   `fb78b2fbbd579d10cd14a78ce71af7c0e9216306` (`00381f05`), the same head
+   PERF031 ran against.
+
+`LAUNCHABLE_CONTRACT` was `None`, so `resolve_launch_contract` refused the arm
+regardless of either gate; `00381f05` bound it to `PERF032` and `d2417480`
+registered the contract with the launcher. Provider spend is zero; there is no
+whole-run retry.
+
+- [x] PERF032a: make the open-loop packet's rung set a parameter, defaulting to
+  the frozen ladder so PERF020/PERF021 stay reproducible byte-for-byte, and
+  generate the four-rung PERF032 packet.
+- [x] PERF032b: preregister the single FlashInfer arm, its anchor rung, its
+  falsifiable capacity prediction and its real packet digests — without
+  opening launch authority or assuming a budget grant.
+- [x] PERF032c: on a human budget grant, set `AUTHORIZED_CUMULATIVE_USD`, bind
+  the Pathfinder authorization commit to a real pushed head, and open the arm.
+- [x] PERF032d: run the arm once. If `r045` does not reproduce an unsaturated
+  cell, diagnose the anchor before reading any higher rung. Report the knee, or
+  report the new bound if `r120` also holds.
+
+### PERF032 Result (2026-08-10) — the ladder ran out of rungs again
+
+The arm executed once and every measured cell completed. All four rungs report
+`all_completed: true`, `provider_calls_zero: true` and `trace_match: true`;
+`32/32` measured turns in all eight cells across both sub-arms, `failed: 0` and
+`provider_calls: 0` everywhere. The one selected-worker trace digest
+`d9e93cf0f4c636a3838e41938d2ef3ff6e1d66a60860922f84771b3fa5158ac9` is shared by
+every cell of both sub-arms — the same digest PERF020, PERF021 and both PERF031
+arms carry — so `cross_cell_trace_match` holds. ARC telemetry records exactly
+`36` session actions in every cell (`9` created, `27` appended, zero rebuilt,
+zero reused) and every cell closed its eight measured sessions and ended at zero
+resident sessions and tokens.
+
+**The outcome is the third branch of the preregistered prediction: falsified
+high.** `first_overloaded_cell` is `null` on **both** the `rayline_arc` and the
+`rayline_remote` sub-arm at every rung; no cell reports `overloaded: true`, and
+every cell keeps `final_arrival_backlog_bounded`, `offered_rate_maintained` and
+a false `queue_latency_dominates_service_p95`. `r120` was preregistered as the
+rung that must overload, and it did not.
+
+#### The anchor reproduced, so the higher rungs are readable
+
+`r045` re-offered exactly the cell PERF031B measured and returned
+`0.550508384859422` completion throughput against PERF031B's
+`0.5518306368768308` — a reproduction within `0.24%`, on byte-identical
+`workload_sha256` and `identity_sha256` documents, with backlog `3` and drain
+`2.6323210432677584`s against PERF031B's backlog `3` and
+`2.4930392113531994`s. The anchor gate holds, so nothing below invalidates the
+packet.
+
+#### What the four rungs measured
+
+ARC sub-arm, at full receipt precision:
+
+| Rung | Realized arrivals | Completion throughput | Peak backlog | Drain | Service p50 | Service p95 | Start lag p99 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `r045` | `0.5586011607274736` | `0.550508384859422` | `3` | `2.6323210432677584` | `0.674246291979216` | `5.480072750011459` | `0.0050211253019014634` |
+| `r060` | `0.7448015476366314` | `0.7049711873967881` | `3` | `3.7701006061818276` | `0.5073020829586312` | `4.654947250033729` | `0.005022244229301975` |
+| `r090` | `1.1172023214549471` | `0.965043949352505` | `5` | `5.411227960128759` | `0.521253583021462` | `5.40659999998752` | `0.005039932772429978` |
+| `r120` | `1.4896030952732628` | `1.1547543726851863` | `7` | `6.900608240123923` | `0.5123024160275236` | `6.898598000057973` | `0.0061730140240703335` |
+
+The `rayline_remote` sub-arm agrees in shape and is uniformly slightly slower:
+completion `0.5420973309031613`, `0.6818144658576408`, `0.9274611008132237`,
+`1.100264477195747`, peak backlog `4`/`5`/`6`/`7`. ARC over remote completion
+throughput is `1.0155x`, `1.0340x`, `1.0405x`, `1.0495x`, and
+`achieved_start_rate_ratio` is within `1.7e-4` of unity at every rung, so the
+two sub-arms were offered the same load.
+
+#### The rolloff is finite-N tail bias, not saturation
+
+Completion throughput divided by realized arrivals falls monotonically —
+`0.9855`, `0.9465`, `0.8638`, `0.7752` on the ARC sub-arm. **That series is not
+evidence of saturation and must not be read as capacity.** The same receipts
+refute the reading three separate ways.
+
+- **Nothing ever queued.** `start_lag` p99 is `0.0050`–`0.0062`s in all eight
+  cells. Every request was dispatched within six milliseconds of its scheduled
+  arrival, at every rung, on both sub-arms.
+- **Service latency did not degrade.** ARC median service time is `0.674`,
+  `0.507`, `0.521`, `0.512` seconds across a `2.67x` range of offered rate. A
+  server at its knee does not hold its median flat.
+- **The drain is one request, not a backlog.** `drain ÷ service p95` is
+  `0.480`, `0.810`, `1.001`, `1.000` on the ARC sub-arm. The entire
+  post-arrival tail at the top two rungs is the last request finishing.
+
+The rolloff is arithmetic. `completion_throughput_rps` is
+`completed / duration`, `duration` is `span + drain`, and `span` is
+`(n - 1) / arrival_rate`, so the span shrinks as `1 / rate` while the service
+tail does not — a fixed tail takes a monotonically larger share of a shorter
+run with **zero queueing anywhere**. Reconstructing each cell as if it had been
+served with no queueing at all, charged exactly one service-p95 request of
+drain, gives `0.863925` against the observed `0.863804` at ARC `r090` and
+`0.775266` against `0.775209` at ARC `r120`; the `rayline_remote` cells agree
+to the same tolerance. Both top rungs are reproduced to better than `2e-4`
+relative, so there is nothing left over for saturation to explain. The two
+bottom rungs are the ones the reconstruction *under*-predicts, which is the
+opposite of a system that is falling behind.
+
+No completion-ratio floor can rescue the reading either, for the reason
+recorded under PERF033 below: PERF020's `r015` ARC cell, the most idle cell in
+this repo's receipts, peaked at four of eight lanes and still reported a
+completion ratio under `0.89`. Any floor that would call PERF032 saturated
+would call that cell saturated too.
+
+**The admissible claim from this packet is exactly:**
+
+> The FlashInfer knee lies above `1.4896030952732628` realized decisions per
+> second on one H100. Its location is unknown.
+
+`1.1547543726851863` decisions per second is a *measured completion rate at an
+unsaturated rung*, not a ceiling, and the capacity model's `1.143` dec/s
+prediction is **not** confirmed by its proximity to that number. PERF031's
+FlashInfer branch was untested because the ladder was too short; PERF032's is
+untested because the run never loaded the system to its limit either. The
+model's FlashInfer branch remains neither confirmed nor contradicted.
+
+#### `FINAL_BACKLOG_KNEE` measured the right thing without enough resolution
+
+`overloaded: false` was the **correct** verdict at every rung, and the
+predicate that produced it — `backlog_at_final_arrival < 8` against the eight
+episode lanes — was measuring the right quantity: the rig has exactly one
+capacity to exhaust, and it is lane occupancy. What it lacked was resolution. A
+hard boolean on one instantaneous sample cannot separate a cell at `7/8` from
+one at `1/8`, and a reader of `false` cannot tell a near miss from a wide one.
+On this run peak occupancy was `0.375`, `0.375`, `0.625`, `0.875` on the ARC
+sub-arm and `0.500`, `0.625`, `0.750`, `0.875` on `rayline_remote` — an
+approach the recorded verdict could not express. PERF033 keeps backlog as the
+primary signal and changes only how it is read: maximum over all 32 arrival
+instants rather than the last one, normalised by a contract-declared lane
+count, with the approach recorded.
+
+#### The comparison was derived offline, and the artifact says so
+
+No comparison was produced in-run. The launcher executed all four rungs and
+wrote every per-cell receipt, then aborted in `_validate_cells` because the
+comparator validated the sweep against `rayline_open_loop_packet.OFFERED_RATES`
+— the module's frozen three-rung PERF020/PERF021 default — instead of the four
+rungs PERF032 contracted for. `bcdc7989` had made the rung set a parameter of
+the packet builder without making it a parameter of the comparator. `12287b1a`
+fixes it in all three places that had the fault, and `553ddf6f` pins the
+behaviour with a four-rung regression.
+
+The comparison was therefore recomputed after the run from the receipts alone,
+and is deliberately **not** filed under the canonical `comparison.json` name:
+
+| Property | Value |
+| --- | --- |
+| Artifact | `comparison-derived-offline.json` |
+| `schema_version` | `rayline.vllm.open-loop-comparison-derived.v1` |
+| `derived_offline` | `true` |
+| `produced_by` | `rayline_open_loop_comparator.compare_open_loop` |
+| `run_manifest_present` | `false` |
+
+`compare_open_loop` imports no clock, RNG, environment or I/O, so its output is
+a function of the receipts alone; the artifact carries a sha256 for each of the
+eight source receipts, each `state-reset.json` and each ARC telemetry document,
+plus the `deployment-evidence.json` digest
+`d64732b3fae6f526d6ada49588dfb415eca5f93c8081aec97e02b70f2cde8909`, so the
+derivation can be re-checked against unaltered inputs. The contract digests were
+re-verified against the on-disk packet: `packet_manifest_sha256`
+`eeb1c69f57ae964b238c7763ff87abf2dc727ba94b757c45e24aa2e013b08fed`, the
+unchanged `corpus_sha256` and `topology_sha256`, and every receipt's identity
+block against its cell's packet identity document. The embedded `comparison`
+block is `rayline.vllm.open-loop-comparison.v2`, byte-shaped exactly as an
+in-run one, and `status: passed`.
+
+#### What the receipts cannot attest
+
+**No `run-manifest.json` was written and none was fabricated.** A manifest
+carries in-run state that cannot be recovered afterwards — elapsed paid wall
+seconds and its budget receipt, the local Compose and encoder cleanup booleans,
+and the router image id resolved at launch — all of which existed only in
+launcher memory when the run aborted. Reconstructing any of it would be
+assertion, not evidence.
+
+Three consequences follow and are recorded rather than papered over.
+
+- **Cleanup is unevidenced by artifact.** Unlike PERF031, this result cannot
+  quote `encoder_containers_remaining: 0`, `proxy_token_deleted: true` or
+  Compose teardown. What the receipts *do* attest is per-cell state reset:
+  `resident_sessions_after_cleanup: 0` and `resident_tokens_after_cleanup: 0`
+  in all four cells, with `measured_sessions_closed: 8` and
+  `measured_sessions_missing: 0`. That is the in-cell reset, not the app
+  teardown, and it is not a substitute for it.
+- **Actual spend is unmeasured, so conservative accounting stands.** The run is
+  charged its complete `$6.9344208` envelope, leaving the cumulative at
+  `$172.552967066383` and `$11.759856953617` of reserve under the granted
+  `$184.31282402`. Provider spend was `$0.00`: `provider_calls` is zero in every
+  cell.
+- **`startup_log_captured: false` again.** `deployment-evidence.json` was
+  written before the first measured cell with the app name
+  `rayline-arc-session-encoder-flashinfer-perf031`, the resolved encoder URL,
+  `engine_build_id`
+  `vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca+gdn-flashinfer-eager`,
+  `gdn_prefill_backend: flashinfer` and `encoder_gpu: H100` — and
+  `startup_log: []`. This is the preregistered bounded outcome, not a failure,
+  and it is the third arm in a row to record it. The 544-token attention block
+  size, the mamba page padding, the KV cache size and the maximum concurrency
+  therefore stay **derived from vLLM source and never observed**.
+
+The deployed build id matches the contract's, so the engine identity is
+byte-identical to PERF031B's, and the two runs are directly comparable.
+
+PERF032's launch authority pins are **not** closed by this record. The
+successor packet and its criterion are preregistered as PERF033 below.
+
+## PERF033 Saturation Instrument Validation (preregistered 2026-08-10)
+
+PERF032's decision rule did not fire. `first_overloaded_cell` was `null` on
+both sub-arms at every rung, which the preregistration had labelled "falsified
+high -- capacity exceeds `1.490`". That reading is correct. The reasoning
+offered for it at the time was not, and the difference is what this packet is
+about.
+
+**PERF033's primary purpose is instrument validation. The knee measurement is
+the vehicle.** Every future open-loop packet inherits whatever criterion this
+run establishes, so the criterion is the deliverable and the capacity number
+is the by-product. The `1.155` decisions per second PERF032 recorded is
+a measurement at an unsaturated rung, not a ceiling: the encoder was still
+tracking arrivals there, so re-measuring the same rung would buy nothing. Its
+numerical proximity to a preregistered prediction is a coincidence of where
+the ladder happened to stop, and must not be read as confirming that
+prediction — the model's FlashInfer branch remains neither confirmed nor
+contradicted.
+
+### What PERF032's receipts actually show
+
+The continuous series that looked like saturation was completion throughput
+rolling off monotonically against realized arrivals -- `98.6`, `94.7`, `86.4`,
+`77.5` percent -- with backlog `3/3/5/7` and drain `2.6/3.8/5.4/6.9`s. Read
+alone it says the system was 22.5% underwater at `r120`. Read against the rest
+of the same receipts it says nothing of the kind.
+
+| Rung | Realized arrivals | Completion | Completion ÷ arrivals | Service p50 | Service p95 | Drain | Drain ÷ p95 | Peak backlog | Start lag p99 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `r045` | `0.5586` | `0.5505` | `0.986` | `0.674` | `5.480` | `2.632` | `0.480` | `3` | `0.005` |
+| `r060` | `0.7448` | `0.7050` | `0.947` | `0.507` | `4.655` | `3.770` | `0.810` | `3` | `0.005` |
+| `r090` | `1.1172` | `0.9650` | `0.864` | `0.521` | `5.407` | `5.411` | `1.001` | `5` | `0.005` |
+| `r120` | `1.4896` | `1.1548` | `0.775` | `0.512` | `6.899` | `6.901` | `1.000` | `7` | `0.006` |
+
+Three things follow, and each is fatal to the completion-throughput reading.
+
+- **Nothing queued at any rung.** `start_lag` is the interval between a
+  request's scheduled arrival and its actual dispatch. Its p99 is five to six
+  milliseconds in every cell of both sub-arms, so no request ever waited for a
+  lane.
+- **Service latency did not degrade.** Median service time is `0.674`,
+  `0.507`, `0.521`, `0.512` seconds across a `2.67x` range of offered rate. A
+  server at its knee does not hold its median service time constant.
+- **The drain never exceeded one long request.** `drain ÷ service p95` is at
+  most `1.001`. The entire post-arrival tail is the last request finishing,
+  not a backlog being worked off.
+
+The rolloff is arithmetic. `completion_throughput_rps` is
+`completed / duration`; `duration` is `span + drain`; `span` is
+`(n - 1) / arrival_rate` and so shrinks as `1 / rate` while the service tail
+does not. A fixed tail therefore takes a monotonically larger share of the run
+as the rate rises, **with zero queueing anywhere**. Reconstructing each cell as
+if it had been served with no queueing at all, charging it exactly one
+service-p95 request of drain, reproduces the observed ratio at `r090` and
+`r120` to within one part in a thousand. There is nothing left over for
+saturation to explain.
+
+That is also why no completion-ratio floor can be chosen. PERF020's `r015` ARC
+cell offered `0.186` decisions per second, peaked at four of eight lanes and
+is as far from loaded as this rig gets; its completion ratio is `0.886`. A
+`0.90` floor calls it saturated and a `0.95` floor calls PERF032's anchor
+saturated. The quantity is not a monotone function of load alone, so no
+threshold on it is a saturation test.
+
+### The criterion
+
+The rig has exactly one capacity to exhaust. `poisson_schedule` groups the
+corpus by episode and the probe runs one thread per episode, so at most
+`max_episode_lanes` requests are ever outstanding. A cell has saturated when
+peak occupancy reaches that ceiling: past that point more offered load cannot
+raise concurrency, so it cannot raise throughput.
+
+```text
+peak_lane_occupancy(cell) = max_client_backlog / episode_lanes
+
+saturated(cell) <=> peak_lane_occupancy(cell) >= occupancy_ratio
+```
+
+with `episode_lanes = 8` and `occupancy_ratio = 1.0` for PERF033.
+
+`FINAL_BACKLOG_KNEE = 8` was measuring this quantity and PERF032's
+`overloaded: false` was the right answer. What the predicate lacked was
+resolution: a hard `backlog_at_final_arrival < 8` boolean on one instantaneous
+sample cannot distinguish a cell at `7/8` from one at `1/8`, and a reader of
+`false` cannot tell a near miss from a wide one. The criterion keeps the
+quantity, takes the maximum over all 32 arrival instants instead of the last
+one, normalises by the lane count the packet actually declares, and records
+the approach.
+
+Two figures are recorded per cell and deliberately do not vote.
+
+```text
+completion_ratio(cell)          = completion_throughput_rps / realized_arrival_rate_rps
+unqueued_completion_ratio(cell) = (n / (n - 1)) * span / (span + service_p95)
+drain_service_tail_multiple     = drain_seconds_after_final_arrival / service_p95
+```
+
+`unqueued_completion_ratio` is what the same cell would have reported with no
+queueing at all, given its own measured tail. Printing it beside the observed
+ratio is what stops the observed one being mistaken for a deficit again.
+
+The other candidate signals were considered and rejected on this repo's own
+receipts. Start lag cannot work: the corpus is multi-turn, an episode's last
+turn carries the largest accumulated context and is therefore its slowest
+case, so the slow cases never block a lane behind them. Start lag p99 stays
+under `0.011`s even in PERF021's heavily saturated cells. Drain time cannot
+carry the decision either: with 32 cases at eightfold concurrency, draining
+the entire corpus takes about one service-p95 request, so the saturated and
+unsaturated cells separate by only three to seven percent of a percentile
+estimated from 32 samples.
+
+### The criterion is validated against closed runs, not against PERF033
+
+This is the part that makes PERF033 an instrument-validation packet rather
+than another capacity guess. The criterion is checked against every open-loop
+run this repo has closed, before PERF033 runs at all.
+
+| Run | Recorded knee | Criterion's first saturated cell |
+| --- | --- | --- |
+| PERF021 (`torch_reference`) | `r030` | `r030` on both sub-arms |
+| PERF031A (`torch_reference` control) | `r030` | `r030` on both sub-arms |
+| PERF031B (FlashInfer) | none | none |
+| PERF032 (FlashInfer) | none | none, peaking at `0.875` |
+
+PERF021's receipts replay byte-identically into the report PERF021 recorded,
+because the criterion is contract-supplied and absent by default. A closed run
+whose recorded verdict silently changes shape is a closed run whose evidence
+can no longer be checked.
+
+### Why the lane count cannot simply be raised
+
+It was the obvious alternative and it is not admissible.
+
+`MAX_EPISODE_LANES` is the probe's thread count and equals the eight measured
+episodes in the frozen corpus; more lanes needs a different corpus, which
+changes `corpus_sha256` and breaks the identity every open-loop run since
+PERF020 has shared. Independently, `MAX_SESSIONS` and `max_num_seqs` in
+`modal_session_service.py` are both eight, and a ninth concurrent retained
+episode raises `SessionCapacityError`, which `session_api.py` maps to HTTP
+`429`, which the encoder failover contract does not treat as retriable and
+which fails closed to a `503`. That records a failed case, and the integrity
+gate requires `failed == 0`. A wider packet could not pass its own gate.
+
+The lane count is a correctness constraint, so the criterion has to carry the
+weight -- which is exactly why it is stated as an occupancy ratio against a
+declared ceiling rather than as a raw backlog threshold, and why the launcher
+now asserts the packet's own `max_episode_lanes` against the contract's before
+any paid second elapses.
+
+### The rungs
+
+```text
+PERF033   rayline-saturation-knee-perf033-20260810
+          single arm, gdn_prefill_backend = flashinfer
+          app rayline-arc-session-encoder-flashinfer-perf031
+          engine vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca
+                 +gdn-flashinfer-eager
+```
+
+| Rung | Offered rps | Realized rps | Arrival span | Why it is in the packet |
+| --- | ---: | ---: | ---: | --- |
+| `r120` | `1.20` | `1.4896030952732628` | `20.81`s | Anchor: PERF032's top rung, verbatim |
+| `r160` | `1.60` | `1.9861374603643505` | `15.61`s | First rung past the extrapolated ceiling crossing |
+| `r220` | `2.20` | `2.7309390080009823` | `11.35`s | `1.83x` the anchor; must saturate under any model |
+| `r320` | `3.20` | `3.9722749207287010` | `7.80`s | `2.67x` the anchor; the far end |
+
+The realized rates are exact, not estimates. `poisson_schedule` draws from
+`rng.expovariate(offered_rate_rps)` on the frozen seed, so the schedule scales
+as `1 / rate` and the realized rate scales linearly with the offered rate at
+PERF031's measured `1.241335912727719x`.
+
+`3.20` is the top rung on purpose. At that rate the arrival span is `7.80`
+seconds, barely longer than a single service-p95 request, so the cell is a
+burst rather than a sustained load and a higher rung would measure the corpus
+rather than the encoder. That is the stated resolution limit of a 32-case
+packet, and a successor that needs to look higher needs more cases, not more
+rate.
+
+### `r120` is the anchor, and it is what invalidates the packet
+
+`r120` re-offers PERF032's top rung. Its `workload.json` and `identity.json`
+digests are **byte-identical** to PERF032's `r120`, because a rung's documents
+derive only from the rate, the seed and the frozen constants. It is the same
+document PERF032 measured, not merely one offering the same rate.
+
+PERF032 measured that cell as `1.1547543726851863` completion throughput
+against `1.4896030952732628` realized arrivals, peak backlog `7`, drain
+`6.900608240123923`s, service p95 `6.899`s, start lag p99 `0.006`s.
+
+> **If PERF033's `r120` does not reproduce an unsaturated cell at
+> `0.875` peak occupancy, the packet is measuring a different system and
+> `r160`, `r220` and `r320` are uninterpretable.** Diagnose the anchor before
+> reading any higher rung, exactly as PERF032's `r045` anchor governed its
+> ladder.
+
+### The falsifiable predictions
+
+Peak occupancy rose `3`, `3`, `5`, `7` against realized arrivals of `0.559`,
+`0.745`, `1.117`, `1.490`. The linear fit through the top two points crosses
+eight lanes at about `1.72` realized decisions per second.
+
+- **Predicted:** `r120` reproduces `0.875` peak occupancy and is unsaturated;
+  `r160` reaches `1.0` and saturates; `first_saturated_cell` is `r160`.
+- **Falsified low** if `r120` saturates. The anchor gate fires first and no
+  capacity claim is admissible from the packet.
+- **Falsified high** if `r320` does not saturate. Peak occupancy is not
+  approximately linear in arrival rate, the FlashInfer encoder sustains more
+  than `3.97` realized decisions per second on one H100, and the result is a
+  bound rather than a knee.
+- **Instrument falsified** if any cell reports `saturated: true` while its
+  start lag p99 stays under `0.05`s, its median service time is within `20%`
+  of the anchor's and its drain does not exceed `1.1` service-p95 requests.
+  That combination is the signature of an unloaded cell, and a criterion that
+  fires on it is the failure PERF033 exists to prevent, not a capacity result.
+
+Any of the four is a result. The packet exists to distinguish them.
+
+### The packet
+
+Regenerated from the same PERF017 source packet that produced PERF020 and
+PERF032, so the corpus, the topology, the seed and the source identity are
+unchanged and only the rung set is new.
+
+| Digest | Value |
+| --- | --- |
+| `packet_manifest_sha256` | `8c2a5d5e10acad92db0975c694e48b035a7b7354f40e6c5e4e521ae2175e2d63` |
+| `corpus_sha256` | `72bbb22c6a8673d78cb4eadbce46ffd88f882f91f1880b4163e117f4679b1105` (unchanged) |
+| `worker_topology_sha256` | `ad0970c68d2e6b035c187d193f3da8ca49f48a68267bd323e0d66c9d44bcfddd` (unchanged) |
+
+| Rung | `workload_sha256` | `identity_sha256` |
+| --- | --- | --- |
+| `r120` | `8990bbe3b27b5d848b22d116d26c2f1d50d325ac9e5e9dbf2280b9d5590dcb92` | `29a2cbc24842397fb47a14a66ca25d4c031453d8daa5d1982559e235ca1c3bd0` |
+| `r160` | `20fbd23fd970e8e13472eac8b8041f499d94e8ec680b8f972156c6bf640b27d6` | `837c73cf3c30757ecdbb9d476ce579d519229e428b278caf4fb872229aa9f057` |
+| `r220` | `42b1dbc36fe26eb9f41e3c6be97fe2ab63d77be53c885952fab515e746615648` | `5067a46b5a493e4c2265f8b885483b9d1709cd4669f67b6f963c26db59abc26d` |
+| `r320` | `de0720c033debf81a661c0880c3d4e85ed9911307637709fbf65525e54c88d64` | `0f677bd408facddc0c3f585c6ef640e95f79bd4020742321ad576b4136468c64` |
+
+The `r120` pair is PERF032's `r120` pair verbatim. That is the anchor
+property, not a coincidence.
+
+### Constants that decided runs, and where they went
+
+PERF032's verdict was decided by `FINAL_BACKLOG_KNEE = 8`, a comparator
+constant describing a lane count the comparator never wrote and cannot see.
+The governing rule is that **a validator may read a module constant only if
+the same module also wrote the value being validated**. Four live violations
+that PERF033 depends on are routed through the contract instead.
+
+| Constant | Was | Now |
+| --- | --- | --- |
+| `FINAL_BACKLOG_KNEE` | comparator constant, decided PERF032 | `SaturationCriterion.episode_lanes`, asserted against the packet's own `max_episode_lanes` in preflight |
+| `MEASURED_CASES` (comparator) | wrote `passed: False` over a run that completed every case | `case_count` from the contract |
+| `EXPECTED_ARC_REQUESTS` | raised `LaunchError` mid-run after paid GPU time | derived from the contract's case counts, which preflight already checked against the packet manifest |
+| `ENCODER_GPU` | never rejected, only asserted; a non-H100 successor would have written evidence claiming H100 | `OpenLoopRunContract.encoder_gpu` |
+
+`CONCURRENCY_CELLS = (1, 4, 8)` in `rayline_concurrency_comparator.py` is
+deliberately left. It is the same defect in the sibling PERF017 family,
+together with a hardcoded `cells[1]` baseline that raises `KeyError`, but
+PERF033 runs none of it and fixing it here would put an unrelated family's
+closed receipts at risk in a packet whose whole point is that closed receipts
+must keep validating.
+
+### Gates
+
+Evidence-integrity gated exactly as PERF020/PERF021/PERF031/PERF032 were.
+Reported throughput and latency stay diagnostic; PERF033 invents no production
+SLO.
+
+- `32/32` measured turns in every cell of every sub-arm, zero failures, zero
+  provider calls.
+- Selected-worker trace digests match within each cell and across cells.
+- ARC telemetry records exactly 36 session actions per cell, and every cell
+  starts and ends at zero resident sessions and tokens.
+- The deployed engine build id equals the contract's, checked from the encoder
+  itself before the first measured cell; a mismatch aborts.
+- Every cell's `max_episode_lanes` equals the contract's `episode_lanes`,
+  checked in preflight before any paid second.
+- `r120` reproduces an unsaturated cell at `0.875` peak occupancy. It is the
+  control: if it does not, no knee claim is admissible from any rung.
+- Local, encoder, proxy-token and Modal-app cleanup all reach zero.
+
+`startup_log_captured: false` is expected to repeat and is not a failure
+condition, for the reason PERF031 and PERF032 both recorded.
+
+### Budget
+
+The envelope is the unchanged PERF021 shape: 2,400 seconds paid wall, 2,460
+seconds for one orphaned request and 300 seconds scale-down = 5,160
+resource-seconds on one H100 with 8 cores and 64 GiB, `$6.9344208` at the
+pinned `modal-on-demand-2026-07-31-h100-cpu-memory` rate. Four rungs do not
+grow it: PERF033's slowest rung is PERF032's fastest, so every arrival
+schedule here is shorter than one that already fit inside 2,400 seconds twice
+over.
+
+| | PERF033 |
+| --- | ---: |
+| Previous conservative | `$172.552967066383` |
+| Packet envelope | `$6.9344208` |
+| Cumulative if full | `$179.487387866383` |
+| Reserve after full | `$4.825436153617` |
+| Packet ceiling | `$7.00` |
+| Required reserve | `$3.00` |
+
+`$4.825436153617` clears the `$3.00` floor, so **PERF033 fits inside the
+existing authority and needs no further grant.** `budget_receipt` passes on
+arithmetic alone; no figure is assumed and none is invented.
+
+### What is not yet bound
+
+The budget gate is satisfied, so the source is prepared and fail-closed on the
+two gates that remain, and preparation may move neither.
+
+1. **Launch authority.** `LAUNCHABLE_CONTRACT` in
+   `rayline_saturation_knee_v2_contract.py` is `None`, so
+   `resolve_launch_contract` refuses the arm.
+2. **Pathfinder pin.** `PATHFINDER_AUTHORIZATION_COMMIT` is the literal
+   `PENDING`, which no commit can equal and which `_assert_pushed` compares
+   HEAD against.
+
+Provider spend is zero; there is no whole-run retry.
+
+- [x] PERF033a: establish the saturation criterion against every closed
+  open-loop run, and prove PERF021's receipts still replay byte-identically
+  into the report PERF021 recorded.
+- [x] PERF033b: route the four run-deciding constants through the contract and
+  register the new contract with the launcher.
+- [x] PERF033c: preregister the single FlashInfer arm, its anchor rung, its
+  falsifiable predictions and its real packet digests -- without opening launch
+  authority.
+- [x] PERF033d: bind the Pathfinder authorization commit to a real pushed head
+  and open the arm.
+- [x] PERF033e: run the arm once. If `r120` does not reproduce an unsaturated
+  cell at `0.875` peak occupancy, diagnose the anchor before reading any higher
+  rung. Report the knee, or report the new bound if `r320` also holds.
+
+### PERF033 Result (2026-08-11) — the criterion fired, and it fired on the rig
+
+The arm executed once, inside a `591.3705452920403`-second launcher window, and
+every measured cell completed. `comparison_status` is `passed`; all four rungs
+report `all_completed: true`, `provider_calls_zero: true` and
+`trace_match: true`; `32/32` measured turns in all eight cells across both
+sub-arms, `failed: 0` and `provider_calls: 0` everywhere. The one
+selected-worker trace digest
+`d9e93cf0f4c636a3838e41938d2ef3ff6e1d66a60860922f84771b3fa5158ac9` is shared by
+every cell of both sub-arms — the same digest PERF020, PERF021, both PERF031
+arms and PERF032 carry — so `cross_cell_trace_match` holds. ARC telemetry
+records exactly `36` session actions in every cell (`9` created, `27` appended,
+zero rebuilt, zero reused); every cell closed its eight measured sessions with
+`measured_sessions_missing: 0` and ended at `resident_sessions_after_cleanup: 0`
+and `resident_tokens_after_cleanup: 0`. Cleanup reached exact zero:
+`encoder_containers_remaining: 0`, `proxy_token_deleted: true`, Compose removed
+and Pathfinder stopped in all four cells. The deployed
+`vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca+gdn-flashinfer-eager` build on
+`rayline-arc-session-encoder-flashinfer-perf031` equals the contract's, so the
+engine identity is byte-identical to PERF031B's and PERF032's.
+
+#### The criterion fired exactly where it was preregistered to fire
+
+**This is the packet's primary result, and it is the one PERF033 existed to
+produce.** `first_saturated_cell` is `r160` on **both** the `rayline_arc` and
+the `rayline_remote` sub-arm — the preregistered prediction verbatim, including
+which rung. `peak_lane_occupancy` is `0.875` at `r120` and `1.0` at `r160`,
+`r220` and `r320` on both sub-arms, and `terminal_lane_occupancy` equals
+`peak_lane_occupancy` in all eight cells, so the ceiling was held at the final
+arrival rather than touched once in passing. The comparison records the
+criterion it applied, `episode_lanes: 8` and `occupancy_ratio: 1.0`, beside the
+verdict.
+
+The predicate it replaces agrees. `first_overloaded_cell` is also `r160` on
+both sub-arms, from `final_arrival_backlog_bounded: false` at `r160` onward.
+The criterion did not overturn `FINAL_BACKLOG_KNEE`; it returned the same
+verdict with the resolution PERF032 lacked. Where PERF032 could only publish
+two indistinguishable `false`s, `0.875` against `1.000` now separates a near
+miss from a hit, and the eight-lane ceiling is a contract-declared number the
+launcher asserted against the packet's own `max_episode_lanes` before any paid
+second elapsed.
+
+Neither of the two capacity falsification branches fired: `r120` did not
+saturate, so the anchor gate held, and `r320` did saturate, so the packet did
+not run out of ladder the way PERF031B and PERF032 did. The instrument branch
+is a separate matter and is recorded below.
+
+#### The anchor reproduced, so the higher rungs are readable
+
+`r120` re-offered exactly the cell PERF032 measured — `workload_sha256`
+`8990bbe3b27b5d848b22d116d26c2f1d50d325ac9e5e9dbf2280b9d5590dcb92`, the same
+document, not merely the same rate — and returned `1.1392950369109431`
+completion throughput against PERF032's `1.1547543726851863`. That is a
+reproduction within `1.34%`, at the same peak backlog `7`, the same
+`peak_lane_occupancy: 0.875` and the same `saturated: false`. The anchor gate
+required an unsaturated cell at `0.875` and got one, so nothing below
+invalidates the packet.
+
+One anchor figure did not reproduce and it matters later: median service time
+was `0.3015642079990357`s here against PERF032's `0.5123024160275236`s on the
+byte-identical cell, a `41%` move between two runs of the same document. The
+median is a noisy quantity in this rig, and a verdict must not rest on it.
+
+#### What the four rungs measured
+
+ARC sub-arm, at full receipt precision:
+
+| Rung | Realized arrivals | Completion throughput | Peak backlog | Peak occupancy | Saturated | Service p50 | Service p95 | Drain |
+| --- | ---: | ---: | ---: | ---: | :-: | ---: | ---: | ---: |
+| `r120` | `1.4896030952732628` | `1.1392950369109431` | `7` | `0.875` | no | `0.3015642079990357` | `7.271725958096795` | `7.27663174011753` |
+| `r160` | `1.9861374603643502` | `1.3297264272949245` | `8` | `1.0` | yes | `0.3172379999887198` | `8.422372959088534` | `8.456915878604693` |
+| `r220` | `2.730939008000981` | `1.541710300680092` | `8` | `1.0` | yes | `0.2983986670151353` | `9.16321308305487` | `9.40476235489196` |
+| `r320` | `3.9722749207287005` | `1.7651070629332493` | `8` | `1.0` | yes | `0.2906020419904962` | `9.906671416945755` | `10.325119647736459` |
+
+The `rayline_remote` sub-arm agrees in shape and is uniformly slightly slower:
+completion `1.0887292940271942`, `1.2749088914353695`, `1.4697845566251178`,
+`1.687767203270508`, with the identical peak backlog `7`/`8`/`8`/`8` and the
+identical `first_saturated_cell`. ARC over remote completion throughput is
+`1.04644473439004`, `1.042997218254426`, `1.0489362496909944` and
+`1.0458237720894648`, and `achieved_start_rate_ratio` is within `1.93e-4` of
+unity at every rung, so both sub-arms were offered the same load and the
+saturation verdict replicates across a transport change.
+
+#### What saturated is the rig, not the encoder
+
+This is the finding, and collapsing it into "the knee is `1.99` decisions per
+second" would be wrong. Three independent readings of the same receipts say the
+eight concurrent lanes are what ran out.
+
+- **Median service time is flat across the whole ladder.**
+  `0.3015642079990357`, `0.3172379999887198`, `0.2983986670151353`,
+  `0.2906020419904962` seconds over a `2.67x` range of offered rate, and the
+  trend is very slightly *down*. An encoder at its own knee does not do that.
+- **Completion throughput keeps rising past the saturation point.**
+  `1.1392950369109431` → `1.3297264272949245` → `1.541710300680092` →
+  `1.7651070629332493`, a `1.55x` climb across three rungs that the criterion
+  calls saturated. Saturating the lanes puts more work in flight
+  simultaneously, vLLM batches it better, and aggregate throughput improves
+  even though every lane is busy. A server at its throughput ceiling cannot
+  produce that series.
+- **Implied residence falls as load rises.** By Little's Law, holding all eight
+  lanes busy implies a mean residence of `8 / throughput`: `7.021886`,
+  `6.016275`, `5.189042` and `4.532303` seconds. This is an upper bound on mean
+  residence in each cell — `r120` never reached eight lanes — and it falls
+  monotonically. Work is spending *less* time in the system per decision as the
+  offered rate rises, which is the opposite of a queue building at a fixed
+  service rate.
+
+Service p95 does rise, `7.271725958096795` → `9.906671416945755` seconds,
+while p50 stays flat. That is what a bounded-concurrency rig does when arrivals
+compress against a fixed lane count. These receipts cannot separate lane wait
+from longer service under heavier simultaneous batching — `start_lag` p99 is
+`0.0050`s in every cell and `queue_latency_dominates_service_p95` is `false`
+everywhere, and neither instrument can see a wait inside a busy lane — but the
+distinction does not change the conclusion, because both are consequences of
+the lane count binding first.
+
+The small real deficit that *does* appear is visible only against the unqueued
+reconstruction, and it is two orders of magnitude smaller than a naive reading
+of the completion ratio would claim:
+
+| Rung | `completion_ratio` | `unqueued_completion_ratio` | Shortfall | `drain_service_tail_multiple` |
+| --- | ---: | ---: | ---: | ---: |
+| `r120` | `0.764831276550176` | `0.7649648856304584` | `0.02%` | `1.0006746379125127` |
+| `r160` | `0.6695037246067503` | `0.6704661081584959` | `0.14%` | `1.0041013286497702` |
+| `r220` | `0.5645348710327325` | `0.5711819835257331` | `1.16%` | `1.0263607611923569` |
+| `r320` | `0.4443567220693391` | `0.4548554384140957` | `2.31%` | `1.0422390339983347` |
+
+Both series are monotone in load and both are tiny. The observed completion
+ratio falls to `0.444` at `r320`, which read alone would say the system was
+`55.6%` underwater; the unqueued reconstruction accounts for all but `2.31%` of
+that, exactly as PERF032's did. Printing the two together is what stops the
+observed ratio being mistaken for a deficit, which is what it was preregistered
+to do.
+
+**So: the rig's eight concurrent lanes are what saturated. The encoder was
+never the binding constraint on throughput at any rung tested.**
+
+#### The instrument-falsification clause also evaluates true, and that is a defect in the clause
+
+Recorded plainly because it is preregistered and it fires. The clause reads:
+instrument falsified if any cell reports `saturated: true` while its start lag
+p99 stays under `0.05`s, its median service time is within `20%` of the
+anchor's and its drain does not exceed `1.1` service-p95 requests. At `r160`
+all three hold — start lag p99 `0.005019662751934106`s, median
+`0.3172379999887198`s against the anchor's `0.3015642079990357`s (`+5.2%`),
+`drain_service_tail_multiple` `1.0041013286497702` — and they hold at `r220`
+(`-1.05%`, `1.0263607611923569`) and `r320` (`-3.64%`, `1.0422390339983347`)
+too. On a literal reading, the packet's own instrument branch is satisfied by
+every saturated cell.
+
+The clause is wrong, and the same preregistration contains the proof. It
+rejected start lag as a saturation signal because p99 stays under `0.011`s even
+in PERF021's heavily saturated cells, and it rejected drain because at
+eightfold concurrency the whole corpus drains in about one service-p95 request,
+separating saturated from unsaturated cells by three to seven percent. Two of
+the clause's three conjuncts are therefore conditions the same section had
+already shown hold in known-saturated cells, so they discriminate nothing and
+the conjunction reduces to its median term. That term is a statement about
+per-request service time, not about concurrency — the precise conflation this
+packet exists to separate — and the anchor's own `41%` run-to-run median move
+shows it is not stable enough to carry a verdict in either direction.
+
+The occupancy criterion's verdict stands on evidence the clause does not touch:
+peak *and* terminal occupancy at the declared ceiling in three rungs on both
+sub-arms, a completion-ratio shortfall against the unqueued reconstruction that
+is monotone in load, and a `drain_service_tail_multiple` that rises above one
+for the first time in this repo's receipts. **A successor packet must rewrite
+the clause in those terms before inheriting it.** Recording a falsification
+branch that fires on the correct answer is worse than recording none, because
+the next reader cannot tell which of the two the receipts support.
+
+#### The admissible claim, and why a taller ladder cannot improve it
+
+> FlashInfer single-H100 decision capacity is **at least `1.7651070629332493`
+> realized decisions per second and still climbing at the top rung. Its
+> location remains unknown.**
+
+The bound now comes from the harness rather than from the ladder's height, and
+that is the difference from PERF031B and PERF032. Raising the rungs again would
+not find the knee: the lane cap binds first, `MAX_EPISODE_LANES = 8` is the
+probe's thread count and equals the eight measured episodes in the frozen
+corpus, and the encoder's `MAX_SESSIONS` and `max_num_seqs` are both eight, so
+a ninth concurrent retained episode raises `SessionCapacityError` → HTTP `429`
+→ a non-retriable `503` → a failed case → a violated `failed == 0` gate. A
+wider packet could not pass its own gate, which is why the lane count is a
+correctness constraint and not a knob.
+
+`r320` also crossed the resolution limit the preregistration stated. Its
+arrival span is `7.804092269201034`s against a measured service p95 of
+`9.906671416945755`s, so the burst is now *shorter* than one slow request; the
+preregistration expected the span to be "barely longer" than a p95 request
+using PERF032's `6.899`s figure. The floor above is quoted from `r320` because
+it is the highest measured completion rate and every integrity gate passed
+there, but `r220`'s `1.541710300680092`, whose `11.351406937019688`s span still
+exceeds its own p95, is the highest rung fully inside the packet's stated
+resolution. Both exceed everything below.
+
+Locating the encoder's own knee needs a different experimental design, not a
+taller ladder. Concretely it needs all three of:
+
+- **A corpus with more measured episodes**, since lanes are episodes. That
+  changes `corpus_sha256` and ends the identity chain
+  `72bbb22c6a8673d78cb4eadbce46ffd88f882f91f1880b4163e117f4679b1105` that every
+  open-loop run since PERF020 shares, so it is a new packet family, not a new
+  rung set.
+- **An encoder profile whose `MAX_SESSIONS` and `max_num_seqs` exceed eight**,
+  with KV capacity sized for it, because otherwise the extra lanes convert
+  directly into failed cases.
+- **More cases per rung**, so the arrival span stays long relative to a single
+  service-p95 request at the rates where the encoder is actually loaded. Thirty
+  two cases have run out of span, not out of rate.
+
+Until such a packet exists, the FlashInfer knee is bounded from below and
+unlocated, and this repo should stop quoting completion rates from lane-capped
+cells as if they were capacities.
+
+#### The capacity model is contradicted from below, not confirmed
+
+The handoff capacity model
+(`docs/agent/handoff_rayline_serving_cost_20260810.md` §2.2) predicts a
+transport-bound `1.055 / (0.637 + 0.286) = 1.143` dec/s for FlashInfer. The
+measured floor is `1.7651070629332493` with the encoder unsaturated, `1.54x`
+the prediction, so **the prediction is contradicted from below: the encoder is
+faster than the model said.** PERF031B's and PERF032's "neither confirmed nor
+contradicted" is superseded, and PERF032's warning against reading its
+`1.1547543726851863` as confirmation of `1.143` is now settled by measurement
+rather than by argument. Falsifying a prediction is the more useful outcome
+here, because a number that merely sat near `1.143` fitted the model without
+testing it.
+
+Be exact about *which* assumption breaks. The branch is
+`effective_concurrency / (transport + compute)` with an assumed effective
+concurrency of `1.055`. The ladder demonstrates concurrency of `8` — declared,
+asserted in preflight, and observed at both peak and terminal occupancy in
+three rungs of both sub-arms — which is `7.58x` the assumption. That is the
+assumption the data breaks. The per-decision cost assumption breaks in the
+opposite direction: at concurrency `8` and a `0.923`s per-decision cost the
+model would predict `8.67` dec/s, and the implied mean residence at full
+occupancy is `4.532303`s, `4.91x` the assumed `0.923`s. The two errors are
+compensating, which is exactly why the model's *output* landed within `1.54x`
+while both of its *inputs* are wrong by a factor of five to eight. The model's
+arithmetic is not validated by the proximity of PERF032's number, and its
+transport-bound structure is not validated by this result either; what the
+receipts establish is that its concurrency term does not describe this rig.
+
+#### `startup_log_captured: false` again, as preregistered
+
+`deployment-evidence.json` was written before the first measured cell with the
+app name `rayline-arc-session-encoder-flashinfer-perf031`, the resolved encoder
+URL, `engine_build_id`
+`vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca+gdn-flashinfer-eager`,
+`gdn_prefill_backend: flashinfer`, `encoder_gpu: H100` — and `startup_log: []`
+with `startup_log_captured: false`. This is the preregistered bounded outcome
+and the fourth arm in a row to record it. The 544-token attention block size,
+the mamba page padding, the KV cache size and the maximum concurrency stay
+**derived from vLLM source and never observed**.
+
+#### Budget
+
+The launcher window's resource upper estimate was `$0.7947310484070672` over
+`591.3705452920403` seconds. Conservative accounting charges the complete
+`$6.9344208` envelope regardless, taking the cumulative to
+`$179.487387866383` and leaving `$4.825436153617005` of reserve under the
+`$184.31282402` authority, clear of the `$3.00` floor. `provider_spend_usd` is
+`$0.00` and `provider_calls` is zero in every cell, as
+`release_qualification_1000_executed: false` requires.
+
+PERF033's launch authority is closed: `LAUNCHABLE_CONTRACT` is back to `None`
+in `rayline_saturation_knee_v2_contract.py` after its one authorized execution.
+`PATHFINDER_AUTHORIZATION_COMMIT` stays at the real
+`fb78b2fbbd579d10cd14a78ce71af7c0e9216306` as the record of what ran, exactly
+as the closed PERF020/PERF021, PERF031 and PERF032 contracts keep theirs. The
+arm cannot retry. PERF032's own pins are untouched by this record and are
+tracked separately; PERF033 closes only its own.
+
+### PERF034 preregistration: the 32-lane saturation-capacity packet, fail-closed
+
+PERF033's conclusion demanded a different experimental design, and PERF034 is
+that design, preregistered in `rayline_saturation_capacity_contract.py` with
+both human gates shut. It removes the rig's ceiling instead of inferring past
+it: 32 lanes, a ladder to the predicted knee, and a second firing point so the
+receipts say *which* resource bound.
+
+#### One of PERF033's three blockers was already solved, and one was never real
+
+The "different experimental design" list above named a wider corpus as a new
+packet family that "ends the identity chain". That was wrong in the way that
+matters: the 128-case directional corpus already exists with 32 episodes of
+four decisions each, and the 32-case corpus every open-loop run since PERF020
+shared is a *selection* from it, not a sibling. `corpus_sha256` changes to
+`5e4edcbcb44be32818f9b8e855e38a5d84e3b3a8358781ce4d228e6266ce54f3`, but the
+identity chain survives as a prefix property: the sha256 of the new trace's
+first 32 `[case_id, canonical]` entries must equal PERF020's recorded
+`selected_worker_trace_sha256`
+(`d9e93cf0f4c636a3838e41938d2ef3ff6e1d66a60860922f84771b3fa5158ac9`), pinned
+by test against PERF033's own receipts. The topology is unchanged.
+
+The encoder-profile blocker dissolved on inspection of its origin.
+`MAX_SESSIONS = 8` entered the repo in `4f14763b` ("Add bounded Rayline
+retained-session gateway") as a bare constant with no derivation, no comment
+and no sizing argument; `MAX_RESIDENT_TOKENS` is *derived from it*, not the
+other way around. The eight-lane ceiling that bounded four packet families was
+an unexplained initial choice, not a measured limit. The raise is still scoped
+as if the evidence depended on it, because it does: the PERF034 profile lives
+under the distinct app name `rayline-arc-session-encoder-flashinfer-perf034`,
+and every app the closed runs' evidence names keeps `8 / 32` forever
+(`f26dc967`). Same engine build, same image, same prefill backend; only the
+session-service caps move, so the container's 8 cores and 64 GiB — and
+therefore the `$6.9344208` envelope — are unchanged.
+
+The third blocker (more cases per rung) is met by the same corpus: 128
+measured cases keep the arrival span long relative to a service-p95 request at
+the rates where the encoder is actually loaded.
+
+#### Where the knee is predicted, and why occupancy alone would go silent
+
+The derived GPU-busy fraction at eight fully saturated lanes was `0.53`, which
+extrapolates to a compute knee near 15 lanes with about 2x uncertainty either
+way. That is occupancy `~0.5` of this packet's 32 lanes, so the occupancy
+criterion — correct at PERF033's ceiling — would stay silent while the encoder
+saturates. The contract therefore arms a second, independent firing point:
+`throughput_plateau_gain`, the marginal-throughput floor. The first rung
+converting less than the floor of its additional realized arrivals into
+completed throughput is the plateau. The diagnosis is in which criterion fires
+first: occupancy first means the rig bound again (and that outcome, not a
+wider packet, is the recorded result — 32 lanes is the whole corpus); plateau
+first with occupancy short of the ceiling is direct proof the encoder bound.
+
+The floor is `1/3`, calibrated on every recorded open-loop receipt rather than
+chosen by intuition. The intuitive `0.5` false-fires on PERF032's provably
+unqueued top rung, whose raw marginal gains of `0.51` / `0.46` are the drain
+arithmetic this plan already dissected, not load. The drain-corrected slope
+cannot decide at all — the inflated service tail feeds the correction, so it
+reads `0.93`–`1.0` even on PERF021's saturated rungs — and the implied
+residence delta sign-flips on unqueued cells. One third sits inside the
+measured gap: unqueued cells convert at least `0.46` of added arrivals, rungs
+past a known knee at most `0.32`, giving `~28%` margin on both sides. Replayed
+from the recorded receipts: PERF032 never fires; PERF021 fires at `r030` on
+both arms, the same rung occupancy pins; PERF033 fires at `r220` after
+occupancy's `r160`, which reads correctly as "the rig bound first".
+
+#### The falsification clause, rewritten in the terms PERF033 demanded
+
+PERF033 recorded that its inherited instrument-falsification clause fires on
+the correct answer and must be rewritten before a successor inherits it. The
+rewrite: **a plateau verdict is falsified at any rung that fires while its
+drain-corrected marginal gain stays within `10%` of `1.0` and its implied
+residence delta is non-positive.** That pair is PERF032's recorded signature
+of finite-corpus drain arithmetic, and both quantities are carried per rung in
+the v4 report as non-voting evidence, so the check is against numbers the
+receipts already print. The old clause's start-lag and drain conjuncts are
+dropped for the reason PERF033 proved: they hold in known-saturated cells and
+discriminate nothing. The occupancy verdict keeps the evidence terms PERF033's
+stood on — peak and terminal occupancy at the declared ceiling, a
+completion-ratio shortfall against the unqueued reconstruction that is
+monotone in load, and a `drain_service_tail_multiple` above one.
+
+Memory is preregistered as a cliff, not a curve. Worst case at 32 lanes is
+`8,388,608` resident tokens against a `~70` GiB pool, but the frozen corpus
+peaks at `4,261,735` tokens — `51%` of the derived cap — so the packet is safe
+by corpus construction, not by headroom at the limit. If memory does bind, the
+coordinator's `SessionCapacityError` becomes a failed case and the
+`failed == 0` gate voids the arm; `cache_miss_tokens` and
+`session_actions.rebuilt` must stay exactly zero. `CHUNK_SCHEDULE_TOKENS` and
+`enforce_eager` are held fixed from PERF033 and are the first suspects if
+throughput plateaus below the predicted knee.
+
+#### Ladder, anchor, and gates
+
+Realized targets of roughly `1.5 / 3 / 5 / 8` decisions per second at the
+measured `1.2413` realized-per-offered ratio give offered rungs
+`1.20 / 2.40 / 4.00 / 6.45`. The anchor `r120` re-offers PERF033's rate but is
+deliberately *not* byte-identical to its cell — a rung's workload document
+carries the lane count and case counts — so for the first time in this packet
+family the anchor property is a measured quantity rather than a digest: at
+`1.20` offered, an unconstrained encoder must reproduce PERF033's
+`1.1547543726851863` decisions per second, which eight lanes already carried.
+
+Both gates ship shut. The Pathfinder pin is the literal `PENDING`, no contract
+is launchable, and the budget fails closed by arithmetic: the authority still
+reads PERF033's `$184.31282402` ceiling, under which the conservative
+cumulative-if-full of `$186.421808666383` makes `budget_receipt` raise. The
+minimum viable grant for this one arm is `$5.108984646383`, which takes the
+ceiling to `$189.421808666383` and leaves the reserve at exactly the `$3.00`
+floor. No granted figure is recorded anywhere in the repo; only a human may
+raise the ceiling, and the authorize → bind → launch → close sequence applies
+unchanged.
+
+### PERF034 Result (2026-08-11) — both criteria fired together, at twice PERF033's throughput
+
+The grant arrived and the sequence ran as written: authorize `e282f16c`
+recorded the human's confirmation and its minimum-grant interpretation, the
+Pathfinder registry head `da85e104` carried the granted figure, bind
+`dcb1e819` moved the ceiling to `$189.421808666383` and opened exactly this
+run, and the arm executed once. All eight arm-cells measured cleanly:
+`128/128` completed in every cell, `failed: 0` and `provider_calls: 0`
+everywhere, and one selected-worker trace digest
+`7fed5d061b60f72a7efda5d51c2e3640d8c9caf85dc9e6dc902d6261137013d8` shared by
+every cell of both sub-arms, so `cross_cell_trace_match` holds. ARC telemetry
+is byte-identical across all four cells: `136` session actions (`34` created,
+`102` appended, zero rebuilt, zero reused), `cache_miss_tokens` sum exactly
+zero, zero truncations, and `4,497,623` appended tokens per cell. The memory
+cliff stayed distant: `1,205,793` retained tokens against the `~4.26M` the
+corpus was preregistered to peak at. The three state-reset receipts that
+exist (`r120`, `r240`, `r400`) all record `32/32` measured sessions closed,
+`measured_sessions_missing: 0`, and exact zeros for resident sessions and
+tokens after cleanup.
+
+The fourth state-reset receipt does not exist, and that is how the run ended:
+after `r645`'s both sub-arms completed and wrote their receipts, the
+post-cell state reset got HTTP 502 from the protected encoder and the
+launcher raised `StateResetError` before writing `comparison.json`. The
+`finally` cleanup ran — proxy token deleted, app stopped,
+`encoder_containers_remaining: 0`, independently reconfirmed by a fresh
+inventory afterwards — and under the registry's no-retry clause that launched
+failure closes the PERF034 ID for good. The comparison below is derived
+offline from the eight receipts by the comparator CLI with the contract's
+criterion verbatim (`episode_lanes: 32`, `occupancy_ratio: 1.0`,
+`throughput_plateau_gain: 1/3`, `case_count: 128`), the exact
+`comparison-derived-offline.json` precedent PERF032 set. Its `status` is
+`passed` with `all_completed`, `provider_calls_zero` and `trace_match` true
+at every rung.
+
+#### What the four rungs measured
+
+ARC sub-arm, at full receipt precision where it matters:
+
+| Rung | Realized arrivals | Completion throughput | Peak backlog | Peak occupancy | Saturated | Marginal gain | Plateaued |
+| --- | ---: | ---: | ---: | ---: | :-: | ---: | :-: |
+| `r120` | `1.2518` | `1.0721298521209137` | `15` | `0.46875` | no | — | no |
+| `r240` | `2.5036` | `1.3381459770827528` | `33` | `1.03125` | **yes** | `0.2125` | **yes** |
+| `r400` | `4.1727` | `1.9075689750820500` | `28` | `0.87500` | no | `0.3412` | no |
+| `r645` | `6.7285` | `2.3061533124360074` | `31` | `0.96875` | no | `0.1560` | yes |
+
+Remote sub-arm:
+
+| Rung | Realized arrivals | Completion throughput | Peak backlog | Peak occupancy | Saturated | Marginal gain | Plateaued |
+| --- | ---: | ---: | ---: | ---: | :-: | ---: | :-: |
+| `r120` | `1.2518` | `1.0284163272054432` | `17` | `0.53125` | no | — | no |
+| `r240` | `2.5036` | `1.5131281562594237` | `25` | `0.78125` | no | `0.3872` | no |
+| `r400` | `4.1727` | `1.8423191772364715` | `32` | `1.00000` | **yes** | `0.1972` | **yes** |
+| `r645` | `6.7285` | `2.1262018706449126` | `30` | `0.93750` | no | `0.1111` | yes |
+
+Two design inputs shifted under the run and both are visible above. The
+realized-per-offered ratio measured `1.0432`, not the `1.2413` the ladder was
+designed with, so the realized targets landed at `1.25 / 2.50 / 4.17 / 6.73`
+rather than the intended `1.5 / 3 / 5 / 8`. And every rung — including the
+anchor — reports `overloaded: true` with an unbounded final-arrival backlog,
+because at 128 cases even `1.25` realized arrivals per second exceeds what
+this encoder completes.
+
+#### The two criteria fired at the same rung, so the encoder is not isolated
+
+`first_saturated_cell` and `first_throughput_plateau_cell` are the **same
+rung on both sub-arms**: `r240` for `rayline_arc` (peak occupancy `1.03125`)
+and `r400` for `rayline_remote` (peak occupancy exactly `1.0`). The
+preregistered diagnosis rule was written for a separation that did not
+happen: plateau-first-with-occupancy-short would have proved the encoder
+bound, occupancy-first would have meant the rig bound again. With both firing
+together, the recorded result is the one the preregistration reserved for
+occupancy reaching the ceiling: **the corpus ran out of lanes again**, this
+time at its absolute limit — 32 lanes is every episode the corpus has, so no
+wider packet over this corpus can exist.
+
+The knee-near-15-lanes prediction is not confirmed. Occupancy blew through
+`0.5` and pinned at the firing rungs, which the `0.53` GPU-busy
+extrapolation said should not happen. What the prediction got right is
+scale: the cap raise roughly **doubled** the family's recorded ceiling, from
+PERF033's `1.15` decisions per second to `2.13` (remote) and `2.31` (arc) at
+`r645` — and the top rung is non-voting evidence that the encoder's own limit
+is finally nearby, because there occupancy sits *below* the pin
+(`0.94`–`0.97`) while marginal gains of `0.111`–`0.156` convert barely a
+tenth of added arrivals into completions.
+
+The rewritten falsification clause does not fire. At the firing rungs the
+drain-corrected marginal gains are `0.8983` (arc `r240`) and `0.8631`
+(remote `r400`) — both outside the `10%`-of-`1.0` band — and the implied
+residence deltas are positive (`+10.67`s and `+0.85`s), so neither rung
+shows PERF032's drain-arithmetic signature. The occupancy verdicts stand on
+their preregistered evidence terms: terminal occupancy equals peak occupancy
+at both firing rungs, the completion ratio falls monotonically with load on
+both sub-arms (`0.86 → 0.53 → 0.46 → 0.34` on arc), and
+`drain_service_tail_multiple` is above one in all eight cells.
+
+#### The anchor did not reproduce, and the higher rungs are qualified by it
+
+`r120` on arc returned `1.0721298521209137` completion throughput against
+the required `1.1547543726851863` — `7.15%` short, where PERF033's own
+anchor reproduced within `1.34%`. No tolerance was preregistered, so the
+anchor gate is recorded as **not held**. The likely mechanism is the corpus
+change itself: this anchor is overloaded (`overloaded: true`, backlog
+unbounded) where PERF033's 32-case anchor was not, because quadrupling the
+measured span at the same offered rate gives the backlog four times as long
+to accumulate against a capacity of `~1.07` completions per second. That is
+a hypothesis, not a receipt. What the miss qualifies is the absolute
+throughput figures above; the criterion verdicts compare rungs within this
+run and do not rest on PERF033's scale.
+
+One preregistered analysis-time check cannot be run: the PERF020 trace-prefix
+property. The probe hashes the selected-worker trace without persisting its
+entries, so the sha256 of the first 32 `[case_id, canonical]` pairs is not
+recomputable from any receipt. The within-run chain is intact — one digest
+across all eight cells, `corpus_sha256` and `topology_sha256` equal to the
+contract's — but continuity to PERF020's recorded digest is unverified, and a
+successor that wants it must first make the probe persist the trace.
+
+#### Budget
+
+Receipts span `845` seconds from `deployment-evidence.json` to the final
+`r645` telemetry write, after a `~133`-second image deploy; the paid window
+stayed near `1,000` seconds against the `2,400`-second envelope, an upper
+estimate of roughly `$2.9` at the envelope's rate. Conservative accounting
+charges the complete `$6.9344208` envelope regardless, taking the cumulative
+to `$186.421808666383` and leaving the reserve at exactly `$3.00` under the
+`$189.421808666383` authority — the preregistered arithmetic, landed to the
+digit. `provider_spend_usd` is `$0.00` and `provider_calls` is zero in every
+cell.
+
+PERF034's launch authority is closed: `LAUNCHABLE_CONTRACT` is back to `None`
+in `rayline_saturation_capacity_contract.py` after its one authorized
+execution (`ad65afa3`), and `PATHFINDER_AUTHORIZATION_COMMIT` stays at the
+real `da85e1045a92aa3d6aa6d765a2dc2f5257e1d31d` as the record of what ran.
+The arm cannot retry: the 502 was a launched failure, and any successor —
+including one that only wants the missing `r645` state-reset receipt or the
+trace-prefix check — needs a new registry ID and fresh human authorization.
+
+### PERF035 Result (2026-08-11) — the L4 saturates from the first rung, and the TFLOPS extrapolation is falsified
+
+The question was the deployment's, not the family's: GCP Cloud Run with GPU
+sells exactly one card Modal also rents — the 24 GB L4 — and every recorded
+Rayline capacity number was measured on an H100. PERF035 re-ran PERF033's
+exact eight-lane, 32-case packet on an L4
+(`rayline-arc-session-encoder-flashinfer-perf035-l4`, same vLLM `9f5ea81c`
+`gdn-flashinfer-eager` build, same Qwen3.5-0.8B `2fc06364`, FlashInfer) with
+the card as the only variable moved. The preregistered prediction was the
+calculator's TFLOPS extrapolation: `0.4014` decisions per second, with a
+stated `±30%` validation band of `0.2809`–`0.5218` that is explicitly a
+target and not an integrity gate. The chain ran as written: authorize
+`62c8d8f2` recorded the human's grant (`$2.4194208` minimum-viable against
+the "anything under `$10`" bound, ceiling to `$191.841229466383`), the
+Pathfinder registry head `511760ab` carried the authorization, bind
+`aff63344` opened exactly this run, and the arm executed once.
+
+It is the family's first launched run that closed with no in-run anomaly.
+The launcher wrote `comparison.json` itself — `status: passed`, with
+`all_completed`, `provider_calls_zero` and `trace_match` true at every rung —
+where PERF034 needed an offline derivation and PERF032 before it. All eight
+arm-cells completed `32/32` with `failed: 0` and `provider_calls: 0`; the
+selected-worker trace sha256 equals PERF020's recorded
+`d9e93cf0f4c636a3838e41938d2ef3ff6e1d66a60860922f84771b3fa5158ac9` **exactly**
+in every cell — this being the same 32-case corpus, continuity here is exact
+equality, not PERF034's unverifiable prefix property. All four state-reset
+receipts exist and record `8/8` measured sessions closed with exact zeros for
+resident sessions and tokens. ARC telemetry is byte-identical across the four
+cells: `36` session actions (`9` created, `27` appended, zero rebuilt, zero
+reused), `cache_miss_tokens` sum exactly zero, zero truncations, `1,235,801`
+appended tokens and `308,144` retained tokens per cell. The identity docs
+carry the frozen family label `gpu_class: NVIDIA H100 80GB` by byte-pinned
+lineage; the actual card is attested where the preregistration said it would
+be, in `deployment-evidence.json` (`"encoder_gpu": "L4"`, the perf035 app
+name, the engine build id).
+
+#### What the four rungs measured
+
+ARC sub-arm, at full receipt precision where it matters:
+
+| Rung | Realized arrivals | Completion throughput | Peak occupancy | Saturated | Marginal gain | Plateaued |
+| --- | ---: | ---: | ---: | :-: | ---: | :-: |
+| `r016` | `0.1986` | `0.1267535599322920` | `1.0` | **yes** | — | no |
+| `r032` | `0.3972` | `0.1651960199614078` | `1.0` | yes | `0.1936` | **yes** |
+| `r048` | `0.5958` | `0.1824534930884859` | `1.0` | yes | `0.0869` | yes |
+| `r072` | `0.8938` | `0.1976547216213381` | `1.0` | yes | `0.0510` | yes |
+
+Remote sub-arm:
+
+| Rung | Realized arrivals | Completion throughput | Peak occupancy | Saturated | Marginal gain | Plateaued |
+| --- | ---: | ---: | ---: | :-: | ---: | :-: |
+| `r016` | `0.1986` | `0.1220556638168625` | `1.0` | **yes** | — | no |
+| `r032` | `0.3972` | `0.1572359819546513` | `1.0` | yes | `0.1771` | **yes** |
+| `r048` | `0.5958` | `0.1735490282425835` | `1.0` | yes | `0.0821` | yes |
+| `r072` | `0.8938` | `0.1847654720958659` | `1.0` | yes | `0.0376` | yes |
+
+The arrival plumbing behaved exactly as designed this time: the
+realized-per-offered ratio landed at the `1.2413` the ladder was built with
+(realized `0.1986 / 0.3972 / 0.5958 / 0.8938` against offered
+`0.16 / 0.32 / 0.48 / 0.72`), where PERF034's measured `1.0432`. And every
+rung of both sub-arms reports `overloaded: true` with the offered rate
+maintained — on this card even `0.199` realized arrivals per second exceeds
+what the encoder completes.
+
+#### Occupancy fired first, and the drain clause voids the plateau
+
+`first_saturated_cell` is `r016` on **both** sub-arms: peak lane occupancy
+reached `1.0` of the eight declared lanes at the very first rung — and stayed
+pinned there, peak and terminal, at every rung of both sub-arms.
+`first_throughput_plateau_cell` is `r032` on both sub-arms. But the
+preregistered falsification clause fires at the plateau's firing rung: the
+drain-corrected marginal gains are `0.9525` (arc `r032`) and `0.9495` (remote
+`r032`) — inside the `10%`-of-`1.0` band — with implied residence deltas
+negative (`−4.58`s and `−4.78`s; in fact negative at every rung of both
+sub-arms), which is PERF032's recorded signature of finite-corpus drain
+arithmetic. The plateau verdicts are therefore voided, and the recorded
+result is **occupancy-first: the rig bound, again** — the outcome the
+preregistration reserved for it, "even an eighth of the compute cannot
+exhaust eight lanes of this corpus." The expected plateau-first separation,
+the direct proof of encoder binding four H100 packets could not produce, did
+not happen on the L4 either. Separating the encoder needs a wider corpus,
+not a smaller card.
+
+The saturated-pipeline arithmetic is exact: implied per-decision residence
+falls `63.11 → 48.43 → 43.85 → 40.47` seconds on arc across the rungs, and
+at every rung completion throughput equals `8 lanes ÷ residence` to the
+receipt's precision — throughput above `r016` grows only because queueing
+compresses residence, not because the card finds capacity. The supporting
+evidence holds on its preregistered terms: completion ratio falls
+monotonically with load on both sub-arms (`0.64 → 0.42 → 0.31 → 0.22` on
+arc), `drain_service_tail_multiple` is above one in all eight cells
+(`1.014`–`1.063`), and arc ran slightly faster than remote at every rung
+(throughput ratios `1.039`–`1.070`).
+
+#### The anchor prediction failed, the band was missed, and both are results
+
+The preregistration placed `r016` at `0.49×` the predicted ceiling — "well
+inside where the encoder cannot bind — so it measures the arrival plumbing,
+not the card." That prediction failed outright: `r016` saturated and
+overloaded immediately, with a service p50 of `0.808` seconds against a p95
+of `95.0` seconds and a `96.4`-second drain after the final arrival. The
+card's own claim then lands below the band: the measured ceiling is
+`0.1977` decisions per second (arc `r072`; remote `0.1848`) against the
+`0.2809` band floor — which, per the preregistered `tolerance_rationale`,
+**falsifies the L4 TFLOPS extrapolation and is a result, not a voided arm**.
+The cross-check the registry dismissed — naive scaling of PERF033's measured
+`1.7651` dps by the TFLOPS ratio, `0.216` dps, "wrong because it also scales
+the non-GPU serial time" — landed within `9%` of measured, evidence that at
+this scale the workload is GPU-bound nearly end to end and the serial time
+the calculator protected does not dominate.
+
+For the deployment question that motivated the run: one L4 sustains about
+`0.198` decisions per second under this eight-lane shape, `0.88×` the `0.225`
+reference production rate — a single Cloud Run L4 instance does not carry the
+reference rate, where the 32-lane H100 measured `2.13`–`2.31`. The
+deployment plan needs more than one L4 instance or the RTX PRO 6000 class,
+and either measurement needs a new registry ID.
+
+#### Budget
+
+The paid launcher window measured `2292.06` seconds against the
+`2,400`-second envelope — the `paid_wall_check` had warned that only a card
+slower than `~0.17` dps would breach it, and at `0.198` dps the margin held —
+for a measured resource upper bound of `$1.0747` against the `$2.4194208`
+envelope. Conservative accounting charges the full envelope regardless,
+taking the cumulative to `$188.841229466383` and leaving the reserve at
+exactly `$3.00` under the `$191.841229466383` authority — the preregistered
+arithmetic, landed to the digit. `provider_spend_usd` is `$0.00` and
+`provider_calls` is zero in every cell.
+
+Cleanup ran inside the launcher — the L4 app stopped at `17:55:34`, the
+ephemeral proxy token deleted, `encoder_containers_remaining: 0` — and a
+fresh inventory afterwards independently reconfirmed zero Rayline containers
+on Modal. PERF035's launch authority is closed: `LAUNCHABLE_CONTRACT` is back
+to `None` in `rayline_l4_capacity_contract.py` after its one authorized
+execution (`1d66ba9a`), with `PATHFINDER_AUTHORIZATION_COMMIT` staying at the
+real `511760abd07a978802bbfc2065dac19e2062f050` as the record of what ran.
+Receipts are uploaded to `router-artifacts` at revision
+`2714e487016238a2325a7b61516665e39f89b2af` (19 files). The 1,000-case
+release qualification stays held.
+
+### PERF036 Result (2026-08-11) — the RTX PRO 6000 lands inside the band, and measured-anchor TFLOPS scaling survives its first cross-GPU hop
+
+PERF035 falsified the token-model calculator but left one method standing:
+naive scaling of a measured ceiling by the dense-FP16 TFLOPS ratio, which
+had reproduced the L4's number within `9.2%` when run from PERF033's H100
+anchor. PERF036 tested that surviving method prospectively on GCP Cloud
+Run's other GPU class — the 96 GB RTX PRO 6000, on Modal since April 2026 —
+by re-running the same eight-lane, 32-case packet
+(`rayline-arc-session-encoder-flashinfer-perf036-rtx6000`, same vLLM
+`9f5ea81c` `gdn-flashinfer-eager` build, same Qwen3.5-0.8B `2fc06364`,
+FlashInfer) with the card as the only variable moved and a four-rung ladder
+scaled up for the faster card (offered `0.32 / 0.64 / 0.96 / 1.44`, with
+`r032` byte-identical to PERF035's `r032` as the cross-run anchor). The
+preregistered prediction scaled PERF035's measured `0.1977` dps by
+`480/121`: `0.7843` decisions per second, band `0.5490`–`1.0195`, a
+validation target and explicitly not an integrity gate. The chain ran as
+written: authorize `fee6176e` recorded the human's grant (`$5.6186208`
+minimum-viable against the under-`$10` approval, ceiling to
+`$197.459850266383`), the Pathfinder registry head `ed8a52cc` carried the
+authorization, bind `fcc1fc7d` opened exactly this run, and the arm
+executed once.
+
+**The headline: the measured ceiling is `0.8877` decisions per second (arc
+`r144`; remote `0.8441`), inside the preregistered band and `13.2%` above
+the point prediction.** Measured-anchor TFLOPS scaling is now validated on
+its first true cross-GPU hop (L4 → RTX PRO 6000, Ada to Blackwell), where
+the token-model calculator it replaced had missed the L4 by `2.03×`. For
+the deployment question that motivated the family: one RTX PRO 6000
+sustains `3.95×` the `0.225` reference production rate under this
+eight-lane shape — the single-instance Cloud Run deployment the L4 could
+not carry (`0.88×`), this card carries with nearly fourfold headroom.
+
+#### What the four rungs measured
+
+ARC sub-arm, at full receipt precision where it matters:
+
+| Rung | Realized arrivals | Completion throughput | Peak occupancy | Saturated | Marginal gain | Plateaued |
+| --- | ---: | ---: | ---: | :-: | ---: | :-: |
+| `r032` | `0.3972` | `0.3765813234487028` | `0.375` | no | — | no |
+| `r064` | `0.7945` | `0.6082146256068232` | `0.875` | no | `0.5831` | no |
+| `r096` | `1.1917` | `0.7472059583005314` | `1.0` | **yes** | `0.3499` | no |
+| `r144` | `1.7875` | `0.8877486456148235` | `1.0` | yes | `0.2359` | **yes** |
+
+Remote sub-arm:
+
+| Rung | Realized arrivals | Completion throughput | Peak occupancy | Saturated | Marginal gain | Plateaued |
+| --- | ---: | ---: | ---: | :-: | ---: | :-: |
+| `r032` | `0.3972` | `0.3743563562117826` | `0.375` | no | — | no |
+| `r064` | `0.7945` | `0.5772243128224220` | `0.875` | no | `0.5107` | no |
+| `r096` | `1.1917` | `0.7208324179423778` | `1.0` | **yes** | `0.3615` | no |
+| `r144` | `1.7875` | `0.8441019084741728` | `1.0` | yes | `0.2069` | **yes** |
+
+For the first time in this family, the low rungs ran genuinely unsaturated:
+peak lane occupancy `0.375` at `r032` and `0.875` at `r064`, `overloaded:
+false` on both sub-arms, completion ratios `0.95` and `0.77`, and a service
+p50 of `0.53` seconds at the anchor rung. The anchor gate landed exactly:
+`r032`'s realized arrival rate equals PERF035's `r032` to the last digit
+(`0.39722749207287017`), the realized-per-offered ratio is the ladder's
+designed `1.2413` at every rung, and on the workload that pinned the L4 at
+occupancy `1.0` from its first rung, this card completed `2.28×` the
+throughput while three-eighths busy.
+
+#### Occupancy still fired first, and the drain clause voids the plateau again
+
+The preregistered expectation — plateau first with occupancy short of the
+ceiling, the direct encoder-bound signature — did not materialize.
+`first_saturated_cell` is `r096` on both sub-arms;
+`first_throughput_plateau_cell` is `r144` on both. And at the plateau's
+firing rung the preregistered falsification clause fires a third time: the
+drain-corrected marginal gains are `0.9581` (arc `r144`) and `0.9558`
+(remote `r144`) — inside the `10%`-of-`1.0` band — with implied residence
+deltas negative (`−1.69`s and `−1.62`s), PERF032's recorded signature of
+finite-corpus drain arithmetic. The `r144` plateau verdicts are voided, and
+the structural result is **occupancy-first: the rig bound, a third time** —
+though no longer PERF035's degenerate everywhere-pinned form. The saturated
+arithmetic is exact where it applies: at `r096` and `r144` completion
+throughput equals `8 lanes ÷ implied residence` to the receipt's precision
+(`8 ÷ 10.71 = 0.747`, `8 ÷ 9.01 = 0.888`), so throughput above `r096` grows
+only because queueing compresses residence. The measured `0.8877` is
+therefore the eight-lane rig's number on this card, a floor on the
+encoder's own ceiling rather than the ceiling itself; separating the
+encoder still needs a wider corpus or more lanes, on any card. The
+supporting evidence holds on its preregistered terms: completion ratio
+falls monotonically with load on both sub-arms (`0.95 → 0.77 → 0.63 →
+0.50` on arc), and arc ran faster than remote at every rung (throughput
+ratios `1.006`–`1.054`, service p50 ratios `0.60`–`0.80`).
+
+#### Integrity, identity, and the run that almost wasn't
+
+All eight arm-cells completed `32/32` with `failed: 0` and
+`provider_calls: 0`; `comparison.json` was written by the launcher itself
+with `status: passed` and `all_completed`, `provider_calls_zero`, and
+`trace_match` true at every rung. The selected-worker trace sha256 equals
+PERF020's recorded
+`d9e93cf0f4c636a3838e41938d2ef3ff6e1d66a60860922f84771b3fa5158ac9`
+**exactly** in every cell. ARC telemetry is byte-identical across the four
+cells and — being the same corpus — byte-identical to PERF035's: `36`
+session actions (`9` created, `27` appended, zero rebuilt, zero reused),
+`cache_miss_tokens` sum exactly zero, zero truncations, `1,235,801`
+appended and `308,144` retained tokens per cell. All four state-reset
+receipts record `8/8` measured sessions closed with exact zeros for
+resident sessions and tokens. The identity docs carry the frozen family
+label `gpu_class: NVIDIA H100 80GB` by byte-pinned lineage; the actual card
+is attested where the preregistration said it would be, in
+`deployment-evidence.json` (`"encoder_gpu": "RTX-PRO-6000"`, the perf036
+app name, the engine build id). The first launch attempt deployed the app
+(`137.2`s) and then aborted before any cell, warmup, or GPU-seconds were
+requested — the local Docker daemon was down, `docker compose up` failed,
+and the launcher's own handler stopped the Modal app. Nothing was measured,
+so under the no-retry clause this was an environment failure before launch
+substance, not a launched failure; the evidence directory is preserved and
+uploaded as `...-aborted-docker-down`, and the packet-frozen run then
+executed once (deploy `62.7`s, cached).
+
+#### Budget
+
+The paid launcher window measured `878.02` seconds against the
+`2,400`-second envelope — a third of PERF035's window, on a card charged
+`2.6×` the rate — for a measured resource upper bound of `$0.9561` against
+the `$5.6186208` envelope. Conservative accounting charges the full
+envelope regardless, taking the cumulative to `$194.459850266383` and
+leaving the reserve at exactly `$3.00` under the `$197.459850266383`
+authority — the preregistered arithmetic, landed to the digit.
+`provider_spend_usd` is `$0.00` and `provider_calls` is zero in every cell.
+
+Cleanup ran inside the launcher — the app stopped, the ephemeral proxy
+token deleted, `encoder_containers_remaining: 0` — and a fresh inventory
+afterwards independently reconfirmed zero Rayline encoder containers on
+Modal. PERF036's launch authority is closed: `LAUNCHABLE_CONTRACT` is back
+to `None` in `rayline_rtx6000_capacity_contract.py` after its one
+authorized execution (`d277497d`), with `PATHFINDER_AUTHORIZATION_COMMIT`
+staying at the real `ed8a52cccb8980d6f03334d768de43c51fefa189` as the
+record of what ran. Receipts are uploaded to `router-artifacts` at revision
+`7d62eae9ce10656c37055e35fe676b0262122fcb` (19 files, plus the aborted
+attempt's evidence at `44483196`). The 1,000-case release qualification
+stays held.
+
+### PERF037 Result (2026-08-12) — the burst is not absorbed, and the deployment absorbs about 38 seconds of it
+
+PERF037 ran once on 2026-08-12 from bind commit `1bab501e`, executing
+PERF034's packet byte for byte on PERF036's card at 32 lanes — every episode
+the frozen 128-case corpus has. All eleven packet digests were re-verified
+against the contract before the paid window opened, so the cross-GPU claim
+rests on byte-identity rather than on a regenerated packet.
+
+**The predicted outcome held.** No cell absorbed its burst. The preregistered
+predicate needs all three of realized arrivals at least `2.33` dec/s,
+completion throughput at least `0.95x` realized, and peak backlog no greater
+than 32; every cell failed the second condition by a wide margin, and the
+verdict is the same on both arms.
+
+| Rung | Realized dec/s | Completion dec/s (arc) | Peak backlog | Occupancy | Absorbs |
+| --- | ---: | ---: | ---: | ---: | :---: |
+| `r120` | `1.2518` | `0.7967` | 25 | `0.781` | no |
+| `r240` | `2.5036` | `1.0494` | 30 | `0.938` | no |
+| `r400` | `4.1727` | `1.2159` | 32 | `1.000` | no |
+| `r645` | `6.7285` | `1.3098` | 32 | `1.000` | no |
+
+**The measured ceiling is `1.3098` dec/s** (`r645`, ARC arm; Remote `1.2119`),
+inside the preregistered `0.7835`–`1.4550` band and `17.0%` above the
+`1.1193` point prediction. Measured-anchor TFLOPS scaling therefore survives
+its **second** cross-GPU hop, and its first at a lane count other than eight.
+It survives conservatively in the same direction as before: the card returned
+`0.568` of the H100's 32-lane figure (Remote `0.570`) against a dense-FP16
+TFLOPS ratio of `0.4853`, so the naive method under-predicts this card by a
+consistent margin at both lane counts rather than by a lane-count-dependent
+one. The two arms agreeing to within `0.002` on that ratio is the strongest
+form the cross-check has taken.
+
+**What the run was bought for.** The verdict was already implied by
+arithmetic; the purchase was the degradation shape. At the measured ceiling
+the worst recorded production burst of `2.33` dec/s is `1.78x` the encoder's
+capacity, and `absorbable_burst_seconds` — backlog accumulating at
+`burst − ceiling` and clearing at `ceiling`, against the 30-second recovery
+budget — is **`38.52` seconds**, against `27.7` at the point prediction and
+`15.2` at the band floor. The sentence a deployment decision can use is: *this
+single-instance deployment absorbs a 2.33 dec/s burst lasting about 38
+seconds, and queues beyond it.*
+
+**Occupancy and the plateau.** Peak lane occupancy reached `1.0` at `r400` and
+stayed there at `r645`, so the rig went over-full at the top two rungs; the
+completion ratio fell monotonically from `0.6365` at `r120` to `0.1947` at
+`r645`. The plateau criterion fired at `r240` on both arms. Unlike PERF032,
+PERF034 and PERF036, the preregistered drain clause does **not** falsify it
+here: the clause needs the drain-corrected marginal gain to sit within `10%`
+of `1.0` while the implied residence delta is non-positive, and although every
+residence delta is negative, the drain-corrected gains are `0.868`, `0.848`
+and `0.688` (ARC) and `0.869`, `0.842` and `0.842` (Remote) — all outside the
+window. This is the first time in the family the plateau verdict survives its
+own drain clause. It changes nothing about this packet's result, because
+PERF037 preregistered the plateau as non-voting corroboration carried from
+PERF034 and read absorption and the ceiling off directly measured quantities
+within a single cell (`DRAIN_CLAUSE_VOIDS_ABSORPTION_VERDICT = False`,
+`DRAIN_CLAUSE_VOIDS_CEILING_MEASUREMENT = False`). It is recorded because a
+successor asking about the encoder's true ceiling now has one surviving
+plateau to reason from.
+
+**Integrity.** All eight arm-cells scheduled and completed 128 of 128 measured
+turns with `failed: 0` and `provider_calls: 0`. `cache_miss_tokens` sums to
+zero and `session_actions.rebuilt` is zero in every cell. One selected-worker
+trace digest, `7fed5d06…`, is identical across all four cells and both arms,
+and `cross_cell_trace_match` is true. Every cell's state reset closed 32 of 32
+measured sessions with zero missing and zero resident tokens, and every local
+compose project was removed. `comparison.json` reports `status: passed`. The
+inherited PERF020 32-case prefix check remains unrunnable
+(`TRACE_PREFIX_CHECK_IS_RUNNABLE = False`) because the probe still hashes the
+trace without persisting its entries; the within-run chain is what stands.
+
+**A reader trap worth naming.** Every cell receipt records
+`identity.gpu_class: NVIDIA H100 80GB`. That is *not* the silicon this run
+used. `gpu_class` is a frozen field inside PERF034's packet, and byte-identity
+to PERF034 is the whole cross-GPU claim — had it read `RTX-PRO-6000` the
+digests would have differed and the arm would be void. The silicon is attested
+in `deployment-evidence.json` (`encoder_gpu: RTX-PRO-6000`) and enforced in
+`modal_session_service.py`, where `GPU_TYPE` resolves to `RTX-PRO-6000` for
+apps in `RTX6000_APP_PROFILES`, scoped to the exact app name so no closed
+run's evidence can change class underneath it.
+
+**Cost.** The paid window ran `2006.44` of the `2400` envelope seconds, so the
+wall held with about `16%` margin — thinner than PERF036's because the encoder
+image rebuilt and the deploy alone took `435` seconds against PERF036's `137`.
+The measured resource upper bound is **`$2.1848`** against the `$5.6186208`
+envelope. Conservative accounting charges the full envelope regardless, taking
+the cumulative to **`$200.078471066383`** and leaving the reserve at exactly
+**`$3.00`** under the granted `$203.078471066383` authority — the
+preregistered arithmetic, landed to the digit. `provider_spend_usd` is `$0.00`
+and `provider_calls` is zero in every cell.
+
+Cleanup ran inside the launcher — the app stopped, the ephemeral proxy token
+deleted, `encoder_containers_remaining: 0` — and an independent
+`modal container list` in the `dev` environment afterwards showed zero rows
+for `rayline-arc-session-encoder-flashinfer-perf037-rtx6000-32lane`. That
+second instrument is app-scoped rather than environment-scoped, amended in
+`ec7ad968` before this packet carried any authority: the `dev` environment is
+shared with foreign lanes (`rayline-tbench-mtrouter`,
+`rayline-router-tbench-dev`, `memex-agent`) that this experiment neither
+started nor may stop, so an environment-wide emptiness gate could not have
+been satisfied by a perfect run. The evidence bar rose to compensate, and the
+full listing is quoted in the run record both pre-run and post-teardown with
+the foreign rows visible. PERF037's launch authority is closed:
+`LAUNCHABLE_CONTRACT` is back to `None` in
+`rayline_rtx6000_burst_contract.py` after its one authorized execution, with
+`PATHFINDER_AUTHORIZATION_COMMIT` staying at the real
+`e3d684ee82b3fb570a833cd40789bdc09a2df8e8` as the record of what ran. The
+1,000-case release qualification stays held.
+
+**What this did not measure**, unchanged from the preregistration: the rig
+produces one homogeneous seeded-Poisson pulse per cell, so this is a finite
+burst-grade pulse against an empty rig, not a baseline → spike → baseline
+profile. The `38.52` second figure is therefore a conservative sizing number —
+a real burst arriving on top of a warm baseline with existing backlog absorbs
+less. Building the baseline-plus-spike shape needs a new `arrival_process`, an
+`open-loop-workload.v2` schema, a second schedule function and a new
+packet-builder path, none of which exists.
+
+## Operating Rules
+
+- Use the repo's normal local image flow; do not invent another Semantic Router
+  serve path.
+- Keep the Rayline model engine, Pathfinder authority, and worker data plane as
+  distinct owners even when colocated.
+- Pin code commits, model and tokenizer revisions, artifacts, serializer,
+  prices, and GPU class in every receipt.
+- Treat KV as a reconstructible optimization. A miss may cost latency but never
+  correctness or a different state transition.
+- Freeze benchmark inputs and pass/fail budgets before a measured run.
+- Never compare external-provider latency directly with local worker
+  throughput.
+- Do not log prompts, tools, raw episode IDs, receipts, authorization headers,
+  cache tensors, or secrets.
+- Run the smallest reported gate first and drive every affected gate to green.
+- Add behavior-visible E2E coverage for config, startup, API, dispatch, or
+  lifecycle changes.
+- Use signed-off commits for work intended for review.
+- Keep TD046 open until durable pending transactions and multi-replica fencing
+  are implemented and tested.
+- Keep TD048 open until the narrow stability rule gains powered changed-action
+  quality/regret evidence (or an explicit reviewed acceptance of its
+  canonicalization semantics) and the full RSP-004Q parity qualification
+  passes.
+
+## Related Docs
+
+- [pl-0039-rayline-arc-orchestrator.md](pl-0039-rayline-arc-orchestrator.md)
+- [pl-0040-rayline-remote-mvp.md](pl-0040-rayline-remote-mvp.md)
+- [Rayline vLLM serving boundary](../architecture/rayline-vllm-serving-boundary.md)
+- [Rayline-on-vLLM parity implementation](../architecture/rayline-vllm-parity-design.md)
+- [Rayline vLLM performance contract](../benchmarks/rayline-vllm-performance-contract.md)
+- [Rayline ARC tutorial](../../../website/docs/tutorials/algorithm/selection/rayline-arc.md)
+- [Rayline Remote tutorial](../../../website/docs/tutorials/algorithm/selection/rayline-remote.md)
+- [TD046](../tech-debt/td-046-rayline-remote-durable-journal-gap.md)
+- [TD048](../tech-debt/td-048-rayline-vllm-selection-stability-gap.md)
+- [Pathfinder ADR 0059 proposal](https://github.com/atlasfutures/pathfinder/blob/fb3a4b9455653eb9f8e490ca414aaa90a24e0a55/docs/adr/0059-rayline-vllm-serving-boundary.md)
+- [Pathfinder stateless vLLM encoder implementation](https://github.com/atlasfutures/pathfinder/commit/7f13de3d10855ea44245717f9ccb50d55ea40e93)
+- Pathfinder `docs/adr/0021-service-owned-kv-sessions.md`
+- Pathfinder `docs/adr/0023-process-global-kv-memory-owner.md`
+- Pathfinder `docs/history/2026-07-22-mtrouter-c82-perf-smoke.md`
+- Pathfinder `docs/history/2026-07-26-kvdelta-s9-p95refined-recanary.md`

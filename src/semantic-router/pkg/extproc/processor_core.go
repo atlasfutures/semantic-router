@@ -70,6 +70,16 @@ func (r *OpenAIRouter) handleRequestBodyDispatch(v *ext_proc.ProcessingRequest_R
 func (r *OpenAIRouter) Process(stream ext_proc.ExternalProcessor_ProcessServer) (retErr error) {
 	logging.Debugf("Processing at stage [init]")
 
+	return r.processWithContext(stream, &RequestContext{
+		Headers:      make(map[string]string),
+		TraceContext: stream.Context(),
+	})
+}
+
+func (r *OpenAIRouter) processWithContext(
+	stream ext_proc.ExternalProcessor_ProcessServer,
+	ctx *RequestContext,
+) (retErr error) {
 	// Recover from any panic (including OOM kills surfaced as runtime panics from
 	// CGO inference calls) so a single bad request cannot take down the gRPC server.
 	defer func() {
@@ -77,12 +87,8 @@ func (r *OpenAIRouter) Process(stream ext_proc.ExternalProcessor_ProcessServer) 
 			logging.Errorf("Process: recovered panic: %v\n%s", rec, debug.Stack())
 			retErr = status.Errorf(codes.Internal, "internal error: %v", rec)
 		}
+		finalizeSelectionProcessTerminal(ctx)
 	}()
-
-	// Initialize request context
-	ctx := &RequestContext{
-		Headers: make(map[string]string),
-	}
 
 	for {
 		req, err := stream.Recv()
@@ -99,6 +105,7 @@ func (r *OpenAIRouter) Process(stream ext_proc.ExternalProcessor_ProcessServer) 
 func (r *OpenAIRouter) handleProcessReceiveError(ctx *RequestContext, err error) error {
 	if ctx.IsStreamingResponse && !ctx.StreamingComplete {
 		ctx.StreamingAborted = true
+		ctx.SelectionSettlement.OutcomeClass = selectionTerminalOutcomeClass(err)
 		logging.Debugf("Streaming response aborted before completion, will not cache")
 	}
 	if ctx.InflightToken != 0 {
@@ -121,6 +128,17 @@ func (r *OpenAIRouter) handleProcessReceiveError(ctx *RequestContext, err error)
 
 	logging.Errorf("Error receiving request: %v", err)
 	return err
+}
+
+func selectionTerminalOutcomeClass(err error) string {
+	if errors.Is(err, context.Canceled) {
+		return "client_cancelled"
+	}
+	if rpcStatus, ok := status.FromError(err); ok &&
+		rpcStatus.Code() == codes.Canceled {
+		return "client_cancelled"
+	}
+	return "stream_error"
 }
 
 func handleProcessStatusError(ctx *RequestContext, err error) bool {

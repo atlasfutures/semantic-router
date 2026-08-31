@@ -16,6 +16,15 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/services"
 )
 
+const (
+	apiReadTimeout = 30 * time.Second
+	// Route decisions can legitimately wait through a ten-minute retained
+	// encoder cold start. Keep the server's response budget wider than that
+	// internal deadline so the handler can return its completed decision.
+	apiWriteTimeout = 11 * time.Minute
+	apiIdleTimeout  = 60 * time.Second
+)
+
 // Init starts the API server.
 func Init(configPath string, port int) error {
 	return InitWithOptions(InitOptions{
@@ -114,6 +123,7 @@ func InitWithOptions(opts InitOptions) error {
 		configPath:            opts.ConfigPath,
 		memoryStore:           memoryStore,
 		knowledgeBaseMapCache: newKnowledgeBaseMapCache(),
+		startupStatusConfig:   &cfg.StartupStatus,
 	}
 
 	// Create HTTP server with routes
@@ -121,9 +131,9 @@ func InitWithOptions(opts InitOptions) error {
 	server := &http.Server{
 		Addr:         managementCfg.ListenAddress(),
 		Handler:      mux,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		ReadTimeout:  apiReadTimeout,
+		WriteTimeout: apiWriteTimeout,
+		IdleTimeout:  apiIdleTimeout,
 	}
 
 	logging.ComponentEvent("apiserver", "server_listening", map[string]interface{}{

@@ -18,6 +18,7 @@ package extproc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -26,12 +27,49 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/classification"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/sessiontelemetry"
 )
 
 type selectionResultSelector struct {
 	result *selection.SelectionResult
 	err    error
+}
+
+type cancellationSelector struct {
+	cancelled *bool
+}
+
+func (s cancellationSelector) Select(
+	ctx context.Context,
+	_ *selection.SelectionContext,
+) (*selection.SelectionResult, error) {
+	select {
+	case <-ctx.Done():
+		*s.cancelled = true
+		return nil, ctx.Err()
+	default:
+		return nil, fmt.Errorf("selection context was not cancelled")
+	}
+}
+
+func (s cancellationSelector) Method() selection.SelectionMethod {
+	return selection.MethodStatic
+}
+
+func (s cancellationSelector) UpdateFeedback(
+	context.Context,
+	*selection.Feedback,
+) error {
+	return nil
+}
+
+func (s cancellationSelector) Tier() selection.AlgorithmTier {
+	return selection.TierSupported
+}
+
+func (s cancellationSelector) ExternalDependencies() []selection.Dependency {
+	return nil
 }
 
 func (s selectionResultSelector) Select(ctx context.Context, selCtx *selection.SelectionContext) (*selection.SelectionResult, error) {
@@ -72,9 +110,10 @@ func TestSelectModelFromCandidatesUsesDefaultCandidateOnInvalidSelectionResult(t
 			registry.Register(selection.MethodStatic, selectionResultSelector{result: tc.result})
 
 			router := &OpenAIRouter{ModelSelector: registry}
-			selected, method := router.selectModelFromCandidates(&selection.SelectionContext{
+			requestContext := &RequestContext{}
+			selected, method, _ := router.selectModelFromCandidates(&selection.SelectionContext{
 				CandidateModels: []config.ModelRef{{Model: "model-a"}, {Model: "model-b"}},
-			}, nil, nil)
+			}, nil, requestContext)
 
 			if selected == nil || selected.Model != "model-a" {
 				t.Fatalf("expected default candidate model-a, got %#v", selected)
@@ -82,21 +121,259 @@ func TestSelectModelFromCandidatesUsesDefaultCandidateOnInvalidSelectionResult(t
 			if method != string(selection.MethodStatic) {
 				t.Fatalf("expected static method, got %q", method)
 			}
+			if requestContext.VSRSelectionReasoning != selectionFallbackInvalidResult {
+				t.Fatalf(
+					"fallback reason = %q, want %q",
+					requestContext.VSRSelectionReasoning,
+					selectionFallbackInvalidResult,
+				)
+			}
 		})
 	}
 }
 
 func TestSelectModelFromCandidatesUsesFirstValidDefaultCandidateOnInvalidContext(t *testing.T) {
 	router := &OpenAIRouter{}
-	selected, method := router.selectModelFromCandidates(&selection.SelectionContext{
+	requestContext := &RequestContext{}
+	selected, method, _ := router.selectModelFromCandidates(&selection.SelectionContext{
 		CandidateModels: []config.ModelRef{{Model: " "}, {Model: "model-b"}},
-	}, nil, nil)
+	}, nil, requestContext)
 
 	if selected == nil || selected.Model != "model-b" {
 		t.Fatalf("expected default candidate model-b, got %#v", selected)
 	}
-	if method != "" {
-		t.Fatalf("expected empty method for invalid context default, got %q", method)
+	if method != string(selection.MethodStatic) {
+		t.Fatalf("expected static method for invalid context default, got %q", method)
+	}
+	if requestContext.VSRSelectionReasoning != selectionFallbackInvalidContext {
+		t.Fatalf("fallback reason = %q", requestContext.VSRSelectionReasoning)
+	}
+}
+
+func TestPromptSelectionDoesNotResolveBaseModelThroughLoRAAlias(t *testing.T) {
+	candidates := []config.ModelRef{
+		{Model: "model-b", LoRAName: "model-a"},
+		{Model: "model-a"},
+	}
+	selected := selectedModelRefFromResult(
+		&selection.SelectionContext{CandidateModels: candidates},
+		&selection.SelectionResult{
+			SelectedModel: "model-a",
+			Method:        selection.MethodPrompt,
+		},
+	)
+	if selected == nil || selected.Model != "model-a" || selected.LoRAName != "" {
+		t.Fatalf("selected = %#v, want base model-a candidate", selected)
+	}
+}
+
+func TestSelectModelFromCandidatesPropagatesRequestCancellation(t *testing.T) {
+	cancelled := false
+	registry := selection.NewRegistry()
+	registry.Register(
+		selection.MethodStatic,
+		cancellationSelector{cancelled: &cancelled},
+	)
+	cancelledContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	requestContext := &RequestContext{TraceContext: cancelledContext}
+	router := &OpenAIRouter{ModelSelector: registry}
+
+	selected, _, err := router.selectModelFromCandidates(
+		&selection.SelectionContext{
+			DecisionName:    "cancelled",
+			CandidateModels: []config.ModelRef{{Model: "model-a"}, {Model: "model-b"}},
+		},
+		nil,
+		requestContext,
+	)
+
+	if !cancelled {
+		t.Fatal("selector did not observe request cancellation")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context cancellation", err)
+	}
+	if selected != nil {
+		t.Fatalf("cancelled selection returned fallback %#v", selected)
+	}
+	if requestContext.VSRSelectionReasoning != "" {
+		t.Fatalf("cancelled request mutated fallback diagnostics")
+	}
+}
+
+func TestSelectModelFromCandidatesFailsClosedForRaylineARCWithoutSessionMutation(t *testing.T) {
+	sessiontelemetry.ResetRouterSessionMemoryForTesting()
+	t.Cleanup(sessiontelemetry.ResetRouterSessionMemoryForTesting)
+	registry := selection.NewRegistry()
+	registry.Register(
+		selection.MethodRaylineARC,
+		selectionResultSelector{err: fmt.Errorf("private encoder detail")},
+	)
+	router := &OpenAIRouter{ModelSelector: registry}
+	algorithm := &config.AlgorithmConfig{
+		Type:    config.RaylineARCAlgorithmType,
+		OnError: "fail_closed",
+	}
+	selected, method, err := router.selectModelFromCandidates(
+		&selection.SelectionContext{
+			SessionID:       "arc-session",
+			CandidateModels: []config.ModelRef{{Model: "a"}, {Model: "b"}},
+		},
+		algorithm,
+		&RequestContext{SessionID: "arc-session"},
+	)
+	if selected != nil || method != string(selection.MethodRaylineARC) {
+		t.Fatalf("selected=%#v method=%q", selected, method)
+	}
+	var failure *modelSelectionFailure
+	if !errors.As(err, &failure) || failure.class != "selector" {
+		t.Fatalf("error = %#v, want bounded selector failure", err)
+	}
+	if _, ok := sessiontelemetry.GetRouterSessionSnapshot(
+		"arc-session",
+		time.Now(),
+	); ok {
+		t.Fatal("ARC failure recorded a successful session decision")
+	}
+}
+
+func TestSelectModelFromCandidatesBindsPrivateARCDispatchContract(t *testing.T) {
+	state, err := raylinearc.NewEpisodeState(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scorer := &fakeARCScorer{
+		workerIDs: []string{"worker-a", "worker-b"},
+		decision: raylinearc.Decision{
+			SelectedArm:     1,
+			SelectedWorker:  "worker-b",
+			RawScores:       []float32{0.1, 0.9},
+			AdjustedScores:  []float32{0.1, 0.9},
+			SwitchCostUSD:   []float64{0, 0},
+			CacheMissTokens: []int{0, 0},
+		},
+	}
+	encoder := &fakeARCEncoder{
+		result: &raylinearc.EncoderResult{
+			Embedding:         make([]float32, 1024),
+			SerializedTokens:  10,
+			FullHistoryTokens: 10,
+			ModelRevision:     config.RaylineARCEncoderModelRevision,
+		},
+	}
+	registry := selection.NewRegistry()
+	registry.Register(
+		selection.MethodRaylineARC,
+		newRaylineARCSelector(scorer, encoder, nil, "revision"),
+	)
+	router := &OpenAIRouter{ModelSelector: registry}
+	requestContext := &RequestContext{}
+	selected, method, err := router.selectModelFromCandidates(
+		validARCSelectionContext(state),
+		&config.AlgorithmConfig{
+			Type:    config.RaylineARCAlgorithmType,
+			OnError: "fail_closed",
+		},
+		requestContext,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected == nil || selected.Model != "worker-b" ||
+		method != string(selection.MethodRaylineARC) {
+		t.Fatalf("selection = %#v, method = %q", selected, method)
+	}
+	if requestContext.RaylineARCDispatch == nil ||
+		requestContext.RaylineARCDispatch.ID != "worker-b" ||
+		requestContext.RaylineARCDispatch.Model != "provider/worker-b" {
+		t.Fatalf(
+			"dispatch contract = %#v",
+			requestContext.RaylineARCDispatch,
+		)
+	}
+	if requestContext.VSRRaylineARC == nil {
+		t.Fatal("privacy-safe ARC trace was not retained")
+	}
+}
+
+func TestBuildSelectionContextHashesARCIdentityAndNormalizesOriginalBody(t *testing.T) {
+	rawEpisodeID := "private-episode"
+	algorithm := &config.AlgorithmConfig{
+		Type: config.RaylineARCAlgorithmType,
+		RaylineARC: &config.RaylineARCAlgorithmConfig{
+			Episode: config.RaylineARCEpisodeConfig{
+				IDHeader:              "x-rayline-episode-id",
+				AcquireTimeoutSeconds: 1,
+				LeaseTTLSeconds:       60,
+			},
+		},
+	}
+	episodeStore, err := raylinearc.NewMemoryEpisodeStore(
+		raylinearc.MemoryEpisodeStoreConfig{
+			MaxEpisodes: 4,
+			IdleTTL:     time.Minute,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := &OpenAIRouter{
+		Config:                 &config.RouterConfig{},
+		RaylineARCEpisodeStore: episodeStore,
+	}
+	requestContext := &RequestContext{
+		Headers: map[string]string{
+			"x-rayline-episode-id": rawEpisodeID,
+		},
+		OriginalRequestBody: []byte(
+			`{"model":"auto","messages":[{"role":"user","content":"hello"}]}`,
+		),
+	}
+	t.Cleanup(func() {
+		router.finalizeRaylineARCAbort(requestContext, "test_cleanup")
+	})
+	selCtx := router.buildSelectionContext(
+		[]config.ModelRef{{Model: "a"}, {Model: "b"}},
+		"arc",
+		"query",
+		algorithm,
+		"",
+		nil,
+		requestContext,
+	)
+	if selCtx.RaylineARC == nil {
+		t.Fatal("missing ARC selection context")
+	}
+	if selCtx.RaylineARC.EpisodeIDHash != raylinearc.HashEpisodeID(rawEpisodeID) {
+		t.Fatalf("episode hash = %q", selCtx.RaylineARC.EpisodeIDHash)
+	}
+	if len(selCtx.RaylineARC.Turns) != 1 ||
+		selCtx.RaylineARC.Turns[0].Text != "hello" {
+		t.Fatalf("turns = %#v", selCtx.RaylineARC.Turns)
+	}
+	if strings.Contains(selCtx.RaylineARC.EpisodeIDHash, rawEpisodeID) {
+		t.Fatal("raw episode ID retained in ARC context")
+	}
+}
+
+func TestRaylineARCSelectionFailureReturnsPrivacySafe503(t *testing.T) {
+	router := &OpenAIRouter{}
+	response, handled := router.decisionEvaluationErrorResponse(
+		&modelSelectionFailure{class: "encoder_contract"},
+		&RequestContext{RequestID: "request-id"},
+	)
+	if !handled || response == nil || response.GetImmediateResponse() == nil {
+		t.Fatal("ARC failure was not handled as an immediate response")
+	}
+	immediate := response.GetImmediateResponse()
+	if got := int(immediate.GetStatus().GetCode()); got != 503 {
+		t.Fatalf("status = %d, want 503", got)
+	}
+	body := string(immediate.Body)
+	if strings.Contains(body, "encoder_contract") ||
+		!strings.Contains(body, "Rayline ARC routing unavailable") {
+		t.Fatalf("unexpected response body: %s", body)
 	}
 }
 
@@ -106,11 +383,14 @@ func TestSelectModelFromCandidatesRecordsSingleCandidateInRouterMemory(t *testin
 
 	router := &OpenAIRouter{}
 	reqCtx := &RequestContext{SessionID: "single-candidate-session"}
-	selected, method := router.selectModelFromCandidates(&selection.SelectionContext{
+	selected, method, err := router.selectModelFromCandidates(&selection.SelectionContext{
 		SessionID:       "single-candidate-session",
 		DecisionName:    "warmup",
 		CandidateModels: []config.ModelRef{{Model: "model-a"}},
 	}, nil, reqCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if selected == nil || selected.Model != "model-a" {
 		t.Fatalf("expected model-a, got %#v", selected)
@@ -162,7 +442,7 @@ func TestSelectorForDecisionMethodBuildsDecisionScopedHybridSelector(t *testing.
 			ExperienceWeight: 0.6,
 			RouterDCWeight:   0.4,
 		},
-	})
+	}, nil)
 
 	result, err := selector.Select(context.Background(), &selection.SelectionContext{
 		Query:           "need help with coding",
@@ -175,6 +455,60 @@ func TestSelectorForDecisionMethodBuildsDecisionScopedHybridSelector(t *testing.
 	wantWeights := fmt.Sprintf("weights=[elo:%.2f, dc:%.2f, am:%.2f, cost:%.2f]", 0.6, 0.4, 0.2, 0.2)
 	if !strings.Contains(result.Reasoning, wantWeights) {
 		t.Fatalf("expected decision-scoped hybrid weights in reasoning, got %q", result.Reasoning)
+	}
+}
+
+func TestSelectorForDecisionMethodBuildsDecisionScopedMultiFactorSelector(t *testing.T) {
+	qualityPolicy := &config.AlgorithmConfig{
+		Type: "multi_factor",
+		MultiFactor: &config.MultiFactorSelectionConfig{
+			Weights: &config.MultiFactorWeightsConfig{Quality: 1},
+		},
+	}
+	costPolicy := &config.AlgorithmConfig{
+		Type: "multi_factor",
+		MultiFactor: &config.MultiFactorSelectionConfig{
+			Weights: &config.MultiFactorWeightsConfig{Cost: 1},
+		},
+	}
+	cfg := config.DefaultGlobalConfig()
+	cfg.BackendModels.ModelConfig = map[string]config.ModelParams{
+		"premium": {
+			QualityScore: 0.9,
+			Pricing:      config.ModelPricing{PromptPer1M: 10},
+		},
+		"economy": {
+			QualityScore: 0.1,
+			Pricing:      config.ModelPricing{PromptPer1M: 1},
+		},
+	}
+	cfg.Decisions = []config.Decision{
+		{Name: "quality", Algorithm: qualityPolicy},
+		{Name: "cost", Algorithm: costPolicy},
+	}
+
+	registry := selection.NewFactory(buildModelSelectionConfig(&cfg)).
+		WithModelConfig(cfg.BackendModels.ModelConfig).
+		CreateAll()
+	router := &OpenAIRouter{Config: &cfg, ModelSelector: registry}
+	candidates := []config.ModelRef{{Model: "premium"}, {Model: "economy"}}
+
+	qualityResult, err := router.selectorForDecisionMethod(selection.MethodMultiFactor, qualityPolicy, nil).
+		Select(context.Background(), &selection.SelectionContext{DecisionName: "quality", CandidateModels: candidates})
+	if err != nil {
+		t.Fatalf("quality selector returned error: %v", err)
+	}
+	if qualityResult.SelectedModel != "premium" {
+		t.Fatalf("quality decision selected %q, want premium", qualityResult.SelectedModel)
+	}
+
+	costResult, err := router.selectorForDecisionMethod(selection.MethodMultiFactor, costPolicy, nil).
+		Select(context.Background(), &selection.SelectionContext{DecisionName: "cost", CandidateModels: candidates})
+	if err != nil {
+		t.Fatalf("cost selector returned error: %v", err)
+	}
+	if costResult.SelectedModel != "economy" {
+		t.Fatalf("cost decision selected %q, want economy", costResult.SelectedModel)
 	}
 }
 

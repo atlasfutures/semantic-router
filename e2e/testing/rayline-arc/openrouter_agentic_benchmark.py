@@ -1,0 +1,795 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+
+"""Bounded agentic direct/static-gateway/Rayline ARC OpenRouter benchmark."""
+
+from __future__ import annotations
+
+import argparse
+import concurrent.futures
+import itertools
+import json
+import os
+import sys
+import time
+from typing import Any
+
+from modal_encoder_warmup import warm_encoder_from_environment
+from modal_fullstack_canary import (
+    _episode_id,
+    _read_metrics,
+)
+from modal_fullstack_inputs import CANDIDATE_PROMPTS
+from modal_http import connection_for_url as _connection
+from modal_http import request_following_result_redirects
+from openrouter_agentic_preflight_contract import (
+    ENVIRONMENT_KEY,
+    from_environment,
+)
+from openrouter_agentic_preflight_contract import (
+    MAX_EXTERNAL_ATTEMPTS as TRANSPORT_PREFLIGHT_EXTERNAL_ATTEMPTS,
+)
+from openrouter_agentic_preflight_contract import (
+    MAX_PROVIDER_REQUESTS as TRANSPORT_PREFLIGHT_REQUESTS,
+)
+from openrouter_agentic_reporting import (
+    build_report,
+    flatten,
+    validate_router_metrics,
+)
+from openrouter_agentic_workload import (
+    PROVIDER_NAMES,
+    SCENARIOS,
+    WORKERS,
+    pinned_provider_payload,
+)
+from openrouter_agentic_workload import candidate_case as _candidate_case
+from openrouter_fullstack_canary import (
+    OpenRouterHTTPError,
+    _attempt_count,
+    _http_error,
+)
+
+HTTP_OK = 200
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+PATHS = ("direct", "gateway_static", "arc")
+CONCURRENCY_LEVELS = (1, 4)
+SERIAL_WAVES = 2
+CONCURRENT_REPETITIONS = 2
+SELECTED_CASE_COUNT = 6
+MIN_ACTIVE_WORKERS = 2
+MIN_SELECTED_CASES_PER_ACTIVE_WORKER = 2
+MAX_COVERAGE_REQUESTS = 24
+KEY_READINESS_REQUESTS = 1
+ENDPOINT_PROBE_REQUESTS = len(WORKERS)
+MAX_COMPLETION_TOKENS = 96
+KEY_READINESS_COMPLETION_TOKENS = 1
+MAX_REPORTED_PROVIDER_COST_USD = 0.50
+MAX_DATA_PLANE_ATTEMPTS = 2
+RETRYABLE_STATUS_CODES = frozenset({429, 503})
+KEY_READINESS_RETRYABLE_STATUS_CODES = frozenset({404, *RETRYABLE_STATUS_CODES})
+ENDPOINT_REACHABILITY_RETRYABLE_STATUS_CODES = frozenset({404})
+MEASURED_REQUESTS_PER_PATH = (
+    SELECTED_CASE_COUNT * SERIAL_WAVES + SELECTED_CASE_COUNT * CONCURRENT_REPETITIONS
+)
+MAX_MEASURED_REQUESTS = len(PATHS) * MEASURED_REQUESTS_PER_PATH
+MAX_BENCHMARK_PROVIDER_REQUESTS = (
+    KEY_READINESS_REQUESTS
+    + ENDPOINT_PROBE_REQUESTS
+    + MAX_COVERAGE_REQUESTS
+    + MAX_MEASURED_REQUESTS
+)
+MAX_BENCHMARK_EXTERNAL_ATTEMPTS = (
+    MAX_BENCHMARK_PROVIDER_REQUESTS * MAX_DATA_PLANE_ATTEMPTS + ENDPOINT_PROBE_REQUESTS
+)
+MAX_PROVIDER_REQUESTS = MAX_BENCHMARK_PROVIDER_REQUESTS + TRANSPORT_PREFLIGHT_REQUESTS
+MAX_EXTERNAL_ATTEMPTS = (
+    MAX_BENCHMARK_EXTERNAL_ATTEMPTS + TRANSPORT_PREFLIGHT_EXTERNAL_ATTEMPTS
+)
+TRANSPORT_PREFLIGHT_ENV = ENVIRONMENT_KEY
+
+
+def _response_model_matches(response_model: str, expected_model: str) -> bool:
+    return response_model == expected_model or response_model.startswith(
+        f"{expected_model}-"
+    )
+
+
+def _request_payload(
+    *,
+    path: str,
+    case: dict[str, Any],
+    expected_worker: str,
+    max_completion_tokens: int = MAX_COMPLETION_TOKENS,
+) -> dict[str, Any]:
+    if path == "direct":
+        model = WORKERS[expected_worker]
+    elif path == "gateway_static":
+        model = expected_worker
+    elif path == "arc":
+        model = "auto"
+    else:
+        raise ValueError(f"unsupported benchmark path: {path}")
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": case["messages"],
+        "tools": case["tools"],
+        "tool_choice": "none",
+        "max_tokens": max_completion_tokens,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
+    # Temperature is deliberately absent on the ARC path. Both arms' routers
+    # already pin it per worker from the manifest, so a client-sent value is
+    # redundant there — and worse, it is unsuppressable: the native router
+    # copies request temperature verbatim and treats a manifest `None` as a
+    # no-op, so a worker whose model does not advertise the parameter could
+    # never avoid sending it. Workers a and c are unaffected on the wire; their
+    # manifests still pin 0.
+    if path != "arc":
+        payload = pinned_provider_payload(payload, expected_worker)
+    return payload
+
+
+def _request_headers(
+    *, path: str, openrouter_key: str, episode_id: str
+) -> dict[str, str]:
+    headers = {"content-type": "application/json"}
+    if path == "direct":
+        headers["authorization"] = f"Bearer {openrouter_key}"
+    if path == "arc":
+        headers["x-rayline-episode-id"] = episode_id
+    return headers
+
+
+def _event_emits_token(event: Any) -> bool:
+    if not isinstance(event, dict):
+        return False
+    choices = event.get("choices")
+    if not isinstance(choices, list):
+        return False
+    for choice in choices:
+        delta = choice.get("delta") if isinstance(choice, dict) else None
+        if not isinstance(delta, dict):
+            continue
+        content = delta.get("content")
+        tool_calls = delta.get("tool_calls")
+        if (isinstance(content, str) and content) or (
+            isinstance(tool_calls, list) and tool_calls
+        ):
+            return True
+    return False
+
+
+def _read_stream(connection: Any, response: Any, started: float) -> dict[str, Any]:
+    first_event_seconds: float | None = None
+    first_token_seconds: float | None = None
+    data_events = 0
+    saw_done = False
+    usage: dict[str, Any] | None = None
+    provider = ""
+    response_model = ""
+    try:
+        while line := response.readline():
+            stripped = line.decode(errors="replace").strip()
+            if not stripped.startswith("data:"):
+                continue
+            data = stripped.removeprefix("data:").strip()
+            if data == "[DONE]":
+                saw_done = True
+                break
+            event = json.loads(data)
+            data_events += 1
+            elapsed = time.perf_counter() - started
+            first_event_seconds = first_event_seconds or elapsed
+            if isinstance(event, dict):
+                if isinstance(event.get("usage"), dict):
+                    usage = event["usage"]
+                provider = str(event.get("provider") or provider)
+                response_model = str(event.get("model") or response_model)
+            if first_token_seconds is None and _event_emits_token(event):
+                first_token_seconds = elapsed
+    finally:
+        connection.close()
+    return {
+        "first_event_seconds": first_event_seconds,
+        "first_token_seconds": first_token_seconds,
+        "total_seconds": time.perf_counter() - started,
+        "data_events": data_events,
+        "saw_done": saw_done,
+        "usage": usage,
+        "provider": provider,
+        "response_model": response_model,
+    }
+
+
+def _completed_usage(stream: dict[str, Any]) -> dict[str, Any]:
+    if (
+        not stream["saw_done"]
+        or not stream["data_events"]
+        or stream["first_event_seconds"] is None
+    ):
+        raise RuntimeError("agentic streaming response was incomplete")
+    if stream["first_token_seconds"] is None:
+        raise RuntimeError("agentic streaming response emitted no content token")
+    usage = stream["usage"]
+    if not isinstance(usage, dict) or not isinstance(usage.get("cost"), (int, float)):
+        raise TypeError("agentic streaming response omitted OpenRouter usage cost")
+    return usage
+
+
+def _upstream_seconds(path: str, upstream_millis: str) -> float | None:
+    if not upstream_millis:
+        if path != "direct":
+            raise RuntimeError("gateway response omitted Envoy upstream service time")
+        return None
+    try:
+        return float(upstream_millis) / 1000.0
+    except ValueError as error:
+        raise RuntimeError("Envoy upstream service time was invalid") from error
+
+
+def _validate_frozen_target(
+    *,
+    path: str,
+    expected_worker: str,
+    selected_worker: str,
+    response_model: str,
+    provider: str,
+    attempts: int,
+) -> None:
+    expected_model = WORKERS[expected_worker]
+    if not _response_model_matches(response_model, expected_model):
+        raise RuntimeError("agentic response model did not match the frozen target")
+    if provider not in PROVIDER_NAMES[expected_worker]:
+        raise RuntimeError("agentic response used a provider outside its order")
+    if path == "arc" and selected_worker != expected_worker:
+        raise RuntimeError("ARC selection changed for a frozen agentic case")
+    if path == "gateway_static" and selected_worker not in {"", expected_worker}:
+        raise RuntimeError("static gateway selected the wrong worker")
+    if attempts > MAX_DATA_PLANE_ATTEMPTS:
+        raise RuntimeError("agentic request exceeded the data-plane attempt bound")
+
+
+def _stream_request_once(
+    *,
+    path: str,
+    case: dict[str, Any],
+    expected_worker: str,
+    gateway_url: str,
+    openrouter_key: str,
+    episode_id: str,
+    timeout_seconds: float,
+    started: float,
+    max_completion_tokens: int,
+) -> dict[str, Any]:
+    direct = path == "direct"
+    base_url = OPENROUTER_BASE_URL if direct else f"{gateway_url.rstrip('/')}/v1"
+    headers = _request_headers(
+        path=path,
+        openrouter_key=openrouter_key,
+        episode_id=episode_id,
+    )
+    connection, response = request_following_result_redirects(
+        connection_factory=_connection,
+        method="POST",
+        url=f"{base_url}/chat/completions",
+        body=json.dumps(
+            _request_payload(
+                path=path,
+                case=case,
+                expected_worker=expected_worker,
+                max_completion_tokens=max_completion_tokens,
+            ),
+            separators=(",", ":"),
+        ).encode(),
+        headers=headers,
+        timeout_seconds=timeout_seconds,
+    )
+    selected_worker = response.getheader("x-vsr-selected-model", "")
+    attempts = _attempt_count(response.getheader("x-envoy-attempt-count"))
+    upstream_millis = response.getheader("x-envoy-upstream-service-time", "")
+    if response.status != HTTP_OK:
+        body = response.read()
+        retry_after = response.getheader("retry-after")
+        connection.close()
+        raise _http_error(
+            endpoint=f"{path} streaming endpoint",
+            status_code=response.status,
+            body=body,
+            retry_after=retry_after,
+            external_attempts=attempts,
+        )
+
+    stream = _read_stream(connection, response, started)
+    usage = _completed_usage(stream)
+    _validate_frozen_target(
+        path=path,
+        expected_worker=expected_worker,
+        selected_worker=selected_worker,
+        response_model=stream["response_model"],
+        provider=stream["provider"],
+        attempts=attempts,
+    )
+    return {
+        "path": path,
+        "case_id": case["case_id"],
+        "scenario": case["scenario"],
+        "selected_worker": expected_worker,
+        "response_model": stream["response_model"],
+        "provider": stream["provider"],
+        "external_attempts": attempts,
+        "time_to_first_event_seconds": stream["first_event_seconds"],
+        "time_to_first_token_seconds": stream["first_token_seconds"],
+        "total_seconds": stream["total_seconds"],
+        "envoy_upstream_service_seconds": _upstream_seconds(path, upstream_millis),
+        "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+        "completion_tokens": int(usage.get("completion_tokens") or 0),
+        "cost_usd": float(usage["cost"]),
+        "data_events": stream["data_events"],
+    }
+
+
+def _stream_request(
+    *,
+    path: str,
+    case: dict[str, Any],
+    expected_worker: str,
+    gateway_url: str,
+    openrouter_key: str,
+    episode_id: str,
+    timeout_seconds: float,
+    max_completion_tokens: int = MAX_COMPLETION_TOKENS,
+    maximum_attempts: int | None = None,
+    retryable_status_codes: frozenset[int] = RETRYABLE_STATUS_CODES,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    external_attempts = 0
+    if maximum_attempts is None:
+        maximum_attempts = MAX_DATA_PLANE_ATTEMPTS if path == "direct" else 1
+    if maximum_attempts < 1 or maximum_attempts > MAX_DATA_PLANE_ATTEMPTS:
+        raise ValueError("agentic request attempt bound was invalid")
+    for attempt in range(1, maximum_attempts + 1):
+        try:
+            result = _stream_request_once(
+                path=path,
+                case=case,
+                expected_worker=expected_worker,
+                gateway_url=gateway_url,
+                openrouter_key=openrouter_key,
+                episode_id=episode_id,
+                timeout_seconds=timeout_seconds,
+                started=started,
+                max_completion_tokens=max_completion_tokens,
+            )
+        except OpenRouterHTTPError as error:
+            external_attempts += error.external_attempts
+            if (
+                attempt == maximum_attempts
+                or error.status_code not in retryable_status_codes
+            ):
+                error.external_attempts = external_attempts
+                raise
+            time.sleep(error.retry_after_seconds)
+            continue
+        external_attempts += int(result["external_attempts"])
+        result["external_attempts"] = external_attempts
+        result["client_attempts"] = attempt
+        return result
+    raise AssertionError("bounded direct retry loop did not return or raise")
+
+
+def _probe_key_readiness(
+    *, gateway_url: str, openrouter_key: str, run_id: str, timeout_seconds: float
+) -> dict[str, Any]:
+    print("agentic OpenRouter key readiness: starting", file=sys.stderr, flush=True)
+    return _stream_request(
+        path="direct",
+        case=_candidate_case(0),
+        expected_worker="worker-a",
+        gateway_url=gateway_url,
+        openrouter_key=openrouter_key,
+        episode_id=_episode_id(run_id, "agentic-key-readiness"),
+        timeout_seconds=timeout_seconds,
+        max_completion_tokens=KEY_READINESS_COMPLETION_TOKENS,
+        maximum_attempts=MAX_DATA_PLANE_ATTEMPTS,
+        retryable_status_codes=KEY_READINESS_RETRYABLE_STATUS_CODES,
+    )
+
+
+def _choose_cases(
+    candidates: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]] | None:
+    active_workers = [
+        worker
+        for worker in WORKERS
+        if len(candidates[worker]) >= MIN_SELECTED_CASES_PER_ACTIVE_WORKER
+    ]
+    if len(active_workers) < MIN_ACTIVE_WORKERS:
+        return None
+    allocations = [
+        counts
+        for counts in itertools.product(
+            *(
+                range(
+                    MIN_SELECTED_CASES_PER_ACTIVE_WORKER,
+                    min(len(candidates[worker]), SELECTED_CASE_COUNT) + 1,
+                )
+                for worker in active_workers
+            )
+        )
+        if sum(counts) == SELECTED_CASE_COUNT
+    ]
+    allocations.sort(key=lambda counts: (max(counts) - min(counts), counts))
+    for allocation in allocations:
+        combinations = [
+            list(itertools.combinations(candidates[worker], count))
+            for worker, count in zip(active_workers, allocation, strict=True)
+        ]
+        for worker_groups in itertools.product(*combinations):
+            selected = [case for group in worker_groups for case in group]
+            if {case["scenario"] for case in selected} == set(SCENARIOS):
+                return selected
+    return None
+
+
+def _probe_endpoint(
+    *,
+    gateway_url: str,
+    openrouter_key: str,
+    run_id: str,
+    timeout_seconds: float,
+    index: int,
+    worker: str,
+) -> dict[str, Any]:
+    return _stream_request(
+        path="gateway_static",
+        case=_candidate_case(index),
+        expected_worker=worker,
+        gateway_url=gateway_url,
+        openrouter_key=openrouter_key,
+        episode_id=_episode_id(run_id, f"agentic-endpoint-{worker}"),
+        timeout_seconds=timeout_seconds,
+        maximum_attempts=MAX_DATA_PLANE_ATTEMPTS,
+        retryable_status_codes=ENDPOINT_REACHABILITY_RETRYABLE_STATUS_CODES,
+    )
+
+
+def _probe_endpoints(
+    *, gateway_url: str, openrouter_key: str, run_id: str, timeout_seconds: float
+) -> list[dict[str, Any]]:
+    print("agentic endpoint probes: starting", file=sys.stderr, flush=True)
+    return [
+        _probe_endpoint(
+            gateway_url=gateway_url,
+            openrouter_key=openrouter_key,
+            run_id=run_id,
+            timeout_seconds=timeout_seconds,
+            index=index,
+            worker=worker,
+        )
+        for index, worker in enumerate(WORKERS)
+    ]
+
+
+def _coverage_request(
+    *,
+    case: dict[str, Any],
+    gateway_url: str,
+    episode_id: str,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    # Discovery cannot supply an expected worker. Run the same stream path with
+    # a provisional target, then validate model/provider from the returned ARC
+    # worker. The implementation is intentionally separate from measured calls.
+    payload = {
+        "model": "auto",
+        "messages": case["messages"],
+        "tools": case["tools"],
+        "tool_choice": "none",
+        "max_tokens": MAX_COMPLETION_TOKENS,
+        "temperature": 0,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
+    started = time.perf_counter()
+    connection, response = request_following_result_redirects(
+        connection_factory=_connection,
+        method="POST",
+        url=f"{gateway_url.rstrip('/')}/v1/chat/completions",
+        body=json.dumps(payload, separators=(",", ":")).encode(),
+        headers=_request_headers(
+            path="arc",
+            openrouter_key="",
+            episode_id=episode_id,
+        ),
+        timeout_seconds=timeout_seconds,
+    )
+    selected_worker = response.getheader("x-vsr-selected-model", "")
+    attempts = _attempt_count(response.getheader("x-envoy-attempt-count"))
+    if response.status != HTTP_OK:
+        body = response.read()
+        retry_after = response.getheader("retry-after")
+        connection.close()
+        raise _http_error(
+            endpoint="agentic coverage endpoint",
+            status_code=response.status,
+            body=body,
+            retry_after=retry_after,
+        )
+    stream = _read_stream(connection, response, started)
+    usage = _completed_usage(stream)
+    if selected_worker not in WORKERS:
+        raise RuntimeError("agentic coverage response was incomplete")
+    if attempts > MAX_DATA_PLANE_ATTEMPTS:
+        raise RuntimeError("agentic coverage exceeded the data-plane attempt bound")
+    if stream["provider"] not in PROVIDER_NAMES[selected_worker]:
+        raise RuntimeError("agentic coverage used a provider outside its order")
+    if not _response_model_matches(stream["response_model"], WORKERS[selected_worker]):
+        raise RuntimeError("agentic coverage returned the wrong model")
+    return {
+        "path": "arc",
+        "case_id": case["case_id"],
+        "scenario": case["scenario"],
+        "selected_worker": selected_worker,
+        "response_model": stream["response_model"],
+        "provider": stream["provider"],
+        "external_attempts": attempts,
+        "time_to_first_event_seconds": stream["first_event_seconds"],
+        "time_to_first_token_seconds": stream["first_token_seconds"],
+        "total_seconds": stream["total_seconds"],
+        "envoy_upstream_service_seconds": None,
+        "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+        "completion_tokens": int(usage.get("completion_tokens") or 0),
+        "cost_usd": float(usage["cost"]),
+        "data_events": stream["data_events"],
+    }
+
+
+def _discover_cases(
+    *, gateway_url: str, run_id: str, timeout_seconds: float
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    candidates: dict[str, list[dict[str, Any]]] = {worker: [] for worker in WORKERS}
+    results: list[dict[str, Any]] = []
+    for index in range(MAX_COVERAGE_REQUESTS):
+        case = _candidate_case(index)
+        result = _coverage_request(
+            case=case,
+            gateway_url=gateway_url,
+            episode_id=_episode_id(run_id, f"agentic-coverage-{index}"),
+            timeout_seconds=timeout_seconds,
+        )
+        candidates[result["selected_worker"]].append(case)
+        results.append(result)
+        print(
+            f"agentic coverage: {index + 1} request(s), "
+            f"counts={[len(candidates[worker]) for worker in WORKERS]}",
+            file=sys.stderr,
+            flush=True,
+        )
+    selected = _choose_cases(candidates)
+    if selected is None:
+        raise RuntimeError("agentic candidates did not cover two active workers")
+    return selected, results
+
+
+def _run_batch(
+    *,
+    path: str,
+    cases: list[dict[str, Any]],
+    concurrency: int,
+    wave: int,
+    gateway_url: str,
+    openrouter_key: str,
+    run_id: str,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    phase = f"{path}-c{concurrency}-w{wave}"
+    print(f"agentic benchmark {phase}: starting", file=sys.stderr, flush=True)
+    started = time.perf_counter()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = [
+            executor.submit(
+                _stream_request,
+                path=path,
+                case=case,
+                expected_worker=case["expected_worker"],
+                gateway_url=gateway_url,
+                openrouter_key=openrouter_key,
+                episode_id=_episode_id(run_id, f"{phase}-{index}"),
+                timeout_seconds=timeout_seconds,
+            )
+            for index, case in enumerate(cases)
+        ]
+        results = [future.result() for future in futures]
+    return {
+        "path": path,
+        "concurrency": concurrency,
+        "wave": wave,
+        "wall_seconds": time.perf_counter() - started,
+        "results": results,
+    }
+
+
+def _rotated_paths(offset: int) -> tuple[str, ...]:
+    shift = offset % len(PATHS)
+    return (*PATHS[shift:], *PATHS[:shift])
+
+
+def _run_measured(
+    *,
+    selected_cases: list[dict[str, Any]],
+    gateway_url: str,
+    openrouter_key: str,
+    run_id: str,
+    timeout_seconds: float,
+) -> list[dict[str, Any]]:
+    phases: list[dict[str, Any]] = []
+    for wave in range(SERIAL_WAVES):
+        for path in _rotated_paths(wave):
+            phases.append(
+                _run_batch(
+                    path=path,
+                    cases=selected_cases,
+                    concurrency=1,
+                    wave=wave,
+                    gateway_url=gateway_url,
+                    openrouter_key=openrouter_key,
+                    run_id=run_id,
+                    timeout_seconds=timeout_seconds,
+                )
+            )
+    concurrent_cases = selected_cases * CONCURRENT_REPETITIONS
+    for path in _rotated_paths(SERIAL_WAVES):
+        phases.append(
+            _run_batch(
+                path=path,
+                cases=concurrent_cases,
+                concurrency=4,
+                wave=0,
+                gateway_url=gateway_url,
+                openrouter_key=openrouter_key,
+                run_id=run_id,
+                timeout_seconds=timeout_seconds,
+            )
+        )
+    return phases
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--gateway-url", required=True)
+    parser.add_argument("--metrics-url", required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--timeout-seconds", type=float, default=180.0)
+    return parser.parse_args()
+
+
+def _bind_expected_workers(
+    selected_cases: list[dict[str, Any]], coverage: list[dict[str, Any]]
+) -> None:
+    selected_by_id = {case["case_id"]: case for case in selected_cases}
+    for result in coverage:
+        case = selected_by_id.get(result["case_id"])
+        if case is not None:
+            case["expected_worker"] = result["selected_worker"]
+    if any("expected_worker" not in case for case in selected_cases):
+        raise RuntimeError("selected agentic case lost its coverage worker")
+
+
+def _bounded_totals(
+    key_readiness: dict[str, Any],
+    endpoint_probes: list[dict[str, Any]],
+    coverage: list[dict[str, Any]],
+    phases: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int, float]:
+    measured_results = flatten(phases)
+    all_results = [key_readiness, *endpoint_probes, *coverage, *measured_results]
+    if len(measured_results) != MAX_MEASURED_REQUESTS:
+        raise RuntimeError("agentic measured request count diverged")
+    if len(all_results) > MAX_BENCHMARK_PROVIDER_REQUESTS:
+        raise RuntimeError("agentic provider request bound was exceeded")
+    external_attempts = sum(int(result["external_attempts"]) for result in all_results)
+    if external_attempts > MAX_BENCHMARK_EXTERNAL_ATTEMPTS:
+        raise RuntimeError("agentic external-attempt bound was exceeded")
+    provider_cost = sum(float(result["cost_usd"]) for result in all_results)
+    if provider_cost > MAX_REPORTED_PROVIDER_COST_USD:
+        raise RuntimeError("agentic provider cost exceeded its reported-cost gate")
+    return all_results, external_attempts, provider_cost
+
+
+def _transport_preflight_from_environment() -> dict[str, Any]:
+    return from_environment(os.environ)
+
+
+def _encode_private_report(report: dict[str, Any], openrouter_key: str) -> str:
+    encoded = json.dumps(report, indent=2, sort_keys=True)
+    if openrouter_key in encoded:
+        raise RuntimeError("OpenRouter credential entered the agentic report")
+    for anchor in CANDIDATE_PROMPTS:
+        if anchor in encoded:
+            raise RuntimeError("agentic report included a routing anchor")
+    return encoded
+
+
+def main() -> None:
+    args = _parse_args()
+    openrouter_key = os.environ.get("OPENROUTER_EPHEMERAL_API_KEY", "")
+    if not openrouter_key:
+        raise SystemExit("OPENROUTER_EPHEMERAL_API_KEY is required")
+    transport_preflight = _transport_preflight_from_environment()
+    print("agentic encoder warmup: starting", file=sys.stderr, flush=True)
+    encoder_warmup = warm_encoder_from_environment(
+        timeout_seconds=args.timeout_seconds,
+        connection_factory=_connection,
+    )
+    metrics_before = _read_metrics(args.metrics_url, args.timeout_seconds)
+    key_readiness = _probe_key_readiness(
+        gateway_url=args.gateway_url,
+        openrouter_key=openrouter_key,
+        run_id=args.run_id,
+        timeout_seconds=args.timeout_seconds,
+    )
+    endpoint_probes = _probe_endpoints(
+        gateway_url=args.gateway_url,
+        openrouter_key=openrouter_key,
+        run_id=args.run_id,
+        timeout_seconds=args.timeout_seconds,
+    )
+    selected_cases, coverage = _discover_cases(
+        gateway_url=args.gateway_url,
+        run_id=args.run_id,
+        timeout_seconds=args.timeout_seconds,
+    )
+    _bind_expected_workers(selected_cases, coverage)
+    phases = _run_measured(
+        selected_cases=selected_cases,
+        gateway_url=args.gateway_url,
+        openrouter_key=openrouter_key,
+        run_id=args.run_id,
+        timeout_seconds=args.timeout_seconds,
+    )
+    all_results, external_attempts, provider_cost = _bounded_totals(
+        key_readiness, endpoint_probes, coverage, phases
+    )
+    external_attempts += int(transport_preflight["external_attempts"])
+    provider_cost += float(transport_preflight["cost_usd"])
+    if external_attempts > MAX_EXTERNAL_ATTEMPTS:
+        raise RuntimeError("agentic packet external-attempt bound was exceeded")
+    if provider_cost > MAX_REPORTED_PROVIDER_COST_USD:
+        raise RuntimeError("agentic packet provider cost exceeded its gate")
+    router_metrics = validate_router_metrics(
+        before=metrics_before,
+        after=_read_metrics(args.metrics_url, args.timeout_seconds),
+        coverage=coverage,
+        phases=phases,
+    )
+    report = build_report(
+        run_id=args.run_id,
+        transport_preflight=transport_preflight,
+        encoder_warmup=encoder_warmup,
+        key_readiness=key_readiness,
+        endpoint_probes=endpoint_probes,
+        selected_cases=selected_cases,
+        coverage=coverage,
+        phases=phases,
+        router_metrics=router_metrics,
+        all_results=all_results,
+        external_attempts=external_attempts,
+        provider_cost=provider_cost,
+        paths=PATHS,
+        concurrency_levels=CONCURRENCY_LEVELS,
+        key_readiness_requests=KEY_READINESS_REQUESTS,
+        selected_case_count=SELECTED_CASE_COUNT,
+        minimum_active_workers=MIN_ACTIVE_WORKERS,
+        minimum_selected_cases_per_active_worker=(MIN_SELECTED_CASES_PER_ACTIVE_WORKER),
+        max_completion_tokens=MAX_COMPLETION_TOKENS,
+        maximum_provider_requests=MAX_PROVIDER_REQUESTS,
+        maximum_external_attempts=MAX_EXTERNAL_ATTEMPTS,
+        maximum_reported_provider_cost_usd=MAX_REPORTED_PROVIDER_COST_USD,
+    )
+    print(_encode_private_report(report, openrouter_key))
+
+
+if __name__ == "__main__":
+    main()

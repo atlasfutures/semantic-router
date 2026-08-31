@@ -96,6 +96,7 @@ providers:
           weight: 100
 
 routing:
+  strategy: priority
   modelCards:
     - name: qwen3-8b
       param_size: 8B
@@ -338,6 +339,14 @@ routing:
             pattern: '[?？]'
         predicate:
           lt: 0.05
+      - name: long_current_turn_bytes
+        description: Current user turn is at least four thousand UTF-8 bytes.
+        feature:
+          type: count
+          source:
+            type: text_bytes
+        predicate:
+          gte: 4000
 
     complexity:
       - name: needs_reasoning
@@ -476,6 +485,12 @@ routing:
         predicate:
           gt: 5
           lte: 99
+      - name: has_images
+        description: Request contains at least one image content part.
+        feature:
+          type: exists
+          source:
+            type: image_content
 
     events:
       - name: critical_payment_event
@@ -489,6 +504,29 @@ routing:
         action_codes:
           - TXN_DECLINE
         temporal: true
+
+    metadata:
+      - name: consent_denied
+        description: Caller explicitly denied remote processing consent.
+        key: consent
+        predicate:
+          equals: denied
+
+    classifiers:
+      - name: generic-safety-score
+        description: Generic binary safety classification head.
+        type: local
+        model_path: models/mmbert32k-jailbreak-detector-merged
+        labels: [SAFE, JAILBREAK]
+        use_cpu: true
+      - name: tool-risk
+        description: Prompted tool execution risk labeler.
+        type: llm
+        model: external-classifier
+        labels: [SAFE, RISKY]
+        instructions: >-
+          Choose RISKY only for destructive, privileged, or irreversible tool
+          operations.
 
   projections:
     partitions:
@@ -555,6 +593,9 @@ routing:
       priority: 200
       tier: 2
       output_contract: Preserve any explicit user-requested output format exactly.
+      annotations:
+        policy_class: business
+        owner: routing-platform
       rules:
         operator: AND
         conditions:
@@ -620,6 +661,136 @@ routing:
             ttl_turns: 4
             keep_current_model: true
             prefer_prefix_retention: true
+
+    - name: rayline_arc_reference_route
+      description: Experimental artifact-verified ARC configuration using public placeholder arm bindings.
+      priority: 195
+      rules:
+        operator: AND
+        conditions:
+          - type: domain
+            name: business
+      modelRefs:
+        - model: qwen3-8b
+          use_reasoning: false
+        - model: qwen3-32b
+          use_reasoning: true
+      adaptations:
+        mode: bypass
+      plugins:
+        # ARC episode requests must never be persisted by Router Replay; the
+        # validator rejects rayline_arc decisions whose effective replay
+        # configuration is enabled.
+        - type: router_replay
+          configuration:
+            enabled: false
+      algorithm:
+        type: rayline_arc
+        on_error: fail_closed
+        rayline_arc:
+          artifact_dir: /var/lib/vllm-sr/rayline-arc
+          artifact_revision: public-synthetic-v1
+          # System text is folded into the user turn it governs, never into a
+          # turn of its own: the encoder wire contract has only two roles.
+          #
+          # include_system_text covers the conversation-opening prompt: the
+          # Anthropic system field, the Responses instructions field, and the
+          # leading run of system/developer messages. Off by default, because
+          # it changes what the trained selector is asked.
+          include_system_text: false
+          # drop_mid_conversation_system_text is the kill switch for the other
+          # scope: a mid_conv_system block, or a system/developer message that
+          # follows a user or assistant message. False by default, so that
+          # text does reach the selector -- it is a correction aimed at the
+          # very next reply, which is the signal the router exists to read.
+          drop_mid_conversation_system_text: false
+          encoder:
+            base_url: http://rayline-arc-encoder:8000
+            # Set base_url to empty and populate replicas + failover to opt
+            # into the versioned retained-session multi-replica contract.
+            replicas: []
+            # Or leave replicas empty and populate membership to use the
+            # reviewed Redis dynamic-membership controller.
+            membership: {}
+            failover: {}
+            model: Qwen/Qwen3.5-0.8B
+            model_revision: 2fc06364715b967f1860aea9cf38778875588b17
+            expected_build_id: vllm@public-synthetic-build
+            expected_io_plugin_version: rayline-arc-io@0.1.0
+            serializer_version: mtrouter-token-blocks-v2
+            serving_rung: B
+            required_pooling_capabilities:
+              - chunked_causal_mean
+            modal_key_env: RAYLINE_ARC_MODAL_KEY
+            modal_secret_env: RAYLINE_ARC_MODAL_SECRET
+            connect_timeout_seconds: 5
+            total_timeout_seconds: 180
+            max_retries: 1
+            # Cap concurrent encoder calls per router process and shed the
+            # surplus immediately instead of queueing it inside the encoder.
+            # 0 disables admission control, which is the default. Size it from
+            # a measured concurrency level the encoder sustains inside the
+            # decision latency budget, and never above the encoder's own
+            # ingress cap.
+            max_inflight_encoder_calls: 0
+          episode:
+            id_header: x-rayline-episode-id
+            close_header: ""
+            backend: redis
+            key_prefix: "vsr:rayline-arc:"
+            acquire_timeout_seconds: 30
+            lease_ttl_seconds: 60
+            idle_ttl_seconds: 900
+            max_in_memory_episodes: 1024
+            development_mode: false
+            redis:
+              address: redis:6379
+              db: 0
+              password_env: RAYLINE_ARC_REDIS_PASSWORD
+              use_tls: false
+              pool_size: 16
+
+    - name: rayline_remote_reference_route
+      description: Experimental fail-closed remote Rayline policy with a pinned bundle and explicit worker map.
+      priority: 194
+      rules:
+        operator: AND
+        conditions:
+          - type: domain
+            name: business
+      modelRefs:
+        - model: qwen3-8b
+          use_reasoning: false
+        - model: qwen3-32b
+          use_reasoning: true
+      adaptations:
+        mode: bypass
+      plugins:
+        - type: router_replay
+          configuration:
+            enabled: false
+      algorithm:
+        type: rayline_remote
+        on_error: fail_closed
+        rayline_remote:
+          base_url: https://rayline-router:8443
+          bundle_version: public-synthetic-remote-v1
+          # The prepare hop carries the full prompt body and tool schemas.
+          # Set this to true only for a trusted plaintext hop you control.
+          allow_insecure_transport: false
+          api_key_env: RAYLINE_API_KEY
+          episode_id_header: x-rayline-episode-id
+          episode_hmac_key_env: RAYLINE_EPISODE_HMAC_KEY
+          decision_id_header: x-rayline-route-id
+          connect_timeout_ms: 250
+          request_timeout_ms: 1000
+          lease_ttl_seconds: 30
+          max_retries: 1
+          workers:
+            - id: qwen3-8b-worker
+              model: qwen3-8b
+            - id: qwen3-32b-worker
+              model: qwen3-32b
 
     - name: legal_confidence_route
       description: Confidence-routed legal and factual traffic.
@@ -1125,6 +1296,45 @@ routing:
 
     # multi_factor example: composes quality/latency/cost/load into one
     # weighted score with optional SLO ceilings. Issue #37.
+    - name: prompt_selected_route
+      description: Prompt-driven selection among bounded decision candidates.
+      priority: 126
+      rules:
+        operator: AND
+        conditions:
+          - type: domain
+            name: other
+      modelRefs:
+        - model: qwen3-8b
+          use_reasoning: false
+        - model: qwen3-32b
+          use_reasoning: true
+      algorithm:
+        type: prompt
+        on_error: fallback
+        prompt:
+          model: qwen3-8b
+          instructions: >-
+            Choose qwen3-8b for ordinary requests and qwen3-32b for hard
+            reasoning, coding, or multi-step analysis.
+          timeout_seconds: 5
+
+    - name: classifier_band_route
+      description: Route a bounded generic classifier score to a local model.
+      priority: 125
+      rules:
+        operator: AND
+        conditions:
+          - type: classifier
+            name: generic-safety-score
+            label: JAILBREAK
+            predicate:
+              gte: 0.5
+            on_error: no_match
+      modelRefs:
+        - model: qwen3-8b
+          use_reasoning: false
+
     - name: multi_factor_route
       description: Compose quality, latency, cost, and load signals into a single weighted score.
       priority: 124
@@ -1371,6 +1581,7 @@ recipes:
   - name: privacy-first
     description: Keeps privacy-sensitive traffic on the local default-tier model.
     routing:
+      strategy: confidence
       signals:
         keywords:
           - name: privacy_recipe_keywords
@@ -1954,7 +2165,7 @@ global:
       enabled: true
       top_k: 5
       similarity_threshold: 0.35
-      tools_db_path: deploy/examples/runtime/tools/tools_db.json
+      tools_db_path: config/runtime/tools/tools_db.json
       fallback_to_empty: true
       advanced_filtering:
         enabled: true
@@ -2053,7 +2264,8 @@ global:
       hallucination_explainer: models/mom-halugate-explainer
       feedback_detector: models/mmbert32k-feedback-detector-merged
     external:
-      - llm_provider: openai
+      - name: external-guardrail
+        llm_provider: openai
         model_role: guardrail
         llm_endpoint:
           address: openai-proxy
@@ -2069,6 +2281,22 @@ global:
         access_key: external-guardrail-key
         max_tokens: 2048
         temperature: 0.2
+      - name: external-classifier
+        llm_provider: openai
+        model_role: classification
+        llm_endpoint:
+          address: openai-proxy
+          port: 443
+          protocol: https
+          name: openai-classifier
+          use_chat_template: true
+          prompt_template: "{{ .Prompt }}"
+        llm_model_name: gpt-4.1-mini
+        llm_timeout_seconds: 15
+        parser_type: json
+        access_key: external-classifier-key
+        max_tokens: 128
+        temperature: 0
     kbs:
       - name: privacy_kb
         source:
@@ -2188,6 +2416,9 @@ global:
         use_vllm: false
       classifier:
         domain:
+          # Omit to keep the historical behaviour of running whenever a model is
+          # configured; false disables the classifier outright.
+          enabled: true
           model_ref: domain_classifier
           model_id: models/mmbert32k-intent-classifier-merged
           threshold: 0.5
@@ -2208,6 +2439,9 @@ global:
           threshold: 0.6
           timeout_seconds: 15
         pii:
+          # Omit to keep the historical behaviour of running whenever a model is
+          # configured; false disables the classifier outright.
+          enabled: true
           model_ref: pii_classifier
           model_id: models/mmbert32k-pii-detector-merged
           threshold: 0.9
@@ -2242,6 +2476,9 @@ global:
           use_cpu: true
           use_mmbert_32k: true
         detector:
+          backend: candle
+          endpoint: ""
+          include_explanation: false
           model_ref: hallucination_detector
           model_id: models/mom-halugate-detector
           threshold: 0.82

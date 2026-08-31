@@ -4,10 +4,23 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/services"
 )
+
+func TestAPIWriteTimeoutCoversColdRouterDecisionBudget(t *testing.T) {
+	const coldRouterDecisionBudget = 10 * time.Minute
+
+	if apiWriteTimeout <= coldRouterDecisionBudget {
+		t.Fatalf(
+			"API write timeout %s must exceed cold router decision budget %s",
+			apiWriteTimeout,
+			coldRouterDecisionBudget,
+		)
+	}
+}
 
 // TestSetupRoutesConfigEndpoints verifies the config API surface exposed by setupRoutes.
 func TestSetupRoutesConfigEndpoints(t *testing.T) {
@@ -29,6 +42,11 @@ func TestSetupRoutesConfigEndpoints(t *testing.T) {
 		{method: http.MethodPut, path: "/config/router", shouldExist: true},
 		{method: http.MethodPost, path: "/config/router/rollback", shouldExist: true},
 		{method: http.MethodGet, path: "/config/router/versions", shouldExist: true},
+		{method: http.MethodGet, path: "/config/router/recipes", shouldExist: true},
+		{method: http.MethodPost, path: "/config/router/recipes/validate", shouldExist: true},
+		{method: http.MethodGet, path: "/config/router/recipes/managed", shouldExist: true},
+		{method: http.MethodPut, path: "/config/router/recipes/managed", shouldExist: true},
+		{method: http.MethodDelete, path: "/config/router/recipes/managed", shouldExist: true},
 		{method: http.MethodGet, path: "/config/classification", shouldExist: false},
 		{method: http.MethodPut, path: "/config/classification", shouldExist: false},
 		{method: http.MethodGet, path: "/config/system-prompts", shouldExist: false},

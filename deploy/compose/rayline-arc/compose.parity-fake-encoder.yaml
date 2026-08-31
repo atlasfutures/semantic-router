@@ -1,0 +1,26 @@
+services:
+  fake-encoder:
+    build:
+      context: ../../../e2e/testing/rayline-arc
+    command:
+      - python
+      - /app/mock_servers.py
+      - encoder
+      - --port
+      - "8080"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  router:
+    depends_on:
+      fake-encoder:
+        condition: service_healthy

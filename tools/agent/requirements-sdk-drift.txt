@@ -1,0 +1,12 @@
+# Vendor SDKs read by tools/agent/scripts/verify_sdk_unions.py.
+#
+# These are not runtime dependencies. The drift check parses their type unions
+# to prove the Rayline ARC turn parser handles every block type the vendors can
+# send. Pin them: an unpinned bump would move the check's expectations without
+# a review, which is the drift this check exists to catch.
+#
+# Bump deliberately. A bump that adds a union member should fail the check and
+# be resolved by rendering the member or adding it to the parser's drop table
+# in the same change.
+anthropic==0.109.1
+openai==2.24.0

@@ -5,6 +5,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/memory"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/services"
 )
@@ -19,6 +20,7 @@ type Registry struct {
 	vectorStore           *VectorStoreRuntime
 	modelSelector         *selection.Registry
 	learningRuntime       LearningRuntime
+	routeDecisionRuntime  RouteDecisionRuntime
 }
 
 // LearningRuntime is the narrow API-server seam for Router Learning state.
@@ -140,6 +142,27 @@ func (r *Registry) SetLearningRuntime(runtime LearningRuntime) {
 	r.mu.Unlock()
 }
 
+// RouteDecisionRuntime returns nil until the router publishes itself. The
+// management listener starts before the router exists, so every reader must
+// treat "not published yet" as a normal state rather than a fault.
+func (r *Registry) RouteDecisionRuntime() RouteDecisionRuntime {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.routeDecisionRuntime
+}
+
+func (r *Registry) SetRouteDecisionRuntime(runtime RouteDecisionRuntime) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.routeDecisionRuntime = runtime
+	r.mu.Unlock()
+}
+
 func (r *Registry) PublishRouterRuntime(
 	cfg *config.RouterConfig,
 	classificationService *services.ClassificationService,
@@ -161,8 +184,14 @@ func (r *Registry) RefreshRuntimeConfig(newCfg *config.RouterConfig) {
 	if r == nil {
 		return
 	}
-	r.UpdateConfig(newCfg)
 	if service := r.ClassificationService(); service != nil {
-		service.RefreshRuntimeConfig(newCfg)
+		if err := service.TryRefreshRuntimeConfig(newCfg); err != nil {
+			logging.Errorf(
+				"Runtime config refresh rejected; retaining previous registry snapshot: %v",
+				err,
+			)
+			return
+		}
 	}
+	r.UpdateConfig(newCfg)
 }

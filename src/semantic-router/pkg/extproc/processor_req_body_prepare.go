@@ -1,6 +1,8 @@
 package extproc
 
 import (
+	"context"
+	"errors"
 	"fmt"
 
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -104,14 +106,27 @@ func (r *OpenAIRouter) runRequestPreRoutingStages(
 	r.resolveEntrypointForRequest(originalModel, ctx)
 	populatePinnedSessionFromHeaders(ctx)
 	history := signalConversationHistoryFromFastExtract(fast)
-	decisionName, _, reasoningDecision, selectedModel, authzErr := r.performDecisionEvaluation(
+	decisionName, _, reasoningDecision, selectedModel, decisionErr := r.performDecisionEvaluation(
 		originalModel,
 		history,
 		ctx,
 	)
-	if authzErr != nil {
-		logging.Errorf("[Request Body] Authz evaluation failed: %v", authzErr)
-		return requestDecisionState{}, r.createErrorResponse(403, authzErr.Error())
+	if decisionErr != nil {
+		// Authoritative-selector failures must be classified before the generic
+		// cancellation check, or a Rayline fail-closed error is misreported as a
+		// client cancellation.
+		if response, handled := r.decisionEvaluationErrorResponse(
+			decisionErr,
+			ctx,
+		); handled {
+			return requestDecisionState{}, response
+		}
+		if errors.Is(decisionErr, context.Canceled) ||
+			errors.Is(decisionErr, context.DeadlineExceeded) {
+			return requestDecisionState{}, r.createErrorResponse(499, "request canceled")
+		}
+		logging.Errorf("[Request Body] Authz evaluation failed: %v", decisionErr)
+		return requestDecisionState{}, r.createErrorResponse(403, decisionErr.Error())
 	}
 
 	metrics.RecordModelRequest(selectedModel)
@@ -121,16 +136,25 @@ func (r *OpenAIRouter) runRequestPreRoutingStages(
 		ctx.InflightToken = 0
 		r.startRouterReplay(ctx, originalModel, selectedModel, decisionName)
 		r.updateRouterReplayStatus(ctx, 200, false)
+		r.attachRouterReplayResponse(
+			ctx,
+			resp.GetImmediateResponse().GetBody(),
+			true,
+		)
+		addRouterReplayHeaderToImmediateResponse(resp, ctx.RouterReplayID)
+		finalizeSelectionAbort(ctx, "immediate_response")
 		return requestDecisionState{}, resp
 	}
 	if resp := r.applyRateLimitAndCacheChecks(ctx, selectedModel, decisionName); resp != nil {
 		inflight.End(selectedModel, ctx.InflightToken)
 		ctx.InflightToken = 0
+		finalizeSelectionAbort(ctx, "immediate_response")
 		return requestDecisionState{}, resp
 	}
 	if ragErr := r.executeRAGPlugin(ctx, decisionName); ragErr != nil {
 		inflight.End(selectedModel, ctx.InflightToken)
 		ctx.InflightToken = 0
+		finalizeSelectionAbort(ctx, "handler_error")
 		return requestDecisionState{}, r.createErrorResponse(503, fmt.Sprintf("RAG retrieval failed: %v", ragErr))
 	}
 
@@ -139,6 +163,47 @@ func (r *OpenAIRouter) runRequestPreRoutingStages(
 		reasoningDecision: reasoningDecision,
 		selectedModel:     selectedModel,
 	}, nil
+}
+
+func (r *OpenAIRouter) decisionEvaluationErrorResponse(
+	err error,
+	ctx *RequestContext,
+) (*ext_proc.ProcessingResponse, bool) {
+	var selectionFailure *modelSelectionFailure
+	if !errors.As(err, &selectionFailure) {
+		return nil, false
+	}
+	requestID := ""
+	if ctx != nil {
+		requestID = ctx.RequestID
+	}
+	algorithm := selectionFailure.algorithm
+	if algorithm == "" {
+		algorithm = configRaylineARC
+	}
+	logging.ComponentErrorEvent(
+		"extproc",
+		algorithm+"_selection_failed",
+		map[string]interface{}{
+			"request_id":    requestID,
+			"failure_class": selectionFailure.class,
+		},
+	)
+	message := "Rayline ARC routing unavailable"
+	if algorithm == configRaylineRemote {
+		metrics.RecordRaylineRemoteFailure(
+			"selection",
+			selectionFailure.class,
+		)
+		message = "Rayline remote routing unavailable"
+	} else {
+		metrics.RecordRaylineARCFailure(selectionFailure.class)
+	}
+	finalizeSelectionAbort(ctx, "selection_failure")
+	return r.createErrorResponse(
+		503,
+		message,
+	), true
 }
 
 func (r *OpenAIRouter) applyRateLimitAndCacheChecks(

@@ -1,0 +1,83 @@
+name: rayline-remote-e2e
+
+services:
+  fake-rayline:
+    build:
+      context: ../../../e2e/testing/rayline-remote
+    command: ["python", "/app/mock_services.py", "rayline", "--port", "8090"]
+    ports:
+      - "${RAYLINE_REMOTE_E2E_POLICY_PORT:-18090}:8090"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=2)"
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  fake-provider-a:
+    build:
+      context: ../../../e2e/testing/rayline-remote
+    command: ["python", "/app/mock_services.py", "provider", "--identity", "a", "--port", "8081"]
+    ports:
+      - "${RAYLINE_REMOTE_E2E_PROVIDER_A_PORT:-18091}:8081"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=2)"
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  fake-provider-b:
+    build:
+      context: ../../../e2e/testing/rayline-remote
+    command: ["python", "/app/mock_services.py", "provider", "--identity", "b", "--port", "8082"]
+    ports:
+      - "${RAYLINE_REMOTE_E2E_PROVIDER_B_PORT:-18092}:8082"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/health', timeout=2)"
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  router:
+    image: ${RAYLINE_REMOTE_ROUTER_IMAGE:-ghcr.io/vllm-project/semantic-router/vllm-sr:latest}
+    pull_policy: never
+    environment:
+      SYNTHETIC_API_KEY: public-e2e-provider-key
+      RAYLINE_REMOTE_API_KEY: public-e2e-rayline-key
+      RAYLINE_REMOTE_EPISODE_HMAC_KEY: public-e2e-hmac-key-32-bytes-long
+    command: ["/app/config/rayline-remote.yaml"]
+    volumes:
+      - ./config.yaml:/app/config/rayline-remote.yaml:ro
+    ports:
+      - "${RAYLINE_REMOTE_E2E_ROUTER_API_PORT:-18093}:8080"
+      - "${RAYLINE_REMOTE_E2E_METRICS_PORT:-19191}:9190"
+    depends_on:
+      fake-rayline:
+        condition: service_healthy
+      fake-provider-a:
+        condition: service_healthy
+      fake-provider-b:
+        condition: service_healthy
+
+  envoy:
+    image: envoyproxy/envoy:v1.34-latest
+    command: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "warning"]
+    volumes:
+      - ./envoy.yaml:/etc/envoy/envoy.yaml:ro
+    ports:
+      - "${RAYLINE_REMOTE_E2E_ENVOY_PORT:-18889}:8888"
+    depends_on:
+      - router
+      - fake-provider-a
+      - fake-provider-b

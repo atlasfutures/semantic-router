@@ -28,8 +28,11 @@ package selection
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylineremote"
 )
 
 // SelectionMethod defines the type of model selection algorithm
@@ -92,6 +95,18 @@ const (
 	// MethodMultiFactor combines quality/latency/cost/load signals via a
 	// weighted score with optional SLO ceilings. Issue #37.
 	MethodMultiFactor SelectionMethod = "multi_factor"
+
+	// MethodPrompt uses a concrete helper LLM to choose one declared candidate
+	// through a runtime-owned structured output contract.
+	MethodPrompt SelectionMethod = "prompt"
+
+	// MethodRaylineARC uses the artifact-verified Rayline ARC orchestrator.
+	// The encoder is served by a dedicated vLLM pooling deployment.
+	MethodRaylineARC SelectionMethod = "rayline_arc"
+
+	// MethodRaylineRemote delegates authoritative selection and episode state
+	// to a version-pinned Pathfinder Rayline service.
+	MethodRaylineRemote SelectionMethod = "rayline_remote"
 
 	// MethodSessionAware wraps a base selector with agentic session policy:
 	// it keeps tool loops and hot multi-turn continuations on the current model
@@ -158,6 +173,11 @@ type SelectionContext struct {
 	// DecisionName is the name of the matched decision for category-specific selection
 	DecisionName string
 
+	// RecipeName identifies the isolated routing profile that owns DecisionName.
+	// Selectors are instantiated per recipe; shared learning/lookup components
+	// use both fields as their state namespace.
+	RecipeName config.RecipeName
+
 	// CategoryName is the detected domain category (e.g., "physics", "math")
 	// Used by ML selectors to create feature vectors with category one-hot encoding
 	CategoryName string
@@ -198,6 +218,90 @@ type SelectionContext struct {
 
 	// CacheAffinityCtx carries request-time session signals for cache-affinity estimation.
 	CacheAffinityCtx *CacheAffinityContext
+
+	// RaylineARC carries only the structured, privacy-safe inputs required by
+	// the artifact-owned ARC selector. It is nil for every other algorithm.
+	RaylineARC *RaylineARCSelectionContext
+
+	// RaylineRemote carries the request-scoped inputs and opaque transaction
+	// returned by the Pathfinder-owned selector. The transaction's receipt has
+	// no public accessor and must never enter generic traces.
+	RaylineRemote *RaylineRemoteSelectionContext
+}
+
+type RaylineARCSelectionContext struct {
+	EpisodeIDHash      string
+	Turns              []raylinearc.Turn
+	State              *raylinearc.EpisodeState
+	InputTokens        int
+	PreparationFailure string
+}
+
+type RaylineARCTrace struct {
+	// ArtifactID and ArtifactRevision hold SHA256-derived hashes of the
+	// deployment-private artifact identity, never the raw pins.
+	ArtifactID           string
+	ArtifactRevision     string
+	EncoderRevision      string
+	EpisodeIDHash        string
+	SelectedArm          int
+	PreviousArm          *int
+	RawScores            []float32
+	AdjustedScores       []float32
+	SwitchCostUSD        []float64
+	CacheMissTokens      []int
+	Stayed               bool
+	UpgradeExemptions    []bool
+	StayUpgradeExempted  bool
+	SerializedTokens     int
+	FullHistoryTokens    int
+	TruncatedTokens      int
+	CachedPrefixTokens   int
+	RetainedPrefixTokens int
+	AppendedTokens       int
+	SessionAction        string
+	SessionRevision      int
+	EncoderLatency       time.Duration
+	EncoderReplicaIndex  int
+	EncoderAttempts      int
+	EncoderFailover      bool
+	// EncoderReplicaID and EncoderVisitedReplicaIDs are internal transaction
+	// state. They must never be logged or exported as metric labels.
+	EncoderReplicaID         string
+	EncoderVisitedReplicaIDs []string
+}
+
+type RaylineRemoteSelectionContext struct {
+	DecisionID         string
+	RawEpisodeID       string
+	RequestBody        []byte
+	PreparationFailure string
+	Transaction        *raylineremote.Transaction
+}
+
+type RaylineRemoteTrace struct {
+	BundleHash       string
+	SelectedIndex    int
+	RouteCallIndex   int
+	SelectionLatency time.Duration
+}
+
+// ScopedRoutingName namespaces recipe-local task-family names for shared
+// lookup-table state while keeping default-recipe keys unscoped.
+func (c *SelectionContext) ScopedRoutingName(localName string) string {
+	if c == nil {
+		return ""
+	}
+	return config.RoutingNamespaceKey(c.RecipeName, localName)
+}
+
+// RoutingScope returns the lookup-table namespace for this recipe. The
+// default recipe keeps unscoped keys.
+func (c *SelectionContext) RoutingScope() string {
+	if c == nil {
+		return ""
+	}
+	return config.RoutingNamespaceScope(c.RecipeName)
 }
 
 // SelectionResult contains the result of a model selection decision
@@ -226,9 +330,23 @@ type SelectionResult struct {
 	// AllScores maps each candidate model to its computed score
 	AllScores map[string]float64
 
+	// Prompt-helper telemetry is populated only by MethodPrompt.
+	HelperModel            string
+	HelperPromptTokens     int64
+	HelperCompletionTokens int64
+	HelperTotalTokens      int64
+	HelperLatencyMs        int64
+
 	// SessionPolicy records the session-aware stay/switch policy trace when
 	// Method is session_aware.
 	SessionPolicy *SessionPolicyTrace
+
+	// RaylineARC records bounded, privacy-safe artifact policy diagnostics.
+	RaylineARC *RaylineARCTrace
+
+	// RaylineRemote records bounded ordinal diagnostics. It never contains a
+	// worker ID, prompt, episode identity, credential, or transaction receipt.
+	RaylineRemote *RaylineRemoteTrace
 }
 
 // Selector is the interface for model selection algorithms

@@ -118,6 +118,10 @@ func (r *OpenAIRouter) finalizeStreamingResponse(ctx *RequestContext) {
 
 	usage := extractStreamingUsage(ctx)
 	r.reportStreamingUsageMetrics(ctx, usage)
+	finalizeSelectionSettlement(
+		ctx,
+		ctx.SelectionSettlement,
+	)
 	r.calibrateTokenEstimator(ctx, int(usage.PromptTokens))
 
 	if err := r.cacheStreamingResponse(ctx); err != nil {

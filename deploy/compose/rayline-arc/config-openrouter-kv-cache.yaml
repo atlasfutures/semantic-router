@@ -1,0 +1,173 @@
+version: v0.3
+
+listeners:
+  - name: rayline-arc-openrouter-kv-cache
+    address: 0.0.0.0
+    port: 8888
+    timeout: 180s
+
+providers:
+  defaults:
+    default_model: worker-a
+  models:
+    - name: worker-a
+      provider_model_id: deepseek/deepseek-v4-flash
+      api_format: openai
+      pricing:
+        # Conservative maximum rates across the 2026-08-05 re-vetted provider
+        # order (Baidu/GMICloud/SiliconFlow); must equal artifact v4 pricing
+        # or the router's price-identity gate fails closed.
+        currency: USD
+        prompt_per_1m: 0.13
+        cached_input_per_1m: 0.13
+        cache_write_per_1m: 0.13
+        completion_per_1m: 0.28
+      backend_refs:
+        - name: openrouter
+          endpoint: openrouter.ai:443
+          protocol: https
+          type: openai
+          base_url: https://openrouter.ai/api/v1
+          provider: openai
+          api_key_env: SYNTHETIC_API_KEY
+    - name: worker-b
+      provider_model_id: openai/gpt-5.6-luna
+      api_format: openai
+      pricing:
+        # Per-field maximum rates across OpenAI's three endpoint tags for
+        # gpt-5.6-luna (openai, openai/flex, openai/priority) as of the
+        # 2026-08-07 luna amendment; must equal artifact v7 pricing or the
+        # router's price-identity gate fails closed. OpenAI prices cache reads
+        # and writes separately, so unlike the other workers these three input
+        # rates are not flat.
+        currency: USD
+        prompt_per_1m: 0.2
+        cached_input_per_1m: 0.02
+        cache_write_per_1m: 0.25
+        completion_per_1m: 1.2
+      backend_refs:
+        - name: openrouter
+          endpoint: openrouter.ai:443
+          protocol: https
+          type: openai
+          base_url: https://openrouter.ai/api/v1
+          provider: openai
+          api_key_env: SYNTHETIC_API_KEY
+    - name: worker-c
+      provider_model_id: tencent/hy3
+      api_format: openai
+      pricing:
+        currency: USD
+        prompt_per_1m: 0.14
+        cached_input_per_1m: 0.14
+        cache_write_per_1m: 0.14
+        completion_per_1m: 0.58
+      backend_refs:
+        - name: openrouter
+          endpoint: openrouter.ai:443
+          protocol: https
+          type: openai
+          base_url: https://openrouter.ai/api/v1
+          provider: openai
+          api_key_env: SYNTHETIC_API_KEY
+
+routing:
+  modelCards:
+    - name: worker-a
+      modality: text
+    - name: worker-b
+      modality: text
+    - name: worker-c
+      modality: text
+  decisions:
+    - name: rayline-arc-openrouter-kv-cache
+      description: Matched native-versus-FlashInfer retained-session benchmark
+      priority: 100
+      rules:
+        operator: AND
+        conditions: []
+      modelRefs:
+        - model: worker-a
+          use_reasoning: false
+        - model: worker-b
+          use_reasoning: false
+        - model: worker-c
+          use_reasoning: false
+      adaptations:
+        mode: bypass
+      plugins:
+        - type: router_replay
+          configuration:
+            enabled: false
+      algorithm:
+        type: rayline_arc
+        on_error: fail_closed
+        rayline_arc:
+          artifact_dir: /var/lib/vllm-sr/rayline-arc
+          artifact_revision: ${RAYLINE_ARC_ARTIFACT_REVISION}
+          encoder:
+            base_url: ${RAYLINE_ARC_ENCODER_BASE_URL}
+            model: Qwen/Qwen3.5-0.8B
+            model_revision: 2fc06364715b967f1860aea9cf38778875588b17
+            expected_build_id: ${RAYLINE_ARC_ENCODER_BUILD_ID}
+            expected_io_plugin_version: rayline-arc-io@0.1.0
+            serializer_version: mtrouter-token-blocks-v2
+            serving_rung: B
+            required_pooling_capabilities:
+              - chunked_causal_mean
+              - resumable_causal_mean
+            modal_key_env: RAYLINE_ARC_MODAL_KEY
+            modal_secret_env: RAYLINE_ARC_MODAL_SECRET
+            connect_timeout_seconds: 10
+            total_timeout_seconds: 180
+            max_retries: 0
+          episode:
+            id_header: x-rayline-episode-id
+            backend: redis
+            key_prefix: "vsr:rayline-arc-openrouter-kv-cache:"
+            acquire_timeout_seconds: 5
+            lease_ttl_seconds: 3
+            idle_ttl_seconds: 300
+            max_in_memory_episodes: 256
+            redis:
+              address: redis:6379
+              db: 0
+              password_env: RAYLINE_ARC_REDIS_PASSWORD
+              use_tls: false
+              pool_size: 16
+
+global:
+  stores:
+    semantic_cache:
+      enabled: false
+  model_catalog:
+    embeddings:
+      semantic:
+        mmbert_model_path: ""
+        qwen3_model_path: ""
+        gemma_model_path: ""
+        bert_model_path: ""
+        multimodal_model_path: ""
+    modules:
+      prompt_guard:
+        enabled: false
+        model_ref: ""
+        model_id: ""
+        jailbreak_mapping_path: ""
+        use_mmbert_32k: false
+      classifier:
+        domain:
+          model_ref: ""
+          model_id: ""
+          category_mapping_path: ""
+          use_mmbert_32k: false
+        pii:
+          model_ref: ""
+          model_id: ""
+          pii_mapping_path: ""
+          use_mmbert_32k: false
+      feedback_detector:
+        enabled: false
+        model_ref: ""
+        model_id: ""
+        use_mmbert_32k: false

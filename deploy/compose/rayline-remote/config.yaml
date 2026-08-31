@@ -1,0 +1,129 @@
+version: v0.3
+
+listeners:
+  - name: rayline-remote-e2e
+    address: 0.0.0.0
+    port: 8888
+    timeout: 30s
+
+providers:
+  defaults:
+    default_model: worker-a
+  models:
+    - name: worker-a
+      provider_model_id: provider/a
+      api_format: openai
+      pricing:
+        currency: USD
+        prompt_per_1m: 2
+        cached_input_per_1m: 1
+        cache_write_per_1m: 2.5
+        completion_per_1m: 4
+      backend_refs:
+        - name: provider-a
+          endpoint: fake-provider-a:8081
+          protocol: http
+          type: mock
+          provider: openai
+          base_url: http://fake-provider-a:8081/v1
+          api_key_env: SYNTHETIC_API_KEY
+    - name: worker-b
+      provider_model_id: provider/b
+      api_format: openai
+      pricing:
+        currency: USD
+        prompt_per_1m: 2
+        cached_input_per_1m: 1
+        cache_write_per_1m: 2.5
+        completion_per_1m: 4
+      backend_refs:
+        - name: provider-b
+          endpoint: fake-provider-b:8082
+          protocol: http
+          type: mock
+          provider: openai
+          base_url: http://fake-provider-b:8082/v1
+          api_key_env: SYNTHETIC_API_KEY
+
+routing:
+  modelCards:
+    - name: worker-a
+      modality: text
+    - name: worker-b
+      modality: text
+  decisions:
+    - name: rayline-remote-e2e
+      description: Public synthetic remote Rayline acceptance route
+      priority: 100
+      rules:
+        operator: AND
+        conditions: []
+      modelRefs:
+        - model: worker-a
+          use_reasoning: false
+        - model: worker-b
+          use_reasoning: true
+      adaptations:
+        mode: bypass
+      plugins:
+        - type: router_replay
+          configuration:
+            enabled: false
+      algorithm:
+        type: rayline_remote
+        on_error: fail_closed
+        rayline_remote:
+          base_url: http://fake-rayline:8090
+          bundle_version: rayline-remote-e2e-bundle-v1
+          # Hermetic single-host compose stack; the plaintext hop never
+          # leaves the compose network.
+          allow_insecure_transport: true
+          api_key_env: RAYLINE_REMOTE_API_KEY
+          episode_id_header: x-rayline-episode-id
+          episode_hmac_key_env: RAYLINE_REMOTE_EPISODE_HMAC_KEY
+          decision_id_header: x-rayline-route-id
+          connect_timeout_ms: 200
+          request_timeout_ms: 500
+          lease_ttl_seconds: 30
+          max_retries: 0
+          workers:
+            - id: remote-worker-a
+              model: worker-a
+            - id: remote-worker-b
+              model: worker-b
+
+global:
+  stores:
+    semantic_cache:
+      enabled: false
+  model_catalog:
+    embeddings:
+      semantic:
+        mmbert_model_path: ""
+        qwen3_model_path: ""
+        gemma_model_path: ""
+        bert_model_path: ""
+        multimodal_model_path: ""
+    modules:
+      prompt_guard:
+        enabled: false
+        model_ref: ""
+        model_id: ""
+        jailbreak_mapping_path: ""
+        use_mmbert_32k: false
+      classifier:
+        domain:
+          model_ref: ""
+          model_id: ""
+          category_mapping_path: ""
+          use_mmbert_32k: false
+        pii:
+          model_ref: ""
+          model_id: ""
+          pii_mapping_path: ""
+          use_mmbert_32k: false
+      feedback_detector:
+        enabled: false
+        model_ref: ""
+        model_id: ""
+        use_mmbert_32k: false

@@ -13,6 +13,8 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/projectiontrace"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/ratelimit"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerreplay"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // EnhancedHallucinationSpan represents a hallucinated span with NLI explanation.
@@ -110,6 +112,13 @@ type RequestContext struct {
 	// this request (e.g. response headers not processed). The cache-write path
 	// reads it to avoid caching non-2xx error bodies (cache poisoning).
 	UpstreamStatusCode int
+	// UpstreamAttemptCount distinguishes one logical Rayline request from the
+	// wire attempts Envoy made beneath it. RetryCount is attempts minus one;
+	// RetryExhausted is true only when the final 429/503 consumed the artifact
+	// budget. These fields never contain provider, prompt, or episode identity.
+	UpstreamAttemptCount   uint64
+	UpstreamRetryCount     uint64
+	UpstreamRetryExhausted bool
 
 	// TTFT tracking
 	TTFTRecorded bool
@@ -139,27 +148,40 @@ type RequestContext struct {
 	// HistoryTokenCount is zero (server-side conversation state).
 	PreviousResponseID string
 
-	// EntrypointRecipe is the routing recipe selected by the entrypoint table
-	// for this request's model name (issue #2331). nil means the model matched
-	// no entrypoint and the default routing behavior applies.
-	EntrypointRecipe *config.RoutingRecipe
+	// Routing is the single source of truth for entrypoint resolution. A
+	// resolved context with no recipe represents concrete-model passthrough.
+	Routing RequestRoutingContext
 
 	// VSR decision tracking
-	VSRSelectedCategory            string                                      // The category from domain classification (MMLU category)
-	VSRSelectedDecisionName        string                                      // The decision name from DecisionEngine evaluation
-	VSRSelectedDecisionConfidence  float64                                     // Confidence score from DecisionEngine evaluation
-	VSRReasoningMode               string                                      // "on" or "off" - whether reasoning mode was determined to be used
-	VSRSelectedModel               string                                      // The model selected by VSR
-	VSRSelectionMethod             string                                      // Model selection algorithm used (e.g., "elo", "static", "router_dc")
-	VSRLearningPolicy              *routerLearningPolicy                       // Primary Router Learning trace
-	VSRLearningPolicies            routerLearningPolicies                      // Router Learning traces by component
-	VSRLearningProtectionPreflight *routerreplay.LearningProtectionDiagnostics // Protection preflight trace for replay
-	VSRLearningSessionID           string                                      // Router Learning memory key used for this request
-	VSRLearningConversationID      string                                      // Client-declared conversation identity used by Router Learning
-	VSRCacheHit                    bool                                        // Whether this request hit the cache
-	VSRCacheSimilarity             float32                                     // Similarity score from last cache lookup (0 = no lookup performed)
-	VSRInjectedSystemPrompt        bool                                        // Whether a system prompt was injected into the request
-	VSRSelectedDecision            *config.Decision                            // The decision object selected by DecisionEngine (for plugins)
+	VSRSelectedCategory             string                                      // The category from domain classification (MMLU category)
+	VSRSelectedDecisionName         string                                      // The decision name from DecisionEngine evaluation
+	VSRSelectedDecisionConfidence   float64                                     // Confidence score from DecisionEngine evaluation
+	VSRReasoningMode                string                                      // "on" or "off" - whether reasoning mode was determined to be used
+	VSRSelectedModel                string                                      // The model selected by VSR
+	VSRSelectionMethod              string                                      // Model selection algorithm used (e.g., "elo", "static", "router_dc")
+	VSRSelectionReasoning           string                                      // Bounded human-readable selector rationale for replay
+	VSRPromptHelperModel            string                                      // Concrete prompt-selector helper model
+	VSRPromptHelperPromptTokens     int64                                       // Prompt tokens consumed by the helper
+	VSRPromptHelperCompletionTokens int64                                       // Completion tokens consumed by the helper
+	VSRPromptHelperTotalTokens      int64                                       // Total helper tokens
+	VSRPromptHelperLatencyMs        int64                                       // Helper model round-trip latency
+	VSRLearningPolicy               *routerLearningPolicy                       // Primary Router Learning trace
+	VSRLearningPolicies             routerLearningPolicies                      // Router Learning traces by component
+	VSRLearningProtectionPreflight  *routerreplay.LearningProtectionDiagnostics // Protection preflight trace for replay
+	VSRLearningSessionID            string                                      // Router Learning memory key used for this request
+	VSRLearningConversationID       string                                      // Client-declared conversation identity used by Router Learning
+	VSRCacheHit                     bool                                        // Whether this request hit the cache
+	VSRCacheSimilarity              float32                                     // Similarity score from last cache lookup (0 = no lookup performed)
+	VSRInjectedSystemPrompt         bool                                        // Whether a system prompt was injected into the request
+	VSRSelectedDecision             *config.Decision                            // The decision object selected by DecisionEngine (for plugins)
+	VSRRaylineARC                   *selection.RaylineARCTrace                  // Privacy-safe ARC selection trace; never prompt or embedding data.
+	RaylineARCDispatch              *raylinearc.WorkerManifest                  // Private artifact-owned upstream contract; never emit in traces.
+	RaylineARCAuthHeader            string                                      // Auth header carrying the artifact credential; kept single-valued.
+	RaylineARCTransaction           *raylineARCEpisodeTransaction               // Fenced ARC state lease; finalized exactly once.
+	RaylineARCCloseRequested        bool                                        // Exact configured final-turn signal; triggers post-2xx session close fanout.
+	SelectionTransaction            *selectionTransactionOwner                  // Shared authoritative selector lifecycle owner; at most one per request.
+	SelectionSettlement             selectionActualOutcome                      // Bounded actual outcome facts; unknown fields remain nil.
+	VSRRaylineRemote                *selection.RaylineRemoteTrace               // Bounded ordinal remote policy trace; never worker IDs or receipts.
 
 	// ResponsePath records how the final response was produced, surfaced as the
 	// v0.4 keystone x-vsr-response-path header (one of the headers.ResponsePath*
@@ -192,11 +214,14 @@ type RequestContext struct {
 	VSRMatchedKB           []string // Matched knowledge-base signal names
 	VSRMatchedConversation []string // Matched conversation-shape signal names
 	VSRMatchedEvent        []string // Matched event signal names
+	VSRMatchedMetadata     []string // Matched untrusted request metadata signal names
+	VSRMatchedClassifier   []string // Matched generic classifier signal names
 	VSRConversationFacts   classification.ConversationFacts
 	VSRMatchedProjection   []string // Matched projection mapping outputs
 	VSRProjectionScores    map[string]float64
 	VSRSignalConfidences   map[string]float64
 	VSRSignalValues        map[string]float64
+	VSRSignalErrors        map[string]string
 	VSRProjectionTrace     *projectiontrace.Trace
 
 	// Hallucination mitigation tracking

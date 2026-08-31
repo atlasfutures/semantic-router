@@ -2,7 +2,9 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from .rayline_arc_config import RaylineARCAlgorithmConfig
 
 
 class ModelRef(BaseModel):
@@ -346,6 +348,24 @@ class MultiFactorSelectionConfig(BaseModel):
     on_no_candidates: str | None = "cheapest"
 
 
+class PromptSelectionConfig(BaseModel):
+    """Configuration for prompt-driven candidate selection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str
+    instructions: str
+    timeout_seconds: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_required_text(self):
+        if not self.model.strip():
+            raise ValueError("model is required")
+        if not self.instructions.strip():
+            raise ValueError("instructions are required")
+        return self
+
+
 class AlgorithmConfig(BaseModel):
     """Algorithm configuration for multi-model decisions.
 
@@ -367,6 +387,7 @@ class AlgorithmConfig(BaseModel):
        - "hybrid": Combine multiple selection methods
        - "knn", "kmeans", "svm", "mlp": Shared ML model-selection selectors
        - "multi_factor": Combine quality, latency, cost, and load
+       - "rayline_arc": Artifact-verified switch-aware ARC orchestrator
 
     Cross-request learning systems live under global.router.learning.adaptation
     and global.router.learning.protection.
@@ -377,7 +398,8 @@ class AlgorithmConfig(BaseModel):
     # Algorithm type: looper ("confidence", "ratings", "remom", "fusion",
     # "workflows") or
     # selection ("static", "router_dc", "automix", "hybrid", "knn",
-    #            "kmeans", "svm", "mlp", "multi_factor", "latency_aware")
+    #            "kmeans", "svm", "mlp", "multi_factor", "latency_aware",
+    #            "rayline_arc")
     type: Literal[
         "confidence",
         "ratings",
@@ -394,6 +416,8 @@ class AlgorithmConfig(BaseModel):
         "mlp",
         "multi_factor",
         "latency_aware",
+        "prompt",
+        "rayline_arc",
     ]
 
     # Looper algorithm configurations
@@ -409,5 +433,20 @@ class AlgorithmConfig(BaseModel):
     automix: AutoMixSelectionConfig | None = None
     hybrid: HybridSelectionConfig | None = None
     multi_factor: MultiFactorSelectionConfig | None = None
-    # Behavior on algorithm failure: "skip" or "fail"
+    prompt: PromptSelectionConfig | None = None
+    rayline_arc: RaylineARCAlgorithmConfig | None = None
+    # Behavior on algorithm failure: "skip", "fail", or ARC-only "fail_closed"
     on_error: str | None = "skip"
+
+    @model_validator(mode="after")
+    def normalize_prompt_fallback(self):
+        if self.type == "prompt":
+            if self.prompt is None:
+                raise ValueError("algorithm.type=prompt requires prompt configuration")
+            if self.on_error == "skip":
+                self.on_error = "fallback"
+            if self.on_error not in (None, "", "fallback"):
+                raise ValueError("prompt on_error must be fallback")
+        elif self.prompt is not None:
+            raise ValueError("prompt configuration requires algorithm.type=prompt")
+        return self

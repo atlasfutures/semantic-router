@@ -7,6 +7,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerreplay"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 func replayRoutingRecordMetadataTestContext() *RequestContext {
@@ -355,5 +356,45 @@ func TestBuildReplayRoutingRecord_ResponseAPIChainFields(t *testing.T) {
 	if record.ConversationID != "conv-chain" || record.PreviousResponseID != "resp_prev_1" {
 		t.Fatalf("unexpected response API persistence: conversation_id=%q previous_response_id=%q",
 			record.ConversationID, record.PreviousResponseID)
+	}
+}
+
+// TestShouldStartRouterReplayExcludesBothRaylineSelectionPaths pins the
+// fail-closed guard shared by every startRouterReplay call site. Both rayline
+// paths carry state that must never reach a persisted replay record:
+// RaylineARCDispatch is an artifact-owned upstream contract and
+// VSRRaylineRemote is a bounded policy trace. A replay record persists the
+// full plaintext episode around them, so an armed selection slipping past
+// this guard is a silent disclosure rather than a degraded feature.
+func TestShouldStartRouterReplayExcludesBothRaylineSelectionPaths(t *testing.T) {
+	replayEnabled := func() *RequestContext {
+		return &RequestContext{
+			RouterReplayPluginConfig: &config.RouterReplayPluginConfig{Enabled: true},
+		}
+	}
+
+	if !shouldStartRouterReplay(replayEnabled()) {
+		t.Fatal("baseline: replay must start when no rayline selection is armed")
+	}
+
+	arcTrace := replayEnabled()
+	arcTrace.VSRRaylineARC = &selection.RaylineARCTrace{}
+	if shouldStartRouterReplay(arcTrace) {
+		t.Fatal("a rayline ARC selection trace must not start a router replay")
+	}
+
+	// Independent of the trace: a bound dispatch contract must close the guard
+	// on its own, because VSRRaylineARC stays nil when the selection result
+	// carried no trace.
+	arcDispatch := replayEnabled()
+	arcDispatch.RaylineARCDispatch = &raylinearc.WorkerManifest{ID: "worker-1"}
+	if shouldStartRouterReplay(arcDispatch) {
+		t.Fatal("an armed rayline ARC dispatch must not start a router replay")
+	}
+
+	remote := replayEnabled()
+	remote.VSRRaylineRemote = &selection.RaylineRemoteTrace{}
+	if shouldStartRouterReplay(remote) {
+		t.Fatal("an armed rayline remote selection must not start a router replay")
 	}
 }

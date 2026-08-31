@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+
+from __future__ import annotations
+
+import importlib
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SCRIPT_DIR = REPO_ROOT / "e2e/testing/rayline-arc"
+sys.path.insert(0, str(SCRIPT_DIR))
+
+budget = importlib.import_module("rayline_three_arm_budget")
+contract = importlib.import_module("rayline_open_loop_contract")
+
+
+def test_perf020_contract_freezes_rates_and_budget() -> None:
+    assert [cell.label for cell in contract.PERF020.cells] == [
+        "r015",
+        "r030",
+        "r045",
+    ]
+    assert [cell.offered_rate_rps for cell in contract.PERF020.cells] == [
+        0.15,
+        0.30,
+        0.45,
+    ]
+    receipt = budget.budget_receipt(contract.PERF020.budget)
+    assert receipt["maximum_resource_seconds"] == contract.MAXIMUM_RESOURCE_SECONDS
+    assert receipt["maximum_resource_envelope_usd"] == pytest.approx(6.9344208)
+    assert receipt["cumulative_if_full_envelope_usd"] == pytest.approx(
+        65.03408153955587
+    )
+    assert receipt["reserve_after_full_envelope_usd"] == pytest.approx(
+        19.27874248044413
+    )
+
+    successor = budget.budget_receipt(contract.PERF021.budget)
+    assert contract.PERF021.cells == contract.PERF020.cells
+    assert successor["maximum_resource_envelope_usd"] == pytest.approx(6.9344208)
+    assert successor["cumulative_if_full_envelope_usd"] == pytest.approx(
+        66.66615136879144
+    )
+    assert successor["reserve_after_full_envelope_usd"] == pytest.approx(
+        67.64667265120856
+    )
+
+
+def test_perf020_and_perf021_launch_authority_is_closed() -> None:
+    assert contract.PATHFINDER_AUTHORIZATION_COMMIT == (
+        "b53434ab01260339785050ee1761be388ce5a2ad"
+    )
+    with pytest.raises(ValueError, match="no Rayline open-loop sweep"):
+        contract.resolve_launch_contract(contract.PERF020_RUN_ID)
+    with pytest.raises(ValueError, match="no Rayline open-loop sweep"):
+        contract.resolve_launch_contract(contract.PERF021_RUN_ID)
+
+
+def test_perf020_and_perf021_keep_the_frozen_default_encoder_identity() -> None:
+    identity = importlib.import_module("rayline_three_arm_contract").IDENTITY
+
+    for run in (contract.PERF020, contract.PERF021):
+        # PERF021's recorded source.engine_build_id is the bare vLLM commit.
+        # Any successor that wants to be identity-matched to it must deploy the
+        # default, unprofiled app.
+        assert run.encoder_app_name == "rayline-arc-session-encoder"
+        assert run.encoder_app_name == identity.encoder_app_name
+        assert run.encoder_build_id == ("vllm@9f5ea81ca0aa570aea46baf82311a1139c1267ca")
+        assert run.encoder_gdn_prefill_backend == "torch_reference"

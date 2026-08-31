@@ -135,7 +135,7 @@ profile_rules:
     paths:
       - e2e/profiles/multi-endpoint/**
       - e2e/config/config.multi-endpoint.yaml
-      - scripts/multi-endpoint/**
+      - tools/demos/multi-endpoint.sh
   authz-rbac:
     owner: e2e
     coverage_role: authz-and-rate-limit-contracts
@@ -228,8 +228,72 @@ manual_profile_rules:
     summary: Llama Stack-backed RAG vector-store and hybrid-search behavior that runs outside the standard CI profile matrix.
     paths:
       - e2e/profiles/rag-hybrid-search/**
+  hallucination:
+    owner: e2e
+    coverage_role: hallucination-detection
+    selection_mode: manual-only
+    summary: Pluggable endpoint hallucination detection backend coverage, verifying fact-check gating and response warnings.
+    paths:
+      - e2e/profiles/hallucination/**
+      - e2e/testcases/hallucination_detection*.go
+      - deploy/kubernetes/hallucination/**
+      - e2e/testcases/testdata/hallucination_detection_cases.json
 
 workflow_suite_rules:
+  rayline-remote-compose:
+    owner: router-core
+    kind: workflow-integration
+    summary: Hermetic Envoy, Router, transactional Rayline protocol fixture, and two-provider acceptance with fail-closed lifecycle and privacy checks.
+    workflow: .github/workflows/integration-test-rayline-remote.yml
+    local_command: make rayline-remote-test-integration
+    paths:
+      - deploy/compose/rayline-remote/**
+      - e2e/testing/rayline-remote/**
+      - src/semantic-router/pkg/config/rayline_remote_config.go
+      - src/semantic-router/pkg/extproc/*rayline_remote*
+      - src/semantic-router/pkg/extproc/selection_transaction*
+      - src/semantic-router/pkg/extproc/selection_settlement*
+      - src/semantic-router/pkg/selection/raylineremote/**
+      - src/semantic-router/pkg/extproc/processor_core.go
+      - src/semantic-router/pkg/extproc/processor_req_body.go
+      - src/semantic-router/pkg/extproc/processor_res_header.go
+      - src/semantic-router/pkg/extproc/processor_res_body_pipeline.go
+      - src/semantic-router/pkg/extproc/processor_res_body_streaming.go
+      - src/semantic-router/pkg/extproc/req_filter_classification.go
+      - src/semantic-router/pkg/extproc/router_selection.go
+      - tools/make/e2e.mk
+      - tools/agent/e2e-profile-map.yaml
+      - .github/workflows/integration-test-rayline-remote.yml
+  rayline-arc-compose:
+    owner: router-core
+    kind: workflow-integration
+    summary: Hermetic Envoy, Router, Redis, ARC artifact, encoder-contract, and provider-contract acceptance with transaction, restart, concurrency, and privacy checks.
+    workflow: .github/workflows/integration-test-rayline-arc.yml
+    local_command: make rayline-arc-test-integration
+    paths:
+      - deploy/compose/rayline-arc/**
+      - e2e/testing/rayline-arc/**
+      - src/semantic-router/pkg/config/rayline_arc_config.go
+      - src/semantic-router/pkg/extproc/*rayline_arc*
+      - src/semantic-router/pkg/config/canonical_config.go
+      - src/semantic-router/pkg/config/validator_decision.go
+      - src/semantic-router/pkg/extproc/processor_core.go
+      - src/semantic-router/pkg/extproc/processor_req_body.go
+      - src/semantic-router/pkg/extproc/processor_req_body_routing.go
+      - src/semantic-router/pkg/extproc/processor_res_header.go
+      - src/semantic-router/pkg/extproc/req_filter_classification.go
+      - src/semantic-router/pkg/extproc/router_selection.go
+      - src/semantic-router/pkg/apiserver/route_decision.go
+      - src/semantic-router/pkg/apiserver/route_policy.go
+      - src/semantic-router/pkg/apiserver/routes.go
+      - src/semantic-router/pkg/routerruntime/**
+      - src/semantic-router/pkg/selection/raylinearc/**
+      - src/vllm-plugins/rayline_arc_io/**
+      - tools/make/e2e.mk
+      - tools/agent/e2e-profile-map.yaml
+      - tools/agent/scripts/verify_sdk_unions.py
+      - tools/agent/requirements-sdk-drift.txt
+      - .github/workflows/integration-test-rayline-arc.yml
   vllm-sr-cli-integration:
     owner: vllm-sr-cli
     kind: workflow-integration

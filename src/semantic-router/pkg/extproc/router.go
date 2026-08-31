@@ -3,6 +3,8 @@ package extproc
 import (
 	"encoding/json"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -20,6 +22,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/lookuptable"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/services"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/tools"
 	httputil "github.com/vllm-project/semantic-router/src/semantic-router/pkg/utils/http"
@@ -27,9 +30,12 @@ import (
 
 // OpenAIRouter is an Envoy ExtProc server that routes OpenAI API requests.
 type OpenAIRouter struct {
-	Config                *config.RouterConfig
-	CategoryDescriptions  []string
-	Classifier            *classification.Classifier
+	Config               *config.RouterConfig
+	CategoryDescriptions []string
+	Classifier           *classification.Classifier
+	// RecipeClassifiers selects the isolated classifier graph for each routing
+	// request. Classifier is the default-recipe accessor.
+	RecipeClassifiers     *classification.RecipeClassifiers
 	ClassificationService *services.ClassificationService
 	Cache                 cache.CacheBackend
 	ToolsDatabase         *tools.ToolsDatabase
@@ -41,11 +47,24 @@ type OpenAIRouter struct {
 	ReplayStoreShared     bool
 	// ModelSelector is the registry of advanced model selection algorithms
 	// initialized from config.IntelligentRouting.ModelSelection.
-	ModelSelector   *selection.Registry
-	LookupTable     lookuptable.LookupTable
-	ReplayRecorders map[string]*routerreplay.Recorder
-	MemoryStore     memory.Store
-	MemoryExtractor *memory.MemoryExtractor
+	ModelSelector *selection.Registry
+	// RecipeModelSelectors keeps mutable algorithm state (Elo, RL, ML adapters,
+	// and similar selectors) isolated even when recipes reuse decision names.
+	RecipeModelSelectors        map[config.RecipeName]*selection.Registry
+	LookupTable                 lookuptable.LookupTable
+	ReplayRecorders             map[string]*routerreplay.Recorder
+	MemoryStore                 memory.Store
+	MemoryExtractor             *memory.MemoryExtractor
+	RaylineARCEpisodeStore      raylinearc.EpisodeStore
+	raylineARCEpisodeStoreClose func() error
+	raylineARCSessionClose      raylineARCSessionCloseFunc
+	raylineARCDrainTimeout      time.Duration
+	// raylineARCInflight counts episode transactions still holding a lease on
+	// this router. A hot reload swaps routers and closes the old one, but
+	// in-flight streams keep using it, so the episode store must not close
+	// until those leases reach a terminal commit or abort.
+	raylineARCInflight sync.WaitGroup
+	raylineARCClosing  atomic.Bool
 
 	// CredentialResolver resolves per-user LLM API keys from multiple sources
 	// (ext_authz injected headers -> static config fallback).
@@ -73,8 +92,100 @@ func (r *OpenAIRouter) Close() error {
 	if r.lookupTableCancel != nil {
 		r.lookupTableCancel()
 	}
+	if r.raylineARCEpisodeStoreClose != nil {
+		// Refuse new holds before draining, so a stream that captured this
+		// router but has not registered yet retries against the swapped-in
+		// router instead of using a closed store.
+		r.raylineARCClosing.Store(true)
+		r.waitForRaylineARCDrain()
+		return r.raylineARCEpisodeStoreClose()
+	}
 	return nil
 }
+
+// tryHoldRaylineARC registers a stream against this router's episode store.
+// It returns false once Close has begun, so the caller must re-resolve the
+// current router and try again.
+func (r *OpenAIRouter) tryHoldRaylineARC() bool {
+	if r == nil || r.RaylineARCEpisodeStore == nil {
+		return true
+	}
+	if r.raylineARCClosing.Load() {
+		return false
+	}
+	r.raylineARCInflight.Add(1)
+	if r.raylineARCClosing.Load() {
+		// Close began between the check and the registration; give the hold
+		// back so its drain cannot block on this stream.
+		r.raylineARCInflight.Done()
+		return false
+	}
+	return true
+}
+
+func (r *OpenAIRouter) releaseRaylineARCHold() {
+	if r == nil || r.RaylineARCEpisodeStore == nil {
+		return
+	}
+	r.raylineARCInflight.Done()
+}
+
+// waitForRaylineARCDrain blocks until every in-flight ARC episode transaction
+// has finalized, bounded so a stuck upstream cannot block reload forever.
+func (r *OpenAIRouter) waitForRaylineARCDrain() {
+	timeout := r.raylineARCDrainTimeout
+	if timeout <= 0 {
+		timeout = defaultRaylineARCDrainTimeout
+	}
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		r.raylineARCInflight.Wait()
+	}()
+	select {
+	case <-drained:
+	case <-time.After(timeout):
+		logging.ComponentWarnEvent(
+			"extproc",
+			"rayline_arc_drain_timeout",
+			map[string]interface{}{
+				"timeout_seconds": timeout.Seconds(),
+			},
+		)
+	}
+}
+
+// configuredRaylineARCDrainTimeout covers the largest configured encoder
+// request budget plus terminal finalization. A fixed 30-second drain could
+// close the episode store underneath a valid 180-second encoder request.
+func configuredRaylineARCDrainTimeout(
+	cfg *config.RouterConfig,
+) time.Duration {
+	timeout := defaultRaylineARCDrainTimeout
+	if cfg == nil {
+		return timeout
+	}
+	for _, decision := range cfg.Decisions {
+		if decision.Algorithm == nil ||
+			decision.Algorithm.Type != config.RaylineARCAlgorithmType ||
+			decision.Algorithm.RaylineARC == nil {
+			continue
+		}
+		encoderBudget := time.Duration(
+			decision.Algorithm.RaylineARC.Encoder.TotalTimeoutSeconds,
+		) * time.Second
+		if encoderBudget <= 0 {
+			continue
+		}
+		candidate := encoderBudget + episodeFinalizeTimeout
+		if candidate > timeout {
+			timeout = candidate
+		}
+	}
+	return timeout
+}
+
+const defaultRaylineARCDrainTimeout = 30 * time.Second
 
 // Ensure OpenAIRouter implements the ext_proc calls.
 var _ ext_proc.ExternalProcessorServer = (*OpenAIRouter)(nil)
@@ -204,6 +315,21 @@ func (r *OpenAIRouter) LoadToolsDatabase() error {
 	r.ToolsRegistry = tools.NewDefaultRegistry(r.ToolsDatabase)
 
 	return nil
+}
+
+// PreloadKnowledgeBases moves lazy KB embedding work out of the first routed
+// request and into startup/reload readiness.
+func (r *OpenAIRouter) PreloadKnowledgeBases() error {
+	if r == nil {
+		return nil
+	}
+	if r.RecipeClassifiers != nil {
+		return r.RecipeClassifiers.PreloadKnowledgeBases()
+	}
+	if r.Classifier == nil {
+		return nil
+	}
+	return r.Classifier.PreloadKnowledgeBases()
 }
 
 func (r *OpenAIRouter) RegisterToolStrategy(name string, retriever tools.ToolRetriever) {

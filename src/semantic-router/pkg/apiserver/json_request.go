@@ -44,6 +44,10 @@ func readJSONRequestBody(r *http.Request, maxBytes int64) ([]byte, error) {
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBytes+1))
 	if err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			return nil, fmt.Errorf("%w: exceeds %d bytes", errRequestBodyTooLarge, maxBytes)
+		}
 		return nil, fmt.Errorf("failed to read request body: %w", err)
 	}
 	if int64(len(body)) > maxBytes {

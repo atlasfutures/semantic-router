@@ -45,8 +45,10 @@ func TestParseResponseUsage_ExtractsUsageFields(t *testing.T) {
 	}`), "test-model")
 
 	assert.Equal(t, responseUsageMetrics{
-		promptTokens:     11,
-		completionTokens: 7,
+		promptTokens:             11,
+		promptTokensReported:     true,
+		completionTokens:         7,
+		completionTokensReported: true,
 	}, usage)
 }
 
@@ -69,6 +71,8 @@ func TestParseResponseUsage_TracksCacheTokenReporting(t *testing.T) {
 		cacheWriteTokens:           25,
 		cacheWriteTokensReported:   true,
 		completionTokens:           7,
+		completionTokensReported:   true,
+		promptTokensReported:       true,
 	}, usage)
 }
 
@@ -91,6 +95,8 @@ func TestParseResponseUsage_ExtractsResponsesAPIUsage(t *testing.T) {
 		cacheWriteTokens:           30,
 		cacheWriteTokensReported:   true,
 		completionTokens:           8,
+		completionTokensReported:   true,
+		promptTokensReported:       true,
 	}, usage)
 }
 
@@ -222,6 +228,7 @@ func TestCalibrateTokenEstimatorUsesContextTextBytes(t *testing.T) {
 		VSRMatchedContext:       []string{"long_context"},
 		VSRSelectedDecisionName: "fallback_decision",
 	}
+	ctx.Routing.SelectRecipe(&config.RoutingRecipe{Name: config.DefaultRecipeName})
 
 	for i := 0; i < 20; i++ {
 		router.calibrateTokenEstimator(ctx, 1000)

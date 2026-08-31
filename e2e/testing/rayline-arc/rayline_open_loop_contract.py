@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+
+"""Frozen PERF020/PERF021 open-loop sweeps and one-shot launch authority."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from rayline_three_arm_budget import BudgetContract
+from rayline_three_arm_contract import IDENTITY
+
+PERF020_RUN_ID = "rayline-open-loop-sweep-perf020-20260802"
+PERF021_RUN_ID = "rayline-open-loop-sweep-perf021-20260802"
+PATHFINDER_AUTHORIZATION_COMMIT = "b53434ab01260339785050ee1761be388ce5a2ad"
+MEASURED_CASES = 32
+WARMUP_CASES = 4
+MEASURED_EPISODES = 8
+WARMUP_EPISODES = 1
+OPEN_LOOP_ARMS = ("rayline_remote", "rayline_arc")
+MAXIMUM_PAID_WALL_SECONDS = 40 * 60
+MAXIMUM_ORPHAN_REQUEST_SECONDS = 41 * 60
+MAXIMUM_SCALEDOWN_SECONDS = 5 * 60
+MAXIMUM_RESOURCE_SECONDS = (
+    MAXIMUM_PAID_WALL_SECONDS
+    + MAXIMUM_ORPHAN_REQUEST_SECONDS
+    + MAXIMUM_SCALEDOWN_SECONDS
+)
+
+
+DEFAULT_ENCODER_GPU = "H100"
+
+
+@dataclass(frozen=True)
+class SaturationCriterion:
+    """How one run decides that a cell saturated.
+
+    This rig has exactly one capacity to exhaust: concurrent in-flight
+    requests. `poisson_schedule` groups the corpus by episode and the probe
+    runs one thread per episode, so at most `episode_lanes` requests are ever
+    outstanding, and the encoder is sized to the same number
+    (`MAX_SESSIONS == max_num_seqs == 8`). A cell has therefore saturated when
+    peak occupancy reaches that ceiling: offering more load past that point
+    cannot raise concurrency, so it cannot raise throughput.
+
+    `episode_lanes` is carried here rather than read from a module constant
+    because the comparator sees only receipts. It never wrote the lane count
+    and so may not assume it; the run that generated the packet states it, and
+    the launcher checks the packet's own `max_episode_lanes` against it before
+    any paid second elapses.
+
+    `throughput_plateau_gain` arms a second, independent firing point. The
+    occupancy criterion can only see the rig's ceiling; a run whose encoder
+    binds below that ceiling plateaus in throughput while occupancy still has
+    headroom, and the occupancy criterion stays silent -- correctly, and
+    uselessly. The gain is the marginal-throughput floor: the first rung that
+    converts less than this fraction of its additional realized arrival rate
+    into additional completed throughput is the plateau. `None` is the frozen
+    PERF033 behaviour -- occupancy only, and a v3 report byte-identical to the
+    one that closed run recorded.
+    """
+
+    episode_lanes: int
+    occupancy_ratio: float = 1.0
+    throughput_plateau_gain: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.episode_lanes < 1:
+            raise ValueError("episode lanes must be positive")
+        if not 0.0 < self.occupancy_ratio <= 1.0:
+            raise ValueError("occupancy ratio must fall in (0, 1]")
+        if self.throughput_plateau_gain is not None and not (
+            0.0 < self.throughput_plateau_gain < 1.0
+        ):
+            raise ValueError("throughput plateau gain must fall in (0, 1)")
+
+
+@dataclass(frozen=True)
+class OpenLoopCell:
+    label: str
+    offered_rate_rps: float
+    workload_sha256: str
+    identity_sha256: str
+
+    @property
+    def concurrency(self) -> int:
+        """Compatibility with the shared eight-lane local-stack builder."""
+        return 8
+
+
+@dataclass(frozen=True)
+class OpenLoopRunContract:
+    run_id: str
+    packet_manifest_sha256: str
+    corpus_sha256: str
+    topology_sha256: str
+    cells: tuple[OpenLoopCell, ...]
+    compose_project_prefix: str
+    temporary_prefix: str
+    budget: BudgetContract
+    # The encoder a run owns. The defaults are PERF020/PERF021's exact frozen
+    # identity, so an existing contract keeps its recorded engine build id and
+    # its pinned URL; only a run that deliberately deploys an experiment-profile
+    # app carries a different backend.
+    encoder_app_name: str = IDENTITY.encoder_app_name
+    encoder_build_id: str = IDENTITY.engine_build_id
+    encoder_gdn_prefill_backend: str = "torch_reference"
+    # The GPU class this run's evidence may claim. It was an assertion-free
+    # launcher constant, so a non-H100 successor would have written deployment
+    # evidence claiming H100 without anything rejecting it.
+    encoder_gpu: str = DEFAULT_ENCODER_GPU
+    # The case counts this run's packet must carry. The launcher validates the
+    # packet manifest against these in preflight and derives its expected ARC
+    # telemetry count from them, so a count mismatch can no longer surface as a
+    # mid-run failure after paid GPU time.
+    measured_cases: int = MEASURED_CASES
+    warmup_cases: int = WARMUP_CASES
+    # The episode counts behind those cases. They were launcher module
+    # constants, which silently pinned every successor packet to PERF020's
+    # 8-episode corpus shape.
+    measured_episodes: int = MEASURED_EPISODES
+    warmup_episodes: int = WARMUP_EPISODES
+    # How this run decides saturation. `None` is the frozen PERF020/PERF021
+    # behaviour: the legacy `overloaded` predicate alone, and a report that is
+    # byte-identical to the ones those closed runs recorded.
+    saturation: SaturationCriterion | None = None
+    # The Pathfinder head this run's authority is pinned to. A successor packet
+    # gets its own pin; without this it would silently inherit PERF020's.
+    pathfinder_authorization_commit: str = PATHFINDER_AUTHORIZATION_COMMIT
+
+
+PERF020 = OpenLoopRunContract(
+    run_id=PERF020_RUN_ID,
+    packet_manifest_sha256="e1b992793aad733ee63d586974172355c969a7c7f5781f580bb21143e9af23df",
+    corpus_sha256="72bbb22c6a8673d78cb4eadbce46ffd88f882f91f1880b4163e117f4679b1105",
+    topology_sha256="ad0970c68d2e6b035c187d193f3da8ca49f48a68267bd323e0d66c9d44bcfddd",
+    cells=(
+        OpenLoopCell(
+            label="r015",
+            offered_rate_rps=0.15,
+            workload_sha256="b2529d40e824b133c1dd79bad3552f56dac9485c8cc412cdcc1a3bcf9a2c08af",
+            identity_sha256="be489e730c15a47ef80298cc4341941130ebff909e36cca08611e3be63b1a77c",
+        ),
+        OpenLoopCell(
+            label="r030",
+            offered_rate_rps=0.30,
+            workload_sha256="fb765a65038a15415e9776b52d0a465f53cd989453f2ddc54fda2583b9dfcb6c",
+            identity_sha256="f72d61ab651052b55bf21ce32c74f80cd21b74812de12511f4d174517b29c814",
+        ),
+        OpenLoopCell(
+            label="r045",
+            offered_rate_rps=0.45,
+            workload_sha256="4f396a19f2f35dd00379a262b0cad5e3871c14210fa80c30f3e3b01cb2cafc2e",
+            identity_sha256="131d1d70a05463871ab1f40572f0f53e26cdb0c9ce6d44407570729bb48d4073",
+        ),
+    ),
+    compose_project_prefix="rayline-open-loop-perf020",
+    temporary_prefix="rayline-perf020-",
+    budget=BudgetContract(
+        run_id=PERF020_RUN_ID,
+        previous_conservative_usd=58.09966073955587,
+        authorized_cumulative_usd=84.31282402,
+        packet_ceiling_usd=7.0,
+        required_reserve_usd=3.0,
+        maximum_paid_wall_seconds=MAXIMUM_PAID_WALL_SECONDS,
+        maximum_orphan_request_seconds=MAXIMUM_ORPHAN_REQUEST_SECONDS,
+        maximum_scaledown_seconds=MAXIMUM_SCALEDOWN_SECONDS,
+    ),
+)
+
+PERF021 = OpenLoopRunContract(
+    run_id=PERF021_RUN_ID,
+    packet_manifest_sha256=PERF020.packet_manifest_sha256,
+    corpus_sha256=PERF020.corpus_sha256,
+    topology_sha256=PERF020.topology_sha256,
+    cells=PERF020.cells,
+    compose_project_prefix="rayline-open-loop-perf021",
+    temporary_prefix="rayline-perf021-",
+    budget=BudgetContract(
+        run_id=PERF021_RUN_ID,
+        previous_conservative_usd=59.73173056879144,
+        authorized_cumulative_usd=134.31282402,
+        packet_ceiling_usd=7.0,
+        required_reserve_usd=3.0,
+        maximum_paid_wall_seconds=MAXIMUM_PAID_WALL_SECONDS,
+        maximum_orphan_request_seconds=MAXIMUM_ORPHAN_REQUEST_SECONDS,
+        maximum_scaledown_seconds=MAXIMUM_SCALEDOWN_SECONDS,
+    ),
+)
+
+# PERF020 and PERF021 are closed after their one authorized executions.
+LAUNCHABLE_CONTRACT: OpenLoopRunContract | None = None
+
+
+def resolve_launch_contract(run_id: str) -> OpenLoopRunContract:
+    if LAUNCHABLE_CONTRACT is None:
+        raise ValueError("no Rayline open-loop sweep is currently launchable")
+    if run_id != LAUNCHABLE_CONTRACT.run_id:
+        raise ValueError(
+            f"launcher only permits preregistered run id {LAUNCHABLE_CONTRACT.run_id}"
+        )
+    return LAUNCHABLE_CONTRACT

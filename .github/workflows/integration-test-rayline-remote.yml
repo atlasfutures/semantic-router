@@ -1,0 +1,73 @@
+name: Integration Test [Rayline Remote]
+
+on:
+  workflow_dispatch:
+
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+    paths:
+      - 'deploy/compose/rayline-remote/**'
+      - 'e2e/testing/rayline-remote/**'
+      - 'src/semantic-router/pkg/config/rayline_remote_config.go'
+      - 'src/semantic-router/pkg/extproc/*rayline_remote*'
+      - 'src/semantic-router/pkg/extproc/selection_transaction*'
+      - 'src/semantic-router/pkg/extproc/selection_settlement*'
+      - 'src/semantic-router/pkg/selection/raylineremote/**'
+      - 'src/semantic-router/pkg/extproc/processor_core.go'
+      - 'src/semantic-router/pkg/extproc/processor_req_body.go'
+      - 'src/semantic-router/pkg/extproc/processor_res_header.go'
+      - 'src/semantic-router/pkg/extproc/processor_res_body_pipeline.go'
+      - 'src/semantic-router/pkg/extproc/processor_res_body_streaming.go'
+      - 'src/semantic-router/pkg/extproc/req_filter_classification.go'
+      - 'src/semantic-router/pkg/extproc/router_selection.go'
+      - 'tools/make/e2e.mk'
+      - 'tools/agent/e2e-profile-map.yaml'
+      - '.github/workflows/integration-test-rayline-remote.yml'
+
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/compose/rayline-remote/**'
+      - 'e2e/testing/rayline-remote/**'
+      - 'src/semantic-router/pkg/config/rayline_remote_config.go'
+      - 'src/semantic-router/pkg/extproc/*rayline_remote*'
+      - 'src/semantic-router/pkg/extproc/selection_transaction*'
+      - 'src/semantic-router/pkg/extproc/selection_settlement*'
+      - 'src/semantic-router/pkg/selection/raylineremote/**'
+      - 'src/semantic-router/pkg/extproc/processor_core.go'
+      - 'src/semantic-router/pkg/extproc/processor_req_body.go'
+      - 'src/semantic-router/pkg/extproc/processor_res_header.go'
+      - 'src/semantic-router/pkg/extproc/processor_res_body_pipeline.go'
+      - 'src/semantic-router/pkg/extproc/processor_res_body_streaming.go'
+      - 'src/semantic-router/pkg/extproc/req_filter_classification.go'
+      - 'src/semantic-router/pkg/extproc/router_selection.go'
+      - 'tools/make/e2e.mk'
+      - 'tools/agent/e2e-profile-map.yaml'
+      - '.github/workflows/integration-test-rayline-remote.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rayline-remote:
+    name: Hermetic full-stack acceptance
+    if: github.repository == 'vllm-project/semantic-router' && !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Run remote Rayline integration suite
+        run: make rayline-remote-test-integration
+
+      - name: Show bounded container status on failure
+        if: failure()
+        run: docker compose --project-name rayline-remote-e2e --file deploy/compose/rayline-remote/compose.yaml ps
+
+      - name: Clean up
+        if: always()
+        run: docker compose --project-name rayline-remote-e2e --file deploy/compose/rayline-remote/compose.yaml down --volumes --remove-orphans
