@@ -105,10 +105,10 @@ spec:
       targetPort: fixture
       protocol: TCP
 ---
-# -- Envoy AI Gateway backends -----------------------------------------------
-# One Envoy Gateway Backend, two AIServiceBackends. The schema is what makes the
-# same fixture observable as an OpenAI-shaped or an Anthropic-shaped provider, so
-# a case that declares an Anthropic provider is routed through the Anthropic one.
+# -- Envoy Gateway backend ---------------------------------------------------
+# One Envoy Gateway Backend and no AIServiceBackend. The route to this fixture is
+# a plain HTTPRoute, so there is no AI Gateway schema to declare: the Router
+# emits the provider-native contract and Envoy only carries the bytes.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: Backend
 metadata:
@@ -119,29 +119,3 @@ spec:
     - fqdn:
         hostname: conformance-fixture.conformance-fixture-system.svc.cluster.local
         port: 8080
----
-apiVersion: aigateway.envoyproxy.io/v1alpha1
-kind: AIServiceBackend
-metadata:
-  name: conformance-fixture-openai
-  namespace: default
-spec:
-  schema:
-    name: OpenAI
-  backendRef:
-    name: conformance-fixture
-    kind: Backend
-    group: gateway.envoyproxy.io
----
-apiVersion: aigateway.envoyproxy.io/v1alpha1
-kind: AIServiceBackend
-metadata:
-  name: conformance-fixture-anthropic
-  namespace: default
-spec:
-  schema:
-    name: Anthropic
-  backendRef:
-    name: conformance-fixture
-    kind: Backend
-    group: gateway.envoyproxy.io

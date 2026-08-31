@@ -16,19 +16,28 @@ config:
       # Three aliases, one fixture. The alias is what selects the provider wire
       # protocol and dialect a case declares, and it is the name each case's
       # expected-provider-request.json carries in /model.
+      #
+      # api_format is the LLM wire contract the Router encodes for this model.
+      # It is model-level and it is what decides whether the provider sees Chat
+      # Completions or Messages. backend_refs[].type stays a backend label and
+      # selects no encoding, so a model that omits api_format is dispatched as
+      # OpenAI Chat no matter what its backend claims to be.
       - name: conformance-chat-model
+        api_format: openai
         backend_refs:
           - name: conformance-fixture
             endpoint: conformance-fixture.conformance-fixture-system.svc.cluster.local:8080
             weight: 1
             type: openai
       - name: conformance-messages-model
+        api_format: anthropic
         backend_refs:
           - name: conformance-fixture
             endpoint: conformance-fixture.conformance-fixture-system.svc.cluster.local:8080
             weight: 1
             type: anthropic
       - name: conformance-openrouter-model
+        api_format: openai
         backend_refs:
           - name: conformance-fixture
             endpoint: conformance-fixture.conformance-fixture-system.svc.cluster.local:8080

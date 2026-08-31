@@ -52,17 +52,27 @@ spec:
   connection:
     bufferLimit: 50Mi
 ---
-# AIGatewayRoute - one rule per conformance provider model.
+# A plain Gateway API route to the fixture, deliberately not an AIGatewayRoute.
 #
-# The model alias selects the wire schema the AI Gateway speaks to the fixture,
-# so a case that declares an Anthropic provider must resolve to
-# conformance-messages-model. The fallback keeps an unrouted request observable:
-# it still reaches the fixture, which records and refuses it with 597 rather than
-# letting the run read as "the provider was simply not called".
-apiVersion: aigateway.envoyproxy.io/v1alpha1
-kind: AIGatewayRoute
+# The Router owns protocol translation and emits the backend-native wire
+# contract; Envoy owns transport and forwards those bytes unchanged. Keeping the
+# AI Gateway translator out of the path is what makes the fixture's recording
+# evidence about the Router rather than about two translators in series.
+#
+# It is also the only wiring that can carry native Anthropic egress. The AI
+# Gateway external processor registers a fixed path set -- /v1/chat/completions,
+# /v1/completions, /v1/embeddings, /v1/images/generations, /cohere/v2/rerank,
+# /v1/models, /anthropic/v1/messages -- and answers "unsupported path" with 404
+# for anything else. A model declaring api_format: anthropic dispatches to
+# /v1/messages, which is not in that set, so an AIGatewayRoute drops the request
+# before the provider ever sees it.
+#
+# One fixture serves every case, so no per-model rule is needed: the Router
+# chooses the model semantically and the fixture records whatever arrives.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
 metadata:
-  name: semantic-router
+  name: semantic-router-direct
   namespace: default
 spec:
   parentRefs:
@@ -70,50 +80,10 @@ spec:
       kind: Gateway
       group: gateway.networking.k8s.io
   rules:
-    - matches:
-        - headers:
-            - type: Exact
-              name: x-ai-eg-model
-              value: conformance-messages-model
-      # Deliberately the OpenAI-schema backend, not conformance-fixture-anthropic.
-      # Envoy-mediated router egress is always OpenAI Chat today: an Anthropic
-      # ingress is normalized to /v1/chat/completions with an OpenAI body (the
-      # router says so itself via x-vsr-upstream-protocol: openai), and Envoy AI
-      # Gateway v0.4.0 reaches its Anthropic translator only from the
-      # /anthropic/v1/messages processor. Pointing this rule at the Anthropic
-      # backend therefore fails inside the gateway with an opaque 500 and zero
-      # recorded requests, which hides the divergence instead of measuring it.
-      # Routed here, the fixture records what the router really emitted and
-      # refuses it with 597, so the case fails at the provider boundary with the
-      # exact diff. Flip back to conformance-fixture-anthropic once the router
-      # gains native Anthropic egress.
-      backendRefs:
-        - name: conformance-fixture-openai
-      timeouts:
-        request: 120s
-        backendRequest: 120s
-    - matches:
-        - headers:
-            - type: Exact
-              name: x-ai-eg-model
-              value: conformance-chat-model
-      backendRefs:
-        - name: conformance-fixture-openai
-      timeouts:
-        request: 120s
-        backendRequest: 120s
-    - matches:
-        - headers:
-            - type: Exact
-              name: x-ai-eg-model
-              value: conformance-openrouter-model
-      backendRefs:
-        - name: conformance-fixture-openai
-      timeouts:
-        request: 120s
-        backendRequest: 120s
     - backendRefs:
-        - name: conformance-fixture-openai
+        - name: conformance-fixture
+          kind: Backend
+          group: gateway.envoyproxy.io
       timeouts:
         request: 120s
         backendRequest: 120s
