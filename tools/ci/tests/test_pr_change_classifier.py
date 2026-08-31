@@ -328,6 +328,7 @@ class PRChangeClassifierTests(unittest.TestCase):
                 "envoy-ai-gateway",
                 "streaming",
                 "anthropic-shim",
+                "protocol-conformance",
                 "response-api",
             ),
         )
