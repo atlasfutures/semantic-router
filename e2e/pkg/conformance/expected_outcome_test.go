@@ -14,11 +14,15 @@ func TestFrozenInventoryExpectedOutcomes(t *testing.T) {
 		t.Fatalf("load frozen inventory: %v", err)
 	}
 
-	// seed-02 carried a marker until native Anthropic egress landed: the Router
-	// now dispatches api_format: anthropic to /v1/messages, so the case passes and
-	// keeping the marker would fail the run for passing unexpectedly. seed-03 kept
-	// its marker but changed cause -- the Chat short-circuit is gone and the
-	// missing provider version header is what remains.
+	// seed-02 lost its marker: a model declaring api_format: anthropic dispatches
+	// to /v1/messages, so the case passes and keeping the marker would fail the
+	// run for passing unexpectedly. The gap was never the Router's -- a Cloud Run
+	// run on 2026-08-29, before the codec work merged, already passed this case
+	// once its config set api_format per model. What the marker really recorded
+	// was a profile that had not declared the field.
+	//
+	// seed-03 kept its marker but changed cause: the Chat short-circuit is gone
+	// and the missing provider version header is what remains.
 	want := map[string]string{
 		"seed-03-responses-to-anthropic-stream":             "PL-0042#seed-03-cross-protocol-anthropic-version",
 		"seed-06-anthropic-openrouter-midstream-truncation": "PL-0042#seed-06-terminal-event-after-disconnect",

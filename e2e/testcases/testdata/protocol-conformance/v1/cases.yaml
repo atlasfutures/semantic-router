@@ -150,9 +150,12 @@ cases:
         Cross-protocol Anthropic egress carries no anthropic-version header. The
         Router dispatches to /v1/messages with an Anthropic body, but the version
         header only ever reaches the provider when a same-protocol client sent it,
-        and nothing synthesizes it here. Declaring it as backend extra_headers is
-        not a workaround: that promotes the backend to a provider profile, which
-        then requires a base_url and takes endpoint ownership away from Envoy.
+        and nothing synthesizes it here. Backend extra_headers does supply it, but
+        only where the backend already declares base_url and owns its own
+        endpoint: in this profile Envoy owns the endpoint, so adding
+        extra_headers promotes the backend to a provider profile that then fails
+        to resolve. A deployment that already routes by base_url, such as the
+        Cloud Run conformance cell, can close this case by configuration alone.
       signature:
         - 'header anthropic-version = "", want "2023-06-01"'
     provenance:
