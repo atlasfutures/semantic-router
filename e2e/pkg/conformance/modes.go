@@ -74,7 +74,7 @@ func compareReject(cmp Comparison, got Payload) ([]Mismatch, error) {
 
 	// Round-trip the declared body through JSON so both sides use the same number
 	// representation as every other comparison.
-	wantBody, err := reencode(cmp.Reject.Body)
+	wantBody, err := remarshalJSON(cmp.Reject.Body)
 	if err != nil {
 		return nil, fmt.Errorf("declared reject_body: %w", err)
 	}
@@ -251,7 +251,7 @@ func volatileSet(pointers []string) map[string]struct{} {
 	return set
 }
 
-func reencode(value map[string]any) (any, error) {
+func remarshalJSON(value map[string]any) (any, error) {
 	raw, err := json.Marshal(value)
 	if err != nil {
 		return nil, err

@@ -95,8 +95,8 @@ func TestParseSSE(t *testing.T) {
 }
 
 func TestParseSSERejectsUnknownField(t *testing.T) {
-	if _, err := ParseSSE([]byte("evnet: typo\ndata: {}\n\n")); err == nil ||
-		!strings.Contains(err.Error(), `unknown field "evnet"`) {
+	if _, err := ParseSSE([]byte("evt: unknown\ndata: {}\n\n")); err == nil ||
+		!strings.Contains(err.Error(), `unknown field "evt"`) {
 		t.Fatalf("ParseSSE() error = %v, want an unknown-field error", err)
 	}
 }
