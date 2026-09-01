@@ -40,7 +40,7 @@ type protocolGoldenCase struct {
 }
 
 func TestProtocolTurnGoldens(t *testing.T) {
-	data, err := os.ReadFile("testdata/protocol_turn_goldens.v1.json")
+	data, err := os.ReadFile("testdata/turn_projection_goldens.v1.json")
 	if err != nil {
 		t.Fatalf("read protocol fixture: %v", err)
 	}
