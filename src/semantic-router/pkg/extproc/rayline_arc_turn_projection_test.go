@@ -42,7 +42,7 @@ func TestProjectRaylineARCTurnsReadsTheDecodedRequest(t *testing.T) {
 		},
 	}
 
-	turns, err := projectRaylineARCTurns(reqCtx, raylinearc.TurnOptions{})
+	turns, err := (&OpenAIRouter{}).projectRaylineARCTurns(reqCtx, raylinearc.TurnOptions{})
 	if err != nil {
 		t.Fatalf("projectRaylineARCTurns() error = %v", err)
 	}
@@ -67,7 +67,7 @@ func TestUnknownContentKindFailsClosedAndReadsAs503(t *testing.T) {
 		},
 	}
 
-	_, err := projectRaylineARCTurns(reqCtx, raylinearc.TurnOptions{})
+	_, err := (&OpenAIRouter{}).projectRaylineARCTurns(reqCtx, raylinearc.TurnOptions{})
 	code := raylinearc.TurnNormalizationErrorCode(err)
 	if code != "unknown_item" {
 		t.Fatalf("turn projection error code = %q, want %q", code, "unknown_item")

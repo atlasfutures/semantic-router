@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -69,7 +70,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		return result
 	}
 	result.State = state
-	turns, err := projectRaylineARCTurns(
+	turns, err := r.projectRaylineARCTurns(
 		reqCtx,
 		raylinearc.TurnOptions{
 			IncludeSystemText: algorithm.RaylineARC.IncludeSystemText,
@@ -189,11 +190,76 @@ func (r *OpenAIRouter) prepareRaylineARCTransaction(
 // the single query string and the prior-turn string list: the encoder was
 // trained on role-tagged turns with tool calls flattened, and both of those
 // fields carry a different shape.
-func projectRaylineARCTurns(
+func (r *OpenAIRouter) projectRaylineARCTurns(
 	reqCtx *RequestContext,
 	options raylinearc.TurnOptions,
 ) ([]raylinearc.Turn, error) {
-	return raylinearc.ProjectTurns(reqCtx.SemanticRequest, options)
+	request, err := r.raylineARCConversation(reqCtx)
+	if err != nil {
+		return nil, err
+	}
+	return raylinearc.ProjectTurns(request, options)
+}
+
+// raylineARCConversation returns the whole conversation the selector must
+// read, which is not always the request body.
+//
+// A Responses request that carries previous_response_id names its earlier
+// turns instead of repeating them. The router retains those turns and replays
+// them into the provider request, but only after selection has run. The
+// selector would otherwise see a long session as a single question and route
+// it as one, so the retained turns are prepended here.
+//
+// The retained turns are decoded through the same public codec as the body, so
+// the projection reads one shape and not two.
+func (r *OpenAIRouter) raylineARCConversation(
+	reqCtx *RequestContext,
+) (*llmprotocol.Request, error) {
+	request := reqCtx.SemanticRequest
+	state := reqCtx.ResponseObjectState
+	if request == nil || state == nil ||
+		len(state.ConversationHistory) == 0 ||
+		// Materialization is idempotent by this flag. It is set on the
+		// dispatch path, which runs after selection, so this guard only
+		// matters if that order ever changes.
+		state.ProviderContextApplied {
+		return request, nil
+	}
+	engine, err := r.protocolEngine()
+	if err != nil {
+		return nil, storedHistoryFailure(err)
+	}
+	history, err := materializeStoredResponseHistory(
+		engine,
+		state.ConversationHistory,
+	)
+	if err != nil {
+		return nil, storedHistoryFailure(err)
+	}
+	if len(history) == 0 {
+		return request, nil
+	}
+	// A copy: the request the router dispatches is owned by the dispatch path,
+	// and the selector must not widen it.
+	merged := *request
+	merged.Messages = make(
+		[]llmprotocol.Message,
+		0,
+		len(history)+len(request.Messages),
+	)
+	merged.Messages = append(merged.Messages, history...)
+	merged.Messages = append(merged.Messages, request.Messages...)
+	return &merged, nil
+}
+
+// storedHistoryFailure fails the episode closed with a bounded class. Routing
+// on the body alone would show the selector a truncated conversation, which is
+// the failure this projection exists to prevent.
+func storedHistoryFailure(err error) error {
+	return &raylinearc.TurnNormalizationError{
+		Code: "stored_history",
+		Err:  err,
+	}
 }
 
 func boundedARCPrepareFailure(err error) string {

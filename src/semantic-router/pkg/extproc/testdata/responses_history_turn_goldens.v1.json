@@ -1,0 +1,100 @@
+{
+  "schema_version": "rayline.arc.responses-history-turns.v1",
+  "cases": [
+    {
+      "id": "retained_turns_precede_the_request",
+      "stored": [
+        {
+          "id": "resp_1",
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": "what is the capital of France?"
+            }
+          ],
+          "output": [
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": [{ "type": "output_text", "text": "Paris." }]
+            }
+          ]
+        }
+      ],
+      "request": {
+        "model": "golden-model",
+        "previous_response_id": "resp_1",
+        "input": [
+          { "type": "message", "role": "user", "content": "and of Spain?" }
+        ]
+      },
+      "turns": [
+        { "role": "user", "text": "what is the capital of France?" },
+        { "role": "assistant", "text": "Paris." },
+        { "role": "user", "text": "and of Spain?" }
+      ]
+    },
+    {
+      "id": "retained_tool_lifecycle_resolves_across_the_join",
+      "stored": [
+        {
+          "id": "resp_1",
+          "input": [
+            { "type": "message", "role": "user", "content": "how many hits?" }
+          ],
+          "output": [
+            {
+              "type": "function_call",
+              "call_id": "call_grep",
+              "name": "grep",
+              "arguments": "{\"q\":\"x\"}"
+            }
+          ]
+        },
+        {
+          "id": "resp_2",
+          "input": [
+            {
+              "type": "function_call_output",
+              "call_id": "call_grep",
+              "output": "3 hits"
+            }
+          ],
+          "output": [
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": [{ "type": "output_text", "text": "Three." }]
+            }
+          ]
+        }
+      ],
+      "request": {
+        "model": "golden-model",
+        "previous_response_id": "resp_2",
+        "input": [
+          { "type": "message", "role": "user", "content": "and now?" }
+        ]
+      },
+      "turns": [
+        { "role": "user", "text": "how many hits?" },
+        { "role": "assistant", "text": "[tool_call grep] {\"q\": \"x\"}" },
+        { "role": "user", "text": "[tool_result grep]\n3 hits" },
+        { "role": "assistant", "text": "Three." },
+        { "role": "user", "text": "and now?" }
+      ]
+    },
+    {
+      "id": "no_retained_history_leaves_the_request_alone",
+      "stored": [],
+      "request": {
+        "model": "golden-model",
+        "input": [
+          { "type": "message", "role": "user", "content": "a standalone ask" }
+        ]
+      },
+      "turns": [{ "role": "user", "text": "a standalone ask" }]
+    }
+  ]
+}
