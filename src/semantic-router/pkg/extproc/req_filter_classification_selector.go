@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 )
 
@@ -25,7 +24,9 @@ const (
 
 // selectModelFromCandidates uses the configured selection algorithm to choose
 // a model. Invalid or unavailable selection falls back to the first configured
-// candidate while recording an explicit diagnostic.
+// candidate while recording an explicit diagnostic, except for authoritative
+// fail-closed algorithms (Rayline ARC), which surface a bounded error
+// instead of silently downgrading to the default candidate.
 func (r *OpenAIRouter) selectModelFromCandidates(
 	selCtx *selection.SelectionContext,
 	algorithm *config.AlgorithmConfig,
@@ -33,12 +34,13 @@ func (r *OpenAIRouter) selectModelFromCandidates(
 ) (*config.ModelRef, string, error) {
 	defaultCandidate := firstValidCandidateModelRef(selCtx)
 	if defaultCandidate == nil {
-		return nil, "", nil
+		return nil, "", selectionFailureForAlgorithm(algorithm, "no_candidate")
 	}
 	method := r.getSelectionMethod(algorithm)
 	if err := selection.ValidateSelectionContext(selCtx); err != nil {
-		logging.Warnf("[ModelSelection] Invalid selection context: %v, using default candidate", err)
-		selected := r.recordSelectionFallback(
+		return r.handleSelectionFallback(
+			algorithm,
+			"invalid_context",
 			method,
 			selectionFallbackInvalidContext,
 			selCtx,
@@ -46,17 +48,19 @@ func (r *OpenAIRouter) selectModelFromCandidates(
 			defaultCandidate,
 			nil,
 			ctx,
+			"[ModelSelection] Invalid selection context: %v, using default candidate",
+			err,
 		)
-		return selected, string(method), nil
 	}
-	if len(selCtx.CandidateModels) == 1 {
+	if len(selCtx.CandidateModels) == 1 && !failClosedSelection(algorithm) {
 		return r.selectSingleCandidateModel(selCtx, defaultCandidate, ctx)
 	}
 
 	selector := r.selectorForDecisionMethod(method, algorithm, ctx)
 	if selector == nil {
-		logging.Warnf("[ModelSelection] No selector available for method %s, using default candidate", method)
-		selected := r.recordSelectionFallback(
+		return r.handleSelectionFallback(
+			algorithm,
+			"missing_selector",
 			method,
 			selectionFallbackUnavailable,
 			selCtx,
@@ -64,11 +68,13 @@ func (r *OpenAIRouter) selectModelFromCandidates(
 			defaultCandidate,
 			nil,
 			ctx,
+			"[ModelSelection] No selector available for method %s, using default candidate",
+			method,
 		)
-		return selected, string(method), nil
 	}
 	return r.selectWithSelector(
 		selCtx,
+		algorithm,
 		method,
 		selector,
 		defaultCandidate,
@@ -78,6 +84,7 @@ func (r *OpenAIRouter) selectModelFromCandidates(
 
 func (r *OpenAIRouter) selectWithSelector(
 	selCtx *selection.SelectionContext,
+	algorithm *config.AlgorithmConfig,
 	method selection.SelectionMethod,
 	selector selection.Selector,
 	defaultCandidate *config.ModelRef,
@@ -95,8 +102,9 @@ func (r *OpenAIRouter) selectWithSelector(
 		if requestCtx.Err() != nil {
 			return nil, string(method), requestCtx.Err()
 		}
-		logging.Warnf("[ModelSelection] Selection failed: %v, using default candidate", err)
-		selected := r.recordSelectionFallback(
+		return r.handleSelectionFallback(
+			algorithm,
+			authoritativeSelectionFailureClass(algorithm, err),
 			method,
 			selectionFallbackReasonForError(err),
 			selCtx,
@@ -104,12 +112,14 @@ func (r *OpenAIRouter) selectWithSelector(
 			defaultCandidate,
 			selector,
 			ctx,
+			"[ModelSelection] Selection failed: %v, using default candidate",
+			err,
 		)
-		return selected, string(method), nil
 	}
 	if err := selection.ValidateSelectionResult(selCtx, result); err != nil {
-		logging.Warnf("[ModelSelection] Invalid selection result: %v, using default candidate", err)
-		selected := r.recordSelectionFallback(
+		return r.handleSelectionFallback(
+			algorithm,
+			"invalid_result",
 			method,
 			selectionFallbackInvalidResult,
 			selCtx,
@@ -117,14 +127,16 @@ func (r *OpenAIRouter) selectWithSelector(
 			defaultCandidate,
 			selector,
 			ctx,
+			"[ModelSelection] Invalid selection result: %v, using default candidate",
+			err,
 		)
-		return selected, string(method), nil
 	}
 
 	selectedModel := selectedModelRefFromResult(selCtx, result)
 	if selectedModel == nil {
-		logging.Warnf("[ModelSelection] Selected model %s not found in candidates, using default candidate", result.SelectedModel)
-		selected := r.recordSelectionFallback(
+		return r.handleSelectionFallback(
+			algorithm,
+			"unknown_model",
 			method,
 			selectionFallbackUnknownModel,
 			selCtx,
@@ -132,30 +144,27 @@ func (r *OpenAIRouter) selectWithSelector(
 			defaultCandidate,
 			selector,
 			ctx,
+			"[ModelSelection] Selected model %s not found in candidates, using default candidate",
+			result.SelectedModel,
 		)
-		return selected, string(method), nil
 	}
-	recordCtx, result, selectedModel, learningApplied := r.applyRouterLearning(
-		selCtx,
+	if err := bindRaylineARCDispatchContract(
+		selector,
+		algorithm,
 		result,
 		selectedModel,
 		ctx,
-	)
-	ctx.VSRSelectionReasoning = selectionReasoningForDiagnostics(
+	); err != nil {
+		return nil, "", err
+	}
+	return r.completeModelSelection(
+		selCtx,
+		algorithm,
+		ctx,
 		method,
-		result.Reasoning,
+		result,
+		selectedModel,
 	)
-	recordPromptHelperTelemetry(ctx, result)
-	logSelectionResult(method, result, selectedModel, learningApplied)
-	selection.RecordSelection(
-		string(method),
-		selectionDecisionStateKey(selCtx),
-		selectedModel.Model,
-		result.Tier,
-		result.Score,
-	)
-	recordAgenticSessionDecision(recordCtx, result, selectedModel, ctx)
-	return selectedModel, string(method), nil
 }
 
 func recordPromptHelperTelemetry(
