@@ -478,7 +478,7 @@ func (client *EncoderClient) doCloseAttempt(
 }
 
 func (client *EncoderClient) consumeCloseResponse(response *http.Response) error {
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < http.StatusOK ||
 		response.StatusCode >= http.StatusMultipleChoices {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
@@ -568,7 +568,7 @@ func (client *EncoderClient) Probe(
 func (client *EncoderClient) consumeResponse(
 	response *http.Response,
 ) (*EncoderResult, error) {
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < http.StatusOK ||
 		response.StatusCode >= http.StatusMultipleChoices {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))

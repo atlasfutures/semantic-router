@@ -50,6 +50,7 @@ func (r *OpenAIRouter) raylineARCDispatchFailureResponseFor(
 	)
 }
 
+//nolint:unused // TODO(vsr-next Bucket B): caller was resolveAutoRoutingTarget in the deleted dispatch path.
 func (r *OpenAIRouter) selectionDispatchFailureResponseFor(
 	ctx *RequestContext,
 	failureClass string,

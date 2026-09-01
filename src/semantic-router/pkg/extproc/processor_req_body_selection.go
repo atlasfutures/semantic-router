@@ -10,6 +10,8 @@ import (
 // request-body orchestrator. ARC owns an artifact-exact body contract; every
 // other selector uses the normal selected-model
 // mutation path.
+//
+//nolint:unused // TODO(vsr-next Bucket B): caller was the deleted auto-routing body pipeline.
 func (r *OpenAIRouter) modifyRequestBodyForSelectedRoute(
 	openAIRequest *openai.ChatCompletionNewParams,
 	upstreamModel string,

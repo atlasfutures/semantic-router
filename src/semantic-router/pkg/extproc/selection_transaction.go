@@ -398,6 +398,7 @@ func recordSelectionTransactionSuccess(
 	// metric is exported for the selection transaction owner.
 }
 
+//nolint:unused // TODO(vsr-next Bucket B): caller was the deleted dispatch path.
 func recordSelectionLifecycleFailure(
 	ctx *RequestContext,
 	stage string,
@@ -410,6 +411,7 @@ func recordSelectionLifecycleFailure(
 	logSelectionTransactionFailure(kind, stage, err)
 }
 
+//nolint:unused // TODO(vsr-next Bucket B): used by selectionDispatchFailureResponseFor.
 func selectionUnavailableMessage(*RequestContext) string {
 	return "Rayline ARC routing unavailable"
 }

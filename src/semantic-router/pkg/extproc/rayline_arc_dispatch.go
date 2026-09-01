@@ -32,6 +32,8 @@ import (
 // errNotPortedBucketB marks a fork dispatch hook whose upstream seam was
 // removed by PR #3076. It fails closed until the hook is re-seated on
 // prepareProviderDispatch / applyDispatchDecision.
+//
+//nolint:unused // TODO(vsr-next Bucket B): referenced once the body-rewrite hooks are re-seated.
 var errNotPortedBucketB = errors.New("rayline_arc dispatch hook not ported: re-seat on prepareProviderDispatch")
 
 // modifyRequestBodyForRaylineARC applied the artifact-exact body contract on
@@ -42,6 +44,8 @@ var errNotPortedBucketB = errors.New("rayline_arc dispatch hook not ported: re-s
 // buildRequestParamsMutations; the neutral request is now rendered from
 // ctx.SemanticRequest by prepareProviderRequest, so the ARC rewrite must move
 // behind applyDispatchDecision or be deleted in favour of VSR-owned dispatch.
+//
+//nolint:unused // TODO(vsr-next Bucket B): caller was the deleted auto-routing body pipeline.
 func (r *OpenAIRouter) modifyRequestBodyForRaylineARC(
 	_ *openai.ChatCompletionNewParams,
 	_ string,
