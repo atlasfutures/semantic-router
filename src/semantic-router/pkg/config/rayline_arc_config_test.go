@@ -45,12 +45,16 @@ func TestRaylineARCConfigCanonicalRoundTripKeepsOnlyCredentialReference(t *testi
 	}
 }
 
-func TestValidateRaylineARCAlgorithmConfigRejectsInvalidContracts(t *testing.T) {
-	tests := []struct {
-		name    string
-		mutate  func(*Decision)
-		wantErr string
-	}{
+// raylineARCInvalidContract names one mutation of the valid ARC decision and
+// the substring the validator must answer with.
+type raylineARCInvalidContract struct {
+	name    string
+	mutate  func(*Decision)
+	wantErr string
+}
+
+func raylineARCInvalidContracts() []raylineARCInvalidContract {
+	return []raylineARCInvalidContract{
 		{
 			name: "missing block",
 			mutate: func(decision *Decision) {
@@ -147,8 +151,10 @@ func TestValidateRaylineARCAlgorithmConfigRejectsInvalidContracts(t *testing.T) 
 			wantErr: "max_inflight_encoder_calls must be between",
 		},
 	}
+}
 
-	for _, test := range tests {
+func TestValidateRaylineARCAlgorithmConfigRejectsInvalidContracts(t *testing.T) {
+	for _, test := range raylineARCInvalidContracts() {
 		t.Run(test.name, func(t *testing.T) {
 			decision := validRaylineARCDecision()
 			test.mutate(&decision)
