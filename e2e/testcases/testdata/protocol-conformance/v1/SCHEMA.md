@@ -148,7 +148,7 @@ steps:
 | `body` | `file` | Write a buffered body from a sibling file, then end the response |
 | `sse` | `file`, `chunk_bytes` | Write an SSE stream from a sibling file. `chunk_bytes` splits it at fixed byte boundaries; `0` writes it whole |
 | `delay` | `millis` | Sleep before the next step |
-| `disconnect` | none | Close the connection with no terminal event |
+| `disconnect` | none | Hijack the connection and close it. See the caveat below before using it |
 
 Rules the loader enforces:
 
@@ -167,9 +167,29 @@ Composing the fault families PL-0042 requires:
 - pre-stream error: one `status` with the error code, then `body`.
 - post-commit error: `status: 200`, `sse` for the committed prefix, then a
   second `sse` carrying the provider error event.
-- mid-stream truncation: `status: 200`, `sse`, then `disconnect`.
+- mid-stream truncation: `status: 200`, `sse`, and then simply no more steps.
+  The script running out ends the provider body at the HTTP layer with the SSE
+  sequence incomplete, which is what a Router must answer with a synthesized
+  terminal event.
 - arbitrary chunk boundaries, including a split inside a UTF-8 sequence: `sse`
   with a `chunk_bytes` that does not align to the event grammar.
+
+### Do not reach for `disconnect` to model a truncated stream
+
+`disconnect` hijacks the TCP connection and closes it, so no chunked terminator
+is written. An in-cluster proxy forwards that as a stream reset and tears the
+Router's response path down before anything can be appended, so the client sees
+a truncated transfer and no terminal event. The case then measures the proxy
+rather than the Router, and it measures a different proxy differently: a managed
+edge in front of a provider converts the same backend death into an HTTP-level
+end, so the identical case produced a terminal event through Cloud Run and none
+through kind while the Router build was the same. One `expected_outcome` cannot
+be correct in both.
+
+Ending the body is both the portable shape and the honest one, because a hosted
+provider always sits behind a proxy that does the same conversion. Keep
+`disconnect` for a case whose subject really is raw-reset handling, and expect
+that case's result to be environment-specific.
 
 ## Invariants
 
@@ -215,18 +235,17 @@ no relaxation.
 
 ## Expected outcome
 
-A case may declare that it is known to fail against a named router gap:
+A case may declare that it is known to fail against a named router gap. The
+promoted tranche carries none today; the shape is kept for the next real gap:
 
 ```yaml
 expected_outcome:
   status: fail
-  reference: vllm-project/semantic-router#3013
+  reference: vllm-project/semantic-router#0000
   reason: >-
-    Responses ingress short-circuits onto the Chat path instead of the selected
-    Messages backend.
+    One sentence naming what the Router does instead.
   signature:
-    - 'path "/v1/chat/completions", want "/v1/messages"'
-    - "body encoding differs (want sse, got json)"
+    - 'the exact pointer, path, or event sequence the gap produces'
 ```
 
 | Field | Meaning |
@@ -253,6 +272,21 @@ unchanged: a run in which every case skipped asserted nothing and still fails.
 The signature is what keeps the marker honest, so make it tight. Name the
 pointer, path, or event sequence the gap actually produces, not a phrase any
 failure would contain.
+
+### Every marker this corpus has carried was wrong about the Router
+
+Three markers have been retired, and none named a Router defect. seed-02 blamed
+the Router for not reaching an Anthropic backend when the profile had never
+declared `api_format`. seed-03 blamed it for a missing `anthropic-version` header
+that a backend supplies through `extra_headers`, once its provider profile is
+complete. seed-06 blamed it for synthesizing no terminal event when the fixture
+was resetting a socket the Router never got told about.
+
+So before adding a marker, rule out the corpus itself: the profile's provider
+config, the replay script's fault shape, and the environment the run observed.
+A marker asserts a Router behaviour, and it is easier to be wrong about that
+than the confident tone of a `reason` field suggests. Two of these three
+survived a careful reading of the Router source and fell only when run.
 
 ## Fidelity tiers
 
