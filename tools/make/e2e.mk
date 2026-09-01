@@ -112,6 +112,29 @@ e2e-cleanup: ## Clean up E2E test cluster
 	@echo "Cleaning up E2E test cluster: $(E2E_CLUSTER_NAME)"
 	@kind delete cluster --name $(E2E_CLUSTER_NAME) || true
 
+# Rayline ARC compose-free acceptance stack
+# Runs the synthetic ARC artifact, the fake encoder, the fake provider and the
+# real router binary as ordinary local processes. No Docker, no Envoy, no
+# Redis: episode state is in memory. Set REDIS_ADDR to run the same checks
+# against a real Redis episode store instead.
+#
+# Needs Python 3 and the Rust bindings on disk; run `make rust` first on a
+# cold tree. It deliberately does not depend on the rust target, so a warm
+# tree runs the whole suite in seconds.
+RAYLINE_ARC_ACCEPTANCE_DIR ?= e2e/testing/rayline-arc
+RAYLINE_ARC_ROUTER_BIN ?= $(PWD)/bin/router-rayline-arc
+RAYLINE_ARC_PYTHON ?= python3
+
+test-rayline-arc-acceptance: ## Run the compose-free Rayline ARC acceptance stack (no Docker)
+	@$(LOG_TARGET)
+	@mkdir -p bin
+	@cd src/semantic-router && CGO_LDFLAGS="-L$(PWD)/candle-binding/target/release" \
+		go build -o $(RAYLINE_ARC_ROUTER_BIN) ./cmd
+	@RAYLINE_ARC_ROUTER_BIN=$(RAYLINE_ARC_ROUTER_BIN) \
+		DYLD_LIBRARY_PATH="$(PWD)/candle-binding/target/release:$(PWD)/ml-binding/target/release:$(PWD)/nlp-binding/target/release:$$DYLD_LIBRARY_PATH" \
+		LD_LIBRARY_PATH="$(PWD)/candle-binding/target/release:$(PWD)/ml-binding/target/release:$(PWD)/nlp-binding/target/release:$$LD_LIBRARY_PATH" \
+		$(RAYLINE_ARC_PYTHON) $(RAYLINE_ARC_ACCEPTANCE_DIR)/test_acceptance.py
+
 # Download E2E test dependencies
 e2e-deps: ## Download E2E test dependencies
 	@$(LOG_TARGET)
