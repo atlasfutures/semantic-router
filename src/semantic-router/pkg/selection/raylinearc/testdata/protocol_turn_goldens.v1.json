@@ -1,0 +1,1227 @@
+{
+  "schema_version": "rayline.arc.protocol-turns.v1",
+  "cases": [
+    {
+      "id": "anthropic_tool_flow",
+      "protocol": "anthropic_messages",
+      "request": {
+        "system": "drop this",
+        "messages": [
+          {
+            "role": "system",
+            "content": "drop this message"
+          },
+          {
+            "role": "user",
+            "content": "Plan café"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "drop this block"
+              },
+              {
+                "type": "text",
+                "text": "Calling"
+              },
+              {
+                "type": "tool_use",
+                "id": "call_lookup",
+                "name": "lookup",
+                "input": {
+                  "z": "é",
+                  "a": 1
+                }
+              },
+              {
+                "type": "tool_use",
+                "id": "call_calc",
+                "name": "calc",
+                "input": {
+                  "flag": true
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "context"
+              },
+              {
+                "type": "image",
+                "source": {
+                  "type": "base64",
+                  "media_type": "image/png",
+                  "data": "not-a-real-image"
+                }
+              },
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_lookup",
+                "content": "found"
+              },
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_calc",
+                "is_error": true,
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "failed"
+                  },
+                  {
+                    "type": "image",
+                    "source": {
+                      "type": "base64",
+                      "media_type": "image/png",
+                      "data": "drop"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "Plan café"
+        },
+        {
+          "role": "assistant",
+          "text": "Calling\n[tool_call lookup] {\"a\": 1, \"z\": \"\\u00e9\"}\n[tool_call calc] {\"flag\": true}"
+        },
+        {
+          "role": "user",
+          "text": "context\n\n[tool_result lookup]\nfound\n\n[tool_result calc] [tool error]\nfailed"
+        }
+      ]
+    },
+    {
+      "id": "openai_chat_tool_flow",
+      "protocol": "openai_chat",
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "drop this"
+          },
+          {
+            "role": "developer",
+            "content": "drop this too"
+          },
+          {
+            "role": "user",
+            "content": "Plan café"
+          },
+          {
+            "role": "assistant",
+            "content": "Calling",
+            "tool_calls": [
+              {
+                "id": "call_lookup",
+                "type": "function",
+                "function": {
+                  "name": "lookup",
+                  "arguments": "{\"z\":\"é\",\"a\":1}"
+                }
+              },
+              {
+                "id": "call_calc",
+                "type": "function",
+                "function": {
+                  "name": "calc",
+                  "arguments": "{\"flag\":true}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": "context"
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call_lookup",
+            "content": "found"
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call_calc",
+            "content": "failed"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "Plan café"
+        },
+        {
+          "role": "assistant",
+          "text": "Calling\n[tool_call lookup] {\"a\": 1, \"z\": \"\\u00e9\"}\n[tool_call calc] {\"flag\": true}"
+        },
+        {
+          "role": "user",
+          "text": "context\n\n[tool_result lookup]\nfound\n\n[tool_result calc]\nfailed"
+        }
+      ]
+    },
+    {
+      "id": "openai_responses_tool_flow",
+      "protocol": "openai_responses",
+      "request": {
+        "input": [
+          {
+            "type": "message",
+            "role": "developer",
+            "content": "drop this"
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": "Plan café"
+          },
+          {
+            "type": "reasoning",
+            "summary": []
+          },
+          {
+            "type": "message",
+            "role": "assistant",
+            "content": "Calling"
+          },
+          {
+            "type": "function_call",
+            "call_id": "call_lookup",
+            "name": "lookup",
+            "arguments": "{\"z\":\"é\",\"a\":1}"
+          },
+          {
+            "type": "function_call",
+            "call_id": "call_calc",
+            "name": "calc",
+            "arguments": "{\"flag\":true}"
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": "context"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call_lookup",
+            "output": "found"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call_calc",
+            "is_error": true,
+            "output": "failed"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "Plan café"
+        },
+        {
+          "role": "assistant",
+          "text": "Calling\n[tool_call lookup] {\"a\": 1, \"z\": \"\\u00e9\"}\n[tool_call calc] {\"flag\": true}"
+        },
+        {
+          "role": "user",
+          "text": "context\n\n[tool_result lookup]\nfound\n\n[tool_result calc] [tool error]\nfailed"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_python_scalar_coercion",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "true_call",
+                "name": "truth",
+                "input": true
+              },
+              {
+                "type": "tool_use",
+                "id": "false_call",
+                "name": "falsehood",
+                "input": false
+              },
+              {
+                "type": "tool_use",
+                "id": "null_call",
+                "name": "empty",
+                "input": null
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "assistant",
+          "text": "[tool_call truth] True\n[tool_call falsehood] False\n[tool_call empty] "
+        }
+      ]
+    },
+    {
+      "id": "responses_string_input",
+      "protocol": "openai_responses",
+      "request": {
+        "input": "single input"
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "single input"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_unresolved_tool_id",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "missing",
+                "content": "result"
+              }
+            ]
+          }
+        ]
+      },
+      "error_code": "unresolved_tool_id"
+    },
+    {
+      "id": "chat_malformed_tool_arguments",
+      "protocol": "openai_chat",
+      "request": {
+        "messages": [
+          {
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                  "name": "run",
+                  "arguments": "{bad"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "error_code": "malformed_tool_arguments"
+    },
+    {
+      "id": "chat_unresolved_tool_id",
+      "protocol": "openai_chat",
+      "request": {
+        "messages": [
+          {
+            "role": "tool",
+            "tool_call_id": "missing",
+            "content": "result"
+          }
+        ]
+      },
+      "error_code": "unresolved_tool_id"
+    },
+    {
+      "id": "responses_unresolved_tool_id",
+      "protocol": "openai_responses",
+      "request": {
+        "input": [
+          {
+            "type": "function_call_output",
+            "call_id": "missing",
+            "output": "result"
+          }
+        ]
+      },
+      "error_code": "unresolved_tool_id"
+    },
+    {
+      "id": "anthropic_unknown_block",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "future_unknown_block"
+              }
+            ]
+          }
+        ]
+      },
+      "error_code": "unknown_item"
+    },
+    {
+      "id": "chat_unknown_role",
+      "protocol": "openai_chat",
+      "request": {
+        "messages": [
+          {
+            "role": "future_role",
+            "content": "unknown"
+          }
+        ]
+      },
+      "error_code": "unknown_item"
+    },
+    {
+      "id": "responses_unknown_item",
+      "protocol": "openai_responses",
+      "request": {
+        "input": [
+          {
+            "type": "future_unknown_item"
+          }
+        ]
+      },
+      "error_code": "unknown_item"
+    },
+    {
+      "id": "anthropic_compaction_summary",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "compaction",
+                "content": "Earlier: the user asked for a parser audit."
+              },
+              {
+                "type": "text",
+                "text": "continue"
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "Earlier: the user asked for a parser audit.\ncontinue"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_compaction_failed_is_empty",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "compaction",
+                "content": null
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": ""
+        }
+      ]
+    },
+    {
+      "id": "anthropic_server_tool_families_drop_as_pairs",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "searching"
+              },
+              {
+                "type": "mcp_tool_use",
+                "id": "mcptoolu_1",
+                "name": "read_file",
+                "server_name": "fs",
+                "input": {
+                  "path": "a.go"
+                }
+              },
+              {
+                "type": "server_tool_use",
+                "id": "srvtoolu_1",
+                "name": "tool_search",
+                "input": {}
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "mcp_tool_result",
+                "tool_use_id": "mcptoolu_1",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "file body"
+                  }
+                ]
+              },
+              {
+                "type": "tool_search_tool_result",
+                "tool_use_id": "srvtoolu_1",
+                "content": {
+                  "type": "tool_search_result",
+                  "tools": []
+                }
+              },
+              {
+                "type": "text",
+                "text": "thanks"
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "assistant",
+          "text": "searching"
+        },
+        {
+          "role": "user",
+          "text": "thanks"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_tool_reference_in_result",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_grep",
+                "name": "grep",
+                "input": {
+                  "q": "x"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_grep",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "3 hits"
+                  },
+                  {
+                    "type": "tool_reference",
+                    "tool_name": "grep"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "assistant",
+          "text": "[tool_call grep] {\"q\": \"x\"}"
+        },
+        {
+          "role": "user",
+          "text": "[tool_result grep]\n3 hits"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_tool_reference_rejected_at_top_level",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_reference",
+                "tool_name": "grep"
+              }
+            ]
+          }
+        ]
+      },
+      "error_code": "unknown_item"
+    },
+    {
+      "id": "anthropic_mid_conv_system_folds",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "mid_conv_system",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Be terse from now on."
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "text": "summarize"
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "Be terse from now on.\nsummarize"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_advisor_and_fallback_drop",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "switching model"
+              },
+              {
+                "type": "fallback",
+                "from": {
+                  "model": "claude-opus-4-5"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "advisor_tool_result",
+                "tool_use_id": "srvtoolu_adv",
+                "content": {
+                  "type": "text",
+                  "text": "advice"
+                }
+              },
+              {
+                "type": "text",
+                "text": "go on"
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "assistant",
+          "text": "switching model"
+        },
+        {
+          "role": "user",
+          "text": "go on"
+        }
+      ]
+    },
+    {
+      "id": "responses_host_tool_items_drop",
+      "protocol": "openai_responses",
+      "request": {
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": "patch it"
+          },
+          {
+            "type": "apply_patch_call",
+            "call_id": "ap_1",
+            "status": "completed",
+            "operation": {
+              "type": "update_file",
+              "path": "a.go",
+              "diff": "@@"
+            }
+          },
+          {
+            "type": "apply_patch_call_output",
+            "call_id": "ap_1",
+            "status": "completed",
+            "output": "ok"
+          },
+          {
+            "type": "shell_call",
+            "call_id": "sh_1",
+            "status": "completed",
+            "action": {
+              "type": "exec",
+              "commands": [
+                "go build ./..."
+              ]
+            }
+          },
+          {
+            "type": "shell_call_output",
+            "call_id": "sh_1",
+            "output": []
+          },
+          {
+            "type": "mcp_list_tools",
+            "server_label": "fs",
+            "tools": []
+          },
+          {
+            "type": "message",
+            "role": "assistant",
+            "content": "done"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "patch it"
+        },
+        {
+          "role": "assistant",
+          "text": "done"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_system_role_message_drops_whole",
+      "protocol": "anthropic_messages",
+      "request": {
+        "system": "top level",
+        "messages": [
+          {
+            "role": "system",
+            "content": [
+              {
+                "type": "mid_conv_system",
+                "text": "relocated"
+              },
+              {
+                "type": "text",
+                "text": "also system"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": "ask"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "ask"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_unknown_role_drops_whole",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "developer",
+            "content": "tooling note"
+          },
+          {
+            "role": "user",
+            "content": "ask"
+          },
+          {
+            "role": "tool",
+            "content": "stray"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "ask"
+        }
+      ]
+    },
+    {
+      "id": "responses_system_and_developer_roles_drop",
+      "protocol": "openai_responses",
+      "request": {
+        "input": [
+          {
+            "type": "message",
+            "role": "system",
+            "content": "sys"
+          },
+          {
+            "type": "message",
+            "role": "developer",
+            "content": "dev"
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": "ask"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "ask"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_null_content_is_empty_turn",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": null
+          },
+          {
+            "role": "assistant",
+            "content": "hi"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": ""
+        },
+        {
+          "role": "assistant",
+          "text": "hi"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_absent_content_is_empty_turn",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user"
+          },
+          {
+            "role": "assistant",
+            "content": "hi"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": ""
+        },
+        {
+          "role": "assistant",
+          "text": "hi"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_empty_content_array_is_empty_turn",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": []
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": ""
+        }
+      ]
+    },
+    {
+      "id": "responses_empty_input_is_no_turns",
+      "protocol": "openai_responses",
+      "request": {
+        "input": []
+      },
+      "turns": []
+    },
+    {
+      "id": "anthropic_all_blocks_dropped_is_empty_turn",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image",
+                "source": {
+                  "type": "base64",
+                  "media_type": "image/png",
+                  "data": "iVBOR"
+                }
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "secret",
+                "signature": "s"
+              },
+              {
+                "type": "redacted_thinking",
+                "data": "enc"
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": ""
+        },
+        {
+          "role": "assistant",
+          "text": ""
+        }
+      ]
+    },
+    {
+      "id": "anthropic_interleaved_rich_blocks_keep_order",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "a"
+              },
+              {
+                "type": "image",
+                "source": {
+                  "type": "url",
+                  "url": "https://example.test/y.png"
+                }
+              },
+              {
+                "type": "text",
+                "text": "b"
+              },
+              {
+                "type": "document",
+                "source": {
+                  "type": "text",
+                  "media_type": "text/plain",
+                  "data": "d"
+                }
+              },
+              {
+                "type": "text",
+                "text": "c"
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "a\nb\nc"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_consecutive_same_role_stay_separate",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "one"
+          },
+          {
+            "role": "user",
+            "content": "two"
+          },
+          {
+            "role": "assistant",
+            "content": "three"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "one"
+        },
+        {
+          "role": "user",
+          "text": "two"
+        },
+        {
+          "role": "assistant",
+          "text": "three"
+        }
+      ]
+    },
+    {
+      "id": "responses_dropped_item_keeps_same_role_coalescing",
+      "protocol": "openai_responses",
+      "request": {
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": "one"
+          },
+          {
+            "type": "reasoning",
+            "id": "r1",
+            "summary": []
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": "two"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "one\ntwo"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_tool_result_string_content",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "c1",
+                "name": "grep",
+                "input": {
+                  "q": "x"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "c1",
+                "content": "3 hits"
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "assistant",
+          "text": "[tool_call grep] {\"q\": \"x\"}"
+        },
+        {
+          "role": "user",
+          "text": "[tool_result grep]\n3 hits"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_tool_result_empty_content_with_error",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "c1",
+                "name": "grep",
+                "input": {}
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "c1",
+                "content": [],
+                "is_error": true
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "assistant",
+          "text": "[tool_call grep] {}"
+        },
+        {
+          "role": "user",
+          "text": "[tool_result grep] [tool error]\n"
+        }
+      ]
+    },
+    {
+      "id": "anthropic_text_and_tool_result_in_one_message",
+      "protocol": "anthropic_messages",
+      "request": {
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "c1",
+                "name": "grep",
+                "input": {}
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "before"
+              },
+              {
+                "type": "tool_result",
+                "tool_use_id": "c1",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "out"
+                  }
+                ]
+              },
+              {
+                "type": "image",
+                "source": {
+                  "type": "url",
+                  "url": "https://example.test/y.png"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "assistant",
+          "text": "[tool_call grep] {}"
+        },
+        {
+          "role": "user",
+          "text": "before\n\n[tool_result grep]\nout"
+        }
+      ]
+    },
+    {
+      "id": "responses_message_content_parts_drop_non_text",
+      "protocol": "openai_responses",
+      "request": {
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "a"
+              },
+              {
+                "type": "input_image",
+                "image_url": "https://example.test/y.png"
+              },
+              {
+                "type": "input_text",
+                "text": "b"
+              }
+            ]
+          }
+        ]
+      },
+      "turns": [
+        {
+          "role": "user",
+          "text": "a\nb"
+        }
+      ]
+    }
+  ]
+}
