@@ -26,6 +26,7 @@ var selectionMethodByAlgorithmType = map[string]selection.SelectionMethod{
 	"multi_factor":  selection.MethodMultiFactor,
 	"mlp":           selection.MethodMLP,
 	"prompt":        selection.MethodPrompt,
+	"rayline_arc":   selection.MethodRaylineARC,
 }
 
 func (r *OpenAIRouter) evaluateSignalsForDecision(

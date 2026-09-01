@@ -244,7 +244,7 @@ func (r *OpenAIRouter) buildSelectionContext(
 		recipeName = reqCtx.Routing.RecipeName()
 	}
 
-	return &selection.SelectionContext{
+	selCtx := &selection.SelectionContext{
 		Query:                      query,
 		DecisionName:               decisionName,
 		RecipeName:                 recipeName,
@@ -261,6 +261,8 @@ func (r *OpenAIRouter) buildSelectionContext(
 		ConversationHistory:        conversationHistory,
 		CacheAffinityCtx:           r.buildCacheAffinityContext(reqCtx, modelRefs),
 	}
+	selCtx.RaylineARC = r.buildRaylineARCSelectionContext(algorithm, reqCtx, len(modelRefs))
+	return selCtx
 }
 
 func (r *OpenAIRouter) buildAgenticSessionContext(

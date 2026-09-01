@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .rayline_arc_config import RaylineARCAlgorithmConfig
+
 
 class ModelRef(BaseModel):
     """Model reference in decision."""
@@ -449,6 +451,7 @@ class AlgorithmConfig(BaseModel):
         "multi_factor",
         "latency_aware",
         "prompt",
+        "rayline_arc",
     ]
 
     # Looper algorithm configurations
@@ -465,6 +468,7 @@ class AlgorithmConfig(BaseModel):
     hybrid: HybridSelectionConfig | None = None
     multi_factor: MultiFactorSelectionConfig | None = None
     prompt: PromptSelectionConfig | None = None
+    rayline_arc: RaylineARCAlgorithmConfig | None = None
     # Behavior on algorithm failure: "skip" or "fail"
     on_error: str | None = "skip"
 

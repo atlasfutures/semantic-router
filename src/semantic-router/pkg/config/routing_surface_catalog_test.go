@@ -57,7 +57,7 @@ func TestDecisionAlgorithmCatalog_PublicAlgorithmSurface(t *testing.T) {
 	publicTypes := []string{
 		"automix", "confidence", "fusion", "hybrid", "kmeans",
 		"knn", "latency_aware", "mlp", "multi_factor", "ratings",
-		"remom", "router_dc", "static", "svm",
+		"rayline_arc", "remom", "router_dc", "static", "svm",
 	}
 
 	for _, algType := range publicTypes {
@@ -87,6 +87,7 @@ func TestGetAlgorithmTier(t *testing.T) {
 		{"kmeans", "experimental"},
 		{"svm", "experimental"},
 		{"mlp", "experimental"},
+		{"rayline_arc", "experimental"},
 	}
 
 	for _, tt := range tests {

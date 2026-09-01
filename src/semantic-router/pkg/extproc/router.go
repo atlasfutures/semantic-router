@@ -24,6 +24,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/lookuptable"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/services"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/sessiontelemetry"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/tools"
@@ -70,7 +71,11 @@ type OpenAIRouter struct {
 	ReplayRecorders      map[string]*routerreplay.Recorder
 	MemoryStore          memory.Store
 	MemoryExtractor      *memory.MemoryExtractor
-	ProtocolCodecs       *protocolcodec.Registry
+	// RaylineARCEpisodeStore is the fenced episode state the rayline_arc
+	// selector leases per request; nil when no rayline_arc decision exists.
+	RaylineARCEpisodeStore raylinearc.EpisodeStore
+	raylineARCSessionClose raylineARCSessionCloseFunc
+	ProtocolCodecs         *protocolcodec.Registry
 
 	// CredentialResolver resolves per-user LLM API keys from multiple sources
 	// (ext_authz injected headers -> static config fallback).

@@ -14,6 +14,8 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/ratelimit"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerreplay"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // EnhancedHallucinationSpan represents a hallucinated span with NLI explanation.
@@ -84,6 +86,13 @@ type RequestContext struct {
 	// this request (e.g. response headers not processed). The cache-write path
 	// reads it to avoid caching non-2xx error bodies (cache poisoning).
 	UpstreamStatusCode int
+	// UpstreamAttemptCount distinguishes one logical Rayline request from the
+	// wire attempts Envoy made beneath it. RetryCount is attempts minus one;
+	// RetryExhausted is true only when the final 429/503 consumed the artifact
+	// budget. These fields never contain provider, prompt, or episode identity.
+	UpstreamAttemptCount   uint64
+	UpstreamRetryCount     uint64
+	UpstreamRetryExhausted bool
 
 	// TTFT tracking
 	TTFTRecorded bool
@@ -141,8 +150,15 @@ type RequestContext struct {
 	VSRCacheSource                  string
 	VSRCacheEntryAgeSeconds         float64
 	VSRCacheTTLSeconds              int
-	VSRInjectedSystemPrompt         bool             // Whether a system prompt was injected into the request
-	VSRSelectedDecision             *config.Decision // The decision object selected by DecisionEngine (for plugins)
+	VSRInjectedSystemPrompt         bool                          // Whether a system prompt was injected into the request
+	VSRSelectedDecision             *config.Decision              // The decision object selected by DecisionEngine (for plugins)
+	VSRRaylineARC                   *selection.RaylineARCTrace    // Privacy-safe ARC selection trace; never prompt or embedding data.
+	RaylineARCDispatch              *raylinearc.WorkerManifest    // Private artifact-owned upstream contract; never emit in traces.
+	RaylineARCAuthHeader            string                        // Auth header carrying the artifact credential; kept single-valued.
+	RaylineARCTransaction           *raylineARCEpisodeTransaction // Fenced ARC state lease; finalized exactly once.
+	RaylineARCCloseRequested        bool                          // Exact configured final-turn signal; triggers post-2xx session close fanout.
+	SelectionTransaction            *selectionTransactionOwner    // Shared authoritative selector lifecycle owner; at most one per request.
+	SelectionSettlement             selectionActualOutcome        // Bounded actual outcome facts; unknown fields remain nil.
 	// VSREligibleModelRefs is the selected decision's model set after applying
 	// request contracts. Loopers consume this exact set; broader Router Learning
 	// candidate sets must independently apply the same request contracts.

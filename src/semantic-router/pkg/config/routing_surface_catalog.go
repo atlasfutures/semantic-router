@@ -103,6 +103,7 @@ var decisionAlgorithmCatalog = []AlgorithmCatalogEntry{
 	{Type: DecisionAlgorithmLatencyAware, Tier: "supported", Execution: AlgorithmExecutionSelector},
 	{Type: DecisionAlgorithmMLP, Tier: "experimental", Execution: AlgorithmExecutionSelector},
 	{Type: DecisionAlgorithmMultiFactor, Tier: "supported", Execution: AlgorithmExecutionSelector},
+	{Type: RaylineARCAlgorithmType, Tier: "experimental", Execution: AlgorithmExecutionSelector},
 	{Type: DecisionAlgorithmRatings, Tier: "supported", Execution: AlgorithmExecutionLooper},
 	{Type: DecisionAlgorithmReMoM, Tier: "supported", Execution: AlgorithmExecutionLooper},
 	{Type: DecisionAlgorithmRouterDC, Tier: "supported", Execution: AlgorithmExecutionSelector},

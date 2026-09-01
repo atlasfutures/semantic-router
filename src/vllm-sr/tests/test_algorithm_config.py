@@ -29,6 +29,12 @@ from cli.algorithms import (  # noqa: E402
     WorkflowRoleConfig,
     WorkflowsAlgorithmConfig,
 )
+from cli.rayline_arc_config import (  # noqa: E402
+    RaylineARCAlgorithmConfig,
+    RaylineARCEncoderConfig,
+    RaylineARCEpisodeConfig,
+    RaylineARCRedisConfig,
+)
 
 
 class TestAlgorithmConfigTypes:
@@ -55,6 +61,7 @@ class TestAlgorithmConfigTypes:
             "mlp",
             "multi_factor",
             "latency_aware",
+            "rayline_arc",
         ]
 
         for algo_type in selection_types:
@@ -214,6 +221,65 @@ class TestMultiFactorSelectionConfig:
         assert config.weights.quality == 0.4
         assert config.slo.max_ttft_ms == 800
         assert config.latency_percentile == 95
+
+
+class TestRaylineARCAlgorithmConfig:
+    """Test the typed ARC artifact, encoder, and episode shape."""
+
+    def test_typed_contract(self):
+        config = RaylineARCAlgorithmConfig(
+            artifact_dir="/var/lib/vllm-sr/rayline-arc",
+            artifact_revision="public-synthetic-v1",
+            encoder=RaylineARCEncoderConfig(
+                base_url="http://rayline-arc-encoder:8000",
+                model="Qwen/Qwen3.5-0.8B",
+                model_revision="2fc06364715b967f1860aea9cf38778875588b17",
+                expected_build_id="vllm@public-synthetic-build",
+                expected_io_plugin_version="rayline-arc-io@0.1.0",
+                serializer_version="mtrouter-token-blocks-v2",
+                serving_rung="A",
+                required_pooling_capabilities=["all_plugin_mean"],
+                modal_key_env="RAYLINE_ARC_MODAL_KEY",
+                modal_secret_env="RAYLINE_ARC_MODAL_SECRET",
+                connect_timeout_seconds=5,
+                total_timeout_seconds=180,
+                max_retries=1,
+            ),
+            episode=RaylineARCEpisodeConfig(
+                id_header="x-rayline-episode-id",
+                backend="redis",
+                key_prefix="vsr:rayline-arc:",
+                acquire_timeout_seconds=30,
+                lease_ttl_seconds=60,
+                idle_ttl_seconds=900,
+                max_in_memory_episodes=1024,
+                redis=RaylineARCRedisConfig(
+                    address="redis:6379",
+                    password_env="RAYLINE_ARC_REDIS_PASSWORD",
+                ),
+            ),
+        )
+
+        assert config.encoder.required_pooling_capabilities == ["all_plugin_mean"]
+        assert config.encoder.modal_key_env == "RAYLINE_ARC_MODAL_KEY"
+        assert config.encoder.modal_secret_env == "RAYLINE_ARC_MODAL_SECRET"
+        assert config.episode.redis.password_env == "RAYLINE_ARC_REDIS_PASSWORD"
+
+    def test_retry_bound(self):
+        with pytest.raises(PydanticValidationError):
+            RaylineARCEncoderConfig(
+                base_url="http://encoder:8000",
+                model="Qwen/Qwen3.5-0.8B",
+                model_revision="2fc06364715b967f1860aea9cf38778875588b17",
+                expected_build_id="vllm@build",
+                expected_io_plugin_version="rayline-arc-io@0.1.0",
+                serializer_version="mtrouter-token-blocks-v2",
+                serving_rung="A",
+                required_pooling_capabilities=["all_plugin_mean"],
+                connect_timeout_seconds=5,
+                total_timeout_seconds=180,
+                max_retries=4,
+            )
 
 
 class TestReMoMAlgorithmConfig:

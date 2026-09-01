@@ -100,6 +100,10 @@ const (
 	// through a runtime-owned structured output contract.
 	MethodPrompt SelectionMethod = "prompt"
 
+	// MethodRaylineARC uses the artifact-verified Rayline ARC orchestrator.
+	// The encoder is served by a dedicated vLLM pooling deployment.
+	MethodRaylineARC SelectionMethod = "rayline_arc"
+
 	// MethodSessionAware wraps a base selector with agentic session policy:
 	// it keeps tool loops and hot multi-turn continuations on the current model
 	// unless the switch benefit clears the explicit handoff and prefix-cache cost.
@@ -210,6 +214,10 @@ type SelectionContext struct {
 
 	// CacheAffinityCtx carries request-time session signals for cache-affinity estimation.
 	CacheAffinityCtx *CacheAffinityContext
+
+	// RaylineARC carries only the structured, privacy-safe inputs required by
+	// the artifact-owned ARC selector. It is nil for every other algorithm.
+	RaylineARC *RaylineARCSelectionContext
 }
 
 // ScopedRoutingName namespaces recipe-local task-family names for shared
@@ -266,6 +274,9 @@ type SelectionResult struct {
 	// SessionPolicy records the session-aware stay/switch policy trace when
 	// Method is session_aware.
 	SessionPolicy *SessionPolicyTrace
+
+	// RaylineARC records bounded, privacy-safe artifact policy diagnostics.
+	RaylineARC *RaylineARCTrace
 }
 
 // Selector is the interface for model selection algorithms

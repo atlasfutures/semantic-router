@@ -50,6 +50,7 @@ type routerComponents struct {
 	rateLimiter          *ratelimit.RateLimitResolver
 	lookupTableCancel    func()
 	routerSessionStore   *sessiontelemetry.RouterSessionStateStoreSlot
+	raylineARC           raylineARCComponents
 	resources            *resourceScope
 }
 
@@ -215,6 +216,7 @@ func buildRouterComponents(cfg *config.RouterConfig) (*routerComponents, error) 
 	}
 	components.recipeModelSelectors, components.modelSelector, components.lookupTable, components.lookupTableCancel = createModelSelectorRegistries(cfg, replayReaderForLookup)
 	registerModelSelectorResources(components.resources, components.recipeModelSelectors, components.lookupTableCancel)
+	components.raylineARC = registerRaylineARCSelector(cfg, components.recipeModelSelectors, components.resources)
 
 	components.memoryStore, components.memoryExtractor = createMemoryRuntime(cfg)
 	if components.memoryStore != nil {
@@ -343,6 +345,8 @@ func (components *routerComponents) buildRouter() *OpenAIRouter {
 		RateLimiter:             components.rateLimiter,
 		lookupTableCancel:       components.lookupTableCancel,
 		routerSessionStateStore: components.routerSessionStore,
+		RaylineARCEpisodeStore:  components.raylineARC.episodeStore,
+		raylineARCSessionClose:  components.raylineARC.sessionClose,
 		resources:               components.resources,
 	}
 	if components.classificationSvc != nil {

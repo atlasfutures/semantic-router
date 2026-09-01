@@ -44,6 +44,9 @@ func validateDecisionModelContracts(cfg *RouterConfig) error {
 		if err := validateDecisionPromptModel(cfg, decision); err != nil {
 			return err
 		}
+		if err := validateRaylineARCDecisionContract(cfg, decision); err != nil {
+			return err
+		}
 		if err := validateDecisionWorkflowModelRefs(decision); err != nil {
 			return err
 		}
@@ -662,7 +665,7 @@ func validateMigratedLearningAlgorithm(decisionName string, normalizedType strin
 }
 
 func configuredAlgorithmBlocks(algorithm *AlgorithmConfig) []string {
-	configuredBlocks := make([]string, 0, 14)
+	configuredBlocks := make([]string, 0, 15)
 	addBlock := func(name string, configured bool) {
 		if configured {
 			configuredBlocks = append(configuredBlocks, name)
@@ -683,6 +686,7 @@ func configuredAlgorithmBlocks(algorithm *AlgorithmConfig) []string {
 	addBlock("latency_aware", algorithm.LatencyAware != nil)
 	addBlock("multi_factor", algorithm.MultiFactor != nil)
 	addBlock("prompt", algorithm.Prompt != nil)
+	addBlock("rayline_arc", algorithm.RaylineARC != nil)
 	addBlock("session_aware", algorithm.SessionAware != nil)
 	return configuredBlocks
 }
@@ -700,6 +704,7 @@ func expectedAlgorithmBlock(normalizedType string) (string, bool) {
 		"latency_aware": "latency_aware",
 		"multi_factor":  "multi_factor",
 		"prompt":        "prompt",
+		"rayline_arc":   "rayline_arc",
 	}
 	expectedBlock, ok := expectedBlockByType[normalizedType]
 	return expectedBlock, ok
@@ -719,6 +724,8 @@ func validateSpecializedAlgorithmConfig(decisionName string, modelRefs []ModelRe
 		return validateDecisionWorkflowsAlgorithm(decisionName, modelRefs, algorithm.Workflows)
 	case "prompt":
 		return validatePromptAlgorithmConfig(decisionName, modelRefs, algorithm)
+	case RaylineARCAlgorithmType:
+		return validateRaylineARCSpecializedAlgorithmConfig(decisionName, algorithm)
 	}
 	return nil
 }

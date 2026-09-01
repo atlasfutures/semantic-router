@@ -1483,6 +1483,94 @@ routing:
       algorithm:
         type: mlp
 
+    - name: rayline_arc_reference_route
+      description: Experimental artifact-verified ARC configuration using public placeholder arm bindings.
+      priority: 195
+      rules:
+        operator: AND
+        conditions:
+          - type: domain
+            name: business
+      modelRefs:
+        - model: qwen3-8b
+          use_reasoning: false
+        - model: qwen3-32b
+          use_reasoning: true
+      adaptations:
+        mode: bypass
+      plugins:
+        # ARC episode requests must never be persisted by Router Replay; the
+        # validator rejects rayline_arc decisions whose effective replay
+        # configuration is enabled.
+        - type: router_replay
+          configuration:
+            enabled: false
+      algorithm:
+        type: rayline_arc
+        on_error: fail_closed
+        rayline_arc:
+          artifact_dir: /var/lib/vllm-sr/rayline-arc
+          artifact_revision: public-synthetic-v1
+          # System text is folded into the user turn it governs, never into a
+          # turn of its own: the encoder wire contract has only two roles.
+          #
+          # include_system_text covers the conversation-opening prompt: the
+          # Anthropic system field, the Responses instructions field, and the
+          # leading run of system/developer messages. Off by default, because
+          # it changes what the trained selector is asked.
+          include_system_text: false
+          # drop_mid_conversation_system_text is the kill switch for the other
+          # scope: a mid_conv_system block, or a system/developer message that
+          # follows a user or assistant message. False by default, so that
+          # text does reach the selector -- it is a correction aimed at the
+          # very next reply, which is the signal the router exists to read.
+          drop_mid_conversation_system_text: false
+          encoder:
+            base_url: http://rayline-arc-encoder:8000
+            # Set base_url to empty and populate replicas + failover to opt
+            # into the versioned retained-session multi-replica contract.
+            replicas: []
+            # Or leave replicas empty and populate membership to use the
+            # reviewed Redis dynamic-membership controller.
+            membership: {}
+            failover: {}
+            model: Qwen/Qwen3.5-0.8B
+            model_revision: 2fc06364715b967f1860aea9cf38778875588b17
+            expected_build_id: vllm@public-synthetic-build
+            expected_io_plugin_version: rayline-arc-io@0.1.0
+            serializer_version: mtrouter-token-blocks-v2
+            serving_rung: B
+            required_pooling_capabilities:
+              - chunked_causal_mean
+            modal_key_env: RAYLINE_ARC_MODAL_KEY
+            modal_secret_env: RAYLINE_ARC_MODAL_SECRET
+            connect_timeout_seconds: 5
+            total_timeout_seconds: 180
+            max_retries: 1
+            # Cap concurrent encoder calls per router process and shed the
+            # surplus immediately instead of queueing it inside the encoder.
+            # 0 disables admission control, which is the default. Size it from
+            # a measured concurrency level the encoder sustains inside the
+            # decision latency budget, and never above the encoder's own
+            # ingress cap.
+            max_inflight_encoder_calls: 0
+          episode:
+            id_header: x-rayline-episode-id
+            close_header: ""
+            backend: redis
+            key_prefix: "vsr:rayline-arc:"
+            acquire_timeout_seconds: 30
+            lease_ttl_seconds: 60
+            idle_ttl_seconds: 900
+            max_in_memory_episodes: 1024
+            development_mode: false
+            redis:
+              address: redis:6379
+              db: 0
+              password_env: RAYLINE_ARC_REDIS_PASSWORD
+              use_tls: false
+              pool_size: 16
+
     - name: image_generation_route
       description: Dedicated image-generation route using the OpenAI image backend.
       priority: 105

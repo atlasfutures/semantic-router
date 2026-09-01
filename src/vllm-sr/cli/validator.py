@@ -39,6 +39,7 @@ from cli.validator_workflows import (
     validate_static_workflow_roles,
     validate_workflow_final_model,
 )
+from cli.validator_rayline_arc import validate_rayline_arc_decisions
 from cli.validator_signal_references import validate_signal_references
 
 log = get_logger(__name__)
@@ -55,6 +56,7 @@ EXPECTED_ALGORITHM_BLOCK_BY_TYPE = {
     "latency_aware": "latency_aware",
     "multi_factor": "multi_factor",
     "prompt": "prompt",
+    "rayline_arc": "rayline_arc",
 }
 
 ALGORITHM_CONFIG_BLOCKS = (
@@ -69,6 +71,7 @@ ALGORITHM_CONFIG_BLOCKS = (
     "latency_aware",
     "multi_factor",
     "prompt",
+    "rayline_arc",
 )
 
 
@@ -94,6 +97,7 @@ VALID_ALGORITHM_TYPES = {
     "multi_factor",
     "latency_aware",
     "prompt",
+    "rayline_arc",
 }
 
 MIGRATED_LEARNING_ALGORITHM_TARGETS = {
@@ -693,6 +697,7 @@ def validate_user_config(
     errors.extend(validate_signal_references(config))
     errors.extend(validate_algorithm_one_of(config))
     errors.extend(validate_latency_aware_algorithm_config(config))
+    errors.extend(validate_rayline_arc_decisions(config))
 
     # Validate domain references
     errors.extend(validate_domain_references(config))
