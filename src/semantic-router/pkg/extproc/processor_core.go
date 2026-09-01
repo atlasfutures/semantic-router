@@ -68,9 +68,25 @@ func (r *OpenAIRouter) handleRequestBodyDispatch(v *ext_proc.ProcessingRequest_R
 }
 
 // Process implements the ext_proc calls
-func (r *OpenAIRouter) Process(stream ext_proc.ExternalProcessor_ProcessServer) (retErr error) {
+func (r *OpenAIRouter) Process(stream ext_proc.ExternalProcessor_ProcessServer) error {
+	return r.processWithContext(stream, &RequestContext{
+		Headers:      make(map[string]string),
+		TraceContext: stream.Context(),
+	})
+}
+
+// processWithContext runs one ext_proc stream over an already-built request
+// context. Every exit from this loop is terminal for that context, which is
+// why the authoritative selector's lifecycle is finalized here: EOF, a
+// receive error, a cancel and a recovered panic all leave a prepared
+// selection holding state that nothing else will release.
+func (r *OpenAIRouter) processWithContext(
+	stream ext_proc.ExternalProcessor_ProcessServer,
+	ctx *RequestContext,
+) (retErr error) {
 	logging.Debugf("Processing at stage [init]")
-	var ctx *RequestContext
+
+	defer finalizeSelectionProcessTerminal(ctx)
 
 	// Recover from any panic (including OOM kills surfaced as runtime panics from
 	// CGO inference calls) so a single bad request cannot take down the gRPC server.
@@ -81,12 +97,6 @@ func (r *OpenAIRouter) Process(stream ext_proc.ExternalProcessor_ProcessServer) 
 			retErr = status.Errorf(codes.Internal, "internal error: %v", rec)
 		}
 	}()
-
-	// Initialize request context
-	ctx = &RequestContext{
-		Headers:      make(map[string]string),
-		TraceContext: stream.Context(),
-	}
 
 	for {
 		req, err := stream.Recv()
