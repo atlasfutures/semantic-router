@@ -1,0 +1,571 @@
+#!/usr/bin/env python3
+"""Contract-faithful fake encoder and provider for ARC stack acceptance."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
+
+from modal_fullstack_inputs import ROUTING_AXIS_INDEX
+
+MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
+TOKENIZER_SHA256 = "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42"
+ENGINE_BUILD_ID = "vllm@public-rayline-e2e-build"
+PLUGIN_VERSION = "rayline-arc-io@0.1.0"
+SERIALIZER_VERSION = "mtrouter-token-blocks-v2"
+REQUEST_SCHEMA_VERSION = "rayline.arc.pooling-request.v1"
+SESSION_REQUEST_SCHEMA_VERSION = "rayline.arc.session-pooling-request.v1"
+SESSION_RESPONSE_SCHEMA_VERSION = "rayline.arc.session-pooling-response.v1"
+EMBEDDING_DIMENSION = 1024
+EPISODE_HASH_LENGTH = 64
+PROVIDER_API_KEY = "public-e2e-provider-key"
+ENCODER_ID = os.getenv("RAYLINE_ARC_E2E_ENCODER_ID", "encoder-a")
+
+
+def _validated_pooling_data(
+    body: dict[str, Any],
+    *,
+    session_wire: bool,
+) -> dict[str, Any]:
+    """Enforce the plugin's strict request contract like the real endpoint."""
+    if session_wire:
+        data = body
+        expected_schema = SESSION_REQUEST_SCHEMA_VERSION
+    else:
+        if body.get("task", "plugin") != "plugin":
+            raise ValueError("task must be 'plugin'")
+        data = body["data"]
+        expected_schema = REQUEST_SCHEMA_VERSION
+    if not isinstance(data, dict):
+        raise TypeError("data must be an object")
+    allowed = {
+        "schema_version",
+        "serializer_version",
+        "serving_rung",
+        "episode_id_hash",
+        "turns",
+    }
+    unexpected = set(data) - allowed
+    if unexpected:
+        raise ValueError(f"unexpected fields: {sorted(unexpected)}")
+    if data["schema_version"] != expected_schema:
+        raise ValueError("unsupported schema_version")
+    if data["serializer_version"] != SERIALIZER_VERSION:
+        raise ValueError("unsupported serializer_version")
+    if data["serving_rung"] != "B":
+        raise ValueError("unexpected serving rung")
+    episode_hash = data["episode_id_hash"]
+    if (
+        not isinstance(episode_hash, str)
+        or len(episode_hash) != EPISODE_HASH_LENGTH
+        or any(character not in "0123456789abcdef" for character in episode_hash)
+    ):
+        raise ValueError("episode_id_hash must be a lowercase SHA256 hex digest")
+    _validate_turns(data["turns"])
+    return data
+
+
+def _validate_turns(turns: Any) -> None:
+    if not isinstance(turns, list) or not turns:
+        raise ValueError("turns must be a non-empty list")
+    for turn in turns:
+        if not isinstance(turn, dict) or set(turn) != {"role", "text"}:
+            raise ValueError("turns must contain role/text objects")
+        if turn["role"] not in ("user", "assistant"):
+            raise ValueError("turn role must be user or assistant")
+        if not isinstance(turn["text"], str):
+            raise TypeError("turn text must be a string")
+
+
+def _json_bytes(value: object) -> bytes:
+    return json.dumps(value, separators=(",", ":")).encode()
+
+
+def _message_text(body: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for message in body.get("messages", []):
+        content = message.get("content", "")
+        if isinstance(content, str):
+            parts.append(content)
+    return "\n".join(parts)
+
+
+class QuietHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+    def read_json(self) -> dict[str, Any]:
+        length = int(self.headers.get("content-length", "0"))
+        value = json.loads(self.rfile.read(length))
+        if not isinstance(value, dict):
+            raise TypeError("request body must be an object")
+        return value
+
+    def send_json(
+        self,
+        status: int,
+        value: object,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        payload = _json_bytes(value)
+        self.send_response(status)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(payload)))
+        for name, header_value in (headers or {}).items():
+            self.send_header(name, header_value)
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def send_health(self) -> None:
+        self.send_json(200, {"status": "ok"})
+
+
+class EncoderState:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.active_by_episode: dict[str, int] = {}
+        self.active_global = 0
+        self.max_same_episode = 0
+        self.max_global = 0
+        self.request_index = 0
+        self.pooling_requests = 0
+        self.session_history: dict[str, tuple[list[dict[str, str]], int, int]] = {}
+        self.session_actions: dict[str, int] = {}
+        self.close_calls = 0
+
+    def next_request_index(self) -> int:
+        with self.lock:
+            self.request_index += 1
+            return self.request_index
+
+    def begin(self, episode_hash: str) -> None:
+        with self.lock:
+            self.pooling_requests += 1
+            active = self.active_by_episode.get(episode_hash, 0) + 1
+            self.active_by_episode[episode_hash] = active
+            self.active_global += 1
+            self.max_same_episode = max(self.max_same_episode, active)
+            self.max_global = max(self.max_global, self.active_global)
+
+    def end(self, episode_hash: str) -> None:
+        with self.lock:
+            active = self.active_by_episode.get(episode_hash, 0) - 1
+            if active <= 0:
+                self.active_by_episode.pop(episode_hash, None)
+            else:
+                self.active_by_episode[episode_hash] = active
+            self.active_global -= 1
+
+    def reset(self) -> None:
+        with self.lock:
+            self.active_by_episode.clear()
+            self.active_global = 0
+            self.max_same_episode = 0
+            self.max_global = 0
+            self.pooling_requests = 0
+            self.session_history.clear()
+            self.session_actions.clear()
+            self.close_calls = 0
+
+    def close_session(self, episode_hash: str) -> None:
+        with self.lock:
+            self.close_calls += 1
+            self.session_history.pop(episode_hash, None)
+
+    def update_session(
+        self,
+        episode_hash: str,
+        turns: list[dict[str, str]],
+        token_count: int,
+    ) -> tuple[str, int, int, int]:
+        with self.lock:
+            previous = self.session_history.get(episode_hash)
+            if previous is None:
+                action = "created"
+                retained = 0
+                revision = 1
+            else:
+                previous_turns, previous_tokens, previous_revision = previous
+                revision = previous_revision
+                if turns == previous_turns:
+                    action = "reused"
+                    retained = token_count
+                elif (
+                    len(turns) > len(previous_turns)
+                    and turns[: len(previous_turns)] == previous_turns
+                    and token_count > previous_tokens
+                ):
+                    action = "appended"
+                    retained = previous_tokens
+                    revision += 1
+                else:
+                    action = "rebuilt"
+                    retained = 0
+                    revision += 1
+            appended = token_count - retained
+            self.session_history[episode_hash] = (
+                [dict(turn) for turn in turns],
+                token_count,
+                revision,
+            )
+            self.session_actions[action] = self.session_actions.get(action, 0) + 1
+            return action, retained, appended, revision
+
+    def snapshot(self) -> dict[str, Any]:
+        with self.lock:
+            return {
+                "max_same_episode": self.max_same_episode,
+                "max_global": self.max_global,
+                "pooling_requests": self.pooling_requests,
+                "resident_sessions": len(self.session_history),
+                "close_calls": self.close_calls,
+                "session_actions": dict(self.session_actions),
+            }
+
+
+ENCODER_STATE = EncoderState()
+
+
+class EncoderHandler(QuietHandler):
+    def do_GET(self) -> None:
+        if self.path == "/health":
+            self.send_health()
+            return
+        if self.path == "/stats":
+            self.send_json(200, ENCODER_STATE.snapshot())
+            return
+        self.send_json(404, {"error": "not_found"})
+
+    def send_vllm_error(self, status: int, message: str, err_type: str) -> None:
+        # Mirror vLLM's ErrorResponse envelope so clients see the real shape.
+        self.send_json(
+            status,
+            {"error": {"message": message, "type": err_type, "code": status}},
+        )
+
+    def do_DELETE(self) -> None:
+        prefix = "/v1/rayline/arc/session/"
+        if not self.path.startswith(prefix):
+            self.send_vllm_error(404, "Not Found", "NotFoundError")
+            return
+        if (
+            self.headers.get("Modal-Key") != "public-e2e-modal-key"
+            or self.headers.get("Modal-Secret") != "public-e2e-modal-secret"
+        ):
+            self.send_vllm_error(
+                401, "modal-proxy: missing credentials", "Unauthorized"
+            )
+            return
+        episode_hash = self.path[len(prefix) :]
+        if len(episode_hash) != EPISODE_HASH_LENGTH or any(
+            character not in "0123456789abcdef" for character in episode_hash
+        ):
+            self.send_vllm_error(400, "invalid episode hash", "BadRequestError")
+            return
+        ENCODER_STATE.close_session(episode_hash)
+        self.send_json(200, {"closed": True})
+
+    def send_session_pooling_response(
+        self,
+        episode_hash: str,
+        turns: list[dict[str, Any]],
+        embedding: list[float],
+        token_count: int,
+    ) -> None:
+        action, retained, appended, revision = ENCODER_STATE.update_session(
+            episode_hash,
+            turns,
+            token_count,
+        )
+        self.send_json(
+            200,
+            {
+                "schema_version": SESSION_RESPONSE_SCHEMA_VERSION,
+                "embedding": embedding,
+                "serialized_tokens": token_count,
+                "full_history_tokens": token_count,
+                "truncated_tokens": 0,
+                "retained_prefix_tokens": retained,
+                "appended_tokens": appended,
+                "session_action": action,
+                "session_revision": revision,
+                "serializer_version": SERIALIZER_VERSION,
+                "model": "Qwen/Qwen3.5-0.8B",
+                "model_revision": MODEL_REVISION,
+                "tokenizer_revision": MODEL_REVISION,
+                "tokenizer_sha256": TOKENIZER_SHA256,
+                "eos_token_id": 248046,
+                "engine_build_id": ENGINE_BUILD_ID,
+                "io_plugin_version": PLUGIN_VERSION,
+                "pooling_capabilities": [
+                    "chunked_causal_mean",
+                    "resumable_causal_mean",
+                ],
+            },
+        )
+
+    def send_stateless_pooling_response(
+        self,
+        embedding: list[float],
+        token_count: int,
+    ) -> None:
+        self.send_json(
+            200,
+            {
+                # Mirror the vLLM IOProcessorResponse envelope exactly,
+                # including the engine-owned correlation fields.
+                "request_id": f"pool-{ENCODER_STATE.next_request_index()}",
+                "created_at": int(time.time()),
+                "data": {
+                    "embedding": embedding,
+                    "serialized_tokens": token_count,
+                    "full_history_tokens": token_count,
+                    "truncated_tokens": 0,
+                    "cached_prefix_tokens": 0,
+                    "serializer_version": SERIALIZER_VERSION,
+                    "model": "Qwen/Qwen3.5-0.8B",
+                    "model_revision": MODEL_REVISION,
+                    "tokenizer_revision": MODEL_REVISION,
+                    "tokenizer_sha256": TOKENIZER_SHA256,
+                    "eos_token_id": 248046,
+                    "engine_build_id": ENGINE_BUILD_ID,
+                    "io_plugin_version": PLUGIN_VERSION,
+                    "pooling_capabilities": ["chunked_causal_mean"],
+                },
+            },
+        )
+
+    def do_POST(self) -> None:
+        if self.path == "/reset":
+            ENCODER_STATE.reset()
+            self.send_json(200, {"status": "reset"})
+            return
+        session_wire = self.path == "/v1/rayline/arc/session/pooling"
+        if self.path != "/pooling" and not session_wire:
+            self.send_vllm_error(404, "Not Found", "NotFoundError")
+            return
+        if (
+            self.headers.get("Modal-Key") != "public-e2e-modal-key"
+            or self.headers.get("Modal-Secret") != "public-e2e-modal-secret"
+        ):
+            self.send_vllm_error(
+                401, "modal-proxy: missing credentials", "Unauthorized"
+            )
+            return
+        try:
+            body = self.read_json()
+            data = _validated_pooling_data(body, session_wire=session_wire)
+            episode_hash = data["episode_id_hash"]
+            turns = data["turns"]
+            text = "\n".join(str(turn.get("text", "")) for turn in turns)
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            self.send_vllm_error(400, str(error), "BadRequestError")
+            return
+
+        ENCODER_STATE.begin(episode_hash)
+        try:
+            if "ARC_DELAY" in text:
+                time.sleep(0.4)
+            if "ARC_ENCODER_FAIL" in text:
+                self.send_vllm_error(503, "Service Unavailable", "InternalServerError")
+                return
+            if "ARC_ENCODER_A_UNAVAILABLE" in text and ENCODER_ID == "encoder-a":
+                self.send_vllm_error(503, "Service Unavailable", "InternalServerError")
+                return
+            sign = -1.0 if "ARC_ROUTE_B" in text else 1.0
+            embedding = [0.0] * EMBEDDING_DIMENSION
+            embedding[ROUTING_AXIS_INDEX] = sign
+            token_count = max(1, sum(len(str(turn.get("text", ""))) for turn in turns))
+            if session_wire:
+                self.send_session_pooling_response(
+                    episode_hash,
+                    turns,
+                    embedding,
+                    token_count,
+                )
+                return
+            self.send_stateless_pooling_response(embedding, token_count)
+        finally:
+            ENCODER_STATE.end(episode_hash)
+
+
+class ProviderState:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.requests: list[dict[str, Any]] = []
+
+    def append(self, body: dict[str, Any]) -> int:
+        with self.lock:
+            self.requests.append(body)
+            return len(self.requests)
+
+    def reset(self) -> None:
+        with self.lock:
+            self.requests.clear()
+
+    def snapshot(self) -> list[dict[str, Any]]:
+        with self.lock:
+            return list(self.requests)
+
+    def matching_count(self, marker: str) -> int:
+        with self.lock:
+            return sum(marker in _message_text(body) for body in self.requests)
+
+
+PROVIDER_STATE = ProviderState()
+
+
+class ProviderHandler(QuietHandler):
+    def do_GET(self) -> None:
+        if self.path == "/health":
+            self.send_health()
+            return
+        if self.path == "/observed":
+            self.send_json(200, {"requests": PROVIDER_STATE.snapshot()})
+            return
+        self.send_json(404, {"error": "not_found"})
+
+    def _send_retry_scenario(self, text: str, sequence: int) -> bool:
+        for marker, status, error in (
+            (
+                "ARC_PROVIDER_429_THEN_OK",
+                429,
+                "synthetic_provider_rate_limit",
+            ),
+            (
+                "ARC_PROVIDER_503_THEN_OK",
+                503,
+                "synthetic_provider_unavailable",
+            ),
+        ):
+            if marker in text and PROVIDER_STATE.matching_count(marker) == 1:
+                self.send_json(
+                    status,
+                    {"error": error},
+                    headers={"Retry-After": "1"},
+                )
+                return True
+        if "ARC_PROVIDER_429_ALWAYS" in text:
+            self.send_json(
+                429,
+                {"error": "synthetic_provider_rate_limit"},
+                headers={"Retry-After": "1"},
+            )
+            return True
+        if "ARC_STREAM_429_THEN_OK" not in text:
+            return False
+        if PROVIDER_STATE.matching_count("ARC_STREAM_429_THEN_OK") == 1:
+            self.send_json(
+                429,
+                {"error": "synthetic_provider_rate_limit"},
+                headers={"Retry-After": "1"},
+            )
+            return True
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.send_header("transfer-encoding", "chunked")
+        self.send_header("x-e2e-provider-sequence", str(sequence))
+        self.end_headers()
+        for payload in (
+            b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+            b"data: [DONE]\n\n",
+        ):
+            self.wfile.write(f"{len(payload):x}\r\n".encode() + payload + b"\r\n")
+        self.wfile.write(b"0\r\n\r\n")
+        self.wfile.flush()
+        return True
+
+    def _send_terminal_scenario(self, text: str, sequence: int) -> bool:
+        if "ARC_PROVIDER_TRANSPORT" in text:
+            self.close_connection = True
+            return True
+        if "ARC_PROVIDER_5XX" in text:
+            self.send_json(503, {"error": "synthetic_provider_failure"})
+            return True
+        if "ARC_STREAM_ABORT" not in text:
+            return False
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.send_header("transfer-encoding", "chunked")
+        self.send_header("x-e2e-provider-sequence", str(sequence))
+        self.end_headers()
+        payload = b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+        self.wfile.write(f"{len(payload):x}\r\n".encode() + payload + b"\r\n")
+        self.wfile.flush()
+        self.close_connection = True
+        return True
+
+    def do_POST(self) -> None:
+        if self.path == "/reset":
+            PROVIDER_STATE.reset()
+            self.send_json(200, {"status": "reset"})
+            return
+        if self.headers.get("Authorization") != f"Bearer {PROVIDER_API_KEY}":
+            # Prove the router injected exactly the artifact-owned credential
+            # rather than forwarding a caller-supplied Authorization header.
+            self.send_json(
+                401,
+                {
+                    "error": {
+                        "message": "missing or wrong provider credential",
+                        "type": "AuthenticationError",
+                        "code": 401,
+                    }
+                },
+            )
+            return
+        try:
+            body = self.read_json()
+        except (TypeError, ValueError, json.JSONDecodeError):
+            self.send_json(400, {"error": "invalid_request"})
+            return
+        sequence = PROVIDER_STATE.append(body)
+        text = _message_text(body)
+        if self._send_retry_scenario(text, sequence):
+            return
+        if "ARC_PROVIDER_DELAY" in text:
+            time.sleep(1)
+        if self._send_terminal_scenario(text, sequence):
+            return
+        self.send_json(
+            200,
+            {
+                "id": f"synthetic-{sequence}",
+                "object": "chat.completion",
+                "model": body.get("model", ""),
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 1,
+                    "total_tokens": 2,
+                },
+            },
+        )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("service", choices=("encoder", "provider"))
+    parser.add_argument("--port", type=int, required=True)
+    args = parser.parse_args()
+    handler = EncoderHandler if args.service == "encoder" else ProviderHandler
+    server = ThreadingHTTPServer(("0.0.0.0", args.port), handler)
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
