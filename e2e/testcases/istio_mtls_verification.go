@@ -123,8 +123,11 @@ func checkIstioProxyCertificates(ctx context.Context, namespace, podName string,
 
 		certDetails[certPath] = certExists
 
-		if !certExists && verbose {
-			fmt.Printf("[Test] Certificate not found at %s in pod %s\n", certPath, podName)
+		if !certExists {
+			allCertsFound = false
+			if verbose {
+				fmt.Printf("[Test] Certificate not found at %s in pod %s\n", certPath, podName)
+			}
 		}
 	}
 

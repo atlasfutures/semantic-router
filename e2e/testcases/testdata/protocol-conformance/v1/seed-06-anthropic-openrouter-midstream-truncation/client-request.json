@@ -1,0 +1,11 @@
+{
+  "model": "auto",
+  "max_tokens": 64,
+  "messages": [
+    {
+      "role": "user",
+      "content": [{"type": "text", "text": "Count from one to five."}]
+    }
+  ],
+  "stream": true
+}

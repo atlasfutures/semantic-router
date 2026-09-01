@@ -132,9 +132,11 @@ func testEntropyRouting(ctx context.Context, client *kubernetes.Clientset, opts 
 		fmt.Printf("  Category:    %d/%d (%.2f%%)\n", categoryMatches, totalTests, categoryAccuracy)
 	}
 
-	// Return error if any critical metric is 0%
-	if reasoningMatches == 0 {
-		return fmt.Errorf("entropy routing test failed: 0%% reasoning accuracy (0/%d correct)", totalTests)
+	// No acceptance contract covers this testcase, so the floor lives here.
+	// The previous bar passed on a single correct reasoning decision out of 26.
+	if err := requireAccuracyFloor("entropy routing reasoning", reasoningMatches, totalTests,
+		minUncalibratedRoutingAccuracy); err != nil {
+		return err
 	}
 
 	return nil

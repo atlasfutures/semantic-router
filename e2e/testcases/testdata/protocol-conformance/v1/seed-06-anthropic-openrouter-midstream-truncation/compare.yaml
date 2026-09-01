@@ -1,0 +1,16 @@
+# The Messages envelope is minted by the router from an OpenRouter generation id,
+# so its value is nondeterministic while its presence is not.
+volatile:
+  - /message/id
+
+# Two notes on expected-provider-request.json, which JSON cannot carry itself:
+#
+#   stream_options {include_usage: true} is router-injected, not client-authored.
+#   The router adds it to every streaming Chat request so the provider reports
+#   usage on the final chunk. It is legal OpenAI Chat and it is what a correct run
+#   emits, so the expected request carries it rather than the comparator hiding it.
+#
+#   The case declares an openrouter dialect but expects no OpenRouter `provider`
+#   routing block. Nothing in the conformance profile selects providers, so no
+#   correct run can emit one. The dialect is what the fixture answers as, not a
+#   claim that the router negotiates OpenRouter routing.

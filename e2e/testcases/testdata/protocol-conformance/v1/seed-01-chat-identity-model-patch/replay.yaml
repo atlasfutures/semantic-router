@@ -1,0 +1,13 @@
+# seed-01: Chat identity. The provider is a plain OpenAI Chat backend that answers
+# the buffered request in one shot, so the script is the minimal status + body pair.
+schema_version: protocol-conformance-replay-v1
+
+expect:
+  method: POST
+  path: /v1/chat/completions
+  headers:
+    content-type: application/json
+
+steps:
+  - {kind: status, status: 200, headers: {content-type: application/json}}
+  - {kind: body, file: provider-response.json}

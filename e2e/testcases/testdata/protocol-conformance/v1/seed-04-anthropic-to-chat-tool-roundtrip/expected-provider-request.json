@@ -1,0 +1,61 @@
+{
+  "max_completion_tokens": 256,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Add 2 and 3."
+    },
+    {
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "id": "toolu_seed04aaaaaaaaaaaaaaaa",
+          "type": "function",
+          "function": {
+            "name": "calculate_sum",
+            "arguments": "{\"a\": 2, \"b\": 3}"
+          }
+        }
+      ]
+    },
+    {
+      "id": "item_3a3234ffe986ecf50f4eafa2",
+      "role": "tool",
+      "content": "5",
+      "tool_call_id": "toolu_seed04aaaaaaaaaaaaaaaa"
+    }
+  ],
+  "model": "conformance-chat-model",
+  "tool_choice": {
+    "function": {
+      "name": "calculate_sum"
+    },
+    "type": "function"
+  },
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "calculate_sum",
+        "description": "Add two integers and return the sum.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "integer",
+              "description": "First addend."
+            },
+            "b": {
+              "type": "integer",
+              "description": "Second addend."
+            }
+          },
+          "required": [
+            "a",
+            "b"
+          ]
+        }
+      }
+    }
+  ]
+}

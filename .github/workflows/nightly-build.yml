@@ -28,7 +28,8 @@ jobs:
     needs: core
     uses: ./.github/workflows/integration-test-k8s.yml
     with:
-      profiles: '["envoy-ai-gateway","dashboard","remote-embedding"]'
+      profiles: '["envoy-ai-gateway","dashboard","remote-embedding","protocol-conformance"]'
+      cadence: nightly
     secrets: inherit
 
   cli:

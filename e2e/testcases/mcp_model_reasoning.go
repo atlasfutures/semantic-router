@@ -100,9 +100,11 @@ func testMCPModelReasoning(ctx context.Context, client *kubernetes.Clientset, op
 			modelRecommendationsFollowed, reasoningDecisionsCorrect)
 	}
 
-	// Return error if accuracy is too low
-	if successfulTests == 0 {
-		return fmt.Errorf("mcp model reasoning test failed: 0%% accuracy (0/%d successful)", totalTests)
+	// No acceptance contract covers this testcase, so the floor lives here.
+	// The previous bar passed on a single successful case out of N.
+	if err := requireAccuracyFloor("mcp model reasoning", successfulTests, totalTests,
+		minUncalibratedRoutingAccuracy); err != nil {
+		return err
 	}
 
 	return nil

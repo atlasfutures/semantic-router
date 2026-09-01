@@ -1,0 +1,20 @@
+# seed-05: pre-stream error. The request asks for a stream, but the provider never
+# commits one: the single status step carries 429 and Retry-After, and the body step
+# writes a buffered JSON error. Because status is step 0 and no SSE step follows,
+# nothing about this response can be mistaken for a committed stream, which is what
+# the no-sse-success-frame invariant asserts.
+schema_version: protocol-conformance-replay-v1
+
+expect:
+  method: POST
+  path: /v1/chat/completions
+  headers:
+    content-type: application/json
+
+steps:
+  - kind: status
+    status: 429
+    headers:
+      content-type: application/json
+      retry-after: "2"
+  - {kind: body, file: provider-response.json}

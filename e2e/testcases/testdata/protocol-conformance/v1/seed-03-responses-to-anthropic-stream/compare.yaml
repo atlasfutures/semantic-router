@@ -1,0 +1,8 @@
+# The router mints the Responses envelope itself, so its identifiers and creation
+# timestamp are nondeterministic. Semantic mode matches them by JSON type, which
+# still fails the case if one of them disappears.
+volatile:
+  - /response/id
+  - /response/created_at
+  - /item_id
+  - /item/id

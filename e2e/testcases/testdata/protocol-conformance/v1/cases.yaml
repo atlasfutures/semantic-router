@@ -1,0 +1,702 @@
+schema_version: dpc-003-inventory-v1alpha1
+status: design-only-acceptance-gated
+scope:
+  router_infra_issue: https://github.com/atlasfutures/router-infra/issues/22
+  upstream_epic: https://github.com/vllm-project/semantic-router/issues/1138
+  conformance_issue: https://github.com/vllm-project/semantic-router/issues/2358
+  audited_vsr_commit: 2aaf0a647e491e8dde22a4ce6888975e358c9008
+  audited_firebase_commit: 387ef2ad5c9b8b1087ded5556e7bbeaa07d3f5b7
+
+publication_policy:
+  public_corpus_license_target: Apache-2.0
+  private_source_license: no-top-level-license-found
+  rule: >-
+    Private Firebase tests are behavior-only provenance. Do not copy code,
+    fixture bytes, prompts, credentials, endpoints, provider responses, or
+    model aliases. Author every eventual public payload anew from the public
+    normative sources named by the case, then submit through normal DCO and
+    project contribution review.
+
+comparison_modes:
+  exact: Raw bytes and relevant headers are identical.
+  exact-except: Raw or structural identity except narrowly declared pointers,
+    headers, generated IDs, or timestamps.
+  semantic: Typed blocks or events, ordering, usage, error, terminal state, and
+    the complete fidelity ledger are equivalent.
+  reject: A typed status, error, diagnostic, and zero-dispatch outcome match.
+
+fidelity_actions:
+  - preserved
+  - patched
+  - mapped
+  - synthesized
+  - coerced
+  - omitted
+  - rejected
+
+normative_sources:
+  openai_chat: https://platform.openai.com/docs/api-reference/chat/create
+  openai_responses: https://platform.openai.com/docs/api-reference/responses/create
+  openai_responses_streaming: https://platform.openai.com/docs/api-reference/responses-streaming
+  anthropic_messages: https://platform.claude.com/docs/en/api/messages
+  anthropic_streaming: https://platform.claude.com/docs/en/build-with-claude/streaming
+  anthropic_caching: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+  anthropic_errors: https://platform.claude.com/docs/en/api/errors
+  openrouter_routing: https://openrouter.ai/docs/guides/routing/provider-selection
+  openrouter_caching: https://openrouter.ai/docs/guides/best-practices/prompt-caching
+  openrouter_responses: https://openrouter.ai/docs/api/api-reference/responses/create-responses
+  fireworks_chat: https://docs.fireworks.ai/api-reference/post-chatcompletions
+  fireworks_responses: https://docs.fireworks.ai/api-reference/post-responses
+  fireworks_compatibility: https://docs.fireworks.ai/tools-sdks/openai-compatibility
+  fireworks_vision: https://docs.fireworks.ai/guides/querying-vision-language-models
+  zai_chat: https://docs.z.ai/api-reference/llm/chat-completion
+  zai_anthropic_endpoint: https://docs.z.ai/devpack/tool/others
+  vsr_3013: https://github.com/vllm-project/semantic-router/issues/3013
+  vsr_2947: https://github.com/vllm-project/semantic-router/issues/2947
+  vsr_3024: https://github.com/vllm-project/semantic-router/issues/3024
+  vsr_3035: https://github.com/vllm-project/semantic-router/pull/3035
+  agentgateway_goldens: https://github.com/agentgateway/agentgateway/blob/main/crates/llm/src/golden_tests.rs
+
+# The compact smoke tier CI runs on pull requests. It is the smallest subset of
+# the promoted tranche that still exercises every ingress protocol the router
+# accepts (openai-chat, anthropic-messages, openai-responses) and both client
+# modes (buffered, streaming). The full tranche runs nightly.
+smoke_tier:
+  - seed-01-chat-identity-model-patch
+  - seed-02-anthropic-native-request-capture
+  - seed-03-responses-to-anthropic-stream
+
+cases:
+  - id: seed-01-chat-identity-model-patch
+    tranche: first-six
+    contract: Chat identity path changes only the selected model and provider-owned authentication.
+    client: {protocol: openai-chat, path: /v1/chat/completions, mode: buffered}
+    provider: {protocol: openai-chat, dialect: openai}
+    mutation_mode: patch
+    features: [strict-json-schema, usage]
+    synthetic_shape: A text request with a small strict schema.
+    expectation:
+      outcome: supported
+      provider_request: exact-except
+      client_response: exact-except
+      allowed_patches: [/model, Authorization]
+      fidelity:
+        /model: patched
+        /response_format: preserved
+        /temperature: preserved
+      loss: none
+      dispatch_attempts: 1
+    provenance:
+      origin: public-regression-seed
+      sources: [openai_chat, vsr_3024, vsr_3035]
+      note: Accepted issue 3024 and open PR 3035 make request-field survival a focused seed. The unknown-field arm moved out when strict rejection landed.
+    ownership:
+      primary: Data Plane & Networking
+      reviewers: [Evaluation & Quality]
+      upstream_issues: [1138, 2358, 3024]
+
+  - id: seed-02-anthropic-native-request-capture
+    tranche: first-six
+    contract: A same-protocol Messages request reaches an Anthropic provider with compatible blocks and headers intact.
+    client: {protocol: anthropic-messages, path: /v1/messages, mode: buffered}
+    provider: {protocol: anthropic-messages, dialect: anthropic}
+    mutation_mode: patch
+    features: [system-blocks, cache-control, beta-header, image-block, usage]
+    synthetic_shape: Two system text blocks, one cache marker, and one tiny generated image block.
+    expectation:
+      outcome: supported
+      provider_request: exact-except
+      client_response: exact-except
+      allowed_patches: [/model, x-api-key, Authorization]
+      fidelity:
+        /system: preserved
+        /messages: preserved
+        /anthropic-version: preserved
+        /anthropic-beta: preserved
+      loss: none
+      dispatch_attempts: 1
+    provenance:
+      origin: public-regression-seed
+      sources: [anthropic_messages, anthropic_caching]
+      note: Extends the public anthropic-shim recorder idea into a protocol-neutral exact-capture contract.
+    ownership:
+      primary: Data Plane & Networking
+      reviewers: [Evaluation & Quality]
+      upstream_issues: [1138, 2358]
+
+  - id: seed-03-responses-to-anthropic-stream
+    tranche: first-six
+    contract: Responses clients receive a complete Responses SSE sequence when the selected backend speaks Messages.
+    client: {protocol: openai-responses, path: /v1/responses, mode: streaming}
+    provider: {protocol: anthropic-messages, dialect: anthropic}
+    mutation_mode: translate
+    features: [text, sse-order, terminal-event, usage]
+    synthetic_shape: A short text stream with two provider deltas and terminal usage.
+    expectation:
+      outcome: supported
+      provider_request: semantic
+      client_response: semantic
+      invariants: [no-chat-chunk-leak, response-completed-exactly-once, ordered-text, usage-preserved]
+      fidelity:
+        /input: mapped
+        /provider-events: mapped
+        /response.completed: synthesized
+      loss: none
+      dispatch_attempts: 1
+    provenance:
+      origin: public-accepted-bug-seed
+      sources: [openai_responses_streaming, anthropic_streaming, vsr_3013]
+      note: >-
+        Seeded from issue 3013, which is now closed: the Responses stream reaches
+        the Messages backend and comes back as a Responses SSE sequence. It then
+        carried a marker for a second reason, a missing anthropic-version header,
+        until the profile declared one. That was never the Router's gap either.
+        Anthropic requires the header and the Router synthesizes none, but a
+        backend can supply it through extra_headers, and a provider profile is all
+        or nothing: naming extra_headers also obliges base_url, a provider type,
+        an auth header and a resolvable credential. Supplying the whole set is
+        what a real Anthropic backend needs anyway, and it closes this case with
+        no code change. What remains upstream is a defaults and documentation
+        gap, not a functional one: the reference config declares an
+        api_format: anthropic model without the header, and every backend the
+        project tests against is permissive enough to hide that.
+    ownership:
+      primary: Data Plane & Networking
+      reviewers: [Evaluation & Quality]
+      upstream_issues: [1138, 2358, 3013]
+
+  - id: seed-04-anthropic-to-chat-tool-roundtrip
+    tranche: first-six
+    contract: A representable Messages tool call and result round-trip through Chat without losing pairing or argument bytes.
+    client: {protocol: anthropic-messages, path: /v1/messages, mode: buffered}
+    provider: {protocol: openai-chat, dialect: openai}
+    mutation_mode: translate
+    features: [tools, tool-choice, tool-result, multi-turn]
+    synthetic_shape: A calculate_sum tool with two integer arguments and one result turn.
+    expectation:
+      outcome: supported
+      provider_request: semantic
+      client_response: semantic
+      invariants:
+        - tool-id-pairing
+        - argument-json-equivalence
+        - ordered-blocks
+        - content-encoding-equivalence
+        - null-vs-omitted-equivalence
+      fidelity:
+        /tools: mapped
+        /tool_choice: mapped
+        /tool_use/id: preserved
+        /tool_result/tool_use_id: preserved
+      loss: none
+      dispatch_attempts: 1
+    provenance:
+      origin: public-regression-seed
+      sources: [anthropic_messages, openai_chat, agentgateway_goldens]
+      note: Uses AgentGateway's Apache-2.0 golden-test pattern, not its Rust request types or fixture bytes.
+    ownership:
+      primary: Data Plane & Networking
+      reviewers: [Evaluation & Quality, Agentic & Context]
+      upstream_issues: [1138, 2358]
+
+  - id: seed-05-chat-prestream-rate-limit
+    tranche: first-six
+    contract: A provider 429 before response commitment preserves bounded retry metadata and does not look successful.
+    client: {protocol: openai-chat, path: /v1/chat/completions, mode: streaming}
+    provider: {protocol: openai-chat, dialect: generic-openai-compatible}
+    mutation_mode: patch
+    features: [pre-stream-error, retry-after, usage-absent]
+    synthetic_shape: Provider returns a synthetic 429 JSON error and a small Retry-After value before SSE headers.
+    expectation:
+      outcome: provider-error
+      provider_request: exact-except
+      client_response: exact-except
+      invariants: [status-429, retry-after-bounded, no-sse-success-frame, no-usage]
+      fidelity:
+        /status: preserved
+        /error: preserved
+        /Retry-After: preserved
+      loss: none
+      dispatch_attempts: 1
+    provenance:
+      origin: public-regression-seed
+      sources: [openai_chat]
+      note: Generic fault script; no hosted endpoint or captured provider body is used.
+    ownership:
+      primary: Data Plane & Networking
+      reviewers: [Evaluation & Quality, Enterprise & Environment]
+      upstream_issues: [1138, 2358, 2294]
+
+  - id: seed-06-anthropic-openrouter-midstream-truncation
+    tranche: first-six
+    contract: A committed translated stream that ends mid-block never becomes a clean Anthropic success and is never retried.
+    client: {protocol: anthropic-messages, path: /v1/messages, mode: streaming}
+    provider: {protocol: openai-chat, dialect: openrouter}
+    mutation_mode: translate
+    features: [sse, truncated-stream, post-commit-error, no-retry]
+    synthetic_shape: One text delta, then the provider body ends before finish reason, usage, or terminal sentinel.
+    expectation:
+      outcome: transport-error-after-commit
+      provider_request: semantic
+      client_response: semantic
+      invariants: [partial-text-preserved, no-message-stop-success, no-second-dispatch, incomplete-usage]
+      fidelity:
+        /partial-text: mapped
+        /terminal-state: synthesized
+      loss: provider-terminal-state-unavailable
+      dispatch_attempts: 1
+    provenance:
+      origin: public-regression-seed
+      sources: [anthropic_streaming, openrouter_routing]
+      note: >-
+        Fault is generated by the hermetic fixture, not copied from a production
+        stream. It ends the provider body rather than resetting the connection.
+        A reset is not the Router's to answer: an in-cluster proxy forwards it as
+        a stream reset and tears the response path down before anything can be
+        appended, so the case would measure the proxy. A managed edge in front of
+        a provider converts the same backend death into an HTTP-level end, which
+        is why this corpus saw a terminal event through Cloud Run and none
+        through kind while the Router was identical. Ending the body is the shape
+        a provider failure reaches a Router in, and it behaves the same in both.
+    ownership:
+      primary: Data Plane & Networking
+      reviewers: [Evaluation & Quality]
+      upstream_issues: [1138, 2358, 2294]
+
+  - id: import-01-fireworks-chat-stream-usage
+    tranche: firebase-derived-deferred
+    contract: Fireworks final Chat chunk usage survives streaming translation.
+    client: {protocol: openai-chat, path: /v1/chat/completions, mode: streaming}
+    provider: {protocol: openai-chat, dialect: fireworks}
+    mutation_mode: patch
+    features: [sse, usage, terminal-sentinel]
+    synthetic_shape: Two content chunks, then a finish chunk carrying prompt, completion, and total tokens.
+    expectation: {outcome: supported, provider_request: exact-except, client_response: exact-except, loss: none, dispatch_attempts: 1}
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: providers.spec.ts streaming OpenAI conversion and provider usage behavior
+      sources: [fireworks_compatibility]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality], upstream_issues: [1138, 2358]}
+
+  - id: import-02-fireworks-tool-cache-field-policy
+    tranche: firebase-derived-deferred
+    contract: Unsupported provider-only fields on tool definitions are removed only with an explicit fidelity entry.
+    client: {protocol: openai-chat, path: /v1/chat/completions, mode: buffered}
+    provider: {protocol: openai-chat, dialect: fireworks}
+    mutation_mode: patch
+    features: [tools, cache-control, provider-capability]
+    synthetic_shape: One function tool with a nonstandard per-tool cache marker and otherwise standard schema.
+    expectation:
+      outcome: supported-with-declared-loss
+      provider_request: exact-except
+      client_response: semantic
+      fidelity: {/tools/0/cache_control: omitted, /tools/0/function: preserved}
+      loss: nonauthoritative-tool-cache-hint
+      dispatch_attempts: 1
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: providers.spec.ts Fireworks unsupported tool-field filtering behavior
+      sources: [fireworks_chat]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality], upstream_issues: [1138, 2358]}
+
+  - id: import-03-fireworks-chat-image
+    tranche: firebase-derived-deferred
+    contract: OpenAI image content is preserved on a Fireworks vision-capable profile.
+    client: {protocol: openai-chat, path: /v1/chat/completions, mode: buffered}
+    provider: {protocol: openai-chat, dialect: fireworks}
+    mutation_mode: patch
+    features: [image-url, text, usage]
+    synthetic_shape: Original locally generated geometric icon encoded as a data URL plus a text instruction.
+    expectation: {outcome: supported, provider_request: exact-except, client_response: exact-except, loss: none, dispatch_attempts: 1}
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: providers.spec.ts multimodal request-conversion behavior
+      sources: [openai_chat, fireworks_vision]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality], upstream_issues: [1138, 2358]}
+
+  - id: import-04-anthropic-to-zai-thinking-coercion
+    tranche: firebase-derived-deferred
+    contract: Anthropic adaptive thinking is either deterministically mapped to Z.ai controls or rejected, never silently changed.
+    client: {protocol: anthropic-messages, path: /v1/messages, mode: buffered}
+    provider: {protocol: openai-chat, dialect: z-ai}
+    mutation_mode: translate
+    features: [reasoning, effort, dialect-coercion]
+    synthetic_shape: Adaptive thinking with a named high effort and a short text turn.
+    expectation:
+      outcome: supported-with-declared-loss
+      provider_request: semantic
+      client_response: semantic
+      fidelity: {/thinking/type: coerced, /reasoning_effort: mapped}
+      loss: adaptive-policy-collapsed-to-provider-controls
+      dispatch_attempts: 1
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: providers.spec.ts Z.ai thinking and effort normalization behaviors
+      sources: [anthropic_messages, zai_chat]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality], upstream_issues: [1138, 2358]}
+
+  - id: import-05-anthropic-to-zai-streaming-tool
+    tranche: firebase-derived-deferred
+    contract: Z.ai streaming reasoning and tool arguments become correctly ordered Anthropic blocks.
+    client: {protocol: anthropic-messages, path: /v1/messages, mode: streaming}
+    provider: {protocol: openai-chat, dialect: z-ai}
+    mutation_mode: translate
+    features: [reasoning, tools, partial-arguments, sse, usage]
+    synthetic_shape: Visible reasoning followed by one lookup_timezone tool call split across arbitrary chunks.
+    expectation: {outcome: supported, provider_request: semantic, client_response: semantic, loss: none, dispatch_attempts: 1}
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: providers.spec.ts Z.ai request shaping and OpenAI-to-Anthropic stream translation
+      sources: [zai_chat, anthropic_streaming]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality], upstream_issues: [1138, 2358]}
+
+  - id: import-06-anthropic-to-zai-anthropic-native
+    tranche: firebase-derived-deferred
+    contract: Z.ai's Anthropic-compatible endpoint is a distinct same-protocol dialect profile.
+    client: {protocol: anthropic-messages, path: /v1/messages, mode: buffered}
+    provider: {protocol: anthropic-messages, dialect: z-ai}
+    mutation_mode: patch
+    features: [system, tools, dialect-path, usage]
+    synthetic_shape: Plain text plus one standard function tool using only documented Messages fields.
+    expectation: {outcome: supported, provider_request: exact-except, client_response: exact-except, loss: none, dispatch_attempts: 1}
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: providers.spec.ts Z.ai provider dispatch behavior
+      sources: [anthropic_messages, zai_anthropic_endpoint]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality], upstream_issues: [1138, 2358]}
+
+  - id: import-07-responses-openrouter-native-tools
+    tranche: firebase-derived-deferred
+    contract: A native Responses request preserves supported client tools, tool choice, store policy, and provider routing controls.
+    client: {protocol: openai-responses, path: /v1/responses, mode: buffered}
+    provider: {protocol: openai-responses, dialect: openrouter}
+    mutation_mode: patch
+    features: [tools, tool-choice, store, provider-order, usage]
+    synthetic_shape: One client function tool, required choice, store false, and explicit provider order.
+    expectation: {outcome: supported, provider_request: exact-except, client_response: exact-except, loss: none, dispatch_attempts: 1}
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: providers.spec.ts native Responses forwarding through OpenRouter
+      sources: [openrouter_responses, openrouter_routing]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality, Enterprise & Environment], upstream_issues: [1138, 2358]}
+
+  - id: import-08-responses-openrouter-terminal-no-newline
+    tranche: firebase-derived-deferred
+    contract: A final response.completed frame without a trailing newline is parsed and forwarded exactly once.
+    client: {protocol: openai-responses, path: /v1/responses, mode: streaming}
+    provider: {protocol: openai-responses, dialect: openrouter}
+    mutation_mode: patch
+    features: [sse, terminal-event, no-final-newline, usage]
+    synthetic_shape: Normal Responses frames with the terminal JSON ending at EOF.
+    expectation: {outcome: supported, provider_request: exact-except, client_response: exact, loss: none, dispatch_attempts: 1}
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: responses_endpoint.spec.ts terminal frame without newline behavior
+      sources: [openai_responses_streaming, openrouter_responses]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality], upstream_issues: [1138, 2358]}
+
+  - id: import-09-responses-fireworks-native-continuation
+    tranche: firebase-derived-deferred
+    contract: Fireworks Responses preserves previous_response_id, store policy, tools, and response identity.
+    client: {protocol: openai-responses, path: /v1/responses, mode: buffered}
+    provider: {protocol: openai-responses, dialect: fireworks}
+    mutation_mode: patch
+    features: [previous-response-id, tools, store, usage]
+    synthetic_shape: Second-turn request referencing a synthetic first-turn response ID with one function tool.
+    expectation: {outcome: supported, provider_request: exact-except, client_response: exact-except, loss: none, dispatch_attempts: 1}
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: providers.spec.ts native Responses provider dispatch and continuation behavior
+      sources: [openai_responses, fireworks_responses]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality, Agentic & Context], upstream_issues: [1138, 2358, 2999]}
+
+  - id: import-10-responses-fireworks-unsupported-hosted-tool
+    tranche: firebase-derived-deferred
+    contract: A required hosted tool absent from the Fireworks capability profile is rejected before dispatch.
+    client: {protocol: openai-responses, path: /v1/responses, mode: buffered}
+    provider: {protocol: openai-responses, dialect: fireworks}
+    mutation_mode: reject
+    features: [hosted-tool, tool-choice, capability-mismatch]
+    synthetic_shape: One invented hosted tool type selected as mandatory, with no client function fallback.
+    expectation:
+      outcome: rejected
+      provider_request: reject
+      client_response: reject
+      fidelity: {/tools/0: rejected, /tool_choice: rejected}
+      loss: none
+      dispatch_attempts: 0
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: providers.spec.ts hosted-tool filtering and tool-choice repair behavior
+      sources: [openai_responses, fireworks_responses]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality], upstream_issues: [1138, 2358]}
+
+  - id: import-11-anthropic-to-openai-responses-buffered
+    tranche: firebase-derived-deferred
+    contract: Messages system, tools, effort, images, stop reason, and usage map to and from Responses without losing representable semantics.
+    client: {protocol: anthropic-messages, path: /v1/messages, mode: buffered}
+    provider: {protocol: openai-responses, dialect: openai}
+    mutation_mode: translate
+    features: [system, tools, image, reasoning-effort, usage, stop-reason]
+    synthetic_shape: System text, one generated image, one client tool, and a short final text output.
+    expectation: {outcome: supported, provider_request: semantic, client_response: semantic, loss: none, dispatch_attempts: 1}
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: providers.spec.ts Messages-to-Responses buffered conversion behaviors
+      sources: [anthropic_messages, openai_responses]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality], upstream_issues: [1138, 2358]}
+
+  - id: import-12-anthropic-to-openai-responses-tool-stream
+    tranche: firebase-derived-deferred
+    contract: Responses function-call deltas assemble into one Anthropic tool_use block with stable ID and arguments.
+    client: {protocol: anthropic-messages, path: /v1/messages, mode: streaming}
+    provider: {protocol: openai-responses, dialect: openai}
+    mutation_mode: translate
+    features: [tools, partial-arguments, sse, usage, terminal-event]
+    synthetic_shape: Function arguments split at UTF-8-safe and JSON-unsafe boundaries, then completed.
+    expectation: {outcome: supported, provider_request: semantic, client_response: semantic, loss: none, dispatch_attempts: 1}
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: providers.spec.ts Responses-to-Anthropic streaming tool conversion
+      sources: [openai_responses_streaming, anthropic_streaming, agentgateway_goldens]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality], upstream_issues: [1138, 2358]}
+
+  - id: import-13-anthropic-openai-encrypted-reasoning
+    tranche: firebase-derived-deferred
+    contract: OpenAI encrypted reasoning is carried as opaque provider state and never exposed as generic reasoning text.
+    client: {protocol: anthropic-messages, path: /v1/messages, mode: streaming}
+    provider: {protocol: openai-responses, dialect: openai}
+    mutation_mode: translate
+    features: [encrypted-reasoning, redacted-thinking-carrier, sse, tool-order]
+    synthetic_shape: One opaque invented encrypted blob followed by a tool call and text block.
+    expectation:
+      outcome: supported
+      provider_request: semantic
+      client_response: semantic
+      invariants: [opaque-bytes-preserved, carrier-before-tool, no-visible-reasoning]
+      fidelity: {/reasoning/encrypted_content: mapped, /content/redacted_thinking: synthesized}
+      loss: none
+      dispatch_attempts: 1
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: providers.spec.ts encrypted-reasoning carrier and stream conversion behaviors
+      sources: [openai_responses_streaming, anthropic_streaming]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality, Agentic & Context], upstream_issues: [1138, 2358, 2999]}
+
+  - id: import-14-anthropic-provider-switch-a-b-a
+    tranche: firebase-derived-deferred
+    contract: OpenAI Responses state can be hidden from an Anthropic turn without destroying the original carrier needed when routing returns to OpenAI.
+    client: {protocol: anthropic-messages, path: /v1/messages, mode: sequence}
+    provider: {protocol: mixed, dialect: openai-anthropic-openai}
+    mutation_mode: translate
+    features: [a-to-b-to-a, encrypted-reasoning, nonmutating-view, tools, continuation-lineage]
+    synthetic_shape: Turn A yields an opaque reasoning carrier; turn B uses Messages; turn A replays the original opaque state.
+    expectation:
+      outcome: supported-with-declared-loss
+      provider_request: semantic
+      client_response: semantic
+      invariants: [original-history-immutable, provider-a-carrier-restored, tool-pairing-preserved]
+      fidelity: {/turn-b/provider-a-carrier: omitted, /turn-c/provider-a-carrier: mapped}
+      loss: provider-a-state-not-visible-to-provider-b
+      dispatch_attempts: 3
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: providers.spec.ts nonmutating reasoning-carrier stripping and replay behaviors
+      sources: [openai_responses, anthropic_messages, agentgateway_goldens]
+    ownership: {primary: Data Plane & Networking, reviewers: [Agentic & Context, Evaluation & Quality, Enterprise & Environment], upstream_issues: [1138, 2358, 2999]}
+
+  - id: import-15-anthropic-thinking-signature-stream
+    tranche: firebase-derived-deferred
+    contract: Native Anthropic thinking deltas and the terminal signature remain ordered and byte-preserved.
+    client: {protocol: anthropic-messages, path: /v1/messages, mode: streaming}
+    provider: {protocol: anthropic-messages, dialect: anthropic}
+    mutation_mode: patch
+    features: [thinking, signature, sse-order, usage]
+    synthetic_shape: Invented thinking deltas, an opaque signature delta, then a visible text block.
+    expectation: {outcome: supported, provider_request: exact-except, client_response: exact-except, loss: none, dispatch_attempts: 1}
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: thinking_filter.spec.ts native Anthropic thinking-preservation behavior
+      sources: [anthropic_streaming]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality, Agentic & Context], upstream_issues: [1138, 2358]}
+
+  - id: import-16-signed-thinking-to-chat-reject
+    tranche: firebase-derived-deferred
+    contract: Required signed Anthropic thinking cannot be routed to Chat by stripping or relabeling it.
+    client: {protocol: anthropic-messages, path: /v1/messages, mode: buffered}
+    provider: {protocol: openai-chat, dialect: openrouter}
+    mutation_mode: reject
+    features: [signed-thinking, redacted-thinking, capability-mismatch]
+    synthetic_shape: Conversation history contains an opaque signed thinking block required for continuation.
+    expectation: {outcome: rejected, provider_request: reject, client_response: reject, loss: none, dispatch_attempts: 0}
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: thinking_filter.spec.ts provider-gated thinking filtering behavior
+      sources: [anthropic_streaming, openrouter_routing]
+    ownership: {primary: Data Plane & Networking, reviewers: [Agentic & Context, Evaluation & Quality], upstream_issues: [1138, 2358, 2999]}
+
+  - id: import-17-anthropic-stream-cache-usage
+    tranche: firebase-derived-deferred
+    contract: Anthropic cache creation and read counters agree between message_start, message_delta, client output, and internal usage.
+    client: {protocol: anthropic-messages, path: /v1/messages, mode: streaming}
+    provider: {protocol: anthropic-messages, dialect: anthropic}
+    mutation_mode: patch
+    features: [cache-control, cache-usage, sse, usage-parity]
+    synthetic_shape: Two-request cache cycle with deterministic nonzero creation then read counters.
+    expectation:
+      outcome: supported
+      provider_request: exact-except
+      client_response: semantic
+      invariants: [start-delta-usage-consistent, cache-read-preserved, cache-write-preserved]
+      loss: none
+      dispatch_attempts: 2
+    provenance:
+      origin: firebase-behavior-reexpression-and-public-bug
+      private_reference: upstreamCost.spec.ts cache usage extraction behavior
+      sources: [anthropic_caching, anthropic_streaming, vsr_2947]
+      note: Direct regression seed for accepted issue 2947.
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality], upstream_issues: [1138, 2358, 2947]}
+
+  - id: import-18-responses-incomplete-max-tokens
+    tranche: firebase-derived-deferred
+    contract: A Responses incomplete terminal caused by output limits remains incomplete and preserves usage and reason.
+    client: {protocol: openai-responses, path: /v1/responses, mode: streaming}
+    provider: {protocol: openai-responses, dialect: openai}
+    mutation_mode: patch
+    features: [sse, incomplete, max-output-tokens, usage]
+    synthetic_shape: Normal text deltas ending with response.incomplete and a max-output reason.
+    expectation: {outcome: supported, provider_request: exact-except, client_response: exact, loss: none, dispatch_attempts: 1}
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: providers.spec.ts incomplete-reason and stop-reason mapping behavior
+      sources: [openai_responses_streaming]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality], upstream_issues: [1138, 2358]}
+
+  - id: import-19-responses-completed-at-eof
+    tranche: firebase-derived-deferred
+    contract: A complete Responses stream whose final event ends at EOF is complete, not truncated.
+    client: {protocol: openai-responses, path: /v1/responses, mode: streaming}
+    provider: {protocol: openai-responses, dialect: openai}
+    mutation_mode: patch
+    features: [terminal-event, no-final-newline, usage, exact-passthrough]
+    synthetic_shape: A response.completed event ending immediately after its JSON payload.
+    expectation: {outcome: supported, provider_request: exact-except, client_response: exact, loss: none, dispatch_attempts: 1}
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: responses_endpoint.spec.ts terminal frame at EOF behavior
+      sources: [openai_responses_streaming]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality], upstream_issues: [1138, 2358]}
+
+  - id: import-20-responses-client-cancellation
+    tranche: firebase-derived-deferred
+    contract: Client cancellation propagates upstream, records a cancelled dispatch outcome, and never retries after commitment.
+    client: {protocol: openai-responses, path: /v1/responses, mode: streaming}
+    provider: {protocol: openai-responses, dialect: openai}
+    mutation_mode: patch
+    features: [cancellation, partial-sse, no-retry, usage-partial]
+    synthetic_shape: Client cancels after one output delta while the provider fixture waits for context cancellation.
+    expectation:
+      outcome: cancelled
+      provider_request: exact-except
+      client_response: semantic
+      invariants: [upstream-context-cancelled, no-terminal-success, no-second-dispatch]
+      loss: provider-final-usage-unavailable
+      dispatch_attempts: 1
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: responses_endpoint.spec.ts interrupted-stream accounting boundary
+      sources: [openai_responses_streaming]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality], upstream_issues: [1138, 2358, 2294]}
+
+  - id: import-21-anthropic-openrouter-midstream-error
+    tranche: firebase-derived-deferred
+    contract: A provider error after Anthropic bytes are committed becomes an Anthropic error event, never a clean success.
+    client: {protocol: anthropic-messages, path: /v1/messages, mode: streaming}
+    provider: {protocol: openai-chat, dialect: openrouter}
+    mutation_mode: translate
+    features: [mid-stream-error, error-envelope, retry-after, no-retry]
+    synthetic_shape: One visible text delta followed by a synthetic overload error frame.
+    expectation:
+      outcome: provider-error-after-commit
+      provider_request: semantic
+      client_response: semantic
+      invariants: [error-event-present, no-clean-message-stop, no-second-dispatch]
+      loss: final-usage-unavailable
+      dispatch_attempts: 1
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: error_envelope.spec.ts mid-stream pipe-error behavior
+      sources: [anthropic_streaming, anthropic_errors, openrouter_routing]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality], upstream_issues: [1138, 2358, 2294]}
+
+  - id: import-22-chat-zai-cache-usage
+    tranche: firebase-derived-deferred
+    contract: Z.ai cached-token usage remains distinct from ordinary prompt tokens and totals remain internally consistent.
+    client: {protocol: openai-chat, path: /v1/chat/completions, mode: buffered}
+    provider: {protocol: openai-chat, dialect: z-ai}
+    mutation_mode: patch
+    features: [usage, cached-tokens, reasoning-tokens]
+    synthetic_shape: Synthetic usage with prompt, completion, cached, and reasoning counters.
+    expectation: {outcome: supported, provider_request: exact-except, client_response: exact-except, loss: none, dispatch_attempts: 1}
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: upstreamCost.spec.ts multi-provider usage and cost-shape parsing behavior
+      sources: [zai_chat]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality], upstream_issues: [1138, 2358]}
+
+  - id: import-23-chat-openrouter-session-routing
+    tranche: firebase-derived-deferred
+    contract: OpenRouter session affinity and provider order are server-derived, bounded, and cannot be spoofed by client headers.
+    client: {protocol: openai-chat, path: /v1/chat/completions, mode: buffered}
+    provider: {protocol: openai-chat, dialect: openrouter}
+    mutation_mode: patch
+    features: [session-affinity, provider-order, header-trust, unknown-field-survival]
+    synthetic_shape: Trusted conversation identity plus an untrusted conflicting session hint.
+    expectation:
+      outcome: supported
+      provider_request: exact-except
+      client_response: exact-except
+      fidelity: {/session_id: synthesized, /provider: synthesized, /untrusted-session-header: rejected}
+      loss: untrusted-client-routing-hint
+      dispatch_attempts: 1
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: providers.spec.ts OpenRouter session and provider-ordering behaviors
+      sources: [openrouter_caching, openrouter_routing]
+    ownership: {primary: Data Plane & Networking, reviewers: [Enterprise & Environment, Evaluation & Quality], upstream_issues: [1138, 2358]}
+
+  - id: import-24-responses-openrouter-image-and-tools
+    tranche: firebase-derived-deferred
+    contract: Native Responses image input and supported client tools survive OpenRouter dispatch without Chat conversion.
+    client: {protocol: openai-responses, path: /v1/responses, mode: buffered}
+    provider: {protocol: openai-responses, dialect: openrouter}
+    mutation_mode: patch
+    features: [image, tools, native-protocol, usage]
+    synthetic_shape: One original generated image input and one classify_shape function tool.
+    expectation: {outcome: supported, provider_request: exact-except, client_response: exact-except, loss: none, dispatch_attempts: 1}
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: providers.spec.ts native Responses hosted/client tool filtering and image conversion behavior
+      sources: [openai_responses, openrouter_responses]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality], upstream_issues: [1138, 2358]}
+
+  - id: import-25-anthropic-fireworks-tool-result-reject
+    tranche: firebase-derived-deferred
+    contract: Required Messages tool-result error and image semantics are rejected when a Fireworks Chat profile cannot represent them faithfully.
+    client: {protocol: anthropic-messages, path: /v1/messages, mode: buffered}
+    provider: {protocol: openai-chat, dialect: fireworks}
+    mutation_mode: reject
+    features: [tool-result, image, is-error, capability-mismatch]
+    synthetic_shape: A tool result containing an original generated image plus a required error-state flag.
+    expectation:
+      outcome: rejected
+      provider_request: reject
+      client_response: reject
+      fidelity: {/messages/tool_result/is_error: rejected, /messages/tool_result/image: rejected}
+      loss: none
+      dispatch_attempts: 0
+    provenance:
+      origin: firebase-behavior-reexpression
+      private_reference: providers.spec.ts tool-result conversion and provider-specific tool behavior
+      sources: [anthropic_messages, fireworks_chat, agentgateway_goldens]
+    ownership: {primary: Data Plane & Networking, reviewers: [Evaluation & Quality, Agentic & Context], upstream_issues: [1138, 2358]}

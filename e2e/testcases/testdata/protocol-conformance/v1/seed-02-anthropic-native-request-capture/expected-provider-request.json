@@ -1,0 +1,36 @@
+{
+  "model": "conformance-messages-model",
+  "system": [
+    {
+      "text": "You are a protocol conformance fixture.",
+      "type": "text"
+    },
+    {
+      "cache_control": {
+        "type": "ephemeral"
+      },
+      "text": "Answer in one short sentence and never add commentary.",
+      "type": "text"
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mP4z8AAAAMBAQD3A0FDAAAAAElFTkSuQmCC"
+          },
+          "type": "image"
+        },
+        {
+          "text": "What colour is this pixel?",
+          "type": "text"
+        }
+      ]
+    }
+  ],
+  "max_tokens": 128
+}

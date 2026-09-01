@@ -3,6 +3,7 @@ package testcases
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/vllm-project/semantic-router/e2e/pkg/fixtures"
@@ -93,9 +94,11 @@ func testAuthzRBACRouting(ctx context.Context, client *kubernetes.Clientset, opt
 	}
 
 	passed := 0
+	var failures []string
 	for _, tc := range cases {
 		if err := checkAuthzRoutingCase(ctx, chatClient, tc, opts.Verbose); err != nil {
 			fmt.Printf("[AuthzRBAC] FAIL %s: %v\n", tc.name, err)
+			failures = append(failures, fmt.Sprintf("%s: %v", tc.name, err))
 			continue
 		}
 		if opts.Verbose {
@@ -108,11 +111,16 @@ func testAuthzRBACRouting(ctx context.Context, client *kubernetes.Clientset, opt
 		opts.SetDetails(map[string]interface{}{
 			"total":  len(cases),
 			"passed": passed,
+			"failed": len(failures),
 		})
 	}
 
-	if passed == 0 {
-		return fmt.Errorf("authz-rbac-routing: 0/%d cases passed", len(cases))
+	// Every RBAC case is deterministic: each role must route to its own decision.
+	// A single passing case must not mask a role-routing collapse in the others,
+	// so this is an all-of bar rather than the previous "0/N passed" check.
+	if len(failures) > 0 {
+		return fmt.Errorf("authz-rbac-routing: %d/%d cases failed:\n  %s",
+			len(failures), len(cases), strings.Join(failures, "\n  "))
 	}
 	return nil
 }

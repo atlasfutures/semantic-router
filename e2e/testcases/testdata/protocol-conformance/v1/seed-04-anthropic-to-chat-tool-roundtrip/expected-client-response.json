@@ -1,0 +1,35 @@
+{
+  "id": "chatcmpl-seed04aaaaaaaa",
+  "type": "message",
+  "role": "assistant",
+  "model": "conformance-chat-model",
+  "content": [
+    {
+      "text": "The sum is 5.",
+      "type": "text"
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 61,
+    "output_tokens": 6,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 0,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "output_tokens_details": {
+      "thinking_tokens": 0
+    },
+    "server_tool_use": {
+      "web_fetch_requests": 0,
+      "web_search_requests": 0
+    },
+    "service_tier": "standard"
+  },
+  "container": null,
+  "stop_details": null
+}

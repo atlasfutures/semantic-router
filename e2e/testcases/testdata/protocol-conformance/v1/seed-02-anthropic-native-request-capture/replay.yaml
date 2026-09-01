@@ -1,0 +1,19 @@
+# seed-02: Anthropic-native capture. expect.headers is the header half of the
+# contract: the version and beta headers must survive the hop unchanged, which is
+# what the /anthropic-version and /anthropic-beta ledger entries claim.
+#
+# The image block is a synthetic 1x1 solid-red PNG generated for this corpus. It is
+# not derived from any captured traffic.
+schema_version: protocol-conformance-replay-v1
+
+expect:
+  method: POST
+  path: /v1/messages
+  headers:
+    content-type: application/json
+    anthropic-version: "2023-06-01"
+    anthropic-beta: prompt-caching-2024-07-31
+
+steps:
+  - {kind: status, status: 200, headers: {content-type: application/json}}
+  - {kind: body, file: provider-response.json}

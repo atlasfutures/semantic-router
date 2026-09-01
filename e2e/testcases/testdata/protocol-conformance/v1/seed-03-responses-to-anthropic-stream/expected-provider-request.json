@@ -1,0 +1,16 @@
+{
+  "model": "conformance-messages-model",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "text": "Say hello in two words.",
+          "type": "text"
+        }
+      ]
+    }
+  ],
+  "max_tokens": 32,
+  "stream": true
+}

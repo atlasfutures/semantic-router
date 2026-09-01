@@ -123,9 +123,11 @@ func testRoutingFallback(ctx context.Context, client *kubernetes.Clientset, opts
 			methodCorrect, totalTests, methodAccuracy, confidenceMet, totalTests, confidenceAccuracy)
 	}
 
-	// Return error if accuracy is 0%
-	if correctTests == 0 {
-		return fmt.Errorf("routing fallback test failed: 0%% accuracy (0/%d correct)", totalTests)
+	// No acceptance contract covers this testcase, so the floor lives here.
+	// The previous bar passed on a single correct case out of 20.
+	if err := requireAccuracyFloor("routing fallback", correctTests, totalTests,
+		minUncalibratedRoutingAccuracy); err != nil {
+		return err
 	}
 
 	return nil

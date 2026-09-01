@@ -1,0 +1,21 @@
+{
+  "id": "msg_seed02aaaaaaaaaaaaaaaa",
+  "type": "message",
+  "role": "assistant",
+  "model": "conformance-messages-model",
+  "content": [
+    {
+      "type": "text",
+      "text": "The pixel is red."
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 46,
+    "cache_creation_input_tokens": 19,
+    "cache_read_input_tokens": 0,
+    "output_tokens": 6
+  }
+}
+

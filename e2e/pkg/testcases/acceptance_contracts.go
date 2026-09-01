@@ -14,15 +14,20 @@ const (
 	// Conservative floors for the baseline kubernetes contract.
 	// These catch severe behavioral regressions without turning E2E into
 	// a model-benchmark gate.
-	minBaselineDomainClassificationAccuracy = 60.0
+	//
+	// The exported floors are also applied inside the testcases themselves, so
+	// that a profile which declares no acceptance contract still enforces them.
+	// Without that, the contract only bound the baseline profile and the same
+	// testcase accepted a single correct case everywhere else.
+	MinBaselineDomainClassificationAccuracy = 60.0
 	minBaselineSemanticCacheHitRate         = 40.0
-	minBaselinePIIDetectionRate             = 65.0
-	minBaselineJailbreakDetectionRate       = 70.0
-	minBaselineDecisionPriorityAccuracy     = 75.0
-	minBaselineRuleConditionAccuracy        = 80.0
-	minBaselineDecisionFallbackAccuracy     = 85.0
-	minBaselinePluginChainAccuracy          = 60.0
-	minBaselinePluginConfigAccuracy         = 80.0
+	MinBaselinePIIDetectionRate             = 65.0
+	MinBaselineJailbreakDetectionRate       = 70.0
+	MinBaselineDecisionPriorityAccuracy     = 75.0
+	MinBaselineRuleConditionAccuracy        = 80.0
+	MinBaselineDecisionFallbackAccuracy     = 85.0
+	MinBaselinePluginChainAccuracy          = 60.0
+	MinBaselinePluginConfigAccuracy         = 80.0
 	minBaselineSequentialStressSuccessRate  = 95.0
 	minBaselineProgressiveStressOverallRate = 75.0
 )
@@ -57,7 +62,7 @@ var baselineAcceptanceContracts = map[string]acceptanceContract{
 		minimumKey:     "minimum_accuracy_rate",
 		numeratorKey:   "correct_tests",
 		denominatorKey: "total_tests",
-		minimum:        minBaselineDomainClassificationAccuracy,
+		minimum:        MinBaselineDomainClassificationAccuracy,
 		metricName:     "correct classifications",
 	}),
 	"semantic-cache": applyFlatRateContract(flatRateContract{
@@ -73,7 +78,7 @@ var baselineAcceptanceContracts = map[string]acceptanceContract{
 		minimumKey:     "minimum_detection_rate",
 		numeratorKey:   "correct_tests",
 		denominatorKey: "total_tests",
-		minimum:        minBaselinePIIDetectionRate,
+		minimum:        MinBaselinePIIDetectionRate,
 		metricName:     "correct PII detections",
 	}),
 	"jailbreak-detection": applyFlatRateContract(flatRateContract{
@@ -81,7 +86,7 @@ var baselineAcceptanceContracts = map[string]acceptanceContract{
 		minimumKey:     "minimum_detection_rate",
 		numeratorKey:   "correct_tests",
 		denominatorKey: "total_tests",
-		minimum:        minBaselineJailbreakDetectionRate,
+		minimum:        MinBaselineJailbreakDetectionRate,
 		metricName:     "correct jailbreak detections",
 	}),
 	"decision-priority-selection": applyFlatRateContract(flatRateContract{
@@ -89,7 +94,7 @@ var baselineAcceptanceContracts = map[string]acceptanceContract{
 		minimumKey:     "minimum_accuracy_rate",
 		numeratorKey:   "correct_tests",
 		denominatorKey: "total_tests",
-		minimum:        minBaselineDecisionPriorityAccuracy,
+		minimum:        MinBaselineDecisionPriorityAccuracy,
 		metricName:     "correct priority selections",
 	}),
 	"rule-condition-logic": applyFlatRateContract(flatRateContract{
@@ -97,7 +102,7 @@ var baselineAcceptanceContracts = map[string]acceptanceContract{
 		minimumKey:     "minimum_accuracy_rate",
 		numeratorKey:   "correct_tests",
 		denominatorKey: "total_tests",
-		minimum:        minBaselineRuleConditionAccuracy,
+		minimum:        MinBaselineRuleConditionAccuracy,
 		metricName:     "correct rule-condition evaluations",
 	}),
 	"decision-fallback-behavior": applyFlatRateContract(flatRateContract{
@@ -105,7 +110,7 @@ var baselineAcceptanceContracts = map[string]acceptanceContract{
 		minimumKey:     "minimum_accuracy_rate",
 		numeratorKey:   "correct_tests",
 		denominatorKey: "total_tests",
-		minimum:        minBaselineDecisionFallbackAccuracy,
+		minimum:        MinBaselineDecisionFallbackAccuracy,
 		metricName:     "correct fallback behaviors",
 	}),
 	"plugin-chain-execution": applyFlatRateContract(flatRateContract{
@@ -113,7 +118,7 @@ var baselineAcceptanceContracts = map[string]acceptanceContract{
 		minimumKey:     "minimum_accuracy_rate",
 		numeratorKey:   "correct_tests",
 		denominatorKey: "total_tests",
-		minimum:        minBaselinePluginChainAccuracy,
+		minimum:        MinBaselinePluginChainAccuracy,
 		metricName:     "correct plugin-chain behaviors",
 	}),
 	"plugin-config-variations": applyFlatRateContract(flatRateContract{
@@ -121,7 +126,7 @@ var baselineAcceptanceContracts = map[string]acceptanceContract{
 		minimumKey:     "minimum_accuracy_rate",
 		numeratorKey:   "correct_tests",
 		denominatorKey: "total_tests",
-		minimum:        minBaselinePluginConfigAccuracy,
+		minimum:        MinBaselinePluginConfigAccuracy,
 		metricName:     "correct plugin configurations",
 	}),
 	"chat-completions-stress-request": applyFlatRateContract(flatRateContract{

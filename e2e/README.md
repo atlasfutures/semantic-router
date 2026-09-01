@@ -8,11 +8,13 @@ A profile owns environment setup and a list of tests. A test case owns one
 externally visible contract and can be reused by several profiles.
 
 ```text
-e2e/cmd/e2e             command-line entry point
-e2e/pkg/framework       cluster, profile lifecycle, execution, and reports
-e2e/pkg/testcases       reusable test implementations and registry
-e2e/profiles            deployment-specific profile implementations
-e2e/config              focused Router configs for profiles and smoke tests
+e2e/cmd/e2e                  command-line entry point
+e2e/cmd/conformance-fixture  standalone programmable provider fixture
+e2e/pkg/framework            cluster, profile lifecycle, execution, and reports
+e2e/pkg/testcases            reusable test implementations and registry
+e2e/pkg/conformance          protocol-conformance corpus, comparators, and fixture
+e2e/profiles                 deployment-specific profile implementations
+e2e/config                   focused Router configs for profiles and smoke tests
 ```
 
 The scripts under [`testing/`](testing/) are older or specialized manual
@@ -110,6 +112,20 @@ cluster; it does not reconcile drift first.
 Parallel tests must not mutate the same runtime state. Leave parallel mode off
 until the selected cases are known to be isolated.
 
+### CI cadence tiers
+
+CI does not list test names in workflow YAML. `e2e/pkg/testmatrix` maps a profile
+and a cadence onto the subset CI runs, and the workflow asks the binary for it:
+
+```bash
+./bin/e2e -profile envoy-ai-gateway -list-tests pr
+```
+
+An empty result means the cadence does not narrow that profile, so the profile's
+own list runs. Pull requests use the `pr` cadence and the nightly run uses
+`nightly`; to change what either runs, edit the table in
+[`pkg/testmatrix/citiers.go`](pkg/testmatrix/citiers.go).
+
 ## Profile selection
 
 ### Supported Profiles
@@ -132,6 +148,7 @@ until the selected cases are known to be isolated.
 - **streaming**: streamed request bodies and cache round trips.
 - **anthropic-shim**: affected-change Anthropic backend and cross-protocol matrix coverage.
 - **response-api**: affected-change memory-backed Responses API and cross-protocol matrix coverage.
+- **protocol-conformance**: corpus run comparing both wire boundaries.
 - **response-api-redis**: manual Redis persistence and TTL coverage.
 - **response-api-redis-cluster**: manual Redis Cluster persistence and TTL coverage.
 - **router-replay**: manual management-boundary and restart-recovery coverage.
@@ -149,6 +166,7 @@ until the selected cases are known to be isolated.
 | Full CI | Runs in the complete E2E matrix | `full_ci: true` in the test-domain registry |
 | Affected | Selected when owned paths change | `selection: pr` and `paths` in the test-domain registry |
 | Manual only | Requires explicit selection and profile prerequisites | `selection: manual` in the test-domain registry |
+| Cadence tier | Narrows which test cases a profile runs per cadence | `ciTiers` in `e2e/pkg/testmatrix` |
 
 [`tools/agent/test-domain-registry.yaml`](../tools/agent/test-domain-registry.yaml)
 owns the exact selection mode, path triggers, and coverage role for every entry.

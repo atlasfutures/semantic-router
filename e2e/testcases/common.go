@@ -34,6 +34,47 @@ func setupRouterAPIConnection(ctx context.Context, client *kubernetes.Clientset,
 	return session.LocalPort(), session.Close, nil
 }
 
+// minUncalibratedRoutingAccuracy is the provisional floor for routing and
+// classification testcases that no acceptance contract covers.
+//
+// It matches the most lenient calibrated floor in
+// pkg/testcases/acceptance_contracts.go (domain classification and plugin chain
+// both sit at 60%). It is set by analogy rather than from a measured pass rate,
+// because these testcases previously recorded none: they accepted a single
+// correct case out of N. Raise each call site to its own calibrated constant as
+// real pass rates get recorded.
+const minUncalibratedRoutingAccuracy = 60.0
+
+// minMCPFallbackAccuracy is deliberately below minUncalibratedRoutingAccuracy.
+// The fallback testcase exercises graceful degradation rather than perfect
+// classification, which its original comment stated but never encoded as a
+// number. This keeps that tolerance while removing the "one success passes" bar.
+const minMCPFallbackAccuracy = 40.0
+
+// requireAccuracyFloor turns a counted accuracy into a testcase verdict.
+//
+// It replaces the "0% only" bars these testcases used to carry, where a single
+// correct case out of N satisfied the whole suite. The floors passed in are the
+// calibrated values from pkg/testcases/acceptance_contracts.go; applying them
+// here as well means they hold on every profile, not only on the one profile
+// that declares an acceptance contract.
+//
+// A run that executed no cases fails: an emptied or unreadable case list must
+// not read as a pass.
+func requireAccuracyFloor(label string, correct, total int, minimum float64) error {
+	if total == 0 {
+		return fmt.Errorf("%s: no cases were executed; nothing was asserted", label)
+	}
+
+	actual := float64(correct) / float64(total) * 100
+	if actual < minimum {
+		return fmt.Errorf("%s: %d/%d correct (%.2f%%) below minimum %.2f%%",
+			label, correct, total, actual, minimum)
+	}
+
+	return nil
+}
+
 // Random content generation for stress tests
 
 var (

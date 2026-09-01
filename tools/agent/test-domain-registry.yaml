@@ -451,6 +451,24 @@ profiles:
       - src/semantic-router/pkg/extproc/processor_res_body_pipeline.go
       - src/semantic-router/pkg/extproc/processor_res_semantic_stream.go
       - src/semantic-router/pkg/extproc/provider_request_adapter.go
+  protocol-conformance:
+    owner: e2e
+    coverage_role: protocol-conformance-corpus-and-wire-boundary-comparison
+    # PR runs the compact all-protocol smoke tier and nightly runs the whole
+    # corpus. The tier itself lives in e2e/pkg/testmatrix, not here.
+    selection: pr
+    full_ci: true
+    paths:
+      - e2e/profiles/protocol-conformance/**
+      - e2e/testing/conformance-fixture/**
+      - e2e/pkg/conformance/**
+      - e2e/testcases/testdata/protocol-conformance/**
+      - e2e/cmd/conformance-fixture/**
+      # The router surfaces the corpus asserts on. A translation change here is
+      # exactly what the smoke tier exists to catch before merge.
+      - src/semantic-router/pkg/llmprotocol/**
+      - src/semantic-router/pkg/protocolcodec/**
+      - src/semantic-router/pkg/responseapi/**
   response-api:
     owner: e2e
     coverage_role: responses-api-memory

@@ -109,9 +109,11 @@ func testKeywordRouting(ctx context.Context, client *kubernetes.Clientset, opts 
 			correctTests, totalTests, accuracy, keywordsCorrect, totalTests, keywordAccuracy)
 	}
 
-	// Return error if accuracy is 0%
-	if correctTests == 0 {
-		return fmt.Errorf("keyword routing test failed: 0%% accuracy (0/%d correct)", totalTests)
+	// No acceptance contract covers this testcase, so the floor lives here.
+	// The previous bar passed on a single correct case out of 12.
+	if err := requireAccuracyFloor("keyword routing", correctTests, totalTests,
+		minUncalibratedRoutingAccuracy); err != nil {
+		return err
 	}
 
 	return nil

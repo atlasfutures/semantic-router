@@ -1,0 +1,24 @@
+{
+  "id": "chatcmpl-seed01aaaaaaaa",
+  "object": "chat.completion",
+  "created": 1735689600,
+  "model": "conformance-chat-model",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\"sum\":5}",
+        "refusal": null
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 27,
+    "completion_tokens": 7,
+    "total_tokens": 34
+  }
+}
+

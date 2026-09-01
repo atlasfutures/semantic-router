@@ -111,9 +111,12 @@ func testDecisionFallback(ctx context.Context, client *kubernetes.Clientset, opt
 			correctTests, totalTests, accuracy)
 	}
 
-	// Return error if accuracy is below threshold
-	if correctTests == 0 {
-		return fmt.Errorf("decision fallback test failed: 0%% accuracy (0/%d correct)", totalTests)
+	// The floor is the calibrated value from pkg/testcases/acceptance_contracts.go,
+	// applied here so it binds every profile. The comment already claimed a
+	// threshold; the code only failed at exactly 0%.
+	if err := requireAccuracyFloor("decision fallback", correctTests, totalTests,
+		pkgtestcases.MinBaselineDecisionFallbackAccuracy); err != nil {
+		return err
 	}
 
 	return nil

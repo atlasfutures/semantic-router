@@ -182,3 +182,21 @@ func findAnthropicShimContainer(t *testing.T, jsonDocument []byte) (string, core
 	t.Fatal("anthropic-shim container not found in backend.yaml Deployment")
 	return "", "", false
 }
+
+func TestProtocolConformanceProfileBuildsItsProviderFixture(t *testing.T) {
+	registration, ok := framework.LookupProfileRegistration("protocol-conformance")
+	if !ok {
+		t.Fatal("protocol-conformance profile is not registered")
+	}
+
+	// The build context is the e2e module root because the image carries the
+	// fixture tree as well as the binary.
+	want := []framework.LocalImageBuild{{
+		Dockerfile:   "e2e/testing/conformance-fixture/Dockerfile",
+		Tag:          "ghcr.io/vllm-project/semantic-router/conformance-fixture:e2e-test",
+		BuildContext: "e2e",
+	}}
+	if !reflect.DeepEqual(registration.Capabilities.LocalImages, want) {
+		t.Fatalf("protocol-conformance local images = %#v, want %#v", registration.Capabilities.LocalImages, want)
+	}
+}

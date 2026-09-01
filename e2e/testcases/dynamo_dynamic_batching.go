@@ -23,6 +23,11 @@ func init() {
 	})
 }
 
+// minDynamoConcurrentSuccessRate mirrors the 50% tolerance that the
+// dynamo-optimized-inference testcase documents for transient failures, stated
+// as a percentage for requireAccuracyFloor.
+const minDynamoConcurrentSuccessRate = 50.0
+
 func testDynamoDynamicBatching(ctx context.Context, client *kubernetes.Clientset, opts pkgtestcases.TestCaseOptions) error {
 	if opts.Verbose {
 		fmt.Println("[Test] Testing Dynamo dynamic batching")
@@ -121,7 +126,15 @@ func testDynamoDynamicBatching(ctx context.Context, client *kubernetes.Clientset
 		}
 	}
 
-	return nil
+	// The success rate was measured but never gated: every concurrent request
+	// could fail and the testcase still returned nil. The floor matches the
+	// documented tolerance in the sibling dynamo-optimized-inference testcase,
+	// which allows for transient failures under concurrency.
+	//
+	// Batching efficiency stays a reported measurement rather than a gate: it is
+	// a timing ratio, and no floor for it has been calibrated.
+	return requireAccuracyFloor("dynamo dynamic batching", successCount, concurrentRequests,
+		minDynamoConcurrentSuccessRate)
 }
 
 type BatchResult struct {

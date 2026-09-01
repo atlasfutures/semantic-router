@@ -1,0 +1,24 @@
+{
+  "model": "auto",
+  "max_tokens": 128,
+  "system": [
+    {"type": "text", "text": "You are a protocol conformance fixture."},
+    {
+      "type": "text",
+      "text": "Answer in one short sentence and never add commentary.",
+      "cache_control": {"type": "ephemeral"}
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "image",
+          "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mP4z8AAAAMBAQD3A0FDAAAAAElFTkSuQmCC"}
+        },
+        {"type": "text", "text": "What colour is this pixel?"}
+      ]
+    }
+  ]
+}
