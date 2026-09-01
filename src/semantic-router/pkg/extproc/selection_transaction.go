@@ -398,7 +398,8 @@ func recordSelectionTransactionSuccess(
 	// metric is exported for the selection transaction owner.
 }
 
-//nolint:unused // TODO(vsr-next Bucket B): caller was the deleted dispatch path.
+// recordSelectionLifecycleFailure reports a lifecycle-stage failure with the
+// owning algorithm, bounded to a failure class.
 func recordSelectionLifecycleFailure(
 	ctx *RequestContext,
 	stage string,
@@ -411,7 +412,9 @@ func recordSelectionLifecycleFailure(
 	logSelectionTransactionFailure(kind, stage, err)
 }
 
-//nolint:unused // TODO(vsr-next Bucket B): used by selectionDispatchFailureResponseFor.
+// selectionUnavailableMessage is the single client-visible wording for an
+// authoritative selector that could not answer. It names no transport,
+// no provider and no private component.
 func selectionUnavailableMessage(*RequestContext) string {
 	return "Rayline ARC routing unavailable"
 }

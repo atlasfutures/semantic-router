@@ -19,6 +19,9 @@ func (r *OpenAIRouter) handleResponseHeaders(v *ext_proc.ProcessingRequest_Respo
 		// path can avoid caching non-2xx error bodies (cache poisoning).
 		ctx.UpstreamStatusCode = outcome.statusCode
 	}
+	if unavailable := r.commitSelectionOnResponseHeaders(v, ctx, outcome); unavailable != nil {
+		return unavailable, nil
+	}
 	finishUpstreamResponseSpan(ctx, outcome)
 	maybeRecordResponseHeaderTTFT(ctx)
 	r.updateRouterReplayStatus(ctx, outcome.statusCode, ctx != nil && ctx.IsStreamingResponse)

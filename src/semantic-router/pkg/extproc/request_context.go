@@ -153,8 +153,7 @@ type RequestContext struct {
 	VSRInjectedSystemPrompt         bool                          // Whether a system prompt was injected into the request
 	VSRSelectedDecision             *config.Decision              // The decision object selected by DecisionEngine (for plugins)
 	VSRRaylineARC                   *selection.RaylineARCTrace    // Privacy-safe ARC selection trace; never prompt or embedding data.
-	RaylineARCDispatch              *raylinearc.WorkerManifest    // Private artifact-owned upstream contract; never emit in traces.
-	RaylineARCAuthHeader            string                        // Auth header carrying the artifact credential; kept single-valued.
+	RaylineARCDispatch              *raylinearc.WorkerManifest    // Private artifact-owned transport budget; never emit in traces.
 	RaylineARCTransaction           *raylineARCEpisodeTransaction // Fenced ARC state lease; finalized exactly once.
 	RaylineARCCloseRequested        bool                          // Exact configured final-turn signal; triggers post-2xx session close fanout.
 	SelectionTransaction            *selectionTransactionOwner    // Shared authoritative selector lifecycle owner; at most one per request.

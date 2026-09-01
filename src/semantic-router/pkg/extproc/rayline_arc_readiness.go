@@ -260,31 +260,28 @@ func raylineARCEndpointIdentityMatches(
 		parsed.Scheme == "https"
 }
 
-// raylineARCAuthShapeMatches pins the credential's transport shape. A custom
-// auth header that collides with a routing or protocol header would let an
-// earlier same-named mutation stand in for the artifact credential, and a
-// non-Bearer prefix or custom chat path would not reach the pinned provider
-// contract at all.
+// raylineARCAuthShapeMatches pins the credential's transport shape against the
+// router's own default. VSR appends the provider credential, so readiness only
+// has to prove the profile did not move the header, the prefix or the chat
+// path away from that default: a custom auth header could let an earlier
+// same-named mutation stand in for the artifact credential, and a custom chat
+// path would not reach the pinned provider contract at all.
 func raylineARCAuthShapeMatches(profile *config.ProviderProfile) bool {
-	authHeader := profile.AuthHeader
-	if authHeader == "" {
-		authHeader = "Authorization"
-	}
-	if !strings.EqualFold(authHeader, "Authorization") {
+	_, defaultHeader, defaultPrefix, _ := resolveProviderAuth(nil)
+	authHeader, authPrefix, err := profile.ResolveAuthHeader()
+	if err != nil {
 		return false
 	}
-	authPrefix := profile.AuthPrefix
-	if authPrefix == "" {
-		authPrefix = "Bearer"
-	}
-	return authPrefix == "Bearer" && profile.ChatPath == ""
+	return strings.EqualFold(authHeader, defaultHeader) &&
+		authPrefix == defaultPrefix &&
+		profile.ChatPath == ""
 }
 
 // raylineARCEndpointCredentialMatches enforces the artifact-owned credential
 // identity: the endpoint key must come from exactly the environment variable
 // the worker manifest declares, and that credential must be present. This
 // keeps a wrong-tenant or absent key from passing readiness and letting a
-// caller-supplied Authorization header reach the provider.
+// caller-supplied credential header reach the provider.
 func raylineARCEndpointCredentialMatches(
 	worker *raylinearc.WorkerManifest,
 	endpoint *config.VLLMEndpoint,

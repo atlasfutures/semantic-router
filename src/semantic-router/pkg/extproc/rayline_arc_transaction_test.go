@@ -174,11 +174,11 @@ func TestCommitSucceedsWhileRenewalIsInFlight(t *testing.T) {
 func TestKnownLeaseLossBlocksRaylineARCDispatch(t *testing.T) {
 	transaction := &raylineARCEpisodeTransaction{selectionReady: true}
 	ctx := &RequestContext{RaylineARCTransaction: transaction}
-	if !raylineARCDispatchAllowed(ctx) {
-		t.Fatal("valid prepared transaction was blocked")
+	if err := selectionDispatchAllowed(ctx); err != nil {
+		t.Fatalf("valid prepared transaction was blocked: %v", err)
 	}
 	transaction.leaseLost.Store(true)
-	if raylineARCDispatchAllowed(ctx) {
+	if err := selectionDispatchAllowed(ctx); err == nil {
 		t.Fatal("known-lost lease remained dispatchable")
 	}
 }
