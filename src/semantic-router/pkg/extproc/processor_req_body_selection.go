@@ -8,7 +8,7 @@ import (
 
 // modifyRequestBodyForSelectedRoute keeps provider body shaping outside the
 // request-body orchestrator. ARC owns an artifact-exact body contract; every
-// other selector, including rayline_remote, uses the normal selected-model
+// other selector uses the normal selected-model
 // mutation path.
 func (r *OpenAIRouter) modifyRequestBodyForSelectedRoute(
 	openAIRequest *openai.ChatCompletionNewParams,
@@ -26,12 +26,10 @@ func (r *OpenAIRouter) modifyRequestBodyForSelectedRoute(
 			ctx,
 		)
 	}
-	return r.modifyRequestBodyForAutoRouting(
-		openAIRequest,
-		upstreamModel,
-		decisionName,
-		useReasoning,
-		profile,
-		ctx,
-	)
+	// TODO(vsr-next Bucket B): re-seat on prepareProviderDispatch. Upstream
+	// removed modifyRequestBodyForAutoRouting together with the whole
+	// auto-routing body pipeline; this seam is unreachable until Bucket B
+	// decides whether ARC keeps a body rewrite at all.
+	_, _, _, _ = openAIRequest, upstreamModel, useReasoning, profile
+	return nil, errNotPortedBucketB
 }

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -55,9 +56,13 @@ func TestBuildRaylineARCSelectionContextParsesExactCloseSignal(t *testing.T) {
 					"x-rayline-episode-id":    t.Name(),
 					"x-rayline-episode-close": test.header,
 				},
-				OriginalRequestBody: []byte(
-					`{"messages":[{"role":"user","content":"public test turn"}]}`,
-				),
+				SourceFormat: llmprotocol.OpenAIChatV1,
+				ProtocolEnvelope: llmprotocol.Envelope{
+					Format: llmprotocol.OpenAIChatV1,
+					Request: []byte(
+						`{"messages":[{"role":"user","content":"public test turn"}]}`,
+					),
+				},
 				TraceContext: context.Background(),
 			}
 			algorithm := &config.AlgorithmConfig{

@@ -25,6 +25,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -214,11 +215,11 @@ func decisionOnlyRequestContext(
 		episodeIdentity = "decision-only:" + uuid.NewString()
 	}
 	return &RequestContext{
-		Headers:             map[string]string{algorithm.RaylineARC.Episode.IDHeader: episodeIdentity},
-		RequestID:           request.DecisionID,
-		OriginalRequestBody: request.Body,
-		ClientProtocol:      config.ClientProtocolAnthropic,
-		TraceContext:        ctx,
+		Headers:          map[string]string{algorithm.RaylineARC.Episode.IDHeader: episodeIdentity},
+		RequestID:        request.DecisionID,
+		SourceFormat:     llmprotocol.AnthropicMessagesV1,
+		ProtocolEnvelope: llmprotocol.Envelope{Format: llmprotocol.AnthropicMessagesV1, Request: request.Body},
+		TraceContext:     ctx,
 	}
 }
 

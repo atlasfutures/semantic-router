@@ -284,8 +284,8 @@ func TestDecisionOnlyRequestContextExcludesExecutedModel(t *testing.T) {
 	for name, value := range map[string]string{
 		"episode header":  requestContext.Headers[decisionServiceEpisodeHeader],
 		"request id":      requestContext.RequestID,
-		"request body":    string(requestContext.OriginalRequestBody),
-		"client protocol": requestContext.ClientProtocol,
+		"request body":    string(requestContext.ProtocolEnvelope.Request),
+		"client protocol": string(requestContext.SourceFormat),
 	} {
 		if strings.Contains(value, executed) {
 			t.Fatalf("%s carries the executed model: %q", name, value)

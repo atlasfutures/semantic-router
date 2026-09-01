@@ -3,13 +3,10 @@ package extproc
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylineremote"
 )
 
 type selectionActualOutcome struct {
@@ -171,83 +168,6 @@ func (*raylineARCSelectionTransactionAdapter) Settle(
 	return nil
 }
 
-type raylineRemoteSelectionTransactionAdapter struct {
-	transaction *raylineremote.Transaction
-}
-
-func (adapter *raylineRemoteSelectionTransactionAdapter) ValidateDispatch(
-	ctx context.Context,
-) error {
-	if adapter == nil || adapter.transaction == nil {
-		return errors.New("remote selection transaction is unavailable")
-	}
-	return adapter.transaction.ValidateDispatch(ctx)
-}
-
-func (adapter *raylineRemoteSelectionTransactionAdapter) CommitOnHeaders(
-	ctx context.Context,
-	statusCode int,
-) error {
-	return adapter.transaction.CommitOnHeaders(ctx, statusCode)
-}
-
-func (adapter *raylineRemoteSelectionTransactionAdapter) Abort(
-	ctx context.Context,
-	class string,
-) error {
-	return adapter.transaction.Abort(ctx, remoteAbortReason(class))
-}
-
-func (adapter *raylineRemoteSelectionTransactionAdapter) Settle(
-	ctx context.Context,
-	outcome selectionActualOutcome,
-) error {
-	return adapter.transaction.Settle(
-		ctx,
-		raylineremote.ActualOutcome{
-			OutcomeClass: remoteOutcomeClass(outcome.OutcomeClass),
-			StatusCode:   outcome.StatusCode,
-			InputTokens:  outcome.InputTokens,
-			OutputTokens: outcome.OutputTokens,
-			LatencyMS:    outcome.LatencyMS,
-			CostUSD:      outcome.CostUSD,
-			ErrorType:    outcome.ErrorType,
-		},
-	)
-}
-
-func remoteAbortReason(class string) raylineremote.AbortReason {
-	switch {
-	case strings.Contains(class, "cancel"):
-		return raylineremote.AbortClientCancelled
-	case strings.Contains(class, "non_2xx"):
-		return raylineremote.AbortProviderNon2xx
-	case strings.Contains(class, "transport"):
-		return raylineremote.AbortProviderNetwork
-	case strings.Contains(class, "dispatch"):
-		return raylineremote.AbortDispatchFailure
-	case strings.Contains(class, "selection"):
-		return raylineremote.AbortSelectionFailed
-	default:
-		return raylineremote.AbortRequestFailure
-	}
-}
-
-func remoteOutcomeClass(class string) raylineremote.OutcomeClass {
-	switch class {
-	case "success":
-		return raylineremote.OutcomeSuccess
-	case "upstream_error":
-		return raylineremote.OutcomeUpstreamError
-	case "client_cancelled":
-		return raylineremote.OutcomeClientCancelled
-	case "stream_error":
-		return raylineremote.OutcomeStreamError
-	default:
-		return raylineremote.OutcomeUnknown
-	}
-}
-
 func bindRaylineARCSelectionTransaction(ctx *RequestContext) {
 	if ctx == nil || ctx.RaylineARCTransaction == nil {
 		return
@@ -273,27 +193,7 @@ func ensureSelectionTransactionBound(ctx *RequestContext) {
 	bindRaylineARCSelectionTransaction(ctx)
 }
 
-func bindRaylineRemoteSelectionTransaction(
-	ctx *RequestContext,
-	transaction *raylineremote.Transaction,
-) error {
-	if ctx == nil || transaction == nil ||
-		ctx.SelectionTransaction != nil {
-		return errors.New("remote selection transaction binding failed")
-	}
-	ctx.SelectionTransaction = newSelectionTransactionOwner(
-		configRaylineRemote,
-		&raylineRemoteSelectionTransactionAdapter{
-			transaction: transaction,
-		},
-	)
-	return nil
-}
-
-const (
-	configRaylineARC    = "rayline_arc"
-	configRaylineRemote = "rayline_remote"
-)
+const configRaylineARC = "rayline_arc"
 
 func selectionDispatchAllowed(ctx *RequestContext) error {
 	ensureSelectionTransactionBound(ctx)
@@ -487,25 +387,15 @@ func logSelectionTransactionFailure(
 			"failure_class": boundedSelectionTransactionFailure(err),
 		},
 	)
-	if kind == configRaylineRemote {
-		metrics.RecordRaylineRemoteFailure(
-			stage,
-			boundedSelectionTransactionFailure(err),
-		)
-	}
 }
 
 func recordSelectionTransactionSuccess(
-	kind string,
-	operation string,
-	outcome string,
+	string,
+	string,
+	string,
 ) {
-	if kind == configRaylineRemote {
-		metrics.RecordRaylineRemoteTransaction(
-			operation,
-			outcome,
-		)
-	}
+	// ARC records its own bounded episode telemetry; no generic success
+	// metric is exported for the selection transaction owner.
 }
 
 func recordSelectionLifecycleFailure(
@@ -520,22 +410,14 @@ func recordSelectionLifecycleFailure(
 	logSelectionTransactionFailure(kind, stage, err)
 }
 
-func selectionUnavailableMessage(ctx *RequestContext) string {
-	if ctx != nil &&
-		ctx.SelectionTransaction != nil &&
-		ctx.SelectionTransaction.kind == configRaylineRemote {
-		return "Rayline remote routing unavailable"
-	}
+func selectionUnavailableMessage(*RequestContext) string {
 	return "Rayline ARC routing unavailable"
 }
 
 func boundedSelectionTransactionFailure(err error) string {
-	var remoteFailure *raylineremote.Failure
 	switch {
 	case err == nil:
 		return ""
-	case errors.As(err, &remoteFailure):
-		return string(remoteFailure.Class)
 	case errors.Is(err, context.Canceled):
 		return "canceled"
 	case errors.Is(err, context.DeadlineExceeded):

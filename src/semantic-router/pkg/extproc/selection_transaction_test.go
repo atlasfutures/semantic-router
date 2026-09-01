@@ -66,7 +66,7 @@ func TestSelectionTransactionOwnerRunsEachTerminalOperationOnce(
 	ctx := &RequestContext{
 		UpstreamStatusCode: 200,
 		SelectionTransaction: newSelectionTransactionOwner(
-			configRaylineRemote,
+			configRaylineARC,
 			transaction,
 		),
 	}
@@ -112,7 +112,7 @@ func TestSelectionTransactionOwnerAbortsWithoutCommitOnNon2xx(
 	ctx := &RequestContext{
 		UpstreamStatusCode: 503,
 		SelectionTransaction: newSelectionTransactionOwner(
-			configRaylineRemote,
+			configRaylineARC,
 			transaction,
 		),
 	}
@@ -134,7 +134,7 @@ func TestSelectionDispatchFailureRemainsPreCommit(t *testing.T) {
 	}
 	ctx := &RequestContext{
 		SelectionTransaction: newSelectionTransactionOwner(
-			configRaylineRemote,
+			configRaylineARC,
 			transaction,
 		),
 	}
@@ -159,7 +159,7 @@ func TestSelectionProcessTerminalSettlesCommittedBrokenStream(
 		IsStreamingResponse: true,
 		StreamingAborted:    true,
 		SelectionTransaction: newSelectionTransactionOwner(
-			configRaylineRemote,
+			configRaylineARC,
 			transaction,
 		),
 	}
@@ -201,7 +201,7 @@ func TestResponseHeaderCommitFailureBecomesTyped503(t *testing.T) {
 	}
 	ctx := &RequestContext{
 		SelectionTransaction: newSelectionTransactionOwner(
-			configRaylineRemote,
+			configRaylineARC,
 			transaction,
 		),
 	}

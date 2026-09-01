@@ -29,55 +29,29 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
+// errNotPortedBucketB marks a fork dispatch hook whose upstream seam was
+// removed by PR #3076. It fails closed until the hook is re-seated on
+// prepareProviderDispatch / applyDispatchDecision.
+var errNotPortedBucketB = errors.New("rayline_arc dispatch hook not ported: re-seat on prepareProviderDispatch")
+
+// modifyRequestBodyForRaylineARC applied the artifact-exact body contract on
+// top of the pre-#3076 auto-routing body pipeline.
+//
+// TODO(vsr-next Bucket B): re-seat on prepareProviderDispatch. Upstream
+// removed serializeOpenAIRequestWithStream, injectMemoryMessages and
+// buildRequestParamsMutations; the neutral request is now rendered from
+// ctx.SemanticRequest by prepareProviderRequest, so the ARC rewrite must move
+// behind applyDispatchDecision or be deleted in favour of VSR-owned dispatch.
 func (r *OpenAIRouter) modifyRequestBodyForRaylineARC(
-	openAIRequest *openai.ChatCompletionNewParams,
-	decisionName string,
-	profile *config.ProviderProfile,
+	_ *openai.ChatCompletionNewParams,
+	_ string,
+	_ *config.ProviderProfile,
 	ctx *RequestContext,
 ) ([]byte, error) {
 	if ctx == nil || ctx.RaylineARCDispatch == nil {
 		return nil, errors.New("ARC dispatch contract is unavailable")
 	}
-	modifiedBody, err := serializeOpenAIRequestWithStream(
-		openAIRequest,
-		ctx.ExpectStreamingResponse,
-	)
-	if err != nil {
-		return nil, errors.New("serialize ARC request")
-	}
-	if decisionName != "" {
-		modifiedBody, err = r.addSystemPromptIfConfigured(
-			modifiedBody,
-			decisionName,
-			ctx.RaylineARCDispatch.ID,
-			ctx,
-		)
-		if err != nil {
-			return nil, errors.New("apply ARC system prompt")
-		}
-	}
-	if ctx.MemoryContext != "" {
-		modifiedBody, err = injectMemoryMessages(
-			modifiedBody,
-			ctx.MemoryContext,
-		)
-		if err != nil {
-			return nil, errors.New("apply ARC memory context")
-		}
-	}
-	if ctx.VSRSelectedDecision != nil &&
-		ctx.VSRSelectedDecision.GetRequestParamsConfig() != nil {
-		modifiedBody, err = r.buildRequestParamsMutations(
-			ctx.VSRSelectedDecision,
-			modifiedBody,
-			profile,
-			ctx.Routing.RecipeName(),
-		)
-		if err != nil {
-			return nil, errors.New("apply ARC request parameters")
-		}
-	}
-	return applyRaylineARCDispatch(modifiedBody, ctx.RaylineARCDispatch)
+	return nil, errNotPortedBucketB
 }
 
 func applyRaylineARCDispatch(

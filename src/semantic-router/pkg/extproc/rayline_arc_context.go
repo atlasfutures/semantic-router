@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -185,17 +186,19 @@ func normalizeRaylineARCTurns(
 	reqCtx *RequestContext,
 	options raylinearc.TurnOptions,
 ) ([]raylinearc.Turn, error) {
+	// TODO(vsr-next Bucket C): project reqCtx.SemanticRequest.Messages (plus
+	// stored Responses history) through the Turn renderer instead of
+	// re-parsing the wire body; upstream pkg/protocolcodec now owns parsing.
 	protocol := raylinearc.ProtocolOpenAIChat
-	switch {
-	case reqCtx.ResponseAPICtx != nil &&
-		reqCtx.ResponseAPICtx.IsResponseAPIRequest:
+	switch reqCtx.SourceFormat {
+	case llmprotocol.OpenAIResponsesV1:
 		protocol = raylinearc.ProtocolOpenAIResponses
-	case reqCtx.ClientProtocol == config.ClientProtocolAnthropic:
+	case llmprotocol.AnthropicMessagesV1:
 		protocol = raylinearc.ProtocolAnthropicMessages
 	}
 	return raylinearc.NormalizeTurns(
 		protocol,
-		reqCtx.OriginalRequestBody,
+		reqCtx.ProtocolEnvelope.Request,
 		options,
 	)
 }
