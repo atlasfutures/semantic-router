@@ -1,3 +1,9 @@
+//go:build vsr_next_bucket_b
+
+// Parked: reads deploy/compose/rayline-arc/config-openrouter.yaml, which the
+// vsr-next port does not carry (deploy/compose is a non-goal). Revisit with
+// the Bucket D dev config.
+
 /*
 Copyright 2025 vLLM Semantic Router.
 
