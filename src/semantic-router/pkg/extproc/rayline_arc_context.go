@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -70,7 +69,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		return result
 	}
 	result.State = state
-	turns, err := normalizeRaylineARCTurns(
+	turns, err := projectRaylineARCTurns(
 		reqCtx,
 		raylinearc.TurnOptions{
 			IncludeSystemText: algorithm.RaylineARC.IncludeSystemText,
@@ -182,25 +181,19 @@ func (r *OpenAIRouter) prepareRaylineARCTransaction(
 	return state, ""
 }
 
-func normalizeRaylineARCTurns(
+// projectRaylineARCTurns renders the decoded request into ARC turns.
+//
+// The router decodes every public wire format exactly once, so the selector
+// reads the neutral messages rather than the wire body. ARC deliberately reads
+// neither of the two flattened text fields the selection context also offers,
+// the single query string and the prior-turn string list: the encoder was
+// trained on role-tagged turns with tool calls flattened, and both of those
+// fields carry a different shape.
+func projectRaylineARCTurns(
 	reqCtx *RequestContext,
 	options raylinearc.TurnOptions,
 ) ([]raylinearc.Turn, error) {
-	// TODO(vsr-next Bucket C): project reqCtx.SemanticRequest.Messages (plus
-	// stored Responses history) through the Turn renderer instead of
-	// re-parsing the wire body; upstream pkg/protocolcodec now owns parsing.
-	protocol := raylinearc.ProtocolOpenAIChat
-	switch reqCtx.SourceFormat {
-	case llmprotocol.OpenAIResponsesV1:
-		protocol = raylinearc.ProtocolOpenAIResponses
-	case llmprotocol.AnthropicMessagesV1:
-		protocol = raylinearc.ProtocolAnthropicMessages
-	}
-	return raylinearc.NormalizeTurns(
-		protocol,
-		reqCtx.ProtocolEnvelope.Request,
-		options,
-	)
+	return raylinearc.ProjectTurns(reqCtx.SemanticRequest, options)
 }
 
 func boundedARCPrepareFailure(err error) string {

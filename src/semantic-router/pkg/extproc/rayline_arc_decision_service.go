@@ -62,7 +62,10 @@ func (service *raylineARCDecisionService) RouteDecision(
 		return routerruntime.RouteDecision{}, err
 	}
 
-	requestContext := decisionOnlyRequestContext(ctx, algorithm, request)
+	requestContext, err := service.decisionOnlyRequestContext(ctx, algorithm, request)
+	if err != nil {
+		return routerruntime.RouteDecision{}, err
+	}
 	selectionContext := &selection.SelectionContext{
 		DecisionName:    decision.Name,
 		CandidateModels: decision.ModelRefs,
@@ -194,8 +197,18 @@ func commitDecisionOnlyEpisode(ctx context.Context, requestContext *RequestConte
 	return nil
 }
 
+// consultWireFormat is the wire contract a route consult body is read as.
+// Callers of this bridge relay the Anthropic Messages request they are about
+// to send, so the consult reads that body under the same codec the routed
+// ingress path uses.
+const consultWireFormat = llmprotocol.AnthropicMessagesV1
+
 // decisionOnlyRequestContext is the minimum the ARC preparation path reads. It
 // is not a real request: there is no stream, no upstream, and no dispatch.
+//
+// The body is decoded through the public codec here, because the selector
+// reads the decoded request and nothing else. A body the codec refuses fails
+// the consult closed, which is what it did before the decode moved here.
 //
 // The caller's session identity is placed under the algorithm's configured
 // episode header rather than under a header name hardcoded here, so the
@@ -205,11 +218,30 @@ func commitDecisionOnlyEpisode(ctx context.Context, requestContext *RequestConte
 //
 // request.ExecutedModel is absent on purpose. It is record-only, and this
 // struct is exactly the state selection reads.
-func decisionOnlyRequestContext(
+func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 	ctx context.Context,
 	algorithm *config.AlgorithmConfig,
 	request routerruntime.RouteDecisionRequest,
-) *RequestContext {
+) (*RequestContext, error) {
+	engine, err := service.router.protocolEngine()
+	if err != nil {
+		return nil, fmt.Errorf(
+			"decision-only routing has no protocol runtime: %w",
+			err,
+		)
+	}
+	decoded, envelope, _, err := engine.DecodeRequestForMutation(
+		consultWireFormat,
+		request.Body,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"decision-only routing could not decode the consult body: %w",
+			err,
+		)
+	}
+	decoded.Trusted.SourceFormat = consultWireFormat
+	decoded.Trusted.CorrelationID = request.DecisionID
 	episodeIdentity := request.SessionID
 	if episodeIdentity == "" {
 		episodeIdentity = "decision-only:" + uuid.NewString()
@@ -217,10 +249,11 @@ func decisionOnlyRequestContext(
 	return &RequestContext{
 		Headers:          map[string]string{algorithm.RaylineARC.Episode.IDHeader: episodeIdentity},
 		RequestID:        request.DecisionID,
-		SourceFormat:     llmprotocol.AnthropicMessagesV1,
-		ProtocolEnvelope: llmprotocol.Envelope{Format: llmprotocol.AnthropicMessagesV1, Request: request.Body},
+		SourceFormat:     consultWireFormat,
+		SemanticRequest:  &decoded,
+		ProtocolEnvelope: envelope,
 		TraceContext:     ctx,
-	}
+	}, nil
 }
 
 // decisionOnlyRoutingTarget finds the decision that serves route consults.

@@ -17,20 +17,9 @@ limitations under the License.
 package raylinearc
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
-)
-
-type InputProtocol string
-
-const (
-	ProtocolAnthropicMessages InputProtocol = "anthropic_messages"
-	ProtocolOpenAIChat        InputProtocol = "openai_chat"
-	ProtocolOpenAIResponses   InputProtocol = "openai_responses"
 )
 
 type Turn struct {
@@ -128,142 +117,13 @@ type TurnOptions struct {
 	//
 	// This field is a kill switch, which is why it is worded as a negative:
 	// the Go zero value has to mean "include".
+	//
+	// The codec hoists every system message into Request.Instructions and
+	// keeps no record of where it sat, so a decoded request carries no
+	// mid-conversation scope to drop. This option therefore binds only a
+	// system message that reaches the projection inside the message
+	// sequence, which no public wire format produces today.
 	DropMidConversationSystemText bool
-}
-
-func NormalizeTurns(
-	protocol InputProtocol,
-	requestBody []byte,
-	options TurnOptions,
-) ([]Turn, error) {
-	request, err := decodeRequestObject(requestBody)
-	if err != nil {
-		return nil, err
-	}
-	switch protocol {
-	case ProtocolAnthropicMessages:
-		return normalizeAnthropicTurns(request, options)
-	case ProtocolOpenAIChat:
-		return normalizeOpenAIChatTurns(request, options)
-	case ProtocolOpenAIResponses:
-		return normalizeOpenAIResponsesTurns(request, options)
-	default:
-		return nil, turnError(
-			"unsupported_protocol",
-			"",
-			"unsupported protocol %q",
-			protocol,
-		)
-	}
-}
-
-func decodeRequestObject(data []byte) (map[string]any, error) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return nil, turnError("invalid_json", "", "%v", err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return nil, turnError(
-				"invalid_json",
-				"",
-				"request contains multiple JSON values",
-			)
-		}
-		return nil, turnError("invalid_json", "", "%v", err)
-	}
-	request, ok := value.(map[string]any)
-	if !ok {
-		return nil, turnError(
-			"invalid_request",
-			"",
-			"request body must be an object",
-		)
-	}
-	return request, nil
-}
-
-func requiredArray(
-	object map[string]any,
-	field string,
-	path string,
-) ([]any, error) {
-	value, ok := object[field]
-	if !ok {
-		return nil, turnError(
-			"missing_field",
-			path+"."+field,
-			"field is required",
-		)
-	}
-	array, ok := value.([]any)
-	if !ok {
-		return nil, turnError(
-			"invalid_field",
-			path+"."+field,
-			"field must be an array",
-		)
-	}
-	return array, nil
-}
-
-func requiredObject(value any, path string) (map[string]any, error) {
-	object, ok := value.(map[string]any)
-	if !ok {
-		return nil, turnError(
-			"invalid_item",
-			path,
-			"item must be an object",
-		)
-	}
-	return object, nil
-}
-
-func requiredString(
-	object map[string]any,
-	field string,
-	path string,
-) (string, error) {
-	value, ok := object[field]
-	if !ok {
-		return "", turnError(
-			"missing_field",
-			path+"."+field,
-			"field is required",
-		)
-	}
-	text, ok := value.(string)
-	if !ok {
-		return "", turnError(
-			"invalid_field",
-			path+"."+field,
-			"field must be a string",
-		)
-	}
-	return text, nil
-}
-
-func optionalBool(
-	object map[string]any,
-	field string,
-	path string,
-) (bool, error) {
-	value, ok := object[field]
-	if !ok || value == nil {
-		return false, nil
-	}
-	result, ok := value.(bool)
-	if !ok {
-		return false, turnError(
-			"invalid_field",
-			path+"."+field,
-			"field must be a boolean",
-		)
-	}
-	return result, nil
 }
 
 func turnError(
@@ -389,24 +249,6 @@ func (buffer *systemTextBuffer) add(text string) {
 		return
 	}
 	buffer.pending = append(buffer.pending, text)
-}
-
-// midConversationSystemText renders system text that already sits at the
-// position it governs, so it needs no buffering. It contributes nothing when
-// the scope is off, and nothing when the content cannot be read, on the same
-// reasoning collect gives for the mid-conversation scope.
-func midConversationSystemText(
-	include bool,
-	render func() (string, error),
-) string {
-	if !include {
-		return ""
-	}
-	text, err := render()
-	if err != nil {
-		return ""
-	}
-	return text
 }
 
 // take returns the buffered text and empties the buffer.

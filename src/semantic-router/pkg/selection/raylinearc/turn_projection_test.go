@@ -149,7 +149,7 @@ type turnProjectionFixture struct {
 
 type turnProjectionGoldenCase struct {
 	ID       string          `json:"id"`
-	Protocol InputProtocol   `json:"protocol"`
+	Protocol string          `json:"protocol"`
 	Request  json.RawMessage `json:"request"`
 	Turns    []Turn          `json:"turns"`
 }
@@ -242,12 +242,12 @@ func turnProjectionWireBody(
 	body["model"] = "golden-model"
 	var format llmprotocol.WireFormat
 	switch test.Protocol {
-	case ProtocolAnthropicMessages:
+	case "anthropic_messages":
 		format = llmprotocol.AnthropicMessagesV1
 		body["max_tokens"] = 1
-	case ProtocolOpenAIChat:
+	case "openai_chat":
 		format = llmprotocol.OpenAIChatV1
-	case ProtocolOpenAIResponses:
+	case "openai_responses":
 		format = llmprotocol.OpenAIResponsesV1
 	default:
 		t.Fatalf("fixture case names an unknown protocol %q", test.Protocol)

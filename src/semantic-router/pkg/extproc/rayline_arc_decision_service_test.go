@@ -114,7 +114,7 @@ func decisionServiceRouter(t *testing.T, selector *stubARCSelector) *OpenAIRoute
 }
 
 func anthropicBody(text string) []byte {
-	return []byte(`{"model":"claude","messages":[{"role":"user","content":"` + text + `"}]}`)
+	return []byte(`{"model":"claude","max_tokens":1024,"messages":[{"role":"user","content":"` + text + `"}]}`)
 }
 
 func TestRouteDecisionResolvesWorkerManifestFacts(t *testing.T) {
@@ -267,10 +267,13 @@ func TestRouteDecisionKeepsExecutedModelOutOfEpisodeState(t *testing.T) {
 // executed model could leak into it. Assert it does not appear anywhere in
 // that state, so the record-only rule holds structurally rather than by habit.
 func TestDecisionOnlyRequestContextExcludesExecutedModel(t *testing.T) {
+	selector := &stubARCSelector{arm: 0, workers: decisionServiceWorkers()}
+	router := decisionServiceRouter(t, selector)
+	service := &raylineARCDecisionService{router: router}
 	algorithm := decisionServiceConfig().Decisions[0].Algorithm
 	const executed = "executed-model-marker"
 
-	requestContext := decisionOnlyRequestContext(
+	requestContext, err := service.decisionOnlyRequestContext(
 		context.Background(),
 		algorithm,
 		routerruntime.RouteDecisionRequest{
@@ -280,6 +283,9 @@ func TestDecisionOnlyRequestContextExcludesExecutedModel(t *testing.T) {
 			ExecutedModel: executed,
 		},
 	)
+	if err != nil {
+		t.Fatalf("decisionOnlyRequestContext() error = %v", err)
+	}
 
 	for name, value := range map[string]string{
 		"episode header":  requestContext.Headers[decisionServiceEpisodeHeader],
@@ -372,9 +378,8 @@ func TestRouteDecisionFailsClosedOnAmbiguousDecisions(t *testing.T) {
 	}
 }
 
-// The transport layer accepts this body: messages is a non-empty list of
-// objects. The algorithm still cannot read it, and must fail closed rather
-// than route on an empty conversation.
+// A body the codec cannot read must fail the consult closed rather than route
+// on an empty conversation. The selector must not run at all.
 func TestRouteDecisionRejectsUnnormalizableBodies(t *testing.T) {
 	selector := &stubARCSelector{arm: 0, workers: decisionServiceWorkers()}
 	router := decisionServiceRouter(t, selector)

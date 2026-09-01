@@ -57,11 +57,17 @@ func TestBuildRaylineARCSelectionContextParsesExactCloseSignal(t *testing.T) {
 					"x-rayline-episode-close": test.header,
 				},
 				SourceFormat: llmprotocol.OpenAIChatV1,
-				ProtocolEnvelope: llmprotocol.Envelope{
-					Format: llmprotocol.OpenAIChatV1,
-					Request: []byte(
-						`{"messages":[{"role":"user","content":"public test turn"}]}`,
-					),
+				// The selector reads the decoded request, so the episode is
+				// prepared from SemanticRequest and not from the wire body.
+				SemanticRequest: &llmprotocol.Request{
+					Generation: 1,
+					Messages: []llmprotocol.Message{{
+						Role: llmprotocol.RoleUser,
+						Content: []llmprotocol.Content{{
+							Kind: llmprotocol.ContentText,
+							Text: "public test turn",
+						}},
+					}},
 				},
 				TraceContext: context.Background(),
 			}
