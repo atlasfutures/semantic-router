@@ -74,6 +74,9 @@ var AnthropicShimContract = []string{
 	"chat-completions-request",
 	"anthropic-messages-cache-cycle",
 	"anthropic-chat-cache-control",
+	// The only assertion on the request headers a provider received. The shim
+	// records them and nothing else checks them.
+	"anthropic-provider-inbound-headers",
 	"anthropic-messages-stop-sequence",
 	"anthropic-messages-streaming",
 	"anthropic-chat-completions-streaming",
