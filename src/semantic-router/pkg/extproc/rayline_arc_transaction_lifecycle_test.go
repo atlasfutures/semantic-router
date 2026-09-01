@@ -1,9 +1,3 @@
-//go:build vsr_next_bucket_b
-
-// Parked until Bucket B re-seats the ARC dispatch hooks on upstream's
-// prepareProviderDispatch / applyDispatchDecision seam. Build with
-// -tags vsr_next_bucket_b once those symbols exist again.
-
 /*
 Copyright 2025 vLLM Semantic Router.
 
@@ -125,7 +119,7 @@ func TestRaylineARCTransactionRenewsRedisLease(t *testing.T) {
 	}
 	requestContext.RaylineARCTransaction.markSelection(0, 77)
 	time.Sleep(240 * time.Millisecond)
-	if finalizeErr := finalizeRaylineARCResponseHeaders(
+	if finalizeErr := finalizeSelectionResponseHeaders(
 		requestContext,
 		true,
 	); finalizeErr != nil {
