@@ -143,29 +143,23 @@ cases:
         /response.completed: synthesized
       loss: none
       dispatch_attempts: 1
-    expected_outcome:
-      status: fail
-      reference: PL-0042#seed-03-cross-protocol-anthropic-version
-      reason: >-
-        Cross-protocol Anthropic egress carries no anthropic-version header. The
-        Router dispatches to /v1/messages with an Anthropic body, but the version
-        header only ever reaches the provider when a same-protocol client sent it,
-        and nothing synthesizes it here. Backend extra_headers does supply it, but
-        only where the backend already declares base_url and owns its own
-        endpoint: in this profile Envoy owns the endpoint, so adding
-        extra_headers promotes the backend to a provider profile that then fails
-        to resolve. A deployment that already routes by base_url, such as the
-        Cloud Run conformance cell, can close this case by configuration alone.
-      signature:
-        - 'header anthropic-version = "", want "2023-06-01"'
     provenance:
       origin: public-accepted-bug-seed
       sources: [openai_responses_streaming, anthropic_streaming, vsr_3013]
       note: >-
-        Seeded from issue 3013, which is now closed: the Responses stream does
-        reach the Messages backend and comes back as a Responses SSE sequence.
-        The case still fails, at the provider header boundary instead, which is
-        what its expected_outcome now records.
+        Seeded from issue 3013, which is now closed: the Responses stream reaches
+        the Messages backend and comes back as a Responses SSE sequence. It then
+        carried a marker for a second reason, a missing anthropic-version header,
+        until the profile declared one. That was never the Router's gap either.
+        Anthropic requires the header and the Router synthesizes none, but a
+        backend can supply it through extra_headers, and a provider profile is all
+        or nothing: naming extra_headers also obliges base_url, a provider type,
+        an auth header and a resolvable credential. Supplying the whole set is
+        what a real Anthropic backend needs anyway, and it closes this case with
+        no code change. What remains upstream is a defaults and documentation
+        gap, not a functional one: the reference config declares an
+        api_format: anthropic model without the header, and every backend the
+        project tests against is permissive enough to hide that.
     ownership:
       primary: Data Plane & Networking
       reviewers: [Evaluation & Quality]

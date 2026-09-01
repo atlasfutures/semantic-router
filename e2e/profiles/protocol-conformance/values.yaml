@@ -36,6 +36,19 @@ config:
             endpoint: conformance-fixture.conformance-fixture-system.svc.cluster.local:8080
             weight: 1
             type: anthropic
+            # A provider profile is all or nothing. Naming extra_headers promotes
+            # this backend into one, and a profile must then also resolve a
+            # base_url, a provider type, an auth header and a credential, or
+            # dispatch fails before the provider is reached. The host matches
+            # endpoint and the URL carries no path, so the dispatch path stays
+            # /v1/messages. The key is synthetic: the fixture never checks it.
+            base_url: http://conformance-fixture.conformance-fixture-system.svc.cluster.local:8080
+            provider: anthropic
+            auth_header: x-api-key
+            auth_prefix: ""
+            api_key: synthetic-conformance-key
+            extra_headers:
+              anthropic-version: "2023-06-01"
       - name: conformance-openrouter-model
         api_format: openai
         backend_refs:

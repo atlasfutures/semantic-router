@@ -14,13 +14,21 @@ func TestFrozenInventoryExpectedOutcomes(t *testing.T) {
 		t.Fatalf("load frozen inventory: %v", err)
 	}
 
-	// One marker left, and both retirements were the corpus's own fault rather
-	// than the Router's.
+	// No markers left. All three retirements were the corpus's own fault rather
+	// than the Router's, which is the useful part: each one looked like a Router
+	// gap until it was run against something that could tell the difference.
 	//
 	// seed-02 assumed the Router could not reach an Anthropic backend. It could;
-	// the profile had simply never declared api_format. A Cloud Run run on
-	// 2026-08-29, before the codec work merged, already passed this case once its
-	// config set the field.
+	// the profile had never declared api_format. A Cloud Run run on 2026-08-29,
+	// before the codec work merged, already passed this case once its config set
+	// the field.
+	//
+	// seed-03 assumed cross-protocol Anthropic egress could not carry the version
+	// header Anthropic requires. The Router does synthesize none, but a backend
+	// supplies it through extra_headers, and a provider profile is all or nothing:
+	// naming extra_headers also obliges base_url, a provider type, an auth header
+	// and a resolvable credential. Declaring the whole set is what a real
+	// Anthropic backend needs anyway, and it closes the case with no code change.
 	//
 	// seed-06 assumed the Router synthesizes no terminal event after a provider
 	// dies mid-stream. It does. The old script reset the TCP connection, and an
@@ -29,11 +37,9 @@ func TestFrozenInventoryExpectedOutcomes(t *testing.T) {
 	// Ending the provider body instead is the shape a real provider failure
 	// arrives in, and the Router answers it with a terminal error event.
 	//
-	// seed-03 kept its marker but changed cause: the Chat short-circuit is gone
-	// and the missing provider version header is what remains.
-	want := map[string]string{
-		"seed-03-responses-to-anthropic-stream": "PL-0042#seed-03-cross-protocol-anthropic-version",
-	}
+	// An empty map is therefore the assertion, not a gap in one: a new marker has
+	// to be argued for, and a stale one cannot sit here unnoticed.
+	want := map[string]string{}
 
 	marked := map[string]string{}
 	for _, c := range inv.Cases {
