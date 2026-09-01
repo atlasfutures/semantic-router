@@ -6,19 +6,23 @@ package apiserver
 type RoutePermission string
 
 const (
-	PermHealthRead         RoutePermission = "health.read"
-	PermReadyRead          RoutePermission = "ready.read"
-	PermDocsRead           RoutePermission = "docs.read"
-	PermClassifyInvoke     RoutePermission = "classify.invoke"
-	PermConfigRead         RoutePermission = "config.read"
-	PermConfigWrite        RoutePermission = "config.write"
-	PermSecretView         RoutePermission = "secret_view"
-	PermLearningIngest     RoutePermission = "learning.ingest"
-	PermReplayRead         RoutePermission = "replay.read"
-	PermReplayDetail       RoutePermission = "replay.detail"
-	PermDataRead           RoutePermission = "data.read"
-	PermDataWrite          RoutePermission = "data.write"
-	PermMetricsRead        RoutePermission = "metrics.read"
+	PermHealthRead     RoutePermission = "health.read"
+	PermReadyRead      RoutePermission = "ready.read"
+	PermDocsRead       RoutePermission = "docs.read"
+	PermClassifyInvoke RoutePermission = "classify.invoke"
+	PermConfigRead     RoutePermission = "config.read"
+	PermConfigWrite    RoutePermission = "config.write"
+	PermSecretView     RoutePermission = "secret_view"
+	PermLearningIngest RoutePermission = "learning.ingest"
+	PermReplayRead     RoutePermission = "replay.read"
+	PermReplayDetail   RoutePermission = "replay.detail"
+	PermDataRead       RoutePermission = "data.read"
+	PermDataWrite      RoutePermission = "data.write"
+	PermMetricsRead    RoutePermission = "metrics.read"
+	// PermRouteDecision gates decision-only routing. It is deliberately absent
+	// from the built-in viewer and operator roles: the caller is a trusted
+	// proxy, not a console user, so a deployment must grant it on purpose.
+	PermRouteDecision      RoutePermission = "route.decision"
 	PermCacheRead          RoutePermission = "cache.read"
 	PermCacheInvalidate    RoutePermission = "cache.invalidate"
 	PermCacheManage        RoutePermission = "cache.manage"

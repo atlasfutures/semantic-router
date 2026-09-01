@@ -87,5 +87,6 @@ func apiRoutes() []apiRoute {
 		apiMemoryRoutes(),
 		apiVectorStoreRoutes(),
 		apiFileRoutes(),
+		apiRouteDecisionRoutes(),
 	)
 }

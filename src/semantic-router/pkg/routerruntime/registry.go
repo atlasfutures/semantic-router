@@ -22,6 +22,7 @@ type Registry struct {
 	vectorStore           *VectorStoreRuntime
 	modelSelector         *selection.Registry
 	learningRuntime       LearningRuntime
+	routeDecisionRuntime  RouteDecisionRuntime
 	replayRuntime         ReplayRuntime
 	responseCache         *cache.ResponseCacheService
 	contextCompression    *contextcompression.Service
@@ -38,6 +39,7 @@ type RouterRuntimeSnapshot struct {
 	MemoryStore           memory.Store
 	ModelSelector         *selection.Registry
 	LearningRuntime       LearningRuntime
+	RouteDecisionRuntime  RouteDecisionRuntime
 	ReplayRuntime         ReplayRuntime
 	ResponseCache         *cache.ResponseCacheService
 	ContextCompression    *contextcompression.Service
@@ -304,6 +306,27 @@ func (r *Registry) SetLearningRuntime(runtime LearningRuntime) {
 	r.mu.Unlock()
 }
 
+// RouteDecisionRuntime returns nil until the router publishes itself. The
+// management listener starts before the router exists, so every reader must
+// treat "not published yet" as a normal state rather than a fault.
+func (r *Registry) RouteDecisionRuntime() RouteDecisionRuntime {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.routeDecisionRuntime
+}
+
+func (r *Registry) SetRouteDecisionRuntime(runtime RouteDecisionRuntime) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.routeDecisionRuntime = runtime
+	r.mu.Unlock()
+}
+
 func (r *Registry) PublishRouterRuntime(
 	cfg *config.RouterConfig,
 	classificationService *services.ClassificationService,
@@ -333,6 +356,7 @@ func (r *Registry) PublishRouterRuntimeSnapshot(snapshot RouterRuntimeSnapshot) 
 	r.memoryStore = snapshot.MemoryStore
 	r.modelSelector = snapshot.ModelSelector
 	r.learningRuntime = snapshot.LearningRuntime
+	r.routeDecisionRuntime = snapshot.RouteDecisionRuntime
 	r.replayRuntime = snapshot.ReplayRuntime
 	r.responseCache = snapshot.ResponseCache
 	r.contextCompression = snapshot.ContextCompression

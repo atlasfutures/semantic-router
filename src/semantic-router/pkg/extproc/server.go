@@ -489,6 +489,7 @@ func publishRouterState(
 			MemoryStore:           router.MemoryStore,
 			ModelSelector:         router.ModelSelector,
 			LearningRuntime:       router.routerLearningRuntimeState(),
+			RouteDecisionRuntime:  router.routeDecisionRuntimeState(),
 			ReplayRuntime:         router,
 			ResponseCache:         router.responseCacheService(),
 			ContextCompression:    router.contextCompressionService(),
