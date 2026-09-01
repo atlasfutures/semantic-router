@@ -393,3 +393,26 @@ func assertAdaptationSampled(t *testing.T, ctx *RequestContext, want bool) {
 		t.Fatalf("expected sampling used=%v, got %#v", want, sampling)
 	}
 }
+
+func TestRouterLearningProposalPreservesSelectionExtensions(t *testing.T) {
+	const traceKey = selection.ExtensionKey("example.com/router-ext.trace")
+
+	baseResult := &selection.SelectionResult{
+		SelectedModel: "cheap",
+		Method:        selection.MethodStatic,
+		AllScores:     map[string]float64{"cheap": 1},
+	}
+	baseResult.SetExtension(traceKey, "ext-trace")
+
+	result := proposalSelectionResult(
+		baseResult,
+		config.ModelRef{Model: "frontier"},
+		routerLearningCandidateScore{model: "frontier", score: 2},
+		nil,
+	)
+
+	trace, ok := selection.Extension[string](result.Extensions, traceKey)
+	if !ok || trace != "ext-trace" {
+		t.Fatalf("expected the proposal to carry base result extensions, got %q ok=%v", trace, ok)
+	}
+}
