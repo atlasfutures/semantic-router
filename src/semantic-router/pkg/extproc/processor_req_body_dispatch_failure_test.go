@@ -1,3 +1,9 @@
+//go:build vsr_next_bucket_b
+
+// Parked until Bucket B re-seats the ARC dispatch hooks on upstream's
+// prepareProviderDispatch / applyDispatchDecision seam. Build with
+// -tags vsr_next_bucket_b once those symbols exist again.
+
 package extproc
 
 import (

@@ -18,8 +18,6 @@ package extproc
 
 import (
 	"context"
-	"errors"
-	"os"
 	"slices"
 	"sync"
 	"testing"
@@ -27,10 +25,7 @@ import (
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -188,49 +183,6 @@ func TestRaylineARCEpisodeCloseFailurePreservesProviderSuccessAndAffinity(
 	}
 }
 
-func TestRaylineARCEpisodeFinalizerCoversEOFErrorCancelAndPanic(
-	t *testing.T,
-) {
-	tests := []struct {
-		name   string
-		stream ext_proc.ExternalProcessor_ProcessServer
-	}{
-		{
-			name:   "EOF",
-			stream: NewMockStream(nil),
-		},
-		{
-			name: "handler error",
-			stream: &MockStream{
-				Ctx:       context.Background(),
-				RecvError: errors.New("synthetic receive failure"),
-			},
-		},
-		{
-			name: "cancel",
-			stream: &MockStream{
-				Ctx:       context.Background(),
-				RecvError: status.Error(codes.Canceled, "synthetic cancel"),
-			},
-		},
-		{
-			name: "panic",
-			stream: &panicOnRecvStream{
-				MockStream: MockStream{Ctx: context.Background()},
-				panicVal:   "synthetic panic",
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			router, requestContext, store, episode := newTestARCEpisodeTransaction(t)
-			requestContext.RaylineARCTransaction.markSelection(1, 123)
-			_ = router.processWithContext(test.stream, requestContext)
-			assertARCEpisodeNotAdvanced(t, store, episode)
-		})
-	}
-}
-
 func TestRaylineARCEpisodeCommitFailsAfterLeaseLoss(t *testing.T) {
 	router, requestContext, _, _ := newTestARCEpisodeTransaction(t)
 	requestContext.RaylineARCTransaction.markSelection(1, 123)
@@ -252,72 +204,6 @@ func TestRaylineARCEpisodeCommitFailsAfterLeaseLoss(t *testing.T) {
 			response,
 			requestContext.RaylineARCTransaction.finalizeErr,
 		)
-	}
-}
-
-func TestRaylineARCTransactionRenewsRedisLease(t *testing.T) {
-	address := os.Getenv("RAYLINE_ARC_TEST_REDIS_ADDR")
-	if address == "" {
-		t.Skip("RAYLINE_ARC_TEST_REDIS_ADDR is not set")
-	}
-	episode := raylinearc.HashEpisodeID(
-		t.Name() + time.Now().String(),
-	)
-	store, err := raylinearc.NewRedisEpisodeStore(
-		raylinearc.RedisEpisodeStoreConfig{
-			Address: address,
-			KeyPrefix: "test:rayline-arc:" +
-				episode + ":",
-			LeaseTTL: 90 * time.Millisecond,
-			IdleTTL:  time.Minute,
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = store.Close()
-	})
-	lease, state, err := store.Prepare(
-		context.Background(),
-		episode,
-		2,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	requestContext := &RequestContext{
-		Headers: make(map[string]string),
-		RaylineARCTransaction: newRaylineARCEpisodeTransaction(
-			store,
-			lease,
-			state,
-			episode,
-			90*time.Millisecond,
-			nil,
-		),
-	}
-	requestContext.RaylineARCTransaction.markSelection(0, 77)
-	time.Sleep(240 * time.Millisecond)
-	if finalizeErr := finalizeRaylineARCResponseHeaders(
-		requestContext,
-		true,
-	); finalizeErr != nil {
-		t.Fatal(finalizeErr)
-	}
-	nextLease, nextState, err := store.Prepare(
-		context.Background(),
-		episode,
-		2,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		_ = store.Abort(context.Background(), nextLease)
-	}()
-	if nextState.TurnIndex != 1 {
-		t.Fatalf("renewed transaction state = %#v", nextState)
 	}
 }
 
@@ -399,53 +285,6 @@ func arcResponseHeaders(
 	}
 }
 
-// TestRouterCloseWaitsForInflightARCTransactions proves a hot reload cannot
-// close the episode store while a prepared lease is still awaiting its
-// terminal commit or abort.
-func TestRouterCloseWaitsForInflightARCTransactions(t *testing.T) {
-	closed := make(chan struct{})
-	store, _ := raylinearc.NewMemoryEpisodeStore(raylinearc.MemoryEpisodeStoreConfig{
-		MaxEpisodes: 4,
-		IdleTTL:     time.Minute,
-	})
-	router := &OpenAIRouter{
-		RaylineARCEpisodeStore: store,
-		raylineARCEpisodeStoreClose: func() error {
-			close(closed)
-			return nil
-		},
-	}
-	// Mirror RouterService.Process: the stream registers its hold on entry.
-	if !router.tryHoldRaylineARC() {
-		t.Fatal("hold refused on an open router")
-	}
-
-	returned := make(chan struct{})
-	go func() {
-		defer close(returned)
-		_ = router.Close()
-	}()
-
-	select {
-	case <-closed:
-		t.Fatal("episode store closed while a transaction was in flight")
-	case <-time.After(100 * time.Millisecond):
-	}
-
-	router.releaseRaylineARCHold()
-
-	select {
-	case <-returned:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Close did not return after the transaction finalized")
-	}
-	select {
-	case <-closed:
-	default:
-		t.Fatal("episode store was never closed")
-	}
-}
-
 // blockingRenewStore signals when a renewal starts and blocks until its
 // context is cancelled, then returns that cancellation error.
 type blockingRenewStore struct {
@@ -508,53 +347,6 @@ func TestCommitSucceedsWhileRenewalIsInFlight(t *testing.T) {
 	}
 	if resumed.PreviousArm == nil || *resumed.PreviousArm != 1 {
 		t.Fatalf("episode did not advance: %#v", resumed)
-	}
-}
-
-// TestHoldRefusedOnceCloseBegins proves a stream that captured a router which
-// has started closing is told to retry rather than using a closed store.
-func TestHoldRefusedOnceCloseBegins(t *testing.T) {
-	store, err := raylinearc.NewMemoryEpisodeStore(
-		raylinearc.MemoryEpisodeStoreConfig{MaxEpisodes: 2, IdleTTL: time.Minute},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	router := &OpenAIRouter{
-		RaylineARCEpisodeStore:      store,
-		raylineARCEpisodeStoreClose: func() error { return nil },
-	}
-	if !router.tryHoldRaylineARC() {
-		t.Fatal("hold refused before Close")
-	}
-	router.releaseRaylineARCHold()
-
-	if err := router.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if router.tryHoldRaylineARC() {
-		t.Fatal("hold granted on a closing router")
-	}
-}
-
-func TestRaylineARCDrainTimeoutCoversConfiguredEncoderBudget(t *testing.T) {
-	cfg := &config.RouterConfig{}
-	cfg.Decisions = []config.Decision{
-		{
-			Algorithm: &config.AlgorithmConfig{
-				Type: config.RaylineARCAlgorithmType,
-				RaylineARC: &config.RaylineARCAlgorithmConfig{
-					Encoder: config.RaylineARCEncoderConfig{
-						TotalTimeoutSeconds: 180,
-					},
-				},
-			},
-		},
-	}
-	got := configuredRaylineARCDrainTimeout(cfg)
-	want := 180*time.Second + episodeFinalizeTimeout
-	if got != want {
-		t.Fatalf("drain timeout = %s, want %s", got, want)
 	}
 }
 

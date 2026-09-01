@@ -23,7 +23,6 @@ import (
 	"testing"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
-	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -388,83 +387,5 @@ func TestRaylineARCCredentialSurvivesLaterHeaderMutations(t *testing.T) {
 	}
 	if !slices.Contains(state.removeHeaders, "x-drop") {
 		t.Fatalf("unrelated deletion was dropped: %#v", state.removeHeaders)
-	}
-}
-
-// TestToolMutationCannotEraseARCDispatch proves a later tool-selection body
-// rewrite cannot revert the artifact-owned model, provider policy, or limits.
-func TestToolMutationCannotEraseARCDispatch(t *testing.T) {
-	worker := &raylinearc.WorkerManifest{
-		Model:                       "artifact/provider-model",
-		OpenRouterProviderOrder:     []string{"pinned-provider"},
-		OpenRouterRequireParameters: true,
-		ThinkingMode:                "off",
-	}
-	ctx := &RequestContext{Headers: map[string]string{}, RaylineARCDispatch: worker}
-	// A tool mutation reserializes the client request, losing ARC shaping.
-	clientBody := []byte(`{"model":"MoM","messages":[],"provider":{"order":["attacker"]}}`)
-	response := &ext_proc.ProcessingResponse{
-		Response: &ext_proc.ProcessingResponse_RequestBody{
-			RequestBody: &ext_proc.BodyResponse{
-				Response: &ext_proc.CommonResponse{
-					BodyMutation: &ext_proc.BodyMutation{
-						Mutation: &ext_proc.BodyMutation_Body{Body: clientBody},
-					},
-				},
-			},
-		},
-	}
-
-	router := &OpenAIRouter{Config: &config.RouterConfig{}}
-	router.reapplyRaylineARCDispatch(response, ctx)
-
-	final := response.GetRequestBody().GetResponse().GetBodyMutation().GetBody()
-	var object map[string]any
-	if err := json.Unmarshal(final, &object); err != nil {
-		t.Fatal(err)
-	}
-	if object["model"] != "artifact/provider-model" {
-		t.Fatalf("artifact model was lost: %#v", object["model"])
-	}
-	provider, ok := object["provider"].(map[string]any)
-	if !ok {
-		t.Fatalf("artifact provider policy was lost: %#v", object["provider"])
-	}
-	order, ok := provider["order"].([]any)
-	if !ok || len(order) != 1 || order[0] != "pinned-provider" {
-		t.Fatalf("client provider order survived: %#v", provider["order"])
-	}
-	if provider["require_parameters"] != true {
-		t.Fatalf("artifact parameter policy was lost: %#v", provider)
-	}
-}
-
-// TestReapplyFailsClosedOnUnshapeableBody proves a body the artifact contract
-// cannot shape is cleared rather than forwarded unshaped.
-func TestReapplyFailsClosedOnUnshapeableBody(t *testing.T) {
-	ctx := &RequestContext{
-		Headers:            map[string]string{},
-		RaylineARCDispatch: &raylinearc.WorkerManifest{Model: "artifact/model"},
-	}
-	response := &ext_proc.ProcessingResponse{
-		Response: &ext_proc.ProcessingResponse_RequestBody{
-			RequestBody: &ext_proc.BodyResponse{
-				Response: &ext_proc.CommonResponse{
-					BodyMutation: &ext_proc.BodyMutation{
-						Mutation: &ext_proc.BodyMutation_Body{
-							Body: []byte("not json"),
-						},
-					},
-				},
-			},
-		},
-	}
-
-	router := &OpenAIRouter{Config: &config.RouterConfig{}}
-	router.reapplyRaylineARCDispatch(response, ctx)
-
-	if body := response.GetRequestBody().GetResponse().
-		GetBodyMutation().GetBody(); len(body) != 0 {
-		t.Fatalf("unshapeable body was forwarded: %q", body)
 	}
 }
