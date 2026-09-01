@@ -14,18 +14,25 @@ func TestFrozenInventoryExpectedOutcomes(t *testing.T) {
 		t.Fatalf("load frozen inventory: %v", err)
 	}
 
-	// seed-02 lost its marker: a model declaring api_format: anthropic dispatches
-	// to /v1/messages, so the case passes and keeping the marker would fail the
-	// run for passing unexpectedly. The gap was never the Router's -- a Cloud Run
-	// run on 2026-08-29, before the codec work merged, already passed this case
-	// once its config set api_format per model. What the marker really recorded
-	// was a profile that had not declared the field.
+	// One marker left, and both retirements were the corpus's own fault rather
+	// than the Router's.
+	//
+	// seed-02 assumed the Router could not reach an Anthropic backend. It could;
+	// the profile had simply never declared api_format. A Cloud Run run on
+	// 2026-08-29, before the codec work merged, already passed this case once its
+	// config set the field.
+	//
+	// seed-06 assumed the Router synthesizes no terminal event after a provider
+	// dies mid-stream. It does. The old script reset the TCP connection, and an
+	// in-cluster proxy forwards a reset as a stream reset, tearing the response
+	// path down before anything can be appended -- so the case measured the proxy.
+	// Ending the provider body instead is the shape a real provider failure
+	// arrives in, and the Router answers it with a terminal error event.
 	//
 	// seed-03 kept its marker but changed cause: the Chat short-circuit is gone
 	// and the missing provider version header is what remains.
 	want := map[string]string{
-		"seed-03-responses-to-anthropic-stream":             "PL-0042#seed-03-cross-protocol-anthropic-version",
-		"seed-06-anthropic-openrouter-midstream-truncation": "PL-0042#seed-06-terminal-event-after-disconnect",
+		"seed-03-responses-to-anthropic-stream": "PL-0042#seed-03-cross-protocol-anthropic-version",
 	}
 
 	marked := map[string]string{}

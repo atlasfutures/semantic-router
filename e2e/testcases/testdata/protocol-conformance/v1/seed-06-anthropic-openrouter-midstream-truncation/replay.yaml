@@ -1,10 +1,20 @@
 # seed-06: mid-stream truncation after commit.
 #
 # status 200 is step 0, so the response is committed before the fault. The sse step
-# writes a prefix that has no finish_reason and no terminal sentinel, the delay lets
-# the router observe the stream as live, and disconnect closes the connection with
-# no terminal event at all. The fault is in the script, not in the payload file: the
-# provider stream is well formed for as far as it goes.
+# writes a prefix with no finish_reason and no terminal sentinel, and the delay lets
+# the router observe the stream as live. Then the response simply ends: the script
+# runs out of steps, so the provider closes its body at the HTTP layer with the SSE
+# sequence incomplete. The fault is in the script, not in the payload file, which is
+# well formed for as far as it goes.
+#
+# Deliberately not a disconnect step. That step hijacks the TCP connection and
+# closes it, and an in-cluster proxy forwards the reset as a stream reset, so the
+# Router's response path is torn down before it can append anything -- the case then
+# measures the proxy rather than the Router. A managed edge in front of the provider
+# converts the same backend death into an HTTP-level end, which is why the identical
+# corpus produced a terminal event through Cloud Run and none through kind. Ending
+# the body is the shape a provider failure actually reaches a Router in, and it is
+# the same in both environments.
 schema_version: protocol-conformance-replay-v1
 
 expect:
@@ -17,4 +27,3 @@ steps:
   - {kind: status, status: 200, headers: {content-type: text/event-stream}}
   - {kind: sse, file: provider-response.sse, chunk_bytes: 29}
   - {kind: delay, millis: 25}
-  - {kind: disconnect}
