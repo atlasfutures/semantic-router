@@ -526,6 +526,7 @@ func proposalSelectionResult(
 	if baseResult != nil {
 		result.Method = baseResult.Method
 		result.Tier = baseResult.Tier
+		result.Extensions = baseResult.Extensions
 		result.AllScores = cloneSelectionScores(baseResult.AllScores)
 		if result.AllScores == nil {
 			result.AllScores = map[string]float64{}
