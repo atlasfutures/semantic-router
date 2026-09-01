@@ -17,7 +17,6 @@ limitations under the License.
 package extproc
 
 import (
-	"math"
 	"strconv"
 	"strings"
 
@@ -27,112 +26,9 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
-const (
-	envoyAttemptCountHeader       = "x-envoy-attempt-count"
-	envoyMaxRetriesHeader         = "x-envoy-max-retries"
-	envoyRetryOnHeader            = "x-envoy-retry-on"
-	envoyRetryGRPCOnHeader        = "x-envoy-retry-grpc-on"
-	envoyRetriableStatusHeader    = "x-envoy-retriable-status-codes"
-	envoyRetriableHeadersHeader   = "x-envoy-retriable-header-names"
-	envoyRequestTimeoutHeader     = "x-envoy-upstream-rq-timeout-ms"
-	envoyPerTryTimeoutHeader      = "x-envoy-upstream-rq-per-try-timeout-ms"
-	envoyHedgePerTryTimeoutHeader = "x-envoy-hedge-on-per-try-timeout"
-)
-
-var envoyRetryControlHeaders = []string{
-	envoyMaxRetriesHeader,
-	envoyRetryOnHeader,
-	envoyRetryGRPCOnHeader,
-	envoyRetriableStatusHeader,
-	envoyRetriableHeadersHeader,
-	envoyRequestTimeoutHeader,
-	envoyPerTryTimeoutHeader,
-	envoyHedgePerTryTimeoutHeader,
-}
-
-// enforceRaylineARCTransportRetryHeaders makes the signed worker contract the
-// last writer of Envoy retry controls. The OpenRouter-only route topology owns
-// the retryable statuses and backoff algorithm; these request headers supply
-// the signed artifact's attempt/deadline budget. Envoy evaluates
-// retriable_request_headers before request-body ext_proc mutations, so the
-// deployment boundary—not a late header matcher—selects the retrying route.
-//
-// OpenAI-compatible self-hosted workers intentionally use routes with no retry
-// policy. A 429 from a vLLM worker is server backpressure, and replaying it
-// automatically can amplify overload. The caller must never be able to opt
-// itself in or increase the artifact-owned retry budget.
-func enforceRaylineARCTransportRetryHeaders(
-	state *routeHeaderState,
-	ctx *RequestContext,
-) {
-	if state == nil || ctx == nil || ctx.RaylineARCDispatch == nil {
-		return
-	}
-
-	for _, name := range envoyRetryControlHeaders {
-		state.setHeaders = removeSetHeader(state.setHeaders, name)
-		state.removeHeaders = appendHeaderRemoval(state.removeHeaders, name)
-	}
-
-	worker := ctx.RaylineARCDispatch
-	if worker.EffectiveDispatchBackend() != raylinearc.DispatchOpenRouter {
-		return
-	}
-
-	state.setHeaders = append(
-		state.setHeaders,
-		overwriteHeader(envoyRetryOnHeader, "retriable-status-codes"),
-		overwriteHeader(
-			envoyMaxRetriesHeader,
-			strconv.FormatUint(worker.OpenRouterMaxRetries, 10),
-		),
-	)
-	if worker.AttemptDeadlineSeconds != nil {
-		milliseconds := int64(math.Ceil(*worker.AttemptDeadlineSeconds * 1000))
-		if milliseconds > 0 {
-			state.setHeaders = append(
-				state.setHeaders,
-				overwriteHeader(
-					envoyRequestTimeoutHeader,
-					strconv.FormatInt(milliseconds, 10),
-				),
-			)
-		}
-	}
-}
-
-func overwriteHeader(name string, value string) *core.HeaderValueOption {
-	return &core.HeaderValueOption{
-		Header: &core.HeaderValue{
-			Key:      name,
-			RawValue: []byte(value),
-		},
-		AppendAction: core.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
-	}
-}
-
-func removeSetHeader(
-	headers []*core.HeaderValueOption,
-	name string,
-) []*core.HeaderValueOption {
-	retained := headers[:0]
-	for _, header := range headers {
-		if strings.EqualFold(header.GetHeader().GetKey(), name) {
-			continue
-		}
-		retained = append(retained, header)
-	}
-	return retained
-}
-
-func appendHeaderRemoval(headers []string, name string) []string {
-	for _, header := range headers {
-		if strings.EqualFold(header, name) {
-			return headers
-		}
-	}
-	return append(headers, name)
-}
+// envoyAttemptCountHeader is the only Envoy retry header the router reads.
+// The retry policy itself is route configuration, not request state.
+const envoyAttemptCountHeader = "x-envoy-attempt-count"
 
 func captureRaylineARCProviderAttempts(
 	headers *core.HeaderMap,

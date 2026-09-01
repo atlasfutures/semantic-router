@@ -17,7 +17,6 @@ limitations under the License.
 package extproc
 
 import (
-	"slices"
 	"testing"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -26,70 +25,6 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
-
-func TestRaylineARCTransportRetryUsesArtifactBudget(t *testing.T) {
-	deadline := 12.3451
-	ctx := &RequestContext{
-		RaylineARCDispatch: &raylinearc.WorkerManifest{
-			OpenRouterMaxRetries:   2,
-			AttemptDeadlineSeconds: &deadline,
-		},
-	}
-	state := &routeHeaderState{
-		setHeaders: []*core.HeaderValueOption{
-			overwriteHeader(envoyRetryOnHeader, "caller-value"),
-			overwriteHeader(envoyMaxRetriesHeader, "99"),
-			overwriteHeader("x-keep", "yes"),
-		},
-		removeHeaders: []string{"x-existing"},
-	}
-
-	enforceRaylineARCTransportRetryHeaders(state, ctx)
-
-	values := headerValuesByName(state.setHeaders)
-	if values[envoyRetryOnHeader] != "retriable-status-codes" {
-		t.Fatalf("retry-on = %q", values[envoyRetryOnHeader])
-	}
-	if values[envoyMaxRetriesHeader] != "2" {
-		t.Fatalf("max retries = %q", values[envoyMaxRetriesHeader])
-	}
-	if values[envoyRequestTimeoutHeader] != "12346" {
-		t.Fatalf("request timeout = %q", values[envoyRequestTimeoutHeader])
-	}
-	if values["x-keep"] != "yes" {
-		t.Fatalf("unrelated header was lost: %#v", values)
-	}
-	for _, name := range envoyRetryControlHeaders {
-		if !slices.Contains(state.removeHeaders, name) {
-			t.Fatalf("retry control %q was not stripped: %#v", name, state.removeHeaders)
-		}
-	}
-}
-
-func TestRaylineARCTransportRetryDoesNotRetrySelfHostedVLLM(t *testing.T) {
-	ctx := &RequestContext{
-		RaylineARCDispatch: &raylinearc.WorkerManifest{
-			DispatchBackend:      raylinearc.DispatchOpenAICompat,
-			OpenRouterMaxRetries: 8,
-		},
-	}
-	state := &routeHeaderState{
-		setHeaders: []*core.HeaderValueOption{
-			overwriteHeader(envoyRetryOnHeader, "caller-value"),
-			overwriteHeader(envoyMaxRetriesHeader, "99"),
-		},
-	}
-
-	enforceRaylineARCTransportRetryHeaders(state, ctx)
-
-	values := headerValuesByName(state.setHeaders)
-	if _, exists := values[envoyRetryOnHeader]; exists {
-		t.Fatalf("self-hosted worker was opted into retry: %#v", values)
-	}
-	if _, exists := values[envoyMaxRetriesHeader]; exists {
-		t.Fatalf("self-hosted worker retained caller retry budget: %#v", values)
-	}
-}
 
 func TestCaptureRaylineARCProviderAttemptsSeparatesLogicalAndWireCounts(
 	t *testing.T,
