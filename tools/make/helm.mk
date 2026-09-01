@@ -207,6 +207,31 @@ helm-safety-validate: helm-ci-setup
 		--namespace $(HELM_NAMESPACE) > "$$tmp_dir/unsafe-learning.yaml"; \
 	grep -q "learning:" "$$tmp_dir/unsafe-learning.yaml"; \
 	grep -q "replicas: 2" "$$tmp_dir/unsafe-learning.yaml"; \
+	echo "Validating Router Learning local-state rejection without a shared store..."; \
+	if helm template $(HELM_RELEASE_NAME) $(HELM_CHART_PATH) \
+		--set autoscaling.enabled=false \
+		--set replicaCount=2 \
+		--set 'config.global.router.learning.enabled=true' \
+		--set 'config.global.router.learning.adaptation.enabled=false' \
+		--set 'config.global.router.learning.protection.enabled=true' \
+		--namespace $(HELM_NAMESPACE) > "$$tmp_dir/local-store.out" 2>&1; then \
+		echo "Expected replica-local learning state to reject multi-replica render"; \
+		cat "$$tmp_dir/local-store.out"; \
+		exit 1; \
+	fi; \
+	grep -q "multi-replica router deployments cannot use Router Learning local state" "$$tmp_dir/local-store.out"; \
+	echo "Validating Router Learning shared state store admits multi-replica render..."; \
+	helm template $(HELM_RELEASE_NAME) $(HELM_CHART_PATH) \
+		--set autoscaling.enabled=false \
+		--set replicaCount=2 \
+		--set 'config.global.router.learning.enabled=true' \
+		--set 'config.global.router.learning.adaptation.enabled=false' \
+		--set 'config.global.router.learning.protection.enabled=true' \
+		--set 'config.global.router.learning.state_store.backend=redis' \
+		--set 'config.global.router.learning.state_store.redis.address=semantic-router-redis:6379' \
+		--namespace $(HELM_NAMESPACE) > "$$tmp_dir/shared-store.yaml"; \
+	grep -q "backend: redis" "$$tmp_dir/shared-store.yaml"; \
+	grep -q "replicas: 2" "$$tmp_dir/shared-store.yaml"; \
 	echo "Validating HPA replica bound rejection..."; \
 	if helm template $(HELM_RELEASE_NAME) $(HELM_CHART_PATH) \
 		--set autoscaling.enabled=true \
