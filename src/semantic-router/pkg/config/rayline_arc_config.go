@@ -436,3 +436,15 @@ func validateRaylineARCDecisionContract(cfg *RouterConfig, decision Decision) er
 	}
 	return nil
 }
+
+// validateRaylineARCSpecializedAlgorithmConfig is the rayline_arc row of the
+// specialized-algorithm validator dispatch table.
+func validateRaylineARCSpecializedAlgorithmConfig(decisionName string, algorithm *AlgorithmConfig) error {
+	if algorithm.OnError != "fail_closed" {
+		return fmt.Errorf("decision '%s': algorithm.type=%s requires algorithm.on_error=fail_closed", decisionName, RaylineARCAlgorithmType)
+	}
+	if err := validateRaylineARCAlgorithmConfig(algorithm.RaylineARC); err != nil {
+		return fmt.Errorf("decision '%s', algorithm.rayline_arc: %w", decisionName, err)
+	}
+	return nil
+}
