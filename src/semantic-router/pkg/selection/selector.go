@@ -224,6 +224,12 @@ type SelectionContext struct {
 
 	// CacheAffinityCtx carries request-time session signals for cache-affinity estimation.
 	CacheAffinityCtx *CacheAffinityContext
+
+	// Extensions carries opaque, request-scoped input for a Selector
+	// registered through Registry.Register outside the default set. It is nil
+	// by default and no code in this repository reads it. See extension.go
+	// for the contract.
+	Extensions Extensions `json:"-"`
 }
 
 // ScopedRoutingName namespaces recipe-local task-family names for shared
@@ -298,6 +304,12 @@ type SelectionResult struct {
 	// SessionPolicy records the session-aware stay/switch policy trace when
 	// Method is session_aware.
 	SessionPolicy *SessionPolicyTrace
+
+	// Extensions carries opaque, request-scoped trace data emitted by a
+	// Selector registered through Registry.Register outside the default set.
+	// It is nil by default and no code in this repository reads it. See
+	// extension.go for the contract.
+	Extensions Extensions `json:"-"`
 }
 
 // Selector is the interface for model selection algorithms
