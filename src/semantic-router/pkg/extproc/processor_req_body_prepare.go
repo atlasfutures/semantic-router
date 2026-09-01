@@ -50,6 +50,9 @@ func (r *OpenAIRouter) runRequestPreRoutingStages(
 		ctx,
 	)
 	if decisionErr != nil {
+		if contract := r.authoritativeSelectionFailureResponse(decisionErr, ctx); contract != nil {
+			return requestDecisionState{}, contract
+		}
 		if errors.Is(decisionErr, context.Canceled) ||
 			errors.Is(decisionErr, context.DeadlineExceeded) {
 			return requestDecisionState{}, r.createErrorResponse(499, "request canceled")
@@ -63,6 +66,9 @@ func (r *OpenAIRouter) runRequestPreRoutingStages(
 			return requestDecisionState{}, r.respondDecisionUnresolved(ctx, originalModel, decisionErr)
 		}
 		return requestDecisionState{}, r.createErrorResponse(403, decisionErr.Error())
+	}
+	if blocked := r.selectionDispatchGateResponse(ctx); blocked != nil {
+		return requestDecisionState{}, blocked
 	}
 	metrics.RecordModelRequest(selectedModel)
 	ctx.InflightToken = inflight.Begin(selectedModel)

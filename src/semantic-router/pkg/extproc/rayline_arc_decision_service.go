@@ -293,10 +293,8 @@ func prepareFailureError(failure string) error {
 		"decision-only routing could not prepare the episode: %s",
 		failure,
 	)
-	switch failure {
-	case "episode_timeout", "episode_capacity":
+	if selectionFailureIsContended(failure) {
 		return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionContended, base)
-	default:
-		return base
 	}
+	return base
 }

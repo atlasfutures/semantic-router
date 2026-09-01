@@ -119,11 +119,10 @@ func (failure *raylineARCSelectionFailure) Error() string {
 }
 
 // contended reports whether this failure is deliberate back-pressure rather
-// than breakage. Only the admission shed qualifies: the gate documents a shed
-// as "a deliberate capacity decision, never an encoder error", so a caller can
-// fix it by waiting. Every other class means waiting will not help.
+// than breakage, against the one shared classifier so that a class cannot
+// answer 429 on one entrypoint and 503 on the other.
 func (failure *raylineARCSelectionFailure) contended() bool {
-	return failure.class == arcEncoderFailureClass(raylinearc.EncoderFailureAdmission)
+	return selectionFailureIsContended(failure.class)
 }
 
 // newRaylineARCSelector takes the admission gate explicitly. A nil gate leaves
@@ -299,6 +298,13 @@ func boundedARCEncoderFailure(err error) error {
 func arcEncoderFailureClass(class raylinearc.EncoderFailureClass) string {
 	return "encoder_" + string(class)
 }
+
+// arcEncoderFailureClassAdmission is the shed's selection-failure class. The
+// gate documents a shed as "a deliberate capacity decision, never an encoder
+// error", so the contention classifier matches this exact string.
+var arcEncoderFailureClassAdmission = arcEncoderFailureClass(
+	raylinearc.EncoderFailureAdmission,
+)
 
 func validARCDecision(
 	decision raylinearc.Decision,

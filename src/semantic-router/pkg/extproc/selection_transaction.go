@@ -416,7 +416,13 @@ func recordSelectionLifecycleFailure(
 // authoritative selector that could not answer. It names no transport,
 // no provider and no private component.
 func selectionUnavailableMessage(*RequestContext) string {
-	return "Rayline ARC routing unavailable"
+	return "Routing is unavailable for this request."
+}
+
+// selectionContendedMessage is the wording for deliberate back-pressure. It
+// must read as retryable, unlike selectionUnavailableMessage.
+func selectionContendedMessage(*RequestContext) string {
+	return "Routing is busy. Retry this request."
 }
 
 func boundedSelectionTransactionFailure(err error) string {
