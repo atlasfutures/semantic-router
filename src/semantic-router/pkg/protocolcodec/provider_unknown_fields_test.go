@@ -97,19 +97,24 @@ var providerStreams = map[string]struct {
 // frame including the trailing usage chunk and [DONE], nothing withheld.
 func runProviderStream(t *testing.T, fixture string, target llmprotocol.WireFormat) ([]byte, []llmprotocol.Event) {
 	t.Helper()
+	return runChatStream(t, fixture, loadProviderFixture(t, fixture), target)
+}
+
+func runChatStream(t *testing.T, label string, body []byte, target llmprotocol.WireFormat) ([]byte, []llmprotocol.Event) {
+	t.Helper()
 	stream, err := NewBuiltinEngine().NewStream(llmprotocol.OpenAIChatV1, target, llmprotocol.StreamContext{
 		Context: context.Background(), PublicModel: "public-model", ProviderModel: "provider-model",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	frames, events, _, pushErr := stream.Push(loadProviderFixture(t, fixture))
+	frames, events, _, pushErr := stream.Push(body)
 	if pushErr != nil {
-		t.Fatalf("push %s: %v", fixture, pushErr)
+		t.Fatalf("push %s: %v", label, pushErr)
 	}
 	finalFrames, finalEvents, _, finalErr := stream.Finalize(nil)
 	if finalErr != nil {
-		t.Fatalf("finalize %s: %v", fixture, finalErr)
+		t.Fatalf("finalize %s: %v", label, finalErr)
 	}
 	return append(bytes.Join(frames, nil), bytes.Join(finalFrames, nil)...), append(events, finalEvents...)
 }
@@ -308,5 +313,27 @@ func TestRefusalNamesTheOffendingField(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `"future_field"`) {
 		t.Fatalf("error %q does not name the offending field", err)
+	}
+}
+
+// A trailing empty chunk that names a different outcome must not poison a
+// stream the client has already been served. The first reason wins and the
+// stream still completes.
+func TestRepeatedFinishReasonKeepsTheFirst(t *testing.T) {
+	head := `{"id":"c1","object":"chat.completion.chunk","created":1,"model":"provider-model","choices":[{"index":0,`
+	body := "data: " + head + `"delta":{"content":"hi","role":"assistant"},"finish_reason":null}]}` + "\n\n" +
+		"data: " + head + `"delta":{"content":"","role":"assistant"},"finish_reason":"stop"}]}` + "\n\n" +
+		"data: " + head + `"delta":{"content":"","role":"assistant"},"finish_reason":"length"}],` +
+		`"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}` + "\n\n" +
+		"data: [DONE]\n\n"
+	frames, events := runChatStream(t, "repeated finish reason", []byte(body), llmprotocol.OpenAIChatV1)
+	if !bytes.Contains(frames, []byte("data: [DONE]")) {
+		t.Fatalf("stream did not complete: %q", frames)
+	}
+	assertStreamUsage(t, terminalUsage(t, events), 3, 1, 4)
+	for _, event := range events {
+		if event.Type == llmprotocol.EventResponseCompleted && event.StopReason != llmprotocol.StopEndTurn {
+			t.Fatalf("stop reason = %q, want the first reason to win", event.StopReason)
+		}
 	}
 }

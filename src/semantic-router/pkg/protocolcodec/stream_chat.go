@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"sort"
+	"sync"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 )
 
 type chatStreamDecoder struct {
@@ -274,7 +276,8 @@ func (decoder *chatStreamDecoder) decodeChoice(choice chatChunkChoiceWire) ([]ll
 		return nil, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "stream_multiple_choices", "streaming multiple choices is unsupported", nil)
 	}
 	if decoder.completedItems[choice.Index] && chatChunkDeltaIsEmpty(choice.Delta) {
-		return nil, decoder.observeRepeatedFinishReason(choice.FinishReason)
+		decoder.observeRepeatedFinishReason(choice.FinishReason)
+		return nil, nil
 	}
 	events, err := decoder.decodeChoiceTextEvents(choice)
 	if err != nil {
@@ -328,20 +331,38 @@ func emptyChatDeltaText(text *string) bool {
 }
 
 // observeRepeatedFinishReason ingests the finish reason the trailing chunk
-// repeats. Repeating the same outcome is what OpenRouter does; naming a
-// different one would change the outcome after the choice closed, and the
-// stream has no way to take that back.
-func (decoder *chatStreamDecoder) observeRepeatedFinishReason(reason *string) error {
+// repeats. Repeating the same outcome is what OpenRouter does. A different one
+// is kept out rather than refused: this chunk arrives after the client already
+// holds the content, so failing here would poison a stream that was served,
+// which is the failure this whole change removes. The first reason wins and
+// the disagreement is logged.
+func (decoder *chatStreamDecoder) observeRepeatedFinishReason(reason *string) {
 	if reason == nil {
-		return nil
+		return
 	}
-	if decodeChatStop(*reason) != decoder.stop {
-		return invalidProviderResponse(
-			"stream_finish_reason_changed",
-			"Chat stream changed its finish reason after the choice completed",
-		)
+	trailing := decodeChatStop(*reason)
+	if trailing == decoder.stop {
+		return
 	}
-	return nil
+	reportChangedFinishReason(decoder.stop, trailing)
+}
+
+// reportedFinishReasonChanges keeps one line per distinct pair per process. The
+// set of stop reasons is closed and small, so every disagreement is still
+// named while a provider that always does this cannot flood the log.
+var reportedFinishReasonChanges sync.Map
+
+// reportChangedFinishReason names the two reasons and nothing else. Stop
+// reasons are a closed vocabulary; no response content passes through here.
+func reportChangedFinishReason(first, trailing llmprotocol.StopReason) {
+	key := string(first) + ">" + string(trailing)
+	if _, seen := reportedFinishReasonChanges.LoadOrStore(key, struct{}{}); seen {
+		return
+	}
+	logging.ComponentWarnEvent("protocolcodec", "stream_finish_reason_changed", map[string]interface{}{
+		"first":    string(first),
+		"trailing": string(trailing),
+	})
 }
 
 func chatChoiceNeedsItem(choice chatChunkChoiceWire) bool {
