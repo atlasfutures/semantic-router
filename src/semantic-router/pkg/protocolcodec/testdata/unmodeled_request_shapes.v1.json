@@ -7,8 +7,8 @@
       "group": "C",
       "trigger": "image.source.data (inline base64 payload bytes)",
       "note": "The router never decodes the image. It rejects the request because the payload does not parse as strict base64. With valid base64 this exact body decodes.",
-      "current_code": "invalid_media_data",
-      "current_message": "inline media must be valid base64",
+      "current_code": "",
+      "current_message": "",
       "request": {
         "model": "demo-model",
         "max_tokens": 64,

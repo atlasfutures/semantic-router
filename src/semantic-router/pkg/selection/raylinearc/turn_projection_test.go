@@ -69,8 +69,8 @@ type goldenExpectation struct {
 
 // turnProjectionExpectations classifies every case in the fixture.
 //
-// Counted on 2026-09-02 against the codec at this commit: 13 cases project, 8
-// reshape, 14 are rejected at ingress.
+// Counted on 2026-09-02 against the codec at this commit: 14 cases project, 8
+// reshape, 13 are rejected at ingress.
 //
 // Nine cases moved off rejected when the codec began carrying request blocks
 // it does not name. Five of them project byte for byte. Four reshape, and the
@@ -137,7 +137,7 @@ var turnProjectionExpectations = map[string]goldenExpectation{
 	// Rejected: shapes the fork routed. The codec models a narrower request
 	// union than the Anthropic and Responses request APIs accept, so every one
 	// of these answers 400 at ingress today.
-	"anthropic_tool_flow":              {disposition: dispositionCodecRejected, codecError: "invalid_media_data"},
+	"anthropic_tool_flow":              {disposition: dispositionProjected},
 	"openai_responses_tool_flow":       {disposition: dispositionCodecRejected, codecError: "invalid_json"},
 	"anthropic_python_scalar_coercion": {disposition: dispositionCodecRejected, codecError: "invalid_tool_call"},
 	"anthropic_compaction_summary": {
@@ -193,9 +193,9 @@ func TestTurnProjectionGoldens(t *testing.T) {
 			runTurnProjectionCase(t, engine, test, expectation)
 		})
 	}
-	if counts[dispositionProjected] != 13 ||
+	if counts[dispositionProjected] != 14 ||
 		counts[dispositionCodecReshaped] != 8 ||
-		counts[dispositionCodecRejected] != 14 {
+		counts[dispositionCodecRejected] != 13 {
 		t.Fatalf(
 			"disposition counts moved: projected=%d reshaped=%d rejected=%d",
 			counts[dispositionProjected],

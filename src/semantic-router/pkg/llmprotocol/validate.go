@@ -1,9 +1,7 @@
 package llmprotocol
 
 import (
-	"encoding/base64"
 	"encoding/json"
-	"io"
 	"math"
 	"strings"
 )
@@ -687,10 +685,10 @@ func validateMediaSource(content Content) error {
 	if strings.TrimSpace(content.MediaType) == "" {
 		return NewError(ErrorInvalidRequest, "media_type_required", "inline media requires a media type", nil)
 	}
-	decoder := base64.NewDecoder(base64.StdEncoding.Strict(), strings.NewReader(content.Data))
-	if _, err := io.Copy(io.Discard, decoder); err != nil {
-		return NewError(ErrorInvalidRequest, "invalid_media_data", "inline media must be valid base64", err)
-	}
+	// The payload bytes are not read here. The Router routes the block, it
+	// never opens it, and the provider validates the encoding it is given. So
+	// decoding it at ingress buys nothing and costs one pass over every inline
+	// image, while turning a body the provider would have judged into a 400.
 	return nil
 }
 
