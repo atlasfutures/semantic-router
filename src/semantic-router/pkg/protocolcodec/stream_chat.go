@@ -273,6 +273,9 @@ func (decoder *chatStreamDecoder) decodeChoice(choice chatChunkChoiceWire) ([]ll
 	if choice.Index != 0 {
 		return nil, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "stream_multiple_choices", "streaming multiple choices is unsupported", nil)
 	}
+	if decoder.completedItems[choice.Index] && chatChunkDeltaIsEmpty(choice.Delta) {
+		return nil, decoder.observeRepeatedFinishReason(choice.FinishReason)
+	}
 	events, err := decoder.decodeChoiceTextEvents(choice)
 	if err != nil {
 		return nil, err
@@ -305,6 +308,40 @@ func (decoder *chatStreamDecoder) decodeChoiceTextEvents(choice chatChunkChoiceW
 		}
 	}
 	return events, nil
+}
+
+// chatChunkDeltaIsEmpty reports whether a delta adds nothing to the item it
+// names. OpenRouter repeats the finished choice on the chunk that carries
+// usage, with a role and an empty content string and nothing else. Reading
+// that as a delta ends the stream one frame before the client receives its
+// usage and stop, so an empty delta on a choice that has already finished is a
+// no-op. A delta that carries anything is still a lifecycle error.
+func chatChunkDeltaIsEmpty(delta chatChunkDeltaWire) bool {
+	return emptyChatDeltaText(delta.Content) && emptyChatDeltaText(delta.Reasoning) &&
+		emptyChatDeltaText(delta.AlternateReasoning) && emptyChatDeltaText(delta.Refusal) &&
+		delta.Audio == nil && delta.LegacyFunctionCall == nil &&
+		len(delta.ToolCalls) == 0 && len(delta.Annotations) == 0
+}
+
+func emptyChatDeltaText(text *string) bool {
+	return text == nil || *text == ""
+}
+
+// observeRepeatedFinishReason ingests the finish reason the trailing chunk
+// repeats. Repeating the same outcome is what OpenRouter does; naming a
+// different one would change the outcome after the choice closed, and the
+// stream has no way to take that back.
+func (decoder *chatStreamDecoder) observeRepeatedFinishReason(reason *string) error {
+	if reason == nil {
+		return nil
+	}
+	if decodeChatStop(*reason) != decoder.stop {
+		return invalidProviderResponse(
+			"stream_finish_reason_changed",
+			"Chat stream changed its finish reason after the choice completed",
+		)
+	}
+	return nil
 }
 
 func chatChoiceNeedsItem(choice chatChunkChoiceWire) bool {
