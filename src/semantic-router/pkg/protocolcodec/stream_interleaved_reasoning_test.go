@@ -3,7 +3,9 @@ package protocolcodec
 import (
 	"bytes"
 	"context"
-	"errors"
+	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
@@ -11,12 +13,9 @@ import (
 
 // An OpenRouter-style upstream can emit reasoning, then visible text, then more
 // reasoning inside one choice. Anthropic Messages cannot resume a content block
-// once another block has started, so this is the stream shape most likely to
-// break a cell that answers Anthropic and dispatches to such a provider.
-//
-// This test records what happens today. It asserts nothing about which
-// behaviour is right; it fails only if the outcome stops being one of the two
-// the encoder can produce, so the answer stays in the tree.
+// once another block has started, so the encoder degrades: it closes the open
+// block and carries the resumed reasoning onto a fresh thinking block at the
+// next index. Nothing is dropped, and a Messages client sees a valid stream.
 func TestChatInterleavedReasoningIntoAnthropicStream(t *testing.T) {
 	frames := []string{
 		`data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"role":"assistant","reasoning":"first "}}]}`,
@@ -35,26 +34,66 @@ func TestChatInterleavedReasoningIntoAnthropicStream(t *testing.T) {
 	var public [][]byte
 	for index, frame := range frames {
 		emitted, _, _, pushErr := stream.Push([]byte(frame + "\n\n"))
+		if pushErr != nil {
+			t.Fatalf("frame %d failed: %v", index, pushErr)
+		}
 		public = append(public, emitted...)
-		if pushErr == nil {
+	}
+	final, _, _, finalErr := stream.Finalize(nil)
+	if finalErr != nil {
+		t.Fatalf("finalize failed: %v", finalErr)
+	}
+	public = append(public, final...)
+	body := bytes.Join(public, nil)
+	want := []string{
+		"message_start",
+		"content_block_start 0 thinking",
+		"content_block_delta 0 thinking_delta first ",
+		"content_block_stop 0",
+		"content_block_start 1 text",
+		"content_block_delta 1 text_delta visible ",
+		"content_block_stop 1",
+		"content_block_start 2 thinking",
+		"content_block_delta 2 thinking_delta second",
+		"content_block_stop 2",
+		"message_delta",
+		"message_stop",
+	}
+	got := describeAnthropicStream(t, body)
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("interleaved reasoning stream shape:\nwant:\n%s\ngot:\n%s", strings.Join(want, "\n"), strings.Join(got, "\n"))
+	}
+}
+
+// describeAnthropicStream reduces an encoded Messages stream to one line per
+// event, so a test can pin block ordering and indexes without matching bytes.
+func describeAnthropicStream(t *testing.T, body []byte) []string {
+	t.Helper()
+	var described []string
+	for _, line := range strings.Split(string(body), "\n") {
+		payload, found := strings.CutPrefix(line, "data: ")
+		if !found {
 			continue
 		}
-		var protocolError *llmprotocol.ProtocolError
-		if !errors.As(pushErr, &protocolError) {
-			t.Fatalf("frame %d failed with a non-protocol error: %v", index, pushErr)
+		var wire anthropicEventWire
+		if err := json.Unmarshal([]byte(payload), &wire); err != nil {
+			t.Fatalf("stream carried an unparsable frame %q: %v", payload, err)
 		}
-		t.Logf(
-			"interleaved reasoning fails closed at frame %d: %s %s %q",
-			index, protocolError.Category, protocolError.Code, protocolError.Message,
-		)
-		if protocolError.Code != "anthropic_content_interleaving" {
-			t.Fatalf("interleaving now fails with %q, which this test does not describe", protocolError.Code)
-		}
-		return
+		described = append(described, describeAnthropicEvent(wire))
 	}
-	body := bytes.Join(public, nil)
-	if !bytes.Contains(body, []byte("thinking_delta")) || !bytes.Contains(body, []byte("text_delta")) {
-		t.Fatalf("interleaved reasoning was accepted but lost a block: %s", body)
+	return described
+}
+
+func describeAnthropicEvent(wire anthropicEventWire) string {
+	if wire.Index == nil {
+		return wire.Type
 	}
-	t.Logf("interleaved reasoning is served: %s", body)
+	switch {
+	case wire.ContentBlock != nil:
+		return fmt.Sprintf("%s %d %s", wire.Type, *wire.Index, wire.ContentBlock.Type)
+	case wire.Delta != nil:
+		return fmt.Sprintf("%s %d %s %s%s", wire.Type, *wire.Index, wire.Delta.Type, wire.Delta.Text, wire.Delta.Thinking)
+	default:
+		return fmt.Sprintf("%s %d", wire.Type, *wire.Index)
+	}
 }
