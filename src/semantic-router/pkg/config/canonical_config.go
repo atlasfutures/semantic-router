@@ -71,7 +71,10 @@ type RoutingModel struct {
 	LoRAs             []LoRAAdapter `yaml:"loras,omitempty"`
 	QualityScore      float64       `yaml:"quality_score,omitempty"`
 	Modality          string        `yaml:"modality,omitempty"`
-	Tags              []string      `yaml:"tags,omitempty"`
+	// Vision is the model card's image-input contract. Absent means capable;
+	// see ModelParams.SupportsVision.
+	Vision *bool    `yaml:"vision,omitempty"`
+	Tags   []string `yaml:"tags,omitempty"`
 }
 
 func isCanonicalConfig(raw map[string]interface{}) bool {
@@ -131,6 +134,7 @@ func applyCanonicalRoutingState(cfg *RouterConfig, canonical *CanonicalConfig) {
 			Tags:              append([]string(nil), model.Tags...),
 			QualityScore:      model.QualityScore,
 			Modality:          model.Modality,
+			Vision:            copyBool(model.Vision),
 		}
 	}
 }
@@ -595,6 +599,16 @@ func copyLoRAAdapters(input []LoRAAdapter) []LoRAAdapter {
 	output := make([]LoRAAdapter, len(input))
 	copy(output, input)
 	return output
+}
+
+// copyBool clones an optional flag so a shared model card cannot be flipped
+// through an aliased pointer.
+func copyBool(input *bool) *bool {
+	if input == nil {
+		return nil
+	}
+	value := *input
+	return &value
 }
 
 func routingModelHasLoRA(model RoutingModel, loraName string) bool {

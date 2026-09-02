@@ -128,6 +128,7 @@ func routingModelsFromRouterConfig(cfg *RouterConfig) []RoutingModel {
 			Tags:              append([]string(nil), params.Tags...),
 			QualityScore:      params.QualityScore,
 			Modality:          params.Modality,
+			Vision:            copyBool(params.Vision),
 		})
 	}
 	return models

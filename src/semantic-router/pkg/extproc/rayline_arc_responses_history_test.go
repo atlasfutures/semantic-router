@@ -86,7 +86,7 @@ func TestRaylineARCIncludesRetainedResponsesHistory(t *testing.T) {
 				},
 			}
 
-			turns, err := router.projectRaylineARCTurns(
+			turns, _, err := router.projectRaylineARCTurns(
 				reqCtx,
 				raylinearc.TurnOptions{},
 			)
@@ -132,7 +132,7 @@ func TestRaylineARCDoesNotDoubleAppliedResponsesHistory(t *testing.T) {
 		},
 	}
 
-	turns, err := router.projectRaylineARCTurns(reqCtx, raylinearc.TurnOptions{})
+	turns, _, err := router.projectRaylineARCTurns(reqCtx, raylinearc.TurnOptions{})
 	if err != nil {
 		t.Fatalf("projectRaylineARCTurns() error = %v", err)
 	}

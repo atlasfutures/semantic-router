@@ -32,7 +32,7 @@ import (
 func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	algorithm *config.AlgorithmConfig,
 	reqCtx *RequestContext,
-	workerCount int,
+	modelRefs []config.ModelRef,
 ) *selection.RaylineARCSelectionContext {
 	if algorithm == nil ||
 		algorithm.Type != config.RaylineARCAlgorithmType ||
@@ -63,14 +63,14 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		algorithm.RaylineARC,
 		reqCtx,
 		result.EpisodeIDHash,
-		workerCount,
+		len(modelRefs),
 	)
 	if failure != "" {
 		result.PreparationFailure = failure
 		return result
 	}
 	result.State = state
-	turns, err := r.projectRaylineARCTurns(
+	turns, imageBearing, err := r.projectRaylineARCTurns(
 		reqCtx,
 		raylinearc.TurnOptions{
 			IncludeSystemText: algorithm.RaylineARC.IncludeSystemText,
@@ -89,7 +89,31 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		return result
 	}
 	result.Turns = turns
+	result.ImageBearing = imageBearing
+	result.NonVisionArms = r.nonVisionArms(modelRefs)
 	return result
+}
+
+// nonVisionArms reads the image-input contract off each candidate's model
+// card. It returns nil when no candidate is marked, which is the unmarked
+// default and leaves selection exactly as it was.
+func (r *OpenAIRouter) nonVisionArms(modelRefs []config.ModelRef) []bool {
+	if r == nil || r.Config == nil || len(modelRefs) == 0 {
+		return nil
+	}
+	marked := false
+	arms := make([]bool, len(modelRefs))
+	for index, ref := range modelRefs {
+		params, known := r.Config.ModelConfig[strings.TrimSpace(ref.Model)]
+		if known && !params.SupportsVision() {
+			arms[index] = true
+			marked = true
+		}
+	}
+	if !marked {
+		return nil
+	}
+	return arms
 }
 
 // logRaylineARCTurnRejection records why an episode could not be prepared.
@@ -193,12 +217,28 @@ func (r *OpenAIRouter) prepareRaylineARCTransaction(
 func (r *OpenAIRouter) projectRaylineARCTurns(
 	reqCtx *RequestContext,
 	options raylinearc.TurnOptions,
-) ([]raylinearc.Turn, error) {
+) (turns []raylinearc.Turn, imageBearing bool, err error) {
 	request, err := r.raylineARCConversation(reqCtx)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return raylinearc.ProjectTurns(request, options)
+	turns, err = raylinearc.ProjectTurns(request, options)
+	if err != nil {
+		return nil, false, err
+	}
+	// The projection drops image blocks, so the image fact is read off the
+	// same conversation before it is lost. The capability walker already
+	// covers instruction blocks, message blocks and the blocks nested inside
+	// a tool result, which is the whole of what the provider will receive.
+	return turns, requestCarriesImageInput(request), nil
+}
+
+func requestCarriesImageInput(request *llmprotocol.Request) bool {
+	if request == nil {
+		return false
+	}
+	return llmprotocol.RequiredCapabilities(*request).
+		Supports(llmprotocol.CapabilityImageInput)
 }
 
 // raylineARCConversation returns the whole conversation the selector must

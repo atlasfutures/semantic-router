@@ -44,6 +44,7 @@ func ParseRoutingYAMLBytes(data []byte) (*RouterConfig, error) {
 			Tags:              append([]string(nil), model.Tags...),
 			QualityScore:      model.QualityScore,
 			Modality:          model.Modality,
+			Vision:            copyBool(model.Vision),
 		}
 	}
 

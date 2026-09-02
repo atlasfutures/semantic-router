@@ -77,7 +77,7 @@ func (service *raylineARCDecisionService) RouteDecision(
 	selectionContext.RaylineARC = service.router.buildRaylineARCSelectionContext(
 		algorithm,
 		requestContext,
-		len(decision.ModelRefs),
+		decision.ModelRefs,
 	)
 	if failure := selectionContext.RaylineARC.PreparationFailure; failure != "" {
 		service.router.finalizeRaylineARCAbort(requestContext, failure)

@@ -137,6 +137,10 @@ routing:
       capabilities: [chat, vision, multimodal]
       quality_score: 0.88
       modality: omni
+      # Image input is accepted. An absent flag means the same thing; state it
+      # only where a card must be audited, or set it false to mark a model that
+      # rejects image input.
+      vision: true
       tags: [multimodal, omni]
     - name: sdxl-image
       param_size: 3B

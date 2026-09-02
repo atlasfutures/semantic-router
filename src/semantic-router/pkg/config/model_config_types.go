@@ -366,6 +366,18 @@ type ModelParams struct {
 	QualityScore       float64             `yaml:"quality_score,omitempty"`
 	ExternalModelIDs   map[string]string   `yaml:"external_model_ids,omitempty"`
 	Modality           string              `yaml:"modality,omitempty"`
+	// Vision declares whether the model accepts image input. It is a pointer
+	// because an absent flag means "assumed vision-capable": a catalog that
+	// has never been audited must not start refusing image turns. Only an
+	// explicit false marks a model that rejects them.
+	Vision *bool `yaml:"vision,omitempty"`
+}
+
+// SupportsVision reports whether this model may receive image input. An
+// unmarked model is treated as capable, so the flag costs nothing until an
+// operator marks an exception.
+func (params ModelParams) SupportsVision() bool {
+	return params.Vision == nil || *params.Vision
 }
 
 type LoRAAdapter struct {
