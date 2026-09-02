@@ -163,8 +163,8 @@
       "group": "B",
       "trigger": "tool_use.input holding true, false or null",
       "note": "The Anthropic API types input as arbitrary JSON. The neutral model requires one JSON object.",
-      "current_code": "invalid_tool_call",
-      "current_message": "tool call arguments must be one strict JSON object",
+      "current_code": "",
+      "current_message": "",
       "request": {
         "model": "demo-model",
         "max_tokens": 64,
@@ -601,8 +601,8 @@
       "group": "A",
       "trigger": "document.source.type text",
       "note": "The url image source in the same body decodes. Only the document text source refuses the request.",
-      "current_code": "unsupported_document_source",
-      "current_message": "Anthropic document source cannot be represented by the neutral protocol",
+      "current_code": "",
+      "current_message": "",
       "request": {
         "model": "demo-model",
         "max_tokens": 64,

@@ -271,3 +271,45 @@ func TestAnthropicBlockTypesOutsideTheTableRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+// A block the contract does name can still hold a variant it does not. The
+// carrier covers those too, so the request routes rather than being refused
+// for a variant that only its own API understands.
+func TestAnthropicUnnamedVariantOfANamedBlockIsCarried(t *testing.T) {
+	cases := []struct {
+		name  string
+		block string
+		mark  string
+	}{
+		{
+			name:  "scalar_tool_use_input",
+			block: `{"type": "tool_use", "id": "true_call", "name": "truth", "input": true}`,
+			mark:  `"input":true`,
+		},
+		{
+			name:  "text_document_source",
+			block: `{"type": "document", "source": {"type": "text", "media_type": "text/plain", "data": "d"}}`,
+			mark:  `"type":"text"`,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			body := `{
+			  "model": "claude-sonnet-4-5",
+			  "max_tokens": 64,
+			  "messages": [{"role": "assistant", "content": [
+			    {"type": "text", "text": "keep me"},
+			    ` + testCase.block + `
+			  ]}]
+			}`
+			routed := routeAnthropicRequest(t, body, llmprotocol.AnthropicMessagesV1)
+			if !bytes.Contains(routed, []byte(testCase.mark)) {
+				t.Fatalf("the variant did not survive the round trip: %s", routed)
+			}
+			dropped := routeAnthropicRequest(t, body, llmprotocol.OpenAIChatV1)
+			if !bytes.Contains(dropped, []byte("keep me")) {
+				t.Fatalf("dropping the variant also dropped the text beside it: %s", dropped)
+			}
+		})
+	}
+}
