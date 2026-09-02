@@ -537,6 +537,41 @@ func closeEncoderResponse(response *http.Response) {
 	}
 }
 
+// closeProbeSession releases the probe's retained session without letting the
+// cleanup outlive the caller's deadline.
+//
+// The request path deliberately strips cancellation here, so that a cancelled
+// request still releases its session rather than leaking it until the idle
+// TTL. A probe cannot afford that: closeSession then answers only to
+// total_timeout_seconds, which the dev overlay sets to 600 s, and a readiness
+// caller that asked for a bound would wait ten minutes on cleanup for a probe
+// that had already failed. That is how a bounded readiness probe still held
+// the router's port shut for 259 s on 00009-kvm.
+//
+// So the two cases are separated. A failed encode established no session, so
+// there is nothing to leak and the caller's deadline is honoured exactly. A
+// successful encode did, so cancellation is stripped to release it, but the
+// cleanup is still bounded rather than open-ended.
+func (client *EncoderClient) closeProbeSession(
+	ctx context.Context,
+	episodeIDHash string,
+	encodeFailed bool,
+) error {
+	if encodeFailed {
+		return client.closeSession(ctx, episodeIDHash)
+	}
+	cleanupContext, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		encoderProbeSessionCloseTimeout,
+	)
+	defer cancel()
+	return client.closeSession(cleanupContext, episodeIDHash)
+}
+
+// encoderProbeSessionCloseTimeout bounds the probe's best-effort session
+// cleanup. It is a single small request to an encoder that has just answered.
+const encoderProbeSessionCloseTimeout = 10 * time.Second
+
 // Probe exercises the exact plugin path and full metadata contract. The input
 // is fixed public canary content and the caller-provided correlation is hashed.
 func (client *EncoderClient) Probe(
@@ -555,7 +590,7 @@ func (client *EncoderClient) Probe(
 	if !client.config.RetainedSession {
 		return encodeErr
 	}
-	closeErr := client.closeSession(context.WithoutCancel(ctx), episodeIDHash)
+	closeErr := client.closeProbeSession(ctx, episodeIDHash, encodeErr != nil)
 	if encodeErr != nil && closeErr != nil {
 		return errors.Join(encodeErr, closeErr)
 	}

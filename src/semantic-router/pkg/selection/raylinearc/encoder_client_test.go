@@ -22,6 +22,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -486,5 +487,56 @@ func TestEncoderClientRequiresEngineEnvelopeFields(t *testing.T) {
 			)
 			assertEncoderFailureClass(t, err, EncoderFailureContract)
 		})
+	}
+}
+
+// A readiness probe must never outrun the deadline its caller set. The router
+// does not open its gRPC port until readiness returns, so a probe that
+// ignores its context holds the port shut until the platform kills the
+// container: revision 00009-kvm logged its readiness schedule and then went
+// silent for 259 s against a 30 s bound, because the retained-session cleanup
+// answered only to total_timeout_seconds.
+func TestEncoderClientProbeHonoursTheCallerDeadline(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	// Accept the connection and never answer, which is what a cold encoder
+	// behind a warm edge looks like.
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			defer conn.Close()
+		}
+	}()
+
+	config := validEncoderClientConfig("http://" + listener.Addr().String())
+	config.ServingRung = encoderServingRungB
+	config.RequiredCapabilities = []string{
+		"chunked_causal_mean",
+		"resumable_causal_mean",
+	}
+	config.RetainedSession = true
+	config.TotalTimeout = 10 * time.Minute
+	client, err := NewEncoderClient(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	probeErr := client.Probe(ctx, "readiness")
+	elapsed := time.Since(started)
+
+	if probeErr == nil {
+		t.Fatal("probe against a silent encoder succeeded")
+	}
+	if elapsed > 100*time.Millisecond {
+		t.Fatalf("probe took %v, want it to honour the 20ms deadline", elapsed)
 	}
 }
