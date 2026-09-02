@@ -191,6 +191,12 @@ type RequestParamsPluginConfig struct {
 	MaxTokensLimit *int `json:"max_tokens_limit,omitempty" yaml:"max_tokens_limit,omitempty"`
 	// MaxN is the maximum allowed value for n (number of completions).
 	MaxN *int `json:"max_n,omitempty" yaml:"max_n,omitempty"`
+	// MinCompletionTokensByModel raises max_tokens to a per-model floor, keyed
+	// by logical model name. It is the mirror of MaxTokensLimit: the cap keeps
+	// a client from asking for too much, the floor keeps a reasoning model from
+	// truncating its answer inside a budget sized for a plain one. Absent or
+	// zero leaves the request untouched, and the floor is applied after the cap.
+	MinCompletionTokensByModel map[string]int `json:"min_completion_tokens_by_model,omitempty" yaml:"min_completion_tokens_by_model,omitempty"`
 	// StripUnknown if true, removes fields not in the OpenAI spec.
 	StripUnknown bool `json:"strip_unknown,omitempty" yaml:"strip_unknown,omitempty"`
 }

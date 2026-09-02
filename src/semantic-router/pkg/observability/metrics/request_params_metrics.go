@@ -32,6 +32,16 @@ var (
 		[]string{"decision"},
 	)
 
+	// The floor is per model, and model names come from config, so the label
+	// set stays bounded.
+	RequestParamsCompletionFloorApplied = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "sr_request_params_completion_floor_applied_total",
+			Help: "Total number of times max_tokens was raised to a per-model floor",
+		},
+		[]string{"decision", "model"},
+	)
+
 	RequestParamsUnknownFieldStripped = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "sr_request_params_unknown_field_stripped_total",
@@ -51,6 +61,10 @@ func RecordMaxTokensCapped(decision string) {
 
 func RecordMaxNCapped(decision string) {
 	RequestParamsMaxNCapped.WithLabelValues(decision).Inc()
+}
+
+func RecordCompletionFloorApplied(decision, model string) {
+	RequestParamsCompletionFloorApplied.WithLabelValues(decision, model).Inc()
 }
 
 func RecordUnknownFieldStripped(decision, field string) {

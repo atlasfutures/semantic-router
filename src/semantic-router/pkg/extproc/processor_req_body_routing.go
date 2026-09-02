@@ -118,7 +118,7 @@ func (r *OpenAIRouter) prepareProviderRequest(
 		return false, err
 	}
 	changed = decisionChanged || changed
-	paramsChanged, err := r.applyDispatchRequestParams(request, ctx)
+	paramsChanged, err := r.applyDispatchRequestParams(request, dispatch, ctx)
 	return paramsChanged || changed, err
 }
 
@@ -144,14 +144,24 @@ func (r *OpenAIRouter) applyDispatchDecision(
 
 func (r *OpenAIRouter) applyDispatchRequestParams(
 	request *llmprotocol.Request,
+	dispatch *providerDispatch,
 	ctx *RequestContext,
 ) (bool, error) {
-	if ctx.VSRSelectedDecision != nil && ctx.VSRSelectedDecision.GetRequestParamsConfig() != nil {
-		return r.applySemanticRequestParams(
-			ctx.VSRSelectedDecision, request, ctx.Routing.RecipeName(),
-		)
+	if ctx.VSRSelectedDecision == nil {
+		return false, nil
 	}
-	return false, nil
+	params := ctx.VSRSelectedDecision.GetRequestParamsConfig()
+	if params == nil {
+		return false, nil
+	}
+	recipe := ctx.Routing.RecipeName()
+	changed, err := r.applySemanticRequestParams(ctx.VSRSelectedDecision, request, recipe)
+	if err != nil {
+		return changed, err
+	}
+	decisionKey := config.RoutingDecisionKey(recipe, ctx.VSRSelectedDecision.Name)
+	raised := applyCompletionTokenFloor(params, request, dispatch.logicalModel, decisionKey)
+	return raised || changed, nil
 }
 
 func wireFormatForModel(apiFormat string) (llmprotocol.WireFormat, error) {
