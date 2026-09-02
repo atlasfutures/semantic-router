@@ -47,12 +47,19 @@ func registerRaylineARCSelector(
 	fields := map[string]interface{}{
 		"ready": readinessFailure == "",
 	}
-	if readinessFailure != "" {
-		fields["failure_class"] = readinessFailure
-		fields["reprobing"] = readinessFailure == raylineARCEncoderProbeFailureClass
-		logging.ComponentErrorEvent("extproc", "rayline_arc_component_readiness", fields)
-	} else {
+	switch readinessFailure {
+	case "":
 		logging.ComponentEvent("extproc", "rayline_arc_component_readiness", fields)
+	case raylineARCReadinessPendingClass:
+		// The normal boot: registered, unarmed, probing. Not an error, and it
+		// is the line that proves readiness ran at all.
+		fields["failure_class"] = readinessFailure
+		fields["reprobing"] = true
+		logging.ComponentEvent("extproc", "rayline_arc_component_readiness", fields)
+	default:
+		fields["failure_class"] = readinessFailure
+		fields["reprobing"] = false
+		logging.ComponentErrorEvent("extproc", "rayline_arc_component_readiness", fields)
 	}
 	return raylineARCComponents{
 		episodeStore: episodeStore,

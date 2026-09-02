@@ -18,7 +18,6 @@ package extproc
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -39,10 +38,10 @@ const (
 	defaultRaylineARCProbeStartupTimeout = 30 * time.Second
 )
 
-// raylineARCEncoderProbeFailureClass is the readiness class a failed or
-// timed-out encoder probe reports. It is produced in two places and matched in
-// a third, so it lives here rather than as three string literals.
-const raylineARCEncoderProbeFailureClass = "encoder_probe"
+// raylineARCReadinessPendingClass is the state every instance now starts in:
+// the selector is registered and unarmed, and a background probe decides when
+// it arms. It is not a failure, so readiness reports it as an ordinary event.
+const raylineARCReadinessPendingClass = "encoder_probe_pending"
 
 // raylineARCStartupProbeAttempt numbers the one synchronous probe, so the
 // recovery loop's attempts continue the same count in the logs.
@@ -134,82 +133,65 @@ func raylineARCReprobe(
 		if delay > backoff.max {
 			delay = backoff.max
 		}
-		logRaylineARCProbeFailure(attempt, delay, false)
+		logRaylineARCProbeFailure(attempt, delay)
 	}
 }
 
-// raylineARCArmOrRecover runs the one synchronous readiness probe under a
-// bound and decides which way readiness goes.
+// raylineARCArmInBackground starts readiness without blocking the caller.
 //
-// The bound is the point of this function. The router does not open its port
-// until readiness returns, so an unbounded probe against a cold encoder holds
-// the port shut past the platform's own startup budget and the instance is
-// killed before it can recover. A probe that outruns the bound is therefore
-// treated exactly as a failed probe: the selector stays unarmed, the process
-// stays up and fails closed, and the recovery loop takes over. Recovery
-// attempts are not bounded this way, so a cold encoder is answered by the
-// first recovery attempt and arms the selector.
+// This is the whole point of the function. The router does not open its gRPC
+// port until every component is constructed, so any encoder call made here
+// holds the port shut, and a cold encoder holds it shut past the platform's
+// own startup budget. Nothing on the construction path may wait on the
+// encoder. The selector is therefore registered unarmed, every selection
+// fails closed on not_ready, and the first probe runs on this goroutine
+// exactly like the retries that may follow it.
 //
-// It returns the readiness failure class, empty when the probe armed the
-// selector on the spot.
-func raylineARCArmOrRecover(
+// Probes are not deadlined beyond the encoder's own timeout. The bound that
+// used to exist here protected the port, and the port is no longer waiting.
+func raylineARCArmInBackground(
 	ctx context.Context,
 	selector *raylineARCSelector,
 	armed *raylineARCArmedComponents,
 	probe func(context.Context) error,
-	startupTimeout time.Duration,
 	backoff raylineARCProbeBackoff,
 	wait func(context.Context, time.Duration) bool,
-) string {
+) {
 	logging.ComponentEvent(
 		"extproc",
 		"rayline_arc_readiness_schedule",
 		map[string]interface{}{
-			"startup_timeout_seconds": startupTimeout.Seconds(),
 			"initial_backoff_seconds": backoff.initial.Seconds(),
 			"max_backoff_seconds":     backoff.max.Seconds(),
 		},
 	)
-	startupContext, cancelStartup := context.WithTimeout(ctx, startupTimeout)
-	probeErr := probe(startupContext)
-	timedOut := errors.Is(startupContext.Err(), context.DeadlineExceeded)
-	cancelStartup()
-	if probeErr == nil {
-		selector.arm(armed)
-		return ""
-	}
-	logRaylineARCProbeFailure(
-		raylineARCStartupProbeAttempt,
-		backoff.initial,
-		timedOut,
-	)
-	go raylineARCRecoverReadiness(ctx, selector, armed, probe, backoff, wait)
-	return raylineARCEncoderProbeFailureClass
+	go func() {
+		if probe(ctx) == nil {
+			raylineARCPublishReady(selector, armed, false)
+			return
+		}
+		logRaylineARCProbeFailure(raylineARCStartupProbeAttempt, backoff.initial)
+		raylineARCRecoverReadiness(ctx, selector, armed, probe, backoff, wait)
+	}()
 }
 
 // logRaylineARCProbeFailure is the one place a readiness attempt is reported,
 // so an operator can read the schedule off the logs rather than infer it.
-func logRaylineARCProbeFailure(
-	attempt int,
-	nextDelay time.Duration,
-	timedOut bool,
-) {
+func logRaylineARCProbeFailure(attempt int, nextDelay time.Duration) {
 	logging.ComponentErrorEvent(
 		"extproc",
 		"rayline_arc_readiness_probe_failed",
 		map[string]interface{}{
 			"attempt":            attempt,
 			"next_delay_seconds": nextDelay.Seconds(),
-			"timed_out":          timedOut,
 			"startup":            attempt == raylineARCStartupProbeAttempt,
 		},
 	)
 }
 
-// raylineARCRecoverReadiness turns a failed startup probe into a recoverable
-// state. It keeps probing, and the first good answer arms the selector and
-// flips the readiness gauge. Until then the selector stays unarmed and every
-// selection fails closed.
+// raylineARCRecoverReadiness keeps probing until the encoder answers or the
+// generation shuts down. The first good answer arms the selector. Until then
+// every selection fails closed.
 func raylineARCRecoverReadiness(
 	ctx context.Context,
 	selector *raylineARCSelector,
@@ -221,8 +203,18 @@ func raylineARCRecoverReadiness(
 	if !raylineARCReprobe(ctx, probe, backoff, wait) {
 		return false
 	}
-	// Arm before the gauge: an operator who sees ready=1 must never find a
-	// selector that still refuses requests.
+	raylineARCPublishReady(selector, armed, true)
+	return true
+}
+
+// raylineARCPublishReady is the one place readiness becomes true. It arms
+// before it reports, so an operator who sees ready=1 never finds a selector
+// that still refuses requests.
+func raylineARCPublishReady(
+	selector *raylineARCSelector,
+	armed *raylineARCArmedComponents,
+	recovered bool,
+) {
 	selector.arm(armed)
 	metrics.SetRaylineARCComponentReady(true)
 	logging.ComponentEvent(
@@ -230,8 +222,7 @@ func raylineARCRecoverReadiness(
 		"rayline_arc_component_readiness",
 		map[string]interface{}{
 			"ready":     true,
-			"recovered": true,
+			"recovered": recovered,
 		},
 	)
-	return true
 }
