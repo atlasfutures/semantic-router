@@ -359,6 +359,10 @@ func (AnthropicMessagesCodec) EncodeRequest(request llmprotocol.Request, envelop
 		return nil, diagnostics, err
 	}
 	body, encodeErr := marshalWire(wire)
+	if encodeErr != nil {
+		return nil, diagnostics, encodeErr
+	}
+	body, encodeErr = mergeUnmodeledFields(body, request, llmprotocol.AnthropicMessagesV1, &diagnostics, policy)
 	return body, diagnostics, encodeErr
 }
 

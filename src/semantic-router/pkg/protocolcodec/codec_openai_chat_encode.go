@@ -56,6 +56,10 @@ func (OpenAIChatCodec) EncodeRequest(request llmprotocol.Request, envelope llmpr
 		return nil, diagnostics, encodeErr
 	}
 	body, encodeErr := marshalWire(wire)
+	if encodeErr != nil {
+		return nil, diagnostics, encodeErr
+	}
+	body, encodeErr = mergeUnmodeledFields(body, request, llmprotocol.OpenAIChatV1, &diagnostics, policy)
 	return body, diagnostics, encodeErr
 }
 

@@ -19,7 +19,12 @@ func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope 
 		return nil, nil, err
 	}
 	body, err := marshalWire(wire)
-	return body, nil, err
+	if err != nil {
+		return nil, nil, err
+	}
+	var diagnostics llmprotocol.Diagnostics
+	body, err = mergeUnmodeledFields(body, request, llmprotocol.OpenAIResponsesV1, &diagnostics, policy)
+	return body, diagnostics, err
 }
 
 func validateResponsesEncodableRequest(request llmprotocol.Request) error {

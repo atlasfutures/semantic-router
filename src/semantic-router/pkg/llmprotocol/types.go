@@ -233,6 +233,9 @@ type Request struct {
 	Store              *bool
 	AutoStore          *bool
 	Trusted            TrustedMetadata
+	// Unmodeled holds source-format members this contract does not name. It is
+	// opaque to the Router and survives only to the wire format it came from.
+	Unmodeled *UnmodeledFields
 }
 
 type StopReason string

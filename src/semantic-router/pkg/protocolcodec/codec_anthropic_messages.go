@@ -153,13 +153,15 @@ type anthropicJSONOutputFormatWire struct {
 
 func (AnthropicMessagesCodec) DecodeRequest(body []byte, policy llmprotocol.Policy) (llmprotocol.Request, llmprotocol.Envelope, llmprotocol.Diagnostics, error) {
 	var wire anthropicRequestWire
-	if err := decodeWire(body, &wire, policy); err != nil {
+	unmodeled, err := decodeWireCapturingUnmodeled(body, &wire, policy)
+	if err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}
 	if err := validateAnthropicRequestWire(wire); err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}
 	request := decodeAnthropicBaseRequest(wire)
+	request.Unmodeled = unmodeledRequestFields(llmprotocol.AnthropicMessagesV1, unmodeled)
 	if err := decodeAnthropicRequestFields(wire, &request, policy); err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}

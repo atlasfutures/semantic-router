@@ -619,3 +619,127 @@ func marshalWire(value any) ([]byte, error) {
 	}
 	return body, nil
 }
+
+// decodeWireCapturingUnmodeled decodes a client request object and returns the
+// members the wire struct does not name instead of refusing them. Every other
+// document rule still applies -- size, UTF-8, duplicate keys, depth, trailing
+// data -- and the members the struct does name are still decoded strictly,
+// including their nested values. Only the top level of the request object is
+// widened, and the bytes of every member are left exactly as the client sent
+// them.
+func decodeWireCapturingUnmodeled(
+	body []byte,
+	target any,
+	policy llmprotocol.Policy,
+) (map[string]json.RawMessage, error) {
+	if err := validateClientJSONDocument(body, policy, true); err != nil {
+		return nil, err
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(body, &object); err != nil {
+		return nil, llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_json", "request JSON is invalid", err)
+	}
+	named := exactJSONStructFields(dereferenceJSONType(reflect.TypeOf(target)))
+	strict := rejectUnknownFields(body, policy)
+	var unmodeled map[string]json.RawMessage
+	for name, value := range object {
+		fieldType, found := named[name]
+		if !found {
+			if unmodeled == nil {
+				unmodeled = make(map[string]json.RawMessage)
+			}
+			unmodeled[name] = value
+			continue
+		}
+		if !strict {
+			continue
+		}
+		if err := validateExactJSONValue(value, dereferenceJSONType(fieldType)); err != nil {
+			return nil, llmprotocol.NewError(
+				llmprotocol.ErrorInvalidRequest, "invalid_json",
+				"request JSON contains a non-canonical field",
+				fmt.Errorf("field %q: %w", name, err),
+			)
+		}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if err := decoder.Decode(target); err != nil {
+		return nil, llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_json", "request JSON is invalid", err)
+	}
+	if err := requireEOF(decoder); err != nil {
+		return nil, llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "trailing_json", "request body contains trailing JSON", err)
+	}
+	return unmodeled, nil
+}
+
+// unmodeledRequestFields builds the carrier for one decoded request. An empty
+// set yields no carrier, so a body with nothing unnamed decodes exactly as it
+// did before.
+func unmodeledRequestFields(
+	format llmprotocol.WireFormat,
+	fields map[string]json.RawMessage,
+) *llmprotocol.UnmodeledFields {
+	if len(fields) == 0 {
+		return nil
+	}
+	return &llmprotocol.UnmodeledFields{Format: format, Fields: fields}
+}
+
+// mergeUnmodeledFields re-emits carried members into an encoded request body.
+// The carrier survives only to the wire format it came from; any other target
+// drops it and records why, because dropping a member the target cannot name
+// is the routable outcome and refusing the request is not.
+func mergeUnmodeledFields(
+	body []byte,
+	request llmprotocol.Request,
+	target llmprotocol.WireFormat,
+	diagnostics *llmprotocol.Diagnostics,
+	policy llmprotocol.Policy,
+) ([]byte, error) {
+	carrier := request.Unmodeled
+	if carrier.Len() == 0 {
+		return body, nil
+	}
+	if carrier.Format != target {
+		for _, name := range sortedFieldNames(carrier.Fields) {
+			appendUnmodeledDrop(diagnostics, policy, carrier.Format, target, name)
+		}
+		return body, nil
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(body, &object); err != nil {
+		return nil, llmprotocol.NewError(llmprotocol.ErrorInternal, "encode_wire", "wire request could not be encoded", err)
+	}
+	for name, value := range carrier.Fields {
+		if _, claimed := object[name]; claimed {
+			continue
+		}
+		object[name] = value
+	}
+	return marshalWire(object)
+}
+
+func appendUnmodeledDrop(
+	diagnostics *llmprotocol.Diagnostics,
+	policy llmprotocol.Policy,
+	source, target llmprotocol.WireFormat,
+	field string,
+) {
+	if diagnostics == nil || len(*diagnostics) >= policy.Limits.Diagnostics {
+		return
+	}
+	*diagnostics = append(*diagnostics, llmprotocol.Diagnostic{
+		Source: source, Target: target, Field: field,
+		Action: llmprotocol.DiagnosticDropped,
+		Reason: "the target wire format does not name this member",
+	})
+}
+
+func sortedFieldNames(fields map[string]json.RawMessage) []string {
+	names := make([]string, 0, len(fields))
+	for name := range fields {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
