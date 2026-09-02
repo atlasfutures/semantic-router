@@ -1,0 +1,40 @@
+: OPENROUTER PROCESSING
+
+: OPENROUTER PROCESSING
+
+data: {"id":"gen-fixture-stream","object":"chat.completion.chunk","created":1788389289,"model":"deepseek/deepseek-v4-pro","provider":"Venice","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":"We are asked: \"Sa","reasoning_details":[{"type":"reasoning.text","text":"We are asked: \"Sa","format":"unknown","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-fixture-stream","object":"chat.completion.chunk","created":1788389289,"model":"deepseek/deepseek-v4-pro","provider":"Venice","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":"y hello in exact","reasoning_details":[{"type":"reasoning.text","text":"y hello in exact","format":"unknown","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-fixture-stream","object":"chat.completion.chunk","created":1788389289,"model":"deepseek/deepseek-v4-pro","provider":"Venice","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":"ly five words.\" So","reasoning_details":[{"type":"reasoning.text","text":"ly five words.\" So","format":"unknown","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-fixture-stream","object":"chat.completion.chunk","created":1788389289,"model":"deepseek/deepseek-v4-pro","provider":"Venice","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":" I need to output","reasoning_details":[{"type":"reasoning.text","text":" I need to output","format":"unknown","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-fixture-stream","object":"chat.completion.chunk","created":1788389289,"model":"deepseek/deepseek-v4-pro","provider":"Venice","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":" a greeting that is exact","reasoning_details":[{"type":"reasoning.text","text":" a greeting that is exact","format":"unknown","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-fixture-stream","object":"chat.completion.chunk","created":1788389289,"model":"deepseek/deepseek-v4-pro","provider":"Venice","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":"ly five w","reasoning_details":[{"type":"reasoning.text","text":"ly five w","format":"unknown","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-fixture-stream","object":"chat.completion.chunk","created":1788389289,"model":"deepseek/deepseek-v4-pro","provider":"Venice","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":"ords. For exa","reasoning_details":[{"type":"reasoning.text","text":"ords. For exa","format":"unknown","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-fixture-stream","object":"chat.completion.chunk","created":1788389289,"model":"deepseek/deepseek-v4-pro","provider":"Venice","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":"mple: \"Hello, nice","reasoning_details":[{"type":"reasoning.text","text":"mple: \"Hello, nice","format":"unknown","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-fixture-stream","object":"chat.completion.chunk","created":1788389289,"model":"deepseek/deepseek-v4-pro","provider":"Venice","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":" to meet","reasoning_details":[{"type":"reasoning.text","text":" to meet","format":"unknown","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-fixture-stream","object":"chat.completion.chunk","created":1788389289,"model":"deepseek/deepseek-v4-pro","provider":"Venice","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":" you!\" That's","reasoning_details":[{"type":"reasoning.text","text":" you!\" That's","format":"unknown","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-fixture-stream","object":"chat.completion.chunk","created":1788389289,"model":"deepseek/deepseek-v4-pro","provider":"Venice","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":" five words. But I ne","reasoning_details":[{"type":"reasoning.text","text":" five words. But I ne","format":"unknown","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-fixture-stream","object":"chat.completion.chunk","created":1788389289,"model":"deepseek/deepseek-v4-pro","provider":"Venice","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":"ed to make sure it's exa","reasoning_details":[{"type":"reasoning.text","text":"ed to make sure it's exa","format":"unknown","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-fixture-stream","object":"chat.completion.chunk","created":1788389289,"model":"deepseek/deepseek-v4-pro","provider":"Venice","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":"ctly five w","reasoning_details":[{"type":"reasoning.text","text":"ctly five w","format":"unknown","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-fixture-stream","object":"chat.completion.chunk","created":1788389289,"model":"deepseek/deepseek-v4-pro","provider":"Venice","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":"ords. I'll respond with that.","reasoning_details":[{"type":"reasoning.text","text":"ords. I'll respond with that.","format":"unknown","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-fixture-stream","object":"chat.completion.chunk","created":1788389289,"model":"deepseek/deepseek-v4-pro","provider":"Venice","choices":[{"index":0,"delta":{"content":"Hello, nice to meet you!","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-fixture-stream","object":"chat.completion.chunk","created":1788389289,"model":"deepseek/deepseek-v4-pro","provider":"Venice","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":null},"finish_reason":"stop","native_finish_reason":"stop"}]}
+
+data: {"id":"gen-fixture-stream","object":"chat.completion.chunk","created":1788389289,"model":"deepseek/deepseek-v4-pro","provider":"Venice","service_tier":null,"choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}],"usage":{"prompt_tokens":11,"completion_tokens":68,"total_tokens":79,"cost":0.000242618,"is_byok":false,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"audio_tokens":0,"video_tokens":0},"cost_details":{"upstream_inference_cost":0.000242618,"upstream_inference_prompt_cost":0.00001815,"upstream_inference_completions_cost":0.000224468},"completion_tokens_details":{"reasoning_tokens":58,"image_tokens":0,"audio_tokens":0}}}
+
+data: [DONE]
+
