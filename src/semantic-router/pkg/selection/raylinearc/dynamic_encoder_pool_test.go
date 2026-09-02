@@ -295,10 +295,8 @@ func newDynamicEncoderTestPool(
 ) *DynamicEncoderPool {
 	t.Helper()
 	pool, err := NewDynamicEncoderPool(context.Background(), DynamicEncoderPoolConfig{
-		Source: source,
-		ClientFactory: func(member EncoderMembershipReplica) (*EncoderClient, error) {
-			return newRetainedSessionTestClient(t, member.BaseURL), nil
-		},
+		Source:        source,
+		ClientFactory: retainedSessionTestClientFactory,
 		PoolConfig: EncoderPoolConfig{
 			SchemaVersion:          EncoderFailoverSchemaV1,
 			UnavailableStatusCodes: []int{503},
@@ -310,7 +308,112 @@ func newDynamicEncoderTestPool(
 	if err != nil {
 		t.Fatal(err)
 	}
+	awaitDynamicEncoderSnapshot(t, pool)
 	return pool
+}
+
+// awaitDynamicEncoderSnapshot waits for the background refresh loop to adopt
+// its first snapshot. Construction no longer loads membership, so every test
+// that wants a populated pool has to say so.
+func awaitDynamicEncoderSnapshot(t *testing.T, pool *DynamicEncoderPool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for pool.currentSnapshot() == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("dynamic encoder pool never adopted a snapshot")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// A membership source that is slow or unreachable must not hold up
+// construction: the router has to open its port first, and an empty pool
+// fails closed until the background refresh lands.
+func TestNewDynamicEncoderPoolDoesNotLoadMembershipOnConstruction(t *testing.T) {
+	var closeStatus atomic.Int32
+	serverA, _, _ := newCloseAwareEncoderReplicaTestServer(t, &closeStatus)
+	defer serverA.Close()
+	serverB, _, _ := newCloseAwareEncoderReplicaTestServer(t, &closeStatus)
+	defer serverB.Close()
+	serverC, _, _ := newCloseAwareEncoderReplicaTestServer(t, &closeStatus)
+	defer serverC.Close()
+	source := &blockingEncoderMembershipSource{
+		release: make(chan struct{}),
+		snapshot: dynamicMembershipSnapshot(1, []EncoderMembershipReplica{
+			{ID: "replica-a", BaseURL: serverA.URL, State: EncoderReplicaActive},
+			{ID: "replica-b", BaseURL: serverB.URL, State: EncoderReplicaActive},
+			{ID: "replica-c", BaseURL: serverC.URL, State: EncoderReplicaActive},
+		}),
+	}
+
+	started := time.Now()
+	pool, err := NewDynamicEncoderPool(context.Background(), DynamicEncoderPoolConfig{
+		Source:        source,
+		ClientFactory: retainedSessionTestClientFactory,
+		PoolConfig: EncoderPoolConfig{
+			SchemaVersion:          EncoderFailoverSchemaV1,
+			UnavailableStatusCodes: []int{503},
+			UnavailableCooldown:    time.Minute,
+			MaxRemaps:              1,
+		},
+		RefreshInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("construction blocked on the membership source for %v", elapsed)
+	}
+
+	// Fail closed while empty: no snapshot means no dispatch.
+	if err := pool.Probe(context.Background(), "readiness"); err == nil {
+		t.Fatal("an empty dynamic pool answered a probe")
+	}
+	if _, err := pool.Encode(
+		context.Background(),
+		HashEpisodeID("episode"),
+		[]Turn{{Role: "user", Text: "hello"}},
+	); err == nil {
+		t.Fatal("an empty dynamic pool served an encode")
+	}
+
+	close(source.release)
+	awaitDynamicEncoderSnapshot(t, pool)
+}
+
+// blockingEncoderMembershipSource stands in for a control plane that is not
+// answering yet, which is what a cold or unreachable source looks like.
+type blockingEncoderMembershipSource struct {
+	release  chan struct{}
+	snapshot EncoderMembershipSnapshot
+}
+
+func (source *blockingEncoderMembershipSource) Load(
+	ctx context.Context,
+) (EncoderMembershipSnapshot, error) {
+	select {
+	case <-source.release:
+		return cloneEncoderMembershipSnapshot(source.snapshot), nil
+	case <-ctx.Done():
+		return EncoderMembershipSnapshot{}, ctx.Err()
+	}
+}
+
+// retainedSessionTestClientFactory builds replica clients without touching
+// *testing.T: the factory now runs on the pool's refresh goroutine, where a
+// t.Fatal would be an illegal FailNow from a non-test goroutine.
+func retainedSessionTestClientFactory(
+	member EncoderMembershipReplica,
+) (*EncoderClient, error) {
+	config := validEncoderClientConfig(member.BaseURL)
+	config.ServingRung = encoderServingRungB
+	config.RequiredCapabilities = []string{
+		"chunked_causal_mean",
+		"resumable_causal_mean",
+	}
+	config.RetainedSession = true
+	return NewEncoderClient(config)
 }
 
 func dynamicMembershipSnapshot(

@@ -80,29 +80,38 @@ func NewDynamicEncoderPool(
 		endpoints:     make(map[string]string),
 		done:          make(chan struct{}),
 	}
-	if err := pool.Refresh(ctx); err != nil {
-		return nil, err
-	}
-	go pool.runRefreshLoop()
+	// Construction does no network I/O. The router does not open its port
+	// until every component is built, so a membership source that is slow or
+	// unreachable would hold the port shut until the platform kills the
+	// container. The pool therefore starts empty and the refresh loop adopts
+	// the first snapshot. An empty pool fails every encode and every probe
+	// closed, so a not-yet-refreshed pool can never dispatch on a guess.
+	go pool.runRefreshLoop(ctx)
 	return pool, nil
 }
 
-func (pool *DynamicEncoderPool) runRefreshLoop() {
+func (pool *DynamicEncoderPool) runRefreshLoop(parent context.Context) {
+	pool.refreshOnce(parent)
 	ticker := time.NewTicker(pool.refresh)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-pool.done:
 			return
+		case <-parent.Done():
+			return
 		case <-ticker.C:
-			refreshContext, cancel := context.WithTimeout(
-				context.Background(),
-				pool.refresh,
-			)
-			_ = pool.Refresh(refreshContext)
-			cancel()
+			pool.refreshOnce(parent)
 		}
 	}
+}
+
+// refreshOnce bounds one refresh by the refresh interval, so a stalled source
+// can never occupy the loop past its own period.
+func (pool *DynamicEncoderPool) refreshOnce(parent context.Context) {
+	refreshContext, cancel := context.WithTimeout(parent, pool.refresh)
+	defer cancel()
+	_ = pool.Refresh(refreshContext)
 }
 
 // Refresh adopts one newer reviewed snapshot. Errors leave the current
