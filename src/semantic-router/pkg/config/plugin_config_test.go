@@ -3,7 +3,51 @@ package config
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"gopkg.in/yaml.v2"
 )
+
+// The floor an operator writes for the ARC thinking arms must survive the
+// YAML path the router actually loads, and must pass plugin validation.
+var _ = Describe("request_params per-model completion floor", func() {
+	It("decodes the per-model floor an operator writes for the thinking arms", func() {
+		var decision Decision
+		Expect(yaml.Unmarshal([]byte(`
+name: rayline-arc-dev
+plugins:
+  - type: request_params
+    configuration:
+      blocked_params:
+        - temperature
+      min_completion_tokens_by_model:
+        xiaomi/mimo-v2.5-pro@thinking-on: 65536
+        deepseek/deepseek-v4-flash@thinking-on: 65536
+`), &decision)).To(Succeed())
+
+		params := decision.GetRequestParamsConfig()
+		Expect(params).NotTo(BeNil())
+		Expect(params.BlockedParams).To(Equal([]string{"temperature"}))
+		Expect(params.MinCompletionTokensByModel).To(Equal(map[string]int{
+			"xiaomi/mimo-v2.5-pro@thinking-on":       65536,
+			"deepseek/deepseek-v4-flash@thinking-on": 65536,
+		}))
+		Expect(validateDecisionPluginPayload(decision.Name, 0, decision.Plugins[0])).To(Succeed())
+	})
+
+	It("leaves the floor unset when the operator names none", func() {
+		var decision Decision
+		Expect(yaml.Unmarshal([]byte(`
+name: capped-only
+plugins:
+  - type: request_params
+    configuration:
+      max_tokens_limit: 8192
+`), &decision)).To(Succeed())
+
+		params := decision.GetRequestParamsConfig()
+		Expect(params).NotTo(BeNil())
+		Expect(params.MinCompletionTokensByModel).To(BeNil())
+	})
+})
 
 var _ = Describe("IsRAGEnabledForDecision", func() {
 	It("returns false for decision without RAG plugin", func() {
