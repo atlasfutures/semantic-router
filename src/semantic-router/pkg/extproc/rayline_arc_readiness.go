@@ -161,7 +161,7 @@ func probeRaylineARCReadiness(
 			selector,
 			armed,
 			probe,
-			raylineARCDefaultProbeBackoff(),
+			raylineARCProbeBackoffFromConfig(arcConfig.Encoder),
 			raylineARCWait,
 		)
 		return selector, episodeStore, closeResources, closeSession, "encoder_probe"

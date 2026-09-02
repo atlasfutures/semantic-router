@@ -20,6 +20,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 )
@@ -43,12 +44,27 @@ type raylineARCProbeBackoff struct {
 	max     time.Duration
 }
 
-// raylineARCDefaultProbeBackoff is the shipped schedule.
-func raylineARCDefaultProbeBackoff() raylineARCProbeBackoff {
-	return raylineARCProbeBackoff{
-		initial: defaultRaylineARCProbeRetryInitial,
-		max:     defaultRaylineARCProbeRetryMax,
+// raylineARCProbeBackoffFromConfig reads the operator's schedule, filling in
+// the shipped defaults for the knobs a deployment leaves unset. A configured
+// initial delay above the ceiling raises the ceiling rather than shrinking the
+// delay, so the schedule can never be faster than the operator asked for.
+func raylineARCProbeBackoffFromConfig(
+	encoder config.RaylineARCEncoderConfig,
+) raylineARCProbeBackoff {
+	backoff := raylineARCProbeBackoff{
+		initial: time.Duration(encoder.ProbeRetryInitialSeconds) * time.Second,
+		max:     time.Duration(encoder.ProbeRetryMaxSeconds) * time.Second,
 	}
+	if backoff.initial <= 0 {
+		backoff.initial = defaultRaylineARCProbeRetryInitial
+	}
+	if backoff.max <= 0 {
+		backoff.max = defaultRaylineARCProbeRetryMax
+	}
+	if backoff.max < backoff.initial {
+		backoff.max = backoff.initial
+	}
+	return backoff
 }
 
 // raylineARCWait sleeps for delay unless ctx ends first, and reports whether

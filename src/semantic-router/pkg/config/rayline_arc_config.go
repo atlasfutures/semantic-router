@@ -33,6 +33,10 @@ const (
 	// surplus simply queues inside the encoder container where the router
 	// cannot see it, which is the condition this knob exists to remove.
 	maxRaylineARCInflightEncoderCalls = 32
+	// An hour between readiness re-probes is already far beyond any encoder
+	// outage a router should sit through silently; past that the schedule is
+	// a misconfiguration, not a policy.
+	maxRaylineARCProbeRetrySeconds = 3600
 )
 
 var (
@@ -94,6 +98,17 @@ type RaylineARCEncoderConfig struct {
 	// default, leaves admission control off so that existing deployments keep
 	// their current behaviour until an operator opts in.
 	MaxInflightEncoderCalls int `yaml:"max_inflight_encoder_calls,omitempty"`
+	// ProbeRetryInitialSeconds and ProbeRetryMaxSeconds bound the readiness
+	// re-probe schedule. The router probes the encoder once at startup; when
+	// that probe fails it keeps probing on an exponential backoff between
+	// these two delays until the encoder answers, so a transient rejection at
+	// boot costs a few requests rather than the instance's whole lifetime.
+	//
+	// Zero on either field selects the shipped default, 5 s and 60 s. Attempts
+	// are never capped: while the encoder is unreachable the router can only
+	// fail closed, so there is nothing to fall back to.
+	ProbeRetryInitialSeconds int `yaml:"probe_retry_initial_seconds,omitempty"`
+	ProbeRetryMaxSeconds     int `yaml:"probe_retry_max_seconds,omitempty"`
 }
 
 // RaylineARCEpisodeConfig configures serialized, fenced episode state.
@@ -187,6 +202,9 @@ func validateRaylineARCEncoderConfig(cfg RaylineARCEncoderConfig) error {
 	); err != nil {
 		return err
 	}
+	if err := validateRaylineARCProbeRetry(cfg); err != nil {
+		return err
+	}
 	return validateRaylineARCEncoderTimeouts(cfg)
 }
 
@@ -244,6 +262,22 @@ func validateRaylineARCEncoderPins(cfg RaylineARCEncoderConfig) error {
 		return err
 	}
 	return validateImmutableRaylineARCPin("expected_io_plugin_version", cfg.ExpectedPluginVersion)
+}
+
+func validateRaylineARCProbeRetry(cfg RaylineARCEncoderConfig) error {
+	if cfg.ProbeRetryInitialSeconds < 0 || cfg.ProbeRetryMaxSeconds < 0 {
+		return fmt.Errorf(
+			"probe_retry_initial_seconds and probe_retry_max_seconds cannot be negative",
+		)
+	}
+	if cfg.ProbeRetryInitialSeconds > maxRaylineARCProbeRetrySeconds ||
+		cfg.ProbeRetryMaxSeconds > maxRaylineARCProbeRetrySeconds {
+		return fmt.Errorf(
+			"probe_retry_initial_seconds and probe_retry_max_seconds cannot exceed %d",
+			maxRaylineARCProbeRetrySeconds,
+		)
+	}
+	return nil
 }
 
 func validateRaylineARCEncoderTimeouts(cfg RaylineARCEncoderConfig) error {

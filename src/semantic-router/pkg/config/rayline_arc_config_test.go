@@ -153,6 +153,56 @@ func raylineARCInvalidContracts() []raylineARCInvalidContract {
 	}
 }
 
+// The readiness re-probe schedule must stay optional: every deployment that
+// predates it leaves it unset, and unset means the shipped default rather
+// than a zero-second hot loop. What it may not be is negative, or so long
+// that an instance would sit unready past any real outage.
+func TestValidateRaylineARCAlgorithmConfigChecksProbeRetrySchedule(t *testing.T) {
+	tests := []struct {
+		name    string
+		initial int
+		ceiling int
+		wantErr string
+	}{
+		{name: "unset", initial: 0, ceiling: 0},
+		{name: "shipped default", initial: 5, ceiling: 60},
+		{name: "one second", initial: 1, ceiling: 1},
+		{
+			name:    "at the bound",
+			initial: maxRaylineARCProbeRetrySeconds,
+			ceiling: maxRaylineARCProbeRetrySeconds,
+		},
+		{name: "negative initial", initial: -1, wantErr: "cannot be negative"},
+		{
+			name:    "ceiling above the bound",
+			ceiling: maxRaylineARCProbeRetrySeconds + 1,
+			wantErr: "cannot exceed",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			decision := validRaylineARCDecision()
+			encoder := &decision.Algorithm.RaylineARC.Encoder
+			encoder.ProbeRetryInitialSeconds = test.initial
+			encoder.ProbeRetryMaxSeconds = test.ceiling
+			err := validateDecisionAlgorithmConfig(
+				decision.Name,
+				decision.ModelRefs,
+				decision.Algorithm,
+			)
+			if test.wantErr == "" {
+				if err != nil {
+					t.Fatalf("error = %v, want accepted", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("error = %v, want substring %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestValidateRaylineARCAlgorithmConfigRejectsInvalidContracts(t *testing.T) {
 	for _, test := range raylineARCInvalidContracts() {
 		t.Run(test.name, func(t *testing.T) {

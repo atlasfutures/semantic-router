@@ -69,6 +69,13 @@ routing:
             # decision latency budget, and never above the encoder's own
             # ingress cap.
             max_inflight_encoder_calls: 0
+            # Readiness re-probe schedule. The startup encoder probe is not
+            # one-shot: a failed probe is retried on an exponential backoff
+            # between these two delays until the encoder answers, so a
+            # transient rejection at boot does not pin the instance at
+            # ready=0 for its lifetime. 0 selects the shipped 5 s / 60 s.
+            probe_retry_initial_seconds: 5
+            probe_retry_max_seconds: 60
           episode:
             id_header: x-rayline-episode-id
             close_header: ""

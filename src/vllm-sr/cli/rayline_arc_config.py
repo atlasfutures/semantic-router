@@ -73,6 +73,10 @@ class RaylineARCEncoderConfig(BaseModel):
     connect_timeout_seconds: int = Field(gt=0)
     total_timeout_seconds: int = Field(gt=0)
     max_retries: int = Field(ge=0, le=3)
+    # Readiness re-probe schedule. 0 on either field selects the router's
+    # shipped default, 5 s and 60 s.
+    probe_retry_initial_seconds: int = Field(default=0, ge=0, le=3600)
+    probe_retry_max_seconds: int = Field(default=0, ge=0, le=3600)
 
     @field_validator("membership", mode="before")
     @classmethod

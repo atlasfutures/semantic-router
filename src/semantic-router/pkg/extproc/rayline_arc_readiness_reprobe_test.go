@@ -25,6 +25,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 )
 
@@ -105,6 +106,53 @@ func TestRaylineARCReadinessRecoveryStopsOnShutdown(t *testing.T) {
 	}
 	if selector.armedComponents() != nil {
 		t.Fatal("a cancelled recovery armed the selector")
+	}
+}
+
+// The schedule is config-driven, and an unset knob keeps the shipped default
+// rather than a zero-second hot loop.
+func TestRaylineARCProbeBackoffFromConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		encoder config.RaylineARCEncoderConfig
+		want    raylineARCProbeBackoff
+	}{
+		{
+			name: "unset falls back to the defaults",
+			want: raylineARCProbeBackoff{
+				initial: defaultRaylineARCProbeRetryInitial,
+				max:     defaultRaylineARCProbeRetryMax,
+			},
+		},
+		{
+			name: "configured seconds are honoured",
+			encoder: config.RaylineARCEncoderConfig{
+				ProbeRetryInitialSeconds: 2,
+				ProbeRetryMaxSeconds:     30,
+			},
+			want: raylineARCProbeBackoff{
+				initial: 2 * time.Second,
+				max:     30 * time.Second,
+			},
+		},
+		{
+			name: "an initial above the ceiling never shrinks it",
+			encoder: config.RaylineARCEncoderConfig{
+				ProbeRetryInitialSeconds: 120,
+			},
+			want: raylineARCProbeBackoff{
+				initial: 120 * time.Second,
+				max:     120 * time.Second,
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := raylineARCProbeBackoffFromConfig(test.encoder)
+			if got != test.want {
+				t.Fatalf("backoff = %+v, want %+v", got, test.want)
+			}
+		})
 	}
 }
 
