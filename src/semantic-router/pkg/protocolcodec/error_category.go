@@ -2,6 +2,7 @@ package protocolcodec
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
@@ -45,6 +46,40 @@ func decodeProviderErrorCategory(values ...string) llmprotocol.ErrorCategory {
 		case "upstream_unavailable", "api_error", "overloaded_error", "server_error":
 			return llmprotocol.ErrorUpstreamUnavailable
 		}
+		if category, named := httpStatusErrorCategory(value); named {
+			return category
+		}
 	}
 	return llmprotocol.ErrorUpstreamUnavailable
+}
+
+// httpStatusErrorCategories names the statuses whose category is not implied
+// by their class. Providers send a status where the contract documents a name,
+// and a status says exactly as much about the category as a name does.
+var httpStatusErrorCategories = map[int]llmprotocol.ErrorCategory{
+	400: llmprotocol.ErrorInvalidRequest,
+	401: llmprotocol.ErrorAuthentication,
+	403: llmprotocol.ErrorPermission,
+	404: llmprotocol.ErrorNotFound,
+	408: llmprotocol.ErrorUpstreamTimeout,
+	409: llmprotocol.ErrorConflict,
+	429: llmprotocol.ErrorRateLimited,
+	504: llmprotocol.ErrorUpstreamTimeout,
+}
+
+func httpStatusErrorCategory(value string) (llmprotocol.ErrorCategory, bool) {
+	status, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return "", false
+	}
+	if category, named := httpStatusErrorCategories[status]; named {
+		return category, true
+	}
+	if status >= 400 && status < 500 {
+		return llmprotocol.ErrorInvalidRequest, true
+	}
+	if status >= 500 && status < 600 {
+		return llmprotocol.ErrorUpstreamUnavailable, true
+	}
+	return "", false
 }

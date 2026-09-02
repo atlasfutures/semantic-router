@@ -216,6 +216,11 @@ func (engine *Engine) TranslateResponse(source, target llmprotocol.WireFormat, b
 // TranslateTransportError translates an HTTP non-2xx body through the neutral
 // error contract. It intentionally does not use DecodeResponse: a failed model
 // Response resource and an API transport error are different wire objects.
+//
+// An error envelope is an upstream document like any other, and it is the one
+// document whose whole purpose is to tell the client what went wrong. Refusing
+// it for a member the contract does not name replaces that answer with a
+// generic failure, so it takes the same drop policy as the response leg.
 func (engine *Engine) TranslateTransportError(
 	source,
 	target llmprotocol.WireFormat,
@@ -227,7 +232,7 @@ func (engine *Engine) TranslateTransportError(
 		return TransportErrorResult{}, err
 	}
 	decodePolicy := engine.policy
-	decodePolicy.UnknownFields = llmprotocol.UnknownReject
+	decodePolicy.UnknownFields = llmprotocol.UnknownDropUpstream
 	decodePolicy.SourcePreservation = llmprotocol.SourceDisabled
 	transportError, diagnostics, err := sourcePair.buffered.DecodeTransportError(body, decodePolicy)
 	if err != nil {
@@ -268,7 +273,7 @@ func (engine *Engine) DecodeTransportError(
 		return llmprotocol.TransportError{}, nil, err
 	}
 	decodePolicy := engine.policy
-	decodePolicy.UnknownFields = llmprotocol.UnknownReject
+	decodePolicy.UnknownFields = llmprotocol.UnknownDropUpstream
 	decodePolicy.SourcePreservation = llmprotocol.SourceDisabled
 	transportError, diagnostics, err := pair.buffered.DecodeTransportError(body, decodePolicy)
 	if err != nil {

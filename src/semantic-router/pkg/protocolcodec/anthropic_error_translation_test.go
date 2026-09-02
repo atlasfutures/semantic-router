@@ -82,8 +82,6 @@ func TestTransportErrorTranslationRejectsInvalidProviderEnvelopes(t *testing.T) 
 	}{
 		{name: "Chat missing error", source: llmprotocol.OpenAIChatV1, body: `{}`, code: "upstream_error_required"},
 		{name: "Responses null error", source: llmprotocol.OpenAIResponsesV1, body: `{"error":null}`, code: "upstream_error_required"},
-		{name: "Chat missing type", source: llmprotocol.OpenAIChatV1, body: `{"error":{"message":"failed"}}`, code: "upstream_error_type_required"},
-		{name: "Responses whitespace type", source: llmprotocol.OpenAIResponsesV1, body: `{"error":{"type":"  ","message":"failed"}}`, code: "upstream_error_type_required"},
 		{name: "Chat missing message", source: llmprotocol.OpenAIChatV1, body: `{"error":{"type":"server_error"}}`, code: "upstream_error_message_required"},
 		{name: "Responses whitespace message", source: llmprotocol.OpenAIResponsesV1, body: `{"error":{"type":"server_error","message":"\t"}}`, code: "upstream_error_message_required"},
 		{name: "Anthropic missing envelope type", source: llmprotocol.AnthropicMessagesV1, body: `{"error":{"type":"api_error","message":"failed"}}`, code: "invalid_upstream_error_envelope"},
@@ -105,6 +103,27 @@ func TestTransportErrorTranslationRejectsInvalidProviderEnvelopes(t *testing.T) 
 				assertInvalidProviderEnvelope(t, test.source, target, []byte(test.body), test.code)
 			})
 		}
+	}
+}
+
+// The OpenAI envelope documents a type and providers omit it. The message is
+// what a client acts on, so a missing or blank type is carried rather than
+// refused. The Anthropic envelope keeps its own type rule, above.
+func TestOpenAITransportErrorToleratesAMissingType(t *testing.T) {
+	engine := NewBuiltinEngine()
+	for name, body := range map[string]string{
+		"missing":    `{"error":{"message":"failed"}}`,
+		"whitespace": `{"error":{"type":"  ","message":"failed"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			transportError, _, err := engine.DecodeTransportError(llmprotocol.OpenAIChatV1, []byte(body))
+			if err != nil {
+				t.Fatalf("envelope with a %s type was refused: %v", name, err)
+			}
+			if transportError.Error == nil || transportError.Error.Message != "failed" {
+				t.Fatalf("decoded error = %+v, want the upstream message", transportError.Error)
+			}
+		})
 	}
 }
 

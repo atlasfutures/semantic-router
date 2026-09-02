@@ -259,6 +259,13 @@ func validateTransportErrorDetails(errorType, message string) error {
 			"upstream transport error details require a non-empty type",
 		)
 	}
+	return validateTransportErrorMessage(message)
+}
+
+// validateTransportErrorMessage holds the one part of an error envelope a
+// client can act on. Contracts that document the type as optional, or whose
+// providers omit it, still require this much.
+func validateTransportErrorMessage(message string) error {
 	if strings.TrimSpace(message) == "" {
 		return invalidProviderResponse(
 			"upstream_error_message_required",

@@ -1,6 +1,13 @@
 package protocolcodec
 
-import "github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"strconv"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+)
 
 // OpenAI Chat Completions and Responses share the same non-2xx API error
 // envelope. This is intentionally not a Responses resource whose status is
@@ -10,10 +17,37 @@ type openAITransportErrorWire struct {
 }
 
 type openAITransportErrorDetailWire struct {
-	Type    string  `json:"type"`
-	Code    *string `json:"code"`
-	Message string  `json:"message"`
-	Param   *string `json:"param"`
+	Type    string               `json:"type"`
+	Code    *openAIErrorCodeWire `json:"code"`
+	Message string               `json:"message"`
+	Param   *string              `json:"param"`
+}
+
+// openAIErrorCodeWire accepts the code as the string the OpenAI contract
+// documents and as the HTTP status integer several providers send in its
+// place. Both name the same thing, and rejecting one shape loses the message
+// the envelope exists to carry.
+type openAIErrorCodeWire struct {
+	Value string
+}
+
+func (code *openAIErrorCodeWire) UnmarshalJSON(raw []byte) error {
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		code.Value = text
+		return nil
+	}
+	var number json.Number
+	if err := json.Unmarshal(raw, &number); err == nil {
+		if _, convErr := strconv.ParseInt(number.String(), 10, 64); convErr == nil {
+			code.Value = number.String()
+			return nil
+		}
+	}
+	return fmt.Errorf("upstream error code must be a string or an integer")
 }
 
 func decodeOpenAITransportError(
@@ -32,12 +66,17 @@ func decodeOpenAITransportError(
 			nil,
 		)
 	}
-	if err := validateTransportErrorDetails(wire.Error.Type, wire.Error.Message); err != nil {
+	// The OpenAI contract documents a type and several providers omit it. The
+	// message is the part a client acts on; the type only steers category
+	// selection, which the code and the fallback already cover. Refusing the
+	// envelope for a missing type would replace an actionable upstream answer
+	// with a generic one.
+	if err := validateTransportErrorMessage(wire.Error.Message); err != nil {
 		return llmprotocol.TransportError{}, nil, err
 	}
 	code, parameter := "", ""
 	if wire.Error.Code != nil {
-		code = *wire.Error.Code
+		code = wire.Error.Code.Value
 	}
 	if wire.Error.Param != nil {
 		parameter = *wire.Error.Param
@@ -63,10 +102,23 @@ func encodeOpenAITransportError(transportError llmprotocol.TransportError) []byt
 func openAITransportErrorEnvelope(protocolError *llmprotocol.ProtocolError) openAITransportErrorWire {
 	return openAITransportErrorWire{Error: &openAITransportErrorDetailWire{
 		Type:    canonicalOpenAIErrorType(protocolError.Category),
-		Code:    optionalString(protocolError.Code),
+		Code:    optionalErrorCode(protocolError.Code),
 		Message: protocolError.Message,
 		Param:   optionalString(protocolError.Parameter),
 	}}
+}
+
+// The encoder re-emits the code as the string the OpenAI contract documents,
+// whatever shape it arrived in. A client reading the envelope sees one type.
+func optionalErrorCode(value string) *openAIErrorCodeWire {
+	if value == "" {
+		return nil
+	}
+	return &openAIErrorCodeWire{Value: value}
+}
+
+func (code openAIErrorCodeWire) MarshalJSON() ([]byte, error) {
+	return json.Marshal(code.Value)
 }
 
 func optionalString(value string) *string {
