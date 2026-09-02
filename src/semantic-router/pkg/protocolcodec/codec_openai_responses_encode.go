@@ -360,7 +360,7 @@ func decodeResponsesReasoning(
 
 func encodeResponsesContent(contents []llmprotocol.Content, direction string) (json.RawMessage, error) {
 	parts := make([]responsesContentWire, 0, len(contents))
-	for _, content := range contents {
+	for _, content := range withoutCarriedContent(contents) {
 		switch content.Kind {
 		case llmprotocol.ContentText:
 			part := responsesContentWire{Type: direction + "_text", Text: content.Text}
@@ -370,11 +370,6 @@ func encodeResponsesContent(contents []llmprotocol.Content, direction string) (j
 			parts = append(parts, part)
 		case llmprotocol.ContentRefusal:
 			parts = append(parts, responsesContentWire{Type: "refusal", Refusal: content.Text})
-		case llmprotocol.ContentUnmodeled:
-			// The block belongs to the contract it came from. Responses cannot
-			// name it, so it is dropped and the drop is recorded beside the
-			// encoded request.
-			continue
 		case llmprotocol.ContentReasoning:
 			return nil, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "reasoning_content_position", "Responses reasoning must be encoded as an ordered reasoning item", nil)
 		case llmprotocol.ContentImage:

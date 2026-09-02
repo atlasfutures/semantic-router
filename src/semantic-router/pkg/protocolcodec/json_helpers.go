@@ -837,3 +837,17 @@ func carriedItemBytes(message llmprotocol.Message, target llmprotocol.WireFormat
 	}
 	return carriedBlockBytes(message.Content[0], target)
 }
+
+// withoutCarriedContent removes carried blocks from a content list. A carrier
+// is re-emitted as the item or block it came from, never as a content part of
+// another contract, so a content encoder has nothing to do with one.
+func withoutCarriedContent(contents []llmprotocol.Content) []llmprotocol.Content {
+	kept := make([]llmprotocol.Content, 0, len(contents))
+	for _, content := range contents {
+		if content.Kind == llmprotocol.ContentUnmodeled {
+			continue
+		}
+		kept = append(kept, content)
+	}
+	return kept
+}
