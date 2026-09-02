@@ -18,6 +18,7 @@ package extproc
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -42,6 +43,10 @@ const (
 // timed-out encoder probe reports. It is produced in two places and matched in
 // a third, so it lives here rather than as three string literals.
 const raylineARCEncoderProbeFailureClass = "encoder_probe"
+
+// raylineARCStartupProbeAttempt numbers the one synchronous probe, so the
+// recovery loop's attempts continue the same count in the logs.
+const raylineARCStartupProbeAttempt = 1
 
 // raylineARCReadinessProbeName is the session identity every readiness probe
 // uses, so the encoder sees one long-lived readiness session rather than one
@@ -116,10 +121,12 @@ func raylineARCReprobe(
 	wait func(context.Context, time.Duration) bool,
 ) bool {
 	delay := backoff.initial
+	attempt := raylineARCStartupProbeAttempt
 	for {
 		if !wait(ctx, delay) {
 			return false
 		}
+		attempt++
 		if probe(ctx) == nil {
 			return true
 		}
@@ -127,6 +134,7 @@ func raylineARCReprobe(
 		if delay > backoff.max {
 			delay = backoff.max
 		}
+		logRaylineARCProbeFailure(attempt, delay, false)
 	}
 }
 
@@ -153,15 +161,49 @@ func raylineARCArmOrRecover(
 	backoff raylineARCProbeBackoff,
 	wait func(context.Context, time.Duration) bool,
 ) string {
+	logging.ComponentEvent(
+		"extproc",
+		"rayline_arc_readiness_schedule",
+		map[string]interface{}{
+			"startup_timeout_seconds": startupTimeout.Seconds(),
+			"initial_backoff_seconds": backoff.initial.Seconds(),
+			"max_backoff_seconds":     backoff.max.Seconds(),
+		},
+	)
 	startupContext, cancelStartup := context.WithTimeout(ctx, startupTimeout)
 	probeErr := probe(startupContext)
+	timedOut := errors.Is(startupContext.Err(), context.DeadlineExceeded)
 	cancelStartup()
 	if probeErr == nil {
 		selector.arm(armed)
 		return ""
 	}
+	logRaylineARCProbeFailure(
+		raylineARCStartupProbeAttempt,
+		backoff.initial,
+		timedOut,
+	)
 	go raylineARCRecoverReadiness(ctx, selector, armed, probe, backoff, wait)
 	return raylineARCEncoderProbeFailureClass
+}
+
+// logRaylineARCProbeFailure is the one place a readiness attempt is reported,
+// so an operator can read the schedule off the logs rather than infer it.
+func logRaylineARCProbeFailure(
+	attempt int,
+	nextDelay time.Duration,
+	timedOut bool,
+) {
+	logging.ComponentErrorEvent(
+		"extproc",
+		"rayline_arc_readiness_probe_failed",
+		map[string]interface{}{
+			"attempt":            attempt,
+			"next_delay_seconds": nextDelay.Seconds(),
+			"timed_out":          timedOut,
+			"startup":            attempt == raylineARCStartupProbeAttempt,
+		},
+	)
 }
 
 // raylineARCRecoverReadiness turns a failed startup probe into a recoverable
