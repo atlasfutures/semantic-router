@@ -152,19 +152,24 @@ func probeRaylineARCReadiness(
 	probe := func(ctx context.Context) error {
 		return encoder.Probe(ctx, raylineARCReadinessProbeName)
 	}
-	// A transient rejection or a cold encoder at boot must not pin the
-	// instance dead for its lifetime, and the probe must not hold the port
-	// shut long enough for the platform to kill the container first.
-	failureClass := raylineARCArmOrRecover(
+	// Nothing here may wait on the encoder: the router opens its gRPC port
+	// only after construction returns, so a probe on this path holds the port
+	// shut and a cold encoder holds it shut past the platform's startup
+	// budget. Readiness runs in the background and arms the selector when the
+	// encoder answers.
+	raylineARCArmInBackground(
 		probeContext,
 		selector,
 		armed,
 		probe,
-		raylineARCStartupProbeTimeoutFromConfig(arcConfig.Encoder),
 		raylineARCProbeBackoffFromConfig(arcConfig.Encoder),
 		raylineARCWait,
 	)
-	return selector, episodeStore, closeResources, closeSession, failureClass
+	return selector,
+		episodeStore,
+		closeResources,
+		closeSession,
+		raylineARCReadinessPendingClass
 }
 
 func raylineARCLoadedContractFailure(
