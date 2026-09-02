@@ -31,11 +31,6 @@ import (
 const (
 	defaultRaylineARCProbeRetryInitial = 5 * time.Second
 	defaultRaylineARCProbeRetryMax     = 60 * time.Second
-	// The startup probe holds the router's port shut while it runs, and Cloud
-	// Run allows 180 s on its own TCP startup probe. Thirty seconds answers a
-	// warm encoder many times over and leaves the platform budget intact when
-	// the encoder is cold.
-	defaultRaylineARCProbeStartupTimeout = 30 * time.Second
 )
 
 // raylineARCReadinessPendingClass is the state every instance now starts in:
@@ -56,17 +51,6 @@ const raylineARCReadinessProbeName = "semantic-router-startup-readiness"
 type raylineARCProbeBackoff struct {
 	initial time.Duration
 	max     time.Duration
-}
-
-// raylineARCStartupProbeTimeoutFromConfig bounds the synchronous startup
-// probe, defaulting when the deployment leaves the knob unset.
-func raylineARCStartupProbeTimeoutFromConfig(
-	encoder config.RaylineARCEncoderConfig,
-) time.Duration {
-	if encoder.ProbeStartupTimeoutSeconds <= 0 {
-		return defaultRaylineARCProbeStartupTimeout
-	}
-	return time.Duration(encoder.ProbeStartupTimeoutSeconds) * time.Second
 }
 
 // raylineARCProbeBackoffFromConfig reads the operator's schedule, filling in

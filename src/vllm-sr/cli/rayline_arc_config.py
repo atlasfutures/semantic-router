@@ -77,9 +77,6 @@ class RaylineARCEncoderConfig(BaseModel):
     # shipped default, 5 s and 60 s.
     probe_retry_initial_seconds: int = Field(default=0, ge=0, le=3600)
     probe_retry_max_seconds: int = Field(default=0, ge=0, le=3600)
-    # Bound on the synchronous startup probe. 0 selects the router's shipped
-    # 30 s; the ceiling stays inside Cloud Run's 180 s TCP startup budget.
-    probe_startup_timeout_seconds: int = Field(default=0, ge=0, le=170)
 
     @field_validator("membership", mode="before")
     @classmethod

@@ -37,12 +37,6 @@ const (
 	// outage a router should sit through silently; past that the schedule is
 	// a misconfiguration, not a policy.
 	maxRaylineARCProbeRetrySeconds = 3600
-	// Cloud Run gives a container 180 s on its TCP startup probe, and the
-	// router does not open its port until ARC readiness returns. The startup
-	// probe must therefore finish with room to spare, or a slow encoder
-	// starves the platform probe and the instance is killed before the
-	// recovery loop can help.
-	maxRaylineARCProbeStartupTimeoutSeconds = 170
 )
 
 var (
@@ -115,17 +109,6 @@ type RaylineARCEncoderConfig struct {
 	// fail closed, so there is nothing to fall back to.
 	ProbeRetryInitialSeconds int `yaml:"probe_retry_initial_seconds,omitempty"`
 	ProbeRetryMaxSeconds     int `yaml:"probe_retry_max_seconds,omitempty"`
-	// ProbeStartupTimeoutSeconds bounds the one synchronous probe the router
-	// runs before it opens its port. Without a bound the probe inherits the
-	// full encoder deadline, so a cold encoder holds the port shut past Cloud
-	// Run's 180 s TCP startup budget and the instance is killed before the
-	// re-probe loop is ever entered.
-	//
-	// Zero selects the shipped default, 30 s. On timeout the router treats the
-	// probe exactly as it treats an error: it serves fail-closed and recovers
-	// in the background, where each attempt may take the full encoder
-	// deadline.
-	ProbeStartupTimeoutSeconds int `yaml:"probe_startup_timeout_seconds,omitempty"`
 }
 
 // RaylineARCEpisodeConfig configures serialized, fenced episode state.
@@ -292,13 +275,6 @@ func validateRaylineARCProbeRetry(cfg RaylineARCEncoderConfig) error {
 		return fmt.Errorf(
 			"probe_retry_initial_seconds and probe_retry_max_seconds cannot exceed %d",
 			maxRaylineARCProbeRetrySeconds,
-		)
-	}
-	if cfg.ProbeStartupTimeoutSeconds < 0 ||
-		cfg.ProbeStartupTimeoutSeconds > maxRaylineARCProbeStartupTimeoutSeconds {
-		return fmt.Errorf(
-			"probe_startup_timeout_seconds must be between 0 and %d",
-			maxRaylineARCProbeStartupTimeoutSeconds,
 		)
 	}
 	return nil

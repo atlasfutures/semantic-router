@@ -1565,12 +1565,6 @@ routing:
             # ready=0 for its lifetime. 0 selects the shipped 5 s / 60 s.
             probe_retry_initial_seconds: 5
             probe_retry_max_seconds: 60
-            # Bound on the one synchronous probe the router runs before it
-            # opens its port. It must stay well inside Cloud Run's 180 s TCP
-            # startup budget: a cold encoder answers the first recovery
-            # attempt instead, which may take the full encoder deadline.
-            # 0 selects the shipped 30 s.
-            probe_startup_timeout_seconds: 30
           episode:
             id_header: x-rayline-episode-id
             close_header: ""
