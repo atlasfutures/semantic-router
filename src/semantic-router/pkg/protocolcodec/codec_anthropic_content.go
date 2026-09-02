@@ -233,9 +233,6 @@ func anthropicRequestContentType(body json.RawMessage) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if typeName == "redacted_thinking" {
-		return "", llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "redacted_reasoning", "redacted reasoning cannot be translated", nil)
-	}
 	return typeName, nil
 }
 

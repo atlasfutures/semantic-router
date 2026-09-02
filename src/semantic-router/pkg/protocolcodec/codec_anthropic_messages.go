@@ -453,8 +453,19 @@ func invalidAnthropicToolChoiceVariant(field string) error {
 
 func decodeAnthropicMessage(wire anthropicMessageWire, messageIndex int, policy llmprotocol.Policy) ([]llmprotocol.Message, error) {
 	role, err := canonicalRole(wire.Role)
-	if err != nil || role != llmprotocol.RoleSystem && role != llmprotocol.RoleUser && role != llmprotocol.RoleAssistant {
-		return nil, llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_anthropic_role", "Anthropic message role must be system, user, or assistant", err)
+	if err != nil {
+		return nil, llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_anthropic_role", "Anthropic message role is not a role the protocol names", err)
+	}
+	switch role {
+	case llmprotocol.RoleDeveloper:
+		// Anthropic Messages has no developer role. System is the closest role
+		// it does express, and mapping it keeps the message in position rather
+		// than refusing the conversation around it.
+		role = llmprotocol.RoleSystem
+	case llmprotocol.RoleTool:
+		// A tool-role message that is not a tool result block is ordinary user
+		// content. Anthropic carries tool results inside a user message.
+		role = llmprotocol.RoleUser
 	}
 	contents, err := decodeAnthropicRequestContent(wire.Content, policy)
 	if err != nil {

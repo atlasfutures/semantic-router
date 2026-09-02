@@ -796,3 +796,44 @@ func messageDropsWhole(contents []llmprotocol.Content, target llmprotocol.WireFo
 	}
 	return true
 }
+
+// hasUnnamedMembers reports whether a JSON object holds members the wire struct
+// does not name.
+func hasUnnamedMembers(body []byte, target any) bool {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(body, &object); err != nil {
+		return false
+	}
+	named := exactJSONStructFields(dereferenceJSONType(reflect.TypeOf(target)))
+	for name := range object {
+		if _, found := named[name]; !found {
+			return true
+		}
+	}
+	return false
+}
+
+// carriedItemMessage wraps one carried input item as a message. The role never
+// reaches a provider: the message is either re-emitted as the item it came
+// from, or dropped whole by a target that cannot name it.
+func carriedItemMessage(format llmprotocol.WireFormat, itemType string, body json.RawMessage) llmprotocol.Message {
+	return llmprotocol.Message{
+		Role: llmprotocol.RoleUser,
+		Content: []llmprotocol.Content{{
+			Kind: llmprotocol.ContentUnmodeled,
+			Unmodeled: &llmprotocol.UnmodeledBlock{
+				Format: format, Type: itemType,
+				Raw: append(json.RawMessage(nil), body...),
+			},
+		}},
+	}
+}
+
+// carriedItemBytes returns the source item of a message that holds exactly one
+// carried block for the target format.
+func carriedItemBytes(message llmprotocol.Message, target llmprotocol.WireFormat) (json.RawMessage, bool) {
+	if len(message.Content) != 1 {
+		return nil, false
+	}
+	return carriedBlockBytes(message.Content[0], target)
+}

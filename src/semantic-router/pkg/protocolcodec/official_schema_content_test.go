@@ -509,15 +509,16 @@ func TestOfficialAnthropicContentBlockUnionsAreClosed(t *testing.T) {
 	requestSupported := fields("document", "image", "text", "thinking", "tool_result", "tool_use")
 	// Every request block outside the modelled six is carried whole rather than
 	// refused, so a conversation the Router only routes is not lost at ingress.
-	// redacted_thinking is the exception: it is signed provider ciphertext that
-	// the neutral contract still refuses to translate.
+	// redacted_thinking is carried for the strongest version of that reason: it
+	// is opaque provider ciphertext the client is required to echo back
+	// unchanged, so it can only ever be forwarded.
 	requestCarried := fields(
 		"bash_code_execution_tool_result", "code_execution_tool_result", "container_upload",
-		"search_result", "server_tool_use",
+		"redacted_thinking", "search_result", "server_tool_use",
 		"text_editor_code_execution_tool_result", "tool_search_tool_result",
 		"web_fetch_tool_result", "web_search_tool_result",
 	)
-	requestUnsupported := append(fields("redacted_thinking"), requestCarried...)
+	requestUnsupported := requestCarried
 	responseSupported := fields("text", "thinking", "tool_use")
 	responseUnsupported := fields(
 		"bash_code_execution_tool_result", "code_execution_tool_result", "container_upload",
@@ -532,11 +533,7 @@ func TestOfficialAnthropicContentBlockUnionsAreClosed(t *testing.T) {
 			assertAnthropicRequestBlockIsCarried(t, engine, blockType)
 		})
 	}
-	t.Run("request/redacted_thinking", func(t *testing.T) {
-		body := anthropicRequestBodyWithBlock(t, "redacted_thinking")
-		_, _, _, err := engine.DecodeRequest(llmprotocol.AnthropicMessagesV1, body)
-		assertProtocolError(t, err, llmprotocol.ErrorUnsupportedFeature, "redacted_reasoning")
-	})
+
 	for _, blockType := range responseUnsupported {
 		t.Run("response/"+blockType, func(t *testing.T) {
 			body, err := json.Marshal(map[string]any{

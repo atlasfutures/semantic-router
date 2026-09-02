@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -476,6 +477,9 @@ func TestOfficialUnsupportedResponsesItemDiscriminatorsAreTyped(t *testing.T) {
 	)
 	assertClosedDiscriminatorInventory(t, "OpenAI Responses input item", 30, supported, unsupported)
 	engine := NewBuiltinEngine()
+	// The inventory stays closed: these are the item types the contract does
+	// not model. It no longer refuses them, because the Router forwards a
+	// Responses body to a Responses provider that does understand them.
 	for _, itemType := range unsupported {
 		t.Run(itemType, func(t *testing.T) {
 			body, err := json.Marshal(map[string]any{
@@ -487,10 +491,18 @@ func TestOfficialUnsupportedResponsesItemDiscriminatorsAreTyped(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, _, _, err = engine.DecodeRequest(llmprotocol.OpenAIResponsesV1, body)
-			var protocolError *llmprotocol.ProtocolError
-			if !errors.As(err, &protocolError) || protocolError.Category != llmprotocol.ErrorUnsupportedFeature {
-				t.Fatalf("item %q returned %T %v, want typed unsupported_feature", itemType, err, err)
+			request, envelope, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, body)
+			if err != nil {
+				t.Fatalf("item %q was refused at ingress: %v", itemType, err)
+			}
+			request.Model = "selected-arm"
+			request.Generation++
+			result, err := engine.EncodeRequest(llmprotocol.OpenAIResponsesV1, request, envelope)
+			if err != nil {
+				t.Fatalf("item %q could not be re-encoded: %v", itemType, err)
+			}
+			if !bytes.Contains(result.Body, []byte(`"variant_specific_field":true`)) {
+				t.Fatalf("item %q did not survive the round trip: %s", itemType, result.Body)
 			}
 		})
 	}

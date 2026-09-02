@@ -22,6 +22,10 @@ func decodeResponsesInput(raw json.RawMessage, request *llmprotocol.Request, pol
 		return err
 	}
 	for index, itemBody := range itemBodies {
+		if carried, isCarried := carriedResponsesInputItem(itemBody); isCarried {
+			request.Messages = append(request.Messages, carried)
+			continue
+		}
 		item, err := decodeResponsesItemWire(itemBody, policy, false)
 		if err != nil {
 			return err
@@ -31,6 +35,47 @@ func decodeResponsesInput(raw json.RawMessage, request *llmprotocol.Request, pol
 		}
 	}
 	return nil
+}
+
+// carriedResponsesInputItem decides whether an input item is carried whole
+// rather than decoded. An item type the contract does not name, and a modelled
+// item holding a member it does not name, are both bodies the Responses API
+// accepts and the Router only forwards.
+//
+// item_reference is the exception: it names retained state the Router has to
+// resolve before dispatch, so it still refuses.
+func carriedResponsesInputItem(body json.RawMessage) (llmprotocol.Message, bool) {
+	var discriminator struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(body, &discriminator); err != nil {
+		return llmprotocol.Message{}, false
+	}
+	itemType := discriminator.Type
+	if itemType == "" {
+		itemType = "message"
+	}
+	if itemType == "item_reference" {
+		return llmprotocol.Message{}, false
+	}
+	if isSupportedResponsesItemType(itemType, false) &&
+		!(hasUnnamedMembers(body, responsesItemWire{}) && !hasResponsesRefusedMember(body)) {
+		return llmprotocol.Message{}, false
+	}
+	return carriedItemMessage(llmprotocol.OpenAIResponsesV1, itemType, body), true
+}
+
+// hasResponsesRefusedMember reports whether an item names a member the codec
+// refuses on purpose rather than one it simply does not model. A removed API
+// field still fails closed: carrying it would hand a provider a member the
+// surface itself withdrew.
+func hasResponsesRefusedMember(body json.RawMessage) bool {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(body, &object); err != nil {
+		return false
+	}
+	_, present := object["prompt_cache_breakpoint"]
+	return present
 }
 
 var responsesItemUnionFields = []string{
@@ -284,6 +329,12 @@ func decodeResponsesReasoningItem(item responsesItemWire, request *llmprotocol.R
 		return err
 	}
 	content = append(content, reasoning...)
+	if len(content) == 0 {
+		// A reasoning item with an empty summary says nothing. Refusing the
+		// request for it would lose a conversation over an item with no
+		// content, so the message it would have made is dropped instead.
+		return nil
+	}
 	request.Messages = append(request.Messages, llmprotocol.Message{ID: item.ID, Role: llmprotocol.RoleAssistant, Content: content})
 	return nil
 }

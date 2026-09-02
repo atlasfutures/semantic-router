@@ -78,27 +78,38 @@ func encodeResponsesRequestWire(request llmprotocol.Request) (responsesRequestWi
 	return wire, nil
 }
 
-func encodeResponsesRequestItems(request llmprotocol.Request) ([]responsesItemWire, error) {
-	items := make([]responsesItemWire, 0, len(request.Messages))
-	for _, instruction := range request.Instructions {
-		if messageDropsWhole(instruction.Content, llmprotocol.OpenAIResponsesV1) {
-			continue
+func encodeResponsesRequestItems(request llmprotocol.Request) ([]json.RawMessage, error) {
+	items := make([]json.RawMessage, 0, len(request.Messages))
+	appendMessage := func(message llmprotocol.Message) error {
+		if carried, isCarried := carriedItemBytes(message, llmprotocol.OpenAIResponsesV1); isCarried {
+			items = append(items, carried)
+			return nil
 		}
-		encoded, err := encodeResponsesMessage(llmprotocol.Message{Role: instruction.Role, Content: instruction.Content}, "input")
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, encoded...)
-	}
-	for _, message := range request.Messages {
 		if messageDropsWhole(message.Content, llmprotocol.OpenAIResponsesV1) {
-			continue
+			return nil
 		}
 		encoded, err := encodeResponsesMessage(message, "input")
 		if err != nil {
+			return err
+		}
+		for _, item := range encoded {
+			body, marshalErr := json.Marshal(item)
+			if marshalErr != nil {
+				return llmprotocol.NewError(llmprotocol.ErrorInternal, "encode_wire", "wire request could not be encoded", marshalErr)
+			}
+			items = append(items, body)
+		}
+		return nil
+	}
+	for _, instruction := range request.Instructions {
+		if err := appendMessage(llmprotocol.Message{Role: instruction.Role, Content: instruction.Content}); err != nil {
 			return nil, err
 		}
-		items = append(items, encoded...)
+	}
+	for _, message := range request.Messages {
+		if err := appendMessage(message); err != nil {
+			return nil, err
+		}
 	}
 	return items, nil
 }

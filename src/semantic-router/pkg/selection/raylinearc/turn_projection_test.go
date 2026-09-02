@@ -69,17 +69,21 @@ type goldenExpectation struct {
 
 // turnProjectionExpectations classifies every case in the fixture.
 //
-// Counted on 2026-09-02 against the codec at this commit: 15 cases project, 9
-// reshape, 11 are rejected at ingress.
+// Counted on 2026-09-02 against the codec at this commit: 16 cases project, 14
+// reshape, 5 are rejected at ingress. The five that remain are bodies the fork
+// refused too: an unresolved tool identifier, or malformed tool arguments.
 //
-// Nine cases moved off rejected when the codec began carrying request blocks
-// it does not name. Five of them project byte for byte. Four reshape, and the
-// reason is recorded beside each: two carry a block the fork read text out of
-// (compaction, mid_conv_system), so the projection now emits the turn without
-// that text; two carry a block that is the message's only content, so the turn
-// survives as empty text where the fork emitted no turn at all. Both are the
-// consequence of the carrier being opaque: nothing outside the codec that
-// re-emits it may read inside it, including this projection.
+// Eighteen cases moved off rejected when the codec began carrying the parts of
+// a request it does not name. Eight of them project byte for byte. Ten reshape,
+// and the reason is recorded beside each. They fall into three shapes. A block
+// the fork read text out of (compaction, mid_conv_system, a scalar tool call)
+// now contributes no text. A block or item that is a message's only content
+// leaves an empty turn where the fork emitted none. And a tool result the fork
+// folded into the turn before it now stands as its own turn.
+//
+// All three follow from the carrier being opaque: nothing outside the codec
+// that re-emits it may read inside it, and that includes this projection. The
+// alternative was refusing every one of these conversations at ingress.
 var turnProjectionExpectations = map[string]goldenExpectation{
 	// Projected: byte-identical to the fork.
 	"openai_chat_tool_flow":                          {disposition: dispositionProjected},
@@ -127,8 +131,11 @@ var turnProjectionExpectations = map[string]goldenExpectation{
 		disposition: dispositionCodecReshaped,
 		turns:       []Turn{{Role: "user", Text: ""}},
 	},
-	"chat_unknown_role":      {disposition: dispositionCodecRejected, codecError: "invalid_role"},
-	"responses_unknown_item": {disposition: dispositionCodecRejected, codecError: "unsupported_input_item"},
+	"chat_unknown_role": {disposition: dispositionCodecRejected, codecError: "invalid_role"},
+	"responses_unknown_item": {
+		disposition: dispositionCodecReshaped,
+		turns:       []Turn{{Role: "user", Text: ""}},
+	},
 	"anthropic_tool_reference_rejected_at_top_level": {
 		disposition: dispositionCodecReshaped,
 		turns:       []Turn{{Role: "user", Text: ""}},
@@ -137,8 +144,18 @@ var turnProjectionExpectations = map[string]goldenExpectation{
 	// Rejected: shapes the fork routed. The codec models a narrower request
 	// union than the Anthropic and Responses request APIs accept, so every one
 	// of these answers 400 at ingress today.
-	"anthropic_tool_flow":        {disposition: dispositionProjected},
-	"openai_responses_tool_flow": {disposition: dispositionCodecRejected, codecError: "invalid_json"},
+	"anthropic_tool_flow": {disposition: dispositionProjected},
+	"openai_responses_tool_flow": {
+		disposition: dispositionCodecReshaped,
+		turns: []Turn{
+			{Role: "user", Text: "Plan café"},
+			{Role: "assistant", Text: "Calling"},
+			{Role: "assistant", Text: `[tool_call lookup] {"a": 1, "z": "\u00e9"}`},
+			{Role: "assistant", Text: `[tool_call calc] {"flag": true}`},
+			{Role: "user", Text: "context\n\n[tool_result lookup]\nfound"},
+			{Role: "user", Text: ""},
+		},
+	},
 	"anthropic_python_scalar_coercion": {
 		disposition: dispositionCodecReshaped,
 		turns:       []Turn{{Role: "assistant", Text: ""}},
@@ -154,13 +171,36 @@ var turnProjectionExpectations = map[string]goldenExpectation{
 		disposition: dispositionCodecReshaped,
 		turns:       []Turn{{Role: "user", Text: "summarize"}},
 	},
-	"anthropic_advisor_and_fallback_drop":               {disposition: dispositionProjected},
-	"anthropic_system_role_message_drops_whole":         {disposition: dispositionProjected},
-	"responses_host_tool_items_drop":                    {disposition: dispositionCodecRejected, codecError: "unsupported_input_item"},
-	"anthropic_unknown_role_drops_whole":                {disposition: dispositionCodecRejected, codecError: "invalid_anthropic_role"},
-	"anthropic_all_blocks_dropped_is_empty_turn":        {disposition: dispositionCodecRejected, codecError: "redacted_reasoning"},
-	"anthropic_interleaved_rich_blocks_keep_order":      {disposition: dispositionProjected},
-	"responses_dropped_item_keeps_same_role_coalescing": {disposition: dispositionCodecRejected, codecError: "empty_message"},
+	"anthropic_advisor_and_fallback_drop":       {disposition: dispositionProjected},
+	"anthropic_system_role_message_drops_whole": {disposition: dispositionProjected},
+	"responses_host_tool_items_drop": {
+		disposition: dispositionCodecReshaped,
+		turns: []Turn{
+			{Role: "user", Text: "patch it"},
+			{Role: "user", Text: ""},
+			{Role: "user", Text: ""},
+			{Role: "user", Text: ""},
+			{Role: "user", Text: ""},
+			{Role: "user", Text: ""},
+			{Role: "assistant", Text: "done"},
+		},
+	},
+	"anthropic_unknown_role_drops_whole": {
+		disposition: dispositionCodecReshaped,
+		turns: []Turn{
+			{Role: "user", Text: "ask"},
+			{Role: "user", Text: "stray"},
+		},
+	},
+	"anthropic_all_blocks_dropped_is_empty_turn":   {disposition: dispositionProjected},
+	"anthropic_interleaved_rich_blocks_keep_order": {disposition: dispositionProjected},
+	"responses_dropped_item_keeps_same_role_coalescing": {
+		disposition: dispositionCodecReshaped,
+		turns: []Turn{
+			{Role: "user", Text: "one"},
+			{Role: "user", Text: "two"},
+		},
+	},
 }
 
 type turnProjectionFixture struct {
@@ -196,9 +236,9 @@ func TestTurnProjectionGoldens(t *testing.T) {
 			runTurnProjectionCase(t, engine, test, expectation)
 		})
 	}
-	if counts[dispositionProjected] != 15 ||
-		counts[dispositionCodecReshaped] != 9 ||
-		counts[dispositionCodecRejected] != 11 {
+	if counts[dispositionProjected] != 16 ||
+		counts[dispositionCodecReshaped] != 14 ||
+		counts[dispositionCodecRejected] != 5 {
 		t.Fatalf(
 			"disposition counts moved: projected=%d reshaped=%d rejected=%d",
 			counts[dispositionProjected],
