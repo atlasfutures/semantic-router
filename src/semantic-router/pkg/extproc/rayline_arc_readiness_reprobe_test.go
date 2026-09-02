@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -160,6 +161,39 @@ func TestRaylineARCReadinessArmsOffTheConstructionPath(t *testing.T) {
 	awaitRaylineARCArmed(t, selector)
 	if value := raylineARCEncoderReadyGauge(); value != 1 {
 		t.Fatalf("readiness gauge = %v, want 1 after the encoder answered", value)
+	}
+}
+
+// Anything that can see the selector armed must also see the readiness gauge
+// at 1. "Armed" is the stronger claim of the two, so it may not become
+// visible first: an observer that catches the window reads a serving router
+// that still reports itself not ready.
+func TestRaylineARCReadinessGaugeIsVisibleOnceArmed(t *testing.T) {
+	if runtime.GOMAXPROCS(0) < 2 {
+		t.Skip("the observer has to spin on a second processor to catch the window")
+	}
+	for iteration := 0; iteration < 20000; iteration++ {
+		setRaylineARCEncoderReadyGauge(t, false)
+		selector := newRaylineARCSelector(nil, nil, nil, "artifact-revision")
+
+		observed := make(chan float64, 1)
+		go func() {
+			// A tight spin, deliberately: a Gosched here closes the very
+			// window this test exists to catch.
+			for selector.armedComponents() == nil {
+			}
+			observed <- raylineARCEncoderReadyGauge()
+		}()
+
+		raylineARCPublishReady(selector, armedARCComponentsFixture(), false)
+
+		if value := <-observed; value != 1 {
+			t.Fatalf(
+				"iteration %d saw the selector armed with the gauge at %v",
+				iteration,
+				value,
+			)
+		}
 	}
 }
 

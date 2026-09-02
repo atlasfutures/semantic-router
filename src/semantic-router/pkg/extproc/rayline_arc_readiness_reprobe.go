@@ -191,16 +191,24 @@ func raylineARCRecoverReadiness(
 	return true
 }
 
-// raylineARCPublishReady is the one place readiness becomes true. It arms
-// before it reports, so an operator who sees ready=1 never finds a selector
-// that still refuses requests.
+// raylineARCPublishReady is the one place readiness becomes true.
+//
+// The gauge is raised before the arm, and the order matters. Arming is the
+// stronger fact: once it lands, any goroutine can serve a selection, and a
+// reader that sees a serving router still reporting ready=0 has been told
+// something false. Raising the gauge first inverts the window into a harmless
+// one, where the gauge leads the selector by the few nanoseconds between two
+// atomic stores and a request in that window simply fails closed, exactly as
+// it did a moment earlier. The two cannot be made one store, because one is a
+// Prometheus gauge and the other an atomic pointer, so the choice is only
+// which way the window points.
 func raylineARCPublishReady(
 	selector *raylineARCSelector,
 	armed *raylineARCArmedComponents,
 	recovered bool,
 ) {
-	selector.arm(armed)
 	metrics.SetRaylineARCComponentReady(true)
+	selector.arm(armed)
 	logging.ComponentEvent(
 		"extproc",
 		"rayline_arc_component_readiness",
