@@ -670,6 +670,190 @@
           }
         ]
       }
+    },
+    {
+      "id": "anthropic_context_management_top_level",
+      "surface": "anthropic.messages.v1",
+      "group": "A",
+      "trigger": "top-level member context_management",
+      "note": "Measured in 97.9 percent of August Claude Code requests. Body redacted.",
+      "current_code": "",
+      "current_message": "",
+      "request": {
+        "model": "demo-model",
+        "max_tokens": 64,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "redacted"
+              }
+            ]
+          }
+        ],
+        "context_management": {
+          "edits": [
+            {
+              "type": "clear_tool_uses_20250919"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "anthropic_diagnostics_and_fallbacks_top_level",
+      "surface": "anthropic.messages.v1",
+      "group": "A",
+      "trigger": "top-level members diagnostics and fallbacks",
+      "note": "Measured in 93.8 and 23.7 percent of August Claude Code requests. Body redacted.",
+      "current_code": "",
+      "current_message": "",
+      "request": {
+        "model": "demo-model",
+        "max_tokens": 64,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "redacted"
+              }
+            ]
+          }
+        ],
+        "diagnostics": {
+          "enabled": true
+        },
+        "fallbacks": [
+          "demo-fallback"
+        ]
+      }
+    },
+    {
+      "id": "anthropic_response_format_top_level",
+      "surface": "anthropic.messages.v1",
+      "group": "A",
+      "trigger": "top-level member response_format",
+      "note": "Measured in 0.16 percent of August Claude Code requests. Body redacted.",
+      "current_code": "",
+      "current_message": "",
+      "request": {
+        "model": "demo-model",
+        "max_tokens": 64,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "redacted"
+              }
+            ]
+          }
+        ],
+        "response_format": {
+          "type": "text"
+        }
+      }
+    },
+    {
+      "id": "anthropic_advisor_result_block",
+      "surface": "anthropic.messages.v1",
+      "group": "A",
+      "trigger": "content block type advisor_result",
+      "note": "41 August Claude Code requests. Outside the fifteen-shape table. Body redacted.",
+      "current_code": "",
+      "current_message": "",
+      "request": {
+        "model": "demo-model",
+        "max_tokens": 64,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "redacted"
+              },
+              {
+                "type": "advisor_result",
+                "advisor_name": "redacted",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "redacted"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "anthropic_tool_search_tool_search_result_block",
+      "surface": "anthropic.messages.v1",
+      "group": "A",
+      "trigger": "content block type tool_search_tool_search_result",
+      "note": "5 August Claude Code requests. Outside the fifteen-shape table. Body redacted.",
+      "current_code": "",
+      "current_message": "",
+      "request": {
+        "model": "demo-model",
+        "max_tokens": 64,
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_search_tool_search_result",
+                "tool_search_tool_use_id": "redacted",
+                "content": [
+                  {
+                    "type": "tool_reference",
+                    "tool_name": "redacted"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "anthropic_inline_base64_image",
+      "surface": "anthropic.messages.v1",
+      "group": "C",
+      "trigger": "image.source.data, the inline base64 payload",
+      "note": "9.4 percent of the August production corpus. Payload redacted to one pixel.",
+      "current_code": "",
+      "current_message": "",
+      "request": {
+        "model": "demo-model",
+        "max_tokens": 64,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "redacted"
+              },
+              {
+                "type": "image",
+                "source": {
+                  "type": "base64",
+                  "media_type": "image/png",
+                  "data": "aW1hZ2U="
+                }
+              }
+            ]
+          }
+        ]
+      }
     }
   ]
 }

@@ -240,3 +240,34 @@ func TestAnthropicInlineImagePayloadIsNotParsedAtIngress(t *testing.T) {
 		t.Fatalf("a body was refused for payload bytes the Router never reads: %v", err)
 	}
 }
+
+// Two block types the fifteen-shape table does not list, both seen in the
+// August corpus. Neither needs its own codec branch: the carrier is keyed on
+// "the neutral contract does not name this", not on a list of block names, so
+// a block type first seen in production routes without a code change. These
+// tests exist to prove that claim rather than to assume it.
+func TestAnthropicBlockTypesOutsideTheTableRoundTrip(t *testing.T) {
+	for _, blockType := range []string{"advisor_result", "tool_search_tool_search_result"} {
+		t.Run(blockType, func(t *testing.T) {
+			body := `{
+			  "model": "claude-sonnet-4-5",
+			  "max_tokens": 64,
+			  "messages": [{"role": "user", "content": [
+			    {"type": "text", "text": "redacted"},
+			    {"type": "` + blockType + `", "content": [{"type": "text", "text": "redacted"}]}
+			  ]}]
+			}`
+			routed := routeAnthropicRequest(t, body, llmprotocol.AnthropicMessagesV1)
+			if !bytes.Contains(routed, []byte(`"`+blockType+`"`)) {
+				t.Fatalf("%q did not survive the round trip: %s", blockType, routed)
+			}
+			dropped := routeAnthropicRequest(t, body, llmprotocol.OpenAIChatV1)
+			if bytes.Contains(dropped, []byte(blockType)) {
+				t.Fatalf("%q reached a wire format that cannot name it: %s", blockType, dropped)
+			}
+			if !bytes.Contains(dropped, []byte("redacted")) {
+				t.Fatalf("dropping %q also dropped the text beside it: %s", blockType, dropped)
+			}
+		})
+	}
+}
