@@ -185,3 +185,58 @@ func TestAnthropicUnmodeledNestedBlockDoesNotReachAnotherFormat(t *testing.T) {
 		t.Fatalf("dropping the carried block also dropped the text beside it: %s", routed)
 	}
 }
+
+// Shape 1 in the fixture, and 9.4 percent of the measured Workshop corpus: an
+// inline base64 image in user content. The Router never reads the payload
+// bytes; the provider does. Parsing them at ingress only turns a routable body
+// into a 400.
+func anthropicInlineImageBody(data string) string {
+	return `{
+	  "model": "claude-sonnet-4-5",
+	  "max_tokens": 64,
+	  "messages": [{"role": "user", "content": [
+	    {"type": "text", "text": "what is this"},
+	    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "` + data + `"}}
+	  ]}]
+	}`
+}
+
+func TestAnthropicInlineImageReachesAChatProvider(t *testing.T) {
+	routed := routeAnthropicRequest(t, anthropicInlineImageBody("aW1hZ2U="), llmprotocol.OpenAIChatV1)
+	if !bytes.Contains(routed, []byte(`"url":"data:image/png;base64,aW1hZ2U="`)) {
+		t.Fatalf("the inline image did not reach the provider as a data URI: %s", routed)
+	}
+}
+
+// The same image has to come back. A provider answer is decoded against the
+// destination format, so the round trip is what keeps an image-bearing turn
+// routable in both directions.
+func TestChatInlineImageReturnsToAnthropic(t *testing.T) {
+	engine := NewBuiltinEngine()
+	chatBody := routeAnthropicRequest(t, anthropicInlineImageBody("aW1hZ2U="), llmprotocol.OpenAIChatV1)
+	request, envelope, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIChatV1, chatBody)
+	if err != nil {
+		t.Fatalf("the routed Chat body did not decode: %v", err)
+	}
+	request.Generation++
+	result, err := engine.EncodeRequest(llmprotocol.AnthropicMessagesV1, request, envelope)
+	if err != nil {
+		t.Fatalf("EncodeRequest(anthropic) error = %v", err)
+	}
+	if !bytes.Contains(result.Body, []byte(`"media_type":"image/png"`)) ||
+		!bytes.Contains(result.Body, []byte(`"data":"aW1hZ2U="`)) {
+		t.Fatalf("the image did not return to its Anthropic shape: %s", result.Body)
+	}
+}
+
+// The payload the Router never reads must not decide whether the request
+// routes. A payload the provider will reject is the provider's answer to give.
+func TestAnthropicInlineImagePayloadIsNotParsedAtIngress(t *testing.T) {
+	engine := NewBuiltinEngine()
+	_, _, _, err := engine.DecodeRequestForMutation(
+		llmprotocol.AnthropicMessagesV1, []byte(anthropicInlineImageBody("not-base64!!")),
+	)
+	if err != nil {
+		t.Fatalf("a body was refused for payload bytes the Router never reads: %v", err)
+	}
+}
