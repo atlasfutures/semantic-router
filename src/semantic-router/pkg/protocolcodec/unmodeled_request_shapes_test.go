@@ -35,9 +35,12 @@ import (
 // The only edit to the recorded bodies is that "model", and "max_tokens" for
 // Anthropic, are set on every case, because both API surfaces require them.
 //
-// TestUnmodeledRequestShapesAreRefusedAtIngress pins what happens today and
-// passes. TestUnmodeledRequestShapesAreRoutable states the expected behaviour
-// and fails on main, once per shape.
+// TestUnmodeledRequestShapesMatchRecordedDisposition pins what each shape does
+// today: a case with a recorded code is still refused with exactly that code,
+// and a case with no recorded code routes. A shape may only move between the
+// two by editing the fixture, so a codec change can never move one silently.
+// TestUnmodeledRequestShapesAreRoutable states the destination: every shape
+// routes. It fails once per shape that has not been carried yet.
 type unmodeledShapeFixture struct {
 	SchemaVersion string                 `json:"schema_version"`
 	Cases         []unmodeledRequestCase `json:"cases"`
@@ -50,8 +53,9 @@ type unmodeledRequestCase struct {
 	Trigger string                 `json:"trigger"`
 	Note    string                 `json:"note"`
 	// CurrentCode and CurrentMessage are the protocol error the codec answers
-	// on main. They are asserted so a codec change shows up here rather than
-	// silently moving a shape between routable and refused.
+	// today. They are empty once the shape routes, and are asserted either way
+	// so a codec change shows up here rather than silently moving a shape
+	// between routable and refused.
 	CurrentCode    string          `json:"current_code"`
 	CurrentMessage string          `json:"current_message"`
 	Request        json.RawMessage `json:"request"`
@@ -74,14 +78,20 @@ func readUnmodeledRequestShapes(t *testing.T) []unmodeledRequestCase {
 	return fixture.Cases
 }
 
-// TestUnmodeledRequestShapesAreRefusedAtIngress records the present behaviour.
-// It passes on main. It exists so the exact rejection each shape receives is in
-// the tree rather than only in a report.
-func TestUnmodeledRequestShapesAreRefusedAtIngress(t *testing.T) {
+// TestUnmodeledRequestShapesMatchRecordedDisposition records the present
+// behaviour of every shape. It passes at every commit; the fixture moves, not
+// the assertion.
+func TestUnmodeledRequestShapesMatchRecordedDisposition(t *testing.T) {
 	engine := NewBuiltinEngine()
 	for _, testCase := range readUnmodeledRequestShapes(t) {
 		t.Run(testCase.ID, func(t *testing.T) {
 			_, _, _, err := engine.DecodeRequestForMutation(testCase.Surface, testCase.Request)
+			if testCase.CurrentCode == "" {
+				if err != nil {
+					t.Fatalf("%s is recorded as routable but was refused: %v", testCase.ID, err)
+				}
+				return
+			}
 			if err == nil {
 				t.Fatalf("%s now decodes; the recorded rejection %q is stale", testCase.ID, testCase.CurrentCode)
 			}
@@ -103,7 +113,7 @@ func TestUnmodeledRequestShapesAreRefusedAtIngress(t *testing.T) {
 // the router only routes reaches its destination, and the parts the neutral
 // model does not name survive the round trip rather than refusing the request.
 //
-// Every case fails on main.
+// A case passes once its shape is carried rather than refused.
 func TestUnmodeledRequestShapesAreRoutable(t *testing.T) {
 	engine := NewBuiltinEngine()
 	for _, testCase := range readUnmodeledRequestShapes(t) {

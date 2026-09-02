@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -114,4 +115,73 @@ func jsonEqual(t *testing.T, left, right json.RawMessage) bool {
 	leftBody, _ := json.Marshal(leftValue)
 	rightBody, _ := json.Marshal(rightValue)
 	return string(leftBody) == string(rightBody)
+}
+
+// Shape 7 in the fixture, and the largest single ingress failure in the
+// measured Claude Code corpus: a tool_reference block nested inside a
+// tool_result. The carrier has to reach nested content, not only the top-level
+// block list.
+const anthropicToolReferenceBody = `{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 64,
+  "messages": [
+    {"role": "assistant", "content": [
+      {"type": "tool_use", "id": "call_grep", "name": "grep", "input": {"q": "x"}}
+    ]},
+    {"role": "user", "content": [
+      {"type": "tool_result", "tool_use_id": "call_grep", "content": [
+        {"type": "text", "text": "3 hits"},
+        {"type": "tool_reference", "tool_name": "grep"}
+      ]}
+    ]}
+  ]
+}`
+
+func anthropicToolResultBlocks(t *testing.T, body []byte) []map[string]json.RawMessage {
+	t.Helper()
+	var wire struct {
+		Messages []struct {
+			Content []map[string]json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &wire); err != nil {
+		t.Fatalf("routed body is not an Anthropic request: %v", err)
+	}
+	for _, message := range wire.Messages {
+		for _, block := range message.Content {
+			if string(block["type"]) != `"tool_result"` {
+				continue
+			}
+			var nested []map[string]json.RawMessage
+			if err := json.Unmarshal(block["content"], &nested); err != nil {
+				t.Fatalf("tool_result content is not a block list: %v", err)
+			}
+			return nested
+		}
+	}
+	t.Fatal("the routed body carries no tool_result block")
+	return nil
+}
+
+func TestAnthropicUnmodeledNestedBlockReachesTheSameFormat(t *testing.T) {
+	blocks := anthropicToolResultBlocks(t, routeAnthropicRequest(t, anthropicToolReferenceBody, llmprotocol.AnthropicMessagesV1))
+	if len(blocks) != 2 {
+		t.Fatalf("tool_result holds %d blocks, want the text block and the carried one", len(blocks))
+	}
+	if string(blocks[1]["type"]) != `"tool_reference"` {
+		t.Fatalf("second block is %s, want the carried tool_reference", blocks[1]["type"])
+	}
+	if string(blocks[1]["tool_name"]) != `"grep"` {
+		t.Fatalf("carried block lost its members: %v", blocks[1])
+	}
+}
+
+func TestAnthropicUnmodeledNestedBlockDoesNotReachAnotherFormat(t *testing.T) {
+	routed := routeAnthropicRequest(t, anthropicToolReferenceBody, llmprotocol.OpenAIChatV1)
+	if bytes.Contains(routed, []byte("tool_reference")) {
+		t.Fatalf("a block the target cannot name reached it: %s", routed)
+	}
+	if !bytes.Contains(routed, []byte("3 hits")) {
+		t.Fatalf("dropping the carried block also dropped the text beside it: %s", routed)
+	}
 }

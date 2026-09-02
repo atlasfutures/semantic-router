@@ -9,7 +9,92 @@
       "note": "The router never decodes the image. It rejects the request because the payload does not parse as strict base64. With valid base64 this exact body decodes.",
       "current_code": "invalid_media_data",
       "current_message": "inline media must be valid base64",
-      "request": {"model":"demo-model","max_tokens":64,"system":"drop this","messages":[{"role":"system","content":"drop this message"},{"role":"user","content":"Plan café"},{"role":"assistant","content":[{"type":"thinking","thinking":"drop this block"},{"type":"text","text":"Calling"},{"type":"tool_use","id":"call_lookup","name":"lookup","input":{"z":"é","a":1}},{"type":"tool_use","id":"call_calc","name":"calc","input":{"flag":true}}]},{"role":"user","content":[{"type":"text","text":"context"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"not-a-real-image"}},{"type":"tool_result","tool_use_id":"call_lookup","content":"found"},{"type":"tool_result","tool_use_id":"call_calc","is_error":true,"content":[{"type":"text","text":"failed"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"drop"}}]}]}]}
+      "request": {
+        "model": "demo-model",
+        "max_tokens": 64,
+        "system": "drop this",
+        "messages": [
+          {
+            "role": "system",
+            "content": "drop this message"
+          },
+          {
+            "role": "user",
+            "content": "Plan caf\u00e9"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "drop this block"
+              },
+              {
+                "type": "text",
+                "text": "Calling"
+              },
+              {
+                "type": "tool_use",
+                "id": "call_lookup",
+                "name": "lookup",
+                "input": {
+                  "z": "\u00e9",
+                  "a": 1
+                }
+              },
+              {
+                "type": "tool_use",
+                "id": "call_calc",
+                "name": "calc",
+                "input": {
+                  "flag": true
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "context"
+              },
+              {
+                "type": "image",
+                "source": {
+                  "type": "base64",
+                  "media_type": "image/png",
+                  "data": "not-a-real-image"
+                }
+              },
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_lookup",
+                "content": "found"
+              },
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_calc",
+                "is_error": true,
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "failed"
+                  },
+                  {
+                    "type": "image",
+                    "source": {
+                      "type": "base64",
+                      "media_type": "image/png",
+                      "data": "drop"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "openai_responses_tool_flow",
@@ -19,7 +104,58 @@
       "note": "Removing is_error decodes this body. Any field the neutral model does not name refuses the whole request.",
       "current_code": "invalid_json",
       "current_message": "request JSON contains a non-canonical field",
-      "request": {"model":"demo-model","input":[{"type":"message","role":"developer","content":"drop this"},{"type":"message","role":"user","content":"Plan café"},{"type":"reasoning","summary":[]},{"type":"message","role":"assistant","content":"Calling"},{"type":"function_call","call_id":"call_lookup","name":"lookup","arguments":"{\"z\":\"é\",\"a\":1}"},{"type":"function_call","call_id":"call_calc","name":"calc","arguments":"{\"flag\":true}"},{"type":"message","role":"user","content":"context"},{"type":"function_call_output","call_id":"call_lookup","output":"found"},{"type":"function_call_output","call_id":"call_calc","is_error":true,"output":"failed"}]}
+      "request": {
+        "model": "demo-model",
+        "input": [
+          {
+            "type": "message",
+            "role": "developer",
+            "content": "drop this"
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": "Plan caf\u00e9"
+          },
+          {
+            "type": "reasoning",
+            "summary": []
+          },
+          {
+            "type": "message",
+            "role": "assistant",
+            "content": "Calling"
+          },
+          {
+            "type": "function_call",
+            "call_id": "call_lookup",
+            "name": "lookup",
+            "arguments": "{\"z\":\"\u00e9\",\"a\":1}"
+          },
+          {
+            "type": "function_call",
+            "call_id": "call_calc",
+            "name": "calc",
+            "arguments": "{\"flag\":true}"
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": "context"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call_lookup",
+            "output": "found"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call_calc",
+            "is_error": true,
+            "output": "failed"
+          }
+        ]
+      }
     },
     {
       "id": "anthropic_python_scalar_coercion",
@@ -29,7 +165,35 @@
       "note": "The Anthropic API types input as arbitrary JSON. The neutral model requires one JSON object.",
       "current_code": "invalid_tool_call",
       "current_message": "tool call arguments must be one strict JSON object",
-      "request": {"model":"demo-model","max_tokens":64,"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"true_call","name":"truth","input":true},{"type":"tool_use","id":"false_call","name":"falsehood","input":false},{"type":"tool_use","id":"null_call","name":"empty","input":null}]}]}
+      "request": {
+        "model": "demo-model",
+        "max_tokens": 64,
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "true_call",
+                "name": "truth",
+                "input": true
+              },
+              {
+                "type": "tool_use",
+                "id": "false_call",
+                "name": "falsehood",
+                "input": false
+              },
+              {
+                "type": "tool_use",
+                "id": "null_call",
+                "name": "empty",
+                "input": null
+              }
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "anthropic_compaction_summary",
@@ -38,7 +202,25 @@
       "trigger": "content block type compaction",
       "current_code": "unsupported_content",
       "current_message": "Anthropic content type is unsupported",
-      "request": {"model":"demo-model","max_tokens":64,"messages":[{"role":"user","content":[{"type":"compaction","content":"Earlier: the user asked for a parser audit."},{"type":"text","text":"continue"}]}]}
+      "request": {
+        "model": "demo-model",
+        "max_tokens": 64,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "compaction",
+                "content": "Earlier: the user asked for a parser audit."
+              },
+              {
+                "type": "text",
+                "text": "continue"
+              }
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "anthropic_compaction_failed_is_empty",
@@ -47,7 +229,21 @@
       "trigger": "content block type compaction with null content",
       "current_code": "unsupported_content",
       "current_message": "Anthropic content type is unsupported",
-      "request": {"model":"demo-model","max_tokens":64,"messages":[{"role":"user","content":[{"type":"compaction","content":null}]}]}
+      "request": {
+        "model": "demo-model",
+        "max_tokens": 64,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "compaction",
+                "content": null
+              }
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "anthropic_server_tool_families_drop_as_pairs",
@@ -56,16 +252,109 @@
       "trigger": "content block types mcp_tool_use, server_tool_use, mcp_tool_result, tool_search_tool_result",
       "current_code": "unsupported_content",
       "current_message": "Anthropic content type is unsupported",
-      "request": {"model":"demo-model","max_tokens":64,"messages":[{"role":"assistant","content":[{"type":"text","text":"searching"},{"type":"mcp_tool_use","id":"mcptoolu_1","name":"read_file","server_name":"fs","input":{"path":"a.go"}},{"type":"server_tool_use","id":"srvtoolu_1","name":"tool_search","input":{}}]},{"role":"user","content":[{"type":"mcp_tool_result","tool_use_id":"mcptoolu_1","content":[{"type":"text","text":"file body"}]},{"type":"tool_search_tool_result","tool_use_id":"srvtoolu_1","content":{"type":"tool_search_result","tools":[]}},{"type":"text","text":"thanks"}]}]}
+      "request": {
+        "model": "demo-model",
+        "max_tokens": 64,
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "searching"
+              },
+              {
+                "type": "mcp_tool_use",
+                "id": "mcptoolu_1",
+                "name": "read_file",
+                "server_name": "fs",
+                "input": {
+                  "path": "a.go"
+                }
+              },
+              {
+                "type": "server_tool_use",
+                "id": "srvtoolu_1",
+                "name": "tool_search",
+                "input": {}
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "mcp_tool_result",
+                "tool_use_id": "mcptoolu_1",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "file body"
+                  }
+                ]
+              },
+              {
+                "type": "tool_search_tool_result",
+                "tool_use_id": "srvtoolu_1",
+                "content": {
+                  "type": "tool_search_result",
+                  "tools": []
+                }
+              },
+              {
+                "type": "text",
+                "text": "thanks"
+              }
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "anthropic_tool_reference_in_result",
       "surface": "anthropic.messages.v1",
       "group": "A",
       "trigger": "content block type tool_reference nested in tool_result content",
-      "current_code": "unsupported_content",
-      "current_message": "Anthropic content type is unsupported",
-      "request": {"model":"demo-model","max_tokens":64,"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"call_grep","name":"grep","input":{"q":"x"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_grep","content":[{"type":"text","text":"3 hits"},{"type":"tool_reference","tool_name":"grep"}]}]}]}
+      "current_code": "",
+      "current_message": "",
+      "request": {
+        "model": "demo-model",
+        "max_tokens": 64,
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_grep",
+                "name": "grep",
+                "input": {
+                  "q": "x"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_grep",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "3 hits"
+                  },
+                  {
+                    "type": "tool_reference",
+                    "tool_name": "grep"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "anthropic_mid_conv_system_folds",
@@ -74,7 +363,30 @@
       "trigger": "content block type mid_conv_system",
       "current_code": "unsupported_content",
       "current_message": "Anthropic content type is unsupported",
-      "request": {"model":"demo-model","max_tokens":64,"messages":[{"role":"user","content":[{"type":"mid_conv_system","content":[{"type":"text","text":"Be terse from now on."}]},{"type":"text","text":"summarize"}]}]}
+      "request": {
+        "model": "demo-model",
+        "max_tokens": 64,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "mid_conv_system",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Be terse from now on."
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "text": "summarize"
+              }
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "anthropic_advisor_and_fallback_drop",
@@ -83,7 +395,44 @@
       "trigger": "content block types fallback and advisor_tool_result",
       "current_code": "unsupported_content",
       "current_message": "Anthropic content type is unsupported",
-      "request": {"model":"demo-model","max_tokens":64,"messages":[{"role":"assistant","content":[{"type":"text","text":"switching model"},{"type":"fallback","from":{"model":"claude-opus-4-5"}}]},{"role":"user","content":[{"type":"advisor_tool_result","tool_use_id":"srvtoolu_adv","content":{"type":"text","text":"advice"}},{"type":"text","text":"go on"}]}]}
+      "request": {
+        "model": "demo-model",
+        "max_tokens": 64,
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "switching model"
+              },
+              {
+                "type": "fallback",
+                "from": {
+                  "model": "claude-opus-4-5"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "advisor_tool_result",
+                "tool_use_id": "srvtoolu_adv",
+                "content": {
+                  "type": "text",
+                  "text": "advice"
+                }
+              },
+              {
+                "type": "text",
+                "text": "go on"
+              }
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "anthropic_system_role_message_drops_whole",
@@ -93,7 +442,30 @@
       "note": "The system role itself decodes. Only the unmodelled block refuses the request.",
       "current_code": "unsupported_content",
       "current_message": "Anthropic content type is unsupported",
-      "request": {"model":"demo-model","max_tokens":64,"system":"top level","messages":[{"role":"system","content":[{"type":"mid_conv_system","text":"relocated"},{"type":"text","text":"also system"}]},{"role":"user","content":"ask"}]}
+      "request": {
+        "model": "demo-model",
+        "max_tokens": 64,
+        "system": "top level",
+        "messages": [
+          {
+            "role": "system",
+            "content": [
+              {
+                "type": "mid_conv_system",
+                "text": "relocated"
+              },
+              {
+                "type": "text",
+                "text": "also system"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": "ask"
+          }
+        ]
+      }
     },
     {
       "id": "responses_host_tool_items_drop",
@@ -102,7 +474,58 @@
       "trigger": "input item types apply_patch_call, apply_patch_call_output, shell_call, shell_call_output, mcp_list_tools",
       "current_code": "unsupported_input_item",
       "current_message": "Responses input item is unsupported",
-      "request": {"model":"demo-model","input":[{"type":"message","role":"user","content":"patch it"},{"type":"apply_patch_call","call_id":"ap_1","status":"completed","operation":{"type":"update_file","path":"a.go","diff":"@@"}},{"type":"apply_patch_call_output","call_id":"ap_1","status":"completed","output":"ok"},{"type":"shell_call","call_id":"sh_1","status":"completed","action":{"type":"exec","commands":["go build ./..."]}},{"type":"shell_call_output","call_id":"sh_1","output":[]},{"type":"mcp_list_tools","server_label":"fs","tools":[]},{"type":"message","role":"assistant","content":"done"}]}
+      "request": {
+        "model": "demo-model",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": "patch it"
+          },
+          {
+            "type": "apply_patch_call",
+            "call_id": "ap_1",
+            "status": "completed",
+            "operation": {
+              "type": "update_file",
+              "path": "a.go",
+              "diff": "@@"
+            }
+          },
+          {
+            "type": "apply_patch_call_output",
+            "call_id": "ap_1",
+            "status": "completed",
+            "output": "ok"
+          },
+          {
+            "type": "shell_call",
+            "call_id": "sh_1",
+            "status": "completed",
+            "action": {
+              "type": "exec",
+              "commands": [
+                "go build ./..."
+              ]
+            }
+          },
+          {
+            "type": "shell_call_output",
+            "call_id": "sh_1",
+            "output": []
+          },
+          {
+            "type": "mcp_list_tools",
+            "server_label": "fs",
+            "tools": []
+          },
+          {
+            "type": "message",
+            "role": "assistant",
+            "content": "done"
+          }
+        ]
+      }
     },
     {
       "id": "anthropic_unknown_role_drops_whole",
@@ -111,7 +534,24 @@
       "trigger": "message role developer and message role tool",
       "current_code": "invalid_anthropic_role",
       "current_message": "Anthropic message role must be system, user, or assistant",
-      "request": {"model":"demo-model","max_tokens":64,"messages":[{"role":"developer","content":"tooling note"},{"role":"user","content":"ask"},{"role":"tool","content":"stray"}]}
+      "request": {
+        "model": "demo-model",
+        "max_tokens": 64,
+        "messages": [
+          {
+            "role": "developer",
+            "content": "tooling note"
+          },
+          {
+            "role": "user",
+            "content": "ask"
+          },
+          {
+            "role": "tool",
+            "content": "stray"
+          }
+        ]
+      }
     },
     {
       "id": "anthropic_all_blocks_dropped_is_empty_turn",
@@ -121,7 +561,39 @@
       "note": "The block is opaque ciphertext that a client is required to send back unchanged. Refusing it on the request path breaks the conversation it belongs to.",
       "current_code": "redacted_reasoning",
       "current_message": "redacted reasoning cannot be translated",
-      "request": {"model":"demo-model","max_tokens":64,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBOR"}}]},{"role":"assistant","content":[{"type":"thinking","thinking":"secret","signature":"s"},{"type":"redacted_thinking","data":"enc"}]}]}
+      "request": {
+        "model": "demo-model",
+        "max_tokens": 64,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image",
+                "source": {
+                  "type": "base64",
+                  "media_type": "image/png",
+                  "data": "iVBOR"
+                }
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "secret",
+                "signature": "s"
+              },
+              {
+                "type": "redacted_thinking",
+                "data": "enc"
+              }
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "anthropic_interleaved_rich_blocks_keep_order",
@@ -131,7 +603,44 @@
       "note": "The url image source in the same body decodes. Only the document text source refuses the request.",
       "current_code": "unsupported_document_source",
       "current_message": "Anthropic document source cannot be represented by the neutral protocol",
-      "request": {"model":"demo-model","max_tokens":64,"messages":[{"role":"user","content":[{"type":"text","text":"a"},{"type":"image","source":{"type":"url","url":"https://example.test/y.png"}},{"type":"text","text":"b"},{"type":"document","source":{"type":"text","media_type":"text/plain","data":"d"}},{"type":"text","text":"c"}]}]}
+      "request": {
+        "model": "demo-model",
+        "max_tokens": 64,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "a"
+              },
+              {
+                "type": "image",
+                "source": {
+                  "type": "url",
+                  "url": "https://example.test/y.png"
+                }
+              },
+              {
+                "type": "text",
+                "text": "b"
+              },
+              {
+                "type": "document",
+                "source": {
+                  "type": "text",
+                  "media_type": "text/plain",
+                  "data": "d"
+                }
+              },
+              {
+                "type": "text",
+                "text": "c"
+              }
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "responses_dropped_item_keeps_same_role_coalescing",
@@ -141,7 +650,26 @@
       "note": "The item yields a message with no content blocks, and a message with no content blocks is refused.",
       "current_code": "empty_message",
       "current_message": "messages must contain at least one content block",
-      "request": {"model":"demo-model","input":[{"type":"message","role":"user","content":"one"},{"type":"reasoning","id":"r1","summary":[]},{"type":"message","role":"user","content":"two"}]}
+      "request": {
+        "model": "demo-model",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": "one"
+          },
+          {
+            "type": "reasoning",
+            "id": "r1",
+            "summary": []
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": "two"
+          }
+        ]
+      }
     }
   ]
 }
