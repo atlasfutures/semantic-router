@@ -911,6 +911,10 @@ class RequestParamsPluginConfig(BaseModel):
     blocked_params: Optional[List[str]] = None
     max_tokens_limit: Optional[int] = Field(default=None, ge=1)
     max_n: Optional[int] = Field(default=None, ge=1)
+    # Per-model floor on max_tokens, keyed by logical model name. The cap above
+    # keeps a client from asking for too much; this keeps a reasoning model from
+    # truncating its answer inside a budget sized for a plain one.
+    min_completion_tokens_by_model: Optional[Dict[str, int]] = None
     strip_unknown: Optional[bool] = None
 
 

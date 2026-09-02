@@ -123,6 +123,8 @@ decisions:
           blocked_params: ["logprobs"]
           max_tokens_limit: 256
           max_n: 1
+          min_completion_tokens_by_model:
+            test_model: 128
           strip_unknown: true
       - type: "response_jailbreak"
         configuration:
