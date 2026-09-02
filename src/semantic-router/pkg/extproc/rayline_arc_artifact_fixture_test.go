@@ -98,16 +98,6 @@ func writeARCArtifact(t *testing.T, providerBaseURL string) string {
 	return dir
 }
 
-// fixtureArmAxis is the value one arm embedding lands on after layer
-// normalization, given a pre-norm vector of one 1 and the rest zeros. The
-// golden scores are written in terms of it.
-func fixtureArmAxis() float64 {
-	mean := 1.0 / float64(fixtureArmDimension)
-	variance := ((1-mean)*(1-mean) + float64(fixtureArmDimension-1)*mean*mean) /
-		float64(fixtureArmDimension)
-	return (1 - mean) / math.Sqrt(variance+1e-5)
-}
-
 // The head reduces to score = |history[routingAxis] + candidateArmAxis|, so a
 // unit embedding on the routing axis separates the two arms by exactly 2.
 func fixtureTensors() map[string]fixtureTensor {
@@ -158,57 +148,6 @@ func fixtureTensors() map[string]fixtureTensor {
 		},
 		"q_network.head.bias": {shape: []int{1}},
 	}
-}
-
-type fixtureGoldenCase struct {
-	ID                 string    `json:"id"`
-	Embedding          []float32 `json:"embedding"`
-	PreviousModelIndex int64     `json:"previous_model_index"`
-	RouteCallIndex     uint64    `json:"route_call_index"`
-	Scores             []float32 `json:"scores"`
-	SelectedIndex      int       `json:"selected_index"`
-}
-
-type fixtureGoldenFile struct {
-	SchemaVersion    string              `json:"schema_version"`
-	CheckpointSHA256 string              `json:"checkpoint_sha256"`
-	ScoreTolerance   float32             `json:"score_tolerance"`
-	Pool             []string            `json:"pool"`
-	Cases            []fixtureGoldenCase `json:"cases"`
-}
-
-func fixtureGolden(checkpointDigest string) fixtureGoldenFile {
-	arm := float32(fixtureArmAxis())
-	return fixtureGoldenFile{
-		SchemaVersion:    "rayline.mtrouter-head-golden.v1",
-		CheckpointSHA256: checkpointDigest,
-		ScoreTolerance:   0.001,
-		Pool:             []string{fixtureWorkerA, fixtureWorkerB},
-		Cases: []fixtureGoldenCase{
-			{
-				ID:                 "route-a",
-				Embedding:          fixtureEmbedding(1),
-				PreviousModelIndex: -1,
-				RouteCallIndex:     0,
-				Scores:             []float32{arm + 1, arm - 1},
-				SelectedIndex:      0,
-			},
-			{
-				ID:                 "route-b",
-				Embedding:          fixtureEmbedding(-1),
-				PreviousModelIndex: -1,
-				RouteCallIndex:     0,
-				Scores:             []float32{arm - 1, arm + 1},
-				SelectedIndex:      1,
-			},
-		},
-	}
-}
-
-func fixtureEmbedding(sign float32) []float32 {
-	embedding := make([]float32, fixtureHistoryDimension)
-	embedding[fixtureRoutingAxis] = sign
-	return embedding
 }
 
 func encodeFixtureSafeTensors(t *testing.T, tensors map[string]fixtureTensor) []byte {
