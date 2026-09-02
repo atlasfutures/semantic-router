@@ -5,6 +5,12 @@ type UnknownFieldPolicy string
 const (
 	UnknownReject             UnknownFieldPolicy = "reject"
 	UnknownPreserveSameFormat UnknownFieldPolicy = "preserve_same_format"
+	// UnknownDropUpstream is as strict as UnknownReject on the client
+	// boundary and tolerant on the provider boundary: an upstream response
+	// member the wire contract does not name is removed before decoding and
+	// its path is reported. Only the engine's response leg derives it; no
+	// configured policy may hold it, so a request is never decoded under it.
+	UnknownDropUpstream UnknownFieldPolicy = "drop_upstream"
 )
 
 type LossyPolicy string

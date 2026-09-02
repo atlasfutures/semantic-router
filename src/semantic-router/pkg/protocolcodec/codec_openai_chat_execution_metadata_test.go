@@ -2,6 +2,7 @@ package protocolcodec
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -109,7 +110,7 @@ func TestOpenAIChatRequestRejectsProviderTokenizedToolArguments(t *testing.T) {
 	}
 }
 
-func TestOpenAIChatResponseExtensionEnvelopeRoundTripAndUnknownRejection(t *testing.T) {
+func TestOpenAIChatResponseExtensionEnvelopeRoundTripAndUnknownDrop(t *testing.T) {
 	engine := NewBuiltinEngine()
 	raw := []byte(vLLMChatResponseExtensionsFixture)
 	translated, translateErr := engine.TranslateResponse(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1, raw, nil)
@@ -120,15 +121,20 @@ func TestOpenAIChatResponseExtensionEnvelopeRoundTripAndUnknownRejection(t *test
 		t.Fatal("same-format response envelope was not replayed byte-for-byte")
 	}
 
+	// A member the provider adds after this contract was written no longer
+	// fails the response. It is dropped, and it does not reach the client.
 	future := bytes.Replace(raw, []byte(`"kv_transfer_params":{}`), []byte(`"kv_transfer_params":{},"future_field":true`), 1)
-	_, translateErr = engine.TranslateResponse(
+	dropped, translateErr := engine.TranslateResponse(
 		llmprotocol.OpenAIChatV1,
 		llmprotocol.OpenAIChatV1,
 		future,
 		func(*llmprotocol.Response) error { return nil },
 	)
-	if translateErr == nil || !strings.Contains(translateErr.Error(), "invalid_upstream_json") {
-		t.Fatalf("future field error = %v", translateErr)
+	if translateErr != nil {
+		t.Fatalf("future field was refused: %v", translateErr)
+	}
+	if bytes.Contains(dropped.Body, []byte("future_field")) {
+		t.Fatalf("dropped body still carries the unknown member: %s", dropped.Body)
 	}
 }
 
@@ -161,17 +167,10 @@ func TestOpenAIChatResponseRejectsInvalidClosedExecutionMetadata(t *testing.T) {
 		"non_null_ec_transfer":     strings.Replace(vLLMChatResponseExtensionsFixture, `"ec_transfer_params":null`, `"ec_transfer_params":{}`, 1),
 		"non_null_metrics":         strings.Replace(vLLMChatResponseExtensionsFixture, `"metrics":null`, `"metrics":{}`, 1),
 		"non_null_routed_experts":  strings.Replace(vLLMChatResponseExtensionsFixture, `"routed_experts":null`, `"routed_experts":[]`, 1),
-		"nested_kv_field":          strings.Replace(vLLMChatResponseExtensionsFixture, `"kv_transfer_params":{}`, `"kv_transfer_params":{"future":true}`, 1),
 		"unknown_service_tier":     strings.Replace(vLLMChatResponseExtensionsFixture, `"service_tier":"default"`, `"service_tier":"future"`, 1),
 		"non_scalar_stop_reason":   strings.Replace(vLLMChatResponseExtensionsFixture, `"stop_reason":106`, `"stop_reason":true`, 1),
 		"fractional_stop_reason":   strings.Replace(vLLMChatResponseExtensionsFixture, `"stop_reason":106`, `"stop_reason":1.5`, 1),
 		"exponent_stop_reason":     strings.Replace(vLLMChatResponseExtensionsFixture, `"stop_reason":106`, `"stop_reason":1e3`, 1),
-		"nested_usage_field": strings.Replace(
-			vLLMChatResponseExtensionsFixture,
-			`"prompt_tokens_details":{"cached_tokens":1,"audio_tokens":0}`,
-			`"prompt_tokens_details":{"cached_tokens":1,"audio_tokens":0,"future":1}`,
-			1,
-		),
 		"oversized_fingerprint": strings.Replace(
 			vLLMChatResponseExtensionsFixture,
 			`"system_fingerprint":"fp_1"`,
@@ -194,7 +193,37 @@ func TestOpenAIChatResponseRejectsInvalidClosedExecutionMetadata(t *testing.T) {
 	}
 }
 
-func TestOpenAIChatStreamAcceptsClosedVLLMExecutionMetadataAndRejectsFutureFields(t *testing.T) {
+// A nested member the contract does not name is dropped at whatever depth the
+// provider puts it. The closed shapes above stay closed for values.
+func TestOpenAIChatResponseDropsNestedUnknownExecutionMetadata(t *testing.T) {
+	engine := NewBuiltinEngine()
+	for name, raw := range map[string]string{
+		"nested_kv_field": strings.Replace(vLLMChatResponseExtensionsFixture, `"kv_transfer_params":{}`, `"kv_transfer_params":{"future":true}`, 1),
+		"nested_usage_field": strings.Replace(
+			vLLMChatResponseExtensionsFixture,
+			`"prompt_tokens_details":{"cached_tokens":1,"audio_tokens":0}`,
+			`"prompt_tokens_details":{"cached_tokens":1,"audio_tokens":0,"future":1}`,
+			1,
+		),
+	} {
+		t.Run(name, func(t *testing.T) {
+			dropped, translateErr := engine.TranslateResponse(
+				llmprotocol.OpenAIChatV1,
+				llmprotocol.OpenAIChatV1,
+				[]byte(raw),
+				func(*llmprotocol.Response) error { return nil },
+			)
+			if translateErr != nil {
+				t.Fatalf("nested unknown member was refused: %v", translateErr)
+			}
+			if bytes.Contains(dropped.Body, []byte(`"future"`)) {
+				t.Fatalf("dropped body still carries the unknown member: %s", dropped.Body)
+			}
+		})
+	}
+}
+
+func TestOpenAIChatStreamAcceptsClosedVLLMExecutionMetadataAndDropsFutureFields(t *testing.T) {
 	engine := NewBuiltinEngine()
 	context := llmprotocol.StreamContext{PublicModel: "public-model", ProviderModel: "provider-model"}
 	stream, streamErr := engine.NewStream(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1, context)
@@ -222,19 +251,20 @@ func TestOpenAIChatStreamAcceptsClosedVLLMExecutionMetadataAndRejectsFutureField
 	}
 
 	future := bytes.Replace(frame, []byte(`"kv_transfer_params":{}`), []byte(`"kv_transfer_params":{},"future_field":true`), 1)
-	assertChatStreamRejected(t, engine, context, future, "invalid_upstream_json")
+	assertChatStreamAcceptedWithoutField(t, engine, context, future, "future_field")
 	sameModelContext := llmprotocol.StreamContext{PublicModel: "same-model", ProviderModel: "same-model"}
-	assertChatStreamRejected(t, engine, sameModelContext, future, "invalid_upstream_json")
-	if _, _, decodeErr := engine.DecodeResponseStream(
-		llmprotocol.OpenAIChatV1,
-		append(append([]byte(nil), future...), []byte("data: [DONE]\n\n")...),
-		sameModelContext,
-	); decodeErr == nil || !strings.Contains(decodeErr.Error(), "invalid_upstream_json") {
-		t.Fatalf("DecodeResponseStream future field error = %v", decodeErr)
+	assertChatStreamAcceptedWithoutField(t, engine, sameModelContext, future, "future_field")
+	// This synthetic frame carries no terminal event, so accumulating it fails
+	// on its own account. The point is that the unknown member no longer
+	// changes the outcome: both bodies now fail the same way.
+	baseline := decodeChatStreamError(t, engine, frame, sameModelContext)
+	withFuture := decodeChatStreamError(t, engine, future, sameModelContext)
+	if fmt.Sprint(withFuture) != fmt.Sprint(baseline) {
+		t.Fatalf("DecodeResponseStream error = %v, want the same failure as the body without the unknown member (%v)", withFuture, baseline)
 	}
 
 	nestedFuture := bytes.Replace(frame, []byte(`"kv_transfer_params":{}`), []byte(`"kv_transfer_params":{"future":true}`), 1)
-	assertChatStreamRejected(t, engine, context, nestedFuture, "invalid_upstream_json")
+	assertChatStreamAcceptedWithoutField(t, engine, context, nestedFuture, `"future"`)
 	withLogprobs := bytes.Replace(frame, []byte(`"logprobs":null`), []byte(`"logprobs":{"content":[]}`), 1)
 	assertChatStreamRejected(t, engine, context, withLogprobs, "unsupported_upstream_stream_logprobs")
 }
@@ -258,6 +288,45 @@ func TestOpenAIChatStreamAcceptsProviderTokenizedToolArguments(t *testing.T) {
 		t.Fatal("Push() emitted no neutral events")
 	}
 	assertDiagnosticFields(t, diagnostics, "choices.delta.tool_calls.function.TokenizedArguments")
+}
+
+func decodeChatStreamError(
+	t *testing.T,
+	engine *Engine,
+	frame []byte,
+	context llmprotocol.StreamContext,
+) error {
+	t.Helper()
+	_, _, err := engine.DecodeResponseStream(
+		llmprotocol.OpenAIChatV1,
+		append(append([]byte(nil), frame...), []byte("data: [DONE]\n\n")...),
+		context,
+	)
+	return err
+}
+
+// assertChatStreamAcceptedWithoutField pins the tolerant half of the stream
+// contract: the frame is accepted and the member the contract does not name is
+// gone from what the client receives.
+func assertChatStreamAcceptedWithoutField(
+	t *testing.T,
+	engine *Engine,
+	context llmprotocol.StreamContext,
+	payload []byte,
+	field string,
+) {
+	t.Helper()
+	stream, err := engine.NewStream(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1, context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frames, _, _, pushErr := stream.Push(payload)
+	if pushErr != nil {
+		t.Fatalf("stream error = %v, want the unknown member dropped", pushErr)
+	}
+	if bytes.Contains(bytes.Join(frames, nil), []byte(field)) {
+		t.Fatalf("rewritten frames still carry %s: %q", field, bytes.Join(frames, nil))
+	}
 }
 
 func assertChatStreamRejected(

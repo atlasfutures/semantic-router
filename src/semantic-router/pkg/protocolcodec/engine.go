@@ -184,7 +184,7 @@ func (engine *Engine) TranslateResponse(source, target llmprotocol.WireFormat, b
 	if translateResponseErr != nil {
 		return ResponseResult{}, translateResponseErr
 	}
-	decodePolicy := engine.translationDecodePolicy(source, target, mutate != nil)
+	decodePolicy := engine.responseDecodePolicy(source, target, mutate != nil)
 	response, envelope, diagnostics, translateResponseErr := sourcePair.buffered.DecodeResponse(body, decodePolicy)
 	if translateResponseErr != nil {
 		return ResponseResult{Diagnostics: diagnostics}, translateResponseErr
@@ -292,6 +292,19 @@ func (engine *Engine) translationDecodePolicy(source, target llmprotocol.WireFor
 	return policy
 }
 
+// responseDecodePolicy is translationDecodePolicy for the upstream leg. It
+// keeps every rule that one applies and then relaxes exactly one: a member the
+// provider names and the wire contract does not is dropped and reported rather
+// than failing the response. The Router routes the completion; it does not
+// author it, and refusing it loses work the user already paid for.
+func (engine *Engine) responseDecodePolicy(source, target llmprotocol.WireFormat, mutated bool) llmprotocol.Policy {
+	policy := engine.translationDecodePolicy(source, target, mutated)
+	if policy.UnknownFields == llmprotocol.UnknownReject {
+		policy.UnknownFields = llmprotocol.UnknownDropUpstream
+	}
+	return policy
+}
+
 func (engine *Engine) EncodeError(format llmprotocol.WireFormat, protocolError *llmprotocol.ProtocolError) ([]byte, error) {
 	if protocolError == nil {
 		protocolError = llmprotocol.NewError(llmprotocol.ErrorInternal, "internal", "request failed", nil)
@@ -342,7 +355,7 @@ func (engine *Engine) NewStreamWithMutation(
 	}
 	context.Source = source
 	context.Target = target
-	streamPolicy := engine.strictStreamPolicy()
+	streamPolicy := engine.providerStreamPolicy()
 	return &StreamEngine{
 		decoder:            sourcePair.stream.NewDecoder(context, streamPolicy),
 		encoder:            targetPair.stream.NewEncoder(context, streamPolicy),
@@ -355,14 +368,15 @@ func (engine *Engine) NewStreamWithMutation(
 
 // Streams are always decoded into neutral events before re-encoding or
 // accumulation. Unlike buffered same-format envelopes, they have no complete
-// byte-for-byte replay path, so accepting unknown fields would silently drop
-// provider semantics.
-func (engine *Engine) strictStreamPolicy() llmprotocol.Policy {
+// byte-for-byte replay path, so a same-format stream cannot replay unnamed
+// members either. Every chunk is an upstream document, so the stream leg takes
+// the same response policy: drop what the contract does not name, and say so.
+func (engine *Engine) providerStreamPolicy() llmprotocol.Policy {
 	policy := engine.policy
 	if policy.UnknownFields == llmprotocol.UnknownPreserveSameFormat {
-		policy.UnknownFields = llmprotocol.UnknownReject
 		policy.SourcePreservation = llmprotocol.SourceDisabled
 	}
+	policy.UnknownFields = llmprotocol.UnknownDropUpstream
 	return policy
 }
 

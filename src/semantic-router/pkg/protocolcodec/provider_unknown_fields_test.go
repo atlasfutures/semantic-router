@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -153,6 +154,50 @@ func TestOpenRouterTerminalUsageFrameNoLongerFailsOnFieldNames(t *testing.T) {
 	}
 	if protocolError.Code != "invalid_item_lifecycle" {
 		t.Fatalf("terminal frame code is %q, want the repeated-stop lifecycle failure", protocolError.Code)
+	}
+}
+
+// The dropped members are named, so an operator can see which provider field
+// the Router stopped carrying without reading any response content.
+func TestOpenRouterUnknownFieldsAreNamed(t *testing.T) {
+	_, dropped := pruneUnknownProviderFields(
+		loadProviderFixture(t, openRouterResponseReasoning), reflect.TypeOf(&chatResponseWire{}),
+	)
+	want := []string{
+		"choices[].message.reasoning_details",
+		"choices[].native_finish_reason",
+		"provider",
+		"usage.completion_tokens_details.image_tokens",
+		"usage.cost",
+		"usage.cost_details",
+		"usage.is_byok",
+		"usage.prompt_tokens_details.video_tokens",
+	}
+	if !reflect.DeepEqual(dropped, want) {
+		t.Fatalf("dropped fields are %v, want %v", dropped, want)
+	}
+}
+
+func TestOpenRouterStreamUnknownFieldsAreNamed(t *testing.T) {
+	seen := map[string]bool{}
+	for _, line := range strings.Split(string(loadProviderFixture(t, openRouterStream)), "\n") {
+		payload, found := strings.CutPrefix(strings.TrimSpace(line), "data: ")
+		if !found || payload == "[DONE]" {
+			continue
+		}
+		_, dropped := pruneUnknownProviderFields([]byte(payload), reflect.TypeOf(&chatChunkWire{}))
+		for _, field := range dropped {
+			seen[field] = true
+		}
+	}
+	for _, field := range []string{
+		"choices[].delta.reasoning_details", "choices[].native_finish_reason", "provider",
+		"usage.completion_tokens_details.image_tokens", "usage.cost", "usage.cost_details",
+		"usage.is_byok", "usage.prompt_tokens_details.video_tokens",
+	} {
+		if !seen[field] {
+			t.Fatalf("stream did not report %q as dropped; reported %v", field, seen)
+		}
 	}
 }
 

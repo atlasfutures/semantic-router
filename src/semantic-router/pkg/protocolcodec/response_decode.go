@@ -66,7 +66,7 @@ func (engine *Engine) DecodeResponseStream(
 	}
 	context.Source = format
 	context.Target = format
-	decoder := pair.stream.NewDecoder(context, engine.strictStreamPolicy())
+	decoder := pair.stream.NewDecoder(context, engine.providerStreamPolicy())
 	accumulator := newResponseAccumulator()
 	events, diagnostics, err := decoder.Push(body)
 	if applyErr := accumulator.apply(events); applyErr != nil {

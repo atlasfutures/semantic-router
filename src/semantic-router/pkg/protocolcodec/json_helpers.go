@@ -92,6 +92,11 @@ func decodeProviderJSON(body []byte, target any, policy llmprotocol.Policy, requ
 	if err := validateProviderJSONDocument(body, policy, requireObject); err != nil {
 		return err
 	}
+	if policy.UnknownFields == llmprotocol.UnknownDropUpstream {
+		pruned, dropped := pruneUnknownProviderFields(body, reflect.TypeOf(target))
+		reportDroppedProviderFields(dropped)
+		body = pruned
+	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	if rejectUnknownFields(body, policy) {
 		if err := validateExactJSONFieldNames(body, reflect.TypeOf(target)); err != nil {
@@ -349,8 +354,13 @@ func decodeProviderEventType(body []byte, fallback string, policy llmprotocol.Po
 	return eventType, nil
 }
 
+// rejectUnknownFields governs both boundaries. UnknownDropUpstream is strict
+// here as well: the provider document reaching this point has already had its
+// unnamed members removed, so anything still unnamed is a client document and
+// is refused exactly as before.
 func rejectUnknownFields(body []byte, policy llmprotocol.Policy) bool {
-	if policy.UnknownFields == llmprotocol.UnknownReject {
+	if policy.UnknownFields == llmprotocol.UnknownReject ||
+		policy.UnknownFields == llmprotocol.UnknownDropUpstream {
 		return true
 	}
 	return policy.UnknownFields == llmprotocol.UnknownPreserveSameFormat &&

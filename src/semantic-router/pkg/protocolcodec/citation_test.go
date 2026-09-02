@@ -11,7 +11,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
-func TestChatResponseAcceptsNullAnnotationsWithoutWeakeningUnknownFields(t *testing.T) {
+func TestChatResponseAcceptsNullAnnotationsAndDropsUnknownFields(t *testing.T) {
 	engine := NewBuiltinEngine()
 	withNull := []byte(`{"id":"response_1","model":"source-model","choices":[{"index":0,"message":{"role":"assistant","content":"hello","annotations":null},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
 	translated, err := engine.TranslateResponse(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1, withNull, func(response *llmprotocol.Response) error {
@@ -25,9 +25,15 @@ func TestChatResponseAcceptsNullAnnotationsWithoutWeakeningUnknownFields(t *test
 		t.Fatalf("translated body = %s", translated.Body)
 	}
 
+	// A member the upstream names and the contract does not is dropped, not
+	// refused. It must not reach the client either.
 	unknown := bytes.Replace(withNull, []byte(`"annotations":null`), []byte(`"annotations":null,"future_field":true`), 1)
-	if _, err := engine.TranslateResponse(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1, unknown, func(*llmprotocol.Response) error { return nil }); err == nil {
-		t.Fatal("unknown Chat response field was accepted")
+	dropped, err := engine.TranslateResponse(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1, unknown, func(*llmprotocol.Response) error { return nil })
+	if err != nil {
+		t.Fatalf("unknown Chat response field was refused: %v", err)
+	}
+	if bytes.Contains(dropped.Body, []byte("future_field")) {
+		t.Fatalf("dropped body still carries the unknown member: %s", dropped.Body)
 	}
 }
 
