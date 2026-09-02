@@ -40,15 +40,16 @@ func registerRaylineARCSelector(
 		resources.add(closeEpisodeStore)
 	}
 	metrics.SetRaylineARCComponentReady(readinessFailure == "")
-	metrics.SetRaylineARCNamedComponentReady(
-		"episode_store",
-		readinessFailure == "" && episodeStore != nil,
-	)
+	// Each component reports its own readiness. An encoder that is not
+	// answering yet must not read as a broken episode store, or the two
+	// gauges cannot tell an operator which dependency is late.
+	metrics.SetRaylineARCNamedComponentReady("episode_store", episodeStore != nil)
 	fields := map[string]interface{}{
 		"ready": readinessFailure == "",
 	}
 	if readinessFailure != "" {
 		fields["failure_class"] = readinessFailure
+		fields["reprobing"] = readinessFailure == "encoder_probe"
 		logging.ComponentErrorEvent("extproc", "rayline_arc_component_readiness", fields)
 	} else {
 		logging.ComponentEvent("extproc", "rayline_arc_component_readiness", fields)

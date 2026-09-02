@@ -84,21 +84,48 @@ func createRaylineARCSelector(
 	if failureClass != "" {
 		return unavailable(failureClass)
 	}
-	if probeErr := encoder.Probe(
-		context.Background(),
-		"semantic-router-startup-readiness",
-	); probeErr != nil {
-		encoder.Close()
-		return unavailable("encoder_probe")
+	selector, episodeStore, closeResources, closeSession, failureClass :=
+		probeRaylineARCReadiness(arcConfig, runtime, encoder)
+	if selector == nil {
+		return unavailable(failureClass)
 	}
+	return selector, episodeStore, closeResources, closeSession, failureClass
+}
+
+// probeRaylineARCReadiness opens the episode store, probes the encoder, and
+// returns a selector that either serves now or is armed later by the recovery
+// loop.
+//
+// The episode store is opened before the probe so that an encoder that is not
+// answering yet costs only the encoder: the store is a separate component with
+// its own gauge, and there is nothing to gain from throwing away a good
+// connection because a different dependency is late.
+//
+// A nil selector means the failure is not recoverable and the caller should
+// build the unavailable one.
+func probeRaylineARCReadiness(
+	arcConfig *config.RaylineARCAlgorithmConfig,
+	runtime *raylinearc.Runtime,
+	encoder raylineARCReadyEncoder,
+) (
+	*raylineARCSelector,
+	raylinearc.EpisodeStore,
+	func() error,
+	raylineARCSessionCloseFunc,
+	string,
+) {
 	episodeStore, closeStore, err := createRaylineARCEpisodeStore(
 		arcConfig.Episode,
 	)
 	if err != nil {
 		encoder.Close()
-		return unavailable("episode_store")
+		return nil, nil, nil, nil, "episode_store"
 	}
+	// The recovery loop outlives this call, so shutting the generation down
+	// has to stop it before the encoder it probes is closed.
+	probeContext, cancelProbe := context.WithCancel(context.Background())
 	closeResources := func() error {
+		cancelProbe()
 		encoder.Close()
 		if closeStore != nil {
 			return closeStore()
@@ -111,12 +138,36 @@ func createRaylineARCSelector(
 	}); ok {
 		closeSession = closer.CloseSession
 	}
-	return newRaylineARCSelector(
-		&runtimeARCScorer{runtime: runtime, policy: runtime.Policy()},
-		encoder,
-		raylinearc.NewAdmissionGate(arcConfig.Encoder.MaxInflightEncoderCalls),
+	selector := newRaylineARCSelector(
+		nil,
+		nil,
+		nil,
 		arcConfig.ArtifactRevision,
-	), episodeStore, closeResources, closeSession, ""
+	)
+	armed := &raylineARCArmedComponents{
+		scorer:    &runtimeARCScorer{runtime: runtime, policy: runtime.Policy()},
+		encoder:   encoder,
+		admission: raylinearc.NewAdmissionGate(arcConfig.Encoder.MaxInflightEncoderCalls),
+	}
+	probe := func(ctx context.Context) error {
+		return encoder.Probe(ctx, raylineARCReadinessProbeName)
+	}
+	if probe(probeContext) != nil {
+		// A transient encoder rejection at boot used to pin the instance dead
+		// for its lifetime. Keep the process up and failing closed, and let
+		// the recovery loop arm it when the encoder answers.
+		go raylineARCRecoverReadiness(
+			probeContext,
+			selector,
+			armed,
+			probe,
+			raylineARCDefaultProbeBackoff(),
+			raylineARCWait,
+		)
+		return selector, episodeStore, closeResources, closeSession, "encoder_probe"
+	}
+	selector.arm(armed)
+	return selector, episodeStore, closeResources, closeSession, ""
 }
 
 func raylineARCLoadedContractFailure(
