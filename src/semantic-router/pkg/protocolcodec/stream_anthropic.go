@@ -14,12 +14,13 @@ type anthropicStreamDecoder struct {
 }
 type anthropicStreamEncoder struct {
 	streamState
-	blocks         map[streamContentKey]llmprotocol.ContentKind
-	blockIndexes   map[streamContentKey]int
-	blockStarted   map[streamContentKey]bool
-	blockStopped   map[streamContentKey]bool
-	itemBlockKeys  map[int][]streamContentKey
-	activeBlock    streamContentKey
+	blocks         map[anthropicBlockKey]llmprotocol.ContentKind
+	blockIndexes   map[anthropicBlockKey]int
+	blockStarted   map[anthropicBlockKey]bool
+	blockStopped   map[anthropicBlockKey]bool
+	itemBlockKeys  map[int][]anthropicBlockKey
+	blockResumes   map[streamContentKey]int
+	activeBlock    anthropicBlockKey
 	hasActiveBlock bool
 	nextBlockIndex int
 }
@@ -31,11 +32,12 @@ func (AnthropicMessagesCodec) NewDecoder(context llmprotocol.StreamContext, poli
 func (AnthropicMessagesCodec) NewEncoder(context llmprotocol.StreamContext, policy llmprotocol.Policy) llmprotocol.StreamEncoder {
 	return &anthropicStreamEncoder{
 		streamState:   streamState{context: context, policy: policy},
-		blocks:        make(map[streamContentKey]llmprotocol.ContentKind),
-		blockIndexes:  make(map[streamContentKey]int),
-		blockStarted:  make(map[streamContentKey]bool),
-		blockStopped:  make(map[streamContentKey]bool),
-		itemBlockKeys: make(map[int][]streamContentKey),
+		blocks:        make(map[anthropicBlockKey]llmprotocol.ContentKind),
+		blockIndexes:  make(map[anthropicBlockKey]int),
+		blockStarted:  make(map[anthropicBlockKey]bool),
+		blockStopped:  make(map[anthropicBlockKey]bool),
+		itemBlockKeys: make(map[int][]anthropicBlockKey),
+		blockResumes:  make(map[streamContentKey]int),
 	}
 }
 
@@ -576,133 +578,6 @@ func encodeAnthropicMessageStart(event llmprotocol.Event) anthropicEventWire {
 			Content: json.RawMessage(`[]`), Usage: usage,
 		},
 	}
-}
-
-func (encoder *anthropicStreamEncoder) ensureAnthropicBlockStarted(
-	event llmprotocol.Event,
-	kind llmprotocol.ContentKind,
-) ([][]byte, streamContentKey, error) {
-	key := contentKey(event)
-	if encoder.blockStarted[key] {
-		if encoder.blockStopped[key] {
-			return nil, key, llmprotocol.NewError(
-				llmprotocol.ErrorUnsupportedFeature,
-				"anthropic_content_interleaving",
-				"Messages cannot resume a content block after another block starts",
-				nil,
-			)
-		}
-		if encoder.blocks[key] != kind {
-			return nil, key, llmprotocol.NewError(
-				llmprotocol.ErrorUpstreamUnavailable,
-				"stream_content_kind_mismatch",
-				"upstream stream changed a content block kind",
-				nil,
-			)
-		}
-		return nil, key, nil
-	}
-	var frames [][]byte
-	if encoder.hasActiveBlock && encoder.activeBlock != key {
-		stopped, err := encoder.stopAnthropicBlock(encoder.activeBlock)
-		if err != nil {
-			return nil, key, err
-		}
-		frames = append(frames, stopped...)
-	}
-	encoder.blockStarted[key] = true
-	encoder.blocks[key] = kind
-	encoder.blockIndexes[key] = encoder.nextBlockIndex
-	encoder.nextBlockIndex++
-	encoder.itemBlockKeys[event.ItemIndex] = append(encoder.itemBlockKeys[event.ItemIndex], key)
-	wire := encoder.encodeAnthropicItemStart(event, key, kind)
-	frame, err := encodeSSE(wire.Type, wire)
-	if err != nil {
-		return nil, key, err
-	}
-	encoder.activeBlock = key
-	encoder.hasActiveBlock = true
-	return append(frames, frame), key, nil
-}
-
-func (encoder *anthropicStreamEncoder) encodeAnthropicItemStart(
-	event llmprotocol.Event,
-	key streamContentKey,
-	kind llmprotocol.ContentKind,
-) anthropicEventWire {
-	block := &anthropicContentWire{Type: "text", Text: ""}
-	if kind == llmprotocol.ContentToolCall {
-		block.Type, block.ID, block.Name, block.Input = "tool_use", event.ToolCall.ID, event.ToolCall.Name, json.RawMessage(`{}`)
-	} else if kind == llmprotocol.ContentReasoning {
-		signature := ""
-		if event.Content != nil {
-			signature = event.Content.Signature
-		}
-		block.Type, block.Text, block.Thinking, block.Signature = "thinking", "", "", signature
-	}
-	return anthropicEventWire{Type: "content_block_start", Index: anthropicIndex(encoder.blockIndexes[key]), ContentBlock: block}
-}
-
-func (encoder *anthropicStreamEncoder) completeAnthropicItem(
-	event llmprotocol.Event,
-) ([][]byte, llmprotocol.Diagnostics, error) {
-	keys := append([]streamContentKey(nil), encoder.itemBlockKeys[event.ItemIndex]...)
-	var frames [][]byte
-	if event.ToolCall != nil && len(keys) == 0 {
-		started, key, err := encoder.ensureAnthropicBlockStarted(event, llmprotocol.ContentToolCall)
-		if err != nil {
-			return nil, nil, err
-		}
-		frames = append(frames, started...)
-		delta := anthropicEventWire{
-			Type: "content_block_delta", Index: anthropicIndex(encoder.blockIndexes[key]),
-			Delta: &anthropicDeltaWire{Type: "input_json_delta", PartialJSON: event.ToolCall.Arguments},
-		}
-		deltaFrames, _, err := encodeAnthropicWireFrame(delta)
-		if err != nil {
-			return nil, nil, err
-		}
-		frames = append(frames, deltaFrames...)
-		keys = append(keys, key)
-	}
-	if len(keys) == 0 {
-		kind := llmprotocol.ContentText
-		if event.ToolCall != nil {
-			kind = llmprotocol.ContentToolCall
-		} else if event.Content != nil && event.Content.Kind != "" {
-			kind = event.Content.Kind
-		}
-		started, key, err := encoder.ensureAnthropicBlockStarted(event, kind)
-		if err != nil {
-			return nil, nil, err
-		}
-		frames = append(frames, started...)
-		keys = append(keys, key)
-	}
-	for _, key := range keys {
-		stopped, err := encoder.stopAnthropicBlock(key)
-		if err != nil {
-			return nil, nil, err
-		}
-		frames = append(frames, stopped...)
-	}
-	return frames, nil, nil
-}
-
-func (encoder *anthropicStreamEncoder) stopAnthropicBlock(key streamContentKey) ([][]byte, error) {
-	if !encoder.blockStarted[key] || encoder.blockStopped[key] {
-		return nil, nil
-	}
-	wire := anthropicEventWire{Type: "content_block_stop", Index: anthropicIndex(encoder.blockIndexes[key])}
-	frame, err := encodeSSE(wire.Type, wire)
-	if err != nil {
-		return nil, err
-	}
-	encoder.blockStopped[key] = true
-	if encoder.hasActiveBlock && encoder.activeBlock == key {
-		encoder.hasActiveBlock = false
-	}
-	return [][]byte{frame}, nil
 }
 
 func (encoder *anthropicStreamEncoder) encodeAnthropicCompletion(
