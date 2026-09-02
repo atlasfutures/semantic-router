@@ -47,6 +47,7 @@ var droppedContentKinds = map[llmprotocol.ContentKind]bool{
 	llmprotocol.ContentImage:          true,
 	llmprotocol.ContentReasoning:      true,
 	llmprotocol.ContentRefusal:        true,
+	llmprotocol.ContentUnmodeled:      true,
 	llmprotocol.ContentVideo:          true,
 }
 

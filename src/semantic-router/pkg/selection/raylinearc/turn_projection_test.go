@@ -69,11 +69,17 @@ type goldenExpectation struct {
 
 // turnProjectionExpectations classifies every case in the fixture.
 //
-// Counted on 2026-09-01 against the codec at this commit: 8 cases project, 4
-// reshape, 23 are rejected at ingress. Of the 23, eight are cases the fork
-// itself refused; the other fifteen are shapes the fork routed and the codec
-// now answers 400. That is a routing-surface loss, not a projection defect,
-// and it is tracked as the unknown-field and rich-block survival ask.
+// Counted on 2026-09-02 against the codec at this commit: 13 cases project, 8
+// reshape, 14 are rejected at ingress.
+//
+// Nine cases moved off rejected when the codec began carrying request blocks
+// it does not name. Five of them project byte for byte. Four reshape, and the
+// reason is recorded beside each: two carry a block the fork read text out of
+// (compaction, mid_conv_system), so the projection now emits the turn without
+// that text; two carry a block that is the message's only content, so the turn
+// survives as empty text where the fork emitted no turn at all. Both are the
+// consequence of the carrier being opaque: nothing outside the codec that
+// re-emits it may read inside it, including this projection.
 var turnProjectionExpectations = map[string]goldenExpectation{
 	// Projected: byte-identical to the fork.
 	"openai_chat_tool_flow":                          {disposition: dispositionProjected},
@@ -113,28 +119,40 @@ var turnProjectionExpectations = map[string]goldenExpectation{
 	},
 
 	// Rejected: the fork also refused these, for its own reasons.
-	"anthropic_unresolved_tool_id":                   {disposition: dispositionCodecRejected, codecError: "orphan_tool_result"},
-	"chat_unresolved_tool_id":                        {disposition: dispositionCodecRejected, codecError: "orphan_tool_result"},
-	"responses_unresolved_tool_id":                   {disposition: dispositionCodecRejected, codecError: "orphan_tool_result"},
-	"chat_malformed_tool_arguments":                  {disposition: dispositionCodecRejected, codecError: "invalid_tool_call"},
-	"anthropic_unknown_block":                        {disposition: dispositionCodecRejected, codecError: "unsupported_content"},
-	"chat_unknown_role":                              {disposition: dispositionCodecRejected, codecError: "invalid_role"},
-	"responses_unknown_item":                         {disposition: dispositionCodecRejected, codecError: "unsupported_input_item"},
-	"anthropic_tool_reference_rejected_at_top_level": {disposition: dispositionCodecRejected, codecError: "unsupported_content"},
+	"anthropic_unresolved_tool_id":  {disposition: dispositionCodecRejected, codecError: "orphan_tool_result"},
+	"chat_unresolved_tool_id":       {disposition: dispositionCodecRejected, codecError: "orphan_tool_result"},
+	"responses_unresolved_tool_id":  {disposition: dispositionCodecRejected, codecError: "orphan_tool_result"},
+	"chat_malformed_tool_arguments": {disposition: dispositionCodecRejected, codecError: "invalid_tool_call"},
+	"anthropic_unknown_block": {
+		disposition: dispositionCodecReshaped,
+		turns:       []Turn{{Role: "user", Text: ""}},
+	},
+	"chat_unknown_role":      {disposition: dispositionCodecRejected, codecError: "invalid_role"},
+	"responses_unknown_item": {disposition: dispositionCodecRejected, codecError: "unsupported_input_item"},
+	"anthropic_tool_reference_rejected_at_top_level": {
+		disposition: dispositionCodecReshaped,
+		turns:       []Turn{{Role: "user", Text: ""}},
+	},
 
 	// Rejected: shapes the fork routed. The codec models a narrower request
 	// union than the Anthropic and Responses request APIs accept, so every one
 	// of these answers 400 at ingress today.
-	"anthropic_tool_flow":                               {disposition: dispositionCodecRejected, codecError: "invalid_media_data"},
-	"openai_responses_tool_flow":                        {disposition: dispositionCodecRejected, codecError: "invalid_json"},
-	"anthropic_python_scalar_coercion":                  {disposition: dispositionCodecRejected, codecError: "invalid_tool_call"},
-	"anthropic_compaction_summary":                      {disposition: dispositionCodecRejected, codecError: "unsupported_content"},
-	"anthropic_compaction_failed_is_empty":              {disposition: dispositionCodecRejected, codecError: "unsupported_content"},
-	"anthropic_server_tool_families_drop_as_pairs":      {disposition: dispositionCodecRejected, codecError: "unsupported_content"},
-	"anthropic_tool_reference_in_result":                {disposition: dispositionCodecRejected, codecError: "unsupported_content"},
-	"anthropic_mid_conv_system_folds":                   {disposition: dispositionCodecRejected, codecError: "unsupported_content"},
-	"anthropic_advisor_and_fallback_drop":               {disposition: dispositionCodecRejected, codecError: "unsupported_content"},
-	"anthropic_system_role_message_drops_whole":         {disposition: dispositionCodecRejected, codecError: "unsupported_content"},
+	"anthropic_tool_flow":              {disposition: dispositionCodecRejected, codecError: "invalid_media_data"},
+	"openai_responses_tool_flow":       {disposition: dispositionCodecRejected, codecError: "invalid_json"},
+	"anthropic_python_scalar_coercion": {disposition: dispositionCodecRejected, codecError: "invalid_tool_call"},
+	"anthropic_compaction_summary": {
+		disposition: dispositionCodecReshaped,
+		turns:       []Turn{{Role: "user", Text: "continue"}},
+	},
+	"anthropic_compaction_failed_is_empty":         {disposition: dispositionProjected},
+	"anthropic_server_tool_families_drop_as_pairs": {disposition: dispositionProjected},
+	"anthropic_tool_reference_in_result":           {disposition: dispositionProjected},
+	"anthropic_mid_conv_system_folds": {
+		disposition: dispositionCodecReshaped,
+		turns:       []Turn{{Role: "user", Text: "summarize"}},
+	},
+	"anthropic_advisor_and_fallback_drop":               {disposition: dispositionProjected},
+	"anthropic_system_role_message_drops_whole":         {disposition: dispositionProjected},
 	"responses_host_tool_items_drop":                    {disposition: dispositionCodecRejected, codecError: "unsupported_input_item"},
 	"anthropic_unknown_role_drops_whole":                {disposition: dispositionCodecRejected, codecError: "invalid_anthropic_role"},
 	"anthropic_all_blocks_dropped_is_empty_turn":        {disposition: dispositionCodecRejected, codecError: "redacted_reasoning"},
@@ -175,9 +193,9 @@ func TestTurnProjectionGoldens(t *testing.T) {
 			runTurnProjectionCase(t, engine, test, expectation)
 		})
 	}
-	if counts[dispositionProjected] != 8 ||
-		counts[dispositionCodecReshaped] != 4 ||
-		counts[dispositionCodecRejected] != 23 {
+	if counts[dispositionProjected] != 13 ||
+		counts[dispositionCodecReshaped] != 8 ||
+		counts[dispositionCodecRejected] != 14 {
 		t.Fatalf(
 			"disposition counts moved: projected=%d reshaped=%d rejected=%d",
 			counts[dispositionProjected],

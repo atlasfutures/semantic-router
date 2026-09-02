@@ -23,6 +23,9 @@ func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope 
 		return nil, nil, err
 	}
 	var diagnostics llmprotocol.Diagnostics
+	for _, message := range request.Messages {
+		appendCarriedBlockDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
+	}
 	body, err = mergeUnmodeledFields(body, request, llmprotocol.OpenAIResponsesV1, &diagnostics, policy)
 	return body, diagnostics, err
 }
@@ -78,6 +81,9 @@ func encodeResponsesRequestWire(request llmprotocol.Request) (responsesRequestWi
 func encodeResponsesRequestItems(request llmprotocol.Request) ([]responsesItemWire, error) {
 	items := make([]responsesItemWire, 0, len(request.Messages))
 	for _, instruction := range request.Instructions {
+		if messageDropsWhole(instruction.Content, llmprotocol.OpenAIResponsesV1) {
+			continue
+		}
 		encoded, err := encodeResponsesMessage(llmprotocol.Message{Role: instruction.Role, Content: instruction.Content}, "input")
 		if err != nil {
 			return nil, err
@@ -85,6 +91,9 @@ func encodeResponsesRequestItems(request llmprotocol.Request) ([]responsesItemWi
 		items = append(items, encoded...)
 	}
 	for _, message := range request.Messages {
+		if messageDropsWhole(message.Content, llmprotocol.OpenAIResponsesV1) {
+			continue
+		}
 		encoded, err := encodeResponsesMessage(message, "input")
 		if err != nil {
 			return nil, err
@@ -185,6 +194,11 @@ func (state *responsesMessageEncodingState) appendContent(content llmprotocol.Co
 			return err
 		}
 		return state.appendGeneratedImage(content.GeneratedImage)
+	case llmprotocol.ContentUnmodeled:
+		// A carried block belongs to the contract it came from. Responses never
+		// names an Anthropic block, so it is dropped here and the drop is
+		// recorded beside the encoded request.
+		return nil
 	default:
 		if err := state.flushReasoning(); err != nil {
 			return err
@@ -345,6 +359,11 @@ func encodeResponsesContent(contents []llmprotocol.Content, direction string) (j
 			parts = append(parts, part)
 		case llmprotocol.ContentRefusal:
 			parts = append(parts, responsesContentWire{Type: "refusal", Refusal: content.Text})
+		case llmprotocol.ContentUnmodeled:
+			// The block belongs to the contract it came from. Responses cannot
+			// name it, so it is dropped and the drop is recorded beside the
+			// encoded request.
+			continue
 		case llmprotocol.ContentReasoning:
 			return nil, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "reasoning_content_position", "Responses reasoning must be encoded as an ordered reasoning item", nil)
 		case llmprotocol.ContentImage:

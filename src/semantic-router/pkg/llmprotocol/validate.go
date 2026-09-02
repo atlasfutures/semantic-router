@@ -564,9 +564,27 @@ func validateContent(content Content, blocks *int, limits Limits, depth int) err
 		return validateToolResultContent(content, blocks, limits, depth)
 	case ContentGeneratedImage:
 		return validateGeneratedImageContent(content, limits)
+	case ContentUnmodeled:
+		return validateUnmodeledContent(content)
 	default:
 		return NewError(ErrorInvalidRequest, "unknown_content_kind", "content kind is unsupported", nil)
 	}
+}
+
+// validateUnmodeledContent keeps the carrier inert. It holds source bytes and
+// nothing else, so any semantic field beside it would be a field the Router
+// could read by accident.
+func validateUnmodeledContent(content Content) error {
+	if content.Unmodeled == nil || content.Unmodeled.Format == "" || len(content.Unmodeled.Raw) == 0 {
+		return NewError(ErrorInvalidRequest, "invalid_content", "carried content requires its source format and bytes", nil)
+	}
+	if !json.Valid(content.Unmodeled.Raw) {
+		return NewError(ErrorInvalidRequest, "invalid_content", "carried content must be the JSON the client sent", nil)
+	}
+	if content.Text != "" || content.Cache != nil || len(content.Citations) != 0 || hasNonTextFields(content) {
+		return NewError(ErrorInvalidRequest, "invalid_content", "carried content cannot hold fields from another content kind", nil)
+	}
+	return nil
 }
 
 func validateCacheDirective(cache *CacheDirective) error {

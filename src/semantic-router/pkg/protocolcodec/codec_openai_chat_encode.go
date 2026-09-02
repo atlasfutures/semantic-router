@@ -65,6 +65,9 @@ func (OpenAIChatCodec) EncodeRequest(request llmprotocol.Request, envelope llmpr
 
 func chatRequestDiagnostics(request llmprotocol.Request, policy llmprotocol.Policy) (llmprotocol.Diagnostics, error) {
 	var diagnostics llmprotocol.Diagnostics
+	for _, message := range request.Messages {
+		appendCarriedBlockDrops(&diagnostics, message.Content, llmprotocol.OpenAIChatV1, policy)
+	}
 	if request.PreviousResponseID == "" && request.ConversationID == "" && request.Truncation == "" {
 		return diagnostics, nil
 	}
@@ -96,6 +99,9 @@ func encodeChatBaseRequest(request llmprotocol.Request) chatRequestWire {
 
 func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) error {
 	for _, instruction := range request.Instructions {
+		if messageDropsWhole(instruction.Content, llmprotocol.OpenAIChatV1) {
+			continue
+		}
 		encoded, err := encodeChatMessage(llmprotocol.Message{Role: instruction.Role, Content: instruction.Content})
 		if err != nil {
 			return err
@@ -103,6 +109,9 @@ func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) erro
 		wire.Messages = append(wire.Messages, encoded)
 	}
 	for _, message := range request.Messages {
+		if messageDropsWhole(message.Content, llmprotocol.OpenAIChatV1) {
+			continue
+		}
 		encoded, err := encodeChatMessage(message)
 		if err != nil {
 			return err
@@ -182,6 +191,10 @@ func (state *chatMessageEncodingState) appendContent(content llmprotocol.Content
 		return state.appendCachelessToolCall(content)
 	case llmprotocol.ContentToolResult:
 		return state.appendCachelessToolResult(content)
+	case llmprotocol.ContentUnmodeled:
+		// A carried block belongs to the contract it came from. Chat
+		// Completions never names one, so the block is dropped here and the
+		// drop is recorded in chatRequestDiagnostics.
 	default:
 		return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_content", "content cannot be encoded as chat", nil)
 	}
@@ -274,6 +287,11 @@ func (state *chatMessageEncodingState) appendToolResult(result *llmprotocol.Tool
 	}
 	state.wire.ToolCallID = result.CallID
 	for _, resultContent := range result.Content {
+		if resultContent.Kind == llmprotocol.ContentUnmodeled {
+			// The block belongs to the contract it came from. Dropping it keeps
+			// the tool result routable; refusing it would lose the whole turn.
+			continue
+		}
 		if resultContent.Kind != llmprotocol.ContentText {
 			return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "tool_result_media", "chat tool results support text only", nil)
 		}

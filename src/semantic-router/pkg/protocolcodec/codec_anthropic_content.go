@@ -40,7 +40,29 @@ func decodeAnthropicRequestContentBlock(body json.RawMessage, policy llmprotocol
 	if err != nil {
 		return llmprotocol.Content{}, err
 	}
+	if !anthropicModelledRequestContent[typeName] {
+		return carriedAnthropicBlock(typeName, body), nil
+	}
 	return decodeAnthropicContentBlock(body, typeName, policy, false)
+}
+
+// anthropicModelledRequestContent lists the request blocks the neutral contract
+// names. Every other block is carried whole, because the Router routes the
+// conversation rather than reading it.
+var anthropicModelledRequestContent = map[string]bool{
+	"text": true, "thinking": true, "image": true,
+	"document": true, "tool_use": true, "tool_result": true,
+}
+
+func carriedAnthropicBlock(typeName string, body json.RawMessage) llmprotocol.Content {
+	return llmprotocol.Content{
+		Kind: llmprotocol.ContentUnmodeled,
+		Unmodeled: &llmprotocol.UnmodeledBlock{
+			Format: llmprotocol.AnthropicMessagesV1,
+			Type:   typeName,
+			Raw:    append(json.RawMessage(nil), body...),
+		},
+	}
 }
 
 func decodeAnthropicResponseContentBlock(body json.RawMessage, policy llmprotocol.Policy) (llmprotocol.Content, error) {
@@ -181,14 +203,10 @@ func anthropicRequestContentType(body json.RawMessage) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	switch typeName {
-	case "text", "thinking", "image", "document", "tool_use", "tool_result":
-		return typeName, nil
-	case "redacted_thinking":
+	if typeName == "redacted_thinking" {
 		return "", llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "redacted_reasoning", "redacted reasoning cannot be translated", nil)
-	default:
-		return "", llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_content", "Anthropic content type is unsupported", nil)
 	}
+	return typeName, nil
 }
 
 func anthropicResponseContentType(body json.RawMessage) (string, error) {
@@ -661,13 +679,23 @@ func encodeAnthropicMessage(message llmprotocol.Message) ([]anthropicMessageWire
 }
 
 func encodeAnthropicContent(contents []llmprotocol.Content) (json.RawMessage, error) {
-	blocks := make([]anthropicContentWire, 0, len(contents))
+	blocks := make([]json.RawMessage, 0, len(contents))
 	for _, content := range contents {
+		if content.Kind == llmprotocol.ContentUnmodeled {
+			if carried, kept := carriedBlockBytes(content, llmprotocol.AnthropicMessagesV1); kept {
+				blocks = append(blocks, carried)
+			}
+			continue
+		}
 		block, err := encodeAnthropicContentBlock(content)
 		if err != nil {
 			return nil, err
 		}
-		blocks = append(blocks, block)
+		encoded, err := json.Marshal(block)
+		if err != nil {
+			return nil, llmprotocol.NewError(llmprotocol.ErrorInternal, "encode_wire", "wire request could not be encoded", err)
+		}
+		blocks = append(blocks, encoded)
 	}
 	return json.Marshal(blocks)
 }
@@ -747,6 +775,7 @@ func encodeAnthropicToolResultBlock(result *llmprotocol.ToolResult) (anthropicCo
 
 func anthropicContentDiagnostics(contents []llmprotocol.Content, source llmprotocol.WireFormat, policy llmprotocol.Policy) (llmprotocol.Diagnostics, error) {
 	var diagnostics llmprotocol.Diagnostics
+	appendCarriedBlockDrops(&diagnostics, contents, llmprotocol.AnthropicMessagesV1, policy)
 	for _, content := range contents {
 		if len(content.Citations) > 0 {
 			if err := appendLossy(&diagnostics, policy, source, llmprotocol.AnthropicMessagesV1, "content.citations", "Messages cannot represent URL citations"); err != nil {

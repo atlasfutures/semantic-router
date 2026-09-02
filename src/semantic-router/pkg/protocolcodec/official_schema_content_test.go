@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -506,12 +507,17 @@ func TestOfficialAnthropicToolChoiceUnionIsClosedAndPositionScoped(t *testing.T)
 
 func TestOfficialAnthropicContentBlockUnionsAreClosed(t *testing.T) {
 	requestSupported := fields("document", "image", "text", "thinking", "tool_result", "tool_use")
-	requestUnsupported := fields(
+	// Every request block outside the modelled six is carried whole rather than
+	// refused, so a conversation the Router only routes is not lost at ingress.
+	// redacted_thinking is the exception: it is signed provider ciphertext that
+	// the neutral contract still refuses to translate.
+	requestCarried := fields(
 		"bash_code_execution_tool_result", "code_execution_tool_result", "container_upload",
-		"redacted_thinking", "search_result", "server_tool_use",
+		"search_result", "server_tool_use",
 		"text_editor_code_execution_tool_result", "tool_search_tool_result",
 		"web_fetch_tool_result", "web_search_tool_result",
 	)
+	requestUnsupported := append(fields("redacted_thinking"), requestCarried...)
 	responseSupported := fields("text", "thinking", "tool_use")
 	responseUnsupported := fields(
 		"bash_code_execution_tool_result", "code_execution_tool_result", "container_upload",
@@ -521,21 +527,16 @@ func TestOfficialAnthropicContentBlockUnionsAreClosed(t *testing.T) {
 	assertClosedDiscriminatorInventory(t, "Anthropic request content block", 16, requestSupported, requestUnsupported)
 	assertClosedDiscriminatorInventory(t, "Anthropic response content block", 12, responseSupported, responseUnsupported)
 	engine := NewBuiltinEngine()
-	for _, blockType := range requestUnsupported {
+	for _, blockType := range requestCarried {
 		t.Run("request/"+blockType, func(t *testing.T) {
-			body, err := json.Marshal(map[string]any{
-				"model": "m", "max_tokens": 16,
-				"messages": []map[string]any{{
-					"role": "user", "content": []map[string]any{{"type": blockType}},
-				}},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, _, _, err = engine.DecodeRequest(llmprotocol.AnthropicMessagesV1, body)
-			assertProtocolError(t, err, llmprotocol.ErrorUnsupportedFeature, "")
+			assertAnthropicRequestBlockIsCarried(t, engine, blockType)
 		})
 	}
+	t.Run("request/redacted_thinking", func(t *testing.T) {
+		body := anthropicRequestBodyWithBlock(t, "redacted_thinking")
+		_, _, _, err := engine.DecodeRequest(llmprotocol.AnthropicMessagesV1, body)
+		assertProtocolError(t, err, llmprotocol.ErrorUnsupportedFeature, "redacted_reasoning")
+	})
 	for _, blockType := range responseUnsupported {
 		t.Run("response/"+blockType, func(t *testing.T) {
 			body, err := json.Marshal(map[string]any{
@@ -616,4 +617,40 @@ func requestWireMessageRoles(t *testing.T, format llmprotocol.WireFormat, body [
 		}
 	}
 	return roles
+}
+
+func anthropicRequestBodyWithBlock(t *testing.T, blockType string) []byte {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"model": "m", "max_tokens": 16,
+		"messages": []map[string]any{{
+			"role": "user", "content": []map[string]any{{"type": blockType}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+// assertAnthropicRequestBlockIsCarried states the routing contract for a block
+// the neutral model does not name: it decodes, and it reaches an Anthropic
+// destination with its discriminator intact.
+func assertAnthropicRequestBlockIsCarried(t *testing.T, engine *Engine, blockType string) {
+	t.Helper()
+	request, envelope, _, err := engine.DecodeRequestForMutation(
+		llmprotocol.AnthropicMessagesV1, anthropicRequestBodyWithBlock(t, blockType),
+	)
+	if err != nil {
+		t.Fatalf("a routed-only block was refused at ingress: %v", err)
+	}
+	request.Model = "selected-arm"
+	request.Generation++
+	result, err := engine.EncodeRequest(llmprotocol.AnthropicMessagesV1, request, envelope)
+	if err != nil {
+		t.Fatalf("a carried block could not be re-encoded: %v", err)
+	}
+	if !bytes.Contains(result.Body, []byte(`"`+blockType+`"`)) {
+		t.Fatalf("%q did not survive the round trip: %s", blockType, result.Body)
+	}
 }

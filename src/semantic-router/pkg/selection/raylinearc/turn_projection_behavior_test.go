@@ -35,6 +35,7 @@ var llmprotocolContentUnion = []llmprotocol.ContentKind{
 	llmprotocol.ContentText,
 	llmprotocol.ContentToolCall,
 	llmprotocol.ContentToolResult,
+	llmprotocol.ContentUnmodeled,
 	llmprotocol.ContentVideo,
 }
 

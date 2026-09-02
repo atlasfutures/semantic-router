@@ -50,6 +50,10 @@ const (
 	// image supplied as model input, while this kind preserves the lifecycle of
 	// a model-hosted image generation tool.
 	ContentGeneratedImage ContentKind = "generated_image"
+	// ContentUnmodeled is a block this contract does not name, carried whole in
+	// its source bytes so that routing does not have to refuse it. It holds no
+	// semantics: nothing may read it except the codec that re-emits it.
+	ContentUnmodeled ContentKind = "unmodeled"
 )
 
 const (
@@ -75,6 +79,7 @@ type Content struct {
 	GeneratedImage *GeneratedImage
 	Signature      string
 	Reasoning      ReasoningScope
+	Unmodeled      *UnmodeledBlock
 }
 
 // CacheDirective marks a request block or tool definition as an explicit

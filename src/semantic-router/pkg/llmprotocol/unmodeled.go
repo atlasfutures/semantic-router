@@ -26,3 +26,15 @@ func (fields *UnmodeledFields) Len() int {
 	}
 	return len(fields.Fields)
 }
+
+// UnmodeledBlock is one content block or input item that the neutral contract
+// does not name, kept exactly as the client sent it.
+//
+// It obeys the same rule as UnmodeledFields: the Router never reads it, an
+// encoder re-emits it only to Format, and any other target drops it. Type is
+// the source discriminator and is recorded for diagnostics alone.
+type UnmodeledBlock struct {
+	Format WireFormat
+	Type   string
+	Raw    json.RawMessage
+}

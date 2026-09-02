@@ -743,3 +743,56 @@ func sortedFieldNames(fields map[string]json.RawMessage) []string {
 	sort.Strings(names)
 	return names
 }
+
+// carriedBlockBytes returns the source bytes of a carried block when the target
+// wire format is the one it came from. Any other target drops it: the block
+// names something only its own contract understands, and losing it is the
+// routable outcome where refusing the conversation is not.
+func carriedBlockBytes(content llmprotocol.Content, target llmprotocol.WireFormat) (json.RawMessage, bool) {
+	carried := content.Unmodeled
+	if carried == nil || carried.Format != target || len(carried.Raw) == 0 {
+		return nil, false
+	}
+	return carried.Raw, true
+}
+
+// appendCarriedBlockDrops records the carried blocks one encode will drop. It
+// reads the block list it is given and does not descend into tool results,
+// which carry their own list through the same encoder.
+func appendCarriedBlockDrops(
+	diagnostics *llmprotocol.Diagnostics,
+	contents []llmprotocol.Content,
+	target llmprotocol.WireFormat,
+	policy llmprotocol.Policy,
+) {
+	for _, content := range contents {
+		if content.Kind != llmprotocol.ContentUnmodeled || content.Unmodeled == nil {
+			continue
+		}
+		if content.Unmodeled.Format == target {
+			continue
+		}
+		appendUnmodeledDrop(
+			diagnostics, policy, content.Unmodeled.Format, target,
+			"content."+content.Unmodeled.Type,
+		)
+	}
+}
+
+// messageDropsWhole reports whether every block of a message is a carried block
+// the target cannot name. Such a message encodes to nothing, so the encoder
+// omits the message rather than emitting an empty one the provider refuses.
+func messageDropsWhole(contents []llmprotocol.Content, target llmprotocol.WireFormat) bool {
+	if len(contents) == 0 {
+		return false
+	}
+	for _, content := range contents {
+		if content.Kind != llmprotocol.ContentUnmodeled {
+			return false
+		}
+		if _, kept := carriedBlockBytes(content, target); kept {
+			return false
+		}
+	}
+	return true
+}
