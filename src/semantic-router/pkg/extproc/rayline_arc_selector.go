@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
@@ -102,10 +103,17 @@ func (scorer *runtimeARCScorer) Select(
 	return scorer.policy.Select(rawScores, state, inputTokens, now)
 }
 
+// raylineARCArmedComponents is everything a selection needs from readiness.
+// It is published as one immutable unit so a readiness recovery that lands
+// while requests are in flight can never show a caller a half-armed selector.
+type raylineARCArmedComponents struct {
+	scorer    raylineARCScorer
+	encoder   raylineARCEncoder
+	admission *raylinearc.AdmissionGate
+}
+
 type raylineARCSelector struct {
-	scorer           raylineARCScorer
-	encoder          raylineARCEncoder
-	admission        *raylinearc.AdmissionGate
+	armed            atomic.Pointer[raylineARCArmedComponents]
 	artifactRevision string
 	now              func() time.Time
 }
@@ -134,22 +142,46 @@ func newRaylineARCSelector(
 	admission *raylinearc.AdmissionGate,
 	artifactRevision string,
 ) *raylineARCSelector {
-	return &raylineARCSelector{
-		scorer:           scorer,
-		encoder:          encoder,
-		admission:        admission,
+	selector := &raylineARCSelector{
 		artifactRevision: artifactRevision,
 		now:              time.Now,
 	}
+	if scorer != nil && encoder != nil {
+		selector.arm(&raylineARCArmedComponents{
+			scorer:    scorer,
+			encoder:   encoder,
+			admission: admission,
+		})
+	}
+	return selector
+}
+
+// arm publishes the components a readiness probe has proved good. Readiness
+// may call it after the router is already serving, which is how a transient
+// encoder failure at startup stops being permanent.
+func (selector *raylineARCSelector) arm(
+	components *raylineARCArmedComponents,
+) {
+	selector.armed.Store(components)
+}
+
+// armedComponents returns nil until readiness arms the selector, and every
+// caller treats that nil as fail closed.
+func (selector *raylineARCSelector) armedComponents() *raylineARCArmedComponents {
+	if selector == nil {
+		return nil
+	}
+	return selector.armed.Load()
 }
 
 func (selector *raylineARCSelector) Worker(
 	index int,
 ) (raylinearc.WorkerManifest, bool) {
-	if selector == nil || selector.scorer == nil {
+	armed := selector.armedComponents()
+	if armed == nil {
 		return raylinearc.WorkerManifest{}, false
 	}
-	provider, ok := selector.scorer.(raylineARCWorkerProvider)
+	provider, ok := armed.scorer.(raylineARCWorkerProvider)
 	if !ok {
 		return raylinearc.WorkerManifest{}, false
 	}
@@ -160,15 +192,16 @@ func (selector *raylineARCSelector) Select(
 	ctx context.Context,
 	selCtx *selection.SelectionContext,
 ) (*selection.SelectionResult, error) {
-	arcContext, workerIDs, state, err := selector.prepareSelection(selCtx)
+	armed := selector.armedComponents()
+	arcContext, workerIDs, state, err := selector.prepareSelection(armed, selCtx)
 	if err != nil {
 		return nil, err
 	}
-	encoded, latency, err := selector.encode(ctx, arcContext, state)
+	encoded, latency, err := selector.encode(ctx, armed, arcContext, state)
 	if err != nil {
 		return nil, err
 	}
-	decision, err := selector.scorer.Select(
+	decision, err := armed.scorer.Select(
 		encoded.Embedding,
 		state,
 		encoded.SerializedTokens,
@@ -181,6 +214,7 @@ func (selector *raylineARCSelector) Select(
 		return nil, arcSelectionFailure("artifact_result")
 	}
 	return selector.selectionResult(
+		armed,
 		selCtx,
 		arcContext,
 		state,
@@ -191,6 +225,7 @@ func (selector *raylineARCSelector) Select(
 }
 
 func (selector *raylineARCSelector) prepareSelection(
+	armed *raylineARCArmedComponents,
 	selCtx *selection.SelectionContext,
 ) (
 	*selection.RaylineARCSelectionContext,
@@ -198,7 +233,7 @@ func (selector *raylineARCSelector) prepareSelection(
 	*raylinearc.EpisodeState,
 	error,
 ) {
-	if selector == nil || selector.scorer == nil || selector.encoder == nil {
+	if armed == nil {
 		return nil, nil, nil, arcSelectionFailure("not_ready")
 	}
 	if selCtx == nil || selCtx.RaylineARC == nil {
@@ -210,7 +245,7 @@ func (selector *raylineARCSelector) prepareSelection(
 			arcContext.PreparationFailure,
 		)
 	}
-	workerIDs := selector.scorer.WorkerIDs()
+	workerIDs := armed.scorer.WorkerIDs()
 	if len(workerIDs) != len(selCtx.CandidateModels) {
 		return nil, nil, nil, arcSelectionFailure("candidate_count")
 	}
@@ -232,25 +267,26 @@ func (selector *raylineARCSelector) prepareSelection(
 
 func (selector *raylineARCSelector) encode(
 	ctx context.Context,
+	armed *raylineARCArmedComponents,
 	arcContext *selection.RaylineARCSelectionContext,
 	state *raylinearc.EpisodeState,
 ) (*raylinearc.EncoderResult, time.Duration, error) {
 	// Admission is checked after the episode lease and before any encoder work,
 	// so a shed request never opens a session and never occupies the encoder.
-	release, admitErr := selector.admission.Acquire()
+	release, admitErr := armed.admission.Acquire()
 	if admitErr != nil {
-		selector.recordAdmission(false)
+		recordARCAdmission(armed.admission, false)
 		return nil, 0, boundedARCEncoderFailure(admitErr)
 	}
 	defer func() {
 		release()
-		metrics.SetRaylineARCEncoderInflight(selector.admission.Inflight())
+		metrics.SetRaylineARCEncoderInflight(armed.admission.Inflight())
 	}()
-	selector.recordAdmission(true)
+	recordARCAdmission(armed.admission, true)
 	started := selector.now()
 	var encoded *raylinearc.EncoderResult
 	var err error
-	if encoder, ok := selector.encoder.(raylineARCAffinityEncoder); ok {
+	if encoder, ok := armed.encoder.(raylineARCAffinityEncoder); ok {
 		encoded, err = encoder.EncodeWithAffinity(
 			ctx,
 			arcContext.EpisodeIDHash,
@@ -261,7 +297,7 @@ func (selector *raylineARCSelector) encode(
 			},
 		)
 	} else {
-		encoded, err = selector.encoder.Encode(
+		encoded, err = armed.encoder.Encode(
 			ctx,
 			arcContext.EpisodeIDHash,
 			arcContext.Turns,
@@ -274,11 +310,14 @@ func (selector *raylineARCSelector) encode(
 	return encoded, encoderLatency, nil
 }
 
-func (selector *raylineARCSelector) recordAdmission(admitted bool) {
+func recordARCAdmission(
+	admission *raylinearc.AdmissionGate,
+	admitted bool,
+) {
 	metrics.RecordRaylineARCEncoderAdmission(
 		admitted,
-		selector.admission.Inflight(),
-		selector.admission.HighWater(),
+		admission.Inflight(),
+		admission.HighWater(),
 	)
 }
 
@@ -318,6 +357,7 @@ func validARCDecision(
 }
 
 func (selector *raylineARCSelector) selectionResult(
+	armed *raylineARCArmedComponents,
 	selCtx *selection.SelectionContext,
 	arcContext *selection.RaylineARCSelectionContext,
 	state *raylinearc.EpisodeState,
@@ -346,9 +386,9 @@ func (selector *raylineARCSelector) selectionResult(
 			// The artifact ID and revision are deployment-private pins (the
 			// Helm profile sources the revision from a Secret); expose only
 			// stable hashes so telemetry can detect drift without leaking.
-			ArtifactID:           hashedARCIdentity(selector.scorer.ArtifactID()),
+			ArtifactID:           hashedARCIdentity(armed.scorer.ArtifactID()),
 			ArtifactRevision:     hashedARCIdentity(selector.artifactRevision),
-			EncoderRevision:      selector.scorer.EncoderRevision(),
+			EncoderRevision:      armed.scorer.EncoderRevision(),
 			EpisodeIDHash:        arcContext.EpisodeIDHash,
 			SelectedArm:          decision.SelectedArm,
 			PreviousArm:          cloneInt(state.PreviousArm),

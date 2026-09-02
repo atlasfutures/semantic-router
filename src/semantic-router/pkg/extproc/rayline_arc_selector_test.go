@@ -239,6 +239,70 @@ func TestRaylineARCOptionalSecretFailsClosedWithoutDisclosingReference(t *testin
 	}
 }
 
+// Fail-closed is the whole point of serving while not ready: an unarmed
+// selector must refuse every selection, and must not reach the encoder to do
+// it. Arming is what flips that, and nothing else.
+func TestRaylineARCSelectorFailsClosedUntilReadinessArmsIt(t *testing.T) {
+	state, err := raylinearc.NewEpisodeState(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	components := armedARCComponentsFixture()
+	encoder, ok := components.encoder.(*fakeARCEncoder)
+	if !ok {
+		t.Fatal("fixture encoder is not the fake")
+	}
+	selector := newRaylineARCSelector(nil, nil, nil, "artifact-revision")
+
+	_, err = selector.Select(
+		context.Background(),
+		validARCSelectionContext(state),
+	)
+	var failure *raylineARCSelectionFailure
+	if !errors.As(err, &failure) || failure.class != "not_ready" {
+		t.Fatalf("unarmed selection error = %v, want class not_ready", err)
+	}
+	if encoder.calls != 0 {
+		t.Fatalf("unarmed selector called the encoder %d times", encoder.calls)
+	}
+
+	selector.arm(components)
+
+	result, err := selector.Select(
+		context.Background(),
+		validARCSelectionContext(state),
+	)
+	if err != nil {
+		t.Fatalf("armed selection error = %v", err)
+	}
+	if result.SelectedModel != "worker-b" {
+		t.Fatalf("armed selection model = %q", result.SelectedModel)
+	}
+}
+
+func armedARCComponentsFixture() *raylineARCArmedComponents {
+	return &raylineARCArmedComponents{
+		scorer: &fakeARCScorer{
+			workerIDs: []string{"worker-a", "worker-b"},
+			decision: raylinearc.Decision{
+				SelectedArm:     1,
+				SelectedWorker:  "worker-b",
+				RawScores:       []float32{0.1, 0.9},
+				AdjustedScores:  []float32{0.1, 0.8},
+				SwitchCostUSD:   []float64{0, 0.01},
+				CacheMissTokens: []int{0, 100},
+			},
+		},
+		encoder: &fakeARCEncoder{
+			result: &raylinearc.EncoderResult{
+				Embedding:        make([]float32, 1024),
+				SerializedTokens: 120,
+				ModelRevision:    config.RaylineARCEncoderModelRevision,
+			},
+		},
+	}
+}
+
 func validARCSelectionContext(
 	state *raylinearc.EpisodeState,
 ) *selection.SelectionContext {
