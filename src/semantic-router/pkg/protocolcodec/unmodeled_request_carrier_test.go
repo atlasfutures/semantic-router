@@ -313,3 +313,115 @@ func TestAnthropicUnnamedVariantOfANamedBlockIsCarried(t *testing.T) {
 		})
 	}
 }
+
+// The Responses surface needs the same carrier at the input-item level: an
+// item type the contract does not name, and a modelled item carrying a member
+// it does not name, are both bodies the source API accepts.
+const responsesUnmodeledInputBody = `{
+  "model": "gpt-5",
+  "input": [
+    {"type": "message", "role": "user", "content": "patch it"},
+    {"type": "shell_call", "call_id": "sh_1", "status": "completed",
+     "action": {"type": "exec", "commands": ["go build ./..."]}},
+    {"type": "function_call", "call_id": "call_calc", "name": "calc", "arguments": "{}"},
+    {"type": "function_call_output", "call_id": "call_calc", "is_error": true, "output": "failed"}
+  ]
+}`
+
+func routeResponsesRequest(t *testing.T, body string, target llmprotocol.WireFormat) []byte {
+	t.Helper()
+	engine := NewBuiltinEngine()
+	request, envelope, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(body))
+	if err != nil {
+		t.Fatalf("DecodeRequestForMutation() error = %v", err)
+	}
+	request.Model = "selected-arm"
+	request.Generation++
+	result, err := engine.EncodeRequest(target, request, envelope)
+	if err != nil {
+		t.Fatalf("EncodeRequest(%s) error = %v", target, err)
+	}
+	return result.Body
+}
+
+func TestResponsesUnmodeledInputItemsReachTheSameFormat(t *testing.T) {
+	routed := routeResponsesRequest(t, responsesUnmodeledInputBody, llmprotocol.OpenAIResponsesV1)
+	for _, mark := range []string{`"shell_call"`, `"is_error":true`, `"patch it"`} {
+		if !bytes.Contains(routed, []byte(mark)) {
+			t.Fatalf("%s did not survive routing to the same wire format: %s", mark, routed)
+		}
+	}
+}
+
+func TestResponsesUnmodeledInputItemsDoNotReachAnotherFormat(t *testing.T) {
+	routed := routeResponsesRequest(t, responsesUnmodeledInputBody, llmprotocol.OpenAIChatV1)
+	if bytes.Contains(routed, []byte("shell_call")) {
+		t.Fatalf("an item the target cannot name reached it: %s", routed)
+	}
+	if !bytes.Contains(routed, []byte("patch it")) {
+		t.Fatalf("dropping the carried items also dropped the message beside them: %s", routed)
+	}
+}
+
+// A reasoning item with an empty summary decodes to a message with no content.
+// Refusing the request for it loses a conversation over an item that simply
+// says nothing, so the message is dropped instead.
+func TestResponsesEmptyReasoningItemDropsItsMessage(t *testing.T) {
+	body := `{
+	  "model": "gpt-5",
+	  "input": [
+	    {"type": "message", "role": "user", "content": "one"},
+	    {"type": "reasoning", "id": "r1", "summary": []},
+	    {"type": "message", "role": "user", "content": "two"}
+	  ]
+	}`
+	routed := routeResponsesRequest(t, body, llmprotocol.OpenAIResponsesV1)
+	for _, mark := range []string{"one", "two"} {
+		if !bytes.Contains(routed, []byte(mark)) {
+			t.Fatalf("%q was lost with the empty reasoning item: %s", mark, routed)
+		}
+	}
+}
+
+// A message role outside the three Anthropic Messages names is one the source
+// API decodes. It maps to the closest neutral role rather than refusing the
+// whole conversation.
+func TestAnthropicUnnamedRoleRoutes(t *testing.T) {
+	body := `{
+	  "model": "claude-sonnet-4-5",
+	  "max_tokens": 64,
+	  "messages": [
+	    {"role": "developer", "content": "tooling note"},
+	    {"role": "user", "content": "ask"},
+	    {"role": "tool", "content": "stray"}
+	  ]
+	}`
+	routed := routeAnthropicRequest(t, body, llmprotocol.AnthropicMessagesV1)
+	for _, mark := range []string{"tooling note", "ask", "stray"} {
+		if !bytes.Contains(routed, []byte(mark)) {
+			t.Fatalf("%q was lost with the unnamed role: %s", mark, routed)
+		}
+	}
+}
+
+// A redacted_thinking block is opaque ciphertext the client is required to echo
+// back unchanged. It cannot be modelled, so it takes the carrier like any other
+// block the contract does not name.
+func TestAnthropicRedactedThinkingIsCarried(t *testing.T) {
+	body := `{
+	  "model": "claude-sonnet-4-5",
+	  "max_tokens": 64,
+	  "messages": [
+	    {"role": "assistant", "content": [{"type": "redacted_thinking", "data": "ciphertext"}]},
+	    {"role": "user", "content": "go on"}
+	  ]
+	}`
+	routed := routeAnthropicRequest(t, body, llmprotocol.AnthropicMessagesV1)
+	if !bytes.Contains(routed, []byte(`"redacted_thinking"`)) || !bytes.Contains(routed, []byte("ciphertext")) {
+		t.Fatalf("the redacted block did not survive the round trip: %s", routed)
+	}
+	dropped := routeAnthropicRequest(t, body, llmprotocol.OpenAIChatV1)
+	if bytes.Contains(dropped, []byte("ciphertext")) {
+		t.Fatalf("provider ciphertext reached a format that cannot name it: %s", dropped)
+	}
+}

@@ -102,8 +102,8 @@
       "group": "A",
       "trigger": "function_call_output.is_error (unknown field on a modelled item)",
       "note": "Removing is_error decodes this body. Any field the neutral model does not name refuses the whole request.",
-      "current_code": "invalid_json",
-      "current_message": "request JSON contains a non-canonical field",
+      "current_code": "",
+      "current_message": "",
       "request": {
         "model": "demo-model",
         "input": [
@@ -472,8 +472,8 @@
       "surface": "openai.responses.v1",
       "group": "A",
       "trigger": "input item types apply_patch_call, apply_patch_call_output, shell_call, shell_call_output, mcp_list_tools",
-      "current_code": "unsupported_input_item",
-      "current_message": "Responses input item is unsupported",
+      "current_code": "",
+      "current_message": "",
       "request": {
         "model": "demo-model",
         "input": [
@@ -532,8 +532,8 @@
       "surface": "anthropic.messages.v1",
       "group": "B",
       "trigger": "message role developer and message role tool",
-      "current_code": "invalid_anthropic_role",
-      "current_message": "Anthropic message role must be system, user, or assistant",
+      "current_code": "",
+      "current_message": "",
       "request": {
         "model": "demo-model",
         "max_tokens": 64,
@@ -559,8 +559,8 @@
       "group": "A",
       "trigger": "content block type redacted_thinking on the request path",
       "note": "The block is opaque ciphertext that a client is required to send back unchanged. Refusing it on the request path breaks the conversation it belongs to.",
-      "current_code": "redacted_reasoning",
-      "current_message": "redacted reasoning cannot be translated",
+      "current_code": "",
+      "current_message": "",
       "request": {
         "model": "demo-model",
         "max_tokens": 64,
@@ -648,8 +648,8 @@
       "group": "A",
       "trigger": "reasoning input item whose summary is empty",
       "note": "The item yields a message with no content blocks, and a message with no content blocks is refused.",
-      "current_code": "empty_message",
-      "current_message": "messages must contain at least one content block",
+      "current_code": "",
+      "current_message": "",
       "request": {
         "model": "demo-model",
         "input": [
