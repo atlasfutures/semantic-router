@@ -7,6 +7,32 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 )
 
+// applyDispatchRequestParams runs the request_params plugin at provider
+// dispatch: first the upstream blocking and capping, then the floor. It lives
+// here rather than in the routing file so the floor keeps its own seam and the
+// routing hotspot keeps its size.
+func (r *OpenAIRouter) applyDispatchRequestParams(
+	request *llmprotocol.Request,
+	dispatch *providerDispatch,
+	ctx *RequestContext,
+) (bool, error) {
+	if ctx.VSRSelectedDecision == nil {
+		return false, nil
+	}
+	params := ctx.VSRSelectedDecision.GetRequestParamsConfig()
+	if params == nil {
+		return false, nil
+	}
+	recipe := ctx.Routing.RecipeName()
+	changed, err := r.applySemanticRequestParams(ctx.VSRSelectedDecision, request, recipe)
+	if err != nil {
+		return changed, err
+	}
+	decisionKey := config.RoutingDecisionKey(recipe, ctx.VSRSelectedDecision.Name)
+	raised := applyCompletionTokenFloor(params, request, dispatch.logicalModel, decisionKey)
+	return raised || changed, nil
+}
+
 // applyCompletionTokenFloor raises the completion budget to the floor the
 // selected model declares.
 //

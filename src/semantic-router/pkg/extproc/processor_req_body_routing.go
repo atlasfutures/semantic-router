@@ -142,28 +142,6 @@ func (r *OpenAIRouter) applyDispatchDecision(
 	return changed || injected, err
 }
 
-func (r *OpenAIRouter) applyDispatchRequestParams(
-	request *llmprotocol.Request,
-	dispatch *providerDispatch,
-	ctx *RequestContext,
-) (bool, error) {
-	if ctx.VSRSelectedDecision == nil {
-		return false, nil
-	}
-	params := ctx.VSRSelectedDecision.GetRequestParamsConfig()
-	if params == nil {
-		return false, nil
-	}
-	recipe := ctx.Routing.RecipeName()
-	changed, err := r.applySemanticRequestParams(ctx.VSRSelectedDecision, request, recipe)
-	if err != nil {
-		return changed, err
-	}
-	decisionKey := config.RoutingDecisionKey(recipe, ctx.VSRSelectedDecision.Name)
-	raised := applyCompletionTokenFloor(params, request, dispatch.logicalModel, decisionKey)
-	return raised || changed, nil
-}
-
 func wireFormatForModel(apiFormat string) (llmprotocol.WireFormat, error) {
 	switch strings.ToLower(strings.TrimSpace(apiFormat)) {
 	case "", config.APIFormatOpenAI, "openai.chat", string(llmprotocol.OpenAIChatV1):
