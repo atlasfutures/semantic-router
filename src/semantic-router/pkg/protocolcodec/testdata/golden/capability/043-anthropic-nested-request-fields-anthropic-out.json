@@ -48,10 +48,29 @@
     {
       "name": "document_content",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_document_source"
+        "status": "ok",
+        "body": {
+          "max_tokens": 32,
+          "messages": [
+            {
+              "content": [
+                {
+                  "source": {
+                    "content": [
+                      {
+                        "text": "document",
+                        "type": "text"
+                      }
+                    ],
+                    "type": "content"
+                  },
+                  "type": "document"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
         }
       }
     },

@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"bytes"
 	"encoding/json"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
@@ -40,10 +41,39 @@ func decodeAnthropicRequestContentBlock(body json.RawMessage, policy llmprotocol
 	if err != nil {
 		return llmprotocol.Content{}, err
 	}
-	if !anthropicModelledRequestContent[typeName] {
+	if !anthropicModelledRequestContent[typeName] || anthropicVariantIsUnnamed(typeName, body) {
 		return carriedAnthropicBlock(typeName, body), nil
 	}
 	return decodeAnthropicContentBlock(body, typeName, policy, false)
+}
+
+// anthropicVariantIsUnnamed reports whether a block the contract does name
+// holds a variant it does not. Those blocks are carried whole for the same
+// reason as an unnamed block type: the source API accepts the body, the Router
+// does not read the part in question, and refusing it loses the conversation.
+func anthropicVariantIsUnnamed(typeName string, body json.RawMessage) bool {
+	var block struct {
+		Input  json.RawMessage `json:"input"`
+		Source *struct {
+			Type string `json:"type"`
+		} `json:"source"`
+	}
+	if err := json.Unmarshal(body, &block); err != nil {
+		return false
+	}
+	switch typeName {
+	case "tool_use":
+		// The Anthropic API types tool_use.input as arbitrary JSON; the neutral
+		// tool call holds one object.
+		trimmed := bytes.TrimSpace(block.Input)
+		return len(trimmed) > 0 && trimmed[0] != '{'
+	case "document":
+		// A text or content document source is a document the neutral contract
+		// has no media reference for.
+		return block.Source != nil && (block.Source.Type == "text" || block.Source.Type == "content")
+	default:
+		return false
+	}
 }
 
 // anthropicModelledRequestContent lists the request blocks the neutral contract

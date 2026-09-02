@@ -46,11 +46,18 @@
     {
       "name": "document_content",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_document_source"
-        }
+        "status": "ok",
+        "body": {
+          "input": [],
+          "max_output_tokens": 32,
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "action": "dropped",
+            "field": "content.document"
+          }
+        ]
       }
     },
     {

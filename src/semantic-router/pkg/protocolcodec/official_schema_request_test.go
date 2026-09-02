@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -58,19 +59,19 @@ func TestOfficialAnthropicMediaSourceUnionIsClosed(t *testing.T) {
 		})
 	}
 
-	unsupported := []struct {
+	// A text or content document source has no neutral media reference, so the
+	// document block is carried whole rather than refused. The union stays
+	// closed: these two are the sources the contract does not model.
+	carried := []struct {
 		name   string
 		source map[string]any
 	}{
 		{"document/text", map[string]any{"type": "text", "media_type": "text/plain", "data": "plain text"}},
 		{"document/content", map[string]any{"type": "content", "content": []map[string]any{{"type": "text", "text": "document"}}}},
 	}
-	for _, test := range unsupported {
-		t.Run("unsupported/"+test.name, func(t *testing.T) {
-			assertAnthropicMediaSourceError(
-				t, engine, "document", test.source,
-				llmprotocol.ErrorUnsupportedFeature, "unsupported_document_source",
-			)
+	for _, test := range carried {
+		t.Run("carried/"+test.name, func(t *testing.T) {
+			assertAnthropicMediaSourceIsCarried(t, engine, "document", test.source)
 		})
 	}
 
@@ -587,5 +588,38 @@ func TestAnthropicRejectsOpenAIOnlyReasoningEfforts(t *testing.T) {
 			)
 			assertProtocolError(t, err, llmprotocol.ErrorUnsupportedFeature, "lossy_translation")
 		})
+	}
+}
+
+// assertAnthropicMediaSourceIsCarried states that a document source the neutral
+// contract does not model routes back to Anthropic with its source intact.
+func assertAnthropicMediaSourceIsCarried(
+	t *testing.T,
+	engine *Engine,
+	blockType string,
+	source map[string]any,
+) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"model": "m", "max_tokens": 16,
+		"messages": []map[string]any{{
+			"role": "user", "content": []map[string]any{{"type": blockType, "source": source}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, envelope, _, err := engine.DecodeRequestForMutation(llmprotocol.AnthropicMessagesV1, body)
+	if err != nil {
+		t.Fatalf("a routed-only document source was refused at ingress: %v", err)
+	}
+	request.Model = "selected-arm"
+	request.Generation++
+	result, err := engine.EncodeRequest(llmprotocol.AnthropicMessagesV1, request, envelope)
+	if err != nil {
+		t.Fatalf("a carried document could not be re-encoded: %v", err)
+	}
+	if !bytes.Contains(result.Body, []byte(`"`+source["type"].(string)+`"`)) {
+		t.Fatalf("the document source did not survive the round trip: %s", result.Body)
 	}
 }

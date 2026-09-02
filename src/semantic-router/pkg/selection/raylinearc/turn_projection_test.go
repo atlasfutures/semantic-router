@@ -69,8 +69,8 @@ type goldenExpectation struct {
 
 // turnProjectionExpectations classifies every case in the fixture.
 //
-// Counted on 2026-09-02 against the codec at this commit: 14 cases project, 8
-// reshape, 13 are rejected at ingress.
+// Counted on 2026-09-02 against the codec at this commit: 15 cases project, 9
+// reshape, 11 are rejected at ingress.
 //
 // Nine cases moved off rejected when the codec began carrying request blocks
 // it does not name. Five of them project byte for byte. Four reshape, and the
@@ -137,9 +137,12 @@ var turnProjectionExpectations = map[string]goldenExpectation{
 	// Rejected: shapes the fork routed. The codec models a narrower request
 	// union than the Anthropic and Responses request APIs accept, so every one
 	// of these answers 400 at ingress today.
-	"anthropic_tool_flow":              {disposition: dispositionProjected},
-	"openai_responses_tool_flow":       {disposition: dispositionCodecRejected, codecError: "invalid_json"},
-	"anthropic_python_scalar_coercion": {disposition: dispositionCodecRejected, codecError: "invalid_tool_call"},
+	"anthropic_tool_flow":        {disposition: dispositionProjected},
+	"openai_responses_tool_flow": {disposition: dispositionCodecRejected, codecError: "invalid_json"},
+	"anthropic_python_scalar_coercion": {
+		disposition: dispositionCodecReshaped,
+		turns:       []Turn{{Role: "assistant", Text: ""}},
+	},
 	"anthropic_compaction_summary": {
 		disposition: dispositionCodecReshaped,
 		turns:       []Turn{{Role: "user", Text: "continue"}},
@@ -156,7 +159,7 @@ var turnProjectionExpectations = map[string]goldenExpectation{
 	"responses_host_tool_items_drop":                    {disposition: dispositionCodecRejected, codecError: "unsupported_input_item"},
 	"anthropic_unknown_role_drops_whole":                {disposition: dispositionCodecRejected, codecError: "invalid_anthropic_role"},
 	"anthropic_all_blocks_dropped_is_empty_turn":        {disposition: dispositionCodecRejected, codecError: "redacted_reasoning"},
-	"anthropic_interleaved_rich_blocks_keep_order":      {disposition: dispositionCodecRejected, codecError: "unsupported_document_source"},
+	"anthropic_interleaved_rich_blocks_keep_order":      {disposition: dispositionProjected},
 	"responses_dropped_item_keeps_same_role_coalescing": {disposition: dispositionCodecRejected, codecError: "empty_message"},
 }
 
@@ -193,9 +196,9 @@ func TestTurnProjectionGoldens(t *testing.T) {
 			runTurnProjectionCase(t, engine, test, expectation)
 		})
 	}
-	if counts[dispositionProjected] != 14 ||
-		counts[dispositionCodecReshaped] != 8 ||
-		counts[dispositionCodecRejected] != 13 {
+	if counts[dispositionProjected] != 15 ||
+		counts[dispositionCodecReshaped] != 9 ||
+		counts[dispositionCodecRejected] != 11 {
 		t.Fatalf(
 			"disposition counts moved: projected=%d reshaped=%d rejected=%d",
 			counts[dispositionProjected],
