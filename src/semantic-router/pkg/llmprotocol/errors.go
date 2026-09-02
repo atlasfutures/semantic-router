@@ -39,10 +39,18 @@ func (err *ProtocolError) Error() string {
 	if err == nil {
 		return ""
 	}
+	message := err.Message
 	if err.Code != "" {
-		return fmt.Sprintf("%s: %s", err.Code, err.Message)
+		message = fmt.Sprintf("%s: %s", err.Code, err.Message)
 	}
-	return err.Message
+	// The cause names which member or value failed. Without it a decode
+	// failure reads only as "some field was non-canonical", which is not
+	// enough to find the field from a log line. Causes carry member names,
+	// Go types and JSON offsets; they never carry a decoded value.
+	if err.Cause != nil {
+		message += ": " + err.Cause.Error()
+	}
+	return message
 }
 
 func (err *ProtocolError) Unwrap() error {

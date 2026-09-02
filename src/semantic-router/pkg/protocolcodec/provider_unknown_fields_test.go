@@ -233,3 +233,24 @@ func TestNamedProviderFieldsKeepTheirShape(t *testing.T) {
 		t.Fatal("a named provider field with the wrong type was accepted")
 	}
 }
+
+// A refusal that still stands -- the request leg, the transport-error leg --
+// must say which member caused it. Without the cause the log reads only as
+// "some field was non-canonical", which does not locate the field.
+func TestRefusalNamesTheOffendingField(t *testing.T) {
+	engine := NewBuiltinEngine()
+	body := []byte(`{"model":"client-model","messages":[{"role":"user","content":"hello"}],"future_field":true}`)
+	_, err := engine.TranslateRequest(
+		llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1, body,
+		func(request *llmprotocol.Request) error {
+			request.Model = "routed-model"
+			return nil
+		},
+	)
+	if err == nil {
+		t.Fatal("an unknown client request field was accepted")
+	}
+	if !strings.Contains(err.Error(), `"future_field"`) {
+		t.Fatalf("error %q does not name the offending field", err)
+	}
+}
