@@ -1,0 +1,15 @@
+{
+  "error": {
+    "message": "No endpoints found that support image input",
+    "code": 404,
+    "metadata": {
+      "routing_funnel": [
+        {
+          "step": "Initial Endpoints",
+          "endpoint_count": 7
+        }
+      ],
+      "failed_routing_step": "Filter by Image Support"
+    }
+  }
+}
