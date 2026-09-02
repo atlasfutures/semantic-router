@@ -49,7 +49,7 @@ func registerRaylineARCSelector(
 	}
 	if readinessFailure != "" {
 		fields["failure_class"] = readinessFailure
-		fields["reprobing"] = readinessFailure == "encoder_probe"
+		fields["reprobing"] = readinessFailure == raylineARCEncoderProbeFailureClass
 		logging.ComponentErrorEvent("extproc", "rayline_arc_component_readiness", fields)
 	} else {
 		logging.ComponentEvent("extproc", "rayline_arc_component_readiness", fields)

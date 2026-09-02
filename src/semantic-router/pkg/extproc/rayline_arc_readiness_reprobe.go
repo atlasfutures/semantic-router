@@ -31,7 +31,17 @@ import (
 const (
 	defaultRaylineARCProbeRetryInitial = 5 * time.Second
 	defaultRaylineARCProbeRetryMax     = 60 * time.Second
+	// The startup probe holds the router's port shut while it runs, and Cloud
+	// Run allows 180 s on its own TCP startup probe. Thirty seconds answers a
+	// warm encoder many times over and leaves the platform budget intact when
+	// the encoder is cold.
+	defaultRaylineARCProbeStartupTimeout = 30 * time.Second
 )
+
+// raylineARCEncoderProbeFailureClass is the readiness class a failed or
+// timed-out encoder probe reports. It is produced in two places and matched in
+// a third, so it lives here rather than as three string literals.
+const raylineARCEncoderProbeFailureClass = "encoder_probe"
 
 // raylineARCReadinessProbeName is the session identity every readiness probe
 // uses, so the encoder sees one long-lived readiness session rather than one
@@ -42,6 +52,17 @@ const raylineARCReadinessProbeName = "semantic-router-startup-readiness"
 type raylineARCProbeBackoff struct {
 	initial time.Duration
 	max     time.Duration
+}
+
+// raylineARCStartupProbeTimeoutFromConfig bounds the synchronous startup
+// probe, defaulting when the deployment leaves the knob unset.
+func raylineARCStartupProbeTimeoutFromConfig(
+	encoder config.RaylineARCEncoderConfig,
+) time.Duration {
+	if encoder.ProbeStartupTimeoutSeconds <= 0 {
+		return defaultRaylineARCProbeStartupTimeout
+	}
+	return time.Duration(encoder.ProbeStartupTimeoutSeconds) * time.Second
 }
 
 // raylineARCProbeBackoffFromConfig reads the operator's schedule, filling in
@@ -107,6 +128,40 @@ func raylineARCReprobe(
 			delay = backoff.max
 		}
 	}
+}
+
+// raylineARCArmOrRecover runs the one synchronous readiness probe under a
+// bound and decides which way readiness goes.
+//
+// The bound is the point of this function. The router does not open its port
+// until readiness returns, so an unbounded probe against a cold encoder holds
+// the port shut past the platform's own startup budget and the instance is
+// killed before it can recover. A probe that outruns the bound is therefore
+// treated exactly as a failed probe: the selector stays unarmed, the process
+// stays up and fails closed, and the recovery loop takes over. Recovery
+// attempts are not bounded this way, so a cold encoder is answered by the
+// first recovery attempt and arms the selector.
+//
+// It returns the readiness failure class, empty when the probe armed the
+// selector on the spot.
+func raylineARCArmOrRecover(
+	ctx context.Context,
+	selector *raylineARCSelector,
+	armed *raylineARCArmedComponents,
+	probe func(context.Context) error,
+	startupTimeout time.Duration,
+	backoff raylineARCProbeBackoff,
+	wait func(context.Context, time.Duration) bool,
+) string {
+	startupContext, cancelStartup := context.WithTimeout(ctx, startupTimeout)
+	probeErr := probe(startupContext)
+	cancelStartup()
+	if probeErr == nil {
+		selector.arm(armed)
+		return ""
+	}
+	go raylineARCRecoverReadiness(ctx, selector, armed, probe, backoff, wait)
+	return raylineARCEncoderProbeFailureClass
 }
 
 // raylineARCRecoverReadiness turns a failed startup probe into a recoverable

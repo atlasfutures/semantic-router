@@ -157,6 +157,49 @@ func raylineARCInvalidContracts() []raylineARCInvalidContract {
 // predates it leaves it unset, and unset means the shipped default rather
 // than a zero-second hot loop. What it may not be is negative, or so long
 // that an instance would sit unready past any real outage.
+// The startup probe bound must stay well inside Cloud Run's 180 s TCP startup
+// budget, because the router holds its port shut until readiness returns.
+func TestValidateRaylineARCAlgorithmConfigChecksProbeStartupTimeout(t *testing.T) {
+	tests := []struct {
+		name    string
+		seconds int
+		wantErr string
+	}{
+		{name: "unset", seconds: 0},
+		{name: "shipped default", seconds: 30},
+		{
+			name:    "at the bound",
+			seconds: maxRaylineARCProbeStartupTimeoutSeconds,
+		},
+		{name: "negative", seconds: -1, wantErr: "must be between 0 and"},
+		{
+			name:    "past the platform startup budget",
+			seconds: maxRaylineARCProbeStartupTimeoutSeconds + 1,
+			wantErr: "must be between 0 and",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			decision := validRaylineARCDecision()
+			decision.Algorithm.RaylineARC.Encoder.ProbeStartupTimeoutSeconds = test.seconds
+			err := validateDecisionAlgorithmConfig(
+				decision.Name,
+				decision.ModelRefs,
+				decision.Algorithm,
+			)
+			if test.wantErr == "" {
+				if err != nil {
+					t.Fatalf("error = %v, want accepted", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("error = %v, want substring %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestValidateRaylineARCAlgorithmConfigChecksProbeRetrySchedule(t *testing.T) {
 	tests := []struct {
 		name    string

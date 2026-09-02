@@ -152,22 +152,19 @@ func probeRaylineARCReadiness(
 	probe := func(ctx context.Context) error {
 		return encoder.Probe(ctx, raylineARCReadinessProbeName)
 	}
-	if probe(probeContext) != nil {
-		// A transient encoder rejection at boot used to pin the instance dead
-		// for its lifetime. Keep the process up and failing closed, and let
-		// the recovery loop arm it when the encoder answers.
-		go raylineARCRecoverReadiness(
-			probeContext,
-			selector,
-			armed,
-			probe,
-			raylineARCProbeBackoffFromConfig(arcConfig.Encoder),
-			raylineARCWait,
-		)
-		return selector, episodeStore, closeResources, closeSession, "encoder_probe"
-	}
-	selector.arm(armed)
-	return selector, episodeStore, closeResources, closeSession, ""
+	// A transient rejection or a cold encoder at boot must not pin the
+	// instance dead for its lifetime, and the probe must not hold the port
+	// shut long enough for the platform to kill the container first.
+	failureClass := raylineARCArmOrRecover(
+		probeContext,
+		selector,
+		armed,
+		probe,
+		raylineARCStartupProbeTimeoutFromConfig(arcConfig.Encoder),
+		raylineARCProbeBackoffFromConfig(arcConfig.Encoder),
+		raylineARCWait,
+	)
+	return selector, episodeStore, closeResources, closeSession, failureClass
 }
 
 func raylineARCLoadedContractFailure(
