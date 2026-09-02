@@ -1,8 +1,8 @@
 package protocolcodec
 
 import (
+	"bytes"
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -20,6 +20,7 @@ const (
 	openRouterResponse          = "chat-response.json"
 	openRouterResponseReasoning = "chat-response-reasoning.json"
 	openRouterStream            = "chat-stream.sse"
+	openRouterStreamReasoning   = "chat-stream-reasoning.sse"
 )
 
 func loadProviderFixture(t *testing.T, name string) []byte {
@@ -79,81 +80,136 @@ func TestOpenRouterResponsePassesThroughChat(t *testing.T) {
 	}
 }
 
-// providerStreamFrames splits the captured SSE body into wire frames. The
-// terminal frame is returned separately: OpenRouter repeats the stop choice on
-// the chunk that carries usage, and a repeated stop is a second defect that
-// this change does not address.
-func providerStreamFrames(t *testing.T) (frames []string, terminal string) {
-	t.Helper()
-	for _, frame := range strings.SplitAfter(string(loadProviderFixture(t, openRouterStream)), "\n\n") {
-		if strings.TrimSpace(frame) == "" {
-			continue
-		}
-		frames = append(frames, frame)
-	}
-	if len(frames) < 2 {
-		t.Fatalf("stream fixture has %d frames, want the content frames and a terminal usage frame", len(frames))
-	}
-	return frames[:len(frames)-2], frames[len(frames)-2]
+// The two captured streams are the reasoning arms of the arc cell. Both end
+// the same way: a chunk with finish_reason "stop" and an empty delta, then a
+// SECOND chunk repeating that finish_reason with another empty delta and the
+// usage object, then [DONE].
+var providerStreams = map[string]struct {
+	fixture                        string
+	promptTokens, completionTokens int64
+	totalTokens                    int64
+}{
+	openRouterStream:          {openRouterStream, 11, 68, 79},
+	openRouterStreamReasoning: {openRouterStreamReasoning, 258, 22, 280},
 }
 
-func newProviderStream(t *testing.T, target llmprotocol.WireFormat) *StreamEngine {
+// runProviderStream drives the whole pipeline over one captured stream: every
+// frame including the trailing usage chunk and [DONE], nothing withheld.
+func runProviderStream(t *testing.T, fixture string, target llmprotocol.WireFormat) ([]byte, []llmprotocol.Event) {
 	t.Helper()
 	stream, err := NewBuiltinEngine().NewStream(llmprotocol.OpenAIChatV1, target, llmprotocol.StreamContext{
-		Context: context.Background(), PublicModel: "public-model", ProviderModel: "deepseek/deepseek-v4-pro",
+		Context: context.Background(), PublicModel: "public-model", ProviderModel: "provider-model",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return stream
+	frames, events, _, pushErr := stream.Push(loadProviderFixture(t, fixture))
+	if pushErr != nil {
+		t.Fatalf("push %s: %v", fixture, pushErr)
+	}
+	finalFrames, finalEvents, _, finalErr := stream.Finalize(nil)
+	if finalErr != nil {
+		t.Fatalf("finalize %s: %v", fixture, finalErr)
+	}
+	return append(bytes.Join(frames, nil), bytes.Join(finalFrames, nil)...), append(events, finalEvents...)
 }
 
-// Every content frame of a real OpenRouter stream must decode. Each one names
-// provider, native_finish_reason and, while the model is thinking,
-// reasoning_details.
-func pushProviderStreamContent(t *testing.T, target llmprotocol.WireFormat) {
+// terminalUsage returns the usage the stream settled on, from its completion
+// event. The trailing chunk is the only frame that carries token counts, so an
+// absent or zero usage here means the stream died before ingesting it.
+func terminalUsage(t *testing.T, events []llmprotocol.Event) llmprotocol.Usage {
 	t.Helper()
-	stream := newProviderStream(t, target)
-	frames, _ := providerStreamFrames(t)
-	for _, frame := range frames {
-		if _, _, _, err := stream.Push([]byte(frame)); err != nil {
-			t.Fatalf("push frame %.160q: %v", frame, err)
+	for _, event := range events {
+		if event.Type == llmprotocol.EventResponseCompleted && event.Usage != nil {
+			return *event.Usage
+		}
+	}
+	t.Fatal("stream emitted no completion event carrying usage")
+	return llmprotocol.Usage{}
+}
+
+// An Anthropic client must see the whole terminal sequence: the text block
+// closes, then message_delta carries the stop reason and usage, then
+// message_stop. Before this fix the stream died after content_block_stop.
+func TestOpenRouterStreamCompletesForAnthropicClients(t *testing.T) {
+	for name, want := range providerStreams {
+		t.Run(name, func(t *testing.T) {
+			body, events := runProviderStream(t, want.fixture, llmprotocol.AnthropicMessagesV1)
+			for _, marker := range []string{"event: content_block_stop", "event: message_delta", "event: message_stop"} {
+				if !bytes.Contains(body, []byte(marker)) {
+					t.Fatalf("Anthropic stream is missing %q:\n%s", marker, body)
+				}
+			}
+			if bytes.Index(body, []byte("event: message_delta")) > bytes.Index(body, []byte("event: message_stop")) {
+				t.Fatal("Anthropic stream emitted message_stop before message_delta")
+			}
+			assertStreamUsage(t, terminalUsage(t, events), want.promptTokens, want.completionTokens, want.totalTokens)
+		})
+	}
+}
+
+// A Chat client must see its own terminal chunk and the [DONE] sentinel.
+func TestOpenRouterStreamCompletesForChatClients(t *testing.T) {
+	for name, want := range providerStreams {
+		t.Run(name, func(t *testing.T) {
+			body, events := runProviderStream(t, want.fixture, llmprotocol.OpenAIChatV1)
+			if !bytes.Contains(body, []byte(`"finish_reason":"stop"`)) {
+				t.Fatalf("Chat stream never emitted a terminal chunk:\n%s", body)
+			}
+			if !bytes.Contains(body, []byte("data: [DONE]")) {
+				t.Fatalf("Chat stream never emitted [DONE]:\n%s", body)
+			}
+			assertStreamUsage(t, terminalUsage(t, events), want.promptTokens, want.completionTokens, want.totalTokens)
+		})
+	}
+}
+
+func assertStreamUsage(t *testing.T, usage llmprotocol.Usage, prompt, completion, total int64) {
+	t.Helper()
+	if usage.State != llmprotocol.UsageAvailable {
+		t.Fatalf("usage state = %q, want the trailing chunk's counts to be available", usage.State)
+	}
+	for _, count := range []struct {
+		name string
+		got  llmprotocol.TokenCount
+		want int64
+	}{
+		{"input total", usage.InputTotal, prompt},
+		{"output total", usage.OutputTotal, completion},
+		{"total", usage.Total, total},
+	} {
+		if count.got.Value == nil {
+			t.Fatalf("%s is absent, want %d from the trailing chunk", count.name, count.want)
+		}
+		if *count.got.Value != count.want {
+			t.Fatalf("%s = %d, want %d from the trailing chunk", count.name, *count.got.Value, count.want)
 		}
 	}
 }
 
-func TestOpenRouterStreamTranslatesToAnthropic(t *testing.T) {
-	pushProviderStreamContent(t, llmprotocol.AnthropicMessagesV1)
-}
-
-func TestOpenRouterStreamPassesThroughChat(t *testing.T) {
-	pushProviderStreamContent(t, llmprotocol.OpenAIChatV1)
-}
-
-// The terminal usage frame carries the four accounting members OpenRouter adds
-// -- cost, is_byok, cost_details and the two token-detail additions -- and it
-// must no longer fail on any of them. It still fails, on the repeated stop
-// choice that precedes the usage in the same chunk. That is the next defect on
-// this path and it is deliberately not fixed here; this test pins which of the
-// two failures the frame produces, so the fix for the other one flips it.
-func TestOpenRouterTerminalUsageFrameNoLongerFailsOnFieldNames(t *testing.T) {
-	stream := newProviderStream(t, llmprotocol.OpenAIChatV1)
-	frames, terminal := providerStreamFrames(t)
-	for _, frame := range frames {
-		if _, _, _, err := stream.Push([]byte(frame)); err != nil {
-			t.Fatalf("push frame %.160q: %v", frame, err)
-		}
+// A delta that carries anything after its choice has finished is still a
+// lifecycle error. Only an empty one is a no-op.
+func TestNonEmptyDeltaAfterFinishStaysAnError(t *testing.T) {
+	stream, err := NewBuiltinEngine().NewStream(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1, llmprotocol.StreamContext{
+		Context: context.Background(), PublicModel: "public-model", ProviderModel: "provider-model",
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	_, _, _, err := stream.Push([]byte(terminal))
-	var protocolError *llmprotocol.ProtocolError
-	if !errors.As(err, &protocolError) {
-		t.Fatalf("terminal frame error is %v, want a protocol error", err)
+	head := `{"id":"c1","object":"chat.completion.chunk","created":1,"model":"provider-model","choices":[{"index":0,`
+	if _, _, _, pushErr := stream.Push([]byte(
+		"data: " + head + `"delta":{"content":"hi","role":"assistant"},"finish_reason":null}]}` + "\n\n" +
+			"data: " + head + `"delta":{"content":"","role":"assistant"},"finish_reason":"stop"}]}` + "\n\n",
+	)); pushErr != nil {
+		t.Fatalf("push: %v", pushErr)
 	}
-	if protocolError.Code == "invalid_upstream_json" {
-		t.Fatal("the terminal usage frame still fails on a provider field name")
+	_, _, _, pushErr := stream.Push([]byte(
+		"data: " + head + `"delta":{"content":"more","role":"assistant"},"finish_reason":"stop"}]}` + "\n\n"))
+	if pushErr == nil {
+		t.Fatal("a non-empty delta after finish was accepted")
 	}
-	if protocolError.Code != "invalid_item_lifecycle" {
-		t.Fatalf("terminal frame code is %q, want the repeated-stop lifecycle failure", protocolError.Code)
+	if !strings.Contains(pushErr.Error(), "invalid_item_lifecycle") {
+		t.Fatalf("error = %v, want invalid_item_lifecycle", pushErr)
 	}
 }
 
