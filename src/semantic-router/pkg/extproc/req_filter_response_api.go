@@ -414,18 +414,9 @@ func createImmediateJSONResponse(statusCode int, body []byte) *ext_proc.Processi
 	}
 }
 
-// statusCodeToEnumForResponseAPI converts HTTP status code to Envoy enum.
+// statusCodeToEnumForResponseAPI converts an HTTP status code to the Envoy
+// enum. The Response API answers the same statuses as every other path, so it
+// shares the one mapping rather than carrying a narrower table of its own.
 func statusCodeToEnumForResponseAPI(statusCode int) typev3.StatusCode {
-	switch statusCode {
-	case 200:
-		return typev3.StatusCode_OK
-	case 400:
-		return typev3.StatusCode_BadRequest
-	case 404:
-		return typev3.StatusCode_NotFound
-	case 500:
-		return typev3.StatusCode_InternalServerError
-	default:
-		return typev3.StatusCode_OK
-	}
+	return statusCodeToEnum(statusCode)
 }

@@ -169,26 +169,32 @@ func joinAssistantContentParts(
 	return strings.Join(textParts, " ")
 }
 
-var httpStatusToEnvoyCode = map[int]typev3.StatusCode{
-	200: typev3.StatusCode_OK,
-	400: typev3.StatusCode_BadRequest,
-	401: typev3.StatusCode_Unauthorized,
-	403: typev3.StatusCode_Forbidden,
-	404: typev3.StatusCode_NotFound,
-	405: typev3.StatusCode_MethodNotAllowed,
-	413: typev3.StatusCode_PayloadTooLarge,
-	422: typev3.StatusCode_UnprocessableEntity,
-	429: typev3.StatusCode_TooManyRequests,
-	500: typev3.StatusCode_InternalServerError,
-	502: typev3.StatusCode_BadGateway,
-	503: typev3.StatusCode_ServiceUnavailable,
-}
-
+// statusCodeToEnum maps an HTTP status onto the Envoy status enum.
+//
+// The enum's values are the HTTP status codes themselves, so any status Envoy
+// defines is carried through unchanged. A lookup table adds nothing here and
+// costs something: whatever it omits used to fall through to OK.
+//
+// Envoy validates this field as defined_only and rejects the zero value, so a
+// status it has no value for cannot be sent as itself. 499, which this router
+// raises on a client cancel, is the one that reaches here. Such a status
+// degrades to the nearest defined code of its own class. It must never degrade
+// to a success: a caller reads 200 as a result and parses the error body as
+// one.
 func statusCodeToEnum(statusCode int) typev3.StatusCode {
-	if code, ok := httpStatusToEnvoyCode[statusCode]; ok {
-		return code
+	if statusCode > 0 && statusCode < 600 {
+		if _, defined := typev3.StatusCode_name[int32(statusCode)]; defined {
+			return typev3.StatusCode(statusCode) // #nosec G115 -- bounded above.
+		}
 	}
-	return typev3.StatusCode_OK
+	switch {
+	case statusCode >= 400 && statusCode < 500:
+		return typev3.StatusCode_BadRequest
+	case statusCode >= 500 && statusCode < 600:
+		return typev3.StatusCode_BadGateway
+	default:
+		return typev3.StatusCode_InternalServerError
+	}
 }
 
 // isSafeImageDataURL returns true only for inline base64-encoded image data URIs
