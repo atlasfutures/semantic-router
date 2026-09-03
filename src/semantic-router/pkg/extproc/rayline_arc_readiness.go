@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -46,6 +47,7 @@ func createRaylineARCSelector(
 		return nil, nil, nil, nil, ""
 	}
 	arcConfig := decisions[0].Algorithm.RaylineARC
+	warnFaultInjectionEnabled(decisions)
 	unavailable := func(class string) (
 		selection.Selector,
 		raylinearc.EpisodeStore,
@@ -519,6 +521,21 @@ func raylineARCOptionalSecret(name string) (string, error) {
 		return "", errors.New("ARC encoder credential environment is unset")
 	}
 	return value, nil
+}
+
+// warnFaultInjectionEnabled says so in the boot log when a cell has been
+// given the fault affordance. While it is on, any caller who knows the header
+// can make this cell refuse a request, so the setting must never be something
+// an operator has to read the config to discover.
+func warnFaultInjectionEnabled(decisions []*config.Decision) {
+	for _, decision := range decisions {
+		if !decision.Algorithm.RaylineARC.FaultInjection.Enabled {
+			continue
+		}
+		logging.ComponentWarnEvent("extproc", "fault_injection_enabled", map[string]interface{}{
+			"decision": decision.Name,
+		})
+	}
 }
 
 func configuredRaylineARCDecisions(

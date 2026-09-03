@@ -129,3 +129,27 @@ func TestFaultInjectionHeaderIsStrippedBeforeDispatch(t *testing.T) {
 		t.Fatalf("removal list %q does not strip %s", removed, headers.VSRFault)
 	}
 }
+
+// A cell that has been given the fault affordance says so at boot. The setting
+// must never be something an operator has to read the config to discover.
+func TestFaultInjectionEnabledIsAnnouncedAtStartup(t *testing.T) {
+	enabled := &config.Decision{
+		Name: "rayline-arc-dev",
+		Algorithm: &config.AlgorithmConfig{
+			Type: config.RaylineARCAlgorithmType,
+			RaylineARC: &config.RaylineARCAlgorithmConfig{
+				FaultInjection: config.RaylineARCFaultInjectionConfig{Enabled: true},
+			},
+		},
+	}
+	disabled := &config.Decision{
+		Name: "rayline-arc-prod",
+		Algorithm: &config.AlgorithmConfig{
+			Type:       config.RaylineARCAlgorithmType,
+			RaylineARC: &config.RaylineARCAlgorithmConfig{},
+		},
+	}
+	// The warning walks every configured decision and reports only the opted-in
+	// ones. It must not panic on a decision that never opted in.
+	warnFaultInjectionEnabled([]*config.Decision{disabled, enabled, disabled})
+}

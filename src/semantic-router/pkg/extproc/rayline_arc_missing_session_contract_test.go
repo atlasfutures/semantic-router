@@ -54,7 +54,7 @@ func TestMissingSessionHeaderMessageSurvivesClientEncoding(t *testing.T) {
 				t.Fatalf("status = %d, want 400", got)
 			}
 			message, errorType := immediateErrorBody(t, immediate.GetBody())
-			want := "This request needs an " + testEpisodeIDHeader + " header."
+			want := "This request needs the " + testEpisodeIDHeader + " header."
 			if message != want {
 				t.Fatalf("message = %q, want %q", message, want)
 			}

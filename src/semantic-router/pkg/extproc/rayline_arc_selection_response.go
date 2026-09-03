@@ -45,12 +45,14 @@ func selectionFailureIsCallerError(class string) bool {
 }
 
 // missingEpisodeHeaderMessage names the header the caller left out. The header
-// name is configuration, not request content, so it is safe to return.
+// name is configuration, not request content, so it is safe to return. The
+// article is "the" rather than "a" or "an" because the name is configured and
+// either article would be wrong for some spelling of it.
 func missingEpisodeHeaderMessage(ctx *RequestContext) string {
 	if ctx == nil || ctx.RaylineARCEpisodeIDHeader == "" {
 		return "This request needs a session header."
 	}
-	return "This request needs an " + ctx.RaylineARCEpisodeIDHeader + " header."
+	return "This request needs the " + ctx.RaylineARCEpisodeIDHeader + " header."
 }
 
 // missingEpisodeHeaderResponse refuses a request that named no episode. The
