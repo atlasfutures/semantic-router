@@ -365,9 +365,15 @@ func reportChangedFinishReason(first, trailing llmprotocol.StopReason) {
 	})
 }
 
+// An empty string is not model output. A provider that always sends a field
+// fills it with one, and reading that as a delta opens a content block that
+// never receives a delta. On a thinking arm, where every reasoning chunk also
+// carries content:"", it opens one such block per token. So a block is opened
+// only by text that says something.
 func chatChoiceNeedsItem(choice chatChunkChoiceWire) bool {
-	return choice.Delta.Content != nil || len(choice.Delta.Annotations) > 0 ||
-		choice.Delta.Reasoning != nil || choice.Delta.AlternateReasoning != nil || choice.Delta.Refusal != nil
+	return !emptyChatDeltaText(choice.Delta.Content) || len(choice.Delta.Annotations) > 0 ||
+		!emptyChatDeltaText(choice.Delta.Reasoning) || !emptyChatDeltaText(choice.Delta.AlternateReasoning) ||
+		choice.Delta.Refusal != nil
 }
 
 type chatEventFactory func() ([]llmprotocol.Event, error)
@@ -382,7 +388,7 @@ func (decoder *chatStreamDecoder) chatChoiceEventFactories(choice chatChunkChoic
 }
 
 func (decoder *chatStreamDecoder) decodeContentDelta(choice chatChunkChoiceWire) ([]llmprotocol.Event, error) {
-	if choice.Delta.Content == nil {
+	if emptyChatDeltaText(choice.Delta.Content) {
 		return nil, nil
 	}
 	content := llmprotocol.Content{Kind: llmprotocol.ContentText, Text: *choice.Delta.Content}
@@ -396,10 +402,10 @@ func (decoder *chatStreamDecoder) decodeContentDelta(choice chatChunkChoiceWire)
 
 func (decoder *chatStreamDecoder) decodeReasoningDelta(choice chatChunkChoiceWire) ([]llmprotocol.Event, error) {
 	reasoning := choice.Delta.Reasoning
-	if reasoning == nil {
+	if emptyChatDeltaText(reasoning) {
 		reasoning = choice.Delta.AlternateReasoning
 	}
-	if reasoning == nil {
+	if emptyChatDeltaText(reasoning) {
 		return nil, nil
 	}
 	content := llmprotocol.Content{
