@@ -1,8 +1,8 @@
 package protocolcodec
 
 import (
-	"sort"
 	"encoding/json"
+	"sort"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
