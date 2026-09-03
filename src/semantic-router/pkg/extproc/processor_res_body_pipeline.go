@@ -21,6 +21,9 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 ) *ext_proc.ProcessingResponse {
 	usage := invalidResponseTerminalUsage("authoritative_usage_missing")
 	semanticResponse, err := r.decodeClientResponse(responseBody, ctx)
+	if err == nil {
+		err = injectedDecodeFailure(ctx)
+	}
 	if err != nil {
 		metrics.RecordRequestError(ctx.RequestModel, "parse_error")
 		logging.ComponentErrorEvent("extproc", "neutral_response_decode_failed", map[string]interface{}{
@@ -63,6 +66,26 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	r.updateRouterReplayHallucinationStatus(ctx)
 	r.attachRouterReplayResponse(ctx, finalBody, true)
 	return response
+}
+
+// injectedDecodeFailure turns a request that asked to fail into a decode
+// failure, after the upstream call has happened and its body has been read.
+// The point is the body phase: a fault that short-circuited earlier would
+// exercise a path no real failure takes.
+func injectedDecodeFailure(ctx *RequestContext) error {
+	if ctx == nil || ctx.InjectedFault != headers.FaultUpstreamDecode {
+		return nil
+	}
+	logging.ComponentWarnEvent("extproc", "fault_injected", map[string]interface{}{
+		"fault":      ctx.InjectedFault,
+		"request_id": ctx.RequestID,
+	})
+	return llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamUnavailable,
+		"fault_upstream_decode",
+		"upstream response was refused by an injected fault",
+		nil,
+	)
 }
 
 // upstreamDecodeFailureResponse answers a response the codec could not

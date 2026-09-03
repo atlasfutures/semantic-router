@@ -166,7 +166,7 @@ func (r *OpenAIRouter) buildProviderDispatchResponse(
 		setHeaders: r.startUpstreamSpanAndInjectHeaders(
 			dispatch.logicalModel, dispatch.backendAddress, ctx,
 		),
-		removeHeaders: []string{"content-length"},
+		removeHeaders: append([]string{"content-length"}, faultInjectionHeadersForRemoval()...),
 		profile:       dispatch.profile,
 	}
 	if errorResponse := r.appendProviderCredential(

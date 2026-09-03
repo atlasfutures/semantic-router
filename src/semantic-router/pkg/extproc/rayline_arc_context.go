@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
@@ -33,6 +34,20 @@ import (
 // episode. It is the caller's omission rather than a router failure, which is
 // what separates it from every other preparation class.
 const arcFailureMissingEpisodeID = "missing_episode_id"
+
+// requestedFault reads the failure this request asked for. It answers empty
+// unless the cell opted in, so the header is inert everywhere else and no
+// caller can make a serving cell refuse a request. It is read once, here, and
+// every later phase reads the answer rather than the header.
+func requestedFault(arc *config.RaylineARCAlgorithmConfig, reqCtx *RequestContext) string {
+	if arc == nil || !arc.FaultInjection.Enabled {
+		return ""
+	}
+	if strings.TrimSpace(reqCtx.Headers[headers.VSRFault]) == headers.FaultUpstreamDecode {
+		return headers.FaultUpstreamDecode
+	}
+	return ""
+}
 
 func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	algorithm *config.AlgorithmConfig,
@@ -49,6 +64,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		result.PreparationFailure = "missing_request"
 		return result
 	}
+	reqCtx.InjectedFault = requestedFault(algorithm.RaylineARC, reqCtx)
 	rawEpisodeID := strings.TrimSpace(
 		reqCtx.Headers[algorithm.RaylineARC.Episode.IDHeader],
 	)
