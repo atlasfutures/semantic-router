@@ -125,6 +125,7 @@ decisions:
           max_n: 1
           min_completion_tokens_by_model:
             test_model: 128
+          send_upstream_session_id: true
           strip_unknown: true
       - type: "response_jailbreak"
         configuration:

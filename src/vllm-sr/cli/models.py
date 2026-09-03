@@ -915,6 +915,10 @@ class RequestParamsPluginConfig(BaseModel):
     # keeps a client from asking for too much; this keeps a reasoning model from
     # truncating its answer inside a budget sized for a plain one.
     min_completion_tokens_by_model: Optional[Dict[str, int]] = None
+    # Sends the router's own episode id hash as the upstream session_id, so a
+    # provider that routes by session keeps the conversation on one endpoint.
+    # OpenRouter is the only backend that reads it.
+    send_upstream_session_id: Optional[bool] = None
     strip_unknown: Optional[bool] = None
 
 
