@@ -28,6 +28,16 @@ func missingSessionModelRefs() []config.ModelRef {
 	return refs
 }
 
+// raylineARCAlgorithmConfigForTest is the fail-closed ARC algorithm the
+// bounded-class assertions need, without an episode store behind it.
+func raylineARCAlgorithmConfigForTest() *config.AlgorithmConfig {
+	return &config.AlgorithmConfig{
+		Type:       config.RaylineARCAlgorithmType,
+		OnError:    "fail_closed",
+		RaylineARC: &config.RaylineARCAlgorithmConfig{},
+	}
+}
+
 func missingSessionRequestContext(t *testing.T, header string) (*OpenAIRouter, *RequestContext, *config.AlgorithmConfig) {
 	t.Helper()
 	store, err := raylinearc.NewMemoryEpisodeStore(raylinearc.MemoryEpisodeStoreConfig{
