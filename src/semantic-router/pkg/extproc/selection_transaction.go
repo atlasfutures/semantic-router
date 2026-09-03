@@ -409,6 +409,14 @@ func recordSelectionLifecycleFailure(
 	if ctx != nil && ctx.SelectionTransaction != nil {
 		kind = ctx.SelectionTransaction.kind
 	}
+	if kind == "" {
+		// A failure before the transaction exists still belongs to an
+		// algorithm, and the log line is only keyable if it says which.
+		var failure *modelSelectionFailure
+		if errors.As(err, &failure) {
+			kind = failure.algorithm
+		}
+	}
 	logSelectionTransactionFailure(kind, stage, err)
 }
 

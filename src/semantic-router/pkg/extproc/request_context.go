@@ -78,8 +78,12 @@ type RequestContext struct {
 	StreamingComplete      bool // True after neutral stream finalization runs once.
 	StreamingAborted       bool // True if the neutral stream ended abnormally.
 	ProtocolResponseStream *protocolcodec.StreamEngine
-	PublicChatUsageFilter  *protocolcodec.ChatUsageStreamFilter
-	SemanticStreamState    *semanticResponseStreamState
+	// RaylineARCEpisodeIDHeader names the header an ARC episode is keyed by.
+	// It is set when preparation fails for want of it, so the refusal can
+	// tell the caller which header to send.
+	RaylineARCEpisodeIDHeader string
+	PublicChatUsageFilter     *protocolcodec.ChatUsageStreamFilter
+	SemanticStreamState       *semanticResponseStreamState
 
 	// UpstreamStatusCode is the HTTP status the upstream returned, captured at
 	// the response-header phase. Zero means the status was never observed for

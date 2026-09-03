@@ -79,8 +79,12 @@ func TestRaylineARCMissingSessionHeaderIsPreparationFailure(t *testing.T) {
 			if arcContext == nil {
 				t.Fatal("no ARC selection context was built")
 			}
-			if arcContext.PreparationFailure != "missing_episode_id" {
-				t.Fatalf("preparation failure = %q, want missing_episode_id", arcContext.PreparationFailure)
+			if arcContext.PreparationFailure != arcFailureMissingEpisodeID {
+				t.Fatalf("preparation failure = %q, want %q", arcContext.PreparationFailure, arcFailureMissingEpisodeID)
+			}
+			if requestContext.RaylineARCEpisodeIDHeader != testEpisodeIDHeader {
+				t.Fatalf("header name = %q, want the configured header so the refusal can name it",
+					requestContext.RaylineARCEpisodeIDHeader)
 			}
 		})
 	}
@@ -91,9 +95,9 @@ func TestRaylineARCMissingSessionHeaderIsPreparationFailure(t *testing.T) {
 func TestRaylineARCMissingSessionHeaderAnswers400(t *testing.T) {
 	router, requestContext, algorithm := missingSessionRequestContext(t, "")
 	router.buildRaylineARCSelectionContext(algorithm, requestContext, missingSessionModelRefs())
-	before := testutil.ToFloat64(metrics.RaylineARCSelectionFailures.WithLabelValues("missing_episode_id"))
+	before := testutil.ToFloat64(metrics.RaylineARCSelectionFailures.WithLabelValues(arcFailureMissingEpisodeID))
 
-	err := selectionFailureForAlgorithm(algorithm, "missing_episode_id")
+	err := selectionFailureForAlgorithm(algorithm, arcFailureMissingEpisodeID)
 	response := router.authoritativeSelectionFailureResponse(err, requestContext)
 	if response == nil {
 		t.Fatal("a missing session header produced no admission response")
@@ -121,7 +125,7 @@ func TestRaylineARCMissingSessionHeaderAnswers400(t *testing.T) {
 	if !bytesContainsHeaderName(body.Error.Message) {
 		t.Fatalf("message %q does not name %s", body.Error.Message, testEpisodeIDHeader)
 	}
-	after := testutil.ToFloat64(metrics.RaylineARCSelectionFailures.WithLabelValues("missing_episode_id"))
+	after := testutil.ToFloat64(metrics.RaylineARCSelectionFailures.WithLabelValues(arcFailureMissingEpisodeID))
 	if after != before+1 {
 		t.Fatalf("failure counter moved %v to %v, want one increment", before, after)
 	}

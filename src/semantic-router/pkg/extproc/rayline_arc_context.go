@@ -29,6 +29,11 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
+// arcFailureMissingEpisodeID is the bounded class for a request that names no
+// episode. It is the caller's omission rather than a router failure, which is
+// what separates it from every other preparation class.
+const arcFailureMissingEpisodeID = "missing_episode_id"
+
 func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	algorithm *config.AlgorithmConfig,
 	reqCtx *RequestContext,
@@ -48,7 +53,10 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		reqCtx.Headers[algorithm.RaylineARC.Episode.IDHeader],
 	)
 	if rawEpisodeID == "" {
-		result.PreparationFailure = "missing_episode_id"
+		// The refusal names the header, so the header name travels with the
+		// request rather than being looked up again from config later.
+		reqCtx.RaylineARCEpisodeIDHeader = algorithm.RaylineARC.Episode.IDHeader
+		result.PreparationFailure = arcFailureMissingEpisodeID
 		return result
 	}
 	result.EpisodeIDHash = raylinearc.HashEpisodeID(rawEpisodeID)

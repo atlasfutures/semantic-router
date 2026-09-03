@@ -7,6 +7,8 @@ import (
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 )
 
 // selectionContendedRetryAfterSeconds is the shortest honest wait. Both
@@ -34,6 +36,23 @@ func selectionFailureIsContended(class string) bool {
 	}
 }
 
+// selectionFailureIsCallerError separates the caller's omission from the
+// router's breakage. A request that names no episode is not going to succeed
+// on retry, so answering 503 sends the caller round a loop that cannot end.
+// Every other class is the router's to answer for.
+func selectionFailureIsCallerError(class string) bool {
+	return class == arcFailureMissingEpisodeID
+}
+
+// missingEpisodeHeaderMessage names the header the caller left out. The header
+// name is configuration, not request content, so it is safe to return.
+func missingEpisodeHeaderMessage(ctx *RequestContext) string {
+	if ctx == nil || ctx.RaylineARCEpisodeIDHeader == "" {
+		return "This request needs a session header."
+	}
+	return "This request needs a " + ctx.RaylineARCEpisodeIDHeader + " header."
+}
+
 // authoritativeSelectionFailureResponse maps a fail-closed selector's bounded
 // failure onto the admission contract. It answers nil for every other error so
 // the caller keeps its existing classification.
@@ -46,6 +65,13 @@ func (r *OpenAIRouter) authoritativeSelectionFailureResponse(
 		return nil
 	}
 	recordSelectionLifecycleFailure(ctx, "selection", err)
+	if selectionFailureIsCallerError(failure.class) {
+		metrics.RecordRaylineARCFailure(failure.class)
+		return r.createErrorResponse(
+			http.StatusBadRequest,
+			missingEpisodeHeaderMessage(ctx),
+		)
+	}
 	if !selectionFailureIsContended(failure.class) {
 		return r.createErrorResponse(
 			http.StatusServiceUnavailable,
