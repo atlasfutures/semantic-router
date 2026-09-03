@@ -121,8 +121,9 @@ type anthropicToolWire struct {
 }
 
 type anthropicCacheControlWire struct {
-	Type string `json:"type"`
-	TTL  string `json:"ttl,omitempty"`
+	Type  string `json:"type"`
+	TTL   string `json:"ttl,omitempty"`
+	Scope string `json:"scope,omitempty"`
 }
 
 type anthropicMetadataWire struct {

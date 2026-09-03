@@ -89,6 +89,11 @@ type Content struct {
 type CacheDirective struct {
 	Type string
 	TTL  string
+	// Scope names which cache the breakpoint writes to and reads from.
+	// Anthropic added it with the prompt-caching-scope beta and Claude Code
+	// sets it on its system prompt, so a Router that dropped it would either
+	// refuse the turn or silently move the entry to a different cache.
+	Scope string
 }
 
 // Citation is bounded, protocol-neutral attribution attached to a text block.
