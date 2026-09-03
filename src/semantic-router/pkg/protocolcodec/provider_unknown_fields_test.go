@@ -95,6 +95,8 @@ var providerStreams = map[string]struct {
 
 // runProviderStream drives the whole pipeline over one captured stream: every
 // frame including the trailing usage chunk and [DONE], nothing withheld.
+//
+//nolint:unparam // both stream fixtures share this runner; the events return is used by the usage assertions.
 func runProviderStream(t *testing.T, fixture string, target llmprotocol.WireFormat) ([]byte, []llmprotocol.Event) {
 	t.Helper()
 	return runChatStream(t, fixture, loadProviderFixture(t, fixture), target)
@@ -335,5 +337,63 @@ func TestRepeatedFinishReasonKeepsTheFirst(t *testing.T) {
 		if event.Type == llmprotocol.EventResponseCompleted && event.StopReason != llmprotocol.StopEndTurn {
 			t.Fatalf("stop reason = %q, want the first reason to win", event.StopReason)
 		}
+	}
+}
+
+// anthropicEventSequence lists the SSE event names a stream produced, in order.
+func anthropicEventSequence(body []byte) []string {
+	var names []string
+	for _, line := range strings.Split(string(body), "\n") {
+		if name, found := strings.CutPrefix(strings.TrimSpace(line), "event: "); found {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// Every reasoning chunk of a thinking arm carries content:"" beside its
+// reasoning text. An empty string is not model output: emitting a delta for it
+// opens a text block that never receives one, and on a thinking arm it opens a
+// new pair per token. The mimo fixture must produce one thinking block holding
+// both reasoning deltas, then one text block holding all five content deltas.
+func TestOpenRouterReasoningStreamOpensOneBlockPerKind(t *testing.T) {
+	body, _ := runProviderStream(t, openRouterStreamReasoning, llmprotocol.AnthropicMessagesV1)
+	want := []string{
+		"message_start",
+		"content_block_start", "content_block_delta", "content_block_delta", "content_block_stop",
+		"content_block_start",
+		"content_block_delta", "content_block_delta", "content_block_delta",
+		"content_block_delta", "content_block_delta",
+		"content_block_stop",
+		"message_delta", "message_stop",
+	}
+	if got := anthropicEventSequence(body); !reflect.DeepEqual(got, want) {
+		t.Fatalf("event sequence =\n  %v\nwant\n  %v", got, want)
+	}
+}
+
+// No content block may be opened without at least one delta, on either arm.
+func TestOpenRouterStreamOpensNoEmptyBlocks(t *testing.T) {
+	for name, fixture := range map[string]string{
+		"reasoning": openRouterStreamReasoning,
+		"text":      openRouterStream,
+	} {
+		t.Run(name, func(t *testing.T) {
+			body, _ := runProviderStream(t, fixture, llmprotocol.AnthropicMessagesV1)
+			open, delta := false, false
+			for _, event := range anthropicEventSequence(body) {
+				switch event {
+				case "content_block_start":
+					open, delta = true, false
+				case "content_block_delta":
+					delta = true
+				case "content_block_stop":
+					if open && !delta {
+						t.Fatalf("a content block was opened and closed with no delta:\n%s", body)
+					}
+					open = false
+				}
+			}
+		})
 	}
 }
