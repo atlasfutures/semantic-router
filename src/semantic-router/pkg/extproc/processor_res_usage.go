@@ -204,6 +204,11 @@ func (r *OpenAIRouter) recordResponseCost(
 		"total_tokens":          totalTokens,
 		"completion_latency_ms": completionLatency.Milliseconds(),
 	}
+	if ctx.StreamingAborted {
+		// The counts are real but the turn is not a whole one. Anything
+		// reading these lines has to be able to tell the difference.
+		eventFields["truncated"] = true
+	}
 
 	if r.Config != nil {
 		pricing, ok := r.Config.GetFullModelPricing(ctx.RequestModel)

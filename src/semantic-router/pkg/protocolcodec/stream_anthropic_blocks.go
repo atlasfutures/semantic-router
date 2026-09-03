@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"sort"
 	"encoding/json"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
@@ -137,6 +138,33 @@ func (encoder *anthropicStreamEncoder) completeAnthropicItem(
 		frames = append(frames, stopped...)
 	}
 	return frames, nil, nil
+}
+
+// closeOpenAnthropicBlocks stops every block the client is still holding open.
+// A stream that ends early has to leave the client's message well formed:
+// a content block opened and never stopped is one an Anthropic client keeps
+// waiting on, and it cannot tell that from a slow answer.
+func (encoder *anthropicStreamEncoder) closeOpenAnthropicBlocks() ([][]byte, error) {
+	var frames [][]byte
+	for _, index := range sortedItemIndexes(encoder.itemBlockKeys) {
+		for _, key := range encoder.itemBlockKeys[index] {
+			stopped, err := encoder.stopAnthropicBlock(key)
+			if err != nil {
+				return nil, err
+			}
+			frames = append(frames, stopped...)
+		}
+	}
+	return frames, nil
+}
+
+func sortedItemIndexes(items map[int][]anthropicBlockKey) []int {
+	indexes := make([]int, 0, len(items))
+	for index := range items {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+	return indexes
 }
 
 func (encoder *anthropicStreamEncoder) stopAnthropicBlock(key anthropicBlockKey) ([][]byte, error) {

@@ -59,6 +59,13 @@
       }
     },
     {
+      "event": "content_block_stop",
+      "data": {
+        "index": 0,
+        "type": "content_block_stop"
+      }
+    },
+    {
       "event": "error",
       "data": {
         "error": {

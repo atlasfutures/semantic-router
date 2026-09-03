@@ -82,6 +82,13 @@
             },
             {
               "data": {
+                "index": 0,
+                "type": "content_block_stop"
+              },
+              "event": "content_block_stop"
+            },
+            {
+              "data": {
                 "error": {
                   "message": "upstream stream ended before completion",
                   "type": "api_error"

@@ -381,6 +381,23 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 	ctx.InflightToken = 0
 
 	usage := r.takeNeutralResponseUsage(ctx)
+	if usage.invalid && ctx.StreamingAborted && ctx.SemanticStreamState != nil {
+		// A stream that never reached its terminal event has no reconstructed
+		// response to read usage from, but the counts the upstream did send
+		// before the cut are still authoritative. They are what the turn cost.
+		usage = responseUsageFromSemanticUsage(ctx.SemanticStreamState.usage)
+	}
+	if usage.invalid && ctx.StreamingAborted {
+		// The turn ran and produced tokens somebody paid for, but no
+		// authoritative count ever arrived, so there is nothing to put in an
+		// llm_usage line. Say that instead of estimating: an invented number
+		// here is an invented number about money.
+		logging.ComponentWarnEvent("extproc", "stream_truncated_uncounted", map[string]interface{}{
+			"request_id": ctx.RequestID,
+			"model":      ctx.RequestModel,
+			"reason":     usage.invalidReason,
+		})
+	}
 	r.reportSemanticStreamingUsage(ctx, completionLatency, usage)
 	r.calibrateTokenEstimator(ctx, usage.promptTokens)
 

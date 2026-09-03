@@ -29,29 +29,42 @@ data: {"id":"gen-1","object":"chat.completion.chunk","created":1788474769,` +
 func TestCutStreamIsTerminatedHonestly(t *testing.T) {
 	body := runCutStream(t, llmprotocol.AnthropicMessagesV1)
 	events := anthropicEventSequence(body)
-	// What the client already holds must be closed before the turn ends.
+	// What the client already holds is closed, then the failure is named.
 	assertAnthropicEventsInOrder(t, body, "content_block_start", "content_block_delta",
-		"content_block_stop", "error", "message_stop")
-	if events[len(events)-1] != "message_stop" {
-		t.Fatalf("a cut stream did not end on message_stop: %v", events)
+		"content_block_stop", "error")
+	if events[len(events)-1] != "error" {
+		t.Fatalf("a cut stream did not end on the failure: %v", events)
 	}
 	if !strings.Contains(string(body), `"type":"error"`) {
 		t.Fatalf("a cut stream carried no error frame:\n%s", body)
 	}
+	// message_stop is the terminal of a message that finished. This one did
+	// not, and a client that reads message_stop as "the answer is complete"
+	// would be told a whole answer arrived. Anthropic documents message_stop
+	// only as the last event of the normal flow and never says it follows an
+	// error, so the Router does not send one.
+	for _, event := range events {
+		if event == "message_stop" {
+			t.Fatalf("a cut stream published a success terminal: %v", events)
+		}
+	}
 }
 
-// The Chat leg gets the equivalent: the error chunk it already emits, then the
-// sentinel every Chat client waits for. A finish_reason of "length" would say
-// the model reached a limit, which is not what happened -- the platform closed
-// the connection -- so the error frame carries the outcome and [DONE] ends the
-// stream.
-func TestCutChatStreamEndsOnTheSentinel(t *testing.T) {
+// The Chat leg ends on its error chunk for the same reason. [DONE] is the
+// sentinel that ends a stream that ran to the end; a finish_reason of "length"
+// would claim the model reached a limit it never reached. Neither is true of a
+// connection the platform closed, so the error chunk carries the outcome and
+// nothing after it claims the turn finished.
+func TestCutChatStreamEndsOnItsError(t *testing.T) {
 	body := runCutStream(t, llmprotocol.OpenAIChatV1)
 	if !bytes.Contains(body, []byte(`"error"`)) {
 		t.Fatalf("a cut Chat stream carried no error chunk:\n%s", body)
 	}
-	if !bytes.HasSuffix(bytes.TrimRight(body, "\n"), []byte("data: [DONE]")) {
-		t.Fatalf("a cut Chat stream did not end on the sentinel:\n%s", body)
+	if bytes.Contains(body, []byte("data: [DONE]")) {
+		t.Fatalf("a cut Chat stream published a success sentinel:\n%s", body)
+	}
+	if bytes.Contains(body, []byte(`"finish_reason":"length"`)) {
+		t.Fatalf("a cut Chat stream claimed the model reached a limit:\n%s", body)
 	}
 }
 

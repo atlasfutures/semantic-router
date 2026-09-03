@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
@@ -280,18 +281,48 @@ func assertPublicStreamErrorWire(
 	parameter string,
 ) {
 	t.Helper()
-	if len(frames) != 1 {
-		t.Fatalf("public error frame count = %d: %q", len(frames), frames)
+	// A terminal failure may be preceded by the frames that close what the
+	// client is already holding open -- an Anthropic content block, say. Those
+	// carry no outcome, so the assertion is that exactly one frame states the
+	// failure, not that exactly one frame is sent.
+	errorFrame, remaining := splitTerminalErrorFrame(t, frames)
+	if remaining != 0 {
+		t.Fatalf("public error frame count = %d: %q", remaining, frames)
 	}
-	parsed, err := parseSSEFrame(frames[0], llmprotocol.DefaultPolicy().Limits.SSEFrameBytes)
+	parsed, err := parseSSEFrame(errorFrame, llmprotocol.DefaultPolicy().Limits.SSEFrameBytes)
 	if err != nil {
-		t.Fatalf("public error frame is invalid: %v: %q", err, frames[0])
+		t.Fatalf("public error frame is invalid: %v: %q", err, errorFrame)
 	}
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(parsed.Data, &object); err != nil {
 		t.Fatalf("public error payload is invalid JSON: %v: %s", err, parsed.Data)
 	}
 	assertPublicStreamErrorPayload(t, format, failure, parsed, object, code, message, parameter)
+}
+
+// splitTerminalErrorFrame returns the one frame that states a failure and the
+// count of any other frame that is not a block close.
+func splitTerminalErrorFrame(t *testing.T, frames [][]byte) ([]byte, int) {
+	t.Helper()
+	var errorFrame []byte
+	others := 0
+	for _, frame := range frames {
+		switch {
+		case bytes.Contains(frame, []byte(`"error"`)):
+			if errorFrame != nil {
+				others++
+				continue
+			}
+			errorFrame = frame
+		case bytes.Contains(frame, []byte("content_block_stop")):
+		default:
+			others++
+		}
+	}
+	if errorFrame == nil {
+		t.Fatalf("no frame stated the failure: %q", frames)
+	}
+	return errorFrame, others
 }
 
 func assertPublicStreamErrorPayload(

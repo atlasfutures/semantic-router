@@ -116,6 +116,11 @@ func (r *OpenAIRouter) handleProcessReceiveError(ctx *RequestContext, err error)
 	if ctx.IsStreamingResponse && !ctx.StreamingComplete {
 		ctx.StreamingAborted = true
 		logging.Debugf("Streaming response aborted before completion, will not cache")
+		// This is the only place a stream the platform cut is ever seen
+		// ending. Returning without finalizing leaves the turn with no usage
+		// record: the upstream charged for every token it generated and the
+		// Router counted none of them.
+		r.finalizeSemanticStreamingResponse(ctx, err)
 	}
 	if ctx.InflightToken != 0 {
 		inflight.End(ctx.RequestModel, ctx.InflightToken)

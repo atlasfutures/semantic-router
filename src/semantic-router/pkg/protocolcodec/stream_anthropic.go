@@ -546,14 +546,18 @@ func (encoder *anthropicStreamEncoder) encodeAnthropicLifecycleEvent(
 		// usage update immediately before their terminal event.
 		return nil, nil, nil
 	case llmprotocol.EventResponseFailed:
-		failed, err := encoder.encodeAnthropicFailure(event)
-		if err != nil {
-			return nil, nil, err
-		}
 		if event.Usage != nil && event.Usage.State == llmprotocol.UsageAvailable {
 			appendAccountingOmission(&diagnostics, encoder.policy, encoder.context.Source, encoder.context.Target, "usage", "Messages error events cannot carry token usage")
 		}
-		wire = failed
+		failureError := event.Error
+		if failureError == nil {
+			failureError = llmprotocol.NewError(
+				llmprotocol.ErrorUpstreamUnavailable, "stream_incomplete",
+				"upstream stream ended before completion", nil,
+			)
+		}
+		frames, err := encoder.terminateAnthropicStream(failureError)
+		return frames, diagnostics, err
 	default:
 		return nil, nil, nil
 	}
@@ -666,9 +670,29 @@ func (encoder *anthropicStreamEncoder) Finalize(reason error) ([][]byte, llmprot
 	}
 	encoder.terminal = true
 	protocolError := streamFinalizationError(reason, "stream ended before completion")
-	wire := anthropicEventWire{Type: "error", Error: &anthropicErrorWire{
+	frames, err := encoder.terminateAnthropicStream(protocolError)
+	return frames, nil, err
+}
+
+// terminateAnthropicStream ends a message the upstream never finished. The
+// client is holding an open content block and a message with no stop reason,
+// so the block is closed, the failure is named, and the message is ended. A
+// stream that just stops instead is indistinguishable from a slow one: the
+// turn that prompted this reached the client as 1,191 deltas and a clean
+// close, and curl exited 0.
+func (encoder *anthropicStreamEncoder) terminateAnthropicStream(
+	protocolError *llmprotocol.ProtocolError,
+) ([][]byte, error) {
+	frames, err := encoder.closeOpenAnthropicBlocks()
+	if err != nil {
+		return nil, err
+	}
+	failure := anthropicEventWire{Type: "error", Error: &anthropicErrorWire{
 		Type: canonicalAnthropicErrorType(protocolError), Message: protocolError.Message,
 	}}
-	frame, err := encodeSSE(wire.Type, wire)
-	return [][]byte{frame}, nil, err
+	failureFrame, err := encodeSSE(failure.Type, failure)
+	if err != nil {
+		return nil, err
+	}
+	return append(frames, failureFrame), nil
 }
