@@ -1638,6 +1638,9 @@ class RoutingModel(BaseModel):
     tags: Optional[List[str]] = None
     quality_score: Optional[float] = Field(default=None, ge=0, le=1)
     modality: Optional[str] = None
+    # Absent means the model is assumed to accept image input. Only an
+    # explicit false marks a model that rejects it.
+    vision: Optional[bool] = None
 
 
 class ReasoningFamily(BaseModel):
