@@ -49,6 +49,7 @@ type chatRequestWire struct {
 	ResponseFormat       *chatOutputWire        `json:"response_format,omitempty"`
 	ReasoningEffort      string                 `json:"reasoning_effort,omitempty"`
 	ReasoningBudget      *int64                 `json:"reasoning_budget_tokens,omitempty"`
+	Reasoning            *chatReasoningWire     `json:"reasoning,omitempty"`
 	Stream               bool                   `json:"stream,omitempty"`
 	StreamOptions        *chatStreamOptionsWire `json:"stream_options,omitempty"`
 	Metadata             map[string]string      `json:"metadata,omitempty"`
@@ -70,6 +71,15 @@ type chatRequestWire struct {
 	TopLogprobs          json.RawMessage        `json:"top_logprobs,omitempty"`
 	Verbosity            json.RawMessage        `json:"verbosity,omitempty"`
 	WebSearchOptions     json.RawMessage        `json:"web_search_options,omitempty"`
+}
+
+// chatReasoningWire is OpenRouter's reasoning control object. The Router uses
+// one member of it: max_tokens, the only bound OpenRouter documents for how
+// much a model may spend on reasoning. max_completion_tokens does not bound it
+// -- the reasoning models do not count reasoning against that field, which is
+// how a max_tokens 512 request reached 37,213 completion tokens.
+type chatReasoningWire struct {
+	MaxTokens *int64 `json:"max_tokens,omitempty"`
 }
 
 type chatStreamOptionsWire struct {
