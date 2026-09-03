@@ -50,7 +50,7 @@ func missingEpisodeHeaderMessage(ctx *RequestContext) string {
 	if ctx == nil || ctx.RaylineARCEpisodeIDHeader == "" {
 		return "This request needs a session header."
 	}
-	return "This request needs a " + ctx.RaylineARCEpisodeIDHeader + " header."
+	return "This request needs an " + ctx.RaylineARCEpisodeIDHeader + " header."
 }
 
 // missingEpisodeHeaderResponse refuses a request that named no episode. The

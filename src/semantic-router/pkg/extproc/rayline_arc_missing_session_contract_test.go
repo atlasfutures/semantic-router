@@ -2,7 +2,6 @@ package extproc
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -55,8 +54,9 @@ func TestMissingSessionHeaderMessageSurvivesClientEncoding(t *testing.T) {
 				t.Fatalf("status = %d, want 400", got)
 			}
 			message, errorType := immediateErrorBody(t, immediate.GetBody())
-			if !strings.Contains(message, testEpisodeIDHeader) {
-				t.Fatalf("message %q does not name %s", message, testEpisodeIDHeader)
+			want := "This request needs an " + testEpisodeIDHeader + " header."
+			if message != want {
+				t.Fatalf("message = %q, want %q", message, want)
 			}
 			if errorType != "invalid_request_error" {
 				t.Fatalf("error type = %q, want invalid_request_error", errorType)
