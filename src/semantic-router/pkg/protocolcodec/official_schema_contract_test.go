@@ -25,7 +25,11 @@ func TestOfficialNestedUnsupportedFieldsFailWithTypedErrors(t *testing.T) {
 		{"Responses text verbosity", llmprotocol.OpenAIResponsesV1, `{"model":"m","input":"hello","text":{"verbosity":"high"}}`},
 		{"Responses input breakpoint", llmprotocol.OpenAIResponsesV1, `{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello","prompt_cache_breakpoint":{"mode":"explicit"}}]}]}`},
 		{"Responses input message phase", llmprotocol.OpenAIResponsesV1, `{"model":"m","input":[{"type":"message","role":"user","phase":"commentary","content":[{"type":"input_text","text":"hello"}]}]}`},
-		{"Anthropic eager tool", llmprotocol.AnthropicMessagesV1, `{"model":"m","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"tools":[{"name":"lookup","input_schema":{"type":"object"},"eager_input_streaming":true}]}`},
+		// eager_input_streaming used to sit here. It is now dropped and counted:
+		// it changes when a tool's input is delivered, not what the model calls.
+		// defer_loading takes its place, because that one decides whether the
+		// tool enters the context window at all.
+		{"Anthropic deferred tool", llmprotocol.AnthropicMessagesV1, `{"model":"m","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"tools":[{"name":"lookup","input_schema":{"type":"object"},"defer_loading":true}]}`},
 		{"Anthropic image transformation", llmprotocol.AnthropicMessagesV1, `{"model":"m","max_tokens":16,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"url","url":"https://example.com/image.png"},"transformations":{"on_load":{"type":"auto"}}}]}]}`},
 	}
 	engine := NewBuiltinEngine()

@@ -163,10 +163,11 @@ func (AnthropicMessagesCodec) DecodeRequest(body []byte, policy llmprotocol.Poli
 	}
 	request := decodeAnthropicBaseRequest(wire)
 	request.Unmodeled = unmodeledRequestFields(llmprotocol.AnthropicMessagesV1, unmodeled)
-	if err := decodeAnthropicRequestFields(wire, &request, policy); err != nil {
-		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
+	var diagnostics llmprotocol.Diagnostics
+	if err := decodeAnthropicRequestFields(wire, &request, &diagnostics, policy); err != nil {
+		return llmprotocol.Request{}, llmprotocol.Envelope{}, diagnostics, err
 	}
-	return request, requestEnvelope(llmprotocol.AnthropicMessagesV1, body, request.Generation, policy), nil, nil
+	return request, requestEnvelope(llmprotocol.AnthropicMessagesV1, body, request.Generation, policy), diagnostics, nil
 }
 
 func validateAnthropicRequestWire(wire anthropicRequestWire) error {
@@ -204,7 +205,12 @@ func validateAnthropicRequestWire(wire anthropicRequestWire) error {
 	return nil
 }
 
-func decodeAnthropicRequestFields(wire anthropicRequestWire, request *llmprotocol.Request, policy llmprotocol.Policy) error {
+func decodeAnthropicRequestFields(
+	wire anthropicRequestWire,
+	request *llmprotocol.Request,
+	diagnostics *llmprotocol.Diagnostics,
+	policy llmprotocol.Policy,
+) error {
 	if err := decodeAnthropicOutputConfig(wire.OutputConfig, request); err != nil {
 		return err
 	}
@@ -220,7 +226,7 @@ func decodeAnthropicRequestFields(wire anthropicRequestWire, request *llmprotoco
 	if err := decodeAnthropicMessages(wire.Messages, request, policy); err != nil {
 		return err
 	}
-	if err := decodeAnthropicTools(wire.Tools, request, policy); err != nil {
+	if err := decodeAnthropicTools(wire.Tools, request, diagnostics, policy); err != nil {
 		return err
 	}
 	return decodeAnthropicToolChoice(wire.ToolChoice, request)
@@ -357,7 +363,12 @@ func decodeAnthropicMessages(messages []anthropicMessageWire, request *llmprotoc
 	return nil
 }
 
-func decodeAnthropicTools(raw json.RawMessage, request *llmprotocol.Request, policy llmprotocol.Policy) error {
+func decodeAnthropicTools(
+	raw json.RawMessage,
+	request *llmprotocol.Request,
+	diagnostics *llmprotocol.Diagnostics,
+	policy llmprotocol.Policy,
+) error {
 	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return nil
 	}
@@ -380,12 +391,24 @@ func decodeAnthropicTools(raw json.RawMessage, request *llmprotocol.Request, pol
 			return err
 		}
 		if err := rejectUnsupportedRequestFields(map[string]json.RawMessage{
-			"tools.allowed_callers":       toolWire.AllowedCallers,
-			"tools.defer_loading":         toolWire.DeferLoading,
-			"tools.eager_input_streaming": toolWire.EagerInputStreaming,
-			"tools.input_examples":        toolWire.InputExamples,
+			"tools.allowed_callers": toolWire.AllowedCallers,
+			"tools.defer_loading":   toolWire.DeferLoading,
+			"tools.input_examples":  toolWire.InputExamples,
 		}); err != nil {
 			return err
+		}
+		// eager_input_streaming asks the provider to stream a tool's input as
+		// it is generated rather than buffering and validating it first. The
+		// tool chosen, the input it finally holds and the effect of the call
+		// are the same either way, so the hint is dropped and counted. The
+		// members above it are refused instead: each of those changes what the
+		// model is shown or what it can call.
+		if len(bytes.TrimSpace(toolWire.EagerInputStreaming)) > 0 {
+			appendPresentationDrop(
+				diagnostics, policy, llmprotocol.AnthropicMessagesV1, "",
+				"tools.eager_input_streaming",
+				"the neutral tool contract has no streaming hint",
+			)
 		}
 		schema := toolWire.InputSchema
 		if len(schema) == 0 {

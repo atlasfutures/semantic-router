@@ -54,8 +54,8 @@
         },
         "diagnostics": [
           {
-            "action": "dropped",
-            "field": "content.document"
+            "field": "content.document",
+            "action": "dropped"
           }
         ]
       }
@@ -81,8 +81,8 @@
         },
         "diagnostics": [
           {
-            "action": "dropped",
-            "field": "content.search_result"
+            "field": "content.search_result",
+            "action": "dropped"
           }
         ]
       }
@@ -98,8 +98,8 @@
         },
         "diagnostics": [
           {
-            "action": "dropped",
-            "field": "content.server_tool_use"
+            "field": "content.server_tool_use",
+            "action": "dropped"
           }
         ]
       }
@@ -127,11 +127,40 @@
     {
       "name": "tool_eager_input_streaming",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_tools_eager_input_streaming"
-        }
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "input_text"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "max_output_tokens": 32,
+          "model": "routed-model",
+          "tool_choice": "auto",
+          "tools": [
+            {
+              "name": "lookup",
+              "parameters": {
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        },
+        "diagnostics": [
+          {
+            "field": "tools.eager_input_streaming",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {
