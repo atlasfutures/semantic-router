@@ -9,9 +9,11 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 )
 
 var (
@@ -598,6 +600,29 @@ func authoritative(value int64) llmprotocol.TokenCount {
 
 func unknownCount() llmprotocol.TokenCount {
 	return llmprotocol.TokenCount{Provenance: llmprotocol.UsageUnknown}
+}
+
+func derived(value int64) llmprotocol.TokenCount {
+	return llmprotocol.TokenCount{Value: llmprotocol.Int64(value), Provenance: llmprotocol.UsageDerived}
+}
+
+// reportedUnreconciledUsage keeps one line per distinct breakdown per process.
+var reportedUnreconciledUsage sync.Map
+
+// reportUnreconciledUsage names a usage breakdown whose parts cannot be true
+// against the total beside them -- a provider reporting more reasoning tokens
+// than completion tokens, say. The parts are then left unknown rather than
+// derived, because a derived remainder would be negative and a zero would
+// assert a split the provider never stated. The totals it did state are kept,
+// and the response is served: the client asked for a completion, not for a
+// breakdown. Only the field path is reported; no count and no content.
+func reportUnreconciledUsage(path string) {
+	if _, seen := reportedUnreconciledUsage.LoadOrStore(path, struct{}{}); seen {
+		return
+	}
+	logging.ComponentWarnEvent("protocolcodec", "upstream_usage_unreconciled", map[string]interface{}{
+		"field": path,
+	})
 }
 
 func tokenValue(value llmprotocol.TokenCount) int64 {

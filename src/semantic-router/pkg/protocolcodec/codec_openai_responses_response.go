@@ -354,20 +354,26 @@ func decodeResponsesUsage(wire responsesUsageWire) llmprotocol.Usage {
 	if wire.OutputTokensDetails != nil {
 		reasoning = wire.OutputTokensDetails.ReasoningTokens
 	}
-	uncached := int64(-1)
-	if cached >= 0 && cacheWrite >= 0 && wire.InputTokens >= cached && cacheWrite <= wire.InputTokens-cached {
-		uncached = wire.InputTokens - cached - cacheWrite
-	}
-	other := int64(-1)
-	if reasoning >= 0 && wire.OutputTokens >= reasoning {
-		other = wire.OutputTokens - reasoning
-	}
-	return llmprotocol.Usage{
+	usage := llmprotocol.Usage{
 		State:         llmprotocol.UsageAvailable,
-		InputUncached: authoritative(uncached), InputCacheRead: authoritative(cached), InputCacheWrite: authoritative(cacheWrite),
-		OutputReasoning: authoritative(reasoning), OutputOther: authoritative(other),
+		InputUncached: unknownCount(), InputCacheRead: unknownCount(), InputCacheWrite: unknownCount(),
+		OutputReasoning: unknownCount(), OutputOther: unknownCount(),
 		InputTotal: authoritative(wire.InputTokens), OutputTotal: authoritative(wire.OutputTokens), Total: authoritative(wire.TotalTokens),
 	}
+	if cached >= 0 && cacheWrite >= 0 && wire.InputTokens >= cached && cacheWrite <= wire.InputTokens-cached {
+		usage.InputCacheRead = authoritative(cached)
+		usage.InputCacheWrite = authoritative(cacheWrite)
+		usage.InputUncached = derived(wire.InputTokens - cached - cacheWrite)
+	} else {
+		reportUnreconciledUsage("usage.input_tokens_details")
+	}
+	if reasoning >= 0 && reasoning <= wire.OutputTokens {
+		usage.OutputReasoning = authoritative(reasoning)
+		usage.OutputOther = derived(wire.OutputTokens - reasoning)
+	} else {
+		reportUnreconciledUsage("usage.output_tokens_details")
+	}
+	return usage
 }
 
 func (OpenAIResponsesCodec) EncodeResponse(response llmprotocol.Response, envelope llmprotocol.Envelope, policy llmprotocol.Policy) ([]byte, llmprotocol.Diagnostics, error) {

@@ -155,25 +155,21 @@ func decodeChatUsage(wire chatUsageWire) llmprotocol.Usage {
 	}
 	if wire.PromptTokensDetails != nil {
 		cached, cacheWrite := wire.PromptTokensDetails.CachedTokens, wire.PromptTokensDetails.CacheWriteTokens
-		uncached := int64(-1)
 		if cached >= 0 && cacheWrite >= 0 && wire.PromptTokens >= cached && cacheWrite <= wire.PromptTokens-cached {
-			uncached = wire.PromptTokens - cached - cacheWrite
-		}
-		usage.InputCacheRead = authoritative(cached)
-		usage.InputCacheWrite = authoritative(cacheWrite)
-		usage.InputUncached = llmprotocol.TokenCount{
-			Value: llmprotocol.Int64(uncached), Provenance: llmprotocol.UsageDerived,
+			usage.InputCacheRead = authoritative(cached)
+			usage.InputCacheWrite = authoritative(cacheWrite)
+			usage.InputUncached = derived(wire.PromptTokens - cached - cacheWrite)
+		} else {
+			reportUnreconciledUsage("usage.prompt_tokens_details")
 		}
 	}
 	if wire.CompletionTokensDetails != nil {
 		reasoning := wire.CompletionTokensDetails.ReasoningTokens
-		other := wire.CompletionTokens - reasoning
-		if reasoning < 0 || wire.CompletionTokens < reasoning {
-			other = -1
-		}
-		usage.OutputReasoning = authoritative(reasoning)
-		usage.OutputOther = llmprotocol.TokenCount{
-			Value: llmprotocol.Int64(other), Provenance: llmprotocol.UsageDerived,
+		if reasoning >= 0 && reasoning <= wire.CompletionTokens {
+			usage.OutputReasoning = authoritative(reasoning)
+			usage.OutputOther = derived(wire.CompletionTokens - reasoning)
+		} else {
+			reportUnreconciledUsage("usage.completion_tokens_details")
 		}
 	}
 	return usage
