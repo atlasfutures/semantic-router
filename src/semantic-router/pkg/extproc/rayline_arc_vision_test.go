@@ -17,11 +17,15 @@ limitations under the License.
 package extproc
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"testing"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 func TestRaylineARCImageSignalSurvivesTheDroppedProjection(t *testing.T) {
@@ -134,5 +138,146 @@ func TestRaylineARCNonVisionArmsAreNilWhenNothingIsMarked(t *testing.T) {
 	}}
 	if got := router.nonVisionArms([]config.ModelRef{{Model: "arm-0"}}); got != nil {
 		t.Fatalf("nonVisionArms() = %v, want nil", got)
+	}
+}
+
+func visionSelectionContext(
+	state *raylinearc.EpisodeState,
+	imageBearing bool,
+	nonVisionArms []bool,
+) *selection.SelectionContext {
+	selectionContext := validARCSelectionContext(state)
+	selectionContext.RaylineARC.ImageBearing = imageBearing
+	selectionContext.RaylineARC.NonVisionArms = nonVisionArms
+	return selectionContext
+}
+
+func armedVisionSelector(
+	scorer *fakeARCScorer,
+	encoder *fakeARCEncoder,
+) *raylineARCSelector {
+	return newRaylineARCSelector(scorer, encoder, nil, "artifact-revision")
+}
+
+func visionScorer() *fakeARCScorer {
+	return &fakeARCScorer{
+		workerIDs: []string{"worker-a", "worker-b"},
+		decision: raylinearc.Decision{
+			SelectedArm:     0,
+			SelectedWorker:  "worker-a",
+			RawScores:       []float32{0.9, 0.1},
+			AdjustedScores:  []float32{0.9, 0.1},
+			SwitchCostUSD:   []float64{0, 0},
+			CacheMissTokens: []int{0, 0},
+		},
+	}
+}
+
+func visionEncoder() *fakeARCEncoder {
+	return &fakeARCEncoder{result: &raylinearc.EncoderResult{
+		Embedding:        make([]float32, 1024),
+		SerializedTokens: 10,
+		ModelRevision:    config.RaylineARCEncoderModelRevision,
+	}}
+}
+
+func TestRaylineARCSelectorExcludesNonVisionArmsOnAnImageTurn(t *testing.T) {
+	state, err := raylinearc.NewEpisodeState(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scorer := visionScorer()
+	selector := armedVisionSelector(scorer, visionEncoder())
+
+	if _, err := selector.Select(
+		context.Background(),
+		visionSelectionContext(state, true, []bool{false, true}),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(scorer.excluded, []bool{false, true}) {
+		t.Fatalf(
+			"scorer exclusion = %v, want the non-vision arm excluded",
+			scorer.excluded,
+		)
+	}
+}
+
+// A text-only turn must route exactly as it did before the flag existed, even
+// when an arm is marked, or the flag would cost throughput for nothing.
+func TestRaylineARCSelectorLeavesATextTurnUnconstrained(t *testing.T) {
+	state, err := raylinearc.NewEpisodeState(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scorer := visionScorer()
+	selector := armedVisionSelector(scorer, visionEncoder())
+
+	if _, err := selector.Select(
+		context.Background(),
+		visionSelectionContext(state, false, []bool{false, true}),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if scorer.excluded != nil {
+		t.Fatalf(
+			"scorer exclusion = %v, want none on a text-only turn",
+			scorer.excluded,
+		)
+	}
+}
+
+// An episode parked on a non-vision arm must be pulled off it, not kept there
+// by the stay margin. The selector's part is to mark the arm.
+func TestRaylineARCSelectorExcludesANonVisionPreviousArm(t *testing.T) {
+	previous := 1
+	state, err := raylinearc.NewEpisodeState(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.PreviousArm = &previous
+	scorer := visionScorer()
+	selector := armedVisionSelector(scorer, visionEncoder())
+
+	if _, err := selector.Select(
+		context.Background(),
+		visionSelectionContext(state, true, []bool{false, true}),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(scorer.excluded) != 2 || !scorer.excluded[previous] {
+		t.Fatalf(
+			"scorer exclusion = %v, want the previous arm excluded",
+			scorer.excluded,
+		)
+	}
+}
+
+// No arm can serve the turn, so there is nothing to degrade to. The router
+// fails closed with its own class rather than sending an image to a model
+// that will answer 404.
+func TestRaylineARCSelectorFailsClosedWhenNoArmTakesImages(t *testing.T) {
+	state, err := raylinearc.NewEpisodeState(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoder := visionEncoder()
+	selector := armedVisionSelector(visionScorer(), encoder)
+
+	_, err = selector.Select(
+		context.Background(),
+		visionSelectionContext(state, true, []bool{true, true}),
+	)
+	var failure *raylineARCSelectionFailure
+	if !errors.As(err, &failure) || failure.class != "no_vision_arm" {
+		t.Fatalf("Select() error = %v, want class no_vision_arm", err)
+	}
+	// The encoder is the expensive dependency. A request no arm can serve
+	// must not occupy it.
+	if encoder.calls != 0 {
+		t.Fatalf("encoder calls = %d, want 0", encoder.calls)
+	}
+	if failure.contended() {
+		t.Fatal("no_vision_arm must answer 503, not 429")
 	}
 }
