@@ -73,6 +73,18 @@ type RaylineARCAlgorithmConfig struct {
 	// count. This field is the kill switch for that, worded as a negative so
 	// the zero value keeps the text.
 	DropMidConversationSystemText bool `yaml:"drop_mid_conversation_system_text,omitempty"`
+	// FaultInjection lets a request ask this cell to fail in a named way, so a
+	// failure path can be exercised where nothing natural triggers it any more.
+	// Off by default, and while it is off the header it reads means nothing, so
+	// a cell that has not opted in cannot be made to fail by a caller.
+	FaultInjection RaylineARCFaultInjectionConfig `yaml:"fault_injection,omitempty"`
+}
+
+// RaylineARCFaultInjectionConfig is the opt-in for the dev-only fault header.
+// It is deliberately one bool: a cell either lends itself to this or it does
+// not, and anything finer would be a second way to configure failure.
+type RaylineARCFaultInjectionConfig struct {
+	Enabled bool `yaml:"enabled,omitempty"`
 }
 
 // RaylineARCEncoderConfig pins the dedicated vLLM pooling service contract.

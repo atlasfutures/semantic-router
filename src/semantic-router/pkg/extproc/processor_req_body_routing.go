@@ -358,6 +358,14 @@ func appendContentLengthHeader(headersOut *[]*core.HeaderValueOption, bodyLength
 	}})
 }
 
+// faultInjectionHeadersForRemoval lists the headers the router reads for
+// itself and the provider must never see. The fault header is stripped whether
+// or not the cell reads it, so a caller cannot learn from the provider's
+// behaviour whether this cell has the affordance turned on.
+func faultInjectionHeadersForRemoval() []string {
+	return []string{headers.VSRFault}
+}
+
 func (r *OpenAIRouter) applyDecisionHeaderMutations(state *routeHeaderState, ctx *RequestContext) {
 	if ctx == nil || ctx.VSRSelectedDecision == nil {
 		return

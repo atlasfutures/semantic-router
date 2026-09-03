@@ -1533,6 +1533,13 @@ routing:
           # text does reach the selector -- it is a correction aimed at the
           # very next reply, which is the signal the router exists to read.
           drop_mid_conversation_system_text: false
+          # fault_injection lets a request ask this cell to fail in a named
+          # way, so a failure path with no natural trigger can still be
+          # exercised. Off, and off is the only setting a serving cell should
+          # have: while it is off the x-vsr-fault header means nothing, and
+          # while it is on any caller can make this cell refuse a request.
+          fault_injection:
+            enabled: false
           encoder:
             base_url: http://rayline-arc-encoder:8000
             # Set base_url to empty and populate replicas + failover to opt

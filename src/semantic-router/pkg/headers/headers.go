@@ -124,6 +124,16 @@ const (
 	// contract revision and response-path names how the response was produced.
 	// Everything else in the contract keys off response-path.
 
+	// VSRFault asks the router to fail this request in a named way. It is read
+	// only where rayline_arc.fault_injection.enabled is true, is never
+	// forwarded upstream, and is never echoed to the client. It exists so a
+	// failure path with no natural trigger can still be exercised on a cell.
+	VSRFault = "x-vsr-fault"
+
+	// FaultUpstreamDecode makes the response-body phase treat the upstream
+	// response as one the codec could not decode. It is the only fault value.
+	FaultUpstreamDecode = "upstream_decode"
+
 	// VSRSchemaVersion stamps the response-header contract revision so clients
 	// know which contract they are parsing. Value: SchemaVersionValue.
 	VSRSchemaVersion = "x-vsr-schema-version"
