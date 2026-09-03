@@ -256,14 +256,14 @@ func decodeAnthropicCacheControl(cache *anthropicCacheControlWire) *llmprotocol.
 	if cache == nil {
 		return nil
 	}
-	return &llmprotocol.CacheDirective{Type: cache.Type, TTL: cache.TTL}
+	return &llmprotocol.CacheDirective{Type: cache.Type, TTL: cache.TTL, Scope: cache.Scope}
 }
 
 func encodeAnthropicCacheControl(cache *llmprotocol.CacheDirective) *anthropicCacheControlWire {
 	if cache == nil {
 		return nil
 	}
-	return &anthropicCacheControlWire{Type: cache.Type, TTL: cache.TTL}
+	return &anthropicCacheControlWire{Type: cache.Type, TTL: cache.TTL, Scope: cache.Scope}
 }
 
 func decodeAnthropicMediaContent(typeName string, source *anthropicMediaSourceWire) (llmprotocol.Content, error) {

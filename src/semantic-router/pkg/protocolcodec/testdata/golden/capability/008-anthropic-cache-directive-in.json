@@ -4,7 +4,7 @@
     "model": "client-model",
     "max_tokens": 32,
     "system": [
-      {"type": "text", "text": "Stable instructions", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
+      {"type": "text", "text": "Stable instructions", "cache_control": {"type": "ephemeral", "ttl": "1h", "scope": "global"}}
     ],
     "messages": [
       {"role": "user", "content": [{"type": "text", "text": "Hello", "cache_control": {"type": "ephemeral"}}]}

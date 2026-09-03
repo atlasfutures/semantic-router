@@ -20,6 +20,7 @@
     "system": [
       {
         "cache_control": {
+          "scope": "global",
           "ttl": "1h",
           "type": "ephemeral"
         },

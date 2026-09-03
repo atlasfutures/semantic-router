@@ -89,10 +89,13 @@ type Content struct {
 type CacheDirective struct {
 	Type string
 	TTL  string
-	// Scope names which cache the breakpoint writes to and reads from.
-	// Anthropic added it with the prompt-caching-scope beta and Claude Code
-	// sets it on its system prompt, so a Router that dropped it would either
-	// refuse the turn or silently move the entry to a different cache.
+	// Scope is the member Claude Code sets on its cache breakpoints once it
+	// negotiates the prompt-caching-scope beta. Anthropic has not published
+	// what it means, and observed values differ ("global" here on
+	// 2026-09-03, "turn" in a third-party report), so the Router carries it
+	// unread rather than interpreting it: refusing the turn loses the
+	// conversation and rewriting the value would move a cache entry the
+	// Router does not understand.
 	Scope string
 }
 
