@@ -21,6 +21,7 @@ type openAIBackendDialect struct {
 	kind                            openAIBackendDialectKind
 	supportsTopLevelReasoningEffort bool
 	supportsTopLevelDeepSeekThink   bool
+	supportsUpstreamSessionID       bool
 }
 
 // resolveOpenAIBackendDialect captures request-shaping differences between
@@ -62,12 +63,20 @@ func newOpenAIBackendDialect(kind openAIBackendDialectKind) openAIBackendDialect
 		dialect.supportsTopLevelDeepSeekThink = true
 	case openAIBackendDialectOpenRouter:
 		dialect.supportsTopLevelReasoningEffort = true
+		dialect.supportsUpstreamSessionID = true
 	}
 	return dialect
 }
 
 func (d openAIBackendDialect) usesTopLevelReasoningEffort() bool {
 	return d.supportsTopLevelReasoningEffort
+}
+
+// usesUpstreamSessionID reports that the backend routes a conversation by a
+// top-level session_id. OpenRouter uses it as its sticky routing key; every
+// other OpenAI-compatible backend would see an unknown member.
+func (d openAIBackendDialect) usesUpstreamSessionID() bool {
+	return d.supportsUpstreamSessionID
 }
 
 func (d openAIBackendDialect) usesDeepSeekOfficialReasoning() bool {

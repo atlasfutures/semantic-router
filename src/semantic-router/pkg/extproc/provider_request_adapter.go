@@ -14,11 +14,15 @@ func (r *OpenAIRouter) adaptProviderRequest(
 	if dispatch == nil || ctx == nil || dispatch.decisionName == "" || dispatch.targetFormat != llmprotocol.OpenAIChatV1 {
 		return body, nil
 	}
-	return r.setReasoningModeToRequestBodyForModelAndProvider(
+	body, err := r.setReasoningModeToRequestBodyForModelAndProvider(
 		body,
 		dispatch.logicalModel,
 		dispatch.useReasoning,
 		ctx.VSRSelectedDecision,
 		dispatch.profile,
 	)
+	if err != nil {
+		return nil, err
+	}
+	return applyUpstreamSessionID(body, dispatch, ctx)
 }

@@ -33,6 +33,39 @@ plugins:
 		Expect(validateDecisionPluginPayload(decision.Name, 0, decision.Plugins[0])).To(Succeed())
 	})
 
+	It("decodes the upstream session id switch the ARC cell turns on", func() {
+		var decision Decision
+		Expect(yaml.Unmarshal([]byte(`
+name: rayline-arc-dev
+plugins:
+  - type: request_params
+    configuration:
+      blocked_params:
+        - temperature
+      send_upstream_session_id: true
+`), &decision)).To(Succeed())
+
+		params := decision.GetRequestParamsConfig()
+		Expect(params).NotTo(BeNil())
+		Expect(params.SendUpstreamSessionID).To(BeTrue())
+		Expect(validateDecisionPluginPayload(decision.Name, 0, decision.Plugins[0])).To(Succeed())
+	})
+
+	It("leaves the upstream session id off when the operator names nothing", func() {
+		var decision Decision
+		Expect(yaml.Unmarshal([]byte(`
+name: capped-only
+plugins:
+  - type: request_params
+    configuration:
+      max_tokens_limit: 8192
+`), &decision)).To(Succeed())
+
+		params := decision.GetRequestParamsConfig()
+		Expect(params).NotTo(BeNil())
+		Expect(params.SendUpstreamSessionID).To(BeFalse())
+	})
+
 	It("leaves the floor unset when the operator names none", func() {
 		var decision Decision
 		Expect(yaml.Unmarshal([]byte(`

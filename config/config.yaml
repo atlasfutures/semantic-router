@@ -1065,6 +1065,11 @@ routing:
             # thinking, so a budget sized for the terse arm truncates it.
             min_completion_tokens_by_model:
               qwen3-32b: 4096
+            # Off by default. On, the dispatched body carries the router's own
+            # episode id hash as session_id, which OpenRouter uses to keep a
+            # conversation on one provider endpoint. No client identity leaves
+            # the router, and no other backend is sent the field.
+            send_upstream_session_id: false
 
     - name: support_router_dc_route
       description: Embedding-driven support route that escalates only when the derived projection band says the request is not a simple support query.

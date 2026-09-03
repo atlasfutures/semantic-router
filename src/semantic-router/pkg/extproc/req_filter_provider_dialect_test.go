@@ -15,6 +15,7 @@ func TestResolveOpenAIBackendDialect(t *testing.T) {
 		wantKind                  openAIBackendDialectKind
 		wantTopLevelEffort        bool
 		wantTopLevelDeepSeekThink bool
+		wantUpstreamSessionID     bool
 	}{
 		{
 			name:               "legacy endpoint without profile is vllm",
@@ -41,10 +42,11 @@ func TestResolveOpenAIBackendDialect(t *testing.T) {
 			wantTopLevelDeepSeekThink: true,
 		},
 		{
-			name:               "openrouter uses top-level reasoning effort",
-			profile:            &config.ProviderProfile{Type: "openai", BaseURL: "https://openrouter.ai/api/v1"},
-			wantKind:           openAIBackendDialectOpenRouter,
-			wantTopLevelEffort: true,
+			name:                  "openrouter uses top-level reasoning effort and routes by session id",
+			profile:               &config.ProviderProfile{Type: "openai", BaseURL: "https://openrouter.ai/api/v1"},
+			wantKind:              openAIBackendDialectOpenRouter,
+			wantTopLevelEffort:    true,
+			wantUpstreamSessionID: true,
 		},
 		{
 			name:               "unknown openai-compatible provider is generic",
@@ -60,6 +62,7 @@ func TestResolveOpenAIBackendDialect(t *testing.T) {
 			assert.Equal(t, tt.wantKind, dialect.kind)
 			assert.Equal(t, tt.wantTopLevelEffort, dialect.usesTopLevelReasoningEffort())
 			assert.Equal(t, tt.wantTopLevelDeepSeekThink, dialect.usesDeepSeekOfficialReasoning())
+			assert.Equal(t, tt.wantUpstreamSessionID, dialect.usesUpstreamSessionID())
 		})
 	}
 }

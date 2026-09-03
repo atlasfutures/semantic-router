@@ -197,6 +197,9 @@ type RequestParamsPluginConfig struct {
 	// truncating its answer inside a budget sized for a plain one. Absent or
 	// zero leaves the request untouched, and the floor is applied after the cap.
 	MinCompletionTokensByModel map[string]int `json:"min_completion_tokens_by_model,omitempty" yaml:"min_completion_tokens_by_model,omitempty"`
+	// SendUpstreamSessionID pins a conversation to one provider endpoint by
+	// sending its episode id hash. Contract: req_filter_upstream_session.go.
+	SendUpstreamSessionID bool `json:"send_upstream_session_id,omitempty" yaml:"send_upstream_session_id,omitempty"`
 	// StripUnknown if true, removes fields not in the OpenAI spec.
 	StripUnknown bool `json:"strip_unknown,omitempty" yaml:"strip_unknown,omitempty"`
 }

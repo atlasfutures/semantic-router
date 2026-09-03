@@ -42,6 +42,16 @@ var (
 		[]string{"decision", "model"},
 	)
 
+	// One label only. The value is an episode hash, which is unbounded, so it
+	// is never a label; the decision names the config that asked for it.
+	RequestParamsUpstreamSessionIDApplied = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "sr_request_params_upstream_session_id_applied_total",
+			Help: "Total number of requests that carried an upstream session_id for provider affinity",
+		},
+		[]string{"decision"},
+	)
+
 	RequestParamsUnknownFieldStripped = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "sr_request_params_unknown_field_stripped_total",
@@ -69,4 +79,8 @@ func RecordCompletionFloorApplied(decision, model string) {
 
 func RecordUnknownFieldStripped(decision, field string) {
 	RequestParamsUnknownFieldStripped.WithLabelValues(decision, field).Inc()
+}
+
+func RecordUpstreamSessionIDApplied(decision string) {
+	RequestParamsUpstreamSessionIDApplied.WithLabelValues(decision).Inc()
 }
