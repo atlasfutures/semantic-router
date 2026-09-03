@@ -327,10 +327,15 @@ func (state *semanticResponseStreamState) response() (*llmprotocol.Response, err
 		}
 		if len(contents) == 0 {
 			// A model that answers with only a stop token completes its turn
-			// like any other. The client was already served an empty text
-			// block, so reconstruct the same thing rather than refusing: the
-			// alternative bills the turn, reports it successful, and leaves
-			// settlement holding no response at all.
+			// like any other. Refusing here bills the turn, reports it
+			// successful, and leaves settlement holding no response at all.
+			//
+			// The client is served no content block for such a turn -- an
+			// Anthropic message whose content is empty is how that outcome is
+			// said on the wire. The neutral contract cannot say it the same
+			// way: ValidateResponse refuses an output item that names no
+			// content (empty_output_item), so the record kept for settlement
+			// holds an empty text block instead. The two differ on purpose.
 			logging.ComponentWarnEvent("extproc", "upstream_completion_was_empty", map[string]interface{}{
 				"item_index": index,
 			})

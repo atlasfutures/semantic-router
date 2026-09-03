@@ -496,16 +496,21 @@ func (decoder *chatStreamDecoder) completeChoice(reason *string) ([]llmprotocol.
 		if decoder.stop == llmprotocol.StopToolCall {
 			return nil, invalidProviderResponse("stream_tool_output_missing", "Chat stream ended with tool_calls but emitted no tool call")
 		}
+		// The stream ended without a single content delta: the model spent
+		// the turn on a stop token. An item still opens and closes, because
+		// the turn happened and its stop reason and usage belong to it, but
+		// it names no content. Naming a text content here is what made every
+		// such turn reach the client as an empty text block, which reads as
+		// an answer the model never gave.
 		started, err := decoder.next(llmprotocol.Event{
 			Type: llmprotocol.EventOutputItemStarted, ItemIndex: 0,
-			Role: llmprotocol.RoleAssistant, Content: &llmprotocol.Content{Kind: llmprotocol.ContentText},
+			Role: llmprotocol.RoleAssistant,
 		})
 		if err != nil {
 			return nil, err
 		}
 		completed, err := decoder.next(llmprotocol.Event{
 			Type: llmprotocol.EventOutputItemCompleted, ItemIndex: 0, StopReason: decoder.stop,
-			Content: &llmprotocol.Content{Kind: llmprotocol.ContentText},
 		})
 		return []llmprotocol.Event{started, completed}, err
 	}

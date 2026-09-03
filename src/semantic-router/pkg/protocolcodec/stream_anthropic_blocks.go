@@ -112,14 +112,17 @@ func (encoder *anthropicStreamEncoder) completeAnthropicItem(
 		frames = append(frames, deltaFrames...)
 		keys = append(keys, key)
 	}
+	// An item that completed without a single block is a completion the model
+	// spent on a stop token and nothing else. Anthropic represents that as a
+	// message whose content is empty, so the item ends here: opening a block
+	// to fill the gap would tell the client the model answered when it did
+	// not, and the answer it would show is the empty string. The stop reason
+	// and the usage still reach the client on message_delta.
+	if len(keys) == 0 && event.Content == nil {
+		return frames, nil, nil
+	}
 	if len(keys) == 0 {
-		kind := llmprotocol.ContentText
-		if event.ToolCall != nil {
-			kind = llmprotocol.ContentToolCall
-		} else if event.Content != nil && event.Content.Kind != "" {
-			kind = event.Content.Kind
-		}
-		started, key, err := encoder.ensureAnthropicBlockStarted(event, kind)
+		started, key, err := encoder.ensureAnthropicBlockStarted(event, event.Content.Kind)
 		if err != nil {
 			return nil, nil, err
 		}
