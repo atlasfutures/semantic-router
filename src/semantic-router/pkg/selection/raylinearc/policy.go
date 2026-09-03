@@ -93,6 +93,10 @@ type Decision struct {
 	Stayed                      bool
 	ColdSwitchUpgradeExemptions []bool
 	StayUpgradeExempted         bool
+	// ExcludedArms echoes the hard constraint the caller applied. Scores are
+	// left alone, so this is the only record of why the winner was not the
+	// highest-scoring arm.
+	ExcludedArms []bool
 }
 
 type Policy struct {
@@ -115,8 +119,17 @@ func newPolicy(manifest *Manifest) *Policy {
 	}
 }
 
+// Select scores the arms and applies the artifact's own switch policy.
+//
+// excluded is a hard constraint indexed like the worker pool, or nil when
+// nothing is excluded. An excluded arm can never be selected: not by score,
+// and not by the stay margin, so a request that the previous arm cannot serve
+// switches away from it like any other forced switch. Scores are not masked,
+// because the trace is what explains the decision and a fabricated score
+// would explain the wrong one.
 func (policy *Policy) Select(
 	rawScores []float32,
+	excluded []bool,
 	state *EpisodeState,
 	inputTokens int,
 	now time.Time,
@@ -129,20 +142,23 @@ func (policy *Policy) Select(
 	); err != nil {
 		return Decision{}, err
 	}
+	if err := validateExclusion(excluded, len(policy.workers)); err != nil {
+		return Decision{}, err
+	}
 	adjustment := policy.adjustScores(
 		rawScores,
 		state,
 		inputTokens,
 		now,
 	)
-	tentative, ok := ArgmaxFirst(adjustment.scores)
+	tentative, ok := argmaxEligible(adjustment.scores, excluded)
 	if !ok {
-		return Decision{}, errors.New("ARC policy has no candidate arm")
+		return Decision{}, ErrNoEligibleArm
 	}
 	selected, stayed, stayUpgradeExempted := policy.applyStayMargin(
 		tentative,
 		adjustment.scores,
-		state.PreviousArm,
+		eligiblePreviousArm(state.PreviousArm, excluded),
 	)
 	return Decision{
 		SelectedArm:                 selected,
@@ -154,6 +170,7 @@ func (policy *Policy) Select(
 		Stayed:                      stayed,
 		ColdSwitchUpgradeExemptions: adjustment.upgradeExemptions,
 		StayUpgradeExempted:         stayUpgradeExempted,
+		ExcludedArms:                append([]bool(nil), excluded...),
 	}, nil
 }
 

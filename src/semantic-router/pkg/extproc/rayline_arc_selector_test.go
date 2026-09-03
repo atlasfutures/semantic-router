@@ -349,6 +349,7 @@ type fakeARCScorer struct {
 	workerIDs []string
 	decision  raylinearc.Decision
 	err       error
+	excluded  []bool
 }
 
 func (scorer *fakeARCScorer) WorkerIDs() []string {
@@ -377,9 +378,11 @@ func (scorer *fakeARCScorer) Worker(
 
 func (scorer *fakeARCScorer) Select(
 	_ []float32,
+	excluded []bool,
 	_ *raylinearc.EpisodeState,
 	_ int,
 	_ time.Time,
 ) (raylinearc.Decision, error) {
+	scorer.excluded = append([]bool(nil), excluded...)
 	return scorer.decision, scorer.err
 }

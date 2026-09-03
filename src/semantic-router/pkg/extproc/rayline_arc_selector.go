@@ -53,6 +53,7 @@ type raylineARCScorer interface {
 	EncoderRevision() string
 	Select(
 		[]float32,
+		[]bool,
 		*raylinearc.EpisodeState,
 		int,
 		time.Time,
@@ -88,6 +89,7 @@ func (scorer *runtimeARCScorer) Worker(
 
 func (scorer *runtimeARCScorer) Select(
 	embedding []float32,
+	excluded []bool,
 	state *raylinearc.EpisodeState,
 	inputTokens int,
 	now time.Time,
@@ -100,7 +102,13 @@ func (scorer *runtimeARCScorer) Select(
 	if err != nil {
 		return raylinearc.Decision{}, err
 	}
-	return scorer.policy.Select(rawScores, state, inputTokens, now)
+	return scorer.policy.Select(
+		rawScores,
+		excluded,
+		state,
+		inputTokens,
+		now,
+	)
 }
 
 // raylineARCArmedComponents is everything a selection needs from readiness.
@@ -203,6 +211,7 @@ func (selector *raylineARCSelector) Select(
 	}
 	decision, err := armed.scorer.Select(
 		encoded.Embedding,
+		nil,
 		state,
 		encoded.SerializedTokens,
 		selector.now(),
@@ -398,6 +407,7 @@ func (selector *raylineARCSelector) selectionResult(
 			CacheMissTokens:      append([]int(nil), decision.CacheMissTokens...),
 			Stayed:               decision.Stayed,
 			UpgradeExemptions:    append([]bool(nil), decision.ColdSwitchUpgradeExemptions...),
+			ExcludedArms:         append([]bool(nil), decision.ExcludedArms...),
 			StayUpgradeExempted:  decision.StayUpgradeExempted,
 			SerializedTokens:     encoded.SerializedTokens,
 			FullHistoryTokens:    encoded.FullHistoryTokens,
