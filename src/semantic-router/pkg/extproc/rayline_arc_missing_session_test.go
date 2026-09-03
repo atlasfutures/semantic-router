@@ -7,11 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/testutil"
-
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -102,10 +99,11 @@ func TestRaylineARCMissingSessionHeaderIsPreparationFailure(t *testing.T) {
 
 // The caller omitted a header. Answering 503 tells them to retry something
 // that can never succeed; a 400 naming the header tells them what to send.
+// The counter belongs to the construction site and is asserted with the rest
+// of the refusal contract in TestMissingSessionHeaderCountsOnceForOneRequest.
 func TestRaylineARCMissingSessionHeaderAnswers400(t *testing.T) {
 	router, requestContext, algorithm := missingSessionRequestContext(t, "")
 	router.buildRaylineARCSelectionContext(algorithm, requestContext, missingSessionModelRefs())
-	before := testutil.ToFloat64(metrics.RaylineARCSelectionFailures.WithLabelValues(arcFailureMissingEpisodeID))
 
 	err := selectionFailureForAlgorithm(algorithm, arcFailureMissingEpisodeID)
 	response := router.authoritativeSelectionFailureResponse(err, requestContext)
@@ -134,10 +132,6 @@ func TestRaylineARCMissingSessionHeaderAnswers400(t *testing.T) {
 	}
 	if !bytesContainsHeaderName(body.Error.Message) {
 		t.Fatalf("message %q does not name %s", body.Error.Message, testEpisodeIDHeader)
-	}
-	after := testutil.ToFloat64(metrics.RaylineARCSelectionFailures.WithLabelValues(arcFailureMissingEpisodeID))
-	if after != before+1 {
-		t.Fatalf("failure counter moved %v to %v, want one increment", before, after)
 	}
 }
 

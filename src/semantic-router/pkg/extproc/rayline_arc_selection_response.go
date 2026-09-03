@@ -8,7 +8,7 @@ import (
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
 // selectionContendedRetryAfterSeconds is the shortest honest wait. Both
@@ -53,6 +53,26 @@ func missingEpisodeHeaderMessage(ctx *RequestContext) string {
 	return "This request needs a " + ctx.RaylineARCEpisodeIDHeader + " header."
 }
 
+// missingEpisodeHeaderResponse refuses a request that named no episode. The
+// immediate response is re-encoded into the client's wire format before it
+// leaves, and that step uses a canned message per status unless the request
+// carries the protocol error to use, so the refusal is recorded there too.
+// Otherwise the caller is told only that something was invalid.
+func (r *OpenAIRouter) missingEpisodeHeaderResponse(
+	ctx *RequestContext,
+) *ext_proc.ProcessingResponse {
+	message := missingEpisodeHeaderMessage(ctx)
+	if ctx != nil {
+		ctx.ImmediateProtocolError = llmprotocol.NewError(
+			llmprotocol.ErrorInvalidRequest,
+			arcFailureMissingEpisodeID,
+			message,
+			nil,
+		)
+	}
+	return r.createErrorResponse(http.StatusBadRequest, message)
+}
+
 // authoritativeSelectionFailureResponse maps a fail-closed selector's bounded
 // failure onto the admission contract. It answers nil for every other error so
 // the caller keeps its existing classification.
@@ -66,11 +86,10 @@ func (r *OpenAIRouter) authoritativeSelectionFailureResponse(
 	}
 	recordSelectionLifecycleFailure(ctx, "selection", err)
 	if selectionFailureIsCallerError(failure.class) {
-		metrics.RecordRaylineARCFailure(failure.class)
-		return r.createErrorResponse(
-			http.StatusBadRequest,
-			missingEpisodeHeaderMessage(ctx),
-		)
+		// The bounded class is already counted where it is constructed, which
+		// is the one place that sees both entrypoints. Counting it again here
+		// would count the ExtProc path twice.
+		return r.missingEpisodeHeaderResponse(ctx)
 	}
 	if !selectionFailureIsContended(failure.class) {
 		return r.createErrorResponse(

@@ -434,6 +434,13 @@ func selectionContendedMessage(*RequestContext) string {
 }
 
 func boundedSelectionTransactionFailure(err error) string {
+	// A selection failure already carries the bounded class the selector chose.
+	// Folding it into the generic transaction class throws away the only thing
+	// that makes the log line keyable.
+	var selectionFailure *modelSelectionFailure
+	if errors.As(err, &selectionFailure) && selectionFailure.class != "" {
+		return selectionFailure.class
+	}
 	switch {
 	case err == nil:
 		return ""
