@@ -22,6 +22,14 @@ GPU_TYPE_CONDITIONAL = (
     "else:\n"
     '    GPU_TYPE = "H100"'
 )
+# The autoscaler floor, frozen the same way and for the same reason. Only the
+# standing dev app is floored: the dev cell fails closed on a cold encoder, so
+# its first turn after an idle gap is a user-visible 503. Every other app --
+# the default app, every closed run's app, and production -- keeps the
+# scale-to-zero default, so this decision cannot buy idle GPU time for them.
+MIN_CONTAINERS_CONDITIONAL = (
+    "MIN_CONTAINERS = 1 if APP_NAME in DEV_APP_PROFILES else 0"
+)
 
 
 def source() -> str:
@@ -66,6 +74,7 @@ def test_session_service_is_authenticated_and_bounded() -> None:
         "timeout",
         "scaledown_window",
         "max_containers",
+        "min_containers",
         "volumes",
     } <= function_keywords
     function_keyword_values = {
@@ -290,6 +299,32 @@ def test_session_service_confines_the_standing_dev_app_to_its_exact_app_name() -
         "DEV_APP"
         not in service_source.split("MAX_CONCURRENT_INPUTS = ")[1].split("\n")[0]
     )
+
+
+def test_only_the_standing_dev_app_holds_a_warm_container() -> None:
+    """The floor is app-scoped, like the card and the caps above it.
+
+    The dev cell's encoder call fails closed, so a scale-from-zero cold start
+    (measured at 220.7-226.4 s on 2026-09-02) surfaces to the caller as a 503
+    on the first turn after an idle gap. Flooring that one app removes it. The
+    decorator must read the module constant, so the conditional above is the
+    only place the floor can move, and no other app name can be widened by
+    editing this one.
+    """
+
+    service_source = source()
+
+    assert MIN_CONTAINERS_CONDITIONAL in service_source
+
+    module = ast.parse(service_source)
+    service = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.ClassDef) and node.name == "SessionEncoder"
+    )
+    function = decorator_call(service, "app.cls")
+    keywords = {keyword.arg: keyword.value for keyword in function.keywords}
+    assert ast.unparse(keywords["min_containers"]) == "MIN_CONTAINERS"
 
 
 def test_allowed_app_names_extend_with_every_registered_experiment() -> None:

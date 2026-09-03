@@ -165,6 +165,16 @@ CHUNK_SCHEDULE_TOKENS = 8_192
 # and queueing there is invisible to start_lag; 64 keeps ingress unbound so the
 # PERF034 sweep measures the encoder, not the front door.
 MAX_CONCURRENT_INPUTS = 64 if APP_NAME in PERF034_APP_PROFILES else 32
+# The autoscaler floor, scoped to the app name for the same reason the card
+# and the caps above it are. Only the standing dev app is floored. Its caller,
+# the dev Rayline ARC cell, sets on_error: fail_closed, so a scale-from-zero
+# cold start -- 220.7 s and 226.4 s measured through the cell on 2026-09-02 --
+# reaches a real cohort user as a 503 on the first turn after an idle gap, not
+# as a slow turn. One warm L4 removes that turn; it costs ~$1.69/hr, ~$40/day.
+# Every other app name deployed from this module keeps the scale-to-zero
+# default: the default app, every closed run's app, and production, whose own
+# floor is set on the deployment and is not this module's to move.
+MIN_CONTAINERS = 1 if APP_NAME in DEV_APP_PROFILES else 0
 
 _THIS_DIR = Path(__file__).resolve().parent
 _REMOTE_PLUGIN_DIR = "/opt/rayline_arc_io"
@@ -268,6 +278,7 @@ vllm_cache = modal.Volume.from_name("rayline-vllm-cache", create_if_missing=True
     timeout=31 * 60,
     scaledown_window=300,
     max_containers=1,
+    min_containers=MIN_CONTAINERS,
     volumes={
         "/root/.cache/huggingface": hf_cache,
         "/root/.cache/vllm": vllm_cache,
