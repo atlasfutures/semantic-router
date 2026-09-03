@@ -40,8 +40,16 @@ func TestScopedCacheBreakpointSurvivesRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	reEncoded := firstSystemCacheControl(t, encoded.Body)
+	if reEncoded.Scope != "global" || reEncoded.TTL != "1h" {
+		t.Fatalf("routing erased part of the cache breakpoint: %+v", reEncoded)
+	}
+}
+
+func firstSystemCacheControl(t *testing.T, body []byte) anthropicCacheControlWire {
+	t.Helper()
 	var wire anthropicRequestWire
-	if err := json.Unmarshal(encoded.Body, &wire); err != nil {
+	if err := json.Unmarshal(body, &wire); err != nil {
 		t.Fatal(err)
 	}
 	var blocks []anthropicContentWire
@@ -51,9 +59,7 @@ func TestScopedCacheBreakpointSurvivesRouting(t *testing.T) {
 	if len(blocks) != 1 || blocks[0].CacheControl == nil {
 		t.Fatalf("re-encoded system = %s", wire.System)
 	}
-	if blocks[0].CacheControl.Scope != "global" || blocks[0].CacheControl.TTL != "1h" {
-		t.Fatalf("routing erased part of the cache breakpoint: %+v", blocks[0].CacheControl)
-	}
+	return *blocks[0].CacheControl
 }
 
 func firstCacheDirective(request llmprotocol.Request) *llmprotocol.CacheDirective {
