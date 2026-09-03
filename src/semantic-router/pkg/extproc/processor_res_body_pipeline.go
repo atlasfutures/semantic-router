@@ -36,7 +36,7 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	if rewriteClientBody {
 		clientBody, err = r.encodeClientResponse(*semanticResponse, ctx)
 		if err != nil {
-			return r.createErrorResponse(502, "The selected model returned an incompatible response")
+			return r.bodyPhaseErrorResponse(ctx, 502, "The selected model returned an incompatible response")
 		}
 	}
 	usage = r.takeNeutralResponseUsage(ctx)
@@ -92,7 +92,35 @@ func (r *OpenAIRouter) upstreamDecodeFailureResponse(
 			)
 		}
 	}
-	return r.createErrorResponse(status, message)
+	return r.bodyPhaseErrorResponse(ctx, status, message)
+}
+
+// bodyPhaseErrorResponse builds a refusal that replaces a response after the
+// response headers have already gone by. Envoy scrubs the keystone headers
+// once, at encodeHeaders, so anything set here reaches the client verbatim
+// rather than being cleaned up on the way out. The refusal therefore presents
+// the published contract itself: the request id, the model that was selected,
+// the client protocol, and nothing else the contract does not name.
+//
+// The success path builds its headers through the response-header mutation
+// and is untouched.
+func (r *OpenAIRouter) bodyPhaseErrorResponse(
+	ctx *RequestContext,
+	status int,
+	message string,
+) *ext_proc.ProcessingResponse {
+	response := r.createErrorResponse(status, message)
+	immediate := response.GetImmediateResponse()
+	if immediate == nil || ctx == nil {
+		return response
+	}
+	published := newResponseHeaderMutationBuilder()
+	published.addString("content-type", "application/json")
+	published.addString(headers.RequestID, ctx.RequestID)
+	published.addString(headers.VSRSelectedModel, ctx.VSRSelectedModel)
+	published.addString(headers.VSRClientProtocol, normalizeProtocol(string(ctx.SourceFormat)))
+	immediate.Headers = &ext_proc.HeaderMutation{SetHeaders: published.setHeaders}
+	return response
 }
 
 func (r *OpenAIRouter) applySemanticResponseWarnings(
