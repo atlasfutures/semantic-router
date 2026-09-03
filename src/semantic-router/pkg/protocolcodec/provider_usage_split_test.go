@@ -109,3 +109,69 @@ func assertTokenUnknown(t *testing.T, name string, count llmprotocol.TokenCount)
 		t.Fatalf("%s = %d, want it unknown because the provider's split cannot be true", name, *count.Value)
 	}
 }
+
+// A usage object may omit either breakdown entirely. The totals it does state
+// must survive and the omitted sub-counts must read as unknown, never as a
+// derived number the provider did not give.
+func TestUsageWithoutBreakdownKeepsItsTotals(t *testing.T) {
+	bodies := map[string]string{
+		"no completion details": `"usage":{"prompt_tokens":20,"completion_tokens":64,"total_tokens":84,` +
+			`"prompt_tokens_details":{"cached_tokens":5,"cache_write_tokens":0}}`,
+		"no prompt details": `"usage":{"prompt_tokens":20,"completion_tokens":64,"total_tokens":84,` +
+			`"completion_tokens_details":{"reasoning_tokens":40}}`,
+		"no details at all": `"usage":{"prompt_tokens":20,"completion_tokens":64,"total_tokens":84}`,
+	}
+	engine := NewBuiltinEngine()
+	for name, usage := range bodies {
+		for targetName, target := range map[string]llmprotocol.WireFormat{
+			"chat":      llmprotocol.OpenAIChatV1,
+			"anthropic": llmprotocol.AnthropicMessagesV1,
+		} {
+			t.Run(name+"/"+targetName, func(t *testing.T) {
+				body := []byte(`{"id":"chatcmpl_1","object":"chat.completion","created":1,"model":"m",` +
+					`"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"hi"}}],` +
+					usage + `}`)
+				result, err := engine.TranslateResponse(
+					llmprotocol.OpenAIChatV1, target, body,
+					func(response *llmprotocol.Response) error {
+						response.Model = "public-model"
+						return nil
+					},
+				)
+				if err != nil {
+					t.Fatalf("translate: %v", err)
+				}
+				if len(result.Body) == 0 {
+					t.Fatal("translated body is empty")
+				}
+				assertTokenValue(t, "input total", result.Response.Usage.InputTotal, 20)
+				assertTokenValue(t, "output total", result.Response.Usage.OutputTotal, 64)
+				assertTokenValue(t, "total", result.Response.Usage.Total, 84)
+			})
+		}
+	}
+}
+
+// The stream path derives usage with the same function, so the terminal chunk
+// of a stream whose breakdown cannot be true must not fail either.
+func TestUnreconcilableUsageInAStreamStillCompletes(t *testing.T) {
+	stream, err := NewBuiltinEngine().NewStream(
+		llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1,
+		llmprotocol.StreamContext{PublicModel: "public-model", ProviderModel: "provider-model"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := `{"id":"c1","object":"chat.completion.chunk","created":1,"model":"provider-model","choices":[{"index":0,`
+	body := "data: " + head + `"delta":{"content":"hi","role":"assistant"},"finish_reason":null}]}` + "\n\n" +
+		"data: " + head + `"delta":{"content":"","role":"assistant"},"finish_reason":"length"}],` +
+		`"usage":{"prompt_tokens":20,"completion_tokens":64,"total_tokens":84,` +
+		`"completion_tokens_details":{"reasoning_tokens":79}}}` + "\n\n" +
+		"data: [DONE]\n\n"
+	if _, _, _, pushErr := stream.Push([]byte(body)); pushErr != nil {
+		t.Fatalf("push: %v", pushErr)
+	}
+	if _, _, _, finalErr := stream.Finalize(nil); finalErr != nil {
+		t.Fatalf("finalize: %v", finalErr)
+	}
+}
