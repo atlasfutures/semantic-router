@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -28,7 +29,7 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 			"client_format":  ctx.SourceFormat,
 			"error":          err.Error(),
 		})
-		return r.createErrorResponse(502, "The selected model returned an invalid response")
+		return r.upstreamDecodeFailureResponse(ctx, err)
 	}
 	clientBody := responseBody
 	rewriteClientBody := requiresClientResponseRewrite(ctx)
@@ -62,6 +63,36 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	r.updateRouterReplayHallucinationStatus(ctx)
 	r.attachRouterReplayResponse(ctx, finalBody, true)
 	return response
+}
+
+// upstreamDecodeFailureResponse answers a response the codec could not
+// decode. The failure already names what was wrong, and at this boundary that
+// name is the whole diagnosis: the operator cannot see the body and the client
+// cannot tell an unusable response from an unreachable model. So the refusal
+// carries the failure's own code and message instead of one canned sentence.
+//
+// The status stays on the upstream rules: a body that cannot be used is 502
+// and an upstream that ran out of time is 504. The message is the protocol
+// error's own, never its cause, so no part of the response body travels with
+// it.
+func (r *OpenAIRouter) upstreamDecodeFailureResponse(
+	ctx *RequestContext,
+	err error,
+) *ext_proc.ProcessingResponse {
+	status, message := 502, "The selected model returned an invalid response"
+	var protocolError *llmprotocol.ProtocolError
+	if errors.As(err, &protocolError) && protocolError.Message != "" {
+		message = protocolError.Message
+		if protocolError.Category == llmprotocol.ErrorUpstreamTimeout {
+			status = 504
+		}
+		if ctx != nil {
+			ctx.ImmediateProtocolError = llmprotocol.NewError(
+				protocolError.Category, protocolError.Code, protocolError.Message, nil,
+			)
+		}
+	}
+	return r.createErrorResponse(status, message)
 }
 
 func (r *OpenAIRouter) applySemanticResponseWarnings(
