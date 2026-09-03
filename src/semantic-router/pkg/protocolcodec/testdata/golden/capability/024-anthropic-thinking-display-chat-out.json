@@ -3,21 +3,46 @@
     {
       "name": "enabled summarized",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_capability"
-        }
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 2048,
+          "messages": [
+            {
+              "content": "Think carefully.",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model",
+          "reasoning_budget_tokens": 1024
+        },
+        "diagnostics": [
+          {
+            "field": "reasoning_display",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {
       "name": "adaptive omitted",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_capability"
-        }
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 2048,
+          "messages": [
+            {
+              "content": "Think carefully.",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "reasoning_display",
+            "action": "dropped"
+          }
+        ]
       }
     }
   ]

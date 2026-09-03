@@ -525,6 +525,23 @@ func rejectUnsupportedRequestFields(fields map[string]json.RawMessage) error {
 	return rejectUnsupportedRequestField(names[0], fields[names[0]])
 }
 
+// appendPresentationDrop records a client control the target wire format cannot
+// carry and that changes only how an answer is presented, never what the model
+// is asked. Losing one is the routable outcome: the turn still runs and the
+// caller is told what was dropped. Controls that change the answer keep using
+// appendLossy, which a strict policy can still turn into a refusal.
+func appendPresentationDrop(
+	diagnostics *llmprotocol.Diagnostics,
+	policy llmprotocol.Policy,
+	source, target llmprotocol.WireFormat,
+	field, reason string,
+) {
+	*diagnostics = appendDiagnostics(*diagnostics, llmprotocol.Diagnostics{{
+		Source: source, Target: target, Field: field,
+		Action: llmprotocol.DiagnosticDropped, Reason: reason,
+	}}, policy.Limits.Diagnostics)
+}
+
 // appendAccountingOmission records a representation-only omission. Semantic
 // usage remains available to settlement even when a client format has no field
 // for a detailed accounting bucket, so this never converts a successful

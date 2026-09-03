@@ -1,7 +1,13 @@
 {
-  "status": "error",
-  "error": {
-    "category": "unsupported_feature",
-    "code": "unsupported_capability"
+  "status": "ok",
+  "body": {
+    "max_completion_tokens": 32,
+    "messages": [
+      {
+        "content": "Think when necessary.",
+        "role": "user"
+      }
+    ],
+    "model": "routed-model"
   }
 }

@@ -326,10 +326,22 @@ func TestOfficialAnthropicAdaptiveThinkingSurvivesSemanticMutation(t *testing.T)
 	if roundTrip.Thinking == nil || roundTrip.Thinking.Type != "adaptive" {
 		t.Fatalf("adaptive thinking changed after routing mutation: %s", encoded.Body)
 	}
-	_, err = engine.TranslateRequest(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, body, nil)
-	var protocolError *llmprotocol.ProtocolError
-	if !errors.As(err, &protocolError) || protocolError.Category != llmprotocol.ErrorUnsupportedFeature {
-		t.Fatalf("adaptive thinking cross-protocol translation returned %T %v, want typed unsupported_feature", err, err)
+	// Adaptive asks the model to decide whether and how much to think, which
+	// is what Chat Completions does when a request names no reasoning control.
+	// The translation therefore carries it by carrying nothing, and the turn
+	// routes rather than failing.
+	translated, err := engine.TranslateRequest(
+		llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, body, nil,
+	)
+	if err != nil {
+		t.Fatalf("adaptive thinking cross-protocol translation failed: %v", err)
+	}
+	var chat chatRequestWire
+	if err := json.Unmarshal(translated.Body, &chat); err != nil {
+		t.Fatal(err)
+	}
+	if chat.ReasoningEffort != "" || chat.ReasoningBudget != nil {
+		t.Fatalf("adaptive thinking invented a Chat reasoning control: %s", translated.Body)
 	}
 }
 

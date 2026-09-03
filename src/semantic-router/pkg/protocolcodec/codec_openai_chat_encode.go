@@ -11,14 +11,6 @@ func (OpenAIChatCodec) EncodeRequest(request llmprotocol.Request, envelope llmpr
 	if envelope.CanReplay(llmprotocol.OpenAIChatV1, request.Generation, policy, false) {
 		return append([]byte(nil), envelope.Request...), nil, nil
 	}
-	if request.ReasoningDisplay != "" {
-		return nil, nil, llmprotocol.NewError(
-			llmprotocol.ErrorUnsupportedFeature,
-			"unsupported_reasoning_display",
-			"Chat Completions cannot represent reasoning display controls",
-			nil,
-		)
-	}
 	if request.Sampling.MaxOutputTokens != nil && *request.Sampling.MaxOutputTokens < 0 {
 		return nil, nil, llmprotocol.NewError(
 			llmprotocol.ErrorUnsupportedFeature,
@@ -40,6 +32,7 @@ func (OpenAIChatCodec) EncodeRequest(request llmprotocol.Request, envelope llmpr
 		return nil, diagnostics, validationErr
 	}
 	wire := encodeChatBaseRequest(request)
+	encodeChatReasoningControls(&wire, request, &diagnostics, policy)
 	if encodeErr := appendChatMessages(&wire, request); encodeErr != nil {
 		return nil, diagnostics, encodeErr
 	}
@@ -95,6 +88,37 @@ func encodeChatBaseRequest(request llmprotocol.Request) chatRequestWire {
 		}
 	}
 	return wire
+}
+
+// encodeChatReasoningControls carries the thinking controls the Chat wire can
+// hold and records the one it cannot.
+//
+//   - adaptive: the model decides whether and how much to think, which is what
+//     Chat Completions does when the request names no reasoning control. It is
+//     represented by carrying nothing, so the effort level the client sent
+//     still reaches the provider.
+//   - disabled: reasoning_effort "none" is the explicit off-signal. It replaces
+//     any effort the client sent, because the two collapse into one Chat knob
+//     and thinking-off is the stronger statement.
+//   - display: Chat Completions has no control over whether reasoning comes
+//     back or how it is summarized. The turn still runs and the drop is
+//     recorded, because losing a presentation preference is the routable
+//     outcome and refusing the conversation is not.
+func encodeChatReasoningControls(
+	wire *chatRequestWire,
+	request llmprotocol.Request,
+	diagnostics *llmprotocol.Diagnostics,
+	policy llmprotocol.Policy,
+) {
+	if request.ReasoningMode == llmprotocol.ReasoningModeDisabled {
+		wire.ReasoningEffort = "none"
+	}
+	if request.ReasoningDisplay != "" {
+		appendPresentationDrop(
+			diagnostics, policy, request.Trusted.SourceFormat, llmprotocol.OpenAIChatV1,
+			"reasoning_display", "Chat Completions cannot control how reasoning is returned",
+		)
+	}
 }
 
 func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) error {

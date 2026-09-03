@@ -434,8 +434,13 @@ func validateReasoningMode(request Request) error {
 	switch request.ReasoningMode {
 	case "", ReasoningModeEnabled:
 	case ReasoningModeDisabled, ReasoningModeAdaptive:
-		if request.ReasoningBudgetTokens != nil || strings.TrimSpace(request.ReasoningEffort) != "" {
-			return NewError(ErrorInvalidRequest, "conflicting_reasoning_control", string(request.ReasoningMode)+" reasoning cannot include an effort or token budget", nil)
+		// Only a token budget contradicts these modes: neither variant of the
+		// thinking object carries one. An effort level is a separate control
+		// that Anthropic documents as the way to steer thinking depth once a
+		// budget is no longer accepted, and Claude Code sends the pair on
+		// every turn, so the Router routes it.
+		if request.ReasoningBudgetTokens != nil {
+			return NewError(ErrorInvalidRequest, "conflicting_reasoning_control", string(request.ReasoningMode)+" reasoning cannot include a token budget", nil)
 		}
 	default:
 		return NewError(ErrorInvalidRequest, "invalid_reasoning_mode", "reasoning mode is invalid", nil)

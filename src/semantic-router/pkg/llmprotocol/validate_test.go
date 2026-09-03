@@ -177,9 +177,9 @@ func TestValidateRequestReasoningModesAreUnambiguous(t *testing.T) {
 	for name, mutate := range map[string]func(*Request){
 		"unknown mode":           func(request *Request) { request.ReasoningMode = "future" },
 		"enabled without budget": func(request *Request) { request.ReasoningMode = ReasoningModeEnabled },
-		"disabled with effort": func(request *Request) {
+		"disabled with budget": func(request *Request) {
 			request.ReasoningMode = ReasoningModeDisabled
-			request.ReasoningEffort = "high"
+			request.ReasoningBudgetTokens = Int64(512)
 		},
 		"adaptive with budget": func(request *Request) {
 			request.ReasoningMode = ReasoningModeAdaptive
@@ -204,6 +204,16 @@ func TestValidateRequestReasoningModesAreUnambiguous(t *testing.T) {
 	request.ReasoningBudgetTokens = nil
 	if err := ValidateRequest(request, limits); err != nil {
 		t.Fatalf("valid adaptive reasoning rejected: %v", err)
+	}
+	// An effort level is not a token budget. Anthropic documents it as the
+	// control that replaces one, and accepts it alongside either mode.
+	for _, mode := range []ReasoningMode{ReasoningModeAdaptive, ReasoningModeDisabled} {
+		request := validSemanticRequest()
+		request.ReasoningMode = mode
+		request.ReasoningEffort = "high"
+		if err := ValidateRequest(request, limits); err != nil {
+			t.Fatalf("%s reasoning with an effort level rejected: %v", mode, err)
+		}
 	}
 }
 

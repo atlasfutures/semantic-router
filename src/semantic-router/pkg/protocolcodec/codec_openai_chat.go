@@ -23,6 +23,8 @@ func (OpenAIChatCodec) Capabilities() llmprotocol.CapabilitySet {
 		llmprotocol.CapabilityReasoningAccounting, llmprotocol.CapabilityAuthoritativeUsage,
 		llmprotocol.CapabilityMultipleCandidates, llmprotocol.CapabilityCacheDirectives,
 		llmprotocol.CapabilityReasoningEffort,
+		llmprotocol.CapabilityReasoningAdaptive, llmprotocol.CapabilityReasoningDisable,
+		llmprotocol.CapabilityReasoningDisplay,
 		llmprotocol.CapabilityReasoningBudget, llmprotocol.CapabilitySamplingSeed,
 		llmprotocol.CapabilitySamplingPenalties, llmprotocol.CapabilityStopSequences,
 		llmprotocol.CapabilityRequestMetadata, llmprotocol.CapabilityRequestStorage,

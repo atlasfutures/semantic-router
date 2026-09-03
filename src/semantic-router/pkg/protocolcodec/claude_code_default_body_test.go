@@ -43,16 +43,53 @@ func TestClaudeCodeAdaptiveThinkingWithEffortReachesTheChatLeg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claude Code's default body was refused on the Chat leg: %v", err)
 	}
-	var wire struct {
-		ReasoningEffort string `json:"reasoning_effort"`
-	}
+	var wire chatRequestWire
 	if err := json.Unmarshal(result.Body, &wire); err != nil {
 		t.Fatal(err)
 	}
+	// Adaptive is the Chat default -- the model decides -- so the effort the
+	// client sent is what reaches the provider.
 	if wire.ReasoningEffort != "high" {
 		t.Fatalf("Chat reasoning_effort = %q, want high", wire.ReasoningEffort)
 	}
+	// The display preference has no Chat control. The turn still routes and
+	// the drop is recorded rather than refused.
 	assertDiagnosticField(t, result.Diagnostics, "reasoning_display")
+}
+
+// Both display values are dropped and counted, never refused.
+func TestChatRecordsTheReasoningDisplayItCannotCarry(t *testing.T) {
+	body := `{"model":"m","max_tokens":64,"messages":[{"role":"user","content":"hello"}],` +
+		`"thinking":{"type":"adaptive","display":"summarized"}}`
+	engine := NewBuiltinEngine()
+	result, err := engine.TranslateRequest(
+		llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, []byte(body), nil,
+	)
+	if err != nil {
+		t.Fatalf("summarized reasoning display was refused on the Chat leg: %v", err)
+	}
+	assertDiagnosticField(t, result.Diagnostics, "reasoning_display")
+}
+
+// thinking-off must reach the provider as an explicit off-signal, not as
+// silence: a provider that reasons by default would otherwise still reason.
+func TestChatCarriesDisabledThinkingAsAnExplicitOffSignal(t *testing.T) {
+	body := `{"model":"m","max_tokens":64,"messages":[{"role":"user","content":"hello"}],` +
+		`"thinking":{"type":"disabled"},"output_config":{"effort":"high"}}`
+	engine := NewBuiltinEngine()
+	result, err := engine.TranslateRequest(
+		llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, []byte(body), nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire chatRequestWire
+	if err := json.Unmarshal(result.Body, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire.ReasoningEffort != "none" {
+		t.Fatalf("Chat reasoning_effort = %q, want none", wire.ReasoningEffort)
+	}
 }
 
 // thinking.type disabled with an effort level is the other shape Claude Code
