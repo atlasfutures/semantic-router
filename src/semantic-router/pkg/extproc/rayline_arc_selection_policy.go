@@ -212,6 +212,7 @@ func observeRaylineARCSelection(
 		"stayed":                 trace.Stayed,
 		"upgrade_exemptions":     trace.UpgradeExemptions,
 		"stay_upgrade_exempted":  trace.StayUpgradeExempted,
+		"excluded_arms":          trace.ExcludedArms,
 		"serialized_tokens":      trace.SerializedTokens,
 		"full_history_tokens":    trace.FullHistoryTokens,
 		"truncated_tokens":       trace.TruncatedTokens,

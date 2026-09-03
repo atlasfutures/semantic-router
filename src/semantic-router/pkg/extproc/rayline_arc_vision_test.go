@@ -281,3 +281,29 @@ func TestRaylineARCSelectorFailsClosedWhenNoArmTakesImages(t *testing.T) {
 		t.Fatal("no_vision_arm must answer 503, not 429")
 	}
 }
+
+// The exclusion has to reach the trace, or a forced switch reads in the logs
+// as the scores changing their mind.
+func TestRaylineARCSelectorRecordsTheExclusionInItsTrace(t *testing.T) {
+	state, err := raylinearc.NewEpisodeState(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scorer := visionScorer()
+	scorer.decision.ExcludedArms = []bool{false, true}
+	selector := armedVisionSelector(scorer, visionEncoder())
+
+	result, err := selector.Select(
+		context.Background(),
+		visionSelectionContext(state, true, []bool{false, true}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(
+		result.RaylineARC.ExcludedArms,
+		[]bool{false, true},
+	) {
+		t.Fatalf("trace exclusion = %v", result.RaylineARC.ExcludedArms)
+	}
+}

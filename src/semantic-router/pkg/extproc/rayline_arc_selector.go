@@ -205,13 +205,17 @@ func (selector *raylineARCSelector) Select(
 	if err != nil {
 		return nil, err
 	}
+	excluded, err := visionExcludedArms(arcContext, len(workerIDs))
+	if err != nil {
+		return nil, err
+	}
 	encoded, latency, err := selector.encode(ctx, armed, arcContext, state)
 	if err != nil {
 		return nil, err
 	}
 	decision, err := armed.scorer.Select(
 		encoded.Embedding,
-		nil,
+		excluded,
 		state,
 		encoded.SerializedTokens,
 		selector.now(),
@@ -231,6 +235,35 @@ func (selector *raylineARCSelector) Select(
 		decision,
 		latency,
 	), nil
+}
+
+// visionExcludedArms turns the image fact and the arms' model cards into the
+// hard constraint the policy applies. It runs before the encoder, so a turn
+// no arm can serve never occupies that dependency.
+//
+// The exclusion is a refusal, not a degrade: an arm whose model card takes no
+// image input answers 404 for an image turn, so routing there produces no
+// completion at all.
+func visionExcludedArms(
+	arcContext *selection.RaylineARCSelectionContext,
+	armCount int,
+) ([]bool, error) {
+	if !arcContext.ImageBearing || len(arcContext.NonVisionArms) == 0 {
+		return nil, nil
+	}
+	if len(arcContext.NonVisionArms) != armCount {
+		return nil, arcSelectionFailure("vision_arm_mapping")
+	}
+	eligible := 0
+	for _, nonVision := range arcContext.NonVisionArms {
+		if !nonVision {
+			eligible++
+		}
+	}
+	if eligible == 0 {
+		return nil, arcSelectionFailure("no_vision_arm")
+	}
+	return append([]bool(nil), arcContext.NonVisionArms...), nil
 }
 
 func (selector *raylineARCSelector) prepareSelection(
@@ -443,7 +476,12 @@ func hashedARCIdentity(value string) string {
 	return hex.EncodeToString(digest[:8])
 }
 
+// arcSelectionFailure is the one constructor of an ARC selection failure, and
+// therefore the one place the bounded class can be counted. Every call site
+// returns the value immediately, so counting here counts exactly the failures
+// the selector surfaces, on both the ExtProc and the decision-only path.
 func arcSelectionFailure(class string) *raylineARCSelectionFailure {
+	metrics.RecordRaylineARCFailure(class)
 	return &raylineARCSelectionFailure{class: class}
 }
 
