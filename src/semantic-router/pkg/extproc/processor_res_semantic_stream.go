@@ -326,7 +326,15 @@ func (state *semanticResponseStreamState) response() (*llmprotocol.Response, err
 			contents = append(contents, llmprotocol.Content{Kind: llmprotocol.ContentToolCall, ToolCall: &call})
 		}
 		if len(contents) == 0 {
-			return nil, fmt.Errorf("semantic stream output item is empty")
+			// A model that answers with only a stop token completes its turn
+			// like any other. The client was already served an empty text
+			// block, so reconstruct the same thing rather than refusing: the
+			// alternative bills the turn, reports it successful, and leaves
+			// settlement holding no response at all.
+			logging.ComponentWarnEvent("extproc", "upstream_completion_was_empty", map[string]interface{}{
+				"item_index": index,
+			})
+			contents = append(contents, llmprotocol.Content{Kind: llmprotocol.ContentText})
 		}
 		itemID := item.id
 		if itemID == "" {
