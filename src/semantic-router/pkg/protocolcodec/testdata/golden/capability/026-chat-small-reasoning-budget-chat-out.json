@@ -8,6 +8,9 @@
       }
     ],
     "model": "routed-model",
+    "reasoning": {
+      "max_tokens": 512
+    },
     "reasoning_budget_tokens": 512
   }
 }

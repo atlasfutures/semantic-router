@@ -108,6 +108,9 @@
             }
           ],
           "model": "routed-model",
+          "reasoning": {
+            "max_tokens": 2048
+          },
           "reasoning_effort": "high",
           "response_format": {
             "json_schema": {
@@ -219,6 +222,9 @@
             }
           ],
           "model": "routed-model",
+          "reasoning": {
+            "max_tokens": 1024
+          },
           "reasoning_budget_tokens": 1024
         }
       }

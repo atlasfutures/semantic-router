@@ -13,6 +13,9 @@
             }
           ],
           "model": "routed-model",
+          "reasoning": {
+            "max_tokens": 1024
+          },
           "reasoning_budget_tokens": 1024
         },
         "diagnostics": [
@@ -35,7 +38,10 @@
               "role": "user"
             }
           ],
-          "model": "routed-model"
+          "model": "routed-model",
+          "reasoning": {
+            "max_tokens": 2048
+          }
         },
         "diagnostics": [
           {

@@ -253,6 +253,7 @@ func TestOfficialNestedJSONInventoriesAreClosed(t *testing.T) {
 		"chat_content":                    reflect.TypeOf(chatContentWire{}),
 		"chat_tool":                       reflect.TypeOf(chatToolWire{}),
 		"chat_stream_chunk":               reflect.TypeOf(chatChunkWire{}),
+		"chat_reasoning":                  reflect.TypeOf(chatReasoningWire{}),
 		"chat_stream_options":             reflect.TypeOf(chatStreamOptionsWire{}),
 		"chat_stream_choice":              reflect.TypeOf(chatChunkChoiceWire{}),
 		"chat_stream_delta":               reflect.TypeOf(chatChunkDeltaWire{}),

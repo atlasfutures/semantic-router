@@ -259,6 +259,21 @@
       }
     },
     {
+      "name": "reasoning",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "messages": [
+            {
+              "content": "hello",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        }
+      }
+    },
+    {
       "name": "reasoning_budget_tokens",
       "outcome": {
         "status": "ok",
@@ -270,6 +285,9 @@
             }
           ],
           "model": "routed-model",
+          "reasoning": {
+            "max_tokens": 1024
+          },
           "reasoning_budget_tokens": 1024
         }
       }

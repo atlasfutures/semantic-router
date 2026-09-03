@@ -25,6 +25,7 @@
     {"name": "prompt_cache_key", "patch": {"prompt_cache_key": "cache-key"}},
     {"name": "prompt_cache_options", "patch": {"prompt_cache_options": {"retention": "24h"}}},
     {"name": "prompt_cache_retention", "patch": {"prompt_cache_retention": "24h"}},
+    {"name": "reasoning", "patch": {"reasoning": {"max_tokens": 1024}}},
     {"name": "reasoning_budget_tokens", "patch": {"reasoning_budget_tokens": 1024}},
     {"name": "reasoning_effort", "patch": {"reasoning_effort": "high"}},
     {"name": "response_format", "patch": {"response_format": {"type": "json_object"}}},

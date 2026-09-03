@@ -113,12 +113,61 @@ func encodeChatReasoningControls(
 	if request.ReasoningMode == llmprotocol.ReasoningModeDisabled {
 		wire.ReasoningEffort = "none"
 	}
+	if budget := chatReasoningBound(request); budget != nil {
+		wire.Reasoning = &chatReasoningWire{MaxTokens: budget}
+	}
 	if request.ReasoningDisplay != "" {
 		appendPresentationDrop(
 			diagnostics, policy, request.Trusted.SourceFormat, llmprotocol.OpenAIChatV1,
 			"reasoning_display", "Chat Completions cannot control how reasoning is returned",
 		)
 	}
+}
+
+// minimumReasoningBudget is the smallest reasoning budget any documented
+// reasoning API accepts. Anthropic states it for thinking.budget_tokens, and a
+// bound below it would be refused rather than obeyed.
+const minimumReasoningBudget = 1024
+
+// chatReasoningBound returns how many tokens the turn may spend on reasoning,
+// or nil to send no bound at all.
+//
+// max_completion_tokens does not bound reasoning: the models behind the
+// thinking arms do not count reasoning against it, so a turn that asks to
+// reason and states no budget runs until it finishes or until the platform
+// cuts the connection. OpenRouter's reasoning.max_tokens is the bound that
+// does apply.
+//
+// The rule:
+//
+//   - A stated thinking budget is the client's own number and travels
+//     verbatim, whatever the output allowance is.
+//   - A turn that asks to reason without stating a budget -- adaptive
+//     thinking, or an effort level on its own -- is bounded by what the client
+//     allowed for output, floored at the smallest budget a provider accepts.
+//     Reasoning plus output then cannot exceed twice the output allowance, and
+//     the output allowance itself is never reduced: the client gets everything
+//     it asked to be shown.
+//   - A turn that asks for no reasoning gets no bound. Sending one to a
+//     thinking-off arm would ask it to start reasoning.
+//   - A request with no output allowance gets no bound either. There is
+//     nothing to derive one from, and capping a client that asked for no cap
+//     is not the Router's to do.
+func chatReasoningBound(request llmprotocol.Request) *int64 {
+	if request.ReasoningBudgetTokens != nil {
+		return request.ReasoningBudgetTokens
+	}
+	reasoningAsked := request.ReasoningMode == llmprotocol.ReasoningModeAdaptive ||
+		request.ReasoningMode == llmprotocol.ReasoningModeEnabled ||
+		request.ReasoningEffort != "" && request.ReasoningEffort != "none"
+	if !reasoningAsked || request.Sampling.MaxOutputTokens == nil {
+		return nil
+	}
+	bound := *request.Sampling.MaxOutputTokens
+	if bound < minimumReasoningBudget {
+		bound = minimumReasoningBudget
+	}
+	return &bound
 }
 
 func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) error {
