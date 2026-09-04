@@ -258,3 +258,49 @@ func TestArmBoundComesFromTheClientAllowanceNotTheFloor(t *testing.T) {
 		t.Fatalf("the floor's raise was undone: %v", body["max_completion_tokens"])
 	}
 }
+
+// An arm the decision marks thinking-off must not be asked to reason, and the
+// client's own request to reason is what asks it.
+//
+// Claude Code sends adaptive thinking with output_config.effort high on every
+// turn. The Chat encoder renders that as reasoning.max_tokens beside the
+// effort, and the provider boundary used to leave both in place on a
+// thinking-off arm: measured on the dev cell 2026-09-04, a
+// deepseek-v4-pro@thinking-off turn logged reasoning_max_tokens 32000. The arm
+// is the Router's own decision and it is the one that stands, so both controls
+// go and the drop is counted rather than silent.
+func TestThinkingOffArmCarriesNoReasoningRequest(t *testing.T) {
+	ctx := &RequestContext{
+		SourceFormat: llmprotocol.AnthropicMessagesV1,
+		TargetFormat: llmprotocol.OpenAIChatV1,
+	}
+	router := newArmReasoningRouter()
+	// The body the Chat encoder renders for Claude Code's default request.
+	encoded, err := router.setReasoningModeToRequestBodyForModelAndProvider(
+		[]byte(`{"model":"gpt-5-mini","messages":[{"role":"user","content":"hi"}],`+
+			`"max_completion_tokens":32000,"reasoning":{"max_tokens":32000},`+
+			`"reasoning_effort":"high"}`),
+		"gpt-5-mini", false, router.Config.GetDecisionByName("arc"),
+		openRouterProviderProfile(), ctx,
+	)
+	require.NoError(t, err)
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(encoded, &body))
+
+	if _, present := body["reasoning"]; present {
+		t.Fatalf("a thinking-off arm was told to reason: %v", body)
+	}
+	assertNoReasoningEffort(t, body)
+
+	// The record reads the wire, so it names neither control.
+	recordDispatchedReasoningControls(ctx, encoded)
+	if ctx.DispatchedReasoningEffort != "" || ctx.DispatchedReasoningBound != nil {
+		t.Fatalf("routing_decision named a control the wire does not carry: effort %q bound %v",
+			ctx.DispatchedReasoningEffort, ctx.DispatchedReasoningBound)
+	}
+
+	// Dropping a control the client asked for is counted, not silent.
+	if len(ctx.ProtocolDiagnostics) == 0 {
+		t.Fatalf("the client's reasoning request was dropped without a diagnostic")
+	}
+}
