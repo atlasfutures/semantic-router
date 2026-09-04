@@ -39,3 +39,25 @@ func TestComplexityModelConfigWithDefaultsEnablesPrototypeScoring(t *testing.T) 
 		t.Fatal("expected complexity prototype scoring to inherit default enablement")
 	}
 }
+
+// An unmarked card must keep serving. The flag is how an operator takes an
+// arm out, so anything short of an explicit true leaves the arm in.
+func TestModelCardIsDisabledOnlyWhenTheFlagSaysTrue(t *testing.T) {
+	yes := true
+	no := false
+	for _, test := range []struct {
+		name string
+		flag *bool
+		want bool
+	}{
+		{name: "absent", flag: nil, want: false},
+		{name: "explicit false", flag: &no, want: false},
+		{name: "explicit true", flag: &yes, want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := (ModelParams{Disabled: test.flag}).IsDisabled(); got != test.want {
+				t.Fatalf("IsDisabled() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}

@@ -387,3 +387,41 @@ func TestPolicyEmptyExclusionMatchesTheUnconstrainedChoice(t *testing.T) {
 		}
 	}
 }
+
+// A standing exclusion meets both defences at once: the arm holds the top
+// score and the episode is parked on it. Neither may keep it, or an arm taken
+// out of service would go on serving every turn of a settled episode.
+func TestPolicyExclusionBeatsTheScoreAndTheStayMarginTogether(t *testing.T) {
+	t.Parallel()
+	previous := 0
+	state := &EpisodeState{
+		PreviousArm: &previous,
+		Warmth:      make([]*WorkerWarmth, 2),
+	}
+	policy := newPolicy(&Manifest{
+		Policy: PolicyManifest{PreviousWorkerStayMargin: 10},
+		Workers: []WorkerManifest{
+			syntheticWorker("excluded", 1, 0),
+			syntheticWorker("eligible", 1, 0),
+		},
+	})
+	decision, err := policy.Select(
+		[]float32{0.9, 0.1},
+		[]bool{true, false},
+		state,
+		10,
+		time.Unix(1_000, 0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.SelectedArm != 1 || decision.Stayed {
+		t.Fatalf(
+			"Select(excluded top-scoring previous) = %+v, want a switch to arm 1",
+			decision,
+		)
+	}
+	if !reflect.DeepEqual(decision.ExcludedArms, []bool{true, false}) {
+		t.Fatalf("Select() lost the exclusion record: %+v", decision)
+	}
+}
