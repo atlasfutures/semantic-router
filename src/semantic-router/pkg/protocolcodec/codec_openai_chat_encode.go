@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 
@@ -58,8 +59,12 @@ func (OpenAIChatCodec) EncodeRequest(request llmprotocol.Request, envelope llmpr
 
 func chatRequestDiagnostics(request llmprotocol.Request, policy llmprotocol.Policy) (llmprotocol.Diagnostics, error) {
 	var diagnostics llmprotocol.Diagnostics
+	for _, instruction := range request.Instructions {
+		appendChatToolBlockDrops(&diagnostics, instruction.Content, request.Trusted.SourceFormat, policy)
+	}
 	for _, message := range request.Messages {
 		appendCarriedBlockDrops(&diagnostics, message.Content, llmprotocol.OpenAIChatV1, policy)
+		appendChatToolBlockDrops(&diagnostics, message.Content, request.Trusted.SourceFormat, policy)
 	}
 	if request.PreviousResponseID == "" && request.ConversationID == "" && request.Truncation == "" {
 		return diagnostics, nil
@@ -304,9 +309,11 @@ func (state *chatMessageEncodingState) appendContent(content llmprotocol.Content
 	case llmprotocol.ContentFile:
 		return state.appendFile(content)
 	case llmprotocol.ContentToolCall:
-		return state.appendCachelessToolCall(content)
+		// The block's cache breakpoint and caller have no Chat field. Both are
+		// counted in chatRequestDiagnostics and go no further.
+		return state.appendToolCall(content.ToolCall)
 	case llmprotocol.ContentToolResult:
-		return state.appendCachelessToolResult(content)
+		return state.appendToolResult(content.ToolResult)
 	case llmprotocol.ContentUnmodeled:
 		// A carried block belongs to the contract it came from. Chat
 		// Completions never names one, so the block is dropped here and the
@@ -328,18 +335,40 @@ func appendChatTextField(target **string, content llmprotocol.Content) error {
 	return nil
 }
 
-func (state *chatMessageEncodingState) appendCachelessToolCall(content llmprotocol.Content) error {
-	if content.Cache != nil {
-		return unsupportedChatCacheDirective(string(content.Kind))
+// appendChatToolBlockDrops records the two members an Anthropic tool block can
+// carry that a Chat tool call has nowhere to put: the cache breakpoint the
+// client marks on the block, and the caller that names who issued the call.
+// Both describe a call rather than form part of it -- one says what may be
+// reused, the other who asked -- so the turn runs and the loss is counted.
+// Refusing instead answered 500 to every follow-up turn of a tool-using
+// session on the dev cell on 2026-09-04, and the proxy served those turns from
+// another provider without the client ever seeing why.
+func appendChatToolBlockDrops(
+	diagnostics *llmprotocol.Diagnostics,
+	contents []llmprotocol.Content,
+	source llmprotocol.WireFormat,
+	policy llmprotocol.Policy,
+) {
+	for _, content := range contents {
+		if content.Kind != llmprotocol.ContentToolCall && content.Kind != llmprotocol.ContentToolResult {
+			continue
+		}
+		if content.Cache != nil {
+			appendPresentationDrop(
+				diagnostics, policy, source, llmprotocol.OpenAIChatV1,
+				"content.cache_control", "a Chat tool call carries no cache breakpoint",
+			)
+		}
+		if content.Kind != llmprotocol.ContentToolCall || content.ToolCall == nil {
+			continue
+		}
+		if caller := bytes.TrimSpace(content.ToolCall.Caller); len(caller) > 0 && !bytes.Equal(caller, []byte("null")) {
+			appendPresentationDrop(
+				diagnostics, policy, source, llmprotocol.OpenAIChatV1,
+				"content.caller", "a Chat tool call cannot name its issuer",
+			)
+		}
 	}
-	return state.appendToolCall(content.ToolCall)
-}
-
-func (state *chatMessageEncodingState) appendCachelessToolResult(content llmprotocol.Content) error {
-	if content.Cache != nil {
-		return unsupportedChatCacheDirective(string(content.Kind))
-	}
-	return state.appendToolResult(content.ToolResult)
 }
 
 func (state *chatMessageEncodingState) appendText(content llmprotocol.Content) {

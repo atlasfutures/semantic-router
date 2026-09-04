@@ -207,7 +207,6 @@ func validateAnthropicContentExtensions(block anthropicContentWire) error {
 		return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_citations", "Anthropic citations are not supported by the neutral contract", nil)
 	}
 	return rejectUnsupportedRequestFields(map[string]json.RawMessage{
-		"content.caller":          block.Caller,
 		"content.context":         block.Context,
 		"content.title":           block.Title,
 		"content.toolset_name":    block.ToolsetName,
@@ -240,7 +239,7 @@ func decodeAnthropicTypedContent(
 		if len(block.Input) == 0 {
 			arguments = `{}`
 		}
-		return llmprotocol.Content{Kind: llmprotocol.ContentToolCall, ToolCall: &llmprotocol.ToolCall{ID: block.ID, Name: block.Name, Arguments: arguments}, Cache: decodeAnthropicCacheControl(block.CacheControl)}, nil
+		return llmprotocol.Content{Kind: llmprotocol.ContentToolCall, ToolCall: &llmprotocol.ToolCall{ID: block.ID, Name: block.Name, Arguments: arguments, Caller: block.Caller}, Cache: decodeAnthropicCacheControl(block.CacheControl)}, nil
 	case "tool_result":
 		resultContent, err := decodeAnthropicRequestContent(block.Content, policy)
 		if err != nil {
@@ -737,7 +736,7 @@ func encodeAnthropicToolCallBlock(call *llmprotocol.ToolCall) (anthropicContentW
 	if !json.Valid(arguments) {
 		return anthropicContentWire{}, llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_tool_arguments", "tool arguments must be JSON", nil)
 	}
-	return anthropicContentWire{Type: "tool_use", ID: call.ID, Name: call.Name, Input: arguments}, nil
+	return anthropicContentWire{Type: "tool_use", ID: call.ID, Name: call.Name, Input: arguments, Caller: call.Caller}, nil
 }
 
 func encodeAnthropicToolResultBlock(result *llmprotocol.ToolResult) (anthropicContentWire, error) {

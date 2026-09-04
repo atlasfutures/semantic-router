@@ -243,14 +243,20 @@ func decodeAnthropicToolsFixture(t *testing.T, body json.RawMessage) []anthropic
 	return tools
 }
 
-func TestCacheDirectiveOnUnsupportedChatBlockFailsExplicitly(t *testing.T) {
+// A cache breakpoint on a tool block was a typed refusal here until
+// 2026-09-04, when it answered 500 to every follow-up turn of a tool-using
+// session on the dev cell. The breakpoint says what may be reused, not what
+// the model is asked, so the Chat encoder drops and counts it instead. The
+// typed refusal stays for a cache directive on a block whose meaning Chat
+// cannot carry at all.
+func TestCacheDirectiveOnChatToolBlockIsCountedNotRefused(t *testing.T) {
 	engine := NewBuiltinEngine()
 	body := []byte(`{"model":"m","max_tokens":16,"messages":[{"role":"user","content":"hello"},{"role":"assistant","content":[{"type":"tool_use","id":"call-1","name":"lookup","input":{},"cache_control":{"type":"ephemeral"}}]}]}`)
-	_, err := engine.TranslateRequest(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, body, nil)
-	var protocolError *llmprotocol.ProtocolError
-	if !errors.As(err, &protocolError) || protocolError.Category != llmprotocol.ErrorUnsupportedFeature {
-		t.Fatalf("unsupported Chat cache directive returned %T %v, want typed unsupported_feature", err, err)
+	result, err := engine.TranslateRequest(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, body, nil)
+	if err != nil {
+		t.Fatalf("a tool block cache breakpoint was refused for a Chat arm: %v", err)
 	}
+	requireDroppedField(t, result.Diagnostics, "content.cache_control")
 }
 
 func TestMalformedChatCacheDirectiveFailsValidation(t *testing.T) {

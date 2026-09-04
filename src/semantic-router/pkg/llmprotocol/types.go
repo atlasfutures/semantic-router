@@ -123,6 +123,12 @@ type ToolCall struct {
 	ID        string
 	Name      string
 	Arguments string
+	// Caller names who issued the call. Anthropic's programmatic tool
+	// calling sets it on a tool_use block, and Claude Code sends
+	// {"type":"direct"}. The Router carries it unread: it identifies the
+	// issuer rather than changing what the model is asked, so a format
+	// that cannot express it drops and counts it instead of refusing.
+	Caller json.RawMessage
 }
 
 type ToolResult struct {
