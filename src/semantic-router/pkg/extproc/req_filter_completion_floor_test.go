@@ -185,3 +185,38 @@ func completionFloorTestRouter() *OpenAIRouter {
 	}
 	return &OpenAIRouter{Config: cfg, CredentialResolver: newTestCredentialResolver(cfg)}
 }
+
+// The floor exists so an answer has room beside the thinking, not so the turn
+// may think longer. The reasoning bound is derived from what the client
+// allowed, and the floor raises the allowance after that number is taken.
+//
+// Measured on the dev cell 2026-09-04: both ARC configs floor the thinking
+// arms at 65,536, so a client asking for 512 dispatched max_completion_tokens
+// 65,536, the bound was derived from the floored number, and the turn was
+// told it could spend 65,536 tokens reasoning. Three of 17 thinking-arm turns
+// ran to the 630 s platform deadline. The bound never bound anything.
+func TestCompletionFloorDoesNotRaiseTheReasoningBound(t *testing.T) {
+	router := completionFloorTestRouter()
+	request := testNeutralRequest("auto", "think about this")
+	request.Sampling.MaxOutputTokens = llmprotocol.Int64(512)
+	request.ReasoningMode = llmprotocol.ReasoningModeAdaptive
+	ctx := routingTestContext(llmprotocol.OpenAIChatV1, request)
+	ctx.VSRSelectedDecision = completionFloorDecision(map[string]interface{}{
+		completionFloorThinkingArm: completionFloorTokens,
+	})
+
+	body := routeAndDecodeBody(t, router, request, completionFloorThinkingArm, ctx)
+
+	if got := body["max_completion_tokens"]; got != float64(completionFloorTokens) {
+		t.Fatalf("completion budget = %#v, want the configured floor %d", got, completionFloorTokens)
+	}
+	reasoning, present := body["reasoning"].(map[string]any)
+	if !present {
+		t.Fatalf("a reasoning turn was left unbounded: %#v", body)
+	}
+	// 512 is below the smallest budget any reasoning API accepts, so the
+	// client's allowance is floored to 1024 -- not raised to the arm's floor.
+	if got := reasoning["max_tokens"]; got != float64(1024) {
+		t.Fatalf("reasoning.max_tokens = %#v, want 1024 from the client's own 512", got)
+	}
+}
