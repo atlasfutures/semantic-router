@@ -32,8 +32,14 @@ func TestOpenAIChatReasoningControlsRoundTripThroughNeutralIR(t *testing.T) {
 	if err := json.Unmarshal(body, &wire); err != nil {
 		t.Fatalf("decode encoded wire: %v", err)
 	}
-	if wire["reasoning_effort"] != "high" || wire["reasoning_budget_tokens"] != float64(512) {
+	// The neutral budget is re-encoded both ways Chat can hold it: its own
+	// reasoning_budget_tokens, and OpenRouter's reasoning.max_tokens. The
+	// effort does not travel beside the bound -- OpenRouter refuses the pair.
+	if wire["reasoning_budget_tokens"] != float64(512) {
 		t.Fatalf("encoded reasoning controls = %#v", wire)
+	}
+	if _, present := wire["reasoning_effort"]; present {
+		t.Fatalf("an effort level travelled beside the bound: %#v", wire)
 	}
 }
 

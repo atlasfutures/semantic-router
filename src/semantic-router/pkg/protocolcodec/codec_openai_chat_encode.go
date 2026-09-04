@@ -95,8 +95,11 @@ func encodeChatBaseRequest(request llmprotocol.Request) chatRequestWire {
 //
 //   - adaptive: the model decides whether and how much to think, which is what
 //     Chat Completions does when the request names no reasoning control. It is
-//     represented by carrying nothing, so the effort level the client sent
-//     still reaches the provider.
+//     represented by carrying nothing of its own.
+//   - bound: reasoning.max_tokens is the one control a bounded turn carries.
+//     OpenRouter folds a top-level reasoning_effort into the same object and
+//     refuses a body that states both, so an effort level the client sent
+//     gives way to the bound.
 //   - disabled: reasoning_effort "none" is the explicit off-signal. It replaces
 //     any effort the client sent, because the two collapse into one Chat knob
 //     and thinking-off is the stronger statement.
@@ -113,21 +116,16 @@ func encodeChatReasoningControls(
 	if request.ReasoningMode == llmprotocol.ReasoningModeDisabled {
 		wire.ReasoningEffort = "none"
 	}
-	budget, derived := chatReasoningBound(request)
-	if budget != nil {
+	if budget := ReasoningBoundForRequest(request); budget != nil {
 		wire.Reasoning = &chatReasoningWire{MaxTokens: budget}
-	}
-	if derived && wire.ReasoningEffort == "" {
-		// A bound the Router derived travels with the effort level that bound
-		// buys. OpenRouter's docs say the two are "One of the following (not
-		// both)", but they are not enforced -- a request carrying both is
-		// answered 200 -- and neither thinking arm obeys the bound alone.
-		// Sending the bound by itself was measured to cost about 30 percent
-		// more reasoning than sending an effort level beside it.
-		//
-		// An effort the client stated is already on the wire here, and it
-		// stands: it is the client's own number, not one the Router derived.
-		wire.ReasoningEffort = ReasoningEffortForBound(*budget, *request.Sampling.MaxOutputTokens)
+		// One control, not two. OpenRouter reads a top-level reasoning_effort
+		// as reasoning.effort, and its docs put "One of the following (not
+		// both):" above effort and max_tokens. A body carrying the pair is
+		// refused with `Only one of "reasoning.effort" and
+		// "reasoning.max_tokens" can be specified`, which answered every
+		// thinking-arm turn on the dev cell 2026-09-04. The bound is the
+		// number that stops the turn, so the bound is what travels.
+		wire.ReasoningEffort = ""
 	}
 	if request.ReasoningDisplay != "" {
 		appendPresentationDrop(
@@ -154,64 +152,12 @@ func ReasoningBoundForOutputAllowance(allowance int64) int64 {
 	return allowance
 }
 
-// maximumReasoningBudget is the ceiling OpenRouter's documented conversion
-// applies before its floor.
-const maximumReasoningBudget = 128000
-
-// documentedReasoningEfforts are the effort levels OpenRouter converts to a
-// budget, cheapest first, with the ratio it converts by.
-var documentedReasoningEfforts = []struct {
-	level string
-	ratio float64
-}{
-	{level: "low", ratio: 0.2},
-	{level: "medium", ratio: 0.5},
-	{level: "high", ratio: 0.8},
-}
-
-// ReasoningEffortForBound is the effort level that has to travel beside a
-// bound the Router derived.
+// ReasoningBoundForRequest returns how many tokens the turn may spend on
+// reasoning, or nil to send no bound at all.
 //
-// A bound alone does not stop a turn. Measured on the dev cell 2026-09-04,
-// reasoning.max_tokens 1024 travelling by itself left
-// xiaomi/mimo-v2.5-pro@thinking-on spending 21,674 reasoning tokens and
-// deepseek/deepseek-v4-flash@thinking-on spending 20,974; the same shape with
-// an effort level beside the bound spent 16,030. So the bound is the cap for
-// providers that honour it and the effort is the brake for the ones that do
-// not, and both travel.
-//
-// The level is OpenRouter's own conversion, read backwards. It documents
-// "budget_tokens = max(min(max_tokens * {effort_ratio}, 128000), 1024)" with
-// the ratio "0.8 for high effort, 0.5 for medium effort, 0.2 for low effort",
-// and the level that travels is the cheapest one whose budget reaches the
-// bound: it never buys less reasoning than the bound allows, and never a step
-// more than it has to. A bound no level reaches gets the largest level there
-// is. Read 2026-09-04:
-//
-//	https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
-func ReasoningEffortForBound(bound, allowance int64) string {
-	for _, effort := range documentedReasoningEfforts {
-		if documentedReasoningBudget(allowance, effort.ratio) >= bound {
-			return effort.level
-		}
-	}
-	return documentedReasoningEfforts[len(documentedReasoningEfforts)-1].level
-}
-
-func documentedReasoningBudget(allowance int64, ratio float64) int64 {
-	budget := int64(float64(allowance) * ratio)
-	if budget > maximumReasoningBudget {
-		budget = maximumReasoningBudget
-	}
-	if budget < minimumReasoningBudget {
-		budget = minimumReasoningBudget
-	}
-	return budget
-}
-
-// chatReasoningBound returns how many tokens the turn may spend on reasoning,
-// or nil to send no bound at all, and whether the Router derived that number
-// rather than reading it off the request.
+// It is exported because the request_params floor derives the same bound from
+// the allowance the client stated, before it raises the allowance itself, and
+// the two have to be one rule.
 //
 // max_completion_tokens does not bound reasoning: the models behind the
 // thinking arms do not count reasoning against it, so a turn that asks to
@@ -237,21 +183,21 @@ func documentedReasoningBudget(allowance int64, ratio float64) int64 {
 //   - A request with no output allowance gets no bound either. There is
 //     nothing to derive one from, and capping a client that asked for no cap
 //     is not the Router's to do.
-func chatReasoningBound(request llmprotocol.Request) (bound *int64, derived bool) {
+func ReasoningBoundForRequest(request llmprotocol.Request) *int64 {
 	if request.ReasoningMode == llmprotocol.ReasoningModeDisabled {
-		return nil, false
+		return nil
 	}
 	if request.ReasoningBudgetTokens != nil {
-		return request.ReasoningBudgetTokens, false
+		return request.ReasoningBudgetTokens
 	}
 	reasoningAsked := request.ReasoningMode == llmprotocol.ReasoningModeAdaptive ||
 		request.ReasoningMode == llmprotocol.ReasoningModeEnabled ||
 		request.ReasoningEffort != "" && request.ReasoningEffort != "none"
 	if !reasoningAsked || request.Sampling.MaxOutputTokens == nil {
-		return nil, false
+		return nil
 	}
-	derivedBound := ReasoningBoundForOutputAllowance(*request.Sampling.MaxOutputTokens)
-	return &derivedBound, true
+	bound := ReasoningBoundForOutputAllowance(*request.Sampling.MaxOutputTokens)
+	return &bound
 }
 
 func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) error {

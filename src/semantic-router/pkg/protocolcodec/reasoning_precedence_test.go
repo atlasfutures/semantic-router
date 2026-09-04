@@ -36,27 +36,19 @@ func translateChatToChatWire(t *testing.T, engine *Engine, body string) chatRequ
 // Read 2026-09-04:
 // https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
 //
-// The encoder sends both, and both are measured to be needed.
+// "Not both" is enforced. A top-level reasoning_effort is folded into the same
+// object, so a body carrying the bound and an effort is refused with
 //
-// On the dev cell 2026-09-03 an adaptive turn with effort high and max_tokens
-// 512 was encoded with reasoning.max_tokens 1024 beside reasoning_effort high,
-// and xiaomi/mimo-v2.5-pro@thinking-on spent 16,030 reasoning tokens on it.
-// CP9k read that as the effort making the bound inert and sent the bound
-// alone. Build 16 measured the result on 2026-09-04: the same arm spent 21,674
-// reasoning tokens against a bound of 1024, and
-// deepseek/deepseek-v4-flash@thinking-on spent 20,974. Neither arm obeys the
-// bound at all, and the effort dial is the only control they act on, so
-// removing it cost about 30 percent.
+//	Only one of "reasoning.effort" and "reasoning.max_tokens" can be specified
 //
-// The pair is also accepted. The build that sent both was answered 200, so
-// "not both" describes the API rather than constraining it.
+// Measured on the dev cell 2026-09-04: that 400 answered every thinking-arm
+// turn on build 17, which sent the pair. CP9l read an earlier 200 as the pair
+// being accepted; the earlier build's bound happened to be the whole allowance,
+// which is a different shape from the one that fails.
 //
-// So the bound stays as the cap for providers that honour it, and the effort
-// stays as the brake for the ones that do not. What changed is which effort:
-// a level the client stated is carried, and otherwise the level is derived
-// from the bound by OpenRouter's own documented conversion, so the two
-// controls cannot disagree.
-func TestChatSendsTheBoundWithTheEffortBesideIt(t *testing.T) {
+// So the bound travels alone. It is the number that stops the turn, and an
+// effort level the client stated cannot be stated beside it.
+func TestChatSendsTheBoundWithoutAnEffortBesideIt(t *testing.T) {
 	engine := NewBuiltinEngine()
 	body := `{"model":"m","max_tokens":512,"messages":[{"role":"user","content":"hi"}],` +
 		`"thinking":{"type":"adaptive"},"output_config":{"effort":"high"}}`
@@ -64,8 +56,8 @@ func TestChatSendsTheBoundWithTheEffortBesideIt(t *testing.T) {
 	if wire.Reasoning == nil || wire.Reasoning.MaxTokens == nil {
 		t.Fatalf("reasoning was left unbounded: %+v", wire.Reasoning)
 	}
-	if wire.ReasoningEffort != "high" {
-		t.Fatalf("reasoning_effort = %q, want the client's own high beside the bound of %d",
+	if wire.ReasoningEffort != "" {
+		t.Fatalf("reasoning_effort = %q travelled beside the bound of %d, which OpenRouter refuses",
 			wire.ReasoningEffort, *wire.Reasoning.MaxTokens)
 	}
 }
@@ -86,18 +78,19 @@ func TestChatKeepsTheEffortDialWhenNoBoundApplies(t *testing.T) {
 	}
 }
 
-// A budget the client stated is a different case from one the Router derived.
-// Both fields are then the client's own, the Router is only carrying them, and
-// dropping one would be the Router editing a request it was asked to relay.
-func TestChatCarriesBothControlsWhenTheClientSentBoth(t *testing.T) {
+// A client that sends both controls still gets one on the wire. Relaying the
+// pair verbatim would be relaying a request OpenRouter refuses, so the bound
+// travels and the effort does not: the bound is the client's own number too,
+// and it is the one that stops the turn.
+func TestChatSendsOnlyTheBoundWhenTheClientSentBoth(t *testing.T) {
 	body := `{"model":"m","messages":[{"role":"user","content":"hi"}],` +
 		`"reasoning_effort":"high","reasoning_budget_tokens":512}`
 	wire := translateChatToChatWire(t, NewBuiltinEngine(), body)
 	if wire.Reasoning == nil || wire.Reasoning.MaxTokens == nil || *wire.Reasoning.MaxTokens != 512 {
 		t.Fatalf("the client's own budget did not travel: %+v", wire.Reasoning)
 	}
-	if wire.ReasoningEffort != "high" {
-		t.Fatalf("reasoning_effort = %q, want the effort the client sent", wire.ReasoningEffort)
+	if wire.ReasoningEffort != "" {
+		t.Fatalf("reasoning_effort = %q travelled beside the client's own budget", wire.ReasoningEffort)
 	}
 }
 

@@ -569,9 +569,41 @@ func assertTranslatedAnthropicOutputConfig(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.ReasoningEffort != "high" || decoded.OutputFormat.Kind != llmprotocol.OutputJSONSchema ||
+	if decoded.OutputFormat.Kind != llmprotocol.OutputJSONSchema ||
 		!jsonSemanticallyEqual(decoded.OutputFormat.Schema, schema) {
-		t.Fatalf("Anthropic output_config changed through %s: %+v body=%s", target, decoded, translated.Body)
+		t.Fatalf("Anthropic output_config format changed through %s: %+v body=%s", target, decoded, translated.Body)
+	}
+	assertTranslatedReasoningEffort(t, target, decoded, translated.Body)
+}
+
+// assertTranslatedReasoningEffort states where the client's effort level
+// survives. Responses carries it as its own reasoning.effort. Chat cannot: the
+// turn states an output allowance, so it also carries a reasoning bound, and
+// OpenRouter refuses a body that states a bound and an effort. The bound is
+// what the effort becomes there.
+func assertTranslatedReasoningEffort(
+	t *testing.T,
+	target llmprotocol.WireFormat,
+	decoded llmprotocol.Request,
+	body []byte,
+) {
+	t.Helper()
+	if target != llmprotocol.OpenAIChatV1 {
+		if decoded.ReasoningEffort != "high" {
+			t.Fatalf("Anthropic output_config effort changed through %s: %+v body=%s", target, decoded, body)
+		}
+		return
+	}
+	if decoded.ReasoningEffort != "" {
+		t.Fatalf("an effort level travelled beside the Chat bound: %s", body)
+	}
+	var wire struct {
+		Reasoning *struct {
+			MaxTokens *int64 `json:"max_tokens"`
+		} `json:"reasoning"`
+	}
+	if json.Unmarshal(body, &wire) != nil || wire.Reasoning == nil || wire.Reasoning.MaxTokens == nil {
+		t.Fatalf("the client's effort reached Chat as neither an effort nor a bound: %s", body)
 	}
 }
 

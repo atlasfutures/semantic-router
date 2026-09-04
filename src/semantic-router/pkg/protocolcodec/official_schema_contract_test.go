@@ -334,9 +334,9 @@ func TestOfficialAnthropicAdaptiveThinkingSurvivesSemanticMutation(t *testing.T)
 	// is what Chat Completions does when a request names no reasoning control.
 	// The translation therefore carries none of the client's own controls, and
 	// the turn routes rather than failing. What it does carry is the Router's:
-	// a bound derived from the output allowance, with the effort level that
-	// bound buys beside it, because a thinking turn with neither runs until
-	// the platform cuts it.
+	// a bound derived from the output allowance, alone, because a thinking
+	// turn with no bound runs until the platform cuts it and OpenRouter
+	// refuses a bound with an effort level beside it.
 	translated, err := engine.TranslateRequest(
 		llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, body, nil,
 	)
@@ -351,7 +351,7 @@ func TestOfficialAnthropicAdaptiveThinkingSurvivesSemanticMutation(t *testing.T)
 }
 
 // assertAdaptiveThinkingReachesChat says what adaptive carries onto the Chat
-// wire: none of the client's own reasoning controls, and both of the Router's.
+// wire: none of the client's own reasoning controls, and one of the Router's.
 func assertAdaptiveThinkingReachesChat(t *testing.T, chat chatRequestWire, body []byte) {
 	t.Helper()
 	if chat.ReasoningBudget != nil {
@@ -360,8 +360,8 @@ func assertAdaptiveThinkingReachesChat(t *testing.T, chat chatRequestWire, body 
 	if chat.Reasoning == nil || chat.Reasoning.MaxTokens == nil {
 		t.Fatalf("adaptive thinking reached Chat unbounded: %s", body)
 	}
-	if chat.ReasoningEffort != "low" {
-		t.Fatalf("adaptive thinking reached Chat without the effort its bound buys: %s", body)
+	if chat.ReasoningEffort != "" {
+		t.Fatalf("adaptive thinking reached Chat with an effort beside its bound: %s", body)
 	}
 }
 
