@@ -79,11 +79,11 @@ func (d openAIBackendDialect) usesUpstreamSessionID() bool {
 	return d.supportsUpstreamSessionID
 }
 
-// usesReasoningObjectBound reports that the backend accepts OpenRouter's
-// reasoning object, the only wire with a documented bound on how much a turn
-// may spend on reasoning. Every other OpenAI-compatible backend would see an
-// unknown member.
-func (d openAIBackendDialect) usesReasoningObjectBound() bool {
+// usesReasoningObject reports that the backend accepts OpenRouter's reasoning
+// object: the only wire carrying both a documented bound on how much a turn
+// may spend on reasoning and the off-signal that stops it reasoning at all.
+// Every other OpenAI-compatible backend would see an unknown member.
+func (d openAIBackendDialect) usesReasoningObject() bool {
 	return d.kind == openAIBackendDialectOpenRouter
 }
 

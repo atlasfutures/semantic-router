@@ -43,7 +43,7 @@ func applyOpenRouterReasoningBound(
 	dialect openAIBackendDialect,
 	clientAllowance *int64,
 ) {
-	if !dialect.usesReasoningObjectBound() || !mutation.reasoningApplied {
+	if !dialect.usesReasoningObject() || !mutation.reasoningApplied {
 		return
 	}
 	bound := reasoningBoundForRequest(mutation.requestMap, clientAllowance)
@@ -72,6 +72,9 @@ func applyOpenRouterReasoningBound(
 // only where OpenRouter reads it, because the other dialects preserve a
 // client-supplied effort deliberately -- a vLLM chat template needs the
 // argument, and OpenAI takes the level as the client's own.
+//
+// Removing the client's request is not the same as saying no. On OpenRouter
+// the arm's own off-signal takes its place: see offSignalForDisabledArm.
 func dropReasoningRequestFromDisabledArm(
 	mutation *reasoningRequestMutation,
 	dialect openAIBackendDialect,
@@ -81,14 +84,35 @@ func dropReasoningRequestFromDisabledArm(
 	delete(mutation.requestMap, "reasoning")
 
 	droppedEffort := false
-	if dialect.usesReasoningObjectBound() {
+	if dialect.usesReasoningObject() {
 		droppedEffort = reasoningEffortAsksToReason(mutation.requestMap["reasoning_effort"])
 		delete(mutation.requestMap, "reasoning_effort")
 		mutation.appliedEffort = ""
+		mutation.requestMap["reasoning"] = offSignalForDisabledArm()
 	}
 	if hadBound || droppedEffort {
 		recordDroppedReasoningRequest(ctx)
 	}
+}
+
+// offSignalForDisabledArm is how a thinking-off arm says so to OpenRouter.
+//
+// chat_template_kwargs.enable_thinking false is what the Router sent before,
+// and it is a vLLM chat-template argument: the providers OpenRouter picks for
+// the ARC arms never see it. Measured against OpenRouter 2026-09-04 on
+// deepseek-v4-pro, deepseek-v4-flash, mimo-v2.5-pro, qwen3.6-35b-a3b and
+// glm-5.2, a body carrying only that flag reasoned on every arm -- the whole
+// 64-token budget spent on reasoning, empty content, finish_reason "length".
+// The same five with reasoning.enabled false returned reasoning_tokens 0 and
+// content. The users of a thinking-off arm were paying the output rate for
+// reasoning they never asked for and never saw. Read 2026-09-04:
+//
+//	https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
+//
+// The flag stays where it is. It is the control a vLLM-backed arm reads, and
+// an OpenRouter provider that does not read it ignores it.
+func offSignalForDisabledArm() json.RawMessage {
+	return json.RawMessage(`{"enabled":false}`)
 }
 
 // reasoningEffortAsksToReason reports whether an effort level is a request to
