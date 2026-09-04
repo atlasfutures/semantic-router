@@ -93,6 +93,15 @@ type RequestContext struct {
 	PublicChatUsageFilter     *protocolcodec.ChatUsageStreamFilter
 	SemanticStreamState       *semanticResponseStreamState
 
+	// DispatchedReasoningEffort and DispatchedReasoningBound are the reasoning
+	// controls the rendered upstream body carries, read back off that body
+	// rather than recomputed from the arm's configuration. RoutingDecision is
+	// the record waiting for them: the decision is taken before the body
+	// exists, so the line is staged there and written once the wire is known.
+	DispatchedReasoningEffort string
+	DispatchedReasoningBound  *int64
+	RoutingDecision           map[string]interface{}
+
 	// UpstreamStatusCode is the HTTP status the upstream returned, captured at
 	// the response-header phase. Zero means the status was never observed for
 	// this request (e.g. response headers not processed). The cache-write path

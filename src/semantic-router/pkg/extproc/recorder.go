@@ -36,6 +36,25 @@ func (r *OpenAIRouter) logRoutingDecision(ctx *RequestContext, reasonCode string
 	metrics.RecordRoutingReasonCode(reasonCode, selectedModel)
 }
 
+// emitRoutingDecision writes the staged routing record, naming the reasoning
+// controls the rendered body carries. It is called where the body is known,
+// which is after the decision that staged the record.
+func (r *OpenAIRouter) emitRoutingDecision(ctx *RequestContext) {
+	if ctx == nil || ctx.RoutingDecision == nil {
+		return
+	}
+	record := ctx.RoutingDecision
+	ctx.RoutingDecision = nil
+	if ctx.DispatchedReasoningEffort != "" {
+		record["reasoning_effort"] = ctx.DispatchedReasoningEffort
+	}
+	if ctx.DispatchedReasoningBound != nil {
+		record["reasoning_max_tokens"] = *ctx.DispatchedReasoningBound
+	}
+	record["routing_latency_ms"] = time.Since(ctx.ProcessingStartTime).Milliseconds()
+	logging.ComponentEvent("extproc", "routing_decision", record)
+}
+
 // recordRoutingDecision records routing decision with tracing
 func (r *OpenAIRouter) recordRoutingDecision(ctx *RequestContext, decisionName string, originalModel string, matchedModel string, reasoningDecision entropy.ReasoningDecision) {
 	// Start decision evaluation span
