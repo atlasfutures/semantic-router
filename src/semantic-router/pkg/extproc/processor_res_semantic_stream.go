@@ -20,9 +20,16 @@ import (
 // telemetry, replay, memory, and cache policy. It consumes neutral events from
 // the same codec contract as buffered responses and never inspects client SSE JSON.
 type semanticResponseStreamState struct {
+	// requestID is the join key every other Router line carries. Without it a
+	// line written from here can only be joined to its turn by timestamp.
+	requestID  string
 	responseID string
 	model      string
 	stop       llmprotocol.StopReason
+	// sourceStop and provider are what the upstream said about itself: the stop
+	// string it sent and the provider that served the turn.
+	sourceStop string
+	provider   string
 	usage      llmprotocol.Usage
 	items      map[int]*semanticStreamItem
 	order      []int
@@ -233,8 +240,9 @@ func (r *OpenAIRouter) ensureSemanticResponseStream(ctx *RequestContext) error {
 		ctx.PublicChatUsageFilter = protocolcodec.NewChatUsageStreamFilter(llmprotocol.DefaultPolicy().Limits.SSEFrameBytes)
 	}
 	ctx.SemanticStreamState = &semanticResponseStreamState{
-		usage: llmprotocol.Usage{State: llmprotocol.UsageUnavailable},
-		items: make(map[int]*semanticStreamItem),
+		requestID: ctx.RequestID,
+		usage:     llmprotocol.Usage{State: llmprotocol.UsageUnavailable},
+		items:     make(map[int]*semanticStreamItem),
 	}
 	return nil
 }
@@ -261,6 +269,12 @@ func (state *semanticResponseStreamState) observe(events []llmprotocol.Event) {
 		}
 		if event.StopReason != "" {
 			state.stop = event.StopReason
+		}
+		if event.SourceStopReason != "" {
+			state.sourceStop = event.SourceStopReason
+		}
+		if event.UpstreamProvider != "" {
+			state.provider = event.UpstreamProvider
 		}
 		switch event.Type {
 		case llmprotocol.EventOutputItemStarted:
@@ -370,6 +384,7 @@ func (state *semanticResponseStreamState) response() (*llmprotocol.Response, err
 			// content (empty_output_item), so the record kept for settlement
 			// holds an empty text block instead. The two differ on purpose.
 			logging.ComponentWarnEvent("extproc", "upstream_completion_was_empty", map[string]interface{}{
+				"request_id": state.requestID,
 				"item_index": index,
 			})
 			contents = append(contents, llmprotocol.Content{Kind: llmprotocol.ContentText})
@@ -385,7 +400,9 @@ func (state *semanticResponseStreamState) response() (*llmprotocol.Response, err
 	}
 	return &llmprotocol.Response{
 		Generation: 1, ID: state.responseID, CreatedAt: time.Now().UTC(),
-		Model: state.model, Output: output, StopReason: state.stop, Usage: state.usage,
+		Model: state.model, Output: output, StopReason: state.stop,
+		SourceStopReason: state.sourceStop, UpstreamProvider: state.provider,
+		Usage: state.usage,
 	}, nil
 }
 

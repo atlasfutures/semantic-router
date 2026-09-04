@@ -6,6 +6,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/inflight"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/latency"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/ratelimit"
@@ -209,6 +210,7 @@ func (r *OpenAIRouter) recordResponseCost(
 		"completion_latency_ms": completionLatency.Milliseconds(),
 		"usage_source":          responseUsageSource(usage),
 	}
+	addUpstreamAttribution(eventFields, ctx.SemanticResponse)
 	if ctx.StreamingAborted {
 		// The counts are real but the turn is not a whole one. Anything
 		// reading these lines has to be able to tell the difference.
@@ -242,6 +244,32 @@ func (r *OpenAIRouter) recordResponseCost(
 	eventFields["pricing"] = "not_configured"
 	logging.LogEvent("llm_usage", eventFields)
 	return replayUsage
+}
+
+// addUpstreamAttribution names what the upstream said about the turn: which
+// provider served it, what it stopped for, and how much of the completion was
+// reasoning. A turn billed for a bare stop token is otherwise indistinguishable
+// from one that reasoned to exhaustion.
+//
+// A fact the upstream did not state is absent rather than zero. Accounting and
+// attribution both read this line, and a zero here would assert a split or a
+// stop the provider never gave.
+func addUpstreamAttribution(fields map[string]interface{}, response *llmprotocol.Response) {
+	if response == nil {
+		return
+	}
+	if response.StopReason != "" {
+		fields["stop_reason"] = string(response.StopReason)
+	}
+	if response.SourceStopReason != "" {
+		fields["native_stop_reason"] = response.SourceStopReason
+	}
+	if response.UpstreamProvider != "" {
+		fields["upstream_provider"] = response.UpstreamProvider
+	}
+	if reasoning := response.Usage.OutputReasoning; reasoning.Value != nil {
+		fields["reasoning_tokens"] = *reasoning.Value
+	}
 }
 
 func clampCachedPromptTokensInt(promptTokens, cachedPromptTokens int) int {
