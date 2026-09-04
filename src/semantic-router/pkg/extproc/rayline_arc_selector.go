@@ -205,7 +205,7 @@ func (selector *raylineARCSelector) Select(
 	if err != nil {
 		return nil, err
 	}
-	excluded, err := visionExcludedArms(arcContext, len(workerIDs))
+	excluded, err := excludedArms(arcContext, len(workerIDs))
 	if err != nil {
 		return nil, err
 	}
@@ -235,6 +235,54 @@ func (selector *raylineARCSelector) Select(
 		decision,
 		latency,
 	), nil
+}
+
+// excludedArms is every hard constraint the artifact must honour, as one mask
+// indexed like the worker pool.
+//
+// The two constraints are not the same kind of fact. The vision flag answers
+// a question about this turn; the disabled flag is a standing operator verdict
+// that holds for every turn. They are applied in that order so that a basket
+// where no arm takes an image keeps saying so, which is the constraint an
+// operator can do nothing about.
+func excludedArms(
+	arcContext *selection.RaylineARCSelectionContext,
+	armCount int,
+) ([]bool, error) {
+	excluded, err := visionExcludedArms(arcContext, armCount)
+	if err != nil {
+		return nil, err
+	}
+	return withDisabledArms(arcContext, armCount, excluded)
+}
+
+// withDisabledArms folds the out-of-service arms into the mask. An arm an
+// operator disabled is not a worse arm: routing there is the empty completion
+// the flag exists to stop, so it is a refusal like the vision constraint.
+func withDisabledArms(
+	arcContext *selection.RaylineARCSelectionContext,
+	armCount int,
+	excluded []bool,
+) ([]bool, error) {
+	if len(arcContext.DisabledArms) == 0 {
+		return excluded, nil
+	}
+	if len(arcContext.DisabledArms) != armCount {
+		return nil, arcSelectionFailure("disabled_arm_mapping")
+	}
+	combined := make([]bool, armCount)
+	eligible := 0
+	for index := range combined {
+		combined[index] = arcContext.DisabledArms[index] ||
+			(len(excluded) == armCount && excluded[index])
+		if !combined[index] {
+			eligible++
+		}
+	}
+	if eligible == 0 {
+		return nil, arcSelectionFailure("no_enabled_arm")
+	}
+	return combined, nil
 }
 
 // visionExcludedArms turns the image fact and the arms' model cards into the
