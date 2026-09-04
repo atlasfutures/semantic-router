@@ -19,6 +19,7 @@ type reasoningRequestMutation struct {
 	hasOriginalEffort       bool
 	appliedEffort           string
 	reasoningApplied        bool
+	reasoningBound          *int64
 }
 
 func (r *OpenAIRouter) setReasoningModeToRequestBody(
@@ -59,6 +60,7 @@ func (r *OpenAIRouter) setReasoningModeToRequestBodyForModelAndProvider(
 	dialect := resolveOpenAIBackendDialect(profile)
 	if enabled {
 		r.applyEnabledReasoningMutation(mutation, familyConfig, decision, dialect)
+		applyOpenRouterReasoningBound(mutation, dialect)
 	} else {
 		r.applyDisabledReasoningMutation(mutation, familyConfig, dialect)
 	}
@@ -284,7 +286,7 @@ func logReasoningMutation(mutation *reasoningRequestMutation, enabled bool) {
 		return
 	}
 	if mutation.reasoningApplied {
-		logging.Infof("Applied reasoning mode (enabled: %v) with effort (%s) to model: %s", enabled, mutation.appliedEffort, mutation.model)
+		logging.Infof("Applied reasoning mode (enabled: %v) with %s to model: %s", enabled, mutation.appliedControl(), mutation.model)
 		return
 	}
 	logging.Infof("Reasoning mode disabled for model: %s", mutation.model)

@@ -146,6 +146,18 @@ func encodeChatReasoningControls(
 // bound below it would be refused rather than obeyed.
 const minimumReasoningBudget = 1024
 
+// ReasoningBoundForOutputAllowance is the bound a turn gets when it reasons
+// and states no budget of its own: what the client allowed for output, floored
+// at the smallest budget a provider accepts. It is exported because the
+// provider boundary derives the same bound for an arm that reasons by
+// configuration, and the two have to be one number.
+func ReasoningBoundForOutputAllowance(allowance int64) int64 {
+	if allowance < minimumReasoningBudget {
+		return minimumReasoningBudget
+	}
+	return allowance
+}
+
 // chatReasoningBound returns how many tokens the turn may spend on reasoning,
 // or nil to send no bound at all, and whether the Router derived that number
 // rather than reading it off the request.
@@ -187,11 +199,8 @@ func chatReasoningBound(request llmprotocol.Request) (bound *int64, derived bool
 	if !reasoningAsked || request.Sampling.MaxOutputTokens == nil {
 		return nil, false
 	}
-	allowance := *request.Sampling.MaxOutputTokens
-	if allowance < minimumReasoningBudget {
-		allowance = minimumReasoningBudget
-	}
-	return &allowance, true
+	derivedBound := ReasoningBoundForOutputAllowance(*request.Sampling.MaxOutputTokens)
+	return &derivedBound, true
 }
 
 func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) error {

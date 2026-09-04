@@ -79,6 +79,14 @@ func (d openAIBackendDialect) usesUpstreamSessionID() bool {
 	return d.supportsUpstreamSessionID
 }
 
+// usesReasoningObjectBound reports that the backend accepts OpenRouter's
+// reasoning object, the only wire with a documented bound on how much a turn
+// may spend on reasoning. Every other OpenAI-compatible backend would see an
+// unknown member.
+func (d openAIBackendDialect) usesReasoningObjectBound() bool {
+	return d.kind == openAIBackendDialectOpenRouter
+}
+
 func (d openAIBackendDialect) usesDeepSeekOfficialReasoning() bool {
 	return d.kind == openAIBackendDialectOfficialDeepSeek && d.supportsTopLevelDeepSeekThink
 }
