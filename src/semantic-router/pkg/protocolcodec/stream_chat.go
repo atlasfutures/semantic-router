@@ -15,6 +15,12 @@ type chatStreamDecoder struct {
 	framer             sseFramer
 	contentIndexes     map[chatContentKey]int
 	nextContentIndexes map[int]int
+	// upstreamProvider and sourceStop are what the upstream said about itself:
+	// which provider served the turn and what it named the stop. Neither is a
+	// client contract; both are stamped on the neutral events so the Router can
+	// attribute a turn it only ever sees as a stream.
+	upstreamProvider string
+	sourceStop       string
 }
 
 type chatContentKey struct {
@@ -47,6 +53,7 @@ type chatChunkWire struct {
 	Model             string                    `json:"model,omitempty"`
 	Choices           []chatChunkChoiceWire     `json:"choices,omitempty"`
 	Usage             *chatUsageWire            `json:"usage,omitempty"`
+	Provider          *string                   `json:"provider,omitempty"`
 	Moderation        json.RawMessage           `json:"moderation,omitempty"`
 	Obfuscation       string                    `json:"obfuscation,omitempty"`
 	Error             *chatErrorWire            `json:"error,omitempty"`
@@ -132,7 +139,23 @@ func (decoder *chatStreamDecoder) Push(chunk []byte) ([]llmprotocol.Event, llmpr
 	return events, diagnostics, nil
 }
 
+// pushFrame stamps every event it produces with what the upstream has said
+// about itself so far. The provider name and the upstream stop string arrive on
+// chunks, and the Router reads them off the reconstructed response.
 func (decoder *chatStreamDecoder) pushFrame(frame []byte) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	events, diagnostics, err := decoder.decodeProviderFrame(frame)
+	for index := range events {
+		if decoder.upstreamProvider != "" {
+			events[index].UpstreamProvider = decoder.upstreamProvider
+		}
+		if decoder.sourceStop != "" {
+			events[index].SourceStopReason = decoder.sourceStop
+		}
+	}
+	return events, diagnostics, err
+}
+
+func (decoder *chatStreamDecoder) decodeProviderFrame(frame []byte) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
 	parsed, err := decoder.parseProviderSSEFrame(frame)
 	if err != nil || !parsed.HasData {
 		return nil, nil, err
@@ -154,6 +177,7 @@ func (decoder *chatStreamDecoder) pushFrame(frame []byte) ([]llmprotocol.Event, 
 	if err := decoder.observeProviderIdentity(chunk.ID, chunk.Model); err != nil {
 		return nil, nil, err
 	}
+	decoder.observeUpstreamAttribution(chunk)
 	if chunk.Error != nil {
 		event, err := decoder.next(chatStreamFailureEvent(chunk.Error))
 		return []llmprotocol.Event{event}, nil, err
@@ -161,6 +185,20 @@ func (decoder *chatStreamDecoder) pushFrame(frame []byte) ([]llmprotocol.Event, 
 	events, diagnostics, err := decoder.decodeChunkEvents(chunk)
 	diagnostics = decoder.appendProviderChunkDiagnostics(chunk, diagnostics)
 	return events, diagnostics, err
+}
+
+// observeUpstreamAttribution keeps the last non-empty value of each. A provider
+// that names itself once names itself for the turn, and a finish reason only
+// arrives on the chunk that ends the choice.
+func (decoder *chatStreamDecoder) observeUpstreamAttribution(chunk chatChunkWire) {
+	if chunk.Provider != nil && *chunk.Provider != "" {
+		decoder.upstreamProvider = *chunk.Provider
+	}
+	for _, choice := range chunk.Choices {
+		if choice.FinishReason != nil && *choice.FinishReason != "" {
+			decoder.sourceStop = *choice.FinishReason
+		}
+	}
 }
 
 func (decoder *chatStreamDecoder) appendProviderChunkDiagnostics(

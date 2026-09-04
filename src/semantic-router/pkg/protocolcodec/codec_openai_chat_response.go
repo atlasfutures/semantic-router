@@ -75,6 +75,9 @@ func decodeChatResponseEnvelope(wire chatResponseWire) llmprotocol.Response {
 	if wire.Created > 0 {
 		response.CreatedAt = time.Unix(wire.Created, 0).UTC()
 	}
+	if wire.Provider != nil {
+		response.UpstreamProvider = *wire.Provider
+	}
 	if wire.Error != nil {
 		response.Error = &llmprotocol.ProtocolError{
 			Category: decodeProviderErrorCategory(wire.Error.Type, wire.Error.Code),

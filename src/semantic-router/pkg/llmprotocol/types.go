@@ -330,6 +330,11 @@ type Response struct {
 	MatchedStopSequence string
 	Usage               Usage
 	ProviderRequestID   string
+	// UpstreamProvider names the upstream that served the turn, when the
+	// provider reports one. It is Router telemetry: caching, thinking-off
+	// handling and empty completions differ by provider rather than by model.
+	// No codec publishes it to a client.
+	UpstreamProvider string
 	// Evidence is bounded, protocol-neutral model evidence for Router
 	// algorithms. It is never usage evidence and codecs do not publish it unless
 	// the target protocol explicitly represents the same semantic field.

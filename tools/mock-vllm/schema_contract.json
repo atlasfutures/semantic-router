@@ -112,6 +112,7 @@
         "prompt_logprobs",
         "prompt_text",
         "prompt_token_ids",
+        "provider",
         "remote_block_ids",
         "remote_engine_id",
         "remote_host",

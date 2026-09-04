@@ -9,12 +9,16 @@ import (
 )
 
 type chatResponseWire struct {
-	ID                string                    `json:"id"`
-	Object            string                    `json:"object,omitempty"`
-	Created           int64                     `json:"created"`
-	Model             string                    `json:"model"`
-	Choices           []chatChoiceWire          `json:"choices"`
-	Usage             *chatUsageWire            `json:"usage,omitempty"`
+	ID      string           `json:"id"`
+	Object  string           `json:"object,omitempty"`
+	Created int64            `json:"created"`
+	Model   string           `json:"model"`
+	Choices []chatChoiceWire `json:"choices"`
+	Usage   *chatUsageWire   `json:"usage,omitempty"`
+	// Provider names the upstream an aggregator routed the turn to. It is
+	// decoded so it stops counting as a dropped unknown member and can be
+	// named in Router telemetry. Encoding never sets it.
+	Provider          *string                   `json:"provider,omitempty"`
 	Metadata          map[string]string         `json:"metadata,omitempty"`
 	Moderation        json.RawMessage           `json:"moderation,omitempty"`
 	Error             *chatErrorWire            `json:"error,omitempty"`

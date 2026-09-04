@@ -38,14 +38,21 @@ type Event struct {
 	// It is independent from ItemIndex: Responses can stream several text or
 	// refusal parts inside one message, while other wire formats may flatten
 	// those blocks on the wire.
-	ContentIndex        int
-	ItemID              string
-	Role                Role
-	Delta               string
-	ToolCall            *ToolCall
-	Content             *Content
-	GeneratedImage      *GeneratedImage
-	StopReason          StopReason
+	ContentIndex   int
+	ItemID         string
+	Role           Role
+	Delta          string
+	ToolCall       *ToolCall
+	Content        *Content
+	GeneratedImage *GeneratedImage
+	StopReason     StopReason
+	// SourceStopReason is the stop string the upstream itself sent, before it
+	// was mapped onto the neutral reason. A buffered response keeps the same
+	// field; a stream had nowhere to carry it.
+	SourceStopReason string
+	// UpstreamProvider names the upstream that served the turn. It is Router
+	// telemetry and no encoder publishes it.
+	UpstreamProvider    string
 	MatchedStopSequence string
 	Usage               *Usage
 	Error               *ProtocolError

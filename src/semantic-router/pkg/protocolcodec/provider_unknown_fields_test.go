@@ -229,7 +229,6 @@ func TestOpenRouterUnknownFieldsAreNamed(t *testing.T) {
 	want := []string{
 		"choices[].message.reasoning_details",
 		"choices[].native_finish_reason",
-		"provider",
 		"usage.completion_tokens_details.image_tokens",
 		"usage.cost",
 		"usage.cost_details",
@@ -254,7 +253,7 @@ func TestOpenRouterStreamUnknownFieldsAreNamed(t *testing.T) {
 		}
 	}
 	for _, field := range []string{
-		"choices[].delta.reasoning_details", "choices[].native_finish_reason", "provider",
+		"choices[].delta.reasoning_details", "choices[].native_finish_reason",
 		"usage.completion_tokens_details.image_tokens", "usage.cost", "usage.cost_details",
 		"usage.is_byok", "usage.prompt_tokens_details.video_tokens",
 	} {
