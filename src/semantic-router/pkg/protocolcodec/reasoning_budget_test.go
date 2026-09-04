@@ -34,12 +34,13 @@ func TestChatBoundsReasoningTokens(t *testing.T) {
 		},
 		{
 			// Adaptive states no budget, so reasoning is bounded by what the
-			// client allowed for output. The effort level still travels.
+			// client allowed for output. The effort level does not travel
+			// beside a bound the Router derived: OpenRouter takes one control
+			// or the other, and an effort level there makes the bound inert.
 			name: "adaptive is bounded by the output allowance",
 			body: `{"model":"m","max_tokens":4096,"messages":[{"role":"user","content":"hi"}],` +
 				`"thinking":{"type":"adaptive"},"output_config":{"effort":"high"}}`,
 			maxTokens: 4096,
-			effort:    "high",
 		},
 		{
 			// A small output allowance still gets a usable reasoning budget:
@@ -50,12 +51,12 @@ func TestChatBoundsReasoningTokens(t *testing.T) {
 			maxTokens: 1024,
 		},
 		{
-			// An effort level on its own is still a request to reason.
+			// An effort level on its own is still a request to reason, and the
+			// bound derived from it replaces it.
 			name: "an effort level alone is bounded",
 			body: `{"model":"m","max_tokens":8192,"messages":[{"role":"user","content":"hi"}],` +
 				`"output_config":{"effort":"medium"}}`,
 			maxTokens: 8192,
-			effort:    "medium",
 		},
 	}
 	engine := NewBuiltinEngine()

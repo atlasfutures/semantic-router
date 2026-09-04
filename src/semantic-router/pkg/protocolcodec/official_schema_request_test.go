@@ -513,9 +513,16 @@ func TestOfficialAnthropicOutputConfigPreservesSchemaAndEffort(t *testing.T) {
 	}
 	assertAnthropicOutputConfigWire(t, &wire, schema, roundTrip.Body)
 
-	for _, target := range []llmprotocol.WireFormat{llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1} {
+	// The Chat leg turns an effort level with an output allowance into
+	// OpenRouter's reasoning.max_tokens, which takes the effort level's place:
+	// that wire accepts one reasoning control, not two. The Responses leg has
+	// its own effort field and keeps it.
+	for target, wantEffort := range map[llmprotocol.WireFormat]string{
+		llmprotocol.OpenAIChatV1:      "",
+		llmprotocol.OpenAIResponsesV1: "high",
+	} {
 		t.Run(string(target), func(t *testing.T) {
-			assertTranslatedAnthropicOutputConfig(t, engine, target, body, schema)
+			assertTranslatedAnthropicOutputConfig(t, engine, target, body, schema, wantEffort)
 		})
 	}
 }
@@ -554,6 +561,7 @@ func assertTranslatedAnthropicOutputConfig(
 	target llmprotocol.WireFormat,
 	body []byte,
 	schema json.RawMessage,
+	wantEffort string,
 ) {
 	t.Helper()
 	translated, err := engine.TranslateRequest(
@@ -569,7 +577,7 @@ func assertTranslatedAnthropicOutputConfig(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.ReasoningEffort != "high" || decoded.OutputFormat.Kind != llmprotocol.OutputJSONSchema ||
+	if decoded.ReasoningEffort != wantEffort || decoded.OutputFormat.Kind != llmprotocol.OutputJSONSchema ||
 		!jsonSemanticallyEqual(decoded.OutputFormat.Schema, schema) {
 		t.Fatalf("Anthropic output_config changed through %s: %+v body=%s", target, decoded, translated.Body)
 	}

@@ -113,8 +113,25 @@ func encodeChatReasoningControls(
 	if request.ReasoningMode == llmprotocol.ReasoningModeDisabled {
 		wire.ReasoningEffort = "none"
 	}
-	if budget := chatReasoningBound(request); budget != nil {
+	budget, derived := chatReasoningBound(request)
+	if budget != nil {
 		wire.Reasoning = &chatReasoningWire{MaxTokens: budget}
+	}
+	if derived {
+		// OpenRouter's reasoning parameter takes an effort level or a token
+		// bound, "One of the following (not both)", and documents no
+		// precedence for a request that sends both. A derived bound is the
+		// Router's own number, put there to end a turn that would otherwise
+		// run to the platform deadline, and the measurement says an effort
+		// level beside it makes it inert. So the derived bound travels alone.
+		// Nothing is lost by it: "For models that only support
+		// reasoning.effort ... the max_tokens value will be used to determine
+		// the effort level." Read 2026-09-04:
+		//   https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
+		//
+		// A budget the client stated is a different case. Both fields are then
+		// the client's own and the Router is only carrying them.
+		wire.ReasoningEffort = ""
 	}
 	if request.ReasoningDisplay != "" {
 		appendPresentationDrop(
@@ -130,7 +147,8 @@ func encodeChatReasoningControls(
 const minimumReasoningBudget = 1024
 
 // chatReasoningBound returns how many tokens the turn may spend on reasoning,
-// or nil to send no bound at all.
+// or nil to send no bound at all, and whether the Router derived that number
+// rather than reading it off the request.
 //
 // max_completion_tokens does not bound reasoning: the models behind the
 // thinking arms do not count reasoning against it, so a turn that asks to
@@ -149,25 +167,31 @@ const minimumReasoningBudget = 1024
 //     the output allowance itself is never reduced: the client gets everything
 //     it asked to be shown.
 //   - A turn that asks for no reasoning gets no bound. Sending one to a
-//     thinking-off arm would ask it to start reasoning.
+//     thinking-off arm would ask it to start reasoning, and thinking-off says
+//     so even when an effort level travels beside it: Claude Code sends
+//     thinking disabled with output_config.effort high, and the off-signal is
+//     the stronger statement of the two.
 //   - A request with no output allowance gets no bound either. There is
 //     nothing to derive one from, and capping a client that asked for no cap
 //     is not the Router's to do.
-func chatReasoningBound(request llmprotocol.Request) *int64 {
+func chatReasoningBound(request llmprotocol.Request) (bound *int64, derived bool) {
+	if request.ReasoningMode == llmprotocol.ReasoningModeDisabled {
+		return nil, false
+	}
 	if request.ReasoningBudgetTokens != nil {
-		return request.ReasoningBudgetTokens
+		return request.ReasoningBudgetTokens, false
 	}
 	reasoningAsked := request.ReasoningMode == llmprotocol.ReasoningModeAdaptive ||
 		request.ReasoningMode == llmprotocol.ReasoningModeEnabled ||
 		request.ReasoningEffort != "" && request.ReasoningEffort != "none"
 	if !reasoningAsked || request.Sampling.MaxOutputTokens == nil {
-		return nil
+		return nil, false
 	}
-	bound := *request.Sampling.MaxOutputTokens
-	if bound < minimumReasoningBudget {
-		bound = minimumReasoningBudget
+	allowance := *request.Sampling.MaxOutputTokens
+	if allowance < minimumReasoningBudget {
+		allowance = minimumReasoningBudget
 	}
-	return &bound
+	return &allowance, true
 }
 
 func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) error {
