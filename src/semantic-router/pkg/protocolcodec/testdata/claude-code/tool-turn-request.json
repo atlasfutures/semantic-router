@@ -1,0 +1,131 @@
+{
+  "model": "rayline-router",
+  "max_tokens": 64000,
+  "system": [
+    {
+      "type": "text",
+      "text": "x-anthropic-billing-header: cc_version=2.1.260.e31; cc_entrypoint=sdk-cli;"
+    },
+    {
+      "type": "text",
+      "text": "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    },
+    {
+      "type": "text",
+      "text": "You are an interactive agent that helps users with software engineering tasks. IMPORTANT:  ...",
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "Bash",
+      "description": "Executes a bash command and returns its output. - Working di ...",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "timeout": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "Read",
+      "description": "Reads a file from the local filesystem. - `file_path` must b ...",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "file_path": {
+            "type": "string"
+          },
+          "offset": {
+            "type": "string"
+          }
+        }
+      },
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "<system-reminder> As you answer the user's questions, you can use the following context: # ..."
+        },
+        {
+          "type": "text",
+          "text": "List the function names in calc.py. Read it first."
+        }
+      ]
+    },
+    {
+      "role": "system",
+      "content": "Available agent types for the Agent tool: - claude: Catch-all for any task that doesn't fi ..."
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_c69bf1e9093342b2bdcf",
+          "name": "Read",
+          "input": {
+            "file_path": "/tmp/cp9p/work/calc.py"
+          },
+          "caller": {
+            "type": "direct"
+          },
+          "cache_control": {
+            "type": "ephemeral",
+            "ttl": "1h"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "tool_use_id": "toolu_c69bf1e9093342b2bdcf",
+          "type": "tool_result",
+          "content": "1 def add(a, b): 2 return a + b 3 4 5 def mul(a, b): 6 retur ...",
+          "cache_control": {
+            "type": "ephemeral",
+            "ttl": "1h"
+          }
+        }
+      ]
+    },
+    {
+      "role": "system",
+      "content": [
+        {
+          "type": "text",
+          "text": "<total_tokens>14999983 tokens left</total_tokens>",
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "user_id": "redacted"
+  },
+  "thinking": {
+    "type": "adaptive"
+  },
+  "stream": true
+}
