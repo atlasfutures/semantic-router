@@ -137,8 +137,21 @@ func completionFloorRouteBytes(
 	ctx *RequestContext,
 ) []byte {
 	t.Helper()
+	return completionFloorReasoningRouteBytes(t, router, request, selectedModel, ctx, false)
+}
+
+func completionFloorReasoningRouteBytes(
+	t *testing.T,
+	router *OpenAIRouter,
+	request *llmprotocol.Request,
+	selectedModel string,
+	ctx *RequestContext,
+	useReasoning bool,
+) []byte {
+	t.Helper()
 	response, err := router.handleEntrypointModelRouting(
-		request, "auto", "rayline-arc-dev", entropy.ReasoningDecision{}, selectedModel, ctx,
+		request, "auto", "rayline-arc-dev",
+		entropy.ReasoningDecision{UseReasoning: useReasoning}, selectedModel, ctx,
 	)
 	if err != nil {
 		t.Fatalf("handleEntrypointModelRouting returned error: %v", err)
@@ -205,7 +218,11 @@ func TestCompletionFloorDoesNotRaiseTheReasoningBound(t *testing.T) {
 		completionFloorThinkingArm: completionFloorTokens,
 	})
 
-	body := routeAndDecodeBody(t, router, request, completionFloorThinkingArm, ctx)
+	raw := completionFloorReasoningRouteBytes(t, router, request, completionFloorThinkingArm, ctx, true)
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("decode routed request: %v", err)
+	}
 
 	if got := body["max_completion_tokens"]; got != float64(completionFloorTokens) {
 		t.Fatalf("completion budget = %#v, want the configured floor %d", got, completionFloorTokens)

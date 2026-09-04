@@ -64,6 +64,7 @@ func (r *OpenAIRouter) setReasoningModeToRequestBodyForModelAndProvider(
 		applyOpenRouterReasoningBound(mutation, dialect, clientOutputAllowance(ctx))
 	} else {
 		r.applyDisabledReasoningMutation(mutation, familyConfig, dialect)
+		dropReasoningRequestFromDisabledArm(mutation, dialect, ctx)
 	}
 
 	logReasoningMutation(mutation, enabled)

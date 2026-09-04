@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
@@ -53,6 +54,68 @@ func applyOpenRouterReasoningBound(
 	delete(mutation.requestMap, "reasoning_effort")
 	mutation.appliedEffort = ""
 	mutation.reasoningBound = bound
+}
+
+// dropReasoningRequestFromDisabledArm removes the reasoning controls from a
+// turn the decision routed to an arm that must not reason.
+//
+// The controls on the body at this point are the client's, rendered by the
+// Chat encoder. Claude Code sends adaptive thinking with output_config.effort
+// high on every turn, which the encoder renders as a bound with an effort
+// beside it; measured on the dev cell 2026-09-04, a
+// deepseek-v4-pro@thinking-off turn was dispatched with reasoning.max_tokens
+// 32000. Whether the turn reasons is the Router's decision, not the client's,
+// and the arm is the answer.
+//
+// The reasoning object goes whatever the backend is: it is OpenRouter's
+// control and it can only ask a model to reason. The top-level effort goes
+// only where OpenRouter reads it, because the other dialects preserve a
+// client-supplied effort deliberately -- a vLLM chat template needs the
+// argument, and OpenAI takes the level as the client's own.
+func dropReasoningRequestFromDisabledArm(
+	mutation *reasoningRequestMutation,
+	dialect openAIBackendDialect,
+	ctx *RequestContext,
+) {
+	_, hadBound := mutation.requestMap["reasoning"]
+	delete(mutation.requestMap, "reasoning")
+
+	droppedEffort := false
+	if dialect.usesReasoningObjectBound() {
+		droppedEffort = reasoningEffortAsksToReason(mutation.requestMap["reasoning_effort"])
+		delete(mutation.requestMap, "reasoning_effort")
+		mutation.appliedEffort = ""
+	}
+	if hadBound || droppedEffort {
+		recordDroppedReasoningRequest(ctx)
+	}
+}
+
+// reasoningEffortAsksToReason reports whether an effort level is a request to
+// reason. "none" is the off-signal, so dropping it loses nothing.
+func reasoningEffortAsksToReason(raw json.RawMessage) bool {
+	var effort string
+	if len(raw) == 0 || json.Unmarshal(raw, &effort) != nil {
+		return false
+	}
+	return effort != "" && effort != "none"
+}
+
+// recordDroppedReasoningRequest counts a client control the Router removed,
+// through the diagnostics the response header and the lossy counter already
+// read. The turn still runs: a thinking-off answer is the routable outcome and
+// refusing the conversation is not.
+func recordDroppedReasoningRequest(ctx *RequestContext) {
+	if ctx == nil {
+		return
+	}
+	ctx.ProtocolDiagnostics = append(ctx.ProtocolDiagnostics, llmprotocol.Diagnostic{
+		Source: ctx.SourceFormat,
+		Target: ctx.TargetFormat,
+		Field:  "reasoning",
+		Action: llmprotocol.DiagnosticDropped,
+		Reason: "reasoning_disabled_by_selected_model",
+	})
 }
 
 // reasoningBoundForRequest reads the bound the request already carries, or
