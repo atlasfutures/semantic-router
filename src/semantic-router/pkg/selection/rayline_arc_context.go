@@ -22,7 +22,12 @@ type RaylineARCSelectionContext struct {
 	// NonVisionArms marks, by arm ordinal, the candidates whose model card
 	// declares no image input. It is indexed like CandidateModels and is nil
 	// when every arm is vision-capable, which is the unmarked default.
-	NonVisionArms      []bool
+	NonVisionArms []bool
+	// DisabledArms marks, by arm ordinal, the candidates an operator has taken
+	// out of service. Unlike NonVisionArms it is not a fact about this turn:
+	// it holds for every turn until the card changes. Nil when no arm is
+	// marked, which is the unmarked default.
+	DisabledArms       []bool
 	PreparationFailure string
 }
 

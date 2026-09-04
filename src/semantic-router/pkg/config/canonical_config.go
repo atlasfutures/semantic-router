@@ -73,8 +73,11 @@ type RoutingModel struct {
 	Modality          string        `yaml:"modality,omitempty"`
 	// Vision is the model card's image-input contract. Absent means capable;
 	// see ModelParams.SupportsVision.
-	Vision *bool    `yaml:"vision,omitempty"`
-	Tags   []string `yaml:"tags,omitempty"`
+	Vision *bool `yaml:"vision,omitempty"`
+	// Disabled takes the model out of service. Absent means it serves; see
+	// ModelParams.IsDisabled.
+	Disabled *bool    `yaml:"disabled,omitempty"`
+	Tags     []string `yaml:"tags,omitempty"`
 }
 
 func isCanonicalConfig(raw map[string]interface{}) bool {
@@ -135,6 +138,7 @@ func applyCanonicalRoutingState(cfg *RouterConfig, canonical *CanonicalConfig) {
 			QualityScore:      model.QualityScore,
 			Modality:          model.Modality,
 			Vision:            copyBool(model.Vision),
+			Disabled:          copyBool(model.Disabled),
 		}
 	}
 }

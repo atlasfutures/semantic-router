@@ -115,6 +115,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	result.Turns = turns
 	result.ImageBearing = imageBearing
 	result.NonVisionArms = r.nonVisionArms(modelRefs)
+	result.DisabledArms = r.disabledArms(modelRefs)
 	return result
 }
 
@@ -130,6 +131,28 @@ func (r *OpenAIRouter) nonVisionArms(modelRefs []config.ModelRef) []bool {
 	for index, ref := range modelRefs {
 		params, known := r.Config.ModelConfig[strings.TrimSpace(ref.Model)]
 		if known && !params.SupportsVision() {
+			arms[index] = true
+			marked = true
+		}
+	}
+	if !marked {
+		return nil
+	}
+	return arms
+}
+
+// disabledArms reads the in-service verdict off each candidate's model card.
+// It returns nil when no candidate is marked, which is the unmarked default
+// and leaves selection exactly as it was.
+func (r *OpenAIRouter) disabledArms(modelRefs []config.ModelRef) []bool {
+	if r == nil || r.Config == nil || len(modelRefs) == 0 {
+		return nil
+	}
+	marked := false
+	arms := make([]bool, len(modelRefs))
+	for index, ref := range modelRefs {
+		params, known := r.Config.ModelConfig[strings.TrimSpace(ref.Model)]
+		if known && params.IsDisabled() {
 			arms[index] = true
 			marked = true
 		}

@@ -141,6 +141,10 @@ routing:
       # only where a card must be audited, or set it false to mark a model that
       # rejects image input.
       vision: true
+      # In service. An absent flag means the same thing; set it true to take a
+      # model out without deleting its card, which is what a fixed, indexed
+      # arm set such as Rayline ARC requires.
+      disabled: false
       tags: [multimodal, omni]
     - name: sdxl-image
       param_size: 3B

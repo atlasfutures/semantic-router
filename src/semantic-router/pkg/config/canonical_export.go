@@ -129,6 +129,7 @@ func routingModelsFromRouterConfig(cfg *RouterConfig) []RoutingModel {
 			QualityScore:      params.QualityScore,
 			Modality:          params.Modality,
 			Vision:            copyBool(params.Vision),
+			Disabled:          copyBool(params.Disabled),
 		})
 	}
 	return models

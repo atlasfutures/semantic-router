@@ -371,6 +371,13 @@ type ModelParams struct {
 	// has never been audited must not start refusing image turns. Only an
 	// explicit false marks a model that rejects them.
 	Vision *bool `yaml:"vision,omitempty"`
+	// Disabled takes the model out of service without removing its card. The
+	// Rayline ARC basket is a fixed, ordinal-indexed arm set, so an arm that
+	// must stop serving cannot be deleted: the artifact head, the exclusion
+	// mask and the model refs all index by the same ordinal. It is a pointer
+	// for the same reason Vision is: an absent flag is not a verdict, and an
+	// explicit false is one an operator wrote down.
+	Disabled *bool `yaml:"disabled,omitempty"`
 }
 
 // SupportsVision reports whether this model may receive image input. An
@@ -378,6 +385,12 @@ type ModelParams struct {
 // operator marks an exception.
 func (params ModelParams) SupportsVision() bool {
 	return params.Vision == nil || *params.Vision
+}
+
+// IsDisabled reports whether an operator has taken this model out of service.
+// An unmarked model serves, so the flag costs nothing until it is set.
+func (params ModelParams) IsDisabled() bool {
+	return params.Disabled != nil && *params.Disabled
 }
 
 type LoRAAdapter struct {
