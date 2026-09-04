@@ -281,6 +281,14 @@ const (
 	UsageUnknown       UsageProvenance = "unknown"
 )
 
+// UsageSourceStreamEstimate marks a count that settles a turn the Router
+// ended itself. The turn never reached its usage frame, so the count is what
+// the Router observed rather than what the provider billed, and a consumer
+// summing settlements has to be able to leave it out.
+const (
+	UsageSourceStreamEstimate = "stream_estimate"
+)
+
 // TokenCount uses a pointer so absent and an authoritative zero remain
 // distinguishable.
 type TokenCount struct {

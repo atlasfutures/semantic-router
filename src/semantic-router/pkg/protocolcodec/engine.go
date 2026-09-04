@@ -557,6 +557,29 @@ type StreamEngine struct {
 	pendingCompletion  *llmprotocol.Event
 }
 
+// truncationUsageCarrier is an encoder that can put a count on the failure it
+// writes for a turn the Router ended. Not every wire format has a place for
+// one, so it is an option rather than part of the encoder contract.
+type truncationUsageCarrier interface {
+	SetTruncationUsage(usage *llmprotocol.Usage, source string)
+}
+
+// SetTruncationUsage says what a turn the caller is about to end has cost.
+//
+// A stream the Router cuts never reaches its usage frame, so the terminal the
+// codec writes would otherwise carry no numbers and the turn would bill as
+// nothing. The caller owns the count and the word for where it came from; the
+// codec only writes them onto the failure it was already going to write.
+// Called before Finalize, and only for a turn the Router itself ended.
+func (engine *StreamEngine) SetTruncationUsage(usage *llmprotocol.Usage, source string) {
+	if engine == nil {
+		return
+	}
+	if carrier, ok := engine.encoder.(truncationUsageCarrier); ok {
+		carrier.SetTruncationUsage(usage, source)
+	}
+}
+
 func (engine *StreamEngine) Push(frame []byte) ([][]byte, []llmprotocol.Event, llmprotocol.Diagnostics, error) {
 	if err := engine.validatePushState(); err != nil {
 		return nil, nil, nil, err

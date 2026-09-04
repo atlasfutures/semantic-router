@@ -64,6 +64,7 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 		if overran {
 			r.logResponseStreamTruncation(ctx)
 			buffers.recordError(ctx, r.truncatedStreamError(), true)
+			r.attachTruncatedStreamUsage(ctx)
 		}
 		buffers.finalize(ctx)
 		r.finalizeSemanticStreamingResponse(ctx, buffers.streamErr)

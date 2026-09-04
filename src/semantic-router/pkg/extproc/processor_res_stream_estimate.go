@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/classification"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
 // What a truncated turn cost, when the upstream never said.
@@ -74,4 +75,70 @@ func responseUsageSource(usage responseUsageMetrics) string {
 		return "stream_estimate"
 	}
 	return "authoritative"
+}
+
+// attachTruncatedStreamUsage tells the client what the turn it is losing cost.
+//
+// Until this existed the count stopped at the Router's own telemetry: the
+// client received an error frame with no numbers on it, so the proxy in front
+// of the cell billed nothing while the upstream billed for the whole
+// generation. The count now rides the terminal the codec was already going to
+// write.
+//
+// It is only ever called for a turn the Router itself ended. A provider
+// failure is the provider's to describe, and an estimate on it would be the
+// Router inventing a number about someone else's turn.
+func (r *OpenAIRouter) attachTruncatedStreamUsage(ctx *RequestContext) {
+	if ctx == nil || ctx.ProtocolResponseStream == nil {
+		return
+	}
+	usage := truncatedStreamUsage(ctx, invalidResponseTerminalUsage("stream_cut"))
+	if usage.invalid {
+		// Nothing was seen, so there is nothing to say. The turn is named as
+		// uncounted on the telemetry side instead.
+		return
+	}
+	ctx.ProtocolResponseStream.SetTruncationUsage(
+		truncatedStreamNeutralUsage(usage), llmprotocol.UsageSourceStreamEstimate,
+	)
+}
+
+// truncatedStreamNeutralUsage carries the counted row back into the shape the
+// codec writes from.
+//
+// The whole row travels as an estimate even when the upstream stated some of
+// it before the cut. A turn that did not finish is not a settlement, whatever
+// its numbers came from, and one flag per row is what a reconciler can sum.
+// The Router's own llm_usage line keeps the finer distinction: usage_source
+// there says whether the Router invented the numbers, and truncated says the
+// turn was cut.
+func truncatedStreamNeutralUsage(usage responseUsageMetrics) *llmprotocol.Usage {
+	count := func(value int, reported bool) llmprotocol.TokenCount {
+		if !reported {
+			return llmprotocol.TokenCount{Provenance: llmprotocol.UsageUnknown}
+		}
+		return llmprotocol.TokenCount{
+			Value: llmprotocol.Int64(int64(value)), Provenance: llmprotocol.UsageEstimated,
+		}
+	}
+	neutral := &llmprotocol.Usage{
+		State:           llmprotocol.UsageAvailable,
+		InputUncached:   llmprotocol.TokenCount{Provenance: llmprotocol.UsageUnknown},
+		InputCacheRead:  count(usage.cachedPromptTokens, usage.cachedPromptTokensReported),
+		InputCacheWrite: count(usage.cacheWriteTokens, usage.cacheWriteTokensReported),
+		OutputReasoning: llmprotocol.TokenCount{Provenance: llmprotocol.UsageUnknown},
+		OutputOther:     llmprotocol.TokenCount{Provenance: llmprotocol.UsageUnknown},
+		InputTotal:      count(usage.promptTokens, usage.promptTokensReported),
+		OutputTotal:     count(usage.completionTokens, usage.completionTokensReported),
+		Total:           count(usage.totalTokens, usage.totalTokensReported),
+	}
+	// Messages states the fresh part of a prompt beside the cached part, so
+	// the cached tokens have to come out of the number the client is billed
+	// as input. The Chat side states a prompt total that already includes
+	// them.
+	fresh := usage.promptTokens - usage.cachedPromptTokens - usage.cacheWriteTokens
+	if usage.promptTokensReported && fresh >= 0 {
+		neutral.InputUncached = count(fresh, true)
+	}
+	return neutral
 }

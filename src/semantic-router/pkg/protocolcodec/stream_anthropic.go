@@ -23,6 +23,16 @@ type anthropicStreamEncoder struct {
 	activeBlock    anthropicBlockKey
 	hasActiveBlock bool
 	nextBlockIndex int
+	// truncationUsage is what a turn the Router ended cost, set by the caller
+	// before it ends the stream. Left nil for every other failure: a provider
+	// failure is the provider's to describe.
+	truncationUsage  *llmprotocol.Usage
+	truncationSource string
+}
+
+func (encoder *anthropicStreamEncoder) SetTruncationUsage(usage *llmprotocol.Usage, source string) {
+	encoder.truncationUsage = usage
+	encoder.truncationSource = source
 }
 
 func (AnthropicMessagesCodec) NewDecoder(context llmprotocol.StreamContext, policy llmprotocol.Policy) llmprotocol.StreamDecoder {
@@ -49,6 +59,22 @@ type anthropicEventWire struct {
 	Delta        *anthropicDeltaWire             `json:"delta,omitempty"`
 	Usage        *anthropicMessageDeltaUsageWire `json:"usage,omitempty"`
 	Error        *anthropicErrorWire             `json:"error,omitempty"`
+}
+
+// anthropicTruncationFrameWire is the error frame for a turn the Router ended
+// itself. It is the vendor error event plus what the turn cost, because
+// nothing downstream can bill a cut turn otherwise.
+//
+// It is its own shape rather than two more members on anthropicEventWire: the
+// event wire is the published Messages contract, checked field by field
+// against a provider fixture, and these two members are the Router's, written
+// and never read. The count sits beside the error object rather than inside
+// it, so an SDK parsing the failure sees exactly the shape it always saw.
+type anthropicTruncationFrameWire struct {
+	Type        string                          `json:"type"`
+	Error       *anthropicErrorWire             `json:"error,omitempty"`
+	Usage       *anthropicMessageDeltaUsageWire `json:"usage,omitempty"`
+	UsageSource string                          `json:"usage_source,omitempty"`
 }
 
 type anthropicMessageDeltaUsageWire struct {
@@ -540,7 +566,10 @@ func (encoder *anthropicStreamEncoder) encodeAnthropicLifecycleEvent(
 		// usage update immediately before their terminal event.
 		return nil, nil, nil
 	case llmprotocol.EventResponseFailed:
-		if event.Usage != nil && event.Usage.State == llmprotocol.UsageAvailable {
+		// A cut turn's count is the one exception: the caller asked for it to
+		// travel, because nothing downstream can bill the turn without it.
+		// Any other usage on a failure has nowhere to go in Messages.
+		if event.Usage != nil && event.Usage.State == llmprotocol.UsageAvailable && encoder.truncationSource == "" {
 			appendAccountingOmission(&diagnostics, encoder.policy, encoder.context.Source, encoder.context.Target, "usage", "Messages error events cannot carry token usage")
 		}
 		failureError := event.Error
@@ -674,6 +703,9 @@ func (encoder *anthropicStreamEncoder) Finalize(reason error) ([][]byte, llmprot
 // stream that just stops instead is indistinguishable from a slow one: the
 // turn that prompted this reached the client as 1,191 deltas and a clean
 // close, and curl exited 0.
+// A turn the Router cut carries what it cost, so the client's proxy can bill
+// it. The count rides beside the error object rather than inside it, and
+// usageSource says it is not a settlement.
 func (encoder *anthropicStreamEncoder) terminateAnthropicStream(
 	protocolError *llmprotocol.ProtocolError,
 ) ([][]byte, error) {
@@ -681,9 +713,13 @@ func (encoder *anthropicStreamEncoder) terminateAnthropicStream(
 	if err != nil {
 		return nil, err
 	}
-	failure := anthropicEventWire{Type: "error", Error: &anthropicErrorWire{
+	failure := anthropicTruncationFrameWire{Type: "error", Error: &anthropicErrorWire{
 		Type: canonicalAnthropicErrorType(protocolError), Message: protocolError.Message,
 	}}
+	if encoder.truncationUsage != nil && encoder.truncationSource != "" {
+		failure.Usage = encodeAnthropicMessageDeltaUsage(*encoder.truncationUsage)
+		failure.UsageSource = encoder.truncationSource
+	}
 	failureFrame, err := encodeSSE(failure.Type, failure)
 	if err != nil {
 		return nil, err
