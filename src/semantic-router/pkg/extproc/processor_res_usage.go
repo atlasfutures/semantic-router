@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -210,7 +211,12 @@ func (r *OpenAIRouter) recordResponseCost(
 		"completion_latency_ms": completionLatency.Milliseconds(),
 		"usage_source":          responseUsageSource(usage),
 	}
-	addUpstreamAttribution(eventFields, ctx.SemanticResponse)
+	addUpstreamAttribution(eventFields, attributedResponse(ctx))
+	if ctx.ResponseFailureClass != "" {
+		// The counts are real and the turn is not usable. Anything reading
+		// these lines has to be able to tell the difference.
+		eventFields["failure_class"] = ctx.ResponseFailureClass
+	}
 	if ctx.StreamingAborted {
 		// The counts are real but the turn is not a whole one. Anything
 		// reading these lines has to be able to tell the difference.
@@ -244,6 +250,53 @@ func (r *OpenAIRouter) recordResponseCost(
 	eventFields["pricing"] = "not_configured"
 	logging.LogEvent("llm_usage", eventFields)
 	return replayUsage
+}
+
+// reportUnusableResponseUsage puts a turn the Router refused on the same
+// accounting line as one it served.
+//
+// The upstream billed for it either way. A response that decoded and then
+// failed validation still names the provider that served it, the stop it
+// reported and the tokens it charged; until now the refusal returned before
+// the usage line was written, and every one of those facts was lost. The
+// empty completions of decision 30 were counted only by their refusal, which
+// says nothing about which arm or which upstream produced them.
+//
+// A body that never decoded is left alone. There is no remnant to read, and a
+// line built from nothing would assert counts no upstream stated.
+func (r *OpenAIRouter) reportUnusableResponseUsage(
+	ctx *RequestContext,
+	completionLatency time.Duration,
+	err error,
+) {
+	if r == nil || ctx == nil || ctx.UpstreamDecodedRemnant == nil {
+		return
+	}
+	ctx.ResponseFailureClass = responseFailureClass(err)
+	r.reportNonStreamingUsage(ctx, completionLatency, r.takeNeutralResponseUsage(ctx))
+}
+
+// responseFailureClass names the refusal by the code the protocol raised it
+// with, so the usage line and the error line say the same word.
+func responseFailureClass(err error) string {
+	var protocolError *llmprotocol.ProtocolError
+	if errors.As(err, &protocolError) && protocolError.Code != "" {
+		return protocolError.Code
+	}
+	return "response_decode_failed"
+}
+
+// attributedResponse is the response the usage line describes. A turn the
+// Router refused has no semantic response, but the remnant the decoder kept
+// still names what the upstream said and billed.
+func attributedResponse(ctx *RequestContext) *llmprotocol.Response {
+	if ctx == nil {
+		return nil
+	}
+	if ctx.SemanticResponse != nil {
+		return ctx.SemanticResponse
+	}
+	return ctx.UpstreamDecodedRemnant
 }
 
 // addUpstreamAttribution names what the upstream said about the turn: which

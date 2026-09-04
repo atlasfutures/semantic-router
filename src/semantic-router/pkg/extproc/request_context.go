@@ -280,6 +280,14 @@ type RequestContext struct {
 	TargetFormat             llmprotocol.WireFormat
 	SemanticRequest          *llmprotocol.Request
 	SemanticResponse         *llmprotocol.Response
+	// UpstreamDecodedRemnant is the response the codec decoded and then
+	// refused. It exists only on a decode failure and is never served to a
+	// client: accounting reads it so a turn the Router could not use is still
+	// attributed to the upstream that billed for it.
+	UpstreamDecodedRemnant *llmprotocol.Response
+	// ResponseFailureClass names why the response was unusable, on the usage
+	// line, so a refused turn can be told from a served one.
+	ResponseFailureClass string
 	ProtocolEnvelope         llmprotocol.Envelope
 	ResponseEnvelope         llmprotocol.Envelope
 	ProtocolDiagnostics      llmprotocol.Diagnostics

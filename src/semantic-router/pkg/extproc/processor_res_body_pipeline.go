@@ -26,6 +26,7 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	}
 	if err != nil {
 		metrics.RecordRequestError(ctx.RequestModel, "parse_error")
+		r.reportUnusableResponseUsage(ctx, completionLatency, err)
 		logging.ComponentErrorEvent("extproc", "neutral_response_decode_failed", map[string]interface{}{
 			"request_id":     ctx.RequestID,
 			"backend_format": ctx.TargetFormat,

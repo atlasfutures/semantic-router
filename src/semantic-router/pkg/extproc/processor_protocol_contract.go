@@ -226,12 +226,31 @@ func (r *OpenAIRouter) decodeClientResponse(
 	}
 	decoded, err := engine.TranslateResponse(source, target, body, mutation)
 	if err != nil {
+		ctx.UpstreamDecodedRemnant = decodedResponseRemnant(decoded)
 		return nil, err
 	}
+	ctx.UpstreamDecodedRemnant = nil
 	ctx.SemanticResponse = &decoded.Response
 	ctx.ResponseEnvelope = decoded.Envelope
 	ctx.ProtocolDiagnostics = append(ctx.ProtocolDiagnostics, decoded.Diagnostics...)
 	return ctx.SemanticResponse, nil
+}
+
+// decodedResponseRemnant is what the engine decoded before it refused the
+// response. The engine returns the two together, and the refusal is the only
+// thing the Router kept: a response that decoded and then failed validation
+// still states which upstream served the turn, what it stopped for and what it
+// billed, and those are the facts an unusable turn is attributed by.
+//
+// Generation is set by every decoder, so a zero one means the body never
+// became a response at all. There is nothing to attribute then, and a usage
+// line built from it would assert counts no upstream ever stated.
+func decodedResponseRemnant(decoded protocolcodec.ResponseResult) *llmprotocol.Response {
+	if decoded.Response.Generation == 0 {
+		return nil
+	}
+	remnant := decoded.Response
+	return &remnant
 }
 
 // decodeCachedClientResponse decodes the cache's public response contract.

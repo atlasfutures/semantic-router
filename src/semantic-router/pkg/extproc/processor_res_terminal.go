@@ -6,10 +6,11 @@ import "github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmproto
 // already decoded by the neutral protocol engine. Estimated request tokens are
 // never substituted for missing terminal evidence.
 func (r *OpenAIRouter) takeNeutralResponseUsage(ctx *RequestContext) responseUsageMetrics {
-	if r == nil || ctx == nil || ctx.SemanticResponse == nil {
+	response := attributedResponse(ctx)
+	if r == nil || ctx == nil || response == nil {
 		return invalidResponseTerminalUsage("authoritative_usage_missing")
 	}
-	return responseUsageFromSemanticUsage(ctx.SemanticResponse.Usage)
+	return responseUsageFromSemanticUsage(response.Usage)
 }
 
 func invalidResponseTerminalUsage(reason string) responseUsageMetrics {
