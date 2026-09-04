@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -153,7 +154,9 @@ func TestUsageWithoutBreakdownKeepsItsTotals(t *testing.T) {
 }
 
 // The stream path derives usage with the same function, so the terminal chunk
-// of a stream whose breakdown cannot be true must not fail either.
+// of a stream whose breakdown cannot be true must not fail either -- and the
+// totals it does state must reach the client, because that is what the turn
+// is billed from.
 func TestUnreconcilableUsageInAStreamStillCompletes(t *testing.T) {
 	stream, err := NewBuiltinEngine().NewStream(
 		llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1,
@@ -168,10 +171,38 @@ func TestUnreconcilableUsageInAStreamStillCompletes(t *testing.T) {
 		`"usage":{"prompt_tokens":20,"completion_tokens":64,"total_tokens":84,` +
 		`"completion_tokens_details":{"reasoning_tokens":79}}}` + "\n\n" +
 		"data: [DONE]\n\n"
-	if _, _, _, pushErr := stream.Push([]byte(body)); pushErr != nil {
+	var encoded bytes.Buffer
+	frames, events, _, pushErr := stream.Push([]byte(body))
+	if pushErr != nil {
 		t.Fatalf("push: %v", pushErr)
 	}
-	if _, _, _, finalErr := stream.Finalize(nil); finalErr != nil {
+	writeFrames(&encoded, frames)
+	finalFrames, finalEvents, _, finalErr := stream.Finalize(nil)
+	if finalErr != nil {
 		t.Fatalf("finalize: %v", finalErr)
 	}
+	writeFrames(&encoded, finalFrames)
+	assertUnreconciledStreamUsage(t, append(events, finalEvents...))
+
+	// On the wire the dropped split reads as a zero, because Messages has no
+	// way to say "unknown". output_tokens stays 64, which is the number the
+	// provider billed; a clamp would have written 64-79 as some other count.
+	usage := messageDeltaUsage(t, "unreconcilable stream", encoded.Bytes())
+	assertArmUsage(t, usage, armUsage(20, 64, 0, 0, 0))
+}
+
+func assertUnreconciledStreamUsage(t *testing.T, events []llmprotocol.Event) {
+	t.Helper()
+	for index := len(events) - 1; index >= 0; index-- {
+		if events[index].Usage == nil {
+			continue
+		}
+		usage := *events[index].Usage
+		assertTokenValue(t, "input total", usage.InputTotal, 20)
+		assertTokenValue(t, "output total", usage.OutputTotal, 64)
+		assertTokenUnknown(t, "output reasoning", usage.OutputReasoning)
+		assertTokenUnknown(t, "output other", usage.OutputOther)
+		return
+	}
+	t.Fatalf("no event carried usage: %+v", events)
 }
