@@ -76,5 +76,9 @@ func (r *OpenAIRouter) logResponseStreamTruncation(ctx *RequestContext) {
 		"model":       ctx.RequestModel,
 		"deadline_ms": r.responseStreamDeadline().Milliseconds(),
 		"elapsed_ms":  time.Since(ctx.StartTime).Milliseconds(),
+		// Whether the frames were the end of the turn or only the end of the
+		// message. False means this connection is still the platform's to cut,
+		// tens of seconds later, and the client is still waiting.
+		"response_ended": ctx.FullDuplexResponseBody,
 	})
 }

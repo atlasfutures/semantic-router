@@ -50,15 +50,17 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 	// upstream keeps sending would arrive on a message it has been told is
 	// finished, so none of it travels.
 	if ctx != nil && ctx.StreamingComplete {
-		return buildResponseBodyContinueResponse(&ext_proc.BodyMutation{
-			Mutation: &ext_proc.BodyMutation_Body{},
-		}, nil)
+		// The response has already been ended, so this chunk ends nothing: a
+		// second end-of-stream would be a second terminal on a finished
+		// response.
+		return buildResponseBodyContinueResponse(responseStreamBodyMutation(ctx, nil, false), nil)
 	}
 	recordStreamingTTFT(ctx)
 	r.initializeSemanticResponseStream(ctx)
 	buffers := semanticStreamBuffers{}
 	buffers.push(responseBody, ctx)
-	if overran := r.responseStreamOverran(ctx); overran || endOfStream {
+	overran := r.responseStreamOverran(ctx)
+	if overran || endOfStream {
 		if overran {
 			r.logResponseStreamTruncation(ctx)
 			buffers.recordError(ctx, r.truncatedStreamError(), true)
@@ -66,7 +68,10 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 		buffers.finalize(ctx)
 		r.finalizeSemanticStreamingResponse(ctx, buffers.streamErr)
 	}
-	return buffers.processingResponse(ctx)
+	// The turn is over either way here: the upstream reached its end, or the
+	// Router ended it. Both have to end the response, or the client waits for
+	// an EOF that only the platform will send.
+	return buffers.processingResponse(ctx, overran || endOfStream)
 }
 
 func (r *OpenAIRouter) initializeSemanticResponseStream(ctx *RequestContext) {
@@ -83,12 +88,19 @@ func (r *OpenAIRouter) initializeSemanticResponseStream(ctx *RequestContext) {
 type semanticStreamBuffers struct {
 	translated []byte
 	public     []byte
-	streamErr  error
+	// upstream is what arrived, kept only for the full-duplex reply, where a
+	// chunk nothing rewrote still has to be handed back rather than left to
+	// pass through.
+	upstream  []byte
+	streamErr error
 }
 
 func (buffers *semanticStreamBuffers) push(responseBody []byte, ctx *RequestContext) {
 	if len(responseBody) == 0 {
 		return
+	}
+	if ctx.FullDuplexResponseBody {
+		buffers.upstream = append(buffers.upstream, responseBody...)
 	}
 	if ctx.PublicChatUsageFilter != nil {
 		filtered, err := ctx.PublicChatUsageFilter.Push(responseBody)
@@ -141,17 +153,25 @@ func observeProtocolStream(
 	ctx.SemanticStreamState.observe(events)
 }
 
-func (buffers *semanticStreamBuffers) processingResponse(ctx *RequestContext) *ext_proc.ProcessingResponse {
+func (buffers *semanticStreamBuffers) processingResponse(
+	ctx *RequestContext,
+	endOfStream bool,
+) *ext_proc.ProcessingResponse {
 	if ctx.ProtocolResponseStream != nil &&
 		(requiresClientResponseRewrite(ctx) || ctx.StreamingAborted) {
-		return buildResponseBodyContinueResponse(&ext_proc.BodyMutation{
-			Mutation: &ext_proc.BodyMutation_Body{Body: buffers.translated},
-		}, nil)
+		return buildResponseBodyContinueResponse(
+			responseStreamBodyMutation(ctx, buffers.translated, endOfStream), nil)
 	}
 	if ctx.PublicChatUsageFilter != nil {
-		return buildResponseBodyContinueResponse(&ext_proc.BodyMutation{
-			Mutation: &ext_proc.BodyMutation_Body{Body: buffers.public},
-		}, nil)
+		return buildResponseBodyContinueResponse(
+			responseStreamBodyMutation(ctx, buffers.public, endOfStream), nil)
+	}
+	// Nothing was rewritten, so the upstream chunk travels as it is. In the
+	// full-duplex mode it still has to be handed back, because there the reply
+	// is the response body rather than a mutation of it.
+	if ctx.FullDuplexResponseBody {
+		return buildResponseBodyContinueResponse(
+			responseStreamBodyMutation(ctx, buffers.upstream, endOfStream), nil)
 	}
 	return buildResponseBodyContinueResponse(nil, nil)
 }
