@@ -19,16 +19,17 @@ type CanonicalGlobal struct {
 
 // CanonicalRouterGlobal captures router-engine control knobs.
 type CanonicalRouterGlobal struct {
-	ConfigSource              ConfigSource          `yaml:"config_source,omitempty"`
-	Strategy                  RoutingStrategy       `yaml:"strategy,omitempty"`
-	AutoModelName             string                `yaml:"auto_model_name,omitempty"`
-	AutoModelNames            *[]string             `yaml:"auto_model_names,omitempty"`
-	IncludeConfigModelsInList bool                  `yaml:"include_config_models_in_list"`
-	ClearRouteCache           bool                  `yaml:"clear_route_cache"`
-	StreamedBody              CanonicalStreamedBody `yaml:"streamed_body"`
-	SkipProcessing            SkipProcessingConfig  `yaml:"skip_processing"`
-	ModelSelection            ModelSelectionConfig  `yaml:"model_selection"`
-	Learning                  RouterLearningConfig  `yaml:"learning,omitempty"`
+	ConfigSource              ConfigSource            `yaml:"config_source,omitempty"`
+	Strategy                  RoutingStrategy         `yaml:"strategy,omitempty"`
+	AutoModelName             string                  `yaml:"auto_model_name,omitempty"`
+	AutoModelNames            *[]string               `yaml:"auto_model_names,omitempty"`
+	IncludeConfigModelsInList bool                    `yaml:"include_config_models_in_list"`
+	ClearRouteCache           bool                    `yaml:"clear_route_cache"`
+	StreamedBody              CanonicalStreamedBody   `yaml:"streamed_body"`
+	ResponseStream            CanonicalResponseStream `yaml:"response_stream,omitempty"`
+	SkipProcessing            SkipProcessingConfig    `yaml:"skip_processing"`
+	ModelSelection            ModelSelectionConfig    `yaml:"model_selection"`
+	Learning                  RouterLearningConfig    `yaml:"learning,omitempty"`
 }
 
 // CanonicalStreamedBody groups streaming request body controls.
@@ -36,6 +37,19 @@ type CanonicalStreamedBody struct {
 	Enabled    bool  `yaml:"enabled"`
 	MaxBytes   int64 `yaml:"max_bytes,omitempty"`
 	TimeoutSec int   `yaml:"timeout_sec,omitempty"`
+}
+
+// CanonicalResponseStream groups controls over a routed turn's streamed
+// response.
+type CanonicalResponseStream struct {
+	// DeadlineSec is how long one routed turn may stream before the Router
+	// ends it itself. It exists so the Router, not the platform, is what ends
+	// an overrunning turn: a platform cut arrives after the ext_proc stream is
+	// gone, and the frames that close the message honestly have nowhere to go.
+	// Zero selects the shipped default of 590 s, which sits below the cell's
+	// ext_proc message_timeout of 610 s. A negative value turns the deadline
+	// off.
+	DeadlineSec int `yaml:"deadline_sec,omitempty"`
 }
 
 // CanonicalServiceGlobal groups shared runtime services exposed by the router.
@@ -204,26 +218,34 @@ func resolveCanonicalGlobal(override *CanonicalGlobal, rawOverride *StructuredPa
 	return resolved, nil
 }
 
+// applyCanonicalRouterGlobal copies the router-engine module across. It is its
+// own function because the engine's knobs are one group and applyCanonicalGlobal
+// is the sum of every module.
+func applyCanonicalRouterGlobal(cfg *RouterConfig, router *CanonicalRouterGlobal) {
+	cfg.ConfigSource = router.ConfigSource
+	cfg.Strategy = router.Strategy
+	cfg.AutoModelName = router.AutoModelName
+	cfg.AutoModelNames = nil
+	if router.AutoModelNames != nil {
+		cfg.AutoModelNames = append([]string{}, (*router.AutoModelNames)...)
+	}
+	cfg.IncludeConfigModelsInList = router.IncludeConfigModelsInList
+	cfg.ClearRouteCache = router.ClearRouteCache
+	cfg.StreamedBodyMode = router.StreamedBody.Enabled
+	cfg.MaxStreamedBodyBytes = router.StreamedBody.MaxBytes
+	cfg.StreamedBodyTimeoutSec = router.StreamedBody.TimeoutSec
+	cfg.ResponseStreamDeadlineSec = router.ResponseStream.DeadlineSec
+	cfg.SkipProcessing = router.SkipProcessing
+	cfg.ModelSelection = router.ModelSelection
+	cfg.RouterLearning = router.Learning
+}
+
 func applyCanonicalGlobal(cfg *RouterConfig, global *CanonicalGlobal) error {
 	if global == nil {
 		return nil
 	}
 
-	cfg.ConfigSource = global.Router.ConfigSource
-	cfg.Strategy = global.Router.Strategy
-	cfg.AutoModelName = global.Router.AutoModelName
-	cfg.AutoModelNames = nil
-	if global.Router.AutoModelNames != nil {
-		cfg.AutoModelNames = append([]string{}, (*global.Router.AutoModelNames)...)
-	}
-	cfg.IncludeConfigModelsInList = global.Router.IncludeConfigModelsInList
-	cfg.ClearRouteCache = global.Router.ClearRouteCache
-	cfg.StreamedBodyMode = global.Router.StreamedBody.Enabled
-	cfg.MaxStreamedBodyBytes = global.Router.StreamedBody.MaxBytes
-	cfg.StreamedBodyTimeoutSec = global.Router.StreamedBody.TimeoutSec
-	cfg.SkipProcessing = global.Router.SkipProcessing
-	cfg.ModelSelection = global.Router.ModelSelection
-	cfg.RouterLearning = global.Router.Learning
+	applyCanonicalRouterGlobal(cfg, &global.Router)
 
 	cfg.API = global.Services.API
 	cfg.ResponseAPI = global.Services.ResponseAPI

@@ -46,11 +46,23 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 	endOfStream bool,
 	ctx *RequestContext,
 ) *ext_proc.ProcessingResponse {
+	// A turn the Router has already ended is over for the client. Whatever the
+	// upstream keeps sending would arrive on a message it has been told is
+	// finished, so none of it travels.
+	if ctx != nil && ctx.StreamingComplete {
+		return buildResponseBodyContinueResponse(&ext_proc.BodyMutation{
+			Mutation: &ext_proc.BodyMutation_Body{},
+		}, nil)
+	}
 	recordStreamingTTFT(ctx)
 	r.initializeSemanticResponseStream(ctx)
 	buffers := semanticStreamBuffers{}
 	buffers.push(responseBody, ctx)
-	if endOfStream {
+	if overran := r.responseStreamOverran(ctx); overran || endOfStream {
+		if overran {
+			r.logResponseStreamTruncation(ctx)
+			buffers.recordError(ctx, r.truncatedStreamError(), true)
+		}
 		buffers.finalize(ctx)
 		r.finalizeSemanticStreamingResponse(ctx, buffers.streamErr)
 	}

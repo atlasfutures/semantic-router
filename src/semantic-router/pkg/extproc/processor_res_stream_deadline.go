@@ -1,5 +1,12 @@
 package extproc
 
+import (
+	"time"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+)
+
 // The platform's timeout ladder above one routed turn, and the Router's own
 // deadline at the bottom of it.
 //
@@ -26,3 +33,48 @@ const (
 	defaultResponseStreamDeadlineSeconds = 590
 	extProcMessageTimeoutSeconds         = 610
 )
+
+// responseStreamDeadline is how long this turn may stream before the Router
+// ends it. Zero means the deadline is off.
+func (r *OpenAIRouter) responseStreamDeadline() time.Duration {
+	seconds := defaultResponseStreamDeadlineSeconds
+	if r != nil && r.Config != nil && r.Config.ResponseStreamDeadlineSec != 0 {
+		seconds = r.Config.ResponseStreamDeadlineSec
+	}
+	if seconds < 0 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+// responseStreamOverran reports that this turn has streamed for longer than
+// the Router allows one to. It is measured from the start of the request,
+// because that is what every rung of the platform ladder above it measures.
+func (r *OpenAIRouter) responseStreamOverran(ctx *RequestContext) bool {
+	if ctx == nil || ctx.StartTime.IsZero() || ctx.StreamingComplete {
+		return false
+	}
+	deadline := r.responseStreamDeadline()
+	return deadline > 0 && time.Since(ctx.StartTime) >= deadline
+}
+
+// truncatedStreamError is what the client is told. Neither vendor defines a
+// stop reason for a turn ended by infrastructure, so the failure travels as an
+// error frame; the category is a timeout because that is what it is.
+func (r *OpenAIRouter) truncatedStreamError() *llmprotocol.ProtocolError {
+	return llmprotocol.NewError(
+		llmprotocol.ErrorUpstreamTimeout,
+		"stream_truncated",
+		"the router ended this stream at its own deadline, below the platform's",
+		nil,
+	)
+}
+
+func (r *OpenAIRouter) logResponseStreamTruncation(ctx *RequestContext) {
+	logging.ComponentWarnEvent("extproc", "response_stream_deadline_exceeded", map[string]interface{}{
+		"request_id":  ctx.RequestID,
+		"model":       ctx.RequestModel,
+		"deadline_ms": r.responseStreamDeadline().Milliseconds(),
+		"elapsed_ms":  time.Since(ctx.StartTime).Milliseconds(),
+	})
+}

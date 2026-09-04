@@ -220,13 +220,17 @@ type LLMObservability struct {
 }
 
 type RouterOptions struct {
-	AutoModelName             string               `yaml:"auto_model_name,omitempty"`
-	AutoModelNames            []string             `yaml:"auto_model_names,omitempty"`
-	IncludeConfigModelsInList bool                 `yaml:"include_config_models_in_list,omitempty"`
-	ClearRouteCache           bool                 `yaml:"clear_route_cache"`
-	StreamedBodyMode          bool                 `yaml:"streamed_body_mode,omitempty"`
-	MaxStreamedBodyBytes      int64                `yaml:"max_streamed_body_bytes,omitempty"`
-	StreamedBodyTimeoutSec    int                  `yaml:"streamed_body_timeout_sec,omitempty"`
+	AutoModelName             string   `yaml:"auto_model_name,omitempty"`
+	AutoModelNames            []string `yaml:"auto_model_names,omitempty"`
+	IncludeConfigModelsInList bool     `yaml:"include_config_models_in_list,omitempty"`
+	ClearRouteCache           bool     `yaml:"clear_route_cache"`
+	StreamedBodyMode          bool     `yaml:"streamed_body_mode,omitempty"`
+	MaxStreamedBodyBytes      int64    `yaml:"max_streamed_body_bytes,omitempty"`
+	StreamedBodyTimeoutSec    int      `yaml:"streamed_body_timeout_sec,omitempty"`
+	// ResponseStreamDeadlineSec bounds one routed turn's streamed response.
+	// Zero selects the shipped default; a negative value turns the deadline
+	// off, which leaves the platform as the only thing that ends a turn.
+	ResponseStreamDeadlineSec int                  `yaml:"response_stream_deadline_sec,omitempty"`
 	SkipProcessing            SkipProcessingConfig `yaml:"skip_processing,omitempty"`
 }
 
