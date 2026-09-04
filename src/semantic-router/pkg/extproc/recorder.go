@@ -16,23 +16,20 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/utils/entropy"
 )
 
-// logRoutingDecision logs routing decision with structured logging
+// logRoutingDecision stages the routing record. It cannot write it: the
+// reasoning controls belong on this line and the body that carries them has
+// not been rendered yet, so emitRoutingDecision writes it at the provider
+// boundary instead. The reason-code metric is recorded here, where the
+// decision is, because it is about the decision rather than the wire.
 func (r *OpenAIRouter) logRoutingDecision(ctx *RequestContext, reasonCode string, originalModel string, selectedModel string, decisionName string, reasoningEnabled bool) {
-	effortForMetrics := ""
-	if reasoningEnabled && decisionName != "" {
-		effortForMetrics = r.getReasoningEffort(ctx.VSRSelectedDecision, selectedModel)
+	ctx.RoutingDecision = map[string]interface{}{
+		"reason_code":       reasonCode,
+		"request_id":        ctx.RequestID,
+		"original_model":    originalModel,
+		"selected_model":    selectedModel,
+		"decision":          decisionName,
+		"reasoning_enabled": reasoningEnabled,
 	}
-
-	logging.ComponentEvent("extproc", "routing_decision", map[string]interface{}{
-		"reason_code":        reasonCode,
-		"request_id":         ctx.RequestID,
-		"original_model":     originalModel,
-		"selected_model":     selectedModel,
-		"decision":           decisionName,
-		"reasoning_enabled":  reasoningEnabled,
-		"reasoning_effort":   effortForMetrics,
-		"routing_latency_ms": time.Since(ctx.ProcessingStartTime).Milliseconds(),
-	})
 	metrics.RecordRoutingReasonCode(reasonCode, selectedModel)
 }
 

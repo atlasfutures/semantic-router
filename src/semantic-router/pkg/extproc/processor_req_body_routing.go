@@ -189,6 +189,10 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	response *ext_proc.ProcessingResponse,
 	ctx *RequestContext,
 ) (*ext_proc.ProcessingResponse, error) {
+	// This is where the wire becomes known, so it is where the record the
+	// decision staged is written. Deferred, so a turn that fails on the way
+	// still leaves the line, carrying whatever controls the body had reached.
+	defer r.emitRoutingDecision(ctx)
 	if dispatch == nil || response == nil {
 		return nil, status.Error(codes.Internal, "provider dispatch is unavailable")
 	}

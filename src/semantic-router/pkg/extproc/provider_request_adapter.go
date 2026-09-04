@@ -12,6 +12,7 @@ func (r *OpenAIRouter) adaptProviderRequest(
 	ctx *RequestContext,
 ) ([]byte, error) {
 	if dispatch == nil || ctx == nil || dispatch.decisionName == "" || dispatch.targetFormat != llmprotocol.OpenAIChatV1 {
+		recordDispatchedReasoningControls(ctx, body)
 		return body, nil
 	}
 	body, err := r.setReasoningModeToRequestBodyForModelAndProvider(
@@ -24,5 +25,12 @@ func (r *OpenAIRouter) adaptProviderRequest(
 	if err != nil {
 		return nil, err
 	}
-	return applyUpstreamSessionID(body, dispatch, ctx)
+	body, err = applyUpstreamSessionID(body, dispatch, ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Read back rather than remember: the record then names the bytes that
+	// travel, whichever mutation put them there.
+	recordDispatchedReasoningControls(ctx, body)
+	return body, nil
 }
