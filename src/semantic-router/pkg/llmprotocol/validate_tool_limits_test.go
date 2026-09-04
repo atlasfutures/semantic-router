@@ -2,6 +2,7 @@ package llmprotocol
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -101,6 +102,26 @@ func TestToolCountLimitAdmitsALargeMCPToolSetAndStillRefusesAboveIt(t *testing.T
 
 	request.Tools = append(request.Tools, toolWithDescriptionBytes("mcp__server__one_too_many", 16))
 	requireLLMProtocolErrorCode(t, ValidateRequest(request, limits), "tools_limit")
+}
+
+func TestToolTextRefusalRecordsTheOverflow(t *testing.T) {
+	limits := DefaultPolicy().Limits
+	request := validSemanticRequest()
+	request.Tools = []Tool{toolWithDescriptionBytes("Artifact", limits.ToolDescriptionBytes+1)}
+
+	err := ValidateRequest(request, limits)
+	requireLLMProtocolErrorCode(t, err, "tool_text_limit")
+
+	var protocolError *ProtocolError
+	if !errors.As(err, &protocolError) || protocolError.Cause == nil {
+		t.Fatal("the refusal carries no cause, so the log line records no measured size")
+	}
+	detail := protocolError.Cause.Error()
+	for _, want := range []string{"description", itoa(limits.ToolDescriptionBytes + 1), itoa(limits.ToolDescriptionBytes)} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("refusal detail %q omits %q", detail, want)
+		}
+	}
 }
 
 func itoa(value int) string {

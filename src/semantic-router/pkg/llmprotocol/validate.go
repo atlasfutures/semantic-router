@@ -2,6 +2,7 @@ package llmprotocol
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 )
@@ -233,8 +234,13 @@ func validateRequestTool(tool Tool, limits Limits) error {
 	if strings.TrimSpace(tool.Name) == "" || len(tool.InputSchema) == 0 || !json.Valid(tool.InputSchema) {
 		return NewError(ErrorInvalidRequest, "invalid_tool", "tool name and JSON Schema are required", nil)
 	}
-	if exceeds(tool.Name, limits.ToolNameBytes) || exceeds(tool.Description, limits.ToolDescriptionBytes) {
-		return NewError(ErrorInvalidRequest, "tool_text_limit", "tool name or description exceeds the configured limit", nil)
+	if exceeds(tool.Name, limits.ToolNameBytes) {
+		return NewError(ErrorInvalidRequest, "tool_text_limit", "tool name or description exceeds the configured limit",
+			toolTextOverflow("name", len(tool.Name), limits.ToolNameBytes))
+	}
+	if exceeds(tool.Description, limits.ToolDescriptionBytes) {
+		return NewError(ErrorInvalidRequest, "tool_text_limit", "tool name or description exceeds the configured limit",
+			toolTextOverflow("description", len(tool.Description), limits.ToolDescriptionBytes))
 	}
 	if limits.SchemaBytes > 0 && len(tool.InputSchema) > limits.SchemaBytes {
 		return NewError(ErrorInvalidRequest, "schema_limit", "tool schema limit exceeded", nil)
@@ -243,6 +249,14 @@ func validateRequestTool(tool Tool, limits Limits) error {
 		return err
 	}
 	return validateSchemaObject(tool.InputSchema, "tool schema", limits)
+}
+
+// toolTextOverflow names the field and the two byte counts, and nothing the
+// client wrote. Without it the refusal log records only that some tool was too
+// long, which is what made the 2026-09-04 dev-cell refusals take a code read
+// and a client capture to explain.
+func toolTextOverflow(field string, observed, limit int) error {
+	return fmt.Errorf("tool %s is %d bytes, limit %d", field, observed, limit)
 }
 
 func validateToolChoice(choice ToolChoice, namedTools map[string]struct{}, toolCount int, hasImageGeneration bool) error {
