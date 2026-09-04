@@ -34,29 +34,35 @@ func TestChatBoundsReasoningTokens(t *testing.T) {
 		},
 		{
 			// Adaptive states no budget, so reasoning is bounded by what the
-			// client allowed for output. The effort level does not travel
-			// beside a bound the Router derived: OpenRouter takes one control
-			// or the other, and an effort level there makes the bound inert.
+			// client allowed for output. The effort level still travels: a
+			// bound alone was measured to be ignored by both thinking arms,
+			// and an effort the client stated is never replaced.
 			name: "adaptive is bounded by the output allowance",
 			body: `{"model":"m","max_tokens":4096,"messages":[{"role":"user","content":"hi"}],` +
 				`"thinking":{"type":"adaptive"},"output_config":{"effort":"high"}}`,
 			maxTokens: 4096,
+			effort:    "high",
 		},
 		{
 			// A small output allowance still gets a usable reasoning budget:
-			// below 1024 no documented reasoning API accepts one at all.
+			// below 1024 no documented reasoning API accepts one at all. The
+			// client states no effort here, so the effort beside the bound is
+			// the one OpenRouter's own conversion gives that bound: low buys
+			// 20% of a 512-token allowance, floored to 1024, which is the
+			// bound.
 			name: "a small allowance is floored",
 			body: `{"model":"m","max_tokens":512,"messages":[{"role":"user","content":"hi"}],` +
 				`"thinking":{"type":"adaptive"}}`,
 			maxTokens: 1024,
+			effort:    "low",
 		},
 		{
-			// An effort level on its own is still a request to reason, and the
-			// bound derived from it replaces it.
+			// An effort level on its own is still a request to reason.
 			name: "an effort level alone is bounded",
 			body: `{"model":"m","max_tokens":8192,"messages":[{"role":"user","content":"hi"}],` +
 				`"output_config":{"effort":"medium"}}`,
 			maxTokens: 8192,
+			effort:    "medium",
 		},
 	}
 	engine := NewBuiltinEngine()

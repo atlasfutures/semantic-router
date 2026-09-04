@@ -11,6 +11,7 @@
     "model": "routed-model",
     "reasoning": {
       "max_tokens": 1024
-    }
+    },
+    "reasoning_effort": "low"
   }
 }

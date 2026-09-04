@@ -36,19 +36,27 @@ func translateChatToChatWire(t *testing.T, engine *Engine, body string) chatRequ
 // Read 2026-09-04:
 // https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
 //
-// The encoder sends both. Nothing documents which one a provider then obeys,
-// and the measurement says the bound is not the one: on the dev cell
-// 2026-09-03, an adaptive turn with effort high and max_tokens 512 was encoded
-// with reasoning.max_tokens 1024 beside reasoning_effort high, and
-// xiaomi/mimo-v2.5-pro@thinking-on spent 16,030 reasoning tokens on it before
-// the platform cut the connection at 630 s.
+// The encoder sends both, and both are measured to be needed.
 //
-// So a derived bound travels alone. It is the Router's own number, put there
-// to end a turn that would otherwise run to the platform deadline, and an
-// effort level beside it makes it inert. Nothing is lost by dropping the dial:
-// "For models that only support reasoning.effort ... the max_tokens value will
-// be used to determine the effort level."
-func TestChatSendsOneReasoningControlNotBoth(t *testing.T) {
+// On the dev cell 2026-09-03 an adaptive turn with effort high and max_tokens
+// 512 was encoded with reasoning.max_tokens 1024 beside reasoning_effort high,
+// and xiaomi/mimo-v2.5-pro@thinking-on spent 16,030 reasoning tokens on it.
+// CP9k read that as the effort making the bound inert and sent the bound
+// alone. Build 16 measured the result on 2026-09-04: the same arm spent 21,674
+// reasoning tokens against a bound of 1024, and
+// deepseek/deepseek-v4-flash@thinking-on spent 20,974. Neither arm obeys the
+// bound at all, and the effort dial is the only control they act on, so
+// removing it cost about 30 percent.
+//
+// The pair is also accepted. The build that sent both was answered 200, so
+// "not both" describes the API rather than constraining it.
+//
+// So the bound stays as the cap for providers that honour it, and the effort
+// stays as the brake for the ones that do not. What changed is which effort:
+// a level the client stated is carried, and otherwise the level is derived
+// from the bound by OpenRouter's own documented conversion, so the two
+// controls cannot disagree.
+func TestChatSendsTheBoundWithTheEffortBesideIt(t *testing.T) {
 	engine := NewBuiltinEngine()
 	body := `{"model":"m","max_tokens":512,"messages":[{"role":"user","content":"hi"}],` +
 		`"thinking":{"type":"adaptive"},"output_config":{"effort":"high"}}`
@@ -56,8 +64,8 @@ func TestChatSendsOneReasoningControlNotBoth(t *testing.T) {
 	if wire.Reasoning == nil || wire.Reasoning.MaxTokens == nil {
 		t.Fatalf("reasoning was left unbounded: %+v", wire.Reasoning)
 	}
-	if wire.ReasoningEffort != "" {
-		t.Fatalf("reasoning_effort %q travelled beside a bound of %d",
+	if wire.ReasoningEffort != "high" {
+		t.Fatalf("reasoning_effort = %q, want the client's own high beside the bound of %d",
 			wire.ReasoningEffort, *wire.Reasoning.MaxTokens)
 	}
 }

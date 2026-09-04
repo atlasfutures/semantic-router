@@ -111,6 +111,7 @@
           "reasoning": {
             "max_tokens": 2048
           },
+          "reasoning_effort": "high",
           "response_format": {
             "json_schema": {
               "name": "structured_output",

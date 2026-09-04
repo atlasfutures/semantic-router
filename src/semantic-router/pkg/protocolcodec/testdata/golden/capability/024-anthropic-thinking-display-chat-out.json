@@ -41,7 +41,8 @@
           "model": "routed-model",
           "reasoning": {
             "max_tokens": 2048
-          }
+          },
+          "reasoning_effort": "high"
         },
         "diagnostics": [
           {

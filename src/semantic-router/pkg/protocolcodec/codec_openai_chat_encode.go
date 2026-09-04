@@ -158,6 +158,61 @@ func ReasoningBoundForOutputAllowance(allowance int64) int64 {
 	return allowance
 }
 
+// maximumReasoningBudget is the ceiling OpenRouter's documented conversion
+// applies before its floor.
+const maximumReasoningBudget = 128000
+
+// documentedReasoningEfforts are the effort levels OpenRouter converts to a
+// budget, cheapest first, with the ratio it converts by.
+var documentedReasoningEfforts = []struct {
+	level string
+	ratio float64
+}{
+	{level: "low", ratio: 0.2},
+	{level: "medium", ratio: 0.5},
+	{level: "high", ratio: 0.8},
+}
+
+// ReasoningEffortForBound is the effort level that has to travel beside a
+// bound the Router derived.
+//
+// A bound alone does not stop a turn. Measured on the dev cell 2026-09-04,
+// reasoning.max_tokens 1024 travelling by itself left
+// xiaomi/mimo-v2.5-pro@thinking-on spending 21,674 reasoning tokens and
+// deepseek/deepseek-v4-flash@thinking-on spending 20,974; the same shape with
+// an effort level beside the bound spent 16,030. So the bound is the cap for
+// providers that honour it and the effort is the brake for the ones that do
+// not, and both travel.
+//
+// The level is OpenRouter's own conversion, read backwards. It documents
+// "budget_tokens = max(min(max_tokens * {effort_ratio}, 128000), 1024)" with
+// the ratio "0.8 for high effort, 0.5 for medium effort, 0.2 for low effort",
+// and the level that travels is the cheapest one whose budget reaches the
+// bound: it never buys less reasoning than the bound allows, and never a step
+// more than it has to. A bound no level reaches gets the largest level there
+// is. Read 2026-09-04:
+//
+//	https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
+func ReasoningEffortForBound(bound, allowance int64) string {
+	for _, effort := range documentedReasoningEfforts {
+		if documentedReasoningBudget(allowance, effort.ratio) >= bound {
+			return effort.level
+		}
+	}
+	return documentedReasoningEfforts[len(documentedReasoningEfforts)-1].level
+}
+
+func documentedReasoningBudget(allowance int64, ratio float64) int64 {
+	budget := int64(float64(allowance) * ratio)
+	if budget > maximumReasoningBudget {
+		budget = maximumReasoningBudget
+	}
+	if budget < minimumReasoningBudget {
+		budget = minimumReasoningBudget
+	}
+	return budget
+}
+
 // chatReasoningBound returns how many tokens the turn may spend on reasoning,
 // or nil to send no bound at all, and whether the Router derived that number
 // rather than reading it off the request.

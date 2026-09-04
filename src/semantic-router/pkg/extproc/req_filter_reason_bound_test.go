@@ -22,27 +22,41 @@ import (
 // (adaptProviderRequest -> setReasoningModeToRequestBodyForModelAndProvider),
 // so it is where the bound belongs. The rule is the encoder's: what the client
 // allowed for output, floored at the smallest budget a provider accepts.
+//
+// The bound does not travel alone. Measured on the dev cell 2026-09-04, a bound
+// of 1024 sent by itself left the same two arms spending 21,674 and 20,974
+// reasoning tokens, where the earlier build that sent an effort level beside it
+// spent 16,030. So the effort travels too, and the arm's own configured level
+// is not the one that travels: the level is derived from the bound, by
+// OpenRouter's documented conversion, so the two controls agree.
 func TestArmThatReasonsByConfigStatesItsBound(t *testing.T) {
 	tests := []struct {
-		name      string
-		allowance string
-		wantBound int64
+		name       string
+		allowance  string
+		wantBound  int64
+		wantEffort string
 	}{
 		{
-			name:      "the client's output allowance is the bound",
-			allowance: `"max_completion_tokens":4096`,
-			wantBound: 4096,
+			// No documented dial buys 4,096 tokens out of a 4,096 allowance --
+			// high buys 80% of it -- so high is the closest the dial goes.
+			name:       "the client's output allowance is the bound",
+			allowance:  `"max_completion_tokens":4096`,
+			wantBound:  4096,
+			wantEffort: "high",
 		},
 		{
-			name:      "a small allowance is floored",
-			allowance: `"max_completion_tokens":512`,
-			wantBound: 1024,
+			// The bound is the 1024 floor, which low already buys.
+			name:       "a small allowance is floored",
+			allowance:  `"max_completion_tokens":512`,
+			wantBound:  1024,
+			wantEffort: "low",
 		},
 		{
 			// Not every leg writes the allowance as max_completion_tokens.
-			name:      "max_tokens is an output allowance too",
-			allowance: `"max_tokens":8192`,
-			wantBound: 8192,
+			name:       "max_tokens is an output allowance too",
+			allowance:  `"max_tokens":8192`,
+			wantBound:  8192,
+			wantEffort: "high",
 		},
 	}
 	for _, test := range tests {
@@ -56,26 +70,44 @@ func TestArmThatReasonsByConfigStatesItsBound(t *testing.T) {
 			if *bound != test.wantBound {
 				t.Fatalf("reasoning.max_tokens = %d, want %d", *bound, test.wantBound)
 			}
-			if _, present := body["reasoning_effort"]; present {
-				t.Fatalf("the arm's effort travelled beside its bound: %v", body)
+			if body["reasoning_effort"] != test.wantEffort {
+				t.Fatalf("reasoning_effort = %v, want %q -- the level the bound buys",
+					body["reasoning_effort"], test.wantEffort)
 			}
 		})
 	}
 }
 
-// A bound the request already carries is the one that stands. The encoder put
-// it there from what the client asked, and the arm's effort must not be added
-// beside it: OpenRouter takes one reasoning control, and the effort level is
-// the one that made the bound inert on the dev cell.
-func TestArmDoesNotAddItsEffortBesideAnExistingBound(t *testing.T) {
+// A bound the request already carries is the one that stands, and the effort
+// beside it is the one that bound buys, not the arm's. The arm here is
+// configured for high; 2,048 tokens out of a 4,096 allowance is what medium
+// buys, so medium is what travels. An arm-chosen dial above the bound is what
+// made the bound inert on the dev cell.
+func TestArmDerivesTheEffortBesideAnExistingBound(t *testing.T) {
 	body := armReasoningBody(t, `{"model":"gpt-5-mini","messages":[{"role":"user","content":"hi"}],`+
 		`"max_completion_tokens":4096,"reasoning":{"max_tokens":2048}}`)
 	bound := reasoningBoundOf(t, body)
 	if bound == nil || *bound != 2048 {
 		t.Fatalf("the bound the request carried was replaced: %v", body)
 	}
-	if _, present := body["reasoning_effort"]; present {
-		t.Fatalf("the arm's effort travelled beside the bound: %v", body)
+	if body["reasoning_effort"] != "medium" {
+		t.Fatalf("reasoning_effort = %v, want medium -- the level 2048 of 4096 buys",
+			body["reasoning_effort"])
+	}
+}
+
+// An effort the client stated is the client's own, and it is never replaced by
+// one derived from a bound. The arm is configured for high and the bound would
+// derive high too; the client asked for low, so low travels.
+func TestClientStatedEffortSurvivesBesideTheBound(t *testing.T) {
+	body := armReasoningBody(t, `{"model":"gpt-5-mini","messages":[{"role":"user","content":"hi"}],`+
+		`"max_completion_tokens":4096,"reasoning_effort":"low"}`)
+	bound := reasoningBoundOf(t, body)
+	if bound == nil || *bound != 4096 {
+		t.Fatalf("a client-stated effort left the turn unbounded: %v", body)
+	}
+	if body["reasoning_effort"] != "low" {
+		t.Fatalf("reasoning_effort = %v, want the client's own low", body["reasoning_effort"])
 	}
 }
 

@@ -169,20 +169,7 @@ func assertExtProcStructuredOutputPair(
 	if err != nil {
 		t.Fatalf("backend request does not satisfy %s: %v\n%s", backendFormat, err, dispatch)
 	}
-	assertExtProcStructuredOutputRequest(t, decoded, streaming,
-		structuredOutputEffortOnBackend(clientFormat, backendFormat))
-}
-
-// structuredOutputEffortOnBackend says how the client's effort level reaches
-// the backend. On the Chat wire an effort level with an output allowance
-// becomes OpenRouter's reasoning.max_tokens, which takes its place: that wire
-// accepts one reasoning control, not two. Only the Anthropic fixture states an
-// allowance, so only that pair converts.
-func structuredOutputEffortOnBackend(clientFormat, backendFormat llmprotocol.WireFormat) string {
-	if clientFormat == llmprotocol.AnthropicMessagesV1 && backendFormat == llmprotocol.OpenAIChatV1 {
-		return ""
-	}
-	return "high"
+	assertExtProcStructuredOutputRequest(t, decoded, streaming)
 }
 
 // Streaming translation is stateful, so it needs an independent 3x3 matrix at
@@ -513,25 +500,16 @@ func extProcStructuredOutputRequestFixture(format llmprotocol.WireFormat, stream
 	}
 }
 
-func assertExtProcStructuredOutputRequest(
-	t *testing.T,
-	request llmprotocol.Request,
-	streaming bool,
-	wantEffort string,
-) {
+func assertExtProcStructuredOutputRequest(t *testing.T, request llmprotocol.Request, streaming bool) {
 	t.Helper()
-	if !extProcStructuredRequestMetadataMatches(request, streaming, wantEffort) {
+	if !extProcStructuredRequestMetadataMatches(request, streaming) {
 		t.Fatalf("structured request semantics changed: %+v", request)
 	}
 	assertExtProcStructuredSchema(t, request.OutputFormat.Schema)
 }
 
-func extProcStructuredRequestMetadataMatches(
-	request llmprotocol.Request,
-	streaming bool,
-	wantEffort string,
-) bool {
-	return request.Model == "routed-model" && request.Stream == streaming && request.ReasoningEffort == wantEffort &&
+func extProcStructuredRequestMetadataMatches(request llmprotocol.Request, streaming bool) bool {
+	return request.Model == "routed-model" && request.Stream == streaming && request.ReasoningEffort == "high" &&
 		request.OutputFormat.Kind == llmprotocol.OutputJSONSchema && request.OutputFormat.Name == "structured_output" &&
 		request.OutputFormat.Strict != nil && *request.OutputFormat.Strict
 }

@@ -47,17 +47,10 @@ func TestClaudeCodeAdaptiveThinkingWithEffortReachesTheChatLeg(t *testing.T) {
 	if err := json.Unmarshal(result.Body, &wire); err != nil {
 		t.Fatal(err)
 	}
-	// Adaptive is the Chat default -- the model decides -- and it states no
-	// budget, so the Router derives one from the output allowance and that
-	// bound is the single reasoning control the request carries. OpenRouter
-	// takes an effort level or a bound, "One of the following (not both)", and
-	// the effort level beside a derived bound is what made the bound inert on
-	// the dev cell.
-	if wire.Reasoning == nil || wire.Reasoning.MaxTokens == nil {
-		t.Fatalf("Claude Code's default body reached the Chat leg unbounded: %+v", wire.Reasoning)
-	}
-	if wire.ReasoningEffort != "" {
-		t.Fatalf("Chat reasoning_effort = %q, want the derived bound to travel alone", wire.ReasoningEffort)
+	// Adaptive is the Chat default -- the model decides -- so the effort the
+	// client sent is what reaches the provider.
+	if wire.ReasoningEffort != "high" {
+		t.Fatalf("Chat reasoning_effort = %q, want high", wire.ReasoningEffort)
 	}
 	// The display preference has no Chat control. The turn still routes and
 	// the drop is recorded rather than refused.

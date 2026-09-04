@@ -332,8 +332,11 @@ func TestOfficialAnthropicAdaptiveThinkingSurvivesSemanticMutation(t *testing.T)
 	}
 	// Adaptive asks the model to decide whether and how much to think, which
 	// is what Chat Completions does when a request names no reasoning control.
-	// The translation therefore carries it by carrying nothing, and the turn
-	// routes rather than failing.
+	// The translation therefore carries none of the client's own controls, and
+	// the turn routes rather than failing. What it does carry is the Router's:
+	// a bound derived from the output allowance, with the effort level that
+	// bound buys beside it, because a thinking turn with neither runs until
+	// the platform cuts it.
 	translated, err := engine.TranslateRequest(
 		llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, body, nil,
 	)
@@ -344,8 +347,21 @@ func TestOfficialAnthropicAdaptiveThinkingSurvivesSemanticMutation(t *testing.T)
 	if err := json.Unmarshal(translated.Body, &chat); err != nil {
 		t.Fatal(err)
 	}
-	if chat.ReasoningEffort != "" || chat.ReasoningBudget != nil {
-		t.Fatalf("adaptive thinking invented a Chat reasoning control: %s", translated.Body)
+	assertAdaptiveThinkingReachesChat(t, chat, translated.Body)
+}
+
+// assertAdaptiveThinkingReachesChat says what adaptive carries onto the Chat
+// wire: none of the client's own reasoning controls, and both of the Router's.
+func assertAdaptiveThinkingReachesChat(t *testing.T, chat chatRequestWire, body []byte) {
+	t.Helper()
+	if chat.ReasoningBudget != nil {
+		t.Fatalf("adaptive thinking invented a client thinking budget: %s", body)
+	}
+	if chat.Reasoning == nil || chat.Reasoning.MaxTokens == nil {
+		t.Fatalf("adaptive thinking reached Chat unbounded: %s", body)
+	}
+	if chat.ReasoningEffort != "low" {
+		t.Fatalf("adaptive thinking reached Chat without the effort its bound buys: %s", body)
 	}
 }
 
