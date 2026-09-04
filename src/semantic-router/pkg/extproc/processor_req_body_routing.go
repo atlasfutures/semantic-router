@@ -210,6 +210,7 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	if common == nil {
 		return nil, status.Error(codes.Internal, "provider dispatch response is unavailable")
 	}
+	retainUpstreamEmptyRetryPlan(ctx, dispatch, body)
 	if common.HeaderMutation == nil {
 		common.HeaderMutation = &ext_proc.HeaderMutation{}
 	}

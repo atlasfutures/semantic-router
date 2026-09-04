@@ -276,10 +276,10 @@ type RequestContext struct {
 
 	// SourceFormat and SemanticRequest are the authoritative public protocol
 	// contract and neutral request.
-	SourceFormat             llmprotocol.WireFormat
-	TargetFormat             llmprotocol.WireFormat
-	SemanticRequest          *llmprotocol.Request
-	SemanticResponse         *llmprotocol.Response
+	SourceFormat     llmprotocol.WireFormat
+	TargetFormat     llmprotocol.WireFormat
+	SemanticRequest  *llmprotocol.Request
+	SemanticResponse *llmprotocol.Response
 	// UpstreamDecodedRemnant is the response the codec decoded and then
 	// refused. It exists only on a decode failure and is never served to a
 	// client: accounting reads it so a turn the Router could not use is still
@@ -288,11 +288,20 @@ type RequestContext struct {
 	// ResponseFailureClass names why the response was unusable, on the usage
 	// line, so a refused turn can be told from a served one.
 	ResponseFailureClass string
-	ProtocolEnvelope         llmprotocol.Envelope
-	ResponseEnvelope         llmprotocol.Envelope
-	ProtocolDiagnostics      llmprotocol.Diagnostics
-	ImmediateProtocolError   *llmprotocol.ProtocolError
-	ImmediateResponseEncoded bool
+	// UpstreamEmptyRetry holds the dispatched request a second attempt would
+	// re-send. It is present only for a buffered turn on a chat backend.
+	// UpstreamEmptyRetries bounds that to one attempt per turn, and
+	// UpstreamEmptyRetryPriorUsage carries the discarded attempt's counts so
+	// settlement bills both. These are the Router's own retries and are
+	// separate from the wire attempts Envoy made beneath one request.
+	UpstreamEmptyRetry           *upstreamEmptyRetryPlan
+	UpstreamEmptyRetries         int
+	UpstreamEmptyRetryPriorUsage responseUsageMetrics
+	ProtocolEnvelope             llmprotocol.Envelope
+	ResponseEnvelope             llmprotocol.Envelope
+	ProtocolDiagnostics          llmprotocol.Diagnostics
+	ImmediateProtocolError       *llmprotocol.ProtocolError
+	ImmediateResponseEncoded     bool
 
 	// RAG (Retrieval-Augmented Generation) tracking
 	RAGRetrievedContext string  // Retrieved context from RAG plugin

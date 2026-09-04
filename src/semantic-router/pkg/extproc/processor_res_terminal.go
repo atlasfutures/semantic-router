@@ -10,7 +10,26 @@ func (r *OpenAIRouter) takeNeutralResponseUsage(ctx *RequestContext) responseUsa
 	if r == nil || ctx == nil || response == nil {
 		return invalidResponseTerminalUsage("authoritative_usage_missing")
 	}
-	return responseUsageFromSemanticUsage(response.Usage)
+	return addDiscardedAttemptUsage(
+		responseUsageFromSemanticUsage(response.Usage),
+		ctx.UpstreamEmptyRetryPriorUsage,
+	)
+}
+
+// addDiscardedAttemptUsage folds an attempt the Router threw away into the
+// turn's counts. The upstream billed the empty completion whether or not the
+// Router could use it, so a turn that retried costs both attempts. With no
+// retry the discarded usage is the zero value and the sum is unchanged.
+func addDiscardedAttemptUsage(usage, discarded responseUsageMetrics) responseUsageMetrics {
+	if usage.invalid || discarded.invalid {
+		return usage
+	}
+	usage.promptTokens += discarded.promptTokens
+	usage.cachedPromptTokens += discarded.cachedPromptTokens
+	usage.cacheWriteTokens += discarded.cacheWriteTokens
+	usage.completionTokens += discarded.completionTokens
+	usage.totalTokens += discarded.totalTokens
+	return usage
 }
 
 func invalidResponseTerminalUsage(reason string) responseUsageMetrics {

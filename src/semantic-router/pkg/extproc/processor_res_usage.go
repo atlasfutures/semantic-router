@@ -10,6 +10,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/ratelimit"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerreplay"
 )
@@ -212,6 +213,9 @@ func (r *OpenAIRouter) recordResponseCost(
 		"usage_source":          responseUsageSource(usage),
 	}
 	addUpstreamAttribution(eventFields, attributedResponse(ctx))
+	if ctx.UpstreamEmptyRetries > 0 {
+		eventFields["retries"] = ctx.UpstreamEmptyRetries
+	}
 	if ctx.ResponseFailureClass != "" {
 		// The counts are real and the turn is not usable. Anything reading
 		// these lines has to be able to tell the difference.
@@ -284,6 +288,23 @@ func responseFailureClass(err error) string {
 		return protocolError.Code
 	}
 	return "response_decode_failed"
+}
+
+// decodedResponseRemnant is what the engine decoded before it refused the
+// response. The engine returns the two together, and the refusal is the only
+// thing the Router kept: a response that decoded and then failed validation
+// still states which upstream served the turn, what it stopped for and what it
+// billed, and those are the facts an unusable turn is attributed by.
+//
+// Generation is set by every decoder, so a zero one means the body never
+// became a response at all. There is nothing to attribute then, and a usage
+// line built from it would assert counts no upstream ever stated.
+func decodedResponseRemnant(decoded protocolcodec.ResponseResult) *llmprotocol.Response {
+	if decoded.Response.Generation == 0 {
+		return nil
+	}
+	remnant := decoded.Response
+	return &remnant
 }
 
 // attributedResponse is the response the usage line describes. A turn the

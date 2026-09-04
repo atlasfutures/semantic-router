@@ -24,6 +24,12 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	if err == nil {
 		err = injectedDecodeFailure(ctx)
 	}
+	retried := false
+	if err != nil {
+		if retryBody, retryResponse := r.retryEmptyUpstreamCompletion(ctx, err); retryResponse != nil {
+			responseBody, semanticResponse, err, retried = retryBody, retryResponse, nil, true
+		}
+	}
 	if err != nil {
 		metrics.RecordRequestError(ctx.RequestModel, "parse_error")
 		r.reportUnusableResponseUsage(ctx, completionLatency, err)
@@ -36,8 +42,11 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 		return r.upstreamDecodeFailureResponse(ctx, err)
 	}
 	clientBody := responseBody
-	rewriteClientBody := requiresClientResponseRewrite(ctx)
-	if rewriteClientBody {
+	// A retry's answer is not the body Envoy is holding, so it always travels
+	// as a mutation even when the two protocols match.
+	translateClientBody := requiresClientResponseRewrite(ctx)
+	rewriteClientBody := translateClientBody || retried
+	if translateClientBody {
 		clientBody, err = r.encodeClientResponse(*semanticResponse, ctx)
 		if err != nil {
 			return r.bodyPhaseErrorResponse(ctx, 502, "The selected model returned an incompatible response")

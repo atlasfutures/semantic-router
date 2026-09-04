@@ -236,23 +236,6 @@ func (r *OpenAIRouter) decodeClientResponse(
 	return ctx.SemanticResponse, nil
 }
 
-// decodedResponseRemnant is what the engine decoded before it refused the
-// response. The engine returns the two together, and the refusal is the only
-// thing the Router kept: a response that decoded and then failed validation
-// still states which upstream served the turn, what it stopped for and what it
-// billed, and those are the facts an unusable turn is attributed by.
-//
-// Generation is set by every decoder, so a zero one means the body never
-// became a response at all. There is nothing to attribute then, and a usage
-// line built from it would assert counts no upstream ever stated.
-func decodedResponseRemnant(decoded protocolcodec.ResponseResult) *llmprotocol.Response {
-	if decoded.Response.Generation == 0 {
-		return nil
-	}
-	remnant := decoded.Response
-	return &remnant
-}
-
 // decodeCachedClientResponse decodes the cache's public response contract.
 // Cache partitions include the ingress protocol and cache writes persist the
 // client-facing buffered body, so the selected backend format must not affect
