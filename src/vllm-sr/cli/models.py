@@ -1645,6 +1645,10 @@ class RoutingModel(BaseModel):
     # Absent means the model is assumed to accept image input. Only an
     # explicit false marks a model that rejects it.
     vision: Optional[bool] = None
+    # Absent means the model is in service. Only an explicit true takes it
+    # out, which is how a fixed, ordinal-indexed arm set retires an arm
+    # without renumbering the rest.
+    disabled: Optional[bool] = None
 
 
 class ReasoningFamily(BaseModel):
