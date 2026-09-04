@@ -21,7 +21,7 @@ func (r *OpenAIRouter) adaptProviderRequest(
 		dispatch.useReasoning,
 		ctx.VSRSelectedDecision,
 		dispatch.profile,
-		clientOutputAllowance(ctx),
+		ctx,
 	)
 	if err != nil {
 		return nil, err

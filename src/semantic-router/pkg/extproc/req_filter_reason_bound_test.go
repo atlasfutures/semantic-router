@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
 // An arm reasons because its own configuration says so, not because the client
@@ -236,12 +237,14 @@ func assertNoReasoningEffort(t *testing.T, body map[string]interface{}) {
 // client asks for no reasoning at all and the arm reasons anyway.
 func TestArmBoundComesFromTheClientAllowanceNotTheFloor(t *testing.T) {
 	router := newArmReasoningRouter()
-	clientAllowance := int64(512)
+	ctx := &RequestContext{SemanticRequest: &llmprotocol.Request{
+		ClientMaxOutputTokens: llmprotocol.Int64(512),
+	}}
 	encoded, err := router.setReasoningModeToRequestBodyForModelAndProvider(
 		[]byte(`{"model":"gpt-5-mini","messages":[{"role":"user","content":"hi"}],`+
 			`"max_completion_tokens":65536}`),
 		"gpt-5-mini", true, router.Config.GetDecisionByName("arc"),
-		openRouterProviderProfile(), &clientAllowance,
+		openRouterProviderProfile(), ctx,
 	)
 	require.NoError(t, err)
 	var body map[string]interface{}
