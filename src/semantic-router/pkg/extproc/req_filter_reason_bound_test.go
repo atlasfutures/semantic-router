@@ -109,7 +109,7 @@ func TestThinkingOffArmGetsNoBound(t *testing.T) {
 		false,
 		openRouterProviderProfile(),
 	)
-	if _, present := body["reasoning"]; present {
+	if bound := reasoningBoundOf(t, body); bound != nil {
 		t.Fatalf("a thinking-off arm was told to reason: %v", body)
 	}
 }
@@ -287,7 +287,7 @@ func TestThinkingOffArmCarriesNoReasoningRequest(t *testing.T) {
 	var body map[string]interface{}
 	require.NoError(t, json.Unmarshal(encoded, &body))
 
-	if _, present := body["reasoning"]; present {
+	if bound := reasoningBoundOf(t, body); bound != nil {
 		t.Fatalf("a thinking-off arm was told to reason: %v", body)
 	}
 	assertNoReasoningEffort(t, body)
