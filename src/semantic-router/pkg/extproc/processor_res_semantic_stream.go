@@ -414,7 +414,12 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 
 	usage := truncatedStreamUsage(ctx, r.takeNeutralResponseUsage(ctx))
 	r.reportSemanticStreamingUsage(ctx, completionLatency, usage)
-	r.calibrateTokenEstimator(ctx, usage.promptTokens)
+	if !usage.estimated {
+		// The calibrator learns the distance between the Router's own estimate
+		// and a provider count. Feeding it the estimate would teach it that
+		// the two already agree.
+		r.calibrateTokenEstimator(ctx, usage.promptTokens)
+	}
 
 	if responseErr != nil {
 		logging.ComponentWarnEvent("extproc", "neutral_stream_reconstruction_skipped", map[string]interface{}{
@@ -442,10 +447,12 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 //
 // A stream that never reached its terminal event has no reconstructed response
 // to read usage from, but the counts the upstream did send before the cut are
-// still authoritative, and they are what the turn cost. When none arrived
-// there is nothing to put in an llm_usage line, so the turn is named as
-// uncounted instead: an estimate there would be an invented number about
-// money.
+// still authoritative, and they are what the turn cost.
+//
+// When none arrived the turn is counted from what the Router itself forwarded,
+// on a line that says the counts are an estimate. A turn that carried nothing
+// at all is still named as uncounted, because there is nothing to estimate
+// from and a number invented there would be a number about money.
 func truncatedStreamUsage(ctx *RequestContext, usage responseUsageMetrics) responseUsageMetrics {
 	if !usage.invalid || !ctx.StreamingAborted {
 		return usage
@@ -453,13 +460,17 @@ func truncatedStreamUsage(ctx *RequestContext, usage responseUsageMetrics) respo
 	if ctx.SemanticStreamState != nil {
 		usage = responseUsageFromSemanticUsage(ctx.SemanticStreamState.usage)
 	}
-	if usage.invalid {
-		logging.ComponentWarnEvent("extproc", "stream_truncated_uncounted", map[string]interface{}{
-			"request_id": ctx.RequestID,
-			"model":      ctx.RequestModel,
-			"reason":     usage.invalidReason,
-		})
+	if !usage.invalid {
+		return usage
 	}
+	if estimated, carried := estimatedTruncatedStreamUsage(ctx); carried {
+		return estimated
+	}
+	logging.ComponentWarnEvent("extproc", "stream_truncated_uncounted", map[string]interface{}{
+		"request_id": ctx.RequestID,
+		"model":      ctx.RequestModel,
+		"reason":     usage.invalidReason,
+	})
 	return usage
 }
 

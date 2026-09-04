@@ -25,6 +25,10 @@ type responseUsageMetrics struct {
 	totalTokensReported        bool
 	invalid                    bool
 	invalidReason              string
+	// estimated marks counts the Router derived from what it saw of the stream
+	// rather than counts the upstream reported. See
+	// estimatedTruncatedStreamUsage.
+	estimated bool
 }
 
 func responseUsageTotal(usage responseUsageMetrics) int {
@@ -203,6 +207,7 @@ func (r *OpenAIRouter) recordResponseCost(
 		"completion_tokens":     usage.completionTokens,
 		"total_tokens":          totalTokens,
 		"completion_latency_ms": completionLatency.Milliseconds(),
+		"usage_source":          responseUsageSource(usage),
 	}
 	if ctx.StreamingAborted {
 		// The counts are real but the turn is not a whole one. Anything
