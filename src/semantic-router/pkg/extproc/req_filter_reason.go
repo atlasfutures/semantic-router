@@ -38,7 +38,7 @@ func (r *OpenAIRouter) setReasoningModeToRequestBodyForProvider(
 	profile *config.ProviderProfile,
 ) ([]byte, error) {
 	return r.setReasoningModeToRequestBodyForModelAndProvider(
-		requestBody, "", enabled, decision, profile,
+		requestBody, "", enabled, decision, profile, nil,
 	)
 }
 
@@ -48,6 +48,7 @@ func (r *OpenAIRouter) setReasoningModeToRequestBodyForModelAndProvider(
 	enabled bool,
 	decision *config.Decision,
 	profile *config.ProviderProfile,
+	clientAllowance *int64,
 ) ([]byte, error) {
 	mutation, err := parseReasoningRequestMutation(requestBody)
 	if err != nil {
@@ -60,7 +61,7 @@ func (r *OpenAIRouter) setReasoningModeToRequestBodyForModelAndProvider(
 	dialect := resolveOpenAIBackendDialect(profile)
 	if enabled {
 		r.applyEnabledReasoningMutation(mutation, familyConfig, decision, dialect)
-		applyOpenRouterReasoningBound(mutation, dialect)
+		applyOpenRouterReasoningBound(mutation, dialect, clientAllowance)
 	} else {
 		r.applyDisabledReasoningMutation(mutation, familyConfig, dialect)
 	}

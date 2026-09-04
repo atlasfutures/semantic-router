@@ -192,7 +192,7 @@ func (r *OpenAIRouter) buildReasoningFieldsForTest(
 		return nil, ""
 	}
 	encoded, err := r.setReasoningModeToRequestBodyForModelAndProvider(
-		body, model, true, decision, profile,
+		body, model, true, decision, profile, nil,
 	)
 	if err != nil {
 		return nil, ""

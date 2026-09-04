@@ -193,11 +193,24 @@ func ReasoningBoundForRequest(request llmprotocol.Request) *int64 {
 	reasoningAsked := request.ReasoningMode == llmprotocol.ReasoningModeAdaptive ||
 		request.ReasoningMode == llmprotocol.ReasoningModeEnabled ||
 		request.ReasoningEffort != "" && request.ReasoningEffort != "none"
-	if !reasoningAsked || request.Sampling.MaxOutputTokens == nil {
+	allowance := ClientOutputAllowance(request)
+	if !reasoningAsked || allowance == nil {
 		return nil
 	}
-	bound := ReasoningBoundForOutputAllowance(*request.Sampling.MaxOutputTokens)
+	bound := ReasoningBoundForOutputAllowance(*allowance)
 	return &bound
+}
+
+// ClientOutputAllowance is what the caller allowed the turn to write, which is
+// not always what the request dispatches: the request_params floor raises
+// max_completion_tokens so an answer has room beside the thinking, and records
+// the caller's own number here. A bound derived from the raised number would
+// bound nothing.
+func ClientOutputAllowance(request llmprotocol.Request) *int64 {
+	if request.ClientMaxOutputTokens != nil {
+		return request.ClientMaxOutputTokens
+	}
+	return request.Sampling.MaxOutputTokens
 }
 
 func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) error {

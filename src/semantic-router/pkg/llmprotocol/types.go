@@ -218,16 +218,22 @@ type TrustedMetadata struct {
 }
 
 type Request struct {
-	Generation            uint64
-	Model                 string
-	Instructions          []InstructionBlock
-	Messages              []Message
-	Tools                 []Tool
-	ImageGeneration       *ImageGenerationOptions
-	ToolChoice            ToolChoice
-	ParallelToolCalls     *bool
-	CandidateCount        *int64
-	Sampling              Sampling
+	Generation        uint64
+	Model             string
+	Instructions      []InstructionBlock
+	Messages          []Message
+	Tools             []Tool
+	ImageGeneration   *ImageGenerationOptions
+	ToolChoice        ToolChoice
+	ParallelToolCalls *bool
+	CandidateCount    *int64
+	Sampling          Sampling
+	// ClientMaxOutputTokens is the output allowance the caller stated, kept
+	// only when a Router plugin raises Sampling.MaxOutputTokens above it. It
+	// is the number a derived reasoning bound comes from: raising the output
+	// allowance so an answer has room beside the thinking must not also let
+	// the turn think longer. No wire format carries it.
+	ClientMaxOutputTokens *int64
 	OutputFormat          OutputFormat
 	ReasoningMode         ReasoningMode
 	ReasoningEffort       string

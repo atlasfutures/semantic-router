@@ -45,6 +45,12 @@ func (r *OpenAIRouter) applyDispatchRequestParams(
 // max_tokens_limit wins. Both are operator settings on the same plugin; a
 // config that sets a floor above its own cap is contradictory, and the floor
 // is the one that protects the answer.
+//
+// The raise applies to the output allowance and to nothing else. A reasoning
+// bound is derived from what the client allowed, so the client's own number is
+// kept on the request before it is overwritten: measured on the dev cell
+// 2026-09-04, a bound derived from the 65,536 floor let a client asking for
+// 512 output tokens spend 65,536 on reasoning, which bounded nothing.
 func applyCompletionTokenFloor(
 	params *config.RequestParamsPluginConfig,
 	request *llmprotocol.Request,
@@ -61,6 +67,7 @@ func applyCompletionTokenFloor(
 	if request.Sampling.MaxOutputTokens != nil && *request.Sampling.MaxOutputTokens >= int64(floor) {
 		return false
 	}
+	request.ClientMaxOutputTokens = request.Sampling.MaxOutputTokens
 	request.Sampling.MaxOutputTokens = llmprotocol.Int64(int64(floor))
 	metrics.RecordCompletionFloorApplied(decisionKey, logicalModel)
 	logging.Infof("Raised completion budget for model %q to its configured floor %d", logicalModel, floor)

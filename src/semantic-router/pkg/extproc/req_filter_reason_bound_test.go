@@ -133,7 +133,7 @@ func reasoningBodyForProfile(
 	t.Helper()
 	router := newArmReasoningRouter()
 	encoded, err := router.setReasoningModeToRequestBodyForModelAndProvider(
-		[]byte(body), "gpt-5-mini", enabled, router.Config.GetDecisionByName("arc"), profile,
+		[]byte(body), "gpt-5-mini", enabled, router.Config.GetDecisionByName("arc"), profile, nil,
 	)
 	require.NoError(t, err)
 	var decoded map[string]interface{}
@@ -226,5 +226,32 @@ func assertNoReasoningEffort(t *testing.T, body map[string]interface{}) {
 	}
 	if effort, present := reasoning["effort"]; present {
 		t.Fatalf("reasoning.effort %v travelled beside the bound", effort)
+	}
+}
+
+// The second place the bound is derived is the provider boundary, for an arm
+// that reasons by its own configuration. It reads the dispatched body, where
+// the request_params floor has already raised max_completion_tokens, so it is
+// told separately what the client allowed. The a6 corpus is this shape: the
+// client asks for no reasoning at all and the arm reasons anyway.
+func TestArmBoundComesFromTheClientAllowanceNotTheFloor(t *testing.T) {
+	router := newArmReasoningRouter()
+	clientAllowance := int64(512)
+	encoded, err := router.setReasoningModeToRequestBodyForModelAndProvider(
+		[]byte(`{"model":"gpt-5-mini","messages":[{"role":"user","content":"hi"}],`+
+			`"max_completion_tokens":65536}`),
+		"gpt-5-mini", true, router.Config.GetDecisionByName("arc"),
+		openRouterProviderProfile(), &clientAllowance,
+	)
+	require.NoError(t, err)
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(encoded, &body))
+
+	bound := reasoningBoundOf(t, body)
+	if bound == nil || *bound != 1024 {
+		t.Fatalf("the bound came from the floor, not the client's 512: %v", body)
+	}
+	if body["max_completion_tokens"] != float64(65536) {
+		t.Fatalf("the floor's raise was undone: %v", body["max_completion_tokens"])
 	}
 }

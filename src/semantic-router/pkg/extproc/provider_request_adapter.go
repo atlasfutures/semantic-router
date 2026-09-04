@@ -21,6 +21,7 @@ func (r *OpenAIRouter) adaptProviderRequest(
 		dispatch.useReasoning,
 		ctx.VSRSelectedDecision,
 		dispatch.profile,
+		clientOutputAllowance(ctx),
 	)
 	if err != nil {
 		return nil, err
@@ -33,4 +34,14 @@ func (r *OpenAIRouter) adaptProviderRequest(
 	// travel, whichever mutation put them there.
 	recordDispatchedReasoningControls(ctx, body)
 	return body, nil
+}
+
+// clientOutputAllowance is the output allowance the caller stated, present only
+// when a Router plugin raised the dispatched one above it. The reasoning bound
+// comes from the caller's number, not the raised one.
+func clientOutputAllowance(ctx *RequestContext) *int64 {
+	if ctx == nil || ctx.SemanticRequest == nil {
+		return nil
+	}
+	return ctx.SemanticRequest.ClientMaxOutputTokens
 }

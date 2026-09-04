@@ -37,11 +37,15 @@ import (
 // A request with no output allowance keeps its effort level: there is nothing
 // to derive a bound from, and capping a client that asked for no cap is not
 // the Router's to do.
-func applyOpenRouterReasoningBound(mutation *reasoningRequestMutation, dialect openAIBackendDialect) {
+func applyOpenRouterReasoningBound(
+	mutation *reasoningRequestMutation,
+	dialect openAIBackendDialect,
+	clientAllowance *int64,
+) {
 	if !dialect.usesReasoningObjectBound() || !mutation.reasoningApplied {
 		return
 	}
-	bound := reasoningBoundForRequest(mutation.requestMap)
+	bound := reasoningBoundForRequest(mutation.requestMap, clientAllowance)
 	if bound == nil {
 		return
 	}
@@ -53,11 +57,24 @@ func applyOpenRouterReasoningBound(mutation *reasoningRequestMutation, dialect o
 
 // reasoningBoundForRequest reads the bound the request already carries, or
 // derives one from the output allowance, or reports that there is none.
-func reasoningBoundForRequest(requestMap map[string]json.RawMessage) *int64 {
+//
+// The allowance is the client's own where the two differ. The request_params
+// floor raises max_completion_tokens on the dispatched body so an answer has
+// room beside the thinking, and a bound derived from the raised number would
+// bound nothing: measured on the dev cell 2026-09-04, a client asking for 512
+// output tokens against the arms' 65,536 floor was told it could spend 65,536
+// tokens reasoning.
+func reasoningBoundForRequest(
+	requestMap map[string]json.RawMessage,
+	clientAllowance *int64,
+) *int64 {
 	if carried := carriedReasoningBound(requestMap["reasoning"]); carried != nil {
 		return carried
 	}
-	allowance := outputAllowance(requestMap)
+	allowance := clientAllowance
+	if allowance == nil {
+		allowance = outputAllowance(requestMap)
+	}
 	if allowance == nil {
 		return nil
 	}
