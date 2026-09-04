@@ -22,11 +22,18 @@ import (
 // arm's setting is applied. The bound is derived the same way -- what the
 // client allowed for output, floored -- so the two are one rule.
 //
-// Whichever way the bound arrives, the arm's effort level does not travel
-// beside it. OpenRouter's reasoning parameter takes "One of the following (not
-// both)", documents no precedence, and the measurement says the effort wins:
-// an adaptive turn bounded at 1024 with effort high spent 16,030 reasoning
-// tokens on xiaomi/mimo-v2.5-pro@thinking-on. Read 2026-09-04:
+// An effort level travels beside the bound, because a bound alone is ignored.
+// Measured on the dev cell 2026-09-04, reasoning.max_tokens 1024 by itself left
+// xiaomi/mimo-v2.5-pro@thinking-on spending 21,674 reasoning tokens and
+// deepseek/deepseek-v4-flash@thinking-on spending 20,974; the build that sent
+// an effort level beside the bound spent 16,030 on the same shape, and was
+// answered 200, so the docs' "One of the following (not both)" is not enforced.
+//
+// The level is not the arm's. An arm-chosen dial above the bound is what made
+// the bound inert, so the level is derived from the bound by OpenRouter's own
+// documented conversion and the two controls then say the same thing. An
+// effort the client stated is the exception: it is the client's number and it
+// stands. Read 2026-09-04:
 //
 //	https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
 //
@@ -42,8 +49,39 @@ func applyOpenRouterReasoningBound(mutation *reasoningRequestMutation, dialect o
 		return
 	}
 	mutation.requestMap["reasoning"] = encodeReasoningBound(mutation.requestMap["reasoning"], *bound)
-	delete(mutation.requestMap, "reasoning_effort")
+	mutation.appliedEffort = mutation.effortBesideBound(*bound)
+	mutation.requestMap["reasoning_effort"] = reasoningStringValue(mutation.appliedEffort)
 	mutation.reasoningBound = bound
+}
+
+// effortBesideBound is the effort level that travels with the bound: the
+// client's own when the request stated one, otherwise the level OpenRouter's
+// documented conversion gives that bound. With no output allowance there is
+// nothing to convert against, and the arm's own level stands.
+func (mutation *reasoningRequestMutation) effortBesideBound(bound int64) string {
+	if stated := mutation.statedReasoningEffort(); stated != "" {
+		return stated
+	}
+	if allowance := outputAllowance(mutation.requestMap); allowance != nil {
+		return protocolcodec.ReasoningEffortForBound(bound, *allowance)
+	}
+	return mutation.appliedEffort
+}
+
+// statedReasoningEffort is the effort the request carried into the boundary,
+// which is the client's own: parseReasoningRequestMutation lifts it off the
+// body before the arm's setting is applied, and defaults it only when the body
+// had none. "none" is an off-signal, not a level, and a turn that reasons has
+// already overruled it.
+func (mutation *reasoningRequestMutation) statedReasoningEffort() string {
+	if !mutation.hasOriginalEffort {
+		return ""
+	}
+	var effort string
+	if json.Unmarshal(mutation.originalReasoningEffort, &effort) != nil || effort == "none" {
+		return ""
+	}
+	return effort
 }
 
 // reasoningBoundForRequest reads the bound the request already carries, or
@@ -114,12 +152,13 @@ func encodeReasoningBound(existing json.RawMessage, bound int64) json.RawMessage
 	return rendered
 }
 
-// appliedControl names the reasoning control the request ends up carrying, so
+// appliedControl names the reasoning controls the request ends up carrying, so
 // the mutation log says what was sent rather than what was configured. A bound
-// replaces the effort level, and only one of the two travels.
+// travels with the effort level that bound buys, so the line names both.
 func (mutation *reasoningRequestMutation) appliedControl() string {
 	if mutation.reasoningBound != nil {
-		return fmt.Sprintf("a bound of %d reasoning tokens", *mutation.reasoningBound)
+		return fmt.Sprintf("a bound of %d reasoning tokens at effort (%s)",
+			*mutation.reasoningBound, mutation.appliedEffort)
 	}
 	return fmt.Sprintf("effort (%s)", mutation.appliedEffort)
 }

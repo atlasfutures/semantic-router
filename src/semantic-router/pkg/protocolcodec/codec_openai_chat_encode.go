@@ -117,21 +117,17 @@ func encodeChatReasoningControls(
 	if budget != nil {
 		wire.Reasoning = &chatReasoningWire{MaxTokens: budget}
 	}
-	if derived {
-		// OpenRouter's reasoning parameter takes an effort level or a token
-		// bound, "One of the following (not both)", and documents no
-		// precedence for a request that sends both. A derived bound is the
-		// Router's own number, put there to end a turn that would otherwise
-		// run to the platform deadline, and the measurement says an effort
-		// level beside it makes it inert. So the derived bound travels alone.
-		// Nothing is lost by it: "For models that only support
-		// reasoning.effort ... the max_tokens value will be used to determine
-		// the effort level." Read 2026-09-04:
-		//   https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
+	if derived && wire.ReasoningEffort == "" {
+		// A bound the Router derived travels with the effort level that bound
+		// buys. OpenRouter's docs say the two are "One of the following (not
+		// both)", but they are not enforced -- a request carrying both is
+		// answered 200 -- and neither thinking arm obeys the bound alone.
+		// Sending the bound by itself was measured to cost about 30 percent
+		// more reasoning than sending an effort level beside it.
 		//
-		// A budget the client stated is a different case. Both fields are then
-		// the client's own and the Router is only carrying them.
-		wire.ReasoningEffort = ""
+		// An effort the client stated is already on the wire here, and it
+		// stands: it is the client's own number, not one the Router derived.
+		wire.ReasoningEffort = ReasoningEffortForBound(*budget, *request.Sampling.MaxOutputTokens)
 	}
 	if request.ReasoningDisplay != "" {
 		appendPresentationDrop(
