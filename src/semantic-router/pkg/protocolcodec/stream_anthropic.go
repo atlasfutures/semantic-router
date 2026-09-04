@@ -366,13 +366,7 @@ func decodeAnthropicStreamUsage(wire anthropicUsageWire, initial bool) llmprotoc
 		usage.InputTotal = authoritative(wire.InputTokens + wire.CacheReadInputTokens + wire.CacheCreationInputTokens)
 	}
 	if wire.OutputTokens > 0 || !initial {
-		reasoning := wire.OutputTokensDetails.ThinkingTokens
-		other := wire.OutputTokens - reasoning
-		if other < 0 {
-			other = 0
-		}
-		usage.OutputReasoning = authoritative(reasoning)
-		usage.OutputOther = authoritative(other)
+		usage.OutputReasoning, usage.OutputOther = anthropicOutputSplit(wire)
 		usage.OutputTotal = authoritative(wire.OutputTokens)
 	}
 	return usage

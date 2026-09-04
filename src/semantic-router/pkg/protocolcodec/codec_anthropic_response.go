@@ -131,18 +131,29 @@ func appendAnthropicResponseUsage(
 
 func decodeAnthropicUsage(wire anthropicUsageWire) llmprotocol.Usage {
 	inputTotal := wire.InputTokens + wire.CacheReadInputTokens + wire.CacheCreationInputTokens
-	reasoning := int64(0)
-	reasoning = wire.OutputTokensDetails.ThinkingTokens
-	other := wire.OutputTokens - reasoning
-	if other < 0 {
-		other = 0
-	}
+	reasoning, other := anthropicOutputSplit(wire)
 	return llmprotocol.Usage{
 		State:         llmprotocol.UsageAvailable,
 		InputUncached: authoritative(wire.InputTokens), InputCacheRead: authoritative(wire.CacheReadInputTokens), InputCacheWrite: authoritative(wire.CacheCreationInputTokens),
-		OutputReasoning: authoritative(reasoning), OutputOther: authoritative(other),
+		OutputReasoning: reasoning, OutputOther: other,
 		InputTotal: authoritative(inputTotal), OutputTotal: authoritative(wire.OutputTokens), Total: llmprotocol.TokenCount{Value: llmprotocol.Int64(inputTotal + wire.OutputTokens), Provenance: llmprotocol.UsageDerived},
 	}
+}
+
+// anthropicOutputSplit reads the thinking breakdown, or leaves it unknown.
+//
+// A provider that states more thinking tokens than output tokens has stated a
+// split that cannot be true. The totals beside it still can be, and they are
+// what the turn cost, so they are kept and only the split is dropped. The
+// Chat decoder answers the same shape the same way; the two have to agree,
+// because the same arm reaches this router through both.
+func anthropicOutputSplit(wire anthropicUsageWire) (reasoning, other llmprotocol.TokenCount) {
+	thinking := wire.OutputTokensDetails.ThinkingTokens
+	if thinking < 0 || thinking > wire.OutputTokens {
+		reportUnreconciledUsage("usage.output_tokens_details")
+		return unknownCount(), unknownCount()
+	}
+	return authoritative(thinking), derived(wire.OutputTokens - thinking)
 }
 
 func (AnthropicMessagesCodec) EncodeResponse(response llmprotocol.Response, envelope llmprotocol.Envelope, policy llmprotocol.Policy) ([]byte, llmprotocol.Diagnostics, error) {
