@@ -26,11 +26,9 @@ type armUsageWire struct {
 	} `json:"output_tokens_details"`
 }
 
-// armUsageExpectation is one arm in one mode. An empty fixture means the
-// capture does not exist yet; pending names the file it is waiting for.
+// armUsageExpectation is one arm in one mode.
 type armUsageExpectation struct {
 	fixture string
-	pending string
 	want    armUsageWire
 }
 
@@ -101,23 +99,30 @@ func armUsageCases() []armUsageCase {
 			},
 		},
 		{
+			// Cached on a 13-token prompt: 11 of the 13 came from the
+			// provider's cache, so only 2 are fresh input.
 			arm: "z-ai/glm-5.2",
 			nonStreamed: armUsageExpectation{
-				pending: "chat-response-glm.json",
+				fixture: "chat-response-glm.json",
+				want:    armUsage(2, 9, 11, 0, 0),
 			},
 			streamed: armUsageExpectation{
-				pending: "chat-stream-glm.sse",
+				fixture: "chat-stream-glm.sse",
+				want:    armUsage(2, 3, 11, 0, 0),
 			},
 		},
 		{
-			// The flash arm has Anthropic-shaped captures only, taken after
-			// translation. A raw OpenRouter body is what this test needs.
+			// The flash arm states every sub-count as zero, and spells its
+			// small numbers in exponent form. Both captures carry that
+			// spelling, so decoding them at all is part of what this pins.
 			arm: "deepseek/deepseek-v4-flash",
 			nonStreamed: armUsageExpectation{
-				pending: "chat-response-flash.json",
+				fixture: "chat-response-flash.json",
+				want:    armUsage(11, 2, 0, 0, 0),
 			},
 			streamed: armUsageExpectation{
-				pending: "chat-stream-flash.sse",
+				fixture: "chat-stream-flash.sse",
+				want:    armUsage(11, 3, 0, 0, 0),
 			},
 		},
 	}
@@ -127,24 +132,12 @@ func TestEachArmReportsItsOwnUsageShape(t *testing.T) {
 	for _, testCase := range armUsageCases() {
 		t.Run(testCase.arm+"/non-streamed", func(t *testing.T) {
 			expectation := testCase.nonStreamed
-			skipPendingCapture(t, expectation)
 			assertArmUsage(t, anthropicUsageFromResponse(t, expectation.fixture), expectation.want)
 		})
 		t.Run(testCase.arm+"/streamed", func(t *testing.T) {
 			expectation := testCase.streamed
-			skipPendingCapture(t, expectation)
 			assertArmUsage(t, anthropicUsageFromStream(t, expectation.fixture), expectation.want)
 		})
-	}
-}
-
-func skipPendingCapture(t *testing.T, expectation armUsageExpectation) {
-	t.Helper()
-	if expectation.fixture == "" {
-		t.Skipf(
-			"fixture pending: live capture into testdata/provider/openrouter/%s",
-			expectation.pending,
-		)
 	}
 }
 
@@ -231,4 +224,32 @@ func assertArmUsage(t *testing.T, got, want armUsageWire) {
 			t.Errorf("%s = %d, want %d", field.name, field.got, field.want)
 		}
 	}
+}
+
+// A warm prefix is where the two protocols disagree about what a prompt is.
+// OpenRouter states prompt_tokens 1702 with 1024 of it cached; Messages counts
+// the cached part separately, so the client must see 678 fresh input beside a
+// cache_read of 1024. Billing 1702 there charges the cached prefix twice, at
+// the uncached rate.
+func TestWarmPrefixLeavesOnlyFreshInputInInputTokens(t *testing.T) {
+	want := armUsage(678, 2, 1024, 0, 0)
+	t.Run("non-streamed", func(t *testing.T) {
+		assertArmUsage(t, anthropicUsageFromResponse(t, "chat-response-warm-prefix.json"), want)
+	})
+	t.Run("streamed", func(t *testing.T) {
+		assertArmUsage(t, anthropicUsageFromStream(t, "chat-stream-warm-prefix.sse"), want)
+	})
+}
+
+// A turn can be all reasoning and no answer: glm-5.2 spent its whole 64-token
+// allowance thinking and returned empty content. reasoning_tokens equals
+// completion_tokens, which reconciles exactly, so the split is kept and the
+// turn is served. It is the boundary next to the qwen case, where reasoning
+// exceeds completion and the split has to be dropped.
+func TestOutputThatIsAllReasoningKeepsItsSplit(t *testing.T) {
+	assertArmUsage(
+		t,
+		anthropicUsageFromResponse(t, "chat-response-all-reasoning.json"),
+		armUsage(19, 64, 0, 0, 64),
+	)
 }

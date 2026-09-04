@@ -13,11 +13,11 @@ import (
 // completion_tokens 64 on 2026-09-03. The Chat decoder answers that by keeping
 // the totals and leaving the split unknown.
 //
-// The Anthropic decoder answers it by clamping the remainder to zero and
-// calling the result authoritative. That is worse than the wrong number it
-// looks like: reasoning 79 and other 0 do not sum to the output total 64, so
-// the response validator rejects the whole response and the client loses its
-// answer. It is the defect the Chat decoder was already fixed for.
+// The Anthropic decoder used to answer it by clamping the remainder to zero
+// and calling the result authoritative. That was worse than the wrong number
+// it looks like: reasoning 79 and other 0 do not sum to the output total 64,
+// so the response validator rejected the whole response and the client lost
+// its answer. It was the defect the Chat decoder had already been fixed for.
 const (
 	anthropicOverThinkingOutput   = 64
 	anthropicOverThinkingThinking = 79
@@ -95,4 +95,31 @@ func assertUnreconciledThinkingUsage(t *testing.T, events []llmprotocol.Event) {
 		return
 	}
 	t.Fatalf("no event carried an output total: %+v", events)
+}
+
+// The cell's own answer, read back through the Anthropic decoder.
+//
+// This capture is what the cell emitted on a warm-prefix turn: 166 fresh input
+// tokens beside 1536 read from cache, and 22 of its 25 output tokens spent
+// thinking. It is the shape the decoder sees when a Messages response is the
+// source rather than the target, and it reconciles, so every part survives.
+//
+// The input total is this turn's own 166 + 1536. The raw OpenRouter captures
+// beside it are a different turn with a different cache hit; nothing here
+// pairs the two.
+func TestCellWarmPrefixResponseKeepsEveryPartOfItsUsage(t *testing.T) {
+	response, _, _, err := NewBuiltinEngine().DecodeResponse(
+		llmprotocol.AnthropicMessagesV1,
+		loadUsageFixture(t, "anthropic-response-warm-prefix.json"),
+	)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	assertTokenValue(t, "input uncached", response.Usage.InputUncached, 166)
+	assertTokenValue(t, "input cache read", response.Usage.InputCacheRead, 1536)
+	assertTokenValue(t, "input cache write", response.Usage.InputCacheWrite, 0)
+	assertTokenValue(t, "input total", response.Usage.InputTotal, 1702)
+	assertTokenValue(t, "output total", response.Usage.OutputTotal, 25)
+	assertTokenValue(t, "output reasoning", response.Usage.OutputReasoning, 22)
+	assertTokenValue(t, "output other", response.Usage.OutputOther, 3)
 }
