@@ -73,7 +73,11 @@ type RequestContext struct {
 	// Semi-streaming body handler (non-nil when Envoy sends STREAMED body chunks)
 	StreamedBody          *StreamedBodyHandler
 	FullDuplexRequestBody bool // true when the data plane negotiated FULL_DUPLEX_STREAMED
-	SkipProcessing        bool // true only when the configured opt-out header is valid
+	// FullDuplexResponseBody reports the same for the response body, which is
+	// the only mode in which an ext_proc reply can end the downstream response
+	// rather than wait for the upstream to stop.
+	FullDuplexResponseBody bool
+	SkipProcessing         bool // true only when the configured opt-out header is valid
 
 	StreamingComplete      bool // True after neutral stream finalization runs once.
 	StreamingAborted       bool // True if the neutral stream ended abnormally.
