@@ -208,3 +208,62 @@ func newArmReasoningRouter() *OpenAIRouter {
 		map[string]config.ModelParams{"gpt-5-mini": {ReasoningFamily: "gpt-oss"}},
 	)
 }
+
+// The provider boundary sends one reasoning control, never two. OpenRouter
+// reads a top-level reasoning_effort as reasoning.effort and refuses a body
+// that also carries reasoning.max_tokens:
+//
+//	Only one of "reasoning.effort" and "reasoning.max_tokens" can be specified
+//
+// Measured on the dev cell 2026-09-04, that 400 answered every thinking-arm
+// turn on build 17, which sent the arm's effort beside the bound. The arm's
+// configured effort is the one that goes: the bound is the number that stops
+// the turn, and the effort dial cannot be stated beside it. Read 2026-09-04:
+//
+//	https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
+func TestOneReasoningControlReachesOpenRouter(t *testing.T) {
+	t.Run("a bound leaves no effort anywhere", func(t *testing.T) {
+		body := armReasoningBody(t, `{"model":"gpt-5-mini","messages":[{"role":"user","content":"hi"}],`+
+			`"max_completion_tokens":4096}`)
+		bound := reasoningBoundOf(t, body)
+		if bound == nil || *bound != 4096 {
+			t.Fatalf("the arm's turn was not bounded: %v", body)
+		}
+		assertNoReasoningEffort(t, body)
+	})
+
+	t.Run("a client effort does not survive beside the bound", func(t *testing.T) {
+		body := armReasoningBody(t, `{"model":"gpt-5-mini","messages":[{"role":"user","content":"hi"}],`+
+			`"max_completion_tokens":4096,"reasoning_effort":"low"}`)
+		if bound := reasoningBoundOf(t, body); bound == nil {
+			t.Fatalf("a client-stated effort left the turn unbounded: %v", body)
+		}
+		assertNoReasoningEffort(t, body)
+	})
+
+	t.Run("a carried bound also travels alone", func(t *testing.T) {
+		body := armReasoningBody(t, `{"model":"gpt-5-mini","messages":[{"role":"user","content":"hi"}],`+
+			`"max_completion_tokens":4096,"reasoning":{"max_tokens":2048}}`)
+		bound := reasoningBoundOf(t, body)
+		if bound == nil || *bound != 2048 {
+			t.Fatalf("the bound the request carried was replaced: %v", body)
+		}
+		assertNoReasoningEffort(t, body)
+	})
+}
+
+// assertNoReasoningEffort fails when an effort level reached the wire in either
+// placement OpenRouter reads: the top-level alias or the reasoning object.
+func assertNoReasoningEffort(t *testing.T, body map[string]interface{}) {
+	t.Helper()
+	if effort, present := body["reasoning_effort"]; present {
+		t.Fatalf("reasoning_effort %v travelled beside the bound; OpenRouter refuses both", effort)
+	}
+	reasoning, present := body["reasoning"].(map[string]interface{})
+	if !present {
+		return
+	}
+	if effort, present := reasoning["effort"]; present {
+		t.Fatalf("reasoning.effort %v travelled beside the bound", effort)
+	}
+}
