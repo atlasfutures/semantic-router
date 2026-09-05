@@ -6,7 +6,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
-type anthropicContentBlockDecoder func(json.RawMessage, llmprotocol.Policy) (llmprotocol.Content, error)
+type anthropicContentBlockDecoder func(json.RawMessage, int, llmprotocol.Policy) (llmprotocol.Content, error)
 
 func decodeAnthropicContentArray(
 	raw json.RawMessage,
@@ -25,8 +25,8 @@ func decodeAnthropicContentArray(
 		return nil, err
 	}
 	contents := make([]llmprotocol.Content, 0, len(blockBodies))
-	for _, blockBody := range blockBodies {
-		content, err := decodeBlock(blockBody, policy)
+	for index, blockBody := range blockBodies {
+		content, err := decodeBlock(blockBody, index, policy)
 		if err != nil {
 			return nil, err
 		}
@@ -35,7 +35,7 @@ func decodeAnthropicContentArray(
 	return contents, nil
 }
 
-func decodeAnthropicRequestContentBlock(body json.RawMessage, policy llmprotocol.Policy) (llmprotocol.Content, error) {
+func decodeAnthropicRequestContentBlock(body json.RawMessage, index int, policy llmprotocol.Policy) (llmprotocol.Content, error) {
 	typeName, err := anthropicRequestContentType(body)
 	if err != nil {
 		return llmprotocol.Content{}, err
@@ -43,20 +43,21 @@ func decodeAnthropicRequestContentBlock(body json.RawMessage, policy llmprotocol
 	if !anthropicModelledRequestContent[typeName] || anthropicVariantIsUnnamed(typeName, body) {
 		return carriedAnthropicBlock(typeName, body), nil
 	}
-	return decodeAnthropicContentBlock(body, typeName, policy, false)
+	return decodeAnthropicContentBlock(body, typeName, index, policy, false)
 }
 
-func decodeAnthropicResponseContentBlock(body json.RawMessage, policy llmprotocol.Policy) (llmprotocol.Content, error) {
+func decodeAnthropicResponseContentBlock(body json.RawMessage, index int, policy llmprotocol.Policy) (llmprotocol.Content, error) {
 	typeName, err := anthropicResponseContentType(body)
 	if err != nil {
 		return llmprotocol.Content{}, err
 	}
-	return decodeAnthropicContentBlock(body, typeName, policy, true)
+	return decodeAnthropicContentBlock(body, typeName, index, policy, true)
 }
 
 func decodeAnthropicContentBlock(
 	body json.RawMessage,
 	typeName string,
+	index int,
 	policy llmprotocol.Policy,
 	providerOutput bool,
 ) (llmprotocol.Content, error) {
@@ -73,148 +74,10 @@ func decodeAnthropicContentBlock(
 	if err := validateAnthropicContentVariant(body, typeName, providerOutput); err != nil {
 		return llmprotocol.Content{}, err
 	}
-	if err := validateAnthropicContentExtensions(block, providerOutput); err != nil {
+	if err := validateAnthropicContentExtensions(block, anthropicBlockLocation(typeName, index), providerOutput); err != nil {
 		return llmprotocol.Content{}, err
 	}
 	return decodeAnthropicTypedContent(typeName, block, policy)
-}
-
-func validateAnthropicContentVariant(body json.RawMessage, typeName string, providerOutput bool) error {
-	allowedByType := map[string][]string{
-		"text":        {"cache_control", "citations", "text", "type"},
-		"thinking":    {"signature", "thinking", "type"},
-		"image":       {"cache_control", "source", "transformations", "type"},
-		"document":    {"cache_control", "citations", "context", "source", "title", "type"},
-		"tool_use":    {"cache_control", "caller", "id", "input", "name", "toolset_name", "type"},
-		"tool_result": {"cache_control", "content", "is_error", "tool_use_id", "toolset_name", "type"},
-	}
-	if providerOutput {
-		allowedByType = map[string][]string{
-			"text":     {"citations", "text", "type"},
-			"thinking": {"signature", "thinking", "type"},
-			"tool_use": {"caller", "id", "input", "name", "toolset_name", "type"},
-		}
-	}
-	allowed, recognized := allowedByType[typeName]
-	if !recognized {
-		return nil
-	}
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(body, &object); err != nil {
-		return err
-	}
-	if err := requireAnthropicContentFields(object, typeName, providerOutput); err != nil {
-		return err
-	}
-	return rejectAnthropicContentVariantFields(object, allowed, providerOutput)
-}
-
-func requireAnthropicContentFields(object map[string]json.RawMessage, typeName string, providerOutput bool) error {
-	requiredByType := map[string][]string{
-		"text":        {"text"},
-		"thinking":    {"thinking"},
-		"image":       {"source"},
-		"document":    {"source"},
-		"tool_use":    {"id", "input", "name"},
-		"tool_result": {"content", "tool_use_id"},
-	}
-	for _, name := range requiredByType[typeName] {
-		if _, present := object[name]; present {
-			continue
-		}
-		category := llmprotocol.ErrorInvalidRequest
-		code := "invalid_content_variant"
-		message := "Anthropic content is missing the required field: " + name
-		if providerOutput {
-			category = llmprotocol.ErrorUpstreamUnavailable
-			code = "invalid_response_content"
-			message = "Anthropic provider output is missing the required field: " + name
-		}
-		return llmprotocol.NewError(category, code, message, nil)
-	}
-	return nil
-}
-
-func rejectAnthropicContentVariantFields(
-	object map[string]json.RawMessage,
-	allowed []string,
-	providerOutput bool,
-) error {
-	known := []string{
-		"cache_control", "caller", "citations", "content", "context", "data", "file_id", "id", "input",
-		"is_error", "name", "signature", "source", "text", "thinking", "title", "tool_use_id",
-		"toolset_name", "transformations", "type",
-	}
-	allowedSet := make(map[string]struct{}, len(allowed))
-	for _, name := range allowed {
-		allowedSet[name] = struct{}{}
-	}
-	for _, name := range known {
-		if _, present := object[name]; !present {
-			continue
-		}
-		if _, valid := allowedSet[name]; valid {
-			continue
-		}
-		category := llmprotocol.ErrorInvalidRequest
-		code := "invalid_content_variant"
-		message := "Anthropic content includes a field from a different union variant"
-		if providerOutput {
-			category = llmprotocol.ErrorUpstreamUnavailable
-			code = "invalid_response_content"
-			message = "Anthropic provider output mixes content union variants"
-		}
-		return llmprotocol.NewError(category, code, message+": "+name, nil)
-	}
-	return nil
-}
-
-func anthropicContentDiscriminator(body json.RawMessage) (string, error) {
-	var discriminator struct {
-		Type string `json:"type"`
-	}
-	if err := json.Unmarshal(body, &discriminator); err != nil || discriminator.Type == "" {
-		return "", llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "content_type_required", "Anthropic content type is required", err)
-	}
-	return discriminator.Type, nil
-}
-
-func anthropicRequestContentType(body json.RawMessage) (string, error) {
-	typeName, err := anthropicContentDiscriminator(body)
-	if err != nil {
-		return "", err
-	}
-	return typeName, nil
-}
-
-func anthropicResponseContentType(body json.RawMessage) (string, error) {
-	typeName, err := anthropicContentDiscriminator(body)
-	if err != nil {
-		return "", err
-	}
-	switch typeName {
-	case "text", "thinking", "tool_use":
-		return typeName, nil
-	case "redacted_thinking":
-		return "", llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "redacted_reasoning", "redacted reasoning cannot be translated", nil)
-	default:
-		return "", llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_content", "Anthropic response content type is unsupported", nil)
-	}
-}
-
-func validateAnthropicContentExtensions(block anthropicContentWire, providerOutput bool) error {
-	// A request block carries its citations unread; only provider output is
-	// refused, because the Router would have to generate the response-side
-	// spans it cannot derive.
-	if providerOutput && len(block.Citations) > 0 {
-		return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_citations", "Anthropic citations are not supported by the neutral contract", nil)
-	}
-	return rejectUnsupportedRequestFields(map[string]json.RawMessage{
-		"content.context":         block.Context,
-		"content.title":           block.Title,
-		"content.toolset_name":    block.ToolsetName,
-		"content.transformations": block.Transformations,
-	})
 }
 
 func decodeAnthropicTypedContent(

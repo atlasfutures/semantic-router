@@ -498,6 +498,16 @@ func appendLossy(diagnostics *llmprotocol.Diagnostics, policy llmprotocol.Policy
 }
 
 func rejectUnsupportedRequestField(field string, value json.RawMessage) error {
+	return rejectUnsupportedRequestFieldAt("", field, value)
+}
+
+// rejectUnsupportedRequestFieldAt is rejectUnsupportedRequestField for a field
+// inside a repeated element. The category, code and client message are the
+// same; the difference is the cause, which says which element the field sat
+// on. The cause is the part that reaches the ingress_request_refused line, and
+// a refused body is never stored, so it is the only record of where to look.
+// An empty location keeps the plain form, which already names the field.
+func rejectUnsupportedRequestFieldAt(location, field string, value json.RawMessage) error {
 	trimmed := bytes.TrimSpace(value)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return nil
@@ -506,11 +516,22 @@ func rejectUnsupportedRequestField(field string, value json.RawMessage) error {
 		llmprotocol.ErrorUnsupportedFeature,
 		"unsupported_"+strings.ReplaceAll(field, ".", "_"),
 		field+" is not supported by the protocol-neutral request contract",
-		nil,
+		unsupportedFieldCause(location, field),
 	)
 }
 
+func unsupportedFieldCause(location, field string) error {
+	if location == "" {
+		return nil
+	}
+	return fmt.Errorf("%s: field %q", location, field)
+}
+
 func rejectUnsupportedRequestFields(fields map[string]json.RawMessage) error {
+	return rejectUnsupportedRequestFieldsAt("", fields)
+}
+
+func rejectUnsupportedRequestFieldsAt(location string, fields map[string]json.RawMessage) error {
 	names := make([]string, 0, len(fields))
 	for name, value := range fields {
 		trimmed := bytes.TrimSpace(value)
@@ -522,7 +543,7 @@ func rejectUnsupportedRequestFields(fields map[string]json.RawMessage) error {
 	if len(names) == 0 {
 		return nil
 	}
-	return rejectUnsupportedRequestField(names[0], fields[names[0]])
+	return rejectUnsupportedRequestFieldAt(location, names[0], fields[names[0]])
 }
 
 // appendPresentationDrop records a client control the target wire format cannot
