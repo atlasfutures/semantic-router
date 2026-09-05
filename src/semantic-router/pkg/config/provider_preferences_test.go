@@ -164,3 +164,74 @@ func TestProviderPreferencesRejectedByCanonicalLoad(t *testing.T) {
 		t.Fatal("canonical load accepted provider_preferences that pins nothing")
 	}
 }
+
+// The cell lists providers.models[] under qualified arm names, and
+// dispatch.logicalModel carries that same qualified name. The lookup is an
+// exact match on it, so two arms of one bare model pin independently: a
+// thinking-off arm and a thinking-on arm are separate entries with separate
+// pins, and neither may answer for the other.
+func TestProviderPreferencesResolvePerQualifiedArm(t *testing.T) {
+	parsed, err := ParseYAMLBytes([]byte(`
+version: v0.3
+providers:
+  defaults:
+    default_model: deepseek/deepseek-v4-flash@thinking-off
+  models:
+    - name: deepseek/deepseek-v4-flash@thinking-off
+      provider_preferences:
+        order:
+          - deepinfra
+        allow_fallbacks: false
+      backend_refs:
+        - base_url: https://openrouter.ai/api/v1
+          provider: openai
+    - name: deepseek/deepseek-v4-flash@thinking-on
+      provider_preferences:
+        order:
+          - together
+        allow_fallbacks: false
+      backend_refs:
+        - base_url: https://openrouter.ai/api/v1
+          provider: openai
+    - name: deepseek/deepseek-v4-pro@thinking-on
+      backend_refs:
+        - base_url: https://openrouter.ai/api/v1
+          provider: openai
+routing:
+  modelCards:
+    - name: deepseek/deepseek-v4-flash@thinking-off
+    - name: deepseek/deepseek-v4-flash@thinking-on
+    - name: deepseek/deepseek-v4-pro@thinking-on
+  decisions:
+    - name: default
+      rules:
+        operator: AND
+      modelRefs:
+        - model: deepseek/deepseek-v4-flash@thinking-off
+`))
+	if err != nil {
+		t.Fatalf("ParseYAMLBytes: %v", err)
+	}
+
+	for arm, wantFirst := range map[string]string{
+		"deepseek/deepseek-v4-flash@thinking-off": "deepinfra",
+		"deepseek/deepseek-v4-flash@thinking-on":  "together",
+	} {
+		preferences := parsed.ProviderPreferencesForModel(arm)
+		if preferences == nil {
+			t.Fatalf("the qualified arm %q did not resolve a pin", arm)
+		}
+		if len(preferences.Order) != 1 || preferences.Order[0] != wantFirst {
+			t.Fatalf("arm %q resolved the wrong pin: %#v", arm, preferences.Order)
+		}
+	}
+
+	// An arm that pins nothing must not inherit its sibling's pin, and the bare
+	// model name is not an arm at all.
+	if preferences := parsed.ProviderPreferencesForModel("deepseek/deepseek-v4-pro@thinking-on"); preferences != nil {
+		t.Fatalf("an unpinned arm inherited a pin: %#v", preferences)
+	}
+	if preferences := parsed.ProviderPreferencesForModel("deepseek/deepseek-v4-flash"); preferences != nil {
+		t.Fatalf("the bare model name resolved a pin: %#v", preferences)
+	}
+}
