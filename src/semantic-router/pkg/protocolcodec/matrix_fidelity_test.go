@@ -23,11 +23,20 @@ func TestUnknownPreservationIsOnlyExactUnchangedSameFormat(t *testing.T) {
 	if err != nil || !bytes.Equal(same.Body, body) {
 		t.Fatalf("same-format replay = %s, %v", same.Body, err)
 	}
-	if _, err := engine.TranslateRequest(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1, body, nil); err == nil {
-		t.Fatal("cross-format translation silently dropped an unknown field")
+	// Cross-format and mutated same-format both lose the member, and neither
+	// loses it silently: the carrier counts the drop by the name the client
+	// wrote. A refusal here would cost the turn instead of the member.
+	cross, err := engine.TranslateRequest(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1, body, nil)
+	if err != nil {
+		t.Fatalf("cross-format translation refused an unknown field: %v", err)
 	}
-	if _, err := engine.TranslateRequest(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1, body, func(*llmprotocol.Request) error { return nil }); err == nil {
-		t.Fatal("mutated same-format translation silently dropped an unknown field")
+	requireDroppedField(t, cross.Diagnostics, "future_field")
+	mutated, err := engine.TranslateRequest(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1, body, func(*llmprotocol.Request) error { return nil })
+	if err != nil {
+		t.Fatalf("mutated same-format translation refused an unknown field: %v", err)
+	}
+	if !bytes.Contains(mutated.Body, []byte(`"future_field"`)) {
+		t.Fatalf("mutated same-format translation dropped an unknown field: %s", mutated.Body)
 	}
 }
 
@@ -74,10 +83,15 @@ func TestPolicyEnumsAndEveryLimitAreClosed(t *testing.T) {
 
 func TestCrossFormatFidelityAndCapabilityFailuresAreExplicit(t *testing.T) {
 	engine := NewBuiltinEngine()
+	// Messages has no developer role. The turn runs with the instruction
+	// carried as system authority and the loss counted, because refusing it
+	// costs the whole conversation and the gateway does not replay a 400.
 	developer := []byte(`{"model":"source-model","messages":[{"role":"developer","content":"preserve authority"},{"role":"user","content":"hello"}],"max_tokens":8}`)
-	if _, err := engine.TranslateRequest(llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1, developer, nil); err == nil {
-		t.Fatal("developer authority was silently collapsed")
+	collapsed, err := engine.TranslateRequest(llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1, developer, nil)
+	if err != nil {
+		t.Fatalf("developer authority refused the turn: %v", err)
 	}
+	requireApproximatedField(t, collapsed.Diagnostics, "instructions.role")
 	strictTool := []byte(`{"model":"source-model","messages":[{"role":"user","content":"hello"}],"max_tokens":8,"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"},"strict":true}}]}`)
 	translatedTool, err := engine.TranslateRequest(llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1, strictTool, nil)
 	if err != nil {

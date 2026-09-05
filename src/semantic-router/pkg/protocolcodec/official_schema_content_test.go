@@ -3,8 +3,8 @@ package protocolcodec
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
@@ -230,7 +230,10 @@ func assertResponsesReasoningContent(t *testing.T, response llmprotocol.Response
 	}
 }
 
-func TestOfficialUnsupportedAnthropicToolDiscriminatorsAreTyped(t *testing.T) {
+// Every official server-tool discriminator now passes ingress and comes back
+// out of a Messages target byte for byte. Refusing one refused the turn around
+// it, and on this auth path nothing strips a server tool before the cell.
+func TestOfficialAnthropicServerToolDiscriminatorsAreCarried(t *testing.T) {
 	unsupported := fields(
 		"bash_20250124", "browser_toolset_20260801",
 		"code_execution_20250522", "code_execution_20250825", "code_execution_20260120", "code_execution_20260521",
@@ -258,10 +261,21 @@ func TestOfficialUnsupportedAnthropicToolDiscriminatorsAreTyped(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, _, _, err = engine.DecodeRequest(llmprotocol.AnthropicMessagesV1, body)
-			var protocolError *llmprotocol.ProtocolError
-			if !errors.As(err, &protocolError) || protocolError.Category != llmprotocol.ErrorUnsupportedFeature || protocolError.Code != "unsupported_tool" {
-				t.Fatalf("tool %q returned %T %v, want unsupported_feature/unsupported_tool", toolType, err, err)
+			request, _, _, err := engine.DecodeRequest(llmprotocol.AnthropicMessagesV1, body)
+			if err != nil {
+				t.Fatalf("server tool %q was refused at ingress: %v", toolType, err)
+			}
+			if len(request.Tools) != 1 || request.Tools[0].Type != toolType || !request.Tools[0].ServerTool() {
+				t.Fatalf("server tool %q lost its type: %+v", toolType, request.Tools)
+			}
+			encoded, err := engine.EncodeRequest(llmprotocol.AnthropicMessagesV1, request, llmprotocol.Envelope{})
+			if err != nil {
+				t.Fatalf("Messages target refused server tool %q: %v", toolType, err)
+			}
+			for _, member := range []string{toolType, "variant_specific_field"} {
+				if !strings.Contains(string(encoded.Body), member) {
+					t.Fatalf("Messages target dropped %q from server tool %q: %s", member, toolType, encoded.Body)
+				}
 			}
 		})
 	}
@@ -416,10 +430,26 @@ func TestOfficialUnsupportedToolChoiceDiscriminatorsAreTyped(t *testing.T) {
 			assertProtocolError(t, err, llmprotocol.ErrorUnsupportedFeature, "unsupported_tool_choice")
 		})
 	}
-	t.Run("chat/function rejects custom payload", func(t *testing.T) {
+	// A member of another variant no longer decides the outcome on its own.
+	// The stray "custom" payload is carried, so the choice is read as the
+	// function variant it names, and the refusal that remains is the one that
+	// still matters: no tool called "lookup" was declared.
+	t.Run("chat/function choice still needs a declared tool", func(t *testing.T) {
 		body := []byte(`{"model":"m","messages":[{"role":"user","content":"hello"}],"tool_choice":{"type":"function","function":{"name":"lookup"},"custom":{"name":"wrong"}}}`)
 		_, _, _, err := engine.DecodeRequest(llmprotocol.OpenAIChatV1, body)
-		assertProtocolError(t, err, llmprotocol.ErrorInvalidRequest, "invalid_tool_choice")
+		assertProtocolError(t, err, llmprotocol.ErrorInvalidRequest, "unknown_tool_choice")
+	})
+	t.Run("chat/function choice with a stray member is accepted", func(t *testing.T) {
+		body := []byte(`{"model":"m","messages":[{"role":"user","content":"hello"}],` +
+			`"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}],` +
+			`"tool_choice":{"type":"function","function":{"name":"lookup"},"custom":{"name":"wrong"}}}`)
+		request, _, _, err := engine.DecodeRequest(llmprotocol.OpenAIChatV1, body)
+		if err != nil {
+			t.Fatalf("a declared function choice beside a stray member was refused: %v", err)
+		}
+		if request.ToolChoice.Mode != llmprotocol.ToolChoiceNamed || request.ToolChoice.Name != "lookup" {
+			t.Fatalf("tool choice = %+v, want the named function the client asked for", request.ToolChoice)
+		}
 	})
 
 	responsesUnsupported := fields(
@@ -454,15 +484,26 @@ func TestOfficialUnsupportedToolChoiceDiscriminatorsAreTyped(t *testing.T) {
 			t.Fatalf("image-generation tool choice = %+v, %v", request.ToolChoice, err)
 		}
 	})
-	t.Run("responses/image_generation rejects function payload", func(t *testing.T) {
+	// The discriminator decides the variant. A member beside it that belongs to
+	// another variant is a member this contract does not name, so it no longer
+	// refuses the turn: the choice is read as image generation and the request
+	// routes.
+	t.Run("responses/image_generation accepts a stray member", func(t *testing.T) {
 		body := []byte(`{"model":"m","input":"hello","tools":[{"type":"image_generation"}],"tool_choice":{"type":"image_generation","name":"lookup"}}`)
-		_, _, _, err := engine.DecodeRequest(llmprotocol.OpenAIResponsesV1, body)
-		assertProtocolError(t, err, llmprotocol.ErrorInvalidRequest, "invalid_json")
+		request, _, _, err := engine.DecodeRequest(llmprotocol.OpenAIResponsesV1, body)
+		if err != nil {
+			t.Fatalf("an image-generation choice beside a stray member was refused: %v", err)
+		}
+		if request.ImageGeneration == nil || request.ToolChoice.Mode != llmprotocol.ToolChoiceImageGeneration {
+			t.Fatalf("image-generation tool choice = %+v, %+v", request.ToolChoice, request.ImageGeneration)
+		}
 	})
-	t.Run("responses/function rejects MCP payload", func(t *testing.T) {
+	// The MCP server label is carried the same way, which leaves the declared
+	// tool list as the only thing a named choice is still checked against.
+	t.Run("responses/function choice still needs a declared tool", func(t *testing.T) {
 		body := []byte(`{"model":"m","input":"hello","tool_choice":{"type":"function","name":"lookup","server_label":"wrong"}}`)
 		_, _, _, err := engine.DecodeRequest(llmprotocol.OpenAIResponsesV1, body)
-		assertProtocolError(t, err, llmprotocol.ErrorInvalidRequest, "invalid_tool_choice")
+		assertProtocolError(t, err, llmprotocol.ErrorInvalidRequest, "unknown_tool_choice")
 	})
 }
 

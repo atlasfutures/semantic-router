@@ -1,0 +1,42 @@
+{
+  "max_completion_tokens": 32,
+  "messages": [
+    {
+      "content": "look it up",
+      "role": "user"
+    },
+    {
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\n            \"query\": \"handbook\"\n          }",
+            "name": "lookup"
+          },
+          "id": "call_lookup",
+          "type": "function"
+        }
+      ]
+    },
+    {
+      "content": "ten",
+      "id": "item_3a3234ffe986ecf50f4eafa2",
+      "role": "tool",
+      "tool_call_id": "call_lookup"
+    }
+  ],
+  "model": "routed-model",
+  "tool_choice": "auto",
+  "tools": [
+    {
+      "function": {
+        "description": "Look up a value",
+        "name": "lookup",
+        "parameters": {
+          "type": "object"
+        }
+      },
+      "type": "function"
+    }
+  ]
+}

@@ -110,11 +110,31 @@
     {
       "name": "assistant_text_citations_unknown_sibling",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "invalid_request",
-          "code": "invalid_json"
-        }
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 32,
+          "messages": [
+            {
+              "content": "hello",
+              "role": "user"
+            },
+            {
+              "content": "hi",
+              "role": "assistant"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "content.citation_style",
+            "action": "dropped"
+          },
+          {
+            "field": "content.citations",
+            "action": "dropped"
+          }
+        ]
       }
     }
   ]

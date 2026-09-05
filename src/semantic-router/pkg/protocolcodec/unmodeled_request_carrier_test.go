@@ -88,18 +88,29 @@ func TestAnthropicUnmodeledTopLevelFieldsDoNotReachAnotherFormat(t *testing.T) {
 	}
 }
 
-// A member the codec does name is still decoded strictly. The carrier widens
-// the request contract; it does not relax the fields inside it.
-func TestAnthropicNamedFieldsStayStrictBesideTheCarrier(t *testing.T) {
-	engine := NewBuiltinEngine()
+// The carrier reaches inside a block the contract does name. A protocol moves
+// by adding a member to an existing block as often as by adding a new block
+// type, so a member the block does not name is carried rather than refused,
+// and a Messages destination gets its bytes back unchanged.
+func TestAnthropicUnknownMemberInsideANamedBlockIsCarried(t *testing.T) {
 	body := `{
 	  "model": "claude-sonnet-4-5",
 	  "max_tokens": 64,
-	  "messages": [{"role": "user", "content": [{"type": "text", "text": "hi", "unknown_member": 1}]}],
+	  "messages": [{"role": "user", "content": [
+	    {"type": "text", "text": "hi", "unknown_member": {"nested": [1, "two"]}}
+	  ]}],
 	  "context_management": {"edits": []}
 	}`
-	if _, _, _, err := engine.DecodeRequestForMutation(llmprotocol.AnthropicMessagesV1, []byte(body)); err == nil {
-		t.Fatal("an unknown member inside a named block was accepted")
+	routed := routeAnthropicRequest(t, body, llmprotocol.AnthropicMessagesV1)
+	if !bytes.Contains(routed, []byte(`"unknown_member":{"nested":[1,"two"]}`)) {
+		t.Fatalf("the member inside the named block did not survive the round trip: %s", routed)
+	}
+	dropped := routeAnthropicRequest(t, body, llmprotocol.OpenAIChatV1)
+	if bytes.Contains(dropped, []byte("unknown_member")) {
+		t.Fatalf("a member the target cannot name reached it: %s", dropped)
+	}
+	if !bytes.Contains(dropped, []byte("hi")) {
+		t.Fatalf("dropping the member also dropped the text it sat on: %s", dropped)
 	}
 }
 

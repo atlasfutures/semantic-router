@@ -54,13 +54,23 @@ func TestApplySemanticRequestParamsBlocksAndCapsNeutralFields(t *testing.T) {
 	}
 }
 
-func TestProtocolCodecRejectsUnknownFieldsBeforeRequestParamPlugins(t *testing.T) {
+// Accept-by-default carries an unknown wire field instead of refusing it. The
+// rule the plugins depend on is unchanged: the field never becomes semantic
+// request state, so no plugin can read it or route on it. It sits on the
+// carrier, which only the encoder for its own wire format touches.
+func TestProtocolCodecCarriesUnknownFieldsPastRequestParamPlugins(t *testing.T) {
 	engine := protocolcodec.NewBuiltinEngine()
-	_, _, _, err := engine.DecodeRequest(
+	request, _, _, err := engine.DecodeRequest(
 		llmprotocol.OpenAIChatV1,
 		[]byte(`{"model":"m","messages":[{"role":"user","content":"hello"}],"future_field":true}`),
 	)
-	if err == nil {
-		t.Fatal("unknown wire field reached semantic request plugins")
+	if err != nil {
+		t.Fatalf("an unknown wire field was refused: %v", err)
+	}
+	if request.Unmodeled.Len() != 1 || request.Unmodeled.Fields["future_field"] == nil {
+		t.Fatalf("unknown wire field was not carried: %+v", request.Unmodeled)
+	}
+	if request.Model != "m" || len(request.Messages) != 1 {
+		t.Fatalf("carrying the field changed semantic request state: %+v", request)
 	}
 }

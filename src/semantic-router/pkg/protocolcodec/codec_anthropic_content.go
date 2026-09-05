@@ -2,6 +2,7 @@ package protocolcodec
 
 import (
 	"encoding/json"
+	"reflect"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
@@ -78,7 +79,16 @@ func decodeAnthropicContentBlock(
 	if err := validateAnthropicContentExtensions(block, location, providerOutput); err != nil {
 		return llmprotocol.Content{}, err
 	}
-	return decodeAnthropicTypedContent(typeName, block, policy)
+	content, err := decodeAnthropicTypedContent(typeName, block, policy)
+	if err != nil || providerOutput {
+		// Provider output is not carried: a member the upstream added to a
+		// completion is dropped and reported by the response leg's own policy,
+		// and re-emitting it into a client answer would assert a shape no
+		// client contract states.
+		return content, err
+	}
+	content.Extensions = captureUnnamedMembers(body, reflect.TypeOf(anthropicContentWire{}), llmprotocol.AnthropicMessagesV1)
+	return content, nil
 }
 
 func decodeAnthropicTypedContent(
@@ -474,9 +484,21 @@ func appendAnthropicMessages(wire *anthropicRequestWire, messages []llmprotocol.
 }
 
 func appendAnthropicTools(wire *anthropicRequestWire, tools []llmprotocol.Tool) error {
-	encoded := make([]anthropicToolWire, 0, len(tools))
+	encoded := make([]json.RawMessage, 0, len(tools))
 	for _, tool := range tools {
-		encoded = append(encoded, anthropicToolWire{Name: tool.Name, Description: tool.Description, InputSchema: tool.InputSchema, Strict: tool.Strict, CacheControl: encodeAnthropicCacheControl(tool.Cache)})
+		body, err := json.Marshal(anthropicToolWire{
+			Name: tool.Name, Description: tool.Description, InputSchema: tool.InputSchema,
+			Strict: tool.Strict, Type: tool.Type, CacheControl: encodeAnthropicCacheControl(tool.Cache),
+		})
+		if err != nil {
+			return llmprotocol.NewError(llmprotocol.ErrorInternal, "encode_wire", "wire request could not be encoded", err)
+		}
+		if carriedForTarget(tool.Extensions, llmprotocol.AnthropicMessagesV1) {
+			if body, err = mergeUnnamedMembersInto(body, tool.Extensions); err != nil {
+				return err
+			}
+		}
+		encoded = append(encoded, body)
 	}
 	if len(encoded) == 0 {
 		return nil
@@ -543,6 +565,11 @@ func encodeAnthropicContent(contents []llmprotocol.Content) (json.RawMessage, er
 		encoded, err := json.Marshal(block)
 		if err != nil {
 			return nil, llmprotocol.NewError(llmprotocol.ErrorInternal, "encode_wire", "wire request could not be encoded", err)
+		}
+		if carriedForTarget(content.Extensions, llmprotocol.AnthropicMessagesV1) {
+			if encoded, err = mergeUnnamedMembersInto(encoded, content.Extensions); err != nil {
+				return nil, err
+			}
 		}
 		blocks = append(blocks, encoded)
 	}

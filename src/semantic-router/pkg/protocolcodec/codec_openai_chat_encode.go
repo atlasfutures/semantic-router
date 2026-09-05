@@ -60,11 +60,15 @@ func (OpenAIChatCodec) EncodeRequest(request llmprotocol.Request, envelope llmpr
 func chatRequestDiagnostics(request llmprotocol.Request, policy llmprotocol.Policy) (llmprotocol.Diagnostics, error) {
 	var diagnostics llmprotocol.Diagnostics
 	const citationReason = "a Chat content part carries no block citations"
+	appendToolExtensionDrops(&diagnostics, request.Tools, llmprotocol.OpenAIChatV1, policy)
+	appendServerToolDrops(&diagnostics, request.Tools, request.Trusted.SourceFormat, llmprotocol.OpenAIChatV1, policy)
 	for _, instruction := range request.Instructions {
+		appendContentExtensionDrops(&diagnostics, instruction.Content, llmprotocol.OpenAIChatV1, policy)
 		appendChatToolBlockDrops(&diagnostics, instruction.Content, request.Trusted.SourceFormat, policy)
 		appendCitationCarryDrops(&diagnostics, instruction.Content, request.Trusted.SourceFormat, llmprotocol.OpenAIChatV1, policy, citationReason)
 	}
 	for _, message := range request.Messages {
+		appendContentExtensionDrops(&diagnostics, message.Content, llmprotocol.OpenAIChatV1, policy)
 		appendCarriedBlockDrops(&diagnostics, message.Content, llmprotocol.OpenAIChatV1, policy)
 		appendChatToolBlockDrops(&diagnostics, message.Content, request.Trusted.SourceFormat, policy)
 		appendCitationCarryDrops(&diagnostics, message.Content, request.Trusted.SourceFormat, llmprotocol.OpenAIChatV1, policy, citationReason)
@@ -245,8 +249,18 @@ func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) erro
 	return nil
 }
 
+// appendChatTools writes the tools Chat Completions can express. A server tool
+// is not one of them: the source API runs it, so there is no function for the
+// caller to implement and no shape a Chat tool array can hold. Emitting it as
+// a nameless function produced a body the provider refused, which turned a
+// declared web search into a failed turn instead of a routing decision. The
+// drop is counted in chatRequestDiagnostics; the capability gate is what sends
+// the turn to an arm that has the tool.
 func appendChatTools(wire *chatRequestWire, tools []llmprotocol.Tool) {
 	for _, tool := range tools {
+		if tool.ServerTool() {
+			continue
+		}
 		wire.Tools = append(wire.Tools, chatToolWire{Type: "function", Function: chatFunctionDefinitionWire{
 			Name: tool.Name, Description: tool.Description, Parameters: tool.InputSchema, Strict: tool.Strict,
 		}, CacheControl: encodeAnthropicCacheControl(tool.Cache)})

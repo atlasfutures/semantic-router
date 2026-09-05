@@ -218,20 +218,28 @@ func validateRequestTools(tools []Tool, limits Limits) (map[string]struct{}, int
 		if err := validateRequestTool(tool, limits); err != nil {
 			return nil, 0, err
 		}
-		if _, duplicate := namedTools[tool.Name]; duplicate {
+		if _, duplicate := namedTools[tool.Identity()]; duplicate {
 			return nil, 0, NewError(ErrorInvalidRequest, "duplicate_tool", "tool names must be unique", nil)
 		}
 		schemaBytes += len(tool.InputSchema)
 		if limits.SchemaBytes > 0 && schemaBytes > limits.SchemaBytes {
 			return nil, 0, NewError(ErrorInvalidRequest, "schema_limit", "total schema limit exceeded", nil)
 		}
-		namedTools[tool.Name] = struct{}{}
+		namedTools[tool.Identity()] = struct{}{}
 	}
 	return namedTools, schemaBytes, nil
 }
 
+// validateRequestTool checks what a declared tool must state. A callable tool
+// has to name the function the model calls and describe its arguments. A
+// server tool states neither: the source API runs it, and its type is the
+// whole declaration -- {"type":"web_search_20250305"} is the shape Claude Code
+// sends. Refusing that shape refused the turn around it.
 func validateRequestTool(tool Tool, limits Limits) error {
-	if strings.TrimSpace(tool.Name) == "" || len(tool.InputSchema) == 0 || !json.Valid(tool.InputSchema) {
+	if len(tool.InputSchema) > 0 && !json.Valid(tool.InputSchema) {
+		return NewError(ErrorInvalidRequest, "invalid_tool", "tool name and JSON Schema are required", nil)
+	}
+	if !tool.ServerTool() && (strings.TrimSpace(tool.Name) == "" || len(tool.InputSchema) == 0) {
 		return NewError(ErrorInvalidRequest, "invalid_tool", "tool name and JSON Schema are required", nil)
 	}
 	if exceeds(tool.Name, limits.ToolNameBytes) {
@@ -247,6 +255,9 @@ func validateRequestTool(tool Tool, limits Limits) error {
 	}
 	if err := validateCacheDirective(tool.Cache); err != nil {
 		return err
+	}
+	if len(tool.InputSchema) == 0 {
+		return nil
 	}
 	return validateSchemaObject(tool.InputSchema, "tool schema", limits)
 }

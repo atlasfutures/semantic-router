@@ -1,0 +1,16 @@
+{
+  "max_tokens": 32,
+  "messages": [
+    {
+      "content": [
+        {
+          "future_field": true,
+          "text": "hello",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "routed-model"
+}

@@ -89,6 +89,11 @@ type Content struct {
 	Signature      string
 	Reasoning      ReasoningScope
 	Unmodeled      *UnmodeledBlock
+	// Extensions holds the members of this block, at any depth, that the wire
+	// contract the block came from does not name. Unmodeled carries a whole
+	// block the contract cannot name at all; Extensions carries the parts of
+	// a block it can.
+	Extensions *UnmodeledFields
 }
 
 // CacheDirective marks a request block or tool definition as an explicit
@@ -157,6 +162,31 @@ type Tool struct {
 	Strict      *bool
 	InputSchema json.RawMessage
 	Cache       *CacheDirective
+	// Type is the tool's own discriminator. An empty value and "custom" both
+	// mean a tool the model calls and the caller runs. Every other value names
+	// a tool the source API runs itself -- web search, the advisor -- which a
+	// target format that has no such tool cannot express.
+	Type string
+	// Extensions holds the members of this tool that the source contract does
+	// not name.
+	Extensions *UnmodeledFields
+}
+
+// ServerTool reports whether the source API runs this tool itself rather than
+// handing the call back to the caller. A server tool is identified by its type
+// alone: it declares no schema the Router could validate and need not name a
+// function, because nothing outside the source API ever invokes it.
+func (tool Tool) ServerTool() bool {
+	return tool.Type != "" && tool.Type != "custom"
+}
+
+// Identity is what makes two declared tools the same tool. A callable tool is
+// its name; a server tool that states no name is its type.
+func (tool Tool) Identity() string {
+	if tool.Name != "" {
+		return tool.Name
+	}
+	return tool.Type
 }
 
 type ToolChoiceMode string

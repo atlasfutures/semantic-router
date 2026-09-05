@@ -64,47 +64,32 @@ func carriedAnthropicBlock(typeName string, body json.RawMessage) llmprotocol.Co
 }
 
 // decodeWireCapturingUnmodeled decodes a client request object and returns the
-// members the wire struct does not name instead of refusing them. Every other
-// document rule still applies -- size, UTF-8, duplicate keys, depth, trailing
-// data -- and the members the struct does name are still decoded strictly,
-// including their nested values. Only the top level of the request object is
-// widened, and the bytes of every member are left exactly as the client sent
-// them.
+// members the wire contract does not name instead of refusing them. Every
+// other document rule still applies -- size, UTF-8, duplicate keys, depth,
+// trailing data, and the canonical spelling of every member the struct does
+// name. The bytes of a captured member are left exactly as the client sent
+// them, at whatever depth it sent them.
 func decodeWireCapturingUnmodeled(
 	body []byte,
 	target any,
 	policy llmprotocol.Policy,
-) (map[string]json.RawMessage, error) {
+	format llmprotocol.WireFormat,
+) (*llmprotocol.UnmodeledFields, error) {
 	if err := validateClientJSONDocument(body, policy, true); err != nil {
 		return nil, err
 	}
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(body, &object); err != nil {
-		return nil, llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_json", "request JSON is invalid", err)
+	targetType := dereferenceJSONType(reflect.TypeOf(target))
+	if rejectUnknownFields(body, policy) {
+		if err := validateNamedMemberValues(body, targetType); err != nil {
+			return nil, err
+		}
+	} else if err := validateCanonicalJSONFieldNames(body, reflect.TypeOf(target), policy); err != nil {
+		return nil, llmprotocol.NewError(
+			llmprotocol.ErrorInvalidRequest, "invalid_json",
+			"request JSON contains a non-canonical field", err,
+		)
 	}
-	named := exactJSONStructFields(dereferenceJSONType(reflect.TypeOf(target)))
-	strict := rejectUnknownFields(body, policy)
-	var unmodeled map[string]json.RawMessage
-	for name, value := range object {
-		fieldType, found := named[name]
-		if !found {
-			if unmodeled == nil {
-				unmodeled = make(map[string]json.RawMessage)
-			}
-			unmodeled[name] = value
-			continue
-		}
-		if !strict {
-			continue
-		}
-		if err := validateExactJSONValue(value, dereferenceJSONType(fieldType)); err != nil {
-			return nil, llmprotocol.NewError(
-				llmprotocol.ErrorInvalidRequest, "invalid_json",
-				"request JSON contains a non-canonical field",
-				fmt.Errorf("field %q: %w", name, err),
-			)
-		}
-	}
+	captured := captureUnnamedMembers(body, targetType, format)
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	if err := decoder.Decode(target); err != nil {
 		return nil, llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_json", "request JSON is invalid", err)
@@ -112,20 +97,32 @@ func decodeWireCapturingUnmodeled(
 	if err := requireEOF(decoder); err != nil {
 		return nil, llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "trailing_json", "request body contains trailing JSON", err)
 	}
-	return unmodeled, nil
+	return captured, nil
 }
 
-// unmodeledRequestFields builds the carrier for one decoded request. An empty
-// set yields no carrier, so a body with nothing unnamed decodes exactly as it
-// did before.
-func unmodeledRequestFields(
-	format llmprotocol.WireFormat,
-	fields map[string]json.RawMessage,
-) *llmprotocol.UnmodeledFields {
-	if len(fields) == 0 {
-		return nil
+// validateNamedMemberValues keeps the strict rule for a policy that still
+// holds it: the top level is widened, and every member the struct does name is
+// decoded exactly, nested values included.
+func validateNamedMemberValues(body []byte, targetType reflect.Type) error {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(body, &object); err != nil {
+		return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_json", "request JSON is invalid", err)
 	}
-	return &llmprotocol.UnmodeledFields{Format: format, Fields: fields}
+	named := exactJSONStructFields(targetType)
+	for name, value := range object {
+		fieldType, found := named[name]
+		if !found {
+			continue
+		}
+		if err := validateExactJSONValue(value, dereferenceJSONType(fieldType)); err != nil {
+			return llmprotocol.NewError(
+				llmprotocol.ErrorInvalidRequest, "invalid_json",
+				"request JSON contains a non-canonical field",
+				fmt.Errorf("field %q: %w", name, err),
+			)
+		}
+	}
+	return nil
 }
 
 // mergeUnmodeledFields re-emits carried members into an encoded request body.
@@ -140,26 +137,14 @@ func mergeUnmodeledFields(
 	policy llmprotocol.Policy,
 ) ([]byte, error) {
 	carrier := request.Unmodeled
-	if carrier.Len() == 0 {
+	if carrier.Empty() {
 		return body, nil
 	}
 	if carrier.Format != target {
-		for _, name := range sortedFieldNames(carrier.Fields) {
-			appendUnmodeledDrop(diagnostics, policy, carrier.Format, target, name)
-		}
+		appendUnnamedMemberDrops(diagnostics, policy, carrier, target, "")
 		return body, nil
 	}
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(body, &object); err != nil {
-		return nil, llmprotocol.NewError(llmprotocol.ErrorInternal, "encode_wire", "wire request could not be encoded", err)
-	}
-	for name, value := range carrier.Fields {
-		if _, claimed := object[name]; claimed {
-			continue
-		}
-		object[name] = value
-	}
-	return marshalWire(object)
+	return mergeUnnamedMembersInto(body, carrier)
 }
 
 func appendUnmodeledDrop(

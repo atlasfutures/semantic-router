@@ -210,7 +210,8 @@ type responsesAnnotationWire struct {
 
 func (OpenAIResponsesCodec) DecodeRequest(body []byte, policy llmprotocol.Policy) (llmprotocol.Request, llmprotocol.Envelope, llmprotocol.Diagnostics, error) {
 	var wire responsesRequestWire
-	if err := decodeWire(body, &wire, policy); err != nil {
+	unmodeled, err := decodeWireCapturingUnmodeled(body, &wire, policy, llmprotocol.OpenAIResponsesV1)
+	if err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}
 	if err := rejectUnsupportedRequestFields(map[string]json.RawMessage{
@@ -237,6 +238,7 @@ func (OpenAIResponsesCodec) DecodeRequest(body []byte, policy llmprotocol.Policy
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}
 	request := decodeResponsesBaseRequest(wire, conversationID)
+	request.Unmodeled = unmodeled
 	if err := decodeResponsesReasoningRequest(wire.Reasoning, &request); err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}

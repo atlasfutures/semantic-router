@@ -1,0 +1,10 @@
+{
+  "future_field": true,
+  "messages": [
+    {
+      "content": "hello",
+      "role": "user"
+    }
+  ],
+  "model": "routed-model"
+}

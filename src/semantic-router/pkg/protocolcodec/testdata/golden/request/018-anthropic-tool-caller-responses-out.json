@@ -1,0 +1,46 @@
+{
+  "input": [
+    {
+      "content": [
+        {
+          "text": "look it up",
+          "type": "input_text"
+        }
+      ],
+      "id": "item_6a32e29c376158d871e9638e",
+      "role": "user",
+      "type": "message"
+    },
+    {
+      "arguments": "{\n            \"query\": \"handbook\"\n          }",
+      "call_id": "call_lookup",
+      "id": "item_3c86696367ede4d56c0da3b8",
+      "name": "lookup",
+      "type": "function_call"
+    },
+    {
+      "call_id": "call_lookup",
+      "id": "item_3a3234ffe986ecf50f4eafa2",
+      "output": [
+        {
+          "text": "ten",
+          "type": "input_text"
+        }
+      ],
+      "type": "function_call_output"
+    }
+  ],
+  "max_output_tokens": 32,
+  "model": "routed-model",
+  "tool_choice": "auto",
+  "tools": [
+    {
+      "description": "Look up a value",
+      "name": "lookup",
+      "parameters": {
+        "type": "object"
+      },
+      "type": "function"
+    }
+  ]
+}

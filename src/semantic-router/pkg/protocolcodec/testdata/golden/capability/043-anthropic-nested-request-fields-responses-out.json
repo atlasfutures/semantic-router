@@ -36,11 +36,30 @@
     {
       "name": "document_file",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_content_title"
-        }
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "file_id": "file_document",
+                  "type": "input_file"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "max_output_tokens": 32,
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "content.title",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {
@@ -63,11 +82,30 @@
     {
       "name": "image_transformations",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_content_transformations"
-        }
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "image_url": "https://example.com/image.png",
+                  "type": "input_image"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "max_output_tokens": 32,
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "content.transformations",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {
@@ -107,21 +145,80 @@
     {
       "name": "tool_allowed_callers",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_tools_allowed_callers"
-        }
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "input_text"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "max_output_tokens": 32,
+          "model": "routed-model",
+          "tool_choice": "auto",
+          "tools": [
+            {
+              "description": "Look up a value",
+              "name": "lookup",
+              "parameters": {
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        },
+        "diagnostics": [
+          {
+            "field": "tools.allowed_callers",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {
       "name": "tool_defer_loading",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_tools_defer_loading"
-        }
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "input_text"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "max_output_tokens": 32,
+          "model": "routed-model",
+          "tool_choice": "auto",
+          "tools": [
+            {
+              "name": "lookup",
+              "parameters": {
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        },
+        "diagnostics": [
+          {
+            "field": "tools.defer_loading",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {
@@ -166,11 +263,40 @@
     {
       "name": "tool_input_examples",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_tools_input_examples"
-        }
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "input_text"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "max_output_tokens": 32,
+          "model": "routed-model",
+          "tool_choice": "auto",
+          "tools": [
+            {
+              "name": "lookup",
+              "parameters": {
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        },
+        "diagnostics": [
+          {
+            "field": "tools.input_examples",
+            "action": "dropped"
+          }
+        ]
       }
     }
   ]

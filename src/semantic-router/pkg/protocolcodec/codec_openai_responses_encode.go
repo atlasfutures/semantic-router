@@ -23,7 +23,10 @@ func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope 
 		return nil, nil, err
 	}
 	var diagnostics llmprotocol.Diagnostics
+	appendToolExtensionDrops(&diagnostics, request.Tools, llmprotocol.OpenAIResponsesV1, policy)
+	appendServerToolDrops(&diagnostics, request.Tools, request.Trusted.SourceFormat, llmprotocol.OpenAIResponsesV1, policy)
 	for _, message := range request.Messages {
+		appendContentExtensionDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
 		appendCarriedBlockDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
 		appendCitationCarryDrops(
 			&diagnostics, message.Content, request.Trusted.SourceFormat, llmprotocol.OpenAIResponsesV1,
@@ -124,6 +127,10 @@ func encodeResponsesTools(input []llmprotocol.Tool, imageGeneration *llmprotocol
 	}
 	tools := make([]responsesToolWire, 0, len(input)+1)
 	for _, tool := range input {
+		if tool.ServerTool() {
+			// Counted in the encoder's diagnostics; see appendServerToolDrops.
+			continue
+		}
 		tools = append(tools, responsesToolWire{Type: "function", Name: tool.Name, Description: tool.Description, Parameters: tool.InputSchema, Strict: tool.Strict})
 	}
 	if imageGeneration != nil {

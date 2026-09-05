@@ -44,6 +44,8 @@ func decodeWireJSON(body []byte, target any, policy llmprotocol.Policy, requireO
 			return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_json", "request JSON contains a non-canonical field", err)
 		}
 		decoder.DisallowUnknownFields()
+	} else if err := validateCanonicalJSONFieldNames(body, reflect.TypeOf(target), policy); err != nil {
+		return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_json", "request JSON contains a non-canonical field", err)
 	}
 	if err := decoder.Decode(target); err != nil {
 		return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_json", "request JSON is invalid", err)
@@ -93,6 +95,13 @@ func decodeProviderValue(body []byte, target any, policy llmprotocol.Policy) err
 func decodeProviderJSON(body []byte, target any, policy llmprotocol.Policy, requireObject bool) error {
 	if err := validateProviderJSONDocument(body, policy, requireObject); err != nil {
 		return err
+	}
+	if policy.UnknownFields == llmprotocol.UnknownCapture {
+		// Accept-by-default is a client-boundary rule. A provider document has
+		// no carrier to hold an unnamed member and no client contract to
+		// re-emit it into, so the upstream leg keeps the strictness it had.
+		// The engine asks for UnknownDropUpstream where it wants pruning.
+		policy.UnknownFields = llmprotocol.UnknownReject
 	}
 	if policy.UnknownFields == llmprotocol.UnknownDropUpstream {
 		pruned, dropped := pruneUnknownProviderFields(body, reflect.TypeOf(target))
@@ -171,6 +180,81 @@ func validateExactJSONValue(body []byte, targetType reflect.Type) error {
 		return nil
 	}
 	return nil
+}
+
+// validateCanonicalJSONFieldNames is the strictness that survives
+// accept-by-default. A member the struct does not name at all is a member of a
+// protocol that moved, and the request carries it. A member that differs from
+// one the struct does name only in case is not that: Go's decoder matches it
+// case-insensitively, so accepting it would silently write a value into a
+// member under a spelling no contract states. Refusing it keeps a second
+// spelling of "text" from overwriting text.
+func validateCanonicalJSONFieldNames(body []byte, targetType reflect.Type, policy llmprotocol.Policy) error {
+	if policy.UnknownFields != llmprotocol.UnknownCapture {
+		return nil
+	}
+	return validateCanonicalJSONValue(body, dereferenceJSONType(targetType))
+}
+
+func validateCanonicalJSONValue(body []byte, targetType reflect.Type) error {
+	if targetType == nil || bytes.Equal(bytes.TrimSpace(body), []byte("null")) ||
+		reflect.PointerTo(targetType).Implements(jsonUnmarshalerType) {
+		return nil
+	}
+	switch targetType.Kind() {
+	case reflect.Struct:
+		return validateCanonicalJSONObject(body, targetType)
+	case reflect.Slice, reflect.Array:
+		return validateCanonicalJSONArray(body, targetType)
+	default:
+		return nil
+	}
+}
+
+func validateCanonicalJSONObject(body []byte, targetType reflect.Type) error {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(body, &object); err != nil {
+		return err
+	}
+	fields := exactJSONStructFields(targetType)
+	for name, value := range object {
+		fieldType, found := fields[name]
+		if !found {
+			if canonical, folded := foldedJSONFieldName(fields, name); folded {
+				return fmt.Errorf("field %q differs from %q only in case", name, canonical)
+			}
+			continue
+		}
+		if err := validateCanonicalJSONValue(value, dereferenceJSONType(fieldType)); err != nil {
+			return fmt.Errorf("field %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func validateCanonicalJSONArray(body []byte, targetType reflect.Type) error {
+	if targetType.Elem() == reflect.TypeOf(json.RawMessage{}) {
+		return nil
+	}
+	var elements []json.RawMessage
+	if err := json.Unmarshal(body, &elements); err != nil {
+		return err
+	}
+	for index, element := range elements {
+		if err := validateCanonicalJSONValue(element, dereferenceJSONType(targetType.Elem())); err != nil {
+			return fmt.Errorf("element %d: %w", index, err)
+		}
+	}
+	return nil
+}
+
+func foldedJSONFieldName(fields map[string]reflect.Type, name string) (string, bool) {
+	for candidate := range fields {
+		if strings.EqualFold(candidate, name) {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 func validateExactJSONObject(body []byte, targetType reflect.Type) error {
@@ -361,6 +445,9 @@ func decodeProviderEventType(body []byte, fallback string, policy llmprotocol.Po
 // unnamed members removed, so anything still unnamed is a client document and
 // is refused exactly as before.
 func rejectUnknownFields(body []byte, policy llmprotocol.Policy) bool {
+	if policy.UnknownFields == llmprotocol.UnknownCapture {
+		return false
+	}
 	if policy.UnknownFields == llmprotocol.UnknownReject ||
 		policy.UnknownFields == llmprotocol.UnknownDropUpstream {
 		return true

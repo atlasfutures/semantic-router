@@ -126,24 +126,27 @@ func TestToolUseCallerIsDroppedAndCountedForChat(t *testing.T) {
 
 // caller belongs to tool_use alone. The canonical-field policy still refuses it
 // on a block that has no such member, and still refuses an unknown sibling.
-func TestCallerOnAnotherBlockAndUnknownSiblingsStayRefused(t *testing.T) {
+// The union rules survive accept-by-default. A member belonging to another
+// variant of the union is not a protocol that moved: it is a block that cannot
+// be read at all, and reading it wrong is worse than refusing it. A member no
+// variant names is the other case, and that one is carried.
+func TestCallerOnAnotherBlockStaysRefusedAndUnknownSiblingsAreCarried(t *testing.T) {
 	engine := NewBuiltinEngine()
-	bodies := map[string]string{
-		"caller on a text block": `{"model":"m","max_tokens":16,"messages":[` +
-			`{"role":"user","content":[{"type":"text","text":"hi",` +
-			`"caller":{"type":"direct"}}]}]}`,
-		"unknown sibling on a tool_use block": `{"model":"m","max_tokens":16,"messages":[` +
-			`{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read",` +
-			`"input":{},"caller":{"type":"direct"},"invented_field":true}]}]}`,
+	callerOnText := `{"model":"m","max_tokens":16,"messages":[` +
+		`{"role":"user","content":[{"type":"text","text":"hi",` +
+		`"caller":{"type":"direct"}}]}]}`
+	if _, _, _, err := engine.DecodeRequest(
+		llmprotocol.AnthropicMessagesV1, []byte(callerOnText),
+	); err == nil {
+		t.Fatal("a member of another union variant was accepted")
 	}
-	for name, body := range bodies {
-		t.Run(name, func(t *testing.T) {
-			if _, _, _, err := engine.DecodeRequest(
-				llmprotocol.AnthropicMessagesV1, []byte(body),
-			); err == nil {
-				t.Fatal("a non-canonical block was accepted")
-			}
-		})
+	unknownSibling := `{"model":"m","max_tokens":16,"messages":[` +
+		`{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read",` +
+		`"input":{},"caller":{"type":"direct"},"invented_field":true}]}]}`
+	if _, _, _, err := engine.DecodeRequest(
+		llmprotocol.AnthropicMessagesV1, []byte(unknownSibling),
+	); err != nil {
+		t.Fatalf("an unknown block sibling was refused: %v", err)
 	}
 }
 
@@ -224,6 +227,18 @@ func requireDroppedField(t *testing.T, diagnostics llmprotocol.Diagnostics, fiel
 		}
 	}
 	t.Fatalf("no dropped diagnostic for %q; recorded: %s", field, strings.Join(names, ", "))
+}
+
+func requireApproximatedField(t *testing.T, diagnostics llmprotocol.Diagnostics, field string) {
+	t.Helper()
+	names := make([]string, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		names = append(names, string(diagnostic.Action)+" "+diagnostic.Field)
+		if diagnostic.Field == field && diagnostic.Action == llmprotocol.DiagnosticApproximated {
+			return
+		}
+	}
+	t.Fatalf("no approximated diagnostic for %q; recorded: %s", field, strings.Join(names, ", "))
 }
 
 func anthropicToolUseBlock(t *testing.T, body []byte) anthropicContentWire {

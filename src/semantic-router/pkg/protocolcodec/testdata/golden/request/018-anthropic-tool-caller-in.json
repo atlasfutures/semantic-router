@@ -1,0 +1,50 @@
+{
+  "model": "client-model",
+  "max_tokens": 32,
+  "messages": [
+    {
+      "role": "user",
+      "content": "look it up"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "call_lookup",
+          "name": "lookup",
+          "input": {
+            "query": "handbook"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "call_lookup",
+          "content": [
+            {
+              "type": "text",
+              "text": "ten"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "lookup",
+      "description": "Look up a value",
+      "input_schema": {
+        "type": "object"
+      }
+    }
+  ]
+}

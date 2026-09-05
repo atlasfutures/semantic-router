@@ -137,14 +137,23 @@ func TestAnthropicRequestCitationsAreDroppedAndCountedForChat(t *testing.T) {
 	}
 }
 
-// The canonical-field policy is unchanged: only citations is carried, and a
-// sibling the Messages contract does not name still fails the turn.
-func TestAnthropicRequestCitationsKeepCanonicalFieldPolicy(t *testing.T) {
+// A sibling the Messages contract does not name is carried now rather than
+// refused: accept-by-default made the block carrier reach every depth. The
+// spelling rule survives it. A member that differs from one the contract does
+// name only in case is not a new member but a second spelling of an old one,
+// and Go would decode it into that member without saying so.
+func TestAnthropicRequestCarriesUnknownSiblingAndRefusesCaseFolded(t *testing.T) {
 	engine := NewBuiltinEngine()
-	body := []byte(`{"model":"client-model","max_tokens":32,"messages":[` +
+	carried := []byte(`{"model":"client-model","max_tokens":32,"messages":[` +
 		`{"role":"assistant","content":[{"type":"text","text":"hi","citations":[],` +
 		`"citation_style":"footnote"}]}]}`)
-	_, _, _, err := engine.DecodeRequest(llmprotocol.AnthropicMessagesV1, body)
+	if _, _, _, err := engine.DecodeRequest(llmprotocol.AnthropicMessagesV1, carried); err != nil {
+		t.Fatalf("an unknown block sibling was refused: %v", err)
+	}
+	folded := []byte(`{"model":"client-model","max_tokens":32,"messages":[` +
+		`{"role":"assistant","content":[{"type":"text","text":"hi",` +
+		`"CACHE_CONTROL":{"type":"ephemeral"}}]}]}`)
+	_, _, _, err := engine.DecodeRequest(llmprotocol.AnthropicMessagesV1, folded)
 	assertProtocolError(t, err, llmprotocol.ErrorInvalidRequest, "invalid_json")
 }
 
@@ -175,23 +184,6 @@ func TestAnthropicBlockRefusalsNameTheBlock(t *testing.T) {
 		at       string
 		field    string
 	}{
-		{
-			name:     "document_title",
-			block:    `{"type":"document","source":{"type":"file","file_id":"file_1"},"title":"Reference"}`,
-			category: llmprotocol.ErrorUnsupportedFeature,
-			code:     "unsupported_content_title",
-			at:       `content block 1 of type "document"`,
-			field:    `"content.title"`,
-		},
-		{
-			name: "image_transformations",
-			block: `{"type":"image","source":{"type":"url","url":"https://example.com/i.png"},` +
-				`"transformations":{"on_load":{"type":"auto"}}}`,
-			category: llmprotocol.ErrorUnsupportedFeature,
-			code:     "unsupported_content_transformations",
-			at:       `content block 1 of type "image"`,
-			field:    `"content.transformations"`,
-		},
 		{
 			name:     "missing_required_member",
 			block:    `{"type":"text"}`,

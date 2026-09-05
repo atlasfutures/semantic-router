@@ -3,7 +3,18 @@ package llmprotocol
 type UnknownFieldPolicy string
 
 const (
-	UnknownReject             UnknownFieldPolicy = "reject"
+	UnknownReject UnknownFieldPolicy = "reject"
+	// UnknownCapture accepts a member no wire struct names, wherever it sits.
+	// A top-level member and a member nested inside a modelled struct are the
+	// same class of fact: the client and the provider agree on something this
+	// contract happens not to model, and the Router routes the conversation
+	// rather than reading it. The member is carried back out to its own wire
+	// format and dropped, with its path counted, by any other target.
+	//
+	// It relaxes exactly one rule. Malformed JSON, a duplicate key, a
+	// non-canonical spelling of a member the struct does name, and every hard
+	// limit still refuse the request.
+	UnknownCapture            UnknownFieldPolicy = "capture"
 	UnknownPreserveSameFormat UnknownFieldPolicy = "preserve_same_format"
 	// UnknownDropUpstream is as strict as UnknownReject on the client
 	// boundary and tolerant on the provider boundary: an upstream response
@@ -84,7 +95,7 @@ type Limits struct {
 
 func DefaultPolicy() Policy {
 	return Policy{
-		UnknownFields: UnknownReject, LossyFeatures: LossyReject,
+		UnknownFields: UnknownCapture, LossyFeatures: LossyReject,
 		MissingStableIDs:   MissingIDGenerateStable,
 		SourcePreservation: SourceBoundedSameFormat,
 		Limits: Limits{

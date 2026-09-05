@@ -51,20 +51,24 @@ func TestIngressProtocolRejectionIsLoggedWithTheMember(t *testing.T) {
 	}
 }
 
-// An unsupported-feature refusal has to name the block as well as the feature.
-// On 2026-09-05 a Claude Code turn was refused with unsupported_citations and
-// the line said only that, so nothing told an operator which of hundreds of
-// blocks in the conversation carried the member. The refused body is the
-// user's conversation and is never stored, so the block type, its index and
-// the field path have to travel on the error itself.
+// A refusal that survives accept-by-default has to name the block as well as
+// the rule. On 2026-09-05 a Claude Code turn was refused with
+// unsupported_citations and the line said only that, so nothing told an
+// operator which of hundreds of blocks in the conversation carried the member.
+// The refused body is the user's conversation and is never stored, so the
+// block type, its index and the field path have to travel on the error itself.
+//
+// The member below belongs to another variant of the content union, which is
+// one of the two classes ingress still refuses: it cannot be read at all, and
+// reading it wrong is worse than refusing it.
 func TestIngressUnsupportedFeatureRefusalNamesTheBlock(t *testing.T) {
 	logs := captureLogs(t)
 	body := []byte(`{"model":"client-model","max_tokens":32,"messages":[{"role":"user",` +
 		`"content":[{"type":"text","text":"look"},` +
-		`{"type":"document","source":{"type":"file","file_id":"file_1"},"title":"Reference"}]}]}`)
+		`{"type":"text","text":"hi","source":{"type":"base64","media_type":"image/png","data":"aW1n"}}]}]}`)
 	_, _, _, err := protocolcodec.NewBuiltinEngine().DecodeRequestForMutation(llmprotocol.AnthropicMessagesV1, body)
 	if err == nil {
-		t.Fatal("an unsupported document title was accepted")
+		t.Fatal("a member of another content union variant was accepted")
 	}
 	recordIngressProtocolError(&RequestContext{
 		RequestID: "rt_ffae7c99-26e", SourceFormat: llmprotocol.AnthropicMessagesV1,
@@ -75,11 +79,11 @@ func TestIngressUnsupportedFeatureRefusalNamesTheBlock(t *testing.T) {
 		t.Fatalf("an ingress rejection wrote %d log lines, want exactly 1", len(entries))
 	}
 	fields := entries[0].ContextMap()
-	if code, _ := fields["code"].(string); code != "unsupported_content_title" {
-		t.Fatalf("code = %q, want unsupported_content_title", code)
+	if code, _ := fields["code"].(string); code != "invalid_content_variant" {
+		t.Fatalf("code = %q, want invalid_content_variant", code)
 	}
 	detail, _ := fields["detail"].(string)
-	for _, want := range []string{"content block 1", `type "document"`, `"content.title"`} {
+	for _, want := range []string{"content block 1", `type "text"`, `"content.source"`} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("detail %q does not carry %s", detail, want)
 		}

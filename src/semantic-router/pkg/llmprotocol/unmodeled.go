@@ -17,14 +17,37 @@ import "encoding/json"
 type UnmodeledFields struct {
 	Format WireFormat
 	Fields map[string]json.RawMessage
+	// Children holds the same carrier for a member the contract does name and
+	// that is itself a modelled object. A protocol moves by adding a member
+	// inside a struct as often as beside it -- cache_control.evict_on_complete
+	// and output_config.task_budget are both that shape -- so the carrier has
+	// to reach the same depth the wire does.
+	Children map[string]*UnmodeledFields
 }
 
-// Len reports how many members the carrier holds. A nil carrier holds none.
+// Len reports how many members the carrier holds at its own level. A nil
+// carrier holds none.
 func (fields *UnmodeledFields) Len() int {
 	if fields == nil {
 		return 0
 	}
 	return len(fields.Fields)
+}
+
+// Empty reports whether the carrier holds nothing at any depth.
+func (fields *UnmodeledFields) Empty() bool {
+	if fields == nil {
+		return true
+	}
+	if len(fields.Fields) > 0 {
+		return false
+	}
+	for _, child := range fields.Children {
+		if !child.Empty() {
+			return false
+		}
+	}
+	return true
 }
 
 // UnmodeledBlock is one content block or input item that the neutral contract

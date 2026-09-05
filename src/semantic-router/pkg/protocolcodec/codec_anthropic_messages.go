@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"reflect"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
@@ -57,26 +58,22 @@ type anthropicMessageWire struct {
 }
 
 type anthropicContentWire struct {
-	Type            string                     `json:"type"`
-	Text            string                     `json:"text,omitempty"`
-	Thinking        string                     `json:"thinking,omitempty"`
-	Signature       string                     `json:"signature,omitempty"`
-	Data            string                     `json:"data,omitempty"`
-	ID              string                     `json:"id,omitempty"`
-	Name            string                     `json:"name,omitempty"`
-	Input           json.RawMessage            `json:"input,omitempty"`
-	ToolUseID       string                     `json:"tool_use_id,omitempty"`
-	Content         json.RawMessage            `json:"content,omitempty"`
-	IsError         *bool                      `json:"is_error,omitempty"`
-	Source          *anthropicMediaSourceWire  `json:"source,omitempty"`
-	Citations       json.RawMessage            `json:"citations,omitempty"`
-	CacheControl    *anthropicCacheControlWire `json:"cache_control,omitempty"`
-	Caller          json.RawMessage            `json:"caller,omitempty"`
-	Context         json.RawMessage            `json:"context,omitempty"`
-	Title           json.RawMessage            `json:"title,omitempty"`
-	ToolsetName     json.RawMessage            `json:"toolset_name,omitempty"`
-	Transformations json.RawMessage            `json:"transformations,omitempty"`
-	FileID          string                     `json:"file_id,omitempty"`
+	Type         string                     `json:"type"`
+	Text         string                     `json:"text,omitempty"`
+	Thinking     string                     `json:"thinking,omitempty"`
+	Signature    string                     `json:"signature,omitempty"`
+	Data         string                     `json:"data,omitempty"`
+	ID           string                     `json:"id,omitempty"`
+	Name         string                     `json:"name,omitempty"`
+	Input        json.RawMessage            `json:"input,omitempty"`
+	ToolUseID    string                     `json:"tool_use_id,omitempty"`
+	Content      json.RawMessage            `json:"content,omitempty"`
+	IsError      *bool                      `json:"is_error,omitempty"`
+	Source       *anthropicMediaSourceWire  `json:"source,omitempty"`
+	Citations    json.RawMessage            `json:"citations,omitempty"`
+	CacheControl *anthropicCacheControlWire `json:"cache_control,omitempty"`
+	Caller       json.RawMessage            `json:"caller,omitempty"`
+	FileID       string                     `json:"file_id,omitempty"`
 }
 
 func (wire anthropicContentWire) MarshalJSON() ([]byte, error) {
@@ -107,17 +104,21 @@ type anthropicMediaSourceWire struct {
 	Content   json.RawMessage `json:"content,omitempty"`
 }
 
+// anthropicToolWire names only what the neutral tool contract reads. Every
+// other member a tool definition carries -- allowed_callers, defer_loading,
+// eager_input_streaming, input_examples, and whatever the next beta adds --
+// rides the generic carrier, which re-emits it to a Messages target and counts
+// it everywhere else.
 type anthropicToolWire struct {
-	Name                string                     `json:"name"`
-	Description         string                     `json:"description,omitempty"`
-	InputSchema         json.RawMessage            `json:"input_schema"`
-	Strict              *bool                      `json:"strict,omitempty"`
-	Type                string                     `json:"type,omitempty"`
-	AllowedCallers      json.RawMessage            `json:"allowed_callers,omitempty"`
-	CacheControl        *anthropicCacheControlWire `json:"cache_control,omitempty"`
-	DeferLoading        json.RawMessage            `json:"defer_loading,omitempty"`
-	EagerInputStreaming json.RawMessage            `json:"eager_input_streaming,omitempty"`
-	InputExamples       json.RawMessage            `json:"input_examples,omitempty"`
+	// name and input_schema are omitted when empty because a server tool
+	// states neither, and emitting an empty name would send Messages a
+	// declaration no client wrote.
+	Name         string                     `json:"name,omitempty"`
+	Description  string                     `json:"description,omitempty"`
+	InputSchema  json.RawMessage            `json:"input_schema,omitempty"`
+	Strict       *bool                      `json:"strict,omitempty"`
+	Type         string                     `json:"type,omitempty"`
+	CacheControl *anthropicCacheControlWire `json:"cache_control,omitempty"`
 }
 
 type anthropicCacheControlWire struct {
@@ -154,7 +155,7 @@ type anthropicJSONOutputFormatWire struct {
 
 func (AnthropicMessagesCodec) DecodeRequest(body []byte, policy llmprotocol.Policy) (llmprotocol.Request, llmprotocol.Envelope, llmprotocol.Diagnostics, error) {
 	var wire anthropicRequestWire
-	unmodeled, err := decodeWireCapturingUnmodeled(body, &wire, policy)
+	unmodeled, err := decodeWireCapturingUnmodeled(body, &wire, policy, llmprotocol.AnthropicMessagesV1)
 	if err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}
@@ -162,7 +163,7 @@ func (AnthropicMessagesCodec) DecodeRequest(body []byte, policy llmprotocol.Poli
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}
 	request := decodeAnthropicBaseRequest(wire)
-	request.Unmodeled = unmodeledRequestFields(llmprotocol.AnthropicMessagesV1, unmodeled)
+	request.Unmodeled = unmodeled
 	var diagnostics llmprotocol.Diagnostics
 	if err := decodeAnthropicRequestFields(wire, &request, &diagnostics, policy); err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, diagnostics, err
@@ -226,7 +227,7 @@ func decodeAnthropicRequestFields(
 	if err := decodeAnthropicMessages(wire.Messages, request, policy); err != nil {
 		return err
 	}
-	if err := decodeAnthropicTools(wire.Tools, request, diagnostics, policy); err != nil {
+	if err := decodeAnthropicTools(wire.Tools, request, policy); err != nil {
 		return err
 	}
 	return decodeAnthropicToolChoice(wire.ToolChoice, request)
@@ -363,10 +364,13 @@ func decodeAnthropicMessages(messages []anthropicMessageWire, request *llmprotoc
 	return nil
 }
 
+// decodeAnthropicTools accepts every tool the source API accepts. A tool type
+// the neutral contract does not model is still a tool the conversation needs:
+// the type travels on the neutral tool, a Messages target re-emits it, and a
+// target with no such tool drops and counts it under the capability gate.
 func decodeAnthropicTools(
 	raw json.RawMessage,
 	request *llmprotocol.Request,
-	diagnostics *llmprotocol.Diagnostics,
 	policy llmprotocol.Policy,
 ) error {
 	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
@@ -377,45 +381,21 @@ func decodeAnthropicTools(
 		return err
 	}
 	for _, toolBody := range toolBodies {
-		var discriminator struct {
-			Type string `json:"type"`
-		}
-		if err := json.Unmarshal(toolBody, &discriminator); err != nil {
-			return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_tool", "Anthropic tool is invalid", err)
-		}
-		if discriminator.Type != "" && discriminator.Type != "custom" {
-			return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_tool", "only custom tools enter the model protocol", nil)
-		}
 		var toolWire anthropicToolWire
 		if err := decodeWireValue(toolBody, &toolWire, policy); err != nil {
 			return err
 		}
-		if err := rejectUnsupportedRequestFields(map[string]json.RawMessage{
-			"tools.allowed_callers": toolWire.AllowedCallers,
-			"tools.defer_loading":   toolWire.DeferLoading,
-			"tools.input_examples":  toolWire.InputExamples,
-		}); err != nil {
-			return err
-		}
-		// eager_input_streaming asks the provider to stream a tool's input as
-		// it is generated rather than buffering and validating it first. The
-		// tool chosen, the input it finally holds and the effect of the call
-		// are the same either way, so the hint is dropped and counted. The
-		// members above it are refused instead: each of those changes what the
-		// model is shown or what it can call.
-		if len(bytes.TrimSpace(toolWire.EagerInputStreaming)) > 0 {
-			appendPresentationDrop(
-				diagnostics, policy, llmprotocol.AnthropicMessagesV1, "",
-				"tools.eager_input_streaming",
-				"the neutral tool contract has no streaming hint",
-			)
-		}
 		schema := toolWire.InputSchema
-		if len(schema) == 0 {
+		if len(schema) == 0 && (toolWire.Type == "" || toolWire.Type == "custom") {
 			schema = json.RawMessage(`{"type":"object"}`)
 		}
-		request.Tools = append(request.Tools, llmprotocol.Tool{Name: toolWire.Name, Description: toolWire.Description, InputSchema: schema, Strict: toolWire.Strict})
-		request.Tools[len(request.Tools)-1].Cache = decodeAnthropicCacheControl(toolWire.CacheControl)
+		tool := llmprotocol.Tool{
+			Name: toolWire.Name, Description: toolWire.Description,
+			InputSchema: schema, Strict: toolWire.Strict, Type: toolWire.Type,
+			Cache:      decodeAnthropicCacheControl(toolWire.CacheControl),
+			Extensions: captureUnnamedMembers(toolBody, reflect.TypeOf(anthropicToolWire{}), llmprotocol.AnthropicMessagesV1),
+		}
+		request.Tools = append(request.Tools, tool)
 	}
 	return nil
 }

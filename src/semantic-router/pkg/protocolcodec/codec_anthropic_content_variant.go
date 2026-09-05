@@ -149,13 +149,17 @@ func anthropicResponseContentType(body json.RawMessage) (string, error) {
 	}
 }
 
-// validateAnthropicContentExtensions refuses the block members the neutral
-// contract does not carry. Every refusal here names the block it came from, so
-// the ingress_request_refused line says which block and which field failed.
+// validateAnthropicContentExtensions holds the one block member the neutral
+// contract still refuses, and only on the provider leg. A request block
+// carries its citations unread; refusing them failed real turns on the dev
+// cell on 2026-09-05. Provider output is different: the Router would have to
+// generate the response-side spans it cannot derive.
+//
+// Every other extension member -- context, title, toolset_name,
+// transformations, and whatever the next beta adds -- is carried by the block
+// carrier instead of named here. That is what stops this function from growing
+// one branch per beta.
 func validateAnthropicContentExtensions(block anthropicContentWire, location string, providerOutput bool) error {
-	// A request block carries its citations unread; only provider output is
-	// refused, because the Router would have to generate the response-side
-	// spans it cannot derive.
 	if providerOutput && len(block.Citations) > 0 {
 		return llmprotocol.NewError(
 			llmprotocol.ErrorUnsupportedFeature, "unsupported_citations",
@@ -163,10 +167,5 @@ func validateAnthropicContentExtensions(block anthropicContentWire, location str
 			unsupportedFieldCause(location, "content.citations"),
 		)
 	}
-	return rejectUnsupportedRequestFieldsAt(location, map[string]json.RawMessage{
-		"content.context":         block.Context,
-		"content.title":           block.Title,
-		"content.toolset_name":    block.ToolsetName,
-		"content.transformations": block.Transformations,
-	})
+	return nil
 }

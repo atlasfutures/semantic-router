@@ -122,7 +122,7 @@ func (engine *Engine) EncodeRequest(format llmprotocol.WireFormat, request llmpr
 	if err := llmprotocol.RequireCapabilities(format, pair.buffered.Capabilities(), llmprotocol.RequiredCapabilities(request)); err != nil {
 		return RequestResult{Request: request, Envelope: envelope}, err
 	}
-	body, diagnostics, encodeRequestErr := pair.buffered.EncodeRequest(request, envelope, engine.policy)
+	body, diagnostics, encodeRequestErr := pair.buffered.EncodeRequest(request, envelope, engine.requestEncodePolicy())
 	return RequestResult{Request: request, Envelope: envelope, Body: body, Diagnostics: diagnostics}, encodeRequestErr
 }
 
@@ -174,7 +174,7 @@ func (engine *Engine) TranslateRequest(source, target llmprotocol.WireFormat, bo
 	if err := llmprotocol.RequireCapabilities(target, targetPair.buffered.Capabilities(), llmprotocol.RequiredCapabilities(request)); err != nil {
 		return RequestResult{Request: request, Envelope: envelope, Diagnostics: diagnostics}, err
 	}
-	encoded, encodeDiagnostics, translateRequestErr := targetPair.buffered.EncodeRequest(request, envelope, engine.policy)
+	encoded, encodeDiagnostics, translateRequestErr := targetPair.buffered.EncodeRequest(request, envelope, engine.requestEncodePolicy())
 	diagnostics = appendDiagnostics(diagnostics, encodeDiagnostics, engine.policy.Limits.Diagnostics)
 	return RequestResult{Request: request, Envelope: envelope, Body: encoded, Diagnostics: diagnostics}, translateRequestErr
 }
@@ -297,6 +297,22 @@ func (engine *Engine) translationDecodePolicy(source, target llmprotocol.WireFor
 	return policy
 }
 
+// requestEncodePolicy is the leg that dispatches a client request. It relaxes
+// exactly one rule: a feature the target cannot express is dropped and counted
+// rather than refused. A dropped request feature costs the caller fidelity on
+// a turn that still runs; refusing it costs the whole turn, and the gateway
+// does not replay a body-level 400.
+//
+// The response leg keeps LossyReject. An answer the Router cannot represent is
+// not the caller's request to degrade, and the response-side table is CP9v.
+func (engine *Engine) requestEncodePolicy() llmprotocol.Policy {
+	policy := engine.policy
+	if policy.LossyFeatures == llmprotocol.LossyReject {
+		policy.LossyFeatures = llmprotocol.LossyAllowWithDiagnostic
+	}
+	return policy
+}
+
 // responseDecodePolicy is translationDecodePolicy for the upstream leg. It
 // keeps every rule that one applies and then relaxes exactly one: a member the
 // provider names and the wire contract does not is dropped and reported rather
@@ -304,7 +320,8 @@ func (engine *Engine) translationDecodePolicy(source, target llmprotocol.WireFor
 // author it, and refusing it loses work the user already paid for.
 func (engine *Engine) responseDecodePolicy(source, target llmprotocol.WireFormat, mutated bool) llmprotocol.Policy {
 	policy := engine.translationDecodePolicy(source, target, mutated)
-	if policy.UnknownFields == llmprotocol.UnknownReject {
+	if policy.UnknownFields == llmprotocol.UnknownReject ||
+		policy.UnknownFields == llmprotocol.UnknownCapture {
 		policy.UnknownFields = llmprotocol.UnknownDropUpstream
 	}
 	return policy
@@ -493,7 +510,9 @@ func (engine *Engine) codec(format llmprotocol.WireFormat) (codecPair, error) {
 }
 
 func validatePolicy(policy llmprotocol.Policy) error {
-	if policy.UnknownFields != llmprotocol.UnknownReject && policy.UnknownFields != llmprotocol.UnknownPreserveSameFormat {
+	if policy.UnknownFields != llmprotocol.UnknownReject &&
+		policy.UnknownFields != llmprotocol.UnknownPreserveSameFormat &&
+		policy.UnknownFields != llmprotocol.UnknownCapture {
 		return fmt.Errorf("unknown-field policy is invalid")
 	}
 	if policy.LossyFeatures != llmprotocol.LossyReject && policy.LossyFeatures != llmprotocol.LossyAllowWithDiagnostic {

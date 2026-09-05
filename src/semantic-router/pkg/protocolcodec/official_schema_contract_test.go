@@ -25,12 +25,11 @@ func TestOfficialNestedUnsupportedFieldsFailWithTypedErrors(t *testing.T) {
 		{"Responses text verbosity", llmprotocol.OpenAIResponsesV1, `{"model":"m","input":"hello","text":{"verbosity":"high"}}`},
 		{"Responses input breakpoint", llmprotocol.OpenAIResponsesV1, `{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello","prompt_cache_breakpoint":{"mode":"explicit"}}]}]}`},
 		{"Responses input message phase", llmprotocol.OpenAIResponsesV1, `{"model":"m","input":[{"type":"message","role":"user","phase":"commentary","content":[{"type":"input_text","text":"hello"}]}]}`},
-		// eager_input_streaming used to sit here. It is now dropped and counted:
-		// it changes when a tool's input is delivered, not what the model calls.
-		// defer_loading takes its place, because that one decides whether the
-		// tool enters the context window at all.
-		{"Anthropic deferred tool", llmprotocol.AnthropicMessagesV1, `{"model":"m","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"tools":[{"name":"lookup","input_schema":{"type":"object"},"defer_loading":true}]}`},
-		{"Anthropic image transformation", llmprotocol.AnthropicMessagesV1, `{"model":"m","max_tokens":16,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"url","url":"https://example.com/image.png"},"transformations":{"on_load":{"type":"auto"}}}]}]}`},
+		// The two Anthropic rows that used to sit here -- a tool asking for
+		// deferred loading, and an image asking for a load-time transformation
+		// -- moved to TestAnthropicNestedCarriedFieldsAreCountedNotRefused.
+		// The Messages wire structs no longer name either member, so both ride
+		// the carrier instead of refusing the turn.
 	}
 	engine := NewBuiltinEngine()
 	for _, test := range tests {
@@ -42,6 +41,60 @@ func TestOfficialNestedUnsupportedFieldsFailWithTypedErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A nested Anthropic member the Messages wire structs do not name is accepted
+// and carried. The Router selects a destination, so a member it never reads
+// must not end a turn. The loss still has to be visible, so a target that
+// cannot express the member counts it by the path the client wrote.
+func TestAnthropicNestedCarriedFieldsAreCountedNotRefused(t *testing.T) {
+	engine := NewBuiltinEngine()
+	tests := []struct {
+		name  string
+		body  string
+		field string
+	}{
+		{
+			name: "deferred tool",
+			body: `{"model":"m","max_tokens":16,"messages":[{"role":"user","content":"hello"}],` +
+				`"tools":[{"name":"lookup","input_schema":{"type":"object"},"defer_loading":true}]}`,
+			field: "tools.defer_loading",
+		},
+		{
+			name: "image transformation",
+			body: `{"model":"m","max_tokens":16,"messages":[{"role":"user","content":[` +
+				`{"type":"image","source":{"type":"url","url":"https://example.com/image.png"},` +
+				`"transformations":{"on_load":{"type":"auto"}}}]}]}`,
+			field: "content.transformations",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, _, _, err := engine.DecodeRequest(llmprotocol.AnthropicMessagesV1, []byte(test.body)); err != nil {
+				t.Fatalf("ingress refused a carried nested member: %v", err)
+			}
+			result, err := engine.TranslateRequest(
+				llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, []byte(test.body), nil,
+			)
+			if err != nil {
+				t.Fatalf("Chat target refused a carried nested member: %v", err)
+			}
+			assertDroppedDiagnosticField(t, result.Diagnostics, test.field)
+		})
+	}
+}
+
+// assertDroppedDiagnosticField requires one counted drop for a named path. A
+// carried member that leaves without a diagnostic is the silent loss this
+// contract exists to prevent.
+func assertDroppedDiagnosticField(t *testing.T, diagnostics llmprotocol.Diagnostics, field string) {
+	t.Helper()
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Field == field && diagnostic.Action == llmprotocol.DiagnosticDropped {
+			return
+		}
+	}
+	t.Fatalf("diagnostics %v do not count %q as dropped", diagnosticFields(diagnostics), field)
 }
 
 func TestAnthropicCacheDirectivesSurviveSemanticMutation(t *testing.T) {

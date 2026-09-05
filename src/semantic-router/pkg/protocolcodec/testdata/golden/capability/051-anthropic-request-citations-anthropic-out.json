@@ -141,10 +141,32 @@
     {
       "name": "assistant_text_citations_unknown_sibling",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "invalid_request",
-          "code": "invalid_json"
+        "status": "ok",
+        "body": {
+          "max_tokens": 32,
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            },
+            {
+              "content": [
+                {
+                  "citation_style": "footnote",
+                  "citations": [],
+                  "text": "hi",
+                  "type": "text"
+                }
+              ],
+              "role": "assistant"
+            }
+          ],
+          "model": "routed-model"
         }
       }
     }

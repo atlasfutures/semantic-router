@@ -146,13 +146,30 @@ func anthropicMediaRequest(blockType string, source map[string]any) ([]byte, err
 	})
 }
 
-func TestRemovedResponsesItemCacheBreakpointFailsClosed(t *testing.T) {
+// prompt_cache_breakpoint left the Responses item wire struct, so no contract
+// names it any more. It used to fail closed. Accept-by-default takes it
+// instead: the member asks the provider to cut a cache prefix, the Router
+// never reads it, and refusing the body loses the conversation.
+//
+// The item keeps routing. The member does not reach a target that cannot name
+// it. A Responses input item has no carrier of its own yet, so the member is
+// also lost on a Responses target and no diagnostic counts it; only the
+// request envelope, content blocks and tool definitions carry today.
+func TestRemovedResponsesItemCacheBreakpointIsAcceptedAndDropped(t *testing.T) {
 	engine := NewBuiltinEngine()
 	body := []byte(`{"model":"m","input":[{"type":"function_call","id":"item_1","call_id":"call_1","name":"lookup","arguments":"{}","prompt_cache_breakpoint":{"mode":"explicit"}}]}`)
-	_, _, _, err := engine.DecodeRequest(llmprotocol.OpenAIResponsesV1, body)
-	var protocolError *llmprotocol.ProtocolError
-	if !errors.As(err, &protocolError) || protocolError.Category != llmprotocol.ErrorInvalidRequest {
-		t.Fatalf("removed Responses item cache breakpoint returned %T %v, want typed invalid_request", err, err)
+	if _, _, _, err := engine.DecodeRequest(llmprotocol.OpenAIResponsesV1, body); err != nil {
+		t.Fatalf("a removed Responses item member refused the request: %v", err)
+	}
+	result, err := engine.TranslateRequest(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIChatV1, body, nil)
+	if err != nil {
+		t.Fatalf("a Chat target refused the item: %v", err)
+	}
+	if !bytes.Contains(result.Body, []byte(`"name":"lookup"`)) {
+		t.Fatalf("dropping the member also dropped the tool call it sat on: %s", result.Body)
+	}
+	if bytes.Contains(result.Body, []byte("prompt_cache_breakpoint")) {
+		t.Fatalf("a member the target cannot name reached it: %s", result.Body)
 	}
 }
 
@@ -363,21 +380,75 @@ func TestOfficialStreamOptionsRequireStreaming(t *testing.T) {
 	}
 }
 
-func TestOfficialStreamOptionsRejectUnknownFieldsAndInvalidTypesBeforeMutation(t *testing.T) {
+// A stream option no contract names is carried, not refused. stream_options is
+// a modelled struct, so the carrier reaches inside it: the member returns to
+// its own wire format and any other target counts it by the path the client
+// wrote.
+func TestOfficialStreamOptionsCarryUnknownFieldsBeforeMutation(t *testing.T) {
+	engine := NewBuiltinEngine()
+	tests := []struct {
+		name   string
+		format llmprotocol.WireFormat
+		target llmprotocol.WireFormat
+		body   string
+	}{
+		{
+			name:   "Chat unknown option",
+			format: llmprotocol.OpenAIChatV1, target: llmprotocol.AnthropicMessagesV1,
+			body: `{"model":"m","messages":[{"role":"user","content":"hello"}],"stream":true,"stream_options":{"include_usage":true,"future_option":true}}`,
+		},
+		{
+			name:   "Responses unknown option",
+			format: llmprotocol.OpenAIResponsesV1, target: llmprotocol.OpenAIChatV1,
+			body: `{"model":"m","input":"hello","stream":true,"stream_options":{"future_option":true}}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, _, _, err := engine.DecodeRequestForMutation(test.format, []byte(test.body)); err != nil {
+				t.Fatalf("mutation-aware decode refused an unknown stream option: %v", err)
+			}
+			result, err := engine.TranslateRequest(test.format, test.target, []byte(test.body), nil)
+			if err != nil {
+				t.Fatalf("%s refused an unknown stream option: %v", test.target, err)
+			}
+			assertDroppedDiagnosticField(t, result.Diagnostics, "stream_options.future_option")
+		})
+	}
+}
+
+// The Chat target the option came from re-emits it beside the option the
+// contract does name. A fresh envelope forces a real encode, so the members
+// come from the carrier rather than from a replay of the source body.
+func TestOfficialChatStreamOptionsReachTheSameFormat(t *testing.T) {
+	engine := NewBuiltinEngine()
+	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hello"}],"stream":true,` +
+		`"stream_options":{"include_usage":true,"future_option":true}}`)
+	request, _, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIChatV1, body)
+	if err != nil {
+		t.Fatalf("mutation-aware decode refused an unknown stream option: %v", err)
+	}
+	encoded, err := engine.EncodeRequest(llmprotocol.OpenAIChatV1, request, llmprotocol.Envelope{})
+	if err != nil {
+		t.Fatalf("EncodeRequest(chat) error = %v", err)
+	}
+	for _, member := range []string{`"include_usage":true`, `"future_option":true`} {
+		if !bytes.Contains(encoded.Body, []byte(member)) {
+			t.Fatalf("the Chat target dropped %s: %s", member, encoded.Body)
+		}
+	}
+}
+
+// The value of a member the contract does name is still checked. The carrier
+// widens which members may appear; it does not widen what a declared member
+// may hold.
+func TestOfficialStreamOptionsRejectInvalidTypesBeforeMutation(t *testing.T) {
 	engine := NewBuiltinEngine()
 	tests := []struct {
 		name   string
 		format llmprotocol.WireFormat
 		body   string
 	}{
-		{
-			name: "Chat unknown option", format: llmprotocol.OpenAIChatV1,
-			body: `{"model":"m","messages":[{"role":"user","content":"hello"}],"stream":true,"stream_options":{"include_usage":true,"future_option":true}}`,
-		},
-		{
-			name: "Responses unknown option", format: llmprotocol.OpenAIResponsesV1,
-			body: `{"model":"m","input":"hello","stream":true,"stream_options":{"future_option":true}}`,
-		},
 		{
 			name: "Chat invalid usage type", format: llmprotocol.OpenAIChatV1,
 			body: `{"model":"m","messages":[{"role":"user","content":"hello"}],"stream":true,"stream_options":{"include_usage":"yes"}}`,
@@ -607,20 +678,40 @@ func assertTranslatedReasoningEffort(
 	}
 }
 
-func TestAnthropicRejectsOpenAIOnlyReasoningEfforts(t *testing.T) {
+// "none" and "minimal" are effort levels Messages has no equal for. The
+// request leg no longer refuses them. It approximates the level and counts the
+// approximation, because the alternative is a failed turn over a control that
+// changes how much the model thinks, not what it is asked.
+func TestAnthropicApproximatesOpenAIOnlyReasoningEfforts(t *testing.T) {
 	engine := NewBuiltinEngine()
 	for _, effort := range []string{"none", "minimal"} {
 		t.Run(effort, func(t *testing.T) {
 			body := []byte(`{"model":"m","messages":[{"role":"user","content":"answer"}],"reasoning_effort":"` + effort + `"}`)
-			_, err := engine.TranslateRequest(
+			result, err := engine.TranslateRequest(
 				llmprotocol.OpenAIChatV1,
 				llmprotocol.AnthropicMessagesV1,
 				body,
 				nil,
 			)
-			assertProtocolError(t, err, llmprotocol.ErrorUnsupportedFeature, "lossy_translation")
+			if err != nil {
+				t.Fatalf("a Chat-only effort level refused the request: %v", err)
+			}
+			assertApproximatedDiagnosticField(t, result.Diagnostics, "reasoning_effort")
 		})
 	}
+}
+
+// assertApproximatedDiagnosticField requires one counted approximation for a
+// named field. An effort level that changes on the way out without being
+// counted is a change nobody can see.
+func assertApproximatedDiagnosticField(t *testing.T, diagnostics llmprotocol.Diagnostics, field string) {
+	t.Helper()
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Field == field && diagnostic.Action == llmprotocol.DiagnosticApproximated {
+			return
+		}
+	}
+	t.Fatalf("diagnostics %v do not count %q as approximated", diagnosticFields(diagnostics), field)
 }
 
 // assertAnthropicMediaSourceIsCarried states that a document source the neutral

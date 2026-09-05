@@ -263,20 +263,68 @@ func TestOpenRouterStreamUnknownFieldsAreNamed(t *testing.T) {
 	}
 }
 
-// Tolerance belongs to the upstream leg alone. A client request that names a
-// member the contract does not is still refused.
-func TestClientRequestStillRejectsUnknownFields(t *testing.T) {
+// The two legs handle an unnamed member differently, and the difference is
+// deliberate. A client request carries the member: the client wrote it, and a
+// Chat destination can be handed it back unchanged. A provider response has no
+// carrier and no client contract to re-emit into, so the upstream leg still
+// prunes the member and names it.
+func TestClientRequestCarriesUnknownFields(t *testing.T) {
 	engine := NewBuiltinEngine()
 	body := []byte(`{"model":"client-model","messages":[{"role":"user","content":"hello"}],"future_field":true}`)
-	_, err := engine.TranslateRequest(
+
+	// A fresh envelope forces a real encode. A replay of the source bytes would
+	// pass without the carrier holding anything.
+	request, _, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIChatV1, body)
+	if err != nil {
+		t.Fatalf("an unknown client request field was refused: %v", err)
+	}
+	request.Model = "routed-model"
+	encoded, err := engine.EncodeRequest(llmprotocol.OpenAIChatV1, request, llmprotocol.Envelope{})
+	if err != nil {
+		t.Fatalf("EncodeRequest(chat) error = %v", err)
+	}
+	if !bytes.Contains(encoded.Body, []byte(`"future_field":true`)) {
+		t.Fatalf("the Chat target dropped the member the client sent: %s", encoded.Body)
+	}
+
+	result, err := engine.TranslateRequest(
 		llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1, body,
 		func(request *llmprotocol.Request) error {
 			request.Model = "routed-model"
 			return nil
 		},
 	)
-	if err == nil {
-		t.Fatal("an unknown client request field was accepted")
+	if err != nil {
+		t.Fatalf("an unknown client request field was refused by the Messages target: %v", err)
+	}
+	if bytes.Contains(result.Body, []byte("future_field")) {
+		t.Fatalf("a member the target cannot name reached it: %s", result.Body)
+	}
+	assertDroppedDiagnosticField(t, result.Diagnostics, "future_field")
+}
+
+// The provider leg keeps its own rule. An unnamed member of an upstream
+// response is removed before decoding and its path is reported, which is what
+// TestOpenRouterUnknownFieldsAreNamed pins for the captured bodies.
+func TestProviderResponseStillPrunesUnknownFields(t *testing.T) {
+	body := []byte(`{"id":"chatcmpl_1","object":"chat.completion","created":1,"model":"m",` +
+		`"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"hi"}}],` +
+		`"future_field":true}`)
+	pruned, dropped := pruneUnknownProviderFields(body, reflect.TypeOf(&chatResponseWire{}))
+	if !reflect.DeepEqual(dropped, []string{"future_field"}) {
+		t.Fatalf("dropped fields are %v, want the unnamed response member", dropped)
+	}
+	if bytes.Contains(pruned, []byte("future_field")) {
+		t.Fatalf("the member survived pruning: %s", pruned)
+	}
+	result, err := NewBuiltinEngine().TranslateResponse(
+		llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1, body, renameModel("public-model"),
+	)
+	if err != nil {
+		t.Fatalf("translate to Chat: %v", err)
+	}
+	if bytes.Contains(result.Body, []byte("future_field")) {
+		t.Fatalf("a pruned provider member reached the client: %s", result.Body)
 	}
 }
 
@@ -296,12 +344,16 @@ func TestNamedProviderFieldsKeepTheirShape(t *testing.T) {
 	}
 }
 
-// A refusal that still stands -- the request leg, the transport-error leg --
-// must say which member caused it. Without the cause the log reads only as
-// "some field was non-canonical", which does not locate the field.
+// A refusal that still stands must say which member caused it. Without the
+// cause the log reads only as "some field was non-canonical", which does not
+// locate the field. An unnamed member no longer refuses anything, so the
+// refusal under test is the one that survives accept-by-default: a spelling
+// that differs from a declared member only in case. Go's decoder matches those
+// case-insensitively, so accepting one would write a value into a member under
+// a spelling no contract states.
 func TestRefusalNamesTheOffendingField(t *testing.T) {
 	engine := NewBuiltinEngine()
-	body := []byte(`{"model":"client-model","messages":[{"role":"user","content":"hello"}],"future_field":true}`)
+	body := []byte(`{"model":"client-model","messages":[{"role":"user","Content":"hello"}]}`)
 	_, err := engine.TranslateRequest(
 		llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1, body,
 		func(request *llmprotocol.Request) error {
@@ -310,9 +362,9 @@ func TestRefusalNamesTheOffendingField(t *testing.T) {
 		},
 	)
 	if err == nil {
-		t.Fatal("an unknown client request field was accepted")
+		t.Fatal("a case-folded spelling of a declared member was accepted")
 	}
-	if !strings.Contains(err.Error(), `"future_field"`) {
+	if !strings.Contains(err.Error(), `"Content"`) {
 		t.Fatalf("error %q does not name the offending field", err)
 	}
 }

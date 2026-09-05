@@ -1,0 +1,15 @@
+{
+  "max_tokens": 4096,
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "hello",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "routed-model"
+}

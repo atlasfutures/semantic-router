@@ -36,11 +36,30 @@
     {
       "name": "document_file",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_content_title"
-        }
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 32,
+          "messages": [
+            {
+              "content": [
+                {
+                  "file": {
+                    "file_id": "file_document"
+                  },
+                  "type": "file"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "content.title",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {
@@ -62,11 +81,30 @@
     {
       "name": "image_transformations",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_content_transformations"
-        }
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 32,
+          "messages": [
+            {
+              "content": [
+                {
+                  "image_url": {
+                    "url": "https://example.com/image.png"
+                  },
+                  "type": "image_url"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "content.transformations",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {
@@ -104,21 +142,70 @@
     {
       "name": "tool_allowed_callers",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_tools_allowed_callers"
-        }
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 32,
+          "messages": [
+            {
+              "content": "hello",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model",
+          "tool_choice": "auto",
+          "tools": [
+            {
+              "function": {
+                "description": "Look up a value",
+                "name": "lookup",
+                "parameters": {
+                  "type": "object"
+                }
+              },
+              "type": "function"
+            }
+          ]
+        },
+        "diagnostics": [
+          {
+            "field": "tools.allowed_callers",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {
       "name": "tool_defer_loading",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_tools_defer_loading"
-        }
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 32,
+          "messages": [
+            {
+              "content": "hello",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model",
+          "tool_choice": "auto",
+          "tools": [
+            {
+              "function": {
+                "name": "lookup",
+                "parameters": {
+                  "type": "object"
+                }
+              },
+              "type": "function"
+            }
+          ]
+        },
+        "diagnostics": [
+          {
+            "field": "tools.defer_loading",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {
@@ -158,11 +245,35 @@
     {
       "name": "tool_input_examples",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_tools_input_examples"
-        }
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 32,
+          "messages": [
+            {
+              "content": "hello",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model",
+          "tool_choice": "auto",
+          "tools": [
+            {
+              "function": {
+                "name": "lookup",
+                "parameters": {
+                  "type": "object"
+                }
+              },
+              "type": "function"
+            }
+          ]
+        },
+        "diagnostics": [
+          {
+            "field": "tools.input_examples",
+            "action": "dropped"
+          }
+        ]
       }
     }
   ]

@@ -38,10 +38,25 @@
     {
       "name": "document_file",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_content_title"
+        "status": "ok",
+        "body": {
+          "max_tokens": 32,
+          "messages": [
+            {
+              "content": [
+                {
+                  "source": {
+                    "file_id": "file_document",
+                    "type": "file"
+                  },
+                  "title": "Reference",
+                  "type": "document"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
         }
       }
     },
@@ -77,10 +92,29 @@
     {
       "name": "image_transformations",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_content_transformations"
+        "status": "ok",
+        "body": {
+          "max_tokens": 32,
+          "messages": [
+            {
+              "content": [
+                {
+                  "source": {
+                    "type": "url",
+                    "url": "https://example.com/image.png"
+                  },
+                  "transformations": {
+                    "on_load": {
+                      "type": "auto"
+                    }
+                  },
+                  "type": "image"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
         }
       }
     },
@@ -143,20 +177,69 @@
     {
       "name": "tool_allowed_callers",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_tools_allowed_callers"
+        "status": "ok",
+        "body": {
+          "max_tokens": 32,
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "routed-model",
+          "tool_choice": {
+            "type": "auto"
+          },
+          "tools": [
+            {
+              "allowed_callers": [
+                "model"
+              ],
+              "description": "Look up a value",
+              "input_schema": {
+                "type": "object"
+              },
+              "name": "lookup"
+            }
+          ]
         }
       }
     },
     {
       "name": "tool_defer_loading",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_tools_defer_loading"
+        "status": "ok",
+        "body": {
+          "max_tokens": 32,
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "routed-model",
+          "tool_choice": {
+            "type": "auto"
+          },
+          "tools": [
+            {
+              "defer_loading": true,
+              "input_schema": {
+                "type": "object"
+              },
+              "name": "lookup"
+            }
+          ]
         }
       }
     },
@@ -183,28 +266,50 @@
           },
           "tools": [
             {
+              "eager_input_streaming": true,
               "input_schema": {
                 "type": "object"
               },
               "name": "lookup"
             }
           ]
-        },
-        "diagnostics": [
-          {
-            "field": "tools.eager_input_streaming",
-            "action": "dropped"
-          }
-        ]
+        }
       }
     },
     {
       "name": "tool_input_examples",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_tools_input_examples"
+        "status": "ok",
+        "body": {
+          "max_tokens": 32,
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "routed-model",
+          "tool_choice": {
+            "type": "auto"
+          },
+          "tools": [
+            {
+              "input_examples": [
+                {
+                  "q": "weather"
+                }
+              ],
+              "input_schema": {
+                "type": "object"
+              },
+              "name": "lookup"
+            }
+          ]
         }
       }
     }

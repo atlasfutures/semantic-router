@@ -186,13 +186,15 @@ type chatOutputWire struct {
 
 func (OpenAIChatCodec) DecodeRequest(body []byte, policy llmprotocol.Policy) (llmprotocol.Request, llmprotocol.Envelope, llmprotocol.Diagnostics, error) {
 	var wire chatRequestWire
-	if err := decodeWire(body, &wire, policy); err != nil {
+	unmodeled, err := decodeWireCapturingUnmodeled(body, &wire, policy, llmprotocol.OpenAIChatV1)
+	if err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}
 	if err := validateChatRequestWire(wire); err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}
 	request := decodeChatBaseRequest(wire)
+	request.Unmodeled = unmodeled
 	if err := decodeChatMessages(wire.Messages, &request, policy); err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}
