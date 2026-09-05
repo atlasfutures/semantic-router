@@ -184,26 +184,6 @@ func appendContentExtensionDrops(
 	}
 }
 
-// appendServerToolDrops counts the tool declarations a target cannot express
-// at all. A server tool is run by the source API, so a format with no such
-// tool has nowhere to put the declaration and no way to honour it.
-func appendServerToolDrops(
-	diagnostics *llmprotocol.Diagnostics,
-	tools []llmprotocol.Tool,
-	source, target llmprotocol.WireFormat,
-	policy llmprotocol.Policy,
-) {
-	for _, tool := range tools {
-		if !tool.ServerTool() {
-			continue
-		}
-		appendPresentationDrop(
-			diagnostics, policy, source, target, "tools.type",
-			"the target wire format has no server-run tool",
-		)
-	}
-}
-
 // appendToolExtensionDrops counts the carried members of each tool definition
 // that this target cannot express.
 func appendToolExtensionDrops(

@@ -23,15 +23,13 @@ func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope 
 		return nil, nil, err
 	}
 	var diagnostics llmprotocol.Diagnostics
+	// See chatRequestDiagnostics: the table states what Responses cannot
+	// express, and the two carriers hold what no contract names.
+	appendRequestDispositions(&diagnostics, request, llmprotocol.OpenAIResponsesV1, policy)
 	appendToolExtensionDrops(&diagnostics, request.Tools, llmprotocol.OpenAIResponsesV1, policy)
-	appendServerToolDrops(&diagnostics, request.Tools, request.Trusted.SourceFormat, llmprotocol.OpenAIResponsesV1, policy)
 	for _, message := range request.Messages {
 		appendContentExtensionDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
 		appendCarriedBlockDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
-		appendCitationCarryDrops(
-			&diagnostics, message.Content, request.Trusted.SourceFormat, llmprotocol.OpenAIResponsesV1,
-			policy, "a Responses content part carries no block citations",
-		)
 	}
 	body, err = mergeUnmodeledFields(body, request, llmprotocol.OpenAIResponsesV1, &diagnostics, policy)
 	return body, diagnostics, err
@@ -217,9 +215,20 @@ func (state *responsesMessageEncodingState) appendContent(content llmprotocol.Co
 		}
 		return state.appendGeneratedImage(content.GeneratedImage)
 	case llmprotocol.ContentUnmodeled:
-		// A carried block belongs to the contract it came from. Responses never
-		// names an Anthropic block, so it is dropped here and the drop is
-		// recorded beside the encoded request.
+		// A carried block belongs to the contract it came from. Responses names
+		// no Anthropic block, so it is dropped here and the drop is recorded
+		// beside the encoded request. The table's transform row is the one
+		// exception: a document whose source is text becomes a text part.
+		text, transformed := carriedDocumentText(content)
+		if !transformed {
+			return nil
+		}
+		if err := state.flushReasoning(); err != nil {
+			return err
+		}
+		state.ordinary = append(state.ordinary, llmprotocol.Content{
+			Kind: llmprotocol.ContentText, Text: text,
+		})
 		return nil
 	default:
 		if err := state.flushReasoning(); err != nil {

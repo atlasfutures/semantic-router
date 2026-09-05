@@ -127,11 +127,11 @@
         },
         "diagnostics": [
           {
-            "field": "content.citation_style",
+            "field": "content.citations",
             "action": "dropped"
           },
           {
-            "field": "content.citations",
+            "field": "content.citation_style",
             "action": "dropped"
           }
         ]

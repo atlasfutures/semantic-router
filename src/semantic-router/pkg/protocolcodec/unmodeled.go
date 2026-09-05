@@ -200,6 +200,12 @@ func appendCarriedBlockDrops(
 		if content.Unmodeled.Format == target {
 			continue
 		}
+		if _, transformed := carriedDocumentText(content); transformed {
+			// The block is not lost: the table transforms it into a text part
+			// and records that instead. Counting a drop here would say the
+			// text went missing when it did not.
+			continue
+		}
 		appendUnmodeledDrop(
 			diagnostics, policy, content.Unmodeled.Format, target,
 			"content."+content.Unmodeled.Type,
@@ -218,27 +224,6 @@ func carriedAnthropicCitations(raw json.RawMessage) json.RawMessage {
 	return append(json.RawMessage(nil), raw...)
 }
 
-// appendCitationCarryDrops records the citations member a text or document
-// block carries when the target format has no field for it. Claude Code
-// echoes the citations of a web-search or document answer back in history on
-// every later turn, so refusing them failed real turns on the dev cell on
-// 2026-09-05. The member says where an answer came from rather than what the
-// model is asked, so the turn runs and the loss is counted.
-func appendCitationCarryDrops(
-	diagnostics *llmprotocol.Diagnostics,
-	contents []llmprotocol.Content,
-	source, target llmprotocol.WireFormat,
-	policy llmprotocol.Policy,
-	reason string,
-) {
-	for _, content := range contents {
-		if len(content.CitationsRaw) == 0 {
-			continue
-		}
-		appendPresentationDrop(diagnostics, policy, source, target, "content.citations", reason)
-	}
-}
-
 // messageDropsWhole reports whether every block of a message is a carried block
 // the target cannot name. Such a message encodes to nothing, so the encoder
 // omits the message rather than emitting an empty one the provider refuses.
@@ -251,6 +236,9 @@ func messageDropsWhole(contents []llmprotocol.Content, target llmprotocol.WireFo
 			return false
 		}
 		if _, kept := carriedBlockBytes(content, target); kept {
+			return false
+		}
+		if _, transformed := carriedDocumentText(content); transformed {
 			return false
 		}
 	}
