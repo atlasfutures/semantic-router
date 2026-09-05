@@ -1,6 +1,9 @@
 package llmprotocol
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 type ErrorCategory string
 
@@ -62,4 +65,30 @@ func (err *ProtocolError) Unwrap() error {
 
 func NewError(category ErrorCategory, code, message string, cause error) *ProtocolError {
 	return &ProtocolError{Category: category, Code: code, Message: message, Cause: cause}
+}
+
+// NewFieldError builds a refusal that names where it happened in both places
+// anyone looks. The cause reaches the ingress_request_refused line; the
+// message reaches the client, because a client error body carries the message
+// and nothing else.
+//
+// Both are needed. An operator cannot find a block in a conversation of
+// hundreds from a feature name, and the refused body is never stored. And a
+// client repairs its own request only from what the body says: the 2.1.260
+// Claude Code retries without a beta field when, and only when, the 400 body
+// names that field.
+//
+// The detail is contract text -- a block type, an index, a field path -- and
+// never a value the client wrote.
+func NewFieldError(category ErrorCategory, code, message, location, field string) *ProtocolError {
+	detail := fmt.Sprintf("field %q", field)
+	if location != "" {
+		detail = fmt.Sprintf("%s: field %q", location, field)
+	}
+	return &ProtocolError{
+		Category: category, Code: code,
+		Message:   message + ": " + detail,
+		Parameter: field,
+		Cause:     errors.New(detail),
+	}
 }

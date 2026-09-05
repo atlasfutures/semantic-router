@@ -599,11 +599,11 @@ func rejectUnsupportedRequestFieldAt(location, field string, value json.RawMessa
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return nil
 	}
-	return llmprotocol.NewError(
+	return llmprotocol.NewFieldError(
 		llmprotocol.ErrorUnsupportedFeature,
 		"unsupported_"+strings.ReplaceAll(field, ".", "_"),
-		field+" is not supported by the protocol-neutral request contract",
-		unsupportedFieldCause(location, field),
+		"the protocol-neutral request contract does not support this member",
+		location, field,
 	)
 }
 

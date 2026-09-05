@@ -2,7 +2,6 @@ package llmprotocol
 
 import (
 	"encoding/json"
-	"fmt"
 	"math"
 	"strings"
 )
@@ -207,103 +206,6 @@ func validateRequestInstructions(instructions []InstructionBlock, limits Limits,
 				return err
 			}
 		}
-	}
-	return nil
-}
-
-func validateRequestTools(tools []Tool, limits Limits) (map[string]struct{}, int, error) {
-	namedTools := make(map[string]struct{}, len(tools))
-	schemaBytes := 0
-	for _, tool := range tools {
-		if err := validateRequestTool(tool, limits); err != nil {
-			return nil, 0, err
-		}
-		if _, duplicate := namedTools[tool.Identity()]; duplicate {
-			return nil, 0, NewError(ErrorInvalidRequest, "duplicate_tool", "tool names must be unique", nil)
-		}
-		schemaBytes += len(tool.InputSchema)
-		if limits.SchemaBytes > 0 && schemaBytes > limits.SchemaBytes {
-			return nil, 0, NewError(ErrorInvalidRequest, "schema_limit", "total schema limit exceeded", nil)
-		}
-		namedTools[tool.Identity()] = struct{}{}
-	}
-	return namedTools, schemaBytes, nil
-}
-
-// validateRequestTool checks what a declared tool must state. A callable tool
-// has to name the function the model calls and describe its arguments. A
-// server tool states neither: the source API runs it, and its type is the
-// whole declaration -- {"type":"web_search_20250305"} is the shape Claude Code
-// sends. Refusing that shape refused the turn around it.
-func validateRequestTool(tool Tool, limits Limits) error {
-	if len(tool.InputSchema) > 0 && !json.Valid(tool.InputSchema) {
-		return NewError(ErrorInvalidRequest, "invalid_tool", "tool name and JSON Schema are required", nil)
-	}
-	if !tool.ServerTool() && (strings.TrimSpace(tool.Name) == "" || len(tool.InputSchema) == 0) {
-		return NewError(ErrorInvalidRequest, "invalid_tool", "tool name and JSON Schema are required", nil)
-	}
-	if exceeds(tool.Name, limits.ToolNameBytes) {
-		return NewError(ErrorInvalidRequest, "tool_text_limit", "tool name or description exceeds the configured limit",
-			toolTextOverflow("name", len(tool.Name), limits.ToolNameBytes))
-	}
-	if exceeds(tool.Description, limits.ToolDescriptionBytes) {
-		return NewError(ErrorInvalidRequest, "tool_text_limit", "tool name or description exceeds the configured limit",
-			toolTextOverflow("description", len(tool.Description), limits.ToolDescriptionBytes))
-	}
-	if limits.SchemaBytes > 0 && len(tool.InputSchema) > limits.SchemaBytes {
-		return NewError(ErrorInvalidRequest, "schema_limit", "tool schema limit exceeded", nil)
-	}
-	if err := validateCacheDirective(tool.Cache); err != nil {
-		return err
-	}
-	if len(tool.InputSchema) == 0 {
-		return nil
-	}
-	return validateSchemaObject(tool.InputSchema, "tool schema", limits)
-}
-
-// toolTextOverflow names the field and the two byte counts, and nothing the
-// client wrote. Without it the refusal log records only that some tool was too
-// long, which is what made the 2026-09-04 dev-cell refusals take a code read
-// and a client capture to explain.
-func toolTextOverflow(field string, observed, limit int) error {
-	return fmt.Errorf("tool %s is %d bytes, limit %d", field, observed, limit)
-}
-
-func validateToolChoice(choice ToolChoice, namedTools map[string]struct{}, toolCount int, hasImageGeneration bool) error {
-	if !validToolChoiceMode(choice.Mode) {
-		return NewError(ErrorInvalidRequest, "invalid_tool_choice", "tool choice is invalid", nil)
-	}
-	if choice.Mode == ToolChoiceNamed {
-		return validateNamedToolChoice(choice.Name, namedTools)
-	}
-	if choice.Name != "" {
-		return NewError(ErrorInvalidRequest, "invalid_tool_choice", "only named tool choice may contain a name", nil)
-	}
-	if choice.Mode == ToolChoiceImageGeneration && !hasImageGeneration {
-		return NewError(ErrorInvalidRequest, "image_generation_tool_required", "image-generation tool choice requires a declared image-generation tool", nil)
-	}
-	if choice.Mode == ToolChoiceRequired && toolCount == 0 && !hasImageGeneration {
-		return NewError(ErrorInvalidRequest, "tools_required", "tool choice requires at least one declared tool", nil)
-	}
-	return nil
-}
-
-func validToolChoiceMode(mode ToolChoiceMode) bool {
-	switch mode {
-	case "", ToolChoiceAuto, ToolChoiceNone, ToolChoiceRequired, ToolChoiceNamed, ToolChoiceImageGeneration:
-		return true
-	default:
-		return false
-	}
-}
-
-func validateNamedToolChoice(name string, namedTools map[string]struct{}) error {
-	if strings.TrimSpace(name) == "" {
-		return NewError(ErrorInvalidRequest, "tool_choice_name_required", "named tool choice requires a name", nil)
-	}
-	if _, found := namedTools[name]; !found {
-		return NewError(ErrorInvalidRequest, "unknown_tool_choice", "named tool choice does not reference a declared tool", nil)
 	}
 	return nil
 }

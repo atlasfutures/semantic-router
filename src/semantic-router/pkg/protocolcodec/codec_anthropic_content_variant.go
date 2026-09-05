@@ -70,13 +70,13 @@ func requireAnthropicContentFields(
 		}
 		category := llmprotocol.ErrorInvalidRequest
 		code := "invalid_content_variant"
-		message := "Anthropic content is missing the required field: " + name
+		message := "Anthropic content is missing a required field"
 		if providerOutput {
 			category = llmprotocol.ErrorUpstreamUnavailable
 			code = "invalid_response_content"
-			message = "Anthropic provider output is missing the required field: " + name
+			message = "Anthropic provider output is missing a required field"
 		}
-		return llmprotocol.NewError(category, code, message, unsupportedFieldCause(location, "content."+name))
+		return llmprotocol.NewFieldError(category, code, message, location, "content."+name)
 	}
 	return nil
 }
@@ -111,7 +111,7 @@ func rejectAnthropicContentVariantFields(
 			code = "invalid_response_content"
 			message = "Anthropic provider output mixes content union variants"
 		}
-		return llmprotocol.NewError(category, code, message+": "+name, unsupportedFieldCause(location, "content."+name))
+		return llmprotocol.NewFieldError(category, code, message, location, "content."+name)
 	}
 	return nil
 }
@@ -161,10 +161,10 @@ func anthropicResponseContentType(body json.RawMessage) (string, error) {
 // one branch per beta.
 func validateAnthropicContentExtensions(block anthropicContentWire, location string, providerOutput bool) error {
 	if providerOutput && len(block.Citations) > 0 {
-		return llmprotocol.NewError(
+		return llmprotocol.NewFieldError(
 			llmprotocol.ErrorUnsupportedFeature, "unsupported_citations",
 			"Anthropic citations are not supported by the neutral contract",
-			unsupportedFieldCause(location, "content.citations"),
+			location, "content.citations",
 		)
 	}
 	return nil
