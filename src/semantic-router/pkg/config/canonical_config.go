@@ -183,6 +183,9 @@ func mergeCanonicalProviderModelParams(modelConfig map[string]ModelParams, model
 		if params.APIFormat == "" {
 			params.APIFormat = providerParams.APIFormat
 		}
+		if params.ProviderPreferences == nil {
+			params.ProviderPreferences = copyProviderPreferences(providerParams.ProviderPreferences)
+		}
 		modelConfig[modelName] = params
 	}
 }
@@ -226,6 +229,9 @@ func validateCanonicalContract(canonical *CanonicalConfig) error {
 			}
 		}
 		if err := validateProviderReliability(model.Name, model.Reliability); err != nil {
+			return err
+		}
+		if err := validateProviderPreferences(model.Name, model.ProviderPreferences); err != nil {
 			return err
 		}
 		if len(canonicalBackendRefs(model)) == 0 {
@@ -342,6 +348,9 @@ func canonicalProviderModelHasMetadata(model CanonicalProviderModel) bool {
 	if model.ReasoningFamily != "" || model.ProviderModelID != "" || model.APIFormat != "" || len(model.ExternalModelIDs) > 0 {
 		return true
 	}
+	if model.ProviderPreferences != nil {
+		return true
+	}
 	return model.Pricing != (ModelPricing{}) ||
 		model.Reliability != (ProviderReliability{})
 }
@@ -362,6 +371,7 @@ func normalizeCanonicalProviderModels(models []CanonicalProviderModel) (map[stri
 		params.Reliability = model.Reliability
 		params.APIFormat = model.APIFormat
 		params.ExternalModelIDs = normalizeExternalModelIDsFromProviderModel(model)
+		params.ProviderPreferences = copyProviderPreferences(model.ProviderPreferences)
 
 		backendRefs := canonicalBackendRefs(model)
 		params.PreferredEndpoints = make([]string, 0, len(backendRefs))

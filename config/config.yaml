@@ -44,6 +44,19 @@ providers:
       external_model_ids:
         openai: qwen3-8b
         analytics: qwen3-routing
+      # OpenRouter provider routing. Read by the openrouter dialect only.
+      provider_preferences:
+        order:
+          - deepinfra
+          - together
+        allow_fallbacks: false
+        only:
+          - deepinfra
+          - together
+        ignore:
+          - novita
+        require_parameters: true
+        data_collection: deny
       backend_refs:
         - name: local-primary
           endpoint: 127.0.0.1:8000

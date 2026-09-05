@@ -25,6 +25,11 @@ type CanonicalProviderModel struct {
 	Reliability      ProviderReliability   `yaml:"reliability,omitempty"`
 	APIFormat        string                `yaml:"api_format,omitempty"`
 	ExternalModelIDs map[string]string     `yaml:"external_model_ids,omitempty"`
+	// ProviderPreferences pins the OpenRouter providers this binding may use.
+	// It sits with the access binding rather than on the routing model card
+	// because which provider serves an arm is an access detail, not a routing
+	// signal.
+	ProviderPreferences *OpenRouterProviderPreferences `yaml:"provider_preferences,omitempty"`
 }
 
 // ProviderReliability controls generated data-plane load balancing and retry behavior.

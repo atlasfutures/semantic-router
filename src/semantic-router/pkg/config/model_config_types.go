@@ -378,6 +378,10 @@ type ModelParams struct {
 	// for the same reason Vision is: an absent flag is not a verdict, and an
 	// explicit false is one an operator wrote down.
 	Disabled *bool `yaml:"disabled,omitempty"`
+	// ProviderPreferences pins which OpenRouter providers may serve this arm.
+	// Absent leaves the choice to OpenRouter's own ranking; see
+	// OpenRouterProviderPreferences.
+	ProviderPreferences *OpenRouterProviderPreferences `yaml:"provider_preferences,omitempty"`
 }
 
 // SupportsVision reports whether this model may receive image input. An
