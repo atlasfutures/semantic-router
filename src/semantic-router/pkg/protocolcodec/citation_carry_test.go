@@ -161,32 +161,52 @@ func TestAnthropicResponseCitationsStayRefused(t *testing.T) {
 	assertRefusalNamesBlock(t, err, `content block 1 of type "text"`, `"content.citations"`)
 }
 
-// Every unsupported-feature refusal raised for a content block names the
-// block. The refused body is the user's conversation and is never stored, so
-// a refusal that gives only a feature name leaves nothing to search.
+// Every refusal raised for a content block names the block: the unsupported
+// members and the union rules alike. The refused body is the user's
+// conversation and is never stored, so a refusal that gives only a feature
+// name leaves nothing to search.
 func TestAnthropicBlockRefusalsNameTheBlock(t *testing.T) {
 	engine := NewBuiltinEngine()
 	tests := []struct {
-		name  string
-		block string
-		code  string
-		at    string
-		field string
+		name     string
+		block    string
+		category llmprotocol.ErrorCategory
+		code     string
+		at       string
+		field    string
 	}{
 		{
-			name:  "document_title",
-			block: `{"type":"document","source":{"type":"file","file_id":"file_1"},"title":"Reference"}`,
-			code:  "unsupported_content_title",
-			at:    `content block 1 of type "document"`,
-			field: `"content.title"`,
+			name:     "document_title",
+			block:    `{"type":"document","source":{"type":"file","file_id":"file_1"},"title":"Reference"}`,
+			category: llmprotocol.ErrorUnsupportedFeature,
+			code:     "unsupported_content_title",
+			at:       `content block 1 of type "document"`,
+			field:    `"content.title"`,
 		},
 		{
 			name: "image_transformations",
 			block: `{"type":"image","source":{"type":"url","url":"https://example.com/i.png"},` +
 				`"transformations":{"on_load":{"type":"auto"}}}`,
-			code:  "unsupported_content_transformations",
-			at:    `content block 1 of type "image"`,
-			field: `"content.transformations"`,
+			category: llmprotocol.ErrorUnsupportedFeature,
+			code:     "unsupported_content_transformations",
+			at:       `content block 1 of type "image"`,
+			field:    `"content.transformations"`,
+		},
+		{
+			name:     "missing_required_member",
+			block:    `{"type":"text"}`,
+			category: llmprotocol.ErrorInvalidRequest,
+			code:     "invalid_content_variant",
+			at:       `content block 1 of type "text"`,
+			field:    `"content.text"`,
+		},
+		{
+			name:     "member_of_another_variant",
+			block:    `{"type":"text","text":"hi","source":{"type":"base64","media_type":"image/png","data":"aW1n"}}`,
+			category: llmprotocol.ErrorInvalidRequest,
+			code:     "invalid_content_variant",
+			at:       `content block 1 of type "text"`,
+			field:    `"content.source"`,
 		},
 	}
 	for _, test := range tests {
@@ -194,7 +214,7 @@ func TestAnthropicBlockRefusalsNameTheBlock(t *testing.T) {
 			body := []byte(`{"model":"client-model","max_tokens":32,"messages":[{"role":"user",` +
 				`"content":[{"type":"text","text":"look"},` + test.block + `]}]}`)
 			_, _, _, err := engine.DecodeRequest(llmprotocol.AnthropicMessagesV1, body)
-			assertProtocolError(t, err, llmprotocol.ErrorUnsupportedFeature, test.code)
+			assertProtocolError(t, err, test.category, test.code)
 			assertRefusalNamesBlock(t, err, test.at, test.field)
 		})
 	}

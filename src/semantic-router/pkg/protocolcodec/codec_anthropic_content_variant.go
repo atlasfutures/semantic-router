@@ -21,7 +21,7 @@ func anthropicBlockLocation(typeName string, index int) string {
 	return fmt.Sprintf("content block %d of type %q", index, typeName)
 }
 
-func validateAnthropicContentVariant(body json.RawMessage, typeName string, providerOutput bool) error {
+func validateAnthropicContentVariant(body json.RawMessage, typeName, location string, providerOutput bool) error {
 	allowedByType := map[string][]string{
 		"text":        {"cache_control", "citations", "text", "type"},
 		"thinking":    {"signature", "thinking", "type"},
@@ -45,13 +45,17 @@ func validateAnthropicContentVariant(body json.RawMessage, typeName string, prov
 	if err := json.Unmarshal(body, &object); err != nil {
 		return err
 	}
-	if err := requireAnthropicContentFields(object, typeName, providerOutput); err != nil {
+	if err := requireAnthropicContentFields(object, typeName, location, providerOutput); err != nil {
 		return err
 	}
-	return rejectAnthropicContentVariantFields(object, allowed, providerOutput)
+	return rejectAnthropicContentVariantFields(object, allowed, location, providerOutput)
 }
 
-func requireAnthropicContentFields(object map[string]json.RawMessage, typeName string, providerOutput bool) error {
+func requireAnthropicContentFields(
+	object map[string]json.RawMessage,
+	typeName, location string,
+	providerOutput bool,
+) error {
 	requiredByType := map[string][]string{
 		"text":        {"text"},
 		"thinking":    {"thinking"},
@@ -72,7 +76,7 @@ func requireAnthropicContentFields(object map[string]json.RawMessage, typeName s
 			code = "invalid_response_content"
 			message = "Anthropic provider output is missing the required field: " + name
 		}
-		return llmprotocol.NewError(category, code, message, nil)
+		return llmprotocol.NewError(category, code, message, unsupportedFieldCause(location, "content."+name))
 	}
 	return nil
 }
@@ -80,6 +84,7 @@ func requireAnthropicContentFields(object map[string]json.RawMessage, typeName s
 func rejectAnthropicContentVariantFields(
 	object map[string]json.RawMessage,
 	allowed []string,
+	location string,
 	providerOutput bool,
 ) error {
 	known := []string{
@@ -106,7 +111,7 @@ func rejectAnthropicContentVariantFields(
 			code = "invalid_response_content"
 			message = "Anthropic provider output mixes content union variants"
 		}
-		return llmprotocol.NewError(category, code, message+": "+name, nil)
+		return llmprotocol.NewError(category, code, message+": "+name, unsupportedFieldCause(location, "content."+name))
 	}
 	return nil
 }
