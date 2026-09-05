@@ -48,6 +48,9 @@ func (r *OpenAIRouter) emitRoutingDecision(ctx *RequestContext) {
 	if ctx.DispatchedReasoningBound != nil {
 		record["reasoning_max_tokens"] = *ctx.DispatchedReasoningBound
 	}
+	if len(ctx.DispatchedProviderOrder) > 0 {
+		record["provider_order"] = ctx.DispatchedProviderOrder
+	}
 	record["routing_latency_ms"] = time.Since(ctx.ProcessingStartTime).Milliseconds()
 	logging.ComponentEvent("extproc", "routing_decision", record)
 }

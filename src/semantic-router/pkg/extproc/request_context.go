@@ -100,7 +100,10 @@ type RequestContext struct {
 	// exists, so the line is staged there and written once the wire is known.
 	DispatchedReasoningEffort string
 	DispatchedReasoningBound  *int64
-	RoutingDecision           map[string]interface{}
+	// DispatchedProviderOrder is the OpenRouter provider order the rendered
+	// upstream body carries, read back the same way and for the same reason.
+	DispatchedProviderOrder []string
+	RoutingDecision         map[string]interface{}
 
 	// UpstreamStatusCode is the HTTP status the upstream returned, captured at
 	// the response-header phase. Zero means the status was never observed for

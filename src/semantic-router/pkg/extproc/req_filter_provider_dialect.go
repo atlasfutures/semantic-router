@@ -87,6 +87,14 @@ func (d openAIBackendDialect) usesReasoningObject() bool {
 	return d.kind == openAIBackendDialectOpenRouter
 }
 
+// usesProviderPreferences reports that the backend accepts OpenRouter's
+// provider object: the instruction naming which providers may serve the
+// request. Every other OpenAI-compatible backend is one provider and would see
+// an unknown member.
+func (d openAIBackendDialect) usesProviderPreferences() bool {
+	return d.kind == openAIBackendDialectOpenRouter
+}
+
 func (d openAIBackendDialect) usesDeepSeekOfficialReasoning() bool {
 	return d.kind == openAIBackendDialectOfficialDeepSeek && d.supportsTopLevelDeepSeekThink
 }
