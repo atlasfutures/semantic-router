@@ -391,6 +391,23 @@ func (params ModelParams) SupportsVision() bool {
 	return params.Vision == nil || *params.Vision
 }
 
+// SupportsCapability reports whether this model card claims one capability by
+// name. Unlike SupportsVision this is a positive list: an unmarked card claims
+// nothing. That is the right default for a routing capability, whose loss
+// changes what the model is shown rather than how an answer is presented.
+// Assuming an arm had one would route a turn to an arm that answers it on less
+// than the caller sent; claiming none makes the gate fail closed onto a
+// replayable status instead. The routing names are the RoutingCapability
+// constants in pkg/llmprotocol.
+func (params ModelParams) SupportsCapability(name string) bool {
+	for _, capability := range params.Capabilities {
+		if capability == name {
+			return true
+		}
+	}
+	return false
+}
+
 // IsDisabled reports whether an operator has taken this model out of service.
 // An unmarked model serves, so the flag costs nothing until it is set.
 func (params ModelParams) IsDisabled() bool {

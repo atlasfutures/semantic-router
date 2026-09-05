@@ -35,6 +35,13 @@ import (
 // what separates it from every other preparation class.
 const arcFailureMissingEpisodeID = "missing_episode_id"
 
+// arcFailureNoCapableArm is the bounded class for a turn no arm in the basket
+// can serve without changing what the model is shown. It answers 503 like
+// every other authoritative selection failure, because the gateway replays 503
+// and does not replay a body-level 400: a refusal here would end the turn,
+// while a replayable status sends it to the fallback provider intact.
+const arcFailureNoCapableArm = "no_capable_arm"
+
 // requestedFault reads the failure this request asked for. It answers empty
 // unless the cell opted in, so the header is inert everywhere else and no
 // caller can make a serving cell refuse a request. It is read once, here, and
@@ -116,7 +123,45 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	result.ImageBearing = imageBearing
 	result.NonVisionArms = r.nonVisionArms(modelRefs)
 	result.DisabledArms = r.disabledArms(modelRefs)
+	result.RequiredCapabilities = requestRoutingCapabilities(reqCtx)
+	result.IncapableArms = r.incapableArms(modelRefs, result.RequiredCapabilities)
 	return result
+}
+
+// requestRoutingCapabilities reads what this turn needs an arm to hold. It
+// reads the neutral request rather than the body, so it sees the same tools
+// and tool results the dispatch encoder will.
+func requestRoutingCapabilities(reqCtx *RequestContext) []string {
+	if reqCtx == nil || reqCtx.SemanticRequest == nil {
+		return nil
+	}
+	return llmprotocol.RequiredRoutingCapabilities(*reqCtx.SemanticRequest)
+}
+
+// incapableArms reads the capability list off each candidate's model card. It
+// returns nil when the turn requires nothing, which is almost every turn and
+// leaves selection exactly as it was.
+//
+// The exclusion is a refusal rather than a degrade, for the same reason the
+// vision one is: an arm without the capability does not answer this turn
+// worse, it answers a different turn. A tool result that held a screenshot
+// reaches it as an empty tool result, and the answer is built on less than the
+// caller sent.
+func (r *OpenAIRouter) incapableArms(modelRefs []config.ModelRef, required []string) []bool {
+	if r == nil || r.Config == nil || len(required) == 0 || len(modelRefs) == 0 {
+		return nil
+	}
+	arms := make([]bool, len(modelRefs))
+	for index, ref := range modelRefs {
+		params, known := r.Config.ModelConfig[strings.TrimSpace(ref.Model)]
+		for _, capability := range required {
+			if !known || !params.SupportsCapability(capability) {
+				arms[index] = true
+				break
+			}
+		}
+	}
+	return arms
 }
 
 // nonVisionArms reads the image-input contract off each candidate's model

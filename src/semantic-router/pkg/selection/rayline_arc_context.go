@@ -27,7 +27,16 @@ type RaylineARCSelectionContext struct {
 	// out of service. Unlike NonVisionArms it is not a fact about this turn:
 	// it holds for every turn until the card changes. Nil when no arm is
 	// marked, which is the unmarked default.
-	DisabledArms       []bool
+	DisabledArms []bool
+	// RequiredCapabilities names what this turn needs an arm to hold, from
+	// llmprotocol.RequiredRoutingCapabilities. It is empty for almost every
+	// turn: only a server tool or an image inside a tool result puts a name
+	// here.
+	RequiredCapabilities []string
+	// IncapableArms marks, by arm ordinal, the candidates whose model card
+	// does not claim every capability this turn requires. It is nil when the
+	// turn requires none, which leaves selection exactly as it was.
+	IncapableArms      []bool
 	PreparationFailure string
 }
 

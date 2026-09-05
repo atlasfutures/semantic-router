@@ -253,7 +253,46 @@ func excludedArms(
 	if err != nil {
 		return nil, err
 	}
+	excluded, err = withIncapableArms(arcContext, armCount, excluded)
+	if err != nil {
+		return nil, err
+	}
 	return withDisabledArms(arcContext, armCount, excluded)
+}
+
+// withIncapableArms folds the capability gate into the mask. It runs after the
+// vision constraint and before the operator one so that a basket where no arm
+// holds the capability says exactly that, which is the class the caller's
+// gateway has to route around.
+//
+// The failure class is deliberately not a 400. The gateway does not replay a
+// body-level 400, so refusing here would end the user's turn; it does replay
+// 502 and 503, and every other authoritative selection failure already answers
+// 503 through the same path.
+func withIncapableArms(
+	arcContext *selection.RaylineARCSelectionContext,
+	armCount int,
+	excluded []bool,
+) ([]bool, error) {
+	if len(arcContext.IncapableArms) == 0 {
+		return excluded, nil
+	}
+	if len(arcContext.IncapableArms) != armCount {
+		return nil, arcSelectionFailure("capability_arm_mapping")
+	}
+	combined := make([]bool, armCount)
+	eligible := 0
+	for index := range combined {
+		combined[index] = arcContext.IncapableArms[index] ||
+			(len(excluded) == armCount && excluded[index])
+		if !combined[index] {
+			eligible++
+		}
+	}
+	if eligible == 0 {
+		return nil, arcSelectionFailure(arcFailureNoCapableArm)
+	}
+	return combined, nil
 }
 
 // withDisabledArms folds the out-of-service arms into the mask. An arm an
