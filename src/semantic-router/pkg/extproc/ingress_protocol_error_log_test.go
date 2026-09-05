@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 // A 400 at the protocol boundary has to leave something an operator can act
@@ -47,6 +48,41 @@ func TestIngressProtocolRejectionIsLoggedWithTheMember(t *testing.T) {
 	detail, _ := fields["detail"].(string)
 	if !strings.Contains(detail, "previous_message_id") {
 		t.Fatalf("detail %q does not name the offending member", detail)
+	}
+}
+
+// An unsupported-feature refusal has to name the block as well as the feature.
+// On 2026-09-05 a Claude Code turn was refused with unsupported_citations and
+// the line said only that, so nothing told an operator which of hundreds of
+// blocks in the conversation carried the member. The refused body is the
+// user's conversation and is never stored, so the block type, its index and
+// the field path have to travel on the error itself.
+func TestIngressUnsupportedFeatureRefusalNamesTheBlock(t *testing.T) {
+	logs := captureLogs(t)
+	body := []byte(`{"model":"client-model","max_tokens":32,"messages":[{"role":"user",` +
+		`"content":[{"type":"text","text":"look"},` +
+		`{"type":"document","source":{"type":"file","file_id":"file_1"},"title":"Reference"}]}]}`)
+	_, _, _, err := protocolcodec.NewBuiltinEngine().DecodeRequestForMutation(llmprotocol.AnthropicMessagesV1, body)
+	if err == nil {
+		t.Fatal("an unsupported document title was accepted")
+	}
+	recordIngressProtocolError(&RequestContext{
+		RequestID: "rt_ffae7c99-26e", SourceFormat: llmprotocol.AnthropicMessagesV1,
+	}, err)
+
+	entries := logs.All()
+	if len(entries) != 1 {
+		t.Fatalf("an ingress rejection wrote %d log lines, want exactly 1", len(entries))
+	}
+	fields := entries[0].ContextMap()
+	if code, _ := fields["code"].(string); code != "unsupported_content_title" {
+		t.Fatalf("code = %q, want unsupported_content_title", code)
+	}
+	detail, _ := fields["detail"].(string)
+	for _, want := range []string{"content block 1", `type "document"`, `"content.title"`} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("detail %q does not carry %s", detail, want)
+		}
 	}
 }
 

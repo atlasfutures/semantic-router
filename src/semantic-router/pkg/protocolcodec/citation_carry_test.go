@@ -3,6 +3,8 @@ package protocolcodec
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
@@ -151,10 +153,65 @@ func TestAnthropicRequestCitationsKeepCanonicalFieldPolicy(t *testing.T) {
 func TestAnthropicResponseCitationsStayRefused(t *testing.T) {
 	engine := NewBuiltinEngine()
 	body := []byte(`{"id":"msg_1","type":"message","role":"assistant","model":"source-model",` +
-		`"content":[{"type":"text","text":"The handbook says ten.","citations":` + charLocationCitations + `}],` +
+		`"content":[{"type":"text","text":"first"},` +
+		`{"type":"text","text":"The handbook says ten.","citations":` + charLocationCitations + `}],` +
 		`"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
 	_, _, _, err := engine.DecodeResponse(llmprotocol.AnthropicMessagesV1, body)
 	assertProtocolError(t, err, llmprotocol.ErrorUnsupportedFeature, "unsupported_citations")
+	assertRefusalNamesBlock(t, err, `content block 1 of type "text"`, `"content.citations"`)
+}
+
+// Every unsupported-feature refusal raised for a content block names the
+// block. The refused body is the user's conversation and is never stored, so
+// a refusal that gives only a feature name leaves nothing to search.
+func TestAnthropicBlockRefusalsNameTheBlock(t *testing.T) {
+	engine := NewBuiltinEngine()
+	tests := []struct {
+		name  string
+		block string
+		code  string
+		at    string
+		field string
+	}{
+		{
+			name:  "document_title",
+			block: `{"type":"document","source":{"type":"file","file_id":"file_1"},"title":"Reference"}`,
+			code:  "unsupported_content_title",
+			at:    `content block 1 of type "document"`,
+			field: `"content.title"`,
+		},
+		{
+			name: "image_transformations",
+			block: `{"type":"image","source":{"type":"url","url":"https://example.com/i.png"},` +
+				`"transformations":{"on_load":{"type":"auto"}}}`,
+			code:  "unsupported_content_transformations",
+			at:    `content block 1 of type "image"`,
+			field: `"content.transformations"`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body := []byte(`{"model":"client-model","max_tokens":32,"messages":[{"role":"user",` +
+				`"content":[{"type":"text","text":"look"},` + test.block + `]}]}`)
+			_, _, _, err := engine.DecodeRequest(llmprotocol.AnthropicMessagesV1, body)
+			assertProtocolError(t, err, llmprotocol.ErrorUnsupportedFeature, test.code)
+			assertRefusalNamesBlock(t, err, test.at, test.field)
+		})
+	}
+}
+
+// assertRefusalNamesBlock reads the cause, because the cause is the only part
+// of a refusal that reaches the ingress_request_refused line.
+func assertRefusalNamesBlock(t *testing.T, err error, location, field string) {
+	t.Helper()
+	var protocolError *llmprotocol.ProtocolError
+	if !errors.As(err, &protocolError) || protocolError.Cause == nil {
+		t.Fatalf("refusal carries no cause: %v", err)
+	}
+	detail := protocolError.Cause.Error()
+	if !strings.Contains(detail, location) || !strings.Contains(detail, field) {
+		t.Fatalf("cause %q does not name %s and %s", detail, location, field)
+	}
 }
 
 func droppedCitationCount(diagnostics llmprotocol.Diagnostics) int {
