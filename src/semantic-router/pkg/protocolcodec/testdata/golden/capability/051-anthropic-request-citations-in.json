@@ -1,0 +1,140 @@
+{
+  "operation": "request",
+  "cases": [
+    {
+      "name": "assistant_text_char_location_citations",
+      "body": {
+        "model": "client-model",
+        "max_tokens": 32,
+        "messages": [
+          {
+            "role": "user",
+            "content": "what does the handbook say?"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "The handbook says ten.",
+                "citations": [
+                  {
+                    "type": "char_location",
+                    "cited_text": "ten",
+                    "document_index": 0,
+                    "document_title": "Handbook",
+                    "start_char_index": 0,
+                    "end_char_index": 10
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "assistant_text_web_search_result_citations",
+      "body": {
+        "model": "client-model",
+        "max_tokens": 32,
+        "messages": [
+          {
+            "role": "user",
+            "content": "search the web"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "The release is out.",
+                "citations": [
+                  {
+                    "type": "web_search_result_location",
+                    "url": "https://example.com/release",
+                    "title": "Release notes",
+                    "cited_text": "The release is out.",
+                    "encrypted_index": "ZW5jcnlwdGVk"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "document_citations_enabled",
+      "body": {
+        "model": "client-model",
+        "max_tokens": 32,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "document",
+                "source": {
+                  "type": "base64",
+                  "media_type": "application/pdf",
+                  "data": "ZG9jdW1lbnQ="
+                },
+                "citations": {
+                  "enabled": true
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "assistant_text_empty_citations",
+      "body": {
+        "model": "client-model",
+        "max_tokens": 32,
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi",
+                "citations": []
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "assistant_text_citations_unknown_sibling",
+      "body": {
+        "model": "client-model",
+        "max_tokens": 32,
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi",
+                "citations": [],
+                "citation_style": "footnote"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+{
+  "cases": [
+    {
+      "name": "assistant_text_char_location_citations",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 32,
+          "messages": [
+            {
+              "content": "what does the handbook say?",
+              "role": "user"
+            },
+            {
+              "content": "The handbook says ten.",
+              "role": "assistant"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "content.citations",
+            "action": "dropped"
+          }
+        ]
+      }
+    },
+    {
+      "name": "assistant_text_web_search_result_citations",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 32,
+          "messages": [
+            {
+              "content": "search the web",
+              "role": "user"
+            },
+            {
+              "content": "The release is out.",
+              "role": "assistant"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "content.citations",
+            "action": "dropped"
+          }
+        ]
+      }
+    },
+    {
+      "name": "document_citations_enabled",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 32,
+          "messages": [
+            {
+              "content": [
+                {
+                  "file": {
+                    "file_data": "data:application/pdf;base64,ZG9jdW1lbnQ="
+                  },
+                  "type": "file"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "content.citations",
+            "action": "dropped"
+          }
+        ]
+      }
+    },
+    {
+      "name": "assistant_text_empty_citations",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 32,
+          "messages": [
+            {
+              "content": "hello",
+              "role": "user"
+            },
+            {
+              "content": "hi",
+              "role": "assistant"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "content.citations",
+            "action": "dropped"
+          }
+        ]
+      }
+    },
+    {
+      "name": "assistant_text_citations_unknown_sibling",
+      "outcome": {
+        "status": "error",
+        "error": {
+          "category": "invalid_request",
+          "code": "invalid_json"
+        }
+      }
+    }
+  ]
+}

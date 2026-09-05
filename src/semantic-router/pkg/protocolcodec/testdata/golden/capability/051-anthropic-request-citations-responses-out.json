@@ -1,0 +1,163 @@
+{
+  "cases": [
+    {
+      "name": "assistant_text_char_location_citations",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "what does the handbook say?",
+                  "type": "input_text"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "user",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "The handbook says ten.",
+                  "type": "input_text"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "assistant",
+              "type": "message"
+            }
+          ],
+          "max_output_tokens": 32,
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "content.citations",
+            "action": "dropped"
+          }
+        ]
+      }
+    },
+    {
+      "name": "assistant_text_web_search_result_citations",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "search the web",
+                  "type": "input_text"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "user",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "The release is out.",
+                  "type": "input_text"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "assistant",
+              "type": "message"
+            }
+          ],
+          "max_output_tokens": 32,
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "content.citations",
+            "action": "dropped"
+          }
+        ]
+      }
+    },
+    {
+      "name": "document_citations_enabled",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "file_data": "ZG9jdW1lbnQ=",
+                  "type": "input_file"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "max_output_tokens": 32,
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "content.citations",
+            "action": "dropped"
+          }
+        ]
+      }
+    },
+    {
+      "name": "assistant_text_empty_citations",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "input_text"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "user",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "hi",
+                  "type": "input_text"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "assistant",
+              "type": "message"
+            }
+          ],
+          "max_output_tokens": 32,
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "content.citations",
+            "action": "dropped"
+          }
+        ]
+      }
+    },
+    {
+      "name": "assistant_text_citations_unknown_sibling",
+      "outcome": {
+        "status": "error",
+        "error": {
+          "category": "invalid_request",
+          "code": "invalid_json"
+        }
+      }
+    }
+  ]
+}

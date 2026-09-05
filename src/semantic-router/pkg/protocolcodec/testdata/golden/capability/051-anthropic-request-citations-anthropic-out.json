@@ -1,0 +1,152 @@
+{
+  "cases": [
+    {
+      "name": "assistant_text_char_location_citations",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_tokens": 32,
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "what does the handbook say?",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            },
+            {
+              "content": [
+                {
+                  "citations": [
+                    {
+                      "cited_text": "ten",
+                      "document_index": 0,
+                      "document_title": "Handbook",
+                      "end_char_index": 10,
+                      "start_char_index": 0,
+                      "type": "char_location"
+                    }
+                  ],
+                  "text": "The handbook says ten.",
+                  "type": "text"
+                }
+              ],
+              "role": "assistant"
+            }
+          ],
+          "model": "routed-model"
+        }
+      }
+    },
+    {
+      "name": "assistant_text_web_search_result_citations",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_tokens": 32,
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "search the web",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            },
+            {
+              "content": [
+                {
+                  "citations": [
+                    {
+                      "cited_text": "The release is out.",
+                      "encrypted_index": "ZW5jcnlwdGVk",
+                      "title": "Release notes",
+                      "type": "web_search_result_location",
+                      "url": "https://example.com/release"
+                    }
+                  ],
+                  "text": "The release is out.",
+                  "type": "text"
+                }
+              ],
+              "role": "assistant"
+            }
+          ],
+          "model": "routed-model"
+        }
+      }
+    },
+    {
+      "name": "document_citations_enabled",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_tokens": 32,
+          "messages": [
+            {
+              "content": [
+                {
+                  "citations": {
+                    "enabled": true
+                  },
+                  "source": {
+                    "data": "ZG9jdW1lbnQ=",
+                    "media_type": "application/pdf",
+                    "type": "base64"
+                  },
+                  "type": "document"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        }
+      }
+    },
+    {
+      "name": "assistant_text_empty_citations",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_tokens": 32,
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            },
+            {
+              "content": [
+                {
+                  "citations": [],
+                  "text": "hi",
+                  "type": "text"
+                }
+              ],
+              "role": "assistant"
+            }
+          ],
+          "model": "routed-model"
+        }
+      }
+    },
+    {
+      "name": "assistant_text_citations_unknown_sibling",
+      "outcome": {
+        "status": "error",
+        "error": {
+          "category": "invalid_request",
+          "code": "invalid_json"
+        }
+      }
+    }
+  ]
+}
