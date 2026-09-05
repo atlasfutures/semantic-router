@@ -222,6 +222,38 @@ func appendCarriedBlockDrops(
 	}
 }
 
+// carriedAnthropicCitations copies the citations member a request block sets,
+// treating an absent member and an explicit null alike. The bytes are carried
+// verbatim so a Messages target returns exactly what the client sent.
+func carriedAnthropicCitations(raw json.RawMessage) json.RawMessage {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil
+	}
+	return append(json.RawMessage(nil), raw...)
+}
+
+// appendCitationCarryDrops records the citations member a text or document
+// block carries when the target format has no field for it. Claude Code
+// echoes the citations of a web-search or document answer back in history on
+// every later turn, so refusing them failed real turns on the dev cell on
+// 2026-09-05. The member says where an answer came from rather than what the
+// model is asked, so the turn runs and the loss is counted.
+func appendCitationCarryDrops(
+	diagnostics *llmprotocol.Diagnostics,
+	contents []llmprotocol.Content,
+	source, target llmprotocol.WireFormat,
+	policy llmprotocol.Policy,
+	reason string,
+) {
+	for _, content := range contents {
+		if len(content.CitationsRaw) == 0 {
+			continue
+		}
+		appendPresentationDrop(diagnostics, policy, source, target, "content.citations", reason)
+	}
+}
+
 // messageDropsWhole reports whether every block of a message is a carried block
 // the target cannot name. Such a message encodes to nothing, so the encoder
 // omits the message rather than emitting an empty one the provider refuses.

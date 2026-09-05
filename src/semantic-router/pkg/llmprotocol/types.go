@@ -64,9 +64,18 @@ const (
 // Content is one ordered semantic block. Fields are closed by Kind. Data and
 // references are never fetched by a codec.
 type Content struct {
-	Kind           ContentKind
-	Text           string
-	Citations      []Citation
+	Kind      ContentKind
+	Text      string
+	Citations []Citation
+	// CitationsRaw is the citations member an Anthropic text or document
+	// block carries. Claude Code echoes the citations of a web-search or
+	// document answer back in history on every later turn, and the
+	// Citations API marks a document with {"enabled": true}. Neither shape
+	// fits Citation, which models one URL span, so the Router carries the
+	// member unread. It records where an answer came from rather than
+	// changing what the model is asked, so a format with nowhere to put it
+	// drops and counts it instead of refusing the turn.
+	CitationsRaw   json.RawMessage
 	Cache          *CacheDirective
 	MediaType      string
 	URL            string

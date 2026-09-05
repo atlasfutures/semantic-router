@@ -59,12 +59,15 @@ func (OpenAIChatCodec) EncodeRequest(request llmprotocol.Request, envelope llmpr
 
 func chatRequestDiagnostics(request llmprotocol.Request, policy llmprotocol.Policy) (llmprotocol.Diagnostics, error) {
 	var diagnostics llmprotocol.Diagnostics
+	const citationReason = "a Chat content part carries no block citations"
 	for _, instruction := range request.Instructions {
 		appendChatToolBlockDrops(&diagnostics, instruction.Content, request.Trusted.SourceFormat, policy)
+		appendCitationCarryDrops(&diagnostics, instruction.Content, request.Trusted.SourceFormat, llmprotocol.OpenAIChatV1, policy, citationReason)
 	}
 	for _, message := range request.Messages {
 		appendCarriedBlockDrops(&diagnostics, message.Content, llmprotocol.OpenAIChatV1, policy)
 		appendChatToolBlockDrops(&diagnostics, message.Content, request.Trusted.SourceFormat, policy)
+		appendCitationCarryDrops(&diagnostics, message.Content, request.Trusted.SourceFormat, llmprotocol.OpenAIChatV1, policy, citationReason)
 	}
 	if request.PreviousResponseID == "" && request.ConversationID == "" && request.Truncation == "" {
 		return diagnostics, nil

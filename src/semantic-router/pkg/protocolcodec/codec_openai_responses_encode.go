@@ -25,6 +25,10 @@ func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope 
 	var diagnostics llmprotocol.Diagnostics
 	for _, message := range request.Messages {
 		appendCarriedBlockDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
+		appendCitationCarryDrops(
+			&diagnostics, message.Content, request.Trusted.SourceFormat, llmprotocol.OpenAIResponsesV1,
+			policy, "a Responses content part carries no block citations",
+		)
 	}
 	body, err = mergeUnmodeledFields(body, request, llmprotocol.OpenAIResponsesV1, &diagnostics, policy)
 	return body, diagnostics, err

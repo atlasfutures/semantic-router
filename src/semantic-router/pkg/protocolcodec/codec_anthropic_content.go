@@ -73,7 +73,7 @@ func decodeAnthropicContentBlock(
 	if err := validateAnthropicContentVariant(body, typeName, providerOutput); err != nil {
 		return llmprotocol.Content{}, err
 	}
-	if err := validateAnthropicContentExtensions(block); err != nil {
+	if err := validateAnthropicContentExtensions(block, providerOutput); err != nil {
 		return llmprotocol.Content{}, err
 	}
 	return decodeAnthropicTypedContent(typeName, block, policy)
@@ -202,8 +202,11 @@ func anthropicResponseContentType(body json.RawMessage) (string, error) {
 	}
 }
 
-func validateAnthropicContentExtensions(block anthropicContentWire) error {
-	if len(block.Citations) > 0 {
+func validateAnthropicContentExtensions(block anthropicContentWire, providerOutput bool) error {
+	// A request block carries its citations unread; only provider output is
+	// refused, because the Router would have to generate the response-side
+	// spans it cannot derive.
+	if providerOutput && len(block.Citations) > 0 {
 		return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_citations", "Anthropic citations are not supported by the neutral contract", nil)
 	}
 	return rejectUnsupportedRequestFields(map[string]json.RawMessage{
@@ -221,7 +224,11 @@ func decodeAnthropicTypedContent(
 ) (llmprotocol.Content, error) {
 	switch typeName {
 	case "text":
-		return llmprotocol.Content{Kind: llmprotocol.ContentText, Text: block.Text, Cache: decodeAnthropicCacheControl(block.CacheControl)}, nil
+		return llmprotocol.Content{
+			Kind: llmprotocol.ContentText, Text: block.Text,
+			CitationsRaw: carriedAnthropicCitations(block.Citations),
+			Cache:        decodeAnthropicCacheControl(block.CacheControl),
+		}, nil
 	case "thinking":
 		if block.CacheControl != nil {
 			return llmprotocol.Content{}, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_cache_directive", "Anthropic Messages cannot attach cache_control to thinking content", nil)
@@ -232,6 +239,7 @@ func decodeAnthropicTypedContent(
 		}, nil
 	case "image", "document":
 		content, err := decodeAnthropicMediaContent(typeName, block.Source)
+		content.CitationsRaw = carriedAnthropicCitations(block.Citations)
 		content.Cache = decodeAnthropicCacheControl(block.CacheControl)
 		return content, err
 	case "tool_use":
@@ -680,7 +688,10 @@ func encodeAnthropicContent(contents []llmprotocol.Content) (json.RawMessage, er
 func encodeAnthropicContentBlock(content llmprotocol.Content) (anthropicContentWire, error) {
 	switch content.Kind {
 	case llmprotocol.ContentText:
-		return anthropicContentWire{Type: "text", Text: content.Text, CacheControl: encodeAnthropicCacheControl(content.Cache)}, nil
+		return anthropicContentWire{
+			Type: "text", Text: content.Text, Citations: content.CitationsRaw,
+			CacheControl: encodeAnthropicCacheControl(content.Cache),
+		}, nil
 	case llmprotocol.ContentReasoning:
 		if content.Cache != nil {
 			return anthropicContentWire{}, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_cache_directive", "Anthropic Messages cannot attach cache_control to thinking content", nil)
@@ -691,6 +702,7 @@ func encodeAnthropicContentBlock(content llmprotocol.Content) (anthropicContentW
 			return anthropicContentWire{}, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "file_detail", "Anthropic Messages cannot encode file detail", nil)
 		}
 		block := encodeAnthropicMediaBlock(content)
+		block.Citations = content.CitationsRaw
 		block.CacheControl = encodeAnthropicCacheControl(content.Cache)
 		return block, nil
 	case llmprotocol.ContentToolCall:
