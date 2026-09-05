@@ -50,6 +50,16 @@ Provider pricing belongs beside each concrete model under
 `cached_input_per_1m`, and `cache_write_per_1m` rates. Routing model cards do not
 repeat deployment prices or credentials.
 
+Provider selection belongs beside each concrete model too, under
+`providers.models[].provider_preferences`. It pins which OpenRouter providers may
+serve that model, and the Router encodes it as OpenRouter's top-level `provider`
+object on an OpenRouter backend only. Set `order` or `only` — the key must name
+at least one provider slug — plus the optional `allow_fallbacks`, `ignore`,
+`require_parameters`, and `data_collection` (`allow` or `deny`). An `order`
+without `allow_fallbacks: false` is a preference rather than a pin: OpenRouter
+may still serve the request from an unlisted provider. See
+[Provider Routing](https://openrouter.ai/docs/features/provider-routing).
+
 Router-wide debugging surfaces stay closed by default.
 `global.services.observability.profiling` serves Go `pprof` endpoints, and only
 when it is explicitly enabled; it then binds `127.0.0.1:6060` so profiles never
