@@ -149,21 +149,23 @@ func validateOutputItem(
 	if len(item.Content) == 0 {
 		return NewError(ErrorUpstreamUnavailable, "empty_output_item", fmt.Sprintf("upstream output item %d is empty", index), nil)
 	}
-	for _, content := range item.Content {
-		if err := validateOutputContent(item.Role, content, blocks, limits); err != nil {
+	itemLocation := fmt.Sprintf("output item %d", index)
+	for contentIndex, content := range item.Content {
+		location := contentLocation(itemLocation, contentIndex, content.Kind)
+		if err := validateOutputContent(item.Role, content, location, blocks, limits); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateOutputContent(role Role, content Content, blocks *int, limits Limits) error {
+func validateOutputContent(role Role, content Content, location string, blocks *int, limits Limits) error {
 	if role == RoleAssistant && content.Kind == ContentToolResult ||
 		role == RoleTool && content.Kind != ContentToolResult {
 		return NewError(ErrorUpstreamUnavailable, "invalid_output_role_content", "upstream output role and content do not match", nil)
 	}
 	(*blocks)++
-	if err := validateContent(content, blocks, limits, 0); err != nil {
+	if err := validateContent(content, location, blocks, limits, 0); err != nil {
 		return err
 	}
 	if content.Kind == ContentGeneratedImage && content.GeneratedImage.Status != ImageGenerationCompleted &&

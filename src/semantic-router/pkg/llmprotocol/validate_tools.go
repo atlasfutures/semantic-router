@@ -57,13 +57,13 @@ func validateRequestTool(tool Tool, limits Limits, location string) error {
 	if err := validateToolTextLimits(tool, limits, location); err != nil {
 		return err
 	}
-	if err := validateCacheDirective(tool.Cache); err != nil {
+	if err := validateCacheDirective(tool.Cache, location, "tools.cache_control"); err != nil {
 		return err
 	}
 	if len(tool.InputSchema) == 0 {
 		return nil
 	}
-	return validateSchemaObject(tool.InputSchema, "tool schema", limits)
+	return validateSchemaObject(tool.InputSchema, "tool schema", location, "tools.input_schema", limits)
 }
 
 // validateToolDeclaration checks what a tool must state to be usable at all.
@@ -104,31 +104,31 @@ func validateToolTextLimits(tool Tool, limits Limits, location string) error {
 // nothing the client wrote. The counts are what tell an operator whether the
 // limit is wrong or the request is.
 func toolTextLimit(location, field string, observed, limit int) error {
-	refusal := NewFieldError(
+	return NewFieldError(
 		ErrorInvalidRequest, "tool_text_limit",
 		"tool name or description exceeds the configured limit", location, field,
-	)
-	overflow := fmt.Sprintf("%d bytes, limit %d", observed, limit)
-	refusal.Message += " (" + overflow + ")"
-	refusal.Cause = fmt.Errorf("%w: %s", refusal.Cause, overflow)
-	return refusal
+	).WithCount("bytes", observed, limit)
 }
 
 func validateToolChoice(choice ToolChoice, namedTools map[string]struct{}, toolCount int, hasImageGeneration bool) error {
 	if !validToolChoiceMode(choice.Mode) {
-		return NewError(ErrorInvalidRequest, "invalid_tool_choice", "tool choice is invalid", nil)
+		return NewFieldError(ErrorInvalidRequest, "invalid_tool_choice",
+			"tool choice is invalid", "", "tool_choice")
 	}
 	if choice.Mode == ToolChoiceNamed {
 		return validateNamedToolChoice(choice.Name, namedTools)
 	}
 	if choice.Name != "" {
-		return NewError(ErrorInvalidRequest, "invalid_tool_choice", "only named tool choice may contain a name", nil)
+		return NewFieldError(ErrorInvalidRequest, "invalid_tool_choice",
+			"only named tool choice may contain a name", "", "tool_choice.name")
 	}
 	if choice.Mode == ToolChoiceImageGeneration && !hasImageGeneration {
-		return NewError(ErrorInvalidRequest, "image_generation_tool_required", "image-generation tool choice requires a declared image-generation tool", nil)
+		return NewFieldError(ErrorInvalidRequest, "image_generation_tool_required",
+			"image-generation tool choice requires a declared image-generation tool", "", "tool_choice")
 	}
 	if choice.Mode == ToolChoiceRequired && toolCount == 0 && !hasImageGeneration {
-		return NewError(ErrorInvalidRequest, "tools_required", "tool choice requires at least one declared tool", nil)
+		return NewFieldError(ErrorInvalidRequest, "tools_required",
+			"tool choice requires at least one declared tool", "", "tool_choice")
 	}
 	return nil
 }
@@ -144,10 +144,12 @@ func validToolChoiceMode(mode ToolChoiceMode) bool {
 
 func validateNamedToolChoice(name string, namedTools map[string]struct{}) error {
 	if strings.TrimSpace(name) == "" {
-		return NewError(ErrorInvalidRequest, "tool_choice_name_required", "named tool choice requires a name", nil)
+		return NewFieldError(ErrorInvalidRequest, "tool_choice_name_required",
+			"named tool choice requires a name", "", "tool_choice.name")
 	}
 	if _, found := namedTools[name]; !found {
-		return NewError(ErrorInvalidRequest, "unknown_tool_choice", "named tool choice does not reference a declared tool", nil)
+		return NewFieldError(ErrorInvalidRequest, "unknown_tool_choice",
+			"named tool choice does not reference a declared tool", "", "tool_choice.name")
 	}
 	return nil
 }

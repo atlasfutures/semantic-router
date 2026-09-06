@@ -92,3 +92,43 @@ func NewFieldError(category ErrorCategory, code, message, location, field string
 		Cause:     errors.New(detail),
 	}
 }
+
+// WithCount states what the request carried and what the limit is, in both
+// halves of the refusal. The two numbers are what tell an operator whether the
+// limit is wrong or the request is: the CP9r refusals of 2026-09-04 recorded
+// only that something was too large, and explaining them took a code read and
+// a client capture. Neither number is a value the client wrote.
+func (err *ProtocolError) WithCount(unit string, observed, limit int) *ProtocolError {
+	overflow := fmt.Sprintf("%d, limit %d", observed, limit)
+	if unit != "" {
+		overflow = fmt.Sprintf("%d %s, limit %d", observed, unit, limit)
+	}
+	err.Message += " (" + overflow + ")"
+	if err.Cause == nil {
+		err.Cause = errors.New(overflow)
+		return err
+	}
+	err.Cause = fmt.Errorf("%w: %s", err.Cause, overflow)
+	return err
+}
+
+// locateRefusal names where a refusal happened when it came from a validator
+// the request leg shares with the response leg. Those validators see a text
+// block or an image, never the message it sits in, so they cannot name the
+// place themselves and the request caller has to.
+//
+// A refusal that already names a member keeps what it has.
+func locateRefusal(err error, location, field string) error {
+	var protocolError *ProtocolError
+	if !errors.As(err, &protocolError) || protocolError.Parameter != "" {
+		return err
+	}
+	located := NewFieldError(
+		protocolError.Category, protocolError.Code, protocolError.Message, location, field,
+	)
+	if protocolError.Cause != nil {
+		located.Cause = fmt.Errorf("%w: %w", located.Cause, protocolError.Cause)
+	}
+	located.RetryAfter = protocolError.RetryAfter
+	return located
+}

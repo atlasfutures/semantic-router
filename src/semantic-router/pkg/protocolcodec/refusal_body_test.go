@@ -64,6 +64,28 @@ func TestRefusalBodiesNameTheFieldOnEveryClientFormat(t *testing.T) {
 			cause: []string{`"service_tier"`},
 		},
 		{
+			// Raised by the request contract rather than the decoder. The
+			// block index has to survive that boundary: a resumed turn holds
+			// hundreds of blocks and the refused body is never stored.
+			name: "content block refused by the request contract",
+			body: `{"model":"m","max_tokens":16,"messages":[{"role":"user","content":[` +
+				`{"type":"text","text":"look"},` +
+				`{"type":"text","text":"hi","cache_control":{"type":"forever"}}]}]}`,
+			want: []string{
+				"message 0 content block 1", `type "text"`, `"content.cache_control.type"`,
+			},
+			cause: []string{"message 0 content block 1", `"content.cache_control.type"`},
+		},
+		{
+			// A limit states both counts, which is what says whether the limit
+			// is wrong or the request is.
+			name: "model over the limit",
+			body: `{"model":"` + strings.Repeat("m", 1025) + `","max_tokens":16,` +
+				`"messages":[{"role":"user","content":"hi"}]}`,
+			want:  []string{`"model"`, "1025 bytes, limit 1024"},
+			cause: []string{`"model"`, "1025 bytes, limit 1024"},
+		},
+		{
 			name: "tool description over the limit",
 			body: `{"model":"m","max_tokens":16,"messages":[{"role":"user","content":"hi"}],` +
 				`"tools":[{"name":"lookup","input_schema":{"type":"object"},"description":"` +

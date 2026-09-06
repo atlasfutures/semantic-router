@@ -2,6 +2,7 @@ package llmprotocol
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -88,8 +89,8 @@ func TestRequestRefusalsNameTheirField(t *testing.T) {
 
 func assertRefusalNamesItsField(t *testing.T, err error, test refusalCase) {
 	t.Helper()
-	protocolError, ok := err.(*ProtocolError)
-	if !ok {
+	var protocolError *ProtocolError
+	if !errors.As(err, &protocolError) {
 		t.Fatalf("ValidateRequest() error = %v, want a protocol error", err)
 	}
 	if protocolError.Code != test.code {
@@ -480,9 +481,9 @@ func reasoningRefusalCases() []refusalCase {
 			code: "invalid_reasoning_display", field: "reasoning_display",
 		},
 		{
-			name: "reasoning display without reasoning",
+			name:    "reasoning display without reasoning",
 			request: withRequest(func(request *Request) { request.ReasoningDisplay = "summarized" }),
-			code:  "conflicting_reasoning_display", field: "reasoning_display",
+			code:    "conflicting_reasoning_display", field: "reasoning_display",
 		},
 	}
 }
@@ -602,8 +603,8 @@ func TestNoRequestRefusalIsUnnamed(t *testing.T) {
 				limits = *test.limits
 			}
 			err := ValidateRequest(test.request, limits)
-			protocolError, ok := err.(*ProtocolError)
-			if !ok {
+			var protocolError *ProtocolError
+			if !errors.As(err, &protocolError) {
 				t.Fatalf("%s: ValidateRequest() error = %v, want a protocol error", test.name, err)
 			}
 			if protocolError.Parameter == "" {

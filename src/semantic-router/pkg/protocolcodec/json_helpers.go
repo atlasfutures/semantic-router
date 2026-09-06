@@ -607,13 +607,6 @@ func rejectUnsupportedRequestFieldAt(location, field string, value json.RawMessa
 	)
 }
 
-func unsupportedFieldCause(location, field string) error {
-	if location == "" {
-		return nil
-	}
-	return fmt.Errorf("%s: field %q", location, field)
-}
-
 func rejectUnsupportedRequestFields(fields map[string]json.RawMessage) error {
 	return rejectUnsupportedRequestFieldsAt("", fields)
 }
