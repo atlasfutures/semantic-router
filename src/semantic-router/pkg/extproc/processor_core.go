@@ -296,6 +296,7 @@ func (r *OpenAIRouter) processResponseBody(
 	if err != nil {
 		return err
 	}
+	response = normalizeFullDuplexResponseBody(response, ctx, v.ResponseBody)
 	return sendResponse(stream, response, "response body")
 }
 
