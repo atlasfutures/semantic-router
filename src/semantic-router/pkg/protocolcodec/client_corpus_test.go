@@ -310,3 +310,75 @@ func sortedDistinct(paths []string) []string {
 	sort.Strings(distinct)
 	return distinct
 }
+
+// TestRequestDispositionsMatchTheInventory binds the runtime table to the
+// dated inventory. The table decides what a target actually does; the
+// inventory is what a reviewer reads and what CI diffs the corpus against.
+// A row in one and not the other means the document and the behaviour
+// disagree, which is the state the four remediations of the week of
+// 2026-09-01 each had to discover by hand.
+func TestRequestDispositionsMatchTheInventory(t *testing.T) {
+	inventories := loadClientSchemaInventories(t)
+	inventory, present := inventories[llmprotocol.AnthropicMessagesV1]
+	if !present {
+		t.Fatal("the Messages format has no dated inventory")
+	}
+	rows := make(map[string]clientSchemaField, len(inventory.Fields))
+	for _, field := range inventory.Fields {
+		if field.Leg == "request" {
+			rows[field.Path] = field
+		}
+	}
+	for _, row := range anthropicRequestDispositions {
+		assertDispositionRowIsInventoried(t, row, rows)
+	}
+	// Every inventoried member the table does not name is carried by the
+	// generic carrier, and the carrier re-emits only to the format the member
+	// arrived on. So a foreign target always drops it, and any other claim in
+	// the inventory would be describing behaviour that does not exist.
+	for _, field := range inventory.Fields {
+		if field.Leg != "request" {
+			continue
+		}
+		if _, named := anthropicRequestDispositionIndex[field.Path]; named {
+			continue
+		}
+		for target, action := range field.Targets {
+			if action != string(dispositionDrop) {
+				t.Errorf(
+					"inventory row %q is carried by the generic carrier, so target %s drops it; the inventory says %q",
+					field.Path, target, action,
+				)
+			}
+		}
+	}
+}
+
+func assertDispositionRowIsInventoried(
+	t *testing.T, row requestFieldRow, rows map[string]clientSchemaField,
+) {
+	t.Helper()
+	field, inventoried := rows[row.Path]
+	if !inventoried {
+		t.Errorf("the disposition table names %q, and no inventory row classifies it", row.Path)
+		return
+	}
+	for target, disposition := range row.Targets {
+		stated, present := field.Targets[string(target)]
+		if !present {
+			t.Errorf("the table gives %q disposition %q on %s, and the inventory states none",
+				row.Path, disposition.Action, target)
+			continue
+		}
+		if stated != string(disposition.Action) {
+			t.Errorf("the table gives %q disposition %q on %s, and the inventory says %q",
+				row.Path, disposition.Action, target, stated)
+		}
+	}
+	for target := range field.Targets {
+		if _, stated := row.Targets[llmprotocol.WireFormat(target)]; !stated {
+			t.Errorf("the inventory gives %q a disposition on %s, and the table states none",
+				row.Path, target)
+		}
+	}
+}

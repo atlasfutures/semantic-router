@@ -23,10 +23,14 @@ import (
 // hand-rolled branches with no field path, which is why locating them took a
 // log join.
 //
-// Beta records which anthropic-beta value introduced the member. Nothing reads
-// it yet. It is here because CP9v's dated schema inventories key on exactly
-// that, and filling the column later against a table is a smaller job than
-// reconstructing it from branches.
+// Which anthropic-beta value introduced a member is not recorded here. CP9u
+// left a column for it; CP9v put the attribution in the dated inventories
+// under testdata/inventory instead, and kept it out of this table on purpose.
+// The reason is rule 5: production reads the beta set to log it and never to
+// decide anything, so a runtime table that carried an attribution would hold a
+// value nothing may act on. Two homes for one fact also drift, and the
+// inventory is the home CI checks. TestRequestDispositionsMatchTheInventory
+// binds the two, so a row added to one and not the other fails.
 
 type dispositionAction string
 
@@ -44,10 +48,6 @@ type targetDisposition struct {
 type requestFieldRow struct {
 	// Path is the field path exactly as a diagnostic reports it.
 	Path string
-	// Beta is the anthropic-beta value that introduced the member, empty for
-	// the base contract and empty where it is not yet established. CP9v fills
-	// it from the dated inventories.
-	Beta string
 	// Targets holds the disposition per target format. A format that is absent
 	// carries the member.
 	Targets map[llmprotocol.WireFormat]targetDisposition
