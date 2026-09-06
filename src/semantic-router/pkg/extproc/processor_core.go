@@ -223,6 +223,10 @@ func (r *OpenAIRouter) handleProcessRequest(
 		return r.processResponseHeaders(stream, v, ctx)
 	case *ext_proc.ProcessingRequest_ResponseBody:
 		return r.processResponseBody(stream, v, ctx)
+	case *ext_proc.ProcessingRequest_RequestTrailers:
+		return processRequestTrailers(stream, v)
+	case *ext_proc.ProcessingRequest_ResponseTrailers:
+		return processResponseTrailers(stream, v)
 	default:
 		return processUnknownRequest(stream, v)
 	}
