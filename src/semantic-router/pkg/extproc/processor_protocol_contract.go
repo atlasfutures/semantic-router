@@ -118,6 +118,7 @@ func (r *OpenAIRouter) prepareProtocolRequest(
 		}
 		return nil, r.createErrorResponse(400, "invalid inference request")
 	}
+	logIngressBetaSet(ctx)
 	request.Trusted.SourceFormat = ctx.SourceFormat
 	request.Trusted.CorrelationID = ctx.RequestID
 	ctx.IngressBodyBytes = len(body)

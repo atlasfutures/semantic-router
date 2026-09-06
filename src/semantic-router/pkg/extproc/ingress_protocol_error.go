@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
@@ -18,6 +19,12 @@ func logIngressProtocolError(ctx *RequestContext, err error) {
 	if ctx != nil {
 		fields["request_id"] = ctx.RequestID
 		fields["format"] = string(ctx.SourceFormat)
+		// The beta set is the effective protocol version of the refused
+		// request. Without it a refusal names a member and leaves the reader
+		// to guess which opt-in introduced it.
+		if betas := anthropicBetaSet(ctx.Headers); len(betas) > 0 {
+			fields["anthropic_betas"] = strings.Join(betas, ",")
+		}
 	}
 	var protocolError *llmprotocol.ProtocolError
 	if errors.As(err, &protocolError) {
