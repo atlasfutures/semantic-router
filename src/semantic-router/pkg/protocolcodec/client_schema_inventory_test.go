@@ -74,6 +74,11 @@ type clientSchemaInventory struct {
 	Betas []clientSchemaBeta `json:"betas,omitempty"`
 	// Fields classifies every extension member observed on this format.
 	Fields []clientSchemaField `json:"fields"`
+	// Note says what the inventory does not cover. An inventory that
+	// classifies nothing has to state why, because "no member has been seen"
+	// and "no capture has been made" look identical in an empty file and mean
+	// opposite things.
+	Note string `json:"note,omitempty"`
 }
 
 type clientSchemaBeta struct {
@@ -163,8 +168,8 @@ func validateInventoryIdentity(inventory clientSchemaInventory) []string {
 	if !inventoryVersionPattern.MatchString(inventory.Version) {
 		problems = append(problems, fmt.Sprintf("version %q is not a YYYY-MM-DD date", inventory.Version))
 	}
-	if len(inventory.Fields) == 0 {
-		problems = append(problems, "inventory classifies no members")
+	if len(inventory.Fields) == 0 && strings.TrimSpace(inventory.Note) == "" {
+		problems = append(problems, "inventory classifies no members and states no note saying why")
 	}
 	return problems
 }

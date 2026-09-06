@@ -1,0 +1,113 @@
+{
+  "format": "anthropic.messages.v1",
+  "version": "2026-09-05",
+  "base_version": "2023-06-01",
+  "note": "The base version has not moved since 2023-06-01. The protocol moves through anthropic-beta instead, so the effective version of a request is the base version plus its beta set, and the date above is the only identity this inventory can honestly carry. The response leg has no rows: the sole Anthropic-format response capture on disk is the cell's own output, so the client-observed response surface is unmeasured.",
+  "betas": [
+    {
+      "name": "prompt-caching-scope-2026-01-05",
+      "state": "client",
+      "note": "Undocumented. Observed on the anthropic-beta header of the claude-cli 2.1.259 proxy-mode captures of 2026-09-03."
+    },
+    { "name": "extended-cache-ttl-2025-04-11", "state": "client" },
+    {
+      "name": "advanced-tool-use-2025-11-20",
+      "state": "client",
+      "note": "As sent by claude-cli 2.1.259. Anthropic documents the member as generally available, superseding fine-grained-tool-streaming-2025-05-14."
+    },
+    { "name": "cache-diagnosis-2026-04-07", "state": "client" },
+    { "name": "mid-conversation-system-2026-04-07", "state": "client" },
+    { "name": "effort-2025-11-24", "state": "client" },
+    { "name": "interleaved-thinking-2025-05-14", "state": "client" },
+    { "name": "context-management-2025-06-27", "state": "client" },
+    {
+      "name": "prompt-caching-evict-2026-05-12",
+      "state": "server-gated",
+      "note": "Gated server-side, in a Statsig-shaped check. It can switch on with no client upgrade and no warning, so a corpus entry for it goes stale without anyone changing the client."
+    },
+    { "name": "task-budgets-2026-03-13", "state": "client" }
+  ],
+  "fields": [
+    {
+      "path": "content.cache_control",
+      "leg": "request",
+      "first_seen": "2026-09-04",
+      "targets": { "openai.chat.v1": "drop", "openai.responses.v1": "drop" },
+      "note": "The breakpoint a client marks on a tool block. Refusing it answered 500 to every follow-up turn of a tool-using session on 2026-09-04. Beta attribution is operator-owed: the member predates the captures on disk."
+    },
+    {
+      "path": "content.cache_control.evict_on_complete",
+      "leg": "request",
+      "beta": "prompt-caching-evict-2026-05-12",
+      "first_seen": "2026-09-05",
+      "targets": { "openai.chat.v1": "drop", "openai.responses.v1": "drop" },
+      "note": "Sweep item 1. Refused invalid_json before CP9u, because it sits inside a modelled struct."
+    },
+    {
+      "path": "content.caller",
+      "leg": "request",
+      "first_seen": "2026-09-03",
+      "targets": { "openai.chat.v1": "drop", "openai.responses.v1": "drop" },
+      "note": "Programmatic tool calling names who issued the call. Refused unsupported_content_caller until CP9p; e2e run cp2 exited 1 on it. Beta attribution is operator-owed."
+    },
+    {
+      "path": "content.citations",
+      "leg": "request",
+      "first_seen": "2026-09-05",
+      "targets": { "openai.chat.v1": "drop", "openai.responses.v1": "drop" },
+      "note": "Claude Code echoes the citations of a web-search or document answer back in history on every later turn. Two operator turns were refused on 2026-09-05. No corpus entry carries it yet; the evidence is golden capability/051. Beta attribution is operator-owed."
+    },
+    {
+      "path": "content.document",
+      "leg": "request",
+      "first_seen": "2026-09-05",
+      "targets": { "openai.chat.v1": "transform", "openai.responses.v1": "transform" },
+      "note": "Sweep item 4. A document whose source is text becomes a text part carrying the text and its title. Dropping it sent a question with its subject removed: the provider answered, the prompt token count did not rise, and nothing said what was lost."
+    },
+    {
+      "path": "context_management",
+      "leg": "request",
+      "beta": "context-management-2025-06-27",
+      "first_seen": "2026-09-03",
+      "targets": { "openai.chat.v1": "drop", "openai.responses.v1": "drop" },
+      "note": "Sent by claude-cli 2.1.259 on the direct auth path."
+    },
+    {
+      "path": "diagnostics",
+      "leg": "request",
+      "beta": "cache-diagnosis-2026-04-07",
+      "first_seen": "2026-09-03",
+      "targets": { "openai.chat.v1": "drop", "openai.responses.v1": "drop" },
+      "note": "Sent by claude-cli 2.1.259 on the proxy auth path only."
+    },
+    {
+      "path": "output_config.task_budget",
+      "leg": "request",
+      "beta": "task-budgets-2026-03-13",
+      "first_seen": "2026-09-05",
+      "targets": { "openai.chat.v1": "drop", "openai.responses.v1": "drop" },
+      "note": "Sweep item 3. Refused invalid_json before CP9u: a member inside a modelled struct."
+    },
+    {
+      "path": "tools.defer_loading",
+      "leg": "request",
+      "first_seen": "2026-09-05",
+      "targets": { "openai.chat.v1": "drop", "openai.responses.v1": "drop" },
+      "note": "Sweep item 2. Low risk today because the proxy materialises deferred tools before the cell. Beta attribution is operator-owed: the 2026-09-05 sweep did not record the header."
+    },
+    {
+      "path": "tools.eager_input_streaming",
+      "leg": "request",
+      "beta": "advanced-tool-use-2025-11-20",
+      "first_seen": "2026-09-03",
+      "targets": { "openai.chat.v1": "drop", "openai.responses.v1": "drop" }
+    },
+    {
+      "path": "tools.type",
+      "leg": "request",
+      "first_seen": "2026-09-05",
+      "targets": { "openai.chat.v1": "drop", "openai.responses.v1": "drop" },
+      "note": "Sweep items 5 and 6: web_search_20250305 and advisor_20260301. A tool the source API runs itself. Neither OpenAI format has a shape for one, so the declaration is dropped and the CP9u capability gate routes the turn to an arm that holds the tool, or answers a replayable status. Beta attribution is operator-owed."
+    }
+  ]
+}
