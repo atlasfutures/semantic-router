@@ -23,6 +23,13 @@ type UnmodeledFields struct {
 	// and output_config.task_budget are both that shape -- so the carrier has
 	// to reach the same depth the wire does.
 	Children map[string]*UnmodeledFields
+	// Elements holds the same carrier per element of a member the contract
+	// names as an array of modelled objects, index-aligned with the array the
+	// client sent. A protocol adds a member to an array element as readily as
+	// to an object, and without this the walk stopped at every array: a member
+	// on a message object was neither carried nor counted. A nil entry means
+	// that element held nothing unnamed.
+	Elements []*UnmodeledFields
 }
 
 // Len reports how many members the carrier holds at its own level. A nil
@@ -44,6 +51,11 @@ func (fields *UnmodeledFields) Empty() bool {
 	}
 	for _, child := range fields.Children {
 		if !child.Empty() {
+			return false
+		}
+	}
+	for _, element := range fields.Elements {
+		if !element.Empty() {
 			return false
 		}
 	}

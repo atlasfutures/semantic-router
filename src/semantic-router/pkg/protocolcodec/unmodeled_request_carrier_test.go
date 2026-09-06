@@ -490,3 +490,57 @@ func TestOmittedParentStillCountsItsCarriedMembers(t *testing.T) {
 		}
 	}
 }
+
+// The walk stopped at every array, so a member added to a message object was
+// neither carried nor counted. Content blocks and tool declarations have their
+// own carriers; a message object had none, and neither would any future
+// array-of-objects member. Before accept-by-default the same body was a 400,
+// so this is the one place the new policy lost information the old one kept.
+const anthropicUnmodeledMessageMemberBody = `{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 64,
+  "messages": [
+    {"role": "user", "content": [{"type": "text", "text": "one"}]},
+    {"role": "user", "content": [{"type": "text", "text": "two"}], "future_message_field": {"x": 1}}
+  ]
+}`
+
+func TestCarriedMembersInsideAnArrayElementSurvive(t *testing.T) {
+	encoded := routeAnthropicRequest(t, anthropicUnmodeledMessageMemberBody, llmprotocol.AnthropicMessagesV1)
+	if !bytes.Contains(encoded, []byte("future_message_field")) {
+		t.Fatalf("a member on a message object was dropped: %s", encoded)
+	}
+	// It belongs to the element it arrived on, not to the first one.
+	var object struct {
+		Messages []map[string]json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(encoded, &object); err != nil {
+		t.Fatalf("encoded body is not a request object: %v", err)
+	}
+	if len(object.Messages) != 2 {
+		t.Fatalf("message count = %d, want 2: %s", len(object.Messages), encoded)
+	}
+	if _, present := object.Messages[0]["future_message_field"]; present {
+		t.Fatalf("the member moved to message 0: %s", encoded)
+	}
+	if _, present := object.Messages[1]["future_message_field"]; !present {
+		t.Fatalf("message 1 lost its member: %s", encoded)
+	}
+}
+
+func TestArrayElementMembersAreCountedByPathWhenDropped(t *testing.T) {
+	engine := NewBuiltinEngine()
+	result, err := engine.TranslateRequest(
+		llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1,
+		[]byte(anthropicUnmodeledMessageMemberBody), nil,
+	)
+	if err != nil {
+		t.Fatalf("TranslateRequest() error = %v", err)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if diagnostic.Field == "messages.1.future_message_field" {
+			return
+		}
+	}
+	t.Fatalf("Chat dropped a message member without counting its path: %+v", result.Diagnostics)
+}

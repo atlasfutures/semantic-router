@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"sort"
+	"strconv"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
@@ -13,9 +14,10 @@ import (
 // modelled struct beneath it, with one walk shared by the request envelope,
 // each content block and each tool.
 //
-// The walk descends into a member the struct does name only when that member
-// is itself a modelled object. It stops at an array and at json.RawMessage,
-// because both are already carried verbatim by the member that holds them.
+// The walk descends into a member the struct does name when that member is
+// itself a modelled object, and into each element of a member that is an array
+// of modelled objects. It stops at json.RawMessage and at an array of anything
+// else, because both are already carried verbatim by the member holding them.
 
 // captureUnnamedMembers returns the members of one source object that the wire
 // struct does not name, plus the same for each named member that is itself a
@@ -27,7 +29,13 @@ func captureUnnamedMembers(
 	format llmprotocol.WireFormat,
 ) *llmprotocol.UnmodeledFields {
 	targetType = dereferenceJSONType(targetType)
-	if targetType == nil || targetType.Kind() != reflect.Struct {
+	if targetType == nil {
+		return nil
+	}
+	if targetType.Kind() == reflect.Slice || targetType.Kind() == reflect.Array {
+		return captureUnnamedElements(body, targetType.Elem(), format)
+	}
+	if targetType.Kind() != reflect.Struct {
 		return nil
 	}
 	var object map[string]json.RawMessage
@@ -60,6 +68,36 @@ func captureUnnamedMembers(
 	return captured
 }
 
+// captureUnnamedElements walks an array of modelled objects and keeps each
+// element's carrier at its own index. An array of anything else -- a string
+// list, or a json.RawMessage, which is a byte slice -- is carried whole by the
+// member that holds it and stops here.
+func captureUnnamedElements(
+	body []byte,
+	elementType reflect.Type,
+	format llmprotocol.WireFormat,
+) *llmprotocol.UnmodeledFields {
+	element := dereferenceJSONType(elementType)
+	if element == nil || element.Kind() != reflect.Struct {
+		return nil
+	}
+	var elements []json.RawMessage
+	if err := json.Unmarshal(body, &elements); err != nil {
+		return nil
+	}
+	captured := &llmprotocol.UnmodeledFields{
+		Format:   format,
+		Elements: make([]*llmprotocol.UnmodeledFields, len(elements)),
+	}
+	for index, value := range elements {
+		captured.Elements[index] = captureUnnamedMembers(value, elementType, format)
+	}
+	if captured.Empty() {
+		return nil
+	}
+	return captured
+}
+
 // mergeUnnamedMembers writes the carried members back into an encoded object.
 // A member the encoder already claimed is left alone: the Router may have
 // changed it, and the carried copy is what arrived rather than what is being
@@ -83,23 +121,90 @@ func mergeUnnamedMembers(object map[string]json.RawMessage, carried *llmprotocol
 		object[name] = carried.Fields[name]
 	}
 	for _, name := range sortedChildNames(carried.Children) {
-		child, mergeable := carriedParentObject(object[name])
-		if !mergeable {
-			continue
-		}
-		if err := mergeUnnamedMembers(child, carried.Children[name]); err != nil {
+		if err := mergeCarriedChild(object, name, carried.Children[name]); err != nil {
 			return err
 		}
-		if len(child) == 0 {
-			continue
-		}
-		merged, err := marshalWire(child)
+	}
+	return nil
+}
+
+// mergeCarriedChild writes one carried child back into the member holding it,
+// which is an object or an array of objects depending on what was captured.
+func mergeCarriedChild(
+	object map[string]json.RawMessage,
+	name string,
+	carried *llmprotocol.UnmodeledFields,
+) error {
+	if len(carried.Elements) > 0 {
+		merged, replaced, err := mergeCarriedElements(object[name], carried)
 		if err != nil {
 			return err
 		}
-		object[name] = merged
+		if replaced {
+			object[name] = merged
+		}
+		return nil
 	}
+	child, mergeable := carriedParentObject(object[name])
+	if !mergeable {
+		return nil
+	}
+	if err := mergeUnnamedMembers(child, carried); err != nil {
+		return err
+	}
+	if len(child) == 0 {
+		return nil
+	}
+	merged, err := marshalWire(child)
+	if err != nil {
+		return err
+	}
+	object[name] = merged
 	return nil
+}
+
+// mergeCarriedElements writes each element's carried members back into the
+// array the encoder produced. The indexes line up because a carried member
+// re-emits only to the format it arrived in, and a same-format encode writes
+// one element per element it read.
+//
+// An array the encoder did not write is left as it is. Rebuilding one from
+// leftovers would produce elements holding no modelled content, which is the
+// one thing the carrier must not invent. An element the encoder wrote as null
+// or as an empty object is left alone for the same reason.
+func mergeCarriedElements(
+	claimed json.RawMessage,
+	carried *llmprotocol.UnmodeledFields,
+) (json.RawMessage, bool, error) {
+	if len(claimed) == 0 {
+		return nil, false, nil
+	}
+	var elements []json.RawMessage
+	if err := json.Unmarshal(claimed, &elements); err != nil {
+		return nil, false, nil
+	}
+	for index, carriedElement := range carried.Elements {
+		if carriedElement.Empty() || index >= len(elements) {
+			continue
+		}
+		element, mergeable := carriedParentObject(elements[index])
+		if !mergeable || len(element) == 0 {
+			continue
+		}
+		if err := mergeUnnamedMembers(element, carriedElement); err != nil {
+			return nil, false, err
+		}
+		merged, err := marshalWire(element)
+		if err != nil {
+			return nil, false, err
+		}
+		elements[index] = merged
+	}
+	merged, err := marshalWire(elements)
+	if err != nil {
+		return nil, false, err
+	}
+	return merged, true, nil
 }
 
 // carriedParentObject returns the object a carried child merges into. An
@@ -148,12 +253,17 @@ func unnamedMemberPaths(carried *llmprotocol.UnmodeledFields, prefix string) []s
 	if carried == nil {
 		return nil
 	}
-	paths := make([]string, 0, len(carried.Fields)+len(carried.Children))
+	paths := make([]string, 0, len(carried.Fields)+len(carried.Children)+len(carried.Elements))
 	for _, name := range sortedFieldNames(carried.Fields) {
 		paths = append(paths, prefix+name)
 	}
 	for _, name := range sortedChildNames(carried.Children) {
 		paths = append(paths, unnamedMemberPaths(carried.Children[name], prefix+name+".")...)
+	}
+	// An element is named by its index, so a diagnostic says which message
+	// carried the member rather than that some message did.
+	for index, element := range carried.Elements {
+		paths = append(paths, unnamedMemberPaths(element, prefix+strconv.Itoa(index)+".")...)
 	}
 	sort.Strings(paths)
 	return paths
