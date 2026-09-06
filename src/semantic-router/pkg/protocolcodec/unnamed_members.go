@@ -63,8 +63,15 @@ func captureUnnamedMembers(
 // mergeUnnamedMembers writes the carried members back into an encoded object.
 // A member the encoder already claimed is left alone: the Router may have
 // changed it, and the carried copy is what arrived rather than what is being
-// sent. A child whose parent the encoder did not write is skipped, because a
-// struct built from its leftovers alone would be a member no client sent.
+// sent.
+//
+// A parent the encoder did not write is rebuilt to hold its carried members.
+// The encoder writes a parent only when it has something modelled to put
+// there -- Anthropic metadata only for an end-user ID -- so a request whose
+// only metadata is a carried one used to encode with no metadata at all, and
+// the same-format drop count skips what the format is supposed to carry. The
+// member is not invented: nothing is carried under a parent the client did not
+// send.
 func mergeUnnamedMembers(object map[string]json.RawMessage, carried *llmprotocol.UnmodeledFields) error {
 	if carried == nil {
 		return nil
@@ -76,16 +83,15 @@ func mergeUnnamedMembers(object map[string]json.RawMessage, carried *llmprotocol
 		object[name] = carried.Fields[name]
 	}
 	for _, name := range sortedChildNames(carried.Children) {
-		claimed, present := object[name]
-		if !present {
-			continue
-		}
-		var child map[string]json.RawMessage
-		if err := json.Unmarshal(claimed, &child); err != nil || child == nil {
+		child, mergeable := carriedParentObject(object[name])
+		if !mergeable {
 			continue
 		}
 		if err := mergeUnnamedMembers(child, carried.Children[name]); err != nil {
 			return err
+		}
+		if len(child) == 0 {
+			continue
 		}
 		merged, err := marshalWire(child)
 		if err != nil {
@@ -94,6 +100,28 @@ func mergeUnnamedMembers(object map[string]json.RawMessage, carried *llmprotocol
 		object[name] = merged
 	}
 	return nil
+}
+
+// carriedParentObject returns the object a carried child merges into. An
+// absent parent, and a parent the encoder wrote as null, both become a fresh
+// object holding the carried members alone.
+//
+// A parent the encoder wrote as something other than an object has nowhere to
+// put them and keeps what the encoder wrote. No wire struct names a member as
+// an object on the way in and a scalar on the way out, so that branch is a
+// guard rather than a case.
+func carriedParentObject(claimed json.RawMessage) (map[string]json.RawMessage, bool) {
+	if len(claimed) == 0 {
+		return map[string]json.RawMessage{}, true
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(claimed, &object); err != nil {
+		return nil, false
+	}
+	if object == nil {
+		return map[string]json.RawMessage{}, true
+	}
+	return object, true
 }
 
 // mergeUnnamedMembersInto re-encodes one already-marshalled object with its

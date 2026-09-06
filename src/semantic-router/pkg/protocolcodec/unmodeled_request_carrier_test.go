@@ -436,3 +436,57 @@ func TestAnthropicRedactedThinkingIsCarried(t *testing.T) {
 		t.Fatalf("provider ciphertext reached a format that cannot name it: %s", dropped)
 	}
 }
+
+// A carried member sits inside a member the encoder writes only when it has
+// something modelled to put there. Anthropic metadata is written only for an
+// end-user ID, so a request whose only metadata is a carried one produced an
+// encoded body with no metadata at all: the member was neither delivered to
+// the format it came from nor counted as dropped. Carry or count, never
+// silence.
+const anthropicCarriedInsideOmittedParentBody = `{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 64,
+  "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+  "metadata": {"tenant": "acme"},
+  "output_config": {"task_budget": 4096}
+}`
+
+func TestCarriedMembersSurviveAnOmittedParent(t *testing.T) {
+	encoded := routeAnthropicRequest(t, anthropicCarriedInsideOmittedParentBody, llmprotocol.AnthropicMessagesV1)
+	object := decodeJSONObject(t, encoded)
+	for parent, member := range map[string]string{
+		"metadata": "tenant", "output_config": "task_budget",
+	} {
+		claimed, present := object[parent]
+		if !present {
+			t.Fatalf("%s is absent, so its carried member was dropped: %s", parent, encoded)
+		}
+		if !bytes.Contains(claimed, []byte(member)) {
+			t.Fatalf("%s does not carry %q: %s", parent, member, claimed)
+		}
+	}
+}
+
+// The other half: a target that cannot express the member still counts it,
+// whether or not that target writes the parent.
+func TestOmittedParentStillCountsItsCarriedMembers(t *testing.T) {
+	engine := NewBuiltinEngine()
+	result, err := engine.TranslateRequest(
+		llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1,
+		[]byte(anthropicCarriedInsideOmittedParentBody), nil,
+	)
+	if err != nil {
+		t.Fatalf("TranslateRequest() error = %v", err)
+	}
+	for _, path := range []string{"metadata.tenant", "output_config.task_budget"} {
+		found := false
+		for _, diagnostic := range result.Diagnostics {
+			if diagnostic.Field == path {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("Chat dropped %s without counting it: %+v", path, result.Diagnostics)
+		}
+	}
+}
