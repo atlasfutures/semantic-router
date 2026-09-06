@@ -77,7 +77,10 @@ type RequestContext struct {
 	// the only mode in which an ext_proc reply can end the downstream response
 	// rather than wait for the upstream to stop.
 	FullDuplexResponseBody bool
-	SkipProcessing         bool // true only when the configured opt-out header is valid
+	// ResponseBodyChunks joins a non-SSE response body that Envoy split across
+	// several full-duplex chunks. Empty in every other mode.
+	ResponseBodyChunks []byte
+	SkipProcessing     bool // true only when the configured opt-out header is valid
 
 	StreamingComplete      bool // True after neutral stream finalization runs once.
 	StreamingAborted       bool // True if the neutral stream ended abnormally.

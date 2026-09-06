@@ -292,11 +292,15 @@ func (r *OpenAIRouter) processResponseBody(
 	v *ext_proc.ProcessingRequest_ResponseBody,
 	ctx *RequestContext,
 ) error {
-	response, err := r.handleResponseBody(v, ctx)
+	complete := completeResponseBody(v, ctx)
+	if complete == nil {
+		return sendResponse(stream, heldResponseBodyChunk(), "response body")
+	}
+	response, err := r.handleResponseBody(complete, ctx)
 	if err != nil {
 		return err
 	}
-	response = normalizeFullDuplexResponseBody(response, ctx, v.ResponseBody)
+	response = normalizeFullDuplexResponseBody(response, ctx, complete.ResponseBody)
 	return sendResponse(stream, response, "response body")
 }
 
