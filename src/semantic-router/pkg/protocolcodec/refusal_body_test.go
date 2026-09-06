@@ -79,31 +79,43 @@ func TestRefusalBodiesNameTheFieldOnEveryClientFormat(t *testing.T) {
 			if err == nil {
 				t.Fatal("the request was accepted")
 			}
-			protocolError, ok := err.(*llmprotocol.ProtocolError)
-			if !ok {
-				t.Fatalf("error = %v, want a protocol error", err)
-			}
-			if protocolError.Cause == nil {
-				t.Fatal("refusal carries no cause, so the log line names nothing")
-			}
-			for _, want := range test.cause {
-				if !strings.Contains(protocolError.Cause.Error(), want) {
-					t.Fatalf("cause %q does not carry %s", protocolError.Cause, want)
-				}
-			}
-			for _, format := range []llmprotocol.WireFormat{
-				llmprotocol.AnthropicMessagesV1,
-				llmprotocol.OpenAIChatV1,
-				llmprotocol.OpenAIResponsesV1,
-			} {
-				encoded := encodedRefusalBody(t, format, err)
-				for _, want := range test.want {
-					if !strings.Contains(encoded, want) {
-						t.Fatalf("%s error body %s does not carry %s", format, encoded, want)
-					}
-				}
-			}
+			assertRefusalCauseNames(t, err, test.cause)
+			assertRefusalBodiesName(t, err, test.want)
 		})
+	}
+}
+
+// The log line half.
+func assertRefusalCauseNames(t *testing.T, err error, want []string) {
+	t.Helper()
+	protocolError, ok := err.(*llmprotocol.ProtocolError)
+	if !ok {
+		t.Fatalf("error = %v, want a protocol error", err)
+	}
+	if protocolError.Cause == nil {
+		t.Fatal("refusal carries no cause, so the log line names nothing")
+	}
+	for _, name := range want {
+		if !strings.Contains(protocolError.Cause.Error(), name) {
+			t.Fatalf("cause %q does not carry %s", protocolError.Cause, name)
+		}
+	}
+}
+
+// The client half, on every format a client may be speaking.
+func assertRefusalBodiesName(t *testing.T, err error, want []string) {
+	t.Helper()
+	for _, format := range []llmprotocol.WireFormat{
+		llmprotocol.AnthropicMessagesV1,
+		llmprotocol.OpenAIChatV1,
+		llmprotocol.OpenAIResponsesV1,
+	} {
+		encoded := encodedRefusalBody(t, format, err)
+		for _, name := range want {
+			if !strings.Contains(encoded, name) {
+				t.Fatalf("%s error body %s does not carry %s", format, encoded, name)
+			}
+		}
 	}
 }
 

@@ -51,27 +51,11 @@ func toolLocation(index int, tool Tool) string {
 // whole declaration -- {"type":"web_search_20250305"} is the shape Claude Code
 // sends. Refusing that shape refused the turn around it.
 func validateRequestTool(tool Tool, limits Limits, location string) error {
-	if len(tool.InputSchema) > 0 && !json.Valid(tool.InputSchema) {
-		return NewFieldError(ErrorInvalidRequest, "invalid_tool",
-			"tool JSON Schema is not valid JSON", location, "tools.input_schema")
+	if err := validateToolDeclaration(tool, location); err != nil {
+		return err
 	}
-	if !tool.ServerTool() && strings.TrimSpace(tool.Name) == "" {
-		return NewFieldError(ErrorInvalidRequest, "invalid_tool",
-			"a callable tool must name the function the model calls", location, "tools.name")
-	}
-	if !tool.ServerTool() && len(tool.InputSchema) == 0 {
-		return NewFieldError(ErrorInvalidRequest, "invalid_tool",
-			"a callable tool must describe its arguments", location, "tools.input_schema")
-	}
-	if exceeds(tool.Name, limits.ToolNameBytes) {
-		return toolTextLimit(location, "tools.name", len(tool.Name), limits.ToolNameBytes)
-	}
-	if exceeds(tool.Description, limits.ToolDescriptionBytes) {
-		return toolTextLimit(location, "tools.description", len(tool.Description), limits.ToolDescriptionBytes)
-	}
-	if limits.SchemaBytes > 0 && len(tool.InputSchema) > limits.SchemaBytes {
-		return NewFieldError(ErrorInvalidRequest, "schema_limit",
-			"tool schema limit exceeded", location, "tools.input_schema")
+	if err := validateToolTextLimits(tool, limits, location); err != nil {
+		return err
 	}
 	if err := validateCacheDirective(tool.Cache); err != nil {
 		return err
@@ -82,10 +66,40 @@ func validateRequestTool(tool Tool, limits Limits, location string) error {
 	return validateSchemaObject(tool.InputSchema, "tool schema", limits)
 }
 
-// toolTextOverflow names the field and the two byte counts, and nothing the
-// client wrote. Without it the refusal log records only that some tool was too
-// long, which is what made the 2026-09-04 dev-cell refusals take a code read
-// and a client capture to explain.
+// validateToolDeclaration checks what a tool must state to be usable at all.
+func validateToolDeclaration(tool Tool, location string) error {
+	if len(tool.InputSchema) > 0 && !json.Valid(tool.InputSchema) {
+		return NewFieldError(ErrorInvalidRequest, "invalid_tool",
+			"tool JSON Schema is not valid JSON", location, "tools.input_schema")
+	}
+	if tool.ServerTool() {
+		return nil
+	}
+	if strings.TrimSpace(tool.Name) == "" {
+		return NewFieldError(ErrorInvalidRequest, "invalid_tool",
+			"a callable tool must name the function the model calls", location, "tools.name")
+	}
+	if len(tool.InputSchema) == 0 {
+		return NewFieldError(ErrorInvalidRequest, "invalid_tool",
+			"a callable tool must describe its arguments", location, "tools.input_schema")
+	}
+	return nil
+}
+
+func validateToolTextLimits(tool Tool, limits Limits, location string) error {
+	if exceeds(tool.Name, limits.ToolNameBytes) {
+		return toolTextLimit(location, "tools.name", len(tool.Name), limits.ToolNameBytes)
+	}
+	if exceeds(tool.Description, limits.ToolDescriptionBytes) {
+		return toolTextLimit(location, "tools.description", len(tool.Description), limits.ToolDescriptionBytes)
+	}
+	if limits.SchemaBytes > 0 && len(tool.InputSchema) > limits.SchemaBytes {
+		return NewFieldError(ErrorInvalidRequest, "schema_limit",
+			"tool schema limit exceeded", location, "tools.input_schema")
+	}
+	return nil
+}
+
 // toolTextLimit names the tool, the member and the two byte counts, and
 // nothing the client wrote. The counts are what tell an operator whether the
 // limit is wrong or the request is.

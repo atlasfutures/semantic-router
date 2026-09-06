@@ -247,37 +247,42 @@ func TestOfficialAnthropicServerToolDiscriminatorsAreCarried(t *testing.T) {
 	engine := NewBuiltinEngine()
 	for _, toolType := range unsupported {
 		t.Run(toolType, func(t *testing.T) {
-			body, err := json.Marshal(map[string]any{
-				"model":      "m",
-				"max_tokens": 16,
-				"messages":   []map[string]any{{"role": "user", "content": "hello"}},
-				"tools": []map[string]any{{
-					"type":                   toolType,
-					"name":                   "server_tool",
-					"input_schema":           map[string]any{"type": "object"},
-					"variant_specific_field": true,
-				}},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			request, _, _, err := engine.DecodeRequest(llmprotocol.AnthropicMessagesV1, body)
-			if err != nil {
-				t.Fatalf("server tool %q was refused at ingress: %v", toolType, err)
-			}
-			if len(request.Tools) != 1 || request.Tools[0].Type != toolType || !request.Tools[0].ServerTool() {
-				t.Fatalf("server tool %q lost its type: %+v", toolType, request.Tools)
-			}
-			encoded, err := engine.EncodeRequest(llmprotocol.AnthropicMessagesV1, request, llmprotocol.Envelope{})
-			if err != nil {
-				t.Fatalf("Messages target refused server tool %q: %v", toolType, err)
-			}
-			for _, member := range []string{toolType, "variant_specific_field"} {
-				if !strings.Contains(string(encoded.Body), member) {
-					t.Fatalf("Messages target dropped %q from server tool %q: %s", member, toolType, encoded.Body)
-				}
-			}
+			assertServerToolIsCarried(t, engine, toolType)
 		})
+	}
+}
+
+func assertServerToolIsCarried(t *testing.T, engine *Engine, toolType string) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"model":      "m",
+		"max_tokens": 16,
+		"messages":   []map[string]any{{"role": "user", "content": "hello"}},
+		"tools": []map[string]any{{
+			"type":                   toolType,
+			"name":                   "server_tool",
+			"input_schema":           map[string]any{"type": "object"},
+			"variant_specific_field": true,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, _, _, err := engine.DecodeRequest(llmprotocol.AnthropicMessagesV1, body)
+	if err != nil {
+		t.Fatalf("server tool %q was refused at ingress: %v", toolType, err)
+	}
+	if len(request.Tools) != 1 || request.Tools[0].Type != toolType || !request.Tools[0].ServerTool() {
+		t.Fatalf("server tool %q lost its type: %+v", toolType, request.Tools)
+	}
+	encoded, err := engine.EncodeRequest(llmprotocol.AnthropicMessagesV1, request, llmprotocol.Envelope{})
+	if err != nil {
+		t.Fatalf("Messages target refused server tool %q: %v", toolType, err)
+	}
+	for _, member := range []string{toolType, "variant_specific_field"} {
+		if !strings.Contains(string(encoded.Body), member) {
+			t.Fatalf("Messages target dropped %q from server tool %q: %s", member, toolType, encoded.Body)
+		}
 	}
 }
 
@@ -406,7 +411,7 @@ func TestOfficialChatResponseMessageShapeIsStrict(t *testing.T) {
 	}
 }
 
-func TestOfficialUnsupportedToolChoiceDiscriminatorsAreTyped(t *testing.T) {
+func TestOfficialUnsupportedChatToolChoiceDiscriminatorsAreTyped(t *testing.T) {
 	engine := NewBuiltinEngine()
 	chatUnsupported := fields("allowed_tools", "custom")
 	assertClosedDiscriminatorInventory(
@@ -452,6 +457,10 @@ func TestOfficialUnsupportedToolChoiceDiscriminatorsAreTyped(t *testing.T) {
 		}
 	})
 
+}
+
+func TestOfficialUnsupportedResponsesToolChoiceDiscriminatorsAreTyped(t *testing.T) {
+	engine := NewBuiltinEngine()
 	responsesUnsupported := fields(
 		"allowed_tools", "apply_patch", "code_interpreter", "computer", "computer_use",
 		"computer_use_preview", "custom", "file_search", "mcp",

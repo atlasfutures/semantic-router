@@ -56,28 +56,33 @@ func TestToolRefusalsNameTheToolAndTheField(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, _, err := validateRequestTools(test.tools, limits)
-			protocolError, ok := err.(*ProtocolError)
-			if !ok {
-				t.Fatalf("validateRequestTools() error = %v, want a protocol error", err)
-			}
-			if protocolError.Code != test.code {
-				t.Fatalf("code = %q, want %q", protocolError.Code, test.code)
-			}
-			for _, want := range test.message {
-				// The client body carries the message and nothing else, so the
-				// message is what a client can repair its own request from.
-				if !strings.Contains(protocolError.Message, want) {
-					t.Fatalf("client message %q does not carry %s", protocolError.Message, want)
-				}
-			}
-			// The log line carries the cause, which must name the same place.
-			if protocolError.Cause == nil || !strings.Contains(protocolError.Cause.Error(), "field") {
-				t.Fatalf("cause = %v, want a field-naming cause", protocolError.Cause)
-			}
-			if protocolError.Parameter == "" {
-				t.Fatal("refusal names no parameter")
-			}
+			assertToolRefusalNames(t, err, test.code, test.message)
 		})
+	}
+}
+
+func assertToolRefusalNames(t *testing.T, err error, code string, message []string) {
+	t.Helper()
+	protocolError, ok := err.(*ProtocolError)
+	if !ok {
+		t.Fatalf("validateRequestTools() error = %v, want a protocol error", err)
+	}
+	if protocolError.Code != code {
+		t.Fatalf("code = %q, want %q", protocolError.Code, code)
+	}
+	for _, want := range message {
+		// The client body carries the message and nothing else, so the message
+		// is what a client can repair its own request from.
+		if !strings.Contains(protocolError.Message, want) {
+			t.Fatalf("client message %q does not carry %s", protocolError.Message, want)
+		}
+	}
+	// The log line carries the cause, which must name the same place.
+	if protocolError.Cause == nil || !strings.Contains(protocolError.Cause.Error(), "field") {
+		t.Fatalf("cause = %v, want a field-naming cause", protocolError.Cause)
+	}
+	if protocolError.Parameter == "" {
+		t.Fatal("refusal names no parameter")
 	}
 }
 

@@ -215,27 +215,32 @@ func (state *responsesMessageEncodingState) appendContent(content llmprotocol.Co
 		}
 		return state.appendGeneratedImage(content.GeneratedImage)
 	case llmprotocol.ContentUnmodeled:
-		// A carried block belongs to the contract it came from. Responses names
-		// no Anthropic block, so it is dropped here and the drop is recorded
-		// beside the encoded request. The table's transform row is the one
-		// exception: a document whose source is text becomes a text part.
-		text, transformed := carriedDocumentText(content)
-		if !transformed {
-			return nil
-		}
-		if err := state.flushReasoning(); err != nil {
-			return err
-		}
-		state.ordinary = append(state.ordinary, llmprotocol.Content{
-			Kind: llmprotocol.ContentText, Text: text,
-		})
-		return nil
+		return state.appendCarriedBlock(content)
 	default:
 		if err := state.flushReasoning(); err != nil {
 			return err
 		}
 		state.ordinary = append(state.ordinary, content)
 	}
+	return nil
+}
+
+// appendCarriedBlock handles a block belonging to the contract it came from.
+// Responses names no Anthropic block, so it is dropped here and the drop is
+// recorded beside the encoded request. The table's transform row is the one
+// exception: a document whose source is text becomes a text part, because the
+// block holds the text the turn is about.
+func (state *responsesMessageEncodingState) appendCarriedBlock(content llmprotocol.Content) error {
+	text, transformed := carriedDocumentText(content)
+	if !transformed {
+		return nil
+	}
+	if err := state.flushReasoning(); err != nil {
+		return err
+	}
+	state.ordinary = append(state.ordinary, llmprotocol.Content{
+		Kind: llmprotocol.ContentText, Text: text,
+	})
 	return nil
 }
 
