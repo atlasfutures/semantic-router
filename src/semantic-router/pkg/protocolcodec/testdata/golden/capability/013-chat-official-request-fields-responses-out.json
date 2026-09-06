@@ -526,9 +526,14 @@
               "type": "message"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
-        }
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "tool_choice",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {

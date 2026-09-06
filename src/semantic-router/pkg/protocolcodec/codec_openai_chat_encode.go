@@ -45,6 +45,7 @@ func (OpenAIChatCodec) EncodeRequest(request llmprotocol.Request, envelope llmpr
 		)
 	}
 	appendChatTools(&wire, request.Tools)
+	appendUnchoosableToolChoiceDrop(&diagnostics, policy, request, llmprotocol.OpenAIChatV1, len(wire.Tools))
 	if encodeErr := encodeChatRequestOptions(&wire, request); encodeErr != nil {
 		return nil, diagnostics, encodeErr
 	}
@@ -265,7 +266,15 @@ func appendChatTools(wire *chatRequestWire, tools []llmprotocol.Tool) {
 }
 
 func encodeChatRequestOptions(wire *chatRequestWire, request llmprotocol.Request) error {
-	wire.ToolChoice = encodeChatToolChoice(request.ToolChoice)
+	// The choice is gated on the tools this target encoded, not on the tools
+	// the client declared. Ingress defaults tool choice to automatic whenever
+	// tools are present, and the table drops a server tool here, so a
+	// server-tool-only turn otherwise sends a choice with nothing to choose
+	// from -- which Chat Completions rejects, failing the turn at the provider
+	// rather than falling back.
+	if len(wire.Tools) > 0 {
+		wire.ToolChoice = encodeChatToolChoice(request.ToolChoice)
+	}
 	if len(request.Sampling.Stop) == 1 {
 		wire.Stop, _ = json.Marshal(request.Sampling.Stop[0])
 	} else if len(request.Sampling.Stop) > 1 {

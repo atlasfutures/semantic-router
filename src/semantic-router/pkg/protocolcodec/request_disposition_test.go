@@ -150,3 +150,70 @@ func TestDispositionTableRowsAreComplete(t *testing.T) {
 		}
 	}
 }
+
+// The table drops a server tool on Chat and Responses, and the request that
+// declared one arrives with tool choice set to automatic because ingress
+// applies that default whenever tools are present. Encoding both leaves a
+// tool_choice with nothing to choose from, which Chat Completions rejects:
+// the turn fails at the provider instead of falling back. A target that can
+// express none of the declared tools states no choice either.
+const anthropicServerToolOnlyRequest = `{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 64,
+  "messages": [{"role": "user", "content": [{"type": "text", "text": "what shipped today"}]}],
+  "tools": [{"type": "web_search_20250305"}]
+}`
+
+func TestTargetsStateNoToolChoiceWhenTheyEncodeNoTools(t *testing.T) {
+	engine := NewBuiltinEngine()
+	for _, target := range []llmprotocol.WireFormat{
+		llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1,
+	} {
+		t.Run(string(target), func(t *testing.T) {
+			result, err := engine.TranslateRequest(
+				llmprotocol.AnthropicMessagesV1, target, []byte(anthropicServerToolOnlyRequest), nil,
+			)
+			if err != nil {
+				t.Fatalf("%s refused a server-tool turn: %v", target, err)
+			}
+			object := decodeJSONObject(t, result.Body)
+			if _, present := object["tool_choice"]; present {
+				t.Fatalf("%s states a tool choice with no tools: %s", target, result.Body)
+			}
+			if tools, present := object["tools"]; present && string(tools) == "[]" {
+				t.Fatalf("%s writes an empty tools list: %s", target, result.Body)
+			}
+		})
+	}
+}
+
+// The gate is the encoded list, not the declared one: a callable tool beside
+// the server tool still reaches the target, and still states its choice.
+func TestACallableToolKeepsItsToolChoice(t *testing.T) {
+	engine := NewBuiltinEngine()
+	body := `{
+	  "model": "claude-sonnet-4-5",
+	  "max_tokens": 64,
+	  "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+	  "tools": [
+	    {"type": "web_search_20250305"},
+	    {"name": "lookup", "input_schema": {"type": "object"}}
+	  ]
+	}`
+	for _, target := range []llmprotocol.WireFormat{
+		llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1,
+	} {
+		t.Run(string(target), func(t *testing.T) {
+			result, err := engine.TranslateRequest(
+				llmprotocol.AnthropicMessagesV1, target, []byte(body), nil,
+			)
+			if err != nil {
+				t.Fatalf("%s refused the turn: %v", target, err)
+			}
+			object := decodeJSONObject(t, result.Body)
+			if _, present := object["tool_choice"]; !present {
+				t.Fatalf("%s dropped the tool choice beside a callable tool: %s", target, result.Body)
+			}
+		})
+	}
+}

@@ -26,6 +26,7 @@ func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope 
 	// See chatRequestDiagnostics: the table states what Responses cannot
 	// express, and the two carriers hold what no contract names.
 	appendRequestDispositions(&diagnostics, request, llmprotocol.OpenAIResponsesV1, policy)
+	appendUnchoosableToolChoiceDrop(&diagnostics, policy, request, llmprotocol.OpenAIResponsesV1, len(wire.Tools))
 	appendToolExtensionDrops(&diagnostics, request.Tools, llmprotocol.OpenAIResponsesV1, policy)
 	for _, message := range request.Messages {
 		appendContentExtensionDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
@@ -78,7 +79,11 @@ func encodeResponsesRequestWire(request llmprotocol.Request) (responsesRequestWi
 	}
 	wire.Input, _ = json.Marshal(items)
 	wire.Tools = encodeResponsesTools(request.Tools, request.ImageGeneration)
-	wire.ToolChoice = encodeResponsesToolChoice(request.ToolChoice)
+	// Gated on the tools this target encoded; see encodeChatRequestOptions for
+	// why a server-tool-only turn otherwise states a choice with no tools.
+	if len(wire.Tools) > 0 {
+		wire.ToolChoice = encodeResponsesToolChoice(request.ToolChoice)
+	}
 	wire.Text = encodeResponsesOutputFormat(request.OutputFormat)
 	return wire, nil
 }
@@ -148,6 +153,12 @@ func encodeResponsesTools(input []llmprotocol.Tool, imageGeneration *llmprotocol
 			}
 		}
 		tools = append(tools, tool)
+	}
+	if len(tools) == 0 {
+		// Every declared tool was one this target cannot express. An empty
+		// list says nothing the absent member does not, and leaving it out is
+		// what lets the tool choice be gated on it.
+		return nil
 	}
 	encoded, _ := json.Marshal(tools)
 	return encoded

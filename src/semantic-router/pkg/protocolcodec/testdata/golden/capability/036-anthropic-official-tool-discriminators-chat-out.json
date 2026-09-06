@@ -41,12 +41,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]
@@ -64,12 +67,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]
@@ -87,12 +93,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]
@@ -110,12 +119,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]
@@ -133,12 +145,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]
@@ -156,12 +171,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]
@@ -179,12 +197,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]
@@ -202,12 +223,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]
@@ -225,12 +249,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]
@@ -248,12 +275,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]
@@ -271,12 +301,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]
@@ -294,12 +327,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]
@@ -317,12 +353,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]
@@ -340,12 +379,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]
@@ -363,12 +405,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]
@@ -386,12 +431,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]
@@ -409,12 +457,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]
@@ -432,12 +483,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]
@@ -455,12 +509,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]
@@ -478,12 +535,15 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": "auto"
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "tools.type",
+            "action": "dropped"
+          },
+          {
+            "field": "tool_choice",
             "action": "dropped"
           }
         ]

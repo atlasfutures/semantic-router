@@ -280,3 +280,26 @@ func hasJSONValue(raw json.RawMessage) bool {
 	trimmed := strings.TrimSpace(string(raw))
 	return trimmed != "" && trimmed != "null"
 }
+
+// appendUnchoosableToolChoiceDrop counts a tool choice the target has no tools
+// to apply. Ingress defaults the choice to automatic whenever tools are
+// present, and the table drops what a target cannot express, so a turn whose
+// only tools are server tools would otherwise send a choice with nothing to
+// choose from. Chat Completions rejects that, which fails the turn at the
+// provider instead of falling back. The choice is dropped and counted, like
+// every other member a target cannot express.
+func appendUnchoosableToolChoiceDrop(
+	diagnostics *llmprotocol.Diagnostics,
+	policy llmprotocol.Policy,
+	request llmprotocol.Request,
+	target llmprotocol.WireFormat,
+	encodedTools int,
+) {
+	if encodedTools > 0 || request.ToolChoice.Mode == "" {
+		return
+	}
+	appendPresentationDrop(
+		diagnostics, policy, request.Trusted.SourceFormat, target, "tool_choice",
+		"the target encoded no tools for the choice to apply to",
+	)
+}
