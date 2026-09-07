@@ -60,22 +60,27 @@ func TestFullDuplexEndsANonStreamingResponseFromTheChunk(t *testing.T) {
 // An SSE turn is incremental on purpose. Accumulating it would hold every
 // delta back to the end of the turn, which is the opposite of streaming.
 func TestFullDuplexDoesNotAccumulateAnSSEResponse(t *testing.T) {
+	router := &OpenAIRouter{}
 	ctx := &RequestContext{FullDuplexResponseBody: true, IsStreamingResponse: true}
 	chunk := &ext_proc.ProcessingRequest_ResponseBody{
 		ResponseBody: &ext_proc.HttpBody{Body: []byte("data: {}\n\n"), EndOfStream: false},
 	}
 
-	require.Same(t, chunk, completeResponseBody(chunk, ctx),
-		"a streamed turn was buffered instead of forwarded")
+	complete, breach := router.completeResponseBody(chunk, ctx)
+	require.Nil(t, breach)
+	require.Same(t, chunk, complete, "a streamed turn was buffered instead of forwarded")
 }
 
 // Outside full duplex Envoy delivers a whole body and the Router must not
 // start buffering.
 func TestWithoutFullDuplexNoChunkIsHeld(t *testing.T) {
+	router := &OpenAIRouter{}
 	ctx := &RequestContext{}
 	chunk := &ext_proc.ProcessingRequest_ResponseBody{
 		ResponseBody: &ext_proc.HttpBody{Body: []byte(`{"a":1}`), EndOfStream: false},
 	}
 
-	require.Same(t, chunk, completeResponseBody(chunk, ctx))
+	complete, breach := router.completeResponseBody(chunk, ctx)
+	require.Nil(t, breach)
+	require.Same(t, chunk, complete)
 }

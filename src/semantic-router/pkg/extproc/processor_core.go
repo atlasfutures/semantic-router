@@ -292,7 +292,10 @@ func (r *OpenAIRouter) processResponseBody(
 	v *ext_proc.ProcessingRequest_ResponseBody,
 	ctx *RequestContext,
 ) error {
-	complete := completeResponseBody(v, ctx)
+	complete, guardBreach := r.completeResponseBody(v, ctx)
+	if guardBreach != nil {
+		return sendResponse(stream, r.responseBodyGuardResponse(ctx, guardBreach), "response body")
+	}
 	if complete == nil {
 		return sendResponse(stream, heldResponseBodyChunk(), "response body")
 	}

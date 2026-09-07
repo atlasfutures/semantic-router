@@ -83,7 +83,10 @@ type RequestContext struct {
 	// ResponseBodyEnded records that the joined body has been through the
 	// pipeline, so a trailer arriving after it does not send it twice.
 	ResponseBodyEnded bool
-	SkipProcessing    bool // true only when the configured opt-out header is valid
+	// ResponseBodyHeldSince is when the first chunk was held, which is what
+	// the accumulation deadline is measured from.
+	ResponseBodyHeldSince time.Time
+	SkipProcessing        bool // true only when the configured opt-out header is valid
 
 	StreamingComplete      bool // True after neutral stream finalization runs once.
 	StreamingAborted       bool // True if the neutral stream ended abnormally.

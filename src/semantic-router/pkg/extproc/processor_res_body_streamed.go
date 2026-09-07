@@ -1,7 +1,13 @@
 package extproc
 
 import (
+	"time"
+
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 )
 
 // Joining a response body that arrives in pieces.
@@ -27,23 +33,34 @@ import (
 // consumes chunks incrementally and ends the response itself.
 
 // completeResponseBody returns the response-body message the pipeline should
-// read, or nil while the body is still arriving.
-func completeResponseBody(
+// read, or nil while the body is still arriving. A non-nil error is a breached
+// guard, and the turn is over.
+func (r *OpenAIRouter) completeResponseBody(
 	v *ext_proc.ProcessingRequest_ResponseBody,
 	ctx *RequestContext,
-) *ext_proc.ProcessingRequest_ResponseBody {
+) (*ext_proc.ProcessingRequest_ResponseBody, *llmprotocol.ProtocolError) {
 	if ctx == nil || !ctx.FullDuplexResponseBody || ctx.IsStreamingResponse {
-		return v
+		return v, nil
 	}
 	body := v.ResponseBody
 	if body.GetEndOfStream() && len(ctx.ResponseBodyChunks) == 0 {
 		// One chunk carried the whole body. Nothing to join, and no copy.
 		ctx.ResponseBodyEnded = true
-		return v
+		return v, nil
+	}
+	if ctx.ResponseBodyHeldSince.IsZero() {
+		ctx.ResponseBodyHeldSince = time.Now()
 	}
 	ctx.ResponseBodyChunks = append(ctx.ResponseBodyChunks, body.GetBody()...)
+	if breach := r.responseBodyGuardBreach(ctx); breach != nil {
+		// The turn is over, so what is held is released here rather than at
+		// the trailer that will not be flushing it.
+		ctx.ResponseBodyChunks = nil
+		ctx.ResponseBodyEnded = true
+		return nil, breach
+	}
 	if !body.GetEndOfStream() {
-		return nil
+		return nil, nil
 	}
 	ctx.ResponseBodyEnded = true
 	return &ext_proc.ProcessingRequest_ResponseBody{
@@ -51,7 +68,84 @@ func completeResponseBody(
 			Body:        ctx.ResponseBodyChunks,
 			EndOfStream: true,
 		},
+	}, nil
+}
+
+// What bounds the accumulator.
+//
+// Under FULL_DUPLEX_STREAMED Envoy drains each chunk once it has handed it
+// over, so no data-plane buffer limit applies and the Router is the only
+// holder of the body. failure_mode_allow is forced false for a full-duplex
+// stream, so exhausting memory here is a hard 5xx for every request in flight
+// rather than only the one that did it.
+//
+// These are the two knobs the request-side accumulator already uses, read the
+// same way: both default to off, and off means unbounded, which is what this
+// did before there was a guard.
+func (r *OpenAIRouter) responseBodyGuardBreach(ctx *RequestContext) *llmprotocol.ProtocolError {
+	if r == nil || r.Config == nil {
+		return nil
 	}
+	if maxBytes := r.Config.MaxStreamedBodyBytes; maxBytes > 0 &&
+		int64(len(ctx.ResponseBodyChunks)) > maxBytes {
+		logging.ComponentWarnEvent("extproc", "response_body_too_large", map[string]interface{}{
+			"request_id": ctx.RequestID,
+			"model":      ctx.RequestModel,
+			"held_bytes": len(ctx.ResponseBodyChunks),
+			"max_bytes":  maxBytes,
+		})
+		return llmprotocol.NewError(
+			llmprotocol.ErrorUpstreamUnavailable,
+			"response_body_too_large",
+			"the model service sent more response body than the router will hold",
+			nil,
+		)
+	}
+	timeout := time.Duration(r.Config.StreamedBodyTimeoutSec) * time.Second
+	if timeout > 0 && time.Since(ctx.ResponseBodyHeldSince) > timeout {
+		logging.ComponentWarnEvent("extproc", "response_body_timeout", map[string]interface{}{
+			"request_id": ctx.RequestID,
+			"model":      ctx.RequestModel,
+			"held_bytes": len(ctx.ResponseBodyChunks),
+			"timeout_ms": timeout.Milliseconds(),
+		})
+		return llmprotocol.NewError(
+			llmprotocol.ErrorUpstreamTimeout,
+			"response_body_timeout",
+			"the model service took too long to finish its response body",
+			nil,
+		)
+	}
+	return nil
+}
+
+// responseBodyGuardResponse ends the response at a breached guard.
+//
+// The response headers have already gone downstream, so an ImmediateResponse
+// would reset the stream and the client would be told nothing. The refusal
+// travels as the last body instead, encoded in the client's own wire format,
+// on a reply that ends the response.
+func (r *OpenAIRouter) responseBodyGuardResponse(
+	ctx *RequestContext,
+	protocolError *llmprotocol.ProtocolError,
+) *ext_proc.ProcessingResponse {
+	var encoded []byte
+	engine, err := r.protocolEngine()
+	if err == nil {
+		_, target := responseWireFormats(ctx)
+		encoded, err = engine.EncodeError(target, protocolError)
+	}
+	if err != nil {
+		// Ending the response still matters more than saying why: a client
+		// told nothing waits for the platform cut.
+		encoded = nil
+		logging.ComponentErrorEvent("extproc", "response_body_guard_encode_failed", map[string]interface{}{
+			"request_id": ctx.RequestID,
+			"error":      err.Error(),
+		})
+	}
+	metrics.RecordRequestError(ctx.RequestModel, string(protocolError.Category))
+	return buildResponseBodyContinueResponse(responseStreamBodyMutation(ctx, encoded, true), nil)
 }
 
 // heldResponseBodyChunk is the reply for a chunk the Router kept. It forwards
