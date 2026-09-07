@@ -2,6 +2,8 @@ package protocolcodec
 
 import (
 	"encoding/json"
+	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
@@ -150,10 +152,6 @@ func TestRequestDispositionsMatchTheInventory(t *testing.T) {
 	for _, row := range anthropicRequestDispositions {
 		assertDispositionRowIsInventoried(t, row, rows)
 	}
-	// Every inventoried member the table does not name is carried by the
-	// generic carrier, and the carrier re-emits only to the format the member
-	// arrived on. So a foreign target always drops it, and any other claim in
-	// the inventory would be describing behaviour that does not exist.
 	for _, field := range inventory.Fields {
 		if field.Leg != "request" {
 			continue
@@ -161,14 +159,87 @@ func TestRequestDispositionsMatchTheInventory(t *testing.T) {
 		if _, named := anthropicRequestDispositionIndex[field.Path]; named {
 			continue
 		}
-		for target, action := range field.Targets {
-			if action != string(dispositionDrop) {
-				t.Errorf(
-					"inventory row %q is carried by the generic carrier, so target %s drops it; the inventory says %q",
-					field.Path, target, action,
-				)
-			}
+		for _, problem := range carrierDispositionProblems(inventory.Format, field) {
+			t.Error(problem)
 		}
+	}
+}
+
+// carrierDispositionProblems checks an inventoried member the disposition
+// table does not name. Those are handled by the generic carrier, which
+// re-emits a member only to the format it arrived on. So every FOREIGN target
+// drops it, and any other claim describes behaviour that does not exist.
+//
+// The row's own format is the exception, and the check has to make it one. The
+// carrier does carry the member there -- that is the whole of accept by
+// default -- so a row stating carry for its own format is stating the truth,
+// and a rule applied to every target without distinction would reject it. The
+// loop this replaces iterated the stated targets and made no such distinction.
+func carrierDispositionProblems(format llmprotocol.WireFormat, field clientSchemaField) []string {
+	var problems []string
+	for _, target := range sortedTargetNames(field.Targets) {
+		action := field.Targets[target]
+		if llmprotocol.WireFormat(target) == format {
+			if action != string(dispositionCarry) {
+				problems = append(problems, fmt.Sprintf(
+					"inventory row %q arrived on %s, so that format carries it; the inventory says %q",
+					field.Path, target, action,
+				))
+			}
+			continue
+		}
+		if action != string(dispositionDrop) {
+			problems = append(problems, fmt.Sprintf(
+				"inventory row %q is carried by the generic carrier, so target %s drops it; the inventory says %q",
+				field.Path, target, action,
+			))
+		}
+	}
+	return problems
+}
+
+func sortedTargetNames(targets map[string]string) []string {
+	names := make([]string, 0, len(targets))
+	for name := range targets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// A row may state its own format, and stating carry there is correct: the
+// carrier re-emits to the format the member arrived on. The check that
+// replaced the old loop has to allow that and still refuse a foreign carry.
+func TestCarrierRowMayStateCarryForItsOwnFormat(t *testing.T) {
+	field := clientSchemaField{
+		Path: "context_management", Leg: "request",
+		Targets: map[string]string{
+			string(llmprotocol.AnthropicMessagesV1): string(dispositionCarry),
+			string(llmprotocol.OpenAIChatV1):        string(dispositionDrop),
+			string(llmprotocol.OpenAIResponsesV1):   string(dispositionDrop),
+		},
+	}
+	if problems := carrierDispositionProblems(llmprotocol.AnthropicMessagesV1, field); len(problems) != 0 {
+		t.Fatalf("a row stating carry for the format it arrived on was refused: %v", problems)
+	}
+}
+
+func TestCarrierRowRefusesAForeignCarryAndAWrongOwnFormat(t *testing.T) {
+	foreignCarry := clientSchemaField{
+		Path: "context_management", Leg: "request",
+		Targets: map[string]string{string(llmprotocol.OpenAIChatV1): string(dispositionCarry)},
+	}
+	problems := carrierDispositionProblems(llmprotocol.AnthropicMessagesV1, foreignCarry)
+	if len(problems) != 1 || !strings.Contains(problems[0], "openai.chat.v1") {
+		t.Fatalf("a foreign carry was not refused: %v", problems)
+	}
+	ownDrop := clientSchemaField{
+		Path: "context_management", Leg: "request",
+		Targets: map[string]string{string(llmprotocol.AnthropicMessagesV1): string(dispositionDrop)},
+	}
+	problems = carrierDispositionProblems(llmprotocol.AnthropicMessagesV1, ownDrop)
+	if len(problems) != 1 || !strings.Contains(problems[0], "arrived on") {
+		t.Fatalf("a row claiming its own format drops the member was not refused: %v", problems)
 	}
 }
 
