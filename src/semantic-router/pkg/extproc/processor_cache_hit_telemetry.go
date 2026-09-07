@@ -56,6 +56,12 @@ func (r *OpenAIRouter) reportCacheHitTelemetry(
 		"cost":              0.0,
 		"from_cache":        true,
 		"cache_hit":         true,
+		// A cache hit never reaches recordResponseCost, so it carries the field
+		// itself or the turn is the absent-field case the flag exists to remove.
+		// On this path the request's declaration is the observed truth: the
+		// router is the thing streaming, and createCacheHitResponse re-encodes
+		// the cached body as SSE exactly when the request asked for it.
+		"streaming": ctx.ExpectStreamingResponse,
 	})
 }
 

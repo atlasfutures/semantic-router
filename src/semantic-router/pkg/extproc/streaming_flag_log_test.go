@@ -6,6 +6,8 @@ import (
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
 // Whether a turn streamed is a routing fact that never reached a live log.
@@ -171,5 +173,69 @@ func TestStreamingKeysDivergeWhenTheUpstreamDidNotStream(t *testing.T) {
 	}
 	if streamed {
 		t.Fatalf("streaming must be false: the upstream refused and served no stream: %v", usage)
+	}
+}
+
+// A semantic-cache hit never reaches recordResponseCost: it is served from the
+// request phase and writes its own llm_usage line. Without the field there,
+// "always present" would hold for upstream-served turns only, and a cache-served
+// turn would be exactly the absent-field case this change exists to remove.
+//
+// ExpectStreamingResponse is the observed truth on this path, not a guess about
+// one. The router is the thing streaming: createCacheHitResponse re-encodes the
+// cached body as SSE and sets content-type text/event-stream whenever the
+// request asked to stream, so what the request declared is what the client got.
+func cacheHitCompletionBody() []byte {
+	return []byte(`{"id":"gen-cached","object":"chat.completion","model":"m",` +
+		`"choices":[{"index":0,"finish_reason":"stop",` +
+		`"message":{"role":"assistant","content":"a cached answer"}}],` +
+		`"usage":{"prompt_tokens":11,"completion_tokens":5,"total_tokens":16}}`)
+}
+
+func cacheHitContext(requestID string, streaming bool) *RequestContext {
+	return &RequestContext{
+		RequestID: requestID, RequestModel: "m",
+		SourceFormat: llmprotocol.OpenAIChatV1, TargetFormat: llmprotocol.OpenAIChatV1,
+		ExpectStreamingResponse: streaming,
+	}
+}
+
+// A cache hit served as a stream says so on its own accounting line.
+func TestCacheHitUsageLineMarksAStreamedTurn(t *testing.T) {
+	logs := captureLogs(t)
+	router := &OpenAIRouter{}
+
+	router.reportCacheHitTelemetry(cacheHitContext("rt_cache_stream", true), cacheHitCompletionBody(), time.Millisecond)
+
+	fields := findLogEvent(t, logs, "llm_usage")
+	if cached, _ := fields["from_cache"].(bool); !cached {
+		t.Fatalf("this must be the cache-hit usage line: %v", fields)
+	}
+	streaming, present := fields["streaming"].(bool)
+	if !present {
+		t.Fatalf("the cache-hit accounting line does not say whether the turn streamed: %v", fields)
+	}
+	if !streaming {
+		t.Fatalf("streaming = false on a cache hit the router streamed: %v", fields)
+	}
+}
+
+// And a buffered cache hit carries the field as false rather than omitting it.
+func TestCacheHitUsageLineMarksABufferedTurn(t *testing.T) {
+	logs := captureLogs(t)
+	router := &OpenAIRouter{}
+
+	router.reportCacheHitTelemetry(cacheHitContext("rt_cache_buffered", false), cacheHitCompletionBody(), time.Millisecond)
+
+	fields := findLogEvent(t, logs, "llm_usage")
+	if cached, _ := fields["from_cache"].(bool); !cached {
+		t.Fatalf("this must be the cache-hit usage line: %v", fields)
+	}
+	streaming, present := fields["streaming"].(bool)
+	if !present {
+		t.Fatalf("the cache-hit accounting line omitted streaming rather than answering it: %v", fields)
+	}
+	if streaming {
+		t.Fatalf("streaming = true on a buffered cache hit: %v", fields)
 	}
 }
