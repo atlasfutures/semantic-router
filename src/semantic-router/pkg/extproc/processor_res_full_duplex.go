@@ -4,6 +4,8 @@ import (
 	"bytes"
 
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 )
 
 // The one shape a response-body reply may take under FULL_DUPLEX_STREAMED.
@@ -32,6 +34,14 @@ import (
 // streamed_response through responseStreamBodyMutation, and it is the only
 // path that knows whether the turn it is ending is over -- an end-of-stream
 // invented here would end a response mid-turn.
+//
+// A body-phase ImmediateResponse is the fifth shape, and it is legal only
+// while Envoy still owns the response headers. Under BUFFERED it does: a
+// decode failure, a jailbreak refusal, a failed context recovery and the rest
+// reach the client as the 502 or 403 they say they are. Under full duplex the
+// headers have already gone downstream, where sendLocalReply on a started
+// response resets the stream -- so the refusal would become a truncated 200
+// carrying nothing.
 func normalizeFullDuplexResponseBody(
 	response *ext_proc.ProcessingResponse,
 	ctx *RequestContext,
@@ -40,10 +50,12 @@ func normalizeFullDuplexResponseBody(
 	if ctx == nil || !ctx.FullDuplexResponseBody || response == nil {
 		return response
 	}
+	if immediate := response.GetImmediateResponse(); immediate != nil {
+		return endResponseWithImmediateBody(ctx, immediate)
+	}
 	bodyResponse := response.GetResponseBody()
 	if bodyResponse == nil {
-		// An ImmediateResponse, or a reply in another phase. Both are already
-		// legal in either mode.
+		// A reply in another phase, which this does not shape.
 		return response
 	}
 	if bodyResponse.Response == nil {
@@ -79,4 +91,37 @@ func normalizeFullDuplexResponseBody(
 		},
 	}
 	return response
+}
+
+// endResponseWithImmediateBody converts a body-phase refusal into the last
+// body of the response.
+//
+// The status is already spent, which is what "the headers have gone
+// downstream" means: the client will read 200 whatever this says. What can
+// still be preserved is the refusal itself and the end, so the body travels
+// unchanged and the reply ends the response. The header mutation is dropped
+// because Envoy scrubbed those headers at encodeHeaders, long before this.
+//
+// The turn is over, so the body is marked ended and the trailer that may
+// follow neither flushes nor ends anything a second time.
+func endResponseWithImmediateBody(
+	ctx *RequestContext,
+	immediate *ext_proc.ImmediateResponse,
+) *ext_proc.ProcessingResponse {
+	logging.ComponentWarnEvent("extproc", "body_phase_refusal_downgraded", map[string]interface{}{
+		"request_id": ctx.RequestID,
+		"model":      ctx.RequestModel,
+		// What the client would have read under BUFFERED, and will not read
+		// here. The body still says it; the status line cannot.
+		"refused_status": immediate.GetStatus().GetCode(),
+	})
+	ctx.ResponseBodyEnded = true
+	if ctx.IsStreamingResponse {
+		// A streamed turn would otherwise be ended a second time by the
+		// trailer. The turn is accounted by whichever refusal built this
+		// reply, not by the streaming finalizer.
+		ctx.StreamingComplete = true
+	}
+	return buildResponseBodyContinueResponse(
+		responseStreamBodyMutation(ctx, bytes.Clone(immediate.GetBody()), true), nil)
 }
