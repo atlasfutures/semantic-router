@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 // A body-phase ImmediateResponse is legal only while Envoy still owns the
@@ -99,4 +100,43 @@ func TestWithoutFullDuplexDecodeFailureStaysAnImmediateResponse(t *testing.T) {
 	require.NotNil(t, immediate, "the body-phase refusal stopped being an ImmediateResponse")
 	assert.Equal(t, 502, int(immediate.GetStatus().GetCode()))
 	assert.Contains(t, string(immediate.GetBody()), "upstream usage cannot be negative")
+}
+
+// The converted refusal has to be in the client's own wire format.
+//
+// Every body-phase producer builds its ImmediateResponse through
+// createErrorResponse, which is always OpenAI-shaped. On the request and
+// header phases encodeImmediateResponseForClient re-encodes that for the
+// client; this seam had no such step, so it forwarded the OpenAI object
+// verbatim. Together with the 200 downgrade that is worse than an error: an
+// Anthropic client parses a foreign error object as content.
+func TestFullDuplexRefusalIsEncodedForTheClientProtocol(t *testing.T) {
+	router := &OpenAIRouter{}
+	ctx := decodeFailingContext(t)
+	ctx.SourceFormat = llmprotocol.AnthropicMessagesV1
+	ctx.TargetFormat = llmprotocol.OpenAIChatV1
+	ctx.FullDuplexResponseBody = true
+	stream := NewMockStream(nil)
+
+	require.NoError(t, router.processResponseBody(stream, &ext_proc.ProcessingRequest_ResponseBody{
+		ResponseBody: &ext_proc.HttpBody{Body: undecodableUpstreamBody(), EndOfStream: true},
+	}, ctx))
+
+	require.Len(t, stream.Responses, 1)
+	body := stream.Responses[0].GetResponseBody().GetResponse().
+		GetBodyMutation().GetStreamedResponse().GetBody()
+	require.NotEmpty(t, body)
+
+	engine := protocolcodec.NewBuiltinEngine()
+	translated, err := engine.TranslateTransportError(
+		llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1, body, nil)
+	if err != nil {
+		t.Fatalf("the refusal is not a valid Anthropic error: %v\n%s", err, body)
+	}
+	require.NotNil(t, translated.TransportError.Error)
+	// The Anthropic envelope wraps the error; the OpenAI object createErrorResponse
+	// builds has no such wrapper and carries a numeric code instead.
+	assert.Contains(t, string(body), `"type":"error"`)
+	assert.NotContains(t, string(body), `"code":502`,
+		"the OpenAI error object reached an Anthropic client verbatim")
 }

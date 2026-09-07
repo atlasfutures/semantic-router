@@ -199,7 +199,7 @@ func (r *OpenAIRouter) endResponseBodyAtTrailers(
 	if err != nil {
 		return nil, err
 	}
-	return endedByTrailers(normalizeFullDuplexResponseBody(response, ctx, joined)), nil
+	return endedByTrailers(r.normalizeFullDuplexResponseBody(response, ctx, joined)), nil
 }
 
 // endedByTrailers takes the end off a body reply that the trailers will end.
@@ -215,6 +215,16 @@ func (r *OpenAIRouter) endResponseBodyAtTrailers(
 // This is the opposite of the deadline cut, which sets the same flag on
 // purpose because there the Router is ending a response the upstream has not
 // finished, and nothing else in the protocol can say so.
+//
+// Residual uncertainty, recorded rather than guessed at. The vendored
+// comments say the strict one-response-per-request rule applies only when the
+// mode is not FULL_DUPLEX_STREAMED (external_processor.pb.go:387-388) and
+// defer this mode to "the API defined for this mode" (:389-390), which those
+// comments do not spell out. So a body reply on the trailers message is not
+// forbidden, and the end_of_stream=true variant is forbidden by :1279-1281 --
+// but the positive rule for how many body replies this mode expects, and
+// when, is not stated in what is vendored here. If a live cell ever rejects
+// the flush, that gap is where to look first.
 func endedByTrailers(response *ext_proc.ProcessingResponse) *ext_proc.ProcessingResponse {
 	streamed := response.GetResponseBody().GetResponse().GetBodyMutation().GetStreamedResponse()
 	if streamed != nil {

@@ -2,9 +2,11 @@ package extproc
 
 import (
 	"bytes"
+	"encoding/json"
 
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 )
 
@@ -42,7 +44,7 @@ import (
 // headers have already gone downstream, where sendLocalReply on a started
 // response resets the stream -- so the refusal would become a truncated 200
 // carrying nothing.
-func normalizeFullDuplexResponseBody(
+func (r *OpenAIRouter) normalizeFullDuplexResponseBody(
 	response *ext_proc.ProcessingResponse,
 	ctx *RequestContext,
 	chunk *ext_proc.HttpBody,
@@ -51,7 +53,7 @@ func normalizeFullDuplexResponseBody(
 		return response
 	}
 	if immediate := response.GetImmediateResponse(); immediate != nil {
-		return endResponseWithImmediateBody(ctx, immediate)
+		return r.endResponseWithImmediateBody(ctx, immediate)
 	}
 	bodyResponse := response.GetResponseBody()
 	if bodyResponse == nil {
@@ -98,13 +100,22 @@ func normalizeFullDuplexResponseBody(
 //
 // The status is already spent, which is what "the headers have gone
 // downstream" means: the client will read 200 whatever this says. What can
-// still be preserved is the refusal itself and the end, so the body travels
-// unchanged and the reply ends the response. The header mutation is dropped
-// because Envoy scrubbed those headers at encodeHeaders, long before this.
+// still be preserved is the refusal itself and the end. The header mutation
+// is dropped because Envoy scrubbed those headers at encodeHeaders, long
+// before this.
+//
+// The body cannot travel as it was built. Every body-phase producer builds
+// its ImmediateResponse through createErrorResponse, which is always
+// OpenAI-shaped; on the request and header phases
+// encodeImmediateResponseForClient re-encodes that for the client, and this
+// seam had no such step. Forwarded verbatim, and with the status already
+// downgraded to 200, an Anthropic client would parse a foreign error object
+// as content rather than as a failure. So it is re-encoded here into the
+// client's own wire format.
 //
 // The turn is over, so the body is marked ended and the trailer that may
 // follow neither flushes nor ends anything a second time.
-func endResponseWithImmediateBody(
+func (r *OpenAIRouter) endResponseWithImmediateBody(
 	ctx *RequestContext,
 	immediate *ext_proc.ImmediateResponse,
 ) *ext_proc.ProcessingResponse {
@@ -123,5 +134,74 @@ func endResponseWithImmediateBody(
 		ctx.StreamingComplete = true
 	}
 	return buildResponseBodyContinueResponse(
-		responseStreamBodyMutation(ctx, bytes.Clone(immediate.GetBody()), true), nil)
+		responseStreamBodyMutation(ctx, r.clientEncodedRefusal(ctx, immediate), true), nil)
+}
+
+// clientEncodedRefusal re-encodes a body-phase refusal for the client.
+//
+// The typed error is preferred where the producer left one on the context;
+// otherwise it is rebuilt from what the refusal itself says, its HTTP status
+// naming the category and its OpenAI-shaped body the message. If the client
+// speaks OpenAI, or if anything about the re-encode fails, the original body
+// travels: it is the same bytes the client would have read under BUFFERED.
+func (r *OpenAIRouter) clientEncodedRefusal(
+	ctx *RequestContext,
+	immediate *ext_proc.ImmediateResponse,
+) []byte {
+	body := bytes.Clone(immediate.GetBody())
+	_, target := responseWireFormats(ctx)
+	if target == llmprotocol.OpenAIChatV1 {
+		return body
+	}
+	engine, err := r.protocolEngine()
+	if err != nil {
+		return body
+	}
+	encoded, err := engine.EncodeError(target, refusalProtocolError(ctx, immediate))
+	if err != nil {
+		logging.ComponentErrorEvent("extproc", "body_phase_refusal_encode_failed", map[string]interface{}{
+			"request_id": ctx.RequestID,
+			"format":     target,
+			"error":      err.Error(),
+		})
+		return body
+	}
+	return encoded
+}
+
+func refusalProtocolError(
+	ctx *RequestContext,
+	immediate *ext_proc.ImmediateResponse,
+) *llmprotocol.ProtocolError {
+	if ctx.ImmediateProtocolError != nil {
+		return ctx.ImmediateProtocolError
+	}
+	status := int(immediate.GetStatus().GetCode())
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+		} `json:"error"`
+	}
+	message := "the router refused this response"
+	if err := json.Unmarshal(immediate.GetBody(), &envelope); err == nil &&
+		envelope.Error.Message != "" {
+		message = envelope.Error.Message
+	}
+	return llmprotocol.NewError(refusalCategory(status), "response_refused", message, nil)
+}
+
+func refusalCategory(status int) llmprotocol.ErrorCategory {
+	switch {
+	case status == 403:
+		return llmprotocol.ErrorPermission
+	case status == 408 || status == 504:
+		return llmprotocol.ErrorUpstreamTimeout
+	case status == 429:
+		return llmprotocol.ErrorRateLimited
+	case status >= 500:
+		return llmprotocol.ErrorUpstreamUnavailable
+	default:
+		return llmprotocol.ErrorInvalidRequest
+	}
 }
