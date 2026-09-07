@@ -63,6 +63,12 @@ func testSessionPricingChatCompletions(
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("chat completion: expected 200, got %d: %s", resp.StatusCode, string(resp.Body))
 	}
+	// The metrics below are only evidence of pricing telemetry if a turn
+	// actually completed. A 200 carrying an error envelope would leave them
+	// unwritten and the assertions would then be measuring an earlier turn.
+	if err := assertChatCompletionSucceeded(resp.Body, "chat completion"); err != nil {
+		return err
+	}
 
 	body, err := fetchMetrics(ctx, metricsSession)
 	if err != nil {
@@ -110,7 +116,7 @@ func testSessionPricingResponseAPI(
 
 	respAPI := fixtures.NewResponseAPIClient(traffic, 60*time.Second)
 
-	_, raw, err := respAPI.Create(ctx, fixtures.ResponseAPIRequest{
+	apiResp, raw, err := respAPI.Create(ctx, fixtures.ResponseAPIRequest{
 		Model: "MoM",
 		Input: "Say hello in one short sentence for Response API pricing telemetry.",
 	})
@@ -119,6 +125,9 @@ func testSessionPricingResponseAPI(
 	}
 	if raw.StatusCode != http.StatusOK {
 		return fmt.Errorf("response api: expected 200, got %d: %s", raw.StatusCode, string(raw.Body))
+	}
+	if err := assertResponseAPISucceeded(apiResp, raw.Body, "response api"); err != nil {
+		return err
 	}
 
 	body, err := fetchMetrics(ctx, metricsSession)

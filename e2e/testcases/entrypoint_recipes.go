@@ -87,6 +87,9 @@ func assertEntrypointProbeSelectsRecipe(ctx context.Context, localPort string, v
 		logUnexpectedChatCompletionStatus(verbose, response, "entrypoint-recipe-routing", "Query: "+query)
 		return "", fmt.Errorf("probe entrypoint request: %s", formatUnexpectedChatCompletionStatus(response))
 	}
+	if err := assertChatCompletionSucceeded(response.Body, "probe entrypoint request"); err != nil {
+		return "", err
+	}
 
 	decision := response.Headers.Get("x-vsr-selected-decision")
 	if decision != entrypointProbeDecision {
@@ -121,6 +124,9 @@ func assertDefaultAliasStaysIsolated(ctx context.Context, localPort string, verb
 	if response.StatusCode != http.StatusOK {
 		logUnexpectedChatCompletionStatus(verbose, response, "entrypoint-recipe-routing", "Query: "+query)
 		return "", fmt.Errorf("default alias request: %s", formatUnexpectedChatCompletionStatus(response))
+	}
+	if err := assertChatCompletionSucceeded(response.Body, "default alias request"); err != nil {
+		return "", err
 	}
 
 	decision := response.Headers.Get("x-vsr-selected-decision")

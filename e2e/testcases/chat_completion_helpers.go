@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/vllm-project/semantic-router/e2e/pkg/fixtures"
 )
 
 const localChatCompletionsPath = "/v1/chat/completions"
@@ -67,6 +69,56 @@ func sendLocalChatCompletion(
 		Headers:    resp.Header,
 		Body:       bodyBytes,
 	}, nil
+}
+
+// assertChatCompletionSucceeded requires that a body served with 200 is an
+// actual completion rather than an error envelope.
+//
+// A 200 is not on its own evidence that the turn succeeded. Under FULL_DUPLEX
+// the router can end the downstream response itself, so a refusal is delivered
+// as an error body under the status the upstream had already sent. A case that
+// asserts the status and never reads the body counts that turn as healthy.
+//
+// This is the weak form of the check, for cases that assert routing or
+// telemetry rather than content and so cannot name the text they expect.
+// assertChatCompletionBody is the strong form, for cases that can.
+//
+// subject names the request in the failure, so a case making several calls
+// says which one returned the envelope.
+func assertChatCompletionSucceeded(body []byte, subject string) error {
+	var envelope struct {
+		Error   json.RawMessage   `json:"error"`
+		Choices []json.RawMessage `json:"choices"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return fmt.Errorf("%s: served 200 but the body is not JSON: %w: %s",
+			subject, err, truncateString(string(body), 500))
+	}
+	if len(envelope.Error) > 0 && string(envelope.Error) != "null" {
+		return fmt.Errorf("%s: served 200 but the body is an error envelope: %s",
+			subject, truncateString(string(body), 500))
+	}
+	if len(envelope.Choices) == 0 {
+		return fmt.Errorf("%s: served 200 but the body carries no choices, so it is not a completion: %s",
+			subject, truncateString(string(body), 500))
+	}
+	return nil
+}
+
+// assertResponseAPISucceeded is the Response API form of the same check. It is
+// needed for a reason the chat form is not: a Response API error envelope
+// decodes cleanly into the success struct and leaves every field zero, so a
+// decode that returns no error proves nothing on its own.
+func assertResponseAPISucceeded(response *fixtures.ResponseAPIResponse, rawBody []byte, subject string) error {
+	if response == nil || response.Object != "response" {
+		return fmt.Errorf("%s: served 200 but the body is not a response object: %s",
+			subject, truncateString(string(rawBody), 500))
+	}
+	if len(response.Output) == 0 {
+		return fmt.Errorf("%s: served 200 but the response carries no output: %s",
+			subject, truncateString(string(rawBody), 500))
+	}
+	return nil
 }
 
 func formatUnexpectedChatCompletionStatus(response *localChatCompletionResponse) string {
