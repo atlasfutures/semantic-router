@@ -184,9 +184,12 @@ func carriedBlockBytes(content llmprotocol.Content, target llmprotocol.WireForma
 	return carried.Raw, true
 }
 
-// appendCarriedBlockDrops records the carried blocks one encode will drop. It
-// reads the block list it is given and does not descend into tool results,
-// which carry their own list through the same encoder.
+// appendCarriedBlockDrops records the carried blocks one encode will drop,
+// including the blocks inside a tool result. A tool result holds its own
+// content list and reaches the target through the same encoder, so a block
+// carried there is dropped the same way -- and reading only the top-level list
+// left exactly those uncounted, which is what let a tool's output go missing
+// with nothing recording it.
 func appendCarriedBlockDrops(
 	diagnostics *llmprotocol.Diagnostics,
 	contents []llmprotocol.Content,
@@ -194,6 +197,10 @@ func appendCarriedBlockDrops(
 	policy llmprotocol.Policy,
 ) {
 	for _, content := range contents {
+		if content.Kind == llmprotocol.ContentToolResult && content.ToolResult != nil {
+			appendCarriedBlockDrops(diagnostics, content.ToolResult.Content, target, policy)
+			continue
+		}
 		if content.Kind != llmprotocol.ContentUnmodeled || content.Unmodeled == nil {
 			continue
 		}

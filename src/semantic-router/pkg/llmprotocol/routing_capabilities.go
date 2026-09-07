@@ -68,9 +68,10 @@ func carriesToolResultMedia(request Request) bool {
 }
 
 // contentCarriesToolResultMedia reports whether a tool result holds a part
-// that is not text. A carried block is not counted: it belongs to the source
-// contract, is re-emitted only to that contract, and is already counted as a
-// drop by the encoder that cannot name it.
+// that is not text. A carried block is not counted here: it belongs to the
+// source contract, is re-emitted only to that contract, and appendCarriedBlockDrops
+// counts it as a drop on any other target -- which it now does for a block
+// inside a tool result, not only for one beside it.
 func contentCarriesToolResultMedia(contents []Content) bool {
 	for _, content := range contents {
 		if content.Kind != ContentToolResult || content.ToolResult == nil {

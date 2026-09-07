@@ -544,3 +544,50 @@ func TestArrayElementMembersAreCountedByPathWhenDropped(t *testing.T) {
 	}
 	t.Fatalf("Chat dropped a message member without counting its path: %+v", result.Diagnostics)
 }
+
+// A tool result carries its own content list, and a carried block inside it
+// reached no counter: the drop counter read the top-level list only. The
+// capability gate then excluded carried blocks on the stated grounds that the
+// encoder counts them, which was not true for this one. Chat encoded the tool
+// result as its text alone, with the block gone and nothing recording it.
+const anthropicCarriedBlockInToolResultBody = `{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 64,
+  "messages": [
+    {"role": "assistant", "content": [
+      {"type": "tool_use", "id": "call_1", "name": "lookup", "input": {}}
+    ]},
+    {"role": "user", "content": [
+      {"type": "tool_result", "tool_use_id": "call_1", "content": [
+        {"type": "text", "text": "ok"},
+        {"type": "future_mcp_result", "payload": {"a": 1}}
+      ]}
+    ]}
+  ]
+}`
+
+func TestACarriedBlockInsideAToolResultIsCounted(t *testing.T) {
+	engine := NewBuiltinEngine()
+	result, err := engine.TranslateRequest(
+		llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1,
+		[]byte(anthropicCarriedBlockInToolResultBody), nil,
+	)
+	if err != nil {
+		t.Fatalf("TranslateRequest() error = %v", err)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if diagnostic.Field == "content.future_mcp_result" {
+			return
+		}
+	}
+	t.Fatalf("a carried block inside a tool result went missing uncounted: %+v", result.Diagnostics)
+}
+
+// The same block re-emits whole on the contract it came from, so the count is
+// the target's loss and not the block's.
+func TestACarriedBlockInsideAToolResultSurvivesItsOwnFormat(t *testing.T) {
+	encoded := routeAnthropicRequest(t, anthropicCarriedBlockInToolResultBody, llmprotocol.AnthropicMessagesV1)
+	if !bytes.Contains(encoded, []byte("future_mcp_result")) {
+		t.Fatalf("the Messages target dropped a block it carries: %s", encoded)
+	}
+}
