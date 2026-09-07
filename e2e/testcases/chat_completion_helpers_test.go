@@ -102,6 +102,34 @@ func TestAssertResponseAPISucceeded(t *testing.T) {
 			response: &fixtures.ResponseAPIResponse{Object: "response", Status: "completed"},
 			wantErr:  "no output",
 		},
+		{
+			// A run that is still going is not a failure, and the pricing
+			// telemetry it is asserted against is already written.
+			name: "a response still in progress",
+			response: &fixtures.ResponseAPIResponse{
+				Object: "response", Status: "in_progress",
+				Output: []map[string]interface{}{{"type": "message"}},
+			},
+		},
+		{
+			// The shape a failed run takes: the right object, a partial output
+			// item, and a status that says the turn did not succeed. Checking
+			// only object and output would pass this.
+			name: "a failed run with a partial output item",
+			response: &fixtures.ResponseAPIResponse{
+				Object: "response", Status: "failed",
+				Output: []map[string]interface{}{{"type": "message"}},
+			},
+			wantErr: "failed",
+		},
+		{
+			name: "a run that stopped short",
+			response: &fixtures.ResponseAPIResponse{
+				Object: "response", Status: "incomplete",
+				Output: []map[string]interface{}{{"type": "message"}},
+			},
+			wantErr: "incomplete",
+		},
 	}
 
 	for _, test := range tests {

@@ -109,10 +109,20 @@ func assertChatCompletionSucceeded(body []byte, subject string) error {
 // needed for a reason the chat form is not: a Response API error envelope
 // decodes cleanly into the success struct and leaves every field zero, so a
 // decode that returns no error proves nothing on its own.
+//
+// The status is checked as well as the object and the output, because a failed
+// or incomplete run is a well-formed response object and can carry a partial
+// output item. Object and output alone would pass it. The accepted pair
+// matches response_api_basic.go: completed, or in_progress for a run that is
+// still going.
 func assertResponseAPISucceeded(response *fixtures.ResponseAPIResponse, rawBody []byte, subject string) error {
 	if response == nil || response.Object != "response" {
 		return fmt.Errorf("%s: served 200 but the body is not a response object: %s",
 			subject, truncateString(string(rawBody), 500))
+	}
+	if response.Status != "completed" && response.Status != "in_progress" {
+		return fmt.Errorf("%s: served 200 but the response status is %q, not a run that succeeded: %s",
+			subject, response.Status, truncateString(string(rawBody), 500))
 	}
 	if len(response.Output) == 0 {
 		return fmt.Errorf("%s: served 200 but the response carries no output: %s",
