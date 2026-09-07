@@ -42,6 +42,13 @@ func (r *OpenAIRouter) emitRoutingDecision(ctx *RequestContext) {
 	}
 	record := ctx.RoutingDecision
 	ctx.RoutingDecision = nil
+	// What the dispatched body asked the upstream for. This record is written
+	// at provider dispatch, before any response header exists, so the response
+	// truth (IsStreamingResponse) is not yet knowable here -- reading it would
+	// log false on every turn. The key is deliberately not "streaming": that
+	// is the response-side fact llm_usage carries, and equating the two would
+	// silently count a request that asked to stream as a response that did.
+	record["streaming_requested"] = ctx.ExpectStreamingResponse
 	if ctx.DispatchedReasoningEffort != "" {
 		record["reasoning_effort"] = ctx.DispatchedReasoningEffort
 	}

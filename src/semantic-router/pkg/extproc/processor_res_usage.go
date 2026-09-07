@@ -210,6 +210,12 @@ func (r *OpenAIRouter) recordResponseCost(
 		"total_tokens":          totalTokens,
 		"completion_latency_ms": completionLatency.Milliseconds(),
 		"usage_source":          responseUsageSource(usage),
+		// Whether the turn streamed. Read from the response Content-Type at
+		// the header phase, so this is what the upstream actually did rather
+		// than what the request asked for. Always present: an absent field
+		// cannot be told apart from a turn nothing classified, which is what
+		// forced the CP9x traffic mix to be inferred from a side effect.
+		"streaming": ctx.IsStreamingResponse,
 	}
 	addUpstreamAttribution(eventFields, attributedResponse(ctx))
 	if ctx.ResponseFailureClass != "" {
