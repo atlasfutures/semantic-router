@@ -47,9 +47,14 @@ var inventoryDispositionValues = map[string]struct{}{
 	string(dispositionTransform): {},
 }
 
+// A leg is one decode surface, not one direction. A streamed response is
+// decoded through a different wire struct from a non-streamed one, so a member
+// classified on the response leg says nothing about the same member on a
+// chunk: production prunes each against its own struct.
 var inventoryLegValues = map[string]struct{}{
 	"request":  {},
 	"response": {},
+	"stream":   {},
 }
 
 var inventoryVersionPattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
@@ -193,7 +198,7 @@ func validateInventoryField(
 		problems = append(problems, fmt.Sprintf("field %q states no disposition on any target", field.Path))
 	}
 	if _, ok := inventoryLegValues[field.Leg]; !ok {
-		problems = append(problems, fmt.Sprintf("field %q has leg %q, want request or response", field.Path, field.Leg))
+		problems = append(problems, fmt.Sprintf("field %q has leg %q, want request, response or stream", field.Path, field.Leg))
 	}
 	if field.Beta != "" {
 		if _, ok := declared[field.Beta]; !ok {

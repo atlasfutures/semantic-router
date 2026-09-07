@@ -155,9 +155,12 @@ func TestClientSchemaInventoryRejectsAnUnreviewableRow(t *testing.T) {
 			inventory: clientSchemaInventory{
 				Format:  llmprotocol.AnthropicMessagesV1,
 				Version: "2026-09-05",
-				Fields:  []clientSchemaField{{Path: "tools.defer_loading", Leg: "stream"}},
+				Fields: []clientSchemaField{{
+					Path: "tools.defer_loading", Leg: "trailer",
+					Targets: map[string]string{string(llmprotocol.OpenAIChatV1): string(dispositionDrop)},
+				}},
 			},
-			want: "want request or response",
+			want: "want request, response or stream",
 		},
 	}
 	for _, test := range tests {

@@ -1,7 +1,7 @@
 {
   "format": "openai.chat.v1",
   "version": "2026-09-05",
-  "note": "Chat Completions publishes no version header at all, so the date is the whole identity. OpenRouter adds vendor extensions on top of the OpenAI contract, and the rows below are those, read from the real arm captures in testdata/provider/openrouter. The request leg has no rows because no Chat-format client capture exists on disk; the cell's Chat traffic is what it encodes, not what a client sent. Every row drops on every target: an unmodelled provider member is pruned before decode, so it reaches no client, not even a Chat client.",
+  "note": "Chat Completions publishes no version header at all, so the date is the whole identity. OpenRouter adds vendor extensions on top of the OpenAI contract, and the rows below are those, read from the real arm captures in testdata/provider/openrouter. The request leg has no rows because no Chat-format client capture exists on disk; the cell's Chat traffic is what it encodes, not what a client sent. The stream leg repeats most of the response leg because a streamed response is decoded through chatChunkWire and a non-streamed one through chatResponseWire: production prunes each against its own struct, so a row on one says nothing about the other. Every row drops on every target: an unmodelled provider member is pruned before decode, so it reaches no client, not even a Chat client.",
   "fields": [
     {
       "path": "choices[].message.reasoning_details",
@@ -70,6 +70,81 @@
     {
       "path": "usage.prompt_tokens_details.video_tokens",
       "leg": "response",
+      "first_seen": "2026-09-03",
+      "targets": {
+        "anthropic.messages.v1": "drop",
+        "openai.chat.v1": "drop",
+        "openai.responses.v1": "drop"
+      },
+      "note": "Zero on every arm captured so far. Same reconciliation risk as image_tokens."
+    },
+    {
+      "path": "choices[].delta.reasoning_details",
+      "leg": "stream",
+      "first_seen": "2026-09-03",
+      "targets": {
+        "anthropic.messages.v1": "drop",
+        "openai.chat.v1": "drop",
+        "openai.responses.v1": "drop"
+      },
+      "note": "The streamed spelling of the reasoning trace: a chunk carries it on delta where a complete response carries it on message. Adding the stream leg is what surfaced it; the response-leg row did not cover it."
+    },
+    {
+      "path": "choices[].native_finish_reason",
+      "leg": "stream",
+      "first_seen": "2026-09-03",
+      "targets": {
+        "anthropic.messages.v1": "drop",
+        "openai.chat.v1": "drop",
+        "openai.responses.v1": "drop"
+      },
+      "note": "The provider's own stop reason, beside the normalised finish_reason."
+    },
+    {
+      "path": "usage.completion_tokens_details.image_tokens",
+      "leg": "stream",
+      "first_seen": "2026-09-03",
+      "targets": {
+        "anthropic.messages.v1": "drop",
+        "openai.chat.v1": "drop",
+        "openai.responses.v1": "drop"
+      },
+      "note": "Zero on every arm captured so far. It is a usage sub-count, so it enters the split reconciliation the moment an arm returns it non-zero."
+    },
+    {
+      "path": "usage.cost",
+      "leg": "stream",
+      "first_seen": "2026-09-03",
+      "targets": {
+        "anthropic.messages.v1": "drop",
+        "openai.chat.v1": "drop",
+        "openai.responses.v1": "drop"
+      },
+      "note": "OpenRouter's own billing figure. The cell prices from its own table, so carrying this would give a client two disagreeing numbers."
+    },
+    {
+      "path": "usage.cost_details",
+      "leg": "stream",
+      "first_seen": "2026-09-03",
+      "targets": {
+        "anthropic.messages.v1": "drop",
+        "openai.chat.v1": "drop",
+        "openai.responses.v1": "drop"
+      }
+    },
+    {
+      "path": "usage.is_byok",
+      "leg": "stream",
+      "first_seen": "2026-09-03",
+      "targets": {
+        "anthropic.messages.v1": "drop",
+        "openai.chat.v1": "drop",
+        "openai.responses.v1": "drop"
+      }
+    },
+    {
+      "path": "usage.prompt_tokens_details.video_tokens",
+      "leg": "stream",
       "first_seen": "2026-09-03",
       "targets": {
         "anthropic.messages.v1": "drop",

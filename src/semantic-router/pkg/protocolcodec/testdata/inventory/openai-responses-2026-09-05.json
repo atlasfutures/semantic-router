@@ -1,6 +1,6 @@
 {
   "format": "openai.responses.v1",
   "version": "2026-09-05",
-  "note": "No corpus entry is on this format. No Responses-format client capture and no Responses provider capture exist on disk, so the extension surface of this format is unmeasured rather than empty. This file exists so the absence is stated in the same place the other two formats state their members, and so the first capture has somewhere to land. Capturing one is operator-owed.",
+  "note": "No corpus entry is on this format, on any leg. No Responses-format client capture, provider response or recorded stream exists on disk, so the extension surface of this format is unmeasured rather than empty. This file exists so the absence is stated where the other two formats state their members, and so the first capture has somewhere to land. Capturing one is operator-owed.",
   "fields": []
 }

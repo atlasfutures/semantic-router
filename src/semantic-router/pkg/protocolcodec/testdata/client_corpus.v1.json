@@ -31,27 +31,43 @@
       "body": {
         "model": "rayline-router",
         "system": [
-          { "type": "text", "text": "billing header" },
+          {
+            "type": "text",
+            "text": "billing header"
+          },
           {
             "type": "text",
             "text": "You are a Claude agent.",
-            "cache_control": { "type": "ephemeral", "ttl": "1h", "scope": "global" }
+            "cache_control": {
+              "type": "ephemeral",
+              "ttl": "1h",
+              "scope": "global"
+            }
           },
           {
             "type": "text",
             "text": "More instructions",
-            "cache_control": { "type": "ephemeral", "ttl": "1h" }
+            "cache_control": {
+              "type": "ephemeral",
+              "ttl": "1h"
+            }
           }
         ],
         "messages": [
-          { "role": "user", "content": "hello" },
+          {
+            "role": "user",
+            "content": "hello"
+          },
           {
             "role": "system",
             "content": [
               {
                 "type": "text",
                 "text": "mid-conversation",
-                "cache_control": { "type": "ephemeral", "ttl": "1h" }
+                "cache_control": {
+                  "type": "ephemeral",
+                  "ttl": "1h"
+                }
               }
             ]
           }
@@ -60,14 +76,22 @@
           {
             "name": "Agent",
             "description": "Launch an agent",
-            "input_schema": { "type": "object" },
+            "input_schema": {
+              "type": "object"
+            },
             "eager_input_streaming": true
           }
         ],
-        "metadata": { "user_id": "u" },
+        "metadata": {
+          "user_id": "u"
+        },
         "max_tokens": 32000,
-        "output_config": { "effort": "high" },
-        "diagnostics": { "previous_message_id": null },
+        "output_config": {
+          "effort": "high"
+        },
+        "diagnostics": {
+          "previous_message_id": null
+        },
         "stream": true
       }
     },
@@ -91,17 +115,36 @@
           {
             "type": "text",
             "text": "You are a Claude agent.",
-            "cache_control": { "type": "ephemeral" }
+            "cache_control": {
+              "type": "ephemeral"
+            }
           }
         ],
-        "messages": [{ "role": "user", "content": "hello" }],
-        "metadata": { "user_id": "u" },
-        "max_tokens": 32000,
-        "thinking": { "type": "adaptive", "display": "omitted" },
-        "context_management": {
-          "edits": [{ "type": "clear_thinking_20251015", "keep": "all" }]
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "metadata": {
+          "user_id": "u"
         },
-        "output_config": { "effort": "high" },
+        "max_tokens": 32000,
+        "thinking": {
+          "type": "adaptive",
+          "display": "omitted"
+        },
+        "context_management": {
+          "edits": [
+            {
+              "type": "clear_thinking_20251015",
+              "keep": "all"
+            }
+          ]
+        },
+        "output_config": {
+          "effort": "high"
+        },
         "stream": true
       }
     },
@@ -112,7 +155,9 @@
       "captured": "2026-09-05",
       "surface": "anthropic.messages.v1",
       "leg": "request",
-      "betas": ["prompt-caching-evict-2026-05-12"],
+      "betas": [
+        "prompt-caching-evict-2026-05-12"
+      ],
       "note": "Sweep item 1. Server-gated: it can switch on with no client upgrade and no warning, so this entry can go stale without anyone changing the client.",
       "body": {
         "model": "client-model",
@@ -124,7 +169,10 @@
               {
                 "type": "text",
                 "text": "hello",
-                "cache_control": { "type": "ephemeral", "evict_on_complete": true }
+                "cache_control": {
+                  "type": "ephemeral",
+                  "evict_on_complete": true
+                }
               }
             ]
           }
@@ -143,9 +191,25 @@
         "model": "client-model",
         "max_tokens": 64,
         "tools": [
-          { "name": "lookup", "input_schema": { "type": "object" }, "defer_loading": true }
+          {
+            "name": "lookup",
+            "input_schema": {
+              "type": "object"
+            },
+            "defer_loading": true
+          }
         ],
-        "messages": [{ "role": "user", "content": [{ "type": "text", "text": "hello" }] }]
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hello"
+              }
+            ]
+          }
+        ]
       }
     },
     {
@@ -155,13 +219,27 @@
       "captured": "2026-09-05",
       "surface": "anthropic.messages.v1",
       "leg": "request",
-      "betas": ["task-budgets-2026-03-13"],
+      "betas": [
+        "task-budgets-2026-03-13"
+      ],
       "note": "Sweep item 3.",
       "body": {
         "model": "client-model",
         "max_tokens": 64,
-        "output_config": { "task_budget": 2048 },
-        "messages": [{ "role": "user", "content": [{ "type": "text", "text": "hello" }] }]
+        "output_config": {
+          "task_budget": 2048
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hello"
+              }
+            ]
+          }
+        ]
       }
     },
     {
@@ -182,7 +260,11 @@
               {
                 "type": "document",
                 "title": "Release notes",
-                "source": { "type": "text", "media_type": "text/plain", "data": "the document body" }
+                "source": {
+                  "type": "text",
+                  "media_type": "text/plain",
+                  "data": "the document body"
+                }
               }
             ]
           }
@@ -201,9 +283,25 @@
         "model": "client-model",
         "max_tokens": 64,
         "tools": [
-          { "type": "web_search_20250305", "name": "web_search", "input_schema": { "type": "object" } }
+          {
+            "type": "web_search_20250305",
+            "name": "web_search",
+            "input_schema": {
+              "type": "object"
+            }
+          }
         ],
-        "messages": [{ "role": "user", "content": [{ "type": "text", "text": "hello" }] }]
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hello"
+              }
+            ]
+          }
+        ]
       }
     },
     {
@@ -218,9 +316,25 @@
         "model": "client-model",
         "max_tokens": 64,
         "tools": [
-          { "type": "advisor_20260301", "name": "advisor", "input_schema": { "type": "object" } }
+          {
+            "type": "advisor_20260301",
+            "name": "advisor",
+            "input_schema": {
+              "type": "object"
+            }
+          }
         ],
-        "messages": [{ "role": "user", "content": [{ "type": "text", "text": "hello" }] }]
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hello"
+              }
+            ]
+          }
+        ]
       }
     },
     {
@@ -237,7 +351,14 @@
         "messages": [
           {
             "role": "assistant",
-            "content": [{ "type": "tool_use", "id": "call_1", "name": "lookup", "input": {} }]
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_1",
+                "name": "lookup",
+                "input": {}
+              }
+            ]
           },
           {
             "role": "user",
@@ -248,7 +369,11 @@
                 "content": [
                   {
                     "type": "image",
-                    "source": { "type": "base64", "media_type": "image/png", "data": "aGk=" }
+                    "source": {
+                      "type": "base64",
+                      "media_type": "image/png",
+                      "data": "aGk="
+                    }
                   }
                 ]
               }
@@ -330,6 +455,63 @@
       "leg": "response",
       "source": "provider/openrouter/anthropic-response-warm-prefix.json",
       "note": "The cell's own Messages output rather than a client-observed body. It is the only Anthropic-format response capture on disk, so it is the only evidence the Messages response leg has."
+    },
+    {
+      "id": "openrouter_chat_stream_deepseek_v4_pro",
+      "client": "openrouter",
+      "client_version": "deepseek/deepseek-v4-pro",
+      "captured": "2026-09-03",
+      "surface": "openai.chat.v1",
+      "leg": "stream",
+      "source": "provider/openrouter/chat-stream.sse",
+      "note": "A streamed response is decoded through chatChunkWire, not the response wire, so the response leg classifies nothing on it."
+    },
+    {
+      "id": "openrouter_chat_stream_reasoning",
+      "client": "openrouter",
+      "client_version": "xiaomi/mimo-v2.5-pro",
+      "captured": "2026-09-03",
+      "surface": "openai.chat.v1",
+      "leg": "stream",
+      "source": "provider/openrouter/chat-stream-reasoning.sse"
+    },
+    {
+      "id": "openrouter_chat_stream_length_reasoning",
+      "client": "openrouter",
+      "client_version": "qwen/qwen3.6-35b-a3b",
+      "captured": "2026-09-03",
+      "surface": "openai.chat.v1",
+      "leg": "stream",
+      "source": "provider/openrouter/chat-stream-length-reasoning.sse",
+      "note": "finish_reason length, 102 reasoning tokens."
+    },
+    {
+      "id": "openrouter_chat_stream_glm",
+      "client": "openrouter",
+      "client_version": "z-ai/glm-5.2",
+      "captured": "2026-09-04",
+      "surface": "openai.chat.v1",
+      "leg": "stream",
+      "source": "provider/openrouter/chat-stream-glm.sse"
+    },
+    {
+      "id": "openrouter_chat_stream_flash",
+      "client": "openrouter",
+      "client_version": "deepseek/deepseek-v4-flash",
+      "captured": "2026-09-04",
+      "surface": "openai.chat.v1",
+      "leg": "stream",
+      "source": "provider/openrouter/chat-stream-flash.sse",
+      "note": "Serialises small numbers in exponent form, so the chunk decoder is exercised against that spelling."
+    },
+    {
+      "id": "openrouter_chat_stream_warm_prefix",
+      "client": "openrouter",
+      "client_version": "deepseek/deepseek-v4-pro",
+      "captured": "2026-09-04",
+      "surface": "openai.chat.v1",
+      "leg": "stream",
+      "source": "provider/openrouter/chat-stream-warm-prefix.sse"
     }
   ]
 }

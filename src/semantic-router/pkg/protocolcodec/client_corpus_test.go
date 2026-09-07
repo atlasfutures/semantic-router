@@ -212,7 +212,9 @@ func TestCorpusEntriesAreAttributed(t *testing.T) {
 		if (entry.Source == "") == (len(entry.Body) == 0) {
 			t.Errorf("corpus entry %q must state exactly one of source and body", entry.ID)
 		}
-		if !json.Valid(entry.bodyBytes(t)) {
+		// A recorded stream is SSE, not one JSON document. Its frames are
+		// checked where they are read.
+		if entry.Leg != "stream" && !json.Valid(entry.bodyBytes(t)) {
 			t.Errorf("corpus entry %q holds invalid JSON", entry.ID)
 		}
 	}
@@ -229,8 +231,10 @@ func observedCorpusFields(t *testing.T, engine *Engine, entry clientCorpusEntry)
 		return observedRequestExtensionFields(t, engine, entry, body)
 	case "response":
 		return observedResponseExtensionFields(t, entry, body)
+	case "stream":
+		return observedStreamExtensionFields(t, entry, body)
 	default:
-		t.Fatalf("corpus entry %s has leg %q, want request or response", entry.ID, entry.Leg)
+		t.Fatalf("corpus entry %s has leg %q, want request, response or stream", entry.ID, entry.Leg)
 		return nil
 	}
 }
@@ -338,6 +342,56 @@ func observedResponseExtensionFields(t *testing.T, entry clientCorpusEntry, body
 	}
 	_, dropped := pruneUnknownProviderFields(body, wire)
 	return sortedDistinct(dropped)
+}
+
+// observedStreamExtensionFields names the members the frames of one streamed
+// response carry that the chunk wire does not. A streamed response is decoded
+// through a different struct from a non-streamed one -- stream_chat.go decodes
+// each frame into chatChunkWire -- so the response leg says nothing about it,
+// and a member added to a chunk was pruned in production with nothing in CI
+// able to see it.
+func observedStreamExtensionFields(t *testing.T, entry clientCorpusEntry, body []byte) []string {
+	t.Helper()
+	var wire reflect.Type
+	switch entry.Surface {
+	case llmprotocol.OpenAIChatV1:
+		wire = reflect.TypeOf(chatChunkWire{})
+	case llmprotocol.OpenAIResponsesV1:
+		wire = reflect.TypeOf(responsesEventWire{})
+	case llmprotocol.AnthropicMessagesV1:
+		wire = reflect.TypeOf(anthropicEventWire{})
+	default:
+		t.Fatalf("corpus entry %s is on unknown surface %q", entry.ID, entry.Surface)
+	}
+	frames := sseDataFrames(body)
+	if len(frames) == 0 {
+		t.Fatalf("corpus entry %s holds no stream frames", entry.ID)
+	}
+	var paths []string
+	for _, frame := range frames {
+		_, dropped := pruneUnknownProviderFields(frame, wire)
+		paths = append(paths, dropped...)
+	}
+	return sortedDistinct(paths)
+}
+
+// sseDataFrames returns the JSON payload of every data line of a recorded
+// stream. Comment lines, blank lines and the terminal sentinel are not frames
+// the decoder ever hands to a wire struct.
+func sseDataFrames(body []byte) [][]byte {
+	var frames [][]byte
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "" || payload == "[DONE]" || !json.Valid([]byte(payload)) {
+			continue
+		}
+		frames = append(frames, []byte(payload))
+	}
+	return frames
 }
 
 func sortedDistinct(paths []string) []string {
@@ -519,4 +573,48 @@ func slicesContain(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// A member added to a streamed chunk is pruned in production against
+// chatChunkWire, which the response leg never touches. Before the stream leg
+// existed the gate could not see one at all: every response-leg row is about
+// chatResponseWire, and the two structs share a name for almost nothing that
+// matters here -- a chunk carries its reasoning trace on delta, a complete
+// response on message.
+func TestGateSeesAMemberOnAStreamChunk(t *testing.T) {
+	stream := []byte(": OPENROUTER PROCESSING\n\n" +
+		`data: {"id":"gen-fixture-1","object":"chat.completion.chunk","model":"m",` +
+		`"choices":[{"index":0,"delta":{"content":"hi"},"brand_new_member":1}]}` + "\n\n" +
+		"data: [DONE]\n\n")
+	entry := clientCorpusEntry{ID: "probe", Surface: llmprotocol.OpenAIChatV1, Leg: "stream"}
+	observed := observedStreamExtensionFields(t, entry, stream)
+	if !slicesContain(observed, "choices[].brand_new_member") {
+		t.Fatalf("a member on a stream chunk is named %v, want choices[].brand_new_member", observed)
+	}
+	inventory, present := loadClientSchemaInventories(t)[llmprotocol.OpenAIChatV1]
+	if !present {
+		t.Fatal("the Chat format has no dated inventory")
+	}
+	if unclassified := unclassifiedFields(inventory, "stream", observed); !slicesContain(
+		unclassified, "choices[].brand_new_member",
+	) {
+		t.Fatalf("a member on a stream chunk passed the gate unclassified: %v", unclassified)
+	}
+}
+
+// A stream-leg row does not classify the same member on the response leg, and
+// the reverse. The two are different structs, so a member known on one is an
+// open question on the other.
+func TestStreamAndResponseLegsAreSeparate(t *testing.T) {
+	inventory, present := loadClientSchemaInventories(t)[llmprotocol.OpenAIChatV1]
+	if !present {
+		t.Fatal("the Chat format has no dated inventory")
+	}
+	streamed := "choices[].delta.reasoning_details"
+	if got := unclassifiedFields(inventory, "stream", []string{streamed}); len(got) != 0 {
+		t.Fatalf("the stream leg does not classify %q: %v", streamed, got)
+	}
+	if got := unclassifiedFields(inventory, "response", []string{streamed}); len(got) != 1 {
+		t.Fatalf("a stream-leg row classified %q on the response leg", streamed)
+	}
 }
