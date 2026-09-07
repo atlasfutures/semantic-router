@@ -79,14 +79,17 @@ func (r *OpenAIRouter) completeResponseBody(
 // stream, so exhausting memory here is a hard 5xx for every request in flight
 // rather than only the one that did it.
 //
-// These are the two knobs the request-side accumulator already uses, read the
-// same way: both default to off, and off means unbounded, which is what this
-// did before there was a guard.
+// The two knobs are the response stream's own, not the request accumulator's.
+// The shipped config sets streamed_body max_bytes to 1 MiB and timeout_sec to
+// 15 for the request, and a model response is routinely larger and slower than
+// both, so reading those here would refuse ordinary turns the moment the cell
+// declared full duplex. Both default to off, and off means unbounded, which is
+// what this did before there was a guard.
 func (r *OpenAIRouter) responseBodyGuardBreach(ctx *RequestContext) *llmprotocol.ProtocolError {
 	if r == nil || r.Config == nil {
 		return nil
 	}
-	if maxBytes := r.Config.MaxStreamedBodyBytes; maxBytes > 0 &&
+	if maxBytes := r.Config.MaxResponseBodyBytes; maxBytes > 0 &&
 		int64(len(ctx.ResponseBodyChunks)) > maxBytes {
 		logging.ComponentWarnEvent("extproc", "response_body_too_large", map[string]interface{}{
 			"request_id": ctx.RequestID,
@@ -101,7 +104,7 @@ func (r *OpenAIRouter) responseBodyGuardBreach(ctx *RequestContext) *llmprotocol
 			nil,
 		)
 	}
-	timeout := time.Duration(r.Config.StreamedBodyTimeoutSec) * time.Second
+	timeout := time.Duration(r.Config.ResponseBodyTimeoutSec) * time.Second
 	if timeout > 0 && time.Since(ctx.ResponseBodyHeldSince) > timeout {
 		logging.ComponentWarnEvent("extproc", "response_body_timeout", map[string]interface{}{
 			"request_id": ctx.RequestID,

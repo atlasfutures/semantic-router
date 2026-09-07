@@ -155,7 +155,11 @@ func CanonicalGlobalFromRouterConfig(cfg *RouterConfig) *CanonicalGlobal {
 				MaxBytes:   cfg.MaxStreamedBodyBytes,
 				TimeoutSec: cfg.StreamedBodyTimeoutSec,
 			},
-			ResponseStream: CanonicalResponseStream{DeadlineSec: cfg.ResponseStreamDeadlineSec},
+			ResponseStream: CanonicalResponseStream{
+				DeadlineSec:    cfg.ResponseStreamDeadlineSec,
+				MaxBodyBytes:   cfg.MaxResponseBodyBytes,
+				BodyTimeoutSec: cfg.ResponseBodyTimeoutSec,
+			},
 			SkipProcessing: cfg.SkipProcessing,
 			ModelSelection: cfg.ModelSelection,
 			Learning:       cfg.RouterLearning,

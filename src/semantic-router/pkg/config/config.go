@@ -227,6 +227,14 @@ type RouterOptions struct {
 	StreamedBodyMode          bool     `yaml:"streamed_body_mode,omitempty"`
 	MaxStreamedBodyBytes      int64    `yaml:"max_streamed_body_bytes,omitempty"`
 	StreamedBodyTimeoutSec    int      `yaml:"streamed_body_timeout_sec,omitempty"`
+	// MaxResponseBodyBytes and ResponseBodyTimeoutSec bound the response-side
+	// accumulator that joins a body Envoy split across full-duplex chunks.
+	// They are deliberately not the streamed_body limits above: those bound a
+	// request, and a model response is routinely larger and slower than any
+	// request. Zero means unbounded, which is what the accumulator was before
+	// there was a guard.
+	MaxResponseBodyBytes   int64 `yaml:"max_response_body_bytes,omitempty"`
+	ResponseBodyTimeoutSec int   `yaml:"response_body_timeout_sec,omitempty"`
 	// ResponseStreamDeadlineSec bounds one routed turn's streamed response.
 	// Zero selects the shipped default; a negative value turns the deadline
 	// off, which leaves the platform as the only thing that ends a turn.

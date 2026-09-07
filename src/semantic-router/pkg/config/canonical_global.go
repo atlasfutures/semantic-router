@@ -50,6 +50,17 @@ type CanonicalResponseStream struct {
 	// ext_proc message_timeout of 610 s. A negative value turns the deadline
 	// off.
 	DeadlineSec int `yaml:"deadline_sec,omitempty"`
+	// MaxBodyBytes and BodyTimeoutSec bound the response-side accumulator that
+	// joins a body Envoy split across full-duplex chunks. Under
+	// FULL_DUPLEX_STREAMED Envoy drains each chunk once it has handed it over,
+	// so the Router is the only holder and nothing else bounds it.
+	//
+	// They are deliberately separate from global.router.streamed_body, which
+	// bounds a request: the shipped values there are 1 MiB and 15 s, and a
+	// model response is routinely larger and slower than that. Zero on either
+	// means unbounded.
+	MaxBodyBytes   int64 `yaml:"max_body_bytes,omitempty"`
+	BodyTimeoutSec int   `yaml:"body_timeout_sec,omitempty"`
 }
 
 // CanonicalServiceGlobal groups shared runtime services exposed by the router.
@@ -235,6 +246,8 @@ func applyCanonicalRouterGlobal(cfg *RouterConfig, router *CanonicalRouterGlobal
 	cfg.MaxStreamedBodyBytes = router.StreamedBody.MaxBytes
 	cfg.StreamedBodyTimeoutSec = router.StreamedBody.TimeoutSec
 	cfg.ResponseStreamDeadlineSec = router.ResponseStream.DeadlineSec
+	cfg.MaxResponseBodyBytes = router.ResponseStream.MaxBodyBytes
+	cfg.ResponseBodyTimeoutSec = router.ResponseStream.BodyTimeoutSec
 	cfg.SkipProcessing = router.SkipProcessing
 	cfg.ModelSelection = router.ModelSelection
 	cfg.RouterLearning = router.Learning

@@ -1692,6 +1692,12 @@ global:
       timeout_sec: 15
     response_stream:
       deadline_sec: 590
+      # Bound the response-side accumulator that joins a body Envoy split
+      # across FULL_DUPLEX_STREAMED chunks. Separate from streamed_body above,
+      # which bounds a request: a model response is routinely larger and
+      # slower than those limits. Zero on either means unbounded.
+      max_body_bytes: 0
+      body_timeout_sec: 0
     skip_processing:
       enabled: false
     model_selection:

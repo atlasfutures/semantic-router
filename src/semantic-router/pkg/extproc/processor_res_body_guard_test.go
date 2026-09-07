@@ -25,8 +25,8 @@ import (
 func guardedRouter(maxBytes int64, timeoutSec int) *OpenAIRouter {
 	return &OpenAIRouter{Config: &config.RouterConfig{
 		RouterOptions: config.RouterOptions{
-			MaxStreamedBodyBytes:   maxBytes,
-			StreamedBodyTimeoutSec: timeoutSec,
+			MaxResponseBodyBytes:   maxBytes,
+			ResponseBodyTimeoutSec: timeoutSec,
 		},
 	}}
 }
@@ -123,4 +123,38 @@ func TestResponseAccumulatorIsUnboundedByDefault(t *testing.T) {
 	require.NotNil(t, streamed)
 	assert.False(t, streamed.GetEndOfStream(), "an unbounded accumulator refused a body")
 	assert.Len(t, ctx.ResponseBodyChunks, 1<<20)
+}
+
+// The request accumulator's limits are not the response accumulator's.
+//
+// The shipped config/config.yaml sets streamed_body max_bytes 1048576 and
+// timeout_sec 15 for the request. A model response is routinely larger than a
+// megabyte and routinely takes longer than fifteen seconds, so reading those
+// two numbers on the response side would refuse ordinary turns the moment the
+// cell declared full duplex.
+func TestRequestBodyLimitsDoNotBoundTheResponse(t *testing.T) {
+	router := &OpenAIRouter{Config: &config.RouterConfig{
+		RouterOptions: config.RouterOptions{
+			StreamedBodyMode:       true,
+			MaxStreamedBodyBytes:   1048576,
+			StreamedBodyTimeoutSec: 15,
+		},
+	}}
+	ctx := accumulatingContext(t)
+	ctx.ResponseBodyHeldSince = time.Now().Add(-time.Hour)
+	stream := NewMockStream(nil)
+
+	require.NoError(t, router.processResponseBody(stream, &ext_proc.ProcessingRequest_ResponseBody{
+		ResponseBody: &ext_proc.HttpBody{
+			Body: []byte(strings.Repeat("a", 2*1048576)), EndOfStream: false,
+		},
+	}, ctx))
+
+	require.Len(t, stream.Responses, 1)
+	streamed := stream.Responses[0].GetResponseBody().GetResponse().
+		GetBodyMutation().GetStreamedResponse()
+	require.NotNil(t, streamed)
+	assert.False(t, streamed.GetEndOfStream(),
+		"the request body limits refused an ordinary response")
+	assert.Len(t, ctx.ResponseBodyChunks, 2*1048576)
 }
