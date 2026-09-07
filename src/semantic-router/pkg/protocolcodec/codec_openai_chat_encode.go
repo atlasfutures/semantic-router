@@ -225,10 +225,18 @@ func ClientOutputAllowance(request llmprotocol.Request) *int64 {
 
 func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) error {
 	for _, instruction := range request.Instructions {
-		if messageDropsWhole(instruction.Content, llmprotocol.OpenAIChatV1) {
+		// The table drops the billing attribution line here; the drop is
+		// counted in chatRequestDiagnostics. An instruction that held only
+		// that line encodes to nothing and is omitted, like a message whose
+		// every block is carried.
+		content := instructionContentFor(instruction.Content, llmprotocol.OpenAIChatV1)
+		if len(content) == 0 && len(instruction.Content) > 0 {
 			continue
 		}
-		encoded, err := encodeChatMessage(llmprotocol.Message{Role: instruction.Role, Content: instruction.Content})
+		if messageDropsWhole(content, llmprotocol.OpenAIChatV1) {
+			continue
+		}
+		encoded, err := encodeChatMessage(llmprotocol.Message{Role: instruction.Role, Content: content})
 		if err != nil {
 			return err
 		}

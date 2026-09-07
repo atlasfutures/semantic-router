@@ -1,0 +1,107 @@
+{
+  "cases": [
+    {
+      "name": "billing_header_before_system_prompt",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "You are a Claude agent.",
+                  "type": "input_text"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "system",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "input_text"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "max_output_tokens": 32,
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "system.x-anthropic-billing-header",
+            "action": "dropped"
+          }
+        ]
+      }
+    },
+    {
+      "name": "billing_header_alone",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "input_text"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "max_output_tokens": 32,
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "system.x-anthropic-billing-header",
+            "action": "dropped"
+          }
+        ]
+      }
+    },
+    {
+      "name": "system_text_that_merely_starts_like_the_header",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "x-anthropic-billing-header: cc_version=2.1.260.ada;\nYou are a Claude agent.",
+                  "type": "input_text"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "system",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "input_text"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "max_output_tokens": 32,
+          "model": "routed-model"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "cases": [
+    {
+      "name": "billing_header_before_system_prompt",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 32,
+          "messages": [
+            {
+              "content": "You are a Claude agent.",
+              "role": "system"
+            },
+            {
+              "content": "hello",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "system.x-anthropic-billing-header",
+            "action": "dropped"
+          }
+        ]
+      }
+    },
+    {
+      "name": "billing_header_alone",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 32,
+          "messages": [
+            {
+              "content": "hello",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "system.x-anthropic-billing-header",
+            "action": "dropped"
+          }
+        ]
+      }
+    },
+    {
+      "name": "system_text_that_merely_starts_like_the_header",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 32,
+          "messages": [
+            {
+              "content": "x-anthropic-billing-header: cc_version=2.1.260.ada;\nYou are a Claude agent.",
+              "role": "system"
+            },
+            {
+              "content": "hello",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        }
+      }
+    }
+  ]
+}

@@ -112,7 +112,14 @@ func encodeResponsesRequestItems(request llmprotocol.Request) ([]json.RawMessage
 		return nil
 	}
 	for _, instruction := range request.Instructions {
-		if err := appendMessage(llmprotocol.Message{Role: instruction.Role, Content: instruction.Content}); err != nil {
+		// The table drops the billing attribution line here, and the drop is
+		// counted beside the encoder's other dispositions. An instruction
+		// that held only that line encodes to nothing and is omitted.
+		content := instructionContentFor(instruction.Content, llmprotocol.OpenAIResponsesV1)
+		if len(content) == 0 && len(instruction.Content) > 0 {
+			continue
+		}
+		if err := appendMessage(llmprotocol.Message{Role: instruction.Role, Content: content}); err != nil {
 			return nil, err
 		}
 	}

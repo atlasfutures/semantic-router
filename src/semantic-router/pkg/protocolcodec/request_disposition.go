@@ -59,7 +59,16 @@ const (
 	fieldContentCaller       = "content.caller"
 	fieldContentDocumentText = "content.document"
 	fieldToolsType           = "tools.type"
+	// fieldSystemBillingAttribution is the one row keyed by what a block says
+	// rather than by a member it carries: a system text block that is Claude
+	// Code's billing attribution line. See billingAttributionLine.
+	fieldSystemBillingAttribution = "system.x-anthropic-billing-header"
 )
+
+// billingAttributionPrefix opens the line Claude Code prepends as system[0]
+// of every request. The line names the client build and entrypoint, and since
+// 2.1.260 a per-turn hash and a per-prompt id as well.
+const billingAttributionPrefix = "x-anthropic-billing-header:"
 
 var anthropicRequestDispositions = []requestFieldRow{
 	{
@@ -124,6 +133,28 @@ var anthropicRequestDispositions = []requestFieldRow{
 			llmprotocol.OpenAIResponsesV1: {
 				Action: dispositionTransform,
 				Reason: "a text document becomes a Responses text part",
+			},
+		},
+	},
+	{
+		// Claude Code's billing attribution line. Anthropic reads it as
+		// metadata and caches around it; every other host reads it as prompt
+		// text. Two of its fields change on every turn, so on a foreign
+		// target the prompt prefix differs from about token 30 onward and no
+		// provider prefix cache can match. Measured on the dev cell on
+		// 2026-09-04: 8 of 8 MiMo turns reported zero cached prompt tokens,
+		// and the same bodies with the line held constant cached 86-99%.
+		// The line says nothing to a model, so a target that cannot read it
+		// as metadata drops it and counts the drop.
+		Path: fieldSystemBillingAttribution,
+		Targets: map[llmprotocol.WireFormat]targetDisposition{
+			llmprotocol.OpenAIChatV1: {
+				Action: dispositionDrop,
+				Reason: "a Chat host reads the billing attribution line as prompt text, which defeats its prefix cache",
+			},
+			llmprotocol.OpenAIResponsesV1: {
+				Action: dispositionDrop,
+				Reason: "a Responses host reads the billing attribution line as prompt text, which defeats its prefix cache",
 			},
 		},
 	},
@@ -209,12 +240,48 @@ func presentRequestFields(request llmprotocol.Request) []string {
 	}
 	for _, instruction := range request.Instructions {
 		paths = append(paths, presentContentFields(instruction.Content)...)
+		for _, content := range instruction.Content {
+			if billingAttributionLine(content) {
+				paths = append(paths, fieldSystemBillingAttribution)
+			}
+		}
 	}
 	for _, message := range request.Messages {
 		paths = append(paths, presentContentFields(message.Content)...)
 	}
 	sort.Strings(paths)
 	return paths
+}
+
+// billingAttributionLine reports whether a block is Claude Code's billing
+// attribution line: a text block that is that one line and nothing else. A
+// block that opens with the prefix and goes on to other text is not the line;
+// it is prompt text that happens to start that way, and dropping it would send
+// a question with part of its instructions removed, which is the outcome the
+// document row above exists to prevent.
+func billingAttributionLine(content llmprotocol.Content) bool {
+	return content.Kind == llmprotocol.ContentText &&
+		strings.HasPrefix(content.Text, billingAttributionPrefix) &&
+		!strings.ContainsAny(content.Text, "\r\n")
+}
+
+// instructionContentFor returns the blocks of one instruction that travel to
+// this target. The table says whether the target drops the billing attribution
+// line; every other block travels. The count of what was dropped is
+// appendRequestDispositions' job, so this returns the content and nothing
+// else.
+func instructionContentFor(contents []llmprotocol.Content, target llmprotocol.WireFormat) []llmprotocol.Content {
+	if dispositionFor(fieldSystemBillingAttribution, target).Action != dispositionDrop {
+		return contents
+	}
+	kept := make([]llmprotocol.Content, 0, len(contents))
+	for _, content := range contents {
+		if billingAttributionLine(content) {
+			continue
+		}
+		kept = append(kept, content)
+	}
+	return kept
 }
 
 func presentContentFields(contents []llmprotocol.Content) []string {

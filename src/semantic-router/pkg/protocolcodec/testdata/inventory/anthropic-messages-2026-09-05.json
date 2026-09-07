@@ -134,6 +134,16 @@
       "note": "Sweep item 3. Refused invalid_json before CP9u: a member inside a modelled struct."
     },
     {
+      "path": "system.x-anthropic-billing-header",
+      "leg": "request",
+      "first_seen": "2026-09-04",
+      "targets": {
+        "openai.chat.v1": "drop",
+        "openai.responses.v1": "drop"
+      },
+      "note": "Not a member but a block: the billing attribution line Claude Code prepends as system[0]. Anthropic reads it as metadata; every other host reads it as prompt text, and its cch and cc_prompt_id fields change per turn, so no foreign prefix cache could match. 8 of 8 MiMo turns on the dev cell reported zero cached prompt tokens on 2026-09-04. Not tied to a beta: the line ships with the client."
+    },
+    {
       "path": "tools.defer_loading",
       "leg": "request",
       "first_seen": "2026-09-05",
