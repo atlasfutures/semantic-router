@@ -137,6 +137,20 @@ func TestClientSchemaInventoryRejectsAnUnreviewableRow(t *testing.T) {
 			want: "YYYY-MM-DD",
 		},
 		{
+			// A row with no target says a member is known and says nothing
+			// about it. The gate keys on path and leg, so such a row marks the
+			// member classified while asserting nothing -- which is the state
+			// the gate exists to prevent, reached through the inventory
+			// instead of through the corpus.
+			name: "no target disposition",
+			inventory: clientSchemaInventory{
+				Format:  llmprotocol.AnthropicMessagesV1,
+				Version: "2026-09-05",
+				Fields:  []clientSchemaField{{Path: "future_member", Leg: "request"}},
+			},
+			want: "states no disposition",
+		},
+		{
 			name: "unknown leg",
 			inventory: clientSchemaInventory{
 				Format:  llmprotocol.AnthropicMessagesV1,
@@ -170,6 +184,23 @@ func TestClientSchemaInventoryAcceptsAReviewableRow(t *testing.T) {
 	}
 	if problems := validateClientSchemaInventory(inventory); len(problems) != 0 {
 		t.Fatalf("a reviewable inventory was refused: %v", problems)
+	}
+}
+
+// A member every target carries is still a decision, and it is stated the
+// same way as any other: explicitly, on a target. What is refused is a row
+// that states nothing at all.
+func TestClientSchemaInventoryAcceptsAnExplicitCarry(t *testing.T) {
+	inventory := clientSchemaInventory{
+		Format:  llmprotocol.AnthropicMessagesV1,
+		Version: "2026-09-05",
+		Fields: []clientSchemaField{{
+			Path: "future_member", Leg: "request",
+			Targets: map[string]string{string(llmprotocol.OpenAIChatV1): string(dispositionCarry)},
+		}},
+	}
+	if problems := validateClientSchemaInventory(inventory); len(problems) != 0 {
+		t.Fatalf("an explicit carry was refused: %v", problems)
 	}
 }
 

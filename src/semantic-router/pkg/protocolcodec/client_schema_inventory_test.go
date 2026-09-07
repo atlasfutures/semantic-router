@@ -184,6 +184,14 @@ func validateInventoryField(
 		problems = append(problems, fmt.Sprintf("field %q appears twice on the %s leg", field.Path, field.Leg))
 	}
 	seen[key] = struct{}{}
+	// A row keys the gate on path and leg alone, so a row with no target
+	// marks a member classified while asserting nothing about it. That is the
+	// silence the gate exists to break, reached through the inventory rather
+	// than through the corpus. A member every target carries states that
+	// explicitly instead of by omission.
+	if len(field.Targets) == 0 {
+		problems = append(problems, fmt.Sprintf("field %q states no disposition on any target", field.Path))
+	}
 	if _, ok := inventoryLegValues[field.Leg]; !ok {
 		problems = append(problems, fmt.Sprintf("field %q has leg %q, want request or response", field.Path, field.Leg))
 	}
