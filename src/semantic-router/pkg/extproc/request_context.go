@@ -80,7 +80,10 @@ type RequestContext struct {
 	// ResponseBodyChunks joins a non-SSE response body that Envoy split across
 	// several full-duplex chunks. Empty in every other mode.
 	ResponseBodyChunks []byte
-	SkipProcessing     bool // true only when the configured opt-out header is valid
+	// ResponseBodyEnded records that the joined body has been through the
+	// pipeline, so a trailer arriving after it does not send it twice.
+	ResponseBodyEnded bool
+	SkipProcessing    bool // true only when the configured opt-out header is valid
 
 	StreamingComplete      bool // True after neutral stream finalization runs once.
 	StreamingAborted       bool // True if the neutral stream ended abnormally.

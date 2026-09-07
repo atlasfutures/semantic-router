@@ -2,6 +2,8 @@ package extproc
 
 import (
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 )
 
 // The trailer phases of the ext_proc exchange.
@@ -26,6 +28,14 @@ import (
 // change what the upstream said about a message the client has already been
 // given. So the mutation is left nil on purpose: the reply exists to keep the
 // phase contract, not to change anything.
+//
+// A response trailer is more than a phase, though. HttpBody.end_of_stream does
+// not mean "the last body chunk": the ext_proc contract is that it means the
+// last body message and that no trailers will follow. So an upstream response
+// carrying trailers never sets it, and the HttpTrailers message is where the
+// response body ends. Anything the Router is still holding has to travel
+// before the trailer is answered, because Envoy completes the exchange on that
+// reply.
 
 func processRequestTrailers(
 	stream ext_proc.ExternalProcessor_ProcessServer,
@@ -39,10 +49,21 @@ func processRequestTrailers(
 	return sendResponse(stream, response, "request trailers")
 }
 
-func processResponseTrailers(
+func (r *OpenAIRouter) processResponseTrailers(
 	stream ext_proc.ExternalProcessor_ProcessServer,
 	_ *ext_proc.ProcessingRequest_ResponseTrailers,
+	ctx *RequestContext,
 ) error {
+	final, err := r.endResponseBodyAtTrailers(ctx)
+	if err != nil {
+		logging.Errorf("ending the response body at its trailers failed: %v", err)
+		return err
+	}
+	if final != nil {
+		if err := sendResponse(stream, final, "response body"); err != nil {
+			return err
+		}
+	}
 	response := &ext_proc.ProcessingResponse{
 		Response: &ext_proc.ProcessingResponse_ResponseTrailers{
 			ResponseTrailers: &ext_proc.TrailersResponse{},

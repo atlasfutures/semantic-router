@@ -38,12 +38,14 @@ func completeResponseBody(
 	body := v.ResponseBody
 	if body.GetEndOfStream() && len(ctx.ResponseBodyChunks) == 0 {
 		// One chunk carried the whole body. Nothing to join, and no copy.
+		ctx.ResponseBodyEnded = true
 		return v
 	}
 	ctx.ResponseBodyChunks = append(ctx.ResponseBodyChunks, body.GetBody()...)
 	if !body.GetEndOfStream() {
 		return nil
 	}
+	ctx.ResponseBodyEnded = true
 	return &ext_proc.ProcessingRequest_ResponseBody{
 		ResponseBody: &ext_proc.HttpBody{
 			Body:        ctx.ResponseBodyChunks,
@@ -61,4 +63,30 @@ func heldResponseBodyChunk() *ext_proc.ProcessingResponse {
 			StreamedResponse: &ext_proc.StreamedBodyResponse{},
 		},
 	}, nil)
+}
+
+// endResponseBodyAtTrailers is the other way a full-duplex response body ends.
+//
+// Envoy marks a body chunk as the end only when no trailers will follow. When
+// they do, this is where the held body travels, and the reply that carries it
+// is the one that ends the response. Nothing is returned when the body already
+// ended on a chunk, when nothing is held, or outside full duplex, where the
+// trailer mode is SKIP and this message does not arrive at all.
+func (r *OpenAIRouter) endResponseBodyAtTrailers(
+	ctx *RequestContext,
+) (*ext_proc.ProcessingResponse, error) {
+	if ctx == nil || !ctx.FullDuplexResponseBody || ctx.IsStreamingResponse {
+		return nil, nil
+	}
+	if ctx.ResponseBodyEnded || len(ctx.ResponseBodyChunks) == 0 {
+		return nil, nil
+	}
+	joined := &ext_proc.HttpBody{Body: ctx.ResponseBodyChunks, EndOfStream: true}
+	ctx.ResponseBodyEnded = true
+	response, err := r.handleResponseBody(
+		&ext_proc.ProcessingRequest_ResponseBody{ResponseBody: joined}, ctx)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeFullDuplexResponseBody(response, ctx, joined), nil
 }
