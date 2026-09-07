@@ -151,6 +151,24 @@ func TestClientSchemaInventoryRejectsAnUnreviewableRow(t *testing.T) {
 			want: "states no disposition",
 		},
 		{
+			// Stating one foreign target and omitting the other leaves the
+			// omitted one reading as carry, per the documented default. For a
+			// member the generic carrier handles that is never true: the
+			// carrier re-emits only to the format the member arrived on, so
+			// every foreign target drops it. The binding loop cannot catch
+			// this either -- it iterates the targets a row states.
+			name: "request row omits a foreign target",
+			inventory: clientSchemaInventory{
+				Format:  llmprotocol.AnthropicMessagesV1,
+				Version: "2026-09-05",
+				Fields: []clientSchemaField{{
+					Path: "future_member", Leg: "request",
+					Targets: map[string]string{string(llmprotocol.OpenAIChatV1): string(dispositionDrop)},
+				}},
+			},
+			want: "states nothing for openai.responses.v1",
+		},
+		{
 			name: "unknown leg",
 			inventory: clientSchemaInventory{
 				Format:  llmprotocol.AnthropicMessagesV1,
@@ -181,8 +199,11 @@ func TestClientSchemaInventoryAcceptsAReviewableRow(t *testing.T) {
 		Betas:       []clientSchemaBeta{{Name: "task-budgets-2026-03-13", State: "client"}},
 		Fields: []clientSchemaField{{
 			Path: "output_config.task_budget", Leg: "request",
-			Beta:    "task-budgets-2026-03-13",
-			Targets: map[string]string{string(llmprotocol.OpenAIChatV1): string(dispositionDrop)},
+			Beta: "task-budgets-2026-03-13",
+			Targets: map[string]string{
+				string(llmprotocol.OpenAIChatV1):      string(dispositionDrop),
+				string(llmprotocol.OpenAIResponsesV1): string(dispositionDrop),
+			},
 		}},
 	}
 	if problems := validateClientSchemaInventory(inventory); len(problems) != 0 {
@@ -199,7 +220,10 @@ func TestClientSchemaInventoryAcceptsAnExplicitCarry(t *testing.T) {
 		Version: "2026-09-05",
 		Fields: []clientSchemaField{{
 			Path: "future_member", Leg: "request",
-			Targets: map[string]string{string(llmprotocol.OpenAIChatV1): string(dispositionCarry)},
+			Targets: map[string]string{
+				string(llmprotocol.OpenAIChatV1):      string(dispositionCarry),
+				string(llmprotocol.OpenAIResponsesV1): string(dispositionCarry),
+			},
 		}},
 	}
 	if problems := validateClientSchemaInventory(inventory); len(problems) != 0 {
@@ -228,7 +252,8 @@ func TestLoadClientSchemaInventoryReadsAReviewableFile(t *testing.T) {
 	body := `{"format":"anthropic.messages.v1","version":"2026-09-05",` +
 		`"betas":[{"name":"task-budgets-2026-03-13"}],` +
 		`"fields":[{"path":"output_config.task_budget","leg":"request",` +
-		`"beta":"task-budgets-2026-03-13","targets":{"openai.chat.v1":"drop"}}]}`
+		`"beta":"task-budgets-2026-03-13","targets":{"openai.chat.v1":"drop",` +
+		`"openai.responses.v1":"drop"}}]}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}

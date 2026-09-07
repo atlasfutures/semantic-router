@@ -157,7 +157,7 @@ func validateClientSchemaInventory(inventory clientSchemaInventory) []string {
 	}
 	seen := make(map[string]struct{}, len(inventory.Fields))
 	for _, field := range inventory.Fields {
-		problems = append(problems, validateInventoryField(field, declared, seen)...)
+		problems = append(problems, validateInventoryField(inventory.Format, field, declared, seen)...)
 	}
 	return problems
 }
@@ -177,6 +177,7 @@ func validateInventoryIdentity(inventory clientSchemaInventory) []string {
 }
 
 func validateInventoryField(
+	format llmprotocol.WireFormat,
 	field clientSchemaField,
 	declared, seen map[string]struct{},
 ) []string {
@@ -197,6 +198,7 @@ func validateInventoryField(
 	if len(field.Targets) == 0 {
 		problems = append(problems, fmt.Sprintf("field %q states no disposition on any target", field.Path))
 	}
+	problems = append(problems, missingForeignTargets(format, field)...)
 	if _, ok := inventoryLegValues[field.Leg]; !ok {
 		problems = append(problems, fmt.Sprintf("field %q has leg %q, want request, response or stream", field.Path, field.Leg))
 	}
@@ -211,6 +213,34 @@ func validateInventoryField(
 		}
 		if _, ok := inventoryDispositionValues[action]; !ok {
 			problems = append(problems, fmt.Sprintf("field %q gives target %q disposition %q", field.Path, target, action))
+		}
+	}
+	return problems
+}
+
+// missingForeignTargets names the targets a request-leg row leaves unstated.
+// The row describes what happens to the member on the way out, and a member
+// of one wire contract carries no meaning in another, so every format other
+// than the one this inventory describes has an answer. Leaving one out is not
+// a shorthand for carry; it is a question nobody answered, and the binding
+// test cannot see it because that loop iterates the targets a row states.
+//
+// The response and stream legs are exempt. An unmodelled provider member is
+// pruned before decode and reaches no client at all, so those rows state every
+// format including this one, and nothing is left to infer.
+func missingForeignTargets(format llmprotocol.WireFormat, field clientSchemaField) []string {
+	if field.Leg != "request" || len(field.Targets) == 0 {
+		return nil
+	}
+	var problems []string
+	for _, target := range []llmprotocol.WireFormat{
+		llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1,
+	} {
+		if target == format {
+			continue
+		}
+		if _, stated := field.Targets[string(target)]; !stated {
+			problems = append(problems, fmt.Sprintf("field %q states nothing for %s", field.Path, target))
 		}
 	}
 	return problems
