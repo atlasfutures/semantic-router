@@ -265,9 +265,10 @@ func billingAttributionLine(content llmprotocol.Content) bool {
 		!strings.ContainsAny(content.Text, "\r\n")
 }
 
-// instructionContentFor returns the blocks of one instruction that travel to
-// this target. The table says whether the target drops the billing attribution
-// line; every other block travels. The count of what was dropped is
+// instructionContentFor returns the blocks of one instruction that this
+// target sends. The table says whether the target drops the billing
+// attribution line; every other block is sent, and an instruction the drop
+// empties comes back as an empty list. The count of what was dropped is
 // appendRequestDispositions' job, so this returns the content and nothing
 // else.
 func instructionContentFor(contents []llmprotocol.Content, target llmprotocol.WireFormat) []llmprotocol.Content {

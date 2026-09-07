@@ -234,10 +234,10 @@ func carriedAnthropicCitations(raw json.RawMessage) json.RawMessage {
 // messageDropsWhole reports whether every block of a message is a carried block
 // the target cannot name. Such a message encodes to nothing, so the encoder
 // omits the message rather than emitting an empty one the provider refuses.
+// An empty list drops whole too: validation refuses an empty instruction and
+// an empty message before any encode, so the only way a list arrives here
+// empty is that a disposition emptied it.
 func messageDropsWhole(contents []llmprotocol.Content, target llmprotocol.WireFormat) bool {
-	if len(contents) == 0 {
-		return false
-	}
 	for _, content := range contents {
 		if content.Kind != llmprotocol.ContentUnmodeled {
 			return false
