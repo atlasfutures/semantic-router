@@ -155,3 +155,43 @@ func TestIngressNeverRefusesOnTheBetaHeader(t *testing.T) {
 		}
 	}
 }
+
+// The rule-5 wiring is one call in prepareProtocolRequest, and until now no
+// test reached it: every other beta test calls logIngressBetaSet directly, so
+// deleting the call from the ingress path left the whole package green and the
+// cell silent about the version of everything it served.
+func TestPrepareProtocolRequestWritesTheBetaLine(t *testing.T) {
+	logs := captureLogs(t)
+	router, _ := routingTestRouterForFormat(llmprotocol.AnthropicMessagesV1)
+	ctx := &RequestContext{
+		Headers: map[string]string{
+			"anthropic-beta": "interleaved-thinking-2025-05-14,effort-2025-11-24",
+		},
+		SourceFormat: llmprotocol.AnthropicMessagesV1,
+		RequestID:    "rt_beta_wiring",
+		TraceContext: context.Background(),
+	}
+	if _, immediate := router.prepareProtocolRequest([]byte(
+		`{"model":"virtual","max_tokens":32,"messages":[{"role":"user","content":"hello"}]}`,
+	), ctx); immediate != nil {
+		t.Fatal("prepareProtocolRequest returned an immediate response")
+	}
+
+	var betaLines []map[string]interface{}
+	for _, entry := range logs.All() {
+		fields := entry.ContextMap()
+		if event, _ := fields["event"].(string); event == "ingress_beta_set" {
+			betaLines = append(betaLines, fields)
+		}
+	}
+	if len(betaLines) != 1 {
+		t.Fatalf("ingress wrote %d ingress_beta_set lines, want exactly 1", len(betaLines))
+	}
+	if id, _ := betaLines[0]["request_id"].(string); id != "rt_beta_wiring" {
+		t.Fatalf("request_id = %q, want rt_beta_wiring", id)
+	}
+	betas, _ := betaLines[0]["anthropic_betas"].(string)
+	if want := "effort-2025-11-24,interleaved-thinking-2025-05-14"; betas != want {
+		t.Fatalf("anthropic_betas = %q, want %q", betas, want)
+	}
+}
