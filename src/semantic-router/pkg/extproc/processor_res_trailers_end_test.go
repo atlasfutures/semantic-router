@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"testing"
+	"time"
 
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/stretchr/testify/assert"
@@ -97,4 +98,71 @@ func TestTrailersFlushNothingOutsideFullDuplex(t *testing.T) {
 
 	require.Len(t, stream.Responses, 1)
 	assert.NotNil(t, stream.Responses[0].GetResponseTrailers())
+}
+
+// A streamed turn that ends with trailers has the same problem for a different
+// reason. The semantic streaming path finalizes on end_of_stream, and trailers
+// mean that flag never arrives, so finalizeSemanticStreamingResponse did not
+// run: no usage, no cache or replay write, and no end on the response. The
+// turn was then finalized much later by handleProcessReceiveError, which marks
+// it StreamingAborted -- a successful turn recorded as an aborted one.
+func TestTrailersFinalizeAStreamedTurn(t *testing.T) {
+	router := &OpenAIRouter{}
+	ctx := &RequestContext{
+		Headers:   make(map[string]string),
+		RequestID: "request_1", RequestModel: "xiaomi/mimo-v2.5-pro",
+		SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.OpenAIChatV1,
+		IsStreamingResponse:    true,
+		FullDuplexResponseBody: true,
+		StartTime:              time.Now(),
+		TraceContext:           t.Context(),
+	}
+	stream := NewMockStream(nil)
+
+	// The provider finished, but Envoy marks no chunk as the end because
+	// trailers are coming.
+	for _, chunk := range []string{endlessUpstreamChunk(1), completedUpstreamChunk()} {
+		require.NoError(t, router.processResponseBody(stream, &ext_proc.ProcessingRequest_ResponseBody{
+			ResponseBody: &ext_proc.HttpBody{Body: []byte(chunk), EndOfStream: false},
+		}, ctx))
+	}
+	require.False(t, ctx.StreamingComplete, "the turn ended before its trailers arrived")
+
+	sendTrailers(t, router, ctx, stream)
+
+	assert.True(t, ctx.StreamingComplete, "the streamed turn was never finalized")
+	assert.False(t, ctx.StreamingAborted, "a turn the provider completed was recorded as aborted")
+	assert.NotNil(t, ctx.SemanticResponse, "the reconstructed response was never built")
+
+	require.Len(t, stream.Responses, 4, "the trailer did not end the streamed response")
+	ended := stream.Responses[2].GetResponseBody().GetResponse().
+		GetBodyMutation().GetStreamedResponse()
+	require.NotNil(t, ended)
+	assert.True(t, ended.GetEndOfStream(), "the streamed response was left open")
+	assert.NotNil(t, stream.Responses[3].GetResponseTrailers())
+}
+
+// A streamed turn Envoy did mark as ended is finalized once.
+func TestTrailersDoNotRefinalizeAnEndedStreamedTurn(t *testing.T) {
+	router := &OpenAIRouter{}
+	ctx := &RequestContext{
+		Headers:   make(map[string]string),
+		RequestID: "request_1", RequestModel: "xiaomi/mimo-v2.5-pro",
+		SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.OpenAIChatV1,
+		IsStreamingResponse:    true,
+		FullDuplexResponseBody: true,
+		StartTime:              time.Now(),
+		TraceContext:           t.Context(),
+	}
+	stream := NewMockStream(nil)
+	require.NoError(t, router.processResponseBody(stream, &ext_proc.ProcessingRequest_ResponseBody{
+		ResponseBody: &ext_proc.HttpBody{Body: []byte(completedUpstreamChunk()), EndOfStream: true},
+	}, ctx))
+	require.True(t, ctx.StreamingComplete)
+	require.Len(t, stream.Responses, 1)
+
+	sendTrailers(t, router, ctx, stream)
+
+	require.Len(t, stream.Responses, 2, "the ended streamed response was ended a second time")
+	assert.NotNil(t, stream.Responses[1].GetResponseTrailers())
 }

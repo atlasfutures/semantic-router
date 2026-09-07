@@ -68,15 +68,29 @@ func heldResponseBodyChunk() *ext_proc.ProcessingResponse {
 // endResponseBodyAtTrailers is the other way a full-duplex response body ends.
 //
 // Envoy marks a body chunk as the end only when no trailers will follow. When
-// they do, this is where the held body travels, and the reply that carries it
-// is the one that ends the response. Nothing is returned when the body already
-// ended on a chunk, when nothing is held, or outside full duplex, where the
-// trailer mode is SKIP and this message does not arrive at all.
+// they do, this is where the response body ends, and the reply built here is
+// the one that ends it. Nothing is returned when the body already ended on a
+// chunk, when nothing is held, or outside full duplex, where the trailer mode
+// is SKIP and this message does not arrive at all.
+//
+// A streamed turn ends here too, and for the same reason. The semantic
+// streaming path finalizes on end_of_stream, so trailers left it unfinalized:
+// no usage, no cache or replay write, and no end on the response. The turn was
+// finalized much later by handleProcessReceiveError, which marks it aborted --
+// a turn the provider completed, recorded as one that failed.
 func (r *OpenAIRouter) endResponseBodyAtTrailers(
 	ctx *RequestContext,
 ) (*ext_proc.ProcessingResponse, error) {
-	if ctx == nil || !ctx.FullDuplexResponseBody || ctx.IsStreamingResponse {
+	if ctx == nil || !ctx.FullDuplexResponseBody {
 		return nil, nil
+	}
+	if ctx.IsStreamingResponse {
+		if ctx.StreamingComplete {
+			return nil, nil
+		}
+		// The streaming path builds its own end. Telling it the stream is over
+		// is the same thing Envoy's flag would have told it.
+		return r.handleSemanticStreamingResponseBody(nil, true, ctx), nil
 	}
 	if ctx.ResponseBodyEnded || len(ctx.ResponseBodyChunks) == 0 {
 		return nil, nil
