@@ -305,21 +305,28 @@ func slicesContain(values []string, want string) bool {
 func TestGateSeesAMemberOnAStreamChunk(t *testing.T) {
 	stream := []byte(": OPENROUTER PROCESSING\n\n" +
 		`data: {"id":"gen-fixture-1","object":"chat.completion.chunk","model":"m",` +
-		`"choices":[{"index":0,"delta":{"content":"hi"},"brand_new_member":1}]}` + "\n\n" +
+		`"choices":[{"index":0,"delta":{"content":"hi","brand_new_delta_member":1},` +
+		`"brand_new_member":1}]}` + "\n\n" +
 		"data: [DONE]\n\n")
 	entry := clientCorpusEntry{ID: "probe", Surface: llmprotocol.OpenAIChatV1, Leg: "stream"}
 	observed := observedStreamExtensionFields(t, entry, stream)
-	if !slicesContain(observed, "choices[].brand_new_member") {
-		t.Fatalf("a member on a stream chunk is named %v, want choices[].brand_new_member", observed)
+	// Both depths. delta is where a chunk carries everything that changes --
+	// content, reasoning, tool calls -- so it is the member surface a provider
+	// extends first, and the one the response leg has no equivalent of at all.
+	for _, want := range []string{"choices[].brand_new_member", "choices[].delta.brand_new_delta_member"} {
+		if !slicesContain(observed, want) {
+			t.Fatalf("a member on a stream chunk is named %v, want %s", observed, want)
+		}
 	}
 	inventory, present := loadClientSchemaInventories(t)[llmprotocol.OpenAIChatV1]
 	if !present {
 		t.Fatal("the Chat format has no dated inventory")
 	}
-	if unclassified := unclassifiedFields(inventory, "stream", observed); !slicesContain(
-		unclassified, "choices[].brand_new_member",
-	) {
-		t.Fatalf("a member on a stream chunk passed the gate unclassified: %v", unclassified)
+	unclassified := unclassifiedFields(inventory, "stream", observed)
+	for _, want := range []string{"choices[].brand_new_member", "choices[].delta.brand_new_delta_member"} {
+		if !slicesContain(unclassified, want) {
+			t.Fatalf("%s passed the stream gate unclassified: %v", want, unclassified)
+		}
 	}
 }
 
