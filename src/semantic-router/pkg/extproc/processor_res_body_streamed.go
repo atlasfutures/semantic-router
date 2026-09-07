@@ -184,7 +184,7 @@ func (r *OpenAIRouter) endResponseBodyAtTrailers(
 		}
 		// The streaming path builds its own end. Telling it the stream is over
 		// is the same thing Envoy's flag would have told it.
-		return r.handleSemanticStreamingResponseBody(nil, true, ctx), nil
+		return endedByTrailers(r.handleSemanticStreamingResponseBody(nil, true, ctx)), nil
 	}
 	if ctx.ResponseBodyEnded || len(ctx.ResponseBodyChunks) == 0 {
 		return nil, nil
@@ -196,5 +196,26 @@ func (r *OpenAIRouter) endResponseBodyAtTrailers(
 	if err != nil {
 		return nil, err
 	}
-	return normalizeFullDuplexResponseBody(response, ctx, joined), nil
+	return endedByTrailers(normalizeFullDuplexResponseBody(response, ctx, joined)), nil
+}
+
+// endedByTrailers takes the end off a body reply that the trailers will end.
+//
+// StreamedBodyResponse.end_of_stream is documented as the server's echo of a
+// body request: set it "if it has received a body request with end_of_stream
+// set to true, and this is the last chunk of body responses". When trailers
+// follow, that flag is exactly what Envoy withholds on every body message, so
+// a body reply claiming the end here claims something no request carried, and
+// ending the body stream before the trailers would take them with it. Envoy
+// completes the exchange on the TrailersResponse instead.
+//
+// This is the opposite of the deadline cut, which sets the same flag on
+// purpose because there the Router is ending a response the upstream has not
+// finished, and nothing else in the protocol can say so.
+func endedByTrailers(response *ext_proc.ProcessingResponse) *ext_proc.ProcessingResponse {
+	streamed := response.GetResponseBody().GetResponse().GetBodyMutation().GetStreamedResponse()
+	if streamed != nil {
+		streamed.EndOfStream = false
+	}
+	return response
 }

@@ -77,7 +77,8 @@ func TestTrailersFlushConvertsARefusalRatherThanResetting(t *testing.T) {
 	flushed := stream.Responses[1].GetResponseBody().GetResponse().
 		GetBodyMutation().GetStreamedResponse()
 	require.NotNil(t, flushed)
-	assert.True(t, flushed.GetEndOfStream())
+	assert.False(t, flushed.GetEndOfStream(),
+		"the flushed refusal fabricated an end_of_stream before its trailers")
 	assert.Contains(t, string(flushed.GetBody()), "upstream usage cannot be negative")
 	assert.NotNil(t, stream.Responses[2].GetResponseTrailers())
 }

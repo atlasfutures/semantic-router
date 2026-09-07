@@ -60,7 +60,12 @@ func TestTrailersFlushAResponseBodyEnvoyNeverMarkedAsEnded(t *testing.T) {
 	require.NotNil(t, flushed, "the held body was not flushed as a streamed response")
 	assert.Contains(t, string(flushed.GetBody()), "hello",
 		"the whole response body was dropped and the client saw an empty 200")
-	assert.True(t, flushed.GetEndOfStream(), "the flushed body did not end the response")
+	// The body reply must NOT claim to be the end. StreamedBodyResponse.
+	// end_of_stream is documented as set only when a body request arrived with
+	// end_of_stream true, and that is exactly the flag Envoy withholds when
+	// trailers follow. The TrailersResponse is what ends the message.
+	assert.False(t, flushed.GetEndOfStream(),
+		"the flush fabricated an end_of_stream no body request ever carried")
 	assert.NotNil(t, stream.Responses[3].GetResponseTrailers(),
 		"the trailer itself was left unanswered")
 }
@@ -138,7 +143,8 @@ func TestTrailersFinalizeAStreamedTurn(t *testing.T) {
 	ended := stream.Responses[2].GetResponseBody().GetResponse().
 		GetBodyMutation().GetStreamedResponse()
 	require.NotNil(t, ended)
-	assert.True(t, ended.GetEndOfStream(), "the streamed response was left open")
+	assert.False(t, ended.GetEndOfStream(),
+		"the finalized streamed turn fabricated an end_of_stream before its trailers")
 	assert.NotNil(t, stream.Responses[3].GetResponseTrailers())
 }
 
