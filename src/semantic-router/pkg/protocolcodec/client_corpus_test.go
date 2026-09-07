@@ -256,7 +256,50 @@ func observedRequestExtensionFields(
 		paths = append(paths, contentExtensionPaths(message.Content)...)
 	}
 	paths = append(paths, presentRequestFields(request)...)
+	for index, path := range paths {
+		paths[index] = normalizeArrayIndices(path)
+	}
 	return sortedDistinct(paths)
+}
+
+// normalizeArrayIndices replaces the index of an array element with "[]", so
+// one inventory row classifies a member wherever in an array it sits. The
+// carrier names an element by index on purpose -- a drop diagnostic has to say
+// which message carried the member -- but a conversation of hundreds of
+// messages would otherwise need hundreds of identical rows, and the row for
+// message 4 would silently not cover message 5.
+//
+// A segment made only of digits is an index. No member of either protocol is
+// named that way, and the carrier emits a numeric segment for nothing else.
+// The notation matches the response leg, where pruneUnknownProviderFields
+// already writes choices[].
+func normalizeArrayIndices(path string) string {
+	segments := strings.Split(path, ".")
+	normalized := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		if isDigits(segment) {
+			// The index belongs to the member before it, so it becomes that
+			// member's array marker rather than a segment of its own.
+			if last := len(normalized) - 1; last >= 0 {
+				normalized[last] += "[]"
+				continue
+			}
+		}
+		normalized = append(normalized, segment)
+	}
+	return strings.Join(normalized, ".")
+}
+
+func isDigits(segment string) bool {
+	if segment == "" {
+		return false
+	}
+	for _, character := range segment {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func contentExtensionPaths(contents []llmprotocol.Content) []string {
@@ -381,4 +424,99 @@ func assertDispositionRowIsInventoried(
 				row.Path, target)
 		}
 	}
+}
+
+// A member on a message object -- beside role and content, not inside a
+// content block -- is the shape the gate could not see at all before CP9u
+// taught the carrier to descend into array elements. Now it can, and the
+// question is what to call it. The carrier names the element by index, so a
+// diagnostic says which message carried the member; an inventory row cannot
+// use that name, because the same member on message 4 would need a second row
+// and a conversation of hundreds of messages would need hundreds.
+//
+// So the gate normalises the index away and the inventory classifies the
+// member once, wherever it sits. That is also the notation the response leg
+// already uses: pruneUnknownProviderFields writes choices[].
+func TestGateNamesAMemberOnAMessageObjectWithoutItsIndex(t *testing.T) {
+	engine := NewBuiltinEngine()
+	entry := clientCorpusEntry{
+		ID: "probe", Surface: llmprotocol.AnthropicMessagesV1, Leg: "request",
+		Body: json.RawMessage(`{"model":"m","max_tokens":16,"messages":[` +
+			`{"role":"user","content":"one"},` +
+			`{"role":"assistant","content":"two","brand_new_member":1}]}`),
+	}
+	observed := observedCorpusFields(t, engine, entry)
+	if !slicesContain(observed, "messages[].brand_new_member") {
+		t.Fatalf("a member on a message object is named %v, want messages[].brand_new_member", observed)
+	}
+	inventory, present := loadClientSchemaInventories(t)[llmprotocol.AnthropicMessagesV1]
+	if !present {
+		t.Fatal("the Messages format has no dated inventory")
+	}
+	unclassified := unclassifiedFields(inventory, "request", observed)
+	if !slicesContain(unclassified, "messages[].brand_new_member") {
+		t.Fatalf("a member on a message object passed the gate unclassified: %v", unclassified)
+	}
+	// The other half: production counts it. A member CI can see and the
+	// runtime drops in silence would be the same defect one hop later.
+	result, err := engine.TranslateRequest(
+		llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, entry.Body, nil,
+	)
+	if err != nil {
+		t.Fatalf("Chat target refused the request: %v", err)
+	}
+	counted := false
+	for _, diagnostic := range result.Diagnostics {
+		if diagnostic.Action == llmprotocol.DiagnosticDropped &&
+			strings.Contains(diagnostic.Field, "brand_new_member") {
+			counted = true
+		}
+	}
+	if !counted {
+		t.Fatalf("a member on a message object was dropped without a count: %v",
+			diagnosticFields(result.Diagnostics))
+	}
+}
+
+// The same member on two different messages is one row, not two.
+func TestGateReportsAMemberOnTwoMessagesOnce(t *testing.T) {
+	engine := NewBuiltinEngine()
+	entry := clientCorpusEntry{
+		ID: "probe", Surface: llmprotocol.AnthropicMessagesV1, Leg: "request",
+		Body: json.RawMessage(`{"model":"m","max_tokens":16,"messages":[` +
+			`{"role":"user","content":"one","brand_new_member":1},` +
+			`{"role":"assistant","content":"two","brand_new_member":2}]}`),
+	}
+	observed := observedCorpusFields(t, engine, entry)
+	count := 0
+	for _, path := range observed {
+		if path == "messages[].brand_new_member" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("a member on two messages was named %d times, want 1: %v", count, observed)
+	}
+}
+
+func TestNormalizeArrayIndicesLeavesANamedMemberAlone(t *testing.T) {
+	for path, want := range map[string]string{
+		"messages.0.brand_new_member":             "messages[].brand_new_member",
+		"messages.11.tools.2.future":              "messages[].tools[].future",
+		"content.cache_control.evict_on_complete": "content.cache_control.evict_on_complete",
+		"output_config.task_budget":               "output_config.task_budget",
+	} {
+		if got := normalizeArrayIndices(path); got != want {
+			t.Fatalf("normalizeArrayIndices(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func slicesContain(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
