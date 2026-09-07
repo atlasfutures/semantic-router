@@ -93,6 +93,10 @@ type Limits struct {
 	Diagnostics          int
 }
 
+// defaultToolNameBytes is the tool-name ceiling a refusal falls back to when
+// the policy sets none, so refusal text stays bounded under every policy.
+const defaultToolNameBytes = 1024
+
 func DefaultPolicy() Policy {
 	return Policy{
 		UnknownFields: UnknownCapture, LossyFeatures: LossyReject,
@@ -104,7 +108,7 @@ func DefaultPolicy() Policy {
 			Alternatives: 32, OutputItems: 4096, ContentBlocks: 16_384,
 			Citations: 256, CitationURLBytes: 16 << 10, CitationTitleBytes: 16 << 10,
 			JSONDepth: 128, ToolResultDepth: 8,
-			Tools: 1024, ToolNameBytes: 1024, ToolDescriptionBytes: 1 << 20,
+			Tools: 1024, ToolNameBytes: defaultToolNameBytes, ToolDescriptionBytes: 1 << 20,
 			IdentifierBytes: 1024, SchemaBytes: 4 << 20, MetadataBytes: 64 << 10,
 			MetadataEntries: 256, MetadataKeyBytes: 256, MetadataValueBytes: 8 << 10,
 			ToolArgumentsBytes: 4 << 20, ReasoningEffortBytes: 32,

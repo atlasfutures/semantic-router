@@ -2,6 +2,7 @@ package llmprotocol
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -109,5 +110,56 @@ func TestServerToolsNeedNeitherNameNorSchema(t *testing.T) {
 	tools := []Tool{{Type: "web_search_20250305"}, {Type: "advisor_20260301"}}
 	if _, _, err := validateRequestTools(tools, limits); err != nil {
 		t.Fatalf("a server tool declaration was refused: %v", err)
+	}
+}
+
+// A refusal is bounded. The tool location repeats the declared name so an
+// operator can find the tool among the thirty-two a turn declares, but a name
+// over its own limit is the value that broke the limit: repeating it put an
+// unbounded string the client wrote into the client body and into the
+// ingress_request_refused line. A 5012-byte name produced a 10217-byte
+// refusal. The index still finds the tool.
+func TestAToolNameOverItsLimitIsNotRepeated(t *testing.T) {
+	limits := DefaultPolicy().Limits
+	name := strings.Repeat("n", limits.ToolNameBytes+16)
+	_, _, err := validateRequestTools(
+		[]Tool{{Name: name, InputSchema: json.RawMessage(`{"type":"object"}`)}}, limits,
+	)
+	var protocolError *ProtocolError
+	if !errors.As(err, &protocolError) {
+		t.Fatalf("validateRequestTools() error = %v, want a protocol error", err)
+	}
+	if protocolError.Code != "tool_text_limit" {
+		t.Fatalf("code = %q, want tool_text_limit", protocolError.Code)
+	}
+	if strings.Contains(protocolError.Error(), name) {
+		t.Fatal("the refusal repeats the name that broke the limit")
+	}
+	if len(protocolError.Error()) > 512 {
+		t.Fatalf("refusal is %d bytes, so it grows with the request", len(protocolError.Error()))
+	}
+	// It still says which tool, which member, and both counts.
+	for _, want := range []string{"tool 0", `"tools.name"`, "1040 bytes, limit 1024"} {
+		if !strings.Contains(protocolError.Message, want) {
+			t.Fatalf("client message %q does not carry %s", protocolError.Message, want)
+		}
+	}
+}
+
+// A name within its limit is still repeated: that is what makes a refusal
+// findable in a turn declaring thirty-two tools.
+func TestAToolNameWithinItsLimitIsStillNamed(t *testing.T) {
+	limits := DefaultPolicy().Limits
+	limits.ToolDescriptionBytes = 8
+	_, _, err := validateRequestTools([]Tool{{
+		Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`),
+		Description: strings.Repeat("d", 32),
+	}}, limits)
+	var protocolError *ProtocolError
+	if !errors.As(err, &protocolError) {
+		t.Fatalf("validateRequestTools() error = %v, want a protocol error", err)
+	}
+	if !strings.Contains(protocolError.Message, `tool 0 named "lookup"`) {
+		t.Fatalf("client message %q does not name the tool", protocolError.Message)
 	}
 }

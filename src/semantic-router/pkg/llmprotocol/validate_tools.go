@@ -16,7 +16,7 @@ func validateRequestTools(tools []Tool, limits Limits) (map[string]struct{}, int
 	namedTools := make(map[string]struct{}, len(tools))
 	schemaBytes := 0
 	for index, tool := range tools {
-		location := toolLocation(index, tool)
+		location := toolLocation(index, tool, limits)
 		if err := validateRequestTool(tool, limits, location); err != nil {
 			return nil, 0, err
 		}
@@ -38,11 +38,29 @@ func validateRequestTools(tools []Tool, limits Limits) (map[string]struct{}, int
 // is never stored, and a request declares thirty-two tools on an ordinary
 // Claude Code turn, so "some tool was too large" is not something an operator
 // can act on. On 2026-09-03 locating one such refusal took a log join.
-func toolLocation(index int, tool Tool) string {
-	if identity := tool.Identity(); identity != "" {
-		return fmt.Sprintf("tool %d named %q", index, identity)
+//
+// A name over its own limit is left out. It is the value that broke the limit,
+// so repeating it puts an unbounded string the client wrote into the client
+// body and into the ingress_request_refused line: a 5012-byte name produced a
+// 10217-byte refusal. The index still finds the tool, and the byte counts
+// still say why it was refused.
+func toolLocation(index int, tool Tool, limits Limits) string {
+	identity := tool.Identity()
+	if identity == "" || len(identity) > refusalNameBudget(limits) {
+		return fmt.Sprintf("tool %d", index)
 	}
-	return fmt.Sprintf("tool %d", index)
+	return fmt.Sprintf("tool %d named %q", index, identity)
+}
+
+// refusalNameBudget bounds the declared name a refusal may repeat. It follows
+// the configured limit, so a name the policy accepts is a name a refusal can
+// state, and falls back to the default when names are unlimited so that a
+// refusal stays bounded under every policy.
+func refusalNameBudget(limits Limits) int {
+	if limits.ToolNameBytes > 0 {
+		return limits.ToolNameBytes
+	}
+	return defaultToolNameBytes
 }
 
 // validateRequestTool checks what a declared tool must state. A callable tool
