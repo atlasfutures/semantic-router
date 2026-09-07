@@ -73,12 +73,25 @@ func TestUnclassifiedFieldsReportsEachMemberOnce(t *testing.T) {
 	}
 }
 
-func TestClientSchemaInventoryRejectsAnUnreviewableRow(t *testing.T) {
-	tests := []struct {
-		name      string
-		inventory clientSchemaInventory
-		want      string
-	}{
+// unreviewableInventoryCase is one way a row can be unreviewable, and what the
+// complaint has to name. The cases live beside the test rather than inside it:
+// the list grows every time a new way to say nothing is found.
+type unreviewableInventoryCase struct {
+	name      string
+	inventory clientSchemaInventory
+	want      string
+}
+
+// The cases split the way the rules do. A row has an identity -- a path, a
+// leg, a version, the beta it attributes the member to -- and it has an answer
+// per target. Each half can be unreviewable on its own.
+func unreviewableInventoryCases() []unreviewableInventoryCase {
+	cases := unreviewableInventoryIdentityCases()
+	return append(cases, unreviewableInventoryTargetCases()...)
+}
+
+func unreviewableInventoryIdentityCases() []unreviewableInventoryCase {
+	return []unreviewableInventoryCase{
 		{
 			name: "undeclared beta",
 			inventory: clientSchemaInventory{
@@ -103,6 +116,32 @@ func TestClientSchemaInventoryRejectsAnUnreviewableRow(t *testing.T) {
 			want: "appears twice",
 		},
 		{
+			name: "undated version",
+			inventory: clientSchemaInventory{
+				Format:  llmprotocol.AnthropicMessagesV1,
+				Version: "v1",
+				Fields:  []clientSchemaField{{Path: "tools.defer_loading", Leg: "request"}},
+			},
+			want: "YYYY-MM-DD",
+		},
+		{
+			name: "unknown leg",
+			inventory: clientSchemaInventory{
+				Format:  llmprotocol.AnthropicMessagesV1,
+				Version: "2026-09-05",
+				Fields: []clientSchemaField{{
+					Path: "tools.defer_loading", Leg: "trailer",
+					Targets: map[string]string{string(llmprotocol.OpenAIChatV1): string(dispositionDrop)},
+				}},
+			},
+			want: "want request, response or stream",
+		},
+	}
+}
+
+func unreviewableInventoryTargetCases() []unreviewableInventoryCase {
+	return []unreviewableInventoryCase{
+		{
 			name: "unknown disposition",
 			inventory: clientSchemaInventory{
 				Format:  llmprotocol.AnthropicMessagesV1,
@@ -126,15 +165,6 @@ func TestClientSchemaInventoryRejectsAnUnreviewableRow(t *testing.T) {
 				},
 			},
 			want: "unknown target",
-		},
-		{
-			name: "undated version",
-			inventory: clientSchemaInventory{
-				Format:  llmprotocol.AnthropicMessagesV1,
-				Version: "v1",
-				Fields:  []clientSchemaField{{Path: "tools.defer_loading", Leg: "request"}},
-			},
-			want: "YYYY-MM-DD",
 		},
 		{
 			// A row with no target says a member is known and says nothing
@@ -168,20 +198,11 @@ func TestClientSchemaInventoryRejectsAnUnreviewableRow(t *testing.T) {
 			},
 			want: "states nothing for openai.responses.v1",
 		},
-		{
-			name: "unknown leg",
-			inventory: clientSchemaInventory{
-				Format:  llmprotocol.AnthropicMessagesV1,
-				Version: "2026-09-05",
-				Fields: []clientSchemaField{{
-					Path: "tools.defer_loading", Leg: "trailer",
-					Targets: map[string]string{string(llmprotocol.OpenAIChatV1): string(dispositionDrop)},
-				}},
-			},
-			want: "want request, response or stream",
-		},
 	}
-	for _, test := range tests {
+}
+
+func TestClientSchemaInventoryRejectsAnUnreviewableRow(t *testing.T) {
+	for _, test := range unreviewableInventoryCases() {
 		t.Run(test.name, func(t *testing.T) {
 			problems := validateClientSchemaInventory(test.inventory)
 			if !strings.Contains(strings.Join(problems, "\n"), test.want) {
