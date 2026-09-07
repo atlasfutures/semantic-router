@@ -98,13 +98,21 @@ func (r *OpenAIRouter) processWithContext(
 		}
 	}()
 
+	receiver := startStreamReceiver(stream)
 	for {
-		req, err := stream.Recv()
-		if err != nil {
-			return r.handleProcessReceiveError(ctx, err)
+		message, stalled := receiver.next(r.heldResponseBodyWait(ctx))
+		if stalled {
+			// Nothing arrived and the body being held is past its deadline.
+			if err := r.endStalledResponseBody(stream, ctx); err != nil {
+				return err
+			}
+			continue
+		}
+		if message.err != nil {
+			return r.handleProcessReceiveError(ctx, message.err)
 		}
 
-		if err := r.handleProcessRequest(stream, req, ctx); err != nil {
+		if err := r.handleProcessRequest(stream, message.request, ctx); err != nil {
 			state, reason := replayLifecycleForProcessError(err)
 			r.finalizeRouterReplay(ctx, state, reason)
 			return err
