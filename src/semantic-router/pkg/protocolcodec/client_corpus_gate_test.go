@@ -346,3 +346,26 @@ func TestStreamAndResponseLegsAreSeparate(t *testing.T) {
 		t.Fatalf("a stream-leg row classified %q on the response leg", streamed)
 	}
 }
+
+// SSE lets one event carry its payload over several data lines, joined by
+// newlines into one JSON document. Production does that in parseSSELine. A
+// gate that read each data line as its own frame would find neither half
+// parseable, and -- worse -- would skip both in silence, so the members of a
+// multi-line event would be lost while the file still looked covered.
+func TestGateReadsAMemberFromAMultiLineStreamEvent(t *testing.T) {
+	stream := []byte(": OPENROUTER PROCESSING\n\n" +
+		// One event, one JSON document, split across two data lines.
+		`data: {"id":"gen-fixture-1","object":"chat.completion.chunk","model":"m",` + "\n" +
+		`data: "choices":[{"index":0,"delta":{"content":"hi","split_event_member":1}}]}` + "\n\n" +
+		// A single-line event beside it, so the file is the mixed shape.
+		`data: {"id":"gen-fixture-1","object":"chat.completion.chunk","model":"m",` +
+		`"choices":[{"index":0,"delta":{"content":"!"}}],"single_line_member":1}` + "\n\n" +
+		"data: [DONE]\n\n")
+	entry := clientCorpusEntry{ID: "probe", Surface: llmprotocol.OpenAIChatV1, Leg: "stream"}
+	observed := observedStreamExtensionFields(t, entry, stream)
+	for _, want := range []string{"choices[].delta.split_event_member", "single_line_member"} {
+		if !slicesContain(observed, want) {
+			t.Fatalf("a member of a multi-line stream event is named %v, want %s", observed, want)
+		}
+	}
+}

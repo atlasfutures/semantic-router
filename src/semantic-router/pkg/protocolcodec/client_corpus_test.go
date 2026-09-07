@@ -245,35 +245,67 @@ func observedStreamExtensionFields(t *testing.T, entry clientCorpusEntry, body [
 	default:
 		t.Fatalf("corpus entry %s is on unknown surface %q", entry.ID, entry.Surface)
 	}
-	frames := sseDataFrames(body)
-	if len(frames) == 0 {
-		t.Fatalf("corpus entry %s holds no stream frames", entry.ID)
+	payloads := sseEventPayloads(t, entry, body)
+	if len(payloads) == 0 {
+		t.Fatalf("corpus entry %s holds no stream events", entry.ID)
 	}
 	var paths []string
-	for _, frame := range frames {
-		_, dropped := pruneUnknownProviderFields(frame, wire)
+	for _, payload := range payloads {
+		_, dropped := pruneUnknownProviderFields(payload, wire)
 		paths = append(paths, dropped...)
 	}
 	return sortedDistinct(paths)
 }
 
-// sseDataFrames returns the JSON payload of every data line of a recorded
-// stream. Comment lines, blank lines and the terminal sentinel are not frames
-// the decoder ever hands to a wire struct.
-func sseDataFrames(body []byte) [][]byte {
-	var frames [][]byte
-	for _, line := range strings.Split(string(body), "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" || payload == "[DONE]" || !json.Valid([]byte(payload)) {
-			continue
-		}
-		frames = append(frames, []byte(payload))
+// sseEventPayloads returns the JSON document of every event of a recorded
+// stream, framed exactly the way production frames a live one: the same
+// sseFramer splits the bytes into events, and the same parseSSEFrameAtPosition
+// joins the data lines of each.
+//
+// The framing has to be shared, not approximated. SSE lets one event carry its
+// payload over several data lines joined by newlines, and a gate that read
+// each line as its own frame would find neither half parseable and skip both.
+// A mixed file -- one multi-line event among ordinary ones -- would then lose
+// that event's members while still looking covered.
+//
+// An unreadable payload fails the test rather than being skipped. A capture
+// the gate cannot parse teaches nothing, and skipping it is how a whole
+// surface goes quietly uncovered.
+func sseEventPayloads(t *testing.T, entry clientCorpusEntry, body []byte) [][]byte {
+	t.Helper()
+	limit := llmprotocol.DefaultPolicy().Limits.SSEFrameBytes
+	framer := newSSEFramer(limit)
+	frames, err := framer.Push(body)
+	if err != nil {
+		t.Fatalf("corpus entry %s could not be framed: %v", entry.ID, err)
 	}
-	return frames
+	trailing, err := framer.Finalize()
+	if err != nil {
+		t.Fatalf("corpus entry %s has an unfinished frame: %v", entry.ID, err)
+	}
+	frames = append(frames, trailing...)
+
+	payloads := make([][]byte, 0, len(frames))
+	for index, frame := range frames {
+		parsed, parseErr := parseSSEFrameAtPosition(frame, limit, index == 0)
+		if parseErr != nil {
+			t.Fatalf("corpus entry %s frame %d is not a readable event: %v", entry.ID, index, parseErr)
+		}
+		if !parsed.HasData {
+			continue
+		}
+		payload := bytes.TrimSpace(parsed.Data)
+		// The terminal sentinel is not a document any wire struct decodes.
+		if len(payload) == 0 || string(payload) == "[DONE]" {
+			continue
+		}
+		if !json.Valid(payload) {
+			t.Fatalf("corpus entry %s frame %d carries a payload that is not JSON: %s",
+				entry.ID, index, payload)
+		}
+		payloads = append(payloads, payload)
+	}
+	return payloads
 }
 
 func sortedDistinct(paths []string) []string {
