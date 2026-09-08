@@ -102,6 +102,40 @@
           "model": "routed-model"
         }
       }
+    },
+    {
+      "name": "system_text_with_the_prefix_but_not_the_grammar",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "x-anthropic-billing-header: retain this instruction",
+                  "type": "input_text"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "system",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "input_text"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "max_output_tokens": 32,
+          "model": "routed-model"
+        }
+      }
     }
   ]
 }

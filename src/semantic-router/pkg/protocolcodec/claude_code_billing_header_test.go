@@ -130,26 +130,34 @@ func TestBillingHeaderReachesAnAnthropicArm(t *testing.T) {
 	}
 }
 
-// A system block that opens with the prefix and goes on to other text is
-// prompt text, not the line, and it travels whole. The line is exactly one
-// line.
+// A system block that opens with the prefix and is not the line travels
+// whole. The line is exactly one line of "key=value;" fields carrying
+// cc_version; prose after the prefix, a second line, or fields without the
+// version are prompt text that happens to start that way.
 func TestSystemTextThatMerelyStartsLikeTheHeaderTravelsToChat(t *testing.T) {
 	engine := NewBuiltinEngine()
-	prompt := billingAttributionPrefix + " cc_version=2.1.260.ada;\nYou are a Claude agent."
-	body := []byte(`{"model":"rayline-router","max_tokens":64,` +
-		`"system":[{"type":"text","text":` + jsonString(prompt) + `}],` +
-		`"messages":[{"role":"user","content":"hello"}]}`)
-	result, err := engine.TranslateRequest(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, body, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Contains(result.Body, []byte("You are a Claude agent.")) {
-		t.Fatalf("a multi-line system block was dropped as the billing header: %s", result.Body)
-	}
-	for _, diagnostic := range result.Diagnostics {
-		if diagnostic.Field == fieldSystemBillingAttribution {
-			t.Fatalf("prompt text was counted as the billing header: %+v", diagnostic)
-		}
+	for name, prompt := range map[string]string{
+		"second line":      billingAttributionPrefix + " cc_version=2.1.260.ada;\nYou are a Claude agent.",
+		"prose":            billingAttributionPrefix + " retain this instruction. You are a Claude agent.",
+		"no version field": billingAttributionPrefix + " cc_entrypoint=sdk-cli; note=You are a Claude agent.;",
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := []byte(`{"model":"rayline-router","max_tokens":64,` +
+				`"system":[{"type":"text","text":` + jsonString(prompt) + `}],` +
+				`"messages":[{"role":"user","content":"hello"}]}`)
+			result, err := engine.TranslateRequest(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, body, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Contains(result.Body, []byte("You are a Claude agent.")) {
+				t.Fatalf("a system block that is not the line was dropped as the billing header: %s", result.Body)
+			}
+			for _, diagnostic := range result.Diagnostics {
+				if diagnostic.Field == fieldSystemBillingAttribution {
+					t.Fatalf("prompt text was counted as the billing header: %+v", diagnostic)
+				}
+			}
+		})
 	}
 }
 

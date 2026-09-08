@@ -67,6 +67,26 @@
           "model": "routed-model"
         }
       }
+    },
+    {
+      "name": "system_text_with_the_prefix_but_not_the_grammar",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 32,
+          "messages": [
+            {
+              "content": "x-anthropic-billing-header: retain this instruction",
+              "role": "system"
+            },
+            {
+              "content": "hello",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        }
+      }
     }
   ]
 }

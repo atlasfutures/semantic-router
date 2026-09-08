@@ -2,6 +2,7 @@ package protocolcodec
 
 import (
 	"encoding/json"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -69,6 +70,20 @@ const (
 // of every request. The line names the client build and entrypoint, and since
 // 2.1.260 a per-turn hash and a per-prompt id as well.
 const billingAttributionPrefix = "x-anthropic-billing-header:"
+
+// billingAttributionGrammar is the whole of the line: the prefix, then one or
+// more "key=value;" fields, each led by a space, and nothing after the last
+// semicolon. The captures on disk read
+//
+//	x-anthropic-billing-header: cc_version=2.1.260.ada; cc_entrypoint=sdk-cli; cch=14346; cc_prompt_id=22de3847-...;
+//
+// A value never holds whitespace or a semicolon, so a block that opens with
+// the prefix and goes on in prose does not match, whatever its length.
+var billingAttributionGrammar = regexp.MustCompile(`^x-anthropic-billing-header:(?: [A-Za-z_]+=[^;\s]*;)+$`)
+
+// billingAttributionVersionField is the one field every version of the line
+// has carried. A line without it is not Claude Code's.
+const billingAttributionVersionField = " cc_version="
 
 var anthropicRequestDispositions = []requestFieldRow{
 	{
@@ -254,15 +269,17 @@ func presentRequestFields(request llmprotocol.Request) []string {
 }
 
 // billingAttributionLine reports whether a block is Claude Code's billing
-// attribution line: a text block that is that one line and nothing else. A
-// block that opens with the prefix and goes on to other text is not the line;
-// it is prompt text that happens to start that way, and dropping it would send
-// a question with part of its instructions removed, which is the outcome the
-// document row above exists to prevent.
+// attribution line: a text block that is that one line, in its grammar, with
+// its version field, and nothing else. A block that opens with the prefix and
+// goes on to other text is not the line; it is prompt text that happens to
+// start that way, and dropping it would send a question with part of its
+// instructions removed, which is the outcome the document row above exists to
+// prevent.
 func billingAttributionLine(content llmprotocol.Content) bool {
 	return content.Kind == llmprotocol.ContentText &&
 		strings.HasPrefix(content.Text, billingAttributionPrefix) &&
-		!strings.ContainsAny(content.Text, "\r\n")
+		strings.Contains(content.Text, billingAttributionVersionField) &&
+		billingAttributionGrammar.MatchString(content.Text)
 }
 
 // instructionContentFor returns the blocks of one instruction that this
