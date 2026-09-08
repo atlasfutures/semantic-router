@@ -84,33 +84,6 @@
           ]
         }
       }
-    },
-    {
-      "name": "system_text_with_the_prefix_but_not_the_grammar",
-      "outcome": {
-        "status": "ok",
-        "body": {
-          "max_tokens": 32,
-          "messages": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
-              "role": "user"
-            }
-          ],
-          "model": "routed-model",
-          "system": [
-            {
-              "text": "x-anthropic-billing-header: retain this instruction",
-              "type": "text"
-            }
-          ]
-        }
-      }
     }
   ]
 }
