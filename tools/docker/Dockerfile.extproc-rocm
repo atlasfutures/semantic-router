@@ -13,7 +13,7 @@
 # ============================================================================
 # Stage 1: Build candle-binding Rust library (x86_64, CPU-only)
 # ============================================================================
-FROM rust:1.90 AS candle-builder
+FROM rust:1.90@sha256:e227f20ec42af3ea9a3c9c1dd1b2012aa15f12279b5e9d5fb890ca1c2bb5726c AS candle-builder
 
 RUN apt-get update && apt-get install -y \
     build-essential pkg-config lld clang libssl-dev \
@@ -45,7 +45,7 @@ RUN cd candle-binding && \
 # Uses rocm-dynamic feature (dlopen at runtime, no link-time ORT dependency).
 # ort 2.0.0-rc.10 targets ORT 1.22, matching onnxruntime-rocm on PyPI.
 # ============================================================================
-FROM rust:1.90 AS onnx-rocm-builder
+FROM rust:1.90@sha256:e227f20ec42af3ea9a3c9c1dd1b2012aa15f12279b5e9d5fb890ca1c2bb5726c AS onnx-rocm-builder
 
 RUN apt-get update && apt-get install -y \
     build-essential pkg-config lld clang libssl-dev \
@@ -78,7 +78,7 @@ RUN cd onnx-binding && \
 # ============================================================================
 # Stage 3: Build ml-binding Rust library
 # ============================================================================
-FROM rust:1.90 AS ml-builder
+FROM rust:1.90@sha256:e227f20ec42af3ea9a3c9c1dd1b2012aa15f12279b5e9d5fb890ca1c2bb5726c AS ml-builder
 
 ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 
@@ -98,7 +98,7 @@ RUN cd ml-binding && \
 # ============================================================================
 # Stage 4: Build nlp-binding Rust library
 # ============================================================================
-FROM rust:1.90 AS nlp-builder
+FROM rust:1.90@sha256:e227f20ec42af3ea9a3c9c1dd1b2012aa15f12279b5e9d5fb890ca1c2bb5726c AS nlp-builder
 
 ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 
@@ -118,7 +118,7 @@ RUN cd nlp-binding && \
 # ============================================================================
 # Stage 5: Build CK Flash Attention custom op library (ROCm / gfx942)
 # ============================================================================
-FROM rocm/dev-ubuntu-22.04:7.0 AS fa-builder
+FROM rocm/dev-ubuntu-22.04:7.0@sha256:18f5b8916c9abe6262e20d11828ad549b64ad38e469352a38bb17949a3a2c847 AS fa-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         cmake ninja-build composablekernel-dev && \
@@ -140,7 +140,7 @@ RUN cmake -B build -G Ninja \
 # ============================================================================
 # Stage 6: Build Go application (both candle and onnx binaries)
 # ============================================================================
-FROM golang:1.25 AS go-builder
+FROM golang:1.25@sha256:699337d620559a59b4a2bb298ad59611e535d2ee755a34cf2d2a98f37578dc80 AS go-builder
 
 RUN apt-get update && apt-get install -y libssl-dev file && rm -rf /var/lib/apt/lists/*
 
@@ -203,7 +203,7 @@ RUN mkdir -p /app/lib && \
 # ============================================================================
 # Final stage: ROCm 7.0 runtime image with ONNX Runtime ROCm
 # ============================================================================
-FROM rocm/dev-ubuntu-22.04:7.0
+FROM rocm/dev-ubuntu-22.04:7.0@sha256:18f5b8916c9abe6262e20d11828ad549b64ad38e469352a38bb17949a3a2c847
 
 # Install ROCm runtime libraries needed by ORT (hipBLAS, MIOpen, hipFFT)
 RUN apt-get update && apt-get install -y --no-install-recommends \
