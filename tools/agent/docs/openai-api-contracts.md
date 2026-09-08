@@ -170,6 +170,10 @@ terminal, checks final authoritative usage, and turns an incomplete upstream str
 into a failure terminal. `anthropic-chat-cache-control` additionally verifies that
 OpenAI-compatible cache markers reach an Anthropic backend in buffered and streaming
 requests and that a repeated buffered request reports cached input tokens.
+The two `anthropic-billing-attribution-*` cases send a Claude Code-shaped Messages
+request whose `system[0]` is the per-turn billing attribution line: the Chat backend
+must receive the system prompt without the line, buffered and streaming, and the
+Anthropic backend must receive the line unchanged.
 The three `protocol-codec-*-backend-tool-lifecycle` gates send official flat
 Responses function tools, consume the returned call, and submit an inline tool
 result through each backend format. Both turns run once buffered and once as a
@@ -306,6 +310,7 @@ it remains valid when codec internals move.
 | [#3058](https://github.com/vllm-project/semantic-router/issues/3058) and [#2991](https://github.com/vllm-project/semantic-router/pull/2991) provider error must not become an empty success | transport-error 3×3 matrix and ExtProc response seam | three backend error matrices |
 | [#3056](https://github.com/vllm-project/semantic-router/issues/3056) ordered Anthropic thinking and signatures | buffered and streaming order/signature tests | Anthropic buffered and streaming matrices |
 | [#3055](https://github.com/vllm-project/semantic-router/issues/3055) cache directives survive Chat-to-Messages translation | cache-directive schema and pair tests | `anthropic-chat-cache-control` |
+| [memex-desktop#6819](https://github.com/atlasfutures/memex-desktop/issues/6819) Claude Code's per-turn billing attribution line defeats prompt caching on every non-Anthropic route | disposition-table row, capability golden 052, and billing-header codec tests | `anthropic-billing-attribution-chat-backend` and `anthropic-billing-attribution-anthropic-backend` |
 | [#3052](https://github.com/vllm-project/semantic-router/issues/3052) omitted tool choice has `auto` semantics | semantic-default and four-mode 3×3 matrices | tool-selection plus backend tool lifecycle |
 | [#3051](https://github.com/vllm-project/semantic-router/issues/3051) tool selection precedes provider encoding | exactly-one neutral mutation seam test | backend tool lifecycle for every target format |
 | [#3024](https://github.com/vllm-project/semantic-router/issues/3024) routed model rewrites retain the complete JSON Schema contract | structured-output 3×3 goldens and `TestExtProcStructuredOutputRequestProtocolMatrix` | three `protocol-codec-*-backend-structured-output` cases, each buffered and streamed |

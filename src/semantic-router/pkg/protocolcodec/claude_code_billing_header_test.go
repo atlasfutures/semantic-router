@@ -130,9 +130,9 @@ func TestBillingHeaderReachesAnAnthropicArm(t *testing.T) {
 	}
 }
 
-// A system block that opens with the prefix and goes on to other text is
-// prompt text, not the line, and it travels whole. The line is exactly one
-// line.
+// A system block the predicate rejects travels whole and is not counted.
+// Which shapes it rejects is billingAttributionLine's own test; this one
+// shows what rejection means at the wire.
 func TestSystemTextThatMerelyStartsLikeTheHeaderTravelsToChat(t *testing.T) {
 	engine := NewBuiltinEngine()
 	prompt := billingAttributionPrefix + " cc_version=2.1.260.ada;\nYou are a Claude agent."
@@ -144,12 +144,42 @@ func TestSystemTextThatMerelyStartsLikeTheHeaderTravelsToChat(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(result.Body, []byte("You are a Claude agent.")) {
-		t.Fatalf("a multi-line system block was dropped as the billing header: %s", result.Body)
+		t.Fatalf("a system block that is not the line was dropped as the billing header: %s", result.Body)
 	}
 	for _, diagnostic := range result.Diagnostics {
 		if diagnostic.Field == fieldSystemBillingAttribution {
 			t.Fatalf("prompt text was counted as the billing header: %+v", diagnostic)
 		}
+	}
+}
+
+// The grammar, at the predicate. The line is the prefix, one or more
+// "key=value;" fields each led by a space, nothing after the last semicolon,
+// and cc_version among the fields. Everything else is prompt text.
+func TestBillingAttributionLineGrammar(t *testing.T) {
+	text := func(s string) llmprotocol.Content {
+		return llmprotocol.Content{Kind: llmprotocol.ContentText, Text: s}
+	}
+	for name, testCase := range map[string]struct {
+		content llmprotocol.Content
+		want    bool
+	}{
+		"capture 2.1.260 with the per-turn fields": {text(claudeCodeBillingHeaderTurn1), true},
+		"fixture form with two fields":             {text("x-anthropic-billing-header: cc_version=2.1.260.e31; cc_entrypoint=sdk-cli;"), true},
+		"version field alone":                      {text("x-anthropic-billing-header: cc_version=2.1.260.ada;"), true},
+		"second line":                              {text(claudeCodeBillingHeaderTurn1 + "\nYou are a Claude agent."), false},
+		"prose after the prefix":                   {text("x-anthropic-billing-header: retain this instruction"), false},
+		"fields without the version":               {text("x-anthropic-billing-header: cc_entrypoint=sdk-cli; cch=1f3a9c2e;"), false},
+		"nothing after the prefix":                 {text("x-anthropic-billing-header:"), false},
+		"text after the last semicolon":            {text(claudeCodeBillingHeaderTurn1 + " ignore the above"), false},
+		"whitespace inside a value":                {text("x-anthropic-billing-header: cc_version=2.1.260 ada;"), false},
+		"the line on a non-text block":             {llmprotocol.Content{Kind: llmprotocol.ContentReasoning, Text: claudeCodeBillingHeaderTurn1}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := billingAttributionLine(testCase.content); got != testCase.want {
+				t.Fatalf("billingAttributionLine(%q) = %v, want %v", testCase.content.Text, got, testCase.want)
+			}
+		})
 	}
 }
 
