@@ -7,7 +7,7 @@
 # Stage 1: Build candle-binding Rust library (cross-compiled)
 # ============================================================================
 ARG BUILDPLATFORM
-FROM --platform=$BUILDPLATFORM rust:1.90 AS rust-cross-builder
+FROM --platform=$BUILDPLATFORM rust:1.90@sha256:e227f20ec42af3ea9a3c9c1dd1b2012aa15f12279b5e9d5fb890ca1c2bb5726c AS rust-cross-builder
 
 # Install cross-compilation dependencies
 RUN dpkg --add-architecture arm64 && \
@@ -94,7 +94,7 @@ RUN echo "Building Rust library (CPU-only, no CUDA) for TARGETARCH=$TARGETARCH..
 # ONNX Runtime with download-binaries is enabled on amd64.
 # ============================================================================
 ARG BUILDPLATFORM
-FROM --platform=$BUILDPLATFORM rust:1.90 AS onnx-cross-builder
+FROM --platform=$BUILDPLATFORM rust:1.90@sha256:e227f20ec42af3ea9a3c9c1dd1b2012aa15f12279b5e9d5fb890ca1c2bb5726c AS onnx-cross-builder
 
 RUN dpkg --add-architecture arm64 && \
     apt-get update && apt-get install -y \
@@ -173,7 +173,7 @@ RUN echo "Preparing ONNX binding for TARGETARCH=$TARGETARCH..." && \
 # Stage 3: Build ml-binding Rust library (Linfa ML algorithms, cross-compiled)
 # ============================================================================
 ARG BUILDPLATFORM
-FROM --platform=$BUILDPLATFORM rust:1.90 AS ml-cross-builder
+FROM --platform=$BUILDPLATFORM rust:1.90@sha256:e227f20ec42af3ea9a3c9c1dd1b2012aa15f12279b5e9d5fb890ca1c2bb5726c AS ml-cross-builder
 
 ARG TARGETARCH
 
@@ -224,7 +224,7 @@ RUN cd ml-binding && \
 # Stage 4: Build nlp-binding Rust library (BM25 + N-gram keyword classification, cross-compiled)
 # ============================================================================
 ARG BUILDPLATFORM
-FROM --platform=$BUILDPLATFORM rust:1.90 AS nlp-cross-builder
+FROM --platform=$BUILDPLATFORM rust:1.90@sha256:e227f20ec42af3ea9a3c9c1dd1b2012aa15f12279b5e9d5fb890ca1c2bb5726c AS nlp-cross-builder
 
 ARG TARGETARCH
 
@@ -276,7 +276,7 @@ RUN cd nlp-binding && \
 # OpenVINO uses CMake + pip-installed OpenVINO Runtime.
 # ============================================================================
 ARG BUILDPLATFORM
-FROM --platform=$BUILDPLATFORM python:3.12-slim AS openvino-builder
+FROM --platform=$BUILDPLATFORM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea AS openvino-builder
 
 ARG TARGETARCH
 
@@ -336,7 +336,7 @@ RUN mkdir -p /app/openvino-runtime && \
 # Stage 5: Build Go application (candle on all platforms, onnx/openvino on amd64 only)
 # ============================================================================
 ARG BUILDPLATFORM
-FROM --platform=$BUILDPLATFORM golang:1.25 AS go-builder
+FROM --platform=$BUILDPLATFORM golang:1.25@sha256:699337d620559a59b4a2bb298ad59611e535d2ee755a34cf2d2a98f37578dc80 AS go-builder
 
 # Install cross-compilation tools for Go
 RUN dpkg --add-architecture arm64 && \
