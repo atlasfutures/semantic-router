@@ -13,6 +13,21 @@ func applyCanonicalModelCardOverlay(cfg *RouterConfig, canonical *CanonicalConfi
 	for _, card := range canonicalRoutingModels(canonical.Routing) {
 		cardsByName[card.Name] = card
 	}
+	if len(canonical.Providers.Models) == 0 {
+		// A routing-only file has no access bindings; its cards are
+		// materialised straight from routing.modelCards, so the flags are
+		// carried by card name.
+		for name, card := range cardsByName {
+			params, ok := cfg.ModelConfig[name]
+			if !ok {
+				continue
+			}
+			params.Vision = copyBool(card.Vision)
+			params.Disabled = copyBool(card.Disabled)
+			cfg.ModelConfig[name] = params
+		}
+		return
+	}
 	for _, model := range canonical.Providers.Models {
 		params, ok := cfg.ModelConfig[model.Name]
 		if !ok {

@@ -945,3 +945,31 @@ routing:
 		t.Fatalf("expected lora_name to survive parse, got %q", cfg.Decisions[0].ModelRefs[0].LoRAName)
 	}
 }
+
+func TestParseYAMLBytesKeepsRoutingOnlyCardFlags(t *testing.T) {
+	cfg, err := ParseYAMLBytes([]byte(`
+version: v0.3
+providers:
+  defaults:
+    model: private-model
+routing:
+  modelCards:
+    - name: private-model
+      description: Metadata-only routing model
+      vision: false
+      disabled: true
+`))
+	if err != nil {
+		t.Fatalf("expected routing-only card to be valid: %v", err)
+	}
+	params, ok := cfg.ModelConfig["private-model"]
+	if !ok {
+		t.Fatal("expected routing-only model in ModelConfig")
+	}
+	if params.SupportsVision() {
+		t.Fatal("vision: false on a routing-only card was read as image-capable")
+	}
+	if !params.IsDisabled() {
+		t.Fatal("disabled: true on a routing-only card was read as in service")
+	}
+}
