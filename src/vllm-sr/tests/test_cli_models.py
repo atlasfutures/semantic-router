@@ -104,3 +104,45 @@ def test_decision_route_action_rejects_unknown_type():
                 ]
             },
         )
+
+
+def _provider_model(**preferences):
+    return {
+        "version": "v0.3",
+        "providers": {
+            "models": [
+                {
+                    "name": "pinned",
+                    "backend_refs": [
+                        {
+                            "name": "openrouter",
+                            "base_url": "https://openrouter.ai/api/v1",
+                            "provider": "openrouter",
+                            "protocol": "https",
+                            "api_key_env": "OPENROUTER_API_KEY",
+                        }
+                    ],
+                    "provider_preferences": preferences,
+                }
+            ]
+        },
+        "routing": {"modelCards": [{"name": "pinned"}]},
+    }
+
+
+def test_provider_preferences_pin_parses_with_order():
+    config = UserConfig(**_provider_model(order=["baidu/fp8"], allow_fallbacks=False))
+    assert config.providers.models[0].provider_preferences.order == ["baidu/fp8"]
+
+
+@pytest.mark.parametrize(
+    "preferences",
+    [
+        {"allow_fallbacks": False},
+        {"order": [""]},
+        {"only": ["deepinfra"], "ignore": ["  "]},
+    ],
+)
+def test_provider_preferences_rejects_what_the_router_loader_rejects(preferences):
+    with pytest.raises(ValueError):
+        UserConfig(**_provider_model(**preferences))

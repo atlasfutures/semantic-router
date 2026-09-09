@@ -1792,6 +1792,21 @@ class OpenRouterProviderPreferences(BaseModel):
     require_parameters: Optional[bool] = None
     data_collection: Optional[Literal["allow", "deny"]] = None
 
+    @model_validator(mode="after")
+    def validate_pin(self):
+        # Mirrors the Go loader's validateProviderPreferences: a pin that
+        # names no provider is not a pin, and a blank slug is one OpenRouter
+        # would refuse at dispatch.
+        if not self.order and not self.only:
+            raise ValueError("provider_preferences must set order or only")
+        for field in ("order", "only", "ignore"):
+            for index, slug in enumerate(getattr(self, field) or []):
+                if not slug or not slug.strip():
+                    raise ValueError(
+                        f"provider_preferences.{field}[{index}] must be a non-empty provider slug"
+                    )
+        return self
+
 
 class Model(BaseModel):
     """Provider model binding under the existing providers.models hierarchy."""
