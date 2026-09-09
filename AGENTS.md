@@ -65,3 +65,29 @@ Choose a skill by the semantics of the task, not by an automatic path match:
 
 Canonical contributor and GitHub metadata remain in `CONTRIBUTING.md`, the
 issue and PR templates, and `.prowlabels.yaml`.
+
+## Fork working rules
+
+These apply to work on this fork's branches; upstream-bound drafts follow the
+upstream rules above and nothing here.
+
+- Structure commits as a reviewable trajectory: one logical step per commit
+  (refactor, then behaviour, then tests), every commit compiling and passing
+  lint, messages that say why. Sign off every commit (`git commit -s`).
+- Scope a PR to one subsystem where possible and title it with the module
+  prefix: `[Router]`, `[CLI]`, `[Dashboard]`, `[Docs]`, `[CI/Build]`,
+  `[Operator]`, `[E2E]`. Include a Test plan section that says what was run.
+- Read the nearest `AGENTS.md` before editing a hotspot:
+  `src/semantic-router/pkg/config/`, `src/semantic-router/pkg/extproc/`,
+  `src/vllm-sr/cli/`, `deploy/operator/api/v1alpha1/`,
+  `deploy/operator/controllers/`, `dashboard/frontend/src/`,
+  `dashboard/backend/handlers/`. Hotspots are debt, not precedent; do not
+  grow their responsibility.
+- Layer model: `signal` -> `decision` -> `algorithm` -> `plugin` -> `global`.
+  Interfaces belong only at true seams.
+- Local runtime: `make vllm-sr-dev` then `vllm-sr serve --image-pull-policy
+  never` (add `VLLM_SR_PLATFORM=amd` / `--platform amd` on ROCm). Focused
+  suites: `make test-semantic-router`, `make test-binding`,
+  `make test-{category,pii,jailbreak}-classifier`, `make e2e-test` (kind).
+  Lint: `make go-lint`, `make check-go-mod-tidy`, `pre-commit run --all-files`,
+  `markdownlint -c tools/linter/markdown/markdownlint.yaml "**/*.md"`.
