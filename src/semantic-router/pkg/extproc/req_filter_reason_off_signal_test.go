@@ -113,3 +113,30 @@ func newChatTemplateArmReasoningRouter() *OpenAIRouter {
 		map[string]config.ModelParams{"qwen3-model": {ReasoningFamily: "qwen3"}},
 	)
 }
+
+// A client that asks to reason with only the top-level reasoning_effort, no
+// reasoning object, is the plain OpenAI shape. The parser lifts that field off
+// the body before any mutation runs, so the boundary has to read it from the
+// mutation to know the arm dropped a control the client asked for.
+func TestThinkingOffArmCountsAnEffortOnlyRequestAsDropped(t *testing.T) {
+	router := newArmReasoningRouter()
+	ctx := &RequestContext{}
+	body := `{"model":"gpt-5-mini","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"high"}`
+	encoded, err := router.setReasoningModeToRequestBodyForModelAndProvider(
+		[]byte(body), "gpt-5-mini", false, router.Config.GetDecisionByName("arc"), openRouterProviderProfile(), ctx,
+	)
+	require.NoError(t, err)
+	var decoded map[string]interface{}
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	assertNoReasoningEffort(t, decoded)
+
+	dropped := 0
+	for _, diagnostic := range ctx.ProtocolDiagnostics {
+		if diagnostic.Field == "reasoning" && diagnostic.Reason == "reasoning_disabled_by_selected_model" {
+			dropped++
+		}
+	}
+	if dropped != 1 {
+		t.Fatalf("an effort-only request on a thinking-off arm recorded %d dropped-control diagnostics, want 1: %v", dropped, ctx.ProtocolDiagnostics)
+	}
+}

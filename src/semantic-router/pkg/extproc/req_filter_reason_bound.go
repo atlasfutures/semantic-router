@@ -69,11 +69,14 @@ type clientReasoningRequest struct {
 // snapshotClientReasoningRequest reads the client's reasoning controls off
 // the request as it arrived. The catalog-driven mutation clears a carried
 // max_tokens and moves the effort into the reasoning object, so anything the
-// boundary wants to honour or to count has to be read before it runs.
-func snapshotClientReasoningRequest(requestMap map[string]json.RawMessage) clientReasoningRequest {
+// boundary wants to honour or to count has to be read before it runs. The
+// top-level reasoning_effort is already gone from the map by then: the parser
+// lifts it into the mutation before normalising, so it is read from there.
+func snapshotClientReasoningRequest(mutation *reasoningRequestMutation) clientReasoningRequest {
+	requestMap := mutation.requestMap
 	snapshot := clientReasoningRequest{bound: carriedReasoningBound(requestMap["reasoning"])}
 	snapshot.askedToReason = snapshot.bound != nil ||
-		reasoningEffortAsksToReason(requestMap["reasoning_effort"]) ||
+		(mutation.hasOriginalEffort && reasoningEffortAsksToReason(mutation.originalReasoningEffort)) ||
 		reasoningObjectAsksToReason(requestMap["reasoning"])
 	return snapshot
 }

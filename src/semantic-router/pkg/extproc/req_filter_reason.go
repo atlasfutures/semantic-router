@@ -70,7 +70,7 @@ func (r *OpenAIRouter) setReasoningModeToRequestBodyForModelAndProvider(
 	// The catalog-driven mutation rewrites the reasoning object; what the
 	// client asked for is read first, so the bound and the diagnostics below
 	// speak about the request as it arrived.
-	clientReasoning := snapshotClientReasoningRequest(mutation.requestMap)
+	clientReasoning := snapshotClientReasoningRequest(mutation)
 	if enabled {
 		r.applyEnabledReasoningMutation(mutation, familyConfig, decision, transport)
 		applyOpenRouterReasoningBound(mutation, transport, clientReasoning, clientOutputAllowance(ctx))
