@@ -1,6 +1,7 @@
 package classification
 
 import (
+	"context"
 	"sync"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -40,7 +41,9 @@ func (c *Classifier) signalReadiness() map[string]bool {
 // IsJailbreakEnabled silently skipped otherwise healthy contrastive rules when
 // the optional Prompt Guard model was disabled.
 func (c *Classifier) isJailbreakSignalReady() bool {
-	if len(c.Config.JailbreakRules) == 0 {
+	// Response-direction rules are scored from the model's output, so they do
+	// not make the request-stage signal ready on their own.
+	if len(c.Config.RequestJailbreakRules()) == 0 {
 		return false
 	}
 
@@ -197,12 +200,17 @@ func (c *Classifier) evaluateAllSignalsWithContext(
 	ready := c.signalReadiness()
 
 	results := &SignalResults{
-		Metrics:                &SignalMetricsCollection{},
-		SignalConfidences:      make(map[string]float64),
-		SignalValues:           make(map[string]float64),
-		SignalErrors:           make(map[string]string),
-		SignalErrorMatches:     make(map[string]bool),
-		AppliedUnknownPolicies: make(map[string]string),
+		Metrics:            &SignalMetricsCollection{},
+		SignalConfidences:  make(map[string]float64),
+		SignalValues:       make(map[string]float64),
+		SignalErrors:       make(map[string]string),
+		SignalErrorMatches: make(map[string]bool),
+	}
+	if requestFacts.Context == nil {
+		// The legacy, context-free classifier APIs do not have a caller context.
+		// Keep those APIs working while ensuring every request-aware path passes
+		// its supplied context all the way to remote category HTTP calls.
+		requestFacts.Context = context.Background()
 	}
 
 	var wg sync.WaitGroup
@@ -232,6 +240,7 @@ func (c *Classifier) evaluateAllSignalsWithContext(
 		imgArg,
 		imgCache,
 		convFacts,
+		requestFacts.Context,
 		requestFacts,
 		usedSignals,
 	)

@@ -36,7 +36,7 @@ func TestThinkingOffArmStatesTheOffSignalOpenRouterReads(t *testing.T) {
 		assertNoReasoningEffort(t, body)
 	})
 
-	t.Run("the chat-template flag stays beside it", func(t *testing.T) {
+	t.Run("the chat-template flag does not travel beside it", func(t *testing.T) {
 		router := newChatTemplateArmReasoningRouter()
 		encoded, err := router.setReasoningModeToRequestBodyForModelAndProvider(
 			[]byte(claudeCodeBody), "qwen3-model", false,
@@ -49,9 +49,11 @@ func TestThinkingOffArmStatesTheOffSignalOpenRouterReads(t *testing.T) {
 		if enabled := reasoningEnabledOf(t, body); enabled == nil || *enabled {
 			t.Fatalf("a thinking-off arm carried no off-signal: %v", body["reasoning"])
 		}
-		kwargs, present := body["chat_template_kwargs"].(map[string]interface{})
-		if !present || kwargs["enable_thinking"] != false {
-			t.Fatalf("the chat-template off-flag was lost: %v", body["chat_template_kwargs"])
+		// OpenRouter's providers never read a vLLM chat-template argument; the
+		// reasoning object is the control that reaches them, and the catalog
+		// mutation leaves no stale flag beside it.
+		if kwargs, present := body["chat_template_kwargs"].(map[string]interface{}); present && kwargs["enable_thinking"] == true {
+			t.Fatalf("a thinking-off arm carried enable_thinking true: %v", body["chat_template_kwargs"])
 		}
 	})
 

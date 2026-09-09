@@ -32,10 +32,14 @@ func validateDecisionModelContracts(cfg *RouterConfig) error {
 		if err := validateDecisionRuleNode(cfg, decision.Name, &decision.Rules, true); err != nil {
 			return err
 		}
+		warnUnguardedClassifierConditions(decision)
 		if err := validateDecisionAnnotations(decision); err != nil {
 			return err
 		}
 		if err := validateDecisionModelRefs(cfg, decision); err != nil {
+			return err
+		}
+		if err := validateDecisionAction(cfg, decision); err != nil {
 			return err
 		}
 		if err := validateDecisionAlgorithmConfig(decision.Name, decision.ModelRefs, decision.Algorithm); err != nil {
@@ -68,10 +72,8 @@ func validateDecisionRuleNode(cfg *RouterConfig, decisionName string, node *Rule
 		if !root {
 			return fmt.Errorf("decision '%s': on_unknown is only supported on the root rules node", decisionName)
 		}
-		switch node.OnUnknown {
-		case RuleOnUnknownNoMatch, RuleOnUnknownMatch, RuleOnUnknownFailRequest:
-		default:
-			return fmt.Errorf("decision '%s': rules on_unknown must be no_match, match, or fail_request", decisionName)
+		if !node.OnUnknown.IsValid() {
+			return fmt.Errorf("decision '%s': rules on_unknown must be %s", decisionName, UnknownPolicyChoices())
 		}
 		if ruleTreeSetsOnError(node) {
 			return fmt.Errorf("decision '%s': condition on_error has no effect when rules.on_unknown is set; remove one of them", decisionName)
@@ -262,6 +264,9 @@ func validateDecisionModelRefs(cfg *RouterConfig, decision Decision) error {
 		}
 		if modelRef.UseReasoning == nil {
 			return fmt.Errorf("decision '%s', model '%s': missing required field 'use_reasoning'", decision.Name, modelRef.Model)
+		}
+		if err := validateModelRefReasoningControl(cfg, decision.Name, i, modelRef); err != nil {
+			return err
 		}
 		if modelRef.LoRAName == "" {
 			continue

@@ -1,111 +1,62 @@
 package extproc
 
 import (
-	"net/url"
-	"strings"
-
+	modelcatalog "github.com/vllm-project/semantic-router/src/semantic-router/pkg/catalog"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 )
 
-type openAIBackendDialectKind string
-
-const (
-	openAIBackendDialectOfficialOpenAI      openAIBackendDialectKind = "official_openai"
-	openAIBackendDialectOfficialDeepSeek    openAIBackendDialectKind = "official_deepseek"
-	openAIBackendDialectOpenRouter          openAIBackendDialectKind = "openrouter"
-	openAIBackendDialectVLLM                openAIBackendDialectKind = "vllm"
-	openAIBackendDialectGenericOpenAICompat openAIBackendDialectKind = "generic_openai_compatible"
-)
-
-type openAIBackendDialect struct {
-	kind                            openAIBackendDialectKind
-	supportsTopLevelReasoningEffort bool
-	supportsTopLevelDeepSeekThink   bool
-	supportsUpstreamSessionID       bool
-}
-
-// resolveOpenAIBackendDialect captures request-shaping differences between
-// OpenAI-compatible backends. A nil profile is the legacy local-vLLM path, where
-// reasoning_effort must stay in chat_template_kwargs.
-func resolveOpenAIBackendDialect(profile *config.ProviderProfile) openAIBackendDialect {
+// resolveProviderReasoningTransport reads provider request semantics from the
+// compiled catalog. A nil or invalid internal profile safely retains the local
+// template-kwargs behavior; validated user config cannot produce an invalid
+// materialized profile.
+func resolveProviderReasoningTransport(profile *config.ProviderProfile) modelcatalog.ReasoningTransport {
 	if profile == nil {
-		return newOpenAIBackendDialect(openAIBackendDialectVLLM)
+		return modelcatalog.ReasoningTransportChatTemplate
 	}
-	if !strings.EqualFold(profile.Type, "openai") {
-		return newOpenAIBackendDialect(openAIBackendDialectGenericOpenAICompat)
+	if profile.ReasoningTransport == "" && providerIsOpenRouterByHost(profile) {
+		// A binding that reaches OpenRouter through an OpenAI-compatible
+		// provider type still speaks OpenRouter's reasoning object; see
+		// providerIsOpenRouter.
+		return modelcatalog.ReasoningTransportReasoningObject
 	}
-
-	switch normalizedProfileHost(profile) {
-	case "api.openai.com":
-		return newOpenAIBackendDialect(openAIBackendDialectOfficialOpenAI)
-	case "api.deepseek.com":
-		// DeepSeek's official OpenAI-compatible API accepts top-level
-		// reasoning_effort and uses top-level thinking for reasoning on/off.
-		return newOpenAIBackendDialect(openAIBackendDialectOfficialDeepSeek)
-	case "openrouter.ai":
-		// OpenRouter exposes reasoning_effort as a top-level OpenAI-compatible
-		// request field; local vLLM-compatible endpoints do not.
-		return newOpenAIBackendDialect(openAIBackendDialectOpenRouter)
-	default:
-		return newOpenAIBackendDialect(openAIBackendDialectGenericOpenAICompat)
-	}
-}
-
-func newOpenAIBackendDialect(kind openAIBackendDialectKind) openAIBackendDialect {
-	dialect := openAIBackendDialect{
-		kind: kind,
-	}
-	switch kind {
-	case openAIBackendDialectOfficialOpenAI:
-		dialect.supportsTopLevelReasoningEffort = true
-	case openAIBackendDialectOfficialDeepSeek:
-		dialect.supportsTopLevelReasoningEffort = true
-		dialect.supportsTopLevelDeepSeekThink = true
-	case openAIBackendDialectOpenRouter:
-		dialect.supportsTopLevelReasoningEffort = true
-		dialect.supportsUpstreamSessionID = true
-	}
-	return dialect
-}
-
-func (d openAIBackendDialect) usesTopLevelReasoningEffort() bool {
-	return d.supportsTopLevelReasoningEffort
-}
-
-// usesUpstreamSessionID reports that the backend routes a conversation by a
-// top-level session_id. OpenRouter uses it as its sticky routing key; every
-// other OpenAI-compatible backend would see an unknown member.
-func (d openAIBackendDialect) usesUpstreamSessionID() bool {
-	return d.supportsUpstreamSessionID
-}
-
-// usesReasoningObject reports that the backend accepts OpenRouter's reasoning
-// object: the only wire carrying both a documented bound on how much a turn
-// may spend on reasoning and the off-signal that stops it reasoning at all.
-// Every other OpenAI-compatible backend would see an unknown member.
-func (d openAIBackendDialect) usesReasoningObject() bool {
-	return d.kind == openAIBackendDialectOpenRouter
-}
-
-// usesProviderPreferences reports that the backend accepts OpenRouter's
-// provider object: the instruction naming which providers may serve the
-// request. Every other OpenAI-compatible backend is one provider and would see
-// an unknown member.
-func (d openAIBackendDialect) usesProviderPreferences() bool {
-	return d.kind == openAIBackendDialectOpenRouter
-}
-
-func (d openAIBackendDialect) usesDeepSeekOfficialReasoning() bool {
-	return d.kind == openAIBackendDialectOfficialDeepSeek && d.supportsTopLevelDeepSeekThink
-}
-
-func normalizedProfileHost(profile *config.ProviderProfile) string {
-	if profile == nil || profile.BaseURL == "" {
-		return ""
-	}
-	u, err := url.Parse(profile.BaseURL)
+	transport, err := profile.ResolveReasoningTransport()
 	if err != nil {
-		return ""
+		return modelcatalog.ReasoningTransportChatTemplate
 	}
-	return strings.ToLower(u.Hostname())
+	return transport
+}
+
+func usesTopLevelReasoningEffort(transport modelcatalog.ReasoningTransport) bool {
+	return transport == modelcatalog.ReasoningTransportTopLevelEffort ||
+		transport == modelcatalog.ReasoningTransportEffortTemplateSwitch ||
+		transport == modelcatalog.ReasoningTransportEffortBooleanSwitch ||
+		transport == modelcatalog.ReasoningTransportThinkingEffort ||
+		transport == modelcatalog.ReasoningTransportDeepSeekThinking
+}
+
+func usesIndependentEffortSwitch(transport modelcatalog.ReasoningTransport) bool {
+	return transport == modelcatalog.ReasoningTransportEffortTemplateSwitch ||
+		transport == modelcatalog.ReasoningTransportEffortBooleanSwitch
+}
+
+func usesThinkingObjectTransport(transport modelcatalog.ReasoningTransport) bool {
+	return transport == modelcatalog.ReasoningTransportThinkingObject ||
+		transport == modelcatalog.ReasoningTransportThinkingEffort ||
+		transport == modelcatalog.ReasoningTransportDeepSeekThinking
+}
+
+func usesThinkingObjectEffortTransport(transport modelcatalog.ReasoningTransport) bool {
+	return transport == modelcatalog.ReasoningTransportThinkingEffort
+}
+
+func usesReasoningObjectTransport(transport modelcatalog.ReasoningTransport) bool {
+	return transport == modelcatalog.ReasoningTransportReasoningObject
+}
+
+func usesOutputConfigEffortTransport(transport modelcatalog.ReasoningTransport) bool {
+	return transport == modelcatalog.ReasoningTransportOutputConfig
+}
+
+func isDeepSeekThinkingTransport(transport modelcatalog.ReasoningTransport) bool {
+	return transport == modelcatalog.ReasoningTransportDeepSeekThinking
 }

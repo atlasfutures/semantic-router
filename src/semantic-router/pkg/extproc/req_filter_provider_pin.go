@@ -64,7 +64,7 @@ func providerPreferencesForDispatch(
 	if dispatch == nil || routerConfig == nil {
 		return nil
 	}
-	if !resolveOpenAIBackendDialect(dispatch.profile).usesProviderPreferences() {
+	if !providerIsOpenRouter(dispatch.profile) {
 		return nil
 	}
 	return routerConfig.ProviderPreferencesForModel(dispatch.logicalModel)

@@ -214,8 +214,15 @@ func buildRouterComponents(cfg *config.RouterConfig) (*routerComponents, error) 
 	if components.replayRecorder != nil {
 		replayReaderForLookup = components.replayRecorder.Reader()
 	}
-	components.recipeModelSelectors, components.modelSelector, components.lookupTable, components.lookupTableCancel = createModelSelectorRegistries(cfg, replayReaderForLookup)
-	registerModelSelectorResources(components.resources, components.recipeModelSelectors, components.lookupTableCancel)
+	// A decision that runs the learned selector needs the registries whether or
+	// not the operator turned the built-in selection algorithms on: the arm
+	// selector registers into the default recipe's registry.
+	if cfg.ModelSelection.Enabled || len(configuredRaylineARCDecisions(cfg)) > 0 {
+		components.recipeModelSelectors, components.modelSelector, components.lookupTable, components.lookupTableCancel = createModelSelectorRegistries(cfg, replayReaderForLookup)
+		registerModelSelectorResources(components.resources, components.recipeModelSelectors, components.lookupTableCancel)
+	} else {
+		logging.ComponentEvent("extproc", "model_selection_disabled", map[string]interface{}{})
+	}
 	components.raylineARC = registerRaylineARCSelector(cfg, components.recipeModelSelectors, components.resources)
 
 	components.memoryStore, components.memoryExtractor = createMemoryRuntime(cfg)

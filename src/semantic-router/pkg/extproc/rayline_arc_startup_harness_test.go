@@ -196,7 +196,7 @@ const arcRouterConfigTemplate = `version: v0.3
 
 providers:
   defaults:
-    default_model: {{WORKER_A}}
+    model: {{WORKER_A}}
   models:
     - name: {{WORKER_A}}
       provider_model_id: synthetic/{{WORKER_A}}
@@ -210,8 +210,7 @@ providers:
       backend_refs:
         - name: synthetic-a
           base_url: {{PROVIDER_URL}}
-          provider: openai
-          type: openai
+          provider: openrouter
           api_key_env: {{API_KEY_ENV}}
     - name: {{WORKER_B}}
       provider_model_id: synthetic/{{WORKER_B}}
@@ -225,8 +224,7 @@ providers:
       backend_refs:
         - name: synthetic-b
           base_url: {{PROVIDER_URL}}
-          provider: openai
-          type: openai
+          provider: openrouter
           api_key_env: {{API_KEY_ENV}}
 
 routing:

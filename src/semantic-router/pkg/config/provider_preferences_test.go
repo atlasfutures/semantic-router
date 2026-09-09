@@ -12,7 +12,7 @@ func providerPreferencesConfigYAML(preferences string) string {
 version: v0.3
 providers:
   defaults:
-    default_model: model-a
+    model: model-a
   models:
     - name: model-a
 ` + preferences + `      backend_refs:
@@ -175,7 +175,7 @@ func TestProviderPreferencesResolvePerQualifiedArm(t *testing.T) {
 version: v0.3
 providers:
   defaults:
-    default_model: deepseek/deepseek-v4-flash@thinking-off
+    model: deepseek/deepseek-v4-flash@thinking-off
   models:
     - name: deepseek/deepseek-v4-flash@thinking-off
       provider_preferences:

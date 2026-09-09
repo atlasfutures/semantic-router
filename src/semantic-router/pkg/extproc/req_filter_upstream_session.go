@@ -74,7 +74,7 @@ func upstreamSessionIDForDispatch(
 	if params == nil || !params.SendUpstreamSessionID {
 		return "", false
 	}
-	if !resolveOpenAIBackendDialect(dispatch.profile).usesUpstreamSessionID() {
+	if !providerIsOpenRouter(dispatch.profile) {
 		return "", false
 	}
 	if ctx.VSRRaylineARC == nil || ctx.VSRRaylineARC.EpisodeIDHash == "" {

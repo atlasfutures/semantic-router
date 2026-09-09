@@ -3,6 +3,7 @@ package extproc
 import (
 	"encoding/json"
 	"fmt"
+	modelcatalog "github.com/vllm-project/semantic-router/src/semantic-router/pkg/catalog"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
@@ -40,13 +41,14 @@ import (
 // the Router's to do.
 func applyOpenRouterReasoningBound(
 	mutation *reasoningRequestMutation,
-	dialect openAIBackendDialect,
+	transport modelcatalog.ReasoningTransport,
+	client clientReasoningRequest,
 	clientAllowance *int64,
 ) {
-	if !dialect.usesReasoningObject() || !mutation.reasoningApplied {
+	if !usesReasoningObjectTransport(transport) || !mutation.reasoningApplied {
 		return
 	}
-	bound := reasoningBoundForRequest(mutation.requestMap, clientAllowance)
+	bound := reasoningBoundForRequest(mutation.requestMap, client, clientAllowance)
 	if bound == nil {
 		return
 	}
@@ -54,6 +56,43 @@ func applyOpenRouterReasoningBound(
 	delete(mutation.requestMap, "reasoning_effort")
 	mutation.appliedEffort = ""
 	mutation.reasoningBound = bound
+}
+
+// clientReasoningRequest is what the client's body said about reasoning
+// before the provider mutation rewrote it: the bound it carried, if any, and
+// whether any control on it asked the model to reason at all.
+type clientReasoningRequest struct {
+	bound         *int64
+	askedToReason bool
+}
+
+// snapshotClientReasoningRequest reads the client's reasoning controls off
+// the request as it arrived. The catalog-driven mutation clears a carried
+// max_tokens and moves the effort into the reasoning object, so anything the
+// boundary wants to honour or to count has to be read before it runs.
+func snapshotClientReasoningRequest(requestMap map[string]json.RawMessage) clientReasoningRequest {
+	snapshot := clientReasoningRequest{bound: carriedReasoningBound(requestMap["reasoning"])}
+	snapshot.askedToReason = snapshot.bound != nil ||
+		reasoningEffortAsksToReason(requestMap["reasoning_effort"]) ||
+		reasoningObjectAsksToReason(requestMap["reasoning"])
+	return snapshot
+}
+
+// reasoningObjectAsksToReason reports whether the client's reasoning object
+// itself asks to reason: an effort level that is not the off-signal, or an
+// explicit enabled true.
+func reasoningObjectAsksToReason(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var object struct {
+		Effort  json.RawMessage `json:"effort"`
+		Enabled *bool           `json:"enabled"`
+	}
+	if json.Unmarshal(raw, &object) != nil {
+		return false
+	}
+	return reasoningEffortAsksToReason(object.Effort) || (object.Enabled != nil && *object.Enabled)
 }
 
 // dropReasoningRequestFromDisabledArm removes the reasoning controls from a
@@ -77,20 +116,24 @@ func applyOpenRouterReasoningBound(
 // the arm's own off-signal takes its place: see offSignalForDisabledArm.
 func dropReasoningRequestFromDisabledArm(
 	mutation *reasoningRequestMutation,
-	dialect openAIBackendDialect,
+	transport modelcatalog.ReasoningTransport,
+	client clientReasoningRequest,
 	ctx *RequestContext,
 ) {
-	_, hadBound := mutation.requestMap["reasoning"]
-	delete(mutation.requestMap, "reasoning")
-
-	droppedEffort := false
-	if dialect.usesReasoningObject() {
-		droppedEffort = reasoningEffortAsksToReason(mutation.requestMap["reasoning_effort"])
+	if usesReasoningObjectTransport(transport) {
+		// The catalog mutation already wrote enabled false for a family that
+		// can be disabled; a family that cannot is still routed to an arm that
+		// must not reason, so the off-signal is stated here either way, on the
+		// object the mutation left, keeping the presentation members it kept.
 		delete(mutation.requestMap, "reasoning_effort")
 		mutation.appliedEffort = ""
-		mutation.requestMap["reasoning"] = offSignalForDisabledArm()
+		mutation.requestMap["reasoning"] = offSignalForDisabledArm(mutation.requestMap["reasoning"])
+	} else {
+		// reasoning is OpenRouter's object; every other backend would see an
+		// unknown member.
+		delete(mutation.requestMap, "reasoning")
 	}
-	if hadBound || droppedEffort {
+	if client.askedToReason {
 		recordDroppedReasoningRequest(ctx)
 	}
 }
@@ -111,8 +154,21 @@ func dropReasoningRequestFromDisabledArm(
 //
 // The flag stays where it is. It is the control a vLLM-backed arm reads, and
 // an OpenRouter provider that does not read it ignores it.
-func offSignalForDisabledArm() json.RawMessage {
-	return json.RawMessage(`{"enabled":false}`)
+func offSignalForDisabledArm(existing json.RawMessage) json.RawMessage {
+	object := map[string]json.RawMessage{}
+	if len(existing) > 0 {
+		if json.Unmarshal(existing, &object) != nil {
+			object = map[string]json.RawMessage{}
+		}
+	}
+	delete(object, "effort")
+	delete(object, "max_tokens")
+	object["enabled"] = json.RawMessage("false")
+	rendered, err := json.Marshal(object)
+	if err != nil {
+		return json.RawMessage(`{"enabled":false}`)
+	}
+	return rendered
 }
 
 // reasoningEffortAsksToReason reports whether an effort level is a request to
@@ -153,10 +209,11 @@ func recordDroppedReasoningRequest(ctx *RequestContext) {
 // tokens reasoning.
 func reasoningBoundForRequest(
 	requestMap map[string]json.RawMessage,
+	client clientReasoningRequest,
 	clientAllowance *int64,
 ) *int64 {
-	if carried := carriedReasoningBound(requestMap["reasoning"]); carried != nil {
-		return carried
+	if client.bound != nil {
+		return client.bound
 	}
 	allowance := clientAllowance
 	if allowance == nil {

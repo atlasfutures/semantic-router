@@ -81,9 +81,23 @@ func TestArmKeepsItsEffortWithoutAnOutputAllowance(t *testing.T) {
 	if bound := reasoningBoundOf(t, body); bound != nil {
 		t.Fatalf("a bound was invented with no output allowance: %v", body)
 	}
-	if body["reasoning_effort"] != "high" {
-		t.Fatalf("reasoning_effort = %v, want the arm's effort", body["reasoning_effort"])
+	if effort := reasoningEffortOf(body); effort != "high" {
+		t.Fatalf("reasoning effort = %q, want the arm's effort", effort)
 	}
+}
+
+// reasoningEffortOf reads the effort a body carries, wherever the wire put
+// it: OpenRouter reads a top-level reasoning_effort as reasoning.effort.
+func reasoningEffortOf(body map[string]interface{}) string {
+	if effort, ok := body["reasoning_effort"].(string); ok {
+		return effort
+	}
+	if reasoning, ok := body["reasoning"].(map[string]interface{}); ok {
+		if effort, ok := reasoning["effort"].(string); ok {
+			return effort
+		}
+	}
+	return ""
 }
 
 // reasoning.max_tokens is OpenRouter's control. Every other OpenAI-compatible

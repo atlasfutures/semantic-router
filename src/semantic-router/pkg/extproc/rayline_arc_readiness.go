@@ -287,12 +287,25 @@ func raylineARCWorkerDispatchMatches(
 	return true
 }
 
+// raylineARCOpenAICompatibleProviderType reports whether a provider type
+// speaks the OpenAI Chat Completions wire the ARC workers are dispatched on.
+// The catalog types OpenRouter as its own provider so its reasoning transport
+// can carry the chat-template family; the worker contract is the same.
+func raylineARCOpenAICompatibleProviderType(providerType string) bool {
+	switch strings.ToLower(strings.TrimSpace(providerType)) {
+	case "openai", "openrouter":
+		return true
+	default:
+		return false
+	}
+}
+
 func raylineARCEndpointIdentityMatches(
 	cfg *config.RouterConfig,
 	worker *raylinearc.WorkerManifest,
 	endpoint *config.VLLMEndpoint,
 ) bool {
-	if endpoint == nil || endpoint.Type != "openai" ||
+	if endpoint == nil || !raylineARCOpenAICompatibleProviderType(endpoint.Type) ||
 		cfg.ResolveExternalModelID(worker.ID, endpoint.Name) != worker.Model {
 		return false
 	}
@@ -300,7 +313,7 @@ func raylineARCEndpointIdentityMatches(
 		return false
 	}
 	profile, err := cfg.GetProviderProfileForEndpoint(endpoint.Name)
-	if err != nil || profile == nil || profile.Type != "openai" {
+	if err != nil || profile == nil || !raylineARCOpenAICompatibleProviderType(profile.Type) {
 		return false
 	}
 	if !raylineARCAuthShapeMatches(profile) {
@@ -322,13 +335,13 @@ func raylineARCEndpointIdentityMatches(
 // same-named mutation stand in for the artifact credential, and a custom chat
 // path would not reach the pinned provider contract at all.
 func raylineARCAuthShapeMatches(profile *config.ProviderProfile) bool {
-	_, defaultHeader, defaultPrefix, _ := resolveProviderAuth(nil)
-	authHeader, authPrefix, err := profile.ResolveAuthHeader()
+	_, defaultAuth, _ := resolveProviderAuth(nil)
+	providerAuth, err := profile.ResolveAuth()
 	if err != nil {
 		return false
 	}
-	return strings.EqualFold(authHeader, defaultHeader) &&
-		authPrefix == defaultPrefix &&
+	return strings.EqualFold(providerAuth.Header, defaultAuth.Header) &&
+		providerAuth.Prefix == defaultAuth.Prefix &&
 		profile.ChatPath == ""
 }
 

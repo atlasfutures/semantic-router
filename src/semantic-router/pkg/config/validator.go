@@ -26,6 +26,7 @@ var (
 		validateEmbeddingModelContracts,
 		validateGlobalModalityContracts,
 		validateModelSelectionConfig,
+		validateCategoryModelBackendContracts,
 		validateGlobalClassifierRuntimeContracts,
 		validateGlobalRouterLearningConfig,
 		validateReMoMContracts,
@@ -41,6 +42,7 @@ var (
 		validateRuleOperatorContracts,
 		validateRoutingLocalNames,
 		validateLanguageContracts,
+		validateContextContracts,
 		validateRoutingStrategy,
 		validateDecisionSignalReferences,
 		validateDomainContracts,
@@ -56,6 +58,7 @@ var (
 		validateRoutingModalityContracts,
 		validateComplexityContracts,
 		validateJailbreakContracts,
+		validateSignalStageContracts,
 		validateDecisionRouterLearningConfig,
 	}
 )

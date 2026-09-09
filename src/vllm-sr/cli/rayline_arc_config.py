@@ -4,6 +4,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+# Mirrors maxRaylineARCInflightEncoderCalls in the Go loader.
+MAX_INFLIGHT_ENCODER_CALLS = 32
+
 RAYLINE_ARC_ENCODER_MODEL = "Qwen/Qwen3.5-0.8B"
 RAYLINE_ARC_ENCODER_MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
 RAYLINE_ARC_SERIALIZER_VERSION = "mtrouter-token-blocks-v2"
@@ -49,6 +52,14 @@ class RaylineARCEncoderMembershipConfig(BaseModel):
     refresh_seconds: int = Field(gt=0, le=300)
 
 
+class RaylineARCFaultInjectionConfig(BaseModel):
+    """Opt-in for the dev-only fault header; one bool, matching the Go loader."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+
+
 class RaylineARCEncoderConfig(BaseModel):
     """Pinned contract for the dedicated vLLM pooling deployment."""
 
@@ -77,13 +88,16 @@ class RaylineARCEncoderConfig(BaseModel):
     # shipped default, 5 s and 60 s.
     probe_retry_initial_seconds: int = Field(default=0, ge=0, le=3600)
     probe_retry_max_seconds: int = Field(default=0, ge=0, le=3600)
+    # 0 selects the router's shipped default; the Go loader caps the value.
+    max_inflight_encoder_calls: int = Field(default=0, ge=0, le=MAX_INFLIGHT_ENCODER_CALLS)
 
-    @field_validator("membership", mode="before")
+    @field_validator("membership", "failover", mode="before")
     @classmethod
-    def empty_membership_is_absent(cls, value):
-        # The canonical reference config includes membership: {} so its
-        # field inventory is covered without changing the selected static
-        # base_url mode. Treat that zero block exactly as an omitted field.
+    def empty_block_is_absent(cls, value):
+        # The canonical reference config includes membership: {} and
+        # failover: {} so their field inventory is covered without changing
+        # the selected static base_url mode. The Go loader treats a zero block
+        # as omitted; do the same here.
         if value in (None, {}):
             return None
         return value
@@ -129,3 +143,6 @@ class RaylineARCAlgorithmConfig(BaseModel):
     artifact_revision: str
     encoder: RaylineARCEncoderConfig
     episode: RaylineARCEpisodeConfig
+    include_system_text: bool = False
+    drop_mid_conversation_system_text: bool = False
+    fault_injection: RaylineARCFaultInjectionConfig | None = None
