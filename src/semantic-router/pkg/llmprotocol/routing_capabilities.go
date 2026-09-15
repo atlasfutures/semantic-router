@@ -18,7 +18,10 @@ package llmprotocol
 const (
 	// RoutingCapabilityServerTools covers a tool the source API runs itself:
 	// web search, the advisor. Nothing strips these before the cell on this
-	// auth path, and a Chat arm has no shape to hold the declaration.
+	// auth path, and a Chat arm has no shape to hold the declaration. An
+	// Anthropic-defined tool the caller runs, the text editor or bash, is
+	// not covered: the codec writes its schema out for any target, so a
+	// Chat arm serves it without holding anything.
 	RoutingCapabilityServerTools = "server_tools"
 	// RoutingCapabilityToolResultImages covers an image inside a tool result.
 	// Reading a PNG produces one, and so does any MCP tool that returns an

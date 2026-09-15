@@ -163,9 +163,11 @@ type Tool struct {
 	InputSchema json.RawMessage
 	Cache       *CacheDirective
 	// Type is the tool's own discriminator. An empty value and "custom" both
-	// mean a tool the model calls and the caller runs. Every other value names
-	// a tool the source API runs itself -- web search, the advisor -- which a
-	// target format that has no such tool cannot express.
+	// mean a tool the model calls and the caller runs. A value in the
+	// Anthropic-defined table names a tool the caller runs too, declared by
+	// type in place of a schema. Every other value names a tool the source
+	// API runs itself -- web search, the advisor -- which a target format
+	// that has no such tool cannot express.
 	Type string
 	// Extensions holds the members of this tool that the source contract does
 	// not name.
@@ -176,7 +178,15 @@ type Tool struct {
 // handing the call back to the caller. A server tool is identified by its type
 // alone: it declares no schema the Router could validate and need not name a
 // function, because nothing outside the source API ever invokes it.
+//
+// An Anthropic-defined tool is typed the same way and is not one: the caller
+// runs it, and the type stands in for a schema the table can supply. Reading
+// it as a server tool gated every Workshop agent turn of 2026-09-14 behind a
+// capability no arm can hold.
 func (tool Tool) ServerTool() bool {
+	if _, defined := tool.AnthropicDefined(); defined {
+		return false
+	}
 	return tool.Type != "" && tool.Type != "custom"
 }
 
