@@ -1,6 +1,9 @@
 package llmprotocol
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // An Anthropic-defined tool is declared by type alone:
 //
@@ -39,15 +42,60 @@ type AnthropicDefinedTool struct {
 
 // AnthropicDefined reports the documented definition of a tool declared by one
 // of Anthropic's tool types, and false for a custom tool and a server tool.
+//
+// A dated revision the table has not seen, text_editor_20260401 say, resolves
+// to the newest tabled revision of its family. Anthropic ships one every few
+// months, and the day it ships is otherwise the day every Workshop agent turn
+// is refused again. The older schema is an approximation the diagnostics
+// count as one; the client's handler accepts the union of the revisions, so a
+// call built on it is still one the client can run.
 func (tool Tool) AnthropicDefined() (AnthropicDefinedTool, bool) {
-	definition, known := anthropicDefinedTools[tool.Type]
-	return definition, known
+	if definition, known := anthropicDefinedTools[tool.Type]; known {
+		return definition, true
+	}
+	for _, family := range anthropicDefinedToolFamilies {
+		if strings.HasPrefix(tool.Type, family.prefix) && datedRevision(tool.Type, family.prefix) {
+			return anthropicDefinedTools[family.newest], true
+		}
+	}
+	return AnthropicDefinedTool{}, false
+}
+
+// datedRevision reports whether what follows the family prefix is a date
+// stamp and nothing else, the shape every Anthropic tool type takes. A type
+// that merely starts with the prefix, text_editor_toolset_2027 say, is a new
+// kind and stays a server tool until someone reads what it is.
+func datedRevision(toolType, prefix string) bool {
+	stamp := strings.TrimPrefix(toolType, prefix)
+	if len(stamp) != 8 {
+		return false
+	}
+	for _, r := range stamp {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// anthropicDefinedToolFamilies maps a family prefix to its newest tabled
+// revision. Adding a revision to the table means moving `newest` here, which
+// TestAnthropicDefinedToolsAreCallableDeclarations checks.
+var anthropicDefinedToolFamilies = []struct{ prefix, newest string }{
+	{prefix: "text_editor_", newest: "text_editor_20250728"},
+	{prefix: "bash_", newest: "bash_20250124"},
+	{prefix: "memory_", newest: "memory_20250818"},
 }
 
 // Materialized returns the tool as a callable declaration a target without
 // Anthropic's type table can express. A tool that is not Anthropic-defined
 // comes back unchanged. What the caller stated wins over what the type
 // documents: the type fills in only what the declaration left out.
+//
+// A strict flag is kept only beside the caller's own schema. The documented
+// schema lists optional members and no additionalProperties, which is not a
+// schema OpenAI's strict mode accepts, and a 400 at the provider is the
+// failure this table exists to prevent.
 func (tool Tool) Materialized() Tool {
 	definition, known := tool.AnthropicDefined()
 	if !known {
@@ -63,6 +111,7 @@ func (tool Tool) Materialized() Tool {
 	}
 	if len(materialized.InputSchema) == 0 {
 		materialized.InputSchema = definition.InputSchema
+		materialized.Strict = nil
 	}
 	return materialized
 }

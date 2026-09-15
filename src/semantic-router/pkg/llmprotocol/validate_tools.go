@@ -20,16 +20,23 @@ func validateRequestTools(tools []Tool, limits Limits) (map[string]struct{}, int
 		if err := validateRequestTool(tool, limits, location); err != nil {
 			return nil, 0, err
 		}
-		if _, duplicate := namedTools[tool.Identity()]; duplicate {
+		// The name the arm sees and the bytes it is sent are the materialized
+		// ones: a nameless text editor arrives under its documented name, and
+		// its documented schema counts against the budget like any other.
+		// Two declarations that collide only after materialization would
+		// reach the arm as two functions of one name, which a provider
+		// refuses; and a choice naming the documented name has to resolve.
+		materialized := tool.Materialized()
+		if _, duplicate := namedTools[materialized.Identity()]; duplicate {
 			return nil, 0, NewFieldError(ErrorInvalidRequest, "duplicate_tool",
 				"tool names must be unique", location, "tools.name")
 		}
-		schemaBytes += len(tool.InputSchema)
+		schemaBytes += len(materialized.InputSchema)
 		if limits.SchemaBytes > 0 && schemaBytes > limits.SchemaBytes {
 			return nil, 0, NewFieldError(ErrorInvalidRequest, "schema_limit",
 				"total schema limit exceeded", location, "tools.input_schema")
 		}
-		namedTools[tool.Identity()] = struct{}{}
+		namedTools[materialized.Identity()] = struct{}{}
 	}
 	return namedTools, schemaBytes, nil
 }

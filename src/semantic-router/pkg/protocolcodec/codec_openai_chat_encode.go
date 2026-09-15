@@ -261,9 +261,8 @@ func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) erro
 // The transform is counted in the same diagnostics.
 func appendChatTools(wire *chatRequestWire, tools []llmprotocol.Tool) {
 	for _, tool := range tools {
-		if _, defined := tool.AnthropicDefined(); defined {
-			tool = tool.Materialized()
-		} else if tool.ServerTool() {
+		tool = tool.Materialized()
+		if tool.ServerTool() {
 			continue
 		}
 		wire.Tools = append(wire.Tools, chatToolWire{Type: "function", Function: chatFunctionDefinitionWire{

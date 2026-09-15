@@ -310,3 +310,26 @@ func TestAnthropicDefinedToolIsCarriedToMessages(t *testing.T) {
 		t.Fatalf("Messages did not carry the declaration as written: %s", result.Body)
 	}
 }
+
+// A nameless declaration reaches the arm under its documented name, so a
+// choice naming that name has to pass ingress and arrive on the wire.
+func TestAChoiceNamingTheDocumentedNameResolves(t *testing.T) {
+	engine := NewBuiltinEngine()
+	body := `{
+	  "model": "claude-sonnet-4-5",
+	  "max_tokens": 64,
+	  "messages": [{"role": "user", "content": [{"type": "text", "text": "fix the typo"}]}],
+	  "tools": [{"type": "text_editor_20250728"}],
+	  "tool_choice": {"type": "tool", "name": "str_replace_based_edit_tool"}
+	}`
+	result, err := engine.TranslateRequest(
+		llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, []byte(body), nil,
+	)
+	if err != nil {
+		t.Fatalf("Chat refused a choice naming the documented name: %v", err)
+	}
+	choice := decodeJSONObject(t, result.Body)["tool_choice"]
+	if !strings.Contains(string(choice), "str_replace_based_edit_tool") {
+		t.Fatalf("the choice did not reach the wire: %s", result.Body)
+	}
+}

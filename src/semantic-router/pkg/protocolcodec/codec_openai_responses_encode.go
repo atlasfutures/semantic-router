@@ -131,12 +131,11 @@ func encodeResponsesTools(input []llmprotocol.Tool, imageGeneration *llmprotocol
 	}
 	tools := make([]responsesToolWire, 0, len(input)+1)
 	for _, tool := range input {
-		if _, defined := tool.AnthropicDefined(); defined {
-			// The caller runs it; only the documented schema is missing.
-			// Counted as a transform in the request dispositions.
-			tool = tool.Materialized()
-		} else if tool.ServerTool() {
-			// Counted in the encoder's diagnostics; see appendServerToolDrops.
+		// An Anthropic-defined tool comes back callable, counted as a transform
+		// in the request dispositions; a server tool comes back as it was and
+		// is dropped, counted there too.
+		tool = tool.Materialized()
+		if tool.ServerTool() {
 			continue
 		}
 		tools = append(tools, responsesToolWire{Type: "function", Name: tool.Name, Description: tool.Description, Parameters: tool.InputSchema, Strict: tool.Strict})

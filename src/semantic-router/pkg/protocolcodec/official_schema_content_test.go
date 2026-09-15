@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -235,25 +236,44 @@ func assertResponsesReasoningContent(t *testing.T, response llmprotocol.Response
 // the caller does. Refusing one refused the turn around it, and on this auth
 // path nothing strips a typed tool before the cell.
 func TestOfficialAnthropicToolDiscriminatorsAreCarried(t *testing.T) {
-	unsupported := fields(
-		"bash_20250124", "browser_toolset_20260801",
-		"code_execution_20250522", "code_execution_20250825", "code_execution_20260120", "code_execution_20260521",
-		"computer_toolset_20260801", "memory_20250818",
+	// The five the caller runs. The table in llmprotocol spells their schema
+	// out for a foreign target; adding one here without adding it there, or
+	// the reverse, fails the classification check below.
+	callerRun := fields(
+		"bash_20250124", "memory_20250818",
 		"text_editor_20250124", "text_editor_20250429", "text_editor_20250728",
+	)
+	// The sixteen the source API runs. One of these landing in the table
+	// would route a turn to an arm that cannot run the tool and answers on
+	// a fabricated schema, which is worse than the gate this test guards.
+	serverRun := fields(
+		"browser_toolset_20260801",
+		"code_execution_20250522", "code_execution_20250825", "code_execution_20260120", "code_execution_20260521",
+		"computer_toolset_20260801",
 		"tool_search_tool_bm25_20251119", "tool_search_tool_regex_20251119",
 		"web_fetch_20250910", "web_fetch_20260209", "web_fetch_20260309", "web_fetch_20260318",
 		"web_search_20250305", "web_search_20260209", "web_search_20260318",
 	)
+	if !reflect.DeepEqual(callerRun, llmprotocol.AnthropicDefinedToolTypes()) {
+		t.Fatalf("caller-run inventory %v differs from the table %v", callerRun, llmprotocol.AnthropicDefinedToolTypes())
+	}
+	unsupported := append(append([]string(nil), callerRun...), serverRun...)
+	sort.Strings(unsupported)
 	assertClosedDiscriminatorInventory(t, "Anthropic tool", 21, fields("custom"), unsupported)
 	engine := NewBuiltinEngine()
-	for _, toolType := range unsupported {
+	for _, toolType := range callerRun {
 		t.Run(toolType, func(t *testing.T) {
-			assertServerToolIsCarried(t, engine, toolType)
+			assertTypedToolIsCarried(t, engine, toolType, false)
+		})
+	}
+	for _, toolType := range serverRun {
+		t.Run(toolType, func(t *testing.T) {
+			assertTypedToolIsCarried(t, engine, toolType, true)
 		})
 	}
 }
 
-func assertServerToolIsCarried(t *testing.T, engine *Engine, toolType string) {
+func assertTypedToolIsCarried(t *testing.T, engine *Engine, toolType string, serverTool bool) {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
 		"model":      "m",
@@ -275,6 +295,9 @@ func assertServerToolIsCarried(t *testing.T, engine *Engine, toolType string) {
 	}
 	if len(request.Tools) != 1 || request.Tools[0].Type != toolType {
 		t.Fatalf("typed tool %q lost its type: %+v", toolType, request.Tools)
+	}
+	if request.Tools[0].ServerTool() != serverTool {
+		t.Fatalf("typed tool %q: ServerTool() = %v, want %v", toolType, !serverTool, serverTool)
 	}
 	encoded, err := engine.EncodeRequest(llmprotocol.AnthropicMessagesV1, request, llmprotocol.Envelope{})
 	if err != nil {
