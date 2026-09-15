@@ -87,6 +87,7 @@ func (p *Profile) GetTestCases() []string {
 		"protocol-codec-chat-backend-midstream-error-matrix",
 		"protocol-codec-responses-backend-midstream-error-matrix",
 		"anthropic-billing-attribution-chat-backend",
+		"anthropic-defined-tool-chat-backend",
 	}
 }
 
