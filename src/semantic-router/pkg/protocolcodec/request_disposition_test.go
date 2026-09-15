@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -215,5 +216,97 @@ func TestACallableToolKeepsItsToolChoice(t *testing.T) {
 				t.Fatalf("%s dropped the tool choice beside a callable tool: %s", target, result.Body)
 			}
 		})
+	}
+}
+
+// The Workshop agent declares its editor as an Anthropic-defined tool: a type
+// and a name, no schema, with a cache breakpoint, and on some turns a choice
+// naming it. On 2026-09-14 every such turn was refused no_capable_arm, since
+// the table counted the type as a server tool and no arm holds one. The
+// caller runs this tool, so a Chat or Responses arm can serve it once the
+// documented schema is written out under the caller's name.
+func anthropicDefinedToolRequest(cacheControl string) []byte {
+	return []byte(`{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 64,
+  "messages": [{"role": "user", "content": [{"type": "text", "text": "fix the typo"}]}],
+  "tools": [
+    {"name": "read_file", "description": "read", "input_schema": {"type": "object"}},
+    {"name": "str_replace_based_edit_tool", "type": "text_editor_20250728"` + cacheControl + `}
+  ],
+  "tool_choice": {"type": "tool", "name": "str_replace_based_edit_tool"}
+}`)
+}
+
+func TestAnthropicDefinedToolIsMaterializedForForeignTargets(t *testing.T) {
+	engine := NewBuiltinEngine()
+	// Responses refuses a cache directive anywhere in the request, which is
+	// a wire capability of that format and not this table's concern.
+	for target, cacheControl := range map[llmprotocol.WireFormat]string{
+		llmprotocol.OpenAIChatV1:      `, "cache_control": {"type": "ephemeral"}`,
+		llmprotocol.OpenAIResponsesV1: "",
+	} {
+		t.Run(string(target), func(t *testing.T) {
+			result, err := engine.TranslateRequest(
+				llmprotocol.AnthropicMessagesV1, target, anthropicDefinedToolRequest(cacheControl), nil,
+			)
+			if err != nil {
+				t.Fatalf("%s refused the turn: %v", target, err)
+			}
+			body := string(result.Body)
+			if strings.Contains(body, "text_editor_20250728") {
+				t.Fatalf("%s carried the type a provider rejects: %s", target, body)
+			}
+			object := decodeJSONObject(t, result.Body)
+			var tools []map[string]json.RawMessage
+			if err := json.Unmarshal(object["tools"], &tools); err != nil || len(tools) != 2 {
+				t.Fatalf("%s encoded %d tools, want 2: %s", target, len(tools), body)
+			}
+			function := tools[1]
+			if target == llmprotocol.OpenAIChatV1 {
+				if err := json.Unmarshal(tools[1]["function"], &function); err != nil {
+					t.Fatalf("Chat tool is not a function: %s", tools[1])
+				}
+			}
+			if string(function["name"]) != `"str_replace_based_edit_tool"` {
+				t.Fatalf("%s renamed the caller's tool: %s", target, tools[1])
+			}
+			if !strings.Contains(string(function["parameters"]), `"required":["command","path"]`) {
+				t.Fatalf("%s did not write the documented schema: %s", target, tools[1])
+			}
+			choice, present := object["tool_choice"]
+			if !present || !strings.Contains(string(choice), "str_replace_based_edit_tool") {
+				t.Fatalf("%s lost the choice naming the materialized tool: %s", target, body)
+			}
+			assertApproximatedDiagnosticField(t, result.Diagnostics, "tools.type.anthropic_defined")
+			for _, diagnostic := range result.Diagnostics {
+				if diagnostic.Action == llmprotocol.DiagnosticDropped &&
+					(diagnostic.Field == "tools.type" || diagnostic.Field == "tool_choice") {
+					t.Fatalf("%s counted a drop it did not make: %+v", target, diagnostic)
+				}
+			}
+		})
+	}
+}
+
+// The Messages target has the type table, so it re-emits the declaration as
+// written and never the materialized schema, which would cost prompt cache
+// on every Claude arm for nothing.
+func TestAnthropicDefinedToolIsCarriedToMessages(t *testing.T) {
+	engine := NewBuiltinEngine()
+	result, err := engine.TranslateRequest(
+		llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+		anthropicDefinedToolRequest(`, "cache_control": {"type": "ephemeral"}`), nil,
+	)
+	if err != nil {
+		t.Fatalf("Messages refused the turn: %v", err)
+	}
+	var tools []map[string]json.RawMessage
+	if err := json.Unmarshal(decodeJSONObject(t, result.Body)["tools"], &tools); err != nil || len(tools) != 2 {
+		t.Fatalf("Messages encoded %d tools, want 2: %s", len(tools), result.Body)
+	}
+	editor := tools[1]
+	if string(editor["type"]) != `"text_editor_20250728"` || len(editor["input_schema"]) != 0 || len(editor["cache_control"]) == 0 {
+		t.Fatalf("Messages did not carry the declaration as written: %s", result.Body)
 	}
 }

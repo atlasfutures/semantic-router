@@ -255,9 +255,15 @@ func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) erro
 // declared web search into a failed turn instead of a routing decision. The
 // drop is counted in chatRequestDiagnostics; the capability gate is what sends
 // the turn to an arm that has the tool.
+//
+// An Anthropic-defined tool is one of them once its documented schema is
+// written out: the caller runs it, so the arm needs only the function shape.
+// The transform is counted in the same diagnostics.
 func appendChatTools(wire *chatRequestWire, tools []llmprotocol.Tool) {
 	for _, tool := range tools {
-		if tool.ServerTool() {
+		if _, defined := tool.AnthropicDefined(); defined {
+			tool = tool.Materialized()
+		} else if tool.ServerTool() {
 			continue
 		}
 		wire.Tools = append(wire.Tools, chatToolWire{Type: "function", Function: chatFunctionDefinitionWire{
