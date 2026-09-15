@@ -2,8 +2,10 @@ package llmprotocol
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -127,5 +129,87 @@ func TestAnthropicDefinedToolsAreNotServerTools(t *testing.T) {
 	}
 	if (Tool{Name: "lookup"}).ServerTool() || (Tool{Name: "lookup", Type: "custom"}).ServerTool() {
 		t.Fatal("a custom tool reads as a server tool")
+	}
+}
+
+// A dated revision the table has not seen resolves to its family's newest
+// tabled schema, so the next text_editor revision Anthropic ships does not
+// re-open the no_capable_arm refusal. Anything that is not a bare date stamp
+// after the prefix is a new kind and stays a server tool.
+func TestAnUnseenRevisionFallsBackToItsFamily(t *testing.T) {
+	unseen := Tool{Type: "text_editor_20260401", Name: "str_replace_based_edit_tool"}
+	definition, defined := unseen.AnthropicDefined()
+	if !defined || unseen.ServerTool() {
+		t.Fatalf("text_editor_20260401 is not read as Anthropic-defined")
+	}
+	newest, _ := Tool{Type: "text_editor_20250728"}.AnthropicDefined()
+	if !reflect.DeepEqual(definition, newest) {
+		t.Fatalf("text_editor_20260401 resolved to %q, want the newest text editor", definition.Name)
+	}
+	for _, toolType := range []string{"text_editor_toolset_20270101", "text_editor_2026", "text_editor_2026040x", "bash_toolset_20260801"} {
+		if _, defined := (Tool{Type: toolType}).AnthropicDefined(); defined {
+			t.Fatalf("%q is read as Anthropic-defined", toolType)
+		}
+	}
+	for _, family := range anthropicDefinedToolFamilies {
+		if _, tabled := anthropicDefinedTools[family.newest]; !tabled {
+			t.Fatalf("family %q names %q as newest, which the table lacks", family.prefix, family.newest)
+		}
+		for toolType := range anthropicDefinedTools {
+			if strings.HasPrefix(toolType, family.prefix) && toolType > family.newest {
+				t.Fatalf("family %q names %q as newest, but the table holds %q", family.prefix, family.newest, toolType)
+			}
+		}
+	}
+}
+
+// The documented schema is not one strict mode accepts, so a strict flag
+// travels only beside the caller's own schema.
+func TestMaterializedDropsStrictFromTheDocumentedSchema(t *testing.T) {
+	strict := true
+	documented := Tool{Type: "text_editor_20250728", Strict: &strict}.Materialized()
+	if documented.Strict != nil {
+		t.Fatal("strict survived onto the documented schema")
+	}
+	own := Tool{Type: "text_editor_20250728", Strict: &strict, InputSchema: json.RawMessage(`{"type":"object","additionalProperties":false}`)}.Materialized()
+	if own.Strict == nil || !*own.Strict {
+		t.Fatal("strict was dropped from the caller's own schema")
+	}
+}
+
+// Validation reads the tool the arm will see. Two declarations that collide
+// only once materialized are one name at the provider; a choice naming the
+// documented name has to resolve; and the documented bytes count.
+func TestValidationReadsTheMaterializedTool(t *testing.T) {
+	limits := DefaultPolicy().Limits
+	for name, tools := range map[string][]Tool{
+		"two nameless revisions": {{Type: "text_editor_20250429"}, {Type: "text_editor_20250728"}},
+		"custom tool under the documented name": {
+			{Name: "str_replace_based_edit_tool", InputSchema: json.RawMessage(`{"type":"object"}`)},
+			{Type: "text_editor_20250728"},
+		},
+	} {
+		_, _, err := validateRequestTools(tools, limits)
+		var protocolError *ProtocolError
+		if !errors.As(err, &protocolError) || protocolError.Code != "duplicate_tool" {
+			t.Fatalf("%s: validateRequestTools() error = %v, want duplicate_tool", name, err)
+		}
+	}
+	namedTools, schemaBytes, err := validateRequestTools([]Tool{{Type: "text_editor_20250728"}}, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateNamedToolChoice("str_replace_based_edit_tool", namedTools); err != nil {
+		t.Fatalf("a choice naming the documented name was refused: %v", err)
+	}
+	if schemaBytes == 0 {
+		t.Fatal("the documented schema was not counted")
+	}
+	small := limits
+	small.SchemaBytes = 64
+	_, _, err = validateRequestTools([]Tool{{Type: "text_editor_20250728"}}, small)
+	var protocolError *ProtocolError
+	if !errors.As(err, &protocolError) || protocolError.Code != "schema_limit" {
+		t.Fatalf("a documented schema over the budget was accepted: %v", err)
 	}
 }
