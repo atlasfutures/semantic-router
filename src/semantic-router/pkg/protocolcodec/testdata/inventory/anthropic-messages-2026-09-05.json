@@ -172,6 +172,16 @@
         "openai.responses.v1": "drop"
       },
       "note": "Sweep items 5 and 6: web_search_20250305 and advisor_20260301. A tool the source API runs itself. Neither OpenAI format has a shape for one, so the declaration is dropped and the CP9u capability gate routes the turn to an arm that holds the tool, or answers a replayable status. Beta attribution is operator-owed."
+    },
+    {
+      "path": "tools.type.anthropic_defined",
+      "leg": "request",
+      "first_seen": "2026-09-14",
+      "targets": {
+        "openai.chat.v1": "transform",
+        "openai.responses.v1": "transform"
+      },
+      "note": "An Anthropic-defined tool the caller runs: text_editor_*, bash_20250124, memory_20250818. The type stands in for a schema Claude knows, so a target without that table gets the documented schema written out under the caller's name. Every Workshop agent turn of 2026-09-14 declared text_editor_20250728 and was gated no_capable_arm (memex-desktop#6902). Computer use and the 2026 toolsets carry declaration-level parameters and stay under tools.type."
     }
   ]
 }

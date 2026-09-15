@@ -93,6 +93,11 @@ func validateToolDeclaration(tool Tool, location string) error {
 	if tool.ServerTool() {
 		return nil
 	}
+	if _, defined := tool.AnthropicDefined(); defined {
+		// The type is the schema, and the documented name stands in for one
+		// the caller left out. See anthropic_defined_tools.go.
+		return nil
+	}
 	if strings.TrimSpace(tool.Name) == "" {
 		return NewFieldError(ErrorInvalidRequest, "invalid_tool",
 			"a callable tool must name the function the model calls", location, "tools.name")

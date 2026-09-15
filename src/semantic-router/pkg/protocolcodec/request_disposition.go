@@ -60,6 +60,11 @@ const (
 	fieldContentCaller       = "content.caller"
 	fieldContentDocumentText = "content.document"
 	fieldToolsType           = "tools.type"
+	// fieldToolsTypeAnthropicDefined is the second row keyed by what a member
+	// says rather than by its presence: a tools.type value naming one of
+	// Anthropic's own caller-run tools, which the neutral contract can spell
+	// out. See llmprotocol.AnthropicDefinedToolTypes.
+	fieldToolsTypeAnthropicDefined = "tools.type.anthropic_defined"
 	// fieldSystemBillingAttribution is the one row keyed by what a block says
 	// rather than by a member it carries: a system text block that is Claude
 	// Code's billing attribution line. See billingAttributionLine.
@@ -190,6 +195,25 @@ var anthropicRequestDispositions = []requestFieldRow{
 			},
 		},
 	},
+	{
+		// A tool Anthropic defines and the caller runs: the text editor, bash,
+		// memory. The declaration names a type in place of a schema, and a
+		// target with no type table gets the documented schema written out
+		// under the caller's name. Dropping it instead sent the arm a history
+		// of calls to a tool it was never shown, and every Workshop agent
+		// turn of 2026-09-14 declared one.
+		Path: fieldToolsTypeAnthropicDefined,
+		Targets: map[llmprotocol.WireFormat]targetDisposition{
+			llmprotocol.OpenAIChatV1: {
+				Action: dispositionTransform,
+				Reason: "an Anthropic-defined tool becomes a Chat function with its documented schema",
+			},
+			llmprotocol.OpenAIResponsesV1: {
+				Action: dispositionTransform,
+				Reason: "an Anthropic-defined tool becomes a Responses function with its documented schema",
+			},
+		},
+	},
 }
 
 var anthropicRequestDispositionIndex = indexRequestDispositions(anthropicRequestDispositions)
@@ -249,7 +273,9 @@ func appendRequestDispositions(
 func presentRequestFields(request llmprotocol.Request) []string {
 	var paths []string
 	for _, tool := range request.Tools {
-		if tool.ServerTool() {
+		if _, defined := tool.AnthropicDefined(); defined {
+			paths = append(paths, fieldToolsTypeAnthropicDefined)
+		} else if tool.ServerTool() {
 			paths = append(paths, fieldToolsType)
 		}
 	}
