@@ -110,3 +110,22 @@ func TestAnthropicDefinedToolsNeedNoSchema(t *testing.T) {
 		t.Fatalf("an Anthropic-defined tool declaration was refused: %v", err)
 	}
 }
+
+// The distinction the routing gate reads. A server tool needs an arm that
+// holds it; an Anthropic-defined tool needs nothing, since the caller runs
+// it and the codec supplies the schema.
+func TestAnthropicDefinedToolsAreNotServerTools(t *testing.T) {
+	for _, toolType := range AnthropicDefinedToolTypes() {
+		if (Tool{Type: toolType}).ServerTool() {
+			t.Fatalf("%q reads as a server tool", toolType)
+		}
+	}
+	for _, toolType := range []string{"web_search_20250305", "advisor_20260301", "computer_toolset_20260801"} {
+		if !(Tool{Type: toolType}).ServerTool() {
+			t.Fatalf("%q does not read as a server tool", toolType)
+		}
+	}
+	if (Tool{Name: "lookup"}).ServerTool() || (Tool{Name: "lookup", Type: "custom"}).ServerTool() {
+		t.Fatal("a custom tool reads as a server tool")
+	}
+}

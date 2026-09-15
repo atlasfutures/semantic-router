@@ -41,6 +41,16 @@ func TestRaylineARCRoutingCapabilitiesReadTheNeutralRequest(t *testing.T) {
 		{Name: "lookup", Type: "custom"},
 		{Type: "web_search_20250305"},
 	}}
+	// The Workshop agent's edit tool: Anthropic-defined, caller-run, no
+	// schema. The codec writes the schema out, so no arm needs anything.
+	definedTool := llmprotocol.Request{Tools: []llmprotocol.Tool{
+		{Name: "read_file"},
+		{Name: "str_replace_based_edit_tool", Type: "text_editor_20250728"},
+	}}
+	definedBesideServer := llmprotocol.Request{Tools: []llmprotocol.Tool{
+		{Name: "str_replace_based_edit_tool", Type: "text_editor_20250728"},
+		{Type: "web_search_20250305"},
+	}}
 	toolResultImage := llmprotocol.Request{Messages: []llmprotocol.Message{{
 		Role: llmprotocol.RoleTool,
 		Content: []llmprotocol.Content{{
@@ -72,6 +82,8 @@ func TestRaylineARCRoutingCapabilitiesReadTheNeutralRequest(t *testing.T) {
 		want    []string
 	}{
 		{name: "server tool", request: serverTool, want: []string{llmprotocol.RoutingCapabilityServerTools}},
+		{name: "anthropic-defined tool", request: definedTool, want: nil},
+		{name: "anthropic-defined tool beside a server tool", request: definedBesideServer, want: []string{llmprotocol.RoutingCapabilityServerTools}},
 		{name: "tool result image", request: toolResultImage, want: []string{llmprotocol.RoutingCapabilityToolResultImages}},
 		{name: "text only", request: textOnly, want: nil},
 	} {

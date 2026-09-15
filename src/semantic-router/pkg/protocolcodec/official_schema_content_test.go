@@ -230,10 +230,11 @@ func assertResponsesReasoningContent(t *testing.T, response llmprotocol.Response
 	}
 }
 
-// Every official server-tool discriminator now passes ingress and comes back
-// out of a Messages target byte for byte. Refusing one refused the turn around
-// it, and on this auth path nothing strips a server tool before the cell.
-func TestOfficialAnthropicServerToolDiscriminatorsAreCarried(t *testing.T) {
+// Every official tool discriminator now passes ingress and comes back out of
+// a Messages target byte for byte, whether the source API runs the tool or
+// the caller does. Refusing one refused the turn around it, and on this auth
+// path nothing strips a typed tool before the cell.
+func TestOfficialAnthropicToolDiscriminatorsAreCarried(t *testing.T) {
 	unsupported := fields(
 		"bash_20250124", "browser_toolset_20260801",
 		"code_execution_20250522", "code_execution_20250825", "code_execution_20260120", "code_execution_20260521",
@@ -272,8 +273,8 @@ func assertServerToolIsCarried(t *testing.T, engine *Engine, toolType string) {
 	if err != nil {
 		t.Fatalf("server tool %q was refused at ingress: %v", toolType, err)
 	}
-	if len(request.Tools) != 1 || request.Tools[0].Type != toolType || !request.Tools[0].ServerTool() {
-		t.Fatalf("server tool %q lost its type: %+v", toolType, request.Tools)
+	if len(request.Tools) != 1 || request.Tools[0].Type != toolType {
+		t.Fatalf("typed tool %q lost its type: %+v", toolType, request.Tools)
 	}
 	encoded, err := engine.EncodeRequest(llmprotocol.AnthropicMessagesV1, request, llmprotocol.Envelope{})
 	if err != nil {
