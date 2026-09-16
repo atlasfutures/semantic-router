@@ -362,3 +362,49 @@ func immediateStatusCode(t *testing.T, response *ext_proc.ProcessingResponse) in
 	}
 	return int(immediate.Status.Code)
 }
+
+// The body phase must answer this path itself. Reaching the ingress codec
+// would mean the request was being prepared for a turn that is never going to
+// happen, and the caller would get this router's own error envelope instead
+// of the one this endpoint promises.
+func TestRaylineRoutesBodyPhaseAnswersBeforeTheIngressCodec(t *testing.T) {
+	t.Parallel()
+	router := routesRouter(true)
+	response, err := router.HandleRequestBody(&ext_proc.ProcessingRequest_RequestBody{
+		RequestBody: &ext_proc.HttpBody{Body: []byte(`{"model":"rayline-router"}`)},
+	}, routesContext(nil))
+	if err != nil {
+		t.Fatalf("HandleRequestBody() error = %v", err)
+	}
+	if code := immediateStatusCode(t, response); code != 400 {
+		t.Fatalf("status = %d, want 400", code)
+	}
+	var envelope map[string]interface{}
+	if err := json.Unmarshal(response.GetImmediateResponse().Body, &envelope); err != nil {
+		t.Fatalf("error body is not JSON: %v", err)
+	}
+	if envelope["type"] != "error" {
+		t.Fatalf("error body = %v, want the Anthropic envelope this endpoint promises", envelope)
+	}
+}
+
+// The mirror of the case above, and the one that matters more: a routed
+// request on a routes-enabled cell must be untouched by any of this.
+func TestRaylineRoutesLeavesRoutedTrafficAlone(t *testing.T) {
+	t.Parallel()
+	router := routesRouter(true)
+	ctx := &RequestContext{Headers: map[string]string{":path": "/v1/messages", ":method": "POST"}}
+	response, err := router.HandleRequestBody(&ext_proc.ProcessingRequest_RequestBody{
+		RequestBody: &ext_proc.HttpBody{Body: []byte(`{"model":"rayline-router"}`)},
+	}, ctx)
+	if err != nil {
+		t.Fatalf("HandleRequestBody() error = %v", err)
+	}
+	body := response.GetImmediateResponse().Body
+	if strings.Contains(string(body), `"type":"error"`) {
+		t.Fatalf("routed request answered with the routes envelope: %s", body)
+	}
+	if !strings.Contains(string(body), "invalid inference request") {
+		t.Fatalf("routed request answered with %s, want the ingress refusal", body)
+	}
+}

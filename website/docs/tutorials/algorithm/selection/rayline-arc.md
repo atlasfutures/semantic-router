@@ -264,6 +264,102 @@ by embedding credentials in YAML. Configure `modal_key_env` and
 `modal_secret_env` together for a protected Modal web endpoint, or omit both
 for an internal endpoint that does not use Modal proxy authentication.
 
+## Route lookup
+
+A caller that owns its own provider keys and its own LLM bill can ask for the
+selection without the execution:
+
+```text
+POST /v1/routes
+```
+
+The request body is the body that caller was going to send anyway -- the same
+bytes `/v1/messages` or `/v1/responses` would have taken. The wire format is
+read from the body's own shape rather than declared, so moving a request from
+the executing endpoint to this one is a change of path and nothing else.
+Fields the selector does not read, such as `max_tokens` or `temperature`, are
+ignored rather than refused; `model` is ignored too, so neither auto-routing
+alias means anything here.
+
+The answer names the model, the reasoning configuration the arm was scored
+under, what it was chosen over, and both rate cards, so the caller can build
+the provider call and compute its own savings without a reporting call back:
+
+```json
+{
+  "route_id": "rte_7b929848",
+  "object": "route",
+  "model": "worker/model-id",
+  "thinking": { "mode": "off", "budget_tokens": null },
+  "confidence": 0.81,
+  "reason": "previous arm still warm",
+  "checkpoint": "<artifact revision>",
+  "alternatives": [{ "model": "other/model-id", "score": 0.62 }],
+  "baseline": { "model": "reference/model-id", "input_per_mtok": 3.0, "output_per_mtok": 15.0 },
+  "selected_pricing": { "input_per_mtok": 0.435, "output_per_mtok": 0.87 },
+  "warnings": [],
+  "usage": { "encoded_input_tokens": 1840, "cache_read_tokens": 1200 },
+  "latency_ms": 212
+}
+```
+
+`thinking.budget_tokens` is the budget the arm was scored under, not a
+suggestion. Executing a thinking-on arm with a different budget makes the
+decision and the execution diverge on the axis the choice was made on.
+
+`alternatives` explains the choice. It is not a failover list: those arms were
+scored and rejected for this turn, and an arm a hard constraint removed before
+scoring is not listed at all.
+
+`warnings` is always present and usually empty. It names the ways a request
+can produce a well-formed, plausible route while quietly not being the request
+that was asked for -- tools dropped before encoding, a checkpoint pin this
+cell cannot honour.
+
+`baseline` is the artifact's declared reference worker. An artifact that
+declares none omits the field rather than substituting a plausible model.
+
+### Episodes
+
+Three optional request headers shape continuity:
+
+| Header | Effect |
+|---|---|
+| `x-rayline-session` | the conversation this lookup belongs to. **Absent means stateless**, which is what a playground wants: experimenting must not advance a real conversation |
+| `x-rayline-branch` | a subagent lane inside that conversation, so concurrent subagents are separate trajectories rather than each other's previous turn |
+| `x-rayline-route-id` | a caller-minted id this router adopts and echoes, so one id spans both records |
+
+A lookup with a session commits its episode at decision time: there is no
+dispatch phase to commit against, so the chosen arm becomes the previous arm
+on the assumption that the caller ran it. A caller that routinely ignores the
+answer will see `episode.stayed` stop making sense, which is the signal that
+its episode ids are not stable per conversation.
+
+### Enabling it
+
+```yaml
+routing:
+  decisions:
+    - name: rayline_arc_reference_route
+      algorithm:
+        type: rayline_arc
+        on_error: fail_closed
+        rayline_arc:
+          routes_api:
+            enabled: true
+```
+
+Off by default, and deliberately not implied by configuring the algorithm. A
+lookup drives the encoder with no paying turn behind it, and lands on the same
+instance that serves routed traffic, so a cell acquires that load when an
+operator says so. While it is off the path answers 404 for every method, so a
+prober cannot tell a cell that has it switched off from one that never had it.
+
+Errors use the Anthropic error envelope rather than this router's own, because
+a caller of this endpoint is already parsing that envelope from the endpoint
+it would otherwise have called. A contended lookup answers 429, not 503: the
+router is healthy and briefly busy with that session.
+
 ## Deployment
 
 The public Helm profile is
