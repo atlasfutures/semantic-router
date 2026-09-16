@@ -18,6 +18,8 @@ func (r *OpenAIRouter) validateRequestHeaders(method string, path string) *ext_p
 		return validateAllowedMethod(r, method, "GET")
 	case "/v1/responses":
 		return r.validateResponseAPICollectionMethod(method)
+	case raylineRoutesAPIPath:
+		return r.validateRaylineRoutesMethod(method)
 	}
 
 	if extractResponseIDFromInputItemsPath(normalizedPath) != "" {
@@ -37,6 +39,16 @@ func (r *OpenAIRouter) validateRequestHeaders(method string, path string) *ext_p
 	}
 
 	return nil
+}
+
+// validateRaylineRoutesMethod keeps the endpoint invisible where it is not
+// configured: a disabled cell answers 404 for every method, so probing it
+// cannot distinguish "off here" from "never existed".
+func (r *OpenAIRouter) validateRaylineRoutesMethod(method string) *ext_proc.ProcessingResponse {
+	if !r.raylineRoutesAPIEnabled() {
+		return r.createErrorResponse(404, "endpoint not found")
+	}
+	return validateAllowedMethod(r, method, "POST")
 }
 
 func (r *OpenAIRouter) validateResponseAPICollectionMethod(method string) *ext_proc.ProcessingResponse {

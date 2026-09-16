@@ -78,6 +78,20 @@ type RaylineARCAlgorithmConfig struct {
 	// Off by default, and while it is off the header it reads means nothing, so
 	// a cell that has not opted in cannot be made to fail by a caller.
 	FaultInjection RaylineARCFaultInjectionConfig `yaml:"fault_injection,omitempty"`
+	// RoutesAPI serves POST /v1/routes from this cell: the selector's choice
+	// for a request, without executing it, for a caller that owns its own
+	// provider connectivity.
+	RoutesAPI RaylineARCRoutesAPIConfig `yaml:"routes_api,omitempty"`
+}
+
+// RaylineARCRoutesAPIConfig is the opt-in for the route lookup endpoint.
+//
+// Off by default, and deliberately not implied by configuring an ARC
+// decision. A lookup drives the encoder with no paying turn behind it and
+// lands on the same instance that serves routed traffic, so a cell acquires
+// that load when an operator says so and not by being upgraded.
+type RaylineARCRoutesAPIConfig struct {
+	Enabled bool `yaml:"enabled,omitempty"`
 }
 
 // RaylineARCFaultInjectionConfig is the opt-in for the dev-only fault header.

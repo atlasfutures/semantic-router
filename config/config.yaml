@@ -1639,6 +1639,14 @@ routing:
           # while it is on any caller can make this cell refuse a request.
           fault_injection:
             enabled: false
+          # routes_api serves POST /v1/routes from this cell: the selector's
+          # choice for a request, returned without executing it, for a caller
+          # that owns its own provider keys and LLM bill. Off, and not implied
+          # by configuring this algorithm -- a lookup drives the encoder with
+          # no paying turn behind it and lands on the same instance that
+          # serves routed traffic, so an operator opts in deliberately.
+          routes_api:
+            enabled: false
           encoder:
             base_url: http://rayline-arc-encoder:8000
             # Set base_url to empty and populate replicas + failover to opt
