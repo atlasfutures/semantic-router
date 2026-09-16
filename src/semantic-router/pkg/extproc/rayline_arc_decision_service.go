@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 
 	"github.com/google/uuid"
 
@@ -84,18 +85,123 @@ func (service *raylineARCDecisionService) RouteDecision(
 		return routerruntime.RouteDecision{}, prepareFailureError(failure)
 	}
 
-	worker, err := service.selectWorker(ctx, algorithm, selectionContext, requestContext)
+	selected, err := service.selectWorker(ctx, algorithm, selectionContext, requestContext)
 	if err != nil {
 		return routerruntime.RouteDecision{}, err
 	}
-	return routerruntime.RouteDecision{
+	worker := selected.worker
+	decisionFacts := routerruntime.RouteDecision{
 		SelectedWorker: worker.ID,
 		WorkerModel:    worker.Model,
 		// Only the declared provider slug. The dispatch backend would be a
 		// plausible substitute and is exactly the kind of near-miss that reads
 		// as measured in an offline join, so an undeclared provider stays empty.
 		Provider: worker.OpenRouterProviderSlug,
-	}, nil
+		Thinking: routerruntime.RouteThinking{
+			Mode:         worker.ThinkingMode,
+			BudgetTokens: worker.ReasoningBudgetTokens,
+		},
+		SelectedPricing: workerPricing(worker),
+		Warnings:        []string{},
+	}
+	decisionFacts.Confidence = selected.result.Confidence
+	decisionFacts.Reason = selected.result.Reasoning
+	trace := selected.result.RaylineARC
+	decisionFacts.Checkpoint = trace.ArtifactRevision
+	decisionFacts.Alternatives = routeAlternatives(trace, selected.catalog)
+	decisionFacts.Usage = routerruntime.RouteUsage{
+		EncodedInputTokens: trace.SerializedTokens,
+		CacheReadTokens:    trace.CachedPrefixTokens,
+	}
+	decisionFacts.Baseline = routeBaseline(selected.catalog, selected.reference)
+	// The episode is reported only when the caller joined one. A consult that
+	// did not gets its own single-turn trajectory, and reporting that back as
+	// turn zero would read as continuity the caller does not have.
+	if request.SessionID != "" {
+		decisionFacts.Episode = &routerruntime.RouteEpisode{
+			TurnIndex: trace.SessionRevision,
+			Stayed:    trace.Stayed,
+		}
+	}
+	return decisionFacts, nil
+}
+
+// selectedRoute is everything one decision publishes, kept together so the
+// assembly above reads facts rather than re-deriving them.
+type selectedRoute struct {
+	worker    raylinearc.WorkerManifest
+	result    *selection.SelectionResult
+	catalog   raylineARCWorkerProvider
+	reference string
+}
+
+func workerPricing(worker raylinearc.WorkerManifest) routerruntime.RoutePricing {
+	return routerruntime.RoutePricing{
+		InputPerMTok:  worker.EstimatedInputCostPerToken * tokensPerMillion,
+		OutputPerMTok: worker.EstimatedOutputCostPerToken * tokensPerMillion,
+	}
+}
+
+// tokensPerMillion converts the manifest's per-token rates to the per-million
+// unit every provider publishes and every caller reasons in.
+const tokensPerMillion = 1_000_000
+
+// routeAlternatives reports the arms that were scored and not chosen, best
+// first.
+//
+// Arms a hard constraint removed before scoring are left out: their adjusted
+// score is not a comparison this router made, and publishing it would invite
+// a caller to read a filtered-out arm as a near miss.
+func routeAlternatives(
+	trace *selection.RaylineARCTrace,
+	catalog raylineARCWorkerProvider,
+) []routerruntime.RouteAlternative {
+	alternatives := make([]routerruntime.RouteAlternative, 0, len(trace.AdjustedScores))
+	for arm, score := range trace.AdjustedScores {
+		if arm == trace.SelectedArm {
+			continue
+		}
+		if arm < len(trace.ExcludedArms) && trace.ExcludedArms[arm] {
+			continue
+		}
+		worker, found := catalog.Worker(arm)
+		if !found {
+			continue
+		}
+		alternatives = append(alternatives, routerruntime.RouteAlternative{
+			Model: worker.Model,
+			Score: float64(score),
+		})
+	}
+	sort.SliceStable(alternatives, func(first, second int) bool {
+		return alternatives[first].Score > alternatives[second].Score
+	})
+	return alternatives
+}
+
+// routeBaseline resolves the artifact's declared reference worker to a rate
+// card. An artifact that declares none yields an empty baseline rather than a
+// guess: a counterfactual nobody chose is worse than no counterfactual.
+func routeBaseline(
+	catalog raylineARCWorkerProvider,
+	reference string,
+) routerruntime.RouteBaseline {
+	if reference == "" {
+		return routerruntime.RouteBaseline{}
+	}
+	for arm := 0; ; arm++ {
+		worker, found := catalog.Worker(arm)
+		if !found {
+			return routerruntime.RouteBaseline{}
+		}
+		if worker.ID != reference {
+			continue
+		}
+		return routerruntime.RouteBaseline{
+			Model:   worker.Model,
+			Pricing: workerPricing(worker),
+		}
+	}
 }
 
 func (service *raylineARCDecisionService) selectWorker(
@@ -103,8 +209,8 @@ func (service *raylineARCDecisionService) selectWorker(
 	algorithm *config.AlgorithmConfig,
 	selectionContext *selection.SelectionContext,
 	requestContext *RequestContext,
-) (raylinearc.WorkerManifest, error) {
-	worker, failure, err := service.resolveWorker(
+) (selectedRoute, error) {
+	route, failure, err := service.resolveWorker(
 		ctx,
 		algorithm,
 		selectionContext,
@@ -112,12 +218,12 @@ func (service *raylineARCDecisionService) selectWorker(
 	)
 	if err != nil {
 		service.router.finalizeRaylineARCAbort(requestContext, failure)
-		return raylinearc.WorkerManifest{}, err
+		return selectedRoute{}, err
 	}
 	if err := commitDecisionOnlyEpisode(ctx, requestContext); err != nil {
-		return raylinearc.WorkerManifest{}, err
+		return selectedRoute{}, err
 	}
-	return worker, nil
+	return route, nil
 }
 
 // resolveWorker runs selection and maps the chosen arm back to its worker. It
@@ -129,9 +235,9 @@ func (service *raylineARCDecisionService) resolveWorker(
 	algorithm *config.AlgorithmConfig,
 	selectionContext *selection.SelectionContext,
 	requestContext *RequestContext,
-) (raylinearc.WorkerManifest, string, error) {
+) (selectedRoute, string, error) {
 	if err := selection.ValidateSelectionContext(selectionContext); err != nil {
-		return raylinearc.WorkerManifest{}, "invalid_context", err
+		return selectedRoute{}, "invalid_context", err
 	}
 	selector := service.router.selectorForDecisionMethod(
 		selection.MethodRaylineARC,
@@ -139,31 +245,31 @@ func (service *raylineARCDecisionService) resolveWorker(
 		requestContext,
 	)
 	if selector == nil {
-		return raylinearc.WorkerManifest{}, "missing_selector", errors.New(
+		return selectedRoute{}, "missing_selector", errors.New(
 			"no rayline ARC selector is registered",
 		)
 	}
 	result, err := selector.Select(ctx, selectionContext)
 	if err != nil {
-		return raylinearc.WorkerManifest{}, "selection_failed", selectionFailureError(err)
+		return selectedRoute{}, "selection_failed", selectionFailureError(err)
 	}
 	if err := selection.ValidateSelectionResult(selectionContext, result); err != nil {
-		return raylinearc.WorkerManifest{}, "invalid_result", err
+		return selectedRoute{}, "invalid_result", err
 	}
 	if result.RaylineARC == nil {
-		return raylinearc.WorkerManifest{}, "missing_trace", errors.New(
+		return selectedRoute{}, "missing_trace", errors.New(
 			"rayline ARC selection returned no trace",
 		)
 	}
 	provider, ok := selector.(raylineARCWorkerProvider)
 	if !ok {
-		return raylinearc.WorkerManifest{}, "missing_manifest", errors.New(
+		return selectedRoute{}, "missing_manifest", errors.New(
 			"rayline ARC selector exposes no worker manifest",
 		)
 	}
 	worker, found := provider.Worker(result.RaylineARC.SelectedArm)
 	if !found || worker.ID != result.SelectedModel {
-		return raylinearc.WorkerManifest{}, "worker_mismatch", errors.New(
+		return selectedRoute{}, "worker_mismatch", errors.New(
 			"rayline ARC selected arm does not match its worker manifest",
 		)
 	}
@@ -174,7 +280,11 @@ func (service *raylineARCDecisionService) resolveWorker(
 		result.RaylineARC.EncoderReplicaID,
 		result.RaylineARC.EncoderVisitedReplicaIDs,
 	)
-	return worker, "", nil
+	route := selectedRoute{worker: worker, result: result, catalog: provider}
+	if baseline, ok := selector.(raylineARCReferenceWorkerProvider); ok {
+		route.reference = baseline.ReferenceWorker()
+	}
+	return route, "", nil
 }
 
 // commitDecisionOnlyEpisode advances the episode at decision time. The request
@@ -197,11 +307,11 @@ func commitDecisionOnlyEpisode(ctx context.Context, requestContext *RequestConte
 	return nil
 }
 
-// consultWireFormat is the wire contract a route consult body is read as.
-// Callers of this bridge relay the Anthropic Messages request they are about
-// to send, so the consult reads that body under the same codec the routed
-// ingress path uses.
-const consultWireFormat = llmprotocol.AnthropicMessagesV1
+// defaultConsultWireFormat is the wire contract a route consult body is read
+// as when the caller names none. Callers of the legacy consult bridge relay
+// the Anthropic Messages request they are about to send, so that body reads
+// under the same codec the routed ingress path uses.
+const defaultConsultWireFormat = llmprotocol.AnthropicMessagesV1
 
 // decisionOnlyRequestContext is the minimum the ARC preparation path reads. It
 // is not a real request: there is no stream, no upstream, and no dispatch.
@@ -230,8 +340,12 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 			err,
 		)
 	}
+	wireFormat := request.WireFormat
+	if wireFormat == "" {
+		wireFormat = defaultConsultWireFormat
+	}
 	decoded, envelope, _, err := engine.DecodeRequestForMutation(
-		consultWireFormat,
+		wireFormat,
 		request.Body,
 	)
 	if err != nil {
@@ -240,7 +354,7 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 			err,
 		)
 	}
-	decoded.Trusted.SourceFormat = consultWireFormat
+	decoded.Trusted.SourceFormat = wireFormat
 	decoded.Trusted.CorrelationID = request.DecisionID
 	episodeIdentity := request.SessionID
 	if episodeIdentity == "" {
@@ -249,7 +363,7 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 	return &RequestContext{
 		Headers:          map[string]string{algorithm.RaylineARC.Episode.IDHeader: episodeIdentity},
 		RequestID:        request.DecisionID,
-		SourceFormat:     consultWireFormat,
+		SourceFormat:     wireFormat,
 		SemanticRequest:  &decoded,
 		ProtocolEnvelope: envelope,
 		TraceContext:     ctx,

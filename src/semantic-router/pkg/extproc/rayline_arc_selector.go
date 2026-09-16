@@ -64,6 +64,13 @@ type raylineARCWorkerProvider interface {
 	Worker(int) (raylinearc.WorkerManifest, bool)
 }
 
+// raylineARCReferenceWorkerProvider is separate from the worker provider
+// because the reference worker is an artifact policy fact, not a catalog
+// lookup: a scorer can know the arms without declaring a counterfactual.
+type raylineARCReferenceWorkerProvider interface {
+	ReferenceWorker() string
+}
+
 type runtimeARCScorer struct {
 	runtime *raylinearc.Runtime
 	policy  *raylinearc.Policy
@@ -85,6 +92,10 @@ func (scorer *runtimeARCScorer) Worker(
 	index int,
 ) (raylinearc.WorkerManifest, bool) {
 	return scorer.runtime.Worker(index)
+}
+
+func (scorer *runtimeARCScorer) ReferenceWorker() string {
+	return scorer.policy.ReferenceWorker()
 }
 
 func (scorer *runtimeARCScorer) Select(
@@ -194,6 +205,18 @@ func (selector *raylineARCSelector) Worker(
 		return raylinearc.WorkerManifest{}, false
 	}
 	return provider.Worker(index)
+}
+
+func (selector *raylineARCSelector) ReferenceWorker() string {
+	armed := selector.armedComponents()
+	if armed == nil {
+		return ""
+	}
+	provider, ok := armed.scorer.(raylineARCReferenceWorkerProvider)
+	if !ok {
+		return ""
+	}
+	return provider.ReferenceWorker()
 }
 
 func (selector *raylineARCSelector) Select(
