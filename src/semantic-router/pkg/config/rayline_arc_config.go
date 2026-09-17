@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -37,11 +38,21 @@ const (
 	// outage a router should sit through silently; past that the schedule is
 	// a misconfiguration, not a policy.
 	maxRaylineARCProbeRetrySeconds = 3600
+	// DefaultRaylineARCRoutesDeadlineMS is the authority budget a lookup is
+	// held to: 1.5 s end to end, of which the cell owns most.
+	DefaultRaylineARCRoutesDeadlineMS = 1500
+	// A lookup shorter than this cannot survive a cold encode, and one longer
+	// than this has stopped being a synchronous question.
+	minRaylineARCRoutesDeadlineMS = 100
+	maxRaylineARCRoutesDeadlineMS = 30000
 )
 
 var (
 	raylineARCHeaderNamePattern = regexp.MustCompile(`^[!#$%&'*+.^_` + "`" + `|~0-9a-z-]+$`)
 	raylineARCEnvNamePattern    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	// The label is published to callers and read back in support, so it stays
+	// in the character set that survives a URL, a log line and a shell.
+	raylineARCCheckpointLabelPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 )
 
 // RaylineARCAlgorithmConfig configures the artifact-verified Rayline ARC
@@ -92,6 +103,23 @@ type RaylineARCAlgorithmConfig struct {
 // that load when an operator says so and not by being upgraded.
 type RaylineARCRoutesAPIConfig struct {
 	Enabled bool `yaml:"enabled,omitempty"`
+	// DeadlineMS bounds one lookup end to end.
+	//
+	// It exists because the encoder's own total_timeout_seconds is sized for
+	// a dispatched turn that streams for minutes, and a lookup is a question
+	// someone is waiting on. Without a bound of its own, a wedged encoder
+	// holds the caller for the routed turn's timeout.
+	//
+	// Zero selects the shipped default.
+	DeadlineMS int `yaml:"deadline_ms,omitempty"`
+	// CheckpointLabel is the human-readable name this cell reports for the
+	// artifact it serves, published as "<label>.<hash>".
+	//
+	// It is separate from artifact_revision because that pin is deployment
+	// private -- the Helm profile sources it from a Secret -- and must not
+	// reach a caller. Empty publishes the hash alone, which identifies the
+	// checkpoint but tells a reader nothing.
+	CheckpointLabel string `yaml:"checkpoint_label,omitempty"`
 }
 
 // RaylineARCFaultInjectionConfig is the opt-in for the dev-only fault header.
@@ -99,6 +127,15 @@ type RaylineARCRoutesAPIConfig struct {
 // not, and anything finer would be a second way to configure failure.
 type RaylineARCFaultInjectionConfig struct {
 	Enabled bool `yaml:"enabled,omitempty"`
+}
+
+// EffectiveDeadline is the lookup bound this cell applies, with the shipped
+// default substituted for an unset value.
+func (cfg RaylineARCRoutesAPIConfig) EffectiveDeadline() time.Duration {
+	if cfg.DeadlineMS <= 0 {
+		return DefaultRaylineARCRoutesDeadlineMS * time.Millisecond
+	}
+	return time.Duration(cfg.DeadlineMS) * time.Millisecond
 }
 
 // RaylineARCEncoderConfig pins the dedicated vLLM pooling service contract.
@@ -185,6 +222,41 @@ func validateRaylineARCAlgorithmConfig(cfg *RaylineARCAlgorithmConfig) error {
 	if cfg.Encoder.usesDynamicMembership() &&
 		cfg.Episode.Backend != RaylineARCBackendRedis {
 		return fmt.Errorf("episode: redis backend is required with dynamic encoder membership")
+	}
+	if err := validateRaylineARCRoutesAPIConfig(cfg.RoutesAPI); err != nil {
+		return fmt.Errorf("routes_api: %w", err)
+	}
+	return nil
+}
+
+// validateRaylineARCRoutesAPIConfig bounds the lookup deadline from both
+// sides. A deadline longer than the encoder's own total timeout cannot bound
+// anything, and one shorter than a cold encode guarantees a 504 on the first
+// request after a scale-up.
+func validateRaylineARCRoutesAPIConfig(cfg RaylineARCRoutesAPIConfig) error {
+	if cfg.DeadlineMS < 0 || cfg.DeadlineMS > maxRaylineARCRoutesDeadlineMS {
+		return fmt.Errorf(
+			"deadline_ms must be between 0 and %d",
+			maxRaylineARCRoutesDeadlineMS,
+		)
+	}
+	if cfg.DeadlineMS > 0 && cfg.DeadlineMS < minRaylineARCRoutesDeadlineMS {
+		return fmt.Errorf(
+			"deadline_ms must be at least %d",
+			minRaylineARCRoutesDeadlineMS,
+		)
+	}
+	if len(cfg.CheckpointLabel) > maxRaylineARCConfigStringLength {
+		return fmt.Errorf(
+			"checkpoint_label must be at most %d bytes",
+			maxRaylineARCConfigStringLength,
+		)
+	}
+	if cfg.CheckpointLabel != "" &&
+		!raylineARCCheckpointLabelPattern.MatchString(cfg.CheckpointLabel) {
+		return fmt.Errorf(
+			"checkpoint_label must be lowercase alphanumerics, dashes or underscores",
+		)
 	}
 	return nil
 }

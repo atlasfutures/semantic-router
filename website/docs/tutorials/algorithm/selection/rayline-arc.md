@@ -291,9 +291,7 @@ the provider call and compute its own savings without a reporting call back:
   "object": "route",
   "model": "worker/model-id",
   "thinking": { "mode": "off", "budget_tokens": null },
-  "confidence": 0.81,
-  "reason": "previous arm still warm",
-  "checkpoint": "<artifact revision>",
+  "checkpoint": "arc-2026-09-12.c82a1f3e",
   "alternatives": [{ "model": "other/model-id", "score": 0.62 }],
   "baseline": { "model": "reference/model-id", "input_per_mtok": 3.0, "output_per_mtok": 15.0 },
   "selected_pricing": { "input_per_mtok": 0.435, "output_per_mtok": 0.87 },
@@ -318,6 +316,23 @@ cell cannot honour.
 
 `baseline` is the artifact's declared reference worker. An artifact that
 declares none omits the field rather than substituting a plausible model.
+
+`checkpoint` pairs the release name an operator set in `checkpoint_label` with
+the artifact's hash. The hash pins exactly one artifact but tells a reader
+nothing; the label is readable but is not unique across deployments that reuse
+a release name. Neither half alone is the identity.
+
+There is deliberately no confidence score and no per-request explanation. The
+selector has no source for either today, and a constant published under those
+names reads as measured.
+
+### Timing
+
+One lookup is bounded by `deadline_ms`, default 1500, and a lookup that
+exceeds it answers 504. The bound is the endpoint's own: the encoder's
+`total_timeout_seconds` is sized for a dispatched turn that streams for
+minutes and wraps whatever context it is handed, so a lookup that inherited it
+would leave a waiting caller for the routed turn's timeout.
 
 ### Episodes
 
@@ -347,6 +362,8 @@ routing:
         rayline_arc:
           routes_api:
             enabled: true
+            deadline_ms: 1500
+            checkpoint_label: arc-2026-09-12
 ```
 
 Off by default, and deliberately not implied by configuring the algorithm. A

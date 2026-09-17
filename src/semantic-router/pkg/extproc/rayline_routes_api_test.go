@@ -17,7 +17,9 @@ limitations under the License.
 package extproc
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -37,7 +39,10 @@ func routesRouter(enabled bool) *OpenAIRouter {
 				Type:    config.RaylineARCAlgorithmType,
 				OnError: "fail_closed",
 				RaylineARC: &config.RaylineARCAlgorithmConfig{
-					RoutesAPI: config.RaylineARCRoutesAPIConfig{Enabled: enabled},
+					RoutesAPI: config.RaylineARCRoutesAPIConfig{
+						Enabled:         enabled,
+						CheckpointLabel: "arc-2026-09-12",
+					},
 				},
 			},
 		}}},
@@ -220,6 +225,7 @@ func TestRaylineRoutesPayloadOmitsABudgetWhenThinkingIsOff(t *testing.T) {
 	t.Parallel()
 	payload := raylineRoutesPayload(
 		"rte_1234abcd",
+		"arc-2026-09-12.c82a1f3e",
 		routerruntime.RouteDecision{
 			WorkerModel: "deepseek/deepseek-v4-pro",
 			Thinking:    routerruntime.RouteThinking{Mode: "off"},
@@ -259,12 +265,11 @@ func TestRaylineRoutesPayloadCarriesTheWholeDecision(t *testing.T) {
 	t.Parallel()
 	payload := raylineRoutesPayload(
 		"rte_1234abcd",
+		"arc-2026-09-12.c82a1f3e",
 		routerruntime.RouteDecision{
 			WorkerModel: "deepseek/deepseek-v4-pro",
 			Thinking:    routerruntime.RouteThinking{Mode: "on", BudgetTokens: 4096},
-			Confidence:  0.81,
-			Reason:      "previous arm still warm",
-			Checkpoint:  "c82-dev",
+			Checkpoint:  "c82a1f3e",
 			Alternatives: []routerruntime.RouteAlternative{
 				{Model: "z-ai/glm-5.3-flash", Score: 0.62},
 			},
@@ -406,5 +411,92 @@ func TestRaylineRoutesLeavesRoutedTrafficAlone(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "invalid inference request") {
 		t.Fatalf("routed request answered with %s, want the ingress refusal", body)
+	}
+}
+
+// A constant is worse than an absent field: it reads as measured. Neither
+// confidence nor reason had a real source, so neither is published.
+func TestRaylineRoutesPublishesNoUnsourcedFields(t *testing.T) {
+	t.Parallel()
+	payload := raylineRoutesPayload(
+		"rte_1234abcd",
+		"arc-2026-09-12.c82a1f3e",
+		routerruntime.RouteDecision{WorkerModel: "deepseek/deepseek-v4-pro"},
+		nil,
+		time.Millisecond,
+	)
+	body := marshalRoutesPayload(t, payload)
+	for _, field := range []string{"confidence", "reason"} {
+		if _, present := body[field]; present {
+			t.Fatalf("%s is published, but this router has no source for it", field)
+		}
+	}
+}
+
+// The hash pins the artifact and the label says which release it is. Neither
+// alone does both, so the pair is the identity and either half alone is a
+// degraded form of it rather than a different format.
+func TestRaylineRoutesCheckpointPairsLabelAndHash(t *testing.T) {
+	t.Parallel()
+	for name, testCase := range map[string]struct {
+		label string
+		hash  string
+		want  string
+	}{
+		"both":     {label: "arc-2026-09-12", hash: "c82a1f3e", want: "arc-2026-09-12.c82a1f3e"},
+		"no label": {label: "", hash: "c82a1f3e", want: "c82a1f3e"},
+		"no hash":  {label: "arc-2026-09-12", hash: "", want: "arc-2026-09-12"},
+		"neither":  {label: "", hash: "", want: ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := raylineRoutesCheckpoint(testCase.label, testCase.hash); got != testCase.want {
+				t.Fatalf("raylineRoutesCheckpoint() = %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
+
+// The encoder is configured for a dispatched turn that streams for minutes
+// and wraps whatever context it is handed, so the lookup has to impose its
+// own bound or inherit one measured in minutes.
+func TestRaylineRoutesDeadlineDefaultsToTheAuthorityBudget(t *testing.T) {
+	t.Parallel()
+	settings := config.RaylineARCRoutesAPIConfig{Enabled: true}
+	if got := settings.EffectiveDeadline(); got != 1500*time.Millisecond {
+		t.Fatalf("EffectiveDeadline() = %v, want the 1.5s authority budget", got)
+	}
+	settings.DeadlineMS = 800
+	if got := settings.EffectiveDeadline(); got != 800*time.Millisecond {
+		t.Fatalf("EffectiveDeadline() = %v, want 800ms", got)
+	}
+}
+
+// Expiry is read from the lookup's own context because the selector converts
+// every failure to a bounded class that does not unwrap to a context error.
+// A 503 would send the caller into fallback and read as an outage; running
+// out of budget is neither.
+func TestRaylineRoutesReportsAnExpiredLookupAsATimeout(t *testing.T) {
+	t.Parallel()
+	router := routesRouter(true)
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	response := router.raylineRoutesFailure(
+		expired,
+		"rte_1234abcd",
+		errors.New("rayline ARC selection failed: encoder"),
+	)
+	if code := immediateStatusCode(t, response); code != 504 {
+		t.Fatalf("status = %d, want 504", code)
+	}
+	live, liveCancel := context.WithCancel(context.Background())
+	defer liveCancel()
+	response = router.raylineRoutesFailure(
+		live,
+		"rte_1234abcd",
+		errors.New("rayline ARC selection failed: encoder"),
+	)
+	if code := immediateStatusCode(t, response); code != 503 {
+		t.Fatalf("status = %d, want 503 while the budget still holds", code)
 	}
 }

@@ -1647,6 +1647,17 @@ routing:
           # serves routed traffic, so an operator opts in deliberately.
           routes_api:
             enabled: false
+            # deadline_ms bounds one lookup end to end. The encoder's own
+            # total_timeout_seconds is sized for a dispatched turn that
+            # streams for minutes and wraps whatever context it is handed, so
+            # without a bound here a wedged encoder holds a caller who is
+            # waiting on a single answer. Zero selects 1500 ms.
+            deadline_ms: 0
+            # checkpoint_label is the human-readable release name published
+            # beside the artifact hash, as "<label>.<hash>". It is separate
+            # from artifact_revision because that pin is deployment-private.
+            # Empty publishes the hash alone.
+            checkpoint_label: ""
           encoder:
             base_url: http://rayline-arc-encoder:8000
             # Set base_url to empty and populate replicas + failover to opt

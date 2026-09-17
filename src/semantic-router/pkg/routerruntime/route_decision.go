@@ -68,10 +68,6 @@ type RouteDecision struct {
 	// the caller to invent one, and decision and execution then diverge on
 	// the exact axis the choice was made on.
 	Thinking RouteThinking
-	// Confidence and Reason explain the choice. Both come from the selection
-	// result rather than from this package's own reading of it.
-	Confidence float64
-	Reason     string
 	// Checkpoint identifies the artifact revision that scored this route. It
 	// is the already-hashed deployment identity, never the raw pin.
 	Checkpoint string

@@ -26,6 +26,7 @@ import (
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/google/uuid"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
@@ -74,8 +75,6 @@ type raylineRoutesResponse struct {
 	Object       string                 `json:"object"`
 	Model        string                 `json:"model"`
 	Thinking     raylineRoutesThinking  `json:"thinking"`
-	Confidence   float64                `json:"confidence"`
-	Reason       string                 `json:"reason,omitempty"`
 	Checkpoint   string                 `json:"checkpoint,omitempty"`
 	Alternatives []raylineRoutesScore   `json:"alternatives"`
 	Baseline     *raylineRoutesBaseline `json:"baseline,omitempty"`
@@ -126,8 +125,14 @@ type raylineRoutesUsage struct {
 // configured. The endpoint drives the encoder with no paying turn behind it,
 // so a cell should not acquire that traffic by upgrading.
 func (r *OpenAIRouter) raylineRoutesAPIEnabled() bool {
+	return r.raylineRoutesConfig() != nil
+}
+
+// raylineRoutesConfig returns the endpoint's configuration, or nil where this
+// deployment does not serve it.
+func (r *OpenAIRouter) raylineRoutesConfig() *config.RaylineARCRoutesAPIConfig {
 	if r == nil || r.Config == nil {
-		return false
+		return nil
 	}
 	for index := range r.Config.Decisions {
 		algorithm := r.Config.Decisions[index].Algorithm
@@ -135,10 +140,25 @@ func (r *OpenAIRouter) raylineRoutesAPIEnabled() bool {
 			continue
 		}
 		if algorithm.RaylineARC.RoutesAPI.Enabled {
-			return true
+			return &algorithm.RaylineARC.RoutesAPI
 		}
 	}
-	return false
+	return nil
+}
+
+// raylineRoutesCheckpoint composes the public checkpoint identity.
+//
+// The hash alone identifies the artifact but tells a reader nothing; the
+// label alone is not unique across deployments that reuse a release name. The
+// pair is readable and still pins exactly one artifact.
+func raylineRoutesCheckpoint(label string, revisionHash string) string {
+	if label == "" {
+		return revisionHash
+	}
+	if revisionHash == "" {
+		return label
+	}
+	return label + "." + revisionHash
 }
 
 // isRaylineRoutesRequest matches the request the body phase must answer itself
@@ -187,10 +207,21 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		)
 	}
 
+	// The deadline is this endpoint's own, not the encoder's. The encoder is
+	// configured for a dispatched turn that streams for minutes and wraps
+	// whatever context it is handed; the caller here is waiting on an answer,
+	// so the bound has to be imposed from outside.
+	settings := r.raylineRoutesConfig()
+	lookupContext, cancel := context.WithTimeout(
+		r.raylineRoutesContext(ctx),
+		settings.EffectiveDeadline(),
+	)
+	defer cancel()
+
 	routeID := raylineRoutesRouteID(ctx)
 	started := time.Now()
 	decision, err := runtime.RouteDecision(
-		r.raylineRoutesContext(ctx),
+		lookupContext,
 		routerruntime.RouteDecisionRequest{
 			Body:       body,
 			DecisionID: routeID,
@@ -199,7 +230,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		},
 	)
 	if err != nil {
-		return r.raylineRoutesFailure(routeID, err)
+		return r.raylineRoutesFailure(lookupContext, routeID, err)
 	}
 
 	logging.ComponentEvent("extproc", "routing_decision", map[string]interface{}{
@@ -210,6 +241,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	})
 	return r.createJSONResponse(200, raylineRoutesPayload(
 		routeID,
+		raylineRoutesCheckpoint(settings.CheckpointLabel, decision.Checkpoint),
 		decision,
 		warnings,
 		time.Since(started),
@@ -226,16 +258,39 @@ func (r *OpenAIRouter) raylineRoutesContext(ctx *RequestContext) context.Context
 	return context.Background()
 }
 
+// raylineRoutesFailure classifies a failed lookup.
+//
+// Expiry is read from the lookup's own context rather than from the error.
+// The selector converts every failure into a bounded class string on purpose,
+// so a cancelled encode arrives here as "encoder" and a cancelled lease as
+// "episode_timeout", neither of which unwraps to context.DeadlineExceeded.
+// The context is the only thing that still knows, and it is sufficient: if
+// this deadline fired, the lookup ran out of time whatever else also went
+// wrong on the way.
 func (r *OpenAIRouter) raylineRoutesFailure(
+	lookupContext context.Context,
 	routeID string,
 	err error,
 ) *ext_proc.ProcessingResponse {
 	contended := errors.Is(err, routerruntime.ErrRouteDecisionContended)
+	expired := errors.Is(lookupContext.Err(), context.DeadlineExceeded)
 	logging.ComponentErrorEvent("extproc", "routing_decision_failed", map[string]interface{}{
 		"routing_decision_id": routeID,
 		"error":               err.Error(),
 		"contended":           contended,
+		"deadline_exceeded":   expired,
 	})
+	// A lookup that ran out of time is reported as exactly that. Folding it
+	// into the 503 would tell the caller this router is unhealthy when the
+	// honest answer is that it did not answer in the budget they are entitled
+	// to, and the two have different fixes.
+	if expired {
+		return r.createRaylineRoutesError(
+			504,
+			"timeout_error",
+			"route lookup exceeded its deadline",
+		)
+	}
 	// Contention is not an outage. A 503 sends a caller into fallback and
 	// reads as this router being down; a contended lookup is a healthy router
 	// that is briefly busy with this very session, so it says so and says
@@ -255,6 +310,7 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 
 func raylineRoutesPayload(
 	routeID string,
+	checkpoint string,
 	decision routerruntime.RouteDecision,
 	warnings []string,
 	elapsed time.Duration,
@@ -264,9 +320,7 @@ func raylineRoutesPayload(
 		Object:       "route",
 		Model:        decision.WorkerModel,
 		Thinking:     raylineRoutesThinkingOf(decision.Thinking),
-		Confidence:   decision.Confidence,
-		Reason:       decision.Reason,
-		Checkpoint:   decision.Checkpoint,
+		Checkpoint:   checkpoint,
 		Alternatives: raylineRoutesAlternatives(decision.Alternatives),
 		Pricing: raylineRoutesPricing{
 			InputPerMTok:  decision.SelectedPricing.InputPerMTok,

@@ -104,8 +104,6 @@ func (service *raylineARCDecisionService) RouteDecision(
 		SelectedPricing: workerPricing(worker),
 		Warnings:        []string{},
 	}
-	decisionFacts.Confidence = selected.result.Confidence
-	decisionFacts.Reason = selected.result.Reasoning
 	trace := selected.result.RaylineARC
 	decisionFacts.Checkpoint = trace.ArtifactRevision
 	decisionFacts.Alternatives = routeAlternatives(trace, selected.catalog)
