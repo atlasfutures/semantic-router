@@ -34,6 +34,15 @@ type RouteDecisionRequest struct {
 	// previous-arm state would silently change later selections. The
 	// reference decision server holds the same rule.
 	ExecutedModel string
+	// Ephemeral asks for a decision that joins no trajectory: no episode
+	// lease, no episode store read or write, and nothing left behind.
+	//
+	// It is separate from an empty SessionID because the two are different
+	// questions. An empty SessionID says the caller named no conversation;
+	// this says the deployment does not keep episodes for these calls at all.
+	// A caller that names a conversation on a cell with episodes switched off
+	// still gets an ephemeral decision, and is told so.
+	Ephemeral bool
 	// WireFormat names the protocol Body is written in.
 	//
 	// Empty selects Anthropic Messages, which is what the legacy consult

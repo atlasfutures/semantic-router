@@ -192,11 +192,12 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		return r.createRaylineRoutesError(404, "not_found_error", "endpoint not found")
 	}
 
+	settings := r.raylineRoutesConfig()
 	wireFormat, warnings, detail := readRaylineRoutesBody(body)
 	if detail != "" {
 		return r.createRaylineRoutesError(400, "invalid_request_error", detail)
 	}
-	warnings = append(warnings, raylineRoutesHeaderWarnings(ctx)...)
+	warnings = append(warnings, raylineRoutesHeaderWarnings(ctx, settings)...)
 
 	runtime := r.routeDecisionRuntimeState()
 	if runtime == nil {
@@ -211,7 +212,6 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	// configured for a dispatched turn that streams for minutes and wraps
 	// whatever context it is handed; the caller here is waiting on an answer,
 	// so the bound has to be imposed from outside.
-	settings := r.raylineRoutesConfig()
 	lookupContext, cancel := context.WithTimeout(
 		r.raylineRoutesContext(ctx),
 		settings.EffectiveDeadline(),
@@ -219,13 +219,20 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	defer cancel()
 
 	routeID := raylineRoutesRouteID(ctx)
+	episode := raylineRoutesEpisodeIdentity(ctx)
+	// Ephemeral unless this cell keeps episodes and the caller named a
+	// conversation. Both halves are required: without the identity there is
+	// no trajectory to join, and without the setting this cell does not keep
+	// one to join it to.
+	ephemeral := episode == "" || !settings.EpisodeWrites
 	started := time.Now()
 	decision, err := runtime.RouteDecision(
 		lookupContext,
 		routerruntime.RouteDecisionRequest{
 			Body:       body,
 			DecisionID: routeID,
-			SessionID:  raylineRoutesEpisodeIdentity(ctx),
+			SessionID:  episode,
+			Ephemeral:  ephemeral,
 			WireFormat: wireFormat,
 		},
 	)
@@ -417,10 +424,21 @@ func raylineRoutesBodyWarnings(envelope map[string]json.RawMessage) []string {
 	return warnings
 }
 
-func raylineRoutesHeaderWarnings(ctx *RequestContext) []string {
+func raylineRoutesHeaderWarnings(
+	ctx *RequestContext,
+	settings *config.RaylineARCRoutesAPIConfig,
+) []string {
 	warnings := []string{}
 	if raylineRoutesHeader(ctx, raylineRoutesCheckpointHeader) != "" {
 		warnings = append(warnings, "checkpoint_not_pinned: this cell serves one checkpoint and the requested pin was ignored")
+	}
+	// A caller who sends a conversation id and gets a plausible route back has
+	// no way to see that continuity was never applied. Every turn would look
+	// like a first turn, and the only symptom is routing that is quietly worse
+	// than it should be.
+	if settings != nil && !settings.EpisodeWrites &&
+		raylineRoutesHeader(ctx, raylineRoutesSessionHeader) != "" {
+		warnings = append(warnings, "episode_not_tracked: this cell keeps no episodes for route lookups, so the conversation did not influence this route")
 	}
 	return warnings
 }
@@ -431,8 +449,9 @@ func raylineRoutesHeaderWarnings(ctx *RequestContext) []string {
 // matching how the gateway already composes userId:conversationId[:branch]:
 // two concurrent subagents on one conversation are two trajectories, and
 // scoring them as one would make each read as the other's previous turn.
-// An absent session yields an empty identity, and the runtime gives that call
-// its own single-turn episode.
+// An absent session yields an empty identity, which makes the lookup
+// ephemeral. So does a cell with episode_writes off, whatever the caller
+// sent.
 func raylineRoutesEpisodeIdentity(ctx *RequestContext) string {
 	session := raylineRoutesHeader(ctx, raylineRoutesSessionHeader)
 	if session == "" {

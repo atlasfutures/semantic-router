@@ -112,6 +112,16 @@ type RaylineARCRoutesAPIConfig struct {
 	//
 	// Zero selects the shipped default.
 	DeadlineMS int `yaml:"deadline_ms,omitempty"`
+	// EpisodeWrites lets a lookup join a conversation's trajectory, with the
+	// episode lease and episode store round trip that implies.
+	//
+	// Off by default, so a lookup costs nothing but the encode. The reason to
+	// turn it on is a gateway that calls this endpoint on every turn of an
+	// agentic run: a stable episode identity is also the encoder's prefix
+	// cache key, so continuity and encoder efficiency arrive together, and
+	// neither is reachable without the lease that serializes concurrent turns
+	// on one conversation.
+	EpisodeWrites bool `yaml:"episode_writes,omitempty"`
 	// CheckpointLabel is the human-readable name this cell reports for the
 	// artifact it serves, published as "<label>.<hash>".
 	//

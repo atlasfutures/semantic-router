@@ -1653,6 +1653,13 @@ routing:
             # without a bound here a wedged encoder holds a caller who is
             # waiting on a single answer. Zero selects 1500 ms.
             deadline_ms: 0
+            # episode_writes lets a lookup join a conversation's trajectory,
+            # with the episode lease and store round trip that implies. Off,
+            # so a lookup costs nothing but the encode. Turn it on for a
+            # gateway that calls this endpoint every turn of an agentic run: a
+            # stable episode identity is also the encoder's prefix cache key,
+            # so continuity and encoder efficiency arrive together.
+            episode_writes: false
             # checkpoint_label is the human-readable release name published
             # beside the artifact hash, as "<label>.<hash>". It is separate
             # from artifact_revision because that pin is deployment-private.

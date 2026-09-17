@@ -344,11 +344,26 @@ Three optional request headers shape continuity:
 | `x-rayline-branch` | a subagent lane inside that conversation, so concurrent subagents are separate trajectories rather than each other's previous turn |
 | `x-rayline-route-id` | a caller-minted id this router adopts and echoes, so one id spans both records |
 
-A lookup with a session commits its episode at decision time: there is no
-dispatch phase to commit against, so the chosen arm becomes the previous arm
-on the assumption that the caller ran it. A caller that routinely ignores the
-answer will see `episode.stayed` stop making sense, which is the signal that
-its episode ids are not stable per conversation.
+Continuity also has to be switched on. With `episode_writes` off, which is the
+default, every lookup is ephemeral: the episode identity is minted per call
+and thrown away, nothing is leased and nothing is stored, so a lookup costs
+the encode and nothing else. A caller that sends `x-rayline-session` to such a
+cell gets an `episode_not_tracked` warning rather than silence, because a
+route computed without the conversation is indistinguishable from one computed
+with it.
+
+Turn `episode_writes` on for a gateway that calls this endpoint on every turn
+of an agentic run. A stable episode identity is also the encoder's prefix
+cache key, so continuity and encoder efficiency arrive together, and neither
+is reachable without the lease that serializes concurrent turns on one
+conversation.
+
+A tracked lookup commits its episode at decision time: there is no dispatch
+phase to commit against, so the chosen arm becomes the previous arm on the
+assumption that the caller ran it. A caller that routinely ignores the answer
+will see `episode.stayed` stop making sense, which is the signal that its
+episode ids are not stable per conversation. `episode` is omitted entirely
+from an ephemeral lookup rather than reported as turn zero.
 
 ### Enabling it
 
@@ -364,6 +379,7 @@ routing:
             enabled: true
             deadline_ms: 1500
             checkpoint_label: arc-2026-09-12
+            episode_writes: false
 ```
 
 Off by default, and deliberately not implied by configuring the algorithm. A

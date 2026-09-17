@@ -86,6 +86,7 @@ func TestBuildRaylineARCSelectionContextParsesExactCloseSignal(t *testing.T) {
 				algorithm,
 				requestContext,
 				[]config.ModelRef{{Model: "arm-0"}, {Model: "arm-1"}},
+				raylineARCEpisodeRequired,
 			)
 			if selectionContext.PreparationFailure != test.wantFailure ||
 				requestContext.RaylineARCCloseRequested != test.wantClose {

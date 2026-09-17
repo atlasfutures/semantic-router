@@ -158,13 +158,31 @@ func TestRaylineRoutesWarnsThatToolsWereNotEncoded(t *testing.T) {
 
 func TestRaylineRoutesWarnsThatACheckpointPinWasIgnored(t *testing.T) {
 	t.Parallel()
+	tracked := &config.RaylineARCRoutesAPIConfig{Enabled: true, EpisodeWrites: true}
 	ctx := routesContext(map[string]string{raylineRoutesCheckpointHeader: "arc-2026-09-12"})
-	warnings := raylineRoutesHeaderWarnings(ctx)
+	warnings := raylineRoutesHeaderWarnings(ctx, tracked)
 	if len(warnings) != 1 || !strings.HasPrefix(warnings[0], "checkpoint_not_pinned:") {
 		t.Fatalf("warnings = %v, want one checkpoint_not_pinned warning", warnings)
 	}
-	if extra := raylineRoutesHeaderWarnings(routesContext(nil)); len(extra) != 0 {
+	if extra := raylineRoutesHeaderWarnings(routesContext(nil), tracked); len(extra) != 0 {
 		t.Fatalf("warnings without a pin = %v, want none", extra)
+	}
+}
+
+// A caller who sends a conversation id to a cell that keeps no episodes gets
+// a route that looks exactly like a route which used the conversation. Every
+// turn silently reads as a first turn, and nothing else in the answer says so.
+func TestRaylineRoutesWarnsWhenTheConversationIsNotTracked(t *testing.T) {
+	t.Parallel()
+	ctx := routesContext(map[string]string{raylineRoutesSessionHeader: "conv-1"})
+	untracked := &config.RaylineARCRoutesAPIConfig{Enabled: true}
+	warnings := raylineRoutesHeaderWarnings(ctx, untracked)
+	if len(warnings) != 1 || !strings.HasPrefix(warnings[0], "episode_not_tracked:") {
+		t.Fatalf("warnings = %v, want one episode_not_tracked warning", warnings)
+	}
+	tracked := &config.RaylineARCRoutesAPIConfig{Enabled: true, EpisodeWrites: true}
+	if quiet := raylineRoutesHeaderWarnings(ctx, tracked); len(quiet) != 0 {
+		t.Fatalf("warnings with episodes on = %v, want none", quiet)
 	}
 }
 

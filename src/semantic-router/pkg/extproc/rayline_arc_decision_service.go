@@ -75,10 +75,15 @@ func (service *raylineARCDecisionService) RouteDecision(
 	// Reuses the request pipeline's own preparation: it normalizes the body
 	// into turns, hashes the episode identity, and acquires the episode lease.
 	// From here on every exit must be terminal for that lease.
+	episodeMode := raylineARCEpisodeRequired
+	if request.Ephemeral {
+		episodeMode = raylineARCEpisodeEphemeral
+	}
 	selectionContext.RaylineARC = service.router.buildRaylineARCSelectionContext(
 		algorithm,
 		requestContext,
 		decision.ModelRefs,
+		episodeMode,
 	)
 	if failure := selectionContext.RaylineARC.PreparationFailure; failure != "" {
 		service.router.finalizeRaylineARCAbort(requestContext, failure)
@@ -112,10 +117,11 @@ func (service *raylineARCDecisionService) RouteDecision(
 		CacheReadTokens:    trace.CachedPrefixTokens,
 	}
 	decisionFacts.Baseline = routeBaseline(selected.catalog, selected.reference)
-	// The episode is reported only when the caller joined one. A consult that
-	// did not gets its own single-turn trajectory, and reporting that back as
-	// turn zero would read as continuity the caller does not have.
-	if request.SessionID != "" {
+	// The episode is reported only when the caller joined one. An ephemeral
+	// consult scored against a fresh in-memory episode, so its turn index and
+	// stay flag describe a trajectory that does not exist; reporting them
+	// would read as continuity the caller does not have.
+	if !request.Ephemeral && request.SessionID != "" {
 		decisionFacts.Episode = &routerruntime.RouteEpisode{
 			TurnIndex: trace.SessionRevision,
 			Stayed:    trace.Stayed,
@@ -293,6 +299,11 @@ func (service *raylineARCDecisionService) resolveWorker(
 // the previous arm optimistically, here. The status argument is a formality
 // the ARC transaction ignores.
 func commitDecisionOnlyEpisode(ctx context.Context, requestContext *RequestContext) error {
+	// An ephemeral consult prepared nothing, so there is nothing to advance.
+	// That is the intended terminal state, not a missing step.
+	if requestContext.VSRRaylineARC != nil && requestContext.RaylineARCTransaction == nil {
+		return nil
+	}
 	if requestContext.SelectionTransaction == nil {
 		return errors.New("decision-only routing prepared no episode transaction")
 	}
@@ -354,12 +365,20 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 	}
 	decoded.Trusted.SourceFormat = wireFormat
 	decoded.Trusted.CorrelationID = request.DecisionID
-	episodeIdentity := request.SessionID
-	if episodeIdentity == "" {
-		episodeIdentity = "decision-only:" + uuid.NewString()
+	// An ephemeral consult sets no episode header at all: the absence is what
+	// the builder reads to skip preparation. Every other consult keeps the
+	// existing contract, where a caller that named no conversation still gets
+	// its own single-turn episode rather than sharing one.
+	headers := map[string]string{}
+	if !request.Ephemeral {
+		episodeIdentity := request.SessionID
+		if episodeIdentity == "" {
+			episodeIdentity = "decision-only:" + uuid.NewString()
+		}
+		headers[algorithm.RaylineARC.Episode.IDHeader] = episodeIdentity
 	}
 	return &RequestContext{
-		Headers:          map[string]string{algorithm.RaylineARC.Episode.IDHeader: episodeIdentity},
+		Headers:          headers,
 		RequestID:        request.DecisionID,
 		SourceFormat:     wireFormat,
 		SemanticRequest:  &decoded,

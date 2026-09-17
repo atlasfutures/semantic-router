@@ -38,7 +38,7 @@ func TestMissingSessionHeaderMessageSurvivesClientEncoding(t *testing.T) {
 			router, requestContext, algorithm := missingSessionRequestContext(t, "")
 			router.Config = &config.RouterConfig{}
 			requestContext.SourceFormat = format
-			router.buildRaylineARCSelectionContext(algorithm, requestContext, missingSessionModelRefs())
+			router.buildRaylineARCSelectionContext(algorithm, requestContext, missingSessionModelRefs(), raylineARCEpisodeRequired)
 
 			err := selectionFailureForAlgorithm(algorithm, arcFailureMissingEpisodeID)
 			response := router.authoritativeSelectionFailureResponse(err, requestContext)
@@ -70,7 +70,7 @@ func TestMissingSessionHeaderMessageSurvivesClientEncoding(t *testing.T) {
 func TestMissingSessionHeaderCountsOnceForOneRequest(t *testing.T) {
 	router, requestContext, algorithm := missingSessionRequestContext(t, "")
 	router.Config = &config.RouterConfig{}
-	router.buildRaylineARCSelectionContext(algorithm, requestContext, missingSessionModelRefs())
+	router.buildRaylineARCSelectionContext(algorithm, requestContext, missingSessionModelRefs(), raylineARCEpisodeRequired)
 	before := testutil.ToFloat64(metrics.RaylineARCSelectionFailures.WithLabelValues(arcFailureMissingEpisodeID))
 
 	// The selector constructs the bounded failure, and the request path then
