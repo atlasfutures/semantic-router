@@ -124,6 +124,27 @@ type TurnOptions struct {
 	// system message that reaches the projection inside the message
 	// sequence, which no public wire format produces today.
 	DropMidConversationSystemText bool
+
+	// IncludeToolNames shows the selector which tools the turn had available,
+	// as a bare comma-separated list of their names.
+	//
+	// Names and nothing else. The 2026-09-17 encoder probe measured all three
+	// renderings against the frozen C82 head over 200 episodes: names cost 42
+	// tokens and flipped 7.6 percent of first-turn decisions, names with
+	// descriptions cost 225 and flipped 13.8, and the full JSON schema block
+	// cost 3,140 and flipped 40.4 -- level with the bar that keeps
+	// IncludeSystemText switched off, and with the same collapse signature
+	// (cross-episode similarity at the first boundary rising from .75 to .98
+	// as the shared prefix drowns the task signal). Tool definitions sit on
+	// the same dose-response curve as any other shared prefix, so the contract
+	// destroys the signal it was meant to add and the names do not.
+	//
+	// The default is false. The probe established that names are safe to send,
+	// not that they help: those 7.6 percent are decisions changing with no
+	// evidence they changed for the better, and the trained selector has never
+	// been consulted with tool names. So this stays behind a deliberate opt-in
+	// until an eval says which way is better.
+	IncludeToolNames bool
 }
 
 func turnError(
@@ -170,6 +191,13 @@ const (
 	// is already running. It governs the reply being routed rather than the
 	// session.
 	systemTextMidConversation
+	// systemTextTools is the turn's available tool names.
+	//
+	// It is not system text, but it is conversation-level context with no turn
+	// of its own, so it folds into the first user turn by the same route and
+	// through the same buffer. Giving it its own scope is what keeps it
+	// configured on its own.
+	systemTextTools
 )
 
 // systemTextScopeAt classifies a system or developer message by its position in
@@ -197,6 +225,7 @@ func systemTextScopeAt(conversationStarted bool) systemTextScope {
 type systemTextBuffer struct {
 	includeOriginal        bool
 	includeMidConversation bool
+	includeToolNames       bool
 	pending                []string
 }
 
@@ -204,14 +233,19 @@ func newSystemTextBuffer(options TurnOptions) systemTextBuffer {
 	return systemTextBuffer{
 		includeOriginal:        options.IncludeSystemText,
 		includeMidConversation: !options.DropMidConversationSystemText,
+		includeToolNames:       options.IncludeToolNames,
 	}
 }
 
 func (buffer *systemTextBuffer) wants(scope systemTextScope) bool {
-	if scope == systemTextMidConversation {
+	switch scope {
+	case systemTextMidConversation:
 		return buffer.includeMidConversation
+	case systemTextTools:
+		return buffer.includeToolNames
+	default:
+		return buffer.includeOriginal
 	}
-	return buffer.includeOriginal
 }
 
 // collect renders one piece of system text and buffers it, but only when its

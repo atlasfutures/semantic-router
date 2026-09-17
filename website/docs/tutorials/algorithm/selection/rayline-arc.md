@@ -264,6 +264,42 @@ by embedding credentials in YAML. Configure `modal_key_env` and
 `modal_secret_env` together for a protected Modal web endpoint, or omit both
 for an internal endpoint that does not use Modal proxy authentication.
 
+## Tool names as a routing signal
+
+`include_tool_names` folds the turn's available tool names into the first user
+turn, where the opening system prompt would go:
+
+```text
+[available tools] Ledger, Scribe, Amend, Lantern, Anvil
+
+rename the helper in the cache module
+```
+
+Names only, in the order the caller declared them, and never the schemas. A
+2026-09-17 encoder probe measured all three renderings over 200 episodes
+against the frozen head:
+
+| rendering | tokens | cosine p10 | first-turn decisions changed |
+|---|---|---|---|
+| names | 42 | .996 | 7.6% |
+| names with descriptions | 225 | .984 | 13.8% |
+| full JSON schemas | 3,140 | .820 | 40.4% |
+
+The schema block lands level with the bar that keeps `include_system_text`
+off, and with the same signature: cross-episode similarity at the first
+boundary rises from .75 to .98 as the shared prefix drowns the per-episode
+signal. Tool definitions sit on the same dose-response curve as any other
+shared prefix, so sending the contract destroys the signal it was meant to
+add, while sending the names does not.
+
+Off by default. The probe established that names are safe to send, not that
+they improve routing: those 7.6% are decisions changing with no evidence they
+changed for the better, and the selector has never been trained with tool
+names. An eval against the current router decides that, not this probe.
+
+Turning it on changes what the selector is asked on every routed turn, not
+only on route lookups.
+
 ## Route lookup
 
 A caller that owns its own provider keys and its own LLM bill can ask for the

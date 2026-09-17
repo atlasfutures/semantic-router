@@ -84,6 +84,21 @@ type RaylineARCAlgorithmConfig struct {
 	// count. This field is the kill switch for that, worded as a negative so
 	// the zero value keeps the text.
 	DropMidConversationSystemText bool `yaml:"drop_mid_conversation_system_text,omitempty"`
+	// IncludeToolNames shows the selector which tools a turn had available, as
+	// a bare comma-separated list of names -- names only, never the schemas.
+	//
+	// The 2026-09-17 encoder probe measured all three renderings against the
+	// frozen C82 head: names cost 42 tokens and moved 7.6% of first-turn
+	// decisions, names with descriptions 225 tokens and 13.8%, and the full
+	// JSON schema block 3,140 tokens and 40.4% -- level with the bar that
+	// keeps include_system_text off, with the same collapse signature. Tool
+	// definitions sit on the same dose-response curve as any other shared
+	// prefix, so sending the contract destroys the signal it was meant to add.
+	//
+	// Off by default. The probe showed names are safe to send, not that they
+	// help, and the trained selector has never been consulted with them. An
+	// eval against the current router has to come first.
+	IncludeToolNames bool `yaml:"include_tool_names,omitempty"`
 	// FaultInjection lets a request ask this cell to fail in a named way, so a
 	// failure path can be exercised where nothing natural triggers it any more.
 	// Off by default, and while it is off the header it reads means nothing, so

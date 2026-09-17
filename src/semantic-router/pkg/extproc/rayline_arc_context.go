@@ -142,6 +142,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 			IncludeSystemText: algorithm.RaylineARC.IncludeSystemText,
 			DropMidConversationSystemText: algorithm.RaylineARC.
 				DropMidConversationSystemText,
+			IncludeToolNames: algorithm.RaylineARC.IncludeToolNames,
 		},
 	)
 	if err != nil {
