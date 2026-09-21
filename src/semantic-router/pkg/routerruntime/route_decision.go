@@ -128,6 +128,11 @@ type RouteAlternative struct {
 type RoutePricing struct {
 	InputPerMTok  float64
 	OutputPerMTok float64
+	// Cache rates are part of the card, not decoration: a caller reproducing
+	// their own cost from their own token counts cannot do it without them
+	// wherever reads are discounted or writes are charged.
+	CacheReadPerMTok  float64
+	CacheWritePerMTok float64
 }
 
 // RouteBaseline is the artifact's reference worker and its rate card. It is
@@ -182,3 +187,10 @@ type RouteDecisionRuntime interface {
 // instead of 503. Every other failure stays 503, because the caller cannot
 // fix it by waiting.
 var ErrRouteDecisionContended = errors.New("route decision contended")
+
+// ErrRouteDecisionInvalidBody marks a request the codec refused: a bad role, a
+// malformed content block, a missing required field. The caller can fix it and
+// retrying unchanged cannot, so an adapter answers 400 rather than 503 --
+// reporting it as unavailability would blame a healthy router for a request
+// that will never succeed.
+var ErrRouteDecisionInvalidBody = errors.New("route decision request is invalid")

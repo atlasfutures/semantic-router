@@ -20,13 +20,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -90,6 +93,16 @@ func (service *raylineARCDecisionService) RouteDecision(
 		return routerruntime.RouteDecision{}, prepareFailureError(failure)
 	}
 
+	// An ephemeral lookup minted its own encoder session and owns closing it,
+	// whatever happens next. Nothing else will: the ephemeral path prepares
+	// no transaction, and the transaction is what closes a retained session
+	// on the routed path. Left open, every lookup strands one retained
+	// session on the encoder until eviction, and sustained lookup traffic
+	// then evicts the live conversations it shares the card with.
+	if request.Ephemeral {
+		defer service.closeEphemeralEncoderSession(ctx, algorithm, selectionContext, requestContext)
+	}
+
 	selected, err := service.selectWorker(ctx, algorithm, selectionContext, requestContext)
 	if err != nil {
 		return routerruntime.RouteDecision{}, err
@@ -112,9 +125,14 @@ func (service *raylineARCDecisionService) RouteDecision(
 	trace := selected.result.RaylineARC
 	decisionFacts.Checkpoint = trace.ArtifactRevision
 	decisionFacts.Alternatives = routeAlternatives(trace, selected.catalog)
+	// Both kinds of reuse count. A resumable encoder reports reuse as
+	// RetainedPrefixTokens and leaves CachedPrefixTokens at zero, so reading
+	// only the latter published cache_read_tokens: 0 for lookups whose input
+	// came almost entirely from the encoder's retained cache -- and that
+	// number is what the gateway meters on.
 	decisionFacts.Usage = routerruntime.RouteUsage{
 		EncodedInputTokens: trace.SerializedTokens,
-		CacheReadTokens:    trace.CachedPrefixTokens,
+		CacheReadTokens:    trace.CachedPrefixTokens + trace.RetainedPrefixTokens,
 	}
 	decisionFacts.Baseline = routeBaseline(selected.catalog, selected.reference)
 	// The episode is reported only when the caller joined one. An ephemeral
@@ -122,8 +140,15 @@ func (service *raylineARCDecisionService) RouteDecision(
 	// stay flag describe a trajectory that does not exist; reporting them
 	// would read as continuity the caller does not have.
 	if !request.Ephemeral && request.SessionID != "" {
+		// The episode's own turn index, not the encoder's session revision.
+		// Those are different counters: the revision tracks the retained
+		// encoder session and stays at zero on the non-resumable path, while
+		// the trajectory this field describes advances on every committed
+		// decision. Reporting the revision made turn_index read as zero for
+		// the ordinary encoder and lag behind the stored episode for the
+		// resumable one.
 		decisionFacts.Episode = &routerruntime.RouteEpisode{
-			TurnIndex: trace.SessionRevision,
+			TurnIndex: committedEpisodeTurnIndex(selectionContext),
 			Stayed:    trace.Stayed,
 		}
 	}
@@ -139,10 +164,19 @@ type selectedRoute struct {
 	reference string
 }
 
+// workerPricing publishes the whole rate card, cache included.
+//
+// Dropping the cache rates left a caller unable to reproduce the cost this
+// endpoint invites them to compute: on a provider with discounted reads or
+// charged writes, input and output alone do not add up to what they will be
+// billed, and the savings figure derived from them is wrong in the direction
+// that flatters us.
 func workerPricing(worker raylinearc.WorkerManifest) routerruntime.RoutePricing {
 	return routerruntime.RoutePricing{
-		InputPerMTok:  worker.EstimatedInputCostPerToken * tokensPerMillion,
-		OutputPerMTok: worker.EstimatedOutputCostPerToken * tokensPerMillion,
+		InputPerMTok:      worker.EstimatedInputCostPerToken * tokensPerMillion,
+		OutputPerMTok:     worker.EstimatedOutputCostPerToken * tokensPerMillion,
+		CacheReadPerMTok:  worker.EstimatedCacheReadCostPerToken * tokensPerMillion,
+		CacheWritePerMTok: worker.EstimatedCacheWriteCostPerToken * tokensPerMillion,
 	}
 }
 
@@ -291,6 +325,81 @@ func (service *raylineARCDecisionService) resolveWorker(
 	return route, "", nil
 }
 
+// closeEphemeralEncoderSession releases the retained encoder session a
+// minted identity created.
+//
+// It is a no-op on an encoder that retains nothing, which is the common
+// deployment: the close call is cheap and the alternative is a leak that only
+// appears under the resumable capability, where it would be found in
+// production rather than here.
+//
+// Failure is logged and swallowed. The caller already has their route, and a
+// close that did not land costs one stranded session rather than a wrong
+// answer -- surfacing it as a lookup failure would trade a real answer for a
+// housekeeping problem.
+func (service *raylineARCDecisionService) closeEphemeralEncoderSession(
+	ctx context.Context,
+	algorithm *config.AlgorithmConfig,
+	selectionContext *selection.SelectionContext,
+	requestContext *RequestContext,
+) {
+	if service.router.raylineARCSessionClose == nil ||
+		selectionContext == nil || selectionContext.RaylineARC == nil {
+		return
+	}
+	episodeIDHash := selectionContext.RaylineARC.EpisodeIDHash
+	if episodeIDHash == "" {
+		return
+	}
+	// The replicas this session actually touched, when selection got far
+	// enough to record them. An empty list is correct for a lookup that
+	// failed before encoding: there is nothing to close on any replica.
+	var visited []string
+	if requestContext != nil && requestContext.VSRRaylineARC != nil {
+		visited = requestContext.VSRRaylineARC.EncoderVisitedReplicaIDs
+	}
+	closeContext, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		ephemeralSessionCloseTimeout(algorithm),
+	)
+	defer cancel()
+	if _, err := service.router.raylineARCSessionClose(
+		closeContext,
+		episodeIDHash,
+		visited,
+	); err != nil {
+		logging.ComponentErrorEvent("extproc", "routing_decision_session_close_failed", map[string]interface{}{
+			"error": err.Error(),
+		})
+	}
+}
+
+// ephemeralSessionCloseTimeout bounds the close so a wedged encoder cannot
+// hold the request goroutine after the answer has been produced.
+func ephemeralSessionCloseTimeout(algorithm *config.AlgorithmConfig) time.Duration {
+	if algorithm != nil && algorithm.RaylineARC != nil {
+		if seconds := algorithm.RaylineARC.RoutesAPI.DeadlineMS; seconds > 0 {
+			return time.Duration(seconds) * time.Millisecond
+		}
+	}
+	return config.DefaultRaylineARCRoutesDeadlineMS * time.Millisecond
+}
+
+// committedEpisodeTurnIndex reads the trajectory position this decision
+// advanced. The state carries the index the policy incremented, so it is
+// read after selection and after the commit, where it is final.
+func committedEpisodeTurnIndex(selectionContext *selection.SelectionContext) int {
+	if selectionContext == nil || selectionContext.RaylineARC == nil ||
+		selectionContext.RaylineARC.State == nil {
+		return 0
+	}
+	turnIndex := selectionContext.RaylineARC.State.TurnIndex
+	if turnIndex > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int(turnIndex)
+}
+
 // commitDecisionOnlyEpisode advances the episode at decision time. The request
 // pipeline waits for upstream headers before committing, but a decision-only
 // consult has no upstream: the caller executes the worker out of this router's
@@ -307,8 +416,19 @@ func commitDecisionOnlyEpisode(ctx context.Context, requestContext *RequestConte
 	if requestContext.SelectionTransaction == nil {
 		return errors.New("decision-only routing prepared no episode transaction")
 	}
+	// The commit runs on its own bounded context, detached from the lookup's
+	// deadline. Sharing it meant a deadline that expired mid-commit cancelled
+	// the cleanup too: lease renewal stops, the lease is neither committed nor
+	// released, and every later turn on that session is refused as contended
+	// until the lease TTL runs out. The answer is late either way; the session
+	// does not have to be broken as well.
+	commitContext, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		episodeFinalizeTimeout,
+	)
+	defer cancel()
 	if _, err := requestContext.SelectionTransaction.commitOnHeaders(
-		ctx,
+		commitContext,
 		http.StatusOK,
 	); err != nil {
 		return fmt.Errorf("decision-only routing could not commit the episode: %w", err)
@@ -359,7 +479,8 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 	)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"decision-only routing could not decode the consult body: %w",
+			"%w: decision-only routing could not decode the consult body: %w",
+			routerruntime.ErrRouteDecisionInvalidBody,
 			err,
 		)
 	}
@@ -412,13 +533,24 @@ func (r *OpenAIRouter) decisionOnlyRoutingTarget() (
 			decision.Algorithm.RaylineARC == nil {
 			continue
 		}
+		// Where several ARC decisions exist, the one that turns the endpoint
+		// on is the one that serves it. Without this, enabling routes_api in
+		// a multi-decision deployment was unusable in both directions: enable
+		// it on one and the selector read the configs as conflicting, enable
+		// it on all and every lookup was refused as ambiguous.
 		if target != nil {
-			return nil, nil, fmt.Errorf(
-				"decision-only routing is ambiguous: decisions '%s' and '%s' both use %s",
-				target.Name,
-				decision.Name,
-				config.RaylineARCAlgorithmType,
-			)
+			targetEnabled := target.Algorithm.RaylineARC.RoutesAPI.Enabled
+			if targetEnabled == decision.Algorithm.RaylineARC.RoutesAPI.Enabled {
+				return nil, nil, fmt.Errorf(
+					"decision-only routing is ambiguous: decisions '%s' and '%s' both use %s; enable routes_api on exactly one",
+					target.Name,
+					decision.Name,
+					config.RaylineARCAlgorithmType,
+				)
+			}
+			if targetEnabled {
+				continue
+			}
 		}
 		target = decision
 	}

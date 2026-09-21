@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"strings"
 	"time"
 
@@ -99,14 +100,18 @@ type raylineRoutesScore struct {
 }
 
 type raylineRoutesPricing struct {
-	InputPerMTok  float64 `json:"input_per_mtok"`
-	OutputPerMTok float64 `json:"output_per_mtok"`
+	InputPerMTok      float64 `json:"input_per_mtok"`
+	OutputPerMTok     float64 `json:"output_per_mtok"`
+	CacheReadPerMTok  float64 `json:"cache_read_per_mtok"`
+	CacheWritePerMTok float64 `json:"cache_write_per_mtok"`
 }
 
 type raylineRoutesBaseline struct {
-	Model         string  `json:"model"`
-	InputPerMTok  float64 `json:"input_per_mtok"`
-	OutputPerMTok float64 `json:"output_per_mtok"`
+	Model             string  `json:"model"`
+	InputPerMTok      float64 `json:"input_per_mtok"`
+	OutputPerMTok     float64 `json:"output_per_mtok"`
+	CacheReadPerMTok  float64 `json:"cache_read_per_mtok"`
+	CacheWritePerMTok float64 `json:"cache_write_per_mtok"`
 }
 
 type raylineRoutesEpisode struct {
@@ -126,6 +131,25 @@ type raylineRoutesUsage struct {
 // so a cell should not acquire that traffic by upgrading.
 func (r *OpenAIRouter) raylineRoutesAPIEnabled() bool {
 	return r.raylineRoutesConfig() != nil
+}
+
+// raylineRoutesEncodesToolNames reports whether this cell shows the selector
+// the turn's tool names, which decides what the tools warning can honestly
+// claim.
+func (r *OpenAIRouter) raylineRoutesEncodesToolNames() bool {
+	if r == nil || r.Config == nil {
+		return false
+	}
+	for index := range r.Config.Decisions {
+		algorithm := r.Config.Decisions[index].Algorithm
+		if !raylineARCSelection(algorithm) || algorithm.RaylineARC == nil {
+			continue
+		}
+		if algorithm.RaylineARC.RoutesAPI.Enabled {
+			return algorithm.RaylineARC.IncludeToolNames
+		}
+	}
+	return false
 }
 
 // raylineRoutesConfig returns the endpoint's configuration, or nil where this
@@ -189,19 +213,20 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		return nil
 	}
 	if !r.raylineRoutesAPIEnabled() {
-		return r.createRaylineRoutesError(404, "not_found_error", "endpoint not found")
+		return r.createRaylineRoutesError(ctx, 404, "not_found_error", "endpoint not found")
 	}
 
 	settings := r.raylineRoutesConfig()
-	wireFormat, warnings, detail := readRaylineRoutesBody(body)
+	wireFormat, warnings, detail := readRaylineRoutesBody(body, r.raylineRoutesEncodesToolNames())
 	if detail != "" {
-		return r.createRaylineRoutesError(400, "invalid_request_error", detail)
+		return r.createRaylineRoutesError(ctx, 400, "invalid_request_error", detail)
 	}
 	warnings = append(warnings, raylineRoutesHeaderWarnings(ctx, settings)...)
 
 	runtime := r.routeDecisionRuntimeState()
 	if runtime == nil {
 		return r.createRaylineRoutesError(
+			ctx,
 			503,
 			"api_error",
 			"route lookup is not available on this router",
@@ -237,7 +262,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		},
 	)
 	if err != nil {
-		return r.raylineRoutesFailure(lookupContext, routeID, err)
+		return r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
 	}
 
 	logging.ComponentEvent("extproc", "routing_decision", map[string]interface{}{
@@ -246,6 +271,9 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		"worker_model":        decision.WorkerModel,
 		"interface":           "routes",
 	})
+	// Same claim as the error path: this body is the route contract, not an
+	// inference response to be re-encoded into a client protocol.
+	ctx.ImmediateResponseEncoded = true
 	return r.createJSONResponse(200, raylineRoutesPayload(
 		routeID,
 		raylineRoutesCheckpoint(settings.CheckpointLabel, decision.Checkpoint),
@@ -275,11 +303,13 @@ func (r *OpenAIRouter) raylineRoutesContext(ctx *RequestContext) context.Context
 // this deadline fired, the lookup ran out of time whatever else also went
 // wrong on the way.
 func (r *OpenAIRouter) raylineRoutesFailure(
+	ctx *RequestContext,
 	lookupContext context.Context,
 	routeID string,
 	err error,
 ) *ext_proc.ProcessingResponse {
 	contended := errors.Is(err, routerruntime.ErrRouteDecisionContended)
+	invalid := errors.Is(err, routerruntime.ErrRouteDecisionInvalidBody)
 	expired := errors.Is(lookupContext.Err(), context.DeadlineExceeded)
 	logging.ComponentErrorEvent("extproc", "routing_decision_failed", map[string]interface{}{
 		"routing_decision_id": routeID,
@@ -287,12 +317,26 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 		"contended":           contended,
 		"deadline_exceeded":   expired,
 	})
+	// A body the codec refused is the caller's to fix. It passed the shallow
+	// envelope check and failed the real decode -- a bad role, a malformed
+	// content block, a missing required field -- and no amount of retrying
+	// changes that, so answering 503 would blame a healthy router for a
+	// request that can never succeed.
+	if invalid {
+		return r.createRaylineRoutesError(
+			ctx,
+			400,
+			"invalid_request_error",
+			"request body could not be read as "+string(wireFormatOf(ctx))+" messages",
+		)
+	}
 	// A lookup that ran out of time is reported as exactly that. Folding it
 	// into the 503 would tell the caller this router is unhealthy when the
 	// honest answer is that it did not answer in the budget they are entitled
 	// to, and the two have different fixes.
 	if expired {
 		return r.createRaylineRoutesError(
+			ctx,
 			504,
 			"timeout_error",
 			"route lookup exceeded its deadline",
@@ -304,6 +348,7 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 	// when to come back.
 	if contended {
 		return r.createRaylineRoutesError(
+			ctx,
 			429,
 			"rate_limit_error",
 			"route lookup contended: the session or the encoder is briefly at capacity",
@@ -312,7 +357,7 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 	// Fail closed. The selector owns the choice and has no fallback arm, so
 	// answering with a default here would replace a policy decision with this
 	// handler's guess.
-	return r.createRaylineRoutesError(503, "api_error", "route lookup failed")
+	return r.createRaylineRoutesError(ctx, 503, "api_error", "route lookup failed")
 }
 
 func raylineRoutesPayload(
@@ -329,11 +374,8 @@ func raylineRoutesPayload(
 		Thinking:     raylineRoutesThinkingOf(decision.Thinking),
 		Checkpoint:   checkpoint,
 		Alternatives: raylineRoutesAlternatives(decision.Alternatives),
-		Pricing: raylineRoutesPricing{
-			InputPerMTok:  decision.SelectedPricing.InputPerMTok,
-			OutputPerMTok: decision.SelectedPricing.OutputPerMTok,
-		},
-		Warnings: append(warnings, decision.Warnings...),
+		Pricing:      raylineRoutesPricingOf(decision.SelectedPricing),
+		Warnings:     append(warnings, decision.Warnings...),
 		Usage: raylineRoutesUsage{
 			EncodedInputTokens: decision.Usage.EncodedInputTokens,
 			CacheReadTokens:    decision.Usage.CacheReadTokens,
@@ -344,10 +386,13 @@ func raylineRoutesPayload(
 		payload.Warnings = []string{}
 	}
 	if decision.Baseline.Model != "" {
+		baseline := raylineRoutesPricingOf(decision.Baseline.Pricing)
 		payload.Baseline = &raylineRoutesBaseline{
-			Model:         decision.Baseline.Model,
-			InputPerMTok:  decision.Baseline.Pricing.InputPerMTok,
-			OutputPerMTok: decision.Baseline.Pricing.OutputPerMTok,
+			Model:             decision.Baseline.Model,
+			InputPerMTok:      baseline.InputPerMTok,
+			OutputPerMTok:     baseline.OutputPerMTok,
+			CacheReadPerMTok:  baseline.CacheReadPerMTok,
+			CacheWritePerMTok: baseline.CacheWritePerMTok,
 		}
 	}
 	if decision.Episode != nil {
@@ -357,6 +402,15 @@ func raylineRoutesPayload(
 		}
 	}
 	return payload
+}
+
+func raylineRoutesPricingOf(pricing routerruntime.RoutePricing) raylineRoutesPricing {
+	return raylineRoutesPricing{
+		InputPerMTok:      pricing.InputPerMTok,
+		OutputPerMTok:     pricing.OutputPerMTok,
+		CacheReadPerMTok:  pricing.CacheReadPerMTok,
+		CacheWritePerMTok: pricing.CacheWritePerMTok,
+	}
 }
 
 func raylineRoutesThinkingOf(thinking routerruntime.RouteThinking) raylineRoutesThinking {
@@ -387,12 +441,15 @@ func raylineRoutesAlternatives(
 // This is the discrimination the platform's own client already performs, kept
 // here rather than pushed onto the caller as a protocol field: a field would
 // be one more thing to get wrong, and getting it wrong would be silent.
-func readRaylineRoutesBody(body []byte) (llmprotocol.WireFormat, []string, string) {
+func readRaylineRoutesBody(
+	body []byte,
+	encodesToolNames bool,
+) (llmprotocol.WireFormat, []string, string) {
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(body, &envelope); err != nil || envelope == nil {
 		return "", nil, "request body must be a JSON object"
 	}
-	warnings := raylineRoutesBodyWarnings(envelope)
+	warnings := raylineRoutesBodyWarnings(envelope, encodesToolNames)
 	if _, responses := envelope["input"]; responses {
 		return llmprotocol.OpenAIResponsesV1, warnings, ""
 	}
@@ -404,10 +461,53 @@ func readRaylineRoutesBody(body []byte) (llmprotocol.WireFormat, []string, strin
 	if err := json.Unmarshal(raw, &messages); err != nil || len(messages) == 0 {
 		return "", nil, "messages must be a non-empty list of message objects"
 	}
-	if _, chat := envelope["max_completion_tokens"]; chat {
-		return llmprotocol.OpenAIChatV1, warnings, ""
+	format, certain := messagesDialect(envelope)
+	if !certain {
+		// Say so rather than route on a coin flip. The two dialects decode a
+		// bare message array almost identically, so this is rarely visible --
+		// which is exactly why it needs announcing when it happens.
+		warnings = append(warnings, "format_inferred: the body carries no field unique to Anthropic Messages or Chat Completions, and was read as "+string(format))
 	}
-	return llmprotocol.AnthropicMessagesV1, warnings, ""
+	return format, warnings, ""
+}
+
+// anthropicOnlyFields and chatOnlyFields are members that exist in one
+// messages dialect and not the other. Neither list has to be exhaustive: it
+// only has to be right, because a field in the wrong list would misread a
+// well-formed body.
+var (
+	anthropicOnlyFields = []string{"system", "stop_sequences", "anthropic_version", "thinking"}
+	chatOnlyFields      = []string{
+		"max_completion_tokens", "frequency_penalty", "presence_penalty",
+		"logprobs", "top_logprobs", "n", "seed", "logit_bias",
+	}
+)
+
+// messagesDialect separates Anthropic Messages from Chat Completions, and
+// reports whether the body actually said which it was.
+//
+// An earlier version keyed solely on max_completion_tokens, so a Chat request
+// that omitted it -- the field is optional -- was read as Anthropic. Reading
+// several markers, in a defined order, removes that single point of failure:
+// a body can only be misread now if it carries markers from both dialects,
+// which is already malformed.
+func messagesDialect(envelope map[string]json.RawMessage) (llmprotocol.WireFormat, bool) {
+	for _, field := range anthropicOnlyFields {
+		if _, present := envelope[field]; present {
+			return llmprotocol.AnthropicMessagesV1, true
+		}
+	}
+	for _, field := range chatOnlyFields {
+		if _, present := envelope[field]; present {
+			return llmprotocol.OpenAIChatV1, true
+		}
+	}
+	// max_tokens is required by Anthropic Messages and optional in Chat, so
+	// its presence alongside no Chat marker is evidence rather than proof.
+	if _, present := envelope["max_tokens"]; present {
+		return llmprotocol.AnthropicMessagesV1, true
+	}
+	return llmprotocol.AnthropicMessagesV1, false
 }
 
 // raylineRoutesBodyWarnings names what this router did with the body other
@@ -416,12 +516,34 @@ func readRaylineRoutesBody(body []byte) (llmprotocol.WireFormat, []string, strin
 // A developer who sends tools and gets a well-formed decision back has no way
 // to learn that the tools were never encoded, because the answer looks right
 // either way. That is the class of mistake this array exists to retire.
-func raylineRoutesBodyWarnings(envelope map[string]json.RawMessage) []string {
+func raylineRoutesBodyWarnings(
+	envelope map[string]json.RawMessage,
+	encodesToolNames bool,
+) []string {
 	warnings := []string{}
-	if _, present := envelope["tools"]; present {
-		warnings = append(warnings, "tools_not_encoded: tools were dropped before encoding and did not influence this route")
+	if _, present := envelope["tools"]; !present {
+		return warnings
 	}
+	// What the cell did with the tools, not what it used to do with them. On
+	// a cell that encodes names, the old warning was simply false: the names
+	// reached the selector and can change the arm it picks, so telling a
+	// caller their tools did not influence the route would misdescribe the
+	// decision they are being handed.
+	if encodesToolNames {
+		warnings = append(warnings, "tool_schemas_not_encoded: tool names influenced this route; their descriptions and schemas were not encoded")
+		return warnings
+	}
+	warnings = append(warnings, "tools_not_encoded: tools were dropped before encoding and did not influence this route")
 	return warnings
+}
+
+// wireFormatOf reports the format this request was read as, for an error
+// message that names it. Empty before the body phase has run.
+func wireFormatOf(ctx *RequestContext) llmprotocol.WireFormat {
+	if ctx == nil || ctx.SourceFormat == "" {
+		return llmprotocol.AnthropicMessagesV1
+	}
+	return ctx.SourceFormat
 }
 
 func raylineRoutesHeaderWarnings(
@@ -457,11 +579,17 @@ func raylineRoutesEpisodeIdentity(ctx *RequestContext) string {
 	if session == "" {
 		return ""
 	}
+	// The session is escaped on BOTH paths, not just the one that appends a
+	// branch. Escaping only the joined form leaves the collision it was meant
+	// to close: session "a:b" alone still encodes to "a:b", which is exactly
+	// what session "a" with branch "b" produces. The value is hashed
+	// downstream, so this has to be injective, not readable.
+	encoded := url.QueryEscape(session)
 	branch := raylineRoutesHeader(ctx, raylineRoutesBranchHeader)
 	if branch == "" {
-		return session
+		return encoded
 	}
-	return session + ":" + branch
+	return encoded + ":" + url.QueryEscape(branch)
 }
 
 // raylineRoutesRouteID adopts the caller's id when it sent one, so a single id
@@ -470,7 +598,11 @@ func raylineRoutesRouteID(ctx *RequestContext) string {
 	if adopted := raylineRoutesHeader(ctx, raylineRoutesRouteIDHeader); adopted != "" {
 		return adopted
 	}
-	return raylineRouteIDPrefix + strings.ReplaceAll(uuid.NewString(), "-", "")[:8]
+	// Half a UUID, not a quarter. Eight hex characters is 32 bits, where a
+	// birthday collision becomes likely in the tens of thousands of lookups --
+	// well inside one busy day, and this id is the join key a support lookup
+	// and a later settle call both rely on being unique.
+	return raylineRouteIDPrefix + strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
 }
 
 func raylineRoutesHeader(ctx *RequestContext, name string) string {
@@ -485,15 +617,26 @@ func raylineRoutesHeader(ctx *RequestContext, name string) string {
 // envelope from the endpoint it would otherwise have called. One error path
 // for both is the point of taking the same body.
 func (r *OpenAIRouter) createRaylineRoutesError(
+	ctx *RequestContext,
 	statusCode int,
 	errorType string,
 	message string,
 ) *ext_proc.ProcessingResponse {
-	return r.createJSONResponse(statusCode, map[string]interface{}{
+	response := r.createJSONResponse(statusCode, map[string]interface{}{
 		"type": "error",
 		"error": map[string]interface{}{
 			"type":    errorType,
 			"message": message,
 		},
 	})
+	// Claim the body before the protocol contract re-encodes it. Every
+	// immediate response at 400 or above is otherwise rewritten into the
+	// source format's error shape, which for this path resolves to Chat --
+	// so the envelope this endpoint documents, and its specific message,
+	// would never reach a caller. Marking it encoded is how a producer says
+	// the body is already in its final wire form.
+	if ctx != nil {
+		ctx.ImmediateResponseEncoded = true
+	}
+	return response
 }

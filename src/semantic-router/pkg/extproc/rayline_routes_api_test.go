@@ -112,7 +112,7 @@ func TestRaylineRoutesReadsWireFormatFromTheBody(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got, _, detail := readRaylineRoutesBody([]byte(testCase.body))
+			got, _, detail := readRaylineRoutesBody([]byte(testCase.body), false)
 			if detail != "" {
 				t.Fatalf("readRaylineRoutesBody() detail = %q, want none", detail)
 			}
@@ -134,7 +134,7 @@ func TestRaylineRoutesRefusesBodiesItCannotRead(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if _, _, detail := readRaylineRoutesBody([]byte(body)); detail == "" {
+			if _, _, detail := readRaylineRoutesBody([]byte(body), false); detail == "" {
 				t.Fatal("readRaylineRoutesBody() detail = \"\", want a refusal")
 			}
 		})
@@ -144,15 +144,112 @@ func TestRaylineRoutesRefusesBodiesItCannotRead(t *testing.T) {
 // A developer who sends tools and gets a plausible route back has no way to
 // learn the tools were never encoded. The warning is the only place that
 // shows.
-func TestRaylineRoutesWarnsThatToolsWereNotEncoded(t *testing.T) {
+// The warning has to describe what this cell did, because the two cells do
+// different things with the same body. Telling a caller their tools were
+// ignored on a cell that encoded the names would misdescribe the decision.
+func TestRaylineRoutesWarnsWhatItDidWithTools(t *testing.T) {
 	t.Parallel()
-	body := `{"messages":[{"role":"user","content":"hi"}],"tools":[{"name":"edit"}]}`
-	_, warnings, detail := readRaylineRoutesBody([]byte(body))
+	body := []byte(`{"messages":[{"role":"user","content":"hi"}],"max_tokens":16,"tools":[{"name":"edit"}]}`)
+
+	_, dropped, detail := readRaylineRoutesBody(body, false)
 	if detail != "" {
 		t.Fatalf("readRaylineRoutesBody() detail = %q, want none", detail)
 	}
-	if len(warnings) != 1 || !strings.HasPrefix(warnings[0], "tools_not_encoded:") {
-		t.Fatalf("warnings = %v, want one tools_not_encoded warning", warnings)
+	if len(dropped) != 1 || !strings.HasPrefix(dropped[0], "tools_not_encoded:") {
+		t.Fatalf("warnings = %v, want one tools_not_encoded warning", dropped)
+	}
+
+	_, encoded, detail := readRaylineRoutesBody(body, true)
+	if detail != "" {
+		t.Fatalf("readRaylineRoutesBody() detail = %q, want none", detail)
+	}
+	if len(encoded) != 1 || !strings.HasPrefix(encoded[0], "tool_schemas_not_encoded:") {
+		t.Fatalf("warnings = %v, want the names-encoded warning", encoded)
+	}
+}
+
+// A body that names its dialect is read as that dialect; one that does not
+// says so, rather than being routed on a coin flip.
+func TestRaylineRoutesDialectMarkers(t *testing.T) {
+	t.Parallel()
+	for name, testCase := range map[string]struct {
+		body    string
+		want    llmprotocol.WireFormat
+		certain bool
+	}{
+		"anthropic by system": {
+			body:    `{"messages":[{"role":"user","content":"hi"}],"system":"be terse"}`,
+			want:    llmprotocol.AnthropicMessagesV1,
+			certain: true,
+		},
+		"anthropic by required max_tokens": {
+			body:    `{"messages":[{"role":"user","content":"hi"}],"max_tokens":16}`,
+			want:    llmprotocol.AnthropicMessagesV1,
+			certain: true,
+		},
+		// The case the old single-field rule got wrong: Chat with no
+		// max_completion_tokens read as Anthropic and said nothing.
+		"chat by penalty": {
+			body:    `{"messages":[{"role":"user","content":"hi"}],"frequency_penalty":0.2}`,
+			want:    llmprotocol.OpenAIChatV1,
+			certain: true,
+		},
+		"chat by max_completion_tokens": {
+			body:    `{"messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
+			want:    llmprotocol.OpenAIChatV1,
+			certain: true,
+		},
+		"ambiguous": {
+			body:    `{"messages":[{"role":"user","content":"hi"}]}`,
+			want:    llmprotocol.AnthropicMessagesV1,
+			certain: false,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			format, warnings, detail := readRaylineRoutesBody([]byte(testCase.body), false)
+			if detail != "" {
+				t.Fatalf("detail = %q, want none", detail)
+			}
+			if format != testCase.want {
+				t.Fatalf("format = %q, want %q", format, testCase.want)
+			}
+			inferred := false
+			for _, warning := range warnings {
+				if strings.HasPrefix(warning, "format_inferred:") {
+					inferred = true
+				}
+			}
+			if inferred == testCase.certain {
+				t.Fatalf("format_inferred present = %v, want %v", inferred, !testCase.certain)
+			}
+		})
+	}
+}
+
+// A route id is a join key. 32 bits collides inside one busy day.
+func TestRaylineRouteIDCarriesEnoughEntropy(t *testing.T) {
+	t.Parallel()
+	minted := raylineRoutesRouteID(routesContext(nil))
+	hex := strings.TrimPrefix(minted, raylineRouteIDPrefix)
+	if len(hex) < 16 {
+		t.Fatalf("route id %q has %d hex characters, want at least 16", minted, len(hex))
+	}
+}
+
+// Two callers must not be able to compose the same episode identity.
+func TestRaylineRoutesEpisodeIdentityIsUnambiguous(t *testing.T) {
+	t.Parallel()
+	withColonInSession := raylineRoutesEpisodeIdentity(routesContext(map[string]string{
+		raylineRoutesSessionHeader: "a:b",
+	}))
+	withBranch := raylineRoutesEpisodeIdentity(routesContext(map[string]string{
+		raylineRoutesSessionHeader: "a",
+		raylineRoutesBranchHeader:  "b",
+	}))
+	if withColonInSession == withBranch {
+		t.Fatalf("session %q and session+branch composed to the same identity %q",
+			"a:b", withBranch)
 	}
 }
 
@@ -500,6 +597,7 @@ func TestRaylineRoutesReportsAnExpiredLookupAsATimeout(t *testing.T) {
 	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
 	response := router.raylineRoutesFailure(
+		nil,
 		expired,
 		"rte_1234abcd",
 		errors.New("rayline ARC selection failed: encoder"),
@@ -510,6 +608,7 @@ func TestRaylineRoutesReportsAnExpiredLookupAsATimeout(t *testing.T) {
 	live, liveCancel := context.WithCancel(context.Background())
 	defer liveCancel()
 	response = router.raylineRoutesFailure(
+		nil,
 		live,
 		"rte_1234abcd",
 		errors.New("rayline ARC selection failed: encoder"),

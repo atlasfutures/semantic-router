@@ -40,6 +40,34 @@ routing:
           # text does reach the selector -- it is a correction aimed at the
           # very next reply, which is the signal the router exists to read.
           drop_mid_conversation_system_text: false
+          # include_tool_names shows the selector which tools the turn had
+          # available, as names only -- never the schemas. A 2026-09-17 probe
+          # measured the full schema block moving 40.4% of first-turn
+          # decisions, level with the bar that keeps include_system_text off;
+          # names move 7.6% for 42 tokens. Off, because safe to send is not
+          # the same as shown to help.
+          include_tool_names: false
+          # routes_api serves POST /v1/routes from this cell: the selector's
+          # choice for a request, returned without executing it. Off, and not
+          # implied by configuring this algorithm -- a lookup drives the
+          # encoder with no paying turn behind it, on the same instance that
+          # serves routed traffic.
+          routes_api:
+            enabled: false
+            # Bounds one lookup end to end. The encoder's own timeout is
+            # sized for a dispatched turn that streams, so without this a
+            # wedged encoder holds a caller waiting on a single answer.
+            deadline_ms: 0
+            # Lets a lookup join a conversation's trajectory, with the lease
+            # and store round trip that implies. Off, so a lookup costs the
+            # encode and nothing else. Turn it on for a gateway calling this
+            # every turn: a stable episode identity is also the encoder's
+            # prefix cache key.
+            episode_writes: false
+            # Human-readable release name published beside the artifact hash,
+            # as "<label>.<hash>". Separate from artifact_revision, which is
+            # deployment-private.
+            checkpoint_label: ""
           encoder:
             base_url: http://rayline-arc-encoder:8000
             # Set base_url to empty and populate replicas + failover to opt

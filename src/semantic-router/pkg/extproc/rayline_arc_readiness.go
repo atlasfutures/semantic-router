@@ -63,7 +63,7 @@ func createRaylineARCSelector(
 		), nil, nil, nil, class
 	}
 	for index := 1; index < len(decisions); index++ {
-		if !reflect.DeepEqual(
+		if !sameRaylineARCSelectionConfig(
 			arcConfig,
 			decisions[index].Algorithm.RaylineARC,
 		) {
@@ -593,4 +593,26 @@ func raylineARCCandidatesMatch(
 		}
 	}
 	return true
+}
+
+// sameRaylineARCSelectionConfig compares the parts of two ARC configurations
+// that the shared selector is built from.
+//
+// routes_api is excluded deliberately. It decides whether THIS cell answers
+// route lookups, which is a serving choice with no bearing on how the
+// selector scores anything; comparing it meant that enabling the endpoint on
+// one decision made every ARC decision read as conflicting, and disabled ARC
+// selection for live traffic. Everything that does reach the selector --
+// artifact, encoder, episode, and the turn-projection switches, tool names
+// included -- is still compared, because a difference there is a genuine
+// conflict.
+func sameRaylineARCSelectionConfig(left, right *config.RaylineARCAlgorithmConfig) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	leftSelection := *left
+	rightSelection := *right
+	leftSelection.RoutesAPI = config.RaylineARCRoutesAPIConfig{}
+	rightSelection.RoutesAPI = config.RaylineARCRoutesAPIConfig{}
+	return reflect.DeepEqual(leftSelection, rightSelection)
 }

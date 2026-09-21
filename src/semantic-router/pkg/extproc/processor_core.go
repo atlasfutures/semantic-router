@@ -53,6 +53,20 @@ func (r *OpenAIRouter) handleRequestBodyDispatch(v *ext_proc.ProcessingRequest_R
 	// Decide mode based on config: only use streaming handler when explicitly enabled
 	streamedMode := r.Config != nil && r.Config.StreamedBodyMode
 	if ctx.FullDuplexRequestBody && !streamedMode {
+		// A route lookup must never take this branch. It forwards the body
+		// untouched to the upstream, and this endpoint's whole contract is
+		// that it reaches no provider -- so falling through here would turn a
+		// promise of no execution into a billed turn. Refusing is the only
+		// safe answer: the lookup needs the whole body, and this mode hands
+		// the router chunks it is not accumulating.
+		if isRaylineRoutesRequest(ctx) {
+			return r.createRaylineRoutesError(
+				ctx,
+				503,
+				"api_error",
+				"route lookup is unavailable while request bodies stream full duplex",
+			), nil
+		}
 		return newFullDuplexRequestBodyResponse(v.RequestBody.GetBody(), eos), nil
 	}
 	if streamedMode && (!eos || ctx.FullDuplexRequestBody) {
