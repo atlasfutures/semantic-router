@@ -53,7 +53,7 @@ func (r *OpenAIRouter) handleRequestHeaders(v *ext_proc.ProcessingRequest_Reques
 	if responseAPIResp, err := r.handleResponseAPIRequestHeaders(method, path, ctx); err != nil || responseAPIResp != nil {
 		return responseAPIResp, err
 	}
-	if validationResp := r.validateRequestHeaders(method, path); validationResp != nil {
+	if validationResp := r.validateRequestHeaders(method, path, ctx); validationResp != nil {
 		return validationResp, nil
 	}
 	return newContinueRequestHeadersResponse(buildIdentityEncodingRequestMutation()), nil

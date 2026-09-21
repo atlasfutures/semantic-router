@@ -6,7 +6,7 @@ import (
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 )
 
-func (r *OpenAIRouter) validateRequestHeaders(method string, path string) *ext_proc.ProcessingResponse {
+func (r *OpenAIRouter) validateRequestHeaders(method string, path string, ctx *RequestContext) *ext_proc.ProcessingResponse {
 	normalizedPath := normalizeRequestPath(path)
 
 	switch normalizedPath {
@@ -19,7 +19,7 @@ func (r *OpenAIRouter) validateRequestHeaders(method string, path string) *ext_p
 	case "/v1/responses":
 		return r.validateResponseAPICollectionMethod(method)
 	case raylineRoutesAPIPath:
-		return r.validateRaylineRoutesMethod(method)
+		return r.validateRaylineRoutesMethod(method, ctx)
 	}
 
 	if extractResponseIDFromInputItemsPath(normalizedPath) != "" {
@@ -44,11 +44,22 @@ func (r *OpenAIRouter) validateRequestHeaders(method string, path string) *ext_p
 // validateRaylineRoutesMethod keeps the endpoint invisible where it is not
 // configured: a disabled cell answers 404 for every method, so probing it
 // cannot distinguish "off here" from "never existed".
-func (r *OpenAIRouter) validateRaylineRoutesMethod(method string) *ext_proc.ProcessingResponse {
+func (r *OpenAIRouter) validateRaylineRoutesMethod(
+	method string,
+	ctx *RequestContext,
+) *ext_proc.ProcessingResponse {
+	// Both refusals use this endpoint's own envelope. They are produced in
+	// the header phase, before the body-phase producer runs, so without this
+	// they are rewritten into the source format's error shape -- which for
+	// this path resolves to Chat -- and a caller sees a different contract
+	// for a 404 or 405 than for every other status.
 	if !r.raylineRoutesAPIEnabled() {
-		return r.createErrorResponse(404, "endpoint not found")
+		return r.createRaylineRoutesError(ctx, 404, "not_found_error", "endpoint not found")
 	}
-	return validateAllowedMethod(r, method, "POST")
+	if method != "POST" {
+		return r.createRaylineRoutesError(ctx, 405, "invalid_request_error", "method not allowed")
+	}
+	return nil
 }
 
 func (r *OpenAIRouter) validateResponseAPICollectionMethod(method string) *ext_proc.ProcessingResponse {

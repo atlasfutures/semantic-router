@@ -64,12 +64,12 @@ func TestRaylineRoutesIsNotFoundWhileDisabled(t *testing.T) {
 	t.Parallel()
 	router := routesRouter(false)
 	for _, method := range []string{"POST", "GET", "DELETE"} {
-		response := router.validateRequestHeaders(method, raylineRoutesAPIPath)
+		response := router.validateRequestHeaders(method, raylineRoutesAPIPath, &RequestContext{Headers: map[string]string{}})
 		if response == nil {
-			t.Fatalf("validateRequestHeaders(%q) = nil, want 404", method)
+			t.Fatalf("validateRequestHeaders(%q, &RequestContext{Headers: map[string]string{}}) = nil, want 404", method)
 		}
 		if code := immediateStatusCode(t, response); code != 404 {
-			t.Fatalf("validateRequestHeaders(%q) status = %d, want 404", method, code)
+			t.Fatalf("validateRequestHeaders(%q, &RequestContext{Headers: map[string]string{}}) status = %d, want 404", method, code)
 		}
 	}
 }
@@ -77,15 +77,15 @@ func TestRaylineRoutesIsNotFoundWhileDisabled(t *testing.T) {
 func TestRaylineRoutesAdmitsOnlyPost(t *testing.T) {
 	t.Parallel()
 	router := routesRouter(true)
-	if response := router.validateRequestHeaders("POST", raylineRoutesAPIPath); response != nil {
-		t.Fatalf("validateRequestHeaders(POST) = %v, want nil", response)
+	if response := router.validateRequestHeaders("POST", raylineRoutesAPIPath, &RequestContext{Headers: map[string]string{}}); response != nil {
+		t.Fatalf("validateRequestHeaders(POST, &RequestContext{Headers: map[string]string{}}) = %v, want nil", response)
 	}
-	response := router.validateRequestHeaders("GET", raylineRoutesAPIPath)
+	response := router.validateRequestHeaders("GET", raylineRoutesAPIPath, &RequestContext{Headers: map[string]string{}})
 	if response == nil {
-		t.Fatal("validateRequestHeaders(GET) = nil, want 405")
+		t.Fatal("validateRequestHeaders(GET, &RequestContext{Headers: map[string]string{}}) = nil, want 405")
 	}
 	if code := immediateStatusCode(t, response); code != 405 {
-		t.Fatalf("validateRequestHeaders(GET) status = %d, want 405", code)
+		t.Fatalf("validateRequestHeaders(GET, &RequestContext{Headers: map[string]string{}}) status = %d, want 405", code)
 	}
 }
 
@@ -199,9 +199,12 @@ func TestRaylineRoutesDialectMarkers(t *testing.T) {
 			want:    llmprotocol.OpenAIChatV1,
 			certain: true,
 		},
-		"ambiguous": {
-			body:    `{"messages":[{"role":"user","content":"hi"}]}`,
-			want:    llmprotocol.AnthropicMessagesV1,
+		// A marker-free body cannot be valid Anthropic, which requires
+		// max_tokens, so reading it as Anthropic made every ordinary Chat
+		// request fail the codec and answer 400.
+		"marker-free reads as chat": {
+			body:    `{"model":"m","messages":[{"role":"user","content":"hi"}]}`,
+			want:    llmprotocol.OpenAIChatV1,
 			certain: false,
 		},
 	} {
@@ -615,5 +618,71 @@ func TestRaylineRoutesReportsAnExpiredLookupAsATimeout(t *testing.T) {
 	)
 	if code := immediateStatusCode(t, response); code != 503 {
 		t.Fatalf("status = %d, want 503 while the budget still holds", code)
+	}
+}
+
+// The opt-out header is honoured for traffic this router forwards. A lookup
+// is not forwarded, so honouring it would hand the body to the upstream and
+// execute the turn this endpoint promises not to execute.
+func TestRaylineRoutesIgnoresTheProcessingOptOut(t *testing.T) {
+	t.Parallel()
+	router := routesRouter(true)
+	ctx := routesContext(nil)
+	ctx.SkipProcessing = true
+	response, err := router.HandleRequestBody(&ext_proc.ProcessingRequest_RequestBody{
+		RequestBody: &ext_proc.HttpBody{Body: []byte(`{"model":"rayline-router"}`)},
+	}, ctx)
+	if err != nil {
+		t.Fatalf("HandleRequestBody() error = %v", err)
+	}
+	if response.GetImmediateResponse() == nil {
+		t.Fatal("a skip-processing lookup was forwarded upstream, want it answered here")
+	}
+	if code := immediateStatusCode(t, response); code != 400 {
+		t.Fatalf("status = %d, want the endpoint's own 400", code)
+	}
+}
+
+// Header-phase refusals are produced before the body-phase error producer
+// runs, so without claiming them they are rewritten into the source format's
+// error shape and a caller sees two different contracts from one endpoint.
+func TestRaylineRoutesHeaderErrorsUseTheRoutesEnvelope(t *testing.T) {
+	t.Parallel()
+	for name, testCase := range map[string]struct {
+		enabled bool
+		method  string
+		status  int
+		errType string
+	}{
+		"disabled is not found": {enabled: false, method: "POST", status: 404, errType: "not_found_error"},
+		"wrong method":          {enabled: true, method: "GET", status: 405, errType: "invalid_request_error"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx := routesContext(nil)
+			response := routesRouter(testCase.enabled).
+				validateRequestHeaders(testCase.method, raylineRoutesAPIPath, ctx)
+			if response == nil {
+				t.Fatalf("validateRequestHeaders() = nil, want %d", testCase.status)
+			}
+			if code := immediateStatusCode(t, response); code != testCase.status {
+				t.Fatalf("status = %d, want %d", code, testCase.status)
+			}
+			if !ctx.ImmediateResponseEncoded {
+				t.Fatal("the header-phase refusal was not claimed, so it will be re-encoded")
+			}
+			var envelope struct {
+				Type  string `json:"type"`
+				Error struct {
+					Type string `json:"type"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(response.GetImmediateResponse().Body, &envelope); err != nil {
+				t.Fatalf("error body is not JSON: %v", err)
+			}
+			if envelope.Type != "error" || envelope.Error.Type != testCase.errType {
+				t.Fatalf("envelope = %+v, want an Anthropic %s", envelope, testCase.errType)
+			}
+		})
 	}
 }

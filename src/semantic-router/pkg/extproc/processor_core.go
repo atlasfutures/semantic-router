@@ -31,7 +31,12 @@ func (r *OpenAIRouter) handleRequestBodyDispatch(v *ext_proc.ProcessingRequest_R
 	// Honor x-vsr-skip-processing before allocating a streamed-body handler.
 	// This guarantees no chunk accumulation, model detection, or buffered
 	// pipeline runs for opted-out requests, regardless of streamed_body_mode.
-	if ctx.SkipProcessing {
+	// A route lookup is served by this router, not forwarded by it, so the
+	// generic processing opt-out does not apply: honouring it here would hand
+	// the caller's body to the upstream and execute a turn the endpoint
+	// promises not to execute. The replay surface takes the same exception at
+	// the header phase, for the same reason.
+	if ctx.SkipProcessing && !isRaylineRoutesRequest(ctx) {
 		if ctx.FullDuplexRequestBody {
 			return newFullDuplexRequestBodyResponse(v.RequestBody.GetBody(), v.RequestBody.GetEndOfStream()), nil
 		}

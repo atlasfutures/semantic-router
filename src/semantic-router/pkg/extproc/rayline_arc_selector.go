@@ -236,6 +236,10 @@ func (selector *raylineARCSelector) Select(
 	if err != nil {
 		return nil, err
 	}
+	// Publish the visited replicas the moment they are known. Everything
+	// below can fail, and a session retained by the encode above has to be
+	// closable after any of those failures.
+	arcContext.EncoderVisitedReplicaIDs = encoded.VisitedReplicaIDs
 	decision, err := armed.scorer.Select(
 		encoded.Embedding,
 		excluded,

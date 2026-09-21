@@ -81,7 +81,7 @@ func TestValidatePublicGenerationEndpoints(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.method+" "+test.path, func(t *testing.T) {
-			response := router.validateRequestHeaders(test.method, test.path)
+			response := router.validateRequestHeaders(test.method, test.path, &RequestContext{Headers: map[string]string{}})
 			if test.status == 0 {
 				if response != nil {
 					t.Fatalf("valid generation endpoint returned immediate response: %+v", response)

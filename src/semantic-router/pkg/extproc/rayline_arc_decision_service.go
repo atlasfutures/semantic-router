@@ -148,7 +148,7 @@ func (service *raylineARCDecisionService) RouteDecision(
 		// the ordinary encoder and lag behind the stored episode for the
 		// resumable one.
 		decisionFacts.Episode = &routerruntime.RouteEpisode{
-			TurnIndex: committedEpisodeTurnIndex(selectionContext),
+			TurnIndex: committedEpisodeTurnIndex(requestContext),
 			Stayed:    trace.Stayed,
 		}
 	}
@@ -351,12 +351,17 @@ func (service *raylineARCDecisionService) closeEphemeralEncoderSession(
 	if episodeIDHash == "" {
 		return
 	}
-	// The replicas this session actually touched, when selection got far
-	// enough to record them. An empty list is correct for a lookup that
-	// failed before encoding: there is nothing to close on any replica.
+	// The replicas this session actually touched. The finished trace carries
+	// them on a successful lookup; the selection context carries them from
+	// the moment the encode returned, which is the only source that survives
+	// a failure between encoding and a validated result. An empty list then
+	// means the encode never ran, and there is genuinely nothing to close.
 	var visited []string
 	if requestContext != nil && requestContext.VSRRaylineARC != nil {
 		visited = requestContext.VSRRaylineARC.EncoderVisitedReplicaIDs
+	}
+	if len(visited) == 0 {
+		visited = selectionContext.RaylineARC.EncoderVisitedReplicaIDs
 	}
 	closeContext, cancel := context.WithTimeout(
 		context.WithoutCancel(ctx),
@@ -386,14 +391,18 @@ func ephemeralSessionCloseTimeout(algorithm *config.AlgorithmConfig) time.Durati
 }
 
 // committedEpisodeTurnIndex reads the trajectory position this decision
-// advanced. The state carries the index the policy incremented, so it is
-// read after selection and after the commit, where it is final.
-func committedEpisodeTurnIndex(selectionContext *selection.SelectionContext) int {
-	if selectionContext == nil || selectionContext.RaylineARC == nil ||
-		selectionContext.RaylineARC.State == nil {
+// advanced, from the state the commit stored.
+//
+// Selection does not mutate the episode state: the commit clones it,
+// increments the clone, persists that, and swaps it onto the transaction. So
+// the pre-commit state is always one behind, and reading it reported
+// turn_index 0 for the first committed lookup of an episode already at 1.
+func committedEpisodeTurnIndex(requestContext *RequestContext) int {
+	if requestContext == nil || requestContext.RaylineARCTransaction == nil ||
+		requestContext.RaylineARCTransaction.state == nil {
 		return 0
 	}
-	turnIndex := selectionContext.RaylineARC.State.TurnIndex
+	turnIndex := requestContext.RaylineARCTransaction.state.TurnIndex
 	if turnIndex > math.MaxInt32 {
 		return math.MaxInt32
 	}
@@ -522,7 +531,8 @@ func (r *OpenAIRouter) decisionOnlyRoutingTarget() (
 	if r.Config == nil {
 		return nil, nil, errors.New("router configuration is unavailable")
 	}
-	var target *config.Decision
+	var arcDecisions []*config.Decision
+	var enabled []*config.Decision
 	for index := range r.Config.Decisions {
 		decision := &r.Config.Decisions[index]
 		// The algorithm block, not just the type name. A decision can name
@@ -533,34 +543,48 @@ func (r *OpenAIRouter) decisionOnlyRoutingTarget() (
 			decision.Algorithm.RaylineARC == nil {
 			continue
 		}
-		// Where several ARC decisions exist, the one that turns the endpoint
-		// on is the one that serves it. Without this, enabling routes_api in
-		// a multi-decision deployment was unusable in both directions: enable
-		// it on one and the selector read the configs as conflicting, enable
-		// it on all and every lookup was refused as ambiguous.
-		if target != nil {
-			targetEnabled := target.Algorithm.RaylineARC.RoutesAPI.Enabled
-			if targetEnabled == decision.Algorithm.RaylineARC.RoutesAPI.Enabled {
-				return nil, nil, fmt.Errorf(
-					"decision-only routing is ambiguous: decisions '%s' and '%s' both use %s; enable routes_api on exactly one",
-					target.Name,
-					decision.Name,
-					config.RaylineARCAlgorithmType,
-				)
-			}
-			if targetEnabled {
-				continue
-			}
+		arcDecisions = append(arcDecisions, decision)
+		if decision.Algorithm.RaylineARC.RoutesAPI.Enabled {
+			enabled = append(enabled, decision)
 		}
-		target = decision
 	}
-	if target == nil {
+
+	// A decision that turns the endpoint on has claimed it, and that is the
+	// only thing that can disambiguate a multi-decision deployment. Scanning
+	// pairwise instead meant two disabled decisions ahead of the enabled one
+	// raised ambiguity before the enabled one was reached.
+	if len(enabled) == 1 {
+		return enabled[0], enabled[0].Algorithm, nil
+	}
+	if len(enabled) > 1 {
 		return nil, nil, fmt.Errorf(
-			"decision-only routing requires a decision with algorithm.type=%s",
+			"decision-only routing is ambiguous: decisions '%s' and '%s' both enable routes_api on %s; enable it on exactly one",
+			enabled[0].Name,
+			enabled[1].Name,
 			config.RaylineARCAlgorithmType,
 		)
 	}
-	return target, target.Algorithm, nil
+
+	// Nothing claimed it. The legacy consult has no routes_api to read, so it
+	// keeps the original rule: one ARC decision serves it, and more than one
+	// is ambiguous with nothing to choose between them. Failing closed here
+	// is deliberate -- guessing would route live traffic through a policy
+	// nobody selected.
+	if len(arcDecisions) == 1 {
+		return arcDecisions[0], arcDecisions[0].Algorithm, nil
+	}
+	if len(arcDecisions) > 1 {
+		return nil, nil, fmt.Errorf(
+			"decision-only routing is ambiguous: decisions '%s' and '%s' both use %s",
+			arcDecisions[0].Name,
+			arcDecisions[1].Name,
+			config.RaylineARCAlgorithmType,
+		)
+	}
+	return nil, nil, fmt.Errorf(
+		"decision-only routing requires a decision with algorithm.type=%s",
+		config.RaylineARCAlgorithmType,
+	)
 }
 
 // prepareFailureError classifies a preparation failure for the caller.

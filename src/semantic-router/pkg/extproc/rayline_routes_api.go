@@ -507,7 +507,11 @@ func messagesDialect(envelope map[string]json.RawMessage) (llmprotocol.WireForma
 	if _, present := envelope["max_tokens"]; present {
 		return llmprotocol.AnthropicMessagesV1, true
 	}
-	return llmprotocol.AnthropicMessagesV1, false
+	// A body with no marker at all is Chat. It cannot be valid Anthropic --
+	// max_tokens is required there and would have been caught above -- so
+	// defaulting the other way made every ordinary Chat request fail the
+	// Anthropic codec and answer 400.
+	return llmprotocol.OpenAIChatV1, false
 }
 
 // raylineRoutesBodyWarnings names what this router did with the body other
