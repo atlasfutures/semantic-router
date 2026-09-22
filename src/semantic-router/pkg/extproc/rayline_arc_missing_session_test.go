@@ -82,7 +82,7 @@ func TestRaylineARCMissingSessionHeaderIsPreparationFailure(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			router, requestContext, algorithm := missingSessionRequestContext(t, header)
-			arcContext := router.buildRaylineARCSelectionContext(algorithm, requestContext, missingSessionModelRefs())
+			arcContext := router.buildRaylineARCSelectionContext(algorithm, requestContext, missingSessionModelRefs(), raylineARCEpisodeRequired)
 			if arcContext == nil {
 				t.Fatal("no ARC selection context was built")
 			}
@@ -103,7 +103,7 @@ func TestRaylineARCMissingSessionHeaderIsPreparationFailure(t *testing.T) {
 // of the refusal contract in TestMissingSessionHeaderCountsOnceForOneRequest.
 func TestRaylineARCMissingSessionHeaderAnswers400(t *testing.T) {
 	router, requestContext, algorithm := missingSessionRequestContext(t, "")
-	router.buildRaylineARCSelectionContext(algorithm, requestContext, missingSessionModelRefs())
+	router.buildRaylineARCSelectionContext(algorithm, requestContext, missingSessionModelRefs(), raylineARCEpisodeRequired)
 
 	err := selectionFailureForAlgorithm(algorithm, arcFailureMissingEpisodeID)
 	response := router.authoritativeSelectionFailureResponse(err, requestContext)

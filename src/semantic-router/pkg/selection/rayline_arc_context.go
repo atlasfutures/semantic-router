@@ -11,9 +11,19 @@ import (
 // algorithm.
 type RaylineARCSelectionContext struct {
 	EpisodeIDHash string
-	Turns         []raylinearc.Turn
-	State         *raylinearc.EpisodeState
-	InputTokens   int
+	// EncoderVisitedReplicaIDs names the replicas this turn's encode touched,
+	// recorded as soon as the encode returns rather than when a result is
+	// built.
+	//
+	// It exists because closing a retained session needs those identities and
+	// every step after the encode can fail: scoring, policy, validation, the
+	// manifest mapping. A cleanup that reads them from the finished trace
+	// therefore finds nothing on exactly the paths where the session was
+	// retained but the lookup did not complete.
+	EncoderVisitedReplicaIDs []string
+	Turns                    []raylinearc.Turn
+	State                    *raylinearc.EpisodeState
+	InputTokens              int
 	// ImageBearing reports that this turn carries image input. The turn
 	// projection drops image blocks, so the encoder never sees them, but the
 	// provider request does: an arm that rejects image input answers 404 and

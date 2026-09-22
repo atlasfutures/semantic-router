@@ -63,7 +63,7 @@ func createRaylineARCSelector(
 		), nil, nil, nil, class
 	}
 	for index := 1; index < len(decisions); index++ {
-		if !reflect.DeepEqual(
+		if !sameRaylineARCSelectionConfig(
 			arcConfig,
 			decisions[index].Algorithm.RaylineARC,
 		) {
@@ -72,6 +72,17 @@ func createRaylineARCSelector(
 	}
 	runtime, err := raylinearc.LoadRuntime(arcConfig.ArtifactDir)
 	if err != nil {
+		// Logged with the path and the error, because the failure class alone
+		// is terminal and unhelpful. A cell whose image shipped without the
+		// artifact reports exactly the same "artifact" class as one whose
+		// manifest is corrupt or whose digests do not verify, does not
+		// reprobe, and fails every request from then on -- so without this
+		// line the only way to tell those apart is to unpack the image.
+		logging.ComponentErrorEvent("extproc", "rayline_arc_artifact_load_failed", map[string]interface{}{
+			"artifact_dir":      arcConfig.ArtifactDir,
+			"artifact_revision": arcConfig.ArtifactRevision,
+			"error":             err.Error(),
+		})
 		return unavailable("artifact")
 	}
 	if failureClass := raylineARCLoadedContractFailure(
@@ -134,12 +145,7 @@ func probeRaylineARCReadiness(
 		}
 		return nil
 	}
-	var closeSession raylineARCSessionCloseFunc
-	if closer, ok := encoder.(interface {
-		CloseSession(context.Context, string, []string) (raylinearc.EncoderCloseReport, error)
-	}); ok {
-		closeSession = closer.CloseSession
-	}
+	closeSession := raylineARCCloseSessionFor(encoder, arcConfig)
 	selector := newRaylineARCSelector(
 		nil,
 		nil,
@@ -593,4 +599,82 @@ func raylineARCCandidatesMatch(
 		}
 	}
 	return true
+}
+
+// sameRaylineARCSelectionConfig compares the parts of two ARC configurations
+// that the shared selector is built from.
+//
+// routes_api is excluded deliberately. It decides whether THIS cell answers
+// route lookups, which is a serving choice with no bearing on how the
+// selector scores anything; comparing it meant that enabling the endpoint on
+// one decision made every ARC decision read as conflicting, and disabled ARC
+// selection for live traffic. Everything that does reach the selector --
+// artifact, encoder, episode, and the turn-projection switches, tool names
+// included -- is still compared, because a difference there is a genuine
+// conflict.
+func sameRaylineARCSelectionConfig(left, right *config.RaylineARCAlgorithmConfig) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	leftSelection := *left
+	rightSelection := *right
+	leftSelection.RoutesAPI = config.RaylineARCRoutesAPIConfig{}
+	rightSelection.RoutesAPI = config.RaylineARCRoutesAPIConfig{}
+	return reflect.DeepEqual(leftSelection, rightSelection)
+}
+
+// raylineARCCloseSessionFor adapts whichever encoder this deployment built to
+// the one close signature the lookup path calls.
+//
+// Both shapes, not just the pool's. A deployment with one base_url and no
+// replica membership -- the supported Rung B configuration, and the one dev
+// and prod run -- gets a bare EncoderClient, whose CloseSession takes no
+// replica list. Matching only the pool's three-argument form left this nil
+// there, so every ephemeral lookup on that config stranded one retained
+// session until the encoder evicted it, and sustained lookup traffic evicted
+// the live conversation prefixes it shares the card with.
+//
+// Nil is returned when nothing is retained, which is a true no-op: a client
+// that retains no session refuses the close outright, and calling it per
+// lookup would log a failure for housekeeping that was never needed.
+func raylineARCCloseSessionFor(
+	encoder interface{},
+	arcConfig *config.RaylineARCAlgorithmConfig,
+) raylineARCSessionCloseFunc {
+	switch closer := encoder.(type) {
+	case interface {
+		CloseSession(context.Context, string, []string) (raylinearc.EncoderCloseReport, error)
+	}:
+		return closer.CloseSession
+	case interface {
+		CloseSession(context.Context, string) error
+	}:
+		if !raylineARCRetainsSessions(arcConfig) {
+			return nil
+		}
+		return func(
+			ctx context.Context,
+			episodeIDHash string,
+			_ []string,
+		) (raylinearc.EncoderCloseReport, error) {
+			// One client is one replica, so the report it cannot produce is
+			// the one a pool would have produced for a membership of one.
+			if err := closer.CloseSession(ctx, episodeIDHash); err != nil {
+				return raylinearc.EncoderCloseReport{Attempted: 1, Failed: 1}, err
+			}
+			return raylinearc.EncoderCloseReport{Attempted: 1, Closed: 1}, nil
+		}
+	}
+	return nil
+}
+
+// raylineARCRetainsSessions reports whether this encoder keeps a session
+// across calls, which is the only case where one needs closing. It reads the
+// same capability the client's own RetainedSession is derived from, so the
+// two cannot disagree.
+func raylineARCRetainsSessions(arcConfig *config.RaylineARCAlgorithmConfig) bool {
+	return arcConfig != nil && slices.Contains(
+		arcConfig.Encoder.RequiredCapabilities,
+		config.RaylineARCCapabilityResumableMean,
+	)
 }

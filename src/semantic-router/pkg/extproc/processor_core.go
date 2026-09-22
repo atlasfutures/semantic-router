@@ -31,7 +31,12 @@ func (r *OpenAIRouter) handleRequestBodyDispatch(v *ext_proc.ProcessingRequest_R
 	// Honor x-vsr-skip-processing before allocating a streamed-body handler.
 	// This guarantees no chunk accumulation, model detection, or buffered
 	// pipeline runs for opted-out requests, regardless of streamed_body_mode.
-	if ctx.SkipProcessing {
+	// A route lookup is served by this router, not forwarded by it, so the
+	// generic processing opt-out does not apply: honouring it here would hand
+	// the caller's body to the upstream and execute a turn the endpoint
+	// promises not to execute. The replay surface takes the same exception at
+	// the header phase, for the same reason.
+	if ctx.SkipProcessing && !isRaylineRoutesRequest(ctx) {
 		if ctx.FullDuplexRequestBody {
 			return newFullDuplexRequestBodyResponse(v.RequestBody.GetBody(), v.RequestBody.GetEndOfStream()), nil
 		}
@@ -53,6 +58,20 @@ func (r *OpenAIRouter) handleRequestBodyDispatch(v *ext_proc.ProcessingRequest_R
 	// Decide mode based on config: only use streaming handler when explicitly enabled
 	streamedMode := r.Config != nil && r.Config.StreamedBodyMode
 	if ctx.FullDuplexRequestBody && !streamedMode {
+		// A route lookup must never take this branch. It forwards the body
+		// untouched to the upstream, and this endpoint's whole contract is
+		// that it reaches no provider -- so falling through here would turn a
+		// promise of no execution into a billed turn. Refusing is the only
+		// safe answer: the lookup needs the whole body, and this mode hands
+		// the router chunks it is not accumulating.
+		if isRaylineRoutesRequest(ctx) {
+			return r.createRaylineRoutesError(
+				ctx,
+				503,
+				"api_error",
+				"route lookup is unavailable while request bodies stream full duplex",
+			), nil
+		}
 		return newFullDuplexRequestBodyResponse(v.RequestBody.GetBody(), eos), nil
 	}
 	if streamedMode && (!eos || ctx.FullDuplexRequestBody) {

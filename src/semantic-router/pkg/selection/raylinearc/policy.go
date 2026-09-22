@@ -104,6 +104,16 @@ type Policy struct {
 	contract PolicyManifest
 }
 
+// ReferenceWorker names the artifact's declared counterfactual worker, or is
+// empty when the artifact declares none. It is the baseline a caller measures
+// its own savings against, so it is published rather than kept internal.
+func (policy *Policy) ReferenceWorker() string {
+	if policy == nil {
+		return ""
+	}
+	return policy.contract.ReferenceWorker
+}
+
 type policyAdjustment struct {
 	scores            []float32
 	switchCost        []float64

@@ -70,6 +70,10 @@ func ProjectTurns(
 		)
 	}
 	systemText := newSystemTextBuffer(options)
+	// Tools are collected before the instructions so the list sits at the
+	// front of the folded prefix, which is where the encoder probe measured
+	// it. Order inside the prefix is part of what was measured.
+	collectToolNames(&systemText, request.Tools)
 	if err := collectInstructionText(
 		&systemText,
 		request.Instructions,
@@ -93,6 +97,42 @@ func ProjectTurns(
 		turns = projected
 	}
 	return systemText.flushTrailing(turns), nil
+}
+
+// toolNamesPrefix introduces the tool list. It is the exact string the
+// encoder probe measured; the selector has been shown this sequence and no
+// other, so changing it voids that measurement.
+const toolNamesPrefix = "[available tools] "
+
+// collectToolNames renders the turn's available tools as their names alone.
+//
+// Declaration order is preserved rather than sorted: it is the order the
+// caller sent and the order the probe encoded, and sorting would make the
+// same tool set render differently depending on how the client happened to
+// build it. Tools the source API runs itself are included -- what the
+// selector reads from this is what the turn can do, not who executes it.
+//
+// This cannot fail, so it does not go through collect's error path: a name is
+// already a string on the decoded request, with no content blocks to render.
+func collectToolNames(systemText *systemTextBuffer, tools []llmprotocol.Tool) {
+	if !systemText.wants(systemTextTools) || len(tools) == 0 {
+		return
+	}
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		// Identity, not Name. A tool the source API runs itself -- web
+		// search, the advisor -- is identified by its type and usually states
+		// no name at all, so keying on Name dropped every one of them and
+		// contradicted this function's own contract. Identity returns the
+		// type for exactly those, and the name for everything else.
+		if name := strings.TrimSpace(tool.Identity()); name != "" {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+	systemText.add(toolNamesPrefix + strings.Join(names, ", "))
 }
 
 // collectInstructionText reads the conversation-opening prompt.

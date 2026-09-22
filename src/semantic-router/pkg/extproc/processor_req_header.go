@@ -41,7 +41,12 @@ func (r *OpenAIRouter) handleRequestHeaders(v *ext_proc.ProcessingRequest_Reques
 	// Streaming detection still runs because the same flag drives mode selection
 	// for downstream filters and is cheap; the body and response handlers will
 	// also short-circuit in the no-op path.
-	if ctx.SkipProcessing {
+	// A route lookup is validated and served by this router, so the opt-out
+	// does not reach it here either. Without this, a GET or a bodyless POST
+	// carrying the header skipped method validation entirely and was
+	// forwarded upstream, and a GET with a body reached the body handler and
+	// could be answered 200 against a POST-only contract.
+	if ctx.SkipProcessing && !isRaylineRoutesRequest(ctx) {
 		detectStreamingExpectation(ctx)
 		return newContinueRequestHeadersResponse(buildLooperInternalHeaderRemovalMutation()), nil
 	}
@@ -53,8 +58,22 @@ func (r *OpenAIRouter) handleRequestHeaders(v *ext_proc.ProcessingRequest_Reques
 	if responseAPIResp, err := r.handleResponseAPIRequestHeaders(method, path, ctx); err != nil || responseAPIResp != nil {
 		return responseAPIResp, err
 	}
-	if validationResp := r.validateRequestHeaders(method, path); validationResp != nil {
+	if validationResp := r.validateRequestHeaders(method, path, ctx); validationResp != nil {
 		return validationResp, nil
+	}
+	// A route lookup is answered entirely from its body, and Envoy sends no
+	// body callback for a header message that already ended the stream. A
+	// bodyless POST therefore passes method validation, finds no body phase
+	// to answer it, and is continued upstream -- forwarding a request to an
+	// endpoint that exists only here and executes nothing. Refusing it now is
+	// the only place left that still can.
+	if isRaylineRoutesRequest(ctx) && v.RequestHeaders.GetEndOfStream() {
+		return r.createRaylineRoutesError(
+			ctx,
+			400,
+			"invalid_request_error",
+			"request body is required",
+		), nil
 	}
 	return newContinueRequestHeadersResponse(buildIdentityEncodingRequestMutation()), nil
 }

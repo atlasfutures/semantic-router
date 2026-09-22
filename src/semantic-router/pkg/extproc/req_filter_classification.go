@@ -261,7 +261,12 @@ func (r *OpenAIRouter) buildSelectionContext(
 		ConversationHistory:        conversationHistory,
 		CacheAffinityCtx:           r.buildCacheAffinityContext(reqCtx, modelRefs),
 	}
-	selCtx.RaylineARC = r.buildRaylineARCSelectionContext(algorithm, reqCtx, modelRefs)
+	selCtx.RaylineARC = r.buildRaylineARCSelectionContext(
+		algorithm,
+		reqCtx,
+		modelRefs,
+		raylineARCEpisodeRequired,
+	)
 	return selCtx
 }
 

@@ -264,6 +264,212 @@ by embedding credentials in YAML. Configure `modal_key_env` and
 `modal_secret_env` together for a protected Modal web endpoint, or omit both
 for an internal endpoint that does not use Modal proxy authentication.
 
+## Tool names as a routing signal
+
+`include_tool_names` folds the turn's available tool names into the first user
+turn, where the opening system prompt would go:
+
+```text
+[available tools] Ledger, Scribe, Amend, Lantern, Anvil
+
+rename the helper in the cache module
+```
+
+Names only, in the order the caller declared them, and never the schemas. A
+2026-09-17 encoder probe measured all three renderings over 200 episodes
+against the frozen head:
+
+| rendering | tokens | cosine p10 | first-turn decisions changed |
+|---|---|---|---|
+| names | 42 | .996 | 7.6% |
+| names with descriptions | 225 | .984 | 13.8% |
+| full JSON schemas | 3,140 | .820 | 40.4% |
+
+The schema block lands level with the bar that keeps `include_system_text`
+off, and with the same signature: cross-episode similarity at the first
+boundary rises from .75 to .98 as the shared prefix drowns the per-episode
+signal. Tool definitions sit on the same dose-response curve as any other
+shared prefix, so sending the contract destroys the signal it was meant to
+add, while sending the names does not.
+
+Off by default. The probe established that names are safe to send, not that
+they improve routing: those 7.6% are decisions changing with no evidence they
+changed for the better, and the selector has never been trained with tool
+names. An eval against the current router decides that, not this probe.
+
+Turning it on changes what the selector is asked on every routed turn, not
+only on route lookups.
+
+## Route lookup
+
+A caller that owns its own provider keys and its own LLM bill can ask for the
+selection without the execution:
+
+```text
+POST /v1/routes
+```
+
+The request body is the body that caller was going to send anyway -- the same
+bytes `/v1/messages` or `/v1/responses` would have taken. Fields the selector
+does not read, such as `max_tokens` or `temperature`, are ignored rather than
+refused; `model` is ignored too, so neither auto-routing alias means anything
+here.
+
+One path serves every dialect, so the dialect has to be established from the
+request. It is inferred from the body's own shape wherever the body says which
+it is: a `system`, `stop_sequences` or `thinking` member, an `input_schema` on
+a tool, a server tool declaring only its `type`, or a `tool_use` content block
+make it Anthropic Messages; a `system`, `developer` or `tool` role inside
+`messages[]`, a `tool_calls` member, a `function` on a tool or any of Chat's
+own sampling fields make it Chat Completions. `max_tokens` decides nothing,
+because both dialects accept it.
+
+A body that carries none of those markers is read as Chat Completions and
+answered with a `format_inferred` warning naming the choice. Send
+`x-rayline-format` to settle it rather than be told:
+
+| `x-rayline-format` | Dialect |
+|---|---|
+| `anthropic` | Anthropic Messages |
+| `chat` | OpenAI Chat Completions |
+| `responses` | OpenAI Responses |
+
+The header wins over inference. An unrecognised value is ignored rather than
+refused, because inference still has an answer and failing a well-formed
+request over a header typo would be the worse of the two.
+
+The answer names the model, the reasoning configuration the arm was scored
+under, what it was chosen over, and both rate cards, so the caller can build
+the provider call and compute its own savings without a reporting call back:
+
+```json
+{
+  "route_id": "rte_7b929848",
+  "object": "route",
+  "model": "worker/model-id",
+  "worker": "worker-id",
+  "provider": "provider-slug",
+  "thinking": { "mode": "off", "budget_tokens": null },
+  "checkpoint": "arc-2026-09-12.c82a1f3e",
+  "alternatives": [{ "model": "other/model-id", "worker": "other-worker-id", "provider": "provider-slug", "score": 0.62 }],
+  "baseline": { "model": "reference/model-id", "input_per_mtok": 3.0, "output_per_mtok": 15.0, "cache_read_per_mtok": 0.3, "cache_write_per_mtok": 3.75 },
+  "selected_pricing": { "input_per_mtok": 0.435, "output_per_mtok": 0.87, "cache_read_per_mtok": 0.0435, "cache_write_per_mtok": 0.544 },
+  "warnings": [],
+  "usage": { "encoded_input_tokens": 1840, "cache_read_tokens": 1200 },
+  "latency_ms": 212
+}
+```
+
+`thinking.budget_tokens` is the budget the arm was scored under, not a
+suggestion. Executing a thinking-on arm with a different budget makes the
+decision and the execution diverge on the axis the choice was made on.
+
+`worker` and `provider` identify which arm was chosen. Two arms can serve the
+same model through different providers at different prices -- the manifest
+requires worker ids to be unique, not model names -- so `model` alone is not
+enough to execute the decision that was made. `provider` is omitted when the
+arm declares none.
+
+`alternatives` explains the choice. It is not a failover list: those arms were
+scored and rejected for this turn, and an arm a hard constraint removed before
+scoring is not listed at all. Each entry names its arm the same way the
+selected one does, because two arms serving one model would otherwise print as
+two identical lines, and the list is sorted by score rather than left in
+manifest order.
+
+`warnings` is always present and usually empty. It names the ways a request
+can produce a well-formed, plausible route while quietly not being the request
+that was asked for -- tools dropped before encoding, a checkpoint pin this
+cell cannot honour.
+
+`baseline` is the artifact's declared reference worker. An artifact that
+declares none omits the field rather than substituting a plausible model.
+
+`checkpoint` pairs the release name an operator set in `checkpoint_label` with
+the artifact's hash. The hash pins exactly one artifact but tells a reader
+nothing; the label is readable but is not unique across deployments that reuse
+a release name. Neither half alone is the identity.
+
+There is deliberately no confidence score and no per-request explanation. The
+selector has no source for either today, and a constant published under those
+names reads as measured.
+
+### Timing
+
+One lookup is bounded by `deadline_ms`, default 1500, and a lookup that
+exceeds it answers 504. The bound is the endpoint's own: the encoder's
+`total_timeout_seconds` is sized for a dispatched turn that streams for
+minutes and wraps whatever context it is handed, so a lookup that inherited it
+would leave a waiting caller for the routed turn's timeout.
+
+A lookup that collides with another on the same conversation, or with a busy
+encoder, answers 429 with `Retry-After`. That is a healthy router saying when
+to come back, not an unavailable one, and it is worth honouring: retrying
+immediately lands on the lease or the queue that produced the contention.
+
+### Episodes
+
+Three optional request headers shape continuity:
+
+| Header | Effect |
+|---|---|
+| `x-rayline-session` | the conversation this lookup belongs to. **Absent means stateless**, which is what a playground wants: experimenting must not advance a real conversation |
+| `x-rayline-branch` | a subagent lane inside that conversation, so concurrent subagents are separate trajectories rather than each other's previous turn |
+| `x-rayline-route-id` | a caller-minted id this router adopts and echoes, so one id spans both records |
+
+A branch without a session names a lane in no conversation, so it is dropped
+and reported as a `branch_ignored` warning rather than silently making the
+lookup stateless.
+
+Continuity also has to be switched on. With `episode_writes` off, which is the
+default, every lookup is ephemeral: the episode identity is minted per call
+and thrown away, nothing is leased and nothing is stored, so a lookup costs
+the encode and nothing else. A caller that sends `x-rayline-session` to such a
+cell gets an `episode_not_tracked` warning rather than silence, because a
+route computed without the conversation is indistinguishable from one computed
+with it.
+
+Turn `episode_writes` on for a gateway that calls this endpoint on every turn
+of an agentic run. A stable episode identity is also the encoder's prefix
+cache key, so continuity and encoder efficiency arrive together, and neither
+is reachable without the lease that serializes concurrent turns on one
+conversation.
+
+A tracked lookup commits its episode at decision time: there is no dispatch
+phase to commit against, so the chosen arm becomes the previous arm on the
+assumption that the caller ran it. A caller that routinely ignores the answer
+will see `episode.stayed` stop making sense, which is the signal that its
+episode ids are not stable per conversation. `episode` is omitted entirely
+from an ephemeral lookup rather than reported as turn zero.
+
+### Enabling it
+
+```yaml
+routing:
+  decisions:
+    - name: rayline_arc_reference_route
+      algorithm:
+        type: rayline_arc
+        on_error: fail_closed
+        rayline_arc:
+          routes_api:
+            enabled: true
+            deadline_ms: 1500
+            checkpoint_label: arc-2026-09-12
+            episode_writes: false
+```
+
+Off by default, and deliberately not implied by configuring the algorithm. A
+lookup drives the encoder with no paying turn behind it, and lands on the same
+instance that serves routed traffic, so a cell acquires that load when an
+operator says so. While it is off the path answers 404 for every method, so a
+prober cannot tell a cell that has it switched off from one that never had it.
+
+Errors use the Anthropic error envelope rather than this router's own, because
+a caller of this endpoint is already parsing that envelope from the endpoint
+it would otherwise have called. A contended lookup answers 429, not 503: the
+router is healthy and briefly busy with that session.
+
 ## Deployment
 
 The public Helm profile is

@@ -64,7 +64,7 @@ func decodableUpstreamBody() []byte {
 // body-phase failure path, which is the path that has no natural trigger left.
 func TestFaultInjectionDrivesTheBodyPhaseFailurePath(t *testing.T) {
 	router, requestContext, algorithm := faultInjectionContext(t, true, headers.FaultUpstreamDecode)
-	router.buildRaylineARCSelectionContext(algorithm, requestContext, missingSessionModelRefs())
+	router.buildRaylineARCSelectionContext(algorithm, requestContext, missingSessionModelRefs(), raylineARCEpisodeRequired)
 
 	response := router.handleNonStreamingResponseBody(decodableUpstreamBody(), requestContext, 0)
 	encoded := router.encodeImmediateResponseForClient(response, requestContext)
@@ -98,7 +98,7 @@ func TestFaultInjectionDrivesTheBodyPhaseFailurePath(t *testing.T) {
 // With the flag off the header means nothing, so the response is served.
 func TestFaultInjectionHeaderIsInertWhenDisabled(t *testing.T) {
 	router, requestContext, algorithm := faultInjectionContext(t, false, headers.FaultUpstreamDecode)
-	router.buildRaylineARCSelectionContext(algorithm, requestContext, missingSessionModelRefs())
+	router.buildRaylineARCSelectionContext(algorithm, requestContext, missingSessionModelRefs(), raylineARCEpisodeRequired)
 	if requestContext.InjectedFault != "" {
 		t.Fatalf("fault = %q, want none while the cell has the flag off", requestContext.InjectedFault)
 	}
@@ -111,7 +111,7 @@ func TestFaultInjectionHeaderIsInertWhenDisabled(t *testing.T) {
 // No header, flag on: nothing changes.
 func TestFaultInjectionNeedsItsHeader(t *testing.T) {
 	router, requestContext, algorithm := faultInjectionContext(t, true, "")
-	router.buildRaylineARCSelectionContext(algorithm, requestContext, missingSessionModelRefs())
+	router.buildRaylineARCSelectionContext(algorithm, requestContext, missingSessionModelRefs(), raylineARCEpisodeRequired)
 	if requestContext.InjectedFault != "" {
 		t.Fatalf("fault = %q, want none without the header", requestContext.InjectedFault)
 	}

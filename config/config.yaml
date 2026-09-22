@@ -1632,6 +1632,17 @@ routing:
           # text does reach the selector -- it is a correction aimed at the
           # very next reply, which is the signal the router exists to read.
           drop_mid_conversation_system_text: false
+          # include_tool_names shows the selector which tools a turn had
+          # available, as a bare comma-separated list of names -- names only,
+          # never the schemas. The 2026-09-17 encoder probe measured all three
+          # renderings against the frozen head: names cost 42 tokens and moved
+          # 7.6% of first-turn decisions, names with descriptions 225 tokens
+          # and 13.8%, and the full JSON schema block 3,140 tokens and 40.4%,
+          # level with the bar that keeps include_system_text off. Tool
+          # definitions sit on the same curve as any other shared prefix, so
+          # sending the contract destroys the signal it was meant to add.
+          # Off: names are safe to send, but not yet shown to help.
+          include_tool_names: false
           # fault_injection lets a request ask this cell to fail in a named
           # way, so a failure path with no natural trigger can still be
           # exercised. Off, and off is the only setting a serving cell should
@@ -1639,6 +1650,32 @@ routing:
           # while it is on any caller can make this cell refuse a request.
           fault_injection:
             enabled: false
+          # routes_api serves POST /v1/routes from this cell: the selector's
+          # choice for a request, returned without executing it, for a caller
+          # that owns its own provider keys and LLM bill. Off, and not implied
+          # by configuring this algorithm -- a lookup drives the encoder with
+          # no paying turn behind it and lands on the same instance that
+          # serves routed traffic, so an operator opts in deliberately.
+          routes_api:
+            enabled: false
+            # deadline_ms bounds one lookup end to end. The encoder's own
+            # total_timeout_seconds is sized for a dispatched turn that
+            # streams for minutes and wraps whatever context it is handed, so
+            # without a bound here a wedged encoder holds a caller who is
+            # waiting on a single answer. Zero selects 1500 ms.
+            deadline_ms: 0
+            # episode_writes lets a lookup join a conversation's trajectory,
+            # with the episode lease and store round trip that implies. Off,
+            # so a lookup costs nothing but the encode. Turn it on for a
+            # gateway that calls this endpoint every turn of an agentic run: a
+            # stable episode identity is also the encoder's prefix cache key,
+            # so continuity and encoder efficiency arrive together.
+            episode_writes: false
+            # checkpoint_label is the human-readable release name published
+            # beside the artifact hash, as "<label>.<hash>". It is separate
+            # from artifact_revision because that pin is deployment-private.
+            # Empty publishes the hash alone.
+            checkpoint_label: ""
           encoder:
             base_url: http://rayline-arc-encoder:8000
             # Set base_url to empty and populate replicas + failover to opt

@@ -1,13 +1,21 @@
 """Cross-field parity tests for the Rayline ARC CLI validator."""
 
+import pathlib
+import re
 from types import SimpleNamespace
+
+import pytest
+from pydantic import ValidationError
 
 from cli.algorithms import AlgorithmConfig, ModelRef
 from cli.rayline_arc_config import (
+    _CHECKPOINT_LABEL,
+    _MAX_CONFIG_STRING_BYTES,
     RaylineARCAlgorithmConfig,
     RaylineARCEncoderFailoverConfig,
     RaylineARCEncoderMembershipConfig,
     RaylineARCEncoderReplicaConfig,
+    RaylineARCRoutesAPIConfig,
 )
 from cli.validator_rayline_arc import (
     _effective_auto_model_names,
@@ -263,3 +271,74 @@ def test_router_replay_null_matches_go_loader():
 
     disabled = _config_with({"services": {"router_replay": {"enabled": False}}})
     assert _validate_rayline_arc_replay(disabled, disabled.decisions[0]) == []
+
+
+# --- routes_api parity with the Go loader -----------------------------------
+#
+# The CLI model forbids unknown keys, so any bound it does not share with the
+# Go validator is a configuration one of the two refuses and the other accepts.
+# Reading the Go source rather than restating its numbers is the point: a
+# literal copied here would keep passing after the Go side moved.
+
+_GO_CONFIG = (
+    pathlib.Path(__file__).resolve().parents[2]
+    / "semantic-router"
+    / "pkg"
+    / "config"
+    / "rayline_arc_config.go"
+)
+
+
+def _go_constant(name: str) -> int:
+    source = _GO_CONFIG.read_text()
+    match = re.search(rf"^\s*{name}\s*=\s*(\d+)\s*$", source, re.MULTILINE)
+    assert match, f"{name} not found in {_GO_CONFIG}"
+    return int(match.group(1))
+
+
+def test_routes_api_bounds_match_the_go_loader():
+    assert _MAX_CONFIG_STRING_BYTES == _go_constant("maxRaylineARCConfigStringLength")
+
+    minimum = _go_constant("minRaylineARCRoutesDeadlineMS")
+    maximum = _go_constant("maxRaylineARCRoutesDeadlineMS")
+
+    RaylineARCRoutesAPIConfig(deadline_ms=minimum)
+    RaylineARCRoutesAPIConfig(deadline_ms=maximum)
+    for rejected in (minimum - 1, maximum + 1, -1):
+        with pytest.raises(ValidationError):
+            RaylineARCRoutesAPIConfig(deadline_ms=rejected)
+
+    # Zero is not "below the minimum": it selects the shipped default, which
+    # is how an operator asks for the deadline without naming a number.
+    assert RaylineARCRoutesAPIConfig(deadline_ms=0).deadline_ms == 0
+
+
+def test_routes_api_checkpoint_label_matches_the_go_validator():
+    pattern = re.search(
+        r"raylineARCCheckpointLabelPattern\s*=\s*regexp\.MustCompile\(`([^`]+)`\)",
+        _GO_CONFIG.read_text(),
+    )
+    assert pattern, "checkpoint label pattern not found in the Go loader"
+    assert pattern.group(1) == _CHECKPOINT_LABEL.pattern
+
+    RaylineARCRoutesAPIConfig(checkpoint_label="a" * _MAX_CONFIG_STRING_BYTES)
+    for rejected in ("a" * (_MAX_CONFIG_STRING_BYTES + 1), "Arc", "-arc", "arc.1"):
+        with pytest.raises(ValidationError):
+            RaylineARCRoutesAPIConfig(checkpoint_label=rejected)
+
+
+def test_routes_api_checkpoint_label_rejects_a_trailing_newline():
+    # A YAML block scalar produces one, and Python's `$` matches just before a
+    # final newline where Go's anchors at end of text. Under `match` the CLI
+    # accepted a label the router then refused at startup -- the exact split
+    # this mirror exists to prevent.
+    for rejected in ("arc\n", "arc\r\n", "arc\n\n"):
+        with pytest.raises(ValidationError):
+            RaylineARCRoutesAPIConfig(checkpoint_label=rejected)
+
+
+def test_routes_api_refuses_unknown_keys():
+    # extra="forbid" is why a documented-but-unmirrored field is a startup
+    # failure rather than a silently ignored one.
+    with pytest.raises(ValidationError):
+        RaylineARCRoutesAPIConfig(enabled=True, episode_write=True)

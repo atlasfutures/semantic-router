@@ -19,6 +19,7 @@ package extproc
 import (
 	"context"
 	"errors"
+	"github.com/google/uuid"
 	"strings"
 	"time"
 
@@ -56,10 +57,28 @@ func requestedFault(arc *config.RaylineARCAlgorithmConfig, reqCtx *RequestContex
 	return ""
 }
 
+// raylineARCEpisodeMode says what a request with no episode identity means.
+type raylineARCEpisodeMode int
+
+const (
+	// raylineARCEpisodeRequired is the routed path. A turn with no episode
+	// identity cannot be scored against a trajectory, and inventing one would
+	// silently give every turn of a conversation its own history.
+	raylineARCEpisodeRequired raylineARCEpisodeMode = iota
+	// raylineARCEpisodeEphemeral is a route lookup that joins no trajectory.
+	//
+	// The episode identity is minted per call and never stored, so the lookup
+	// reads and writes nothing: no lease, no episode store round trip, and no
+	// key left behind. The selector falls back to a fresh in-memory episode,
+	// which is the same state a conversation's first turn sees.
+	raylineARCEpisodeEphemeral
+)
+
 func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	algorithm *config.AlgorithmConfig,
 	reqCtx *RequestContext,
 	modelRefs []config.ModelRef,
+	episodeMode raylineARCEpisodeMode,
 ) *selection.RaylineARCSelectionContext {
 	if algorithm == nil ||
 		algorithm.Type != config.RaylineARCAlgorithmType ||
@@ -75,14 +94,24 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	rawEpisodeID := strings.TrimSpace(
 		reqCtx.Headers[algorithm.RaylineARC.Episode.IDHeader],
 	)
-	if rawEpisodeID == "" {
+	if rawEpisodeID == "" && episodeMode == raylineARCEpisodeRequired {
 		// The refusal names the header, so the header name travels with the
 		// request rather than being looked up again from config later.
 		reqCtx.RaylineARCEpisodeIDHeader = algorithm.RaylineARC.Episode.IDHeader
 		result.PreparationFailure = arcFailureMissingEpisodeID
 		return result
 	}
-	result.EpisodeIDHash = raylinearc.HashEpisodeID(rawEpisodeID)
+	if rawEpisodeID == "" {
+		// An ephemeral identity is random rather than derived from anything
+		// about the request. A hash derived from the turns would collide
+		// across identical prompts and braid unrelated callers into one
+		// encoder session; random cannot.
+		result.EpisodeIDHash = raylinearc.HashEpisodeID(
+			raylineARCEphemeralEpisodePrefix + uuid.NewString(),
+		)
+	} else {
+		result.EpisodeIDHash = raylinearc.HashEpisodeID(rawEpisodeID)
+	}
 	if failure := parseRaylineARCCloseRequest(
 		algorithm.RaylineARC.Episode.CloseHeader,
 		reqCtx,
@@ -90,23 +119,30 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		result.PreparationFailure = failure
 		return result
 	}
-	state, failure := r.prepareRaylineARCTransaction(
-		algorithm.RaylineARC,
-		reqCtx,
-		result.EpisodeIDHash,
-		len(modelRefs),
-	)
-	if failure != "" {
-		result.PreparationFailure = failure
-		return result
+	// An ephemeral lookup skips preparation entirely, which is the whole of
+	// what makes it free: no lease to acquire, renew or release, and nothing
+	// written to the episode store. prepareSelection builds a fresh episode
+	// state when it finds none here.
+	if rawEpisodeID != "" {
+		state, failure := r.prepareRaylineARCTransaction(
+			algorithm.RaylineARC,
+			reqCtx,
+			result.EpisodeIDHash,
+			len(modelRefs),
+		)
+		if failure != "" {
+			result.PreparationFailure = failure
+			return result
+		}
+		result.State = state
 	}
-	result.State = state
 	turns, imageBearing, err := r.projectRaylineARCTurns(
 		reqCtx,
 		raylinearc.TurnOptions{
 			IncludeSystemText: algorithm.RaylineARC.IncludeSystemText,
 			DropMidConversationSystemText: algorithm.RaylineARC.
 				DropMidConversationSystemText,
+			IncludeToolNames: algorithm.RaylineARC.IncludeToolNames,
 		},
 	)
 	if err != nil {
@@ -127,6 +163,11 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	result.IncapableArms = r.incapableArms(modelRefs, result.RequiredCapabilities)
 	return result
 }
+
+// raylineARCEphemeralEpisodePrefix keeps a minted identity out of the space a
+// real caller's session identity could occupy, so the two can never hash to
+// the same encoder session.
+const raylineARCEphemeralEpisodePrefix = "rayline-arc-ephemeral:"
 
 // requestRoutingCapabilities reads what this turn needs an arm to hold. It
 // reads the neutral request rather than the body, so it sees the same tools
