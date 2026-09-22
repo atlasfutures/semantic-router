@@ -859,6 +859,33 @@ func raylineRoutesConsult(
 	}
 }
 
+// raylineRoutesGuardBreach answers a streamed body that broke an accumulation
+// guard, in this endpoint's own envelope.
+//
+// It exists because the generic handling -- return the error, close the
+// ExtProc stream, let Envoy decide -- resolves to "forward upstream" under
+// failure_mode_allow, and forwarding is the one outcome this endpoint is
+// defined by never producing.
+func (r *OpenAIRouter) raylineRoutesGuardBreach(
+	ctx *RequestContext,
+	err error,
+) *ext_proc.ProcessingResponse {
+	if errors.Is(err, ErrStreamedBodyTimeout) {
+		return r.createRaylineRoutesError(
+			ctx,
+			504,
+			"timeout_error",
+			"route lookup body did not arrive within the accumulation deadline",
+		)
+	}
+	return r.createRaylineRoutesError(
+		ctx,
+		413,
+		"invalid_request_error",
+		"route lookup body exceeds the accumulation limit",
+	)
+}
+
 // raylineRoutesContendedRetrySeconds is how long a contended caller is told to
 // wait. One second, because the thing it collided with is one turn's episode
 // lease or one encoder slot, both of which clear in about that time. A longer

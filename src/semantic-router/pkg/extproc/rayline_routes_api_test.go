@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -1387,5 +1388,41 @@ func TestTimedOutLookupLearnsWhetherTheCommitLanded(t *testing.T) {
 	case class := <-transaction.aborted:
 		t.Fatalf("aborted with %q after the commit had already landed", class)
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// A guard breach on a streamed body must be answered here. Returning the
+// error closes the ExtProc stream, and Envoy then applies failure_mode_allow
+// -- true in the shipped local and operator configurations -- which forwards
+// the lookup upstream and executes the request this endpoint is defined by
+// never executing.
+func TestRaylineRoutesAnswersItsOwnStreamedBodyGuardBreaches(t *testing.T) {
+	t.Parallel()
+	for name, testCase := range map[string]struct {
+		err    error
+		status int
+	}{
+		"too large": {err: ErrStreamedBodyTooLarge, status: 413},
+		"timed out": {err: ErrStreamedBodyTimeout, status: 504},
+		// Wrapped, as checkGuards returns them.
+		"wrapped timeout": {
+			err:    fmt.Errorf("%w after 10 bytes", ErrStreamedBodyTimeout),
+			status: 504,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx := routesContext(nil)
+			response := routesRouter(true).raylineRoutesGuardBreach(ctx, testCase.err)
+			if response.GetImmediateResponse() == nil {
+				t.Fatal("the guard breach was not answered here, so Envoy decides")
+			}
+			if code := immediateStatusCode(t, response); code != testCase.status {
+				t.Fatalf("status = %d, want %d", code, testCase.status)
+			}
+			if !ctx.ImmediateResponseEncoded {
+				t.Fatal("the refusal was not claimed, so it will be re-encoded")
+			}
+		})
 	}
 }

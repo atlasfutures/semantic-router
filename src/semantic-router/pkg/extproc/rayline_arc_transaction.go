@@ -203,10 +203,25 @@ func (transaction *raylineARCEpisodeTransaction) abort(
 	return transaction.finalizeErr
 }
 
+// abortStore releases the lease after a commit that could not be completed.
+//
+// Detached from the caller's context on purpose, and this is the only place
+// that can do it: finalizeOnce has already fired by the time this runs, so a
+// later abort() is a no-op that returns the stored commit error without
+// touching the store. If the commit failed BECAUSE its context was cancelled
+// -- a client that disconnected mid-dispatch, or a route lookup that ran out
+// of its deadline -- then aborting on that same cancelled context fails too,
+// and the lease is neither committed nor released. It then sits until its TTL
+// while every later turn on that session is refused as contended.
 func (transaction *raylineARCEpisodeTransaction) abortStore(
 	ctx context.Context,
 ) {
-	_ = transaction.store.Abort(ctx, transaction.lease)
+	abortContext, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		episodeFinalizeTimeout,
+	)
+	defer cancel()
+	_ = transaction.store.Abort(abortContext, transaction.lease)
 	metrics.RecordRaylineARCEpisodeTransaction("abort", "commit_failure")
 }
 

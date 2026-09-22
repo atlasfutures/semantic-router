@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -98,6 +99,16 @@ func (h *StreamedBodyHandler) HandleChunk(body *ext_proc.HttpBody, ctx *RequestC
 	h.buf.Write(chunk)
 
 	if err := h.checkGuards(); err != nil {
+		// A route lookup answers its own guard breaches. Returning the error
+		// closes the ExtProc stream, and Envoy then applies failure_mode_allow
+		// -- which the shipped local and operator configurations set to true,
+		// so the lookup is forwarded upstream and the request this endpoint
+		// promises never to execute is executed and billed. Every other path
+		// can afford that fallback because forwarding is what it wanted
+		// anyway; this one cannot.
+		if isRaylineRoutesRequest(ctx) {
+			return h.router.raylineRoutesGuardBreach(ctx, err), nil
+		}
 		return nil, err
 	}
 
@@ -122,15 +133,26 @@ func (h *StreamedBodyHandler) checkGuards() error {
 	if h.maxBytes > 0 && int64(h.buf.Len()) > h.maxBytes {
 		logging.Infof("[StreamedBody] Accumulated %d bytes exceeds limit %d — aborting",
 			h.buf.Len(), h.maxBytes)
-		return fmt.Errorf("streamed body too large: %d > %d bytes", h.buf.Len(), h.maxBytes)
+		return fmt.Errorf("%w: %d > %d bytes", ErrStreamedBodyTooLarge, h.buf.Len(), h.maxBytes)
 	}
 	if !h.deadline.IsZero() && time.Now().After(h.deadline) {
 		logging.Infof("[StreamedBody] Accumulation deadline exceeded after %d bytes — aborting",
 			h.buf.Len())
-		return fmt.Errorf("streamed body accumulation timed out after %d bytes", h.buf.Len())
+		return fmt.Errorf("%w after %d bytes", ErrStreamedBodyTimeout, h.buf.Len())
 	}
 	return nil
 }
+
+// ErrStreamedBodyTooLarge and ErrStreamedBodyTimeout name which accumulation
+// guard a streamed body breached. They are sentinels rather than message text
+// because a caller that has to answer the breach itself -- the route lookup,
+// which cannot let Envoy's failure_mode_allow forward it -- needs to tell the
+// two apart to choose a status, and matching on prose would break silently
+// the first time one of these messages is reworded.
+var (
+	ErrStreamedBodyTooLarge = errors.New("streamed body too large")
+	ErrStreamedBodyTimeout  = errors.New("streamed body accumulation timed out")
+)
 
 // handleAccumulatedBody passes the complete wire request to the standard
 // request-body pipeline. The ingress Codec is the only semantic parser.

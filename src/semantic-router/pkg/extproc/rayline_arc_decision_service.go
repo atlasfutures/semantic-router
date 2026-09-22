@@ -524,19 +524,31 @@ func commitDecisionOnlyEpisode(ctx context.Context, requestContext *RequestConte
 const raylineARCRoutesCommitGrace = 250 * time.Millisecond
 
 // raylineARCReleaseTimedOutEpisode returns the lease without advancing the
-// trajectory. It is a no-op against a transaction that already committed.
+// trajectory.
+//
+// A transaction that already finalized -- because its commit failed, which is
+// what a cancelled commit is -- released the lease on that path itself, and
+// reports the commit's own error here rather than an abort failure. That is
+// an observation about which path did the releasing, not a leak, so it is
+// recorded as one.
 func raylineARCReleaseTimedOutEpisode(
 	ctx context.Context,
 	requestContext *RequestContext,
 ) {
-	if _, err := requestContext.SelectionTransaction.abort(
+	released, err := requestContext.SelectionTransaction.abort(
 		context.WithoutCancel(ctx),
 		raylineARCRoutesDeadlineAbortClass,
-	); err != nil {
-		logging.ComponentErrorEvent("extproc", "routing_decision_episode_abort_failed", map[string]interface{}{
-			"error": err.Error(),
-		})
+	)
+	if err == nil {
+		return
 	}
+	event := "routing_decision_episode_released_by_commit_path"
+	if released {
+		event = "routing_decision_episode_abort_failed"
+	}
+	logging.ComponentEvent("extproc", event, map[string]interface{}{
+		"detail": err.Error(),
+	})
 }
 
 // raylineARCRoutesDeadlineAbortClass names why a tracked lookup released its
