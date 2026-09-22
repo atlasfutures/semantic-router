@@ -30,6 +30,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 func routesRouter(enabled bool) *OpenAIRouter {
@@ -1073,6 +1074,7 @@ type slowCommitTransaction struct {
 	// inside the call, because the context is cancelled as soon as the call
 	// returns and reading it afterwards says nothing.
 	outcome chan error
+	aborted chan string
 }
 
 func (t *slowCommitTransaction) ValidateDispatch(context.Context) error { return nil }
@@ -1088,7 +1090,10 @@ func (t *slowCommitTransaction) CommitOnHeaders(ctx context.Context, _ int) erro
 	}
 }
 
-func (t *slowCommitTransaction) Abort(context.Context, string) error { return nil }
+func (t *slowCommitTransaction) Abort(_ context.Context, class string) error {
+	t.aborted <- class
+	return nil
+}
 
 func (t *slowCommitTransaction) Settle(context.Context, selectionActualOutcome) error { return nil }
 
@@ -1101,6 +1106,7 @@ func TestTrackedLookupStopsWaitingAtItsDeadline(t *testing.T) {
 	transaction := &slowCommitTransaction{
 		release: make(chan struct{}),
 		outcome: make(chan error, 1),
+		aborted: make(chan string, 1),
 	}
 	requestContext := &RequestContext{
 		SelectionTransaction: newSelectionTransactionOwner("test", transaction),
@@ -1123,17 +1129,27 @@ func TestTrackedLookupStopsWaitingAtItsDeadline(t *testing.T) {
 		t.Fatalf("waited %v, want well under the finalization timeout %v", waited, episodeFinalizeTimeout)
 	}
 
-	// ...and the commit is still going, on a context the lookup's deadline did
-	// not cancel. Without that the lease is neither committed nor released and
-	// every later turn on the session is refused as contended.
-	close(transaction.release)
+	// ...and the episode is RELEASED rather than committed. The caller got a
+	// 504 and no route, so committing would record the selected arm as the
+	// previous arm of a turn nobody ran, and the retry would then be scored
+	// against it. The lease still has to be resolved, which is why the abort
+	// runs at all.
 	select {
-	case outcome := <-transaction.outcome:
-		if outcome != nil {
-			t.Fatalf("the detached commit was cancelled with the lookup: %v", outcome)
+	case class := <-transaction.aborted:
+		if class != raylineARCRoutesDeadlineAbortClass {
+			t.Fatalf("abort class = %q, want %q", class, raylineARCRoutesDeadlineAbortClass)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("the commit did not run after the lookup stopped waiting")
+		t.Fatal("the timed-out lookup neither committed nor released its episode")
+	}
+	// The commit itself was cancelled, not left running to land later.
+	select {
+	case outcome := <-transaction.outcome:
+		if outcome == nil {
+			t.Fatal("the commit landed after the lookup reported a timeout, advancing the episode")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the cancelled commit never returned")
 	}
 }
 
@@ -1144,6 +1160,7 @@ func TestTrackedLookupAwaitsACommitInsideItsBudget(t *testing.T) {
 	transaction := &slowCommitTransaction{
 		release: make(chan struct{}),
 		outcome: make(chan error, 1),
+		aborted: make(chan string, 1),
 	}
 	close(transaction.release)
 	requestContext := &RequestContext{
@@ -1162,5 +1179,145 @@ func TestTrackedLookupAwaitsACommitInsideItsBudget(t *testing.T) {
 		}
 	default:
 		t.Fatal("the function returned before the commit ran")
+	}
+}
+
+// `"tools": []` is how clients commonly serialise an absent tool collection.
+// Warning on it claims the route was shaped by tools the projection never
+// saw -- and on a cell that encodes names, claims they influenced a decision
+// they took no part in.
+func TestRaylineRoutesSaysNothingAboutAnEmptyToolList(t *testing.T) {
+	t.Parallel()
+	for name, body := range map[string]string{
+		"empty list": `{"max_tokens":16,"messages":[{"role":"user","content":"hi"}],"tools":[]}`,
+		"absent":     `{"max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`,
+		"not a list": `{"max_tokens":16,"messages":[{"role":"user","content":"hi"}],"tools":{}}`,
+	} {
+		for _, encodesNames := range []bool{false, true} {
+			t.Run(name, func(t *testing.T) {
+				_, warnings, detail := readRaylineRoutesBody([]byte(body), encodesNames, "")
+				if detail != "" {
+					t.Fatalf("detail = %q, want none", detail)
+				}
+				if routesWarns(warnings, "tools_not_encoded:") ||
+					routesWarns(warnings, "tool_schemas_not_encoded:") {
+					t.Fatalf("warnings = %v, want nothing said about tools", warnings)
+				}
+			})
+		}
+	}
+	// A body that does declare a tool still explains what happened to it.
+	withTools := `{"max_tokens":16,"messages":[{"role":"user","content":"hi"}],` +
+		`"tools":[{"name":"search","input_schema":{"type":"object"}}]}`
+	_, warnings, _ := readRaylineRoutesBody([]byte(withTools), false, "")
+	if !routesWarns(warnings, "tools_not_encoded:") {
+		t.Fatalf("warnings = %v, want the dropped-tools warning", warnings)
+	}
+}
+
+// A decode failure has to name the codec that actually ran. The message is
+// the only thing telling a caller which contract their body was read under,
+// and naming the wrong one sends them to fix the wrong end.
+func TestRaylineRoutesDecodeFailureNamesTheDetectedFormat(t *testing.T) {
+	t.Parallel()
+	ctx := routesContext(map[string]string{raylineRoutesFormatHeader: "anthropic"})
+	// The path-derived default before the body phase runs.
+	ctx.SourceFormat = llmprotocol.OpenAIChatV1
+
+	response := routesRouter(true).handleRaylineRoutesAPI(
+		[]byte(`{"messages":[{"role":"user","content":"hi"}],"max_tokens":16}`),
+		ctx,
+	)
+	// Selection is unavailable on this bare router, so the lookup fails after
+	// the body was read -- which is exactly the point: by then the format the
+	// body was read under must be the one an error would name.
+	if response == nil {
+		t.Fatal("handleRaylineRoutesAPI() = nil, want an answer")
+	}
+	if wireFormatOf(ctx) != llmprotocol.AnthropicMessagesV1 {
+		t.Fatalf("recorded format = %q, want the declared anthropic", wireFormatOf(ctx))
+	}
+}
+
+// directCloseEncoder has the bare EncoderClient's close signature: one
+// session, no replica list.
+type directCloseEncoder struct {
+	closed []string
+	err    error
+}
+
+func (e *directCloseEncoder) CloseSession(_ context.Context, episodeIDHash string) error {
+	e.closed = append(e.closed, episodeIDHash)
+	return e.err
+}
+
+// poolCloseEncoder has the pool's.
+type poolCloseEncoder struct{ closed []string }
+
+func (e *poolCloseEncoder) CloseSession(
+	_ context.Context,
+	episodeIDHash string,
+	_ []string,
+) (raylinearc.EncoderCloseReport, error) {
+	e.closed = append(e.closed, episodeIDHash)
+	return raylinearc.EncoderCloseReport{Attempted: 1, Closed: 1}, nil
+}
+
+func retainedARCConfig(retained bool) *config.RaylineARCAlgorithmConfig {
+	capabilities := []string{"chunked_causal_mean"}
+	if retained {
+		capabilities = append(capabilities, config.RaylineARCCapabilityResumableMean)
+	}
+	return &config.RaylineARCAlgorithmConfig{
+		Encoder: config.RaylineARCEncoderConfig{RequiredCapabilities: capabilities},
+	}
+}
+
+// The supported single-base_url deployment builds a bare EncoderClient, whose
+// close takes no replica list. Matching only the pool's shape left the close
+// unwired there, so every ephemeral lookup stranded one retained session --
+// and sustained lookup traffic then evicted the live conversation prefixes it
+// shares the encoder with.
+func TestSessionCloseIsWiredForTheDirectEncoderClient(t *testing.T) {
+	t.Parallel()
+	encoder := &directCloseEncoder{}
+	closeSession := raylineARCCloseSessionFor(encoder, retainedARCConfig(true))
+	if closeSession == nil {
+		t.Fatal("no close wired for a retained single-client encoder, so its sessions leak")
+	}
+	report, err := closeSession(context.Background(), "episode-hash", nil)
+	if err != nil {
+		t.Fatalf("closeSession() error = %v", err)
+	}
+	if len(encoder.closed) != 1 || encoder.closed[0] != "episode-hash" {
+		t.Fatalf("closed = %v, want the episode closed once", encoder.closed)
+	}
+	// One client is one replica.
+	if report.Attempted != 1 || report.Closed != 1 {
+		t.Fatalf("report = %+v, want one attempted and one closed", report)
+	}
+}
+
+func TestSessionCloseStillPrefersThePoolShape(t *testing.T) {
+	t.Parallel()
+	encoder := &poolCloseEncoder{}
+	closeSession := raylineARCCloseSessionFor(encoder, retainedARCConfig(true))
+	if closeSession == nil {
+		t.Fatal("no close wired for a pool encoder")
+	}
+	if _, err := closeSession(context.Background(), "episode-hash", []string{"a"}); err != nil {
+		t.Fatalf("closeSession() error = %v", err)
+	}
+	if len(encoder.closed) != 1 {
+		t.Fatalf("closed = %v, want the pool's own close to run", encoder.closed)
+	}
+}
+
+// An encoder that retains nothing refuses the close outright, so wiring one
+// would log a failure per lookup for housekeeping that was never needed.
+func TestSessionCloseIsUnwiredWhenNothingIsRetained(t *testing.T) {
+	t.Parallel()
+	if closeSession := raylineARCCloseSessionFor(&directCloseEncoder{}, retainedARCConfig(false)); closeSession != nil {
+		t.Fatal("a close was wired for an encoder that retains no session")
 	}
 }

@@ -473,16 +473,39 @@ func commitDecisionOnlyEpisode(ctx context.Context, requestContext *RequestConte
 		}
 		return nil
 	case <-ctx.Done():
-		// The commit is still running on its detached context and will resolve
-		// the lease on its own. What is gone is this caller's budget, and the
-		// deadline is reported as a deadline -- the endpoint's own 504 -- not
-		// hidden behind a 200 carrying a stale episode.
+		// The caller is getting a 504 and no route, so the episode must not
+		// advance: committing anyway would record the selected arm as the
+		// previous arm of a turn nobody ran, and the retry would then be
+		// scored against it. Cancelling the commit and aborting instead
+		// leaves the trajectory where it was and still resolves the lease,
+		// which is the reason the commit was detached in the first place.
+		cancel()
+		go func() {
+			// abort blocks on the transaction's own lock until the cancelled
+			// commit has returned, so it cannot race it; if that commit
+			// happened to land inside the cancellation window, abort sees a
+			// terminal transaction and does nothing. Detached, because the
+			// caller is not waiting for housekeeping.
+			if _, err := requestContext.SelectionTransaction.abort(
+				context.WithoutCancel(ctx),
+				raylineARCRoutesDeadlineAbortClass,
+			); err != nil {
+				logging.ComponentErrorEvent("extproc", "routing_decision_episode_abort_failed", map[string]interface{}{
+					"error": err.Error(),
+				})
+			}
+		}()
 		return fmt.Errorf(
 			"decision-only routing ran out of budget before the episode committed: %w",
 			ctx.Err(),
 		)
 	}
 }
+
+// raylineARCRoutesDeadlineAbortClass names why a tracked lookup released its
+// episode instead of committing it: the endpoint ran out of the budget it
+// publishes, so there is no executed turn to record.
+const raylineARCRoutesDeadlineAbortClass = "routes_deadline"
 
 // defaultConsultWireFormat is the wire contract a route consult body is read
 // as when the caller names none. Callers of the legacy consult bridge relay

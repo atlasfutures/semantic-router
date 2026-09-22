@@ -242,6 +242,14 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 		return r.createRaylineRoutesError(ctx, 400, "invalid_request_error", detail)
 	}
 	warnings = append(warnings, raylineRoutesHeaderWarnings(ctx, settings)...)
+	// The format the body was actually read under, recorded before selection
+	// runs. wireFormatOf reads this when a decode fails, and without the
+	// update it still held the path-derived default -- so a caller who sent
+	// x-rayline-format: anthropic, and whose body the Anthropic codec then
+	// refused, was told it "could not be read as openai.chat.v1 messages".
+	if ctx != nil {
+		ctx.SourceFormat = wireFormat
+	}
 
 	runtime := r.routeDecisionRuntimeState()
 	if runtime == nil {
@@ -694,7 +702,12 @@ func raylineRoutesBodyWarnings(
 	encodesToolNames bool,
 ) []string {
 	warnings := []string{}
-	if _, present := envelope["tools"]; !present {
+	if !declaresTools(envelope["tools"]) {
+		// Presence is not the question. Clients commonly serialise an absent
+		// tool collection as `"tools": []`, and a warning on that claims the
+		// route was shaped by tools the projection never saw -- in the
+		// encoding case, that names influenced a decision they took no part
+		// in. Both spellings of "no tools" have nothing to explain.
 		return warnings
 	}
 	// What the cell did with the tools, not what it used to do with them. On
@@ -708,6 +721,22 @@ func raylineRoutesBodyWarnings(
 	}
 	warnings = append(warnings, "tools_not_encoded: tools were dropped before encoding and did not influence this route")
 	return warnings
+}
+
+// declaresTools reports whether the body actually offers the model a tool, as
+// opposed to carrying the member with nothing in it.
+func declaresTools(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var tools []json.RawMessage
+	if err := json.Unmarshal(raw, &tools); err != nil {
+		// Not a list. Malformed rather than empty, and the codec will say so
+		// in a moment -- warning about it here would explain a route that is
+		// not going to exist.
+		return false
+	}
+	return len(tools) > 0
 }
 
 // wireFormatOf reports the format this request was read as, for an error
