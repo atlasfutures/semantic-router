@@ -781,11 +781,34 @@ func TestRaylineRoutesReadsToolShapesAsDialectMarkers(t *testing.T) {
 				`[{"type":"thinking","thinking":"...","signature":"s"}]}]}`,
 			want: llmprotocol.AnthropicMessagesV1,
 		},
+		// A server tool declares a type and nothing else -- no name, no
+		// schema -- so it is the one tool shape with no member to key on.
+		// Read as Chat, the commonest web-search request is refused by a
+		// codec that has no such tool, while the selector is told the tool
+		// was there.
+		"anthropic by schema-less server tool": {
+			body: `{"max_tokens":16,"messages":[{"role":"user","content":"hi"}],` +
+				`"tools":[{"type":"web_search_20250305","name":"web_search"}]}`,
+			want: llmprotocol.AnthropicMessagesV1,
+		},
+		"anthropic by server tool with no name at all": {
+			body: `{"max_tokens":16,"messages":[{"role":"user","content":"hi"}],` +
+				`"tools":[{"type":"code_execution_20250522"}]}`,
+			want: llmprotocol.AnthropicMessagesV1,
+		},
 		// The mirror image: Chat nests the callable under function, and a
 		// body whose only marker is that must not read as Anthropic.
 		"chat by tool function": {
 			body: `{"max_tokens":16,"messages":[{"role":"user","content":"hi"}],` +
 				`"tools":[{"type":"function","function":{"name":"search"}}]}`,
+			want: llmprotocol.OpenAIChatV1,
+		},
+		// Chat's own tool spellings are not Anthropic server tools. `custom`
+		// is Chat's second tool type, and reading it as a server tool would
+		// push an ordinary Chat body onto the Anthropic codec.
+		"chat custom tool is not a server tool": {
+			body: `{"max_tokens":16,"messages":[{"role":"user","content":"hi"}],` +
+				`"tools":[{"type":"custom","custom":{"name":"grep"}}]}`,
 			want: llmprotocol.OpenAIChatV1,
 		},
 		// Both dialects carry plain text blocks, so they decide nothing.
@@ -813,7 +836,9 @@ func TestRaylineRoutesReadsToolShapesAsDialectMarkers(t *testing.T) {
 					inferred = true
 				}
 			}
-			if wantInferred := name == "text blocks decide nothing"; inferred != wantInferred {
+			markerFree := name == "text blocks decide nothing" ||
+				name == "chat custom tool is not a server tool"
+			if wantInferred := markerFree; inferred != wantInferred {
 				t.Fatalf("format_inferred present = %v, want %v", inferred, wantInferred)
 			}
 		})
@@ -1036,4 +1061,106 @@ func twoARCDecisionRouter() *OpenAIRouter {
 			arc("claims-routes", true),
 		}},
 	}}
+}
+
+// slowCommitTransaction blocks CommitOnHeaders until released, so a lookup
+// whose budget expires mid-commit can be observed without a real episode
+// store.
+type slowCommitTransaction struct {
+	release chan struct{}
+	// outcome records how the blocked commit ended: nil for released, the
+	// context's error if the commit was cancelled while it waited. Recorded
+	// inside the call, because the context is cancelled as soon as the call
+	// returns and reading it afterwards says nothing.
+	outcome chan error
+}
+
+func (t *slowCommitTransaction) ValidateDispatch(context.Context) error { return nil }
+
+func (t *slowCommitTransaction) CommitOnHeaders(ctx context.Context, _ int) error {
+	select {
+	case <-t.release:
+		t.outcome <- nil
+		return nil
+	case <-ctx.Done():
+		t.outcome <- ctx.Err()
+		return ctx.Err()
+	}
+}
+
+func (t *slowCommitTransaction) Abort(context.Context, string) error { return nil }
+
+func (t *slowCommitTransaction) Settle(context.Context, selectionActualOutcome) error { return nil }
+
+// The commit runs detached so an expired lookup does not strand the lease,
+// but the CALLER must stop waiting at its own deadline. Detaching the run and
+// the wait together let a slow commit add its whole finalization timeout on
+// top of deadline_ms and still answer 200.
+func TestTrackedLookupStopsWaitingAtItsDeadline(t *testing.T) {
+	t.Parallel()
+	transaction := &slowCommitTransaction{
+		release: make(chan struct{}),
+		outcome: make(chan error, 1),
+	}
+	requestContext := &RequestContext{
+		SelectionTransaction: newSelectionTransactionOwner("test", transaction),
+	}
+	lookupContext, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+
+	started := time.Now()
+	err := commitDecisionOnlyEpisode(lookupContext, requestContext)
+	waited := time.Since(started)
+
+	if err == nil {
+		t.Fatal("a lookup that ran out of budget mid-commit reported success")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want it to carry the deadline", err)
+	}
+	// The whole point: bounded by deadline_ms, not by episodeFinalizeTimeout.
+	if waited >= episodeFinalizeTimeout {
+		t.Fatalf("waited %v, want well under the finalization timeout %v", waited, episodeFinalizeTimeout)
+	}
+
+	// ...and the commit is still going, on a context the lookup's deadline did
+	// not cancel. Without that the lease is neither committed nor released and
+	// every later turn on the session is refused as contended.
+	close(transaction.release)
+	select {
+	case outcome := <-transaction.outcome:
+		if outcome != nil {
+			t.Fatalf("the detached commit was cancelled with the lookup: %v", outcome)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the commit did not run after the lookup stopped waiting")
+	}
+}
+
+// Inside the budget nothing changes: the commit is awaited, because the
+// episode turn index this endpoint reports is the one the commit stores.
+func TestTrackedLookupAwaitsACommitInsideItsBudget(t *testing.T) {
+	t.Parallel()
+	transaction := &slowCommitTransaction{
+		release: make(chan struct{}),
+		outcome: make(chan error, 1),
+	}
+	close(transaction.release)
+	requestContext := &RequestContext{
+		SelectionTransaction: newSelectionTransactionOwner("test", transaction),
+	}
+	lookupContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := commitDecisionOnlyEpisode(lookupContext, requestContext); err != nil {
+		t.Fatalf("commitDecisionOnlyEpisode() = %v, want the commit to be awaited", err)
+	}
+	select {
+	case outcome := <-transaction.outcome:
+		if outcome != nil {
+			t.Fatalf("commit outcome = %v, want a clean commit", outcome)
+		}
+	default:
+		t.Fatal("the function returned before the commit ran")
+	}
 }

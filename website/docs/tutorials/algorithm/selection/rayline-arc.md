@@ -318,10 +318,11 @@ here.
 One path serves every dialect, so the dialect has to be established from the
 request. It is inferred from the body's own shape wherever the body says which
 it is: a `system`, `stop_sequences` or `thinking` member, an `input_schema` on
-a tool or a `tool_use` content block make it Anthropic Messages; a `system`,
-`developer` or `tool` role inside `messages[]`, a `tool_calls` member, a
-`function` on a tool or any of Chat's own sampling fields make it Chat
-Completions. `max_tokens` decides nothing, because both dialects accept it.
+a tool, a server tool declaring only its `type`, or a `tool_use` content block
+make it Anthropic Messages; a `system`, `developer` or `tool` role inside
+`messages[]`, a `tool_calls` member, a `function` on a tool or any of Chat's
+own sampling fields make it Chat Completions. `max_tokens` decides nothing,
+because both dialects accept it.
 
 A body that carries none of those markers is read as Chat Completions and
 answered with a `format_inferred` warning naming the choice. Send

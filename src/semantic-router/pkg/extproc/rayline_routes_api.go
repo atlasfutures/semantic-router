@@ -670,6 +670,21 @@ func messagesToolsDialect(raw json.RawMessage) (llmprotocol.WireFormat, bool) {
 		if _, present := tool["input_schema"]; present {
 			return llmprotocol.AnthropicMessagesV1, true
 		}
+		// A schema-less server tool -- web search, the advisor -- declares only
+		// a type, which is the one thing it has. Chat expresses every tool as
+		// type "function" with the callable nested under `function`, so a type
+		// that is neither of the callable spellings, on an object carrying no
+		// `function`, can only be Anthropic's. Without this the commonest
+		// server-tool request has no marker at all, reads as Chat, and is
+		// refused by a codec that has no such tool -- while the selector, which
+		// now encodes these by their type, is told they were there.
+		var toolType string
+		if err := json.Unmarshal(tool["type"], &toolType); err != nil {
+			continue
+		}
+		if toolType != "" && toolType != "function" && toolType != "custom" {
+			return llmprotocol.AnthropicMessagesV1, true
+		}
 	}
 	return "", false
 }

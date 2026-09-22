@@ -438,7 +438,7 @@ func commitDecisionOnlyEpisode(ctx context.Context, requestContext *RequestConte
 	if requestContext.SelectionTransaction == nil {
 		return errors.New("decision-only routing prepared no episode transaction")
 	}
-	// The commit runs on its own bounded context, detached from the lookup's
+	// The commit RUNS on its own bounded context, detached from the lookup's
 	// deadline. Sharing it meant a deadline that expired mid-commit cancelled
 	// the cleanup too: lease renewal stops, the lease is neither committed nor
 	// released, and every later turn on that session is refused as contended
@@ -448,14 +448,40 @@ func commitDecisionOnlyEpisode(ctx context.Context, requestContext *RequestConte
 		context.WithoutCancel(ctx),
 		episodeFinalizeTimeout,
 	)
-	defer cancel()
-	if _, err := requestContext.SelectionTransaction.commitOnHeaders(
-		commitContext,
-		http.StatusOK,
-	); err != nil {
-		return fmt.Errorf("decision-only routing could not commit the episode: %w", err)
+	committed := make(chan error, 1)
+	go func() {
+		// Cancelled from in here, not by this function returning: the point of
+		// detaching is that the commit outlives a caller who stopped waiting.
+		defer cancel()
+		_, err := requestContext.SelectionTransaction.commitOnHeaders(
+			commitContext,
+			http.StatusOK,
+		)
+		committed <- err
+	}()
+	// ...but the caller only WAITS for it inside the lookup's own budget.
+	// Detaching the run and the wait together let a slow commit add its whole
+	// finalization timeout on top of deadline_ms -- nearly 6.5s against a
+	// documented 1.5s -- and still answer 200, which breaks the bound this
+	// endpoint publishes. It cannot simply answer without the commit either:
+	// the episode turn index it reports is the one the commit stores, so an
+	// unwaited commit would publish a trajectory position that is one behind.
+	select {
+	case err := <-committed:
+		if err != nil {
+			return fmt.Errorf("decision-only routing could not commit the episode: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		// The commit is still running on its detached context and will resolve
+		// the lease on its own. What is gone is this caller's budget, and the
+		// deadline is reported as a deadline -- the endpoint's own 504 -- not
+		// hidden behind a 200 carrying a stale episode.
+		return fmt.Errorf(
+			"decision-only routing ran out of budget before the episode committed: %w",
+			ctx.Err(),
+		)
 	}
-	return nil
 }
 
 // defaultConsultWireFormat is the wire contract a route consult body is read

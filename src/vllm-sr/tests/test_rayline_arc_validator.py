@@ -327,6 +327,16 @@ def test_routes_api_checkpoint_label_matches_the_go_validator():
             RaylineARCRoutesAPIConfig(checkpoint_label=rejected)
 
 
+def test_routes_api_checkpoint_label_rejects_a_trailing_newline():
+    # A YAML block scalar produces one, and Python's `$` matches just before a
+    # final newline where Go's anchors at end of text. Under `match` the CLI
+    # accepted a label the router then refused at startup -- the exact split
+    # this mirror exists to prevent.
+    for rejected in ("arc\n", "arc\r\n", "arc\n\n"):
+        with pytest.raises(ValidationError):
+            RaylineARCRoutesAPIConfig(checkpoint_label=rejected)
+
+
 def test_routes_api_refuses_unknown_keys():
     # extra="forbid" is why a documented-but-unmirrored field is a startup
     # failure rather than a silently ignored one.

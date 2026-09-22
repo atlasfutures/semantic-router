@@ -184,7 +184,12 @@ class RaylineARCRoutesAPIConfig(BaseModel):
             raise ValueError(
                 f"checkpoint_label must be at most {_MAX_CONFIG_STRING_BYTES} bytes"
             )
-        if value and not _CHECKPOINT_LABEL.match(value):
+        # fullmatch, not match: Python's `$` also matches just before a
+        # trailing newline, so `match` accepts "arc\n" -- which a YAML block
+        # scalar produces -- while Go's `$` anchors at end of text and rejects
+        # it. The parity this validator claims has to hold on the values YAML
+        # actually hands it, not only on the tidy ones.
+        if value and not _CHECKPOINT_LABEL.fullmatch(value):
             raise ValueError(
                 "checkpoint_label must be lowercase alphanumerics, dashes or underscores"
             )

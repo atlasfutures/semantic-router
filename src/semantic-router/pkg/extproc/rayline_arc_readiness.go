@@ -72,6 +72,17 @@ func createRaylineARCSelector(
 	}
 	runtime, err := raylinearc.LoadRuntime(arcConfig.ArtifactDir)
 	if err != nil {
+		// Logged with the path and the error, because the failure class alone
+		// is terminal and unhelpful. A cell whose image shipped without the
+		// artifact reports exactly the same "artifact" class as one whose
+		// manifest is corrupt or whose digests do not verify, does not
+		// reprobe, and fails every request from then on -- so without this
+		// line the only way to tell those apart is to unpack the image.
+		logging.ComponentErrorEvent("extproc", "rayline_arc_artifact_load_failed", map[string]interface{}{
+			"artifact_dir":      arcConfig.ArtifactDir,
+			"artifact_revision": arcConfig.ArtifactRevision,
+			"error":             err.Error(),
+		})
 		return unavailable("artifact")
 	}
 	if failureClass := raylineARCLoadedContractFailure(
