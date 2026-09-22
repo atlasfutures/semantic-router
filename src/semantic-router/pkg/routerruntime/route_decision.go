@@ -132,9 +132,18 @@ type RouteThinking struct {
 }
 
 // RouteAlternative is one arm the selector considered and did not choose.
+//
+// Identified the same way the selected arm is. Two arms can serve one model
+// through different providers at different prices -- the manifest requires
+// worker ids to be unique, not model names -- so a list keyed on the model
+// alone can print the same line twice and tell a caller nothing about which
+// arm was rejected. Sorting by score removes manifest order too, so position
+// is not an identity either.
 type RouteAlternative struct {
-	Model string
-	Score float64
+	Model    string
+	Worker   string
+	Provider string
+	Score    float64
 }
 
 // RoutePricing is a worker's rate card, per million tokens.

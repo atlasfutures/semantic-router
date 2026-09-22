@@ -55,10 +55,13 @@ func TestRouteAlternativesRankWhatWasConsidered(t *testing.T) {
 		AdjustedScores: []float32{0.9, 0.62, 0.41, 0.7},
 		ExcludedArms:   []bool{false, false, false, false},
 	}
+	// Each entry names its arm, not only its model: two arms can serve one
+	// model through different providers, and sorting by score has already
+	// removed manifest order as an identity.
 	want := []routerruntime.RouteAlternative{
-		{Model: "openai/gpt-5-mini", Score: float64(float32(0.7))},
-		{Model: "z-ai/glm-5.3-flash", Score: float64(float32(0.62))},
-		{Model: "anthropic/claude-sonnet-5", Score: float64(float32(0.41))},
+		{Model: "openai/gpt-5-mini", Worker: "arm-3", Score: float64(float32(0.7))},
+		{Model: "z-ai/glm-5.3-flash", Worker: "arm-1", Score: float64(float32(0.62))},
+		{Model: "anthropic/claude-sonnet-5", Worker: "arm-2", Score: float64(float32(0.41))},
 	}
 	if got := routeAlternatives(trace, routeFactsCatalog()); !reflect.DeepEqual(got, want) {
 		t.Fatalf("routeAlternatives() = %v, want %v", got, want)

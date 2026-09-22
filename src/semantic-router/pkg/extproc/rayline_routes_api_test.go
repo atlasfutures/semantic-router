@@ -1321,3 +1321,71 @@ func TestSessionCloseIsUnwiredWhenNothingIsRetained(t *testing.T) {
 		t.Fatal("a close was wired for an encoder that retains no session")
 	}
 }
+
+// uncancellableCommitTransaction ignores its context, as MemoryEpisodeStore's
+// Commit does. Cancelling such a commit does not stop it, so a lookup that
+// only cancelled and walked away could not know whether the episode advanced.
+type uncancellableCommitTransaction struct {
+	release   chan struct{}
+	committed chan struct{}
+	aborted   chan string
+}
+
+func (t *uncancellableCommitTransaction) ValidateDispatch(context.Context) error { return nil }
+
+func (t *uncancellableCommitTransaction) CommitOnHeaders(_ context.Context, _ int) error {
+	<-t.release
+	t.committed <- struct{}{}
+	return nil
+}
+
+func (t *uncancellableCommitTransaction) Abort(_ context.Context, class string) error {
+	t.aborted <- class
+	return nil
+}
+
+func (t *uncancellableCommitTransaction) Settle(context.Context, selectionActualOutcome) error {
+	return nil
+}
+
+// Cancelling establishes nothing on a store that ignores cancellation. The
+// timeout path has to WAIT for the outcome, or it issues an abort that
+// silently does nothing against a transaction that has already committed --
+// and reports a released episode that in fact advanced.
+func TestTimedOutLookupLearnsWhetherTheCommitLanded(t *testing.T) {
+	t.Parallel()
+	transaction := &uncancellableCommitTransaction{
+		release:   make(chan struct{}),
+		committed: make(chan struct{}, 1),
+		aborted:   make(chan string, 1),
+	}
+	requestContext := &RequestContext{
+		SelectionTransaction: newSelectionTransactionOwner("test", transaction),
+	}
+	lookupContext, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	// Let the commit land right as the deadline fires.
+	go func() {
+		time.Sleep(40 * time.Millisecond)
+		close(transaction.release)
+	}()
+
+	err := commitDecisionOnlyEpisode(lookupContext, requestContext)
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the deadline", err)
+	}
+	select {
+	case <-transaction.committed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the uncancellable commit never ran")
+	}
+	// No abort was issued, because there was nothing left to release: the
+	// commit had already landed and an abort would have been a no-op reported
+	// as a release.
+	select {
+	case class := <-transaction.aborted:
+		t.Fatalf("aborted with %q after the commit had already landed", class)
+	case <-time.After(100 * time.Millisecond):
+	}
+}

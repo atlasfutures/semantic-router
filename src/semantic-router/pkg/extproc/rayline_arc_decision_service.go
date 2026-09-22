@@ -221,7 +221,13 @@ func routeAlternatives(
 		}
 		alternatives = append(alternatives, routerruntime.RouteAlternative{
 			Model: worker.Model,
-			Score: float64(score),
+			// Same identity the selected arm publishes. Without it two arms
+			// serving one model through different providers print as two
+			// identical lines, and the list that claims to explain the choice
+			// cannot say what was rejected.
+			Worker:   worker.ID,
+			Provider: worker.OpenRouterProviderSlug,
+			Score:    float64(score),
 		})
 	}
 	sort.SliceStable(alternatives, func(first, second int) bool {
@@ -473,32 +479,63 @@ func commitDecisionOnlyEpisode(ctx context.Context, requestContext *RequestConte
 		}
 		return nil
 	case <-ctx.Done():
-		// The caller is getting a 504 and no route, so the episode must not
-		// advance: committing anyway would record the selected arm as the
-		// previous arm of a turn nobody ran, and the retry would then be
-		// scored against it. Cancelling the commit and aborting instead
-		// leaves the trajectory where it was and still resolves the lease,
-		// which is the reason the commit was detached in the first place.
+		// The caller is getting a 504 and no route, so the episode should not
+		// advance: committing anyway records the selected arm as the previous
+		// arm of a turn nobody ran, and the retry is then scored against it.
 		cancel()
-		go func() {
-			// abort blocks on the transaction's own lock until the cancelled
-			// commit has returned, so it cannot race it; if that commit
-			// happened to land inside the cancellation window, abort sees a
-			// terminal transaction and does nothing. Detached, because the
-			// caller is not waiting for housekeeping.
-			if _, err := requestContext.SelectionTransaction.abort(
-				context.WithoutCancel(ctx),
-				raylineARCRoutesDeadlineAbortClass,
-			); err != nil {
-				logging.ComponentErrorEvent("extproc", "routing_decision_episode_abort_failed", map[string]interface{}{
-					"error": err.Error(),
+		// Cancelling is not enough on its own to know that. Not every store
+		// honours the context -- MemoryEpisodeStore.Commit ignores it
+		// outright -- so a commit already inside the store can still land
+		// after cancel() returns. Waiting for the outcome is what turns
+		// "probably did not commit" into a fact, and it is bounded: the
+		// commit was just cancelled, so a store that honours cancellation
+		// returns at once and one that does not is finishing a map write.
+		select {
+		case err := <-committed:
+			if err == nil {
+				// It landed. There is no uncommit, so the honest thing is to
+				// say so rather than issue an abort that will silently do
+				// nothing against a terminal transaction. The caller still
+				// gets the deadline, because their budget is still gone.
+				logging.ComponentErrorEvent("extproc", "routing_decision_episode_committed_after_deadline", map[string]interface{}{
+					"detail": "the episode advanced for a lookup that answered 504; the next turn is scored against an arm the caller was never given",
 				})
+			} else {
+				raylineARCReleaseTimedOutEpisode(ctx, requestContext)
 			}
-		}()
+		case <-time.After(raylineARCRoutesCommitGrace):
+			// The store is wedged: neither committed nor cancelled inside a
+			// grace that is generous for a lease write. Release on a detached
+			// context and let the transaction's own lock serialise it, which
+			// is a no-op if the commit turns out to have landed.
+			go raylineARCReleaseTimedOutEpisode(context.WithoutCancel(ctx), requestContext)
+		}
 		return fmt.Errorf(
 			"decision-only routing ran out of budget before the episode committed: %w",
 			ctx.Err(),
 		)
+	}
+}
+
+// raylineARCRoutesCommitGrace bounds how long a timed-out lookup waits to
+// learn whether its cancelled commit landed. It is not a second deadline: the
+// commit has already been cancelled, so this only covers a store that ignores
+// cancellation and is finishing a write it had started.
+const raylineARCRoutesCommitGrace = 250 * time.Millisecond
+
+// raylineARCReleaseTimedOutEpisode returns the lease without advancing the
+// trajectory. It is a no-op against a transaction that already committed.
+func raylineARCReleaseTimedOutEpisode(
+	ctx context.Context,
+	requestContext *RequestContext,
+) {
+	if _, err := requestContext.SelectionTransaction.abort(
+		context.WithoutCancel(ctx),
+		raylineARCRoutesDeadlineAbortClass,
+	); err != nil {
+		logging.ComponentErrorEvent("extproc", "routing_decision_episode_abort_failed", map[string]interface{}{
+			"error": err.Error(),
+		})
 	}
 }
 

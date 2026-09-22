@@ -109,8 +109,13 @@ type raylineRoutesThinking struct {
 }
 
 type raylineRoutesScore struct {
-	Model string  `json:"model"`
-	Score float64 `json:"score"`
+	Model string `json:"model"`
+	// Which arm, not just which model. Two arms can serve one model through
+	// different providers at different prices, so a list keyed on the model
+	// alone repeats itself and explains nothing.
+	Worker   string  `json:"worker"`
+	Provider string  `json:"provider,omitempty"`
+	Score    float64 `json:"score"`
 }
 
 type raylineRoutesPricing struct {
@@ -452,8 +457,10 @@ func raylineRoutesAlternatives(
 	rendered := make([]raylineRoutesScore, 0, len(alternatives))
 	for _, alternative := range alternatives {
 		rendered = append(rendered, raylineRoutesScore{
-			Model: alternative.Model,
-			Score: alternative.Score,
+			Model:    alternative.Model,
+			Worker:   alternative.Worker,
+			Provider: alternative.Provider,
+			Score:    alternative.Score,
 		})
 	}
 	return rendered

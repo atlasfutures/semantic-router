@@ -351,7 +351,7 @@ the provider call and compute its own savings without a reporting call back:
   "provider": "provider-slug",
   "thinking": { "mode": "off", "budget_tokens": null },
   "checkpoint": "arc-2026-09-12.c82a1f3e",
-  "alternatives": [{ "model": "other/model-id", "score": 0.62 }],
+  "alternatives": [{ "model": "other/model-id", "worker": "other-worker-id", "provider": "provider-slug", "score": 0.62 }],
   "baseline": { "model": "reference/model-id", "input_per_mtok": 3.0, "output_per_mtok": 15.0, "cache_read_per_mtok": 0.3, "cache_write_per_mtok": 3.75 },
   "selected_pricing": { "input_per_mtok": 0.435, "output_per_mtok": 0.87, "cache_read_per_mtok": 0.0435, "cache_write_per_mtok": 0.544 },
   "warnings": [],
@@ -372,7 +372,10 @@ arm declares none.
 
 `alternatives` explains the choice. It is not a failover list: those arms were
 scored and rejected for this turn, and an arm a hard constraint removed before
-scoring is not listed at all.
+scoring is not listed at all. Each entry names its arm the same way the
+selected one does, because two arms serving one model would otherwise print as
+two identical lines, and the list is sorted by score rather than left in
+manifest order.
 
 `warnings` is always present and usually empty. It names the ways a request
 can produce a well-formed, plausible route while quietly not being the request
