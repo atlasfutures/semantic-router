@@ -310,12 +310,32 @@ POST /v1/routes
 ```
 
 The request body is the body that caller was going to send anyway -- the same
-bytes `/v1/messages` or `/v1/responses` would have taken. The wire format is
-read from the body's own shape rather than declared, so moving a request from
-the executing endpoint to this one is a change of path and nothing else.
-Fields the selector does not read, such as `max_tokens` or `temperature`, are
-ignored rather than refused; `model` is ignored too, so neither auto-routing
-alias means anything here.
+bytes `/v1/messages` or `/v1/responses` would have taken. Fields the selector
+does not read, such as `max_tokens` or `temperature`, are ignored rather than
+refused; `model` is ignored too, so neither auto-routing alias means anything
+here.
+
+One path serves every dialect, so the dialect has to be established from the
+request. It is inferred from the body's own shape wherever the body says which
+it is: a `system`, `stop_sequences` or `thinking` member, an `input_schema` on
+a tool or a `tool_use` content block make it Anthropic Messages; a `system`,
+`developer` or `tool` role inside `messages[]`, a `tool_calls` member, a
+`function` on a tool or any of Chat's own sampling fields make it Chat
+Completions. `max_tokens` decides nothing, because both dialects accept it.
+
+A body that carries none of those markers is read as Chat Completions and
+answered with a `format_inferred` warning naming the choice. Send
+`x-rayline-format` to settle it rather than be told:
+
+| `x-rayline-format` | Dialect |
+|---|---|
+| `anthropic` | Anthropic Messages |
+| `chat` | OpenAI Chat Completions |
+| `responses` | OpenAI Responses |
+
+The header wins over inference. An unrecognised value is ignored rather than
+refused, because inference still has an answer and failing a well-formed
+request over a header typo would be the worse of the two.
 
 The answer names the model, the reasoning configuration the arm was scored
 under, what it was chosen over, and both rate cards, so the caller can build
@@ -326,11 +346,13 @@ the provider call and compute its own savings without a reporting call back:
   "route_id": "rte_7b929848",
   "object": "route",
   "model": "worker/model-id",
+  "worker": "worker-id",
+  "provider": "provider-slug",
   "thinking": { "mode": "off", "budget_tokens": null },
   "checkpoint": "arc-2026-09-12.c82a1f3e",
   "alternatives": [{ "model": "other/model-id", "score": 0.62 }],
-  "baseline": { "model": "reference/model-id", "input_per_mtok": 3.0, "output_per_mtok": 15.0 },
-  "selected_pricing": { "input_per_mtok": 0.435, "output_per_mtok": 0.87 },
+  "baseline": { "model": "reference/model-id", "input_per_mtok": 3.0, "output_per_mtok": 15.0, "cache_read_per_mtok": 0.3, "cache_write_per_mtok": 3.75 },
+  "selected_pricing": { "input_per_mtok": 0.435, "output_per_mtok": 0.87, "cache_read_per_mtok": 0.0435, "cache_write_per_mtok": 0.544 },
   "warnings": [],
   "usage": { "encoded_input_tokens": 1840, "cache_read_tokens": 1200 },
   "latency_ms": 212
@@ -340,6 +362,12 @@ the provider call and compute its own savings without a reporting call back:
 `thinking.budget_tokens` is the budget the arm was scored under, not a
 suggestion. Executing a thinking-on arm with a different budget makes the
 decision and the execution diverge on the axis the choice was made on.
+
+`worker` and `provider` identify which arm was chosen. Two arms can serve the
+same model through different providers at different prices -- the manifest
+requires worker ids to be unique, not model names -- so `model` alone is not
+enough to execute the decision that was made. `provider` is omitted when the
+arm declares none.
 
 `alternatives` explains the choice. It is not a failover list: those arms were
 scored and rejected for this turn, and an arm a hard constraint removed before
@@ -370,6 +398,11 @@ exceeds it answers 504. The bound is the endpoint's own: the encoder's
 minutes and wraps whatever context it is handed, so a lookup that inherited it
 would leave a waiting caller for the routed turn's timeout.
 
+A lookup that collides with another on the same conversation, or with a busy
+encoder, answers 429 with `Retry-After`. That is a healthy router saying when
+to come back, not an unavailable one, and it is worth honouring: retrying
+immediately lands on the lease or the queue that produced the contention.
+
 ### Episodes
 
 Three optional request headers shape continuity:
@@ -379,6 +412,10 @@ Three optional request headers shape continuity:
 | `x-rayline-session` | the conversation this lookup belongs to. **Absent means stateless**, which is what a playground wants: experimenting must not advance a real conversation |
 | `x-rayline-branch` | a subagent lane inside that conversation, so concurrent subagents are separate trajectories rather than each other's previous turn |
 | `x-rayline-route-id` | a caller-minted id this router adopts and echoes, so one id spans both records |
+
+A branch without a session names a lane in no conversation, so it is dropped
+and reported as a `branch_ignored` warning rather than silently making the
+lookup stateless.
 
 Continuity also has to be switched on. With `episode_writes` off, which is the
 default, every lookup is ephemeral: the episode identity is minted per call

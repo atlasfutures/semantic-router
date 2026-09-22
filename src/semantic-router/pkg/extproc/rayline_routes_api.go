@@ -21,9 +21,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/google/uuid"
 
@@ -271,13 +273,7 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	started := time.Now()
 	decision, err := runtime.RouteDecision(
 		lookupContext,
-		routerruntime.RouteDecisionRequest{
-			Body:       body,
-			DecisionID: routeID,
-			SessionID:  episode,
-			Ephemeral:  ephemeral,
-			WireFormat: wireFormat,
-		},
+		raylineRoutesConsult(body, routeID, episode, ephemeral, wireFormat),
 	)
 	if err != nil {
 		return r.raylineRoutesFailure(ctx, lookupContext, routeID, err)
@@ -365,12 +361,12 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 	// that is briefly busy with this very session, so it says so and says
 	// when to come back.
 	if contended {
-		return r.createRaylineRoutesError(
+		return raylineRoutesRetryAfter(r.createRaylineRoutesError(
 			ctx,
 			429,
 			"rate_limit_error",
 			"route lookup contended: the session or the encoder is briefly at capacity",
-		)
+		), raylineRoutesContendedRetrySeconds)
 	}
 	// Fail closed. The selector owns the choice and has no fallback arm, so
 	// answering with a default here would replace a policy decision with this
@@ -471,19 +467,27 @@ func readRaylineRoutesBody(
 		return "", nil, "request body must be a JSON object"
 	}
 	warnings := raylineRoutesBodyWarnings(envelope, encodesToolNames)
-	if _, responses := envelope["input"]; responses {
-		return llmprotocol.OpenAIResponsesV1, warnings, ""
-	}
-	raw, present := envelope["messages"]
-	if !present {
+	_, hasInput := envelope["input"]
+	raw, hasMessages := envelope["messages"]
+	if !hasInput && !hasMessages {
 		return "", nil, "request body must carry messages or input"
 	}
-	var messages []json.RawMessage
-	if err := json.Unmarshal(raw, &messages); err != nil || len(messages) == 0 {
-		return "", nil, "messages must be a non-empty list of message objects"
+	if hasMessages {
+		var messages []json.RawMessage
+		if err := json.Unmarshal(raw, &messages); err != nil || len(messages) == 0 {
+			return "", nil, "messages must be a non-empty list of message objects"
+		}
 	}
+	// The header is consulted before any inference, including the Responses
+	// one. A caller who states the dialect has said the one thing the body
+	// cannot always say about itself, and an override that some body shapes
+	// silently outrank is not an override -- it is a second inference rule
+	// the caller has no way to predict.
 	if declared, ok := declaredWireFormat(formatHint); ok {
 		return declared, warnings, ""
+	}
+	if hasInput {
+		return llmprotocol.OpenAIResponsesV1, warnings, ""
 	}
 	format, certain := messagesDialect(envelope)
 	if !certain {
@@ -521,6 +525,9 @@ var (
 // which is already malformed.
 func messagesDialect(envelope map[string]json.RawMessage) (llmprotocol.WireFormat, bool) {
 	if format, present := messagesRoleDialect(envelope["messages"]); present {
+		return format, true
+	}
+	if format, present := messagesToolsDialect(envelope["tools"]); present {
 		return format, true
 	}
 	for _, field := range anthropicOnlyFields {
@@ -588,12 +595,80 @@ func messagesRoleDialect(raw json.RawMessage) (llmprotocol.WireFormat, bool) {
 		if _, present := message["tool_call_id"]; present {
 			return llmprotocol.OpenAIChatV1, true
 		}
+		// Anthropic carries a tool call and its result as content blocks on
+		// ordinary user and assistant turns. Such a body names no dialect any
+		// other way -- its roles are ordinary and max_tokens says nothing --
+		// so without this the commonest agentic Anthropic request in
+		// existence falls through to Chat and is refused by a codec that has
+		// no such blocks.
+		if format, present := messageContentDialect(message["content"]); present {
+			return format, true
+		}
 		var role string
 		if err := json.Unmarshal(message["role"], &role); err != nil {
 			continue
 		}
 		if chatOnlyRoles[role] {
 			return llmprotocol.OpenAIChatV1, true
+		}
+	}
+	return "", false
+}
+
+// anthropicOnlyContentBlocks are content block types Anthropic Messages
+// defines and Chat Completions does not. Chat's own array form carries text
+// and image_url blocks, and expresses tool traffic with the tool_calls member
+// and the tool role instead, so these types cannot appear in a Chat body.
+var anthropicOnlyContentBlocks = map[string]bool{
+	"tool_use":          true,
+	"tool_result":       true,
+	"thinking":          true,
+	"redacted_thinking": true,
+}
+
+// messageContentDialect reads the dialect off one message's content blocks.
+// A string content, which both dialects accept, says nothing.
+func messageContentDialect(raw json.RawMessage) (llmprotocol.WireFormat, bool) {
+	if len(raw) == 0 {
+		return "", false
+	}
+	var blocks []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return "", false
+	}
+	for _, block := range blocks {
+		var blockType string
+		if err := json.Unmarshal(block["type"], &blockType); err != nil {
+			continue
+		}
+		if anthropicOnlyContentBlocks[blockType] {
+			return llmprotocol.AnthropicMessagesV1, true
+		}
+	}
+	return "", false
+}
+
+// messagesToolsDialect reads the dialect off the tool declarations.
+//
+// The two dialects declare the same tool differently and unmistakably:
+// Anthropic puts the JSON Schema on input_schema at the top of the tool
+// object, and Chat nests the whole callable under a function member. A body
+// whose only distinguishing feature is its tools -- ordinary roles, plain
+// string content, max_tokens -- is otherwise read as Chat and then refused.
+func messagesToolsDialect(raw json.RawMessage) (llmprotocol.WireFormat, bool) {
+	if len(raw) == 0 {
+		return "", false
+	}
+	var tools []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &tools); err != nil {
+		return "", false
+	}
+	for _, tool := range tools {
+		if _, present := tool["function"]; present {
+			return llmprotocol.OpenAIChatV1, true
+		}
+		if _, present := tool["input_schema"]; present {
+			return llmprotocol.AnthropicMessagesV1, true
 		}
 	}
 	return "", false
@@ -645,6 +720,15 @@ func raylineRoutesHeaderWarnings(
 		raylineRoutesHeader(ctx, raylineRoutesSessionHeader) != "" {
 		warnings = append(warnings, "episode_not_tracked: this cell keeps no episodes for route lookups, so the conversation did not influence this route")
 	}
+	// A branch names a lane inside a conversation, so it means nothing
+	// without the conversation. Sent alone it is silently dropped and the
+	// lookup becomes ephemeral, which looks identical to a correct stateless
+	// call: the caller gets a plausible route and loses every branch's
+	// continuity and its retained encoder prefix with no symptom to read.
+	if raylineRoutesHeader(ctx, raylineRoutesBranchHeader) != "" &&
+		raylineRoutesHeader(ctx, raylineRoutesSessionHeader) == "" {
+		warnings = append(warnings, "branch_ignored: "+raylineRoutesBranchHeader+" names a lane inside a conversation and was dropped because "+raylineRoutesSessionHeader+" was absent")
+	}
 	return warnings
 }
 
@@ -693,6 +777,70 @@ func raylineRoutesHeader(ctx *RequestContext, name string) string {
 		return ""
 	}
 	return strings.TrimSpace(ctx.Headers[name])
+}
+
+// raylineRoutesConsult composes the consult this endpoint sends the selector.
+//
+// It is a function rather than a literal at the call site so the surface can
+// be asserted without standing up the whole selection stack. That mattered:
+// the field was once added to the request type and to this endpoint's
+// documentation without ever being set, which is indistinguishable from the
+// bug it exists to prevent.
+func raylineRoutesConsult(
+	body []byte,
+	routeID string,
+	episode string,
+	ephemeral bool,
+	wireFormat llmprotocol.WireFormat,
+) routerruntime.RouteDecisionRequest {
+	return routerruntime.RouteDecisionRequest{
+		Body:       body,
+		DecisionID: routeID,
+		SessionID:  episode,
+		Ephemeral:  ephemeral,
+		WireFormat: wireFormat,
+		// Named, not defaulted. The two consult surfaces share one
+		// RouteDecision method and disambiguate a multi-decision deployment
+		// differently; an unset surface reads as the legacy consult and
+		// resolves a different decision than this endpoint's own routes_api
+		// claim.
+		Surface: routerruntime.RouteDecisionSurfaceRoutes,
+	}
+}
+
+// raylineRoutesContendedRetrySeconds is how long a contended caller is told to
+// wait. One second, because the thing it collided with is one turn's episode
+// lease or one encoder slot, both of which clear in about that time. A longer
+// delay would make a healthy router look unavailable.
+const raylineRoutesContendedRetrySeconds = 1
+
+// raylineRoutesRetryAfter says when to come back.
+//
+// A 429 that carries no Retry-After leaves an automated client with nothing
+// to honour, and the default behaviour is then an immediate retry -- onto the
+// same lease or the same encoder queue that produced the contention, which
+// amplifies exactly what the refusal was trying to shed.
+func raylineRoutesRetryAfter(
+	response *ext_proc.ProcessingResponse,
+	seconds int,
+) *ext_proc.ProcessingResponse {
+	immediate := response.GetImmediateResponse()
+	if immediate == nil {
+		return response
+	}
+	if immediate.Headers == nil {
+		immediate.Headers = &ext_proc.HeaderMutation{}
+	}
+	immediate.Headers.SetHeaders = append(
+		immediate.Headers.SetHeaders,
+		&core.HeaderValueOption{
+			Header: &core.HeaderValue{
+				Key:      "retry-after",
+				RawValue: []byte(strconv.Itoa(seconds)),
+			},
+		},
+	)
+	return response
 }
 
 // createRaylineRoutesError answers in the Anthropic error envelope rather than

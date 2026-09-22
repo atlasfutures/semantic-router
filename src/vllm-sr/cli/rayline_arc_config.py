@@ -136,6 +136,10 @@ class RaylineARCEpisodeConfig(BaseModel):
 
 
 _CHECKPOINT_LABEL = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+# maxRaylineARCConfigStringLength in pkg/config/rayline_arc_config.go. It is
+# restated rather than derived because nothing links the two files; when it
+# moves there it has to move here, and a test asserts the pair.
+_MAX_CONFIG_STRING_BYTES = 512
 
 
 class RaylineARCRoutesAPIConfig(BaseModel):
@@ -171,6 +175,15 @@ class RaylineARCRoutesAPIConfig(BaseModel):
     @field_validator("checkpoint_label")
     @classmethod
     def _label_character_set(cls, value: str) -> str:
+        # Bytes, matching the Go validator's len() on the same field. The
+        # character set below is ASCII today, so the two agree either way,
+        # but reading it as characters would start disagreeing the moment
+        # that set widens -- and a config this loader accepts and the router
+        # then refuses is a failure the operator only sees at startup.
+        if len(value.encode("utf-8")) > _MAX_CONFIG_STRING_BYTES:
+            raise ValueError(
+                f"checkpoint_label must be at most {_MAX_CONFIG_STRING_BYTES} bytes"
+            )
         if value and not _CHECKPOINT_LABEL.match(value):
             raise ValueError(
                 "checkpoint_label must be lowercase alphanumerics, dashes or underscores"

@@ -120,7 +120,12 @@ func collectToolNames(systemText *systemTextBuffer, tools []llmprotocol.Tool) {
 	}
 	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
-		if name := strings.TrimSpace(tool.Name); name != "" {
+		// Identity, not Name. A tool the source API runs itself -- web
+		// search, the advisor -- is identified by its type and usually states
+		// no name at all, so keying on Name dropped every one of them and
+		// contradicted this function's own contract. Identity returns the
+		// type for exactly those, and the name for everything else.
+		if name := strings.TrimSpace(tool.Identity()); name != "" {
 			names = append(names, name)
 		}
 	}

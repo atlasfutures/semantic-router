@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -748,4 +749,291 @@ func TestRaylineRoutesPublishesTheSelectedArm(t *testing.T) {
 	if body["provider"] != "deepinfra" {
 		t.Fatalf("provider = %v, want the arm's provider", body["provider"])
 	}
+}
+
+// An Anthropic agentic turn names its dialect only through its tools: the
+// roles are ordinary, the content is blocks, and max_tokens is shared. Read
+// as Chat, every such request is refused by a codec that has no tool_use
+// block and no input_schema.
+func TestRaylineRoutesReadsToolShapesAsDialectMarkers(t *testing.T) {
+	t.Parallel()
+	for name, testCase := range map[string]struct {
+		body string
+		want llmprotocol.WireFormat
+	}{
+		"anthropic by tool input_schema": {
+			body: `{"max_tokens":16,"messages":[{"role":"user","content":"hi"}],` +
+				`"tools":[{"name":"search","input_schema":{"type":"object"}}]}`,
+			want: llmprotocol.AnthropicMessagesV1,
+		},
+		"anthropic by tool_use block": {
+			body: `{"max_tokens":16,"messages":[{"role":"assistant","content":` +
+				`[{"type":"tool_use","id":"t1","name":"search","input":{}}]}]}`,
+			want: llmprotocol.AnthropicMessagesV1,
+		},
+		"anthropic by tool_result block": {
+			body: `{"max_tokens":16,"messages":[{"role":"user","content":` +
+				`[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}]}`,
+			want: llmprotocol.AnthropicMessagesV1,
+		},
+		"anthropic by thinking block": {
+			body: `{"max_tokens":16,"messages":[{"role":"assistant","content":` +
+				`[{"type":"thinking","thinking":"...","signature":"s"}]}]}`,
+			want: llmprotocol.AnthropicMessagesV1,
+		},
+		// The mirror image: Chat nests the callable under function, and a
+		// body whose only marker is that must not read as Anthropic.
+		"chat by tool function": {
+			body: `{"max_tokens":16,"messages":[{"role":"user","content":"hi"}],` +
+				`"tools":[{"type":"function","function":{"name":"search"}}]}`,
+			want: llmprotocol.OpenAIChatV1,
+		},
+		// Both dialects carry plain text blocks, so they decide nothing.
+		"text blocks decide nothing": {
+			body: `{"max_tokens":16,"messages":[{"role":"user","content":` +
+				`[{"type":"text","text":"hi"}]}]}`,
+			want: llmprotocol.OpenAIChatV1,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			format, warnings, detail := readRaylineRoutesBody([]byte(testCase.body), false, "")
+			if detail != "" {
+				t.Fatalf("detail = %q, want none", detail)
+			}
+			if format != testCase.want {
+				t.Fatalf("format = %q, want %q", format, testCase.want)
+			}
+			// A marker the body actually carries is knowledge, not a guess,
+			// so nothing may claim it was inferred. The text-block case is
+			// the deliberate exception: it carries no marker at all.
+			inferred := false
+			for _, warning := range warnings {
+				if strings.HasPrefix(warning, "format_inferred:") {
+					inferred = true
+				}
+			}
+			if wantInferred := name == "text blocks decide nothing"; inferred != wantInferred {
+				t.Fatalf("format_inferred present = %v, want %v", inferred, wantInferred)
+			}
+		})
+	}
+}
+
+// An override some body shapes silently outrank is not an override. The
+// Responses inference used to run before the header was read, so a caller
+// stating the dialect on an input body was ignored with no way to tell.
+func TestRaylineRoutesFormatHeaderOutranksTheResponsesInference(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"input":[{"role":"user","content":"hi"}]}`)
+	format, _, detail := readRaylineRoutesBody(body, false, "chat")
+	if detail != "" {
+		t.Fatalf("detail = %q, want none", detail)
+	}
+	if format != llmprotocol.OpenAIChatV1 {
+		t.Fatalf("format = %q, want the declared chat", format)
+	}
+	// With no header the body's own shape still decides.
+	if format, _, _ := readRaylineRoutesBody(body, false, ""); format != llmprotocol.OpenAIResponsesV1 {
+		t.Fatalf("format = %q, want the inferred responses", format)
+	}
+}
+
+// A 429 with no Retry-After is read by most clients as "retry now", onto the
+// same lease or encoder queue that produced the contention.
+func TestRaylineRoutesContentionSaysWhenToRetry(t *testing.T) {
+	t.Parallel()
+	ctx := routesContext(nil)
+	response := routesRouter(true).raylineRoutesFailure(
+		ctx,
+		context.Background(),
+		"rte_1234abcd5678efab",
+		routerruntime.ErrRouteDecisionContended,
+	)
+	if code := immediateStatusCode(t, response); code != 429 {
+		t.Fatalf("status = %d, want 429", code)
+	}
+	found := ""
+	for _, header := range response.GetImmediateResponse().GetHeaders().GetSetHeaders() {
+		if strings.EqualFold(header.GetHeader().GetKey(), "retry-after") {
+			found = string(header.GetHeader().GetRawValue())
+		}
+	}
+	if found == "" {
+		t.Fatal("the contended 429 carries no Retry-After, so clients will retry immediately")
+	}
+	if found != "1" {
+		t.Fatalf("Retry-After = %q, want the one-turn delay", found)
+	}
+	// Content-type must survive the append rather than be replaced by it.
+	contentType := false
+	for _, header := range response.GetImmediateResponse().GetHeaders().GetSetHeaders() {
+		if strings.EqualFold(header.GetHeader().GetKey(), "content-type") {
+			contentType = true
+		}
+	}
+	if !contentType {
+		t.Fatal("appending Retry-After dropped content-type")
+	}
+}
+
+// Envoy sends no body callback for a header message that ended the stream, so
+// a bodyless POST finds no body phase to answer it and is forwarded to an
+// upstream that has never heard of this path.
+func TestRaylineRoutesRefusesABodylessPost(t *testing.T) {
+	t.Parallel()
+	router := routesRouter(true)
+	ctx := routesContext(nil)
+	response, err := router.handleRequestHeaders(&ext_proc.ProcessingRequest_RequestHeaders{
+		RequestHeaders: &ext_proc.HttpHeaders{
+			Headers:     routesHeaderMap("POST", raylineRoutesAPIPath),
+			EndOfStream: true,
+		},
+	}, ctx)
+	if err != nil {
+		t.Fatalf("handleRequestHeaders() error = %v", err)
+	}
+	if response.GetImmediateResponse() == nil {
+		t.Fatal("a bodyless route lookup was continued upstream, want it refused here")
+	}
+	if code := immediateStatusCode(t, response); code != 400 {
+		t.Fatalf("status = %d, want 400", code)
+	}
+	if !ctx.ImmediateResponseEncoded {
+		t.Fatal("the refusal was not claimed, so it will be re-encoded into another contract")
+	}
+}
+
+// The same message with a body to follow must still reach the body phase.
+func TestRaylineRoutesAdmitsAPostThatCarriesABody(t *testing.T) {
+	t.Parallel()
+	ctx := routesContext(nil)
+	response, err := routesRouter(true).handleRequestHeaders(&ext_proc.ProcessingRequest_RequestHeaders{
+		RequestHeaders: &ext_proc.HttpHeaders{
+			Headers:     routesHeaderMap("POST", raylineRoutesAPIPath),
+			EndOfStream: false,
+		},
+	}, ctx)
+	if err != nil {
+		t.Fatalf("handleRequestHeaders() error = %v", err)
+	}
+	if response.GetImmediateResponse() != nil {
+		t.Fatalf("a POST with a body was refused at the header phase: %d", immediateStatusCode(t, response))
+	}
+}
+
+// A branch names a lane inside a conversation, so alone it names a lane in no
+// conversation. Dropped silently, the caller sees a plausible route and loses
+// every branch's continuity with no symptom to read.
+func TestRaylineRoutesWarnsThatALoneBranchWasDropped(t *testing.T) {
+	t.Parallel()
+	settings := &config.RaylineARCRoutesAPIConfig{Enabled: true, EpisodeWrites: true}
+	warnings := raylineRoutesHeaderWarnings(
+		routesContext(map[string]string{raylineRoutesBranchHeader: "subagent-2"}),
+		settings,
+	)
+	if !routesWarns(warnings, "branch_ignored:") {
+		t.Fatalf("warnings = %v, want branch_ignored", warnings)
+	}
+	// With the conversation present the branch is honoured, so there is
+	// nothing to warn about.
+	warnings = raylineRoutesHeaderWarnings(
+		routesContext(map[string]string{
+			raylineRoutesSessionHeader: "conv-1",
+			raylineRoutesBranchHeader:  "subagent-2",
+		}),
+		settings,
+	)
+	if routesWarns(warnings, "branch_ignored:") {
+		t.Fatalf("warnings = %v, want no branch_ignored", warnings)
+	}
+}
+
+func routesWarns(warnings []string, prefix string) bool {
+	for _, warning := range warnings {
+		if strings.HasPrefix(warning, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// routesHeaderMap builds the header message Envoy sends for a request line.
+func routesHeaderMap(method, path string) *core.HeaderMap {
+	return &core.HeaderMap{
+		Headers: []*core.HeaderValue{
+			{Key: ":method", RawValue: []byte(method)},
+			{Key: ":path", RawValue: []byte(path)},
+		},
+	}
+}
+
+// Both consult surfaces share one RouteDecision method, and only /v1/routes
+// has a routes_api block to read. Letting that block disambiguate for the
+// legacy consult moved it off its fail-closed ambiguity the moment some
+// unrelated decision turned the new endpoint on -- onto a policy its own
+// caller never selected.
+func TestDecisionOnlyRoutingTargetHonoursTheSurface(t *testing.T) {
+	t.Parallel()
+	router := twoARCDecisionRouter()
+
+	decision, _, err := router.decisionOnlyRoutingTarget(routerruntime.RouteDecisionSurfaceRoutes)
+	if err != nil {
+		t.Fatalf("routes surface: err = %v, want the claiming decision", err)
+	}
+	if decision.Name != "claims-routes" {
+		t.Fatalf("routes surface picked %q, want the decision that enabled routes_api", decision.Name)
+	}
+
+	if _, _, err := router.decisionOnlyRoutingTarget(routerruntime.RouteDecisionSurfaceConsult); err == nil {
+		t.Fatal("the legacy consult resolved a target from another surface's claim, want its own ambiguity error")
+	} else if !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("consult err = %v, want the ambiguity refusal", err)
+	}
+
+	// One ARC decision is unambiguous for both, claim or no claim.
+	if _, _, err := routesRouter(true).decisionOnlyRoutingTarget(routerruntime.RouteDecisionSurfaceConsult); err != nil {
+		t.Fatalf("single-decision consult: err = %v, want the only decision", err)
+	}
+}
+
+// The adapter must name its surface. An unset one reads as the legacy
+// consult, which resolves a different decision -- and a Surface field that
+// exists, is documented, and is never set looks exactly like one that works.
+func TestRaylineRoutesNamesItsSurface(t *testing.T) {
+	t.Parallel()
+	if routerruntime.RouteDecisionSurfaceRoutes == routerruntime.RouteDecisionSurfaceConsult {
+		t.Fatal("the two surfaces are indistinguishable, so naming one decides nothing")
+	}
+	consult := raylineRoutesConsult(
+		[]byte(`{"messages":[]}`),
+		"rte_1234abcd5678efab",
+		"conv-1",
+		false,
+		llmprotocol.AnthropicMessagesV1,
+	)
+	if consult.Surface != routerruntime.RouteDecisionSurfaceRoutes {
+		t.Fatalf("Surface = %q, want %q", consult.Surface, routerruntime.RouteDecisionSurfaceRoutes)
+	}
+}
+
+func twoARCDecisionRouter() *OpenAIRouter {
+	arc := func(name string, routes bool) config.Decision {
+		return config.Decision{
+			Name: name,
+			Algorithm: &config.AlgorithmConfig{
+				Type:    config.RaylineARCAlgorithmType,
+				OnError: "fail_closed",
+				RaylineARC: &config.RaylineARCAlgorithmConfig{
+					RoutesAPI: config.RaylineARCRoutesAPIConfig{Enabled: routes},
+				},
+			},
+		}
+	}
+	return &OpenAIRouter{Config: &config.RouterConfig{
+		IntelligentRouting: config.IntelligentRouting{Decisions: []config.Decision{
+			arc("plain-arc", false),
+			arc("claims-routes", true),
+		}},
+	}}
 }

@@ -61,6 +61,20 @@ func (r *OpenAIRouter) handleRequestHeaders(v *ext_proc.ProcessingRequest_Reques
 	if validationResp := r.validateRequestHeaders(method, path, ctx); validationResp != nil {
 		return validationResp, nil
 	}
+	// A route lookup is answered entirely from its body, and Envoy sends no
+	// body callback for a header message that already ended the stream. A
+	// bodyless POST therefore passes method validation, finds no body phase
+	// to answer it, and is continued upstream -- forwarding a request to an
+	// endpoint that exists only here and executes nothing. Refusing it now is
+	// the only place left that still can.
+	if isRaylineRoutesRequest(ctx) && v.RequestHeaders.GetEndOfStream() {
+		return r.createRaylineRoutesError(
+			ctx,
+			400,
+			"invalid_request_error",
+			"request body is required",
+		), nil
+	}
 	return newContinueRequestHeadersResponse(buildIdentityEncodingRequestMutation()), nil
 }
 

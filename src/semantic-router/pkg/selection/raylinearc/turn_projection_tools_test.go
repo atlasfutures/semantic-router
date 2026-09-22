@@ -150,3 +150,43 @@ func TestToolNamesPrecedeSystemText(t *testing.T) {
 		t.Fatalf("turn text = %q, want %q", turns[0].Text, want)
 	}
 }
+
+// A tool the source API runs itself -- web search, the advisor -- is
+// identified by its type and usually states no name at all. Keying the
+// projection on Name dropped every one of them while the contract said they
+// were included, so the selector could not tell a turn with web search from
+// one without it.
+func TestServerToolsAreEncodedByTheirIdentity(t *testing.T) {
+	t.Parallel()
+	turns, err := ProjectTurns(
+		toolRequest(
+			llmprotocol.Tool{Name: "Edit"},
+			llmprotocol.Tool{Type: "web_search_20250305"},
+			llmprotocol.Tool{Type: "custom", Name: "Bash"},
+		),
+		TurnOptions{IncludeToolNames: true},
+	)
+	if err != nil {
+		t.Fatalf("ProjectTurns() error = %v", err)
+	}
+	want := toolNamesPrefix + "Edit, web_search_20250305, Bash"
+	if !strings.Contains(turns[0].Text, want) {
+		t.Fatalf("turn text = %q, want it to carry %q", turns[0].Text, want)
+	}
+}
+
+// A tool with neither a name nor a type identifies nothing, and rendering an
+// empty entry would make two different tool sets encode identically.
+func TestUnidentifiableToolsAreDropped(t *testing.T) {
+	t.Parallel()
+	turns, err := ProjectTurns(
+		toolRequest(llmprotocol.Tool{Name: "Edit"}, llmprotocol.Tool{}),
+		TurnOptions{IncludeToolNames: true},
+	)
+	if err != nil {
+		t.Fatalf("ProjectTurns() error = %v", err)
+	}
+	if want := toolNamesPrefix + "Edit\n\nrename the helper"; turns[0].Text != want {
+		t.Fatalf("turn text = %q, want %q", turns[0].Text, want)
+	}
+}

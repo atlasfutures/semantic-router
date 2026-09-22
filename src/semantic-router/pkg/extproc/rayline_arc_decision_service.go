@@ -61,7 +61,7 @@ func (service *raylineARCDecisionService) RouteDecision(
 	if service == nil || service.router == nil {
 		return routerruntime.RouteDecision{}, errors.New("router is unavailable")
 	}
-	decision, algorithm, err := service.router.decisionOnlyRoutingTarget()
+	decision, algorithm, err := service.router.decisionOnlyRoutingTarget(request.Surface)
 	if err != nil {
 		return routerruntime.RouteDecision{}, err
 	}
@@ -530,13 +530,24 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 	}, nil
 }
 
-// decisionOnlyRoutingTarget finds the decision that serves route consults.
+// decisionOnlyRoutingTarget finds the decision that serves a route consult on
+// the surface that asked.
 //
-// Exactly one Rayline ARC decision may claim it. Zero means the deployment
+// Exactly one Rayline ARC decision may serve it. Zero means the deployment
 // never configured decision-only routing; more than one means the consult
 // carries nothing that could choose between them, and guessing would route
 // live traffic through a policy nobody selected.
-func (r *OpenAIRouter) decisionOnlyRoutingTarget() (
+//
+// The surface is a parameter because the two endpoints disambiguate
+// differently and must not borrow each other's rule. Only POST /v1/routes has
+// a routes_api block to read, so only it can treat enabling that block as a
+// claim; the legacy POST /v1/route keeps its original fail-closed rule, and
+// letting the claim decide for it would silently move it onto a policy its
+// caller never selected the moment some unrelated decision turned the new
+// endpoint on.
+func (r *OpenAIRouter) decisionOnlyRoutingTarget(
+	surface routerruntime.RouteDecisionSurface,
+) (
 	*config.Decision,
 	*config.AlgorithmConfig,
 	error,
@@ -566,23 +577,30 @@ func (r *OpenAIRouter) decisionOnlyRoutingTarget() (
 	// only thing that can disambiguate a multi-decision deployment. Scanning
 	// pairwise instead meant two disabled decisions ahead of the enabled one
 	// raised ambiguity before the enabled one was reached.
-	if len(enabled) == 1 {
-		return enabled[0], enabled[0].Algorithm, nil
-	}
-	if len(enabled) > 1 {
-		return nil, nil, fmt.Errorf(
-			"decision-only routing is ambiguous: decisions '%s' and '%s' both enable routes_api on %s; enable it on exactly one",
-			enabled[0].Name,
-			enabled[1].Name,
-			config.RaylineARCAlgorithmType,
-		)
+	//
+	// Confined to the surface that owns routes_api. The legacy consult never
+	// reads this block, so a decision enabling it has claimed nothing on that
+	// surface, and honouring the claim there would answer a /v1/route consult
+	// from a decision its caller had no way to choose.
+	if surface == routerruntime.RouteDecisionSurfaceRoutes {
+		if len(enabled) == 1 {
+			return enabled[0], enabled[0].Algorithm, nil
+		}
+		if len(enabled) > 1 {
+			return nil, nil, fmt.Errorf(
+				"decision-only routing is ambiguous: decisions '%s' and '%s' both enable routes_api on %s; enable it on exactly one",
+				enabled[0].Name,
+				enabled[1].Name,
+				config.RaylineARCAlgorithmType,
+			)
+		}
 	}
 
-	// Nothing claimed it. The legacy consult has no routes_api to read, so it
-	// keeps the original rule: one ARC decision serves it, and more than one
-	// is ambiguous with nothing to choose between them. Failing closed here
-	// is deliberate -- guessing would route live traffic through a policy
-	// nobody selected.
+	// Nothing claimed it, or the caller is the legacy consult, which has no
+	// routes_api to read. Either way the original rule applies: one ARC
+	// decision serves it, and more than one is ambiguous with nothing to
+	// choose between them. Failing closed here is deliberate -- guessing
+	// would route live traffic through a policy nobody selected.
 	if len(arcDecisions) == 1 {
 		return arcDecisions[0], arcDecisions[0].Algorithm, nil
 	}
