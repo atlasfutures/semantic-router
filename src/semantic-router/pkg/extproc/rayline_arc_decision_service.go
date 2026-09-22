@@ -100,7 +100,20 @@ func (service *raylineARCDecisionService) RouteDecision(
 	// session on the encoder until eviction, and sustained lookup traffic
 	// then evicts the live conversations it shares the card with.
 	if request.Ephemeral {
-		defer service.closeEphemeralEncoderSession(ctx, algorithm, selectionContext, requestContext)
+		// Detached from response delivery on purpose. Run inline, this close
+		// blocked the answer and was granted a fresh deadline of its own, so
+		// a lookup that spent most of its budget selecting could take nearly
+		// twice deadline_ms and still return 200 -- breaking the end-to-end
+		// bound this endpoint documents, to do housekeeping the caller is not
+		// waiting for.
+		defer func() {
+			go service.closeEphemeralEncoderSession(
+				context.WithoutCancel(ctx),
+				algorithm,
+				selectionContext,
+				requestContext,
+			)
+		}()
 	}
 
 	selected, err := service.selectWorker(ctx, algorithm, selectionContext, requestContext)
@@ -364,7 +377,7 @@ func (service *raylineARCDecisionService) closeEphemeralEncoderSession(
 		visited = selectionContext.RaylineARC.EncoderVisitedReplicaIDs
 	}
 	closeContext, cancel := context.WithTimeout(
-		context.WithoutCancel(ctx),
+		ctx,
 		ephemeralSessionCloseTimeout(algorithm),
 	)
 	defer cancel()

@@ -54,6 +54,12 @@ const (
 	// raylineRoutesCheckpointHeader pins a checkpoint. This cell serves one
 	// artifact, so a pin that names anything is reported rather than honoured.
 	raylineRoutesCheckpointHeader = "x-rayline-checkpoint"
+	// raylineRoutesFormatHeader lets a caller state the dialect instead of
+	// having it inferred. The body stays exactly what they were going to
+	// send, which is the point of the endpoint, and the one thing the body
+	// cannot always say about itself is which of two overlapping dialects it
+	// is written in.
+	raylineRoutesFormatHeader = "x-rayline-format"
 	// raylineRoutesRouteIDHeader carries a caller-minted id. Adopting it means
 	// one id spans the caller's own record and this router's.
 	raylineRoutesRouteIDHeader = "x-rayline-route-id"
@@ -72,9 +78,15 @@ const raylineRouteIDPrefix = "rte_"
 // how this router would have executed the call, and executing it is the
 // caller's job now.
 type raylineRoutesResponse struct {
-	RouteID      string                 `json:"route_id"`
-	Object       string                 `json:"object"`
-	Model        string                 `json:"model"`
+	RouteID string `json:"route_id"`
+	Object  string `json:"object"`
+	Model   string `json:"model"`
+	// Worker and Provider identify WHICH arm was selected. Two arms may serve
+	// the same model through different providers at different prices -- the
+	// manifest requires worker ids to be unique, not model names -- so the
+	// model alone cannot be executed faithfully.
+	Worker       string                 `json:"worker"`
+	Provider     string                 `json:"provider,omitempty"`
 	Thinking     raylineRoutesThinking  `json:"thinking"`
 	Checkpoint   string                 `json:"checkpoint,omitempty"`
 	Alternatives []raylineRoutesScore   `json:"alternatives"`
@@ -215,9 +227,15 @@ func (r *OpenAIRouter) handleRaylineRoutesAPI(
 	if !r.raylineRoutesAPIEnabled() {
 		return r.createRaylineRoutesError(ctx, 404, "not_found_error", "endpoint not found")
 	}
+	// The header phase already refused every other method. Checking again is
+	// cheap, and the alternative is that one path reaching here without that
+	// validation answers a GET with a route.
+	if method := raylineRoutesHeader(ctx, ":method"); method != "" && method != "POST" {
+		return r.createRaylineRoutesError(ctx, 405, "invalid_request_error", "method not allowed")
+	}
 
 	settings := r.raylineRoutesConfig()
-	wireFormat, warnings, detail := readRaylineRoutesBody(body, r.raylineRoutesEncodesToolNames())
+	wireFormat, warnings, detail := readRaylineRoutesBody(body, r.raylineRoutesEncodesToolNames(), raylineRoutesHeader(ctx, raylineRoutesFormatHeader))
 	if detail != "" {
 		return r.createRaylineRoutesError(ctx, 400, "invalid_request_error", detail)
 	}
@@ -371,6 +389,8 @@ func raylineRoutesPayload(
 		RouteID:      routeID,
 		Object:       "route",
 		Model:        decision.WorkerModel,
+		Worker:       decision.SelectedWorker,
+		Provider:     decision.Provider,
 		Thinking:     raylineRoutesThinkingOf(decision.Thinking),
 		Checkpoint:   checkpoint,
 		Alternatives: raylineRoutesAlternatives(decision.Alternatives),
@@ -444,6 +464,7 @@ func raylineRoutesAlternatives(
 func readRaylineRoutesBody(
 	body []byte,
 	encodesToolNames bool,
+	formatHint string,
 ) (llmprotocol.WireFormat, []string, string) {
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(body, &envelope); err != nil || envelope == nil {
@@ -461,6 +482,9 @@ func readRaylineRoutesBody(
 	if err := json.Unmarshal(raw, &messages); err != nil || len(messages) == 0 {
 		return "", nil, "messages must be a non-empty list of message objects"
 	}
+	if declared, ok := declaredWireFormat(formatHint); ok {
+		return declared, warnings, ""
+	}
 	format, certain := messagesDialect(envelope)
 	if !certain {
 		// Say so rather than route on a coin flip. The two dialects decode a
@@ -477,7 +501,11 @@ func readRaylineRoutesBody(
 // well-formed body.
 var (
 	anthropicOnlyFields = []string{"system", "stop_sequences", "anthropic_version", "thinking"}
-	chatOnlyFields      = []string{
+	// Roles Chat carries inside the message array. Anthropic hoists system
+	// text to a top-level field, so a system or developer turn in messages[]
+	// is Chat by construction.
+	chatOnlyRoles  = map[string]bool{"system": true, "developer": true, "tool": true}
+	chatOnlyFields = []string{
 		"max_completion_tokens", "frequency_penalty", "presence_penalty",
 		"logprobs", "top_logprobs", "n", "seed", "logit_bias",
 	}
@@ -492,6 +520,9 @@ var (
 // a body can only be misread now if it carries markers from both dialects,
 // which is already malformed.
 func messagesDialect(envelope map[string]json.RawMessage) (llmprotocol.WireFormat, bool) {
+	if format, present := messagesRoleDialect(envelope["messages"]); present {
+		return format, true
+	}
 	for _, field := range anthropicOnlyFields {
 		if _, present := envelope[field]; present {
 			return llmprotocol.AnthropicMessagesV1, true
@@ -502,11 +533,10 @@ func messagesDialect(envelope map[string]json.RawMessage) (llmprotocol.WireForma
 			return llmprotocol.OpenAIChatV1, true
 		}
 	}
-	// max_tokens is required by Anthropic Messages and optional in Chat, so
-	// its presence alongside no Chat marker is evidence rather than proof.
-	if _, present := envelope["max_tokens"]; present {
-		return llmprotocol.AnthropicMessagesV1, true
-	}
+	// max_tokens deliberately decides nothing. It is required by Anthropic
+	// Messages and accepted by Chat as a legacy field, so a Chat body using
+	// it was being read as Anthropic and then interpreted under the wrong
+	// codec. A field both dialects accept cannot discriminate between them.
 	// A body with no marker at all is Chat. It cannot be valid Anthropic --
 	// max_tokens is required there and would have been caught above -- so
 	// defaulting the other way made every ordinary Chat request fail the
@@ -520,6 +550,55 @@ func messagesDialect(envelope map[string]json.RawMessage) (llmprotocol.WireForma
 // A developer who sends tools and gets a well-formed decision back has no way
 // to learn that the tools were never encoded, because the answer looks right
 // either way. That is the class of mistake this array exists to retire.
+// messagesRoleDialect reads the dialect off the message roles.
+//
+// A system, developer or tool role inside messages[] is Chat by
+// construction, because Anthropic carries system text in a top-level field
+// and tool results as content blocks on a user turn. A message carrying
+// tool_calls is Chat for the same reason.
+// declaredWireFormat reads an explicit dialect from the caller. An
+// unrecognised value is ignored rather than refused: the body is still
+// readable by inference, and failing a well-formed request over a header
+// typo would be a worse answer than the one inference gives.
+func declaredWireFormat(hint string) (llmprotocol.WireFormat, bool) {
+	switch strings.ToLower(strings.TrimSpace(hint)) {
+	case "anthropic", string(llmprotocol.AnthropicMessagesV1):
+		return llmprotocol.AnthropicMessagesV1, true
+	case "chat", string(llmprotocol.OpenAIChatV1):
+		return llmprotocol.OpenAIChatV1, true
+	case "responses", string(llmprotocol.OpenAIResponsesV1):
+		return llmprotocol.OpenAIResponsesV1, true
+	default:
+		return "", false
+	}
+}
+
+func messagesRoleDialect(raw json.RawMessage) (llmprotocol.WireFormat, bool) {
+	if len(raw) == 0 {
+		return "", false
+	}
+	var messages []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &messages); err != nil {
+		return "", false
+	}
+	for _, message := range messages {
+		if _, present := message["tool_calls"]; present {
+			return llmprotocol.OpenAIChatV1, true
+		}
+		if _, present := message["tool_call_id"]; present {
+			return llmprotocol.OpenAIChatV1, true
+		}
+		var role string
+		if err := json.Unmarshal(message["role"], &role); err != nil {
+			continue
+		}
+		if chatOnlyRoles[role] {
+			return llmprotocol.OpenAIChatV1, true
+		}
+	}
+	return "", false
+}
+
 func raylineRoutesBodyWarnings(
 	envelope map[string]json.RawMessage,
 	encodesToolNames bool,

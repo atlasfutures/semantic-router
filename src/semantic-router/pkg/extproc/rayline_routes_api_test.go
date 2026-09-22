@@ -98,7 +98,10 @@ func TestRaylineRoutesReadsWireFormatFromTheBody(t *testing.T) {
 		want llmprotocol.WireFormat
 	}{
 		"anthropic messages": {
-			body: `{"model":"rayline-router","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`,
+			// system is Anthropic's own top-level field. max_tokens alone no
+			// longer implies Anthropic: Chat accepts it as a legacy field, so
+			// it cannot discriminate.
+			body: `{"model":"rayline-router","max_tokens":16,"system":"be terse","messages":[{"role":"user","content":"hi"}]}`,
 			want: llmprotocol.AnthropicMessagesV1,
 		},
 		"openai responses": {
@@ -112,7 +115,7 @@ func TestRaylineRoutesReadsWireFormatFromTheBody(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got, _, detail := readRaylineRoutesBody([]byte(testCase.body), false)
+			got, _, detail := readRaylineRoutesBody([]byte(testCase.body), false, "")
 			if detail != "" {
 				t.Fatalf("readRaylineRoutesBody() detail = %q, want none", detail)
 			}
@@ -134,7 +137,7 @@ func TestRaylineRoutesRefusesBodiesItCannotRead(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if _, _, detail := readRaylineRoutesBody([]byte(body), false); detail == "" {
+			if _, _, detail := readRaylineRoutesBody([]byte(body), false, ""); detail == "" {
 				t.Fatal("readRaylineRoutesBody() detail = \"\", want a refusal")
 			}
 		})
@@ -149,9 +152,9 @@ func TestRaylineRoutesRefusesBodiesItCannotRead(t *testing.T) {
 // ignored on a cell that encoded the names would misdescribe the decision.
 func TestRaylineRoutesWarnsWhatItDidWithTools(t *testing.T) {
 	t.Parallel()
-	body := []byte(`{"messages":[{"role":"user","content":"hi"}],"max_tokens":16,"tools":[{"name":"edit"}]}`)
+	body := []byte(`{"messages":[{"role":"user","content":"hi"}],"system":"be terse","tools":[{"name":"edit"}]}`)
 
-	_, dropped, detail := readRaylineRoutesBody(body, false)
+	_, dropped, detail := readRaylineRoutesBody(body, false, "")
 	if detail != "" {
 		t.Fatalf("readRaylineRoutesBody() detail = %q, want none", detail)
 	}
@@ -159,7 +162,7 @@ func TestRaylineRoutesWarnsWhatItDidWithTools(t *testing.T) {
 		t.Fatalf("warnings = %v, want one tools_not_encoded warning", dropped)
 	}
 
-	_, encoded, detail := readRaylineRoutesBody(body, true)
+	_, encoded, detail := readRaylineRoutesBody(body, true, "")
 	if detail != "" {
 		t.Fatalf("readRaylineRoutesBody() detail = %q, want none", detail)
 	}
@@ -182,9 +185,17 @@ func TestRaylineRoutesDialectMarkers(t *testing.T) {
 			want:    llmprotocol.AnthropicMessagesV1,
 			certain: true,
 		},
-		"anthropic by required max_tokens": {
+		// max_tokens is accepted by BOTH dialects -- required by Anthropic,
+		// legacy in Chat -- so it cannot decide, and a body carrying only it
+		// is inferred rather than known.
+		"shared max_tokens decides nothing": {
 			body:    `{"messages":[{"role":"user","content":"hi"}],"max_tokens":16}`,
-			want:    llmprotocol.AnthropicMessagesV1,
+			want:    llmprotocol.OpenAIChatV1,
+			certain: false,
+		},
+		"chat by system role in messages": {
+			body:    `{"messages":[{"role":"system","content":"be terse"},{"role":"user","content":"hi"}]}`,
+			want:    llmprotocol.OpenAIChatV1,
 			certain: true,
 		},
 		// The case the old single-field rule got wrong: Chat with no
@@ -210,7 +221,7 @@ func TestRaylineRoutesDialectMarkers(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			format, warnings, detail := readRaylineRoutesBody([]byte(testCase.body), false)
+			format, warnings, detail := readRaylineRoutesBody([]byte(testCase.body), false, "")
 			if detail != "" {
 				t.Fatalf("detail = %q, want none", detail)
 			}
@@ -684,5 +695,57 @@ func TestRaylineRoutesHeaderErrorsUseTheRoutesEnvelope(t *testing.T) {
 				t.Fatalf("envelope = %+v, want an Anthropic %s", envelope, testCase.errType)
 			}
 		})
+	}
+}
+
+// A caller can state the dialect instead of having it inferred. The body
+// stays exactly what they were going to send; the one thing it cannot always
+// say about itself is which of two overlapping dialects it is written in.
+func TestRaylineRoutesFormatHeaderWins(t *testing.T) {
+	t.Parallel()
+	// A body that would otherwise infer as Chat.
+	body := []byte(`{"messages":[{"role":"user","content":"hi"}],"max_tokens":16}`)
+	for hint, want := range map[string]llmprotocol.WireFormat{
+		"anthropic": llmprotocol.AnthropicMessagesV1,
+		"chat":      llmprotocol.OpenAIChatV1,
+		"responses": llmprotocol.OpenAIResponsesV1,
+	} {
+		format, _, detail := readRaylineRoutesBody(body, false, hint)
+		if detail != "" {
+			t.Fatalf("hint %q detail = %q, want none", hint, detail)
+		}
+		if format != want {
+			t.Fatalf("hint %q gave %q, want %q", hint, format, want)
+		}
+	}
+	// An unrecognised hint falls back to inference rather than refusing a
+	// well-formed request over a header typo.
+	format, _, detail := readRaylineRoutesBody(body, false, "klingon")
+	if detail != "" || format != llmprotocol.OpenAIChatV1 {
+		t.Fatalf("bad hint gave (%q, %q), want inference", format, detail)
+	}
+}
+
+// Two arms can serve one model through different providers at different
+// prices, so the model alone cannot be executed faithfully.
+func TestRaylineRoutesPublishesTheSelectedArm(t *testing.T) {
+	t.Parallel()
+	payload := raylineRoutesPayload(
+		"rte_1234abcd5678efab",
+		"arc-2026-09-12.c82a1f3e",
+		routerruntime.RouteDecision{
+			WorkerModel:    "deepseek/deepseek-v4-pro",
+			SelectedWorker: "deepseek-v4-pro@thinking-off",
+			Provider:       "deepinfra",
+		},
+		nil,
+		time.Millisecond,
+	)
+	body := marshalRoutesPayload(t, payload)
+	if body["worker"] != "deepseek-v4-pro@thinking-off" {
+		t.Fatalf("worker = %v, want the selected arm", body["worker"])
+	}
+	if body["provider"] != "deepinfra" {
+		t.Fatalf("provider = %v, want the arm's provider", body["provider"])
 	}
 }

@@ -34,6 +34,12 @@ type RouteDecisionRequest struct {
 	// previous-arm state would silently change later selections. The
 	// reference decision server holds the same rule.
 	ExecutedModel string
+	// Surface names the endpoint asking. It exists because the two adapters
+	// share this method and must not share every rule: the route lookup
+	// resolves its target by which decision enables routes_api, and applying
+	// that to the legacy consult would silently move it off its fail-closed
+	// ambiguity and onto a policy its caller never selected.
+	Surface RouteDecisionSurface
 	// Ephemeral asks for a decision that joins no trajectory: no episode
 	// lease, no episode store read or write, and nothing left behind.
 	//
@@ -52,6 +58,17 @@ type RouteDecisionRequest struct {
 	// twice, once by the adapter and once by the router.
 	WireFormat llmprotocol.WireFormat
 }
+
+// RouteDecisionSurface names which endpoint a consult came from.
+type RouteDecisionSurface string
+
+const (
+	// RouteDecisionSurfaceConsult is the legacy management POST /v1/route.
+	// Its zero value, so an adapter that says nothing keeps the older rules.
+	RouteDecisionSurfaceConsult RouteDecisionSurface = ""
+	// RouteDecisionSurfaceRoutes is the public POST /v1/routes.
+	RouteDecisionSurfaceRoutes RouteDecisionSurface = "routes"
+)
 
 // RouteDecision is the bounded set of selection facts a decision-only consult
 // may publish.

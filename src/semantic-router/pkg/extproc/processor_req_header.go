@@ -41,7 +41,12 @@ func (r *OpenAIRouter) handleRequestHeaders(v *ext_proc.ProcessingRequest_Reques
 	// Streaming detection still runs because the same flag drives mode selection
 	// for downstream filters and is cheap; the body and response handlers will
 	// also short-circuit in the no-op path.
-	if ctx.SkipProcessing {
+	// A route lookup is validated and served by this router, so the opt-out
+	// does not reach it here either. Without this, a GET or a bodyless POST
+	// carrying the header skipped method validation entirely and was
+	// forwarded upstream, and a GET with a body reached the body handler and
+	// could be answered 200 against a POST-only contract.
+	if ctx.SkipProcessing && !isRaylineRoutesRequest(ctx) {
 		detectStreamingExpectation(ctx)
 		return newContinueRequestHeadersResponse(buildLooperInternalHeaderRemovalMutation()), nil
 	}

@@ -1,5 +1,6 @@
 """Typed configuration for the experimental Rayline ARC selector."""
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -134,6 +135,49 @@ class RaylineARCEpisodeConfig(BaseModel):
     redis: RaylineARCRedisConfig | None = None
 
 
+_CHECKPOINT_LABEL = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+
+class RaylineARCRoutesAPIConfig(BaseModel):
+    """POST /v1/routes: the selector's choice, returned without executing it.
+
+    Off by default and not implied by configuring the algorithm. A lookup
+    drives the encoder with no paying turn behind it, on the same instance
+    that serves routed traffic, so an operator opts in deliberately.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    # Bounds one lookup end to end. Zero selects the shipped 1500 ms default;
+    # the Go validator holds the same 100..30000 window, and a value outside
+    # it is a misconfiguration rather than a preference.
+    deadline_ms: int = Field(default=0, ge=0, le=30_000)
+    # Lets a lookup join a conversation's trajectory, with the episode lease
+    # and store round trip that implies.
+    episode_writes: bool = False
+    # Human-readable release name published beside the artifact hash, as
+    # "<label>.<hash>". Separate from artifact_revision, which is
+    # deployment-private and never reaches a caller.
+    checkpoint_label: str = ""
+
+    @field_validator("deadline_ms")
+    @classmethod
+    def _bounded_deadline(cls, value: int) -> int:
+        if value and value < 100:
+            raise ValueError("deadline_ms must be at least 100")
+        return value
+
+    @field_validator("checkpoint_label")
+    @classmethod
+    def _label_character_set(cls, value: str) -> str:
+        if value and not _CHECKPOINT_LABEL.match(value):
+            raise ValueError(
+                "checkpoint_label must be lowercase alphanumerics, dashes or underscores"
+            )
+        return value
+
+
 class RaylineARCAlgorithmConfig(BaseModel):
     """Artifact, encoder, and episode pins for Rayline ARC."""
 
@@ -145,4 +189,11 @@ class RaylineARCAlgorithmConfig(BaseModel):
     episode: RaylineARCEpisodeConfig
     include_system_text: bool = False
     drop_mid_conversation_system_text: bool = False
+    # Shows the selector the turn's tool NAMES -- never their schemas. A
+    # 2026-09-17 encoder probe measured the full schema block moving 40.4% of
+    # first-turn decisions, level with the bar that keeps include_system_text
+    # off; names move 7.6% for 42 tokens. Off, because safe to send is not the
+    # same as shown to help.
+    include_tool_names: bool = False
     fault_injection: RaylineARCFaultInjectionConfig | None = None
+    routes_api: RaylineARCRoutesAPIConfig | None = None
