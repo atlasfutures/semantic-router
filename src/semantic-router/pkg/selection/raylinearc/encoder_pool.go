@@ -140,8 +140,8 @@ func validateEncoderPoolContract(
 	if config.SchemaVersion != EncoderFailoverSchemaV1 {
 		return errors.New("ARC encoder replica contract version is unsupported")
 	}
-	if len(replicas) < 2 || len(replicas) > maxEncoderReplicas {
-		return errors.New("ARC encoder replica count must be between 2 and 8")
+	if len(replicas) < 1 || len(replicas) > maxEncoderReplicas {
+		return errors.New("ARC encoder replica count must be between 1 and 8")
 	}
 	if config.UnavailableCooldown <= 0 {
 		return errors.New("ARC encoder unavailable cooldown must be positive")

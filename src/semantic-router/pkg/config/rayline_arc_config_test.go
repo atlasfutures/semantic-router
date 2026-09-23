@@ -647,3 +647,24 @@ func validDynamicRaylineARCDecision() Decision {
 	}
 	return decision
 }
+
+func TestValidateRaylineARCAlgorithmConfigAcceptsOneReplica(t *testing.T) {
+	decision := validReplicatedRaylineARCDecision()
+	decision.Algorithm.RaylineARC.Encoder.Replicas =
+		decision.Algorithm.RaylineARC.Encoder.Replicas[:1]
+	if err := validateDecisionAlgorithmConfig(
+		decision.Name,
+		decision.ModelRefs,
+		decision.Algorithm,
+	); err != nil {
+		t.Fatalf("one-replica ARC config rejected: %v", err)
+	}
+	decision.Algorithm.RaylineARC.Encoder.Replicas = nil
+	if err := validateDecisionAlgorithmConfig(
+		decision.Name,
+		decision.ModelRefs,
+		decision.Algorithm,
+	); err == nil {
+		t.Fatal("ARC config with no base_url, replicas or membership accepted")
+	}
+}

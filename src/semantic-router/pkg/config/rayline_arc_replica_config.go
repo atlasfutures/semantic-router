@@ -102,9 +102,12 @@ func emptyRaylineARCFailoverConfig(cfg RaylineARCEncoderFailoverConfig) bool {
 }
 
 func validateRaylineARCEncoderReplicas(cfg RaylineARCEncoderConfig) error {
-	if len(cfg.Replicas) < 2 || len(cfg.Replicas) > maxRaylineARCEncoderReplicas {
+	// One replica is allowed so a deployment can scale down to a single
+	// encoder without changing the config shape. It has no failover target:
+	// an unavailable status fails closed, exactly like base_url.
+	if len(cfg.Replicas) < 1 || len(cfg.Replicas) > maxRaylineARCEncoderReplicas {
 		return fmt.Errorf(
-			"replicas must contain between 2 and %d entries",
+			"replicas must contain between 1 and %d entries",
 			maxRaylineARCEncoderReplicas,
 		)
 	}

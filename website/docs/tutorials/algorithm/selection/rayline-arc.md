@@ -149,7 +149,7 @@ vLLM prefix-cache hit.
 
 ### Static retained-encoder replicas
 
-For two to eight independent vLLM retained-session services, replace
+For one to eight independent vLLM retained-session services, replace
 `encoder.base_url` with a static membership block. All replicas share the same
 model, build, plugin, serializer, capabilities, timeout, and optional Modal
 credential shape:

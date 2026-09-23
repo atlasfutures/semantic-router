@@ -509,3 +509,26 @@ func TestEncoderPoolProbeKeepsContractFailuresFatal(t *testing.T) {
 		t.Fatal("Probe() = nil with a replica answering an invalid body, want an error")
 	}
 }
+
+func TestEncoderPoolWithOneReplicaServesAndFailsClosedWithoutPeer(t *testing.T) {
+	t.Parallel()
+	server, _, _ := newCloseAwareEncoderReplicaTestServer(t, new(atomic.Int32))
+	defer server.Close()
+	pool := newEncoderTestPool(t, []EncoderReplica{
+		{ID: "replica-a", State: EncoderReplicaActive, Client: newRetainedSessionTestClient(t, server.URL)},
+	})
+	episode := HashEpisodeID("single-replica-episode")
+	result, err := pool.EncodeWithAffinity(context.Background(), episode, []Turn{{Role: "user", Text: "hello"}}, EncoderAffinity{})
+	if err != nil || result.ReplicaID != "replica-a" || result.ReplicaFailover {
+		t.Fatalf("result=%+v err=%v, want served by replica-a without failover", result, err)
+	}
+
+	down := newStatusEncoderReplicaTestServer(t, http.StatusServiceUnavailable, "")
+	defer down.Close()
+	pool = newEncoderTestPool(t, []EncoderReplica{
+		{ID: "replica-a", State: EncoderReplicaActive, Client: newRetainedSessionTestClient(t, down.URL)},
+	})
+	if _, err := pool.EncodeWithAffinity(context.Background(), episode, []Turn{{Role: "user", Text: "hello"}}, EncoderAffinity{}); err == nil {
+		t.Fatal("single unavailable replica served, want fail closed")
+	}
+}

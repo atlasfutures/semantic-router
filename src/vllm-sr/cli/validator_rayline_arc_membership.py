@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 
 from cli.validation_error import ValidationError
 
-_MIN_ENCODER_REPLICAS = 2
+_MIN_ENCODER_REPLICAS = 1
 _MAX_ENCODER_REPLICAS = 8
 _MAX_ENCODER_REPLICA_ID_BYTES = 64
 _MAX_BOUNDED_STRING_BYTES = 512
@@ -163,7 +163,7 @@ def _validate_encoder_replicas(prefix, replicas) -> list[ValidationError]:
     if not _MIN_ENCODER_REPLICAS <= len(replicas) <= _MAX_ENCODER_REPLICAS:
         return [
             ValidationError(
-                "replicas must contain between 2 and 8 entries",
+                "replicas must contain between 1 and 8 entries",
                 field=f"{prefix}.replicas",
             )
         ]
