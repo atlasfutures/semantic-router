@@ -306,6 +306,15 @@ func (pool *DynamicEncoderPool) Probe(
 	return snapshot.pool.Probe(ctx, correlation)
 }
 
+// LastProbeReport returns the counts from the current snapshot's last Probe.
+func (pool *DynamicEncoderPool) LastProbeReport() EncoderProbeReport {
+	snapshot := pool.currentSnapshot()
+	if snapshot == nil {
+		return EncoderProbeReport{}
+	}
+	return snapshot.pool.LastProbeReport()
+}
+
 func (pool *DynamicEncoderPool) CloseSession(
 	ctx context.Context,
 	episodeIDHash string,

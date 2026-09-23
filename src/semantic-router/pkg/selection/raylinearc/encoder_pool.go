@@ -89,6 +89,8 @@ type EncoderPool struct {
 	unavailableMu  sync.Mutex
 	unavailableTil map[string]time.Time
 	now            func() time.Time
+	probeMu        sync.Mutex
+	lastProbe      EncoderProbeReport
 }
 
 func NewEncoderPool(
@@ -138,8 +140,8 @@ func validateEncoderPoolContract(
 	if config.SchemaVersion != EncoderFailoverSchemaV1 {
 		return errors.New("ARC encoder replica contract version is unsupported")
 	}
-	if len(replicas) < 2 || len(replicas) > maxEncoderReplicas {
-		return errors.New("ARC encoder replica count must be between 2 and 8")
+	if len(replicas) < 1 || len(replicas) > maxEncoderReplicas {
+		return errors.New("ARC encoder replica count must be between 1 and 8")
 	}
 	if config.UnavailableCooldown <= 0 {
 		return errors.New("ARC encoder unavailable cooldown must be positive")
@@ -327,12 +329,13 @@ func (pool *EncoderPool) primaryReplica(
 	excluded []string,
 ) (*EncoderReplica, error) {
 	now := pool.now().UTC()
+	// A persisted owner that is no longer configured is treated like an
+	// unavailable one: the episode is placed afresh among active replicas and
+	// the caller records a failover. Removing a replica from a static list is
+	// how a deployment scales down, and the episodes it owned can only be
+	// rebuilt elsewhere.
 	if owner != "" && !slices.Contains(excluded, owner) {
-		index, exists := pool.byID[owner]
-		if !exists {
-			return nil, encoderFailure(EncoderFailureContract, "replica_owner_missing")
-		}
-		if !pool.unavailable(owner, now) {
+		if index, exists := pool.byID[owner]; exists && !pool.unavailable(owner, now) {
 			return &pool.replicas[index], nil
 		}
 	}
@@ -425,19 +428,110 @@ func appendUniqueReplicaID(values []string, value string) []string {
 	return append(values, value)
 }
 
-// Probe checks every configured replica, including draining members because
-// they can still own live sessions. It does not stop after the first failure.
+// EncoderProbeReport is the bounded outcome of the last readiness probe.
+// Counts only: replica identities and endpoints never cross this interface.
+type EncoderProbeReport struct {
+	Replicas    int
+	Healthy     int
+	Unavailable int
+}
+
+// Probe checks every configured replica concurrently, including draining
+// members because they can still own live sessions.
+//
+// Readiness needs one healthy active replica, not all of them. A replica that
+// fails for availability reasons (a status, transport or timeout failure) is
+// put into the unavailable cooldown, so new episodes are placed on healthy
+// replicas from the first request and episodes it owns take the existing
+// single remap. Requiring every replica would turn one stopped encoder into a
+// fail-closed cell on every router restart, although a running cell rides out
+// the same outage. A decode or contract failure is a wrong deployment rather
+// than an outage, so it still fails readiness.
 func (pool *EncoderPool) Probe(ctx context.Context, correlation string) error {
 	if pool == nil {
 		return encoderFailure(EncoderFailureRequest, "replica_pool")
 	}
-	var failures []error
+	failures := make([]error, len(pool.replicas))
+	var wait sync.WaitGroup
 	for index := range pool.replicas {
-		if err := pool.replicas[index].Client.Probe(ctx, correlation); err != nil {
-			failures = append(failures, err)
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			failures[index] = pool.replicas[index].Client.Probe(ctx, correlation)
+		}(index)
+	}
+	wait.Wait()
+
+	report := EncoderProbeReport{Replicas: len(pool.replicas)}
+	healthyActive := false
+	var fatal []error
+	for index, err := range failures {
+		replica := &pool.replicas[index]
+		if err == nil {
+			report.Healthy++
+			healthyActive = healthyActive || replica.State == EncoderReplicaActive
+			continue
+		}
+		report.Unavailable++
+		if !encoderProbeAvailabilityFailure(err) {
+			fatal = append(fatal, err)
+			continue
+		}
+		pool.markUnavailable(replica.ID)
+	}
+	pool.probeMu.Lock()
+	pool.lastProbe = report
+	pool.probeMu.Unlock()
+	if len(fatal) > 0 {
+		return errors.Join(fatal...)
+	}
+	if !healthyActive {
+		return errors.Join(append(
+			[]error{encoderFailure(EncoderFailureStatus, "replica_set_unavailable")},
+			failures...,
+		)...)
+	}
+	return nil
+}
+
+// LastProbeReport returns the counts from the most recent Probe.
+func (pool *EncoderPool) LastProbeReport() EncoderProbeReport {
+	if pool == nil {
+		return EncoderProbeReport{}
+	}
+	pool.probeMu.Lock()
+	defer pool.probeMu.Unlock()
+	return pool.lastProbe
+}
+
+// encoderProbeAvailabilityFailure reports whether every encoder failure in err
+// is an availability failure. A probe error can join the encode and the close
+// failure, so each branch of the tree is checked.
+func encoderProbeAvailabilityFailure(err error) bool {
+	found := false
+	var walk func(error) bool
+	walk = func(err error) bool {
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			for _, inner := range joined.Unwrap() {
+				if !walk(inner) {
+					return false
+				}
+			}
+			return true
+		}
+		var failure *EncoderFailure
+		if !errors.As(err, &failure) {
+			return false
+		}
+		found = true
+		switch failure.Class {
+		case EncoderFailureStatus, EncoderFailureTransport, EncoderFailureTimeout:
+			return true
+		default:
+			return false
 		}
 	}
-	return errors.Join(failures...)
+	return walk(err) && found
 }
 
 // CloseSession fans one close request out to every configured replica in the
@@ -469,11 +563,9 @@ func (pool *EncoderPool) CloseSession(
 	for _, replicaID := range normalized {
 		index, exists := pool.byID[replicaID]
 		if !exists {
-			report.Failed++
-			failures = append(failures, encoderFailure(
-				EncoderFailureContract,
-				"close_replica_missing",
-			))
+			// A removed replica cannot be reached to close, and no longer
+			// serves the episode; count it like an explicit unavailability.
+			report.Unavailable++
 			continue
 		}
 		launched++
