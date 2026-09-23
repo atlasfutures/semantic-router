@@ -351,3 +351,14 @@ def test_allowed_app_names_extend_with_every_registered_experiment() -> None:
     # nothing may have to remember to also edit the allow-list.
     assert "EXPERIMENT_APP_PROFILES" in starred
     assert "SCALEOUT_APP_NAMES" in starred
+
+
+def test_session_service_scopes_the_raised_cap_rtx_dev_apps() -> None:
+    service_source = source()
+    for name in ("rayline-arc-session-encoder-dev-rtx-a", "rayline-arc-session-encoder-dev-rtx-b"):
+        assert f'"{name}": "flashinfer"' in service_source
+    assert "**DEV_RTX_APP_PROFILES" in service_source
+    override = service_source.split("if APP_NAME in DEV_RTX_APP_PROFILES:\n    MAX_SESSIONS = 32")
+    assert len(override) == 2
+    assert "MAX_CONCURRENT_INPUTS = 64" in override[1].split("\n\n")[0]
+    assert 'if APP_NAME in DEV_RTX_APP_PROFILES:\n    GPU_TYPE = "RTX-PRO-6000"' in service_source

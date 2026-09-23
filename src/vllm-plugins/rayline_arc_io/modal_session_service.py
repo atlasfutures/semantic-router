@@ -80,6 +80,15 @@ DEV_APP_PROFILES = {
     "rayline-arc-session-encoder-dev-c": "flashinfer",
     "rayline-arc-session-encoder-dev-d": "flashinfer",
 }
+# Raised-cap RTX PRO 6000 dev encoders for the 2x RTX vs 4x L4 replay
+# (2026-09-23). Same engine identity as the dev L4 apps; the 96 GB card takes
+# PERF034's 32 lanes: MAX_RESIDENT_TOKENS 8.4M at PERF034's measured ~8.5 KB
+# per resident token is ~71 GiB against a ~85 GiB pool. Scale-to-zero test
+# apps, not standing ones, so they carry no autoscaler floor.
+DEV_RTX_APP_PROFILES = {
+    "rayline-arc-session-encoder-dev-rtx-a": "flashinfer",
+    "rayline-arc-session-encoder-dev-rtx-b": "flashinfer",
+}
 EXPERIMENT_APP_PROFILES = {
     **PERF030_APP_PROFILES,
     **AGT017_APP_PROFILES,
@@ -90,6 +99,7 @@ EXPERIMENT_APP_PROFILES = {
     **PERF035_APP_PROFILES,
     **PERF036_APP_PROFILES,
     **DEV_APP_PROFILES,
+    **DEV_RTX_APP_PROFILES,
 }
 ALLOWED_APP_NAMES = (DEFAULT_APP_NAME, *SCALEOUT_APP_NAMES, *EXPERIMENT_APP_PROFILES)
 APP_NAME = os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", DEFAULT_APP_NAME)
@@ -152,6 +162,9 @@ elif APP_NAME in DEV_APP_PROFILES:
     GPU_TYPE = "L4"
 else:
     GPU_TYPE = "H100"
+# The raised-cap RTX dev apps, kept out of the frozen block above.
+if APP_NAME in DEV_RTX_APP_PROFILES:
+    GPU_TYPE = "RTX-PRO-6000"
 # The historical 8 was committed without rationale (4f14763b) and predates the
 # frozen corpus's 8 episodes; it is retained for every non-PERF034 app because
 # the live stack sizes around it. PERF034 raises its own app to 32 to locate
@@ -173,6 +186,12 @@ CHUNK_SCHEDULE_TOKENS = 8_192
 # and queueing there is invisible to start_lag; 64 keeps ingress unbound so the
 # PERF034 sweep measures the encoder, not the front door.
 MAX_CONCURRENT_INPUTS = 64 if APP_NAME in PERF034_APP_PROFILES else 32
+# The raised-cap RTX dev apps take PERF034's 32 lanes and 64 ingress inputs;
+# see DEV_RTX_APP_PROFILES for why 32 fits the 96 GB card.
+if APP_NAME in DEV_RTX_APP_PROFILES:
+    MAX_SESSIONS = 32
+    MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS
+    MAX_CONCURRENT_INPUTS = 64
 # The autoscaler floor, scoped to the app name for the same reason the card
 # and the caps above it are. Only the standing dev app is floored. Its caller,
 # the dev Rayline ARC cell, sets on_error: fail_closed, so a scale-from-zero
