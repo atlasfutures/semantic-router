@@ -158,7 +158,11 @@ func probeRaylineARCReadiness(
 		admission: raylinearc.NewAdmissionGate(arcConfig.Encoder.MaxInflightEncoderCalls),
 	}
 	probe := func(ctx context.Context) error {
-		return encoder.Probe(ctx, raylineARCReadinessProbeName)
+		if err := encoder.Probe(ctx, raylineARCReadinessProbeName); err != nil {
+			return err
+		}
+		logRaylineARCDegradedReplicas(encoder)
+		return nil
 	}
 	// Nothing here may wait on the encoder: the router opens its gRPC port
 	// only after construction returns, so a probe on this path holds the port
@@ -676,5 +680,30 @@ func raylineARCRetainsSessions(arcConfig *config.RaylineARCAlgorithmConfig) bool
 	return arcConfig != nil && slices.Contains(
 		arcConfig.Encoder.RequiredCapabilities,
 		config.RaylineARCCapabilityResumableMean,
+	)
+}
+
+// logRaylineARCDegradedReplicas reports a readiness probe that armed with part
+// of the replica set unavailable. The selector serves on the healthy replicas;
+// this line is what makes the lost capacity visible to log-based alerting.
+func logRaylineARCDegradedReplicas(encoder raylineARCReadyEncoder) {
+	reporter, ok := encoder.(interface {
+		LastProbeReport() raylinearc.EncoderProbeReport
+	})
+	if !ok {
+		return
+	}
+	report := reporter.LastProbeReport()
+	if report.Unavailable == 0 {
+		return
+	}
+	logging.ComponentWarnEvent(
+		"extproc",
+		"rayline_arc_encoder_replicas_degraded",
+		map[string]interface{}{
+			"replicas":    report.Replicas,
+			"healthy":     report.Healthy,
+			"unavailable": report.Unavailable,
+		},
 	)
 }

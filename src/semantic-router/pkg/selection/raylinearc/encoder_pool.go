@@ -89,6 +89,8 @@ type EncoderPool struct {
 	unavailableMu  sync.Mutex
 	unavailableTil map[string]time.Time
 	now            func() time.Time
+	probeMu        sync.Mutex
+	lastProbe      EncoderProbeReport
 }
 
 func NewEncoderPool(
@@ -425,19 +427,110 @@ func appendUniqueReplicaID(values []string, value string) []string {
 	return append(values, value)
 }
 
-// Probe checks every configured replica, including draining members because
-// they can still own live sessions. It does not stop after the first failure.
+// EncoderProbeReport is the bounded outcome of the last readiness probe.
+// Counts only: replica identities and endpoints never cross this interface.
+type EncoderProbeReport struct {
+	Replicas    int
+	Healthy     int
+	Unavailable int
+}
+
+// Probe checks every configured replica concurrently, including draining
+// members because they can still own live sessions.
+//
+// Readiness needs one healthy active replica, not all of them. A replica that
+// fails for availability reasons (a status, transport or timeout failure) is
+// put into the unavailable cooldown, so new episodes are placed on healthy
+// replicas from the first request and episodes it owns take the existing
+// single remap. Requiring every replica would turn one stopped encoder into a
+// fail-closed cell on every router restart, although a running cell rides out
+// the same outage. A decode or contract failure is a wrong deployment rather
+// than an outage, so it still fails readiness.
 func (pool *EncoderPool) Probe(ctx context.Context, correlation string) error {
 	if pool == nil {
 		return encoderFailure(EncoderFailureRequest, "replica_pool")
 	}
-	var failures []error
+	failures := make([]error, len(pool.replicas))
+	var wait sync.WaitGroup
 	for index := range pool.replicas {
-		if err := pool.replicas[index].Client.Probe(ctx, correlation); err != nil {
-			failures = append(failures, err)
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			failures[index] = pool.replicas[index].Client.Probe(ctx, correlation)
+		}(index)
+	}
+	wait.Wait()
+
+	report := EncoderProbeReport{Replicas: len(pool.replicas)}
+	healthyActive := false
+	var fatal []error
+	for index, err := range failures {
+		replica := &pool.replicas[index]
+		if err == nil {
+			report.Healthy++
+			healthyActive = healthyActive || replica.State == EncoderReplicaActive
+			continue
+		}
+		report.Unavailable++
+		if !encoderProbeAvailabilityFailure(err) {
+			fatal = append(fatal, err)
+			continue
+		}
+		pool.markUnavailable(replica.ID)
+	}
+	pool.probeMu.Lock()
+	pool.lastProbe = report
+	pool.probeMu.Unlock()
+	if len(fatal) > 0 {
+		return errors.Join(fatal...)
+	}
+	if !healthyActive {
+		return errors.Join(append(
+			[]error{encoderFailure(EncoderFailureStatus, "replica_set_unavailable")},
+			failures...,
+		)...)
+	}
+	return nil
+}
+
+// LastProbeReport returns the counts from the most recent Probe.
+func (pool *EncoderPool) LastProbeReport() EncoderProbeReport {
+	if pool == nil {
+		return EncoderProbeReport{}
+	}
+	pool.probeMu.Lock()
+	defer pool.probeMu.Unlock()
+	return pool.lastProbe
+}
+
+// encoderProbeAvailabilityFailure reports whether every encoder failure in err
+// is an availability failure. A probe error can join the encode and the close
+// failure, so each branch of the tree is checked.
+func encoderProbeAvailabilityFailure(err error) bool {
+	found := false
+	var walk func(error) bool
+	walk = func(err error) bool {
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			for _, inner := range joined.Unwrap() {
+				if !walk(inner) {
+					return false
+				}
+			}
+			return true
+		}
+		var failure *EncoderFailure
+		if !errors.As(err, &failure) {
+			return false
+		}
+		found = true
+		switch failure.Class {
+		case EncoderFailureStatus, EncoderFailureTransport, EncoderFailureTimeout:
+			return true
+		default:
+			return false
 		}
 	}
-	return errors.Join(failures...)
+	return walk(err) && found
 }
 
 // CloseSession fans one close request out to every configured replica in the
