@@ -69,7 +69,7 @@ PERF036_APP_PROFILES = {
 # and an L4 (below) because dev consults sit far under the 0.1977 decisions/s
 # PERF035 measured on that card. That number is also why this app is evidence
 # for nothing: the L4 does not carry the production rate.
-# -dev-b is the second standing dev encoder: the same card, caps, floor and
+# -dev-b, -dev-c and -dev-d are additional standing dev encoders: the same card, caps, floor and
 # engine identity, deployed as its own app so the dev cell can list two
 # replicas (encoder.replicas) and exercise affinity and failover on a deployed
 # cell. One app per replica, because retained sessions are process-local and
@@ -77,6 +77,8 @@ PERF036_APP_PROFILES = {
 DEV_APP_PROFILES = {
     "rayline-arc-session-encoder-dev": "flashinfer",
     "rayline-arc-session-encoder-dev-b": "flashinfer",
+    "rayline-arc-session-encoder-dev-c": "flashinfer",
+    "rayline-arc-session-encoder-dev-d": "flashinfer",
 }
 EXPERIMENT_APP_PROFILES = {
     **PERF030_APP_PROFILES,
