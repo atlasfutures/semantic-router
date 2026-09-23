@@ -27,6 +27,30 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
+// fleet is the slice of raylinearc.EncoderPool the replay uses.
+type fleet interface {
+	EncodeWithAffinity(context.Context, string, []raylinearc.Turn, raylinearc.EncoderAffinity) (*raylinearc.EncoderResult, error)
+	CloseSession(context.Context, string, []string) (raylinearc.EncoderCloseReport, error)
+}
+
+// single drives one replica directly; EncoderPool requires two to eight.
+type single struct {
+	id     string
+	client *raylinearc.EncoderClient
+}
+
+func (s single) EncodeWithAffinity(ctx context.Context, hash string, turns []raylinearc.Turn, _ raylinearc.EncoderAffinity) (*raylinearc.EncoderResult, error) {
+	result, err := s.client.Encode(ctx, hash, turns)
+	if err == nil {
+		result.ReplicaID, result.VisitedReplicaIDs = s.id, []string{s.id}
+	}
+	return result, err
+}
+
+func (s single) CloseSession(ctx context.Context, hash string, _ []string) (raylinearc.EncoderCloseReport, error) {
+	return raylinearc.EncoderCloseReport{Attempted: 1}, s.client.CloseSession(ctx, hash)
+}
+
 type traceTurn struct {
 	Conv   int   `json:"conv"`
 	TMS    int64 `json:"t_ms"`
@@ -197,7 +221,7 @@ func readTrace(path string) []traceTurn {
 	return turns
 }
 
-func buildPool(spec string) *raylinearc.EncoderPool {
+func buildPool(spec string) fleet {
 	var replicas []raylinearc.EncoderReplica
 	for _, part := range strings.Split(spec, ",") {
 		id, url, ok := strings.Cut(part, "=")
@@ -226,6 +250,9 @@ func buildPool(spec string) *raylinearc.EncoderPool {
 			panic(err)
 		}
 		replicas = append(replicas, raylinearc.EncoderReplica{ID: id, State: raylinearc.EncoderReplicaActive, Client: client})
+	}
+	if len(replicas) == 1 {
+		return single{id: replicas[0].ID, client: replicas[0].Client}
 	}
 	pool, err := raylinearc.NewEncoderPool(replicas, raylinearc.EncoderPoolConfig{
 		SchemaVersion:          raylinearc.EncoderFailoverSchemaV1,
