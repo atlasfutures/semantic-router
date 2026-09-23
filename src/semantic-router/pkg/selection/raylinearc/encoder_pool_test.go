@@ -241,30 +241,38 @@ func TestEncoderPoolCachedUnavailableOwnerReportsRemap(t *testing.T) {
 	}
 }
 
-func TestEncoderPoolFailsClosedIfPersistedOwnerWasRemoved(t *testing.T) {
+func TestEncoderPoolRemapsIfPersistedOwnerWasRemoved(t *testing.T) {
 	t.Parallel()
-	serverA, callsA := newEncoderReplicaTestServer(t)
+	serverA, callsA, _ := newCloseAwareEncoderReplicaTestServer(t, new(atomic.Int32))
 	defer serverA.Close()
-	serverC, callsC := newEncoderReplicaTestServer(t)
+	serverC, callsC, _ := newCloseAwareEncoderReplicaTestServer(t, new(atomic.Int32))
 	defer serverC.Close()
 	pool := newEncoderTestPool(t, []EncoderReplica{
 		{ID: "replica-a", State: EncoderReplicaActive, Client: newRetainedSessionTestClient(t, serverA.URL)},
 		{ID: "replica-c", State: EncoderReplicaActive, Client: newRetainedSessionTestClient(t, serverC.URL)},
 	})
-	_, err := pool.EncodeWithAffinity(
+	result, err := pool.EncodeWithAffinity(
 		context.Background(),
-		HashEpisodeID("premature-removal"),
+		HashEpisodeID("scaled-down"),
 		[]Turn{{Role: "user", Text: "public test turn"}},
 		EncoderAffinity{Owner: "replica-b", Visited: []string{"replica-b"}},
 	)
-	var failure *EncoderFailure
-	if !errors.As(err, &failure) ||
-		failure.Class != EncoderFailureContract ||
-		failure.Stage != "replica_owner_missing" {
-		t.Fatalf("removed-owner error = %v", err)
+	if err != nil {
+		t.Fatalf("removed-owner encode error = %v", err)
 	}
-	if callsA.Load() != 0 || callsC.Load() != 0 {
-		t.Fatalf("removed owner dispatched to replacement: calls=%d/%d", callsA.Load(), callsC.Load())
+	if result.ReplicaID == "replica-b" || !result.ReplicaFailover || result.ReplicaAttempts != 1 {
+		t.Fatalf("result = %+v, want one remapped attempt on a configured replica", result)
+	}
+	if !slices.Contains(result.VisitedReplicaIDs, "replica-b") ||
+		!slices.Contains(result.VisitedReplicaIDs, result.ReplicaID) {
+		t.Fatalf("visited = %v, want removed and new owner", result.VisitedReplicaIDs)
+	}
+	if callsA.Load()+callsC.Load() != 1 {
+		t.Fatalf("calls = %d/%d, want exactly one encode", callsA.Load(), callsC.Load())
+	}
+	report, err := pool.CloseSession(context.Background(), HashEpisodeID("scaled-down"), result.VisitedReplicaIDs)
+	if err != nil || report.Unavailable != 1 || report.Closed != 1 || report.Failed != 0 {
+		t.Fatalf("close report = %+v err = %v, want the removed replica counted unavailable", report, err)
 	}
 }
 

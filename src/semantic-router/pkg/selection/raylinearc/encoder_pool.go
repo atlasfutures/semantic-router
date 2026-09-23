@@ -329,12 +329,13 @@ func (pool *EncoderPool) primaryReplica(
 	excluded []string,
 ) (*EncoderReplica, error) {
 	now := pool.now().UTC()
+	// A persisted owner that is no longer configured is treated like an
+	// unavailable one: the episode is placed afresh among active replicas and
+	// the caller records a failover. Removing a replica from a static list is
+	// how a deployment scales down, and the episodes it owned can only be
+	// rebuilt elsewhere.
 	if owner != "" && !slices.Contains(excluded, owner) {
-		index, exists := pool.byID[owner]
-		if !exists {
-			return nil, encoderFailure(EncoderFailureContract, "replica_owner_missing")
-		}
-		if !pool.unavailable(owner, now) {
+		if index, exists := pool.byID[owner]; exists && !pool.unavailable(owner, now) {
 			return &pool.replicas[index], nil
 		}
 	}
@@ -562,11 +563,9 @@ func (pool *EncoderPool) CloseSession(
 	for _, replicaID := range normalized {
 		index, exists := pool.byID[replicaID]
 		if !exists {
-			report.Failed++
-			failures = append(failures, encoderFailure(
-				EncoderFailureContract,
-				"close_replica_missing",
-			))
+			// A removed replica cannot be reached to close, and no longer
+			// serves the episode; count it like an explicit unavailability.
+			report.Unavailable++
 			continue
 		}
 		launched++
