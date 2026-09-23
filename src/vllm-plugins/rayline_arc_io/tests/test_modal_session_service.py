@@ -287,6 +287,7 @@ def test_session_service_confines_the_standing_dev_app_to_its_exact_app_name() -
     service_source = source()
 
     assert '"rayline-arc-session-encoder-dev": "flashinfer"' in service_source
+    assert '"rayline-arc-session-encoder-dev-b": "flashinfer"' in service_source
     # Registration in the experiment profiles is what allowlists the name AND
     # what stamps the flashinfer build id; a bare allowlist entry would deploy
     # with the torch_reference identity the router does not expect.
