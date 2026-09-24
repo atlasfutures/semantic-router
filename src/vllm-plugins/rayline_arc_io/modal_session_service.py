@@ -78,6 +78,15 @@ DEV_APP_PROFILES = {
 PROD_APP_PROFILES = {
     "rayline-arc-session-encoder-prod": "flashinfer",
 }
+# The production RTX PRO 6000 encoders: the same FlashInfer engine identity as
+# the L4 prod app, on the 96 GB card with the 32-session cap PERF034 sized.
+# The 2026-09-23 dev replay of prod-shaped traffic measured this shape at about
+# twice the L4's per-request rate, with four times the session slots. Two names
+# so the prod cell can scale from one replica to two by config alone.
+PROD_RTX_APP_PROFILES = {
+    "rayline-arc-session-encoder-prod-rtx-a": "flashinfer",
+    "rayline-arc-session-encoder-prod-rtx-b": "flashinfer",
+}
 EXPERIMENT_APP_PROFILES = {
     **PERF030_APP_PROFILES,
     **AGT017_APP_PROFILES,
@@ -89,6 +98,7 @@ EXPERIMENT_APP_PROFILES = {
     **PERF036_APP_PROFILES,
     **DEV_APP_PROFILES,
     **PROD_APP_PROFILES,
+    **PROD_RTX_APP_PROFILES,
 }
 ALLOWED_APP_NAMES = (DEFAULT_APP_NAME, *SCALEOUT_APP_NAMES, *EXPERIMENT_APP_PROFILES)
 APP_NAME = os.environ.get("RAYLINE_ARC_SESSION_APP_NAME", DEFAULT_APP_NAME)
@@ -176,6 +186,16 @@ CHUNK_SCHEDULE_TOKENS = 8_192
 # and queueing there is invisible to start_lag; 64 keeps ingress unbound so the
 # PERF034 sweep measures the encoder, not the front door.
 MAX_CONCURRENT_INPUTS = 64 if APP_NAME in PERF034_APP_PROFILES else 32
+# The prod RTX apps sit outside the frozen chains above so no recorded run's
+# class or caps can move. They are warm by source, not by a deploy-time
+# autoscaler call: the prod cell fails closed, so a cold card reaches a user
+# as a 503, and a redeploy must not drop the floor.
+if APP_NAME in PROD_RTX_APP_PROFILES:
+    GPU_TYPE = "RTX-PRO-6000"
+    MAX_SESSIONS = 32
+    MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS
+    MAX_CONCURRENT_INPUTS = 64
+    MIN_CONTAINERS = 1
 
 _THIS_DIR = Path(__file__).resolve().parent
 _REMOTE_PLUGIN_DIR = "/opt/rayline_arc_io"

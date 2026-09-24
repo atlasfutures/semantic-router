@@ -311,6 +311,30 @@ def test_session_service_confines_the_standing_prod_app_to_its_exact_app_name() 
     assert GPU_TYPE_CONDITIONAL in service_source
 
 
+def test_session_service_scopes_the_warm_prod_rtx_apps() -> None:
+    """The prod RTX apps widen their own caps, warm, after the frozen chains."""
+
+    service_source = source()
+
+    assert '"rayline-arc-session-encoder-prod-rtx-a": "flashinfer"' in service_source
+    assert '"rayline-arc-session-encoder-prod-rtx-b": "flashinfer"' in service_source
+    assert "**PROD_RTX_APP_PROFILES" in service_source
+    override = (
+        "if APP_NAME in PROD_RTX_APP_PROFILES:\n"
+        '    GPU_TYPE = "RTX-PRO-6000"\n'
+        "    MAX_SESSIONS = 32\n"
+        "    MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS\n"
+        "    MAX_CONCURRENT_INPUTS = 64\n"
+        "    MIN_CONTAINERS = 1\n"
+    )
+    assert override in service_source
+    frozen_end = service_source.index(
+        "MAX_CONCURRENT_INPUTS = 64 if APP_NAME in PERF034_APP_PROFILES else 32"
+    )
+    assert service_source.index(override) > frozen_end
+    assert service_source.index(override) < service_source.index("min_containers=MIN_CONTAINERS")
+
+
 def test_allowed_app_names_extend_with_every_registered_experiment() -> None:
     module = ast.parse(source())
     allowed = next(
