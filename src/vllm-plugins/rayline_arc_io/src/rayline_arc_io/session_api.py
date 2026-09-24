@@ -318,10 +318,15 @@ def create_session_app(
     async def close_session(
         episode_id_hash: EpisodeIDHash,
     ) -> ArcSessionCloseResponse:
+        # Idempotent: `closed` means no retained state remains for the episode,
+        # which is equally true when the session was already evicted, lost to a
+        # container restart, or never created here. The router's close fanout
+        # treats anything else as a failed cleanup and keeps the episode's
+        # affinity, and after a failover the old owner is in that fanout.
         try:
-            closed = await coordinator.close_session(episode_id_hash)
+            await coordinator.close_session(episode_id_hash)
         except SessionBusyError as error:
             raise HTTPException(status_code=409, detail="session_busy") from error
-        return ArcSessionCloseResponse(closed=closed)
+        return ArcSessionCloseResponse(closed=True)
 
     return app

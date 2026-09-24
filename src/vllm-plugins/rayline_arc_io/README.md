@@ -86,7 +86,8 @@ correctness because every request remains reconstructible. Per-episode work is
 serialized; independent episodes may execute concurrently. The deployment
 bounds both resident sessions and total retained tokens, and exposes those
 counts at `GET /health`. `DELETE /v1/rayline/arc/session/{episode_id_hash}`
-releases one idle session explicitly.
+releases one idle session explicitly; it is idempotent and answers
+`{"closed": true}` for an episode with no retained session.
 
 `GET /v1/rayline/arc/session/metrics` exposes a versioned, aggregate-only
 diagnostic snapshot. Coordinator fields report tokenization time, request

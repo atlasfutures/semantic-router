@@ -243,6 +243,18 @@ def test_health_and_explicit_close_are_bounded() -> None:
     assert factory.backends[0].closed is True
 
 
+def test_close_of_an_absent_session_is_idempotent() -> None:
+    """The router accepts only closed: true, and fans a close out to every
+    replica an episode visited, including one whose session is already gone."""
+    client, factory = build_client()
+
+    closed = client.delete("/v1/rayline/arc/session/" + "b" * 64)
+
+    assert closed.status_code == HTTPStatus.OK
+    assert closed.json() == {"closed": True}
+    assert factory.backends == []
+
+
 def test_metrics_endpoint_reports_payload_free_stage_counters() -> None:
     client, _factory = build_client()
     secret_text = "metric-response-must-not-echo-this"
