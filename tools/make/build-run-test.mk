@@ -70,9 +70,18 @@ run-router-onnx: build-router-onnx
 
 # Unit test semantic-router
 # By default, Milvus, Qdrant, Redis, Valkey, and Llama Stack tests are skipped. To enable them, set the relevant env var to false.
+# A dedicated venv, bootstrapped with the stdlib venv module and pip, so the
+# check needs only a Python >= 3.10 on PATH. torch comes from the CPU wheel
+# index: the tests never touch a GPU.
+RAYLINE_ENCODER_PYTHON ?= python3
+RAYLINE_ENCODER_VENV ?= $(CURDIR)/.venv-rayline-encoder
 rayline-encoder-test: ## Run the rayline_arc_io encoder service unit tests (no GPU, no Modal)
 	@$(LOG_TARGET)
-	@cd src/vllm-plugins/rayline_arc_io && uv run --isolated --extra test pytest -q
+	@test -x "$(RAYLINE_ENCODER_VENV)/bin/python" || "$(RAYLINE_ENCODER_PYTHON)" -m venv "$(RAYLINE_ENCODER_VENV)"
+	@"$(RAYLINE_ENCODER_VENV)/bin/python" -m pip install --quiet --disable-pip-version-check \
+		--extra-index-url https://download.pytorch.org/whl/cpu \
+		-e "src/vllm-plugins/rayline_arc_io[test]"
+	@cd src/vllm-plugins/rayline_arc_io && "$(RAYLINE_ENCODER_VENV)/bin/python" -m pytest -q
 
 # Example: make test-semantic-router SKIP_MILVUS_TESTS=false SKIP_QDRANT_TESTS=false SKIP_VALKEY_TESTS=false
 test-semantic-router: ## Run unit tests for semantic-router (set SKIP_MILVUS_TESTS=false / SKIP_QDRANT_TESTS=false to enable)
