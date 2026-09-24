@@ -21,6 +21,14 @@ GPU_TYPE_CONDITIONAL = (
     "else:\n"
     '    GPU_TYPE = "H100"'
 )
+# The autoscaler floor, frozen the same way and for the same reason. Only the
+# standing dev app is floored: the dev cell fails closed on a cold encoder, so
+# its first turn after an idle gap is a user-visible 503. Every other app --
+# the default app, every closed run's app, and production -- keeps the
+# scale-to-zero default, so this decision cannot buy idle GPU time for them.
+MIN_CONTAINERS_CONDITIONAL = (
+    "MIN_CONTAINERS = 1 if APP_NAME in DEV_APP_PROFILES else 0"
+)
 
 
 def source() -> str:
@@ -66,6 +74,7 @@ def test_session_service_is_authenticated_and_bounded() -> None:
         "min_containers",
         "scaledown_window",
         "max_containers",
+        "min_containers",
         "volumes",
     } <= function_keywords
     function_keyword_values = {
@@ -286,6 +295,9 @@ def test_session_service_confines_the_standing_dev_app_to_its_exact_app_name() -
     service_source = source()
 
     assert '"rayline-arc-session-encoder-dev": "flashinfer"' in service_source
+    assert '"rayline-arc-session-encoder-dev-b": "flashinfer"' in service_source
+    assert '"rayline-arc-session-encoder-dev-c": "flashinfer"' in service_source
+    assert '"rayline-arc-session-encoder-dev-d": "flashinfer"' in service_source
     # Registration in the experiment profiles is what allowlists the name AND
     # what stamps the flashinfer build id; a bare allowlist entry would deploy
     # with the torch_reference identity the router does not expect.
@@ -335,6 +347,32 @@ def test_session_service_scopes_the_warm_prod_rtx_apps() -> None:
     assert service_source.index(override) < service_source.index("min_containers=MIN_CONTAINERS")
 
 
+def test_only_the_standing_dev_app_holds_a_warm_container() -> None:
+    """The floor is app-scoped, like the card and the caps above it.
+
+    The dev cell's encoder call fails closed, so a scale-from-zero cold start
+    (measured at 220.7-226.4 s on 2026-09-02) surfaces to the caller as a 503
+    on the first turn after an idle gap. Flooring that one app removes it. The
+    decorator must read the module constant, so the conditional above is the
+    only place the floor can move, and no other app name can be widened by
+    editing this one.
+    """
+
+    service_source = source()
+
+    assert MIN_CONTAINERS_CONDITIONAL in service_source
+
+    module = ast.parse(service_source)
+    service = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.ClassDef) and node.name == "SessionEncoder"
+    )
+    function = decorator_call(service, "app.cls")
+    keywords = {keyword.arg: keyword.value for keyword in function.keywords}
+    assert ast.unparse(keywords["min_containers"]) == "MIN_CONTAINERS"
+
+
 def test_allowed_app_names_extend_with_every_registered_experiment() -> None:
     module = ast.parse(source())
     allowed = next(
@@ -356,3 +394,14 @@ def test_allowed_app_names_extend_with_every_registered_experiment() -> None:
     # nothing may have to remember to also edit the allow-list.
     assert "EXPERIMENT_APP_PROFILES" in starred
     assert "SCALEOUT_APP_NAMES" in starred
+
+
+def test_session_service_scopes_the_raised_cap_rtx_dev_apps() -> None:
+    service_source = source()
+    for name in ("rayline-arc-session-encoder-dev-rtx-a", "rayline-arc-session-encoder-dev-rtx-b"):
+        assert f'"{name}": "flashinfer"' in service_source
+    assert "**DEV_RTX_APP_PROFILES" in service_source
+    override = service_source.split("if APP_NAME in DEV_RTX_APP_PROFILES:\n    MAX_SESSIONS = 32")
+    assert len(override) == 2
+    assert "MAX_CONCURRENT_INPUTS = 64" in override[1].split("\n\n")[0]
+    assert 'if APP_NAME in DEV_RTX_APP_PROFILES:\n    GPU_TYPE = "RTX-PRO-6000"' in service_source

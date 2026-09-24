@@ -69,8 +69,25 @@ PERF036_APP_PROFILES = {
 # and an L4 (below) because dev consults sit far under the 0.1977 decisions/s
 # PERF035 measured on that card. That number is also why this app is evidence
 # for nothing: the L4 does not carry the production rate.
+# -dev-b, -dev-c and -dev-d are additional standing dev encoders: the same card, caps, floor and
+# engine identity, deployed as its own app so the dev cell can list two
+# replicas (encoder.replicas) and exercise affinity and failover on a deployed
+# cell. One app per replica, because retained sessions are process-local and
+# Modal does not route a session back to its container inside one app (TD050).
 DEV_APP_PROFILES = {
     "rayline-arc-session-encoder-dev": "flashinfer",
+    "rayline-arc-session-encoder-dev-b": "flashinfer",
+    "rayline-arc-session-encoder-dev-c": "flashinfer",
+    "rayline-arc-session-encoder-dev-d": "flashinfer",
+}
+# Raised-cap RTX PRO 6000 dev encoders for the 2x RTX vs 4x L4 replay
+# (2026-09-23). Same engine identity as the dev L4 apps; the 96 GB card takes
+# PERF034's 32 lanes: MAX_RESIDENT_TOKENS 8.4M at PERF034's measured ~8.5 KB
+# per resident token is ~71 GiB against a ~85 GiB pool. Scale-to-zero test
+# apps, not standing ones, so they carry no autoscaler floor.
+DEV_RTX_APP_PROFILES = {
+    "rayline-arc-session-encoder-dev-rtx-a": "flashinfer",
+    "rayline-arc-session-encoder-dev-rtx-b": "flashinfer",
 }
 # The standing production encoder takes the proven FlashInfer engine identity
 # on an L4 placement. It has its own name so the historical default app
@@ -97,6 +114,7 @@ EXPERIMENT_APP_PROFILES = {
     **PERF035_APP_PROFILES,
     **PERF036_APP_PROFILES,
     **DEV_APP_PROFILES,
+    **DEV_RTX_APP_PROFILES,
     **PROD_APP_PROFILES,
     **PROD_RTX_APP_PROFILES,
 }
@@ -165,6 +183,9 @@ elif APP_NAME in DEV_APP_PROFILES or APP_NAME in PROD_APP_PROFILES:
     GPU_TYPE = "L4"
 else:
     GPU_TYPE = "H100"
+# The raised-cap RTX dev apps, kept out of the frozen block above.
+if APP_NAME in DEV_RTX_APP_PROFILES:
+    GPU_TYPE = "RTX-PRO-6000"
 # The historical 8 was committed without rationale (4f14763b) and predates the
 # frozen corpus's 8 episodes; it is retained for every non-PERF034 app because
 # the live stack sizes around it. PERF034 raises its own app to 32 to locate
@@ -186,6 +207,23 @@ CHUNK_SCHEDULE_TOKENS = 8_192
 # and queueing there is invisible to start_lag; 64 keeps ingress unbound so the
 # PERF034 sweep measures the encoder, not the front door.
 MAX_CONCURRENT_INPUTS = 64 if APP_NAME in PERF034_APP_PROFILES else 32
+# The raised-cap RTX dev apps take PERF034's 32 lanes and 64 ingress inputs;
+# see DEV_RTX_APP_PROFILES for why 32 fits the 96 GB card.
+if APP_NAME in DEV_RTX_APP_PROFILES:
+    MAX_SESSIONS = 32
+    MAX_RESIDENT_TOKENS = MAX_SESSIONS * MAX_SERIALIZED_TOKENS
+    MAX_CONCURRENT_INPUTS = 64
+# The autoscaler floor, scoped to the app name for the same reason the card
+# and the caps above it are. Only the standing dev app is floored. Its caller,
+# the dev Rayline ARC cell, sets on_error: fail_closed, so a scale-from-zero
+# cold start -- 220.7 s and 226.4 s measured through the cell on 2026-09-02 --
+# reaches a real cohort user as a 503 on the first turn after an idle gap, not
+# as a slow turn. One warm L4 removes that turn; it costs ~$1.69/hr, ~$40/day.
+# Every other app name deployed from this module keeps the scale-to-zero
+# default: the default app, every closed run's app, and the L4 production app,
+# whose own floor is set on the deployment. The production RTX apps set their
+# floor in source, below.
+MIN_CONTAINERS = 1 if APP_NAME in DEV_APP_PROFILES else 0
 # The prod RTX apps sit outside the frozen chains above so no recorded run's
 # class or caps can move. They are warm by source, not by a deploy-time
 # autoscaler call: the prod cell fails closed, so a cold card reaches a user
