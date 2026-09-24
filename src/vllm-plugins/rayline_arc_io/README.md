@@ -1,0 +1,130 @@
+# Rayline ARC vLLM IO Processor
+
+This installable plugin owns the frozen `mtrouter-token-blocks-v2` serializer
+and the Rung A/B pooling adapters for PL-0039. vLLM owns all Qwen inference
+and Rung B's FP32 causal mean; the plugin does not contain or load the Rayline
+policy head.
+
+The plugin is deliberately fail closed. It accepts only the pinned
+`Qwen/Qwen3.5-0.8B` model and tokenizer revision, BF16, a 262,144-token context,
+and automatic prefix caching disabled. Rung A accepts `token_embed`/`ALL`
+without activation for diagnostics. Production Rung B accepts only
+`embed`/causal `MEAN` with activation and returns one normalized vector rather
+than transporting the token-hidden-state matrix. Startup also proves the real EOS and a pinned
+literal-special-token probe. Every tokenizer call sets
+`split_special_tokens=true`; relying on a backend tokenizer attribute is not
+equivalent through the Transformers wrapper.
+
+Install it into the same environment as vLLM:
+
+```bash
+uv pip install ./src/vllm-plugins/rayline_arc_io
+```
+
+The serving process must set an immutable build identifier:
+
+```bash
+export RAYLINE_ARC_ENGINE_BUILD_ID=vllm@<image-or-source-revision>
+```
+
+The standing dev and production encoders are the retained-session service in
+`modal_session_service.py` (below). They are deployed by name, from the commit
+pinned in router-infra (`services/encoder/ENCODER_PIN` and `ENCODER_PROD_PIN`),
+through that repository's `services/encoder/deploy.sh`.
+
+The endpoint requires Modal proxy authentication. Configure Semantic Router
+with environment-variable names for the corresponding `Modal-Key` and
+`Modal-Secret`; never put their values in router YAML.
+
+vLLM's `/pooling` API carries the strict ARC request inside its standard
+plugin envelope and wraps the strict ARC response as `data`:
+
+```json
+{
+  "task": "plugin",
+  "data": {
+    "schema_version": "rayline.arc.pooling-request.v1",
+    "serializer_version": "mtrouter-token-blocks-v2",
+    "serving_rung": "B",
+    "episode_id_hash": "<64-lowercase-hex>",
+    "turns": [{"role": "user", "text": "public synthetic input"}]
+  }
+}
+```
+
+Unit tests are host-independent:
+
+```bash
+uv run --project src/vllm-plugins/rayline_arc_io --extra test pytest
+```
+
+## Retained-session endpoint
+
+`modal_session_service.py` embeds the proven `AsyncPoolingSession` API instead
+of exposing retained state through vLLM's stateless `/pooling` contract. The app
+name, set by `RAYLINE_ARC_SESSION_APP_NAME`, selects the GPU class, the session
+caps and the warm floor; only allowlisted names deploy.
+
+The protected endpoint accepts the complete reconstructible history at
+`POST /v1/rayline/arc/session/pooling`:
+
+```json
+{
+  "schema_version": "rayline.arc.session-pooling-request.v1",
+  "serializer_version": "mtrouter-token-blocks-v2",
+  "serving_rung": "B",
+  "episode_id_hash": "<64-lowercase-hex>",
+  "turns": [{"role": "user", "text": "public synthetic input"}]
+}
+```
+
+An exact token extension appends only its suffix. An identical retry reuses the
+last result, and any other history closes the old live request and rebuilds
+from the supplied full history. Sessions are ephemeral: TTL, LRU pressure,
+container restart, or an affinity miss can discard them without affecting
+correctness because every request remains reconstructible. Per-episode work is
+serialized; independent episodes may execute concurrently. The deployment
+bounds both resident sessions and total retained tokens, and exposes those
+counts at `GET /health`. `DELETE /v1/rayline/arc/session/{episode_id_hash}`
+releases one idle session explicitly; it is idempotent and answers
+`{"closed": true}` for an episode with no retained session.
+
+`GET /v1/rayline/arc/session/metrics` exposes a versioned, aggregate-only
+diagnostic snapshot. Coordinator fields report tokenization time, request
+in-flight and peak in-flight counts, actual same-session lock contention and
+wait time, backend-append concurrency, latency, failures, and successfully
+appended tokens. The protected vLLM deployment also supplies curated scheduler
+gauges and cumulative queue, inference, end-to-end, and prompt-token metrics.
+Those cumulative timings are scoped to completed retained appends, not whole
+sessions or ordinary terminal requests. Scheduler occupancy comes from a
+cached in-process vLLM snapshot, so reading the endpoint does not collect the
+Prometheus registry. The endpoint has no request, episode, prompt, embedding,
+or credential labels; unavailable engine telemetry is represented explicitly
+rather than as zero.
+
+The same protected service also exposes a compatibility `POST /pooling` route
+for Pathfinder's strict stateless v1 client. Each call runs as one randomly
+namespaced ephemeral append and closes its backend before returning the normal
+vLLM plugin envelope. It therefore preserves `cached_prefix_tokens: 0` and
+never turns the stateless contract into cross-request cache reuse, while still
+making append-scoped scheduler and latency metrics available for
+transaction-path capacity receipts.
+
+The Modal MVP pins the service to one container so successive turns reach the
+same cache owner and the GPU cost envelope remains enforceable. Production
+horizontal scale requires cache-aware affinity or an explicit shared session
+directory; ordinary round-robin scaling is correct only by rebuilding and does
+not preserve the KV-reuse performance claim.
+
+The response reports `retained_prefix_tokens`, `appended_tokens`,
+`session_action`, and `session_revision`. These are explicit live-session
+metrics and must not be interpreted as vLLM automatic prefix-cache hits;
+automatic prefix caching remains disabled.
+
+## Not carried into vsr-next
+
+The stateless Rung B service (`modal_service.py`), the canaries, the real
+generation workers, and the benchmark and probe harness under
+`e2e/testing/rayline-arc/` and `deploy/compose/rayline-arc/` stay on the
+pre-port fork history, tagged `archive/rayline-encoder-lineage-20260924`. None
+of them serves traffic.

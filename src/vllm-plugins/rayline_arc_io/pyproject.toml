@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rayline-arc-io"
+version = "0.1.0"
+description = "vLLM IO Processor for the frozen Rayline ARC serializer and pooling contract"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "pydantic>=2.10,<3",
+]
+
+[project.entry-points."vllm.io_processor_plugins"]
+rayline_arc_io = "rayline_arc_io:register_io_processor"
+
+[project.optional-dependencies]
+test = [
+    "httpx>=0.28,<1",
+    "numpy>=2,<3",
+    "pytest>=8.3,<9",
+    "ruff>=0.9,<1",
+    "torch>=2.6,<3",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint.isort]
+known-third-party = ["rayline_arc_io"]
