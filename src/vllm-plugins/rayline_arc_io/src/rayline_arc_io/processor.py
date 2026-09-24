@@ -42,7 +42,7 @@ from .constants import (
 )
 from .integrity import installed_source_digest
 from .pooling import fp32_masked_mean_l2
-from .schemas import ArcPoolingRequest, ArcPoolingResponse
+from .schemas import ArcPoolingRequest, ArcPoolingResponse, safe_error_location
 from .serializer import TokenBlockSerializer, TokenizationResult
 
 _ENGINE_BUILD_PATTERN = re.compile(r"^vllm@[A-Za-z0-9][A-Za-z0-9._:+/@-]{6,127}$")
@@ -53,9 +53,7 @@ _NORMALIZED_EMBEDDING_TOLERANCE = 1e-4
 
 
 def _bounded_error_loc(loc: tuple[Any, ...]) -> str:
-    if not loc:
-        return "request"
-    return ".".join(str(part) for part in loc)
+    return safe_error_location(loc)
 
 
 @dataclass(frozen=True)

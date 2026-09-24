@@ -38,6 +38,7 @@ from .schemas import (
     ArcSessionPoolingResponse,
     ArcSessionStartupLogResponse,
     EpisodeIDHash,
+    safe_error_location,
 )
 from .serializer import TokenBlockSerializer, TokenizationResult
 from .session_coordinator import (
@@ -69,7 +70,7 @@ def _validation_details(error: RequestValidationError) -> list[dict[str, str]]:
     """Return field/type only; FastAPI's default includes request text."""
     return [
         {
-            "location": ".".join(str(part) for part in item["loc"]),
+            "location": safe_error_location(item["loc"]),
             "type": item["type"],
         }
         for item in error.errors()

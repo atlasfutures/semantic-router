@@ -133,3 +133,14 @@ def test_session_response_exposes_retained_state_accounting() -> None:
     assert (
         response.retained_prefix_tokens + response.appended_tokens == SERIALIZED_TOKENS
     )
+
+
+def test_safe_error_location_renders_only_schema_names_and_indices() -> None:
+    from rayline_arc_io.schemas import safe_error_location
+
+    assert safe_error_location(("body", "turns", 3, "text")) == "body.turns.3.text"
+    assert safe_error_location(("body", "caller-text")) == "body.<unknown>"
+    assert safe_error_location(()) == "request"
+    deep = safe_error_location(tuple(range(20)))
+    assert deep == "0.1.2.3.4.5.6.7...."
+    assert len(safe_error_location(("turns",) * 100)) <= 128

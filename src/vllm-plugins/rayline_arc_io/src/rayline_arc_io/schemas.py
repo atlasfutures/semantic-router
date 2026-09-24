@@ -2,7 +2,8 @@
 
 """Strict wire schemas for the Rayline ARC pooling endpoint."""
 
-from typing import Annotated, Literal
+from collections.abc import Sequence
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -272,3 +273,30 @@ class ArcSessionMetricsResponse(BaseModel):
     schema_version: Literal["rayline.arc.session-metrics-response.v4"]
     coordinator: ArcSessionCoordinatorMetrics
     engine: ArcSessionEngineMetrics
+
+
+# A validation error names its location, and with extra="forbid" an unknown
+# request key is itself a location component, so rendering the location
+# verbatim would return caller text in the error. Render only this module's own
+# field names and list indices, and bound the result.
+_KNOWN_FIELD_NAMES = frozenset(
+    name
+    for model in tuple(globals().values())
+    if isinstance(model, type) and issubclass(model, BaseModel) and model is not BaseModel
+    for name in model.model_fields
+) | {"body", "path", "query", "data"}
+_MAX_LOCATION_PARTS = 8
+_MAX_LOCATION_CHARS = 128
+
+
+def safe_error_location(loc: Sequence[Any]) -> str:
+    """Render a validation location without echoing request content."""
+    parts = [
+        str(part)
+        if isinstance(part, int) or part in _KNOWN_FIELD_NAMES
+        else "<unknown>"
+        for part in loc[:_MAX_LOCATION_PARTS]
+    ]
+    if len(loc) > _MAX_LOCATION_PARTS:
+        parts.append("...")
+    return ".".join(parts)[:_MAX_LOCATION_CHARS] or "request"

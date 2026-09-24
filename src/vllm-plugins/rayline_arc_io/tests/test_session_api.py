@@ -222,6 +222,25 @@ def test_validation_error_never_echoes_request_text() -> None:
     assert response.json()["error"] == "invalid_request"
 
 
+def test_invalid_request_does_not_echo_an_unknown_field_name() -> None:
+    """extra="forbid" puts the unknown key in the error location."""
+    client, _ = build_client()
+    secret_key = "never-echo-this-key-" + "x" * 4096
+    invalid = request_body([{"role": "user", "text": "task"}])
+    invalid[secret_key] = 1
+    invalid["turns"][0][secret_key] = 1
+
+    response = client.post(
+        "/v1/rayline/arc/session/pooling",
+        json=invalid,
+    )
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert "never-echo-this-key" not in response.text
+    locations = {field["location"] for field in response.json()["fields"]}
+    assert locations == {"body.<unknown>", "body.turns.0.<unknown>"}
+
+
 def test_health_and_explicit_close_are_bounded() -> None:
     client, factory = build_client()
     turns = [{"role": "user", "text": "task"}]
@@ -241,6 +260,7 @@ def test_health_and_explicit_close_are_bounded() -> None:
     assert closed.json() == {"closed": True}
     assert health_after.json()["resident_sessions"] == 0
     assert factory.backends[0].closed is True
+
 
 
 def test_close_of_an_absent_session_is_idempotent() -> None:
