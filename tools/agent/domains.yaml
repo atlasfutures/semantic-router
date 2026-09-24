@@ -105,6 +105,13 @@ domains:
     checks: [make test-semantic-router]
     ci_jobs: [core-tests]
 
+  rayline-encoder:
+    owner: router-core
+    paths:
+      - src/vllm-plugins/**
+    checks: [make rayline-encoder-test]
+    ci_jobs: []
+
   native-bindings:
     owner: native-bindings
     paths:
