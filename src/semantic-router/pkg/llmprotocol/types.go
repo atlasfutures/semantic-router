@@ -126,6 +126,18 @@ type Message struct {
 	ID      string
 	Role    Role
 	Content []Content
+	// Configuration marks a content-less system message that changes
+	// generation settings from its position on. Only the router writes one;
+	// no decoder produces it.
+	Configuration *ConfigurationUpdate
+}
+
+// ConfigurationUpdate is a mid-conversation settings change. Only the
+// reasoning effort is modelled: providers that document it apply the new
+// effort from that point on without invalidating the cached prefix, which a
+// request-level effort change always does.
+type ConfigurationUpdate struct {
+	ReasoningEffort string
 }
 
 type InstructionBlock struct {

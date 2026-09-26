@@ -100,6 +100,17 @@ type chatMessageWire struct {
 	ToolCallID         string               `json:"tool_call_id,omitempty"`
 	Annotations        []chatAnnotationWire `json:"annotations,omitempty"`
 	Name               json.RawMessage      `json:"name,omitempty"`
+	// ConfigurationUpdate is OpenRouter's Chat Completions spelling of a
+	// mid-conversation settings change; native Chat has no equivalent.
+	ConfigurationUpdate *chatConfigurationUpdateWire `json:"configuration_update,omitempty"`
+}
+
+type chatConfigurationUpdateWire struct {
+	Reasoning chatConfigurationReasoningWire `json:"reasoning"`
+}
+
+type chatConfigurationReasoningWire struct {
+	Effort string `json:"effort"`
 }
 
 type chatAudioOutputWire struct {
@@ -334,6 +345,16 @@ func decodeChatRequestOptions(wire chatRequestWire, request *llmprotocol.Request
 }
 
 func decodeChatRequestMessage(wire chatMessageWire, index int, policy llmprotocol.Policy) (llmprotocol.Message, error) {
+	// The worker's arm owns reasoning effort; a client cannot change it
+	// mid-conversation behind the router's back.
+	if wire.ConfigurationUpdate != nil {
+		return llmprotocol.Message{}, llmprotocol.NewError(
+			llmprotocol.ErrorUnsupportedFeature,
+			"unsupported_configuration_update",
+			"messages.configuration_update is written by the router and is not accepted from clients",
+			nil,
+		)
+	}
 	for _, call := range wire.ToolCalls {
 		if call.Function.TokenizedArguments != nil {
 			return llmprotocol.Message{}, llmprotocol.NewError(

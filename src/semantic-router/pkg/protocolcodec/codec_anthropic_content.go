@@ -244,6 +244,9 @@ func (AnthropicMessagesCodec) EncodeRequest(request llmprotocol.Request, envelop
 }
 
 func validateAnthropicEncodableRequest(request llmprotocol.Request) error {
+	if err := refuseConfigurationUpdates(request, "Anthropic Messages"); err != nil {
+		return err
+	}
 	if request.Sampling.Temperature != nil && *request.Sampling.Temperature > 1 {
 		return llmprotocol.NewError(
 			llmprotocol.ErrorUnsupportedFeature,

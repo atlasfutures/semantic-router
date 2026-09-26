@@ -1,0 +1,12 @@
+{
+  "operation": "request",
+  "body": {
+    "model": "client-model",
+    "messages": [
+      {"role": "user", "content": "First question."},
+      {"role": "assistant", "content": "First answer."},
+      {"role": "system", "content": "", "configuration_update": {"reasoning": {"effort": "max"}}},
+      {"role": "user", "content": "Second question."}
+    ]
+  }
+}

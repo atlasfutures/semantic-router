@@ -236,6 +236,10 @@ func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) erro
 		wire.Messages = append(wire.Messages, encoded)
 	}
 	for _, message := range request.Messages {
+		if message.Configuration != nil {
+			wire.Messages = append(wire.Messages, encodeChatConfigurationMessage(message))
+			continue
+		}
 		if messageDropsWhole(message.Content, llmprotocol.OpenAIChatV1) {
 			continue
 		}
@@ -244,6 +248,35 @@ func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) erro
 			return err
 		}
 		wire.Messages = append(wire.Messages, encoded)
+	}
+	return nil
+}
+
+// encodeChatConfigurationMessage writes the content-less system message that
+// carries a configuration update. The empty content string is part of the
+// documented shape, so it is written rather than omitted.
+func encodeChatConfigurationMessage(message llmprotocol.Message) chatMessageWire {
+	return chatMessageWire{
+		ID: message.ID, Role: "system", Content: json.RawMessage(`""`),
+		ConfigurationUpdate: &chatConfigurationUpdateWire{
+			Reasoning: chatConfigurationReasoningWire{Effort: message.Configuration.ReasoningEffort},
+		},
+	}
+}
+
+// refuseConfigurationUpdates stops a configuration update reaching a wire
+// whose encoding of it is not implemented yet. Dropping it would silently
+// serve the turn at the wrong reasoning effort.
+func refuseConfigurationUpdates(request llmprotocol.Request, wire string) error {
+	for _, message := range request.Messages {
+		if message.Configuration != nil {
+			return llmprotocol.NewError(
+				llmprotocol.ErrorUnsupportedFeature,
+				"unsupported_configuration_update",
+				wire+" encoding of a configuration update is not implemented",
+				nil,
+			)
+		}
 	}
 	return nil
 }
