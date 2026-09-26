@@ -10,10 +10,10 @@ import "encoding/json"
 // boundary and after every mutation, so the record cannot drift from the
 // request: it is the same bytes.
 //
-// Two places carry an effort. OpenRouter and the other backends that take a
-// top-level field carry reasoning_effort; a vLLM-compatible backend takes it
-// through chat_template_kwargs instead. reasoning.max_tokens is OpenRouter's
-// alone. A body that carries none of them records none, which is the honest
+// Three places carry an effort. OpenRouter and the other backends that take a
+// top-level field carry reasoning_effort; OpenRouter's reasoning object can
+// carry it as reasoning.effort; a vLLM-compatible backend takes it through
+// chat_template_kwargs instead. reasoning.max_tokens is OpenRouter's alone. A body that carries none of them records none, which is the honest
 // report for a turn that was told nothing about reasoning.
 func recordDispatchedReasoningControls(ctx *RequestContext, body []byte) {
 	if ctx == nil {
@@ -28,6 +28,7 @@ func recordDispatchedReasoningControls(ctx *RequestContext, body []byte) {
 			ReasoningEffort string `json:"reasoning_effort"`
 		} `json:"chat_template_kwargs"`
 		Reasoning struct {
+			Effort    string `json:"effort"`
 			MaxTokens *int64 `json:"max_tokens"`
 		} `json:"reasoning"`
 	}
@@ -35,6 +36,9 @@ func recordDispatchedReasoningControls(ctx *RequestContext, body []byte) {
 		return
 	}
 	ctx.DispatchedReasoningEffort = wire.ReasoningEffort
+	if ctx.DispatchedReasoningEffort == "" {
+		ctx.DispatchedReasoningEffort = wire.Reasoning.Effort
+	}
 	if ctx.DispatchedReasoningEffort == "" {
 		ctx.DispatchedReasoningEffort = wire.ChatTemplateKwargs.ReasoningEffort
 	}

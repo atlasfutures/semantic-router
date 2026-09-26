@@ -252,6 +252,17 @@ class RaylineARCThinkingLeverConfig(BaseModel):
     workers: dict[str, RaylineARCThinkingBindingConfig] = Field(default_factory=dict)
 
 
+class RaylineARCWorkerThinkingConfig(BaseModel):
+    """A thinking worker's base reasoning level, as the registry compiled it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    level: str
+    wire: Literal["effort", "budget", "provider_default"]
+    effort: str = ""
+    max_tokens: int = Field(default=0, ge=0)
+
+
 class RaylineARCAlgorithmConfig(BaseModel):
     """Artifact, encoder, and episode pins for Rayline ARC."""
 
@@ -272,3 +283,4 @@ class RaylineARCAlgorithmConfig(BaseModel):
     fault_injection: RaylineARCFaultInjectionConfig | None = None
     routes_api: RaylineARCRoutesAPIConfig | None = None
     thinking_lever: RaylineARCThinkingLeverConfig | None = None
+    worker_thinking: dict[str, RaylineARCWorkerThinkingConfig] = Field(default_factory=dict)

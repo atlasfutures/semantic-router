@@ -151,7 +151,14 @@ func raylineARCThinkingLeverConfig(decision *config.Decision) *config.RaylineARC
 // record, so a turn's level can be joined to its usage without reading any
 // transcript.
 func appendRaylineARCThinkingFields(record map[string]interface{}, ctx *RequestContext) {
-	if ctx == nil || ctx.RaylineARCThinking == nil {
+	if ctx == nil {
+		return
+	}
+	if base := ctx.RaylineARCWorkerThinking; base != nil {
+		record["thinking_base_level"] = base.Level
+		record["thinking_base_wire"] = base.Wire
+	}
+	if ctx.RaylineARCThinking == nil {
 		return
 	}
 	trace := ctx.RaylineARCThinking

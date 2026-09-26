@@ -38,6 +38,10 @@ func (r *OpenAIRouter) adaptProviderRequest(
 	if err != nil {
 		return nil, err
 	}
+	body, err = applyRaylineARCWorkerThinking(body, dispatch, ctx)
+	if err != nil {
+		return nil, err
+	}
 	body, err = applyUpstreamSessionID(body, dispatch, ctx)
 	if err != nil {
 		return nil, err

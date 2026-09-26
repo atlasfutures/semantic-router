@@ -1717,6 +1717,18 @@ routing:
                   - {level: neutral, rank: 0, suffix: "Until the next steering instruction, use your normal judgement.", control_sha256: 3706b3ac244e71be7d77e4bb7113a17cbda5cb0fa7c69fc4654940d4d789650c}
                   - {level: down, rank: -1, suffix: "Until the next steering instruction, use minimal deliberation.", control_sha256: 99fca31cf4f665d12f6695cb8c46311be0cc6e4a34829347d4cc9298b24cccf6}
                   - {level: up, rank: 1, suffix: "Until the next steering instruction, reason more thoroughly.", control_sha256: 68a03386f70205c97e7a0002afa023c2b99b8ba98487a134c49824dd85d427be}
+          # worker_thinking fixes a thinking worker's base reasoning level on
+          # the wire, as the thinking-level registry compiled it. Without it
+          # the router derives reasoning.max_tokens from the client's output
+          # allowance and drops any effort, since OpenRouter refuses both at
+          # once. wire: effort (reasoning.effort only), budget
+          # (reasoning.max_tokens only, a simulated level such as a 4096-token
+          # low) or provider_default (no reasoning control, uncapped).
+          worker_thinking:
+            qwen3-32b:
+              level: high
+              wire: effort
+              effort: high
           encoder:
             base_url: http://rayline-arc-encoder:8000
             # Set base_url to empty and populate replicas + failover to opt

@@ -136,3 +136,45 @@ func TestRaylineARCThinkingLeverBindsOnlySelectableWorkers(t *testing.T) {
 		t.Fatalf("error = %v, want an unknown-worker refusal", err)
 	}
 }
+
+func TestRaylineARCWorkerThinkingValidation(t *testing.T) {
+	valid := map[string]RaylineARCWorkerThinkingConfig{
+		"effort":  {Level: "high", Wire: RaylineARCWorkerThinkingEffort, Effort: "high"},
+		"budget":  {Level: "cap_4096", Wire: RaylineARCWorkerThinkingBudget, MaxTokens: 4096},
+		"default": {Level: "default", Wire: RaylineARCWorkerThinkingProviderDefault},
+	}
+	if err := validateRaylineARCWorkerThinking(valid); err != nil {
+		t.Fatalf("valid bases refused: %v", err)
+	}
+	for name, base := range map[string]RaylineARCWorkerThinkingConfig{
+		"effort with a budget":   {Level: "high", Wire: "effort", Effort: "high", MaxTokens: 10},
+		"budget without tokens":  {Level: "low", Wire: "budget"},
+		"default with an effort": {Level: "default", Wire: "provider_default", Effort: "max"},
+		"unknown wire":           {Level: "high", Wire: "both"},
+		"non-canonical effort":   {Level: "high", Wire: "effort", Effort: "High"},
+		"missing level":          {Wire: "provider_default"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if validateRaylineARCWorkerThinking(map[string]RaylineARCWorkerThinkingConfig{"w": base}) == nil {
+				t.Fatal("invalid base accepted")
+			}
+		})
+	}
+}
+
+func TestRaylineARCWorkerThinkingNeedsAThinkingModelRef(t *testing.T) {
+	on, off := true, false
+	decision := validRaylineARCDecision()
+	decision.ModelRefs = []ModelRef{
+		{Model: "arm-on", ModelReasoningControl: ModelReasoningControl{UseReasoning: &on}},
+		{Model: "arm-off", ModelReasoningControl: ModelReasoningControl{UseReasoning: &off}},
+	}
+	base := RaylineARCWorkerThinkingConfig{Level: "high", Wire: "effort", Effort: "high"}
+	for worker, wantErr := range map[string]string{"arm-on": "", "arm-off": "does not reason", "arm-typo": "not one of"} {
+		decision.Algorithm.RaylineARC.WorkerThinking = map[string]RaylineARCWorkerThinkingConfig{worker: base}
+		err := validateRaylineARCDecisionContract(&RouterConfig{}, decision)
+		if (wantErr == "" && err != nil) || (wantErr != "" && (err == nil || !strings.Contains(err.Error(), wantErr))) {
+			t.Fatalf("%s: error = %v, want %q", worker, err, wantErr)
+		}
+	}
+}

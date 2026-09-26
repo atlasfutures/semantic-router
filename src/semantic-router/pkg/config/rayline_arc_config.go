@@ -111,6 +111,9 @@ type RaylineARCAlgorithmConfig struct {
 	// ThinkingLever moves a worker's reasoning depth per turn without
 	// changing the request-level reasoning fields. Off by default.
 	ThinkingLever *RaylineARCThinkingLeverConfig `yaml:"thinking_lever,omitempty"`
+	// WorkerThinking fixes each listed worker's base reasoning level on the
+	// wire, as the shared thinking-level registry compiled it.
+	WorkerThinking map[string]RaylineARCWorkerThinkingConfig `yaml:"worker_thinking,omitempty"`
 }
 
 // RaylineARCRoutesAPIConfig is the opt-in for the route lookup endpoint.
@@ -256,6 +259,9 @@ func validateRaylineARCAlgorithmConfig(cfg *RaylineARCAlgorithmConfig) error {
 	}
 	if err := validateRaylineARCThinkingLeverConfig(cfg.ThinkingLever); err != nil {
 		return fmt.Errorf("thinking_lever: %w", err)
+	}
+	if err := validateRaylineARCWorkerThinking(cfg.WorkerThinking); err != nil {
+		return fmt.Errorf("worker_thinking: %w", err)
 	}
 	return nil
 }
@@ -592,6 +598,9 @@ func validateRaylineARCDecisionContract(cfg *RouterConfig, decision Decision) er
 	}
 	if err := validateRaylineARCThinkingWorkers(decision.Algorithm.RaylineARC, seen); err != nil {
 		return fmt.Errorf("decision '%s': algorithm.rayline_arc.thinking_lever: %w", decision.Name, err)
+	}
+	if err := validateRaylineARCWorkerThinkingRefs(decision.Algorithm.RaylineARC, decision.ModelRefs); err != nil {
+		return fmt.Errorf("decision '%s': algorithm.rayline_arc.worker_thinking: %w", decision.Name, err)
 	}
 	if replay := cfg.EffectiveRouterReplayConfigForDecision(decision.Name); replay != nil && replay.Enabled {
 		return fmt.Errorf(
