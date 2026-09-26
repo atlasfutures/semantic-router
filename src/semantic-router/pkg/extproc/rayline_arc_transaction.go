@@ -341,6 +341,7 @@ func cloneARCState(
 		Warmth:               make([]*raylinearc.WorkerWarmth, len(state.Warmth)),
 		EncoderOwner:         state.EncoderOwner,
 		EncoderVisitedOwners: append([]string(nil), state.EncoderVisitedOwners...),
+		Thinking:             state.Thinking.Clone(),
 	}
 	if state.PreviousArm != nil {
 		value := *state.PreviousArm

@@ -92,9 +92,12 @@ const (
 )
 
 const (
-	thinkingDigestBytes     = 16
-	maxThinkingLevels       = 16
-	maxThinkingLedgerLength = 512
+	thinkingDigestBytes  = 16
+	maxThinkingLevels    = 16
+	maxThinkingLevelName = 32
+	// maxThinkingLedgerLength keeps a full ledger of the longest level names
+	// well inside the 64 KiB episode-state limit.
+	maxThinkingLedgerLength = 384
 	systemReminderPrefix    = "<system-reminder>"
 )
 
@@ -186,8 +189,9 @@ func (binding ThinkingBinding) admits(placement ThinkingPlacement) bool {
 }
 
 func (binding ThinkingBinding) validateLevel(level ThinkingLevel) error {
-	if strings.TrimSpace(level.Name) == "" || level.Name != strings.TrimSpace(level.Name) {
-		return errors.New("a thinking level needs a trimmed, nonblank name")
+	if strings.TrimSpace(level.Name) == "" || level.Name != strings.TrimSpace(level.Name) ||
+		len(level.Name) > maxThinkingLevelName {
+		return fmt.Errorf("a thinking level needs a trimmed, nonblank name of at most %d bytes", maxThinkingLevelName)
 	}
 	switch binding.Lever {
 	case ThinkingLeverSteeringSuffix:
@@ -278,13 +282,57 @@ type ThinkingLedgerEntry struct {
 	Turn      uint64
 }
 
-func cloneThinkingLedger(ledger *ThinkingLedger) *ThinkingLedger {
+// Clone returns a deep copy; a nil ledger clones to nil.
+func (ledger *ThinkingLedger) Clone() *ThinkingLedger {
 	if ledger == nil {
 		return nil
 	}
 	cloned := *ledger
 	cloned.Entries = append([]ThinkingLedgerEntry(nil), ledger.Entries...)
 	return &cloned
+}
+
+// validateThinkingLedger refuses a persisted ledger no planner could have
+// written. Binding membership is checked per turn, against the binding in
+// force then; this checks only the shape.
+func validateThinkingLedger(ledger *ThinkingLedger) error {
+	if ledger == nil {
+		return nil
+	}
+	if len(ledger.BindingSHA256) != sha256.Size*2 || !isLowerHex(ledger.BindingSHA256) {
+		return errors.New("thinking ledger binding digest is invalid")
+	}
+	if len(ledger.LevelInForce) > maxThinkingLevelName ||
+		len(ledger.Entries) > maxThinkingLedgerLength {
+		return errors.New("thinking ledger exceeds its limits")
+	}
+	previous := -1
+	for _, entry := range ledger.Entries {
+		if int(entry.Index) <= previous {
+			return errors.New("thinking ledger anchors are not ascending")
+		}
+		previous = int(entry.Index)
+		if entry.Level == "" || len(entry.Level) > maxThinkingLevelName ||
+			len(entry.Digest) != thinkingDigestBytes*2 || !isLowerHex(entry.Digest) ||
+			!knownThinkingPlacement(entry.Placement) {
+			return errors.New("thinking ledger entry is invalid")
+		}
+	}
+	return nil
+}
+
+func knownThinkingPlacement(placement ThinkingPlacement) bool {
+	return placementFitsLever(ThinkingLeverSteeringSuffix, placement) ||
+		placementFitsLever(ThinkingLeverPerTurnEffort, placement)
+}
+
+func isLowerHex(value string) bool {
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // ThinkingTurn is everything the planner needs for one request.
@@ -385,7 +433,7 @@ func startingLedger(turn ThinkingTurn) ThinkingLedger {
 	if turn.Ledger == nil {
 		return freshThinkingLedger(turn, 0)
 	}
-	return *cloneThinkingLedger(turn.Ledger)
+	return *turn.Ledger.Clone()
 }
 
 func freshThinkingLedger(turn ThinkingTurn, epoch uint32) ThinkingLedger {

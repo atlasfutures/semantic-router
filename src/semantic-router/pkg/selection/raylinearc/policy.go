@@ -41,6 +41,9 @@ type EpisodeState struct {
 	Warmth               []*WorkerWarmth
 	EncoderOwner         string
 	EncoderVisitedOwners []string
+	// Thinking is the episode's thinking-lever ledger, nil until the first
+	// turn a lever governs.
+	Thinking *ThinkingLedger
 }
 
 func NewEpisodeState(workerCount int) (*EpisodeState, error) {
@@ -248,6 +251,9 @@ func validateEpisodeState(state *EpisodeState, workerCount int) error {
 		state.EncoderOwner,
 		state.EncoderVisitedOwners,
 	); err != nil {
+		return err
+	}
+	if err := validateThinkingLedger(state.Thinking); err != nil {
 		return err
 	}
 	return validateWarmth(state.Warmth)

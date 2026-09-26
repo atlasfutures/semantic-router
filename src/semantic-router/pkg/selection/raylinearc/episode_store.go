@@ -28,7 +28,11 @@ import (
 
 const (
 	episodeStateSchemaV1 = "rayline.arc.episode-state.v1"
-	episodeStateSchema   = "rayline.arc.episode-state.v2"
+	episodeStateSchemaV2 = "rayline.arc.episode-state.v2"
+	// episodeStateSchema adds the thinking-lever ledger. It is written only
+	// for an episode that has one, so an episode no lever governs keeps its
+	// v2 bytes and an older router can still read it.
+	episodeStateSchema   = "rayline.arc.episode-state.v3"
 	maxFutureClockSkew   = 5 * time.Minute
 	episodeOwnerBytes    = 24
 	maxEpisodeStateBytes = 64 * 1024
@@ -82,6 +86,25 @@ type episodeStateWire struct {
 	Warmth               []*episodeWarmthWire `json:"warmth"`
 	EncoderOwner         *string              `json:"encoder_owner,omitempty"`
 	EncoderVisitedOwners *[]string            `json:"encoder_visited_owners,omitempty"`
+	Thinking             *episodeThinkingWire `json:"thinking,omitempty"`
+}
+
+type episodeThinkingWire struct {
+	BindingSHA256  string                     `json:"binding_sha256"`
+	Epoch          uint32                     `json:"epoch"`
+	LevelInForce   string                     `json:"level_in_force"`
+	LastChangeTurn uint64                     `json:"last_change_turn"`
+	Entries        []episodeThinkingEntryWire `json:"entries"`
+}
+
+// episodeThinkingEntryWire uses short keys: a long every-turn ledger is the
+// largest thing an episode record carries.
+type episodeThinkingEntryWire struct {
+	Index     uint32 `json:"i"`
+	Placement string `json:"p"`
+	Digest    string `json:"d"`
+	Level     string `json:"l"`
+	Turn      uint64 `json:"t"`
 }
 
 type episodeWarmthWire struct {
@@ -107,6 +130,7 @@ func cloneEpisodeState(state *EpisodeState) *EpisodeState {
 		Warmth:               make([]*WorkerWarmth, len(state.Warmth)),
 		EncoderOwner:         state.EncoderOwner,
 		EncoderVisitedOwners: append([]string(nil), state.EncoderVisitedOwners...),
+		Thinking:             state.Thinking.Clone(),
 	}
 	for index, warmth := range state.Warmth {
 		if warmth == nil {
@@ -135,11 +159,15 @@ func marshalEpisodeState(
 		return nil, err
 	}
 	wire := episodeStateWire{
-		SchemaVersion: episodeStateSchema,
+		SchemaVersion: episodeStateSchemaV2,
 		Version:       version,
 		PreviousArm:   cloneEpisodeArm(state.PreviousArm),
 		TurnIndex:     state.TurnIndex,
 		Warmth:        make([]*episodeWarmthWire, len(state.Warmth)),
+	}
+	if state.Thinking != nil {
+		wire.SchemaVersion = episodeStateSchema
+		wire.Thinking = thinkingLedgerToWire(state.Thinking)
 	}
 	owner := state.EncoderOwner
 	visited := append([]string{}, state.EncoderVisitedOwners...)
@@ -197,13 +225,16 @@ func unmarshalEpisodeState(
 func decodeEpisodeStateAffinity(
 	wire episodeStateWire,
 ) (string, []string, error) {
+	if (wire.Thinking != nil) != (wire.SchemaVersion == episodeStateSchema) {
+		return "", nil, errors.New("ARC episode state contract mismatch")
+	}
 	switch wire.SchemaVersion {
 	case episodeStateSchemaV1:
 		if wire.EncoderOwner != nil || wire.EncoderVisitedOwners != nil {
 			return "", nil, errors.New("ARC episode state contract mismatch")
 		}
 		return "", nil, nil
-	case episodeStateSchema:
+	case episodeStateSchemaV2, episodeStateSchema:
 		if wire.EncoderOwner == nil || wire.EncoderVisitedOwners == nil ||
 			*wire.EncoderVisitedOwners == nil {
 			return "", nil, errors.New("ARC episode state contract mismatch")
@@ -227,6 +258,7 @@ func episodeStateFromWire(
 		Warmth:               make([]*WorkerWarmth, workerCount),
 		EncoderOwner:         owner,
 		EncoderVisitedOwners: visited,
+		Thinking:             thinkingLedgerFromWire(wire.Thinking),
 	}
 	for index, warmth := range wire.Warmth {
 		if warmth == nil {
@@ -260,4 +292,41 @@ func validatePersistedEpisodeState(
 		}
 	}
 	return nil
+}
+
+func thinkingLedgerToWire(ledger *ThinkingLedger) *episodeThinkingWire {
+	wire := &episodeThinkingWire{
+		BindingSHA256:  ledger.BindingSHA256,
+		Epoch:          ledger.Epoch,
+		LevelInForce:   ledger.LevelInForce,
+		LastChangeTurn: ledger.LastChangeTurn,
+		Entries:        make([]episodeThinkingEntryWire, len(ledger.Entries)),
+	}
+	for index, entry := range ledger.Entries {
+		wire.Entries[index] = episodeThinkingEntryWire{
+			Index: entry.Index, Placement: string(entry.Placement),
+			Digest: entry.Digest, Level: entry.Level, Turn: entry.Turn,
+		}
+	}
+	return wire
+}
+
+func thinkingLedgerFromWire(wire *episodeThinkingWire) *ThinkingLedger {
+	if wire == nil {
+		return nil
+	}
+	ledger := &ThinkingLedger{
+		BindingSHA256:  wire.BindingSHA256,
+		Epoch:          wire.Epoch,
+		LevelInForce:   wire.LevelInForce,
+		LastChangeTurn: wire.LastChangeTurn,
+		Entries:        make([]ThinkingLedgerEntry, len(wire.Entries)),
+	}
+	for index, entry := range wire.Entries {
+		ledger.Entries[index] = ThinkingLedgerEntry{
+			Index: entry.Index, Placement: ThinkingPlacement(entry.Placement),
+			Digest: entry.Digest, Level: entry.Level, Turn: entry.Turn,
+		}
+	}
+	return ledger
 }

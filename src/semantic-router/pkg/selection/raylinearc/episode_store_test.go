@@ -19,6 +19,7 @@ package raylinearc
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -289,5 +290,86 @@ func requireARCNoError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func fullThinkingLedger() *ThinkingLedger {
+	ledger := &ThinkingLedger{
+		BindingSHA256: strings.Repeat("a", 64),
+		LevelInForce:  strings.Repeat("l", maxThinkingLevelName),
+	}
+	for index := 0; index < maxThinkingLedgerLength; index++ {
+		ledger.Entries = append(ledger.Entries, ThinkingLedgerEntry{
+			Index:     uint32(1<<31 + index),
+			Placement: ThinkingPlaceSystemAfterToolRun,
+			Digest:    strings.Repeat("f", thinkingDigestBytes*2),
+			Level:     strings.Repeat("l", maxThinkingLevelName),
+			Turn:      1<<63 + uint64(index),
+		})
+	}
+	ledger.LastChangeTurn = 1 << 63
+	return ledger
+}
+
+func TestEpisodeStateWireV3CarriesTheThinkingLedger(t *testing.T) {
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	state, err := NewEpisodeState(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := marshalEpisodeState(state, 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"schema_version":"rayline.arc.episode-state.v2"`) ||
+		strings.Contains(string(payload), `"thinking"`) {
+		t.Fatalf("an episode without a ledger must keep its v2 bytes: %s", payload)
+	}
+
+	// The worst case: every entry and name at its limit still fits.
+	state.Thinking = fullThinkingLedger()
+	payload, err = marshalEpisodeState(state, 2, now)
+	if err != nil {
+		t.Fatalf("a full ledger does not fit: %v", err)
+	}
+	if !strings.Contains(string(payload), `"schema_version":"rayline.arc.episode-state.v3"`) {
+		t.Fatalf("ledger written without v3: %.120s", payload)
+	}
+	decoded, version, err := unmarshalEpisodeState(payload, 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != 2 || !reflect.DeepEqual(decoded.Thinking, state.Thinking) {
+		t.Fatal("the ledger did not round-trip")
+	}
+	cloned := cloneEpisodeState(decoded)
+	cloned.Thinking.Entries[0].Level = "changed"
+	if decoded.Thinking.Entries[0].Level == "changed" {
+		t.Fatal("clone shares ledger entries")
+	}
+}
+
+func TestEpisodeStateWireGatesTheLedgerOnTheSchema(t *testing.T) {
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	ledger := `"thinking":{"binding_sha256":"` + strings.Repeat("a", 64) +
+		`","epoch":0,"level_in_force":"up","last_change_turn":0,"entries":[]}`
+	for name, payload := range map[string]string{
+		"v2 with a ledger": `{"schema_version":"rayline.arc.episode-state.v2","version":1,` +
+			`"previous_arm":null,"turn_index":0,"warmth":[null],"encoder_owner":"",` +
+			`"encoder_visited_owners":[],` + ledger + `}`,
+		"v3 without a ledger": `{"schema_version":"rayline.arc.episode-state.v3","version":1,` +
+			`"previous_arm":null,"turn_index":0,"warmth":[null],"encoder_owner":"",` +
+			`"encoder_visited_owners":[]}`,
+		"v3 with a malformed entry": `{"schema_version":"rayline.arc.episode-state.v3","version":1,` +
+			`"previous_arm":null,"turn_index":0,"warmth":[null],"encoder_owner":"",` +
+			`"encoder_visited_owners":[],"thinking":{"binding_sha256":"` + strings.Repeat("a", 64) +
+			`","epoch":0,"level_in_force":"up","last_change_turn":0,` +
+			`"entries":[{"i":0,"p":"nowhere","d":"` + strings.Repeat("f", 32) + `","l":"up","t":0}]}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := unmarshalEpisodeState([]byte(payload), 1, now); err == nil {
+				t.Fatal("payload accepted")
+			}
+		})
 	}
 }
