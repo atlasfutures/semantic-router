@@ -120,3 +120,19 @@ func TestRaylineARCThinkingLeverRoundTripsStrictly(t *testing.T) {
 		t.Fatalf("thinking_lever did not round-trip:\n%s", encoded)
 	}
 }
+
+func TestRaylineARCThinkingLeverBindsOnlySelectableWorkers(t *testing.T) {
+	lever := validThinkingLeverConfig()
+	binding := lever.Workers["z-ai/glm-5.3-flash@default"]
+	lever.Workers = map[string]RaylineARCThinkingBindingConfig{"public-arm-a": binding}
+	decision := validRaylineARCDecision()
+	decision.Algorithm.RaylineARC.ThinkingLever = lever
+	if err := validateRaylineARCDecisionContract(&RouterConfig{}, decision); err != nil {
+		t.Fatalf("bound modelRef refused: %v", err)
+	}
+	lever.Workers["public-arm-typo"] = binding
+	err := validateRaylineARCDecisionContract(&RouterConfig{}, decision)
+	if err == nil || !strings.Contains(err.Error(), "not one of the decision's modelRefs") {
+		t.Fatalf("error = %v, want an unknown-worker refusal", err)
+	}
+}

@@ -590,6 +590,9 @@ func validateRaylineARCDecisionContract(cfg *RouterConfig, decision Decision) er
 			)
 		}
 	}
+	if err := validateRaylineARCThinkingWorkers(decision.Algorithm.RaylineARC, seen); err != nil {
+		return fmt.Errorf("decision '%s': algorithm.rayline_arc.thinking_lever: %w", decision.Name, err)
+	}
 	if replay := cfg.EffectiveRouterReplayConfigForDecision(decision.Name); replay != nil && replay.Enabled {
 		return fmt.Errorf(
 			"decision '%s': algorithm.type=%s requires router_replay disabled for this decision; episode requests must not be persisted",
