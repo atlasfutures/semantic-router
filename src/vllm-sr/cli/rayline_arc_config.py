@@ -196,6 +196,56 @@ class RaylineARCRoutesAPIConfig(BaseModel):
         return value
 
 
+class RaylineARCThinkingLevelConfig(BaseModel):
+    """One rung of a compiled thinking-lever binding."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    level: str
+    rank: int
+    suffix: str = ""
+    effort: str = ""
+
+
+class RaylineARCThinkingBindingConfig(BaseModel):
+    """One worker's lever binding, compiled from the thinking-level registry.
+
+    The shape is checked here; the Go loader checks the rest (placements that
+    fit the lever, a declared neutral level, effort spelling) and refuses to
+    start on a binding the planner would refuse.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    admission: Literal["certified", "experimental"]
+    lever: Literal["prompt_steering_suffix", "per_turn_effort"]
+    emit: Literal["every_turn", "on_change"]
+    neutral_level: str = ""
+    placements: list[
+        Literal[
+            "append_tail_user_text",
+            "insert_user_after_tool_run",
+            "system_before_governed_turn",
+            "system_after_tool_run",
+        ]
+    ]
+    levels: list[RaylineARCThinkingLevelConfig]
+
+
+class RaylineARCThinkingLeverConfig(BaseModel):
+    """Per-turn thinking lever for one ARC decision. Off by default."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    # Only "rule" is served: every governed turn asks for `level`.
+    source: str = ""
+    level: str = ""
+    admission: Literal["", "certified", "experimental"] = ""
+    min_spacing_turns: int = Field(default=0, ge=0)
+    workers: dict[str, RaylineARCThinkingBindingConfig] = Field(default_factory=dict)
+
+
 class RaylineARCAlgorithmConfig(BaseModel):
     """Artifact, encoder, and episode pins for Rayline ARC."""
 
@@ -215,3 +265,4 @@ class RaylineARCAlgorithmConfig(BaseModel):
     include_tool_names: bool = False
     fault_injection: RaylineARCFaultInjectionConfig | None = None
     routes_api: RaylineARCRoutesAPIConfig | None = None
+    thinking_lever: RaylineARCThinkingLeverConfig | None = None

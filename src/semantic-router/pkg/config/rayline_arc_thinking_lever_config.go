@@ -1,0 +1,130 @@
+package config
+
+import (
+	"fmt"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
+)
+
+const (
+	RaylineARCThinkingSourceRule            = "rule"
+	RaylineARCThinkingAdmissionCertified    = "certified"
+	RaylineARCThinkingAdmissionExperimental = "experimental"
+)
+
+// RaylineARCThinkingLeverConfig turns on the per-turn thinking lever for one
+// ARC decision.
+//
+// A lever writes an item into the provider-bound transcript that the client
+// never sees -- a steering instruction, or a reasoning-effort update -- and
+// the router replays every earlier item on later turns, so the provider's
+// prompt cache survives a change of level. Which bytes realise a level for a
+// worker comes from the shared thinking-level registry, never from this
+// router; Workers carries that compiled binding.
+type RaylineARCThinkingLeverConfig struct {
+	Enabled bool `yaml:"enabled,omitempty"`
+	// Source says who chooses the level. Only "rule" is served: every
+	// governed turn of this decision asks for Level.
+	Source string `yaml:"source,omitempty"`
+	Level  string `yaml:"level,omitempty"`
+	// Admission "experimental" also admits bindings the registry marks
+	// experimental. The default admits certified bindings only.
+	Admission string `yaml:"admission,omitempty"`
+	// MinSpacingTurns is the least number of committed turns between two
+	// changes of level on an on-change binding.
+	MinSpacingTurns uint64 `yaml:"min_spacing_turns,omitempty"`
+	// Workers binds a lever to worker IDs. A worker without a binding is
+	// never steered, and its turns leave the ledger as it was.
+	Workers map[string]RaylineARCThinkingBindingConfig `yaml:"workers,omitempty"`
+}
+
+// RaylineARCThinkingBindingConfig is one worker's compiled lever binding.
+type RaylineARCThinkingBindingConfig struct {
+	Admission    string                          `yaml:"admission"`
+	Lever        string                          `yaml:"lever"`
+	Emit         string                          `yaml:"emit"`
+	NeutralLevel string                          `yaml:"neutral_level,omitempty"`
+	Placements   []string                        `yaml:"placements"`
+	Levels       []RaylineARCThinkingLevelConfig `yaml:"levels"`
+}
+
+type RaylineARCThinkingLevelConfig struct {
+	Level  string `yaml:"level"`
+	Rank   int    `yaml:"rank"`
+	Suffix string `yaml:"suffix,omitempty"`
+	Effort string `yaml:"effort,omitempty"`
+}
+
+// Binding converts the configured binding to the planner's form.
+func (cfg RaylineARCThinkingBindingConfig) Binding() thinkinglever.Binding {
+	binding := thinkinglever.Binding{
+		Lever:   thinkinglever.Lever(cfg.Lever),
+		Emit:    thinkinglever.EmitMode(cfg.Emit),
+		Neutral: cfg.NeutralLevel,
+	}
+	for _, placement := range cfg.Placements {
+		binding.Placements = append(binding.Placements, thinkinglever.Placement(placement))
+	}
+	for _, level := range cfg.Levels {
+		binding.Levels = append(binding.Levels, thinkinglever.Level{
+			Name: level.Level, Rank: level.Rank, Suffix: level.Suffix, Effort: level.Effort,
+		})
+	}
+	return binding
+}
+
+// validateRaylineARCThinkingLeverConfig refuses at load every binding the
+// planner would refuse per turn, so a bad binding stops the cell starting
+// rather than failing a user's turn.
+func validateRaylineARCThinkingLeverConfig(cfg *RaylineARCThinkingLeverConfig) error {
+	if cfg == nil || !cfg.Enabled {
+		return nil
+	}
+	if cfg.Source != RaylineARCThinkingSourceRule {
+		return fmt.Errorf("source %q is not served; use %q", cfg.Source, RaylineARCThinkingSourceRule)
+	}
+	admitExperimental := false
+	switch cfg.Admission {
+	case "", RaylineARCThinkingAdmissionCertified:
+	case RaylineARCThinkingAdmissionExperimental:
+		admitExperimental = true
+	default:
+		return fmt.Errorf("admission %q must be certified or experimental", cfg.Admission)
+	}
+	if cfg.Level == "" {
+		return fmt.Errorf("level is required with source %q", RaylineARCThinkingSourceRule)
+	}
+	if len(cfg.Workers) == 0 {
+		return fmt.Errorf("at least one worker binding is required")
+	}
+	for worker, bindingConfig := range cfg.Workers {
+		if err := validateRaylineARCThinkingBinding(bindingConfig, cfg.Level, admitExperimental); err != nil {
+			return fmt.Errorf("workers[%q]: %w", worker, err)
+		}
+	}
+	return nil
+}
+
+func validateRaylineARCThinkingBinding(
+	cfg RaylineARCThinkingBindingConfig,
+	level string,
+	admitExperimental bool,
+) error {
+	switch cfg.Admission {
+	case RaylineARCThinkingAdmissionCertified:
+	case RaylineARCThinkingAdmissionExperimental:
+		if !admitExperimental {
+			return fmt.Errorf("binding is experimental and admission is certified")
+		}
+	default:
+		return fmt.Errorf("admission %q must be certified or experimental", cfg.Admission)
+	}
+	binding := cfg.Binding()
+	if err := binding.Validate(); err != nil {
+		return err
+	}
+	if _, ok := binding.Level(level); !ok {
+		return fmt.Errorf("level %q is not in the binding", level)
+	}
+	return nil
+}

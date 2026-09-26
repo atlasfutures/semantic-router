@@ -108,6 +108,9 @@ type RaylineARCAlgorithmConfig struct {
 	// for a request, without executing it, for a caller that owns its own
 	// provider connectivity.
 	RoutesAPI RaylineARCRoutesAPIConfig `yaml:"routes_api,omitempty"`
+	// ThinkingLever moves a worker's reasoning depth per turn without
+	// changing the request-level reasoning fields. Off by default.
+	ThinkingLever *RaylineARCThinkingLeverConfig `yaml:"thinking_lever,omitempty"`
 }
 
 // RaylineARCRoutesAPIConfig is the opt-in for the route lookup endpoint.
@@ -250,6 +253,9 @@ func validateRaylineARCAlgorithmConfig(cfg *RaylineARCAlgorithmConfig) error {
 	}
 	if err := validateRaylineARCRoutesAPIConfig(cfg.RoutesAPI); err != nil {
 		return fmt.Errorf("routes_api: %w", err)
+	}
+	if err := validateRaylineARCThinkingLeverConfig(cfg.ThinkingLever); err != nil {
+		return fmt.Errorf("thinking_lever: %w", err)
 	}
 	return nil
 }

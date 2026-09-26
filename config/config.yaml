@@ -1676,6 +1676,39 @@ routing:
             # from artifact_revision because that pin is deployment-private.
             # Empty publishes the hash alone.
             checkpoint_label: ""
+          # thinking_lever moves a worker's reasoning depth per turn without
+          # changing the request-level reasoning fields, which providers key
+          # their prompt cache on. The router writes an item the client never
+          # sees -- a steering instruction, or a reasoning-effort update -- and
+          # replays every earlier item on later turns so the cache survives a
+          # change of level. Which bytes realise a level for a worker comes
+          # from a compiled lever registry, never from the router. Off.
+          thinking_lever:
+            enabled: false
+            # source "rule": every governed turn of this decision asks for
+            # level. It is the only source served.
+            source: rule
+            level: none
+            # admission "experimental" also admits bindings the registry
+            # marks experimental; the default admits certified ones only.
+            admission: certified
+            # min_spacing_turns holds a level for at least this many turns
+            # before an on-change binding may change it again.
+            min_spacing_turns: 0
+            # workers binds a lever to worker IDs. A worker without a binding
+            # is never steered.
+            workers:
+              example-worker:
+                admission: certified
+                lever: prompt_steering_suffix
+                emit: on_change
+                neutral_level: neutral
+                placements: [append_tail_user_text, insert_user_after_tool_run]
+                levels:
+                  - {level: none, rank: 0}
+                  - {level: neutral, rank: 0, suffix: "Until the next steering instruction, use your normal judgement."}
+                  - {level: down, rank: -1, suffix: "Until the next steering instruction, use minimal deliberation."}
+                  - {level: up, rank: 1, suffix: "Until the next steering instruction, reason more thoroughly."}
           encoder:
             base_url: http://rayline-arc-encoder:8000
             # Set base_url to empty and populate replicas + failover to opt
