@@ -19,6 +19,7 @@ package extproc
 import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
 )
 
@@ -72,6 +73,7 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 	}
 	trace := &raylineARCThinkingTrace{Source: lever.Source, LevelRequested: lever.Level, Propensity: 1}
 	ctx.RaylineARCThinking = trace
+	defer recordThinkingLeverTurn(trace)
 	bindingConfig, bound := lever.Workers[ctx.RaylineARCDispatch.ID]
 	if !bound {
 		trace.Skipped = thinkingSkipWorkerUnbound
@@ -121,6 +123,21 @@ func fillThinkingTrace(trace *raylineARCThinkingTrace, binding thinkinglever.Bin
 	trace.Placement = string(plan.Placement)
 	trace.Replayed, trace.Epoch = plan.Replayed, plan.Next.Epoch
 	trace.ResetReason, trace.Skipped = plan.ResetReason, plan.Skipped
+}
+
+// recordThinkingLeverTurn counts one governed turn. Every label value comes
+// from a closed set in this package or the planner's.
+func recordThinkingLeverTurn(trace *raylineARCThinkingTrace) {
+	outcome, reason := "held", trace.ResetReason
+	switch {
+	case trace.Retry:
+		outcome = "retry"
+	case trace.Emitted:
+		outcome = "emitted"
+	case trace.Skipped != "":
+		outcome, reason = "skipped", trace.Skipped
+	}
+	metrics.RecordRaylineARCThinkingLeverTurn(trace.Lever, outcome, reason)
 }
 
 func raylineARCThinkingLeverConfig(decision *config.Decision) *config.RaylineARCThinkingLeverConfig {
