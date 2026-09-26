@@ -24,6 +24,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
 )
 
 const (
@@ -294,7 +296,7 @@ func validatePersistedEpisodeState(
 	return nil
 }
 
-func thinkingLedgerToWire(ledger *ThinkingLedger) *episodeThinkingWire {
+func thinkingLedgerToWire(ledger *thinkinglever.Ledger) *episodeThinkingWire {
 	wire := &episodeThinkingWire{
 		BindingSHA256:  ledger.BindingSHA256,
 		Epoch:          ledger.Epoch,
@@ -311,20 +313,20 @@ func thinkingLedgerToWire(ledger *ThinkingLedger) *episodeThinkingWire {
 	return wire
 }
 
-func thinkingLedgerFromWire(wire *episodeThinkingWire) *ThinkingLedger {
+func thinkingLedgerFromWire(wire *episodeThinkingWire) *thinkinglever.Ledger {
 	if wire == nil {
 		return nil
 	}
-	ledger := &ThinkingLedger{
+	ledger := &thinkinglever.Ledger{
 		BindingSHA256:  wire.BindingSHA256,
 		Epoch:          wire.Epoch,
 		LevelInForce:   wire.LevelInForce,
 		LastChangeTurn: wire.LastChangeTurn,
-		Entries:        make([]ThinkingLedgerEntry, len(wire.Entries)),
+		Entries:        make([]thinkinglever.LedgerEntry, len(wire.Entries)),
 	}
 	for index, entry := range wire.Entries {
-		ledger.Entries[index] = ThinkingLedgerEntry{
-			Index: entry.Index, Placement: ThinkingPlacement(entry.Placement),
+		ledger.Entries[index] = thinkinglever.LedgerEntry{
+			Index: entry.Index, Placement: thinkinglever.Placement(entry.Placement),
 			Digest: entry.Digest, Level: entry.Level, Turn: entry.Turn,
 		}
 	}

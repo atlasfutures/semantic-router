@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package raylinearc
+package thinkinglever
 
 import (
 	"crypto/sha256"
@@ -26,31 +26,31 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
-// ThinkingMessages projects the client transcript for the planner.
-func ThinkingMessages(messages []llmprotocol.Message) []ThinkingMessage {
-	projected := make([]ThinkingMessage, len(messages))
+// Messages projects the client transcript for the planner.
+func Messages(messages []llmprotocol.Message) []Message {
+	projected := make([]Message, len(messages))
 	for index, message := range messages {
-		projected[index] = ThinkingMessage{
+		projected[index] = Message{
 			Role:   string(message.Role),
-			Digest: thinkingMessageDigest(message),
+			Digest: messageDigest(message),
 		}
 	}
 	return projected
 }
 
-// thinkingMessageDigest identifies a client message across turns. It ignores
+// messageDigest identifies a client message across turns. It ignores
 // what agent clients rewrite in history without changing what the model was
 // asked: moving cache breakpoints, re-sent <system-reminder> blocks, caller
 // annotations and members no contract names. Anything else that changes is a
 // rewrite, and the ledger starts a new epoch.
-func thinkingMessageDigest(message llmprotocol.Message) string {
+func messageDigest(message llmprotocol.Message) string {
 	projection := struct {
 		Role    llmprotocol.Role
 		Content []llmprotocol.Content
 	}{Role: message.Role, Content: stableContent(message.Content)}
 	payload, _ := json.Marshal(projection)
 	sum := sha256.Sum256(payload)
-	return hex.EncodeToString(sum[:thinkingDigestBytes])
+	return hex.EncodeToString(sum[:DigestBytes])
 }
 
 func stableContent(blocks []llmprotocol.Content) []llmprotocol.Content {
@@ -77,14 +77,14 @@ func stableContent(blocks []llmprotocol.Content) []llmprotocol.Content {
 	return stable
 }
 
-// ApplyThinkingLedger returns the provider-bound transcript: the client's
+// ApplyLedger returns the provider-bound transcript: the client's
 // messages with every ledger item put back where it was first written. The
 // input slice and its messages are not modified. Items are applied from the
 // highest anchor down so an insertion never shifts an anchor still to come.
-func ApplyThinkingLedger(
+func ApplyLedger(
 	messages []llmprotocol.Message,
-	binding ThinkingBinding,
-	ledger ThinkingLedger,
+	binding Binding,
+	ledger Ledger,
 ) ([]llmprotocol.Message, error) {
 	result := append([]llmprotocol.Message(nil), messages...)
 	for position := len(ledger.Entries) - 1; position >= 0; position-- {
@@ -98,7 +98,7 @@ func ApplyThinkingLedger(
 			return nil, fmt.Errorf("thinking ledger level %q is not in the binding", entry.Level)
 		}
 		var err error
-		result, err = applyThinkingEntry(result, index, entry.Placement, binding.Lever, level)
+		result, err = applyEntry(result, index, entry.Placement, binding.Lever, level)
 		if err != nil {
 			return nil, err
 		}
@@ -106,18 +106,18 @@ func ApplyThinkingLedger(
 	return result, nil
 }
 
-func applyThinkingEntry(
+func applyEntry(
 	messages []llmprotocol.Message,
 	index int,
-	placement ThinkingPlacement,
-	lever ThinkingLever,
-	level ThinkingLevel,
+	placement Placement,
+	lever Lever,
+	level Level,
 ) ([]llmprotocol.Message, error) {
 	if !placementFitsLever(lever, placement) {
 		return nil, fmt.Errorf("placement %q does not fit lever %q", placement, lever)
 	}
 	switch placement {
-	case ThinkingPlaceAppendTailUserText:
+	case PlaceAppendTailUserText:
 		anchored := messages[index]
 		anchored.Content = append(
 			append([]llmprotocol.Content(nil), anchored.Content...),
@@ -125,21 +125,21 @@ func applyThinkingEntry(
 		)
 		messages[index] = anchored
 		return messages, nil
-	case ThinkingPlaceUserAfterToolRun:
+	case PlaceUserAfterToolRun:
 		return insertMessage(messages, index+1, llmprotocol.Message{
 			Role:    llmprotocol.RoleUser,
 			Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: level.Suffix}},
 		}), nil
-	case ThinkingPlaceSystemBeforeTurn:
+	case PlaceSystemBeforeTurn:
 		return insertMessage(messages, index, effortMessage(level)), nil
-	case ThinkingPlaceSystemAfterToolRun:
+	case PlaceSystemAfterToolRun:
 		return insertMessage(messages, index+1, effortMessage(level)), nil
 	default:
 		return nil, fmt.Errorf("unknown thinking placement %q", placement)
 	}
 }
 
-func effortMessage(level ThinkingLevel) llmprotocol.Message {
+func effortMessage(level Level) llmprotocol.Message {
 	return llmprotocol.Message{
 		Role:          llmprotocol.RoleSystem,
 		Configuration: &llmprotocol.ConfigurationUpdate{ReasoningEffort: level.Effort},

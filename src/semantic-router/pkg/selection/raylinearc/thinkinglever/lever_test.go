@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package raylinearc
+package thinkinglever
 
 import (
 	"bytes"
@@ -30,33 +30,33 @@ const (
 	steerUp   = "Until the next steering instruction, reason more thoroughly."
 )
 
-func suffixBinding(emit ThinkingEmitMode, neutral string) ThinkingBinding {
-	binding := ThinkingBinding{
-		Lever:      ThinkingLeverSteeringSuffix,
+func suffixBinding(emit EmitMode, neutral string) Binding {
+	binding := Binding{
+		Lever:      LeverSteeringSuffix,
 		Emit:       emit,
 		Neutral:    neutral,
-		Placements: []ThinkingPlacement{ThinkingPlaceAppendTailUserText, ThinkingPlaceUserAfterToolRun},
-		Levels: []ThinkingLevel{
+		Placements: []Placement{PlaceAppendTailUserText, PlaceUserAfterToolRun},
+		Levels: []Level{
 			{Name: "none", Rank: 0},
 			{Name: "down", Rank: -1, Suffix: steerDown},
 			{Name: "up", Rank: 1, Suffix: steerUp},
 		},
 	}
 	if neutral == "neutral" {
-		binding.Levels = append(binding.Levels, ThinkingLevel{
+		binding.Levels = append(binding.Levels, Level{
 			Name: "neutral", Rank: 0, Suffix: "Until the next steering instruction, use your normal judgement.",
 		})
 	}
 	return binding
 }
 
-func effortBinding() ThinkingBinding {
-	return ThinkingBinding{
-		Lever:      ThinkingLeverPerTurnEffort,
-		Emit:       ThinkingEmitEveryTurn,
+func effortBinding() Binding {
+	return Binding{
+		Lever:      LeverPerTurnEffort,
+		Emit:       EmitEveryTurn,
 		Neutral:    "base",
-		Placements: []ThinkingPlacement{ThinkingPlaceSystemBeforeTurn, ThinkingPlaceSystemAfterToolRun},
-		Levels: []ThinkingLevel{
+		Placements: []Placement{PlaceSystemBeforeTurn, PlaceSystemAfterToolRun},
+		Levels: []Level{
 			{Name: "low", Rank: -1, Effort: "low"},
 			{Name: "base", Rank: 0, Effort: "high"},
 			{Name: "max", Rank: 1, Effort: "max"},
@@ -87,29 +87,29 @@ func toolResult(id string) llmprotocol.Message {
 // and commit the staged ledger only for a turn that "succeeded".
 type episode struct {
 	t       *testing.T
-	binding ThinkingBinding
-	ledger  *ThinkingLedger
+	binding Binding
+	ledger  *Ledger
 	turn    uint64
 	spacing uint64
 }
 
-func (e *episode) serve(messages []llmprotocol.Message, level string) (ThinkingPlan, []llmprotocol.Message) {
+func (e *episode) serve(messages []llmprotocol.Message, level string) (Plan, []llmprotocol.Message) {
 	e.t.Helper()
-	plan, err := PlanThinkingTurn(ThinkingTurn{
-		Binding: e.binding, Ledger: e.ledger, Messages: ThinkingMessages(messages),
+	plan, err := PlanTurn(Turn{
+		Binding: e.binding, Ledger: e.ledger, Messages: Messages(messages),
 		TurnIndex: e.turn, Requested: level, MinTurnsBetweenChanges: e.spacing,
 	})
 	if err != nil {
 		e.t.Fatalf("plan turn %d: %v", e.turn, err)
 	}
-	provider, err := ApplyThinkingLedger(messages, e.binding, plan.Next)
+	provider, err := ApplyLedger(messages, e.binding, plan.Next)
 	if err != nil {
 		e.t.Fatalf("apply turn %d: %v", e.turn, err)
 	}
 	return plan, provider
 }
 
-func (e *episode) commit(plan ThinkingPlan) {
+func (e *episode) commit(plan Plan) {
 	next := plan.Next
 	e.ledger = &next
 	e.turn++
@@ -158,31 +158,31 @@ func TestEffortControlDigestsMatchTheExportContract(t *testing.T) {
 	}
 	binding := effortBinding()
 	for effort, digest := range want {
-		if got := binding.ControlSHA256(ThinkingLevel{Name: effort, Effort: effort}); got != digest {
+		if got := binding.ControlSHA256(Level{Name: effort, Effort: effort}); got != digest {
 			t.Fatalf("control digest for %s = %s, want %s", effort, got, digest)
 		}
 	}
 }
 
 func TestThinkingBindingValidation(t *testing.T) {
-	valid := suffixBinding(ThinkingEmitOnChange, "")
+	valid := suffixBinding(EmitOnChange, "")
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("a ladder without a neutral rung is valid: %v", err)
 	}
-	cases := map[string]func(*ThinkingBinding){
-		"placement for the other lever": func(b *ThinkingBinding) {
-			b.Placements = []ThinkingPlacement{ThinkingPlaceSystemBeforeTurn}
+	cases := map[string]func(*Binding){
+		"placement for the other lever": func(b *Binding) {
+			b.Placements = []Placement{PlaceSystemBeforeTurn}
 		},
-		"no placement":        func(b *ThinkingBinding) { b.Placements = nil },
-		"undeclared neutral":  func(b *ThinkingBinding) { b.Neutral = "missing" },
-		"duplicate level":     func(b *ThinkingBinding) { b.Levels = append(b.Levels, b.Levels[1]) },
-		"blank suffix":        func(b *ThinkingBinding) { b.Levels[1].Suffix = "  " },
-		"effort on a suffix":  func(b *ThinkingBinding) { b.Levels[1].Effort = "low" },
-		"single level ladder": func(b *ThinkingBinding) { b.Levels = b.Levels[:1] },
+		"no placement":        func(b *Binding) { b.Placements = nil },
+		"undeclared neutral":  func(b *Binding) { b.Neutral = "missing" },
+		"duplicate level":     func(b *Binding) { b.Levels = append(b.Levels, b.Levels[1]) },
+		"blank suffix":        func(b *Binding) { b.Levels[1].Suffix = "  " },
+		"effort on a suffix":  func(b *Binding) { b.Levels[1].Effort = "low" },
+		"single level ladder": func(b *Binding) { b.Levels = b.Levels[:1] },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
-			binding := suffixBinding(ThinkingEmitOnChange, "")
+			binding := suffixBinding(EmitOnChange, "")
 			mutate(&binding)
 			if binding.Validate() == nil {
 				t.Fatal("binding validated")
@@ -197,10 +197,10 @@ func TestThinkingBindingValidation(t *testing.T) {
 }
 
 func TestSuffixAppendsToUserTailAndReplaysAsAnExtension(t *testing.T) {
-	e := &episode{t: t, binding: suffixBinding(ThinkingEmitOnChange, "")}
+	e := &episode{t: t, binding: suffixBinding(EmitOnChange, "")}
 	turn0 := []llmprotocol.Message{text(llmprotocol.RoleUser, "fix the bug")}
 	plan, provider0 := e.serve(turn0, "down")
-	if !plan.Emitted || plan.Placement != ThinkingPlaceAppendTailUserText || plan.LevelInForce != "down" {
+	if !plan.Emitted || plan.Placement != PlaceAppendTailUserText || plan.LevelInForce != "down" {
 		t.Fatalf("turn 0 plan = %+v", plan)
 	}
 	if got := provider0[0].Content[1].Text; got != steerDown {
@@ -220,10 +220,10 @@ func TestSuffixAppendsToUserTailAndReplaysAsAnExtension(t *testing.T) {
 }
 
 func TestSuffixAfterToolRunInsertsAUserMessage(t *testing.T) {
-	e := &episode{t: t, binding: suffixBinding(ThinkingEmitOnChange, "")}
+	e := &episode{t: t, binding: suffixBinding(EmitOnChange, "")}
 	messages := []llmprotocol.Message{text(llmprotocol.RoleUser, "go"), toolCall("c1"), toolResult("c1")}
 	plan, provider := e.serve(messages, "up")
-	if plan.Placement != ThinkingPlaceUserAfterToolRun || len(provider) != 4 {
+	if plan.Placement != PlaceUserAfterToolRun || len(provider) != 4 {
 		t.Fatalf("plan = %+v, provider messages = %d", plan, len(provider))
 	}
 	if provider[3].Role != llmprotocol.RoleUser || provider[3].Content[0].Text != steerUp {
@@ -235,7 +235,7 @@ func TestPerTurnEffortStatesTheLevelEveryTurn(t *testing.T) {
 	e := &episode{t: t, binding: effortBinding()}
 	turn0 := []llmprotocol.Message{text(llmprotocol.RoleUser, "plan it")}
 	plan, provider0 := e.serve(turn0, "max")
-	if plan.Placement != ThinkingPlaceSystemBeforeTurn || provider0[0].Configuration == nil ||
+	if plan.Placement != PlaceSystemBeforeTurn || provider0[0].Configuration == nil ||
 		provider0[0].Configuration.ReasoningEffort != "max" {
 		t.Fatalf("turn 0 plan = %+v, first message = %+v", plan, provider0[0])
 	}
@@ -243,7 +243,7 @@ func TestPerTurnEffortStatesTheLevelEveryTurn(t *testing.T) {
 
 	turn1 := append(append([]llmprotocol.Message(nil), turn0...), toolCall("c1"), toolResult("c1"))
 	plan, provider1 := e.serve(turn1, "max")
-	if !plan.Emitted || plan.Placement != ThinkingPlaceSystemAfterToolRun {
+	if !plan.Emitted || plan.Placement != PlaceSystemAfterToolRun {
 		t.Fatalf("turn 1 plan = %+v", plan)
 	}
 	requireExtension(t, provider0, provider1)
@@ -262,7 +262,7 @@ func TestPerTurnEffortStatesTheLevelEveryTurn(t *testing.T) {
 }
 
 func TestRetryOfACommittedTurnReusesItsItem(t *testing.T) {
-	e := &episode{t: t, binding: suffixBinding(ThinkingEmitOnChange, "")}
+	e := &episode{t: t, binding: suffixBinding(EmitOnChange, "")}
 	messages := []llmprotocol.Message{text(llmprotocol.RoleUser, "go")}
 	plan, first := e.serve(messages, "down")
 	e.commit(plan)
@@ -277,7 +277,7 @@ func TestRetryOfACommittedTurnReusesItsItem(t *testing.T) {
 }
 
 func TestHistoryNoiseDoesNotResetButARewriteDoes(t *testing.T) {
-	e := &episode{t: t, binding: suffixBinding(ThinkingEmitOnChange, "")}
+	e := &episode{t: t, binding: suffixBinding(EmitOnChange, "")}
 	turn0 := []llmprotocol.Message{text(llmprotocol.RoleUser, "go")}
 	plan, _ := e.serve(turn0, "down")
 	e.commit(plan)
@@ -294,7 +294,7 @@ func TestHistoryNoiseDoesNotResetButARewriteDoes(t *testing.T) {
 
 	compacted := []llmprotocol.Message{text(llmprotocol.RoleUser, "summary of earlier work"), text(llmprotocol.RoleUser, "continue")}
 	plan, provider := e.serve(compacted, "down")
-	if plan.ResetReason != ThinkingResetTranscriptRewrite || plan.Next.Epoch != 1 {
+	if plan.ResetReason != ResetTranscriptRewrite || plan.Next.Epoch != 1 {
 		t.Fatalf("rewrite plan = %+v", plan)
 	}
 	// The level in force is re-asserted at the new tail.
@@ -304,14 +304,14 @@ func TestHistoryNoiseDoesNotResetButARewriteDoes(t *testing.T) {
 }
 
 func TestBindingChangeResetsTheLedger(t *testing.T) {
-	e := &episode{t: t, binding: suffixBinding(ThinkingEmitOnChange, "")}
+	e := &episode{t: t, binding: suffixBinding(EmitOnChange, "")}
 	messages := []llmprotocol.Message{text(llmprotocol.RoleUser, "go")}
 	plan, _ := e.serve(messages, "down")
 	e.commit(plan)
 	e.binding.Levels[1].Suffix = "A different instruction."
 	next := append(append([]llmprotocol.Message(nil), messages...), text(llmprotocol.RoleAssistant, "a"), text(llmprotocol.RoleUser, "b"))
 	plan, _ = e.serve(next, "down")
-	if plan.ResetReason != ThinkingResetBindingChanged {
+	if plan.ResetReason != ResetBindingChanged {
 		t.Fatalf("plan = %+v", plan)
 	}
 }
@@ -321,17 +321,17 @@ func TestReturnToNeutralNeedsANeutralRung(t *testing.T) {
 		return append(append([]llmprotocol.Message(nil), messages...), text(llmprotocol.RoleAssistant, "a"), text(llmprotocol.RoleUser, "b"))
 	}
 	t.Run("without one the instruction stays in force", func(t *testing.T) {
-		e := &episode{t: t, binding: suffixBinding(ThinkingEmitOnChange, "")}
+		e := &episode{t: t, binding: suffixBinding(EmitOnChange, "")}
 		messages := []llmprotocol.Message{text(llmprotocol.RoleUser, "go")}
 		plan, _ := e.serve(messages, "down")
 		e.commit(plan)
 		plan, _ = e.serve(grow(messages), "none")
-		if plan.Emitted || plan.Skipped != ThinkingSkipNeutralInexpressible || plan.LevelInForce != "down" {
+		if plan.Emitted || plan.Skipped != SkipNeutralInexpressible || plan.LevelInForce != "down" {
 			t.Fatalf("plan = %+v", plan)
 		}
 	})
 	t.Run("with one it is written", func(t *testing.T) {
-		e := &episode{t: t, binding: suffixBinding(ThinkingEmitOnChange, "neutral")}
+		e := &episode{t: t, binding: suffixBinding(EmitOnChange, "neutral")}
 		messages := []llmprotocol.Message{text(llmprotocol.RoleUser, "go")}
 		plan, _ := e.serve(messages, "down")
 		e.commit(plan)
@@ -343,26 +343,26 @@ func TestReturnToNeutralNeedsANeutralRung(t *testing.T) {
 }
 
 func TestChangeSpacingHoldsTheLevel(t *testing.T) {
-	e := &episode{t: t, binding: suffixBinding(ThinkingEmitOnChange, ""), spacing: 3}
+	e := &episode{t: t, binding: suffixBinding(EmitOnChange, ""), spacing: 3}
 	messages := []llmprotocol.Message{text(llmprotocol.RoleUser, "go")}
 	plan, _ := e.serve(messages, "down")
 	e.commit(plan)
 	messages = append(messages, text(llmprotocol.RoleAssistant, "a"), text(llmprotocol.RoleUser, "b"))
 	plan, _ = e.serve(messages, "up")
-	if plan.Emitted || plan.Skipped != ThinkingSkipChangeTooSoon || plan.LevelInForce != "down" {
+	if plan.Emitted || plan.Skipped != SkipChangeTooSoon || plan.LevelInForce != "down" {
 		t.Fatalf("plan = %+v", plan)
 	}
 }
 
 func TestUnsteerableTailsWriteNothing(t *testing.T) {
-	e := &episode{t: t, binding: suffixBinding(ThinkingEmitOnChange, "")}
+	e := &episode{t: t, binding: suffixBinding(EmitOnChange, "")}
 	plan, provider := e.serve([]llmprotocol.Message{text(llmprotocol.RoleUser, "go"), text(llmprotocol.RoleAssistant, "prefill")}, "up")
-	if plan.Emitted || plan.Skipped != ThinkingSkipTailNotSteerable || len(provider) != 2 {
+	if plan.Emitted || plan.Skipped != SkipTailNotSteerable || len(provider) != 2 {
 		t.Fatalf("plan = %+v", plan)
 	}
-	e.binding.Placements = []ThinkingPlacement{ThinkingPlaceAppendTailUserText}
+	e.binding.Placements = []Placement{PlaceAppendTailUserText}
 	plan, _ = e.serve([]llmprotocol.Message{text(llmprotocol.RoleUser, "go"), toolCall("c1"), toolResult("c1")}, "up")
-	if plan.Emitted || plan.Skipped != ThinkingSkipPlacementRefused {
+	if plan.Emitted || plan.Skipped != SkipPlacementRefused {
 		t.Fatalf("plan = %+v", plan)
 	}
 }
@@ -370,10 +370,10 @@ func TestUnsteerableTailsWriteNothing(t *testing.T) {
 func TestLedgerOverflowStartsANewEpoch(t *testing.T) {
 	binding := effortBinding()
 	messages := []llmprotocol.Message{text(llmprotocol.RoleUser, "q0")}
-	ledger := &ThinkingLedger{BindingSHA256: binding.SHA256(), LevelInForce: "base"}
-	for turn := 0; turn < maxThinkingLedgerLength; turn++ {
-		plan, err := PlanThinkingTurn(ThinkingTurn{
-			Binding: binding, Ledger: ledger, Messages: ThinkingMessages(messages),
+	ledger := &Ledger{BindingSHA256: binding.SHA256(), LevelInForce: "base"}
+	for turn := 0; turn < MaxLedgerLength; turn++ {
+		plan, err := PlanTurn(Turn{
+			Binding: binding, Ledger: ledger, Messages: Messages(messages),
 			TurnIndex: uint64(turn), Requested: "max",
 		})
 		if err != nil {
@@ -383,14 +383,14 @@ func TestLedgerOverflowStartsANewEpoch(t *testing.T) {
 		ledger = &next
 		messages = append(messages, text(llmprotocol.RoleAssistant, "a"), text(llmprotocol.RoleUser, "q"))
 	}
-	plan, err := PlanThinkingTurn(ThinkingTurn{
-		Binding: binding, Ledger: ledger, Messages: ThinkingMessages(messages),
-		TurnIndex: maxThinkingLedgerLength, Requested: "max",
+	plan, err := PlanTurn(Turn{
+		Binding: binding, Ledger: ledger, Messages: Messages(messages),
+		TurnIndex: MaxLedgerLength, Requested: "max",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.ResetReason != ThinkingResetOverflow || len(plan.Next.Entries) != 1 || plan.Next.Epoch != 1 {
+	if plan.ResetReason != ResetOverflow || len(plan.Next.Entries) != 1 || plan.Next.Epoch != 1 {
 		t.Fatalf("overflow plan: reset %q entries %d epoch %d", plan.ResetReason, len(plan.Next.Entries), plan.Next.Epoch)
 	}
 }

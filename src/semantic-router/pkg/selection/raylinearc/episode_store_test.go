@@ -24,6 +24,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
 )
 
 func TestMemoryEpisodeStoreSerializesAndCommits(t *testing.T) {
@@ -293,17 +295,17 @@ func requireARCNoError(t *testing.T, err error) {
 	}
 }
 
-func fullThinkingLedger() *ThinkingLedger {
-	ledger := &ThinkingLedger{
+func fullThinkingLedger() *thinkinglever.Ledger {
+	ledger := &thinkinglever.Ledger{
 		BindingSHA256: strings.Repeat("a", 64),
-		LevelInForce:  strings.Repeat("l", maxThinkingLevelName),
+		LevelInForce:  strings.Repeat("l", thinkinglever.MaxLevelName),
 	}
-	for index := 0; index < maxThinkingLedgerLength; index++ {
-		ledger.Entries = append(ledger.Entries, ThinkingLedgerEntry{
+	for index := 0; index < thinkinglever.MaxLedgerLength; index++ {
+		ledger.Entries = append(ledger.Entries, thinkinglever.LedgerEntry{
 			Index:     uint32(1<<31 + index),
-			Placement: ThinkingPlaceSystemAfterToolRun,
-			Digest:    strings.Repeat("f", thinkingDigestBytes*2),
-			Level:     strings.Repeat("l", maxThinkingLevelName),
+			Placement: thinkinglever.PlaceSystemAfterToolRun,
+			Digest:    strings.Repeat("f", thinkinglever.DigestBytes*2),
+			Level:     strings.Repeat("l", thinkinglever.MaxLevelName),
 			Turn:      1<<63 + uint64(index),
 		})
 	}

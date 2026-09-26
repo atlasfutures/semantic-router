@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"math"
 	"time"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
 )
 
 const (
@@ -43,7 +45,7 @@ type EpisodeState struct {
 	EncoderVisitedOwners []string
 	// Thinking is the episode's thinking-lever ledger, nil until the first
 	// turn a lever governs.
-	Thinking *ThinkingLedger
+	Thinking *thinkinglever.Ledger
 }
 
 func NewEpisodeState(workerCount int) (*EpisodeState, error) {
@@ -253,7 +255,7 @@ func validateEpisodeState(state *EpisodeState, workerCount int) error {
 	); err != nil {
 		return err
 	}
-	if err := validateThinkingLedger(state.Thinking); err != nil {
+	if err := thinkinglever.ValidateLedger(state.Thinking); err != nil {
 		return err
 	}
 	return validateWarmth(state.Warmth)
