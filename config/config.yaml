@@ -1698,6 +1698,12 @@ routing:
             # max_ledger_entries caps the episode's lever ledger; at the cap
             # the level in force is held. Zero selects the hard limit, 384.
             max_ledger_entries: 0
+            # eligibility_header, when set, steers only requests carrying it
+            # with the value "1", so a test conversation opts in and every
+            # other conversation on a bound worker is untouched. It never
+            # picks the level. Envoy must pass it to the router and keep it
+            # from the provider. Empty steers every conversation.
+            eligibility_header: ""
             # workers binds a lever to worker IDs. A worker without a binding
             # is never steered.
             workers:
@@ -1724,6 +1730,12 @@ routing:
           # once. wire: effort (reasoning.effort only), budget
           # (reasoning.max_tokens only, a simulated level such as a 4096-token
           # low) or provider_default (no reasoning control, uncapped).
+          # upstream_audit checks, per worker, that each provider-bound body
+          # extends the last one this episode sent it, and logs
+          # upstream_extends_previous with message counts and a digest --
+          # never content. Off: turning it on writes the v3 episode record.
+          upstream_audit:
+            enabled: false
           worker_thinking:
             qwen3-32b:
               level: high

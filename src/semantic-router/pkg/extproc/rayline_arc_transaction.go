@@ -49,6 +49,8 @@ type raylineARCEpisodeTransaction struct {
 	// thinkingLedger is the lever ledger this turn staged, committed only
 	// with the turn; nil leaves the stored ledger as it was.
 	thinkingLedger *thinkinglever.Ledger
+	// upstreamPrefix is this turn's body shape, committed only with the turn.
+	upstreamPrefix *raylinearc.UpstreamPrefix
 	finalizeOnce   sync.Once
 	finalizeErr    error
 	renewCancel    context.CancelFunc
@@ -131,6 +133,14 @@ func (transaction *raylineARCEpisodeTransaction) stageThinkingLedger(ledger thin
 	transaction.thinkingLedger = ledger.Clone()
 }
 
+// stageUpstreamPrefix records the shape of this turn's provider-bound body.
+func (transaction *raylineARCEpisodeTransaction) stageUpstreamPrefix(prefix raylinearc.UpstreamPrefix) {
+	if transaction == nil {
+		return
+	}
+	transaction.upstreamPrefix = &prefix
+}
+
 // committedThinking returns the ledger the prepared state carries, and the
 // committed turn count the planner measures spacing against.
 func (transaction *raylineARCEpisodeTransaction) committedThinking() (*thinkinglever.Ledger, uint64, bool) {
@@ -173,6 +183,9 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 		)
 		if transaction.thinkingLedger != nil {
 			nextState.Thinking = transaction.thinkingLedger.Clone()
+		}
+		if transaction.upstreamPrefix != nil {
+			nextState.Upstream = raylinearc.WithUpstreamPrefix(nextState.Upstream, *transaction.upstreamPrefix)
 		}
 		if err := nextState.Commit(
 			transaction.selectedArm,
@@ -366,6 +379,7 @@ func cloneARCState(
 		EncoderOwner:         state.EncoderOwner,
 		EncoderVisitedOwners: append([]string(nil), state.EncoderVisitedOwners...),
 		Thinking:             state.Thinking.Clone(),
+		Upstream:             append([]raylinearc.UpstreamPrefix(nil), state.Upstream...),
 	}
 	if state.PreviousArm != nil {
 		value := *state.PreviousArm

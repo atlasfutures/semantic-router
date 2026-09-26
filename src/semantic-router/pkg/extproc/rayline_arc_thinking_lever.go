@@ -17,6 +17,8 @@ limitations under the License.
 package extproc
 
 import (
+	"strings"
+
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
@@ -27,6 +29,7 @@ import (
 const (
 	thinkingSkipWorkerUnbound = "worker_unbound"
 	thinkingSkipNoEpisode     = "no_episode"
+	thinkingSkipNotEligible   = "not_eligible"
 )
 
 // raylineARCThinkingTrace is what one turn's lever did. It carries level
@@ -74,6 +77,12 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 	trace := &raylineARCThinkingTrace{Source: lever.Source, LevelRequested: lever.Level, Propensity: 1}
 	ctx.RaylineARCThinking = trace
 	defer recordThinkingLeverTurn(trace)
+	// An eligibility header opts a conversation in; without it the turn is
+	// served exactly as if the lever were off, ledger untouched.
+	if lever.EligibilityHeader != "" && strings.TrimSpace(ctx.Headers[lever.EligibilityHeader]) != "1" {
+		trace.Skipped = thinkingSkipNotEligible
+		return false, nil
+	}
 	bindingConfig, bound := lever.Workers[ctx.RaylineARCDispatch.ID]
 	if !bound {
 		trace.Skipped = thinkingSkipWorkerUnbound

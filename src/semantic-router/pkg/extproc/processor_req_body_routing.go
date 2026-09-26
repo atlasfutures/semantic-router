@@ -256,6 +256,7 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 		metrics.RecordRequestError(dispatch.logicalModel, "provider_adapter_error")
 		return nil, status.Errorf(codes.Internal, "adapt provider request: %v", err)
 	}
+	r.auditRaylineARCUpstream(body, ctx)
 	common := response.GetRequestBody().GetResponse()
 	if common == nil {
 		return nil, status.Error(codes.Internal, "provider dispatch response is unavailable")

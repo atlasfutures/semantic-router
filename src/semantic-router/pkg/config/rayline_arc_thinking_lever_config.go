@@ -37,6 +37,12 @@ type RaylineARCThinkingLeverConfig struct {
 	// cap the level in force is held and nothing more is written; zero
 	// selects the hard limit.
 	MaxLedgerEntries int `yaml:"max_ledger_entries,omitempty"`
+	// EligibilityHeader, when set, limits steering to requests that carry
+	// this header with the value "1": a test episode opts in, and every other
+	// conversation on a bound worker is left exactly as it was. It never
+	// chooses the level. Envoy must admit it to the router and keep it from
+	// the provider.
+	EligibilityHeader string `yaml:"eligibility_header,omitempty"`
 	// Workers binds a lever to worker IDs. A worker without a binding is
 	// never steered, and its turns leave the ledger as it was.
 	Workers map[string]RaylineARCThinkingBindingConfig `yaml:"workers,omitempty"`

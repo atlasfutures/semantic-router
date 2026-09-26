@@ -46,6 +46,52 @@ type EpisodeState struct {
 	// Thinking is the episode's thinking-lever ledger, nil until the first
 	// turn a lever governs.
 	Thinking *thinkinglever.Ledger
+	// Upstream is, per worker, the shape of the last body this episode sent
+	// it, so the next turn can check the provider transcript only grew.
+	Upstream []UpstreamPrefix
+}
+
+// UpstreamPrefix identifies the messages of the last provider-bound body
+// sent to one worker: how many there were, and a truncated chained digest
+// of them. It carries no content.
+type UpstreamPrefix struct {
+	Worker   string
+	Messages int
+	Digest   string
+}
+
+// MaxUpstreamPrefixes bounds the per-worker records an episode keeps; the
+// least recently dispatched worker is dropped first.
+const MaxUpstreamPrefixes = 16
+
+// UpstreamPrefixFor returns the record for worker, if the episode has one.
+func (state *EpisodeState) UpstreamPrefixFor(worker string) (UpstreamPrefix, bool) {
+	if state == nil {
+		return UpstreamPrefix{}, false
+	}
+	for _, prefix := range state.Upstream {
+		if prefix.Worker == worker {
+			return prefix, true
+		}
+	}
+	return UpstreamPrefix{}, false
+}
+
+// WithUpstreamPrefix returns the records with prefix as the most recent,
+// replacing the worker's previous record and dropping the oldest beyond the
+// bound.
+func WithUpstreamPrefix(records []UpstreamPrefix, prefix UpstreamPrefix) []UpstreamPrefix {
+	next := make([]UpstreamPrefix, 0, len(records)+1)
+	for _, record := range records {
+		if record.Worker != prefix.Worker {
+			next = append(next, record)
+		}
+	}
+	next = append(next, prefix)
+	if len(next) > MaxUpstreamPrefixes {
+		next = next[len(next)-MaxUpstreamPrefixes:]
+	}
+	return next
 }
 
 func NewEpisodeState(workerCount int) (*EpisodeState, error) {
@@ -258,6 +304,9 @@ func validateEpisodeState(state *EpisodeState, workerCount int) error {
 	if err := thinkinglever.ValidateLedger(state.Thinking); err != nil {
 		return err
 	}
+	if err := validateUpstreamPrefixes(state.Upstream); err != nil {
+		return err
+	}
 	return validateWarmth(state.Warmth)
 }
 
@@ -403,4 +452,28 @@ func expectedCacheHitRatio(seconds *float64) float64 {
 		(cacheReturnColdSeconds - cacheReturnWarmSeconds)
 	return cacheReturnWarmHitRatio +
 		fraction*(cacheReturnColdHitRatio-cacheReturnWarmHitRatio)
+}
+
+func validateUpstreamPrefixes(records []UpstreamPrefix) error {
+	if len(records) > MaxUpstreamPrefixes {
+		return errors.New("upstream prefix count exceeds limit")
+	}
+	seen := make(map[string]bool, len(records))
+	for _, record := range records {
+		if record.Worker == "" || len(record.Worker) > 512 || seen[record.Worker] ||
+			record.Messages < 0 || len(record.Digest) != 32 || !lowerHex(record.Digest) {
+			return errors.New("upstream prefix is invalid")
+		}
+		seen[record.Worker] = true
+	}
+	return nil
+}
+
+func lowerHex(value string) bool {
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }

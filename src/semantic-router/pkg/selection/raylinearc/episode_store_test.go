@@ -384,3 +384,36 @@ func TestEpisodeStateWireGatesTheLedgerOnTheSchema(t *testing.T) {
 		})
 	}
 }
+
+func TestEpisodeStateWireCarriesUpstreamPrefixesUnderV3(t *testing.T) {
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	state, err := NewEpisodeState(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < MaxUpstreamPrefixes+2; index++ {
+		state.Upstream = WithUpstreamPrefix(state.Upstream, UpstreamPrefix{
+			Worker: strings.Repeat("w", 400) + string(rune('a'+index)), Messages: index, Digest: strings.Repeat("0", 32),
+		})
+	}
+	if len(state.Upstream) != MaxUpstreamPrefixes || state.Upstream[0].Messages != 2 {
+		t.Fatalf("records not bounded to the most recent: %d, oldest %d", len(state.Upstream), state.Upstream[0].Messages)
+	}
+	payload, err := marshalEpisodeState(state, 3, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"schema_version":"rayline.arc.episode-state.v3"`) {
+		t.Fatalf("upstream records written without v3: %.100s", payload)
+	}
+	decoded, _, err := unmarshalEpisodeState(payload, 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decoded.Upstream, state.Upstream) {
+		t.Fatal("upstream records did not round-trip")
+	}
+	if prefix, ok := decoded.UpstreamPrefixFor(state.Upstream[3].Worker); !ok || prefix.Messages != 5 {
+		t.Fatalf("lookup = %+v, %v", prefix, ok)
+	}
+}

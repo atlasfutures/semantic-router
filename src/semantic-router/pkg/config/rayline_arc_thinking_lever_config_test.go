@@ -178,3 +178,24 @@ func TestRaylineARCWorkerThinkingNeedsAThinkingModelRef(t *testing.T) {
 		}
 	}
 }
+
+func TestRaylineARCThinkingLeverEligibilityHeaderIsAFieldName(t *testing.T) {
+	for header, ok := range map[string]bool{
+		"x-rayline-thinking-test": true,
+		"X-Upper":                 false,
+		"has space":               false,
+	} {
+		lever := validThinkingLeverConfig()
+		lever.EligibilityHeader = header
+		err := validateThinkingLeverDecision(t, lever)
+		if ok != (err == nil) {
+			t.Fatalf("%q: error = %v", header, err)
+		}
+	}
+	decision := validRaylineARCDecision()
+	lever := validThinkingLeverConfig()
+	lever.EligibilityHeader = decision.Algorithm.RaylineARC.Episode.IDHeader
+	if validateThinkingLeverDecision(t, lever) == nil {
+		t.Fatal("the episode id header was accepted as the eligibility header")
+	}
+}

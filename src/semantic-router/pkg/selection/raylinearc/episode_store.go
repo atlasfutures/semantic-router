@@ -31,9 +31,10 @@ import (
 const (
 	episodeStateSchemaV1 = "rayline.arc.episode-state.v1"
 	episodeStateSchemaV2 = "rayline.arc.episode-state.v2"
-	// episodeStateSchema adds the thinking-lever ledger. It is written only
-	// for an episode that has one, so an episode no lever governs keeps its
-	// v2 bytes and an older router can still read it.
+	// episodeStateSchema adds the thinking-lever ledger and the upstream
+	// prefix records. It is written only for an episode that carries one of
+	// them, so an episode neither feature touched keeps its v2 bytes and an
+	// older router can still read it.
 	episodeStateSchema   = "rayline.arc.episode-state.v3"
 	maxFutureClockSkew   = 5 * time.Minute
 	episodeOwnerBytes    = 24
@@ -81,14 +82,21 @@ type EpisodeStoreReadiness interface {
 }
 
 type episodeStateWire struct {
-	SchemaVersion        string               `json:"schema_version"`
-	Version              uint64               `json:"version"`
-	PreviousArm          *int                 `json:"previous_arm"`
-	TurnIndex            uint64               `json:"turn_index"`
-	Warmth               []*episodeWarmthWire `json:"warmth"`
-	EncoderOwner         *string              `json:"encoder_owner,omitempty"`
-	EncoderVisitedOwners *[]string            `json:"encoder_visited_owners,omitempty"`
-	Thinking             *episodeThinkingWire `json:"thinking,omitempty"`
+	SchemaVersion        string                `json:"schema_version"`
+	Version              uint64                `json:"version"`
+	PreviousArm          *int                  `json:"previous_arm"`
+	TurnIndex            uint64                `json:"turn_index"`
+	Warmth               []*episodeWarmthWire  `json:"warmth"`
+	EncoderOwner         *string               `json:"encoder_owner,omitempty"`
+	EncoderVisitedOwners *[]string             `json:"encoder_visited_owners,omitempty"`
+	Thinking             *episodeThinkingWire  `json:"thinking,omitempty"`
+	Upstream             []episodeUpstreamWire `json:"upstream,omitempty"`
+}
+
+type episodeUpstreamWire struct {
+	Worker   string `json:"w"`
+	Messages int    `json:"n"`
+	Digest   string `json:"d"`
 }
 
 type episodeThinkingWire struct {
@@ -152,6 +160,7 @@ func cloneEpisodeState(state *EpisodeState) *EpisodeState {
 		EncoderOwner:         state.EncoderOwner,
 		EncoderVisitedOwners: append([]string(nil), state.EncoderVisitedOwners...),
 		Thinking:             state.Thinking.Clone(),
+		Upstream:             append([]UpstreamPrefix(nil), state.Upstream...),
 	}
 	for index, warmth := range state.Warmth {
 		if warmth == nil {
@@ -189,6 +198,14 @@ func marshalEpisodeState(
 	if state.Thinking != nil {
 		wire.SchemaVersion = episodeStateSchema
 		wire.Thinking = thinkingLedgerToWire(state.Thinking)
+	}
+	if len(state.Upstream) > 0 {
+		wire.SchemaVersion = episodeStateSchema
+		for _, prefix := range state.Upstream {
+			wire.Upstream = append(wire.Upstream, episodeUpstreamWire{
+				Worker: prefix.Worker, Messages: prefix.Messages, Digest: prefix.Digest,
+			})
+		}
 	}
 	owner := state.EncoderOwner
 	visited := append([]string{}, state.EncoderVisitedOwners...)
@@ -246,7 +263,7 @@ func unmarshalEpisodeState(
 func decodeEpisodeStateAffinity(
 	wire episodeStateWire,
 ) (string, []string, error) {
-	if (wire.Thinking != nil) != (wire.SchemaVersion == episodeStateSchema) {
+	if (wire.Thinking != nil || len(wire.Upstream) > 0) != (wire.SchemaVersion == episodeStateSchema) {
 		return "", nil, errors.New("ARC episode state contract mismatch")
 	}
 	switch wire.SchemaVersion {
@@ -280,6 +297,11 @@ func episodeStateFromWire(
 		EncoderOwner:         owner,
 		EncoderVisitedOwners: visited,
 		Thinking:             thinkingLedgerFromWire(wire.Thinking),
+	}
+	for _, prefix := range wire.Upstream {
+		state.Upstream = append(state.Upstream, UpstreamPrefix{
+			Worker: prefix.Worker, Messages: prefix.Messages, Digest: prefix.Digest,
+		})
 	}
 	for index, warmth := range wire.Warmth {
 		if warmth == nil {

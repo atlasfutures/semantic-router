@@ -249,7 +249,16 @@ class RaylineARCThinkingLeverConfig(BaseModel):
     min_spacing_turns: int = Field(default=0, ge=0)
     # Mirrors thinkinglever.MaxLedgerLength in the Go loader.
     max_ledger_entries: int = Field(default=0, ge=0, le=384)
+    eligibility_header: str = ""
     workers: dict[str, RaylineARCThinkingBindingConfig] = Field(default_factory=dict)
+
+
+class RaylineARCUpstreamAuditConfig(BaseModel):
+    """Per-worker upstream extension check. Off by default."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
 
 
 class RaylineARCWorkerThinkingConfig(BaseModel):
@@ -284,3 +293,4 @@ class RaylineARCAlgorithmConfig(BaseModel):
     routes_api: RaylineARCRoutesAPIConfig | None = None
     thinking_lever: RaylineARCThinkingLeverConfig | None = None
     worker_thinking: dict[str, RaylineARCWorkerThinkingConfig] = Field(default_factory=dict)
+    upstream_audit: RaylineARCUpstreamAuditConfig | None = None

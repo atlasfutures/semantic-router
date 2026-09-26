@@ -78,14 +78,31 @@ func newLeverEpisode(t *testing.T, enabled bool) *leverEpisode {
 // provider-bound messages and the request context.
 func (e *leverEpisode) turn(worker string, messages []llmprotocol.Message, commit bool) ([]llmprotocol.Message, *RequestContext) {
 	e.t.Helper()
+	return e.turnWithHeaders(worker, messages, commit, nil)
+}
+
+func leverMessages() []llmprotocol.Message {
+	return []llmprotocol.Message{leverText(llmprotocol.RoleUser, "go")}
+}
+
+func (e *leverEpisode) turnWithHeaders(
+	worker string,
+	messages []llmprotocol.Message,
+	commit bool,
+	headers map[string]string,
+) ([]llmprotocol.Message, *RequestContext) {
+	e.t.Helper()
 	lease, state, err := e.store.Prepare(context.Background(), e.episode, 2)
 	if err != nil {
 		e.t.Fatal(err)
 	}
 	transaction := newRaylineARCEpisodeTransaction(e.store, lease, state, e.episode, time.Minute, nil)
 	transaction.markSelection(0, 10)
+	if headers == nil {
+		headers = map[string]string{}
+	}
 	ctx := &RequestContext{
-		Headers:               map[string]string{},
+		Headers:               headers,
 		VSRSelectedDecision:   e.decision,
 		RaylineARCDispatch:    &raylinearc.WorkerManifest{ID: worker},
 		RaylineARCTransaction: transaction,
