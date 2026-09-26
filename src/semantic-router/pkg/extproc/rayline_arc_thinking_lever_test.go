@@ -50,8 +50,8 @@ func thinkingLeverDecision(enabled bool) *config.Decision {
 					Emit:       "on_change",
 					Placements: []string{"append_tail_user_text", "insert_user_after_tool_run"},
 					Levels: []config.RaylineARCThinkingLevelConfig{
-						{Level: "none", Rank: 0},
-						{Level: "down", Rank: -1, Suffix: leverDown},
+						{Level: "none", Rank: 0, ControlSHA256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+						{Level: "down", Rank: -1, Suffix: leverDown, ControlSHA256: "99fca31cf4f665d12f6695cb8c46311be0cc6e4a34829347d4cc9298b24cccf6"},
 					},
 				}},
 			}},

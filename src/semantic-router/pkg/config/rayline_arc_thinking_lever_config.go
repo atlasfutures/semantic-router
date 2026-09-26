@@ -33,6 +33,10 @@ type RaylineARCThinkingLeverConfig struct {
 	// MinSpacingTurns is the least number of committed turns between two
 	// changes of level on an on-change binding.
 	MinSpacingTurns uint64 `yaml:"min_spacing_turns,omitempty"`
+	// MaxLedgerEntries caps the episode ledger below its hard limit. At the
+	// cap the level in force is held and nothing more is written; zero
+	// selects the hard limit.
+	MaxLedgerEntries int `yaml:"max_ledger_entries,omitempty"`
 	// Workers binds a lever to worker IDs. A worker without a binding is
 	// never steered, and its turns leave the ledger as it was.
 	Workers map[string]RaylineARCThinkingBindingConfig `yaml:"workers,omitempty"`
@@ -40,6 +44,9 @@ type RaylineARCThinkingLeverConfig struct {
 
 // RaylineARCThinkingBindingConfig is one worker's compiled lever binding.
 type RaylineARCThinkingBindingConfig struct {
+	// ExportSHA256 names the registry export this binding was compiled
+	// from, so a training row can be traced to its evidence.
+	ExportSHA256 string                          `yaml:"export_sha256,omitempty"`
 	Admission    string                          `yaml:"admission"`
 	Lever        string                          `yaml:"lever"`
 	Emit         string                          `yaml:"emit"`
@@ -53,6 +60,10 @@ type RaylineARCThinkingLevelConfig struct {
 	Rank   int    `yaml:"rank"`
 	Suffix string `yaml:"suffix,omitempty"`
 	Effort string `yaml:"effort,omitempty"`
+	// ControlSHA256 is the registry's digest of this level's bytes. The
+	// loader recomputes it and refuses a mismatch, so the router and the
+	// trained artifact cannot disagree about which action a level is.
+	ControlSHA256 string `yaml:"control_sha256"`
 }
 
 // Binding converts the configured binding to the planner's form.
@@ -97,6 +108,9 @@ func validateRaylineARCThinkingLeverConfig(cfg *RaylineARCThinkingLeverConfig) e
 	if len(cfg.Workers) == 0 {
 		return fmt.Errorf("at least one worker binding is required")
 	}
+	if cfg.MaxLedgerEntries < 0 || cfg.MaxLedgerEntries > thinkinglever.MaxLedgerLength {
+		return fmt.Errorf("max_ledger_entries must be between 0 and %d", thinkinglever.MaxLedgerLength)
+	}
 	for worker, bindingConfig := range cfg.Workers {
 		if err := validateRaylineARCThinkingBinding(bindingConfig, cfg.Level, admitExperimental); err != nil {
 			return fmt.Errorf("workers[%q]: %w", worker, err)
@@ -125,6 +139,11 @@ func validateRaylineARCThinkingBinding(
 	}
 	if _, ok := binding.Level(level); !ok {
 		return fmt.Errorf("level %q is not in the binding", level)
+	}
+	for index, levelConfig := range cfg.Levels {
+		if want := binding.ControlSHA256(binding.Levels[index]); levelConfig.ControlSHA256 != want {
+			return fmt.Errorf("level %q control_sha256 does not match its bytes", levelConfig.Level)
+		}
 	}
 	return nil
 }

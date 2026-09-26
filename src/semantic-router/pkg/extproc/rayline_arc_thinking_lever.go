@@ -34,6 +34,8 @@ type raylineARCThinkingTrace struct {
 	Lever          string
 	Source         string
 	Admission      string
+	ExportSHA256   string
+	ControlInForce string
 	LevelRequested string
 	LevelInForce   string
 	Rank           int
@@ -82,6 +84,7 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 	}
 	binding := bindingConfig.Binding()
 	trace.Lever, trace.Admission = string(binding.Lever), bindingConfig.Admission
+	trace.ExportSHA256 = bindingConfig.ExportSHA256
 	plan, err := thinkinglever.PlanTurn(thinkinglever.Turn{
 		Binding:                binding,
 		Ledger:                 ledger,
@@ -89,11 +92,12 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 		TurnIndex:              turnIndex,
 		Requested:              lever.Level,
 		MinTurnsBetweenChanges: lever.MinSpacingTurns,
+		MaxEntries:             lever.MaxLedgerEntries,
 	})
 	if err != nil {
 		return false, err
 	}
-	messages, err := thinkinglever.ApplyLedger(request.Messages, binding, plan.Next)
+	messages, err := thinkinglever.ApplyLedger(request.Messages, binding.Lever, plan.Next)
 	if err != nil {
 		return false, err
 	}
@@ -101,7 +105,7 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 		ctx.RaylineARCTransaction.stageThinkingLedger(plan.Next)
 	}
 	fillThinkingTrace(trace, binding, plan)
-	if len(plan.Next.Entries) == 0 {
+	if len(messages) == len(request.Messages) && plan.Replayed == 0 && !plan.Emitted {
 		return false, nil
 	}
 	request.Messages = messages
@@ -109,7 +113,7 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 }
 
 func fillThinkingTrace(trace *raylineARCThinkingTrace, binding thinkinglever.Binding, plan thinkinglever.Plan) {
-	trace.LevelInForce = plan.LevelInForce
+	trace.LevelInForce, trace.ControlInForce = plan.LevelInForce, plan.ControlInForce
 	if level, ok := binding.Level(plan.LevelInForce); ok {
 		trace.Rank = level.Rank
 	}
@@ -145,6 +149,12 @@ func appendRaylineARCThinkingFields(record map[string]interface{}, ctx *RequestC
 	record["thinking_lever"] = trace.Lever
 	record["thinking_admission"] = trace.Admission
 	record["thinking_level_in_force"] = trace.LevelInForce
+	if trace.ControlInForce != "" {
+		record["thinking_control_sha256"] = trace.ControlInForce
+	}
+	if trace.ExportSHA256 != "" {
+		record["thinking_export_sha256"] = trace.ExportSHA256
+	}
 	record["thinking_level_rank"] = trace.Rank
 	record["thinking_propensity"] = trace.Propensity
 	record["thinking_emitted"] = trace.Emitted

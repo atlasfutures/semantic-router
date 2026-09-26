@@ -20,9 +20,11 @@ func validThinkingLeverConfig() *RaylineARCThinkingLeverConfig {
 				Emit:       "on_change",
 				Placements: []string{"append_tail_user_text", "insert_user_after_tool_run"},
 				Levels: []RaylineARCThinkingLevelConfig{
-					{Level: "none", Rank: 0},
-					{Level: "down", Rank: -1, Suffix: "Until the next steering instruction, use minimal deliberation."},
-					{Level: "up", Rank: 1, Suffix: "Until the next steering instruction, reason more thoroughly."},
+					{Level: "none", Rank: 0, ControlSHA256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+					{Level: "down", Rank: -1, Suffix: "Until the next steering instruction, use minimal deliberation.",
+						ControlSHA256: "99fca31cf4f665d12f6695cb8c46311be0cc6e4a34829347d4cc9298b24cccf6"},
+					{Level: "up", Rank: 1, Suffix: "Until the next steering instruction, reason more thoroughly.",
+						ControlSHA256: "68a03386f70205c97e7a0002afa023c2b99b8ba98487a134c49824dd85d427be"},
 				},
 			},
 		},
@@ -67,6 +69,13 @@ func TestRaylineARCThinkingLeverRejectsWhatThePlannerWould(t *testing.T) {
 			binding.Admission = RaylineARCThinkingAdmissionExperimental
 			c.Workers[worker] = binding
 		}, "experimental"},
+		{"control digest that does not match the bytes", func(c *RaylineARCThinkingLeverConfig) {
+			binding := c.Workers[worker]
+			binding.Levels = append([]RaylineARCThinkingLevelConfig(nil), binding.Levels...)
+			binding.Levels[1].Suffix = "Edited after the registry hashed it."
+			c.Workers[worker] = binding
+		}, "control_sha256 does not match"},
+		{"ledger cap above the hard limit", func(c *RaylineARCThinkingLeverConfig) { c.MaxLedgerEntries = 100000 }, "max_ledger_entries"},
 		{"placement of the other lever", func(c *RaylineARCThinkingLeverConfig) {
 			binding := c.Workers[worker]
 			binding.Placements = []string{"system_before_governed_turn"}

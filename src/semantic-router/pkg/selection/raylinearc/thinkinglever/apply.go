@@ -77,13 +77,16 @@ func stableContent(blocks []llmprotocol.Content) []llmprotocol.Content {
 	return stable
 }
 
-// ApplyLedger returns the provider-bound transcript: the client's
-// messages with every ledger item put back where it was first written. The
-// input slice and its messages are not modified. Items are applied from the
-// highest anchor down so an insertion never shifts an anchor still to come.
+// ApplyLedger returns the provider-bound transcript for a worker whose
+// binding uses lever: the client's messages with every item of that lever
+// put back where it was first written. Items of the other lever are left
+// out, so a worker never receives an item its binding was not admitted for
+// and each worker's transcript stays what it saw before. The input slice and
+// its messages are not modified. Items are applied from the highest anchor
+// down so an insertion never shifts an anchor still to come.
 func ApplyLedger(
 	messages []llmprotocol.Message,
-	binding Binding,
+	lever Lever,
 	ledger Ledger,
 ) ([]llmprotocol.Message, error) {
 	result := append([]llmprotocol.Message(nil), messages...)
@@ -93,12 +96,15 @@ func ApplyLedger(
 		if index < 0 || index >= len(result) {
 			return nil, fmt.Errorf("thinking ledger anchor %d is outside the transcript", index)
 		}
-		level, ok := binding.Level(entry.Level)
-		if !ok {
-			return nil, fmt.Errorf("thinking ledger level %q is not in the binding", entry.Level)
+		if entry.Payload < 0 || entry.Payload >= len(ledger.Payloads) {
+			return nil, fmt.Errorf("thinking ledger payload %d is unknown", entry.Payload)
+		}
+		payload := ledger.Payloads[entry.Payload]
+		if payload.Lever != lever {
+			continue
 		}
 		var err error
-		result, err = applyEntry(result, index, entry.Placement, binding.Lever, level)
+		result, err = applyEntry(result, index, entry.Placement, payload)
 		if err != nil {
 			return nil, err
 		}
@@ -110,39 +116,38 @@ func applyEntry(
 	messages []llmprotocol.Message,
 	index int,
 	placement Placement,
-	lever Lever,
-	level Level,
+	payload Payload,
 ) ([]llmprotocol.Message, error) {
-	if !placementFitsLever(lever, placement) {
-		return nil, fmt.Errorf("placement %q does not fit lever %q", placement, lever)
+	if !placementFitsLever(payload.Lever, placement) {
+		return nil, fmt.Errorf("placement %q does not fit lever %q", placement, payload.Lever)
 	}
 	switch placement {
 	case PlaceAppendTailUserText:
 		anchored := messages[index]
 		anchored.Content = append(
 			append([]llmprotocol.Content(nil), anchored.Content...),
-			llmprotocol.Content{Kind: llmprotocol.ContentText, Text: level.Suffix},
+			llmprotocol.Content{Kind: llmprotocol.ContentText, Text: payload.Suffix},
 		)
 		messages[index] = anchored
 		return messages, nil
 	case PlaceUserAfterToolRun:
 		return insertMessage(messages, index+1, llmprotocol.Message{
 			Role:    llmprotocol.RoleUser,
-			Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: level.Suffix}},
+			Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: payload.Suffix}},
 		}), nil
 	case PlaceSystemBeforeTurn:
-		return insertMessage(messages, index, effortMessage(level)), nil
+		return insertMessage(messages, index, effortMessage(payload)), nil
 	case PlaceSystemAfterToolRun:
-		return insertMessage(messages, index+1, effortMessage(level)), nil
+		return insertMessage(messages, index+1, effortMessage(payload)), nil
 	default:
 		return nil, fmt.Errorf("unknown thinking placement %q", placement)
 	}
 }
 
-func effortMessage(level Level) llmprotocol.Message {
+func effortMessage(payload Payload) llmprotocol.Message {
 	return llmprotocol.Message{
 		Role:          llmprotocol.RoleSystem,
-		Configuration: &llmprotocol.ConfigurationUpdate{ReasoningEffort: level.Effort},
+		Configuration: &llmprotocol.ConfigurationUpdate{ReasoningEffort: payload.Effort},
 	}
 }
 

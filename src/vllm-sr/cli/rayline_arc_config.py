@@ -205,6 +205,9 @@ class RaylineARCThinkingLevelConfig(BaseModel):
     rank: int
     suffix: str = ""
     effort: str = ""
+    # The registry's digest of this level's bytes; the Go loader recomputes
+    # it and refuses a mismatch.
+    control_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class RaylineARCThinkingBindingConfig(BaseModel):
@@ -217,6 +220,7 @@ class RaylineARCThinkingBindingConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    export_sha256: str = ""
     admission: Literal["certified", "experimental"]
     lever: Literal["prompt_steering_suffix", "per_turn_effort"]
     emit: Literal["every_turn", "on_change"]
@@ -243,6 +247,8 @@ class RaylineARCThinkingLeverConfig(BaseModel):
     level: str = ""
     admission: Literal["", "certified", "experimental"] = ""
     min_spacing_turns: int = Field(default=0, ge=0)
+    # Mirrors thinkinglever.MaxLedgerLength in the Go loader.
+    max_ledger_entries: int = Field(default=0, ge=0, le=384)
     workers: dict[str, RaylineARCThinkingBindingConfig] = Field(default_factory=dict)
 
 

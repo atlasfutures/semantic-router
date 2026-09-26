@@ -102,7 +102,7 @@ func (e *episode) serve(messages []llmprotocol.Message, level string) (Plan, []l
 	if err != nil {
 		e.t.Fatalf("plan turn %d: %v", e.turn, err)
 	}
-	provider, err := ApplyLedger(messages, e.binding, plan.Next)
+	provider, err := ApplyLedger(messages, e.binding.Lever, plan.Next)
 	if err != nil {
 		e.t.Fatalf("apply turn %d: %v", e.turn, err)
 	}
@@ -303,16 +303,54 @@ func TestHistoryNoiseDoesNotResetButARewriteDoes(t *testing.T) {
 	}
 }
 
-func TestBindingChangeResetsTheLedger(t *testing.T) {
+func TestBindingChangeAppendsAndNeverRemoves(t *testing.T) {
 	e := &episode{t: t, binding: suffixBinding(EmitOnChange, "")}
 	messages := []llmprotocol.Message{text(llmprotocol.RoleUser, "go")}
-	plan, _ := e.serve(messages, "down")
+	plan, before := e.serve(messages, "down")
 	e.commit(plan)
+	// A new registry export changes the bytes of "down". The item already
+	// sent keeps its bytes; the new bytes are asserted at the tail.
 	e.binding.Levels[1].Suffix = "A different instruction."
 	next := append(append([]llmprotocol.Message(nil), messages...), text(llmprotocol.RoleAssistant, "a"), text(llmprotocol.RoleUser, "b"))
-	plan, _ = e.serve(next, "down")
-	if plan.ResetReason != ResetBindingChanged {
+	plan, after := e.serve(next, "down")
+	if plan.ResetReason != "" || !plan.Emitted || plan.Replayed != 1 {
 		t.Fatalf("plan = %+v", plan)
+	}
+	requireExtension(t, before, after)
+	if got := after[len(after)-1].Content[1].Text; got != "A different instruction." {
+		t.Fatalf("new bytes not asserted at the tail: %q", got)
+	}
+	if plan.ControlInForce != e.binding.ControlSHA256(e.binding.Levels[1]) {
+		t.Fatal("control in force does not name the new bytes")
+	}
+}
+
+func TestWorkerSwitchReplaysOnlyTheWorkersOwnLever(t *testing.T) {
+	suffix, effort := suffixBinding(EmitOnChange, ""), effortBinding()
+	e := &episode{t: t, binding: suffix}
+	turn0 := []llmprotocol.Message{text(llmprotocol.RoleUser, "go")}
+	plan, a0 := e.serve(turn0, "down")
+	e.commit(plan)
+
+	e.binding = effort
+	turn1 := append(append([]llmprotocol.Message(nil), turn0...), text(llmprotocol.RoleAssistant, "a"), text(llmprotocol.RoleUser, "b"))
+	plan, b1 := e.serve(turn1, "max")
+	if plan.Replayed != 0 || len(b1[0].Content) != 1 {
+		t.Fatalf("the effort worker received a suffix item: %+v", b1[0])
+	}
+	e.commit(plan)
+
+	e.binding = suffix
+	turn2 := append(append([]llmprotocol.Message(nil), turn1...), text(llmprotocol.RoleAssistant, "c"), text(llmprotocol.RoleUser, "d"))
+	plan, a2 := e.serve(turn2, "down")
+	requireExtension(t, a0, a2)
+	for _, message := range a2 {
+		if message.Configuration != nil {
+			t.Fatal("the suffix worker received an effort item")
+		}
+	}
+	if plan.Emitted || plan.LevelInForce != "down" {
+		t.Fatalf("returning worker re-steered: %+v", plan)
 	}
 }
 
@@ -367,30 +405,32 @@ func TestUnsteerableTailsWriteNothing(t *testing.T) {
 	}
 }
 
-func TestLedgerOverflowStartsANewEpoch(t *testing.T) {
-	binding := effortBinding()
+func TestAFullLedgerHoldsInsteadOfResetting(t *testing.T) {
+	e := &episode{t: t, binding: effortBinding()}
 	messages := []llmprotocol.Message{text(llmprotocol.RoleUser, "q0")}
-	ledger := &Ledger{BindingSHA256: binding.SHA256(), LevelInForce: "base"}
-	for turn := 0; turn < MaxLedgerLength; turn++ {
+	var previous []llmprotocol.Message
+	for turn := 0; turn < 3; turn++ {
 		plan, err := PlanTurn(Turn{
-			Binding: binding, Ledger: ledger, Messages: Messages(messages),
-			TurnIndex: uint64(turn), Requested: "max",
+			Binding: e.binding, Ledger: e.ledger, Messages: Messages(messages),
+			TurnIndex: uint64(turn), Requested: "max", MaxEntries: 2,
 		})
 		if err != nil {
-			t.Fatalf("turn %d: %v", turn, err)
+			t.Fatal(err)
+		}
+		provider, err := ApplyLedger(messages, e.binding.Lever, plan.Next)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if previous != nil {
+			requireExtension(t, previous, provider)
+		}
+		if turn == 2 && (plan.Skipped != SkipLedgerFull || plan.Emitted || plan.ResetReason != "" ||
+			len(plan.Next.Entries) != 2 || plan.LevelInForce != "max") {
+			t.Fatalf("full ledger plan = %+v", plan)
 		}
 		next := plan.Next
-		ledger = &next
+		e.ledger = &next
+		previous = provider
 		messages = append(messages, text(llmprotocol.RoleAssistant, "a"), text(llmprotocol.RoleUser, "q"))
-	}
-	plan, err := PlanTurn(Turn{
-		Binding: binding, Ledger: ledger, Messages: Messages(messages),
-		TurnIndex: MaxLedgerLength, Requested: "max",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.ResetReason != ResetOverflow || len(plan.Next.Entries) != 1 || plan.Next.Epoch != 1 {
-		t.Fatalf("overflow plan: reset %q entries %d epoch %d", plan.ResetReason, len(plan.Next.Entries), plan.Next.Epoch)
 	}
 }

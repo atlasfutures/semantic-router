@@ -23,7 +23,6 @@ package thinkinglever
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -80,12 +79,9 @@ const (
 	PlaceSystemAfterToolRun Placement = "system_after_tool_run"
 )
 
-// Reset reasons are a closed set so a reader can count them.
-const (
-	ResetBindingChanged    = "binding_changed"
-	ResetTranscriptRewrite = "transcript_rewrite"
-	ResetOverflow          = "ledger_overflow"
-)
+// ResetTranscriptRewrite is the only reason an epoch ends: the client
+// rewrote its transcript, so the anchors of earlier items are gone.
+const ResetTranscriptRewrite = "transcript_rewrite"
 
 // Skip reasons explain a governed turn that wrote no item.
 const (
@@ -93,15 +89,20 @@ const (
 	SkipPlacementRefused     = "placement_not_admitted"
 	SkipNeutralInexpressible = "neutral_inexpressible"
 	SkipChangeTooSoon        = "change_too_soon"
+	// SkipLedgerFull holds the level in force rather than drop items to make
+	// room, which would edit history the client never rewrote.
+	SkipLedgerFull = "ledger_full"
 )
 
 const (
 	DigestBytes  = 16
 	maxLevels    = 16
 	MaxLevelName = 32
-	// MaxLedgerLength keeps a full ledger of the longest level names
-	// well inside the 64 KiB episode-state limit.
+	// MaxLedgerLength and MaxPayloads keep a full ledger, with every payload
+	// at MaxSuffixBytes, well inside the 64 KiB episode-state limit.
 	MaxLedgerLength      = 384
+	MaxPayloads          = 8
+	MaxSuffixBytes       = 1024
 	systemReminderPrefix = "<system-reminder>"
 )
 
@@ -205,6 +206,9 @@ func (binding Binding) validateLevel(level Level) error {
 		if level.Suffix != "" && strings.TrimSpace(level.Suffix) == "" {
 			return fmt.Errorf("suffix level %q is blank but not empty", level.Name)
 		}
+		if len(level.Suffix) > MaxSuffixBytes {
+			return fmt.Errorf("suffix level %q exceeds %d bytes", level.Name, MaxSuffixBytes)
+		}
 	case LeverPerTurnEffort:
 		if level.Suffix != "" || !plainEffortName(level.Effort) {
 			return fmt.Errorf("effort level %q needs a plain effort name and no suffix", level.Name)
@@ -235,54 +239,76 @@ func (binding Binding) Level(name string) (Level, bool) {
 	return Level{}, false
 }
 
-// SHA256 pins the binding's bytes. The ledger stores level names only, so a
-// ledger written under one binding must never replay under another.
-func (binding Binding) SHA256() string {
-	payload, _ := json.Marshal(binding)
-	sum := sha256.Sum256(payload)
-	return hex.EncodeToString(sum[:])
-}
-
 // ControlSHA256 is the digest a trained artifact records for the action it
-// chose, and the identity the router and the exporter must agree on. A text
-// lever hashes its UTF-8 text. A JSON item hashes its RFC 8785 canonical
-// form; for the one member an effort item carries, sorted compact encoding
-// of a plain-ASCII effort name is that form, and Validate refuses anything
-// else.
+// chose, and the identity the router and the exporter must agree on.
 func (binding Binding) ControlSHA256(level Level) string {
-	payload := []byte(level.Suffix)
+	return binding.payloadFor(level).ControlSHA256()
+}
+
+func (binding Binding) payloadFor(level Level) Payload {
 	if binding.Lever == LeverPerTurnEffort {
-		payload = []byte(`{"reasoning":{"effort":"` + level.Effort + `"}}`)
+		return Payload{Lever: binding.Lever, Effort: level.Effort}
 	}
-	sum := sha256.Sum256(payload)
+	return Payload{Lever: binding.Lever, Suffix: level.Suffix}
+}
+
+// Payload is the exact content of one item, independent of any binding. The
+// ledger keeps payloads rather than level names so an item written under one
+// binding replays byte for byte under the next: dropping or rewriting it
+// would edit history the client never rewrote.
+type Payload struct {
+	Lever  Lever
+	Suffix string
+	Effort string
+}
+
+// ControlSHA256 hashes a text item's UTF-8 text, or the RFC 8785 canonical
+// form of an effort item's value. For the one member an effort item carries,
+// sorted compact encoding of a plain [a-z_] effort name is that form, and
+// Validate refuses any other name.
+func (payload Payload) ControlSHA256() string {
+	bytes := []byte(payload.Suffix)
+	if payload.Lever == LeverPerTurnEffort {
+		bytes = []byte(`{"reasoning":{"effort":"` + payload.Effort + `"}}`)
+	}
+	sum := sha256.Sum256(bytes)
 	return hex.EncodeToString(sum[:])
 }
 
-// writes reports whether a level produces an item at all. A per-turn effort
-// level always does; a suffix level with no text does not.
-func (binding Binding) writes(level Level) bool {
-	return binding.Lever == LeverPerTurnEffort || level.Suffix != ""
+// writes reports whether a payload produces an item at all. A per-turn
+// effort always does; a suffix with no text does not.
+func (payload Payload) writes() bool {
+	return payload.Lever == LeverPerTurnEffort || payload.Suffix != ""
 }
 
-// Ledger is the per-episode record of every item the router wrote.
-// It is committed with the rest of the episode state, so an attempt that
-// never reached a 2xx response leaves nothing behind.
+// Ledger is the per-episode record of every item the router wrote. It is
+// committed with the rest of the episode state, so an attempt that never
+// reached a 2xx response leaves nothing behind.
 type Ledger struct {
-	BindingSHA256  string
-	Epoch          uint32
-	LevelInForce   string
-	LastChangeTurn uint64
-	Entries        []LedgerEntry
+	Epoch    uint32
+	Payloads []Payload
+	Entries  []LedgerEntry
+	// InForce is, per lever, the item last written; a worker only ever
+	// sees its own lever's items, so each lever has its own level in force.
+	InForce []LeverState
 }
 
-// LedgerEntry locates one item by the client message it is anchored
-// to. Index and Digest refer to the client's transcript, which is the only
-// one that survives between turns.
+// LeverState is what one lever has in force in this epoch.
+type LeverState struct {
+	Lever          Lever
+	Payload        int
+	Level          string
+	LastChangeTurn uint64
+}
+
+// LedgerEntry locates one item by the client message it is anchored to.
+// Index and Digest refer to the client's transcript, which is the only one
+// that survives between turns; Payload indexes Ledger.Payloads.
 type LedgerEntry struct {
 	Index     uint32
 	Placement Placement
 	Digest    string
-	Level     string
+	Payload   int
 	Turn      uint64
 }
 
@@ -292,23 +318,53 @@ func (ledger *Ledger) Clone() *Ledger {
 		return nil
 	}
 	cloned := *ledger
+	cloned.Payloads = append([]Payload(nil), ledger.Payloads...)
 	cloned.Entries = append([]LedgerEntry(nil), ledger.Entries...)
+	cloned.InForce = append([]LeverState(nil), ledger.InForce...)
 	return &cloned
 }
 
-// ValidateLedger refuses a persisted ledger no planner could have
-// written. Binding membership is checked per turn, against the binding in
-// force then; this checks only the shape.
+func (ledger *Ledger) state(lever Lever) (LeverState, bool) {
+	for _, state := range ledger.InForce {
+		if state.Lever == lever {
+			return state, true
+		}
+	}
+	return LeverState{Lever: lever, Payload: -1}, false
+}
+
+func (ledger *Ledger) setState(next LeverState) {
+	for index, state := range ledger.InForce {
+		if state.Lever == next.Lever {
+			ledger.InForce[index] = next
+			return
+		}
+	}
+	ledger.InForce = append(ledger.InForce, next)
+}
+
+func (ledger *Ledger) payloadIndex(payload Payload) int {
+	for index, known := range ledger.Payloads {
+		if known == payload {
+			return index
+		}
+	}
+	return -1
+}
+
+// ValidateLedger refuses a persisted ledger no planner could have written.
 func ValidateLedger(ledger *Ledger) error {
 	if ledger == nil {
 		return nil
 	}
-	if len(ledger.BindingSHA256) != sha256.Size*2 || !isLowerHex(ledger.BindingSHA256) {
-		return errors.New("thinking ledger binding digest is invalid")
-	}
-	if len(ledger.LevelInForce) > MaxLevelName ||
-		len(ledger.Entries) > MaxLedgerLength {
+	if len(ledger.Entries) > MaxLedgerLength || len(ledger.Payloads) > MaxPayloads ||
+		len(ledger.InForce) > 2 {
 		return errors.New("thinking ledger exceeds its limits")
+	}
+	for _, payload := range ledger.Payloads {
+		if !validPayload(payload) {
+			return errors.New("thinking ledger payload is invalid")
+		}
 	}
 	previous := -1
 	for _, entry := range ledger.Entries {
@@ -316,18 +372,31 @@ func ValidateLedger(ledger *Ledger) error {
 			return errors.New("thinking ledger anchors are not ascending")
 		}
 		previous = int(entry.Index)
-		if entry.Level == "" || len(entry.Level) > MaxLevelName ||
+		if entry.Payload < 0 || entry.Payload >= len(ledger.Payloads) ||
 			len(entry.Digest) != DigestBytes*2 || !isLowerHex(entry.Digest) ||
-			!knownPlacement(entry.Placement) {
+			!placementFitsLever(ledger.Payloads[entry.Payload].Lever, entry.Placement) {
 			return errors.New("thinking ledger entry is invalid")
+		}
+	}
+	for _, state := range ledger.InForce {
+		if state.Payload < -1 || state.Payload >= len(ledger.Payloads) ||
+			len(state.Level) > MaxLevelName ||
+			(state.Payload >= 0 && ledger.Payloads[state.Payload].Lever != state.Lever) {
+			return errors.New("thinking ledger lever state is invalid")
 		}
 	}
 	return nil
 }
 
-func knownPlacement(placement Placement) bool {
-	return placementFitsLever(LeverSteeringSuffix, placement) ||
-		placementFitsLever(LeverPerTurnEffort, placement)
+func validPayload(payload Payload) bool {
+	switch payload.Lever {
+	case LeverSteeringSuffix:
+		return payload.Effort == "" && len(payload.Suffix) <= MaxSuffixBytes
+	case LeverPerTurnEffort:
+		return payload.Suffix == "" && plainEffortName(payload.Effort)
+	default:
+		return false
+	}
 }
 
 func isLowerHex(value string) bool {
@@ -349,33 +418,43 @@ type Turn struct {
 	// Requested is the level the policy asks for on this turn.
 	Requested              string
 	MinTurnsBetweenChanges uint64
+	// MaxEntries caps the ledger below MaxLedgerLength; zero means the
+	// maximum.
+	MaxEntries int
 }
 
-// Message is the part of a neutral message the planner reads: its
-// role, and a digest that ignores what clients rewrite between turns.
+// Message is the part of a neutral message the planner reads: its role,
+// and a digest that ignores what clients rewrite between turns.
 type Message struct {
 	Role   string
 	Digest string
 }
 
-// Plan is the planner's decision. Next is staged; the caller commits
-// it only with the episode state.
+// Plan is the planner's decision. Next is staged; the caller commits it
+// only with the episode state.
 type Plan struct {
-	Next         Ledger
-	LevelInForce string
-	Emitted      bool
-	Retry        bool
-	Placement    Placement
-	ResetReason  string
-	Skipped      string
-	Replayed     int
+	Next Ledger
+	// LevelInForce and ControlInForce describe the binding's lever after
+	// this turn: what the worker is actually being asked, which is not
+	// always what the policy requested.
+	LevelInForce   string
+	ControlInForce string
+	Emitted        bool
+	Retry          bool
+	Placement      Placement
+	ResetReason    string
+	Skipped        string
+	Replayed       int
 }
 
-// PlanTurn verifies the ledger against the client transcript,
-// decides whether this turn writes an item, and returns the staged ledger.
-// It never fails a turn for a rewritten transcript: that starts a new epoch
-// and costs one cache miss, which is what the rewrite already cost.
-func PlanTurn(turn Turn) (Plan, error) {
+// PlanTurn verifies the ledger against the client transcript, decides
+// whether this turn writes an item, and returns the staged ledger.
+//
+// Only a client rewrite -- an anchor that no longer matches, as after
+// compaction or /clear -- starts a new epoch, and the items it drops sat in
+// messages the client itself removed. Nothing else ever removes an item: a
+// changed binding appends, and a full ledger stops writing.
+func PlanTurn(turn Turn) (plan Plan, err error) {
 	if err := turn.Binding.Validate(); err != nil {
 		return Plan{}, err
 	}
@@ -383,16 +462,16 @@ func PlanTurn(turn Turn) (Plan, error) {
 	if !ok {
 		return Plan{}, fmt.Errorf("requested thinking level %q is not in the binding", turn.Requested)
 	}
-	plan := Plan{Next: startingLedger(turn)}
-	plan.ResetReason = verifyLedger(&plan.Next, turn)
-	if plan.ResetReason != "" {
-		plan.Next = freshLedger(turn, plan.Next.Epoch+1)
+	plan = Plan{Next: startingLedger(turn.Ledger)}
+	if !anchorsHold(plan.Next, turn.Messages) {
+		plan.ResetReason = ResetTranscriptRewrite
+		plan.Next = Ledger{Epoch: plan.Next.Epoch + 1}
 	}
-	plan.Replayed = len(plan.Next.Entries)
-	tail := len(turn.Messages) - 1
+	plan.Replayed = countLever(plan.Next, turn.Binding.Lever)
+	// Every return below reports the lever's state after this turn.
+	defer plan.describe(turn.Binding.Lever)
 	if entry, ok := retriedEntry(plan.Next, turn.Messages); ok {
 		plan.Retry = true
-		plan.LevelInForce = plan.Next.LevelInForce
 		plan.Placement = entry.Placement
 		return plan, nil
 	}
@@ -402,69 +481,83 @@ func PlanTurn(turn Turn) (Plan, error) {
 		if steerable {
 			plan.Skipped = SkipPlacementRefused
 		}
-		plan.LevelInForce = plan.Next.LevelInForce
 		return plan, nil
 	}
-	emit, skipped := shouldEmit(turn, plan.Next, requested, plan.ResetReason != "")
+	payload := turn.Binding.payloadFor(requested)
+	emit, skipped := shouldEmit(turn, plan.Next, requested, payload, plan.ResetReason != "")
 	plan.Skipped = skipped
 	if !emit {
-		plan.LevelInForce = plan.Next.LevelInForce
 		return plan, nil
 	}
-	if len(plan.Next.Entries) >= MaxLedgerLength {
-		plan.ResetReason = ResetOverflow
-		plan.Next = freshLedger(turn, plan.Next.Epoch+1)
-		plan.Replayed = 0
+	if skip := plan.Next.append(turn, placement, payload, requested.Name); skip != "" {
+		plan.Skipped = skip
+		return plan, nil
 	}
-	if plan.Next.LevelInForce != requested.Name {
-		plan.Next.LastChangeTurn = turn.TurnIndex
-	}
-	plan.Next.LevelInForce = requested.Name
-	plan.Next.Entries = append(plan.Next.Entries, LedgerEntry{
-		Index:     uint32(tail),
-		Placement: placement,
-		Digest:    turn.Messages[tail].Digest,
-		Level:     requested.Name,
-		Turn:      turn.TurnIndex,
-	})
 	plan.Emitted = true
 	plan.Placement = placement
-	plan.LevelInForce = requested.Name
 	return plan, nil
 }
 
-func startingLedger(turn Turn) Ledger {
-	if turn.Ledger == nil {
-		return freshLedger(turn, 0)
-	}
-	return *turn.Ledger.Clone()
-}
-
-func freshLedger(turn Turn, epoch uint32) Ledger {
-	return Ledger{
-		BindingSHA256: turn.Binding.SHA256(),
-		Epoch:         epoch,
-		LevelInForce:  turn.Binding.Neutral,
+func (plan *Plan) describe(lever Lever) {
+	state, _ := plan.Next.state(lever)
+	plan.LevelInForce = state.Level
+	if state.Payload >= 0 {
+		plan.ControlInForce = plan.Next.Payloads[state.Payload].ControlSHA256()
 	}
 }
 
-func verifyLedger(ledger *Ledger, turn Turn) string {
-	if ledger.BindingSHA256 != turn.Binding.SHA256() {
-		return ResetBindingChanged
+func (ledger *Ledger) append(turn Turn, placement Placement, payload Payload, level string) string {
+	limit := MaxLedgerLength
+	if turn.MaxEntries > 0 && turn.MaxEntries < limit {
+		limit = turn.MaxEntries
 	}
-	previous := -1
+	index := ledger.payloadIndex(payload)
+	if len(ledger.Entries) >= limit || (index < 0 && len(ledger.Payloads) >= MaxPayloads) {
+		return SkipLedgerFull
+	}
+	if index < 0 {
+		ledger.Payloads = append(ledger.Payloads, payload)
+		index = len(ledger.Payloads) - 1
+	}
+	tail := len(turn.Messages) - 1
+	ledger.Entries = append(ledger.Entries, LedgerEntry{
+		Index: uint32(tail), Placement: placement, Digest: turn.Messages[tail].Digest,
+		Payload: index, Turn: turn.TurnIndex,
+	})
+	state, _ := ledger.state(payload.Lever)
+	if state.Payload != index {
+		state.LastChangeTurn = turn.TurnIndex
+	}
+	state.Payload, state.Level = index, level
+	ledger.setState(state)
+	return ""
+}
+
+func startingLedger(ledger *Ledger) Ledger {
+	if ledger == nil {
+		return Ledger{}
+	}
+	return *ledger.Clone()
+}
+
+func anchorsHold(ledger Ledger, messages []Message) bool {
 	for _, entry := range ledger.Entries {
 		index := int(entry.Index)
-		if index <= previous || index >= len(turn.Messages) ||
-			turn.Messages[index].Digest != entry.Digest {
-			return ResetTranscriptRewrite
+		if index >= len(messages) || messages[index].Digest != entry.Digest {
+			return false
 		}
-		if _, ok := turn.Binding.Level(entry.Level); !ok {
-			return ResetBindingChanged
-		}
-		previous = index
 	}
-	return ""
+	return true
+}
+
+func countLever(ledger Ledger, lever Lever) int {
+	count := 0
+	for _, entry := range ledger.Entries {
+		if ledger.Payloads[entry.Payload].Lever == lever {
+			count++
+		}
+	}
+	return count
 }
 
 // retriedEntry detects a client retrying a turn whose attempt already
@@ -479,8 +572,8 @@ func retriedEntry(ledger Ledger, messages []Message) (LedgerEntry, bool) {
 	return last, int(last.Index) == tail && messages[tail].Digest == last.Digest
 }
 
-// placementFor places an item at the transcript tail so that no
-// message the provider has already seen changes.
+// placementFor places an item at the transcript tail so that no message the
+// provider has already seen changes.
 func placementFor(lever Lever, messages []Message) (Placement, bool) {
 	if len(messages) == 0 {
 		return "", false
@@ -505,28 +598,31 @@ func shouldEmit(
 	turn Turn,
 	ledger Ledger,
 	requested Level,
+	payload Payload,
 	reset bool,
 ) (bool, string) {
-	writes := turn.Binding.writes(requested)
 	if turn.Binding.Emit == EmitEveryTurn {
-		return writes, ""
+		return payload.writes(), ""
 	}
-	// A reset puts the neutral level in force, so a non-neutral request after
-	// one is a change and is re-asserted at the new tail.
-	changed := requested.Name != ledger.LevelInForce
-	if !changed {
+	state, _ := ledger.state(turn.Binding.Lever)
+	// Nothing written yet in this epoch is the neutral level in force. A
+	// change of bytes under the same level name, after a binding change, is
+	// a change and is re-asserted.
+	if state.Payload < 0 {
+		if requested.Name == turn.Binding.Neutral || !payload.writes() {
+			return false, ""
+		}
+		return true, ""
+	}
+	if ledger.Payloads[state.Payload] == payload {
 		return false, ""
 	}
-	if changed && !reset && len(ledger.Entries) > 0 &&
-		turn.TurnIndex-ledger.LastChangeTurn < turn.MinTurnsBetweenChanges {
+	if !reset && turn.TurnIndex-state.LastChangeTurn < turn.MinTurnsBetweenChanges {
 		return false, SkipChangeTooSoon
 	}
-	if !writes {
+	if !payload.writes() {
 		// Writing nothing cannot cancel an instruction already in force.
-		if len(ledger.Entries) > 0 && !reset {
-			return false, SkipNeutralInexpressible
-		}
-		return false, ""
+		return false, SkipNeutralInexpressible
 	}
 	return true, ""
 }

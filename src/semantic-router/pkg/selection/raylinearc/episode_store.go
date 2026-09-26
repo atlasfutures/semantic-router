@@ -92,21 +92,40 @@ type episodeStateWire struct {
 }
 
 type episodeThinkingWire struct {
-	BindingSHA256  string                     `json:"binding_sha256"`
-	Epoch          uint32                     `json:"epoch"`
-	LevelInForce   string                     `json:"level_in_force"`
-	LastChangeTurn uint64                     `json:"last_change_turn"`
-	Entries        []episodeThinkingEntryWire `json:"entries"`
+	Epoch    uint32                       `json:"epoch"`
+	Payloads []episodeThinkingPayloadWire `json:"payloads"`
+	Entries  []episodeThinkingEntryWire   `json:"entries"`
+	InForce  []episodeThinkingStateWire   `json:"in_force"`
 }
 
-// episodeThinkingEntryWire uses short keys: a long every-turn ledger is the
-// largest thing an episode record carries.
+type episodeThinkingPayloadWire struct {
+	Lever  string `json:"lever"`
+	Suffix string `json:"suffix,omitempty"`
+	Effort string `json:"effort,omitempty"`
+}
+
+// episodeThinkingEntryWire uses short keys and placement codes: a long
+// every-turn ledger is the largest thing an episode record carries.
 type episodeThinkingEntryWire struct {
 	Index     uint32 `json:"i"`
 	Placement string `json:"p"`
 	Digest    string `json:"d"`
-	Level     string `json:"l"`
+	Payload   int    `json:"k"`
 	Turn      uint64 `json:"t"`
+}
+
+type episodeThinkingStateWire struct {
+	Lever          string `json:"lever"`
+	Payload        int    `json:"payload"`
+	Level          string `json:"level"`
+	LastChangeTurn uint64 `json:"last_change_turn"`
+}
+
+var thinkingPlacementCodes = map[thinkinglever.Placement]string{
+	thinkinglever.PlaceAppendTailUserText: "a",
+	thinkinglever.PlaceUserAfterToolRun:   "u",
+	thinkinglever.PlaceSystemBeforeTurn:   "sb",
+	thinkinglever.PlaceSystemAfterToolRun: "sa",
 }
 
 type episodeWarmthWire struct {
@@ -298,36 +317,62 @@ func validatePersistedEpisodeState(
 
 func thinkingLedgerToWire(ledger *thinkinglever.Ledger) *episodeThinkingWire {
 	wire := &episodeThinkingWire{
-		BindingSHA256:  ledger.BindingSHA256,
-		Epoch:          ledger.Epoch,
-		LevelInForce:   ledger.LevelInForce,
-		LastChangeTurn: ledger.LastChangeTurn,
-		Entries:        make([]episodeThinkingEntryWire, len(ledger.Entries)),
+		Epoch:    ledger.Epoch,
+		Payloads: make([]episodeThinkingPayloadWire, len(ledger.Payloads)),
+		Entries:  make([]episodeThinkingEntryWire, len(ledger.Entries)),
+		InForce:  make([]episodeThinkingStateWire, len(ledger.InForce)),
+	}
+	for index, payload := range ledger.Payloads {
+		wire.Payloads[index] = episodeThinkingPayloadWire{
+			Lever: string(payload.Lever), Suffix: payload.Suffix, Effort: payload.Effort,
+		}
 	}
 	for index, entry := range ledger.Entries {
 		wire.Entries[index] = episodeThinkingEntryWire{
-			Index: entry.Index, Placement: string(entry.Placement),
-			Digest: entry.Digest, Level: entry.Level, Turn: entry.Turn,
+			Index: entry.Index, Placement: thinkingPlacementCodes[entry.Placement],
+			Digest: entry.Digest, Payload: entry.Payload, Turn: entry.Turn,
+		}
+	}
+	for index, state := range ledger.InForce {
+		wire.InForce[index] = episodeThinkingStateWire{
+			Lever: string(state.Lever), Payload: state.Payload,
+			Level: state.Level, LastChangeTurn: state.LastChangeTurn,
 		}
 	}
 	return wire
 }
 
+// thinkingLedgerFromWire decodes the ledger; an unknown placement code
+// decodes to an empty placement, which ValidateLedger then refuses.
 func thinkingLedgerFromWire(wire *episodeThinkingWire) *thinkinglever.Ledger {
 	if wire == nil {
 		return nil
 	}
+	placements := make(map[string]thinkinglever.Placement, len(thinkingPlacementCodes))
+	for placement, code := range thinkingPlacementCodes {
+		placements[code] = placement
+	}
 	ledger := &thinkinglever.Ledger{
-		BindingSHA256:  wire.BindingSHA256,
-		Epoch:          wire.Epoch,
-		LevelInForce:   wire.LevelInForce,
-		LastChangeTurn: wire.LastChangeTurn,
-		Entries:        make([]thinkinglever.LedgerEntry, len(wire.Entries)),
+		Epoch:    wire.Epoch,
+		Payloads: make([]thinkinglever.Payload, len(wire.Payloads)),
+		Entries:  make([]thinkinglever.LedgerEntry, len(wire.Entries)),
+		InForce:  make([]thinkinglever.LeverState, len(wire.InForce)),
+	}
+	for index, payload := range wire.Payloads {
+		ledger.Payloads[index] = thinkinglever.Payload{
+			Lever: thinkinglever.Lever(payload.Lever), Suffix: payload.Suffix, Effort: payload.Effort,
+		}
 	}
 	for index, entry := range wire.Entries {
 		ledger.Entries[index] = thinkinglever.LedgerEntry{
-			Index: entry.Index, Placement: thinkinglever.Placement(entry.Placement),
-			Digest: entry.Digest, Level: entry.Level, Turn: entry.Turn,
+			Index: entry.Index, Placement: placements[entry.Placement],
+			Digest: entry.Digest, Payload: entry.Payload, Turn: entry.Turn,
+		}
+	}
+	for index, state := range wire.InForce {
+		ledger.InForce[index] = thinkinglever.LeverState{
+			Lever: thinkinglever.Lever(state.Lever), Payload: state.Payload,
+			Level: state.Level, LastChangeTurn: state.LastChangeTurn,
 		}
 	}
 	return ledger

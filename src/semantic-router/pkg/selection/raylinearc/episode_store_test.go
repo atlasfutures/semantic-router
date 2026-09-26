@@ -296,20 +296,26 @@ func requireARCNoError(t *testing.T, err error) {
 }
 
 func fullThinkingLedger() *thinkinglever.Ledger {
-	ledger := &thinkinglever.Ledger{
-		BindingSHA256: strings.Repeat("a", 64),
-		LevelInForce:  strings.Repeat("l", thinkinglever.MaxLevelName),
+	ledger := &thinkinglever.Ledger{}
+	for index := 0; index < thinkinglever.MaxPayloads; index++ {
+		ledger.Payloads = append(ledger.Payloads, thinkinglever.Payload{
+			Lever:  thinkinglever.LeverSteeringSuffix,
+			Suffix: strings.Repeat(string(rune('a'+index)), thinkinglever.MaxSuffixBytes),
+		})
 	}
 	for index := 0; index < thinkinglever.MaxLedgerLength; index++ {
 		ledger.Entries = append(ledger.Entries, thinkinglever.LedgerEntry{
 			Index:     uint32(1<<31 + index),
-			Placement: thinkinglever.PlaceSystemAfterToolRun,
+			Placement: thinkinglever.PlaceUserAfterToolRun,
 			Digest:    strings.Repeat("f", thinkinglever.DigestBytes*2),
-			Level:     strings.Repeat("l", thinkinglever.MaxLevelName),
+			Payload:   index % thinkinglever.MaxPayloads,
 			Turn:      1<<63 + uint64(index),
 		})
 	}
-	ledger.LastChangeTurn = 1 << 63
+	ledger.InForce = []thinkinglever.LeverState{{
+		Lever: thinkinglever.LeverSteeringSuffix, Payload: thinkinglever.MaxPayloads - 1,
+		Level: strings.Repeat("l", thinkinglever.MaxLevelName), LastChangeTurn: 1 << 63,
+	}}
 	return ledger
 }
 
@@ -345,16 +351,15 @@ func TestEpisodeStateWireV3CarriesTheThinkingLedger(t *testing.T) {
 		t.Fatal("the ledger did not round-trip")
 	}
 	cloned := cloneEpisodeState(decoded)
-	cloned.Thinking.Entries[0].Level = "changed"
-	if decoded.Thinking.Entries[0].Level == "changed" {
+	cloned.Thinking.Payloads[0].Suffix = "changed"
+	if decoded.Thinking.Payloads[0].Suffix == "changed" {
 		t.Fatal("clone shares ledger entries")
 	}
 }
 
 func TestEpisodeStateWireGatesTheLedgerOnTheSchema(t *testing.T) {
 	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
-	ledger := `"thinking":{"binding_sha256":"` + strings.Repeat("a", 64) +
-		`","epoch":0,"level_in_force":"up","last_change_turn":0,"entries":[]}`
+	ledger := `"thinking":{"epoch":0,"payloads":[],"entries":[],"in_force":[]}`
 	for name, payload := range map[string]string{
 		"v2 with a ledger": `{"schema_version":"rayline.arc.episode-state.v2","version":1,` +
 			`"previous_arm":null,"turn_index":0,"warmth":[null],"encoder_owner":"",` +
@@ -362,11 +367,15 @@ func TestEpisodeStateWireGatesTheLedgerOnTheSchema(t *testing.T) {
 		"v3 without a ledger": `{"schema_version":"rayline.arc.episode-state.v3","version":1,` +
 			`"previous_arm":null,"turn_index":0,"warmth":[null],"encoder_owner":"",` +
 			`"encoder_visited_owners":[]}`,
-		"v3 with a malformed entry": `{"schema_version":"rayline.arc.episode-state.v3","version":1,` +
+		"v3 with an unknown placement code": `{"schema_version":"rayline.arc.episode-state.v3","version":1,` +
 			`"previous_arm":null,"turn_index":0,"warmth":[null],"encoder_owner":"",` +
-			`"encoder_visited_owners":[],"thinking":{"binding_sha256":"` + strings.Repeat("a", 64) +
-			`","epoch":0,"level_in_force":"up","last_change_turn":0,` +
-			`"entries":[{"i":0,"p":"nowhere","d":"` + strings.Repeat("f", 32) + `","l":"up","t":0}]}}`,
+			`"encoder_visited_owners":[],"thinking":{"epoch":0,` +
+			`"payloads":[{"lever":"prompt_steering_suffix","suffix":"x"}],` +
+			`"entries":[{"i":0,"p":"nowhere","d":"` + strings.Repeat("f", 32) + `","k":0,"t":0}],"in_force":[]}}`,
+		"v3 with an entry naming a missing payload": `{"schema_version":"rayline.arc.episode-state.v3","version":1,` +
+			`"previous_arm":null,"turn_index":0,"warmth":[null],"encoder_owner":"",` +
+			`"encoder_visited_owners":[],"thinking":{"epoch":0,"payloads":[],` +
+			`"entries":[{"i":0,"p":"a","d":"` + strings.Repeat("f", 32) + `","k":0,"t":0}],"in_force":[]}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, _, err := unmarshalEpisodeState([]byte(payload), 1, now); err == nil {

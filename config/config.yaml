@@ -1695,20 +1695,28 @@ routing:
             # min_spacing_turns holds a level for at least this many turns
             # before an on-change binding may change it again.
             min_spacing_turns: 0
+            # max_ledger_entries caps the episode's lever ledger; at the cap
+            # the level in force is held. Zero selects the hard limit, 384.
+            max_ledger_entries: 0
             # workers binds a lever to worker IDs. A worker without a binding
             # is never steered.
             workers:
               example-worker:
+                # export_sha256 names the registry export the binding came
+                # from, so a training row can be traced to its evidence.
+                export_sha256: ""
                 admission: certified
                 lever: prompt_steering_suffix
                 emit: on_change
                 neutral_level: neutral
                 placements: [append_tail_user_text, insert_user_after_tool_run]
                 levels:
-                  - {level: none, rank: 0}
-                  - {level: neutral, rank: 0, suffix: "Until the next steering instruction, use your normal judgement."}
-                  - {level: down, rank: -1, suffix: "Until the next steering instruction, use minimal deliberation."}
-                  - {level: up, rank: 1, suffix: "Until the next steering instruction, reason more thoroughly."}
+                  # control_sha256 is the registry's digest of each level's
+                  # bytes; the router recomputes it and refuses a mismatch.
+                  - {level: none, rank: 0, control_sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855}
+                  - {level: neutral, rank: 0, suffix: "Until the next steering instruction, use your normal judgement.", control_sha256: 3706b3ac244e71be7d77e4bb7113a17cbda5cb0fa7c69fc4654940d4d789650c}
+                  - {level: down, rank: -1, suffix: "Until the next steering instruction, use minimal deliberation.", control_sha256: 99fca31cf4f665d12f6695cb8c46311be0cc6e4a34829347d4cc9298b24cccf6}
+                  - {level: up, rank: 1, suffix: "Until the next steering instruction, reason more thoroughly.", control_sha256: 68a03386f70205c97e7a0002afa023c2b99b8ba98487a134c49824dd85d427be}
           encoder:
             base_url: http://rayline-arc-encoder:8000
             # Set base_url to empty and populate replicas + failover to opt
