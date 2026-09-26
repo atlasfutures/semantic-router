@@ -183,7 +183,11 @@ func (r *OpenAIRouter) applyDispatchDecision(
 	injected, err := r.addSemanticSystemPromptIfConfigured(
 		request, dispatch.decisionName, dispatch.logicalModel, ctx,
 	)
-	return changed || injected, err
+	if err != nil {
+		return false, err
+	}
+	steered, err := r.applyRaylineARCThinkingLever(request, ctx)
+	return changed || injected || steered, err
 }
 
 func wireFormatForModel(apiFormat string) (llmprotocol.WireFormat, error) {

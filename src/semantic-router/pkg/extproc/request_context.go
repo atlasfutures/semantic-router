@@ -191,6 +191,7 @@ type RequestContext struct {
 	RaylineARCDispatch              *raylinearc.WorkerManifest    // Private artifact-owned transport budget; never emit in traces.
 	RaylineARCTransaction           *raylineARCEpisodeTransaction // Fenced ARC state lease; finalized exactly once.
 	RaylineARCCloseRequested        bool                          // Exact configured final-turn signal; triggers post-2xx session close fanout.
+	RaylineARCThinking              *raylineARCThinkingTrace      // What the thinking lever did this turn; non-nil once it ran.
 	SelectionTransaction            *selectionTransactionOwner    // Shared authoritative selector lifecycle owner; at most one per request.
 	SelectionSettlement             selectionActualOutcome        // Bounded actual outcome facts; unknown fields remain nil.
 	// VSREligibleModelRefs is the selected decision's model set after applying

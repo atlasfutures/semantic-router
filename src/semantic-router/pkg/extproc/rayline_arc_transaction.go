@@ -26,6 +26,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/sessiontelemetry"
 )
 
@@ -45,11 +46,14 @@ type raylineARCEpisodeTransaction struct {
 	sessionCloser    raylineARCSessionCloseFunc
 	sessionCloseWait time.Duration
 	selectionReady   bool
-	finalizeOnce     sync.Once
-	finalizeErr      error
-	renewCancel      context.CancelFunc
-	renewDone        chan struct{}
-	leaseLost        atomic.Bool
+	// thinkingLedger is the lever ledger this turn staged, committed only
+	// with the turn; nil leaves the stored ledger as it was.
+	thinkingLedger *thinkinglever.Ledger
+	finalizeOnce   sync.Once
+	finalizeErr    error
+	renewCancel    context.CancelFunc
+	renewDone      chan struct{}
+	leaseLost      atomic.Bool
 	// onFinalize is an optional terminal-path hook; the stream-level hold in
 	// processWithContext is what keeps the episode store open.
 	onFinalize func()
@@ -119,6 +123,23 @@ func (transaction *raylineARCEpisodeTransaction) markSelectionWithAffinity(
 	transaction.selectionReady = true
 }
 
+// stageThinkingLedger records the ledger this turn's lever plan produced.
+func (transaction *raylineARCEpisodeTransaction) stageThinkingLedger(ledger thinkinglever.Ledger) {
+	if transaction == nil {
+		return
+	}
+	transaction.thinkingLedger = ledger.Clone()
+}
+
+// committedThinking returns the ledger the prepared state carries, and the
+// committed turn count the planner measures spacing against.
+func (transaction *raylineARCEpisodeTransaction) committedThinking() (*thinkinglever.Ledger, uint64, bool) {
+	if transaction == nil || transaction.state == nil {
+		return nil, 0, false
+	}
+	return transaction.state.Thinking, transaction.state.TurnIndex, true
+}
+
 // dispatchAllowed is the last pre-upstream fence. The renewal goroutine can
 // discover lease loss after selection but before Envoy receives the request
 // mutation; a known-lost lease must never dispatch and later masquerade as a
@@ -150,6 +171,9 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			[]string(nil),
 			transaction.encoderVisited...,
 		)
+		if transaction.thinkingLedger != nil {
+			nextState.Thinking = transaction.thinkingLedger.Clone()
+		}
 		if err := nextState.Commit(
 			transaction.selectedArm,
 			transaction.serializedTokens,
