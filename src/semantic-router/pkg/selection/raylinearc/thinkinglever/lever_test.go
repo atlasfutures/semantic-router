@@ -434,3 +434,29 @@ func TestAFullLedgerHoldsInsteadOfResetting(t *testing.T) {
 		messages = append(messages, text(llmprotocol.RoleAssistant, "a"), text(llmprotocol.RoleUser, "q"))
 	}
 }
+
+func TestNeutralIsStatedAfterAResetButNotAtEpisodeStart(t *testing.T) {
+	e := &episode{t: t, binding: suffixBinding(EmitOnChange, "neutral")}
+	first := []llmprotocol.Message{text(llmprotocol.RoleUser, "go")}
+	plan, _ := e.serve(first, "neutral")
+	if plan.Emitted {
+		t.Fatalf("a fresh episode wrote the neutral item: %+v", plan)
+	}
+	plan, _ = e.serve(first, "down")
+	e.commit(plan)
+
+	rewritten := []llmprotocol.Message{text(llmprotocol.RoleUser, "summary"), text(llmprotocol.RoleUser, "continue")}
+	plan, provider := e.serve(rewritten, "neutral")
+	if plan.ResetReason != ResetTranscriptRewrite || !plan.Emitted || plan.LevelInForce != "neutral" {
+		t.Fatalf("neutral was not re-asserted after the reset: %+v", plan)
+	}
+	if got := provider[1].Content[len(provider[1].Content)-1].Text; got != "Until the next steering instruction, use your normal judgement." {
+		t.Fatalf("re-asserted text = %q", got)
+	}
+	e.commit(plan)
+	// The re-asserted item is an anchor again, so a retry is recognised.
+	plan, _ = e.serve(rewritten, "neutral")
+	if !plan.Retry {
+		t.Fatalf("retry after the reset not recognised: %+v", plan)
+	}
+}

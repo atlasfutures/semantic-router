@@ -605,11 +605,14 @@ func shouldEmit(
 		return payload.writes(), ""
 	}
 	state, _ := ledger.state(turn.Binding.Lever)
-	// Nothing written yet in this epoch is the neutral level in force. A
-	// change of bytes under the same level name, after a binding change, is
-	// a change and is re-asserted.
+	// Nothing written yet: at the start of an episode that is the neutral
+	// level, so a fresh conversation carries no neutral item it does not
+	// need. After a reset it is not: the previous epoch had a level in
+	// force, and whatever is requested now -- neutral included -- is stated
+	// at the new tail. A change of bytes under the same level name, after a
+	// binding change, is a change and is re-asserted too.
 	if state.Payload < 0 {
-		if requested.Name == turn.Binding.Neutral || !payload.writes() {
+		if !payload.writes() || (requested.Name == turn.Binding.Neutral && ledger.Epoch == 0) {
 			return false, ""
 		}
 		return true, ""
