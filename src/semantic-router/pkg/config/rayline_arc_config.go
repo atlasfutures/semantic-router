@@ -611,7 +611,7 @@ func validateRaylineARCDecisionContract(cfg *RouterConfig, decision Decision) er
 			)
 		}
 	}
-	if err := validateRaylineARCThinkingWorkers(decision.Algorithm.RaylineARC, seen); err != nil {
+	if err := validateRaylineARCThinkingWorkers(decision.Algorithm.RaylineARC, decision.ModelRefs); err != nil {
 		return fmt.Errorf("decision '%s': algorithm.rayline_arc.thinking_lever: %w", decision.Name, err)
 	}
 	if err := validateRaylineARCWorkerThinkingRefs(decision.Algorithm.RaylineARC, decision.ModelRefs); err != nil {

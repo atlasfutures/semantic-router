@@ -121,19 +121,26 @@ func TestRaylineARCThinkingLeverRoundTripsStrictly(t *testing.T) {
 	}
 }
 
-func TestRaylineARCThinkingLeverBindsOnlySelectableWorkers(t *testing.T) {
-	lever := validThinkingLeverConfig()
-	binding := lever.Workers["z-ai/glm-5.3-flash@default"]
-	lever.Workers = map[string]RaylineARCThinkingBindingConfig{"public-arm-a": binding}
+func TestRaylineARCThinkingLeverBindsOnlySelectableThinkingWorkers(t *testing.T) {
+	on, off := true, false
+	binding := validThinkingLeverConfig().Workers["z-ai/glm-5.3-flash@default"]
 	decision := validRaylineARCDecision()
-	decision.Algorithm.RaylineARC.ThinkingLever = lever
-	if err := validateRaylineARCDecisionContract(&RouterConfig{}, decision); err != nil {
-		t.Fatalf("bound modelRef refused: %v", err)
+	decision.ModelRefs = []ModelRef{
+		{Model: "arm-on", ModelReasoningControl: ModelReasoningControl{UseReasoning: &on}},
+		{Model: "arm-off", ModelReasoningControl: ModelReasoningControl{UseReasoning: &off}},
 	}
-	lever.Workers["public-arm-typo"] = binding
-	err := validateRaylineARCDecisionContract(&RouterConfig{}, decision)
-	if err == nil || !strings.Contains(err.Error(), "not one of the decision's modelRefs") {
-		t.Fatalf("error = %v, want an unknown-worker refusal", err)
+	for worker, wantErr := range map[string]string{
+		"arm-on":   "",
+		"arm-off":  "does not reason",
+		"arm-typo": "not one of the decision's modelRefs",
+	} {
+		lever := validThinkingLeverConfig()
+		lever.Workers = map[string]RaylineARCThinkingBindingConfig{worker: binding}
+		decision.Algorithm.RaylineARC.ThinkingLever = lever
+		err := validateRaylineARCDecisionContract(&RouterConfig{}, decision)
+		if (wantErr == "" && err != nil) || (wantErr != "" && (err == nil || !strings.Contains(err.Error(), wantErr))) {
+			t.Fatalf("%s: error = %v, want %q", worker, err, wantErr)
+		}
 	}
 }
 

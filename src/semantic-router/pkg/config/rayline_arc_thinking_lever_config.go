@@ -155,15 +155,25 @@ func validateRaylineARCThinkingBinding(
 }
 
 // validateRaylineARCThinkingWorkers refuses a binding for a worker the
-// decision cannot select. It would never steer anything, which reads as a
-// lever that is on but has no effect -- usually a worker ID typo.
-func validateRaylineARCThinkingWorkers(cfg *RaylineARCAlgorithmConfig, workers map[string]bool) error {
+// decision cannot select -- it would never steer anything, usually a worker ID
+// typo -- and for a worker that does not reason. A thinking-off arm emits no
+// reasoning, so a lever cannot move its depth; it could only change the
+// visible answer, which is not what the lever is for.
+func validateRaylineARCThinkingWorkers(cfg *RaylineARCAlgorithmConfig, modelRefs []ModelRef) error {
 	if cfg == nil || cfg.ThinkingLever == nil || !cfg.ThinkingLever.Enabled {
 		return nil
 	}
+	reasons := make(map[string]bool, len(modelRefs))
+	for _, modelRef := range modelRefs {
+		reasons[modelRef.Model] = modelRef.UseReasoning != nil && *modelRef.UseReasoning
+	}
 	for worker := range cfg.ThinkingLever.Workers {
-		if !workers[worker] {
+		thinking, selectable := reasons[worker]
+		if !selectable {
 			return fmt.Errorf("workers[%q] is not one of the decision's modelRefs", worker)
+		}
+		if !thinking {
+			return fmt.Errorf("workers[%q] does not reason (use_reasoning is false), so a lever cannot steer it", worker)
 		}
 	}
 	return nil
