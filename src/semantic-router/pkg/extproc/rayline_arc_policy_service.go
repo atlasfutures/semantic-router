@@ -101,10 +101,11 @@ func newPolicyServiceScorer(
 // the card's pricing; a card with none leaves them zero, as the v3 manifest
 // would for an unpriced arm.
 func policyWorkerManifest(cfg *config.RouterConfig, model string) raylinearc.WorkerManifest {
-	worker := raylinearc.WorkerManifest{ID: model, Model: cfg.ResolveExternalModelID(model, "")}
-	if worker.Model == "" {
-		worker.Model = model
+	endpoint := ""
+	if endpoints := cfg.GetEndpointsForModel(model); len(endpoints) > 0 {
+		endpoint = endpoints[0].Name
 	}
+	worker := raylinearc.WorkerManifest{ID: model, Model: cfg.ResolveExternalModelID(model, endpoint)}
 	if params, ok := cfg.ModelConfig[model]; ok {
 		pricing := params.Pricing
 		worker.EstimatedInputCostPerToken = pricing.PromptPer1M / tokensPerMillion
