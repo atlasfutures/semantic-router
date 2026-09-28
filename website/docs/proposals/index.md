@@ -15,6 +15,7 @@ without taking over serving-layer scheduling.
 | Proposal | Created | Status | Scope |
 | --- | --- | --- | --- |
 | [Routing Scope: Per-Query and Capacity-Aware Routing](./batch-and-capacity-aware-routing) | 2026-07-14 | Decision record | Keeps semantic routing per-query and capacity handling in the serving layer. |
+| [Rayline ARC Policy Service](./rayline-arc-policy-service) | 2026-09-28 | Proposal | Serve pathfinder SDK checkpoints through a Modal policy service that returns the decision; packages by alias and hash. |
 | [Router Learning](./router-learning-memory-and-adaptations) | 2026-06-20 | Implemented | Online adaptation, route protection, and offline recipe improvement. |
 | [Prompt Classification Routing](./prompt-classification-routing) | 2025-10-08 | Proposal | Keyword, regex, embedding, and classifier signal fusion. |
 

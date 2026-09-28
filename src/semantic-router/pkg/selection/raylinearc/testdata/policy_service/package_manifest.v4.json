@@ -1,0 +1,114 @@
+{
+  "schema_version": "rayline.arc-policy-package.v4",
+  "package_id": "4e88871df485280b146da049421a745730e9d059d22daed5a3bcffbfbcd04161",
+  "serving_policy": {
+    "schema_version": "pathfinder.serving-policy.v1",
+    "policy_id": "f0203b98f859dced93cb2e0bb6b7d4acdf2fd00aef2d1a5d42215cc138874912",
+    "files": {
+      "policy.json": "89b73d7f849510a59cfe8dd9380ebf6e7ace4f72f7414f58721e8c1d8bd95819",
+      "candidate.pt": "9dcd07af41b3973eada83718ae0a7abac67f52fd78c7292b009d119719391a10",
+      "evidence.json": "b137e6fcdce72f43c2c56700149cfa056756a931d3d99d3dc82204081fb48f61"
+    }
+  },
+  "head": {
+    "file": "head.pt2",
+    "sha256": "975d15975eae32e09d39ab8156edcb08b0849f404a7ba4c364f1748340f0ba26",
+    "format": "torch.export",
+    "torch_version": "2.9.0",
+    "dynamic_dimensions": [
+      "blocks"
+    ]
+  },
+  "encoding_profile": {
+    "serializer": "arc-role-blocks-v1",
+    "projection": "pathfinder.input-projection.v1",
+    "tool_definitions": "include_recorded",
+    "encoder_model": "Qwen/Qwen3.5-0.8B",
+    "encoder_revision": "2fc06364715b967f1860aea9cf38778875588b17",
+    "dtype": "bfloat16",
+    "max_tokens": 262144,
+    "readout": "final_layer_block_last_token",
+    "dimension": 1024
+  },
+  "inference_package": {
+    "name": "rayline-router",
+    "source_digest": "d70a42423cc21804b8234c3ff8cb3d1a04817c0690dd1920f39e724a9d091ced"
+  },
+  "decision": {
+    "mode": "factored",
+    "selection": "supported_utility_or_reference_v1",
+    "horizon": "policy_continuation",
+    "fallback_action_id": "0cb8079ef41077d5064824f584e76a41cd346056844badd898726bf6b367e775",
+    "reference_action_ids": {
+      "opus": "0cb8079ef41077d5064824f584e76a41cd346056844badd898726bf6b367e775"
+    },
+    "operating_bounds": {
+      "cost_weight": [
+        0.0,
+        1.0
+      ],
+      "max_quality_drop": null,
+      "quality_margin": null
+    },
+    "model_schedule": "task_turn_compaction_v1"
+  },
+  "actions": [
+    {
+      "action_id": "e9a2ac5c6f1fa64dcbbaa2e06dd8c7e6f7fcb36f735099db7d57de3807a51f96",
+      "trained_arm": {
+        "model": "z-ai/glm-5.3-flash",
+        "provider": "openrouter",
+        "provider_route": "{\"only\": [\"z-ai\"]}",
+        "effort": "none",
+        "control": "{\"level\": \"none\", \"suffix_sha256\": \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}",
+        "reasoning_max_tokens": null,
+        "catalog_id": "policy:example"
+      }
+    },
+    {
+      "action_id": "34b4302469e0baa37920e17c67db48d0cc20a602f967b8e5e98a2a59b3d5c875",
+      "trained_arm": {
+        "model": "z-ai/glm-5.3-flash",
+        "provider": "openrouter",
+        "provider_route": "{\"only\": [\"z-ai\"]}",
+        "effort": "none",
+        "control": "{\"level\": \"high\", \"suffix_sha256\": \"9c610983a217b70fd56c0e33a03c7d298d373cf7f950f7d68f03ffcb637147c2\"}",
+        "reasoning_max_tokens": null,
+        "catalog_id": "policy:example"
+      }
+    },
+    {
+      "action_id": "0cb8079ef41077d5064824f584e76a41cd346056844badd898726bf6b367e775",
+      "trained_arm": {
+        "model": "anthropic/claude-opus-5",
+        "provider": "openrouter",
+        "provider_route": "{\"only\": [\"anthropic\"]}",
+        "effort": "medium",
+        "control": null,
+        "reasoning_max_tokens": null,
+        "catalog_id": "policy:example"
+      }
+    }
+  ],
+  "pricing": {
+    "scenario_id": "openrouter-example-20260928",
+    "pricing_identity": "fe81f9390ffe3dc8daa4888a7dc430ce4a41f164281d15449a24840a70b5f2c2",
+    "live_prices_affect_decisions": false
+  },
+  "calibration": null,
+  "goldens": {
+    "file": "goldens.jsonl",
+    "sha256": "532a32f73d888288722914d941783b51cf6bd2a0fb3549d672203bb7bbabd473",
+    "cases": 200,
+    "required_selection_parity": 1.0,
+    "score_tolerance": 0.0001
+  },
+  "provenance": {
+    "registry_id": "example-registry-id",
+    "hf_repo": "rayline-ai/router-artifacts",
+    "hf_path": "arc/example/fold0",
+    "hf_revision": "0000000000000000000000000000000000000000",
+    "dataset_id": "example-dataset",
+    "fold": 0
+  }
+}
