@@ -111,6 +111,18 @@ func TestDecodePolicyDecisionResponseRefusesAmbiguousDecisions(t *testing.T) {
 	if _, err := DecodePolicyDecisionResponse(twoSelected); err == nil {
 		t.Fatal("a response marking every action selected was accepted")
 	}
+	shadow := raw["shadow"].([]any)[0].(map[string]any)
+	for _, action := range raw["actions"].([]any) {
+		action.(map[string]any)["selected"] = false
+	}
+	raw["actions"].([]any)[1].(map[string]any)["selected"] = true
+	for _, action := range shadow["actions"].([]any) {
+		action.(map[string]any)["selected"] = false
+	}
+	shadowNone, _ := json.Marshal(raw)
+	if _, err := DecodePolicyDecisionResponse(shadowNone); err == nil {
+		t.Fatal("a shadow result marking no action selected was accepted")
+	}
 	unknown := bytes.Replace(body, []byte(`"quality_parity_established"`), []byte(`"surprise": 1, "quality_parity_established"`), 1)
 	if _, err := DecodePolicyDecisionResponse(unknown); err == nil {
 		t.Fatal("a response with an unknown field was accepted")
@@ -128,5 +140,16 @@ func TestDecodePolicyPackageManifestRefusesLivePrices(t *testing.T) {
 	}
 	if _, err := DecodePolicyPackageManifest(live); err == nil {
 		t.Fatal("a package letting live prices affect decisions was accepted")
+	}
+}
+
+func TestDecodePolicyPackagesResponseRefusesAnotherSchema(t *testing.T) {
+	body := readPolicyFixture(t, "packages_response.v1.json")
+	if _, err := DecodePolicyPackagesResponse(body); err != nil {
+		t.Fatal(err)
+	}
+	older := bytes.Replace(body, []byte(PolicyPackagesSchema), []byte("rayline.arc.policy-packages.v0"), 1)
+	if _, err := DecodePolicyPackagesResponse(older); err == nil {
+		t.Fatal("a packages listing with another schema was accepted")
 	}
 }

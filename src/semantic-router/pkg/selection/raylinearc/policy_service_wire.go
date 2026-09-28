@@ -293,7 +293,8 @@ type PolicyPackageManifest struct {
 }
 
 // DecodePolicyDecisionResponse refuses unknown fields, trailing bytes, a
-// different schema, and a response that does not mark exactly its decision.
+// different schema, and a primary or shadow result that does not mark exactly
+// its nonempty decided action.
 func DecodePolicyDecisionResponse(body []byte) (*PolicyDecisionResponse, error) {
 	var response PolicyDecisionResponse
 	if err := decodeStrict(body, &response); err != nil {
@@ -302,17 +303,47 @@ func DecodePolicyDecisionResponse(body []byte) (*PolicyDecisionResponse, error) 
 	if response.SchemaVersion != PolicyDecisionResponseSchema {
 		return nil, fmt.Errorf("policy decision schema %q", response.SchemaVersion)
 	}
+	if err := requireOneSelected(response.Decision, response.Actions); err != nil {
+		return nil, err
+	}
+	for _, shadow := range response.Shadow {
+		if shadow.Scored == nil {
+			continue
+		}
+		if err := requireOneSelected(shadow.Scored.Decision, shadow.Scored.Actions); err != nil {
+			return nil, fmt.Errorf("shadow %s: %w", shadow.Scored.Package.Alias, err)
+		}
+	}
+	return &response, nil
+}
+
+func requireOneSelected(decision PolicyDecision, actions []PolicyActionScore) error {
+	if decision.SelectedActionID == "" {
+		return fmt.Errorf("policy decision names no action")
+	}
 	selected := 0
-	for _, action := range response.Actions {
+	for _, action := range actions {
 		if action.Selected {
 			selected++
-			if action.ActionID != response.Decision.SelectedActionID {
-				return nil, fmt.Errorf("selected action differs from the decision")
+			if action.ActionID != decision.SelectedActionID {
+				return fmt.Errorf("selected action differs from the decision")
 			}
 		}
 	}
 	if selected != 1 {
-		return nil, fmt.Errorf("policy decision marks %d selected actions", selected)
+		return fmt.Errorf("policy decision marks %d selected actions", selected)
+	}
+	return nil
+}
+
+// DecodePolicyPackagesResponse refuses unknown fields and another schema.
+func DecodePolicyPackagesResponse(body []byte) (*PolicyPackagesResponse, error) {
+	var response PolicyPackagesResponse
+	if err := decodeStrict(body, &response); err != nil {
+		return nil, err
+	}
+	if response.SchemaVersion != PolicyPackagesSchema {
+		return nil, fmt.Errorf("policy packages schema %q", response.SchemaVersion)
 	}
 	return &response, nil
 }

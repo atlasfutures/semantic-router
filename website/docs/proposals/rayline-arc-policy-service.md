@@ -90,6 +90,10 @@ handling differ by endpoint. So a remap on a production alias is canaried. If
 the new route's rates leave the package's price scenario, the package is
 re-exported with new prices.
 
+VSR verifies a package only by `package_sha256`, the sha256 of its manifest
+bytes. `package_id`, `profile_id`, `action_id` and `policy_id` are
+pathfinder-issued ids that VSR compares as opaque strings and never recomputes.
+
 Every service error fails closed.
 
 ## Open questions
