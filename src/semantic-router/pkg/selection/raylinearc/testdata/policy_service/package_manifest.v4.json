@@ -1,0 +1,114 @@
+{
+  "schema_version": "rayline.arc-policy-package.v4",
+  "package_id": "99f5ac02d486bd11689dd4034f686b117835bec2c6ea3bb2385b0af105bfda26",
+  "serving_policy": {
+    "schema_version": "pathfinder.serving-policy.v1",
+    "policy_id": "f0203b98f859dced93cb2e0bb6b7d4acdf2fd00aef2d1a5d42215cc138874912",
+    "files": {
+      "policy.json": "89b73d7f849510a59cfe8dd9380ebf6e7ace4f72f7414f58721e8c1d8bd95819",
+      "candidate.pt": "9dcd07af41b3973eada83718ae0a7abac67f52fd78c7292b009d119719391a10",
+      "evidence.json": "b137e6fcdce72f43c2c56700149cfa056756a931d3d99d3dc82204081fb48f61"
+    }
+  },
+  "head": {
+    "file": "head.pt2",
+    "sha256": "975d15975eae32e09d39ab8156edcb08b0849f404a7ba4c364f1748340f0ba26",
+    "format": "torch.export",
+    "torch_version": "2.9.0",
+    "dynamic_dimensions": [
+      "blocks"
+    ]
+  },
+  "encoding_profile": {
+    "serializer": "arc-role-blocks-v1",
+    "projection": "pathfinder.input-projection.v1",
+    "tool_definitions": "include_recorded",
+    "encoder_model": "Qwen/Qwen3.5-0.8B",
+    "encoder_revision": "2fc06364715b967f1860aea9cf38778875588b17",
+    "dtype": "bfloat16",
+    "max_tokens": 262144,
+    "readout": "final_layer_block_last_token",
+    "dimension": 1024
+  },
+  "inference_package": {
+    "name": "rayline-router",
+    "source_digest": "d70a42423cc21804b8234c3ff8cb3d1a04817c0690dd1920f39e724a9d091ced"
+  },
+  "decision": {
+    "mode": "factored",
+    "selection": "supported_utility_or_reference_v1",
+    "horizon": "policy_continuation",
+    "fallback_arm_id": "7c0a96ac5543f42e44bd735c1b255c6bbb5fb2fbb0114a6fe2d4a2b411ed7614",
+    "reference_arm_ids": {
+      "opus": "7c0a96ac5543f42e44bd735c1b255c6bbb5fb2fbb0114a6fe2d4a2b411ed7614"
+    },
+    "operating_bounds": {
+      "cost_weight": [
+        0.0,
+        1.0
+      ],
+      "max_quality_drop": null,
+      "quality_margin": null
+    },
+    "model_schedule": "task_turn_compaction_v1"
+  },
+  "actions": [
+    {
+      "arm_id": "ba334d589b0f9a066b356de57b5ba7573b1e6f257ca096b0882207b7f4626912",
+      "arm": {
+        "model": "z-ai/glm-5.3-flash",
+        "provider": "z-ai",
+        "provider_route": null,
+        "effort": null,
+        "control": "{\"level\": \"none\", \"suffix_sha256\": \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}",
+        "reasoning_max_tokens": null,
+        "catalog_id": "policy:example"
+      }
+    },
+    {
+      "arm_id": "e550f9582836fc3200105259cdb4c28be7679f0f14509fd86329074a955836d6",
+      "arm": {
+        "model": "z-ai/glm-5.3-flash",
+        "provider": "z-ai",
+        "provider_route": null,
+        "effort": null,
+        "control": "{\"level\": \"high\", \"suffix_sha256\": \"9c610983a217b70fd56c0e33a03c7d298d373cf7f950f7d68f03ffcb637147c2\"}",
+        "reasoning_max_tokens": null,
+        "catalog_id": "policy:example"
+      }
+    },
+    {
+      "arm_id": "7c0a96ac5543f42e44bd735c1b255c6bbb5fb2fbb0114a6fe2d4a2b411ed7614",
+      "arm": {
+        "model": "anthropic/claude-opus-5",
+        "provider": "anthropic",
+        "provider_route": null,
+        "effort": "medium",
+        "control": null,
+        "reasoning_max_tokens": null,
+        "catalog_id": "policy:example"
+      }
+    }
+  ],
+  "pricing": {
+    "scenario_id": "openrouter-example-20260928",
+    "pricing_identity": "fe81f9390ffe3dc8daa4888a7dc430ce4a41f164281d15449a24840a70b5f2c2",
+    "live_prices_affect_decisions": false
+  },
+  "calibration": null,
+  "goldens": {
+    "file": "goldens.jsonl",
+    "sha256": "532a32f73d888288722914d941783b51cf6bd2a0fb3549d672203bb7bbabd473",
+    "cases": 200,
+    "required_selection_parity": 1.0,
+    "score_tolerance": 0.0001
+  },
+  "provenance": {
+    "registry_id": "example-registry-id",
+    "hf_repo": "rayline-ai/router-artifacts",
+    "hf_path": "arc/example/fold0",
+    "hf_revision": "0000000000000000000000000000000000000000",
+    "dataset_id": "example-dataset",
+    "fold": 0
+  }
+}

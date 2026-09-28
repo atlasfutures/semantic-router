@@ -1,0 +1,19 @@
+[
+  {
+    "error": "selection_refused",
+    "detail": {
+      "reason": "operating_point_out_of_bounds"
+    }
+  },
+  {
+    "error": "context_exceeds_encoder_capacity",
+    "detail": {
+      "token_count": 270001,
+      "max_tokens": 262144
+    }
+  },
+  {
+    "error": "package_hash_mismatch",
+    "detail": {}
+  }
+]

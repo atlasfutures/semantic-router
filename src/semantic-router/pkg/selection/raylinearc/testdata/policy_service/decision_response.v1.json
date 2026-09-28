@@ -1,0 +1,135 @@
+{
+  "package": {
+    "alias": "rayline/arc-example-fold0",
+    "package_sha256": "6e61e82f564d35d86921f0977151685ebbe261e3ba7fc4f5186d9f12a74518e1"
+  },
+  "policy_id": "f0203b98f859dced93cb2e0bb6b7d4acdf2fd00aef2d1a5d42215cc138874912",
+  "decision": {
+    "selected_arm_id": "e550f9582836fc3200105259cdb4c28be7679f0f14509fd86329074a955836d6",
+    "reason": "supported_prediction",
+    "operating_point": {
+      "name": "default",
+      "point_id": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "cost_weight": 0.3
+    }
+  },
+  "actions": [
+    {
+      "arm_id": "ba334d589b0f9a066b356de57b5ba7573b1e6f257ca096b0882207b7f4626912",
+      "available": true,
+      "supported": true,
+      "selected": false,
+      "score": 0.6088,
+      "predicted_quality": 0.61,
+      "predicted_usage": {
+        "uncached_input": 1200.0,
+        "cache_read": 18000.0,
+        "cache_write": 900.0,
+        "output": 400.0
+      },
+      "predicted_cost_usd": 0.004
+    },
+    {
+      "arm_id": "e550f9582836fc3200105259cdb4c28be7679f0f14509fd86329074a955836d6",
+      "available": true,
+      "supported": true,
+      "selected": true,
+      "score": 0.6579,
+      "predicted_quality": 0.66,
+      "predicted_usage": {
+        "uncached_input": 1200.0,
+        "cache_read": 18000.0,
+        "cache_write": 900.0,
+        "output": 2100.0
+      },
+      "predicted_cost_usd": 0.007
+    },
+    {
+      "arm_id": "7c0a96ac5543f42e44bd735c1b255c6bbb5fb2fbb0114a6fe2d4a2b411ed7614",
+      "available": true,
+      "supported": false,
+      "selected": false,
+      "score": 0.74,
+      "predicted_quality": 0.74,
+      "predicted_usage": null,
+      "predicted_cost_usd": null
+    }
+  ],
+  "schema_version": "rayline.arc.policy-decision-response.v1",
+  "pricing": {
+    "scenario_id": "openrouter-example-20260928",
+    "pricing_identity": "fe81f9390ffe3dc8daa4888a7dc430ce4a41f164281d15449a24840a70b5f2c2"
+  },
+  "encoding": {
+    "profile_id": "e7ff0fd3afa2bc64be268e7187172773ddce31e914858bfce3ae85bfd59dc14c",
+    "tokenization_id": "c51e455b41df6c017327e16001dd064b8b6733faeaa69b23d9bd79c8079237d5",
+    "representation_id": "a8ad1f5f2bb3f4c78bf20d8272c6f9caf298e5c73176b5a97bb7d01d0b5e8469",
+    "token_count": 3412,
+    "session_action": "appended",
+    "session_revision": 3,
+    "engine_build_id": "vllm@example"
+  },
+  "timing_ms": {
+    "encode": 41.5,
+    "score": 1.8,
+    "total": 47.2
+  },
+  "shadow": [
+    {
+      "package": {
+        "alias": "rayline/arc-example-fold1",
+        "package_sha256": "cbff17fda21ece1386a8bf32ebdf251933a1481d5f6c021055ad75147335e48c"
+      },
+      "policy_id": "8adb4ba706a9dcc829c6d08cc163498be99de45ef739a39f1f41cac89e429cb3",
+      "decision": {
+        "selected_arm_id": "ba334d589b0f9a066b356de57b5ba7573b1e6f257ca096b0882207b7f4626912",
+        "reason": "supported_prediction",
+        "operating_point": {
+          "name": "default",
+          "point_id": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "cost_weight": 0.3
+        }
+      },
+      "actions": [
+        {
+          "arm_id": "ba334d589b0f9a066b356de57b5ba7573b1e6f257ca096b0882207b7f4626912",
+          "available": true,
+          "supported": true,
+          "selected": true,
+          "score": 0.63,
+          "predicted_quality": 0.63,
+          "predicted_usage": null,
+          "predicted_cost_usd": null
+        },
+        {
+          "arm_id": "e550f9582836fc3200105259cdb4c28be7679f0f14509fd86329074a955836d6",
+          "available": true,
+          "supported": true,
+          "selected": false,
+          "score": 0.62,
+          "predicted_quality": 0.64,
+          "predicted_usage": null,
+          "predicted_cost_usd": null
+        },
+        {
+          "arm_id": "7c0a96ac5543f42e44bd735c1b255c6bbb5fb2fbb0114a6fe2d4a2b411ed7614",
+          "available": true,
+          "supported": false,
+          "selected": false,
+          "score": 0.5,
+          "predicted_quality": null,
+          "predicted_usage": null,
+          "predicted_cost_usd": null
+        }
+      ]
+    },
+    {
+      "package": {
+        "alias": "rayline/arc-example-fold2",
+        "package_sha256": "6c6e140787fce7558cc445fa19aea3f744a0141192dd267f9ec82118dbecf99a"
+      },
+      "error": "package_not_loaded"
+    }
+  ],
+  "quality_parity_established": false
+}
