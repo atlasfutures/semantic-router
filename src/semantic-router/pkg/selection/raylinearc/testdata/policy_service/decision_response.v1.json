@@ -1,11 +1,11 @@
 {
   "package": {
     "alias": "rayline/arc-example-fold0",
-    "package_sha256": "6e61e82f564d35d86921f0977151685ebbe261e3ba7fc4f5186d9f12a74518e1"
+    "package_sha256": "6f09101f6966b8e708075aca8807f485255773b0643e0889ab55b74741a8d72d"
   },
   "policy_id": "f0203b98f859dced93cb2e0bb6b7d4acdf2fd00aef2d1a5d42215cc138874912",
   "decision": {
-    "selected_arm_id": "e550f9582836fc3200105259cdb4c28be7679f0f14509fd86329074a955836d6",
+    "selected_action_id": "34b4302469e0baa37920e17c67db48d0cc20a602f967b8e5e98a2a59b3d5c875",
     "reason": "supported_prediction",
     "operating_point": {
       "name": "default",
@@ -15,7 +15,7 @@
   },
   "actions": [
     {
-      "arm_id": "ba334d589b0f9a066b356de57b5ba7573b1e6f257ca096b0882207b7f4626912",
+      "action_id": "e9a2ac5c6f1fa64dcbbaa2e06dd8c7e6f7fcb36f735099db7d57de3807a51f96",
       "available": true,
       "supported": true,
       "selected": false,
@@ -30,7 +30,7 @@
       "predicted_cost_usd": 0.004
     },
     {
-      "arm_id": "e550f9582836fc3200105259cdb4c28be7679f0f14509fd86329074a955836d6",
+      "action_id": "34b4302469e0baa37920e17c67db48d0cc20a602f967b8e5e98a2a59b3d5c875",
       "available": true,
       "supported": true,
       "selected": true,
@@ -45,7 +45,7 @@
       "predicted_cost_usd": 0.007
     },
     {
-      "arm_id": "7c0a96ac5543f42e44bd735c1b255c6bbb5fb2fbb0114a6fe2d4a2b411ed7614",
+      "action_id": "0cb8079ef41077d5064824f584e76a41cd346056844badd898726bf6b367e775",
       "available": true,
       "supported": false,
       "selected": false,
@@ -82,7 +82,7 @@
       },
       "policy_id": "8adb4ba706a9dcc829c6d08cc163498be99de45ef739a39f1f41cac89e429cb3",
       "decision": {
-        "selected_arm_id": "ba334d589b0f9a066b356de57b5ba7573b1e6f257ca096b0882207b7f4626912",
+        "selected_action_id": "e9a2ac5c6f1fa64dcbbaa2e06dd8c7e6f7fcb36f735099db7d57de3807a51f96",
         "reason": "supported_prediction",
         "operating_point": {
           "name": "default",
@@ -92,7 +92,7 @@
       },
       "actions": [
         {
-          "arm_id": "ba334d589b0f9a066b356de57b5ba7573b1e6f257ca096b0882207b7f4626912",
+          "action_id": "e9a2ac5c6f1fa64dcbbaa2e06dd8c7e6f7fcb36f735099db7d57de3807a51f96",
           "available": true,
           "supported": true,
           "selected": true,
@@ -102,7 +102,7 @@
           "predicted_cost_usd": null
         },
         {
-          "arm_id": "e550f9582836fc3200105259cdb4c28be7679f0f14509fd86329074a955836d6",
+          "action_id": "34b4302469e0baa37920e17c67db48d0cc20a602f967b8e5e98a2a59b3d5c875",
           "available": true,
           "supported": true,
           "selected": false,
@@ -112,7 +112,7 @@
           "predicted_cost_usd": null
         },
         {
-          "arm_id": "7c0a96ac5543f42e44bd735c1b255c6bbb5fb2fbb0114a6fe2d4a2b411ed7614",
+          "action_id": "0cb8079ef41077d5064824f584e76a41cd346056844badd898726bf6b367e775",
           "available": true,
           "supported": false,
           "selected": false,

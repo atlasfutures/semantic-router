@@ -69,12 +69,28 @@ It is the client side the new scorer will use.
 | #88 E2 | The response is the decision, not per-block rows. Block features stay in the service |
 | #90 R2 | A thin client scorer behind `raylineARCScorer` replaces the Go head port. The v3 Go head keeps working until it is retired |
 | #91 R3 | The ledger feeds `attribution` on every call |
-| #93 | The schedule narrows `available_arm_ids` or sets `held_arm_id`, as pathfinder's learned session does |
+| #93 | The schedule narrows `available_action_ids` or sets `held_action_id`, as pathfinder's learned session does |
 | #97 | Shadow runs through the `shadow` field: one encode, several packages |
 
-Readiness binds each package action (`arm_id`, the trained arm digest) to one
-worker whose model and route equal the trained ones. Every service error fails
-closed.
+## Provider bindings
+
+A package action (`action_id`) names a model, native effort, level and
+reasoning budget, but no provider. VSR config binds each action to a worker:
+provider, the provider's model name, route, credential and lever wire.
+Remapping an action to another provider is a config change, and the package
+and service are unaffected. The route the action was trained on stays in the
+package as provenance.
+
+Readiness refuses a binding that serves a different model, cannot carry the
+action's effort, or cannot express its level with a qualified lever. The
+selection log and usage records name both the `action_id` and the binding.
+
+A remap still changes cost and quality, because cache share and effort
+handling differ by endpoint. So a remap on a production alias is canaried. If
+the new route's rates leave the package's price scenario, the package is
+re-exported with new prices.
+
+Every service error fails closed.
 
 ## Open questions
 

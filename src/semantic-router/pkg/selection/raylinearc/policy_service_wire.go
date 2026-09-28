@@ -40,8 +40,8 @@ type PolicyPackageRef struct {
 }
 
 type PolicyAttribution struct {
-	Message int    `json:"message"`
-	ArmID   string `json:"arm_id"`
+	Message  int    `json:"message"`
+	ActionID string `json:"action_id"`
 }
 
 type PolicyOperatingPoint struct {
@@ -53,8 +53,8 @@ type PolicyOperatingPoint struct {
 }
 
 type PolicySelection struct {
-	AvailableArmIDs     []string             `json:"available_arm_ids"`
-	HeldArmID           *string              `json:"held_arm_id"`
+	AvailableActionIDs  []string             `json:"available_action_ids"`
+	HeldActionID        *string              `json:"held_action_id"`
 	Reference           *string              `json:"reference"`
 	OperatingPoint      PolicyOperatingPoint `json:"operating_point"`
 	PreferenceDimension string               `json:"preference_dimension"`
@@ -94,7 +94,7 @@ type PolicyPredictedUsage struct {
 }
 
 type PolicyActionScore struct {
-	ArmID            string                `json:"arm_id"`
+	ActionID         string                `json:"action_id"`
 	Available        bool                  `json:"available"`
 	Supported        bool                  `json:"supported"`
 	Selected         bool                  `json:"selected"`
@@ -111,9 +111,9 @@ type PolicyResolvedOperatingPoint struct {
 }
 
 type PolicyDecision struct {
-	SelectedArmID  string                       `json:"selected_arm_id"`
-	Reason         string                       `json:"reason"`
-	OperatingPoint PolicyResolvedOperatingPoint `json:"operating_point"`
+	SelectedActionID string                       `json:"selected_action_id"`
+	Reason           string                       `json:"reason"`
+	OperatingPoint   PolicyResolvedOperatingPoint `json:"operating_point"`
 }
 
 type PolicyScoredPackage struct {
@@ -215,7 +215,8 @@ type PolicyPackagesResponse struct {
 	Packages         []PolicyLoadedPackage  `json:"packages"`
 }
 
-// PolicyArm is pathfinder's trained arm; arm_id is its digest.
+// PolicyArm is the pathfinder arm an action was trained on. Its provider and
+// route are provenance: VSR binds each action to a route of its own choosing.
 type PolicyArm struct {
 	Model              string  `json:"model"`
 	Provider           *string `json:"provider"`
@@ -227,8 +228,8 @@ type PolicyArm struct {
 }
 
 type PolicyCatalogAction struct {
-	ArmID string    `json:"arm_id"`
-	Arm   PolicyArm `json:"arm"`
+	ActionID   string    `json:"action_id"`
+	TrainedArm PolicyArm `json:"trained_arm"`
 }
 
 type PolicyPackageManifest struct {
@@ -259,13 +260,13 @@ type PolicyPackageManifest struct {
 	} `json:"encoding_profile"`
 	InferencePackage PolicyInferencePackage `json:"inference_package"`
 	Decision         struct {
-		Mode            string               `json:"mode"`
-		Selection       string               `json:"selection"`
-		Horizon         string               `json:"horizon"`
-		FallbackArmID   string               `json:"fallback_arm_id"`
-		ReferenceArmIDs map[string]string    `json:"reference_arm_ids"`
-		OperatingBounds map[string][]float64 `json:"operating_bounds"`
-		ModelSchedule   *string              `json:"model_schedule"`
+		Mode               string               `json:"mode"`
+		Selection          string               `json:"selection"`
+		Horizon            string               `json:"horizon"`
+		FallbackActionID   string               `json:"fallback_action_id"`
+		ReferenceActionIDs map[string]string    `json:"reference_action_ids"`
+		OperatingBounds    map[string][]float64 `json:"operating_bounds"`
+		ModelSchedule      *string              `json:"model_schedule"`
 	} `json:"decision"`
 	Actions []PolicyCatalogAction `json:"actions"`
 	Pricing struct {
@@ -305,7 +306,7 @@ func DecodePolicyDecisionResponse(body []byte) (*PolicyDecisionResponse, error) 
 	for _, action := range response.Actions {
 		if action.Selected {
 			selected++
-			if action.ArmID != response.Decision.SelectedArmID {
+			if action.ActionID != response.Decision.SelectedActionID {
 				return nil, fmt.Errorf("selected action differs from the decision")
 			}
 		}
