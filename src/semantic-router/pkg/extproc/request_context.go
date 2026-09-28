@@ -301,6 +301,10 @@ type RequestContext struct {
 	// contract and neutral request.
 	SourceFormat     llmprotocol.WireFormat
 	TargetFormat     llmprotocol.WireFormat
+	// RaylineARCRawBody is the client's request body exactly as received. The
+	// ARC policy-service mode forwards its system, tools and messages so the
+	// service projects the conversation itself; nothing else reads it.
+	RaylineARCRawBody []byte
 	SemanticRequest  *llmprotocol.Request
 	SemanticResponse *llmprotocol.Response
 	// UpstreamDecodedRemnant is the response the codec decoded and then

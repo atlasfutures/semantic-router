@@ -70,6 +70,9 @@ func createRaylineARCSelector(
 			return unavailable("conflicting_config")
 		}
 	}
+	if arcConfig.PolicyService != nil {
+		return createRaylineARCPolicySelector(cfg, decisions[0])
+	}
 	runtime, err := raylinearc.LoadRuntime(arcConfig.ArtifactDir)
 	if err != nil {
 		// Logged with the path and the error, because the failure class alone

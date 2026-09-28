@@ -40,8 +40,9 @@ type PolicyPackageRef struct {
 }
 
 type PolicyAttribution struct {
-	Message  int    `json:"message"`
-	ActionID string `json:"action_id"`
+	Message  int     `json:"message"`
+	ActionID string  `json:"action_id"`
+	ArmID    *string `json:"arm_id"`
 }
 
 type PolicyOperatingPoint struct {
@@ -112,6 +113,7 @@ type PolicyResolvedOperatingPoint struct {
 
 type PolicyDecision struct {
 	SelectedActionID string                       `json:"selected_action_id"`
+	SelectedArmID    string                       `json:"selected_arm_id"`
 	Reason           string                       `json:"reason"`
 	OperatingPoint   PolicyResolvedOperatingPoint `json:"operating_point"`
 }
@@ -165,9 +167,9 @@ type PolicyEncoding struct {
 }
 
 type PolicyTiming struct {
-	Encode float64 `json:"encode"`
-	Score  float64 `json:"score"`
-	Total  float64 `json:"total"`
+	Encode *float64 `json:"encode"`
+	Score  *float64 `json:"score"`
+	Total  float64  `json:"total"`
 }
 
 type PolicyPricing struct {
@@ -215,21 +217,17 @@ type PolicyPackagesResponse struct {
 	Packages         []PolicyLoadedPackage  `json:"packages"`
 }
 
-// PolicyArm is the pathfinder arm an action was trained on. Its provider and
-// route are provenance: VSR binds each action to a route of its own choosing.
-type PolicyArm struct {
-	Model              string  `json:"model"`
-	Provider           *string `json:"provider"`
-	ProviderRoute      *string `json:"provider_route"`
-	Effort             *string `json:"effort"`
-	Control            *string `json:"control"`
-	ReasoningMaxTokens *int    `json:"reasoning_max_tokens"`
-	CatalogID          *string `json:"catalog_id"`
-}
-
+// PolicyCatalogAction is one dispatchable action: model, native effort,
+// budget and steering bytes. VSR binds it to a worker; TrainedArmIDs are
+// opaque to VSR.
 type PolicyCatalogAction struct {
-	ActionID   string    `json:"action_id"`
-	TrainedArm PolicyArm `json:"trained_arm"`
+	ActionID           string   `json:"action_id"`
+	Model              string   `json:"model"`
+	Effort             *string  `json:"effort"`
+	ReasoningMaxTokens *int     `json:"reasoning_max_tokens"`
+	Level              *string  `json:"level"`
+	SteeringSuffix     string   `json:"steering_suffix"`
+	TrainedArmIDs      []string `json:"trained_arm_ids"`
 }
 
 type PolicyPackageManifest struct {
@@ -240,7 +238,7 @@ type PolicyPackageManifest struct {
 		PolicyID      string            `json:"policy_id"`
 		Files         map[string]string `json:"files"`
 	} `json:"serving_policy"`
-	Head struct {
+	Head *struct {
 		File              string   `json:"file"`
 		SHA256            string   `json:"sha256"`
 		Format            string   `json:"format"`
@@ -263,6 +261,7 @@ type PolicyPackageManifest struct {
 		Mode               string               `json:"mode"`
 		Selection          string               `json:"selection"`
 		Horizon            string               `json:"horizon"`
+		CostWeight         float64              `json:"cost_weight"`
 		FallbackActionID   string               `json:"fallback_action_id"`
 		ReferenceActionIDs map[string]string    `json:"reference_action_ids"`
 		OperatingBounds    map[string][]float64 `json:"operating_bounds"`
@@ -275,7 +274,7 @@ type PolicyPackageManifest struct {
 		LivePricesAffectDecisions bool   `json:"live_prices_affect_decisions"`
 	} `json:"pricing"`
 	Calibration json.RawMessage `json:"calibration"`
-	Goldens     struct {
+	Goldens     *struct {
 		File                    string  `json:"file"`
 		SHA256                  string  `json:"sha256"`
 		Cases                   int     `json:"cases"`

@@ -1,0 +1,323 @@
+/*
+Copyright 2025 vLLM Semantic Router.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package extproc
+
+// The Rayline ARC policy-service mode: an external service runs the encoder,
+// head and selection rule and returns the decision; this router binds the
+// chosen action to a worker (website/docs/proposals/rayline-arc-policy-service.md).
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"time"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
+)
+
+const (
+	policyFormatAnthropic = "anthropic_messages"
+	policyFormatOpenAI    = "openai_chat"
+)
+
+type policyBinding struct {
+	arm   int
+	level string
+}
+
+// policyServiceScorer carries the worker catalog and action bindings. It does
+// not score embeddings: the policy service decides, and Select branches to it
+// before any encode.
+type policyServiceScorer struct {
+	alias       string
+	sha256      string
+	workerIDs   []string
+	workers     []raylinearc.WorkerManifest
+	bindings    map[string]policyBinding
+	actionOrder []string
+}
+
+func (scorer *policyServiceScorer) WorkerIDs() []string { return scorer.workerIDs }
+func (scorer *policyServiceScorer) ArtifactID() string  { return scorer.alias }
+func (scorer *policyServiceScorer) EncoderRevision() string {
+	return "policy-service"
+}
+
+func (scorer *policyServiceScorer) Select(
+	[]float32, []bool, *raylinearc.EpisodeState, int, time.Time,
+) (raylinearc.Decision, error) {
+	return raylinearc.Decision{}, errors.New("the policy service decides; there is no embedding to score")
+}
+
+func (scorer *policyServiceScorer) Worker(index int) (raylinearc.WorkerManifest, bool) {
+	if index < 0 || index >= len(scorer.workers) {
+		return raylinearc.WorkerManifest{}, false
+	}
+	return scorer.workers[index], true
+}
+
+func newPolicyServiceScorer(
+	cfg *config.RouterConfig,
+	decision *config.Decision,
+) *policyServiceScorer {
+	policy := decision.Algorithm.RaylineARC.PolicyService
+	scorer := &policyServiceScorer{
+		alias:    policy.PackageAlias,
+		sha256:   policy.PackageSHA256,
+		bindings: make(map[string]policyBinding, len(policy.Bindings)),
+	}
+	index := make(map[string]int, len(decision.ModelRefs))
+	for arm, modelRef := range decision.ModelRefs {
+		index[modelRef.Model] = arm
+		scorer.workerIDs = append(scorer.workerIDs, modelRef.Model)
+		scorer.workers = append(scorer.workers, policyWorkerManifest(cfg, modelRef.Model))
+	}
+	for _, binding := range policy.Bindings {
+		scorer.bindings[binding.ActionID] = policyBinding{arm: index[binding.Worker], level: binding.Level}
+		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
+	}
+	return scorer
+}
+
+// policyWorkerManifest describes a worker from its model card. Rates come from
+// the card's pricing; a card with none leaves them zero, as the v3 manifest
+// would for an unpriced arm.
+func policyWorkerManifest(cfg *config.RouterConfig, model string) raylinearc.WorkerManifest {
+	worker := raylinearc.WorkerManifest{ID: model, Model: cfg.ResolveExternalModelID(model, "")}
+	if worker.Model == "" {
+		worker.Model = model
+	}
+	if params, ok := cfg.ModelConfig[model]; ok {
+		pricing := params.Pricing
+		worker.EstimatedInputCostPerToken = pricing.PromptPer1M / tokensPerMillion
+		worker.EstimatedOutputCostPerToken = pricing.CompletionPer1M / tokensPerMillion
+		worker.EstimatedCacheReadCostPerToken = pricing.CachedInputPer1M / tokensPerMillion
+		if pricing.CacheWritePer1M != nil {
+			worker.EstimatedCacheWriteCostPerToken = *pricing.CacheWritePer1M / tokensPerMillion
+		}
+	}
+	return worker
+}
+
+func policyRequestFormat(format llmprotocol.WireFormat) string {
+	switch format {
+	case llmprotocol.AnthropicMessagesV1:
+		return policyFormatAnthropic
+	case llmprotocol.OpenAIChatV1:
+		return policyFormatOpenAI
+	default:
+		return ""
+	}
+}
+
+// createRaylineARCPolicySelector builds the selector for the policy-service
+// mode and arms it in the background once the service reports the configured
+// package loaded.
+func createRaylineARCPolicySelector(
+	cfg *config.RouterConfig,
+	decision *config.Decision,
+) (
+	selection.Selector,
+	raylinearc.EpisodeStore,
+	func() error,
+	raylineARCSessionCloseFunc,
+	string,
+) {
+	arcConfig := decision.Algorithm.RaylineARC
+	policy := arcConfig.PolicyService
+	unavailable := func(class string) (
+		selection.Selector, raylinearc.EpisodeStore, func() error, raylineARCSessionCloseFunc, string,
+	) {
+		return newRaylineARCSelector(nil, nil, nil, policy.PackageSHA256), nil, nil, nil, class
+	}
+	modalKey, keyErr := raylineARCOptionalSecret(policy.ModalKeyEnv)
+	modalSecret, secretErr := raylineARCOptionalSecret(policy.ModalSecretEnv)
+	if keyErr != nil || secretErr != nil {
+		return unavailable("policy_service_auth")
+	}
+	client := raylinearc.NewPolicyServiceClient(raylinearc.PolicyServiceConfig{
+		BaseURL:      policy.BaseURL,
+		ModalKey:     modalKey,
+		ModalSecret:  modalSecret,
+		TotalTimeout: time.Duration(policy.TotalTimeoutSeconds) * time.Second,
+	})
+	episodeStore, closeStore, err := createRaylineARCEpisodeStore(arcConfig.Episode)
+	if err != nil {
+		return unavailable("episode_store")
+	}
+	probeContext, cancelProbe := context.WithCancel(context.Background())
+	closeResources := func() error {
+		cancelProbe()
+		if closeStore != nil {
+			return closeStore()
+		}
+		return nil
+	}
+	selector := newRaylineARCSelector(nil, nil, nil, policy.PackageSHA256)
+	armed := &raylineARCArmedComponents{
+		scorer:    newPolicyServiceScorer(cfg, decision),
+		admission: raylinearc.NewAdmissionGate(0),
+		policy:    client,
+	}
+	probe := func(ctx context.Context) error {
+		return client.RequirePackage(ctx, policy.PackageAlias, policy.PackageSHA256)
+	}
+	raylineARCArmInBackground(
+		probeContext,
+		selector,
+		armed,
+		probe,
+		raylineARCProbeBackoffFromConfig(config.RaylineARCEncoderConfig{}),
+		raylineARCWait,
+	)
+	return selector, episodeStore, closeResources, nil, raylineARCReadinessPendingClass
+}
+
+type policyClientRequest struct {
+	System   json.RawMessage `json:"system"`
+	Tools    json.RawMessage `json:"tools"`
+	Messages json.RawMessage `json:"messages"`
+}
+
+// selectViaPolicyService asks the policy service for the decision and maps
+// the chosen action onto the worker pool.
+func (selector *raylineARCSelector) selectViaPolicyService(
+	ctx context.Context,
+	armed *raylineARCArmedComponents,
+	selCtx *selection.SelectionContext,
+	arcContext *selection.RaylineARCSelectionContext,
+	workerIDs []string,
+	state *raylinearc.EpisodeState,
+	excluded []bool,
+) (*selection.SelectionResult, error) {
+	scorer, ok := armed.scorer.(*policyServiceScorer)
+	if !ok {
+		return nil, arcSelectionFailure("policy_scorer")
+	}
+	if arcContext.RequestFormat == "" {
+		return nil, arcSelectionFailure("policy_request_format")
+	}
+	var body policyClientRequest
+	if err := json.Unmarshal(arcContext.RawRequest, &body); err != nil || len(body.Messages) == 0 {
+		return nil, arcSelectionFailure("policy_request_body")
+	}
+	available := make([]string, 0, len(scorer.actionOrder))
+	for _, actionID := range scorer.actionOrder {
+		arm := scorer.bindings[actionID].arm
+		if len(excluded) == len(workerIDs) && excluded[arm] {
+			continue
+		}
+		available = append(available, actionID)
+	}
+	if len(available) == 0 {
+		return nil, arcSelectionFailure("policy_no_available_action")
+	}
+	request := raylinearc.PolicyDecisionRequest{
+		SchemaVersion: raylinearc.PolicyDecisionRequestSchema,
+		Package:       raylinearc.PolicyPackageRef{Alias: scorer.alias, PackageSHA256: scorer.sha256},
+		EpisodeIDHash: arcContext.EpisodeIDHash,
+		// Epochs and the attribution ledger are not tracked yet: every turn is
+		// sent unattributed in one epoch (a stated deviation from the contract).
+		ContextEpoch:  "0",
+		RequestFormat: arcContext.RequestFormat,
+		Request:       raylinearc.PolicyClientRequest(body),
+		Attribution:   []raylinearc.PolicyAttribution{},
+		Selection: raylinearc.PolicySelection{
+			AvailableActionIDs:  available,
+			OperatingPoint:      raylinearc.PolicyOperatingPoint{Name: "default"},
+			PreferenceDimension: "overall",
+		},
+		Shadow: []raylinearc.PolicyPackageRef{},
+	}
+	started := selector.now()
+	response, err := armed.policy.Decide(ctx, request)
+	latency := selector.now().Sub(started)
+	if err != nil {
+		class := "transport"
+		var failure *raylinearc.PolicyServiceError
+		if errors.As(err, &failure) {
+			class = failure.Class
+		}
+		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
+			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
+		})
+		return nil, arcSelectionFailure("policy_service_" + class)
+	}
+	binding, ok := scorer.bindings[response.Decision.SelectedActionID]
+	if !ok {
+		return nil, arcSelectionFailure("policy_unbound_action")
+	}
+	decision := policyDecision(scorer, response, binding, workerIDs, excluded)
+	if !validARCDecision(decision, workerIDs) {
+		return nil, arcSelectionFailure("artifact_result")
+	}
+	encoded := &raylinearc.EncoderResult{
+		SerializedTokens:  response.Encoding.TokenCount,
+		FullHistoryTokens: response.Encoding.TokenCount,
+		SessionAction:     response.Encoding.SessionAction,
+		SessionRevision:   response.Encoding.SessionRevision,
+		EngineBuildID:     response.Encoding.EngineBuildID,
+	}
+	result := selector.selectionResult(armed, selCtx, arcContext, state, encoded, decision, latency)
+	result.Reasoning = "policy-service ARC decision (" + response.Decision.Reason + ")"
+	result.RaylineARC.PolicyActionID = response.Decision.SelectedActionID
+	result.RaylineARC.PolicyArmID = response.Decision.SelectedArmID
+	result.RaylineARC.ThinkingLevel = binding.level
+	return result, nil
+}
+
+// policyDecision reports each arm's best action score, so the trace and the
+// alternatives rank workers the way the service ranked their actions.
+func policyDecision(
+	scorer *policyServiceScorer,
+	response *raylinearc.PolicyDecisionResponse,
+	binding policyBinding,
+	workerIDs []string,
+	excluded []bool,
+) raylinearc.Decision {
+	count := len(workerIDs)
+	scores := make([]float32, count)
+	scored := make([]bool, count)
+	for _, action := range response.Actions {
+		bound, ok := scorer.bindings[action.ActionID]
+		if !ok || !action.Available {
+			continue
+		}
+		if !scored[bound.arm] || float32(action.Score) > scores[bound.arm] {
+			scores[bound.arm] = float32(action.Score)
+			scored[bound.arm] = true
+		}
+	}
+	excludedArms := make([]bool, count)
+	for arm := range excludedArms {
+		excludedArms[arm] = !scored[arm] || (len(excluded) == count && excluded[arm])
+	}
+	return raylinearc.Decision{
+		SelectedArm:                 binding.arm,
+		SelectedWorker:              workerIDs[binding.arm],
+		RawScores:                   scores,
+		AdjustedScores:              append([]float32(nil), scores...),
+		SwitchCostUSD:               make([]float64, count),
+		CacheMissTokens:             make([]int, count),
+		ColdSwitchUpgradeExemptions: make([]bool, count),
+		ExcludedArms:                excludedArms,
+	}
+}

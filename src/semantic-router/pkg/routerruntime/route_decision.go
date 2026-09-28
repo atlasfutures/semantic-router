@@ -94,6 +94,10 @@ type RouteDecision struct {
 	// the caller to invent one, and decision and execution then diverge on
 	// the exact axis the choice was made on.
 	Thinking RouteThinking
+	// ThinkingLevel and PolicyActionID are the policy-service decision's
+	// level and package action; empty outside that mode.
+	ThinkingLevel  string
+	PolicyActionID string
 	// Checkpoint identifies the artifact revision that scored this route. It
 	// is the already-hashed deployment identity, never the raw pin.
 	Checkpoint string

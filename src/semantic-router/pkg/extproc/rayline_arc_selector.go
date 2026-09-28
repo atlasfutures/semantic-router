@@ -129,6 +129,9 @@ type raylineARCArmedComponents struct {
 	scorer    raylineARCScorer
 	encoder   raylineARCEncoder
 	admission *raylinearc.AdmissionGate
+	// policy is set only in the policy-service mode, where it decides and
+	// encoder is nil.
+	policy *raylinearc.PolicyServiceClient
 }
 
 type raylineARCSelector struct {
@@ -231,6 +234,9 @@ func (selector *raylineARCSelector) Select(
 	excluded, err := excludedArms(arcContext, len(workerIDs))
 	if err != nil {
 		return nil, err
+	}
+	if armed.policy != nil {
+		return selector.selectViaPolicyService(ctx, armed, selCtx, arcContext, workerIDs, state, excluded)
 	}
 	encoded, latency, err := selector.encode(ctx, armed, arcContext, state)
 	if err != nil {
