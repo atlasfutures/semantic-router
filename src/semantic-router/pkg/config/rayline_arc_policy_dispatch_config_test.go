@@ -178,7 +178,11 @@ func TestRaylineARCPolicyDispatchRefusesWhatItCannotSend(t *testing.T) {
 		{"an effort on a thinking-off worker", func(_ *RouterConfig, d *Decision) {
 			d.Algorithm.RaylineARC.PolicyService.Bindings[2] = policyTestBinding(
 				"arm-off", "none", policyTestOffModel, policyTestString("low"), nil, "")
-		}, "cannot carry the action's effort"},
+		}, "must state effort none"},
+		{"a null-effort action on a thinking-off worker", func(_ *RouterConfig, d *Decision) {
+			d.Algorithm.RaylineARC.PolicyService.Bindings[2] = policyTestBinding(
+				"arm-off", "none", policyTestOffModel, nil, nil, "")
+		}, "must state effort none"},
 		{"a level the worker's lever does not bind", func(_ *RouterConfig, d *Decision) {
 			d.Algorithm.RaylineARC.PolicyService.Bindings[2].Level = "up"
 		}, `level "up" needs a thinking_lever binding`},

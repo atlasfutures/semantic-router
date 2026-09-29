@@ -75,8 +75,13 @@ func TestPolicyActionReachesTheProviderBody(t *testing.T) {
 	})
 	t.Run("a thinking-off action on Chat", func(t *testing.T) {
 		body := chat(t, "off")
+		// The off signal is the one the router derives for a
+		// use_reasoning:false worker; this card declares no reasoning family,
+		// so, as in prod, no reasoning control travels.
 		assertJSONField(t, body, "model", `"vendor/off"`)
-		assertJSONField(t, body, "reasoning", `{"effort":"none"}`)
+		if _, present := body["reasoning"]; present {
+			t.Fatalf("a thinking-off action added reasoning controls: %s", body["reasoning"])
+		}
 	})
 	t.Run("an effort action on Messages", func(t *testing.T) {
 		body := chat(t, "claude")
