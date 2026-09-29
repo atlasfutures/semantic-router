@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -138,6 +139,10 @@ type raylineARCSelector struct {
 	armed            atomic.Pointer[raylineARCArmedComponents]
 	artifactRevision string
 	now              func() time.Time
+	// recipe names the routing recipe this selector serves; empty is the
+	// default recipe, which alone owns the process readiness gauge. It is
+	// set before arming starts and never changes.
+	recipe config.RecipeName
 }
 
 type raylineARCSelectionFailure struct {

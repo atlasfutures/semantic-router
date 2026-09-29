@@ -207,7 +207,12 @@ func raylineARCPublishReady(
 	armed *raylineARCArmedComponents,
 	recovered bool,
 ) {
-	metrics.SetRaylineARCComponentReady(true)
+	// A named recipe's selector arms on its own and says so in its log line;
+	// the gauge stays the default recipe's, so one candidate arming never
+	// reads as another's readiness.
+	if selector.recipe == "" {
+		metrics.SetRaylineARCComponentReady(true)
+	}
 	selector.arm(armed)
 	logging.ComponentEvent(
 		"extproc",
@@ -215,6 +220,7 @@ func raylineARCPublishReady(
 		map[string]interface{}{
 			"ready":     true,
 			"recovered": recovered,
+			"recipe":    raylineARCRecipeLabel(selector.recipe),
 		},
 	)
 }
