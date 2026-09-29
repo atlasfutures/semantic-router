@@ -136,9 +136,18 @@ def _validate_rayline_arc_decision(decision) -> list[ValidationError]:
         )
         return errors
 
-    errors.extend(_validate_artifact(decision.name, arc))
-    errors.extend(_validate_encoder(decision.name, arc.encoder))
-    errors.extend(_validate_episode(decision.name, arc.episode, arc.encoder))
+    if arc.policy_service is not None:
+        # The Go loader owns the binding checks, including the action_id
+        # recompute; only the episode contract is shared with the artifact mode.
+        errors.extend(
+            validate_episode_contract(
+                f"decisions.{decision.name}.algorithm.rayline_arc.episode", arc.episode
+            )
+        )
+    else:
+        errors.extend(_validate_artifact(decision.name, arc))
+        errors.extend(_validate_encoder(decision.name, arc.encoder))
+        errors.extend(_validate_episode(decision.name, arc.episode, arc.encoder))
 
     adaptations = decision.adaptations
     if adaptations is None or adaptations.mode != "bypass":

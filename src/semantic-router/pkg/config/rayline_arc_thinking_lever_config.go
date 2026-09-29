@@ -7,7 +7,10 @@ import (
 )
 
 const (
-	RaylineARCThinkingSourceRule            = "rule"
+	RaylineARCThinkingSourceRule = "rule"
+	// RaylineARCThinkingSourcePolicy takes each turn's level from the policy
+	// service's decision: the level its chosen action binds.
+	RaylineARCThinkingSourcePolicy          = "policy"
 	RaylineARCThinkingAdmissionCertified    = "certified"
 	RaylineARCThinkingAdmissionExperimental = "experimental"
 )
@@ -23,8 +26,9 @@ const (
 // router; Workers carries that compiled binding.
 type RaylineARCThinkingLeverConfig struct {
 	Enabled bool `yaml:"enabled,omitempty"`
-	// Source says who chooses the level. Only "rule" is served: every
-	// governed turn of this decision asks for Level.
+	// Source says who chooses the level. "rule" asks for Level on every
+	// governed turn; "policy", the only source in the policy-service mode,
+	// asks for the level of the action the service chose.
 	Source string `yaml:"source,omitempty"`
 	Level  string `yaml:"level,omitempty"`
 	// Admission "experimental" also admits bindings the registry marks
@@ -93,11 +97,18 @@ func (cfg RaylineARCThinkingBindingConfig) Binding() thinkinglever.Binding {
 // validateRaylineARCThinkingLeverConfig refuses at load every binding the
 // planner would refuse per turn, so a bad binding stops the cell starting
 // rather than failing a user's turn.
-func validateRaylineARCThinkingLeverConfig(cfg *RaylineARCThinkingLeverConfig) error {
+func validateRaylineARCThinkingLeverConfig(cfg *RaylineARCThinkingLeverConfig, policyMode bool) error {
 	if cfg == nil || !cfg.Enabled {
 		return nil
 	}
-	if cfg.Source != RaylineARCThinkingSourceRule {
+	fromPolicy := false
+	switch {
+	case policyMode && cfg.Source == RaylineARCThinkingSourcePolicy:
+		fromPolicy = true
+	case !policyMode && cfg.Source == RaylineARCThinkingSourceRule:
+	case policyMode:
+		return fmt.Errorf("source %q is not served in the policy-service mode; use %q", cfg.Source, RaylineARCThinkingSourcePolicy)
+	default:
 		return fmt.Errorf("source %q is not served; use %q", cfg.Source, RaylineARCThinkingSourceRule)
 	}
 	admitExperimental := false
@@ -108,8 +119,8 @@ func validateRaylineARCThinkingLeverConfig(cfg *RaylineARCThinkingLeverConfig) e
 	default:
 		return fmt.Errorf("admission %q must be certified or experimental", cfg.Admission)
 	}
-	if cfg.Level == "" {
-		return fmt.Errorf("level is required with source %q", RaylineARCThinkingSourceRule)
+	if err := validateRaylineARCThinkingLevelSource(cfg, fromPolicy); err != nil {
+		return err
 	}
 	if len(cfg.Workers) == 0 {
 		return fmt.Errorf("at least one worker binding is required")
@@ -121,6 +132,29 @@ func validateRaylineARCThinkingLeverConfig(cfg *RaylineARCThinkingLeverConfig) e
 		if err := validateRaylineARCThinkingBinding(bindingConfig, cfg.Level, admitExperimental); err != nil {
 			return fmt.Errorf("workers[%q]: %w", worker, err)
 		}
+	}
+	return nil
+}
+
+// validateRaylineARCThinkingLevelSource checks the fields that depend on who
+// chooses the level. With source policy the decision chooses every turn, so
+// nothing may override it: no fixed level, no spacing that would hold an
+// older level, and no eligibility header that would skip the action's steer.
+func validateRaylineARCThinkingLevelSource(cfg *RaylineARCThinkingLeverConfig, fromPolicy bool) error {
+	if !fromPolicy {
+		if cfg.Level == "" {
+			return fmt.Errorf("level is required with source %q", RaylineARCThinkingSourceRule)
+		}
+		return nil
+	}
+	if cfg.Level != "" {
+		return fmt.Errorf("level must be empty with source %q: the policy decision chooses it", RaylineARCThinkingSourcePolicy)
+	}
+	if cfg.MinSpacingTurns != 0 {
+		return fmt.Errorf("min_spacing_turns must be 0 with source %q: spacing would hold a level the decision replaced", RaylineARCThinkingSourcePolicy)
+	}
+	if cfg.EligibilityHeader != "" {
+		return fmt.Errorf("eligibility_header is not served with source %q: every decided action is dispatched", RaylineARCThinkingSourcePolicy)
 	}
 	return nil
 }
@@ -143,7 +177,7 @@ func validateRaylineARCThinkingBinding(
 	if err := binding.Validate(); err != nil {
 		return err
 	}
-	if _, ok := binding.Level(level); !ok {
+	if _, ok := binding.Level(level); level != "" && !ok {
 		return fmt.Errorf("level %q is not in the binding", level)
 	}
 	for index, levelConfig := range cfg.Levels {

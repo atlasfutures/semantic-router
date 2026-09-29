@@ -71,10 +71,37 @@ func assertSupportedAlgorithmsInReferenceConfig(t testingT, decisions []interfac
 	assertMapCoversStructFields(t, mustMapAt(t, algorithmsByType["latency_aware"], "latency_aware"), reflect.TypeOf(LatencyAwareAlgorithmConfig{}), "routing.decisions[].algorithm.latency_aware")
 	assertMapCoversStructFields(t, mustMapAt(t, algorithmsByType["multi_factor"], "multi_factor"), reflect.TypeOf(MultiFactorSelectionConfig{}), "routing.decisions[].algorithm.multi_factor")
 	assertMapCoversStructFields(t, mustMapAt(t, algorithmsByType["prompt"], "prompt"), reflect.TypeOf(PromptSelectionConfig{}), "routing.decisions[].algorithm.prompt")
-	assertMapCoversStructFields(t, mustMapAt(t, algorithmsByType["rayline_arc"], "rayline_arc"), reflect.TypeOf(RaylineARCAlgorithmConfig{}), "routing.decisions[].algorithm.rayline_arc")
-	assertMapCoversStructFields(t, mustMapAt(t, algorithmsByType["rayline_arc"], "rayline_arc", "encoder"), reflect.TypeOf(RaylineARCEncoderConfig{}), "routing.decisions[].algorithm.rayline_arc.encoder")
-	assertMapCoversStructFields(t, mustMapAt(t, algorithmsByType["rayline_arc"], "rayline_arc", "episode"), reflect.TypeOf(RaylineARCEpisodeConfig{}), "routing.decisions[].algorithm.rayline_arc.episode")
-	assertMapCoversStructFields(t, mustMapAt(t, algorithmsByType["rayline_arc"], "rayline_arc", "episode", "redis"), reflect.TypeOf(RaylineARCRedisConfig{}), "routing.decisions[].algorithm.rayline_arc.episode.redis")
+	assertReferenceRaylineARCCoverage(t, decisions)
+}
+
+// assertReferenceRaylineARCCoverage covers the two ARC modes, which are
+// separate decisions: the artifact mode's encoder and the policy-service
+// mode's bindings cannot share one decision, so the top-level fields are
+// covered across both.
+func assertReferenceRaylineARCCoverage(t testingT, decisions []interface{}) {
+	var arcs []map[string]interface{}
+	var artifact, policy map[string]interface{}
+	for _, algorithm := range collectChildMapsFromSlice(t, decisions, "algorithm", "routing.decisions") {
+		if mustStringAt(t, algorithm, "type") != RaylineARCAlgorithmType {
+			continue
+		}
+		arc := mustMapAt(t, algorithm, "rayline_arc")
+		arcs = append(arcs, arc)
+		if _, ok := arc["policy_service"]; ok {
+			policy = arc
+		} else {
+			artifact = arc
+		}
+	}
+	if artifact == nil || policy == nil {
+		t.Fatalf("config/config.yaml must include an artifact-mode and a policy-service-mode rayline_arc decision")
+	}
+	assertSliceUnionCoversStructFields(t, arcs, reflect.TypeOf(RaylineARCAlgorithmConfig{}), "routing.decisions[].algorithm.rayline_arc")
+	assertMapCoversStructFields(t, mustMapAt(t, artifact, "encoder"), reflect.TypeOf(RaylineARCEncoderConfig{}), "routing.decisions[].algorithm.rayline_arc.encoder")
+	assertMapCoversStructFields(t, mustMapAt(t, artifact, "episode"), reflect.TypeOf(RaylineARCEpisodeConfig{}), "routing.decisions[].algorithm.rayline_arc.episode")
+	assertMapCoversStructFields(t, mustMapAt(t, artifact, "episode", "redis"), reflect.TypeOf(RaylineARCRedisConfig{}), "routing.decisions[].algorithm.rayline_arc.episode.redis")
+	assertMapCoversStructFields(t, mustMapAt(t, policy, "policy_service"), reflect.TypeOf(RaylineARCPolicyServiceConfig{}), "routing.decisions[].algorithm.rayline_arc.policy_service")
+	assertSliceUnionCoversStructFields(t, mustMapAt(t, policy, "policy_service")["bindings"], reflect.TypeOf(RaylineARCPolicyBinding{}), "routing.decisions[].algorithm.rayline_arc.policy_service.bindings")
 }
 
 func assertReferenceConfidenceAlgorithmCoverage(t testingT, algorithmsByType map[string]map[string]interface{}) {

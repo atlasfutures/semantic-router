@@ -273,7 +273,7 @@ func validateRaylineARCAlgorithmConfig(cfg *RaylineARCAlgorithmConfig) error {
 	if err := validateRaylineARCRoutesAPIConfig(cfg.RoutesAPI); err != nil {
 		return fmt.Errorf("routes_api: %w", err)
 	}
-	if err := validateRaylineARCThinkingLeverConfig(cfg.ThinkingLever); err != nil {
+	if err := validateRaylineARCThinkingLeverConfig(cfg.ThinkingLever, false); err != nil {
 		return fmt.Errorf("thinking_lever: %w", err)
 	}
 	if err := validateRaylineARCWorkerThinking(cfg.WorkerThinking); err != nil {
@@ -299,6 +299,12 @@ func validateRaylineARCPolicyServiceMode(cfg *RaylineARCAlgorithmConfig) error {
 	}
 	if err := validateRaylineARCRoutesAPIConfig(cfg.RoutesAPI); err != nil {
 		return fmt.Errorf("routes_api: %w", err)
+	}
+	if err := validateRaylineARCThinkingLeverConfig(cfg.ThinkingLever, true); err != nil {
+		return fmt.Errorf("thinking_lever: %w", err)
+	}
+	if err := validateRaylineARCWorkerThinking(cfg.WorkerThinking); err != nil {
+		return fmt.Errorf("worker_thinking: %w", err)
 	}
 	return nil
 }
@@ -635,6 +641,9 @@ func validateRaylineARCDecisionContract(cfg *RouterConfig, decision Decision) er
 	}
 	if decision.Algorithm.RaylineARC != nil && decision.Algorithm.RaylineARC.PolicyService != nil {
 		if err := validateRaylineARCPolicyBindings(decision); err != nil {
+			return fmt.Errorf("decision '%s': %w", decision.Name, err)
+		}
+		if err := validateRaylineARCPolicyDispatch(cfg, decision); err != nil {
 			return fmt.Errorf("decision '%s': %w", decision.Name, err)
 		}
 	}

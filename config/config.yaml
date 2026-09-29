@@ -1794,6 +1794,85 @@ routing:
               use_tls: false
               pool_size: 16
 
+    - name: rayline_arc_policy_reference_route
+      description: Experimental ARC configuration that takes its decision from a policy service.
+      priority: 194
+      rules:
+        operator: AND
+        conditions:
+          - type: domain
+            name: business
+      modelRefs:
+        - model: qwen3-8b
+          use_reasoning: false
+        - model: qwen3-32b
+          use_reasoning: true
+      adaptations:
+        mode: bypass
+      plugins:
+        - type: router_replay
+          configuration:
+            enabled: false
+      algorithm:
+        type: rayline_arc
+        on_error: fail_closed
+        rayline_arc:
+          # policy_service switches the decision to an external service that
+          # runs the encoder, head and selection rule and returns the chosen
+          # action. artifact_dir, artifact_revision and encoder are not used.
+          policy_service:
+            base_url: http://rayline-arc-policy-service:8000
+            modal_key_env: RAYLINE_ARC_MODAL_KEY
+            modal_secret_env: RAYLINE_ARC_MODAL_SECRET
+            total_timeout_seconds: 60
+            # The one package this decision serves; readiness refuses a
+            # service that has not loaded exactly it.
+            package_alias: rayline/arc-public-example
+            package_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+            # model_schedule: task_turn_compaction_v1 holds the model between
+            # schedule boundaries and lets only its level vary. Empty lets
+            # every turn choose any action.
+            model_schedule: ""
+            # Each binding maps a package action to a worker. model, effort
+            # and reasoning_max_tokens declare what the action dispatches, as
+            # the package's catalog states it; the loader recomputes the
+            # action_id from them (and from the steering suffix of level, from
+            # a thinking_lever with source policy), so a binding that would
+            # send anything else refuses to load. Omit them for a
+            # decision-only cell that leaves dispatch to the modelRef.
+            bindings:
+              - action_id: 6b17d6750c0bb3b365d9b474315615cb8fffdfb6bf0b7125e328390ab98c546a
+                worker: qwen3-8b
+                level: none
+                model: qwen3-8b-instruct
+                effort: none
+              - action_id: 55bc5dcd39c88ff403e0f4301c633e3021a397e3053cbf9b36d9ba4bc073ecc6
+                worker: qwen3-32b
+                level: none
+                model: qwen3-32b-instruct
+                effort: high
+              - action_id: eca208426c62c4c0289d7f409134cc2515013c70d9cb09bd9b3e2c0a73198cce
+                worker: qwen3-32b
+                level: none
+                model: qwen3-32b-instruct
+                reasoning_max_tokens: 4096
+          episode:
+            id_header: x-rayline-episode-id
+            close_header: ""
+            backend: redis
+            key_prefix: "vsr:rayline-arc-policy:"
+            acquire_timeout_seconds: 30
+            lease_ttl_seconds: 60
+            idle_ttl_seconds: 900
+            max_in_memory_episodes: 1024
+            development_mode: false
+            redis:
+              address: redis:6379
+              db: 0
+              password_env: RAYLINE_ARC_REDIS_PASSWORD
+              use_tls: false
+              pool_size: 16
+
     - name: image_generation_route
       description: Dedicated image-generation route using the OpenAI image backend.
       priority: 105
