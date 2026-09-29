@@ -159,6 +159,9 @@ func createRaylineARCPolicySelector(
 	) {
 		return newRaylineARCSelector(nil, nil, nil, policy.PackageSHA256), nil, nil, nil, class
 	}
+	if !raylineARCPolicyDispatchReady(cfg, decision) {
+		return unavailable("dispatch_contract")
+	}
 	modalKey, keyErr := raylineARCOptionalSecret(policy.ModalKeyEnv)
 	modalSecret, secretErr := raylineARCOptionalSecret(policy.ModalSecretEnv)
 	if keyErr != nil || secretErr != nil {
@@ -282,6 +285,14 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
 		})
 		return nil, arcSelectionFailure("policy_service_" + class)
+	}
+	// A decision is only this package's if the service says it is: a service
+	// that swapped the package under the alias is not the one readiness armed.
+	if response.Package != request.Package {
+		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
+			"class": "package_mismatch", "episode_id_hash": arcContext.EpisodeIDHash,
+		})
+		return nil, arcSelectionFailure("policy_package_mismatch")
 	}
 	// Every action the package scores must be one this router can dispatch.
 	// A package whose catalog outgrew the bindings is a different package in

@@ -3,6 +3,7 @@ package extproc
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,6 +81,83 @@ func TestPolicySessionActionIsBounded(t *testing.T) {
 	for action, want := range map[string]string{"appended": "appended", "reused": "reused", "evicted-by-gc": ""} {
 		if got := boundedPolicySessionAction(action); got != want {
 			t.Fatalf("%q -> %q, want %q", action, got, want)
+		}
+	}
+}
+
+// A response naming another package than the one requested is not served:
+// readiness armed against the configured package, and nothing re-checks it.
+func TestPolicySelectorRefusesAResponseFromAnotherPackage(t *testing.T) {
+	fixture := newPolicySelectorFixture(t, "")
+	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
+	fixture.fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return bindings[0].ActionID })
+	fixture.fake.answerAs = &raylinearc.PolicyPackageRef{Alias: policyTestAlias, PackageSHA256: strings.Repeat("b", 64)}
+	state, _ := raylinearc.NewEpisodeState(2)
+	_, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"}))
+	var failure *raylineARCSelectionFailure
+	if !errors.As(err, &failure) || failure.class != "policy_package_mismatch" {
+		t.Fatalf("error = %v, want class policy_package_mismatch", err)
+	}
+}
+
+func policyReadinessConfig(mutate func(*config.RouterConfig)) (*config.RouterConfig, *config.Decision) {
+	write := 1.25
+	cfg := &config.RouterConfig{BackendModels: config.BackendModels{
+		ModelConfig: map[string]config.ModelParams{
+			"think": {
+				PreferredEndpoints: []string{"openrouter"},
+				Pricing:            config.ModelPricing{Currency: "USD", PromptPer1M: 1, CompletionPer1M: 5, CachedInputPer1M: 0.1, CacheWritePer1M: &write},
+			},
+		},
+		VLLMEndpoints: []config.VLLMEndpoint{{
+			Name: "openrouter", Address: "openrouter.ai", Port: 443, Type: "openai",
+			APIKey: "resolved-key", APIKeyEnvName: "OPENROUTER_API_KEY", ProviderProfileName: "openrouter",
+		}},
+		ProviderProfiles: map[string]config.ProviderProfile{
+			"openrouter": {Type: "openai", BaseURL: "https://openrouter.ai/api/v1"},
+		},
+	}}
+	if mutate != nil {
+		mutate(cfg)
+	}
+	return cfg, &config.Decision{ModelRefs: []config.ModelRef{{Model: "think"}}}
+}
+
+// The policy mode keeps the artifact mode's dispatch contract where it needs
+// no manifest: an owned credential, the default auth shape, https, and USD
+// pricing with a cache-write rate.
+func TestPolicyDispatchReadiness(t *testing.T) {
+	if cfg, decision := policyReadinessConfig(nil); !raylineARCPolicyDispatchReady(cfg, decision) {
+		t.Fatal("a sound worker was refused")
+	}
+	cases := map[string]func(*config.RouterConfig){
+		"an inline key": func(c *config.RouterConfig) { c.VLLMEndpoints[0].APIKeyInline = true },
+		"a missing key": func(c *config.RouterConfig) { c.VLLMEndpoints[0].APIKey = "" },
+		"no key env":    func(c *config.RouterConfig) { c.VLLMEndpoints[0].APIKeyEnvName = "" },
+		"plain http": func(c *config.RouterConfig) {
+			c.ProviderProfiles["openrouter"] = config.ProviderProfile{Type: "openai", BaseURL: "http://openrouter.ai/api/v1"}
+		},
+		"a custom chat path": func(c *config.RouterConfig) {
+			c.ProviderProfiles["openrouter"] = config.ProviderProfile{Type: "openai", BaseURL: "https://openrouter.ai/api/v1", ChatPath: "/x"}
+		},
+		"a custom auth header": func(c *config.RouterConfig) {
+			c.ProviderProfiles["openrouter"] = config.ProviderProfile{Type: "openai", BaseURL: "https://openrouter.ai/api/v1", AuthHeader: "x-caller-key"}
+		},
+		"an unsupported provider type": func(c *config.RouterConfig) { c.VLLMEndpoints[0].Type = "vllm" },
+		"no pricing": func(c *config.RouterConfig) {
+			params := c.ModelConfig["think"]
+			params.Pricing = config.ModelPricing{}
+			c.ModelConfig["think"] = params
+		},
+		"no cache-write rate": func(c *config.RouterConfig) {
+			params := c.ModelConfig["think"]
+			params.Pricing.CacheWritePer1M = nil
+			c.ModelConfig["think"] = params
+		},
+	}
+	for name, mutate := range cases {
+		if cfg, decision := policyReadinessConfig(mutate); raylineARCPolicyDispatchReady(cfg, decision) {
+			t.Fatalf("%s: readiness passed", name)
 		}
 	}
 }
