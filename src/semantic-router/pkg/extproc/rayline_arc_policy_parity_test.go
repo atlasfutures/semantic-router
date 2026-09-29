@@ -161,3 +161,31 @@ func TestPolicyDispatchReadiness(t *testing.T) {
 		}
 	}
 }
+
+// With the cap spent, a decide call is shed before it reaches the service,
+// and answers 429 like the artifact mode's encoder admission.
+func TestPolicySelectorShedsBeyondItsAdmissionCap(t *testing.T) {
+	fixture := newPolicySelectorFixture(t, "")
+	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
+	fixture.fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return bindings[0].ActionID })
+	armed := fixture.selector.armedComponents()
+	gate := raylinearc.NewAdmissionGate(1)
+	fixture.selector.arm(&raylineARCArmedComponents{scorer: armed.scorer, admission: gate, policy: armed.policy})
+	release, err := gate.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, _ := raylinearc.NewEpisodeState(2)
+	_, err = fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"}))
+	var failure *raylineARCSelectionFailure
+	if !errors.As(err, &failure) || !selectionFailureIsContended(failure.class) {
+		t.Fatalf("error = %v, want a contended class", err)
+	}
+	if calls := len(fixture.fake.received()); calls != 0 {
+		t.Fatalf("a shed request reached the service %d times", calls)
+	}
+	release()
+	if _, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"})); err != nil {
+		t.Fatalf("after release: %v", err)
+	}
+}

@@ -298,6 +298,9 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     modal_key_env: str = ""
     modal_secret_env: str = ""
     total_timeout_seconds: int = Field(ge=1, le=900)
+    connect_timeout_seconds: int = Field(default=0, ge=0)
+    # Mirrors maxRaylineARCInflightEncoderCalls in the Go loader.
+    max_inflight_calls: int = Field(default=0, ge=0, le=MAX_INFLIGHT_ENCODER_CALLS)
     package_alias: str = Field(min_length=1)
     package_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     bindings: list[RaylineARCPolicyBindingConfig] = Field(min_length=1)
