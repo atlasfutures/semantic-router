@@ -1906,17 +1906,15 @@ recipes:
                 # from a thinking_lever with source policy), so a binding that
                 # would send anything else refuses to load. Omit them for a
                 # decision-only cell that leaves dispatch to the modelRef.
+                # qwen3-32b dispatches Messages and declares enabled and
+                # disabled thinking only, so its action is a budget, not an
+                # effort (which travels with adaptive thinking).
                 bindings:
                   - action_id: 6b17d6750c0bb3b365d9b474315615cb8fffdfb6bf0b7125e328390ab98c546a
                     worker: qwen3-8b
                     level: none
                     model: qwen3-8b-instruct
                     effort: none
-                  - action_id: 55bc5dcd39c88ff403e0f4301c633e3021a397e3053cbf9b36d9ba4bc073ecc6
-                    worker: qwen3-32b
-                    level: none
-                    model: qwen3-32b-instruct
-                    effort: high
                   - action_id: eca208426c62c4c0289d7f409134cc2515013c70d9cb09bd9b3e2c0a73198cce
                     worker: qwen3-32b
                     level: none

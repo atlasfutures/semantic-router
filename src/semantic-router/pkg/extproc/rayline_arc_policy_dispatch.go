@@ -14,6 +14,10 @@ const raylineARCPolicyActionLevel = "policy_action"
 
 var errPolicyActionFormat = errors.New("the policy action's reasoning cannot be carried in this provider format")
 
+// raylineARCDefaultMessagesMaxTokens is the Messages encoder's output limit
+// for a request that states none.
+const raylineARCDefaultMessagesMaxTokens int64 = 4096
+
 // raylineARCWireTopLevelEffort sends the effort as Chat's top-level
 // reasoning_effort, for a provider whose transport reads that field (an
 // OpenAI-compatible binding, including one that reaches OpenRouter).
@@ -107,6 +111,17 @@ func applyRaylineARCPolicyActionReasoning(
 	case action.ReasoningMaxTokens != nil:
 		budget := *action.ReasoningMaxTokens
 		request.ReasoningMode, request.ReasoningBudgetTokens = llmprotocol.ReasoningModeEnabled, &budget
+		// Messages counts thinking inside max_tokens and refuses a budget
+		// that does not leave room below it, so the caller's allowance is
+		// kept on top of the action's budget.
+		allowance := raylineARCDefaultMessagesMaxTokens
+		if request.Sampling.MaxOutputTokens != nil {
+			allowance = *request.Sampling.MaxOutputTokens
+		}
+		if allowance <= budget {
+			raised := budget + allowance
+			request.Sampling.MaxOutputTokens = &raised
+		}
 		request.ReasoningEffort = ""
 		if action.Effort != nil {
 			request.ReasoningEffort = *action.Effort

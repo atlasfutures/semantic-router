@@ -334,8 +334,42 @@ func validateRaylineARCPolicyBindingDispatch(
 		strings.EqualFold(strings.TrimSpace(cfg.GetModelAPIFormat(binding.Worker)), APIFormatOpenAI) {
 		return fmt.Errorf("worker %q dispatches Chat, where OpenRouter refuses an effort and a reasoning budget together", binding.Worker)
 	}
+	if err := validateRaylineARCPolicyMessagesMode(cfg, binding); err != nil {
+		return err
+	}
 	if want := RaylineARCPolicyActionID(binding.Model, binding.Effort, binding.ReasoningMaxTokens, suffix); want != binding.ActionID {
 		return fmt.Errorf("the declared dispatch does not reproduce the action: it digests to %s", want)
 	}
 	return nil
+}
+
+// validateRaylineARCPolicyMessagesMode refuses a Messages action whose
+// thinking mode the worker's reasoning family does not declare: on Messages
+// an effort travels with adaptive thinking, a budget with enabled thinking,
+// and effort none with disabled thinking. A worker with no declared modes is
+// not constrained here.
+func validateRaylineARCPolicyMessagesMode(cfg *RouterConfig, binding RaylineARCPolicyBinding) error {
+	if cfg == nil || !strings.EqualFold(strings.TrimSpace(cfg.GetModelAPIFormat(binding.Worker)), APIFormatAnthropic) {
+		return nil
+	}
+	if binding.Effort == nil && binding.ReasoningMaxTokens == nil {
+		return nil
+	}
+	family := cfg.GetModelReasoningFamily(binding.Worker)
+	if family == nil || len(family.Modes) == 0 {
+		return nil
+	}
+	mode := "adaptive"
+	switch {
+	case binding.Effort != nil && *binding.Effort == raylineARCPolicyNeutralLevel:
+		mode = "disabled"
+	case binding.ReasoningMaxTokens != nil:
+		mode = "enabled"
+	}
+	for _, supported := range family.Modes {
+		if supported == mode {
+			return nil
+		}
+	}
+	return fmt.Errorf("worker %q dispatches Messages, where this action needs %s thinking, and its reasoning family declares %v", binding.Worker, mode, family.Modes)
 }

@@ -260,3 +260,26 @@ func TestRaylineARCPolicyBindingsWithoutDispatchStillLoad(t *testing.T) {
 		t.Fatalf("decision-only bindings refused: %v", err)
 	}
 }
+
+// On Messages an effort travels with adaptive thinking and a budget with
+// enabled thinking; an action whose mode the worker's family does not declare
+// is refused at load.
+func TestRaylineARCPolicyMessagesActionsRespectTheReasoningFamily(t *testing.T) {
+	cfg, decision := policyDispatchFixture()
+	params := cfg.ModelConfig["arm-think"]
+	params.APIFormat, params.ReasoningFamily = APIFormatAnthropic, "no-adaptive"
+	cfg.ModelConfig["arm-think"] = params
+	cfg.ReasoningFamilies = map[string]ReasoningFamilyConfig{"no-adaptive": {Modes: []string{"enabled", "disabled"}}}
+	err := validatePolicyDispatch(cfg, decision)
+	if err == nil || !strings.Contains(err.Error(), "needs adaptive thinking") {
+		t.Fatalf("an effort action on a family without adaptive: error = %v", err)
+	}
+	decision.Algorithm.RaylineARC.ThinkingLever = nil
+	decision.Algorithm.RaylineARC.PolicyService.Bindings = []RaylineARCPolicyBinding{
+		policyTestBinding("arm-think", "none", policyTestThinkModel, nil, policyTestInt(4096), ""),
+		policyTestBinding("arm-off", "none", policyTestOffModel, policyTestString("none"), nil, ""),
+	}
+	if err := validatePolicyDispatch(cfg, decision); err != nil {
+		t.Fatalf("a budget action on a family with enabled thinking refused: %v", err)
+	}
+}
