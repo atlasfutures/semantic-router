@@ -206,3 +206,36 @@ func TestRaylineARCThinkingLeverEligibilityHeaderIsAFieldName(t *testing.T) {
 		t.Fatal("the episode id header was accepted as the eligibility header")
 	}
 }
+
+// per_turn_effort writes a configuration-update message, which only
+// OpenRouter's Chat wire reads; any other worker is refused at load.
+func TestRaylineARCPerTurnEffortNeedsOpenRouterChat(t *testing.T) {
+	routerWith := func(apiFormat string, profile ProviderProfile) *RouterConfig {
+		return &RouterConfig{BackendModels: BackendModels{
+			ModelConfig:      map[string]ModelParams{"worker": {PreferredEndpoints: []string{"backend"}, APIFormat: apiFormat}},
+			VLLMEndpoints:    []VLLMEndpoint{{Name: "backend", Address: "provider", Port: 443, ProviderProfileName: "profile"}},
+			ProviderProfiles: map[string]ProviderProfile{"profile": profile},
+		}}
+	}
+	arc := &RaylineARCAlgorithmConfig{ThinkingLever: &RaylineARCThinkingLeverConfig{
+		Enabled: true,
+		Workers: map[string]RaylineARCThinkingBindingConfig{"worker": {Lever: "per_turn_effort"}},
+	}}
+	openRouter := ProviderProfile{Type: "openai", BaseURL: "https://openrouter.ai/api/v1"}
+	if err := validateRaylineARCThinkingLeverTransports(routerWith(APIFormatOpenAI, openRouter), arc); err != nil {
+		t.Fatalf("OpenRouter Chat refused: %v", err)
+	}
+	for name, cfg := range map[string]*RouterConfig{
+		"a Messages worker":            routerWith(APIFormatAnthropic, ProviderProfile{Type: "anthropic", BaseURL: "https://api.anthropic.com"}),
+		"a Chat worker off OpenRouter": routerWith(APIFormatOpenAI, ProviderProfile{Type: "openai", BaseURL: "https://api.openai.com/v1"}),
+	} {
+		if err := validateRaylineARCThinkingLeverTransports(cfg, arc); err == nil || !strings.Contains(err.Error(), "per_turn_effort") {
+			t.Fatalf("%s: error = %v", name, err)
+		}
+	}
+	// A suffix lever writes text, which every wire carries.
+	arc.ThinkingLever.Workers["worker"] = RaylineARCThinkingBindingConfig{Lever: "prompt_steering_suffix"}
+	if err := validateRaylineARCThinkingLeverTransports(routerWith(APIFormatAnthropic, ProviderProfile{Type: "anthropic"}), arc); err != nil {
+		t.Fatalf("a suffix lever on Messages refused: %v", err)
+	}
+}

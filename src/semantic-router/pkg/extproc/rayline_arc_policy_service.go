@@ -154,6 +154,9 @@ func createRaylineARCPolicySelector(
 	) {
 		return newRaylineARCSelector(nil, nil, nil, policy.PackageSHA256), nil, nil, nil, class
 	}
+	if !raylineARCPolicyActionsCarriable(cfg, decision) {
+		return unavailable("dispatch_contract")
+	}
 	modalKey, keyErr := raylineARCOptionalSecret(policy.ModalKeyEnv)
 	modalSecret, secretErr := raylineARCOptionalSecret(policy.ModalSecretEnv)
 	if keyErr != nil || secretErr != nil {

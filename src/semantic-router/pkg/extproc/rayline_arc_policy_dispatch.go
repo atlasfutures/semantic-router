@@ -128,3 +128,38 @@ func sameInt64Pointer(left, right *int64) bool {
 	}
 	return *left == *right
 }
+
+// raylineARCPolicyActionsCarriable reports whether every declared action can
+// travel to its worker's provider, so an action no provider can carry stops
+// the selector arming instead of failing each turn that picks it. Messages
+// carries effort and budget itself; Chat needs a reasoning transport that
+// reads them (policyActionChatWire); Responses is not served.
+func raylineARCPolicyActionsCarriable(cfg *config.RouterConfig, decision *config.Decision) bool {
+	for _, binding := range decision.Algorithm.RaylineARC.PolicyService.Bindings {
+		if !binding.DeclaresDispatch() {
+			continue
+		}
+		_, backend, found, err := cfg.ResolvePrimaryBackendForModel(binding.Worker)
+		if err != nil || !found {
+			return false
+		}
+		profile, err := cfg.GetProviderProfileForEndpoint(backend)
+		if err != nil {
+			return false
+		}
+		format, err := wireFormatForModel(cfg.GetModelAPIFormat(binding.Worker))
+		if err != nil {
+			return false
+		}
+		switch format {
+		case llmprotocol.AnthropicMessagesV1:
+		case llmprotocol.OpenAIChatV1:
+			if _, _, err := policyActionChatWire(binding, resolveProviderReasoningTransport(profile)); err != nil {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}

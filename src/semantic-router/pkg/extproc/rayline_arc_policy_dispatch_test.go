@@ -240,3 +240,40 @@ func TestPolicyLeverFailsATurnWithNoDecidedAction(t *testing.T) {
 		t.Fatalf("error = %v, want errPolicyLevelMissing", err)
 	}
 }
+
+// An action whose worker's provider cannot carry its reasoning stops the
+// selector arming, rather than failing every turn that picks it.
+func TestPolicyActionsMustBeCarriableByTheirProvider(t *testing.T) {
+	budget := int64(4096)
+	routerWith := func(apiFormat string, profile config.ProviderProfile) *config.RouterConfig {
+		return &config.RouterConfig{BackendModels: config.BackendModels{
+			ModelConfig: map[string]config.ModelParams{"think": {PreferredEndpoints: []string{"backend"}, APIFormat: apiFormat}},
+			VLLMEndpoints: []config.VLLMEndpoint{{Name: "backend", Address: "provider", Port: 443, Type: profile.Type,
+				ProviderProfileName: "profile"}},
+			ProviderProfiles: map[string]config.ProviderProfile{"profile": profile},
+		}}
+	}
+	openRouter := config.ProviderProfile{Type: "openrouter", BaseURL: "https://openrouter.ai/api/v1"}
+	topLevel := config.ProviderProfile{Type: "openai", BaseURL: "https://api.openai.com/v1", ReasoningTransport: "top_level_effort"}
+	chatTemplate := config.ProviderProfile{Type: "vllm", BaseURL: "http://vllm.internal:8000/v1"}
+	anthropic := config.ProviderProfile{Type: "anthropic", BaseURL: "https://api.anthropic.com"}
+	effort := policyAction("think", "none", "think-trained", policyTestEffort("high"), nil, "")
+	budgeted := policyAction("think", "none", "think-trained", nil, &budget, "")
+	cases := []struct {
+		name    string
+		cfg     *config.RouterConfig
+		action  config.RaylineARCPolicyBinding
+		carries bool
+	}{
+		{"effort on OpenRouter Chat", routerWith(config.APIFormatOpenAI, openRouter), effort, true},
+		{"effort on a top-level transport", routerWith(config.APIFormatOpenAI, topLevel), effort, true},
+		{"budget on a top-level transport", routerWith(config.APIFormatOpenAI, topLevel), budgeted, false},
+		{"effort on a chat-template transport", routerWith(config.APIFormatOpenAI, chatTemplate), effort, false},
+		{"budget on Messages", routerWith(config.APIFormatAnthropic, anthropic), budgeted, true},
+	}
+	for _, test := range cases {
+		if got := raylineARCPolicyActionsCarriable(test.cfg, policyDecisionWithActions(test.action)); got != test.carries {
+			t.Fatalf("%s: carriable = %v, want %v", test.name, got, test.carries)
+		}
+	}
+}

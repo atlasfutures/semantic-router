@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net/url"
+	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
 )
@@ -211,4 +213,47 @@ func validateRaylineARCThinkingWorkers(cfg *RaylineARCAlgorithmConfig, modelRefs
 		}
 	}
 	return nil
+}
+
+// validateRaylineARCThinkingLeverTransports refuses a per_turn_effort binding
+// on a worker whose provider cannot read the item it writes: a
+// configuration-update message exists only on OpenRouter's Chat wire, and the
+// Messages and Responses encoders refuse it, so every governed turn on such a
+// worker would fail at encoding.
+func validateRaylineARCThinkingLeverTransports(cfg *RouterConfig, arc *RaylineARCAlgorithmConfig) error {
+	if cfg == nil || arc == nil || arc.ThinkingLever == nil || !arc.ThinkingLever.Enabled {
+		return nil
+	}
+	for worker, binding := range arc.ThinkingLever.Workers {
+		if binding.Lever != string(thinkinglever.LeverPerTurnEffort) {
+			continue
+		}
+		if format := strings.ToLower(strings.TrimSpace(cfg.GetModelAPIFormat(worker))); format != APIFormatOpenAI {
+			return fmt.Errorf("workers[%q] dispatches %s, and per_turn_effort needs OpenRouter's Chat wire", worker, format)
+		}
+		for _, endpoint := range cfg.GetEndpointsForModel(worker) {
+			profile, err := cfg.GetProviderProfileForEndpoint(endpoint.Name)
+			if err != nil || !raylineARCOpenRouterProfile(profile) {
+				return fmt.Errorf("workers[%q] reaches endpoint %q, which is not OpenRouter, and per_turn_effort needs OpenRouter's Chat wire", worker, endpoint.Name)
+			}
+		}
+	}
+	return nil
+}
+
+// raylineARCOpenRouterProfile reports whether a provider profile reaches
+// OpenRouter, by its type or its host.
+func raylineARCOpenRouterProfile(profile *ProviderProfile) bool {
+	if profile == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(profile.Type), "openrouter") {
+		return true
+	}
+	parsed, err := url.Parse(profile.BaseURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "openrouter.ai" || strings.HasSuffix(host, ".openrouter.ai")
 }
