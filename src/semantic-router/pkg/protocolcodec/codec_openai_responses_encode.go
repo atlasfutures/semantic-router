@@ -37,6 +37,9 @@ func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope 
 }
 
 func validateResponsesEncodableRequest(request llmprotocol.Request) error {
+	if err := refuseConfigurationUpdates(request, "Responses"); err != nil {
+		return err
+	}
 	if request.ReasoningDisplay != "" {
 		return llmprotocol.NewError(
 			llmprotocol.ErrorUnsupportedFeature,

@@ -1676,6 +1676,71 @@ routing:
             # from artifact_revision because that pin is deployment-private.
             # Empty publishes the hash alone.
             checkpoint_label: ""
+          # thinking_lever moves a worker's reasoning depth per turn without
+          # changing the request-level reasoning fields, which providers key
+          # their prompt cache on. The router writes an item the client never
+          # sees -- a steering instruction, or a reasoning-effort update -- and
+          # replays every earlier item on later turns so the cache survives a
+          # change of level. Which bytes realise a level for a worker comes
+          # from a compiled lever registry, never from the router. Off.
+          thinking_lever:
+            enabled: false
+            # source "rule": every governed turn of this decision asks for
+            # level. It is the only source served.
+            source: rule
+            level: none
+            # admission "experimental" also admits bindings the registry
+            # marks experimental; the default admits certified ones only.
+            admission: certified
+            # min_spacing_turns holds a level for at least this many turns
+            # before an on-change binding may change it again.
+            min_spacing_turns: 0
+            # max_ledger_entries caps the episode's lever ledger; at the cap
+            # the level in force is held. Zero selects the hard limit, 384.
+            max_ledger_entries: 0
+            # eligibility_header, when set, steers only requests carrying it
+            # with the value "1", so a test conversation opts in and every
+            # other conversation on a bound worker is untouched. It never
+            # picks the level. Envoy must pass it to the router and keep it
+            # from the provider. Empty steers every conversation.
+            eligibility_header: ""
+            # workers binds a lever to worker IDs. A worker without a binding
+            # is never steered.
+            workers:
+              example-worker:
+                # export_sha256 names the registry export the binding came
+                # from, so a training row can be traced to its evidence.
+                export_sha256: ""
+                admission: certified
+                lever: prompt_steering_suffix
+                emit: on_change
+                neutral_level: neutral
+                placements: [append_tail_user_text, insert_user_after_tool_run]
+                levels:
+                  # control_sha256 is the registry's digest of each level's
+                  # bytes; the router recomputes it and refuses a mismatch.
+                  - {level: none, rank: 0, control_sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855}
+                  - {level: neutral, rank: 0, suffix: "Until the next steering instruction, use your normal judgement.", control_sha256: 3706b3ac244e71be7d77e4bb7113a17cbda5cb0fa7c69fc4654940d4d789650c}
+                  - {level: down, rank: -1, suffix: "Until the next steering instruction, use minimal deliberation.", control_sha256: 99fca31cf4f665d12f6695cb8c46311be0cc6e4a34829347d4cc9298b24cccf6}
+                  - {level: up, rank: 1, suffix: "Until the next steering instruction, reason more thoroughly.", control_sha256: 68a03386f70205c97e7a0002afa023c2b99b8ba98487a134c49824dd85d427be}
+          # worker_thinking fixes a thinking worker's base reasoning level on
+          # the wire, as the thinking-level registry compiled it. Without it
+          # the router derives reasoning.max_tokens from the client's output
+          # allowance and drops any effort, since OpenRouter refuses both at
+          # once. wire: effort (reasoning.effort only), budget
+          # (reasoning.max_tokens only, a simulated level such as a 4096-token
+          # low) or provider_default (no reasoning control, uncapped).
+          # upstream_audit checks, per worker, that each provider-bound body
+          # extends the last one this episode sent it, and logs
+          # upstream_extends_previous with message counts and a digest --
+          # never content. Off: turning it on writes the v3 episode record.
+          upstream_audit:
+            enabled: false
+          # A base travels only on OpenRouter's Chat reasoning object, so it
+          # names a worker dispatched that way, for example:
+          #   z-ai/glm-5.3-flash@thinking-on: {level: high, wire: effort, effort: high}
+          # Neither worker here is (qwen3-32b dispatches Messages), so none.
+          worker_thinking: {}
           encoder:
             base_url: http://rayline-arc-encoder:8000
             # Set base_url to empty and populate replicas + failover to opt
@@ -1833,15 +1898,28 @@ recipes:
                 # model_schedule: task_turn_compaction_v1 holds the model
                 # between schedule boundaries and lets only its level vary.
                 model_schedule: ""
-                # Each binding maps a package action to a worker and the
-                # thinking level it carries.
+                # Each binding maps a package action to a worker. model, effort
+                # and reasoning_max_tokens declare what the action dispatches,
+                # as the package's catalog states it: model is the trained
+                # name, which any worker may serve. The loader recomputes the
+                # action_id from them (and from the steering suffix of level,
+                # from a thinking_lever with source policy), so a binding that
+                # would send anything else refuses to load. Omit them for a
+                # decision-only cell that leaves dispatch to the modelRef.
+                # qwen3-32b dispatches Messages and declares enabled and
+                # disabled thinking only, so its action is a budget, not an
+                # effort (which travels with adaptive thinking).
                 bindings:
                   - action_id: 6b17d6750c0bb3b365d9b474315615cb8fffdfb6bf0b7125e328390ab98c546a
                     worker: qwen3-8b
                     level: none
-                  - action_id: 55bc5dcd39c88ff403e0f4301c633e3021a397e3053cbf9b36d9ba4bc073ecc6
+                    model: qwen3-8b-instruct
+                    effort: none
+                  - action_id: eca208426c62c4c0289d7f409134cc2515013c70d9cb09bd9b3e2c0a73198cce
                     worker: qwen3-32b
                     level: none
+                    model: qwen3-32b-instruct
+                    reasoning_max_tokens: 4096
               episode:
                 id_header: x-rayline-episode-id
                 close_header: ""

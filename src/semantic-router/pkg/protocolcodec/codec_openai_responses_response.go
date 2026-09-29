@@ -491,7 +491,7 @@ func encodeResponsesOutputText(items []llmprotocol.OutputItem) json.RawMessage {
 }
 
 func encodeResponsesOutputItem(item llmprotocol.OutputItem) ([]responsesItemWire, error) {
-	message := llmprotocol.Message(item)
+	message := llmprotocol.Message{ID: item.ID, Role: item.Role, Content: item.Content}
 	return encodeResponsesMessage(message, "output")
 }
 

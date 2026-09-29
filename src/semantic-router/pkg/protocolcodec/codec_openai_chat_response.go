@@ -120,7 +120,7 @@ func decodeChatChoiceItem(choice chatChoiceWire, responseID string, policy llmpr
 	if err != nil {
 		return llmprotocol.OutputItem{}, err
 	}
-	item := llmprotocol.OutputItem(message)
+	item := llmprotocol.OutputItem{ID: message.ID, Role: message.Role, Content: message.Content}
 	if item.ID == "" && policy.MissingStableIDs == llmprotocol.MissingIDGenerateStable {
 		item.ID = llmprotocol.StableID("chat-response", responseID, fmt.Sprint(choice.Index))
 	}
