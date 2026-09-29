@@ -139,11 +139,18 @@ def _validate_rayline_arc_decision(decision) -> list[ValidationError]:
     if arc.policy_service is not None:
         # The Go loader owns the binding checks; only the episode contract is
         # shared with the artifact mode.
-        errors.extend(
-            validate_episode_contract(
-                f"decisions.{decision.name}.algorithm.rayline_arc.episode", arc.episode
+        prefix = f"decisions.{decision.name}.algorithm.rayline_arc.episode"
+        errors.extend(validate_episode_contract(prefix, arc.episode))
+        # The Go loader refuses a close header in the policy-service mode:
+        # there are no encoder replicas whose sessions it would close.
+        if arc.episode.close_header:
+            errors.append(
+                ValidationError(
+                    f"decision '{decision.name}' algorithm.rayline_arc.episode.close_header "
+                    "is not served in the policy-service mode",
+                    field=f"{prefix}.close_header",
+                )
             )
-        )
     else:
         errors.extend(_validate_artifact(decision.name, arc))
         errors.extend(_validate_encoder(decision.name, arc.encoder))

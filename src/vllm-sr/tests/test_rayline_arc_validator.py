@@ -342,3 +342,45 @@ def test_routes_api_refuses_unknown_keys():
     # failure rather than a silently ignored one.
     with pytest.raises(ValidationError):
         RaylineARCRoutesAPIConfig(enabled=True, episode_write=True)
+
+
+def _policy_service_decision(close_header=None):
+    arc = RaylineARCAlgorithmConfig.model_validate(
+        {
+            "policy_service": {
+                "base_url": "http://rayline-arc-policy-service:8000",
+                "total_timeout_seconds": 60,
+                "package_alias": "rayline/arc-public-example",
+                "package_sha256": "0" * 64,
+                "bindings": [
+                    {"action_id": "a" * 64, "worker": "public-arm-a"},
+                    {"action_id": "b" * 64, "worker": "public-arm-b"},
+                ],
+            },
+            "episode": {
+                "id_header": "x-rayline-episode-id",
+                "close_header": close_header,
+                "backend": "memory",
+                "development_mode": True,
+                "key_prefix": "vsr:rayline-arc-policy:",
+                "acquire_timeout_seconds": 30,
+                "lease_ttl_seconds": 60,
+                "idle_ttl_seconds": 900,
+                "max_in_memory_episodes": 128,
+            },
+        }
+    )
+    decision = _valid_decision()
+    decision.algorithm.rayline_arc = arc
+    return decision
+
+
+def test_rayline_arc_cli_accepts_a_policy_service_decision():
+    assert _validate_rayline_arc_decision(_policy_service_decision()) == []
+
+
+def test_rayline_arc_cli_refuses_a_policy_mode_close_header():
+    errors = _validate_rayline_arc_decision(
+        _policy_service_decision(close_header="x-rayline-episode-close")
+    )
+    assert any("close_header" in error.field for error in errors), errors
