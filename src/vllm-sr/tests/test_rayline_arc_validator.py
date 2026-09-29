@@ -397,6 +397,10 @@ def test_rayline_arc_cli_checks_policy_service_connection_fields():
             lambda policy: setattr(policy, "modal_key_env", "RAYLINE_ARC_MODAL_KEY"),
             "modal_key_env",
         ),
+        (
+            lambda policy: setattr(policy, "connect_timeout_seconds", 61),
+            "connect_timeout_seconds",
+        ),
     ):
         decision = _policy_service_decision()
         mutate(decision.algorithm.rayline_arc.policy_service)

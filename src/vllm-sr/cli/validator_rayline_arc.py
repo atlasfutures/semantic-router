@@ -299,6 +299,13 @@ def _validate_policy_service(name, policy) -> list[ValidationError]:
     errors.extend(
         _modal_pair_errors(prefix, policy.modal_key_env, policy.modal_secret_env)
     )
+    if policy.connect_timeout_seconds > policy.total_timeout_seconds:
+        errors.append(
+            ValidationError(
+                "connect_timeout_seconds cannot exceed total_timeout_seconds",
+                field=f"{prefix}.connect_timeout_seconds",
+            )
+        )
     return errors
 
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -273,5 +274,58 @@ func TestPolicySelectorLeavesAnUnreportedEncodeTimeUnknown(t *testing.T) {
 	observeRaylineARCSelection(&RequestContext{RequestID: "r"}, result.RaylineARC)
 	if fields := findLogEvent(t, logs, "rayline_arc_selection"); fields["encoder_latency_millis"] != int64(41) {
 		t.Fatalf("encoder_latency_millis = %v, want 41", fields["encoder_latency_millis"])
+	}
+}
+
+// An Anthropic worker must keep its provider's own credential header and
+// prefix, as an OpenAI-compatible one must keep the default shape.
+func TestPolicyDispatchReadinessHoldsAnthropicToItsDefaultAuth(t *testing.T) {
+	anthropic := func(profile config.ProviderProfile) (*config.RouterConfig, *config.Decision) {
+		return policyReadinessConfig(func(c *config.RouterConfig) {
+			c.VLLMEndpoints[0].Type = "anthropic"
+			c.ProviderProfiles["openrouter"] = profile
+		})
+	}
+	if cfg, decision := anthropic(config.ProviderProfile{Type: "anthropic", BaseURL: "https://api.anthropic.com"}); !raylineARCPolicyDispatchReady(cfg, decision) {
+		t.Fatal("an Anthropic worker on its default auth was refused")
+	}
+	if cfg, decision := anthropic(config.ProviderProfile{Type: "anthropic", BaseURL: "https://api.anthropic.com", AuthHeader: "x-caller-key"}); raylineARCPolicyDispatchReady(cfg, decision) {
+		t.Fatal("an Anthropic worker with a custom auth header passed readiness")
+	}
+}
+
+// The manifest describes the route dispatch takes: the primary backend.
+func TestPolicyWorkerManifestFollowsThePrimaryBackend(t *testing.T) {
+	cfg, _ := policyReadinessConfig(func(c *config.RouterConfig) {
+		params := c.ModelConfig["think"]
+		params.PreferredEndpoints = []string{"direct", "openrouter"}
+		params.ExternalModelIDs = map[string]string{"openai": "vendor/think"}
+		c.ModelConfig["think"] = params
+		c.VLLMEndpoints[0].Weight = 10
+		c.VLLMEndpoints = append([]config.VLLMEndpoint{{
+			Name: "direct", Address: "api.example.com", Port: 443, Type: "openai", Weight: 1,
+			APIKey: "resolved-key", APIKeyEnvName: "DIRECT_KEY", ProviderProfileName: "direct",
+		}}, c.VLLMEndpoints...)
+		c.ProviderProfiles["direct"] = config.ProviderProfile{Type: "openai", BaseURL: "https://api.example.com/v1"}
+	})
+	if _, primary, _, _ := cfg.ResolvePrimaryBackendForModel("think"); primary != "openrouter" {
+		t.Fatalf("the higher-weight endpoint is not primary: %q", primary)
+	}
+	// The first-listed endpoint is a direct OpenAI one; the primary is
+	// OpenRouter, and the manifest must say so.
+	if worker := policyWorkerManifest(cfg, config.ModelRef{Model: "think"}); worker.EffectiveDispatchBackend() != raylinearc.DispatchOpenRouter {
+		t.Fatalf("manifest backend %q, want the primary's openrouter", worker.EffectiveDispatchBackend())
+	}
+}
+
+// An artifact-mode selection logs no policy-service facts, not zeros.
+func TestArtifactSelectionLogsNoPolicyFields(t *testing.T) {
+	logs := captureLogs(t)
+	observeRaylineARCSelection(&RequestContext{RequestID: "r"}, &selection.RaylineARCTrace{SelectedArm: 0})
+	fields := findLogEvent(t, logs, "rayline_arc_selection")
+	for _, field := range []string{"policy_latency_millis", "policy_action_id", "thinking_level", "policy_action_model", "worker_provider_model"} {
+		if _, present := fields[field]; present {
+			t.Fatalf("an artifact-mode selection logged %s", field)
+		}
 	}
 }

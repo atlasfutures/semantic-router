@@ -56,7 +56,7 @@ func raylineARCPolicyWorkerReady(cfg *config.RouterConfig, worker string) bool {
 				return false
 			}
 		case strings.EqualFold(endpoint.Type, "anthropic") && strings.EqualFold(profile.Type, "anthropic"):
-			if _, err := profile.ResolveAuth(); err != nil {
+			if !raylineARCProviderDefaultAuth(profile) {
 				return false
 			}
 		default:
@@ -64,4 +64,17 @@ func raylineARCPolicyWorkerReady(cfg *config.RouterConfig, worker string) bool {
 		}
 	}
 	return true
+}
+
+// raylineARCProviderDefaultAuth reports whether a profile keeps its provider
+// type's own credential header and prefix, as the catalog defines them, with
+// no override that could let another header stand in for the credential.
+func raylineARCProviderDefaultAuth(profile *config.ProviderProfile) bool {
+	resolved, err := profile.ResolveAuth()
+	if err != nil {
+		return false
+	}
+	catalogDefault, err := (&config.ProviderProfile{Type: profile.Type}).ResolveAuth()
+	return err == nil && strings.EqualFold(resolved.Header, catalogDefault.Header) &&
+		resolved.Prefix == catalogDefault.Prefix
 }

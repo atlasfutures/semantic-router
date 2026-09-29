@@ -117,10 +117,8 @@ func newPolicyServiceScorer(
 // OpenRouter-only accounting stays OpenRouter-only.
 func policyWorkerManifest(cfg *config.RouterConfig, modelRef config.ModelRef) raylinearc.WorkerManifest {
 	model := modelRef.Model
-	endpoint := ""
-	if endpoints := cfg.GetEndpointsForModel(model); len(endpoints) > 0 {
-		endpoint = endpoints[0].Name
-	}
+	// The route dispatch takes: the primary backend, not the first listed.
+	_, endpoint, _, _ := cfg.ResolvePrimaryBackendForModel(model)
 	worker := raylinearc.WorkerManifest{
 		ID: model, Model: cfg.ResolveExternalModelID(model, endpoint),
 		ThinkingMode: "off", DispatchBackend: raylinearc.DispatchOpenAICompat,
