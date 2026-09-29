@@ -219,6 +219,12 @@ providers:
     - name: think
       provider_model_id: vendor/think
       api_format: openai
+      pricing:
+        currency: USD
+        prompt_per_1m: 1
+        cached_input_per_1m: 0.1
+        cache_write_per_1m: 1.25
+        completion_per_1m: 5
       backend_refs:
         - name: openrouter-think
           base_url: https://openrouter.ai/api/v1
@@ -227,6 +233,12 @@ providers:
     - name: off
       provider_model_id: vendor/off
       api_format: openai
+      pricing:
+        currency: USD
+        prompt_per_1m: 1
+        cached_input_per_1m: 0.1
+        cache_write_per_1m: 1.25
+        completion_per_1m: 5
       backend_refs:
         - name: openrouter-off
           base_url: https://openrouter.ai/api/v1
@@ -235,6 +247,12 @@ providers:
     - name: claude
       provider_model_id: anthropic/claude-opus-5
       api_format: anthropic
+      pricing:
+        currency: USD
+        prompt_per_1m: 1
+        cached_input_per_1m: 0.1
+        cache_write_per_1m: 1.25
+        completion_per_1m: 5
       backend_refs:
         - name: anthropic-claude
           base_url: https://api.anthropic.com
