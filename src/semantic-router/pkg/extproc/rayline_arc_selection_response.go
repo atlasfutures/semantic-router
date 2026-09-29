@@ -29,7 +29,11 @@ func selectionFailureIsContended(class string) bool {
 	switch class {
 	case "episode_timeout",
 		"episode_capacity",
-		arcEncoderFailureClassAdmission:
+		arcEncoderFailureClassAdmission,
+		// The policy service's own back-pressure: another call holds the
+		// session, or its session table is full. Both clear like a lease.
+		"policy_service_session_busy",
+		"policy_service_session_capacity":
 		return true
 	default:
 		return false

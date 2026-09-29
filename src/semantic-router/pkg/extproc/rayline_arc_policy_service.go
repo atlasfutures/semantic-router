@@ -36,7 +36,13 @@ import (
 const (
 	policyFormatAnthropic = "anthropic_messages"
 	policyFormatOpenAI    = "openai_chat"
+
+	arcFailurePolicyRequestFormat = "policy_request_format"
 )
+
+// policySessionActions is the closed set the encoder session contract names;
+// the service's value becomes a metric label, so any other is dropped.
+var policySessionActions = map[string]bool{"created": true, "rebuilt": true, "appended": true, "reused": true}
 
 type policyBinding struct {
 	arm   int
@@ -218,7 +224,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		return nil, arcSelectionFailure("policy_scorer")
 	}
 	if arcContext.RequestFormat == "" {
-		return nil, arcSelectionFailure("policy_request_format")
+		return nil, arcSelectionFailure(arcFailurePolicyRequestFormat)
 	}
 	var body policyClientRequest
 	if err := json.Unmarshal(arcContext.RawRequest, &body); err != nil || len(body.Messages) == 0 {
@@ -299,7 +305,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	encoded := &raylinearc.EncoderResult{
 		SerializedTokens:  response.Encoding.TokenCount,
 		FullHistoryTokens: response.Encoding.TokenCount,
-		SessionAction:     response.Encoding.SessionAction,
+		SessionAction:     boundedPolicySessionAction(response.Encoding.SessionAction),
 		SessionRevision:   response.Encoding.SessionRevision,
 		EngineBuildID:     response.Encoding.EngineBuildID,
 	}
@@ -372,4 +378,11 @@ func policyDecision(
 		ColdSwitchUpgradeExemptions: make([]bool, count),
 		ExcludedArms:                excludedArms,
 	}
+}
+
+func boundedPolicySessionAction(action string) string {
+	if policySessionActions[action] {
+		return action
+	}
+	return ""
 }
