@@ -168,6 +168,7 @@ func policyRequestFormat(format llmprotocol.WireFormat) string {
 func createRaylineARCPolicySelector(
 	cfg *config.RouterConfig,
 	decision *config.Decision,
+	recipe config.RecipeName,
 ) (
 	selection.Selector,
 	raylinearc.EpisodeStore,
@@ -210,6 +211,7 @@ func createRaylineARCPolicySelector(
 		return nil
 	}
 	selector := newRaylineARCSelector(nil, nil, nil, policy.PackageSHA256)
+	selector.recipe = recipe
 	armed := &raylineARCArmedComponents{
 		scorer:    newPolicyServiceScorer(cfg, decision),
 		admission: raylinearc.NewAdmissionGate(policy.MaxInflightCalls),

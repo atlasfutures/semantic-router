@@ -230,6 +230,7 @@ func observeRaylineARCSelection(
 		"encoder_replica_index":  trace.EncoderReplicaIndex,
 		"encoder_attempts":       trace.EncoderAttempts,
 		"encoder_failover":       trace.EncoderFailover,
+		"recipe":                 raylineARCRecipeLabel(ctx.Routing.RecipeName()),
 	}
 	// The policy-service facts exist only when a policy service decided; an
 	// artifact-mode selection carries none rather than zeros.

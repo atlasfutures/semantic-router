@@ -300,13 +300,28 @@ func parseRaylineARCCloseRequest(
 	}
 }
 
+// raylineARCEpisodeStoreFor is the episode store of the recipe serving this
+// request: a named recipe's own, or the default recipe's.
+func (r *OpenAIRouter) raylineARCEpisodeStoreFor(reqCtx *RequestContext) raylinearc.EpisodeStore {
+	if r == nil {
+		return nil
+	}
+	if reqCtx != nil {
+		if recipe := reqCtx.Routing.RecipeName(); recipe != "" && recipe != config.DefaultRecipeName {
+			return r.RaylineARCRecipeEpisodeStores[recipe]
+		}
+	}
+	return r.RaylineARCEpisodeStore
+}
+
 func (r *OpenAIRouter) prepareRaylineARCTransaction(
 	arcConfig *config.RaylineARCAlgorithmConfig,
 	reqCtx *RequestContext,
 	episodeIDHash string,
 	workerCount int,
 ) (*raylinearc.EpisodeState, string) {
-	if r == nil || r.RaylineARCEpisodeStore == nil {
+	store := r.raylineARCEpisodeStoreFor(reqCtx)
+	if store == nil {
 		return nil, "episode_store"
 	}
 	prepareContext := reqCtx.TraceContext
@@ -322,7 +337,7 @@ func (r *OpenAIRouter) prepareRaylineARCTransaction(
 	defer cancel()
 	// The owning stream already holds this router open (processWithContext),
 	// so the episode store cannot be closed underneath this lease.
-	lease, state, err := r.RaylineARCEpisodeStore.Prepare(
+	lease, state, err := store.Prepare(
 		prepareContext,
 		episodeIDHash,
 		workerCount,
@@ -331,7 +346,7 @@ func (r *OpenAIRouter) prepareRaylineARCTransaction(
 		return nil, boundedARCPrepareFailure(err)
 	}
 	reqCtx.RaylineARCTransaction = newRaylineARCEpisodeTransaction(
-		r.RaylineARCEpisodeStore,
+		store,
 		lease,
 		state,
 		episodeIDHash,

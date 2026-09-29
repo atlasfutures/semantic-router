@@ -74,7 +74,7 @@ func createRaylineARCSelector(
 		if !raylineARCDecisionsShareWorkers(decisions) {
 			return unavailable("conflicting_config")
 		}
-		return createRaylineARCPolicySelector(cfg, decisions[0])
+		return createRaylineARCPolicySelector(cfg, decisions[0], "")
 	}
 	runtime, err := raylinearc.LoadRuntime(arcConfig.ArtifactDir)
 	if err != nil {
