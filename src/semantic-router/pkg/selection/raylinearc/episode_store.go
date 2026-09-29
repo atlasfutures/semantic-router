@@ -108,6 +108,7 @@ func cloneEpisodeState(state *EpisodeState) *EpisodeState {
 		Warmth:               make([]*WorkerWarmth, len(state.Warmth)),
 		EncoderOwner:         state.EncoderOwner,
 		EncoderVisitedOwners: append([]string(nil), state.EncoderVisitedOwners...),
+		Policy:               state.Policy.Clone(),
 	}
 	for index, warmth := range state.Warmth {
 		if warmth == nil {

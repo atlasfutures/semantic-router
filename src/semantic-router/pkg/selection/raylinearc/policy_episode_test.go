@@ -102,9 +102,14 @@ func TestPolicyStateSurvivesTheEpisodeStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, want := restored.Policy, state.Policy
-	if got == nil || got.Epoch != want.Epoch || got.PrefixDigest != want.PrefixDigest ||
-		len(got.Ledger) != 1 || got.Ledger[0] != want.Ledger[0] {
-		t.Fatalf("restored %+v, want %+v", got, want)
+	// The memory backend stores a clone rather than bytes; both must keep it.
+	for name, got := range map[string]*PolicyEpisodeState{
+		"marshalled": restored.Policy, "cloned": cloneEpisodeState(state).Policy,
+	} {
+		want := state.Policy
+		if got == nil || got.Epoch != want.Epoch || got.PrefixDigest != want.PrefixDigest ||
+			len(got.Ledger) != 1 || got.Ledger[0] != want.Ledger[0] {
+			t.Fatalf("%s: %+v, want %+v", name, got, want)
+		}
 	}
 }
