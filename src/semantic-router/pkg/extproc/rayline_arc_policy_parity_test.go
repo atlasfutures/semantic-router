@@ -237,3 +237,41 @@ func TestPolicyWorkerManifestCarriesTheCardsFacts(t *testing.T) {
 		t.Fatalf("a non-OpenRouter worker = %+v", worker)
 	}
 }
+
+// A service that does not report its encode time leaves encoder latency
+// unknown: the selection log omits the field rather than logging 0.
+func TestPolicySelectorLeavesAnUnreportedEncodeTimeUnknown(t *testing.T) {
+	fixture := newPolicySelectorFixture(t, "")
+	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
+	fixture.fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return bindings[0].ActionID })
+	fixture.fake.encodeUnreported = true
+	state, _ := raylinearc.NewEpisodeState(2)
+	result, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.RaylineARC.EncoderLatencyUnknown {
+		t.Fatal("an unreported encode time was not marked unknown")
+	}
+	logs := captureLogs(t)
+	observeRaylineARCSelection(&RequestContext{RequestID: "r"}, result.RaylineARC)
+	fields := findLogEvent(t, logs, "rayline_arc_selection")
+	if _, present := fields["encoder_latency_millis"]; present {
+		t.Fatalf("encoder_latency_millis logged for an unknown encode time: %v", fields["encoder_latency_millis"])
+	}
+	if _, present := fields["policy_latency_millis"]; !present {
+		t.Fatal("policy_latency_millis missing")
+	}
+
+	// A reported time is logged, as in the artifact mode.
+	fixture.fake.encodeUnreported = false
+	result, err = fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs = captureLogs(t)
+	observeRaylineARCSelection(&RequestContext{RequestID: "r"}, result.RaylineARC)
+	if fields := findLogEvent(t, logs, "rayline_arc_selection"); fields["encoder_latency_millis"] != int64(41) {
+		t.Fatalf("encoder_latency_millis = %v, want 41", fields["encoder_latency_millis"])
+	}
+}
