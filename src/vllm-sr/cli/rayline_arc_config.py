@@ -196,6 +196,82 @@ class RaylineARCRoutesAPIConfig(BaseModel):
         return value
 
 
+class RaylineARCThinkingLevelConfig(BaseModel):
+    """One rung of a compiled thinking-lever binding."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    level: str
+    rank: int
+    suffix: str = ""
+    effort: str = ""
+    # The registry's digest of this level's bytes; the Go loader recomputes
+    # it and refuses a mismatch.
+    control_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class RaylineARCThinkingBindingConfig(BaseModel):
+    """One worker's lever binding, compiled from the thinking-level registry.
+
+    The shape is checked here; the Go loader checks the rest (placements that
+    fit the lever, a declared neutral level, effort spelling) and refuses to
+    start on a binding the planner would refuse.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    export_sha256: str = ""
+    admission: Literal["certified", "experimental"]
+    lever: Literal["prompt_steering_suffix", "per_turn_effort"]
+    emit: Literal["every_turn", "on_change"]
+    neutral_level: str = ""
+    placements: list[
+        Literal[
+            "append_tail_user_text",
+            "insert_user_after_tool_run",
+            "system_before_governed_turn",
+            "system_after_tool_run",
+        ]
+    ]
+    levels: list[RaylineARCThinkingLevelConfig]
+
+
+class RaylineARCThinkingLeverConfig(BaseModel):
+    """Per-turn thinking lever for one ARC decision. Off by default."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    # Only "rule" is served: every governed turn asks for `level`.
+    source: str = ""
+    level: str = ""
+    admission: Literal["", "certified", "experimental"] = ""
+    min_spacing_turns: int = Field(default=0, ge=0)
+    # Mirrors thinkinglever.MaxLedgerLength in the Go loader.
+    max_ledger_entries: int = Field(default=0, ge=0, le=384)
+    eligibility_header: str = ""
+    workers: dict[str, RaylineARCThinkingBindingConfig] = Field(default_factory=dict)
+
+
+class RaylineARCUpstreamAuditConfig(BaseModel):
+    """Per-worker upstream extension check. Off by default."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+
+
+class RaylineARCWorkerThinkingConfig(BaseModel):
+    """A thinking worker's base reasoning level, as the registry compiled it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    level: str
+    wire: Literal["effort", "budget", "provider_default"]
+    effort: str = ""
+    max_tokens: int = Field(default=0, ge=0)
+
+
 class RaylineARCAlgorithmConfig(BaseModel):
     """Artifact, encoder, and episode pins for Rayline ARC."""
 
@@ -215,3 +291,6 @@ class RaylineARCAlgorithmConfig(BaseModel):
     include_tool_names: bool = False
     fault_injection: RaylineARCFaultInjectionConfig | None = None
     routes_api: RaylineARCRoutesAPIConfig | None = None
+    thinking_lever: RaylineARCThinkingLeverConfig | None = None
+    worker_thinking: dict[str, RaylineARCWorkerThinkingConfig] = Field(default_factory=dict)
+    upstream_audit: RaylineARCUpstreamAuditConfig | None = None

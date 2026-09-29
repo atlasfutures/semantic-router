@@ -111,6 +111,22 @@ type RaylineARCAlgorithmConfig struct {
 	// PolicyService switches the decision to an external policy service. When
 	// set, artifact_dir, artifact_revision and encoder are not used.
 	PolicyService *RaylineARCPolicyServiceConfig `yaml:"policy_service,omitempty"`
+	// ThinkingLever moves a worker's reasoning depth per turn without
+	// changing the request-level reasoning fields. Off by default.
+	ThinkingLever *RaylineARCThinkingLeverConfig `yaml:"thinking_lever,omitempty"`
+	// WorkerThinking fixes each listed worker's base reasoning level on the
+	// wire, as the shared thinking-level registry compiled it.
+	WorkerThinking map[string]RaylineARCWorkerThinkingConfig `yaml:"worker_thinking,omitempty"`
+	// UpstreamAudit checks, per worker, that each provider-bound body extends
+	// the last one this episode sent it, and logs the verdict. Off by
+	// default: turning it on writes the v3 episode record.
+	UpstreamAudit RaylineARCUpstreamAuditConfig `yaml:"upstream_audit,omitempty"`
+}
+
+// RaylineARCUpstreamAuditConfig is the opt-in for the upstream extension
+// check. It stores message counts and digests, never content.
+type RaylineARCUpstreamAuditConfig struct {
+	Enabled bool `yaml:"enabled,omitempty"`
 }
 
 // RaylineARCRoutesAPIConfig is the opt-in for the route lookup endpoint.
@@ -256,6 +272,17 @@ func validateRaylineARCAlgorithmConfig(cfg *RaylineARCAlgorithmConfig) error {
 	}
 	if err := validateRaylineARCRoutesAPIConfig(cfg.RoutesAPI); err != nil {
 		return fmt.Errorf("routes_api: %w", err)
+	}
+	if err := validateRaylineARCThinkingLeverConfig(cfg.ThinkingLever); err != nil {
+		return fmt.Errorf("thinking_lever: %w", err)
+	}
+	if err := validateRaylineARCWorkerThinking(cfg.WorkerThinking); err != nil {
+		return fmt.Errorf("worker_thinking: %w", err)
+	}
+	if lever := cfg.ThinkingLever; lever != nil && lever.Enabled && lever.EligibilityHeader != "" &&
+		(!raylineARCHeaderNamePattern.MatchString(lever.EligibilityHeader) ||
+			lever.EligibilityHeader == cfg.Episode.IDHeader || lever.EligibilityHeader == cfg.Episode.CloseHeader) {
+		return fmt.Errorf("thinking_lever: eligibility_header must be a lowercase HTTP field name distinct from the episode headers")
 	}
 	return nil
 }
@@ -610,6 +637,12 @@ func validateRaylineARCDecisionContract(cfg *RouterConfig, decision Decision) er
 		if err := validateRaylineARCPolicyBindings(decision); err != nil {
 			return fmt.Errorf("decision '%s': %w", decision.Name, err)
 		}
+	}
+	if err := validateRaylineARCThinkingWorkers(decision.Algorithm.RaylineARC, decision.ModelRefs); err != nil {
+		return fmt.Errorf("decision '%s': algorithm.rayline_arc.thinking_lever: %w", decision.Name, err)
+	}
+	if err := validateRaylineARCWorkerThinkingRefs(decision.Algorithm.RaylineARC, decision.ModelRefs); err != nil {
+		return fmt.Errorf("decision '%s': algorithm.rayline_arc.worker_thinking: %w", decision.Name, err)
 	}
 	if replay := cfg.EffectiveRouterReplayConfigForDecision(decision.Name); replay != nil && replay.Enabled {
 		return fmt.Errorf(

@@ -227,6 +227,9 @@ func validateMessageEnvelope(message Message, location string, limits Limits) er
 		return NewFieldError(ErrorInvalidRequest, "invalid_role",
 			"message role is invalid", location, "messages.role")
 	}
+	if message.Configuration != nil {
+		return validateConfigurationMessage(message, location)
+	}
 	if len(message.Content) == 0 {
 		return NewFieldError(ErrorInvalidRequest, "empty_message",
 			"messages must contain at least one content block", location, "messages.content")
@@ -234,6 +237,18 @@ func validateMessageEnvelope(message Message, location string, limits Limits) er
 	if message.Role == RoleTool && len(message.Content) != 1 {
 		return NewFieldError(ErrorInvalidRequest, "tool_message_cardinality",
 			"tool messages contain exactly one tool result", location, "messages.content")
+	}
+	return nil
+}
+
+func validateConfigurationMessage(message Message, location string) error {
+	if message.Role != RoleSystem || len(message.Content) != 0 {
+		return NewFieldError(ErrorInvalidRequest, "invalid_configuration_message",
+			"a configuration update is a system message without content", location, "messages.configuration")
+	}
+	if message.Configuration.ReasoningEffort == "" {
+		return NewFieldError(ErrorInvalidRequest, "invalid_configuration_message",
+			"a configuration update must change the reasoning effort", location, "messages.configuration")
 	}
 	return nil
 }

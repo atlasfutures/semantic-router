@@ -183,7 +183,11 @@ func (r *OpenAIRouter) applyDispatchDecision(
 	injected, err := r.addSemanticSystemPromptIfConfigured(
 		request, dispatch.decisionName, dispatch.logicalModel, ctx,
 	)
-	return changed || injected, err
+	if err != nil {
+		return false, err
+	}
+	steered, err := r.applyRaylineARCThinkingLever(request, ctx)
+	return changed || injected || steered, err
 }
 
 func wireFormatForModel(apiFormat string) (llmprotocol.WireFormat, error) {
@@ -252,6 +256,7 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 		metrics.RecordRequestError(dispatch.logicalModel, "provider_adapter_error")
 		return nil, status.Errorf(codes.Internal, "adapt provider request: %v", err)
 	}
+	r.auditRaylineARCUpstream(body, ctx)
 	common := response.GetRequestBody().GetResponse()
 	if common == nil {
 		return nil, status.Error(codes.Internal, "provider dispatch response is unavailable")

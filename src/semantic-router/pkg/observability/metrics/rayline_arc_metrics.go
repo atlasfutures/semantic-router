@@ -100,6 +100,13 @@ var (
 		},
 		[]string{"outcome", "failure_class"},
 	)
+	RaylineARCThinkingLeverTurns = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_rayline_arc_thinking_lever_turns_total",
+			Help: "Rayline ARC turns a thinking lever governed, by lever, outcome and bounded reason. Level names are configuration-controlled and deliberately not a label.",
+		},
+		[]string{"lever", "outcome", "reason"},
+	)
 	RaylineARCSessionActions = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "llm_rayline_arc_session_actions_total",
@@ -269,6 +276,10 @@ func RecordRaylineARCEpisodeTransaction(
 		outcome,
 		failureClass,
 	).Inc()
+}
+
+func RecordRaylineARCThinkingLeverTurn(lever, outcome, reason string) {
+	RaylineARCThinkingLeverTurns.WithLabelValues(lever, outcome, reason).Inc()
 }
 
 func RecordRaylineARCProviderRequest(
