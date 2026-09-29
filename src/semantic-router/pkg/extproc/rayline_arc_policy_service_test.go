@@ -125,6 +125,9 @@ func TestPolicySelectorMapsTheDecisionToAWorkerAndLevel(t *testing.T) {
 		t.Fatalf("decision = model %q level %q action %q", result.SelectedModel,
 			result.RaylineARC.ThinkingLevel, result.RaylineARC.PolicyActionID)
 	}
+	if result.RaylineARC.PolicyActionModel != "vendor/think" || result.RaylineARC.WorkerProviderModel != "think" {
+		t.Fatalf("model names = action %q worker %q", result.RaylineARC.PolicyActionModel, result.RaylineARC.WorkerProviderModel)
+	}
 	sent := fixture.fake.received()[0]
 	if sent.ContextEpoch != "0" || len(sent.Attribution) != 0 || len(sent.Selection.AvailableActionIDs) != 3 ||
 		sent.Package.Alias != policyTestAlias || sent.RequestFormat != policyFormatAnthropic {

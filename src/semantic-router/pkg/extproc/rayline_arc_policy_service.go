@@ -41,6 +41,8 @@ const (
 type policyBinding struct {
 	arm   int
 	level string
+	// model is the action's trained model, when the binding declares it.
+	model string
 }
 
 // policyServiceScorer carries the worker catalog and action bindings. It does
@@ -93,7 +95,7 @@ func newPolicyServiceScorer(
 		scorer.workers = append(scorer.workers, policyWorkerManifest(cfg, modelRef.Model))
 	}
 	for _, binding := range policy.Bindings {
-		scorer.bindings[binding.ActionID] = policyBinding{arm: index[binding.Worker], level: binding.Level}
+		scorer.bindings[binding.ActionID] = policyBinding{arm: index[binding.Worker], level: binding.Level, model: binding.Model}
 		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
 	}
 	return scorer
@@ -306,6 +308,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.PolicyActionID = response.Decision.SelectedActionID
 	result.RaylineARC.PolicyArmID = response.Decision.SelectedArmID
 	result.RaylineARC.ThinkingLevel = binding.level
+	result.RaylineARC.PolicyActionModel = binding.model
+	result.RaylineARC.WorkerProviderModel = scorer.workers[binding.arm].Model
 	result.RaylineARC.PolicyNextState = turn.Next(
 		messages, response.Decision.SelectedActionID, response.Decision.SelectedArmID,
 	)

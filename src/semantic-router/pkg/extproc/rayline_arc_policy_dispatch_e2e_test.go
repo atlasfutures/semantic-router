@@ -30,10 +30,11 @@ func TestPolicyActionReachesTheProviderBody(t *testing.T) {
 	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
 	budget := int64(4096)
 	actions := map[string]config.RaylineARCPolicyBinding{
-		"think-up":     policyAction("think", "up", "vendor/think", policyTestEffort("high"), nil, policyTestUp),
-		"think-budget": policyAction("think", "none", "vendor/think", nil, &budget, ""),
-		"claude":       policyAction("claude", "none", "anthropic/claude-opus-5", policyTestEffort("medium"), nil, ""),
-		"off":          policyAction("off", "none", "vendor/off", policyTestEffort("none"), nil, ""),
+		// Actions name trained models; the cards serve provider model ids.
+		"think-up":     policyAction("think", "up", "think-trained", policyTestEffort("high"), nil, policyTestUp),
+		"think-budget": policyAction("think", "none", "think-trained", nil, &budget, ""),
+		"claude":       policyAction("claude", "none", "claude-opus-5", policyTestEffort("medium"), nil, ""),
+		"off":          policyAction("off", "none", "off-trained", policyTestEffort("none"), nil, ""),
 	}
 	catalog := make([]string, 0, len(actions))
 	for _, action := range actions {

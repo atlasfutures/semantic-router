@@ -81,15 +81,16 @@ Remapping an action to another provider is a config change, and the package
 and service are unaffected. The route the action was trained on stays in the
 package as provenance.
 
-Readiness refuses a binding that serves a different model, cannot carry the
-action's effort, or cannot express its level with a qualified lever. The
+Readiness refuses a binding that cannot carry the action's effort, or cannot
+express its level with a qualified lever. The
 selection log and usage records name both the `action_id` and the binding.
 
-A binding declares what its action dispatches: `model` (the worker's provider
-model id), `effort` and `reasoning_max_tokens` as the catalog states them, and
+A binding declares what its action dispatches: `model` (the trained model
+name), `effort` and `reasoning_max_tokens` as the catalog states them, and
 `level`, whose steering suffix comes from a `thinking_lever` with source
 `policy`. The loader recomputes pathfinder's `action_id` from those fields and
-refuses a binding that does not reproduce it. It also refuses a thinking-off
+refuses a binding that does not reproduce it. Any worker may serve the trained
+model; selection logs `policy_action_model` beside `worker_provider_model`. It also refuses a thinking-off
 action (`effort: none`) that carries a steer. At dispatch the effort or budget
 replaces the derived reasoning controls: OpenRouter's `reasoning` object on
 Chat, and `output_config.effort` with adaptive thinking, or enabled thinking

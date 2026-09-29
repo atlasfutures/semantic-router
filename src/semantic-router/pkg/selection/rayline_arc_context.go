@@ -63,6 +63,11 @@ type RaylineARCTrace struct {
 	PolicyActionID string
 	PolicyArmID    string
 	ThinkingLevel  string
+	// PolicyActionModel is the chosen action's trained model and
+	// WorkerProviderModel the provider model its worker serves; they differ
+	// when an action is remapped to another provider.
+	PolicyActionModel   string
+	WorkerProviderModel string
 	// PolicyNextState is the ledger and epoch to commit with this turn.
 	PolicyNextState *raylinearc.PolicyEpisodeState
 	// ArtifactID and ArtifactRevision hold SHA256-derived hashes of the

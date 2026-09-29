@@ -63,8 +63,9 @@ type RaylineARCPolicyBinding struct {
 	ActionID string `yaml:"action_id"`
 	Worker   string `yaml:"worker"`
 	Level    string `yaml:"level,omitempty"`
-	// Model is the action's model as the package names it. It must be the
-	// worker's provider model id: a binding never guesses a provider's name.
+	// Model is the action's model as the package names it: the trained
+	// name, which the action_id digests. The worker is the remappable part,
+	// so any worker may serve it; selection logs both names.
 	Model string `yaml:"model,omitempty"`
 	// Effort is the native reasoning effort; absent is the package's null,
 	// which sends no effort. "none" is a thinking-off action.
@@ -277,10 +278,11 @@ func policyBindingSuffix(arc *RaylineARCAlgorithmConfig, binding RaylineARCPolic
 const raylineARCPolicyNeutralLevel = "none"
 
 // validateRaylineARCPolicyDispatch refuses, at load, every binding the router
-// could not dispatch as the package's action: a different model, a native
-// effort or budget the worker cannot carry, a level its lever cannot express,
-// or a thinking-off action with a steer. Then it recomputes the action_id
-// from what would travel, so a binding that loads is exactly its action.
+// could not dispatch as the package's action: a native effort or budget the
+// worker cannot carry, a level its lever cannot express, or a thinking-off
+// action with a steer. Then it recomputes the action_id from what would
+// travel, so a binding that loads is exactly its action. Which worker serves
+// the trained model is configuration, and is not checked here.
 func validateRaylineARCPolicyDispatch(cfg *RouterConfig, decision Decision) error {
 	arc := decision.Algorithm.RaylineARC
 	policy := arc.PolicyService
@@ -311,9 +313,6 @@ func validateRaylineARCPolicyBindingDispatch(
 	binding RaylineARCPolicyBinding,
 	useReasoning bool,
 ) error {
-	if served := raylineARCProviderModelID(cfg, binding.Worker); served != binding.Model {
-		return fmt.Errorf("worker %q serves %q, not the action's model %q", binding.Worker, served, binding.Model)
-	}
 	suffix, err := policyBindingSuffix(arc, binding)
 	if err != nil {
 		return err
@@ -339,17 +338,4 @@ func validateRaylineARCPolicyBindingDispatch(
 		return fmt.Errorf("the declared dispatch does not reproduce the action: it digests to %s", want)
 	}
 	return nil
-}
-
-// raylineARCProviderModelID is the provider's name for a worker's model on
-// its primary endpoint, as dispatch resolves it.
-func raylineARCProviderModelID(cfg *RouterConfig, worker string) string {
-	if cfg == nil {
-		return worker
-	}
-	endpoint := ""
-	if endpoints := cfg.GetEndpointsForModel(worker); len(endpoints) > 0 {
-		endpoint = endpoints[0].Name
-	}
-	return cfg.ResolveExternalModelID(worker, endpoint)
 }

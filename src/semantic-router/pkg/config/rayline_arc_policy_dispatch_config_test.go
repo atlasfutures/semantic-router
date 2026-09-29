@@ -8,8 +8,10 @@ import (
 )
 
 const (
-	policyTestThinkModel = "vendor/think"
-	policyTestOffModel   = "vendor/off"
+	// Trained model names, as a package names them; the workers' provider
+	// model ids differ, since a worker is remappable.
+	policyTestThinkModel = "think-trained"
+	policyTestOffModel   = "off-trained"
 	policyTestUpSuffix   = "Until the next steering instruction, reason more thoroughly before acting."
 )
 
@@ -22,8 +24,8 @@ func policyTestInt(value int64) *int64 { return &value }
 func policyDispatchFixture() (*RouterConfig, Decision) {
 	on, off := true, false
 	cfg := &RouterConfig{BackendModels: BackendModels{ModelConfig: map[string]ModelParams{
-		"arm-think": {ExternalModelIDs: map[string]string{"vllm": policyTestThinkModel}},
-		"arm-off":   {ExternalModelIDs: map[string]string{"vllm": policyTestOffModel}},
+		"arm-think": {ExternalModelIDs: map[string]string{"vllm": "vendor/think"}},
+		"arm-off":   {ExternalModelIDs: map[string]string{"vllm": "vendor/off"}},
 	}}}
 	decision := validRaylineARCDecision()
 	decision.ModelRefs = []ModelRef{
@@ -134,6 +136,17 @@ func TestRaylineARCPolicyDispatchAcceptsBindingsThatReproduceTheirActions(t *tes
 	if err := validatePolicyDispatch(cfg, decision); err != nil {
 		t.Fatalf("valid dispatch refused: %v", err)
 	}
+	// The trained model may be served by any worker: remapping the action to
+	// the other card is configuration, not a different action.
+	remapped := decision.Algorithm.RaylineARC.PolicyService.Bindings[2]
+	remapped.Worker, remapped.Level = "arm-off", "none"
+	remapped.Model = policyTestThinkModel
+	remapped.ActionID = RaylineARCPolicyActionID(policyTestThinkModel, remapped.Effort, nil, "")
+	decision.Algorithm.RaylineARC.PolicyService.Bindings[2] = remapped
+	if err := validatePolicyDispatch(cfg, decision); err != nil {
+		t.Fatalf("a remapped worker refused: %v", err)
+	}
+	cfg, decision = policyDispatchFixture()
 	// A budget action on a reasoning worker, and a null-effort action.
 	decision.Algorithm.RaylineARC.PolicyService.Bindings = append(decision.Algorithm.RaylineARC.PolicyService.Bindings,
 		policyTestBinding("arm-think", "none", policyTestThinkModel, nil, policyTestInt(4096), ""),
@@ -150,10 +163,6 @@ func TestRaylineARCPolicyDispatchRefusesWhatItCannotSend(t *testing.T) {
 		mutate  func(*RouterConfig, *Decision)
 		wantErr string
 	}{
-		{"a different model", func(_ *RouterConfig, d *Decision) {
-			bindings := d.Algorithm.RaylineARC.PolicyService.Bindings
-			bindings[0] = policyTestBinding("arm-think", "none", "vendor/other", policyTestString("high"), nil, "")
-		}, `serves "vendor/think", not the action's model "vendor/other"`},
 		{"an action_id the declared dispatch does not digest to", func(_ *RouterConfig, d *Decision) {
 			d.Algorithm.RaylineARC.PolicyService.Bindings[1].ActionID = RaylineARCPolicyActionID(
 				policyTestThinkModel, policyTestString("high"), nil, "a suffix the lever does not send")
