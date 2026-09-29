@@ -131,7 +131,10 @@ func policyWorkerManifest(cfg *config.RouterConfig, modelRef config.ModelRef) ra
 	}
 	if pin := cfg.ProviderPreferencesForModel(model); pin != nil {
 		worker.OpenRouterProviderOrder = append([]string(nil), pin.Order...)
-		if len(pin.Order) > 0 {
+		// A provider is the worker's only when OpenRouter may use no other:
+		// with fallbacks allowed, the first preference need not serve.
+		if len(pin.Order) > 0 && worker.DispatchBackend == raylinearc.DispatchOpenRouter &&
+			pin.AllowFallbacks != nil && !*pin.AllowFallbacks {
 			worker.OpenRouterProviderSlug = pin.Order[0]
 		}
 		worker.OpenRouterAllowFallbacks = pin.AllowFallbacks == nil || *pin.AllowFallbacks

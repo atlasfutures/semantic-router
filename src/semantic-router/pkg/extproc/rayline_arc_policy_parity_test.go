@@ -230,6 +230,17 @@ func TestPolicyWorkerManifestCarriesTheCardsFacts(t *testing.T) {
 		worker.ThinkingMode != "on" || worker.EffectiveDispatchBackend() != raylinearc.DispatchOpenRouter {
 		t.Fatalf("worker = %+v", worker)
 	}
+	// With fallbacks allowed the first preference need not serve, so no
+	// provider is claimed for the worker.
+	allowed := true
+	cfg.ModelConfig["think"] = func() config.ModelParams {
+		params := cfg.ModelConfig["think"]
+		params.ProviderPreferences = &config.OpenRouterProviderPreferences{Order: []string{"z-ai"}, AllowFallbacks: &allowed}
+		return params
+	}()
+	if worker := policyWorkerManifest(cfg, config.ModelRef{Model: "think"}); worker.OpenRouterProviderSlug != "" {
+		t.Fatalf("a fallback-allowed pin claimed provider %q", worker.OpenRouterProviderSlug)
+	}
 	cfg, _ = policyReadinessConfig(func(c *config.RouterConfig) {
 		c.ProviderProfiles["openrouter"] = config.ProviderProfile{Type: "anthropic", BaseURL: "https://api.anthropic.com"}
 	})
