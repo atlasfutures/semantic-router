@@ -65,6 +65,12 @@ func policyActionChatWire(
 	transport modelcatalog.ReasoningTransport,
 ) (config.RaylineARCWorkerThinkingConfig, bool, error) {
 	base := policyActionWorkerThinking(action)
+	if base.Wire == config.RaylineARCWorkerThinkingEffort && base.Effort == "none" {
+		// A thinking-off action runs on a use_reasoning:false worker, whose
+		// off signal the router already wrote exactly as the artifact mode
+		// writes it. Replacing it would send an off signal prod never sends.
+		return config.RaylineARCWorkerThinkingConfig{}, false, nil
+	}
 	switch {
 	case usesReasoningObjectTransport(transport):
 		return base, true, nil

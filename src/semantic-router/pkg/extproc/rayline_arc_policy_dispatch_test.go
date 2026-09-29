@@ -46,10 +46,13 @@ func TestPolicyActionReasoningReachesTheChatWire(t *testing.T) {
 		useReasoning bool
 		want         string
 	}{
-		"effort":         {policyAction("think", "none", "vendor/think", policyTestEffort("high"), nil, ""), true, `{"effort":"high"}`},
-		"budget":         {policyAction("think", "none", "vendor/think", nil, &budget, ""), true, `{"max_tokens":4096}`},
-		"null effort":    {policyAction("think", "none", "vendor/think", nil, nil, ""), true, ``},
-		"thinking off":   {policyAction("off", "none", "vendor/off", policyTestEffort("none"), nil, ""), false, `{"effort":"none"}`},
+		"effort":      {policyAction("think", "none", "vendor/think", policyTestEffort("high"), nil, ""), true, `{"effort":"high"}`},
+		"budget":      {policyAction("think", "none", "vendor/think", nil, &budget, ""), true, `{"max_tokens":4096}`},
+		"null effort": {policyAction("think", "none", "vendor/think", nil, nil, ""), true, ``},
+		// The thinking-off action keeps the off signal the router derived for
+		// its use_reasoning:false worker, as prod sends it; the fixture body's
+		// derived controls are left as they were.
+		"thinking off":   {policyAction("off", "none", "vendor/off", policyTestEffort("none"), nil, ""), false, `{"max_tokens":32000}`},
 		"steered effort": {policyAction("think", "up", "vendor/think", policyTestEffort("low"), nil, policyTestUp), true, `{"effort":"low"}`},
 	}
 	for name, test := range cases {
@@ -64,6 +67,12 @@ func TestPolicyActionReasoningReachesTheChatWire(t *testing.T) {
 				t.Fatal(err)
 			}
 			reasoning, effort := reasoningControls(t, body)
+			if name == "thinking off" {
+				if string(body) != derivedThinkingBody {
+					t.Fatalf("the thinking-off action rewrote the derived body: %s", body)
+				}
+				return
+			}
 			if string(reasoning) != test.want || effort {
 				t.Fatalf("reasoning = %s (reasoning_effort present: %v), want %s", reasoning, effort, test.want)
 			}

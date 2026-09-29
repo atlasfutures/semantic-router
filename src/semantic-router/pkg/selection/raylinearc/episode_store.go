@@ -31,10 +31,12 @@ import (
 const (
 	episodeStateSchemaV1 = "rayline.arc.episode-state.v1"
 	episodeStateSchemaV2 = "rayline.arc.episode-state.v2"
-	// episodeStateSchema adds the thinking-lever ledger and the upstream
-	// prefix records. It is written only for an episode that carries one of
-	// them, so an episode neither feature touched keeps its v2 bytes and an
-	// older router can still read it.
+	// episodeStateSchema adds the thinking-lever ledger, the upstream prefix
+	// records and the policy-service state. It is written only for an episode
+	// that carries one of them, so an episode none of them touched keeps its
+	// v2 bytes and an older router can still read it -- and an older router
+	// refuses a v3 record by its schema rather than by a field it does not
+	// know.
 	episodeStateSchema   = "rayline.arc.episode-state.v3"
 	maxFutureClockSkew   = 5 * time.Minute
 	episodeOwnerBytes    = 24
@@ -198,6 +200,9 @@ func marshalEpisodeState(
 		Warmth:        make([]*episodeWarmthWire, len(state.Warmth)),
 		Policy:        state.Policy.Clone(),
 	}
+	if state.Policy != nil {
+		wire.SchemaVersion = episodeStateSchema
+	}
 	if state.Thinking != nil {
 		wire.SchemaVersion = episodeStateSchema
 		wire.Thinking = thinkingLedgerToWire(state.Thinking)
@@ -266,7 +271,7 @@ func unmarshalEpisodeState(
 func decodeEpisodeStateAffinity(
 	wire episodeStateWire,
 ) (string, []string, error) {
-	if (wire.Thinking != nil || len(wire.Upstream) > 0) != (wire.SchemaVersion == episodeStateSchema) {
+	if (wire.Thinking != nil || len(wire.Upstream) > 0 || wire.Policy != nil) != (wire.SchemaVersion == episodeStateSchema) {
 		return "", nil, errors.New("ARC episode state contract mismatch")
 	}
 	switch wire.SchemaVersion {

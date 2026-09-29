@@ -417,3 +417,33 @@ func TestEpisodeStateWireCarriesUpstreamPrefixesUnderV3(t *testing.T) {
 		t.Fatalf("lookup = %+v, %v", prefix, ok)
 	}
 }
+
+// Policy-service state is v3: a router that predates it refuses the record by
+// its schema, and a v2 record may not carry it.
+func TestEpisodeStateWireCarriesPolicyStateUnderV3(t *testing.T) {
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	state, err := NewEpisodeState(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Policy = &PolicyEpisodeState{Epoch: 1, PrefixLen: 2, PrefixDigest: strings.Repeat("a", 64),
+		Ledger: []PolicyLedgerEntry{{Message: 1, ActionID: strings.Repeat("b", 64), ArmID: "arm"}}}
+	payload, err := marshalEpisodeState(state, 3, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"schema_version":"rayline.arc.episode-state.v3"`) {
+		t.Fatalf("policy state written without v3: %.100s", payload)
+	}
+	decoded, _, err := unmarshalEpisodeState(payload, 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decoded.Policy, state.Policy) {
+		t.Fatalf("policy state did not round-trip: %+v", decoded.Policy)
+	}
+	v2 := strings.Replace(string(payload), "episode-state.v3", "episode-state.v2", 1)
+	if _, _, err := unmarshalEpisodeState([]byte(v2), 1, now); err == nil {
+		t.Fatal("a v2 record carrying policy state was accepted")
+	}
+}

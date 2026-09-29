@@ -337,11 +337,11 @@ func validateRaylineARCPolicyBindingDispatch(
 	if thinkingOff && binding.ReasoningMaxTokens != nil {
 		return fmt.Errorf("a thinking-off action (effort none) cannot carry reasoning_max_tokens")
 	}
+	if !useReasoning && !thinkingOff {
+		return fmt.Errorf("worker %q does not reason (use_reasoning is false), so its action must state effort none", binding.Worker)
+	}
 	if thinkingOff && useReasoning {
 		return fmt.Errorf("worker %q reasons (use_reasoning is true) but the action is thinking-off (effort none)", binding.Worker)
-	}
-	if !thinkingOff && (binding.Effort != nil || binding.ReasoningMaxTokens != nil) && !useReasoning {
-		return fmt.Errorf("worker %q does not reason (use_reasoning is false), so it cannot carry the action's effort or budget", binding.Worker)
 	}
 	if binding.Effort != nil && binding.ReasoningMaxTokens != nil &&
 		strings.EqualFold(strings.TrimSpace(cfg.GetModelAPIFormat(binding.Worker)), APIFormatOpenAI) {
