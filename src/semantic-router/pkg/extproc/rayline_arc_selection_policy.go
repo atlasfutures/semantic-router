@@ -228,6 +228,7 @@ func observeRaylineARCSelection(
 		"encoder_failover":       trace.EncoderFailover,
 		"policy_action_id":       trace.PolicyActionID,
 		"thinking_level":         trace.ThinkingLevel,
+		"policy_latency_millis":  trace.PolicyLatency.Milliseconds(),
 		"policy_action_model":    trace.PolicyActionModel,
 		"worker_provider_model":  trace.WorkerProviderModel,
 	})

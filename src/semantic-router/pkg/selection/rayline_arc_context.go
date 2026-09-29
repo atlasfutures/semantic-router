@@ -68,6 +68,9 @@ type RaylineARCTrace struct {
 	// when an action is remapped to another provider.
 	PolicyActionModel   string
 	WorkerProviderModel string
+	// PolicyLatency is the decide call's round trip as the router timed it;
+	// EncoderLatency stays the encode alone.
+	PolicyLatency time.Duration
 	// PolicyNextState is the ledger and epoch to commit with this turn.
 	PolicyNextState *raylinearc.PolicyEpisodeState
 	// ArtifactID and ArtifactRevision hold SHA256-derived hashes of the

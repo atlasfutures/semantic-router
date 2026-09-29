@@ -100,7 +100,7 @@ func newPolicyServiceScorer(
 	for arm, modelRef := range decision.ModelRefs {
 		index[modelRef.Model] = arm
 		scorer.workerIDs = append(scorer.workerIDs, modelRef.Model)
-		scorer.workers = append(scorer.workers, policyWorkerManifest(cfg, modelRef.Model))
+		scorer.workers = append(scorer.workers, policyWorkerManifest(cfg, modelRef))
 	}
 	for _, binding := range policy.Bindings {
 		scorer.bindings[binding.ActionID] = policyBinding{arm: index[binding.Worker], level: binding.Level, model: binding.Model}
@@ -109,15 +109,35 @@ func newPolicyServiceScorer(
 	return scorer
 }
 
-// policyWorkerManifest describes a worker from its model card. Rates come from
-// the card's pricing; a card with none leaves them zero, as the v3 manifest
-// would for an unpriced arm.
-func policyWorkerManifest(cfg *config.RouterConfig, model string) raylinearc.WorkerManifest {
+// policyWorkerManifest describes a worker from its model card and modelRef,
+// the facts the artifact manifest would otherwise carry: rates from the
+// card's pricing (zero when absent, as the v3 manifest would for an unpriced
+// arm), the provider pin from its provider_preferences, the thinking mode
+// from use_reasoning, and which dispatch backend its provider is, so
+// OpenRouter-only accounting stays OpenRouter-only.
+func policyWorkerManifest(cfg *config.RouterConfig, modelRef config.ModelRef) raylinearc.WorkerManifest {
+	model := modelRef.Model
 	endpoint := ""
 	if endpoints := cfg.GetEndpointsForModel(model); len(endpoints) > 0 {
 		endpoint = endpoints[0].Name
 	}
-	worker := raylinearc.WorkerManifest{ID: model, Model: cfg.ResolveExternalModelID(model, endpoint)}
+	worker := raylinearc.WorkerManifest{
+		ID: model, Model: cfg.ResolveExternalModelID(model, endpoint),
+		ThinkingMode: "off", DispatchBackend: raylinearc.DispatchOpenAICompat,
+	}
+	if modelRef.UseReasoning != nil && *modelRef.UseReasoning {
+		worker.ThinkingMode = "on"
+	}
+	if profile, err := cfg.GetProviderProfileForEndpoint(endpoint); err == nil && providerIsOpenRouter(profile) {
+		worker.DispatchBackend = raylinearc.DispatchOpenRouter
+	}
+	if pin := cfg.ProviderPreferencesForModel(model); pin != nil {
+		worker.OpenRouterProviderOrder = append([]string(nil), pin.Order...)
+		if len(pin.Order) > 0 {
+			worker.OpenRouterProviderSlug = pin.Order[0]
+		}
+		worker.OpenRouterAllowFallbacks = pin.AllowFallbacks == nil || *pin.AllowFallbacks
+	}
 	if params, ok := cfg.ModelConfig[model]; ok {
 		pricing := params.Pricing
 		worker.EstimatedInputCostPerToken = pricing.PromptPer1M / tokensPerMillion
@@ -343,7 +363,14 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		SessionRevision:   response.Encoding.SessionRevision,
 		EngineBuildID:     response.Encoding.EngineBuildID,
 	}
-	result := selector.selectionResult(armed, selCtx, arcContext, state, encoded, decision, latency)
+	// encoder_latency keeps its artifact-mode meaning, the encode alone, as
+	// the service timed it; the round trip is policy_latency.
+	var encodeLatency time.Duration
+	if encode := response.TimingMillis.Encode; encode != nil && *encode > 0 {
+		encodeLatency = time.Duration(*encode * float64(time.Millisecond))
+	}
+	result := selector.selectionResult(armed, selCtx, arcContext, state, encoded, decision, encodeLatency)
+	result.RaylineARC.PolicyLatency = latency
 	result.Reasoning = "policy-service ARC decision (" + response.Decision.Reason + ")"
 	result.RaylineARC.PolicyActionID = response.Decision.SelectedActionID
 	result.RaylineARC.PolicyArmID = response.Decision.SelectedArmID
