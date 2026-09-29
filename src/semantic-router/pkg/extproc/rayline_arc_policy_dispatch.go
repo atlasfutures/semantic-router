@@ -3,6 +3,7 @@ package extproc
 import (
 	"errors"
 
+	modelcatalog "github.com/vllm-project/semantic-router/src/semantic-router/pkg/catalog"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
@@ -12,6 +13,11 @@ import (
 const raylineARCPolicyActionLevel = "policy_action"
 
 var errPolicyActionFormat = errors.New("the policy action's reasoning cannot be carried in this provider format")
+
+// raylineARCWireTopLevelEffort sends the effort as Chat's top-level
+// reasoning_effort, for a provider whose transport reads that field (an
+// OpenAI-compatible binding, including one that reaches OpenRouter).
+const raylineARCWireTopLevelEffort = "top_level_effort"
 
 // raylineARCPolicyAction returns the binding of the action the policy service
 // chose for this turn, when the bindings declare what an action dispatches.
@@ -46,6 +52,29 @@ func policyActionWorkerThinking(action config.RaylineARCPolicyBinding) config.Ra
 		return config.RaylineARCWorkerThinkingConfig{
 			Level: raylineARCPolicyActionLevel, Wire: config.RaylineARCWorkerThinkingProviderDefault,
 		}
+	}
+}
+
+// policyActionChatWire is the action's reasoning in the shape the provider's
+// Chat transport reads: OpenRouter's reasoning object carries an effort, a
+// budget or nothing; a top-level transport carries an effort as
+// reasoning_effort, or nothing. A budget on a top-level transport, or any
+// other transport, has no faithful shape, and the turn fails.
+func policyActionChatWire(
+	action config.RaylineARCPolicyBinding,
+	transport modelcatalog.ReasoningTransport,
+) (config.RaylineARCWorkerThinkingConfig, bool, error) {
+	base := policyActionWorkerThinking(action)
+	switch {
+	case usesReasoningObjectTransport(transport):
+		return base, true, nil
+	case usesTopLevelReasoningEffort(transport) && base.Wire != config.RaylineARCWorkerThinkingBudget:
+		if base.Wire == config.RaylineARCWorkerThinkingEffort {
+			base.Wire = raylineARCWireTopLevelEffort
+		}
+		return base, true, nil
+	default:
+		return config.RaylineARCWorkerThinkingConfig{}, false, errPolicyActionFormat
 	}
 }
 

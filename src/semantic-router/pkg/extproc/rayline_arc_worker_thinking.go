@@ -51,6 +51,9 @@ func applyRaylineARCWorkerThinking(
 	}
 	delete(requestMap, "reasoning_effort")
 	switch base.Wire {
+	case raylineARCWireTopLevelEffort:
+		delete(requestMap, "reasoning")
+		requestMap["reasoning_effort"], _ = json.Marshal(base.Effort)
 	case config.RaylineARCWorkerThinkingEffort:
 		requestMap["reasoning"], _ = json.Marshal(map[string]string{"effort": base.Effort})
 	case config.RaylineARCWorkerThinkingBudget:
@@ -81,12 +84,10 @@ func raylineARCWorkerThinkingFor(
 		dispatch.targetFormat != llmprotocol.OpenAIChatV1 {
 		return config.RaylineARCWorkerThinkingConfig{}, false, nil
 	}
-	reasoningObject := usesReasoningObjectTransport(resolveProviderReasoningTransport(dispatch.profile))
+	transport := resolveProviderReasoningTransport(dispatch.profile)
+	reasoningObject := usesReasoningObjectTransport(transport)
 	if action, declared := raylineARCPolicyAction(ctx); declared {
-		if !reasoningObject {
-			return config.RaylineARCWorkerThinkingConfig{}, false, errPolicyActionFormat
-		}
-		return policyActionWorkerThinking(action), true, nil
+		return policyActionChatWire(action, transport)
 	}
 	if !dispatch.useReasoning || !reasoningObject {
 		return config.RaylineARCWorkerThinkingConfig{}, false, nil

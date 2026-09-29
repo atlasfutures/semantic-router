@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -73,15 +74,45 @@ func TestPolicyActionReasoningReachesTheChatWire(t *testing.T) {
 	}
 }
 
-// A provider that cannot read OpenRouter's reasoning object fails the turn:
-// sending the derived controls would dispatch an action the package never
-// chose.
+// An OpenAI-compatible binding -- the catalog's top-level transport, even one
+// that reaches OpenRouter -- carries the action's effort as reasoning_effort.
+// A budget has no top-level shape, so it fails the turn rather than send
+// another action.
+func TestPolicyActionReasoningOnATopLevelTransport(t *testing.T) {
+	topLevel := &config.ProviderProfile{Type: "openai", BaseURL: "https://openrouter.ai/api/v1", ReasoningTransport: "top_level_effort"}
+	dispatchTo := func(worker string, useReasoning bool) *providerDispatch {
+		return &providerDispatch{logicalModel: worker, targetFormat: llmprotocol.OpenAIChatV1, useReasoning: useReasoning, profile: topLevel}
+	}
+	effort := policyAction("think", "up", "think-trained", policyTestEffort("xhigh"), nil, policyTestUp)
+	body, err := applyRaylineARCWorkerThinking([]byte(derivedThinkingBody), dispatchTo("think", true),
+		policyDispatchContext(policyDecisionWithActions(effort), effort))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reasoning, _ := reasoningControls(t, body)
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal(body, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if reasoning != nil || string(wire["reasoning_effort"]) != `"xhigh"` {
+		t.Fatalf("reasoning = %s, reasoning_effort = %s", reasoning, wire["reasoning_effort"])
+	}
+
+	budget := int64(4096)
+	budgeted := policyAction("think", "none", "think-trained", nil, &budget, "")
+	if _, err := applyRaylineARCWorkerThinking([]byte(derivedThinkingBody), dispatchTo("think", true),
+		policyDispatchContext(policyDecisionWithActions(budgeted), budgeted)); !errors.Is(err, errPolicyActionFormat) {
+		t.Fatalf("budget on a top-level transport: error = %v, want errPolicyActionFormat", err)
+	}
+}
+
+// A transport that reads neither shape fails the turn.
 func TestPolicyActionReasoningRefusesAProviderThatCannotCarryIt(t *testing.T) {
-	action := policyAction("think", "none", "vendor/think", policyTestEffort("high"), nil, "")
+	action := policyAction("think", "none", "think-trained", policyTestEffort("high"), nil, "")
 	ctx := policyDispatchContext(policyDecisionWithActions(action), action)
 	dispatch := &providerDispatch{
 		logicalModel: "think", targetFormat: llmprotocol.OpenAIChatV1, useReasoning: true,
-		profile: &config.ProviderProfile{Type: "openai", BaseURL: "https://api.openai.com/v1"},
+		profile: &config.ProviderProfile{Type: "vllm", BaseURL: "http://vllm.internal:8000/v1"},
 	}
 	if _, err := applyRaylineARCWorkerThinking([]byte(derivedThinkingBody), dispatch, ctx); !errors.Is(err, errPolicyActionFormat) {
 		t.Fatalf("error = %v, want errPolicyActionFormat", err)
