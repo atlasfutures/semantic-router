@@ -180,6 +180,11 @@ func (r *OpenAIRouter) applyDispatchDecision(
 			request, dispatch.logicalModel, dispatch.targetFormat, dispatch.useReasoning, ctx.VSRSelectedDecision,
 		)
 	}
+	actionChanged, err := applyRaylineARCPolicyActionReasoning(request, dispatch.targetFormat, ctx)
+	if err != nil {
+		return false, err
+	}
+	changed = actionChanged || changed
 	injected, err := r.addSemanticSystemPromptIfConfigured(
 		request, dispatch.decisionName, dispatch.logicalModel, ctx,
 	)

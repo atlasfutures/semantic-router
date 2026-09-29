@@ -17,6 +17,7 @@ limitations under the License.
 package extproc
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -24,6 +25,11 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
 )
+
+// errPolicyLevelMissing fails a turn whose lever takes its level from a
+// policy decision that named no bound action: steering by a guess would send
+// something the package never chose.
+var errPolicyLevelMissing = errors.New("the thinking lever's source is the policy decision, and it named no bound action")
 
 // Skip reasons that belong to the router rather than the planner.
 const (
@@ -74,7 +80,15 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 	if lever == nil || !lever.Enabled {
 		return false, nil
 	}
-	trace := &raylineARCThinkingTrace{Source: lever.Source, LevelRequested: lever.Level, Propensity: 1}
+	requested := lever.Level
+	if lever.Source == config.RaylineARCThinkingSourcePolicy {
+		action, declared := raylineARCPolicyAction(ctx)
+		if !declared {
+			return false, errPolicyLevelMissing
+		}
+		requested = action.Level
+	}
+	trace := &raylineARCThinkingTrace{Source: lever.Source, LevelRequested: requested, Propensity: 1}
 	ctx.RaylineARCThinking = trace
 	defer recordThinkingLeverTurn(trace)
 	// An eligibility header opts a conversation in; without it the turn is
@@ -94,6 +108,10 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 		return false, nil
 	}
 	binding := bindingConfig.Binding()
+	if requested == "" {
+		requested = binding.Neutral
+		trace.LevelRequested = requested
+	}
 	trace.Lever, trace.Admission = string(binding.Lever), bindingConfig.Admission
 	trace.ExportSHA256 = bindingConfig.ExportSHA256
 	plan, err := thinkinglever.PlanTurn(thinkinglever.Turn{
@@ -101,7 +119,7 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 		Ledger:                 ledger,
 		Messages:               thinkinglever.Messages(request.Messages),
 		TurnIndex:              turnIndex,
-		Requested:              lever.Level,
+		Requested:              requested,
 		MinTurnsBetweenChanges: lever.MinSpacingTurns,
 		MaxEntries:             lever.MaxLedgerEntries,
 	})

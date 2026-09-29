@@ -275,6 +275,17 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		})
 		return nil, arcSelectionFailure("policy_service_" + class)
 	}
+	// Every action the package scores must be one this router can dispatch.
+	// A package whose catalog outgrew the bindings is a different package in
+	// all but its alias, so no turn is served from it.
+	for _, action := range response.Actions {
+		if _, bound := scorer.bindings[action.ActionID]; !bound {
+			logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
+				"class": "catalog_unbound", "episode_id_hash": arcContext.EpisodeIDHash,
+			})
+			return nil, arcSelectionFailure("policy_catalog_unbound")
+		}
+	}
 	binding, ok := scorer.bindings[response.Decision.SelectedActionID]
 	if !ok {
 		return nil, arcSelectionFailure("policy_unbound_action")

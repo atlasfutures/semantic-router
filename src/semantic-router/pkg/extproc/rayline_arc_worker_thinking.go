@@ -41,9 +41,9 @@ func applyRaylineARCWorkerThinking(
 	dispatch *providerDispatch,
 	ctx *RequestContext,
 ) ([]byte, error) {
-	base, ok := raylineARCWorkerThinkingFor(dispatch, ctx)
-	if !ok {
-		return body, nil
+	base, ok, err := raylineARCWorkerThinkingFor(dispatch, ctx)
+	if err != nil || !ok {
+		return body, err
 	}
 	var requestMap map[string]json.RawMessage
 	if err := json.Unmarshal(body, &requestMap); err != nil {
@@ -69,19 +69,32 @@ func applyRaylineARCWorkerThinking(
 // raylineARCWorkerThinkingFor answers the gates in one place: an ARC worker
 // with a base, dispatched as Chat to a provider that reads OpenRouter's
 // reasoning object, on a turn the decision routed to a thinking arm.
+//
+// A policy action that declares its dispatch owns the wire instead, on any
+// arm: a thinking-off action states its effort "none" too. It fails the turn
+// rather than send something else when the provider cannot read the object.
 func raylineARCWorkerThinkingFor(
 	dispatch *providerDispatch,
 	ctx *RequestContext,
-) (config.RaylineARCWorkerThinkingConfig, bool) {
-	if dispatch == nil || ctx == nil || ctx.RaylineARCDispatch == nil || !dispatch.useReasoning ||
-		dispatch.targetFormat != llmprotocol.OpenAIChatV1 ||
-		!usesReasoningObjectTransport(resolveProviderReasoningTransport(dispatch.profile)) {
-		return config.RaylineARCWorkerThinkingConfig{}, false
+) (config.RaylineARCWorkerThinkingConfig, bool, error) {
+	if dispatch == nil || ctx == nil || ctx.RaylineARCDispatch == nil ||
+		dispatch.targetFormat != llmprotocol.OpenAIChatV1 {
+		return config.RaylineARCWorkerThinkingConfig{}, false, nil
+	}
+	reasoningObject := usesReasoningObjectTransport(resolveProviderReasoningTransport(dispatch.profile))
+	if action, declared := raylineARCPolicyAction(ctx); declared {
+		if !reasoningObject {
+			return config.RaylineARCWorkerThinkingConfig{}, false, errPolicyActionFormat
+		}
+		return policyActionWorkerThinking(action), true, nil
+	}
+	if !dispatch.useReasoning || !reasoningObject {
+		return config.RaylineARCWorkerThinkingConfig{}, false, nil
 	}
 	decision := ctx.VSRSelectedDecision
 	if decision == nil || decision.Algorithm == nil || decision.Algorithm.RaylineARC == nil {
-		return config.RaylineARCWorkerThinkingConfig{}, false
+		return config.RaylineARCWorkerThinkingConfig{}, false, nil
 	}
 	base, ok := decision.Algorithm.RaylineARC.WorkerThinking[ctx.RaylineARCDispatch.ID]
-	return base, ok
+	return base, ok, nil
 }
