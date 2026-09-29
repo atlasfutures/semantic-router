@@ -21,11 +21,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 const policyFixtures = "testdata/policy_service"
@@ -151,5 +153,20 @@ func TestDecodePolicyPackagesResponseRefusesAnotherSchema(t *testing.T) {
 	older := bytes.Replace(body, []byte(PolicyPackagesSchema), []byte("rayline.arc.policy-packages.v0"), 1)
 	if _, err := DecodePolicyPackagesResponse(older); err == nil {
 		t.Fatal("a packages listing with another schema was accepted")
+	}
+}
+
+func TestPolicyServiceClientBoundsTheConnect(t *testing.T) {
+	for configured, want := range map[time.Duration]time.Duration{0: DefaultPolicyServiceConnectTimeout, 2 * time.Second: 2 * time.Second} {
+		client := NewPolicyServiceClient(PolicyServiceConfig{BaseURL: "https://example.invalid", ConnectTimeout: configured})
+		transport, ok := client.http.Transport.(*http.Transport)
+		if !ok || transport.TLSHandshakeTimeout != want || transport.DialContext == nil {
+			t.Fatalf("connect %v: transport = %+v", configured, transport)
+		}
+	}
+	for code, want := range map[string]string{"session_busy": "session_busy", "no such code": "service_error"} {
+		if got := PolicyServiceErrorClass(code); got != want {
+			t.Fatalf("%q -> %q", code, got)
+		}
 	}
 }

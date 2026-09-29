@@ -114,6 +114,26 @@ a binding's declared dispatch.
 
 Every service error fails closed.
 
+## Transport and admission
+
+`policy_service` bounds and sheds calls the way the artifact mode's encoder
+block does:
+
+- `total_timeout_seconds` (1 to 900) bounds each decide call and each
+  readiness probe.
+- `connect_timeout_seconds` bounds the dial and the TLS handshake. Zero
+  selects 5 s, the encoder's shipped value, and it may not exceed the total.
+- `max_inflight_calls` (0 to 32) caps concurrent decide calls per router
+  process. A call beyond the cap is shed after the episode lease and before
+  it reaches the service. It answers 429 with `retry-after: 1`, as encoder
+  admission does, and is counted by the same admission and in-flight metrics.
+  Zero disables the cap.
+
+The service's own back-pressure errors, `session_busy` and
+`session_capacity`, also answer 429. Other service errors answer 503. Their
+failure class comes from the contract's error codes only; any other value is
+`service_error`.
+
 ## Open questions
 
 - A context over encoder capacity is refused, never truncated. Should VSR

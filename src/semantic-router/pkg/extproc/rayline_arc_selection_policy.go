@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"errors"
+	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
@@ -182,8 +183,12 @@ func observeRaylineARCSelection(
 		switchCost = trace.SwitchCostUSD[trace.SelectedArm]
 		cacheMissTokens = trace.CacheMissTokens[trace.SelectedArm]
 	}
+	var encoderLatency *time.Duration
+	if !trace.EncoderLatencyUnknown {
+		encoderLatency = &trace.EncoderLatency
+	}
 	routermetrics.RecordRaylineARCSelection(
-		trace.EncoderLatency,
+		encoderLatency,
 		trace.SerializedTokens,
 		trace.FullHistoryTokens,
 		trace.TruncatedTokens,
@@ -198,7 +203,7 @@ func observeRaylineARCSelection(
 		trace.EncoderAttempts,
 		trace.EncoderFailover,
 	)
-	logging.ComponentEvent("extproc", "rayline_arc_selection", map[string]interface{}{
+	fields := map[string]interface{}{
 		"request_id":             ctx.RequestID,
 		"artifact_id_hash":       trace.ArtifactID,
 		"artifact_revision_hash": trace.ArtifactRevision,
@@ -222,13 +227,21 @@ func observeRaylineARCSelection(
 		"appended_tokens":        trace.AppendedTokens,
 		"session_action":         trace.SessionAction,
 		"session_revision":       trace.SessionRevision,
-		"encoder_latency_millis": trace.EncoderLatency.Milliseconds(),
 		"encoder_replica_index":  trace.EncoderReplicaIndex,
 		"encoder_attempts":       trace.EncoderAttempts,
 		"encoder_failover":       trace.EncoderFailover,
-		"policy_action_id":       trace.PolicyActionID,
-		"thinking_level":         trace.ThinkingLevel,
-		"policy_action_model":    trace.PolicyActionModel,
-		"worker_provider_model":  trace.WorkerProviderModel,
-	})
+	}
+	// The policy-service facts exist only when a policy service decided; an
+	// artifact-mode selection carries none rather than zeros.
+	if trace.PolicyActionID != "" {
+		fields["policy_action_id"] = trace.PolicyActionID
+		fields["thinking_level"] = trace.ThinkingLevel
+		fields["policy_latency_millis"] = trace.PolicyLatency.Milliseconds()
+		fields["policy_action_model"] = trace.PolicyActionModel
+		fields["worker_provider_model"] = trace.WorkerProviderModel
+	}
+	if !trace.EncoderLatencyUnknown {
+		fields["encoder_latency_millis"] = trace.EncoderLatency.Milliseconds()
+	}
+	logging.ComponentEvent("extproc", "rayline_arc_selection", fields)
 }

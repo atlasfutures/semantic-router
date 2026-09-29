@@ -295,7 +295,7 @@ func validateRaylineARCPolicyServiceMode(cfg *RaylineARCAlgorithmConfig) error {
 		return fmt.Errorf("episode: %w", err)
 	}
 	if cfg.Episode.CloseHeader != "" {
-		return fmt.Errorf("episode: close_header requires encoder replicas")
+		return fmt.Errorf("episode: close_header is not served in the policy-service mode")
 	}
 	if err := validateRaylineARCRoutesAPIConfig(cfg.RoutesAPI); err != nil {
 		return fmt.Errorf("routes_api: %w", err)

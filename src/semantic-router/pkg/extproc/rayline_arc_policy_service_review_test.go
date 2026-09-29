@@ -61,7 +61,8 @@ func runUnofferedActionCase(t *testing.T, mutate func(map[string]any), disabled 
 		ModelRefs: []config.ModelRef{{Model: "w0"}, {Model: "w1"}, {Model: "w2"}},
 		Algorithm: &config.AlgorithmConfig{Type: config.RaylineARCAlgorithmType, RaylineARC: &config.RaylineARCAlgorithmConfig{
 			PolicyService: &config.RaylineARCPolicyServiceConfig{
-				PackageAlias: "rayline/arc-example-fold0", PackageSHA256: strings.Repeat("8", 64),
+				// The shared fixture's own package, so the decision is this package's.
+				PackageAlias: "rayline/arc-example-fold0", PackageSHA256: "81e4a7af2c28c3be9ecbe850888c6773d196d58cad100474cbfb48622af7abe4",
 				Bindings: []config.RaylineARCPolicyBinding{
 					{ActionID: "b779e919d4709c8bc766f1cc7b4228ed1cd8a5d1f230acfb2453e4f37df6e1f1", Worker: "w0"},
 					{ActionID: reviewFixtureSelected, Worker: "w1"},
@@ -124,5 +125,11 @@ func TestRaylineARCDecisionsShareWorkers(t *testing.T) {
 	}
 	if raylineARCDecisionsShareWorkers([]*config.Decision{decision("a", "b"), decision("a")}) {
 		t.Fatal("a shorter worker list accepted")
+	}
+	reasoning := decision("a", "b")
+	on := true
+	reasoning.ModelRefs[1].UseReasoning = &on
+	if raylineARCDecisionsShareWorkers([]*config.Decision{decision("a", "b"), reasoning}) {
+		t.Fatal("a worker list that reasons differently accepted")
 	}
 }

@@ -23,10 +23,15 @@ type fakePolicyService struct {
 	sha256  string
 	catalog []string
 
-	mu       sync.Mutex
-	choose   func(raylinearc.PolicyDecisionRequest) string
-	failWith string
-	requests []raylinearc.PolicyDecisionRequest
+	mu sync.Mutex
+	// answerAs, when set, is the package the decide responses name.
+	answerAs *raylinearc.PolicyPackageRef
+	// encodeUnreported answers timing_ms.encode null, as the reference
+	// service does.
+	encodeUnreported bool
+	choose           func(raylinearc.PolicyDecisionRequest) string
+	failWith         string
+	requests         []raylinearc.PolicyDecisionRequest
 }
 
 func newFakePolicyService(t *testing.T, alias, sha256 string, catalog []string) *fakePolicyService {
@@ -99,6 +104,14 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 	var response raylinearc.PolicyDecisionResponse
 	fake.readFixture("decision_response.v1.json", &response)
 	response.Package = raylinearc.PolicyPackageRef{Alias: fake.alias, PackageSHA256: fake.sha256}
+	fake.mu.Lock()
+	if fake.answerAs != nil {
+		response.Package = *fake.answerAs
+	}
+	if fake.encodeUnreported {
+		response.TimingMillis.Encode = nil
+	}
+	fake.mu.Unlock()
 	response.Shadow = []raylinearc.PolicyShadowResult{}
 	available := make(map[string]bool, len(request.Selection.AvailableActionIDs))
 	for _, actionID := range request.Selection.AvailableActionIDs {

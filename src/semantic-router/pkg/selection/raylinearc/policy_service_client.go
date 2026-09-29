@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -37,7 +38,14 @@ type PolicyServiceConfig struct {
 	ModalKey     string
 	ModalSecret  string
 	TotalTimeout time.Duration
+	// ConnectTimeout bounds the dial and the TLS handshake; zero selects
+	// DefaultPolicyServiceConnectTimeout.
+	ConnectTimeout time.Duration
 }
+
+// DefaultPolicyServiceConnectTimeout matches the encoder's shipped connect
+// timeout.
+const DefaultPolicyServiceConnectTimeout = 5 * time.Second
 
 // PolicyServiceClient calls the policy service's decide and packages endpoints.
 type PolicyServiceClient struct {
@@ -57,8 +65,38 @@ func (err *PolicyServiceError) Error() string {
 	return fmt.Sprintf("policy service failed (class=%s status=%d)", err.Class, err.Status)
 }
 
+// policyServiceErrorCodes is the contract's closed set of error codes
+// (pathfinder arc_policy_contract.ErrorCode). A class becomes a metric label
+// and a log field, so a code outside the set is never passed through.
+var policyServiceErrorCodes = map[string]bool{
+	"invalid_request":                  true,
+	"package_not_loaded":               true,
+	"package_hash_mismatch":            true,
+	"session_busy":                     true,
+	"unsupported_request":              true,
+	"selection_refused":                true,
+	"context_exceeds_encoder_capacity": true,
+	"session_capacity":                 true,
+	"backend_unavailable":              true,
+}
+
+// PolicyServiceErrorClass bounds a service error code to the contract's set;
+// anything else is "service_error".
+func PolicyServiceErrorClass(code string) string {
+	if policyServiceErrorCodes[code] {
+		return code
+	}
+	return "service_error"
+}
+
 func NewPolicyServiceClient(config PolicyServiceConfig) *PolicyServiceClient {
+	connect := config.ConnectTimeout
+	if connect <= 0 {
+		connect = DefaultPolicyServiceConnectTimeout
+	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{Timeout: connect, KeepAlive: 30 * time.Second}).DialContext
+	transport.TLSHandshakeTimeout = connect
 	return &PolicyServiceClient{config: config, http: &http.Client{Transport: transport}}
 }
 
@@ -155,7 +193,7 @@ func (client *PolicyServiceClient) do(
 	if response.StatusCode != http.StatusOK {
 		var failure PolicyErrorResponse
 		if json.Unmarshal(body, &failure) == nil && failure.Error != "" {
-			return nil, &PolicyServiceError{Class: failure.Error, Status: response.StatusCode}
+			return nil, &PolicyServiceError{Class: PolicyServiceErrorClass(failure.Error), Status: response.StatusCode}
 		}
 		return nil, &PolicyServiceError{Class: "status", Status: response.StatusCode}
 	}

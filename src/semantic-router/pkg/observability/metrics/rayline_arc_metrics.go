@@ -193,8 +193,10 @@ func SetRaylineARCEncoderInflight(inflight int) {
 	RaylineARCEncoderInflight.Set(float64(inflight))
 }
 
+// RecordRaylineARCSelection records one selection. A nil latency is an encode
+// time nobody reported, and observes no sample.
 func RecordRaylineARCSelection(
-	latency time.Duration,
+	latency *time.Duration,
 	serialized int,
 	full int,
 	truncated int,
@@ -205,7 +207,9 @@ func RecordRaylineARCSelection(
 	switchCost float64,
 	cacheMissTokens int,
 ) {
-	RaylineARCEncoderLatency.Observe(latency.Seconds())
+	if latency != nil {
+		RaylineARCEncoderLatency.Observe(latency.Seconds())
+	}
 	for kind, count := range map[string]int{
 		"serialized": serialized,
 		"full":       full,

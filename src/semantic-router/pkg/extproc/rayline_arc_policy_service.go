@@ -30,6 +30,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -37,7 +38,13 @@ import (
 const (
 	policyFormatAnthropic = "anthropic_messages"
 	policyFormatOpenAI    = "openai_chat"
+
+	arcFailurePolicyRequestFormat = "policy_request_format"
 )
+
+// policySessionActions is the closed set the encoder session contract names;
+// the service's value becomes a metric label, so any other is dropped.
+var policySessionActions = map[string]bool{"created": true, "rebuilt": true, "appended": true, "reused": true}
 
 type policyBinding struct {
 	arm   int
@@ -93,7 +100,7 @@ func newPolicyServiceScorer(
 	for arm, modelRef := range decision.ModelRefs {
 		index[modelRef.Model] = arm
 		scorer.workerIDs = append(scorer.workerIDs, modelRef.Model)
-		scorer.workers = append(scorer.workers, policyWorkerManifest(cfg, modelRef.Model))
+		scorer.workers = append(scorer.workers, policyWorkerManifest(cfg, modelRef))
 	}
 	for _, binding := range policy.Bindings {
 		scorer.bindings[binding.ActionID] = policyBinding{arm: index[binding.Worker], level: binding.Level, model: binding.Model}
@@ -102,15 +109,36 @@ func newPolicyServiceScorer(
 	return scorer
 }
 
-// policyWorkerManifest describes a worker from its model card. Rates come from
-// the card's pricing; a card with none leaves them zero, as the v3 manifest
-// would for an unpriced arm.
-func policyWorkerManifest(cfg *config.RouterConfig, model string) raylinearc.WorkerManifest {
-	endpoint := ""
-	if endpoints := cfg.GetEndpointsForModel(model); len(endpoints) > 0 {
-		endpoint = endpoints[0].Name
+// policyWorkerManifest describes a worker from its model card and modelRef,
+// the facts the artifact manifest would otherwise carry: rates from the
+// card's pricing (zero when absent, as the v3 manifest would for an unpriced
+// arm), the provider pin from its provider_preferences, the thinking mode
+// from use_reasoning, and which dispatch backend its provider is, so
+// OpenRouter-only accounting stays OpenRouter-only.
+func policyWorkerManifest(cfg *config.RouterConfig, modelRef config.ModelRef) raylinearc.WorkerManifest {
+	model := modelRef.Model
+	// The route dispatch takes: the primary backend, not the first listed.
+	_, endpoint, _, _ := cfg.ResolvePrimaryBackendForModel(model)
+	worker := raylinearc.WorkerManifest{
+		ID: model, Model: cfg.ResolveExternalModelID(model, endpoint),
+		ThinkingMode: "off", DispatchBackend: raylinearc.DispatchOpenAICompat,
 	}
-	worker := raylinearc.WorkerManifest{ID: model, Model: cfg.ResolveExternalModelID(model, endpoint)}
+	if modelRef.UseReasoning != nil && *modelRef.UseReasoning {
+		worker.ThinkingMode = "on"
+	}
+	if profile, err := cfg.GetProviderProfileForEndpoint(endpoint); err == nil && providerIsOpenRouter(profile) {
+		worker.DispatchBackend = raylinearc.DispatchOpenRouter
+	}
+	if pin := cfg.ProviderPreferencesForModel(model); pin != nil {
+		worker.OpenRouterProviderOrder = append([]string(nil), pin.Order...)
+		// A provider is the worker's only when OpenRouter may use no other:
+		// with fallbacks allowed, the first preference need not serve.
+		if len(pin.Order) > 0 && worker.DispatchBackend == raylinearc.DispatchOpenRouter &&
+			pin.AllowFallbacks != nil && !*pin.AllowFallbacks {
+			worker.OpenRouterProviderSlug = pin.Order[0]
+		}
+		worker.OpenRouterAllowFallbacks = pin.AllowFallbacks == nil || *pin.AllowFallbacks
+	}
 	if params, ok := cfg.ModelConfig[model]; ok {
 		pricing := params.Pricing
 		worker.EstimatedInputCostPerToken = pricing.PromptPer1M / tokensPerMillion
@@ -154,7 +182,7 @@ func createRaylineARCPolicySelector(
 	) {
 		return newRaylineARCSelector(nil, nil, nil, policy.PackageSHA256), nil, nil, nil, class
 	}
-	if !raylineARCPolicyActionsCarriable(cfg, decision) {
+	if !raylineARCPolicyDispatchReady(cfg, decision) || !raylineARCPolicyActionsCarriable(cfg, decision) {
 		return unavailable("dispatch_contract")
 	}
 	modalKey, keyErr := raylineARCOptionalSecret(policy.ModalKeyEnv)
@@ -163,10 +191,11 @@ func createRaylineARCPolicySelector(
 		return unavailable("policy_service_auth")
 	}
 	client := raylinearc.NewPolicyServiceClient(raylinearc.PolicyServiceConfig{
-		BaseURL:      policy.BaseURL,
-		ModalKey:     modalKey,
-		ModalSecret:  modalSecret,
-		TotalTimeout: time.Duration(policy.TotalTimeoutSeconds) * time.Second,
+		BaseURL:        policy.BaseURL,
+		ModalKey:       modalKey,
+		ModalSecret:    modalSecret,
+		TotalTimeout:   time.Duration(policy.TotalTimeoutSeconds) * time.Second,
+		ConnectTimeout: time.Duration(policy.ConnectTimeoutSeconds) * time.Second,
 	})
 	episodeStore, closeStore, err := createRaylineARCEpisodeStore(arcConfig.Episode)
 	if err != nil {
@@ -183,7 +212,7 @@ func createRaylineARCPolicySelector(
 	selector := newRaylineARCSelector(nil, nil, nil, policy.PackageSHA256)
 	armed := &raylineARCArmedComponents{
 		scorer:    newPolicyServiceScorer(cfg, decision),
-		admission: raylinearc.NewAdmissionGate(0),
+		admission: raylinearc.NewAdmissionGate(policy.MaxInflightCalls),
 		policy:    client,
 	}
 	probe := func(ctx context.Context) error {
@@ -222,7 +251,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		return nil, arcSelectionFailure("policy_scorer")
 	}
 	if arcContext.RequestFormat == "" {
-		return nil, arcSelectionFailure("policy_request_format")
+		return nil, arcSelectionFailure(arcFailurePolicyRequestFormat)
 	}
 	var body policyClientRequest
 	if err := json.Unmarshal(arcContext.RawRequest, &body); err != nil || len(body.Messages) == 0 {
@@ -267,6 +296,19 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		},
 		Shadow: []raylinearc.PolicyPackageRef{},
 	}
+	// Admission is checked after the episode lease and before the service
+	// call, as the artifact mode checks it before encoding: a shed request
+	// answers 429 and never occupies the service.
+	release, admitErr := armed.admission.Acquire()
+	if admitErr != nil {
+		recordARCAdmission(armed.admission, false)
+		return nil, boundedARCEncoderFailure(admitErr)
+	}
+	defer func() {
+		release()
+		metrics.SetRaylineARCEncoderInflight(armed.admission.Inflight())
+	}()
+	recordARCAdmission(armed.admission, true)
 	started := selector.now()
 	response, err := armed.policy.Decide(ctx, request)
 	latency := selector.now().Sub(started)
@@ -280,6 +322,14 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
 		})
 		return nil, arcSelectionFailure("policy_service_" + class)
+	}
+	// A decision is only this package's if the service says it is: a service
+	// that swapped the package under the alias is not the one readiness armed.
+	if response.Package != request.Package {
+		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
+			"class": "package_mismatch", "episode_id_hash": arcContext.EpisodeIDHash,
+		})
+		return nil, arcSelectionFailure("policy_package_mismatch")
 	}
 	// Every action the package scores must be one this router can dispatch.
 	// A package whose catalog outgrew the bindings is a different package in
@@ -310,11 +360,19 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	encoded := &raylinearc.EncoderResult{
 		SerializedTokens:  response.Encoding.TokenCount,
 		FullHistoryTokens: response.Encoding.TokenCount,
-		SessionAction:     response.Encoding.SessionAction,
+		SessionAction:     boundedPolicySessionAction(response.Encoding.SessionAction),
 		SessionRevision:   response.Encoding.SessionRevision,
 		EngineBuildID:     response.Encoding.EngineBuildID,
 	}
-	result := selector.selectionResult(armed, selCtx, arcContext, state, encoded, decision, latency)
+	// encoder_latency keeps its artifact-mode meaning, the encode alone, as
+	// the service timed it; the round trip is policy_latency.
+	var encodeLatency time.Duration
+	if encode := response.TimingMillis.Encode; encode != nil && *encode > 0 {
+		encodeLatency = time.Duration(*encode * float64(time.Millisecond))
+	}
+	result := selector.selectionResult(armed, selCtx, arcContext, state, encoded, decision, encodeLatency)
+	result.RaylineARC.PolicyLatency = latency
+	result.RaylineARC.EncoderLatencyUnknown = response.TimingMillis.Encode == nil
 	result.Reasoning = "policy-service ARC decision (" + response.Decision.Reason + ")"
 	result.RaylineARC.PolicyActionID = response.Decision.SelectedActionID
 	result.RaylineARC.PolicyArmID = response.Decision.SelectedArmID
@@ -395,4 +453,11 @@ func policySelectedActionAvailable(response *raylinearc.PolicyDecisionResponse) 
 		}
 	}
 	return false
+}
+
+func boundedPolicySessionAction(action string) string {
+	if policySessionActions[action] {
+		return action
+	}
+	return ""
 }

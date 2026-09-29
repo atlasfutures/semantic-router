@@ -178,7 +178,11 @@ func TestRaylineARCPolicyDispatchRefusesWhatItCannotSend(t *testing.T) {
 		{"an effort on a thinking-off worker", func(_ *RouterConfig, d *Decision) {
 			d.Algorithm.RaylineARC.PolicyService.Bindings[2] = policyTestBinding(
 				"arm-off", "none", policyTestOffModel, policyTestString("low"), nil, "")
-		}, "cannot carry the action's effort"},
+		}, "must state effort none"},
+		{"a null-effort action on a thinking-off worker", func(_ *RouterConfig, d *Decision) {
+			d.Algorithm.RaylineARC.PolicyService.Bindings[2] = policyTestBinding(
+				"arm-off", "none", policyTestOffModel, nil, nil, "")
+		}, "must state effort none"},
 		{"a level the worker's lever does not bind", func(_ *RouterConfig, d *Decision) {
 			d.Algorithm.RaylineARC.PolicyService.Bindings[2].Level = "up"
 		}, `level "up" needs a thinking_lever binding`},
@@ -220,6 +224,12 @@ func TestRaylineARCPolicyDispatchRefusesWhatItCannotSend(t *testing.T) {
 		{"a malformed effort", func(_ *RouterConfig, d *Decision) {
 			d.Algorithm.RaylineARC.PolicyService.Bindings[0].Effort = policyTestString("High")
 		}, "plain effort name"},
+		{"a connect timeout beyond the total", func(_ *RouterConfig, d *Decision) {
+			d.Algorithm.RaylineARC.PolicyService.ConnectTimeoutSeconds = 61
+		}, "connect_timeout_seconds"},
+		{"an admission cap beyond the limit", func(_ *RouterConfig, d *Decision) {
+			d.Algorithm.RaylineARC.PolicyService.MaxInflightCalls = maxRaylineARCInflightEncoderCalls + 1
+		}, "max_inflight_calls"},
 		{"a non-positive budget", func(_ *RouterConfig, d *Decision) {
 			d.Algorithm.RaylineARC.PolicyService.Bindings[0].ReasoningMaxTokens = policyTestInt(0)
 		}, "must be positive"},

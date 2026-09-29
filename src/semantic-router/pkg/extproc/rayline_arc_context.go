@@ -119,6 +119,12 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		result.PreparationFailure = failure
 		return result
 	}
+	// The policy service reads only the formats its contract names. Refusing
+	// here, before the lease, leaves the episode untouched.
+	if algorithm.RaylineARC.PolicyService != nil && policyRequestFormat(reqCtx.SourceFormat) == "" {
+		result.PreparationFailure = arcFailurePolicyRequestFormat
+		return result
+	}
 	// An ephemeral lookup skips preparation entirely, which is the whole of
 	// what makes it free: no lease to acquire, renew or release, and nothing
 	// written to the episode store. prepareSelection builds a fresh episode
