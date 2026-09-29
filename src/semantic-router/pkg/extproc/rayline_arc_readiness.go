@@ -71,7 +71,7 @@ func createRaylineARCSelector(
 		}
 	}
 	if arcConfig.PolicyService != nil {
-		return createRaylineARCPolicySelector(cfg, decisions[0])
+		return createRaylineARCPolicySelector(cfg, decisions[0], "")
 	}
 	runtime, err := raylinearc.LoadRuntime(arcConfig.ArtifactDir)
 	if err != nil {

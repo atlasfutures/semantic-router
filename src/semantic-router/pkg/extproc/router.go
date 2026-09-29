@@ -74,8 +74,11 @@ type OpenAIRouter struct {
 	// RaylineARCEpisodeStore is the fenced episode state the rayline_arc
 	// selector leases per request; nil when no rayline_arc decision exists.
 	RaylineARCEpisodeStore raylinearc.EpisodeStore
-	raylineARCSessionClose raylineARCSessionCloseFunc
-	ProtocolCodecs         *protocolcodec.Registry
+	// RaylineARCRecipeEpisodeStores are the named recipes' own episode stores,
+	// one per recipe whose ARC decision uses a policy service.
+	RaylineARCRecipeEpisodeStores map[config.RecipeName]raylinearc.EpisodeStore
+	raylineARCSessionClose        raylineARCSessionCloseFunc
+	ProtocolCodecs                *protocolcodec.Registry
 
 	// CredentialResolver resolves per-user LLM API keys from multiple sources
 	// (ext_authz injected headers -> static config fallback).

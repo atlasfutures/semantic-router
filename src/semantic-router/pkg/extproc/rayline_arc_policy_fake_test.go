@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -29,6 +30,8 @@ type fakePolicyService struct {
 	// encodeUnreported answers timing_ms.encode null, as the reference
 	// service does.
 	encodeUnreported bool
+	// cold lists no loaded package, as a service still loading its package.
+	cold     atomic.Bool
 	choose   func(raylinearc.PolicyDecisionRequest) string
 	failWith string
 	requests []raylinearc.PolicyDecisionRequest
@@ -96,6 +99,10 @@ func (fake *fakePolicyService) packages() raylinearc.PolicyPackagesResponse {
 	var listing raylinearc.PolicyPackagesResponse
 	fake.readFixture("packages_response.v1.json", &listing)
 	listing.Packages = listing.Packages[:1]
+	if fake.cold.Load() {
+		listing.Packages = listing.Packages[:0]
+		return listing
+	}
 	listing.Packages[0].Alias, listing.Packages[0].PackageSHA256 = fake.alias, fake.sha256
 	return listing
 }

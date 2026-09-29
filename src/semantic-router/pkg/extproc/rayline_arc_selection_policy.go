@@ -233,6 +233,7 @@ func observeRaylineARCSelection(
 		"policy_action_id":       trace.PolicyActionID,
 		"thinking_level":         trace.ThinkingLevel,
 		"policy_latency_millis":  trace.PolicyLatency.Milliseconds(),
+		"recipe":                 raylineARCRecipeLabel(ctx.Routing.RecipeName()),
 		"policy_action_model":    trace.PolicyActionModel,
 		"worker_provider_model":  trace.WorkerProviderModel,
 	}
