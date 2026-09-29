@@ -239,3 +239,29 @@ func TestRaylineARCPerTurnEffortNeedsOpenRouterChat(t *testing.T) {
 		t.Fatalf("a suffix lever on Messages refused: %v", err)
 	}
 }
+
+// A worker_thinking base travels only on OpenRouter's Chat reasoning object;
+// a worker it could not reach is refused rather than silently ignored.
+func TestRaylineARCWorkerThinkingNeedsTheReasoningObject(t *testing.T) {
+	routerWith := func(apiFormat string, profile ProviderProfile) *RouterConfig {
+		return &RouterConfig{BackendModels: BackendModels{
+			ModelConfig:      map[string]ModelParams{"worker": {PreferredEndpoints: []string{"backend"}, APIFormat: apiFormat}},
+			VLLMEndpoints:    []VLLMEndpoint{{Name: "backend", Address: "provider", Port: 443, ProviderProfileName: "profile"}},
+			ProviderProfiles: map[string]ProviderProfile{"profile": profile},
+		}}
+	}
+	arc := &RaylineARCAlgorithmConfig{WorkerThinking: map[string]RaylineARCWorkerThinkingConfig{
+		"worker": {Level: "high", Wire: RaylineARCWorkerThinkingEffort, Effort: "high"},
+	}}
+	if err := validateRaylineARCWorkerThinkingTransports(routerWith(APIFormatOpenAI, ProviderProfile{Type: "openai", BaseURL: "https://openrouter.ai/api/v1"}), arc); err != nil {
+		t.Fatalf("OpenRouter Chat refused: %v", err)
+	}
+	for name, cfg := range map[string]*RouterConfig{
+		"a Messages worker":        routerWith(APIFormatAnthropic, ProviderProfile{Type: "anthropic", BaseURL: "https://api.anthropic.com"}),
+		"a chat-template provider": routerWith(APIFormatOpenAI, ProviderProfile{Type: "vllm", BaseURL: "http://vllm.internal:8000/v1"}),
+	} {
+		if err := validateRaylineARCWorkerThinkingTransports(cfg, arc); err == nil {
+			t.Fatalf("%s: accepted", name)
+		}
+	}
+}

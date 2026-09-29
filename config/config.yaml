@@ -1736,11 +1736,11 @@ routing:
           # never content. Off: turning it on writes the v3 episode record.
           upstream_audit:
             enabled: false
-          worker_thinking:
-            qwen3-32b:
-              level: high
-              wire: effort
-              effort: high
+          # A base travels only on OpenRouter's Chat reasoning object, so it
+          # names a worker dispatched that way, for example:
+          #   z-ai/glm-5.3-flash@thinking-on: {level: high, wire: effort, effort: high}
+          # Neither worker here is (qwen3-32b dispatches Messages), so none.
+          worker_thinking: {}
           encoder:
             base_url: http://rayline-arc-encoder:8000
             # Set base_url to empty and populate replicas + failover to opt

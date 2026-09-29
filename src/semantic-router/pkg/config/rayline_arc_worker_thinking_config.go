@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"strings"
+
+	modelcatalog "github.com/vllm-project/semantic-router/src/semantic-router/pkg/catalog"
 )
 
 // Worker thinking wires: how a base reasoning level travels on OpenRouter's
@@ -102,4 +104,40 @@ func validateRaylineARCWorkerThinkingRefs(cfg *RaylineARCAlgorithmConfig, modelR
 		}
 	}
 	return nil
+}
+
+// validateRaylineARCWorkerThinkingTransports refuses a base the router could
+// not put on the wire: it travels only on OpenRouter's reasoning object in a
+// Chat body, and anywhere else the router would silently keep the derived
+// control instead of the configured level.
+func validateRaylineARCWorkerThinkingTransports(cfg *RouterConfig, arc *RaylineARCAlgorithmConfig) error {
+	if cfg == nil || arc == nil {
+		return nil
+	}
+	for worker := range arc.WorkerThinking {
+		if format := strings.ToLower(strings.TrimSpace(cfg.GetModelAPIFormat(worker))); format != APIFormatOpenAI {
+			return fmt.Errorf("%q dispatches %s; a base travels only on OpenRouter's Chat reasoning object", worker, format)
+		}
+		for _, endpoint := range cfg.GetEndpointsForModel(worker) {
+			profile, err := cfg.GetProviderProfileForEndpoint(endpoint.Name)
+			if err != nil || !raylineARCProfileReadsReasoningObject(profile) {
+				return fmt.Errorf("%q reaches endpoint %q, whose transport is not OpenRouter's reasoning object", worker, endpoint.Name)
+			}
+		}
+	}
+	return nil
+}
+
+// raylineARCProfileReadsReasoningObject mirrors the dispatch rule: an
+// OpenRouter host with no explicit transport reads the reasoning object, and
+// otherwise the catalog-resolved transport decides.
+func raylineARCProfileReadsReasoningObject(profile *ProviderProfile) bool {
+	if profile == nil {
+		return false
+	}
+	if profile.ReasoningTransport == "" && raylineARCOpenRouterProfile(profile) {
+		return true
+	}
+	transport, err := profile.ResolveReasoningTransport()
+	return err == nil && transport == modelcatalog.ReasoningTransportReasoningObject
 }
