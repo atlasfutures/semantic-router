@@ -89,7 +89,7 @@ func TestPolicyStateSurvivesTheEpisodeStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	messages, _ := rawMessages(t, user1)
-	state.Policy = (&PolicyEpisodeState{Epoch: 3, EpochStartTurn: 7}).Next(messages, "action-a", "arm-a")
+	state.Policy = (&PolicyEpisodeState{Epoch: 3, EpochStartTurn: 7}).Next(messages, policyTestActionA, "arm-a")
 	now := time.Now().UTC()
 	if err := state.Commit(1, 10, now); err != nil {
 		t.Fatal(err)
@@ -110,6 +110,43 @@ func TestPolicyStateSurvivesTheEpisodeStore(t *testing.T) {
 		if got == nil || got.Epoch != want.Epoch || got.PrefixDigest != want.PrefixDigest ||
 			len(got.Ledger) != 1 || got.Ledger[0] != want.Ledger[0] {
 			t.Fatalf("%s: %+v, want %+v", name, got, want)
+		}
+	}
+}
+
+// policyTestActionA is an action id in the contract's shape: persisted policy
+// state refuses any other.
+const policyTestActionA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+// A persisted record from a shared store could carry indices Next never
+// writes; reading one back must refuse it rather than panic slicing a request.
+func TestPolicyStateRefusesMalformedPersistedRecords(t *testing.T) {
+	now := time.Now().UTC()
+	good := &PolicyEpisodeState{PrefixLen: 2, PrefixDigest: policyTestActionA,
+		Ledger: []PolicyLedgerEntry{{Message: 1, ActionID: policyTestActionA, ArmID: "arm"}}}
+	if err := good.Validate(); err != nil {
+		t.Fatalf("a well-formed state was refused: %v", err)
+	}
+	for name, mutate := range map[string]func(*PolicyEpisodeState){
+		"a negative prefix":         func(s *PolicyEpisodeState) { s.PrefixLen = -1 },
+		"a negative epoch":          func(s *PolicyEpisodeState) { s.Epoch = -1 },
+		"a malformed digest":        func(s *PolicyEpisodeState) { s.PrefixDigest = "nope" },
+		"a negative message index":  func(s *PolicyEpisodeState) { s.Ledger[0].Message = -1 },
+		"a message past the prefix": func(s *PolicyEpisodeState) { s.Ledger[0].Message = 3 },
+		"a malformed action id":     func(s *PolicyEpisodeState) { s.Ledger[0].ActionID = "action-a" },
+		"an oversized ledger": func(s *PolicyEpisodeState) {
+			s.Ledger = make([]PolicyLedgerEntry, MaxPolicyLedgerEntries+1)
+		},
+	} {
+		state := good.Clone()
+		mutate(state)
+		episode, err := NewEpisodeState(1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		episode.Policy = state
+		if err := validatePersistedEpisodeState(episode, now); err == nil {
+			t.Fatalf("%s: accepted", name)
 		}
 	}
 }

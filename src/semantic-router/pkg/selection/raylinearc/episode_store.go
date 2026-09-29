@@ -257,6 +257,9 @@ func validatePersistedEpisodeState(
 	if err := validateEpisodeState(state, len(state.Warmth)); err != nil {
 		return err
 	}
+	if err := state.Policy.Validate(); err != nil {
+		return err
+	}
 	futureLimit := now.Add(maxFutureClockSkew)
 	for _, warmth := range state.Warmth {
 		if warmth != nil && warmth.LastUsed.After(futureLimit) {

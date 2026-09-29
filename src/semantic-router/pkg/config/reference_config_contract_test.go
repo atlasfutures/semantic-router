@@ -44,6 +44,7 @@ func TestReferenceConfigCoversSupportedRoutingSurfaces(t *testing.T) {
 	assertSupportedSignalTypesInReferenceConfig(t, root)
 	assertReferenceLoRACatalogCoverage(t, root)
 	assertSupportedAlgorithmsInReferenceConfig(t, decisions)
+	assertReferenceRaylineARCCoverage(t, root)
 	assertSupportedPluginsInReferenceConfig(t, decisions)
 	assertDecisionRuleCompositionInReferenceConfig(t, decisions)
 }

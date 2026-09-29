@@ -20,6 +20,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"strconv"
 )
 
@@ -52,6 +53,46 @@ func (state *PolicyEpisodeState) Clone() *PolicyEpisodeState {
 	cloned := *state
 	cloned.Ledger = append([]PolicyLedgerEntry(nil), state.Ledger...)
 	return &cloned
+}
+
+// maxPolicyArmIDBytes bounds a trained arm id; pathfinder's are 64 hex.
+const maxPolicyArmIDBytes = 128
+
+// Validate refuses policy state that could not have been written by Next: a
+// persisted record is read back from a shared store, and a negative prefix
+// or message index would otherwise panic when slicing the request.
+func (state *PolicyEpisodeState) Validate() error {
+	if state == nil {
+		return nil
+	}
+	if state.Epoch < 0 || state.PrefixLen < 0 {
+		return errors.New("ARC policy episode state has a negative epoch or prefix")
+	}
+	if (state.PrefixDigest != "" || state.PrefixLen != 0) && !isLowerHex64(state.PrefixDigest) {
+		return errors.New("ARC policy episode prefix digest is malformed")
+	}
+	if len(state.Ledger) > MaxPolicyLedgerEntries {
+		return errors.New("ARC policy episode ledger exceeds its bound")
+	}
+	for _, entry := range state.Ledger {
+		if entry.Message < 0 || entry.Message > state.PrefixLen ||
+			!isLowerHex64(entry.ActionID) || len(entry.ArmID) > maxPolicyArmIDBytes {
+			return errors.New("ARC policy episode ledger entry is malformed")
+		}
+	}
+	return nil
+}
+
+func isLowerHex64(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // ContextEpoch is the epoch as the policy service's context_epoch.

@@ -98,6 +98,10 @@ type raylineRoutesResponse struct {
 	Episode      *raylineRoutesEpisode  `json:"episode,omitempty"`
 	Usage        raylineRoutesUsage     `json:"usage"`
 	LatencyMS    int64                  `json:"latency_ms"`
+	// ThinkingLevel and PolicyActionID name the policy-service action, which
+	// two routes on one worker differ by; absent outside that mode.
+	ThinkingLevel  string `json:"thinking_level,omitempty"`
+	PolicyActionID string `json:"policy_action_id,omitempty"`
 }
 
 type raylineRoutesThinking struct {
@@ -409,7 +413,9 @@ func raylineRoutesPayload(
 			EncodedInputTokens: decision.Usage.EncodedInputTokens,
 			CacheReadTokens:    decision.Usage.CacheReadTokens,
 		},
-		LatencyMS: elapsed.Milliseconds(),
+		LatencyMS:      elapsed.Milliseconds(),
+		ThinkingLevel:  decision.ThinkingLevel,
+		PolicyActionID: decision.PolicyActionID,
 	}
 	if payload.Warnings == nil {
 		payload.Warnings = []string{}

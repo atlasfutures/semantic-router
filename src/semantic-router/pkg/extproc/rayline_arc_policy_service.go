@@ -24,6 +24,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -278,6 +279,12 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	binding, ok := scorer.bindings[response.Decision.SelectedActionID]
 	if !ok {
 		return nil, arcSelectionFailure("policy_unbound_action")
+	}
+	// Only an offered action may be dispatched: the offer already removed
+	// excluded arms (vision, capability, operator-disabled) and, while the
+	// schedule holds the model, every other model's actions.
+	if !slices.Contains(available, response.Decision.SelectedActionID) {
+		return nil, arcSelectionFailure("policy_action_not_offered")
 	}
 	decision := policyDecision(scorer, response, binding, workerIDs, excluded)
 	if !validARCDecision(decision, workerIDs) {
