@@ -1825,6 +1825,11 @@ routing:
             modal_key_env: RAYLINE_ARC_MODAL_KEY
             modal_secret_env: RAYLINE_ARC_MODAL_SECRET
             total_timeout_seconds: 60
+            # connect_timeout_seconds bounds the dial and TLS handshake; 0
+            # selects 5 s. max_inflight_calls caps concurrent decide calls per
+            # router and sheds the surplus with a retryable 429; 0 disables it.
+            connect_timeout_seconds: 5
+            max_inflight_calls: 0
             # The one package this decision serves; readiness refuses a
             # service that has not loaded exactly it.
             package_alias: rayline/arc-public-example

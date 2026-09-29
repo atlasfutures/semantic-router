@@ -220,6 +220,12 @@ func TestRaylineARCPolicyDispatchRefusesWhatItCannotSend(t *testing.T) {
 		{"a malformed effort", func(_ *RouterConfig, d *Decision) {
 			d.Algorithm.RaylineARC.PolicyService.Bindings[0].Effort = policyTestString("High")
 		}, "plain effort name"},
+		{"a connect timeout beyond the total", func(_ *RouterConfig, d *Decision) {
+			d.Algorithm.RaylineARC.PolicyService.ConnectTimeoutSeconds = 61
+		}, "connect_timeout_seconds"},
+		{"an admission cap beyond the limit", func(_ *RouterConfig, d *Decision) {
+			d.Algorithm.RaylineARC.PolicyService.MaxInflightCalls = maxRaylineARCInflightEncoderCalls + 1
+		}, "max_inflight_calls"},
 		{"a non-positive budget", func(_ *RouterConfig, d *Decision) {
 			d.Algorithm.RaylineARC.PolicyService.Bindings[0].ReasoningMaxTokens = policyTestInt(0)
 		}, "must be positive"},

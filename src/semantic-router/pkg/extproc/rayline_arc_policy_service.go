@@ -29,6 +29,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -168,10 +169,11 @@ func createRaylineARCPolicySelector(
 		return unavailable("policy_service_auth")
 	}
 	client := raylinearc.NewPolicyServiceClient(raylinearc.PolicyServiceConfig{
-		BaseURL:      policy.BaseURL,
-		ModalKey:     modalKey,
-		ModalSecret:  modalSecret,
-		TotalTimeout: time.Duration(policy.TotalTimeoutSeconds) * time.Second,
+		BaseURL:        policy.BaseURL,
+		ModalKey:       modalKey,
+		ModalSecret:    modalSecret,
+		TotalTimeout:   time.Duration(policy.TotalTimeoutSeconds) * time.Second,
+		ConnectTimeout: time.Duration(policy.ConnectTimeoutSeconds) * time.Second,
 	})
 	episodeStore, closeStore, err := createRaylineARCEpisodeStore(arcConfig.Episode)
 	if err != nil {
@@ -188,7 +190,7 @@ func createRaylineARCPolicySelector(
 	selector := newRaylineARCSelector(nil, nil, nil, policy.PackageSHA256)
 	armed := &raylineARCArmedComponents{
 		scorer:    newPolicyServiceScorer(cfg, decision),
-		admission: raylinearc.NewAdmissionGate(0),
+		admission: raylinearc.NewAdmissionGate(policy.MaxInflightCalls),
 		policy:    client,
 	}
 	probe := func(ctx context.Context) error {
@@ -272,6 +274,19 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		},
 		Shadow: []raylinearc.PolicyPackageRef{},
 	}
+	// Admission is checked after the episode lease and before the service
+	// call, as the artifact mode checks it before encoding: a shed request
+	// answers 429 and never occupies the service.
+	release, admitErr := armed.admission.Acquire()
+	if admitErr != nil {
+		recordARCAdmission(armed.admission, false)
+		return nil, boundedARCEncoderFailure(admitErr)
+	}
+	defer func() {
+		release()
+		metrics.SetRaylineARCEncoderInflight(armed.admission.Inflight())
+	}()
+	recordARCAdmission(armed.admission, true)
 	started := selector.now()
 	response, err := armed.policy.Decide(ctx, request)
 	latency := selector.now().Sub(started)

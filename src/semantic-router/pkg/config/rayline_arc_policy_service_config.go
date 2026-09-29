@@ -37,6 +37,13 @@ type RaylineARCPolicyServiceConfig struct {
 	ModalKeyEnv         string `yaml:"modal_key_env,omitempty"`
 	ModalSecretEnv      string `yaml:"modal_secret_env,omitempty"`
 	TotalTimeoutSeconds int    `yaml:"total_timeout_seconds"`
+	// ConnectTimeoutSeconds bounds the dial and TLS handshake to the
+	// service; zero selects 5 s, the encoder's.
+	ConnectTimeoutSeconds int `yaml:"connect_timeout_seconds,omitempty"`
+	// MaxInflightCalls caps concurrent decide calls per router process and
+	// sheds the surplus with a retryable 429, as max_inflight_encoder_calls
+	// does in the artifact mode. Zero disables the cap.
+	MaxInflightCalls int `yaml:"max_inflight_calls,omitempty"`
 	// PackageAlias and PackageSHA256 name the one package this decision
 	// serves. Readiness refuses a service that has not loaded exactly it.
 	PackageAlias  string `yaml:"package_alias"`
@@ -100,6 +107,12 @@ func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) e
 	}
 	if cfg.TotalTimeoutSeconds <= 0 || cfg.TotalTimeoutSeconds > maxRaylineARCPolicyTimeoutSeconds {
 		return fmt.Errorf("total_timeout_seconds must be between 1 and %d", maxRaylineARCPolicyTimeoutSeconds)
+	}
+	if cfg.ConnectTimeoutSeconds < 0 || cfg.ConnectTimeoutSeconds > cfg.TotalTimeoutSeconds {
+		return fmt.Errorf("connect_timeout_seconds must be between 0 and total_timeout_seconds")
+	}
+	if cfg.MaxInflightCalls < 0 || cfg.MaxInflightCalls > maxRaylineARCInflightEncoderCalls {
+		return fmt.Errorf("max_inflight_calls must be between 0 and %d", maxRaylineARCInflightEncoderCalls)
 	}
 	if cfg.PackageAlias == "" || len(cfg.PackageAlias) > maxRaylineARCConfigStringLength {
 		return fmt.Errorf("package_alias is required")

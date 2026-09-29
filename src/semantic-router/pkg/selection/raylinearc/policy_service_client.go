@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -37,7 +38,14 @@ type PolicyServiceConfig struct {
 	ModalKey     string
 	ModalSecret  string
 	TotalTimeout time.Duration
+	// ConnectTimeout bounds the dial and the TLS handshake; zero selects
+	// DefaultPolicyServiceConnectTimeout.
+	ConnectTimeout time.Duration
 }
+
+// DefaultPolicyServiceConnectTimeout matches the encoder's shipped connect
+// timeout.
+const DefaultPolicyServiceConnectTimeout = 5 * time.Second
 
 // PolicyServiceClient calls the policy service's decide and packages endpoints.
 type PolicyServiceClient struct {
@@ -82,7 +90,13 @@ func PolicyServiceErrorClass(code string) string {
 }
 
 func NewPolicyServiceClient(config PolicyServiceConfig) *PolicyServiceClient {
+	connect := config.ConnectTimeout
+	if connect <= 0 {
+		connect = DefaultPolicyServiceConnectTimeout
+	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{Timeout: connect, KeepAlive: 30 * time.Second}).DialContext
+	transport.TLSHandshakeTimeout = connect
 	return &PolicyServiceClient{config: config, http: &http.Client{Transport: transport}}
 }
 
