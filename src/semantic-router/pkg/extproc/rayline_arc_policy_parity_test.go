@@ -189,3 +189,51 @@ func TestPolicySelectorShedsBeyondItsAdmissionCap(t *testing.T) {
 		t.Fatalf("after release: %v", err)
 	}
 }
+
+// encoder_latency keeps its artifact-mode meaning: the service's encode time,
+// not the decide round trip, which is reported on its own.
+func TestPolicySelectorReportsEncodeAndRoundTripSeparately(t *testing.T) {
+	fixture := newPolicySelectorFixture(t, "")
+	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
+	fixture.fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return bindings[0].ActionID })
+	calls := 0
+	fixture.selector.now = func() time.Time {
+		calls++
+		return time.Unix(0, 0).Add(time.Duration(calls) * 300 * time.Millisecond)
+	}
+	state, _ := raylinearc.NewEpisodeState(2)
+	result, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The shared fixture's timing_ms.encode is 41.5.
+	if got := result.RaylineARC.EncoderLatency; got != 41500*time.Microsecond {
+		t.Fatalf("encoder latency = %v, want the service's encode time", got)
+	}
+	if result.RaylineARC.PolicyLatency != 300*time.Millisecond {
+		t.Fatalf("policy latency = %v, want the timed round trip", result.RaylineARC.PolicyLatency)
+	}
+}
+
+// The worker manifest carries what the artifact manifest would: the provider
+// pin, the thinking mode and the dispatch backend.
+func TestPolicyWorkerManifestCarriesTheCardsFacts(t *testing.T) {
+	on, fallbacks := true, false
+	cfg, _ := policyReadinessConfig(func(c *config.RouterConfig) {
+		params := c.ModelConfig["think"]
+		params.ProviderPreferences = &config.OpenRouterProviderPreferences{Order: []string{"z-ai", "chutes"}, AllowFallbacks: &fallbacks}
+		c.ModelConfig["think"] = params
+	})
+	worker := policyWorkerManifest(cfg, config.ModelRef{Model: "think", ModelReasoningControl: config.ModelReasoningControl{UseReasoning: &on}})
+	if worker.OpenRouterProviderSlug != "z-ai" || len(worker.OpenRouterProviderOrder) != 2 || worker.OpenRouterAllowFallbacks ||
+		worker.ThinkingMode != "on" || worker.EffectiveDispatchBackend() != raylinearc.DispatchOpenRouter {
+		t.Fatalf("worker = %+v", worker)
+	}
+	cfg, _ = policyReadinessConfig(func(c *config.RouterConfig) {
+		c.ProviderProfiles["openrouter"] = config.ProviderProfile{Type: "anthropic", BaseURL: "https://api.anthropic.com"}
+	})
+	if worker := policyWorkerManifest(cfg, config.ModelRef{Model: "think"}); worker.EffectiveDispatchBackend() == raylinearc.DispatchOpenRouter ||
+		worker.ThinkingMode != "off" {
+		t.Fatalf("a non-OpenRouter worker = %+v", worker)
+	}
+}
