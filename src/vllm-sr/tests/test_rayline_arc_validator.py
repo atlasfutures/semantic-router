@@ -384,3 +384,21 @@ def test_rayline_arc_cli_refuses_a_policy_mode_close_header():
         _policy_service_decision(close_header="x-rayline-episode-close")
     )
     assert any("close_header" in error.field for error in errors), errors
+
+
+def test_rayline_arc_cli_checks_policy_service_connection_fields():
+    for mutate, field in (
+        (lambda policy: setattr(policy, "base_url", "not-a-url"), "base_url"),
+        (
+            lambda policy: setattr(policy, "base_url", "https://user:pw@host/"),
+            "base_url",
+        ),
+        (
+            lambda policy: setattr(policy, "modal_key_env", "RAYLINE_ARC_MODAL_KEY"),
+            "modal_key_env",
+        ),
+    ):
+        decision = _policy_service_decision()
+        mutate(decision.algorithm.rayline_arc.policy_service)
+        errors = _validate_rayline_arc_decision(decision)
+        assert any(error.field.endswith(field) for error in errors), (field, errors)

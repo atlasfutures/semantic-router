@@ -283,7 +283,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// Only an offered action may be dispatched: the offer already removed
 	// excluded arms (vision, capability, operator-disabled) and, while the
 	// schedule holds the model, every other model's actions.
-	if !slices.Contains(available, response.Decision.SelectedActionID) {
+	if !slices.Contains(available, response.Decision.SelectedActionID) ||
+		!policySelectedActionAvailable(response) {
 		return nil, arcSelectionFailure("policy_action_not_offered")
 	}
 	decision := policyDecision(scorer, response, binding, workerIDs, excluded)
@@ -364,4 +365,16 @@ func policyDecision(
 		ColdSwitchUpgradeExemptions: make([]bool, count),
 		ExcludedArms:                excludedArms,
 	}
+}
+
+// policySelectedActionAvailable reports whether the response scores its own
+// selection as available; a response that selects an action it marks
+// unavailable contradicts itself and is not served.
+func policySelectedActionAvailable(response *raylinearc.PolicyDecisionResponse) bool {
+	for _, action := range response.Actions {
+		if action.ActionID == response.Decision.SelectedActionID {
+			return action.Available
+		}
+	}
+	return false
 }

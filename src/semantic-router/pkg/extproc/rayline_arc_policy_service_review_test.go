@@ -23,9 +23,33 @@ const reviewFixtureSelected = "be83da527f7beb71e86f23fdcac94c8365ba49df2ae09050b
 // A service that returns an action the router did not offer -- here one on an
 // operator-disabled arm -- is refused rather than dispatched.
 func TestPolicySelectorRefusesAnActionItDidNotOffer(t *testing.T) {
+	runUnofferedActionCase(t, nil, []bool{false, true, false})
+}
+
+// A response that selects an action it marks unavailable contradicts itself.
+func TestPolicySelectorRefusesASelectionMarkedUnavailable(t *testing.T) {
+	runUnofferedActionCase(t, func(response map[string]any) {
+		for _, action := range response["actions"].([]any) {
+			if entry := action.(map[string]any); entry["action_id"] == reviewFixtureSelected {
+				entry["available"] = false
+			}
+		}
+	}, []bool{false, false, false})
+}
+
+func runUnofferedActionCase(t *testing.T, mutate func(map[string]any), disabled []bool) {
+	t.Helper()
 	fixture, err := os.ReadFile("../selection/raylinearc/testdata/policy_service/decision_response.v1.json")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if mutate != nil {
+		var response map[string]any
+		if err := json.Unmarshal(fixture, &response); err != nil {
+			t.Fatal(err)
+		}
+		mutate(response)
+		fixture, _ = json.Marshal(response)
 	}
 	service := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -58,7 +82,7 @@ func TestPolicySelectorRefusesAnActionItDidNotOffer(t *testing.T) {
 		DecisionName: decision.Name, CandidateModels: decision.ModelRefs,
 		RaylineARC: &selection.RaylineARCSelectionContext{
 			EpisodeIDHash: strings.Repeat("e", 64), State: state, RawRequest: body,
-			RequestFormat: policyFormatAnthropic, DisabledArms: []bool{false, true, false},
+			RequestFormat: policyFormatAnthropic, DisabledArms: disabled,
 		},
 	})
 	var failure *raylineARCSelectionFailure
