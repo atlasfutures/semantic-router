@@ -38,6 +38,10 @@ type RaylineARCPolicyServiceConfig struct {
 	// actions of one model differ only in thinking level, so they share the
 	// worker and carry the level the lever applies.
 	Bindings []RaylineARCPolicyBinding `yaml:"bindings"`
+	// ModelSchedule names the package's model-switch schedule, which VSR
+	// enforces: between boundaries the model is held and only its level
+	// varies. Empty lets every turn choose any action.
+	ModelSchedule string `yaml:"model_schedule,omitempty"`
 }
 
 // RaylineARCPolicyBinding binds one package action to a worker and level.
@@ -47,7 +51,12 @@ type RaylineARCPolicyBinding struct {
 	Level    string `yaml:"level,omitempty"`
 }
 
-const maxRaylineARCPolicyTimeoutSeconds = 900
+const (
+	maxRaylineARCPolicyTimeoutSeconds = 900
+	// RaylineARCModelScheduleTaskTurnCompaction is pathfinder's
+	// task_turn_compaction_v1 (training/sdk/routing_schedule.py).
+	RaylineARCModelScheduleTaskTurnCompaction = "task_turn_compaction_v1"
+)
 
 var raylineARCSHA256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
@@ -69,6 +78,9 @@ func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) e
 	}
 	if !raylineARCSHA256Pattern.MatchString(cfg.PackageSHA256) {
 		return fmt.Errorf("package_sha256 must be 64 lowercase hex characters")
+	}
+	if cfg.ModelSchedule != "" && cfg.ModelSchedule != RaylineARCModelScheduleTaskTurnCompaction {
+		return fmt.Errorf("model_schedule must be empty or %s", RaylineARCModelScheduleTaskTurnCompaction)
 	}
 	if len(cfg.Bindings) == 0 {
 		return fmt.Errorf("bindings are required")

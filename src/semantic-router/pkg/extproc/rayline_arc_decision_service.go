@@ -339,6 +339,7 @@ func (service *raylineARCDecisionService) resolveWorker(
 		result.RaylineARC.EncoderReplicaID,
 		result.RaylineARC.EncoderVisitedReplicaIDs,
 	)
+	requestContext.RaylineARCTransaction.markPolicyState(result.RaylineARC.PolicyNextState)
 	route := selectedRoute{worker: worker, result: result, catalog: provider}
 	if baseline, ok := selector.(raylineARCReferenceWorkerProvider); ok {
 		route.reference = baseline.ReferenceWorker()
@@ -625,9 +626,9 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 		RaylineARCRawBody: request.Body,
 		RequestID:         request.DecisionID,
 		SourceFormat:      wireFormat,
-		SemanticRequest:  &decoded,
-		ProtocolEnvelope: envelope,
-		TraceContext:     ctx,
+		SemanticRequest:   &decoded,
+		ProtocolEnvelope:  envelope,
+		TraceContext:      ctx,
 	}, nil
 }
 

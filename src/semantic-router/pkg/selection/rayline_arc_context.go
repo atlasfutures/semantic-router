@@ -63,6 +63,8 @@ type RaylineARCTrace struct {
 	PolicyActionID string
 	PolicyArmID    string
 	ThinkingLevel  string
+	// PolicyNextState is the ledger and epoch to commit with this turn.
+	PolicyNextState *raylinearc.PolicyEpisodeState
 	// ArtifactID and ArtifactRevision hold SHA256-derived hashes of the
 	// deployment-private artifact identity, never the raw pins.
 	ArtifactID          string

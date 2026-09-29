@@ -82,6 +82,7 @@ type episodeStateWire struct {
 	Warmth               []*episodeWarmthWire `json:"warmth"`
 	EncoderOwner         *string              `json:"encoder_owner,omitempty"`
 	EncoderVisitedOwners *[]string            `json:"encoder_visited_owners,omitempty"`
+	Policy               *PolicyEpisodeState  `json:"policy,omitempty"`
 }
 
 type episodeWarmthWire struct {
@@ -140,6 +141,7 @@ func marshalEpisodeState(
 		PreviousArm:   cloneEpisodeArm(state.PreviousArm),
 		TurnIndex:     state.TurnIndex,
 		Warmth:        make([]*episodeWarmthWire, len(state.Warmth)),
+		Policy:        state.Policy.Clone(),
 	}
 	owner := state.EncoderOwner
 	visited := append([]string{}, state.EncoderVisitedOwners...)
@@ -227,6 +229,7 @@ func episodeStateFromWire(
 		Warmth:               make([]*WorkerWarmth, workerCount),
 		EncoderOwner:         owner,
 		EncoderVisitedOwners: visited,
+		Policy:               wire.Policy.Clone(),
 	}
 	for index, warmth := range wire.Warmth {
 		if warmth == nil {

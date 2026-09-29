@@ -47,6 +47,7 @@ type policyBinding struct {
 // not score embeddings: the policy service decides, and Select branches to it
 // before any encode.
 type policyServiceScorer struct {
+	schedule    string
 	alias       string
 	sha256      string
 	workerIDs   []string
@@ -80,6 +81,7 @@ func newPolicyServiceScorer(
 ) *policyServiceScorer {
 	policy := decision.Algorithm.RaylineARC.PolicyService
 	scorer := &policyServiceScorer{
+		schedule: policy.ModelSchedule,
 		alias:    policy.PackageAlias,
 		sha256:   policy.PackageSHA256,
 		bindings: make(map[string]policyBinding, len(policy.Bindings)),
@@ -220,10 +222,23 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if err := json.Unmarshal(arcContext.RawRequest, &body); err != nil || len(body.Messages) == 0 {
 		return nil, arcSelectionFailure("policy_request_body")
 	}
+	messages, roles, err := policyMessages(body.Messages)
+	if err != nil {
+		return nil, arcSelectionFailure("policy_request_body")
+	}
+	turn, attribution := raylinearc.PolicyTurn(state.Policy, messages, roles, state.TurnIndex)
+	held := -1
+	if scorer.schedule != "" && state.PreviousArm != nil &&
+		!raylinearc.ModelChangeAllowed(state.TurnIndex, turn.EpochStartTurn) {
+		held = *state.PreviousArm
+	}
 	available := make([]string, 0, len(scorer.actionOrder))
 	for _, actionID := range scorer.actionOrder {
 		arm := scorer.bindings[actionID].arm
 		if len(excluded) == len(workerIDs) && excluded[arm] {
+			continue
+		}
+		if held >= 0 && arm != held {
 			continue
 		}
 		available = append(available, actionID)
@@ -235,12 +250,10 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		SchemaVersion: raylinearc.PolicyDecisionRequestSchema,
 		Package:       raylinearc.PolicyPackageRef{Alias: scorer.alias, PackageSHA256: scorer.sha256},
 		EpisodeIDHash: arcContext.EpisodeIDHash,
-		// Epochs and the attribution ledger are not tracked yet: every turn is
-		// sent unattributed in one epoch (a stated deviation from the contract).
-		ContextEpoch:  "0",
+		ContextEpoch:  turn.ContextEpoch(),
 		RequestFormat: arcContext.RequestFormat,
 		Request:       raylinearc.PolicyClientRequest(body),
-		Attribution:   []raylinearc.PolicyAttribution{},
+		Attribution:   attribution,
 		Selection: raylinearc.PolicySelection{
 			AvailableActionIDs:  available,
 			OperatingPoint:      raylinearc.PolicyOperatingPoint{Name: "default"},
@@ -282,7 +295,30 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.PolicyActionID = response.Decision.SelectedActionID
 	result.RaylineARC.PolicyArmID = response.Decision.SelectedArmID
 	result.RaylineARC.ThinkingLevel = binding.level
+	result.RaylineARC.PolicyNextState = turn.Next(
+		messages, response.Decision.SelectedActionID, response.Decision.SelectedArmID,
+	)
 	return result, nil
+}
+
+// policyMessages splits the raw messages array without re-encoding any
+// message, and reads each role for attribution.
+func policyMessages(raw json.RawMessage) ([]json.RawMessage, []string, error) {
+	var messages []json.RawMessage
+	if err := json.Unmarshal(raw, &messages); err != nil || len(messages) == 0 {
+		return nil, nil, errors.New("messages must be a nonempty array")
+	}
+	roles := make([]string, len(messages))
+	for index, message := range messages {
+		var envelope struct {
+			Role string `json:"role"`
+		}
+		if err := json.Unmarshal(message, &envelope); err != nil {
+			return nil, nil, err
+		}
+		roles[index] = envelope.Role
+	}
+	return messages, roles, nil
 }
 
 // policyDecision reports each arm's best action score, so the trace and the
