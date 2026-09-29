@@ -371,6 +371,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	result := selector.selectionResult(armed, selCtx, arcContext, state, encoded, decision, encodeLatency)
 	result.RaylineARC.PolicyLatency = latency
+	result.RaylineARC.EncoderLatencyUnknown = response.TimingMillis.Encode == nil
 	result.Reasoning = "policy-service ARC decision (" + response.Decision.Reason + ")"
 	result.RaylineARC.PolicyActionID = response.Decision.SelectedActionID
 	result.RaylineARC.PolicyArmID = response.Decision.SelectedArmID

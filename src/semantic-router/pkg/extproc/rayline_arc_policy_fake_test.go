@@ -26,6 +26,9 @@ type fakePolicyService struct {
 	mu sync.Mutex
 	// answerAs, when set, is the package the decide responses name.
 	answerAs *raylinearc.PolicyPackageRef
+	// encodeUnreported answers timing_ms.encode null, as the reference
+	// service does.
+	encodeUnreported bool
 	choose   func(raylinearc.PolicyDecisionRequest) string
 	failWith string
 	requests []raylinearc.PolicyDecisionRequest
@@ -104,6 +107,9 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 	fake.mu.Lock()
 	if fake.answerAs != nil {
 		response.Package = *fake.answerAs
+	}
+	if fake.encodeUnreported {
+		response.TimingMillis.Encode = nil
 	}
 	fake.mu.Unlock()
 	response.Shadow = []raylinearc.PolicyShadowResult{}
