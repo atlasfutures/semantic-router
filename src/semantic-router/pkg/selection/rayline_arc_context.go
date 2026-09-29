@@ -48,10 +48,23 @@ type RaylineARCSelectionContext struct {
 	// turn requires none, which leaves selection exactly as it was.
 	IncapableArms      []bool
 	PreparationFailure string
+	// RawRequest and RequestFormat are the client body as received and its
+	// policy-service request format (anthropic_messages or openai_chat), set
+	// only for the policy-service mode.
+	RawRequest    []byte
+	RequestFormat string
 }
 
 // RaylineARCTrace records bounded, privacy-safe artifact policy diagnostics.
 type RaylineARCTrace struct {
+	// PolicyActionID, PolicyArmID and ThinkingLevel are the policy-service
+	// decision: the package action, the trained arm the service scored, and
+	// the level the action binds. Empty outside the policy-service mode.
+	PolicyActionID string
+	PolicyArmID    string
+	ThinkingLevel  string
+	// PolicyNextState is the ledger and epoch to commit with this turn.
+	PolicyNextState *raylinearc.PolicyEpisodeState
 	// ArtifactID and ArtifactRevision hold SHA256-derived hashes of the
 	// deployment-private artifact identity, never the raw pins.
 	ArtifactID          string

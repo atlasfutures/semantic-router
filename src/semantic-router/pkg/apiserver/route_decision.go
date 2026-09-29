@@ -190,6 +190,12 @@ func routeDecisionResponse(
 	if decision.Provider != "" {
 		response["provider"] = decision.Provider
 	}
+	if decision.ThinkingLevel != "" {
+		response["thinking_level"] = decision.ThinkingLevel
+	}
+	if decision.PolicyActionID != "" {
+		response["policy_action_id"] = decision.PolicyActionID
+	}
 	return response
 }
 

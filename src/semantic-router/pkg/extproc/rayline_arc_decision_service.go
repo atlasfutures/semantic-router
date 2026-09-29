@@ -136,6 +136,8 @@ func (service *raylineARCDecisionService) RouteDecision(
 		Warnings:        []string{},
 	}
 	trace := selected.result.RaylineARC
+	decisionFacts.ThinkingLevel = trace.ThinkingLevel
+	decisionFacts.PolicyActionID = trace.PolicyActionID
 	decisionFacts.Checkpoint = trace.ArtifactRevision
 	decisionFacts.Alternatives = routeAlternatives(trace, selected.catalog)
 	// Both kinds of reuse count. A resumable encoder reports reuse as
@@ -337,6 +339,7 @@ func (service *raylineARCDecisionService) resolveWorker(
 		result.RaylineARC.EncoderReplicaID,
 		result.RaylineARC.EncoderVisitedReplicaIDs,
 	)
+	requestContext.RaylineARCTransaction.markPolicyState(result.RaylineARC.PolicyNextState)
 	route := selectedRoute{worker: worker, result: result, catalog: provider}
 	if baseline, ok := selector.(raylineARCReferenceWorkerProvider); ok {
 		route.reference = baseline.ReferenceWorker()
@@ -619,12 +622,13 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 		headers[algorithm.RaylineARC.Episode.IDHeader] = episodeIdentity
 	}
 	return &RequestContext{
-		Headers:          headers,
-		RequestID:        request.DecisionID,
-		SourceFormat:     wireFormat,
-		SemanticRequest:  &decoded,
-		ProtocolEnvelope: envelope,
-		TraceContext:     ctx,
+		Headers:           headers,
+		RaylineARCRawBody: request.Body,
+		RequestID:         request.DecisionID,
+		SourceFormat:      wireFormat,
+		SemanticRequest:   &decoded,
+		ProtocolEnvelope:  envelope,
+		TraceContext:      ctx,
 	}, nil
 }
 

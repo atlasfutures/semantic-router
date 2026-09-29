@@ -31,6 +31,7 @@ func (r *OpenAIRouter) handleRequestBody(
 ) (*ext_proc.ProcessingResponse, error) {
 	ctx.ProcessingStartTime = time.Now()
 	requestBody := v.RequestBody.GetBody()
+	ctx.RaylineARCRawBody = requestBody
 	// A route lookup is answered here and never routed. It runs before the
 	// ingress codec because it discriminates its own wire format from the
 	// body, and before every routing side effect because there is no upstream

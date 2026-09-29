@@ -32,12 +32,15 @@ import (
 const episodeFinalizeTimeout = 5 * time.Second
 
 type raylineARCEpisodeTransaction struct {
-	store            raylinearc.EpisodeStore
-	lease            raylinearc.Lease
-	state            *raylinearc.EpisodeState
-	episodeIDHash    string
-	leaseTTL         time.Duration
-	selectedArm      int
+	store         raylinearc.EpisodeStore
+	lease         raylinearc.Lease
+	state         *raylinearc.EpisodeState
+	episodeIDHash string
+	leaseTTL      time.Duration
+	selectedArm   int
+	// policyNext is the policy-service ledger and epoch to commit with this
+	// turn; nil outside that mode.
+	policyNext       *raylinearc.PolicyEpisodeState
 	serializedTokens int
 	encoderOwner     string
 	encoderVisited   []string
@@ -119,6 +122,17 @@ func (transaction *raylineARCEpisodeTransaction) markSelectionWithAffinity(
 	transaction.selectionReady = true
 }
 
+// markPolicyState stages the policy-service ledger and epoch this turn
+// commits. It is a no-op outside the policy-service mode.
+func (transaction *raylineARCEpisodeTransaction) markPolicyState(
+	next *raylinearc.PolicyEpisodeState,
+) {
+	if transaction == nil || next == nil {
+		return
+	}
+	transaction.policyNext = next.Clone()
+}
+
 // dispatchAllowed is the last pre-upstream fence. The renewal goroutine can
 // discover lease loss after selection but before Envoy receives the request
 // mutation; a known-lost lease must never dispatch and later masquerade as a
@@ -150,6 +164,9 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			[]string(nil),
 			transaction.encoderVisited...,
 		)
+		if transaction.policyNext != nil {
+			nextState.Policy = transaction.policyNext.Clone()
+		}
 		if err := nextState.Commit(
 			transaction.selectedArm,
 			transaction.serializedTokens,
@@ -341,6 +358,7 @@ func cloneARCState(
 		Warmth:               make([]*raylinearc.WorkerWarmth, len(state.Warmth)),
 		EncoderOwner:         state.EncoderOwner,
 		EncoderVisitedOwners: append([]string(nil), state.EncoderVisitedOwners...),
+		Policy:               state.Policy.Clone(),
 	}
 	if state.PreviousArm != nil {
 		value := *state.PreviousArm

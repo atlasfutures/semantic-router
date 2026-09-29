@@ -41,6 +41,8 @@ type EpisodeState struct {
 	Warmth               []*WorkerWarmth
 	EncoderOwner         string
 	EncoderVisitedOwners []string
+	// Policy is the policy-service mode's ledger and epoch; nil otherwise.
+	Policy *PolicyEpisodeState
 }
 
 func NewEpisodeState(workerCount int) (*EpisodeState, error) {

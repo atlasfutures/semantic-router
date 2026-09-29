@@ -2,7 +2,7 @@
   "schema_version": "rayline.arc.policy-decision-request.v1",
   "package": {
     "alias": "rayline/arc-example-fold0",
-    "package_sha256": "6f09101f6966b8e708075aca8807f485255773b0643e0889ab55b74741a8d72d"
+    "package_sha256": "81e4a7af2c28c3be9ecbe850888c6773d196d58cad100474cbfb48622af7abe4"
   },
   "episode_id_hash": "7e414e6ac41ac7a0658ce2807548af8fb48b145f9b74aa77c9b526c569804bbc",
   "context_epoch": "epoch-0",
@@ -64,14 +64,15 @@
   "attribution": [
     {
       "message": 1,
-      "action_id": "e9a2ac5c6f1fa64dcbbaa2e06dd8c7e6f7fcb36f735099db7d57de3807a51f96"
+      "action_id": "b779e919d4709c8bc766f1cc7b4228ed1cd8a5d1f230acfb2453e4f37df6e1f1",
+      "arm_id": "4951fcf2b0d2c10050e8d69681e8deda04f2e3a7b5c3e8b2945bf291be9b9279"
     }
   ],
   "selection": {
     "available_action_ids": [
-      "e9a2ac5c6f1fa64dcbbaa2e06dd8c7e6f7fcb36f735099db7d57de3807a51f96",
-      "34b4302469e0baa37920e17c67db48d0cc20a602f967b8e5e98a2a59b3d5c875",
-      "0cb8079ef41077d5064824f584e76a41cd346056844badd898726bf6b367e775"
+      "b779e919d4709c8bc766f1cc7b4228ed1cd8a5d1f230acfb2453e4f37df6e1f1",
+      "be83da527f7beb71e86f23fdcac94c8365ba49df2ae09050ba7e74958c6b1f90",
+      "569bf3701d341b1945954bf38e0686b23e404ab2a857983402706a40b2a0fad9"
     ],
     "held_action_id": null,
     "reference": null,

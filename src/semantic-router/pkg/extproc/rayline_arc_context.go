@@ -156,6 +156,10 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		return result
 	}
 	result.Turns = turns
+	if algorithm.RaylineARC.PolicyService != nil {
+		result.RawRequest = reqCtx.RaylineARCRawBody
+		result.RequestFormat = policyRequestFormat(reqCtx.SourceFormat)
+	}
 	result.ImageBearing = imageBearing
 	result.NonVisionArms = r.nonVisionArms(modelRefs)
 	result.DisabledArms = r.disabledArms(modelRefs)

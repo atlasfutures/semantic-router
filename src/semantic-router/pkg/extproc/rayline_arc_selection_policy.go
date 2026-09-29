@@ -44,6 +44,7 @@ func (r *OpenAIRouter) completeModelSelection(
 					result.RaylineARC.EncoderReplicaID,
 					result.RaylineARC.EncoderVisitedReplicaIDs,
 				)
+				ctx.RaylineARCTransaction.markPolicyState(result.RaylineARC.PolicyNextState)
 			}
 		}
 		observeRaylineARCSelection(ctx, result.RaylineARC)
@@ -225,5 +226,7 @@ func observeRaylineARCSelection(
 		"encoder_replica_index":  trace.EncoderReplicaIndex,
 		"encoder_attempts":       trace.EncoderAttempts,
 		"encoder_failover":       trace.EncoderFailover,
+		"policy_action_id":       trace.PolicyActionID,
+		"thinking_level":         trace.ThinkingLevel,
 	})
 }

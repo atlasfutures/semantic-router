@@ -108,6 +108,9 @@ type RaylineARCAlgorithmConfig struct {
 	// for a request, without executing it, for a caller that owns its own
 	// provider connectivity.
 	RoutesAPI RaylineARCRoutesAPIConfig `yaml:"routes_api,omitempty"`
+	// PolicyService switches the decision to an external policy service. When
+	// set, artifact_dir, artifact_revision and encoder are not used.
+	PolicyService *RaylineARCPolicyServiceConfig `yaml:"policy_service,omitempty"`
 }
 
 // RaylineARCRoutesAPIConfig is the opt-in for the route lookup endpoint.
@@ -229,6 +232,9 @@ func validateRaylineARCAlgorithmConfig(cfg *RaylineARCAlgorithmConfig) error {
 	if cfg == nil {
 		return fmt.Errorf("configuration is required")
 	}
+	if cfg.PolicyService != nil {
+		return validateRaylineARCPolicyServiceMode(cfg)
+	}
 	if err := validateRaylineARCArtifactConfig(cfg); err != nil {
 		return err
 	}
@@ -247,6 +253,22 @@ func validateRaylineARCAlgorithmConfig(cfg *RaylineARCAlgorithmConfig) error {
 	if cfg.Encoder.usesDynamicMembership() &&
 		cfg.Episode.Backend != RaylineARCBackendRedis {
 		return fmt.Errorf("episode: redis backend is required with dynamic encoder membership")
+	}
+	if err := validateRaylineARCRoutesAPIConfig(cfg.RoutesAPI); err != nil {
+		return fmt.Errorf("routes_api: %w", err)
+	}
+	return nil
+}
+
+func validateRaylineARCPolicyServiceMode(cfg *RaylineARCAlgorithmConfig) error {
+	if err := validateRaylineARCPolicyServiceConfig(cfg.PolicyService); err != nil {
+		return fmt.Errorf("policy_service: %w", err)
+	}
+	if err := validateRaylineARCEpisodeConfig(cfg.Episode); err != nil {
+		return fmt.Errorf("episode: %w", err)
+	}
+	if cfg.Episode.CloseHeader != "" {
+		return fmt.Errorf("episode: close_header requires encoder replicas")
 	}
 	if err := validateRaylineARCRoutesAPIConfig(cfg.RoutesAPI); err != nil {
 		return fmt.Errorf("routes_api: %w", err)
@@ -582,6 +604,11 @@ func validateRaylineARCDecisionContract(cfg *RouterConfig, decision Decision) er
 				RaylineARCAlgorithmType,
 				modelRef.Model,
 			)
+		}
+	}
+	if decision.Algorithm.RaylineARC != nil && decision.Algorithm.RaylineARC.PolicyService != nil {
+		if err := validateRaylineARCPolicyBindings(decision); err != nil {
+			return fmt.Errorf("decision '%s': %w", decision.Name, err)
 		}
 	}
 	if replay := cfg.EffectiveRouterReplayConfigForDecision(decision.Name); replay != nil && replay.Enabled {

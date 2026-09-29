@@ -82,6 +82,7 @@ type episodeStateWire struct {
 	Warmth               []*episodeWarmthWire `json:"warmth"`
 	EncoderOwner         *string              `json:"encoder_owner,omitempty"`
 	EncoderVisitedOwners *[]string            `json:"encoder_visited_owners,omitempty"`
+	Policy               *PolicyEpisodeState  `json:"policy,omitempty"`
 }
 
 type episodeWarmthWire struct {
@@ -107,6 +108,7 @@ func cloneEpisodeState(state *EpisodeState) *EpisodeState {
 		Warmth:               make([]*WorkerWarmth, len(state.Warmth)),
 		EncoderOwner:         state.EncoderOwner,
 		EncoderVisitedOwners: append([]string(nil), state.EncoderVisitedOwners...),
+		Policy:               state.Policy.Clone(),
 	}
 	for index, warmth := range state.Warmth {
 		if warmth == nil {
@@ -140,6 +142,7 @@ func marshalEpisodeState(
 		PreviousArm:   cloneEpisodeArm(state.PreviousArm),
 		TurnIndex:     state.TurnIndex,
 		Warmth:        make([]*episodeWarmthWire, len(state.Warmth)),
+		Policy:        state.Policy.Clone(),
 	}
 	owner := state.EncoderOwner
 	visited := append([]string{}, state.EncoderVisitedOwners...)
@@ -227,6 +230,7 @@ func episodeStateFromWire(
 		Warmth:               make([]*WorkerWarmth, workerCount),
 		EncoderOwner:         owner,
 		EncoderVisitedOwners: visited,
+		Policy:               wire.Policy.Clone(),
 	}
 	for index, warmth := range wire.Warmth {
 		if warmth == nil {
@@ -251,6 +255,9 @@ func validatePersistedEpisodeState(
 		return errors.New("ARC episode state is required")
 	}
 	if err := validateEpisodeState(state, len(state.Warmth)); err != nil {
+		return err
+	}
+	if err := state.Policy.Validate(); err != nil {
 		return err
 	}
 	futureLimit := now.Add(maxFutureClockSkew)

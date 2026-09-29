@@ -70,6 +70,12 @@ func createRaylineARCSelector(
 			return unavailable("conflicting_config")
 		}
 	}
+	if arcConfig.PolicyService != nil {
+		if !raylineARCDecisionsShareWorkers(decisions) {
+			return unavailable("conflicting_config")
+		}
+		return createRaylineARCPolicySelector(cfg, decisions[0])
+	}
 	runtime, err := raylinearc.LoadRuntime(arcConfig.ArtifactDir)
 	if err != nil {
 		// Logged with the path and the error, because the failure class alone
@@ -559,6 +565,24 @@ func warnFaultInjectionEnabled(decisions []*config.Decision) {
 			"decision": decision.Name,
 		})
 	}
+}
+
+// raylineARCDecisionsShareWorkers reports whether every decision lists the
+// same modelRefs in the same order. The policy-service selector builds one
+// worker pool from the first decision, so a decision that orders its workers
+// differently would fail every request on candidate order.
+func raylineARCDecisionsShareWorkers(decisions []*config.Decision) bool {
+	for _, decision := range decisions[1:] {
+		if len(decision.ModelRefs) != len(decisions[0].ModelRefs) {
+			return false
+		}
+		for index, modelRef := range decision.ModelRefs {
+			if modelRef.Model != decisions[0].ModelRefs[index].Model {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func configuredRaylineARCDecisions(

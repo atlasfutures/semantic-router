@@ -3,7 +3,7 @@
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Mirrors maxRaylineARCInflightEncoderCalls in the Go loader.
 MAX_INFLIGHT_ENCODER_CALLS = 32
@@ -90,7 +90,9 @@ class RaylineARCEncoderConfig(BaseModel):
     probe_retry_initial_seconds: int = Field(default=0, ge=0, le=3600)
     probe_retry_max_seconds: int = Field(default=0, ge=0, le=3600)
     # 0 selects the router's shipped default; the Go loader caps the value.
-    max_inflight_encoder_calls: int = Field(default=0, ge=0, le=MAX_INFLIGHT_ENCODER_CALLS)
+    max_inflight_encoder_calls: int = Field(
+        default=0, ge=0, le=MAX_INFLIGHT_ENCODER_CALLS
+    )
 
     @field_validator("membership", "failover", mode="before")
     @classmethod
@@ -196,14 +198,44 @@ class RaylineARCRoutesAPIConfig(BaseModel):
         return value
 
 
-class RaylineARCAlgorithmConfig(BaseModel):
-    """Artifact, encoder, and episode pins for Rayline ARC."""
+class RaylineARCPolicyBindingConfig(BaseModel):
+    """One package action bound to a worker and the level it carries."""
 
     model_config = ConfigDict(extra="forbid")
 
-    artifact_dir: str
-    artifact_revision: str
-    encoder: RaylineARCEncoderConfig
+    action_id: str = Field(pattern=r"^[a-f0-9]{64}$")
+    worker: str = Field(min_length=1)
+    level: str = ""
+
+
+class RaylineARCPolicyServiceConfig(BaseModel):
+    """The policy-service mode: an external service returns the decision."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    base_url: str
+    modal_key_env: str = ""
+    modal_secret_env: str = ""
+    total_timeout_seconds: int = Field(ge=1, le=900)
+    package_alias: str = Field(min_length=1)
+    package_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    bindings: list[RaylineARCPolicyBindingConfig] = Field(min_length=1)
+    model_schedule: Literal["", "task_turn_compaction_v1"] = ""
+
+
+class RaylineARCAlgorithmConfig(BaseModel):
+    """Artifact, encoder, and episode pins for Rayline ARC.
+
+    With policy_service set the decision comes from that service, and the
+    artifact and encoder pins are not used.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_dir: str | None = None
+    artifact_revision: str | None = None
+    encoder: RaylineARCEncoderConfig | None = None
+    policy_service: RaylineARCPolicyServiceConfig | None = None
     episode: RaylineARCEpisodeConfig
     include_system_text: bool = False
     drop_mid_conversation_system_text: bool = False
@@ -215,3 +247,15 @@ class RaylineARCAlgorithmConfig(BaseModel):
     include_tool_names: bool = False
     fault_injection: RaylineARCFaultInjectionConfig | None = None
     routes_api: RaylineARCRoutesAPIConfig | None = None
+
+    @model_validator(mode="after")
+    def _artifact_pins_unless_policy_service(self):
+        if self.policy_service is None and (
+            self.artifact_dir is None
+            or self.artifact_revision is None
+            or self.encoder is None
+        ):
+            raise ValueError(
+                "artifact_dir, artifact_revision and encoder are required without policy_service"
+            )
+        return self

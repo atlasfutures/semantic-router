@@ -2,6 +2,7 @@
 
 import os
 import re
+from urllib.parse import urlparse
 
 from cli.rayline_arc_config import (
     RAYLINE_ARC_ENCODER_MODEL,
@@ -136,9 +137,26 @@ def _validate_rayline_arc_decision(decision) -> list[ValidationError]:
         )
         return errors
 
-    errors.extend(_validate_artifact(decision.name, arc))
-    errors.extend(_validate_encoder(decision.name, arc.encoder))
-    errors.extend(_validate_episode(decision.name, arc.episode, arc.encoder))
+    if arc.policy_service is not None:
+        # The Go loader owns the binding checks; only the episode contract is
+        # shared with the artifact mode.
+        prefix = f"decisions.{decision.name}.algorithm.rayline_arc.episode"
+        errors.extend(_validate_policy_service(decision.name, arc.policy_service))
+        errors.extend(validate_episode_contract(prefix, arc.episode))
+        # The Go loader refuses a close header in the policy-service mode:
+        # there are no encoder replicas whose sessions it would close.
+        if arc.episode.close_header:
+            errors.append(
+                ValidationError(
+                    f"decision '{decision.name}' algorithm.rayline_arc.episode.close_header "
+                    "is not served in the policy-service mode",
+                    field=f"{prefix}.close_header",
+                )
+            )
+    else:
+        errors.extend(_validate_artifact(decision.name, arc))
+        errors.extend(_validate_encoder(decision.name, arc.encoder))
+        errors.extend(_validate_episode(decision.name, arc.episode, arc.encoder))
 
     adaptations = decision.adaptations
     if adaptations is None or adaptations.mode != "bypass":
@@ -223,25 +241,9 @@ def _validate_encoder(name, encoder) -> list[ValidationError]:
             )
         )
     errors.extend(_validate_encoder_capabilities(prefix, encoder))
-    has_modal_key = bool(encoder.modal_key_env)
-    has_modal_secret = bool(encoder.modal_secret_env)
-    if has_modal_key != has_modal_secret:
-        errors.append(
-            ValidationError(
-                "modal_key_env and modal_secret_env must be configured together",
-                field=f"{prefix}.modal_key_env",
-            )
-        )
-    elif has_modal_key and (
-        not _ENV_NAME.fullmatch(encoder.modal_key_env)
-        or not _ENV_NAME.fullmatch(encoder.modal_secret_env)
-    ):
-        errors.append(
-            ValidationError(
-                "Modal proxy credential fields must name valid environment variables",
-                field=f"{prefix}.modal_key_env",
-            )
-        )
+    errors.extend(
+        _modal_pair_errors(prefix, encoder.modal_key_env, encoder.modal_secret_env)
+    )
     if encoder.connect_timeout_seconds > encoder.total_timeout_seconds:
         errors.append(
             ValidationError(
@@ -249,6 +251,54 @@ def _validate_encoder(name, encoder) -> list[ValidationError]:
                 field=f"{prefix}.connect_timeout_seconds",
             )
         )
+    return errors
+
+
+def _modal_pair_errors(prefix, key_env, secret_env) -> list[ValidationError]:
+    has_modal_key = bool(key_env)
+    has_modal_secret = bool(secret_env)
+    if has_modal_key != has_modal_secret:
+        return [
+            ValidationError(
+                "modal_key_env and modal_secret_env must be configured together",
+                field=f"{prefix}.modal_key_env",
+            )
+        ]
+    if has_modal_key and (
+        not _ENV_NAME.fullmatch(key_env) or not _ENV_NAME.fullmatch(secret_env)
+    ):
+        return [
+            ValidationError(
+                "Modal proxy credential fields must name valid environment variables",
+                field=f"{prefix}.modal_key_env",
+            )
+        ]
+    return []
+
+
+def _validate_policy_service(name, policy) -> list[ValidationError]:
+    """Mirror the Go loader's connection checks for the policy-service mode."""
+    prefix = f"decisions.{name}.algorithm.rayline_arc.policy_service"
+    errors: list[ValidationError] = []
+    parsed = urlparse(policy.base_url.strip())
+    if (
+        parsed.scheme not in ("http", "https")
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or _byte_length(policy.base_url) > _MAX_BOUNDED_STRING_BYTES
+    ):
+        errors.append(
+            ValidationError(
+                "base_url must be an absolute HTTP(S) URL without credentials, a query, or a fragment",
+                field=f"{prefix}.base_url",
+            )
+        )
+    errors.extend(
+        _modal_pair_errors(prefix, policy.modal_key_env, policy.modal_secret_env)
+    )
     return errors
 
 

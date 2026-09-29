@@ -1760,6 +1760,8 @@ entrypoints:
     recipe: default
   - model_names: ["vllm-sr/exhaustive-privacy"]
     recipe: privacy-first
+  - model_names: ["vllm-sr/rayline-arc-policy"]
+    recipe: rayline-arc-policy
 
 recipes:
   - name: privacy-first
@@ -1788,6 +1790,74 @@ recipes:
               use_reasoning: false
           algorithm:
             type: static
+  # The policy-service ARC mode, in a recipe of its own: a recipe serves one
+  # ARC configuration, and the default recipe's is the artifact mode above.
+  - name: rayline-arc-policy
+    description: Experimental ARC configuration that takes its decision from a policy service.
+    routing:
+      decisions:
+        - name: rayline_arc_policy_reference_route
+          description: ARC decisions from an external policy service.
+          priority: 100
+          rules:
+            operator: AND
+            conditions: []
+          modelRefs:
+            - model: qwen3-8b
+              use_reasoning: false
+            - model: qwen3-32b
+              use_reasoning: true
+          adaptations:
+            mode: bypass
+          plugins:
+            - type: router_replay
+              configuration:
+                enabled: false
+          algorithm:
+            type: rayline_arc
+            on_error: fail_closed
+            rayline_arc:
+              # policy_service switches the decision to an external service
+              # that runs the encoder, head and selection rule and returns
+              # the chosen action. artifact_dir, artifact_revision and encoder
+              # are not used.
+              policy_service:
+                base_url: http://rayline-arc-policy-service:8000
+                modal_key_env: RAYLINE_ARC_MODAL_KEY
+                modal_secret_env: RAYLINE_ARC_MODAL_SECRET
+                total_timeout_seconds: 60
+                # The one package this decision serves; readiness refuses a
+                # service that has not loaded exactly it.
+                package_alias: rayline/arc-public-example
+                package_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+                # model_schedule: task_turn_compaction_v1 holds the model
+                # between schedule boundaries and lets only its level vary.
+                model_schedule: ""
+                # Each binding maps a package action to a worker and the
+                # thinking level it carries.
+                bindings:
+                  - action_id: 6b17d6750c0bb3b365d9b474315615cb8fffdfb6bf0b7125e328390ab98c546a
+                    worker: qwen3-8b
+                    level: none
+                  - action_id: 55bc5dcd39c88ff403e0f4301c633e3021a397e3053cbf9b36d9ba4bc073ecc6
+                    worker: qwen3-32b
+                    level: none
+              episode:
+                id_header: x-rayline-episode-id
+                close_header: ""
+                backend: redis
+                key_prefix: "vsr:rayline-arc-policy:"
+                acquire_timeout_seconds: 30
+                lease_ttl_seconds: 60
+                idle_ttl_seconds: 900
+                max_in_memory_episodes: 1024
+                development_mode: false
+                redis:
+                  address: redis:6379
+                  db: 0
+                  password_env: RAYLINE_ARC_REDIS_PASSWORD
+                  use_tls: false
+                  pool_size: 16
 
 global:
   router:
