@@ -29,9 +29,9 @@ type fakePolicyService struct {
 	// encodeUnreported answers timing_ms.encode null, as the reference
 	// service does.
 	encodeUnreported bool
-	choose   func(raylinearc.PolicyDecisionRequest) string
-	failWith string
-	requests []raylinearc.PolicyDecisionRequest
+	choose           func(raylinearc.PolicyDecisionRequest) string
+	failWith         string
+	requests         []raylinearc.PolicyDecisionRequest
 }
 
 func newFakePolicyService(t *testing.T, alias, sha256 string, catalog []string) *fakePolicyService {
