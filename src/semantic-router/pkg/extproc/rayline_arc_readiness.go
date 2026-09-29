@@ -568,21 +568,28 @@ func warnFaultInjectionEnabled(decisions []*config.Decision) {
 }
 
 // raylineARCDecisionsShareWorkers reports whether every decision lists the
-// same modelRefs in the same order. The policy-service selector builds one
-// worker pool from the first decision, so a decision that orders its workers
-// differently would fail every request on candidate order.
+// same modelRefs, with the same use_reasoning, in the same order. The
+// policy-service selector builds one worker pool, and its worker facts, from
+// the first decision, so a decision that orders its workers differently would
+// fail every request on candidate order, and one that reasons differently
+// would be reported with the first decision's thinking mode.
 func raylineARCDecisionsShareWorkers(decisions []*config.Decision) bool {
 	for _, decision := range decisions[1:] {
 		if len(decision.ModelRefs) != len(decisions[0].ModelRefs) {
 			return false
 		}
 		for index, modelRef := range decision.ModelRefs {
-			if modelRef.Model != decisions[0].ModelRefs[index].Model {
+			first := decisions[0].ModelRefs[index]
+			if modelRef.Model != first.Model || raylineARCUsesReasoning(modelRef) != raylineARCUsesReasoning(first) {
 				return false
 			}
 		}
 	}
 	return true
+}
+
+func raylineARCUsesReasoning(modelRef config.ModelRef) bool {
+	return modelRef.UseReasoning != nil && *modelRef.UseReasoning
 }
 
 func configuredRaylineARCDecisions(

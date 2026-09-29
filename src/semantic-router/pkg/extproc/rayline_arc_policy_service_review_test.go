@@ -126,4 +126,10 @@ func TestRaylineARCDecisionsShareWorkers(t *testing.T) {
 	if raylineARCDecisionsShareWorkers([]*config.Decision{decision("a", "b"), decision("a")}) {
 		t.Fatal("a shorter worker list accepted")
 	}
+	reasoning := decision("a", "b")
+	on := true
+	reasoning.ModelRefs[1].UseReasoning = &on
+	if raylineARCDecisionsShareWorkers([]*config.Decision{decision("a", "b"), reasoning}) {
+		t.Fatal("a worker list that reasons differently accepted")
+	}
 }
