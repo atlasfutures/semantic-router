@@ -81,9 +81,26 @@ Remapping an action to another provider is a config change, and the package
 and service are unaffected. The route the action was trained on stays in the
 package as provenance.
 
-Readiness refuses a binding that serves a different model, cannot carry the
-action's effort, or cannot express its level with a qualified lever. The
+Readiness refuses a binding that cannot carry the action's effort, or cannot
+express its level with a qualified lever. The
 selection log and usage records name both the `action_id` and the binding.
+
+A binding declares what its action dispatches: `model` (the trained model
+name), `effort` and `reasoning_max_tokens` as the catalog states them, and
+`level`, whose steering suffix comes from a `thinking_lever` with source
+`policy`. The loader recomputes pathfinder's `action_id` from those fields and
+refuses a binding that does not reproduce it. Any worker may serve the trained
+model; selection logs `policy_action_model` beside `worker_provider_model`. It also refuses a thinking-off
+action (`effort: none`) that carries a steer. At dispatch the effort or budget
+replaces the derived reasoning controls: OpenRouter's `reasoning` object on
+Chat, and `output_config.effort` with adaptive thinking, or enabled thinking
+with the budget, on Messages. A decide response that scores an action with no
+binding fails the turn.
+
+On the neutral level the lever writes nothing, so a steer written on an earlier
+turn stays in force. The record carries both `thinking_level_requested` and
+`thinking_level_in_force`. This matches collection, where a "none" draw also
+appended nothing.
 
 A remap still changes cost and quality, because cache share and effort
 handling differ by endpoint. So a remap on a production alias is canaried. If
@@ -91,8 +108,9 @@ the new route's rates leave the package's price scenario, the package is
 re-exported with new prices.
 
 VSR verifies a package only by `package_sha256`, the sha256 of its manifest
-bytes. `package_id`, `profile_id`, `action_id` and `policy_id` are
-pathfinder-issued ids that VSR compares as opaque strings and never recomputes.
+bytes. `package_id`, `profile_id` and `policy_id` are pathfinder-issued ids
+that VSR compares as opaque strings. `action_id` is the one VSR recomputes, from
+a binding's declared dispatch.
 
 Every service error fails closed.
 

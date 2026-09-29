@@ -19,10 +19,13 @@ package raylinearc
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
 )
 
 func TestMemoryEpisodeStoreSerializesAndCommits(t *testing.T) {
@@ -289,5 +292,128 @@ func requireARCNoError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func fullThinkingLedger() *thinkinglever.Ledger {
+	ledger := &thinkinglever.Ledger{}
+	for index := 0; index < thinkinglever.MaxPayloads; index++ {
+		ledger.Payloads = append(ledger.Payloads, thinkinglever.Payload{
+			Lever:  thinkinglever.LeverSteeringSuffix,
+			Suffix: strings.Repeat(string(rune('a'+index)), thinkinglever.MaxSuffixBytes),
+		})
+	}
+	for index := 0; index < thinkinglever.MaxLedgerLength; index++ {
+		ledger.Entries = append(ledger.Entries, thinkinglever.LedgerEntry{
+			Index:     uint32(1<<31 + index),
+			Placement: thinkinglever.PlaceUserAfterToolRun,
+			Digest:    strings.Repeat("f", thinkinglever.DigestBytes*2),
+			Payload:   index % thinkinglever.MaxPayloads,
+			Turn:      1<<63 + uint64(index),
+		})
+	}
+	ledger.InForce = []thinkinglever.LeverState{{
+		Lever: thinkinglever.LeverSteeringSuffix, Payload: thinkinglever.MaxPayloads - 1,
+		Level: strings.Repeat("l", thinkinglever.MaxLevelName), LastChangeTurn: 1 << 63,
+	}}
+	return ledger
+}
+
+func TestEpisodeStateWireV3CarriesTheThinkingLedger(t *testing.T) {
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	state, err := NewEpisodeState(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := marshalEpisodeState(state, 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"schema_version":"rayline.arc.episode-state.v2"`) ||
+		strings.Contains(string(payload), `"thinking"`) {
+		t.Fatalf("an episode without a ledger must keep its v2 bytes: %s", payload)
+	}
+
+	// The worst case: every entry and name at its limit still fits.
+	state.Thinking = fullThinkingLedger()
+	payload, err = marshalEpisodeState(state, 2, now)
+	if err != nil {
+		t.Fatalf("a full ledger does not fit: %v", err)
+	}
+	if !strings.Contains(string(payload), `"schema_version":"rayline.arc.episode-state.v3"`) {
+		t.Fatalf("ledger written without v3: %.120s", payload)
+	}
+	decoded, version, err := unmarshalEpisodeState(payload, 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != 2 || !reflect.DeepEqual(decoded.Thinking, state.Thinking) {
+		t.Fatal("the ledger did not round-trip")
+	}
+	cloned := cloneEpisodeState(decoded)
+	cloned.Thinking.Payloads[0].Suffix = "changed"
+	if decoded.Thinking.Payloads[0].Suffix == "changed" {
+		t.Fatal("clone shares ledger entries")
+	}
+}
+
+func TestEpisodeStateWireGatesTheLedgerOnTheSchema(t *testing.T) {
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	ledger := `"thinking":{"epoch":0,"payloads":[],"entries":[],"in_force":[]}`
+	for name, payload := range map[string]string{
+		"v2 with a ledger": `{"schema_version":"rayline.arc.episode-state.v2","version":1,` +
+			`"previous_arm":null,"turn_index":0,"warmth":[null],"encoder_owner":"",` +
+			`"encoder_visited_owners":[],` + ledger + `}`,
+		"v3 without a ledger": `{"schema_version":"rayline.arc.episode-state.v3","version":1,` +
+			`"previous_arm":null,"turn_index":0,"warmth":[null],"encoder_owner":"",` +
+			`"encoder_visited_owners":[]}`,
+		"v3 with an unknown placement code": `{"schema_version":"rayline.arc.episode-state.v3","version":1,` +
+			`"previous_arm":null,"turn_index":0,"warmth":[null],"encoder_owner":"",` +
+			`"encoder_visited_owners":[],"thinking":{"epoch":0,` +
+			`"payloads":[{"lever":"prompt_steering_suffix","suffix":"x"}],` +
+			`"entries":[{"i":0,"p":"nowhere","d":"` + strings.Repeat("f", 32) + `","k":0,"t":0}],"in_force":[]}}`,
+		"v3 with an entry naming a missing payload": `{"schema_version":"rayline.arc.episode-state.v3","version":1,` +
+			`"previous_arm":null,"turn_index":0,"warmth":[null],"encoder_owner":"",` +
+			`"encoder_visited_owners":[],"thinking":{"epoch":0,"payloads":[],` +
+			`"entries":[{"i":0,"p":"a","d":"` + strings.Repeat("f", 32) + `","k":0,"t":0}],"in_force":[]}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := unmarshalEpisodeState([]byte(payload), 1, now); err == nil {
+				t.Fatal("payload accepted")
+			}
+		})
+	}
+}
+
+func TestEpisodeStateWireCarriesUpstreamPrefixesUnderV3(t *testing.T) {
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	state, err := NewEpisodeState(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < MaxUpstreamPrefixes+2; index++ {
+		state.Upstream = WithUpstreamPrefix(state.Upstream, UpstreamPrefix{
+			Worker: strings.Repeat("w", 400) + string(rune('a'+index)), Messages: index, Digest: strings.Repeat("0", 32),
+		})
+	}
+	if len(state.Upstream) != MaxUpstreamPrefixes || state.Upstream[0].Messages != 2 {
+		t.Fatalf("records not bounded to the most recent: %d, oldest %d", len(state.Upstream), state.Upstream[0].Messages)
+	}
+	payload, err := marshalEpisodeState(state, 3, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"schema_version":"rayline.arc.episode-state.v3"`) {
+		t.Fatalf("upstream records written without v3: %.100s", payload)
+	}
+	decoded, _, err := unmarshalEpisodeState(payload, 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decoded.Upstream, state.Upstream) {
+		t.Fatal("upstream records did not round-trip")
+	}
+	if prefix, ok := decoded.UpstreamPrefixFor(state.Upstream[3].Worker); !ok || prefix.Messages != 5 {
+		t.Fatalf("lookup = %+v, %v", prefix, ok)
 	}
 }
