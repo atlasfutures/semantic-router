@@ -256,6 +256,15 @@ func TestRaylineARCWorkerThinkingNeedsTheReasoningObject(t *testing.T) {
 	if err := validateRaylineARCWorkerThinkingTransports(routerWith(APIFormatOpenAI, ProviderProfile{Type: "openai", BaseURL: "https://openrouter.ai/api/v1"}), arc); err != nil {
 		t.Fatalf("OpenRouter Chat refused: %v", err)
 	}
+	// The dev cell's shape: a provider_default base on an openrouter-type
+	// Chat backend (router-infra vsr.cloudrun.arc.redis.yaml on the
+	// thinking-lever dev pin).
+	providerDefault := &RaylineARCAlgorithmConfig{WorkerThinking: map[string]RaylineARCWorkerThinkingConfig{
+		"worker": {Level: "default", Wire: RaylineARCWorkerThinkingProviderDefault},
+	}}
+	if err := validateRaylineARCWorkerThinkingTransports(routerWith(APIFormatOpenAI, ProviderProfile{Type: "openrouter", BaseURL: "https://openrouter.ai/api/v1"}), providerDefault); err != nil {
+		t.Fatalf("provider_default on OpenRouter Chat refused: %v", err)
+	}
 	for name, cfg := range map[string]*RouterConfig{
 		"a Messages worker":        routerWith(APIFormatAnthropic, ProviderProfile{Type: "anthropic", BaseURL: "https://api.anthropic.com"}),
 		"a chat-template provider": routerWith(APIFormatOpenAI, ProviderProfile{Type: "vllm", BaseURL: "http://vllm.internal:8000/v1"}),
