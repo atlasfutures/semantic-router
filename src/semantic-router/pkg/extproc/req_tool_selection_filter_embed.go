@@ -130,13 +130,13 @@ func preserveTopScoredTools(
 	needed := preserveCount - len(kept)
 	seen := make(map[string]struct{}, len(kept))
 	for _, t := range kept {
-		seen[strings.ToLower(strings.TrimSpace(t.Name))] = struct{}{}
+		seen[strings.ToLower(strings.TrimSpace(t.Identity()))] = struct{}{}
 	}
 	for _, s := range scored {
 		if needed == 0 {
 			break
 		}
-		key := strings.ToLower(strings.TrimSpace(s.tool.Name))
+		key := strings.ToLower(strings.TrimSpace(s.tool.Identity()))
 		if _, dup := seen[key]; dup {
 			continue
 		}

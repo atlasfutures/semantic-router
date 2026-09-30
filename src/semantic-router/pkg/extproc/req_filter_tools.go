@@ -584,11 +584,14 @@ func filterToolsByDecisionPolicy(tools []llmprotocol.Tool, allowTools, blockTool
 	}
 	filtered := make([]llmprotocol.Tool, 0, len(tools))
 	for _, tool := range tools {
-		name := tool.Name
-		if blockSet[name] {
+		// A namespaced tool matches by its function name or by its qualified
+		// identity, so a policy can name one function in every namespace or a
+		// single namespace's function.
+		name, identity := tool.Name, tool.Identity()
+		if blockSet[name] || blockSet[identity] {
 			continue
 		}
-		if len(allowSet) > 0 && !allowSet[name] {
+		if len(allowSet) > 0 && !allowSet[name] && !allowSet[identity] {
 			continue
 		}
 		filtered = append(filtered, tool)

@@ -74,3 +74,31 @@ func TestNamespacedStreamedCallComesBackWithItsNamespace(t *testing.T) {
 		t.Fatalf("the qualified name reached the client: %s", client)
 	}
 }
+
+// Two namespaces may reuse a function name; preserving the top-scored tools
+// keeps both, because each is its own tool.
+func TestPreservedToolsKeepNamespacedFunctionsApart(t *testing.T) {
+	scored := []scoredRequestTool{
+		{tool: llmprotocol.Tool{Name: "close", Namespace: "agents"}},
+		{tool: llmprotocol.Tool{Name: "close", Namespace: "files"}},
+	}
+	kept := preserveTopScoredTools(scored, nil, 2)
+	if len(kept) != 2 {
+		t.Fatalf("kept %d tools, want both namespaced functions: %+v", len(kept), kept)
+	}
+}
+
+// A decision's tool policy matches a namespaced tool by its function name or
+// its qualified identity.
+func TestToolPolicyMatchesNamespacedTools(t *testing.T) {
+	tools := []llmprotocol.Tool{
+		{Name: "spawn_agent", Namespace: "multi_agent_v1"},
+		{Name: "exec_command"},
+	}
+	if kept := filterToolsByDecisionPolicy(tools, nil, []string{"multi_agent_v1__spawn_agent"}); len(kept) != 1 || kept[0].Name != "exec_command" {
+		t.Fatalf("blocking the qualified name kept %+v", kept)
+	}
+	if kept := filterToolsByDecisionPolicy(tools, []string{"spawn_agent"}, nil); len(kept) != 1 || kept[0].Namespace != "multi_agent_v1" {
+		t.Fatalf("allowing the function name kept %+v", kept)
+	}
+}
