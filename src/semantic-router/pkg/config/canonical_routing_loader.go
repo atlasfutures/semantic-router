@@ -46,6 +46,7 @@ func ParseRoutingYAMLBytes(data []byte) (*RouterConfig, error) {
 			Modality:          model.Modality,
 			Vision:            copyBool(model.Vision),
 			Disabled:          copyBool(model.Disabled),
+			HostedTools:       append([]string(nil), model.HostedTools...),
 		}
 	}
 
@@ -63,6 +64,9 @@ func ParseRoutingYAMLBytes(data []byte) (*RouterConfig, error) {
 		return nil, err
 	}
 	if err := validateModalityContracts(&cfg); err != nil {
+		return nil, err
+	}
+	if err := validateHostedToolContracts(&cfg); err != nil {
 		return nil, err
 	}
 

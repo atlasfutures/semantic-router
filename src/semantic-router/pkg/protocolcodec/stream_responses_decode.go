@@ -33,6 +33,12 @@ func (decoder *responsesStreamDecoder) decodeResponsesLifecycleEvent(
 			return nil, nil, err
 		}
 		return nil, nil, nil
+	case "response.web_search_call.in_progress", "response.web_search_call.searching",
+		"response.web_search_call.completed":
+		// A web search's progress is not carried: the item's added and done
+		// events carry what a client needs, and the done item holds the
+		// query and sources.
+		return nil, nil, nil
 	default:
 		if err := decoder.applyUnknownResponsesEvent(&event, frame); err != nil {
 			return nil, nil, err
@@ -104,6 +110,9 @@ func (decoder *responsesStreamDecoder) applyResponsesItemStart(event *llmprotoco
 			Kind:           llmprotocol.ContentGeneratedImage,
 			GeneratedImage: decodeResponsesGeneratedImage(item),
 		}
+	} else if item.Type == "web_search_call" {
+		content := webSearchCallContent(item)
+		event.Content = &content
 	}
 	return nil
 }
@@ -239,7 +248,10 @@ func (decoder *responsesStreamDecoder) validateCompletedResponseItem(wire respon
 			"stream_item_status_mismatch", "Responses image generation item done event requires completed or failed status",
 		)
 	}
-	if item.Type != "image_generation_call" && item.Status != "" && item.Status != "completed" && item.Status != "incomplete" {
+	// A web search may end failed, which is its own terminal status.
+	failedSearch := item.Type == "web_search_call" && item.Status == "failed"
+	if item.Type != "image_generation_call" && !failedSearch &&
+		item.Status != "" && item.Status != "completed" && item.Status != "incomplete" {
 		return responsesItemWire{}, invalidProviderResponse(
 			"stream_item_status_mismatch", "Responses output item done event requires completed or incomplete status",
 		)
@@ -273,6 +285,9 @@ func (decoder *responsesStreamDecoder) applyCompletedResponseItemKind(
 			Kind:           llmprotocol.ContentGeneratedImage,
 			GeneratedImage: decodeResponsesGeneratedImage(item),
 		}
+	case "web_search_call":
+		content := webSearchCallContent(item)
+		event.Content = &content
 	default:
 		return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_output_item", "Responses completed an unsupported output item", nil)
 	}

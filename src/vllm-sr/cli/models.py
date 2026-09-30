@@ -1927,6 +1927,9 @@ class RoutingModel(BaseModel):
     # out, which is how a fixed, ordinal-indexed arm set retires an arm
     # without renumbering the rest.
     disabled: Optional[bool] = None
+    # Provider-run tools this model may be sent (web_search). Absent sends
+    # none: the declaration is dropped. Separate from capabilities.
+    hosted_tools: Optional[List[Literal["web_search"]]] = None
 
     @field_validator("released_at", "knowledge_cutoff", mode="before")
     @classmethod

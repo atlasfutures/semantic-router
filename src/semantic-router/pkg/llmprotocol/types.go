@@ -403,6 +403,11 @@ type Request struct {
 	// serves the turn: without them the turn still works, and the model only
 	// cannot call them.
 	CarriedTools []UnmodeledBlock
+	// HostedTools names the provider-run tools the arm this request is
+	// dispatched to is admitted with (the model card's hosted_tools). A
+	// carried declaration of one reaches a target of its own format only
+	// when named here. The router sets it per dispatch; no decoder does.
+	HostedTools []string
 }
 
 type StopReason string

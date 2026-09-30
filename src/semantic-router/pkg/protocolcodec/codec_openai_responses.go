@@ -131,6 +131,9 @@ type responsesItemWire struct {
 	Phase            json.RawMessage `json:"phase,omitempty"`
 	EncryptedContent json.RawMessage `json:"encrypted_content,omitempty"`
 	Result           *string         `json:"result,omitempty"`
+	// Action is what a web_search_call did: its query or the page it opened,
+	// with the sources it read. The router carries it unread.
+	Action json.RawMessage `json:"action,omitempty"`
 }
 
 func (wire responsesItemWire) MarshalJSON() ([]byte, error) {
@@ -455,15 +458,15 @@ func decodeResponsesNamespaceTool(body json.RawMessage, request *llmprotocol.Req
 	return nil
 }
 
-// carriedResponsesToolTypes are the tool kinds Codex declares on every turn
-// that the contract does not model. Each is kept whole on the request, counted
-// toward the tool limit and a required choice, and dropped on every target,
-// the Responses one included: when the model searches, the provider returns
-// web_search_call output the router does not yet carry back, and the turn
-// would fail. Losing it costs the model a tool, not the turn. Carrying it is
-// atlasfutures/semantic-router#107. A caller-run kind such as custom or
-// apply_patch stays refused: dropping it would silently take away a tool the
-// client expects the model to call.
+// carriedResponsesToolTypes are the provider-run tool kinds Codex declares on
+// every turn that the contract does not model. Each is kept whole on the
+// request, counted toward the tool limit and a required choice, and sent only
+// to a Responses target whose arm is admitted with it (the model card's
+// hosted_tools, handed to the codec as Request.HostedTools); every other
+// target drops and counts it. Web search changes what a turn costs and does,
+// so it stays off an arm that was never evaluated with it. A caller-run kind
+// such as custom or apply_patch stays refused: dropping it would silently
+// take away a tool the client expects the model to call.
 var carriedResponsesToolTypes = map[string]bool{"web_search": true}
 
 func responsesToolDiscriminator(body json.RawMessage) (string, error) {

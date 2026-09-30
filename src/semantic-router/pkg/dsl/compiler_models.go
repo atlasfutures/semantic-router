@@ -56,6 +56,9 @@ func applyRoutingModelArrayFields(params *config.ModelParams, fields map[string]
 	if v, ok := getEvaluationsField(fields, "evaluations"); ok {
 		params.Evaluations = v
 	}
+	if v, ok := getStringArrayField(fields, "hosted_tools"); ok {
+		params.HostedTools = v
+	}
 }
 
 func getEvaluationsField(fields map[string]Value, key string) ([]modelcatalog.UserEvaluation, bool) {

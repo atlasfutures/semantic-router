@@ -72,7 +72,7 @@ func responsesOutputItemRequiredFields(item responsesItemWire) ([]string, error)
 		required = append(required, "call_id", "name", "arguments")
 	case "reasoning":
 		required = append(required, "id", "summary")
-	case "image_generation_call":
+	case "image_generation_call", "web_search_call":
 		required = append(required, "id", "status")
 	default:
 		return nil, invalidProviderResponse("invalid_response_item", "Responses output item type is unsupported")
@@ -205,6 +205,14 @@ func validateResponsesOutputItemStatus(item responsesItemWire) error {
 			return nil
 		default:
 			return invalidProviderResponse("invalid_responses_item_status", "Responses image generation status is not recognized")
+		}
+	}
+	if item.Type == "web_search_call" {
+		switch item.Status {
+		case "completed", "in_progress", "searching", "failed", "incomplete":
+			return nil
+		default:
+			return invalidProviderResponse("invalid_responses_item_status", "Responses web search status is not recognized")
 		}
 	}
 	switch item.Status {

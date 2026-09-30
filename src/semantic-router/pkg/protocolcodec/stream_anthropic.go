@@ -434,6 +434,14 @@ func (encoder *anthropicStreamEncoder) Push(event llmprotocol.Event) ([][]byte, 
 	if encoder.terminal {
 		return nil, nil, llmprotocol.NewError(llmprotocol.ErrorConflict, "stream_terminal", "stream is already terminal", nil)
 	}
+	if event.Content != nil {
+		// A web search the provider ran is shown only to a Responses client;
+		// here it would open an empty block. The answer follows as its own
+		// item.
+		if _, webSearch := carriedWebSearchCall(*event.Content); webSearch {
+			return nil, nil, nil
+		}
+	}
 	normalized, pushErr := encoder.next(event)
 	if pushErr != nil {
 		return nil, nil, pushErr

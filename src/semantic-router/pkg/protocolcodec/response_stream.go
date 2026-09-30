@@ -179,6 +179,15 @@ func neutralContentGroupEvents(
 		}
 		return neutralToolCallEvents(started, completed, group.contents[0])
 	}
+	if len(group.contents) == 1 {
+		// A carried web_search_call replays as the item's start and
+		// completion, as it streamed from the provider.
+		if _, webSearch := carriedWebSearchCall(group.contents[0]); webSearch {
+			content := group.contents[0]
+			started.Content, completed.Content = &content, &content
+			return []llmprotocol.Event{started, completed}, nil
+		}
+	}
 
 	events := []llmprotocol.Event{started}
 	for contentIndex, content := range group.contents {

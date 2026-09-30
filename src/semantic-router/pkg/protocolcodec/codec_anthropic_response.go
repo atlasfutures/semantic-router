@@ -182,7 +182,7 @@ func (AnthropicMessagesCodec) EncodeResponse(response llmprotocol.Response, enve
 		}
 	}
 	contents := make([]llmprotocol.Content, 0)
-	for _, item := range withoutEncryptedReasoningCarriers(response.Output) {
+	for _, item := range withoutResponsesOnlyOutput(response.Output) {
 		contents = append(contents, item.Content...)
 	}
 	contentDiagnostics, err := anthropicContentDiagnostics(contents, envelope.Format, policy)

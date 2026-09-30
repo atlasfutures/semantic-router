@@ -239,7 +239,7 @@ func (AnthropicMessagesCodec) EncodeRequest(request llmprotocol.Request, envelop
 	if encodeErr != nil {
 		return nil, diagnostics, encodeErr
 	}
-	appendCarriedToolDrops(&diagnostics, request.CarriedTools, llmprotocol.AnthropicMessagesV1, policy)
+	appendCarriedToolDrops(&diagnostics, request, llmprotocol.AnthropicMessagesV1, policy)
 	body, encodeErr = mergeUnmodeledFields(body, request, llmprotocol.AnthropicMessagesV1, &diagnostics, policy)
 	return body, diagnostics, encodeErr
 }

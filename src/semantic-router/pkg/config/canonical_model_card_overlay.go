@@ -24,6 +24,7 @@ func applyCanonicalModelCardOverlay(cfg *RouterConfig, canonical *CanonicalConfi
 			}
 			params.Vision = copyBool(card.Vision)
 			params.Disabled = copyBool(card.Disabled)
+			params.HostedTools = append([]string(nil), card.HostedTools...)
 			cfg.ModelConfig[name] = params
 		}
 		return
@@ -39,6 +40,7 @@ func applyCanonicalModelCardOverlay(cfg *RouterConfig, canonical *CanonicalConfi
 		}
 		params.Vision = copyBool(card.Vision)
 		params.Disabled = copyBool(card.Disabled)
+		params.HostedTools = append([]string(nil), card.HostedTools...)
 		if model.ProviderPreferences != nil {
 			params.ProviderPreferences = copyProviderPreferences(model.ProviderPreferences)
 		}

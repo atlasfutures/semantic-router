@@ -605,13 +605,15 @@ func TestOfficialUnsupportedResponsesOutputItemDiscriminatorsAreTyped(t *testing
 		"custom_tool_call_output", "file_search_call", "function_call_output", "function_shell_call",
 		"function_shell_call_output", "local_shell_call", "local_shell_call_output",
 		"mcp_approval_request", "mcp_approval_response", "mcp_call", "mcp_list_tools", "program",
-		"program_output", "tool_search_call", "tool_search_output", "web_search_call",
+		"program_output", "tool_search_call", "tool_search_output",
 	)
+	// web_search_call is carried whole to a Responses client: see
+	// webSearchCallContent.
 	assertClosedDiscriminatorInventory(
 		t,
 		"OpenAI Responses output item",
 		28,
-		fields("function_call", "image_generation_call", "message", "reasoning"),
+		fields("function_call", "image_generation_call", "message", "reasoning", "web_search_call"),
 		unsupported,
 	)
 	engine := NewBuiltinEngine()

@@ -227,6 +227,32 @@ global:
         enabled: true
 ```
 
+### Provider-run tools on a Model Card
+
+`hosted_tools` lists the provider-run tools a model may be sent when a client
+declares one. The only supported value is `web_search`, which Codex CLI
+declares on every Responses turn:
+
+```yaml
+routing:
+  modelCards:
+    - name: gpt-5-codex
+      hosted_tools: [web_search]
+```
+
+- **Absent or empty sends none.** The client's declaration is dropped and
+  counted (`tools.web_search`), and the turn is served without it. Web search
+  changes what a turn costs and does, so a model gets it only when its card
+  admits it.
+- **Forwarded only on OpenAI Responses.** An admitted model on a Responses
+  backend gets the declaration unchanged, and the client gets the provider's
+  `web_search_call` items back, buffered or streamed. A Chat Completions or
+  Anthropic Messages backend drops it.
+- **Separate from `capabilities`.** Admitting web search needs no
+  `capabilities` list, and it does not gate which requests the model may
+  serve.
+- An unknown entry is refused when the configuration loads.
+
 ### Catalog-backed models
 
 Built-in support is additive to the same `version: v0.3` hierarchy. Set the

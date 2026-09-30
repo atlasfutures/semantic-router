@@ -31,6 +31,7 @@ const (
 	responsesOutputReasoning responsesOutputKind = "reasoning"
 	responsesOutputTool      responsesOutputKind = "tool"
 	responsesOutputImage     responsesOutputKind = "image_generation"
+	responsesOutputWebSearch responsesOutputKind = "web_search_call"
 )
 
 type responsesOutputKey struct {
@@ -364,6 +365,9 @@ func (decoder *responsesStreamDecoder) validateResponsesEventItemType(wire respo
 	case "response.image_generation_call.in_progress", "response.image_generation_call.generating",
 		"response.image_generation_call.partial_image", "response.image_generation_call.completed":
 		expected = "image_generation_call"
+	case "response.web_search_call.in_progress", "response.web_search_call.searching",
+		"response.web_search_call.completed":
+		expected = "web_search_call"
 	}
 	if expected != "" && decoder.itemTypes[*wire.OutputIndex] != expected {
 		return invalidProviderResponse(
@@ -477,7 +481,9 @@ func isSupportedResponsesEvent(eventType string) bool {
 		"response.reasoning_text.delta", "response.reasoning_text.done",
 		"response.function_call_arguments.delta", "response.function_call_arguments.done",
 		"response.image_generation_call.in_progress", "response.image_generation_call.generating",
-		"response.image_generation_call.partial_image", "response.image_generation_call.completed":
+		"response.image_generation_call.partial_image", "response.image_generation_call.completed",
+		"response.web_search_call.in_progress", "response.web_search_call.searching",
+		"response.web_search_call.completed":
 		return true
 	default:
 		return false

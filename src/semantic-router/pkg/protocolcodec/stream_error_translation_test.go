@@ -231,7 +231,7 @@ func TestResponsesStreamOutputItemUnionIsDiscriminatedBeforeVariantDecode(t *tes
 	}{
 		{
 			name:     "unsupported official item keeps typed capability error",
-			item:     `{"type":"web_search_call","id":"search_1","variant_specific_field":true}`,
+			item:     `{"type":"file_search_call","id":"search_1","variant_specific_field":true}`,
 			category: llmprotocol.ErrorUnsupportedFeature,
 			code:     "unsupported_output_item",
 		},

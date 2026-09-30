@@ -185,6 +185,9 @@ func (r *OpenAIRouter) encodeDispatchRequest(ctx *RequestContext) ([]byte, error
 		format = llmprotocol.OpenAIChatV1
 	}
 	dispatchRequest := *ctx.SemanticRequest
+	// Only a model admitted with a provider-run tool is sent a client's
+	// declaration of it; the codec drops and counts it otherwise.
+	dispatchRequest.HostedTools = ctx.DispatchHostedTools
 	if format == llmprotocol.OpenAIChatV1 && dispatchRequest.Stream &&
 		!streamUsageAlreadyRequested(dispatchRequest.StreamOptions) {
 		// The Router always asks Chat backends for the final usage chunk so

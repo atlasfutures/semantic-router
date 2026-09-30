@@ -28,7 +28,7 @@ func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope 
 	appendRequestDispositions(&diagnostics, request, llmprotocol.OpenAIResponsesV1, policy)
 	appendUnchoosableToolChoiceDrop(&diagnostics, policy, request, llmprotocol.OpenAIResponsesV1, len(wire.Tools))
 	appendToolExtensionDrops(&diagnostics, request.Tools, llmprotocol.OpenAIResponsesV1, policy)
-	appendCarriedToolDrops(&diagnostics, request.CarriedTools, llmprotocol.OpenAIResponsesV1, policy)
+	appendCarriedToolDrops(&diagnostics, request, llmprotocol.OpenAIResponsesV1, policy)
 	for _, message := range request.Messages {
 		appendContentExtensionDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
 		appendCarriedBlockDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
@@ -154,7 +154,7 @@ func encodeResponsesRequestWire(request llmprotocol.Request) (responsesRequestWi
 		return responsesRequestWire{}, err
 	}
 	wire.Input, _ = json.Marshal(items)
-	wire.Tools = encodeResponsesTools(request.Tools, request.ImageGeneration)
+	wire.Tools = encodeResponsesTools(request.Tools, request.ImageGeneration, forwardedCarriedTools(request, llmprotocol.OpenAIResponsesV1))
 	// Gated on the tools this target encoded; see encodeChatRequestOptions for
 	// why a server-tool-only turn otherwise states a choice with no tools.
 	if len(wire.Tools) > 0 {
@@ -204,8 +204,12 @@ func encodeResponsesRequestItems(request llmprotocol.Request) ([]json.RawMessage
 	return items, nil
 }
 
-func encodeResponsesTools(input []llmprotocol.Tool, imageGeneration *llmprotocol.ImageGenerationOptions) json.RawMessage {
-	if len(input) == 0 && imageGeneration == nil {
+func encodeResponsesTools(
+	input []llmprotocol.Tool,
+	imageGeneration *llmprotocol.ImageGenerationOptions,
+	carried []llmprotocol.UnmodeledBlock,
+) json.RawMessage {
+	if len(input) == 0 && imageGeneration == nil && len(carried) == 0 {
 		return nil
 	}
 	tools := make([]responsesToolWire, 0, len(input)+1)
@@ -254,14 +258,22 @@ func encodeResponsesTools(input []llmprotocol.Tool, imageGeneration *llmprotocol
 		}
 		tools = append(tools, tool)
 	}
-	if len(tools) == 0 {
+	encoded := make([]json.RawMessage, 0, len(tools)+len(carried))
+	for _, tool := range tools {
+		body, _ := json.Marshal(tool)
+		encoded = append(encoded, body)
+	}
+	for _, tool := range carried {
+		encoded = append(encoded, append(json.RawMessage(nil), tool.Raw...))
+	}
+	if len(encoded) == 0 {
 		// Every declared tool was one this target cannot express. An empty
 		// list says nothing the absent member does not, and leaving it out is
 		// what lets the tool choice be gated on it.
 		return nil
 	}
-	encoded, _ := json.Marshal(tools)
-	return encoded
+	body, _ := json.Marshal(encoded)
+	return body
 }
 
 func encodeResponsesOutputFormat(output llmprotocol.OutputFormat) *responsesTextWire {

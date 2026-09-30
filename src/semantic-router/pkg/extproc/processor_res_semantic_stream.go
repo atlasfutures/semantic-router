@@ -45,7 +45,11 @@ type semanticStreamItem struct {
 	reasoning    string
 	reasoningSig string
 	toolCall     *llmprotocol.ToolCall
-	completed    bool
+	// carried is a whole item the source format names and the contract does
+	// not, such as a Responses web_search_call; the settled response keeps it
+	// so a cache hit or a stored continuation shows it as the stream did.
+	carried   *llmprotocol.Content
+	completed bool
 }
 
 func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
@@ -295,6 +299,7 @@ func (state *semanticResponseStreamState) observe(events []llmprotocol.Event) {
 			if event.Content != nil && event.Content.Kind == llmprotocol.ContentReasoning {
 				item.reasoningSig = event.Content.Signature
 			}
+			item.observeCarried(event.Content)
 		case llmprotocol.EventOutputTextDelta:
 			item := state.item(event.ItemIndex)
 			if event.Content != nil && event.Content.Kind == llmprotocol.ContentRefusal {
@@ -332,6 +337,7 @@ func (state *semanticResponseStreamState) observe(events []llmprotocol.Event) {
 				call := *event.ToolCall
 				item.toolCall = &call
 			}
+			item.observeCarried(event.Content)
 		case llmprotocol.EventResponseCompleted:
 			state.terminal = true
 		case llmprotocol.EventResponseFailed:
@@ -339,6 +345,16 @@ func (state *semanticResponseStreamState) observe(events []llmprotocol.Event) {
 			state.failed = event.Error
 		}
 	}
+}
+
+// observeCarried keeps the latest whole carried item an event names; the
+// completion's copy replaces the start's.
+func (item *semanticStreamItem) observeCarried(content *llmprotocol.Content) {
+	if content == nil || content.Kind != llmprotocol.ContentUnmodeled || content.Unmodeled == nil {
+		return
+	}
+	carried := *content
+	item.carried = &carried
 }
 
 func (state *semanticResponseStreamState) item(index int) *semanticStreamItem {
@@ -366,6 +382,9 @@ func (state *semanticResponseStreamState) response() (*llmprotocol.Response, err
 			return nil, fmt.Errorf("semantic stream output item is incomplete")
 		}
 		contents := make([]llmprotocol.Content, 0, 4)
+		if item.carried != nil {
+			contents = append(contents, *item.carried)
+		}
 		if item.reasoning != "" || item.reasoningSig != "" {
 			contents = append(contents, llmprotocol.Content{
 				Kind: llmprotocol.ContentReasoning, Text: item.reasoning,
