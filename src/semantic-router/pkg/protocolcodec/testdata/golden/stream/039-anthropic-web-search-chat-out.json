@@ -1,0 +1,85 @@
+{
+  "frames": [
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "role": "assistant"
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "msg_web_search",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "content": "Go releases twice a year."
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "msg_web_search",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "annotations": [
+                {
+                  "type": "url_citation",
+                  "url_citation": {
+                    "end_index": 25,
+                    "start_index": 0,
+                    "title": "Release History",
+                    "url": "https://go.dev/doc/devel/release"
+                  }
+                }
+              ],
+              "content": ""
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "msg_web_search",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {},
+            "finish_reason": "stop",
+            "index": 0
+          }
+        ],
+        "id": "msg_web_search",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": "[DONE]"
+    }
+  ]
+}

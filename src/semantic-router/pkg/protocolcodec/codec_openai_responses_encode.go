@@ -338,6 +338,13 @@ func (state *responsesMessageEncodingState) appendContent(content llmprotocol.Co
 		}
 		return state.appendGeneratedImage(content.GeneratedImage)
 	case llmprotocol.ContentUnmodeled:
+		if call, webSearch := carriedWebSearchCall(content); webSearch {
+			if err := state.flushPending(); err != nil {
+				return err
+			}
+			state.items = append(state.items, call)
+			return nil
+		}
 		return state.appendCarriedBlock(content)
 	default:
 		if err := state.flushReasoning(); err != nil {

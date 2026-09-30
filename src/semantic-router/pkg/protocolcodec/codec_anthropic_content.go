@@ -52,7 +52,14 @@ func decodeAnthropicResponseContentBlock(body json.RawMessage, index int, policy
 	if err != nil {
 		return llmprotocol.Content{}, err
 	}
-	return decodeAnthropicContentBlock(body, typeName, index, policy, true)
+	if anthropicServerToolBlock(typeName) {
+		return carriedAnthropicBlock(typeName, body), nil
+	}
+	content, err := decodeAnthropicContentBlock(body, typeName, index, policy, true)
+	if err == nil && content.Kind == llmprotocol.ContentText && len(content.CitationsRaw) > 0 {
+		content.Citations = webSearchURLCitations(content.CitationsRaw, content.Text)
+	}
+	return content, err
 }
 
 func decodeAnthropicContentBlock(
@@ -80,6 +87,11 @@ func decodeAnthropicContentBlock(
 		return llmprotocol.Content{}, err
 	}
 	content, err := decodeAnthropicTypedContent(typeName, block, policy)
+	if err == nil && providerOutput && typeName == "text" {
+		// Provider citations reach here only as web search result locations;
+		// see validateAnthropicContentExtensions.
+		content.CitationsRaw = carriedAnthropicCitations(block.Citations)
+	}
 	if err != nil || providerOutput {
 		// Provider output is not carried: a member the upstream added to a
 		// completion is dropped and reported by the response leg's own policy,
@@ -287,7 +299,7 @@ func buildAnthropicRequestWire(
 	if messagesErr := appendAnthropicMessages(&wire, request.Messages); messagesErr != nil {
 		return anthropicRequestWire{}, diagnostics, messagesErr
 	}
-	if toolsErr := appendAnthropicTools(&wire, request.Tools); toolsErr != nil {
+	if toolsErr := appendAnthropicTools(&wire, request); toolsErr != nil {
 		return anthropicRequestWire{}, diagnostics, toolsErr
 	}
 	// Gated on the tools this target encoded, as on Chat and Responses: a
@@ -509,9 +521,9 @@ func appendAnthropicMessages(wire *anthropicRequestWire, messages []llmprotocol.
 	return nil
 }
 
-func appendAnthropicTools(wire *anthropicRequestWire, tools []llmprotocol.Tool) error {
-	encoded := make([]json.RawMessage, 0, len(tools))
-	for _, tool := range tools {
+func appendAnthropicTools(wire *anthropicRequestWire, request llmprotocol.Request) error {
+	encoded := make([]json.RawMessage, 0, len(request.Tools))
+	for _, tool := range request.Tools {
 		body, err := json.Marshal(anthropicToolWire{
 			Name: llmprotocol.QualifiedToolName(tool.Namespace, tool.Name), Description: llmprotocol.FlattenedToolDescription(tool),
 			InputSchema: tool.InputSchema,
@@ -526,6 +538,11 @@ func appendAnthropicTools(wire *anthropicRequestWire, tools []llmprotocol.Tool) 
 			}
 		}
 		encoded = append(encoded, body)
+	}
+	for _, carried := range forwardedCarriedTools(request, llmprotocol.AnthropicMessagesV1) {
+		if mapped := anthropicHostedTool(carried, llmprotocol.AnthropicMessagesV1); mapped != nil {
+			encoded = append(encoded, mapped)
+		}
 	}
 	if len(encoded) == 0 {
 		return nil
@@ -687,7 +704,9 @@ func anthropicContentDiagnostics(contents []llmprotocol.Content, source llmproto
 	var diagnostics llmprotocol.Diagnostics
 	appendCarriedBlockDrops(&diagnostics, contents, llmprotocol.AnthropicMessagesV1, policy)
 	for _, content := range contents {
-		if len(content.Citations) > 0 {
+		// URL citations derived from Anthropic's own raw citations are not
+		// lost: the raw ones are what this encoder writes.
+		if len(content.Citations) > 0 && len(content.CitationsRaw) == 0 {
 			if err := appendLossy(&diagnostics, policy, source, llmprotocol.AnthropicMessagesV1, "content.citations", "Messages cannot represent URL citations"); err != nil {
 				return diagnostics, err
 			}

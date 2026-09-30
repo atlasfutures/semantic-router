@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
@@ -48,8 +49,13 @@ type semanticStreamItem struct {
 	// carried is a whole item the source format names and the contract does
 	// not, such as a Responses web_search_call; the settled response keeps it
 	// so a cache hit or a stored continuation shows it as the stream did.
-	carried   *llmprotocol.Content
-	completed bool
+	carried *llmprotocol.Content
+	// citations and citationsRaw are the text's citations, as streamed: the
+	// raw form an Anthropic web search wrote and the URL citations derived
+	// from it or sent by a Responses provider.
+	citations    []llmprotocol.Citation
+	citationsRaw []json.RawMessage
+	completed    bool
 }
 
 func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
@@ -307,6 +313,7 @@ func (state *semanticResponseStreamState) observe(events []llmprotocol.Event) {
 			} else {
 				item.text += event.Delta
 			}
+			item.observeCitations(event.Content)
 		case llmprotocol.EventReasoningDelta:
 			item := state.item(event.ItemIndex)
 			item.reasoning += event.Delta
@@ -344,6 +351,18 @@ func (state *semanticResponseStreamState) observe(events []llmprotocol.Event) {
 			state.terminal = true
 			state.failed = event.Error
 		}
+	}
+}
+
+// observeCitations keeps the citations a text delta carries.
+func (item *semanticStreamItem) observeCitations(content *llmprotocol.Content) {
+	if content == nil {
+		return
+	}
+	item.citations = append(item.citations, content.Citations...)
+	var raw []json.RawMessage
+	if len(content.CitationsRaw) > 0 && json.Unmarshal(content.CitationsRaw, &raw) == nil {
+		item.citationsRaw = append(item.citationsRaw, raw...)
 	}
 }
 
@@ -395,7 +414,11 @@ func (state *semanticResponseStreamState) response() (*llmprotocol.Response, err
 			contents = append(contents, llmprotocol.Content{Kind: llmprotocol.ContentRefusal, Text: item.refusal})
 		}
 		if item.text != "" {
-			contents = append(contents, llmprotocol.Content{Kind: llmprotocol.ContentText, Text: item.text})
+			text := llmprotocol.Content{Kind: llmprotocol.ContentText, Text: item.text, Citations: item.citations}
+			if len(item.citationsRaw) > 0 {
+				text.CitationsRaw, _ = json.Marshal(item.citationsRaw)
+			}
+			contents = append(contents, text)
 		}
 		if item.toolCall != nil {
 			call := *item.toolCall

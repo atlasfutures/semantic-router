@@ -140,7 +140,7 @@ func anthropicResponseContentType(body json.RawMessage) (string, error) {
 		return "", err
 	}
 	switch typeName {
-	case "text", "thinking", "tool_use":
+	case "text", "thinking", "tool_use", "server_tool_use", "web_search_tool_result":
 		return typeName, nil
 	case "redacted_thinking":
 		return "", llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "redacted_reasoning", "redacted reasoning cannot be translated", nil)
@@ -160,7 +160,7 @@ func anthropicResponseContentType(body json.RawMessage) (string, error) {
 // carrier instead of named here. That is what stops this function from growing
 // one branch per beta.
 func validateAnthropicContentExtensions(block anthropicContentWire, location string, providerOutput bool) error {
-	if providerOutput && len(block.Citations) > 0 {
+	if providerOutput && len(block.Citations) > 0 && !webSearchResultCitations(block.Citations) {
 		return llmprotocol.NewFieldError(
 			llmprotocol.ErrorUnsupportedFeature, "unsupported_citations",
 			"Anthropic citations are not supported by the neutral contract",

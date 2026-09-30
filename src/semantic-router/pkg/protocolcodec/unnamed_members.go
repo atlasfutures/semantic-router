@@ -352,7 +352,21 @@ func forwardedCarriedTools(request llmprotocol.Request, target llmprotocol.WireF
 }
 
 func carriedToolForwarded(tool llmprotocol.UnmodeledBlock, target llmprotocol.WireFormat, hosted []string) bool {
-	return tool.Format == target && slices.Contains(hosted, tool.Type)
+	if !slices.Contains(hosted, tool.Type) {
+		return false
+	}
+	return tool.Format == target || anthropicHostedTool(tool, target) != nil
+}
+
+// anthropicHostedTool is the Anthropic server tool a carried Responses
+// declaration maps to on a Messages target, or nil: web_search becomes
+// Anthropic's web search tool, whose results come back as the server_tool_use
+// and web_search_tool_result blocks anthropic_web_search.go carries.
+func anthropicHostedTool(tool llmprotocol.UnmodeledBlock, target llmprotocol.WireFormat) json.RawMessage {
+	if target != llmprotocol.AnthropicMessagesV1 || tool.Format != llmprotocol.OpenAIResponsesV1 || tool.Type != "web_search" {
+		return nil
+	}
+	return json.RawMessage(`{"type":"web_search_20250305","name":"web_search"}`)
 }
 
 // appendToolExtensionDrops counts the carried members of each tool definition

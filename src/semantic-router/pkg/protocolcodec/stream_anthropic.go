@@ -11,6 +11,14 @@ type anthropicStreamDecoder struct {
 	streamState
 	framer       sseFramer
 	stopSequence string
+	// serverBlocks holds each open server web search block until it stops:
+	// its start frame, and the input a server_tool_use streams as JSON deltas.
+	serverBlocks map[int]*anthropicServerBlock
+	// textRunes counts each text block's characters so far, which is the span
+	// a streamed web search citation covers.
+	textRunes map[int]int64
+	// data is the JSON of the event being decoded.
+	data []byte
 }
 type anthropicStreamEncoder struct {
 	streamState
@@ -177,6 +185,7 @@ func (decoder *anthropicStreamDecoder) decodeAnthropicWireFrame(
 			return nil, nil, err
 		}
 	}
+	decoder.data = data
 	return decoder.decodeEvent(wire, frame)
 }
 
@@ -195,12 +204,18 @@ func (decoder *anthropicStreamDecoder) decodeEvent(
 	wire anthropicEventWire,
 	frame []byte,
 ) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	if events, handled, err := decoder.decodeAnthropicWebSearchEvent(wire); handled {
+		return events, nil, err
+	}
 	switch wire.Type {
 	case "message_start":
 		return decoder.emitAnthropicEvent(decodeAnthropicMessageStart(wire))
 	case "content_block_start":
 		return decoder.emitDecodedAnthropicEvent(decodeAnthropicContentStart(wire))
 	case "content_block_delta":
+		if wire.Delta != nil && wire.Delta.Type == "text_delta" {
+			decoder.countText(anthropicEventIndex(wire), wire.Delta.Text)
+		}
 		return decoder.emitDecodedAnthropicEvent(decodeAnthropicContentDelta(wire))
 	case "content_block_stop":
 		return decoder.emitAnthropicEvent(llmprotocol.Event{Type: llmprotocol.EventOutputItemCompleted, ItemIndex: anthropicEventIndex(wire)})
@@ -470,6 +485,16 @@ func isAnthropicContentEvent(eventType llmprotocol.EventType) bool {
 func (encoder *anthropicStreamEncoder) encodeAnthropicContentEvent(
 	event llmprotocol.Event,
 ) ([][]byte, llmprotocol.Diagnostics, error) {
+	if serverBlock := carriedAnthropicServerBlock(event.Content); serverBlock != nil {
+		if event.Type == llmprotocol.EventOutputItemStarted {
+			frames, err := encoder.startAnthropicServerBlock(event, serverBlock)
+			return frames, nil, err
+		}
+		if event.Type == llmprotocol.EventOutputItemCompleted {
+			frames, err := encoder.completeAnthropicServerBlock(event, serverBlock)
+			return frames, nil, err
+		}
+	}
 	switch event.Type {
 	case llmprotocol.EventOutputItemStarted:
 		return encoder.encodeAnthropicItemStartEvent(event)
@@ -661,7 +686,7 @@ func (encoder *anthropicStreamEncoder) encodeAnthropicTextDelta(
 	event llmprotocol.Event,
 ) ([][]byte, llmprotocol.Diagnostics, error) {
 	var diagnostics llmprotocol.Diagnostics
-	if event.Content != nil && len(event.Content.Citations) > 0 {
+	if event.Content != nil && len(event.Content.Citations) > 0 && len(event.Content.CitationsRaw) == 0 {
 		if err := appendLossy(
 			&diagnostics, encoder.policy, encoder.context.Source, encoder.context.Target,
 			"content.citations", "Messages cannot represent URL citations",
@@ -680,6 +705,13 @@ func (encoder *anthropicStreamEncoder) encodeAnthropicTextDelta(
 	frames, key, err := encoder.ensureAnthropicBlockStarted(event, llmprotocol.ContentText)
 	if err != nil {
 		return nil, diagnostics, err
+	}
+	if event.Content != nil && len(event.Content.CitationsRaw) > 0 {
+		citations, err := encoder.encodeAnthropicCitationDeltas(key, event.Content.CitationsRaw)
+		if err != nil {
+			return frames, diagnostics, err
+		}
+		frames = append(frames, citations...)
 	}
 	if event.Delta == "" {
 		return frames, diagnostics, nil

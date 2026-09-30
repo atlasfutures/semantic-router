@@ -587,6 +587,7 @@ func carriedWebSearchCall(content llmprotocol.Content) (responsesItemWire, bool)
 }
 
 func encodeResponsesOutputItem(item llmprotocol.OutputItem) ([]responsesItemWire, error) {
+	item.Content = anthropicWebSearchAsResponses(item.Content)
 	if len(item.Content) == 1 {
 		if call, carried := carriedWebSearchCall(item.Content[0]); carried {
 			return []responsesItemWire{call}, nil
