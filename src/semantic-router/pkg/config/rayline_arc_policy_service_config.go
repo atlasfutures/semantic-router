@@ -56,6 +56,27 @@ type RaylineARCPolicyServiceConfig struct {
 	// enforces: between boundaries the model is held and only its level
 	// varies. Empty lets every turn choose any action.
 	ModelSchedule string `yaml:"model_schedule,omitempty"`
+	// DispatchEffort chooses what reasoning an action's dispatch carries:
+	// "declared" (the default) sends the effort or budget the binding
+	// declares; "provider_default" sends none, so the provider's default
+	// applies. v4 packages were trained on turns whose effort never reached
+	// the provider (pathfinder #2655), so they are served at the provider's
+	// default until v5. Either way the loader checks the declared effort
+	// against the action_id, the steering suffix still renders from the
+	// level, and a thinking-off action (effort none) stays off.
+	DispatchEffort string `yaml:"dispatch_effort,omitempty"`
+}
+
+// Dispatch effort modes; see RaylineARCPolicyServiceConfig.DispatchEffort.
+const (
+	RaylineARCPolicyDispatchEffortDeclared        = "declared"
+	RaylineARCPolicyDispatchEffortProviderDefault = "provider_default"
+)
+
+// DispatchesProviderDefaultEffort reports whether actions are sent without
+// their declared effort or budget.
+func (cfg *RaylineARCPolicyServiceConfig) DispatchesProviderDefaultEffort() bool {
+	return cfg != nil && cfg.DispatchEffort == RaylineARCPolicyDispatchEffortProviderDefault
 }
 
 // RaylineARCPolicyBinding binds one package action to a worker and level.
@@ -122,6 +143,12 @@ func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) e
 	}
 	if cfg.ModelSchedule != "" && cfg.ModelSchedule != RaylineARCModelScheduleTaskTurnCompaction {
 		return fmt.Errorf("model_schedule must be empty or %s", RaylineARCModelScheduleTaskTurnCompaction)
+	}
+	switch cfg.DispatchEffort {
+	case "", RaylineARCPolicyDispatchEffortDeclared, RaylineARCPolicyDispatchEffortProviderDefault:
+	default:
+		return fmt.Errorf("dispatch_effort must be %s or %s",
+			RaylineARCPolicyDispatchEffortDeclared, RaylineARCPolicyDispatchEffortProviderDefault)
 	}
 	if len(cfg.Bindings) == 0 {
 		return fmt.Errorf("bindings are required")

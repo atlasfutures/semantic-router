@@ -98,6 +98,14 @@ Chat, and `output_config.effort` with adaptive thinking, or enabled thinking
 with the budget, on Messages. A decide response that scores an action with no
 binding fails the turn.
 
+`dispatch_effort: provider_default` sends each action without its declared
+effort or budget, so the provider's default applies. v4 packages were trained
+on turns whose effort never reached the provider (pathfinder #2655), so they
+are served this way until v5. The loader still checks the declared effort
+against the `action_id`. The steering suffix still renders from the level, a
+thinking-off action (`effort: none`) stays off, and the selection log records
+`policy_declared_effort` beside `policy_dispatch_effort`.
+
 On the neutral level the lever writes nothing, so a steer written on an earlier
 turn stays in force. The record carries both `thinking_level_requested` and
 `thinking_level_in_force`. This matches collection, where a "none" draw also
