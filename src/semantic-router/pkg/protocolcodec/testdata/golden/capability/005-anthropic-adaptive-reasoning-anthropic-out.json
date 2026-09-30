@@ -4,12 +4,7 @@
     "max_tokens": 32,
     "messages": [
       {
-        "content": [
-          {
-            "text": "Think when necessary.",
-            "type": "text"
-          }
-        ],
+        "content": "Think when necessary.",
         "role": "user"
       }
     ],

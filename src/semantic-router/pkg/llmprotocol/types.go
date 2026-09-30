@@ -130,6 +130,13 @@ type Message struct {
 	// generation settings from its position on. Only the router writes one;
 	// no decoder produces it.
 	Configuration *ConfigurationUpdate
+	// WireGroup names the client wire message this message was decoded from,
+	// as its 1-based position, when that wire message held tool results.
+	// Anthropic carries a turn's tool results, and any text beside them, in
+	// one user message that the decoder splits into one tool message per
+	// result; the Messages encoder rejoins consecutive messages of one group,
+	// so the provider sees the client's grouping. Zero is no group.
+	WireGroup int
 }
 
 // ConfigurationUpdate is a mid-conversation settings change. Only the

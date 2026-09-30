@@ -4,12 +4,7 @@
     "max_tokens": 64,
     "messages": [
       {
-        "content": [
-          {
-            "text": "Stop on one of several markers.",
-            "type": "text"
-          }
-        ],
+        "content": "Stop on one of several markers.",
         "role": "user"
       }
     ],

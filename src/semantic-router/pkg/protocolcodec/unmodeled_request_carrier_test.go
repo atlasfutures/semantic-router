@@ -47,7 +47,13 @@ func routeAnthropicRequest(
 	if err != nil {
 		t.Fatalf("EncodeRequest(%s) error = %v", target, err)
 	}
-	return result.Body
+	// A Messages destination may be sent the client's own bytes, spacing
+	// included; the assertions read members, so they read compact JSON.
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, result.Body); err != nil {
+		t.Fatalf("EncodeRequest(%s) body is not JSON: %v", target, err)
+	}
+	return compact.Bytes()
 }
 
 func decodeJSONObject(t *testing.T, body []byte) map[string]json.RawMessage {
