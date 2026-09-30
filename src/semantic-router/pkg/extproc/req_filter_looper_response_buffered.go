@@ -23,6 +23,7 @@ func prepareBufferedLooperResponse(
 		return nil, nil, err
 	}
 	response.Model = resp.Model
+	restoreResponseToolNamespaces(&response, requestToolNamespaces(ctx))
 	if responseID := responseObjectPublicID(ctx); responseID != "" {
 		response.ID = responseID
 	}

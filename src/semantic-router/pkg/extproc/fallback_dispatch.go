@@ -398,6 +398,7 @@ func (r *OpenAIRouter) executeFallbackCandidate(
 	if projectionErr != nil {
 		return nil, fallback.EvaluationResult{CanFallback: true}, projectionErr
 	}
+	r.bindCandidateDispatchFacts(&projected, dispatch, ctx)
 	encoded, encodeErr := engine.EncodeRequest(dispatch.targetFormat, projected, ctx.ProtocolEnvelope)
 	if encodeErr != nil {
 		return nil, fallback.EvaluationResult{CanFallback: true}, encodeErr
@@ -474,7 +475,7 @@ func (r *OpenAIRouter) executeFallbackCandidate(
 		return nil, evalResult, engineErr
 	}
 
-	mutation := clientResponseMutation(ctx, dispatch.targetFormat)
+	mutation := withResponseToolNamespaces(clientResponseMutation(ctx, dispatch.targetFormat), requestToolNamespaces(ctx))
 	translated, translateErr := responseEngine.TranslateResponse(dispatch.targetFormat, ctx.SourceFormat, resBody, mutation)
 	if translateErr != nil {
 		attemptOutcome.Error = translateErr

@@ -79,7 +79,7 @@ func (r *OpenAIRouter) prepareLooperResponseWithEngine(resp *looper.Response, re
 		stream, streamErr := engine.NewStreamWithMutation(
 			llmprotocol.OpenAIChatV1,
 			target,
-			streamContext, mutation,
+			streamContext, withStreamToolNamespaces(mutation, requestToolNamespaces(reqCtx)),
 		)
 		if streamErr != nil {
 			return nil, nil, nil, streamErr

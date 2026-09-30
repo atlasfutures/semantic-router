@@ -243,6 +243,7 @@ func (r *OpenAIRouter) shadowRequestEncoder(
 	decisionName := dispatch.decisionName
 	useReasoning := dispatch.useReasoning
 	envelope := ctx.ProtocolEnvelope
+	snapshot := shadowProjectionContext(ctx)
 	return func(request llmprotocol.Request, target *shadowTarget) ([]byte, error) {
 		request.Model = target.upstreamModel
 		request.Stream = false
@@ -261,14 +262,9 @@ func (r *OpenAIRouter) shadowRequestEncoder(
 		if err != nil {
 			return nil, err
 		}
-		body := encoded.Body
-		if decisionName != "" && target.format == llmprotocol.OpenAIChatV1 {
-			body, err = r.setReasoningModeToRequestBodyForModelAndProvider(
-				body, target.logicalModel, useReasoning, decision, target.profile,
-			)
-			if err != nil {
-				return nil, err
-			}
+		body, err := r.applyShadowProviderProjection(encoded.Body, target, decisionName, useReasoning, snapshot)
+		if err != nil {
+			return nil, err
 		}
 		return adaptOllamaOutputLimit(body, target.format, target.profile)
 	}
