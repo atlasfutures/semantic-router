@@ -11,12 +11,18 @@ import (
 
 // toolEmbeddingText builds a phrase for embedding from a neutral function tool.
 func toolEmbeddingText(t llmprotocol.Tool) string {
-	name := strings.TrimSpace(t.Name)
+	// A namespaced tool is embedded under its qualified identity with the
+	// namespace's description, so two namespaces' same-named functions are
+	// told apart by what their namespaces are for.
+	name := strings.TrimSpace(t.Identity())
 	var parts []string
 	if name != "" {
 		parts = append(parts, name)
 	}
 	if description := strings.TrimSpace(t.Description); description != "" {
+		parts = append(parts, description)
+	}
+	if description := strings.TrimSpace(t.NamespaceDescription); description != "" {
 		parts = append(parts, description)
 	}
 	return strings.TrimSpace(strings.Join(parts, " "))
@@ -130,13 +136,13 @@ func preserveTopScoredTools(
 	needed := preserveCount - len(kept)
 	seen := make(map[string]struct{}, len(kept))
 	for _, t := range kept {
-		seen[strings.ToLower(strings.TrimSpace(t.Name))] = struct{}{}
+		seen[strings.ToLower(strings.TrimSpace(t.Identity()))] = struct{}{}
 	}
 	for _, s := range scored {
 		if needed == 0 {
 			break
 		}
-		key := strings.ToLower(strings.TrimSpace(s.tool.Name))
+		key := strings.ToLower(strings.TrimSpace(s.tool.Identity()))
 		if _, dup := seen[key]; dup {
 			continue
 		}

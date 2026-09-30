@@ -228,10 +228,15 @@ func (r *OpenAIRouter) decodeClientResponse(
 		return nil, err
 	}
 	source, target := responseWireFormats(ctx)
+	responseID := responseObjectPublicID(ctx)
+	namespaces := requestToolNamespaces(ctx)
 	var mutation protocolcodec.ResponseMutation
-	if responseID := responseObjectPublicID(ctx); responseID != "" {
+	if responseID != "" || namespaces != nil {
 		mutation = func(response *llmprotocol.Response) error {
-			response.ID = responseID
+			if responseID != "" {
+				response.ID = responseID
+			}
+			restoreResponseToolNamespaces(response, namespaces)
 			return nil
 		}
 	}

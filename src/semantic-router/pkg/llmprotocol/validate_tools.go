@@ -117,11 +117,17 @@ func validateToolDeclaration(tool Tool, location string) error {
 }
 
 func validateToolTextLimits(tool Tool, limits Limits, location string) error {
-	if exceeds(tool.Name, limits.ToolNameBytes) {
-		return toolTextLimit(location, "tools.name", len(tool.Name), limits.ToolNameBytes)
+	// A namespaced tool is called by its qualified name where the format has
+	// no namespaces, so that is the name the limit bounds; the namespace's
+	// description is bounded like the tool's own.
+	if name := QualifiedToolName(tool.Namespace, tool.Name); exceeds(name, limits.ToolNameBytes) {
+		return toolTextLimit(location, "tools.name", len(name), limits.ToolNameBytes)
 	}
 	if exceeds(tool.Description, limits.ToolDescriptionBytes) {
 		return toolTextLimit(location, "tools.description", len(tool.Description), limits.ToolDescriptionBytes)
+	}
+	if exceeds(tool.NamespaceDescription, limits.ToolDescriptionBytes) {
+		return toolTextLimit(location, "tools.namespace.description", len(tool.NamespaceDescription), limits.ToolDescriptionBytes)
 	}
 	if limits.SchemaBytes > 0 && len(tool.InputSchema) > limits.SchemaBytes {
 		return NewFieldError(ErrorInvalidRequest, "schema_limit",

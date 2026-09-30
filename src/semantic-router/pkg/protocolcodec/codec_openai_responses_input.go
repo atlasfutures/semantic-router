@@ -255,7 +255,9 @@ func validateResponsesInputItemMetadata(item responsesItemWire) error {
 	}); err != nil {
 		return err
 	}
-	if item.Namespace != "" {
+	// A function call names the namespace of the tool it calls; see
+	// Tool.Namespace. No other item kind has one to name.
+	if item.Namespace != "" && item.Type != "function_call" {
 		return rejectUnsupportedRequestField("input.namespace", json.RawMessage(`true`))
 	}
 	// status is the lifecycle of the response that produced an item. A client
@@ -339,7 +341,7 @@ func decodeResponsesFunctionCall(item responsesItemWire, index int, policy llmpr
 	}
 	return llmprotocol.Message{ID: item.ID, Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{{
 		Kind:     llmprotocol.ContentToolCall,
-		ToolCall: &llmprotocol.ToolCall{ID: id, Name: item.Name, Arguments: item.Arguments},
+		ToolCall: &llmprotocol.ToolCall{ID: id, Name: item.Name, Arguments: item.Arguments, Namespace: item.Namespace},
 	}}}
 }
 

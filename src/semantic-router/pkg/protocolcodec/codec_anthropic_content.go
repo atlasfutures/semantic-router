@@ -513,8 +513,9 @@ func appendAnthropicTools(wire *anthropicRequestWire, tools []llmprotocol.Tool) 
 	encoded := make([]json.RawMessage, 0, len(tools))
 	for _, tool := range tools {
 		body, err := json.Marshal(anthropicToolWire{
-			Name: tool.Name, Description: tool.Description, InputSchema: tool.InputSchema,
-			Strict: tool.Strict, Type: tool.Type, CacheControl: encodeAnthropicCacheControl(tool.Cache),
+			Name: llmprotocol.QualifiedToolName(tool.Namespace, tool.Name), Description: llmprotocol.FlattenedToolDescription(tool),
+			InputSchema: tool.InputSchema,
+			Strict:      tool.Strict, Type: tool.Type, CacheControl: encodeAnthropicCacheControl(tool.Cache),
 		})
 		if err != nil {
 			return llmprotocol.NewError(llmprotocol.ErrorInternal, "encode_wire", "wire request could not be encoded", err)
@@ -665,7 +666,10 @@ func encodeAnthropicToolCallBlock(call *llmprotocol.ToolCall) (anthropicContentW
 	if !json.Valid(arguments) {
 		return anthropicContentWire{}, llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_tool_arguments", "tool arguments must be JSON", nil)
 	}
-	return anthropicContentWire{Type: "tool_use", ID: call.ID, Name: call.Name, Input: arguments, Caller: call.Caller}, nil
+	return anthropicContentWire{
+		Type: "tool_use", ID: call.ID, Name: llmprotocol.QualifiedToolName(call.Namespace, call.Name),
+		Input: arguments, Caller: call.Caller,
+	}, nil
 }
 
 func encodeAnthropicToolResultBlock(result *llmprotocol.ToolResult) (anthropicContentWire, error) {

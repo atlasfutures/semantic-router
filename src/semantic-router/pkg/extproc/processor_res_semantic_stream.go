@@ -224,10 +224,17 @@ func (r *OpenAIRouter) ensureSemanticResponseStream(ctx *RequestContext) error {
 		PublicModel: ctx.RequestModel, PreviousResponseID: responseObjectPreviousID(ctx),
 	}
 	var mutation protocolcodec.StreamEventMutation
-	if responseID := responseObjectPublicID(ctx); responseID != "" {
+	responseID := responseObjectPublicID(ctx)
+	namespaces := requestToolNamespaces(ctx)
+	if responseID != "" {
 		streamContext.ResponseID = responseID
+	}
+	if responseID != "" || namespaces != nil {
 		mutation = func(event *llmprotocol.Event) error {
-			event.ResponseID = responseID
+			if responseID != "" {
+				event.ResponseID = responseID
+			}
+			llmprotocol.RestoreToolNamespace(event.ToolCall, namespaces)
 			return nil
 		}
 	}
@@ -312,6 +319,9 @@ func (state *semanticResponseStreamState) observe(events []llmprotocol.Event) {
 				}
 				if event.ToolCall.Name != "" {
 					item.toolCall.Name = event.ToolCall.Name
+				}
+				if event.ToolCall.Namespace != "" {
+					item.toolCall.Namespace = event.ToolCall.Namespace
 				}
 				item.toolCall.Arguments += event.ToolCall.Arguments
 			}

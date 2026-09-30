@@ -143,6 +143,7 @@ func (encoder *responsesStreamEncoder) ensureResponsesOutputStarted(
 		item.Type = "function_call"
 		if event.ToolCall != nil {
 			item.CallID, item.Name, item.Arguments = event.ToolCall.ID, event.ToolCall.Name, event.ToolCall.Arguments
+			item.Namespace = event.ToolCall.Namespace
 		}
 	case responsesOutputImage:
 		item.Type = "image_generation_call"
@@ -540,6 +541,7 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesOutput(
 	item := responsesItemWire{
 		Type: "function_call", ID: id, Status: "completed",
 		CallID: event.ToolCall.ID, Name: event.ToolCall.Name, Arguments: event.ToolCall.Arguments,
+		Namespace: event.ToolCall.Namespace,
 	}
 	wire.Item = marshalResponsesEventItem(item)
 	encoder.recordResponsesCompletedOutput(index, wire.Item)

@@ -121,22 +121,11 @@
     {
       "name": "namespace",
       "outcome": {
-        "status": "ok",
-        "body": {
-          "messages": [
-            {
-              "content": "Use the selected tool.",
-              "role": "user"
-            }
-          ],
-          "model": "routed-model"
-        },
-        "diagnostics": [
-          {
-            "field": "tools.namespace",
-            "action": "dropped"
-          }
-        ]
+        "status": "error",
+        "error": {
+          "category": "invalid_request",
+          "code": "invalid_tool"
+        }
       }
     },
     {

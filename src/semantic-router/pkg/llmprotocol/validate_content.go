@@ -345,10 +345,12 @@ func validateToolCallBounds(call *ToolCall, location string, limits Limits) erro
 			"tool call ID or name exceeds the configured limit", location, "content.id").
 			WithCount("bytes", len(call.ID), limits.IdentifierBytes)
 	}
-	if exceeds(call.Name, limits.ToolNameBytes) {
+	// A namespaced call is sent by its qualified name where the format has no
+	// namespaces, so that is the name the limit bounds.
+	if name := QualifiedToolName(call.Namespace, call.Name); exceeds(name, limits.ToolNameBytes) {
 		return NewFieldError(ErrorInvalidRequest, "tool_call_limit",
 			"tool call ID or name exceeds the configured limit", location, "content.name").
-			WithCount("bytes", len(call.Name), limits.ToolNameBytes)
+			WithCount("bytes", len(name), limits.ToolNameBytes)
 	}
 	if limits.ToolArgumentsBytes > 0 && len(call.Arguments) > limits.ToolArgumentsBytes {
 		return NewFieldError(ErrorInvalidRequest, "tool_arguments_limit",

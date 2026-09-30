@@ -665,7 +665,8 @@ func TestOfficialUnsupportedResponsesToolDiscriminatorsAreTyped(t *testing.T) {
 		"file_search", "local_shell", "mcp",
 		"programmatic_tool_calling", "shell", "tool_search", "web_search_preview",
 	)
-	// namespace and web_search are carried whole: see carriedResponsesToolTypes.
+	// namespace is decoded into its functions; web_search is carried: see
+	// decodeResponsesNamespaceTool and carriedResponsesToolTypes.
 	assertClosedDiscriminatorInventory(t, "OpenAI Responses tool", 16,
 		fields("function", "image_generation", "namespace", "web_search"), unsupported)
 	engine := NewBuiltinEngine()

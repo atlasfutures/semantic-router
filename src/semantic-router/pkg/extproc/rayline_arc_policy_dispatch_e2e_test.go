@@ -510,8 +510,9 @@ func TestPolicyDecidesAResponsesRequest(t *testing.T) {
 // A Codex CLI turn, as captured: store:false, include of encrypted reasoning,
 // a prompt cache key, a reasoning summary, the web_search and namespace tools,
 // and a resent reasoning item that carries its blob. It routes through
-// ext_proc to a Chat arm and to an Anthropic arm, neither of which can use
-// those members, so each is dropped and the turn is decided and dispatched.
+// ext_proc to a Chat arm and to an Anthropic arm: the sub-agent functions go
+// under their qualified names, the members neither arm can use are dropped,
+// and the turn is decided and dispatched.
 func TestPolicyDispatchesACodexTurn(t *testing.T) {
 	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
 	actions := map[string]config.RaylineARCPolicyBinding{
@@ -559,13 +560,16 @@ func TestPolicyDispatchesACodexTurn(t *testing.T) {
 				t.Fatalf("request refused: %d %s", immediate.GetStatus().GetCode(), immediate.GetBody())
 			}
 			body := string(response.GetRequestBody().GetResponse().GetBodyMutation().GetBody())
-			for _, gone := range []string{"gAAAAB", "prompt_cache_key", "web_search", "multi_agent_v1", "reasoning.encrypted_content"} {
+			for _, gone := range []string{"gAAAAB", "prompt_cache_key", "web_search", `"namespace"`, "reasoning.encrypted_content"} {
 				if strings.Contains(body, gone) {
 					t.Fatalf("%s reached the %s arm: %s", gone, arm, body)
 				}
 			}
 			if !strings.Contains(body, "exec_command") || !strings.Contains(body, "call_1") {
 				t.Fatalf("the tool turn was lost: %s", body)
+			}
+			if !strings.Contains(body, `"multi_agent_v1__close_agent"`) {
+				t.Fatalf("the sub-agent tool did not reach the %s arm under its qualified name: %s", arm, body)
 			}
 		})
 	}

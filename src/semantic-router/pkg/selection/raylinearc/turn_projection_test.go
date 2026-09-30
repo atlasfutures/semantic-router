@@ -19,7 +19,9 @@ package raylinearc
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
@@ -355,4 +357,33 @@ func readTurnProjectionFixture(t *testing.T) turnProjectionFixture {
 		t.Fatalf("fixture has %d cases, want 35", len(fixture.Cases))
 	}
 	return fixture
+}
+
+// A namespaced call is projected under the name its tool is declared by, so the
+// encoder sees one tool, not a declared tool and an undeclared call.
+func TestProjectedNamespacedCallMatchesItsDeclaration(t *testing.T) {
+	request := &llmprotocol.Request{
+		Tools: []llmprotocol.Tool{{Name: "spawn_agent", Namespace: "multi_agent_v1", InputSchema: []byte(`{"type":"object"}`)}},
+		Messages: []llmprotocol.Message{
+			{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: "spawn a helper"}}},
+			{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentToolCall, ToolCall: &llmprotocol.ToolCall{
+				ID: "call_1", Name: "spawn_agent", Namespace: "multi_agent_v1", Arguments: "{}",
+			}}}},
+			{Role: llmprotocol.RoleTool, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentToolResult, ToolResult: &llmprotocol.ToolResult{
+				CallID: "call_1", Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: "agent-7"}},
+			}}}},
+		},
+	}
+	turns, err := ProjectTurns(request, TurnOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var projected strings.Builder
+	for _, turn := range turns {
+		fmt.Fprintf(&projected, "%+v\n", turn)
+	}
+	text := projected.String()
+	if strings.Count(text, "multi_agent_v1__spawn_agent") < 2 || strings.Contains(strings.ReplaceAll(text, "multi_agent_v1__spawn_agent", ""), "spawn_agent") {
+		t.Fatalf("the call and its declaration are projected under different names:\n%s", text)
+	}
 }
