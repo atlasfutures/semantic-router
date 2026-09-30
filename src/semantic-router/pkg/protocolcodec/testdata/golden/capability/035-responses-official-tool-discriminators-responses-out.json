@@ -232,13 +232,14 @@
               "type": "message"
             }
           ],
-          "model": "routed-model",
-          "tools": [
-            {
-              "type": "web_search"
-            }
-          ]
-        }
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "tools.web_search",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {

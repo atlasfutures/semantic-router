@@ -290,6 +290,13 @@ func buildAnthropicRequestWire(
 	if toolsErr := appendAnthropicTools(&wire, request.Tools); toolsErr != nil {
 		return anthropicRequestWire{}, diagnostics, toolsErr
 	}
+	// Gated on the tools this target encoded, as on Chat and Responses: a
+	// choice over tools that were all dropped, such as a Responses turn that
+	// declares only carried tools, is one the provider would refuse.
+	if len(wire.Tools) == 0 {
+		appendUnchoosableToolChoiceDrop(&diagnostics, policy, request, llmprotocol.AnthropicMessagesV1, 0)
+		return wire, diagnostics, nil
+	}
 	if toolChoiceErr := encodeAnthropicToolChoice(&wire, request); toolChoiceErr != nil {
 		return anthropicRequestWire{}, diagnostics, toolChoiceErr
 	}

@@ -64,14 +64,18 @@ func droppedFields(diagnostics llmprotocol.Diagnostics) []string {
 }
 
 // A Codex turn routes to every target format. A Responses arm gets include,
-// prompt_cache_key, reasoning.summary, store:false, the web_search and
-// namespace tools, and the resent encrypted reasoning item back as Codex sent
-// them; another format drops and counts each one instead of refusing the turn.
+// prompt_cache_key, reasoning.summary, store:false, the namespace tool, and
+// the resent encrypted reasoning item back as Codex sent them; another format
+// drops and counts each one instead of refusing the turn. web_search is
+// dropped on every target.
 func TestCodexTurnRoutesToEveryFormat(t *testing.T) {
 	body := codexBody(t, codexRequestFixture(t, "turn2"))
 
 	t.Run("responses", func(t *testing.T) {
-		routed, _ := routeResponsesRequestDiagnostics(t, body, llmprotocol.OpenAIResponsesV1)
+		routed, diagnostics := routeResponsesRequestDiagnostics(t, body, llmprotocol.OpenAIResponsesV1)
+		if dropped := strings.Join(droppedFields(diagnostics), ","); !strings.Contains(dropped, "tools.web_search") {
+			t.Errorf("the web_search drop was not counted; dropped: %s", dropped)
+		}
 		var wire map[string]json.RawMessage
 		if err := json.Unmarshal(routed, &wire); err != nil {
 			t.Fatal(err)
@@ -86,10 +90,13 @@ func TestCodexTurnRoutesToEveryFormat(t *testing.T) {
 				t.Errorf("%s = %s, want %s", field, got, want)
 			}
 		}
-		for _, tool := range []string{`"type":"web_search"`, `"name":"multi_agent_v1"`, `"name":"exec_command"`} {
+		for _, tool := range []string{`"name":"multi_agent_v1"`, `"name":"exec_command"`} {
 			if !bytes.Contains(routed, []byte(tool)) {
 				t.Errorf("tool %s did not reach the Responses arm: %s", tool, routed)
 			}
+		}
+		if bytes.Contains(routed, []byte("web_search")) {
+			t.Errorf("web_search reached the Responses arm: %s", routed)
 		}
 		if !bytes.Contains(routed, []byte(`"encrypted_content":"gAAAAB-fake-encrypted-content-for-capture"`)) {
 			t.Fatalf("the resent reasoning item lost its encrypted_content: %s", routed)
@@ -189,5 +196,18 @@ func TestEncryptedReasoningStillRefusesARefusedMember(t *testing.T) {
 		`"prompt_cache_breakpoint":{"mode":"explicit"}}]}`
 	if _, _, _, err := NewBuiltinEngine().DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(body)); err == nil {
 		t.Fatal("a refused member rode the encrypted-reasoning carrier")
+	}
+}
+
+// A choice over tools that were all dropped is dropped with them, on Messages
+// as on Chat and Responses, rather than sent to a provider that refuses it.
+func TestAnthropicDropsAChoiceOverDroppedTools(t *testing.T) {
+	body := `{"model":"m","input":"hello","tool_choice":"required","tools":[{"type":"web_search"}]}`
+	routed, diagnostics := routeResponsesRequestDiagnostics(t, body, llmprotocol.AnthropicMessagesV1)
+	if bytes.Contains(routed, []byte("tool_choice")) {
+		t.Fatalf("a choice with no tools reached Messages: %s", routed)
+	}
+	if dropped := strings.Join(droppedFields(diagnostics), ","); !strings.Contains(dropped, "tool_choice") {
+		t.Fatalf("the choice drop was not counted; dropped: %s", dropped)
 	}
 }

@@ -331,10 +331,20 @@ func appendCarriedToolDrops(
 	policy llmprotocol.Policy,
 ) {
 	for _, tool := range tools {
-		if tool.Format != target {
+		if !carriedToolForwarded(tool, target) {
 			appendUnmodeledDrop(diagnostics, policy, tool.Format, target, "tools."+tool.Type)
 		}
 	}
+}
+
+// carriedToolForwarded reports whether a carried tool declaration goes to this
+// target. web_search goes to none, not even a Responses one: when the model
+// searches, the provider returns web_search_call output the response decoder
+// does not yet carry, and the turn would fail mid-stream. Dropping the
+// declaration costs the model its search and keeps the turn. Carrying it,
+// with its output, is atlasfutures/semantic-router#107.
+func carriedToolForwarded(tool llmprotocol.UnmodeledBlock, target llmprotocol.WireFormat) bool {
+	return tool.Format == target && tool.Type != "web_search"
 }
 
 // appendToolExtensionDrops counts the carried members of each tool definition

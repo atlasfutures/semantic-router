@@ -203,7 +203,7 @@ func encodeResponsesTools(
 		encoded = append(encoded, body)
 	}
 	for _, tool := range carried {
-		if tool.Format == llmprotocol.OpenAIResponsesV1 {
+		if carriedToolForwarded(tool, llmprotocol.OpenAIResponsesV1) {
 			encoded = append(encoded, append(json.RawMessage(nil), tool.Raw...))
 		}
 	}

@@ -482,15 +482,16 @@
               "role": "user"
             }
           ],
-          "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          }
+          "model": "routed-model"
         },
         "diagnostics": [
           {
             "field": "max_tokens",
             "action": "generated"
+          },
+          {
+            "field": "tool_choice",
+            "action": "dropped"
           }
         ]
       }
