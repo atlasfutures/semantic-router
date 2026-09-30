@@ -302,3 +302,17 @@ func TestRaylineARCPolicyMessagesActionsRespectTheReasoningFamily(t *testing.T) 
 		t.Fatalf("a budget action on a family with enabled thinking refused: %v", err)
 	}
 }
+
+func TestRaylineARCPolicyDispatchEffortModes(t *testing.T) {
+	for mode, valid := range map[string]bool{"": true, "declared": true, "provider_default": true, "none": false} {
+		cfg := &RaylineARCPolicyServiceConfig{
+			BaseURL: "https://policy.example", TotalTimeoutSeconds: 5, PackageAlias: "a",
+			PackageSHA256: strings.Repeat("a", 64), DispatchEffort: mode,
+			Bindings: []RaylineARCPolicyBinding{{ActionID: strings.Repeat("b", 64), Worker: "w"}},
+		}
+		err := validateRaylineARCPolicyServiceConfig(cfg)
+		if valid && err != nil && strings.Contains(err.Error(), "dispatch_effort") || !valid && (err == nil || !strings.Contains(err.Error(), "dispatch_effort")) {
+			t.Errorf("dispatch_effort %q: err = %v", mode, err)
+		}
+	}
+}

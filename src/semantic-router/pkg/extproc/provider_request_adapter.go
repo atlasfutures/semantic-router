@@ -51,6 +51,9 @@ func (r *OpenAIRouter) adaptProviderRequest(
 		}
 	}
 	reportDroppedReasoningSummary(ctx, dispatch, encoded, body)
+	if body, err = applyRaylineMessagesProviderRouting(body, dispatch, ctx, r.Config); err != nil {
+		return nil, err
+	}
 	// Read back rather than remember: the record names the bytes that travel.
 	recordDispatchedProviderControls(ctx, body)
 	return body, nil

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
@@ -137,4 +138,25 @@ func clientOutputAllowance(ctx *RequestContext) *int64 {
 		return nil
 	}
 	return ctx.SemanticRequest.ClientMaxOutputTokens
+}
+
+// applyRaylineMessagesProviderRouting adds OpenRouter's routing members to a
+// Messages body (#119). The Messages codec owns the reasoning controls and
+// projectProviderRequest leaves a Messages body as the codec rendered it, so
+// only the upstream session id and the provider pin are added here; both
+// self-gate on OpenRouter, so a body bound for Anthropic itself is unchanged.
+func applyRaylineMessagesProviderRouting(
+	body []byte,
+	dispatch *providerDispatch,
+	ctx *RequestContext,
+	cfg *config.RouterConfig,
+) ([]byte, error) {
+	if dispatch == nil || dispatch.targetFormat != llmprotocol.AnthropicMessagesV1 {
+		return body, nil
+	}
+	body, err := applyUpstreamSessionID(body, dispatch, ctx)
+	if err != nil {
+		return nil, err
+	}
+	return applyProviderPreferences(body, dispatch, cfg)
 }
