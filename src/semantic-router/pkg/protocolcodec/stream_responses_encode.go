@@ -20,13 +20,19 @@ func (encoder *responsesStreamEncoder) Push(event llmprotocol.Event) ([][]byte, 
 	if frames, diagnostics, handled, directErr := encoder.encodeDirectResponsesEvent(event); handled {
 		return frames, diagnostics, directErr
 	}
+	var flushed [][]byte
+	if event.Type == llmprotocol.EventResponseCompleted {
+		if flushed, err = encoder.flushPendingAnthropicSearches(event); err != nil {
+			return nil, nil, err
+		}
+	}
 	wire, diagnostics, err := encoder.responsesWireForEvent(event)
 	if err != nil || wire.Type == "" {
-		return nil, diagnostics, err
+		return flushed, diagnostics, err
 	}
 	wire.Sequence = encoder.nextWireSequence()
 	frame, err := encoder.encodeResponsesStreamFrame(wire)
-	return [][]byte{frame}, diagnostics, err
+	return append(flushed, frame), diagnostics, err
 }
 
 func (encoder *responsesStreamEncoder) encodeDirectResponsesEvent(

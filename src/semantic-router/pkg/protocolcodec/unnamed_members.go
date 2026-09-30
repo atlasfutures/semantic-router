@@ -366,6 +366,23 @@ func anthropicHostedTool(tool llmprotocol.UnmodeledBlock, target llmprotocol.Wir
 	if target != llmprotocol.AnthropicMessagesV1 || tool.Format != llmprotocol.OpenAIResponsesV1 || tool.Type != "web_search" {
 		return nil
 	}
+	// Anthropic's tool searches the live web and has no knob for anything
+	// else the declaration may say. A declaration that restricts the search
+	// -- external_web_access: false, which Codex sends, or any other member
+	// -- is one Anthropic cannot honour, so it is not mapped: dropping it
+	// keeps the turn, where mapping it would widen what the model may do.
+	var declared map[string]json.RawMessage
+	if json.Unmarshal(tool.Raw, &declared) != nil {
+		return nil
+	}
+	for name, value := range declared {
+		switch {
+		case name == "type":
+		case name == "external_web_access" && string(value) == "true":
+		default:
+			return nil
+		}
+	}
 	return json.RawMessage(`{"type":"web_search_20250305","name":"web_search"}`)
 }
 

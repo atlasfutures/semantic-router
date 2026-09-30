@@ -30,7 +30,7 @@
                 "type": "search"
               },
               "id": "srvtool_1",
-              "status": "completed",
+              "status": "in_progress",
               "type": "web_search_call"
             }
           ],

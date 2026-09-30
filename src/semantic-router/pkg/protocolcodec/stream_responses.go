@@ -75,7 +75,8 @@ type responsesStreamEncoder struct {
 	streamState
 	// anthropicSearchQueries holds each Anthropic web search's query until its
 	// result completes; see encodeResponsesAnthropicWebSearch.
-	anthropicSearchQueries map[string]string
+	anthropicSearchQueries map[string]anthropicPendingSearch
+	anthropicSearchOrder   []string
 	outputIndexes          map[responsesOutputKey]int
 	outputIDs              map[responsesOutputKey]string
 	outputStarted          map[responsesOutputKey]bool

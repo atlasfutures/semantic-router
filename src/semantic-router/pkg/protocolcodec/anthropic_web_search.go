@@ -100,19 +100,63 @@ type anthropicServerToolUseWire struct {
 }
 
 type anthropicWebSearchResultWire struct {
-	ToolUseID string `json:"tool_use_id"`
-	Content   []struct {
+	ToolUseID string          `json:"tool_use_id"`
+	Content   json.RawMessage `json:"content"`
+}
+
+type anthropicWebSearchOutcome struct {
+	sources []map[string]string
+	failed  bool
+	pending bool
+}
+
+// outcome reads a web search result: a list of results, or an error object
+// (web_search_tool_result_error, such as max_uses_exceeded), which is a
+// failed search.
+func (result anthropicWebSearchResultWire) outcome() anthropicWebSearchOutcome {
+	var items []struct {
 		Type string `json:"type"`
 		URL  string `json:"url"`
-	} `json:"content"`
+	}
+	if json.Unmarshal(result.Content, &items) != nil {
+		return anthropicWebSearchOutcome{failed: true}
+	}
+	var outcome anthropicWebSearchOutcome
+	for _, item := range items {
+		if item.Type == "web_search_result" && item.URL != "" {
+			outcome.sources = append(outcome.sources, map[string]string{"type": "url", "url": item.URL})
+		}
+	}
+	return outcome
+}
+
+// webSearchCallFor is the Responses web_search_call for one Anthropic search
+// and its outcome.
+func webSearchCallFor(use anthropicServerToolUseWire, outcome anthropicWebSearchOutcome) llmprotocol.Content {
+	fields := map[string]any{"type": "search", "query": use.Input.Query}
+	if len(outcome.sources) > 0 {
+		fields["sources"] = outcome.sources
+	}
+	action, _ := json.Marshal(fields)
+	status := "completed"
+	switch {
+	case outcome.failed:
+		status = "failed"
+	case outcome.pending:
+		status = "in_progress"
+	}
+	return webSearchCallContent(responsesItemWire{Type: "web_search_call", ID: use.ID, Status: status, Action: action})
 }
 
 // anthropicWebSearchAsResponses rewrites the carried Anthropic web search
 // blocks of one output into Responses web_search_call contents: each
-// server_tool_use naming web_search becomes one call carrying its query, and
-// the sources of the result that answers it. The result blocks are consumed.
+// server_tool_use naming web_search becomes one call carrying its query and
+// the sources of the result that answers it, failed if the result is an
+// error. A search with no result yet -- a turn Anthropic paused mid-search --
+// is reported in progress, as the stream reports it at completion. The result
+// blocks are consumed.
 func anthropicWebSearchAsResponses(contents []llmprotocol.Content) []llmprotocol.Content {
-	sources := map[string][]map[string]string{}
+	outcomes := map[string]anthropicWebSearchOutcome{}
 	for _, content := range contents {
 		block := content.Unmodeled
 		if content.Kind != llmprotocol.ContentUnmodeled || block == nil ||
@@ -123,11 +167,7 @@ func anthropicWebSearchAsResponses(contents []llmprotocol.Content) []llmprotocol
 		if json.Unmarshal(block.Raw, &result) != nil {
 			continue
 		}
-		for _, item := range result.Content {
-			if item.Type == "web_search_result" && item.URL != "" {
-				sources[result.ToolUseID] = append(sources[result.ToolUseID], map[string]string{"type": "url", "url": item.URL})
-			}
-		}
+		outcomes[result.ToolUseID] = result.outcome()
 	}
 	rewritten := make([]llmprotocol.Content, 0, len(contents))
 	for _, content := range contents {
@@ -144,14 +184,11 @@ func anthropicWebSearchAsResponses(contents []llmprotocol.Content) []llmprotocol
 			if json.Unmarshal(block.Raw, &use) != nil || use.Name != "web_search" {
 				continue
 			}
-			fields := map[string]any{"type": "search", "query": use.Input.Query}
-			if found := sources[use.ID]; len(found) > 0 {
-				fields["sources"] = found
+			outcome, answered := outcomes[use.ID]
+			if !answered {
+				outcome.pending = true
 			}
-			action, _ := json.Marshal(fields)
-			rewritten = append(rewritten, webSearchCallContent(responsesItemWire{
-				Type: "web_search_call", ID: use.ID, Status: "completed", Action: action,
-			}))
+			rewritten = append(rewritten, webSearchCallFor(use, outcome))
 		default:
 			rewritten = append(rewritten, content)
 		}
@@ -391,9 +428,10 @@ func (encoder *responsesStreamEncoder) encodeResponsesAnthropicWebSearch(
 		var use anthropicServerToolUseWire
 		if json.Unmarshal(carried.Raw, &use) == nil && use.Name == "web_search" {
 			if encoder.anthropicSearchQueries == nil {
-				encoder.anthropicSearchQueries = map[string]string{}
+				encoder.anthropicSearchQueries = map[string]anthropicPendingSearch{}
 			}
-			encoder.anthropicSearchQueries[use.ID] = use.Input.Query
+			encoder.anthropicSearchQueries[use.ID] = anthropicPendingSearch{query: use.Input.Query, item: event.ItemIndex}
+			encoder.anthropicSearchOrder = append(encoder.anthropicSearchOrder, use.ID)
 		}
 		return nil, nil, nil
 	}
@@ -401,30 +439,55 @@ func (encoder *responsesStreamEncoder) encodeResponsesAnthropicWebSearch(
 	if json.Unmarshal(carried.Raw, &result) != nil {
 		return nil, nil, nil
 	}
-	query, known := encoder.anthropicSearchQueries[result.ToolUseID]
+	pending, known := encoder.anthropicSearchQueries[result.ToolUseID]
 	if !known {
 		return nil, nil, nil
 	}
-	contents := anthropicWebSearchAsResponses([]llmprotocol.Content{
-		carriedAnthropicBlock("server_tool_use", anthropicJSON(map[string]any{
-			"type": "server_tool_use", "id": result.ToolUseID, "name": "web_search", "input": map[string]string{"query": query},
-		})),
-		{Kind: llmprotocol.ContentUnmodeled, Unmodeled: carried},
-	})
-	if len(contents) != 1 {
-		return nil, nil, nil
+	delete(encoder.anthropicSearchQueries, result.ToolUseID)
+	return encoder.encodeAnthropicSearchCall(event, result.ToolUseID, pending.query, result.outcome())
+}
+
+type anthropicPendingSearch struct {
+	query string
+	item  int
+}
+
+// flushPendingAnthropicSearches reports, before the response completes, each
+// search whose result never arrived -- a turn Anthropic paused mid-search --
+// as a web_search_call in progress, as a buffered response reports it.
+func (encoder *responsesStreamEncoder) flushPendingAnthropicSearches(event llmprotocol.Event) ([][]byte, error) {
+	var frames [][]byte
+	for _, id := range encoder.anthropicSearchOrder {
+		pending, open := encoder.anthropicSearchQueries[id]
+		if !open {
+			continue
+		}
+		delete(encoder.anthropicSearchQueries, id)
+		call := event
+		call.Type, call.ItemIndex = llmprotocol.EventOutputItemCompleted, pending.item
+		flushed, _, err := encoder.encodeAnthropicSearchCall(call, id, pending.query, anthropicWebSearchOutcome{pending: true})
+		if err != nil {
+			return nil, err
+		}
+		frames = append(frames, flushed...)
 	}
+	return frames, nil
+}
+
+func (encoder *responsesStreamEncoder) encodeAnthropicSearchCall(
+	event llmprotocol.Event,
+	id, query string,
+	outcome anthropicWebSearchOutcome,
+) ([][]byte, llmprotocol.Diagnostics, error) {
+	var use anthropicServerToolUseWire
+	use.ID, use.Name, use.Input.Query = id, "web_search", query
+	content := webSearchCallFor(use, outcome)
 	call := event
-	call.ItemID, call.Content = result.ToolUseID, &contents[0]
+	call.ItemID, call.Content = id, &content
 	frames, key, err := encoder.ensureResponsesOutputStarted(call, responsesOutputWebSearch)
 	if err != nil {
 		return nil, nil, err
 	}
 	completed, diagnostics, err := encoder.encodeCompletedResponsesWebSearch(call, key)
 	return append(frames, completed...), diagnostics, err
-}
-
-func anthropicJSON(value any) json.RawMessage {
-	raw, _ := json.Marshal(value)
-	return raw
 }

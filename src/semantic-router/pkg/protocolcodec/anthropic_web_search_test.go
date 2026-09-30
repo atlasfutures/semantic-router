@@ -155,3 +155,89 @@ func TestWebSearchDeclarationMapsToAnthropicsTool(t *testing.T) {
 		t.Fatalf("an arm not admitted got %s (dropped: %s)", plain, dropped)
 	}
 }
+
+// A declaration that restricts the search -- Codex's external_web_access:
+// false -- is not mapped onto Anthropic's live web search; it is dropped.
+func TestRestrictedWebSearchIsNotMappedToAnthropic(t *testing.T) {
+	body := `{"model":"m","input":"q","tools":[{"type":"web_search","external_web_access":false}]}`
+	engine := NewBuiltinEngine()
+	request, envelope, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.HostedTools = []string{"web_search"}
+	request.Generation++
+	result, err := engine.EncodeRequest(llmprotocol.AnthropicMessagesV1, request, envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(result.Body, []byte("web_search")) {
+		t.Fatalf("a restricted search reached Anthropic's live web search: %s", result.Body)
+	}
+	if !strings.Contains(strings.Join(droppedFields(result.Diagnostics), ","), "tools.web_search") {
+		t.Fatal("the drop was not counted")
+	}
+}
+
+// A search Anthropic reports as failed is a failed web_search_call; a search
+// with no result yet is one in progress.
+func TestAnthropicWebSearchFailureAndPause(t *testing.T) {
+	failed := strings.Replace(anthropicWebSearchResponse,
+		`"content":[{"type":"web_search_result","url":"https://go.dev/doc/devel/release","title":"Release History","encrypted_content":"abc","page_age":null}]`,
+		`"content":{"type":"web_search_tool_result_error","error_code":"max_uses_exceeded"}`, 1)
+	routed := translateAnthropicResponse(t, failed, llmprotocol.OpenAIResponsesV1)
+	if !bytes.Contains(routed, []byte(`"status":"failed"`)) || !bytes.Contains(routed, []byte(`"type":"web_search_call"`)) {
+		t.Fatalf("a failed search was not reported as failed: %s", routed)
+	}
+	paused := `{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[` +
+		`{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"go release history"}}],` +
+		`"stop_reason":"tool_use","usage":{"input_tokens":1,"output_tokens":1}}`
+	routed = translateAnthropicResponse(t, paused, llmprotocol.OpenAIResponsesV1)
+	if !bytes.Contains(routed, []byte(`"status":"in_progress"`)) || !bytes.Contains(routed, []byte(`"query":"go release history"`)) {
+		t.Fatalf("an unanswered search was not reported in progress: %s", routed)
+	}
+}
+
+func runAnthropicStream(t *testing.T, body string, client llmprotocol.WireFormat) []byte {
+	t.Helper()
+	stream, err := NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, client, llmprotocol.StreamContext{
+		Context: context.Background(), PublicModel: "public-model", ProviderModel: "claude",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frames, _, _, err := stream.Push([]byte(body))
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	final, _, _, err := stream.Finalize(nil)
+	if err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+	return bytes.Join(append(frames, final...), nil)
+}
+
+// Streamed, as buffered: a failed search is a failed call, and a search whose
+// result never arrived is reported in progress before the response completes.
+func TestAnthropicWebSearchStreamFailureAndPause(t *testing.T) {
+	failed := strings.Replace(anthropicWebSearchStream(),
+		`"content":[{"type":"web_search_result","url":"https://go.dev/doc/devel/release","title":"Release History","encrypted_content":"abc","page_age":null}]`,
+		`"content":{"type":"web_search_tool_result_error","error_code":"max_uses_exceeded"}`, 1)
+	if routed := runAnthropicStream(t, failed, llmprotocol.OpenAIResponsesV1); !bytes.Contains(routed, []byte(`"status":"failed"`)) {
+		t.Fatalf("a streamed failed search was not reported failed:\n%s", routed)
+	}
+	frame := func(event, data string) string { return "event: " + event + "\ndata: " + data + "\n\n" }
+	paused := frame("message_start", `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":5,"output_tokens":1}}}`) +
+		frame("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"go release history"}}}`) +
+		frame("content_block_stop", `{"type":"content_block_stop","index":0}`) +
+		frame("message_delta", `{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":2}}`) +
+		frame("message_stop", `{"type":"message_stop"}`)
+	routed := runAnthropicStream(t, paused, llmprotocol.OpenAIResponsesV1)
+	completed := routed[bytes.Index(routed, []byte("event: response.completed")):]
+	if !bytes.Contains(routed, []byte(`"status":"in_progress","type":"web_search_call"`)) && !bytes.Contains(routed, []byte(`"type":"web_search_call"`)) {
+		t.Fatalf("a streamed unanswered search was not reported:\n%s", routed)
+	}
+	if !bytes.Contains(completed, []byte(`"query":"go release history"`)) {
+		t.Fatalf("the completed response lost the unanswered search:\n%s", completed)
+	}
+}
