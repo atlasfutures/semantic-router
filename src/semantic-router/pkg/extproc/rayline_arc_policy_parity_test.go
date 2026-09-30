@@ -13,7 +13,8 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
-// A format the policy service cannot read is refused before the episode lease,
+// A format the policy service cannot read is refused before the episode lease
+// (Responses is read, as openai_responses),
 // so the episode is untouched and nothing waits on a service call.
 func TestPolicyModeRefusesAnUnreadableFormatBeforeTheLease(t *testing.T) {
 	store, err := raylinearc.NewMemoryEpisodeStore(raylinearc.MemoryEpisodeStoreConfig{MaxEpisodes: 4, IdleTTL: time.Minute})
@@ -23,7 +24,7 @@ func TestPolicyModeRefusesAnUnreadableFormatBeforeTheLease(t *testing.T) {
 	router := &OpenAIRouter{RaylineARCEpisodeStore: store}
 	requestContext := &RequestContext{
 		Headers:      map[string]string{"x-rayline-session": t.Name()},
-		SourceFormat: llmprotocol.OpenAIResponsesV1,
+		SourceFormat: llmprotocol.WireFormat("unsupported.format.v1"),
 		SemanticRequest: &llmprotocol.Request{Generation: 1, Messages: []llmprotocol.Message{
 			{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: "go"}}},
 		}},

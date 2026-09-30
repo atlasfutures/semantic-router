@@ -1,6 +1,7 @@
 package selection
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -53,6 +54,10 @@ type RaylineARCSelectionContext struct {
 	// only for the policy-service mode.
 	RawRequest    []byte
 	RequestFormat string
+	// PolicyInput and PolicyInstructions are a Responses request materialized
+	// for the policy service; set only for request format openai_responses.
+	PolicyInput        []json.RawMessage
+	PolicyInstructions *string
 }
 
 // RaylineARCTrace records bounded, privacy-safe artifact policy diagnostics.

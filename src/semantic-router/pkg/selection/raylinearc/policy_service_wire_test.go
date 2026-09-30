@@ -56,8 +56,8 @@ func TestPolicyFixturesMatchTheirPinnedDigests(t *testing.T) {
 		}
 		seen++
 	}
-	if seen != 5 {
-		t.Fatalf("SHA256SUMS pins %d fixtures, want 5", seen)
+	if seen != 6 {
+		t.Fatalf("SHA256SUMS pins %d fixtures, want 6", seen)
 	}
 }
 
@@ -65,11 +65,12 @@ func TestPolicyFixturesMatchTheirPinnedDigests(t *testing.T) {
 // field is dropped, renamed or defaulted on the Go side.
 func TestPolicyWireTypesRoundTripTheFixtures(t *testing.T) {
 	cases := map[string]any{
-		"package_manifest.v4.json":  &PolicyPackageManifest{},
-		"decision_request.v1.json":  &PolicyDecisionRequest{},
-		"decision_response.v1.json": &PolicyDecisionResponse{},
-		"packages_response.v1.json": &PolicyPackagesResponse{},
-		"error_responses.v1.json":   &[]PolicyErrorResponse{},
+		"package_manifest.v4.json":           &PolicyPackageManifest{},
+		"decision_request.v1.json":           &PolicyDecisionRequest{},
+		"decision_request_responses.v1.json": &PolicyDecisionRequest{},
+		"decision_response.v1.json":          &PolicyDecisionResponse{},
+		"packages_response.v1.json":          &PolicyPackagesResponse{},
+		"error_responses.v1.json":            &[]PolicyErrorResponse{},
 	}
 	for name, target := range cases {
 		body := readPolicyFixture(t, name)

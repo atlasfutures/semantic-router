@@ -114,6 +114,24 @@ a binding's declared dispatch.
 
 Every service error fails closed.
 
+## Request formats
+
+VSR sends the client's request in the format the service projects:
+
+- **Messages and Chat:** the client's system, tools and messages, exactly as
+  received.
+- **Responses** (`openai_responses`): `input` is the fully materialized item
+  history, and `instructions` is the system prompt. The history is the stored
+  history that `previous_response_id` resolves to, followed by this turn's
+  input.
+
+A turn's items must be a byte prefix of the next turn's, because the
+attribution ledger identifies its prefix by those bytes. So every item is
+encoded one way, whether it comes from the store or from the body, and the
+router's retention fields (item id and status) are left out. Attribution may
+name any assistant-output item: an assistant message, a function call, or
+reasoning.
+
 ## Transport and admission
 
 `policy_service` bounds and sheds calls the way the artifact mode's encoder
