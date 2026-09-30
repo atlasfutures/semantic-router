@@ -248,6 +248,9 @@ func (decoder *responsesStreamDecoder) validateCompletedResponseItem(wire respon
 			"stream_item_status_mismatch", "Responses image generation item done event requires completed or failed status",
 		)
 	}
+	if item.Type == "web_search_call" && item.Status == "failed" {
+		return item, nil
+	}
 	if item.Type != "image_generation_call" && item.Status != "" && item.Status != "completed" && item.Status != "incomplete" {
 		return responsesItemWire{}, invalidProviderResponse(
 			"stream_item_status_mismatch", "Responses output item done event requires completed or incomplete status",

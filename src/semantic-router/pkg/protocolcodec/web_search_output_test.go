@@ -183,3 +183,15 @@ func TestResentWebSearchCallRoutes(t *testing.T) {
 		}
 	}
 }
+
+// A web search that failed, or a snapshot taken mid-search, is carried like a
+// completed one: its status is the web search's own.
+func TestWebSearchCallStatusesAreCarried(t *testing.T) {
+	for _, status := range []string{"failed", "searching", "in_progress"} {
+		body := strings.Replace(webSearchResponse, `"id":"ws_1","status":"completed"`, `"id":"ws_1","status":"`+status+`"`, 1)
+		responses := translateResponsesResponse(t, body, llmprotocol.OpenAIResponsesV1)
+		if !bytes.Contains(responses, []byte(`"status":"`+status+`"`)) {
+			t.Fatalf("status %s was not carried: %s", status, responses)
+		}
+	}
+}

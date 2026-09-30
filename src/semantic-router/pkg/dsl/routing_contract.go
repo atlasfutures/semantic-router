@@ -246,6 +246,7 @@ func (d *decompiler) writeRoutingModelFields(model config.RoutingModel) {
 	d.writeOptionalRoutingModelArray("capabilities", model.Capabilities)
 	d.writeRoutingModelLoRAs(model.LoRAs)
 	d.writeOptionalRoutingModelArray("tags", model.Tags)
+	d.writeOptionalRoutingModelArray("hosted_tools", model.HostedTools)
 	if len(model.Evaluations) > 0 {
 		d.write("  evaluations: %s\n", formatDSLFieldValue(evaluationsValue(model.Evaluations)))
 	}
@@ -294,6 +295,9 @@ func routingModelToDecl(model config.RoutingModel) *ModelDecl {
 	}
 	if len(model.Capabilities) > 0 {
 		fields["capabilities"] = stringsToArray(model.Capabilities)
+	}
+	if len(model.HostedTools) > 0 {
+		fields["hosted_tools"] = stringsToArray(model.HostedTools)
 	}
 	if len(model.LoRAs) > 0 {
 		items := make([]Value, 0, len(model.LoRAs))

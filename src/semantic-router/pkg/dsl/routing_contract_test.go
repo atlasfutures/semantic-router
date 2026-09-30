@@ -257,3 +257,29 @@ ROUTE math_route {
 
 	t.Fatalf("expected missing LoRA diagnostic, got %#v", diags)
 }
+
+// hosted_tools survives a DSL compile and decompile.
+func TestRoutingModelHostedToolsRoundTrip(t *testing.T) {
+	cfg, errs := Compile(`
+MODEL "searcher" {
+  hosted_tools: ["web_search"]
+}
+
+ROUTE search_route {
+  PRIORITY 10
+  MODEL "searcher"
+}`)
+	if len(errs) > 0 {
+		t.Fatalf("compile errors: %v", errs)
+	}
+	if !cfg.ModelConfig["searcher"].AdmitsHostedTool("web_search") {
+		t.Fatalf("hosted_tools did not compile: %+v", cfg.ModelConfig["searcher"])
+	}
+	source, err := DecompileRouting(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(source, `hosted_tools: ["web_search"]`) {
+		t.Fatalf("hosted_tools did not decompile:\n%s", source)
+	}
+}

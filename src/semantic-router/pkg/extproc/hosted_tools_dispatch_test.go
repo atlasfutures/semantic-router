@@ -74,7 +74,9 @@ func TestSearchedAnswerStreamsThroughTheRouter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("settle: %v", err)
 	}
-	if len(settled.Output) == 0 {
-		t.Fatal("the settled response lost its output")
+	if len(settled.Output) != 2 || len(settled.Output[0].Content) != 1 ||
+		settled.Output[0].Content[0].Unmodeled == nil ||
+		!bytes.Contains(settled.Output[0].Content[0].Unmodeled.Raw, []byte(`"query":"go release history"`)) {
+		t.Fatalf("the settled response lost the search item: %+v", settled.Output)
 	}
 }

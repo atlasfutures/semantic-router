@@ -207,6 +207,14 @@ func validateResponsesOutputItemStatus(item responsesItemWire) error {
 			return invalidProviderResponse("invalid_responses_item_status", "Responses image generation status is not recognized")
 		}
 	}
+	if item.Type == "web_search_call" {
+		switch item.Status {
+		case "completed", "in_progress", "searching", "failed", "incomplete":
+			return nil
+		default:
+			return invalidProviderResponse("invalid_responses_item_status", "Responses web search status is not recognized")
+		}
+	}
 	switch item.Status {
 	case "completed", "in_progress", "incomplete":
 		return nil
