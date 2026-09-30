@@ -223,9 +223,10 @@ func validateResponsesInputItemMetadata(item responsesItemWire) error {
 	if item.Namespace != "" {
 		return rejectUnsupportedRequestField("input.namespace", json.RawMessage(`true`))
 	}
-	if item.Status != "" && item.Type != "image_generation_call" {
-		return rejectUnsupportedRequestField("input.status", json.RawMessage(`true`))
-	}
+	// status is the lifecycle of the response that produced an item. A client
+	// that keeps no server state (store: false) resends prior output items
+	// verbatim, status included, and the Responses API accepts them; it says
+	// nothing to the model, so it is read and dropped.
 	return nil
 }
 
@@ -459,7 +460,10 @@ func decodeResponsesContentPart(
 	unsupported := map[string]json.RawMessage{
 		"content.prompt_cache_breakpoint": part.PromptCacheBreakpoint,
 	}
-	if context != responsesProviderOutputContent {
+	// An assistant history part is prior output resent verbatim, and output
+	// text carries the logprobs it was generated with (often []). They are a
+	// record of that sampling, not input to this one, so they are dropped.
+	if context != responsesProviderOutputContent && context != responsesAssistantHistoryContent {
 		unsupported["content.logprobs"] = part.Logprobs
 	}
 	if err := rejectUnsupportedRequestFields(unsupported); err != nil {
