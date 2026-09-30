@@ -96,3 +96,46 @@ func TestSelectionFailureClassNamesTheBoundedClass(t *testing.T) {
 		t.Fatalf("failure class = %q, want %q", got, arcFailureMissingEpisodeID)
 	}
 }
+
+// The failure class is part of what the caller receives, so it must survive
+// the same client re-encode the message does, in every wire format and for
+// every status the vocabulary rides on.
+func TestFailureClassSurvivesClientEncoding(t *testing.T) {
+	for name, format := range map[string]llmprotocol.WireFormat{
+		"chat":      llmprotocol.OpenAIChatV1,
+		"anthropic": llmprotocol.AnthropicMessagesV1,
+	} {
+		for _, test := range []struct {
+			class      string
+			wantStatus int
+			wantClass  string
+		}{
+			{arcFailureMissingEpisodeID, 400, selectionFailureMissingSession},
+			{"episode_timeout", 429, selectionFailureSessionBusy},
+			{"not_ready", 503, selectionFailureNotReady},
+		} {
+			t.Run(name+"/"+test.class, func(t *testing.T) {
+				router, requestContext, algorithm := missingSessionRequestContext(t, "")
+				router.Config = &config.RouterConfig{}
+				requestContext.SourceFormat = format
+				router.buildRaylineARCSelectionContext(algorithm, requestContext, missingSessionModelRefs(), raylineARCEpisodeRequired)
+
+				response := router.authoritativeSelectionFailureResponse(
+					selectionFailureForAlgorithm(algorithm, test.class),
+					requestContext,
+				)
+				encoded := router.encodeImmediateResponseForClient(response, requestContext)
+				immediate := encoded.GetImmediateResponse()
+				if immediate == nil {
+					t.Fatalf("response is not an immediate refusal: %+v", encoded)
+				}
+				if got := int(immediate.GetStatus().GetCode()); got != test.wantStatus {
+					t.Fatalf("status = %d, want %d", got, test.wantStatus)
+				}
+				if got := immediateHeaderValue(encoded, selectionFailureHeader); got != test.wantClass {
+					t.Fatalf("%s = %q after client encoding, want %q", selectionFailureHeader, got, test.wantClass)
+				}
+			})
+		}
+	}
+}
