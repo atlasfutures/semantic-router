@@ -209,6 +209,7 @@ func encodeResponsesTools(input []llmprotocol.Tool, imageGeneration *llmprotocol
 		return nil
 	}
 	tools := make([]responsesToolWire, 0, len(input)+1)
+	namespaces := map[string]int{}
 	for _, tool := range input {
 		// An Anthropic-defined tool comes back callable, counted as a transform
 		// in the request dispositions; a server tool comes back as it was and
@@ -217,7 +218,23 @@ func encodeResponsesTools(input []llmprotocol.Tool, imageGeneration *llmprotocol
 		if tool.ServerTool() {
 			continue
 		}
-		tools = append(tools, responsesToolWire{Type: "function", Name: tool.Name, Description: tool.Description, Parameters: tool.InputSchema, Strict: tool.Strict})
+		function := responsesToolWire{Type: "function", Name: tool.Name, Description: tool.Description, Parameters: tool.InputSchema, Strict: tool.Strict}
+		if tool.Namespace == "" {
+			tools = append(tools, function)
+			continue
+		}
+		// A namespace's functions go back into one namespace tool, at the
+		// place of its first function.
+		member, _ := json.Marshal(function)
+		if index, grouped := namespaces[tool.Namespace]; grouped {
+			tools[index].Tools = append(tools[index].Tools, member)
+			continue
+		}
+		namespaces[tool.Namespace] = len(tools)
+		tools = append(tools, responsesToolWire{
+			Type: "namespace", Name: tool.Namespace, Description: tool.NamespaceDescription,
+			Tools: []json.RawMessage{member},
+		})
 	}
 	if imageGeneration != nil {
 		tool := responsesToolWire{
@@ -388,7 +405,7 @@ func (state *responsesMessageEncodingState) appendToolCall(call *llmprotocol.Too
 	}
 	state.items = append(state.items, responsesItemWire{
 		Type: "function_call", ID: responsesItemID(state.messageID, len(state.items), "function_call"),
-		CallID: call.ID, Name: call.Name, Arguments: call.Arguments,
+		CallID: call.ID, Name: call.Name, Arguments: call.Arguments, Namespace: call.Namespace,
 	})
 	return nil
 }

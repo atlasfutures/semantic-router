@@ -132,32 +132,11 @@
     {
       "name": "namespace",
       "outcome": {
-        "status": "ok",
-        "body": {
-          "max_tokens": 4096,
-          "messages": [
-            {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
-              "role": "user"
-            }
-          ],
-          "model": "routed-model"
-        },
-        "diagnostics": [
-          {
-            "field": "max_tokens",
-            "action": "generated"
-          },
-          {
-            "field": "tools.namespace",
-            "action": "dropped"
-          }
-        ]
+        "status": "error",
+        "error": {
+          "category": "invalid_request",
+          "code": "invalid_tool"
+        }
       }
     },
     {

@@ -155,6 +155,9 @@ type ToolCall struct {
 	// issuer rather than changing what the model is asked, so a format
 	// that cannot express it drops and counts it instead of refusing.
 	Caller json.RawMessage
+	// Namespace is the tool group a Responses call names beside its function,
+	// as Codex's multi_agent_v1 sub-agent tools do. See Tool.Namespace.
+	Namespace string
 }
 
 type ToolResult struct {
@@ -184,6 +187,61 @@ type Tool struct {
 	// Extensions holds the members of this tool that the source contract does
 	// not name.
 	Extensions *UnmodeledFields
+	// Namespace groups the tool with others under one name, and
+	// NamespaceDescription describes the group: a Responses namespace tool,
+	// which Codex uses for its multi_agent_v1 sub-agent functions. Responses
+	// spells the group; a format that cannot calls the function by
+	// QualifiedToolName, and the router restores the namespace on the call
+	// that comes back.
+	Namespace            string
+	NamespaceDescription string
+}
+
+// namespaceSeparator joins a namespace and a function name into the one name
+// a format without namespaces calls. It uses only characters every provider
+// allows in a function name, [A-Za-z0-9_-].
+const namespaceSeparator = "__"
+
+// QualifiedToolName is the function name a format without namespaces calls a
+// namespaced tool by. A tool with no namespace keeps its name.
+func QualifiedToolName(namespace, name string) string {
+	if namespace == "" {
+		return name
+	}
+	return namespace + namespaceSeparator + name
+}
+
+// ToolNamespaces maps each qualified name this request declares to the
+// namespace and function it stands for. The router uses it to restore the
+// namespace on a call a Chat or Messages provider returns under the qualified
+// name. Only names the request declared are restored, so a function whose own
+// name happens to contain the separator is never split.
+func ToolNamespaces(tools []Tool) map[string][2]string {
+	var namespaces map[string][2]string
+	for _, tool := range tools {
+		if tool.Namespace == "" {
+			continue
+		}
+		if namespaces == nil {
+			namespaces = map[string][2]string{}
+		}
+		namespaces[QualifiedToolName(tool.Namespace, tool.Name)] = [2]string{tool.Namespace, tool.Name}
+	}
+	return namespaces
+}
+
+// RestoreToolNamespace puts back the namespace of a call returned under a
+// qualified name, and reports whether it did.
+func RestoreToolNamespace(call *ToolCall, namespaces map[string][2]string) bool {
+	if call == nil || call.Namespace != "" {
+		return false
+	}
+	parts, qualified := namespaces[call.Name]
+	if !qualified {
+		return false
+	}
+	call.Namespace, call.Name = parts[0], parts[1]
+	return true
 }
 
 // ServerTool reports whether the source API runs this tool itself rather than
@@ -203,10 +261,11 @@ func (tool Tool) ServerTool() bool {
 }
 
 // Identity is what makes two declared tools the same tool. A callable tool is
-// its name; a server tool that states no name is its type.
+// its name, qualified by its namespace; a server tool that states no name is
+// its type.
 func (tool Tool) Identity() string {
 	if tool.Name != "" {
-		return tool.Name
+		return QualifiedToolName(tool.Namespace, tool.Name)
 	}
 	return tool.Type
 }

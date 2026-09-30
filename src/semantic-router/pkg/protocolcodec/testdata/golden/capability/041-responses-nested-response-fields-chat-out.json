@@ -97,7 +97,7 @@
                   {
                     "function": {
                       "arguments": "{\"q\":\"weather\"}",
-                      "name": "lookup"
+                      "name": "weather__lookup"
                     },
                     "id": "call_1",
                     "type": "function"
@@ -118,10 +118,6 @@
           },
           {
             "field": "output.caller",
-            "action": "dropped"
-          },
-          {
-            "field": "output.namespace",
             "action": "dropped"
           },
           {

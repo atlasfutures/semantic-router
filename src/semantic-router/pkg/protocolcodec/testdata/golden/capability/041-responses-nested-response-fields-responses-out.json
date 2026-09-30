@@ -135,6 +135,7 @@
               "call_id": "call_1",
               "id": "fc_1",
               "name": "lookup",
+              "namespace": "weather",
               "type": "function_call"
             }
           ],
@@ -152,10 +153,6 @@
           },
           {
             "field": "output.caller",
-            "action": "dropped"
-          },
-          {
-            "field": "output.namespace",
             "action": "dropped"
           },
           {

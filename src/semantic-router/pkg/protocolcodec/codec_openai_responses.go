@@ -106,6 +106,8 @@ type responsesToolWire struct {
 	InputImageMask    *responsesImageGenMaskWire `json:"input_image_mask,omitempty"`
 	PartialImages     *int64                     `json:"partial_images,omitempty"`
 	Action            string                     `json:"action,omitempty"`
+	// Tools are a namespace tool's member functions.
+	Tools []json.RawMessage `json:"tools,omitempty"`
 }
 
 type responsesImageGenMaskWire struct {
@@ -402,6 +404,9 @@ func decodeResponsesTool(body json.RawMessage, request *llmprotocol.Request, pol
 	if toolType == "image_generation" {
 		return decodeResponsesImageGenerationTool(body, request, policy)
 	}
+	if toolType == "namespace" {
+		return decodeResponsesNamespaceTool(body, request, policy)
+	}
 	if carriedResponsesToolTypes[toolType] {
 		request.CarriedTools = append(request.CarriedTools, llmprotocol.UnmodeledBlock{
 			Format: llmprotocol.OpenAIResponsesV1, Type: toolType,
@@ -415,17 +420,51 @@ func decodeResponsesTool(body json.RawMessage, request *llmprotocol.Request, pol
 	return decodeResponsesFunctionTool(body, request, policy)
 }
 
+// decodeResponsesNamespaceTool reads a namespace tool, as Codex declares its
+// multi_agent_v1 sub-agent functions, into one callable tool per member
+// function, each carrying the namespace. The functions are the caller's to
+// run, so they reach every target: Responses gets the namespace back, and a
+// format without namespaces calls each function by its QualifiedToolName.
+func decodeResponsesNamespaceTool(body json.RawMessage, request *llmprotocol.Request, policy llmprotocol.Policy) error {
+	var namespace responsesToolWire
+	if err := decodeWireValue(body, &namespace, policy); err != nil {
+		return err
+	}
+	if strings.TrimSpace(namespace.Name) == "" {
+		return llmprotocol.NewFieldError(llmprotocol.ErrorInvalidRequest, "invalid_tool",
+			"a namespace tool must state its name", "", "tools.name")
+	}
+	for _, member := range namespace.Tools {
+		memberType, err := responsesToolDiscriminator(member)
+		if err != nil {
+			return err
+		}
+		if memberType != "function" {
+			return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_tool",
+				"a namespace tool may hold only function tools", nil)
+		}
+		if err := validateResponsesToolVariant(member, memberType); err != nil {
+			return err
+		}
+		if err := decodeResponsesFunctionTool(member, request, policy); err != nil {
+			return err
+		}
+		declared := &request.Tools[len(request.Tools)-1]
+		declared.Namespace, declared.NamespaceDescription = namespace.Name, namespace.Description
+	}
+	return nil
+}
+
 // carriedResponsesToolTypes are the tool kinds Codex declares on every turn
 // that the contract does not model. Each is kept whole on the request, counted
 // toward the tool limit and a required choice, and dropped on every target,
-// the Responses one included: when the model uses one, the provider returns
-// output the router does not yet carry back -- web_search_call items, and a
-// namespace on the function call -- so the turn would fail or the client could
-// not dispatch the call. Losing either costs the model a tool, not the turn.
-// Carrying them is atlasfutures/semantic-router#107. A caller-run kind such as custom or
+// the Responses one included: when the model searches, the provider returns
+// web_search_call output the router does not yet carry back, and the turn
+// would fail. Losing it costs the model a tool, not the turn. Carrying it is
+// atlasfutures/semantic-router#107. A caller-run kind such as custom or
 // apply_patch stays refused: dropping it would silently take away a tool the
 // client expects the model to call.
-var carriedResponsesToolTypes = map[string]bool{"web_search": true, "namespace": true}
+var carriedResponsesToolTypes = map[string]bool{"web_search": true}
 
 func responsesToolDiscriminator(body json.RawMessage) (string, error) {
 	var discriminator struct {

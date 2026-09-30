@@ -248,7 +248,7 @@ func decodeResponsesOutputItem(item responsesItemWire, index int, policy llmprot
 	}
 	appendProviderFieldOmissions(diagnostics, policy, llmprotocol.OpenAIResponsesV1, map[string]bool{
 		"output.caller":    len(item.Caller) > 0,
-		"output.namespace": item.Namespace != "",
+		"output.namespace": item.Namespace != "" && item.Type != "function_call",
 		"output.phase":     len(item.Phase) > 0,
 		"output.status":    item.Status != "" && item.Type != "image_generation_call",
 	}, "response item metadata has no protocol-neutral representation")
@@ -261,7 +261,9 @@ func decodeResponsesOutputItem(item responsesItemWire, index int, policy llmprot
 	case "message":
 		return decodeResponsesMessageOutput(output, item, policy, diagnostics)
 	case "function_call":
-		output.Content = []llmprotocol.Content{{Kind: llmprotocol.ContentToolCall, ToolCall: &llmprotocol.ToolCall{ID: item.CallID, Name: item.Name, Arguments: item.Arguments}}}
+		output.Content = []llmprotocol.Content{{Kind: llmprotocol.ContentToolCall, ToolCall: &llmprotocol.ToolCall{
+			ID: item.CallID, Name: item.Name, Arguments: item.Arguments, Namespace: item.Namespace,
+		}}}
 	case "reasoning":
 		return decodeResponsesReasoningOutput(output, item, policy)
 	case "image_generation_call":

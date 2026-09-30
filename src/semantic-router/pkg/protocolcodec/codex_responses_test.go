@@ -66,15 +66,17 @@ func droppedFields(diagnostics llmprotocol.Diagnostics) []string {
 // A Codex turn routes to every target format. A Responses arm gets include,
 // prompt_cache_key, reasoning.summary and store:false back as Codex sent them;
 // another format drops and counts each one instead of refusing the turn. The
-// web_search and namespace tools, and the resent encrypted reasoning item, are
-// dropped on every target.
+// multi_agent_v1 namespace tools reach every target: Responses gets the
+// namespace tool back, and Chat and Messages call each function by its
+// qualified name. The web_search tool and the resent encrypted reasoning item
+// are dropped on every target.
 func TestCodexTurnRoutesToEveryFormat(t *testing.T) {
 	body := codexBody(t, codexRequestFixture(t, "turn2"))
 
 	t.Run("responses", func(t *testing.T) {
 		routed, diagnostics := routeResponsesRequestDiagnostics(t, body, llmprotocol.OpenAIResponsesV1)
 		dropped := strings.Join(droppedFields(diagnostics), ",")
-		for _, field := range []string{"tools.web_search", "tools.namespace"} {
+		for _, field := range []string{"tools.web_search"} {
 			if !strings.Contains(dropped, field) {
 				t.Errorf("the %s drop was not counted; dropped: %s", field, dropped)
 			}
@@ -96,10 +98,11 @@ func TestCodexTurnRoutesToEveryFormat(t *testing.T) {
 		if !bytes.Contains(routed, []byte(`"name":"exec_command"`)) {
 			t.Errorf("the function tool did not reach the Responses arm: %s", routed)
 		}
-		for _, tool := range []string{"web_search", "multi_agent_v1"} {
-			if bytes.Contains(routed, []byte(tool)) {
-				t.Errorf("%s reached the Responses arm: %s", tool, routed)
-			}
+		if bytes.Contains(routed, []byte("web_search")) {
+			t.Errorf("web_search reached the Responses arm: %s", routed)
+		}
+		if !bytes.Contains(routed, []byte(`{"type":"namespace","name":"multi_agent_v1","description":"Tools for spawning and managing sub-agents.","tools":[{"type":"function","name":"close_agent"`)) {
+			t.Errorf("the namespace tool did not reach the Responses arm whole: %s", routed)
 		}
 		if bytes.Contains(routed, []byte("gAAAAB")) || bytes.Contains(routed, []byte(`"rs_1"`)) {
 			t.Fatalf("the resent encrypted reasoning item reached the Responses arm: %s", routed)
@@ -111,18 +114,18 @@ func TestCodexTurnRoutesToEveryFormat(t *testing.T) {
 	for _, target := range []llmprotocol.WireFormat{llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1} {
 		t.Run(string(target), func(t *testing.T) {
 			routed, diagnostics := routeResponsesRequestDiagnostics(t, body, target)
-			for _, gone := range []string{"encrypted_content", "prompt_cache_key", `"summary"`, "web_search", "multi_agent_v1"} {
+			for _, gone := range []string{"encrypted_content", "prompt_cache_key", `"summary"`, "web_search", `"namespace"`} {
 				if bytes.Contains(routed, []byte(gone)) {
 					t.Fatalf("%s reached %s: %s", gone, target, routed)
 				}
 			}
-			for _, kept := range []string{"echo capture", "call_1", "exec_command"} {
+			for _, kept := range []string{"echo capture", "call_1", "exec_command", `"multi_agent_v1__close_agent"`} {
 				if !bytes.Contains(routed, []byte(kept)) {
 					t.Fatalf("%q was lost routing to %s: %s", kept, target, routed)
 				}
 			}
 			dropped := strings.Join(droppedFields(diagnostics), ",")
-			for _, field := range []string{"include", "prompt_cache_key", "reasoning.summary", "content.reasoning", "tools.web_search", "tools.namespace"} {
+			for _, field := range []string{"include", "prompt_cache_key", "reasoning.summary", "content.reasoning", "tools.web_search"} {
 				if !strings.Contains(dropped, field) {
 					t.Errorf("the drop of %s was not counted; dropped: %s", field, dropped)
 				}
@@ -251,10 +254,10 @@ func TestSummaryOnlyReasoningKeepsItsSummary(t *testing.T) {
 
 // A request that routes unchanged is normally replayed byte for byte, but not
 // when it declares a carried tool: the client bytes would hand the provider
-// the web_search and namespace tools every target drops.
+// the web_search tool every target drops.
 func TestCarriedToolsDisableReplay(t *testing.T) {
 	engine := NewBuiltinEngine()
-	body := `{"model":"m","input":"hello","tools":[{"type":"web_search"},{"type":"namespace","name":"multi_agent_v1","tools":[]}]}`
+	body := `{"model":"m","input":"hello","tools":[{"type":"web_search"}]}`
 	request, envelope, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(body))
 	if err != nil {
 		t.Fatal(err)
@@ -263,7 +266,7 @@ func TestCarriedToolsDisableReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(result.Body, []byte("web_search")) || bytes.Contains(result.Body, []byte("multi_agent_v1")) {
+	if bytes.Contains(result.Body, []byte("web_search")) {
 		t.Fatalf("an unchanged request replayed its carried tools: %s", result.Body)
 	}
 }
@@ -323,5 +326,43 @@ func TestDroppedCarriedItemLeavesNoEmptyAnthropicMessage(t *testing.T) {
 		if string(message.Content) == "[]" {
 			t.Fatalf("message %d reached Messages with empty content: %s", index, routed)
 		}
+	}
+}
+
+// A namespaced call round-trips on every target. In history, Responses gets
+// the call back with its namespace and Chat and Messages get it under the
+// qualified name the tool was declared by. A call a Chat or Messages provider
+// returns under that name gets its namespace back from the request's own
+// tools, and a name the request did not declare is never split.
+func TestNamespacedCallsRoundTrip(t *testing.T) {
+	body := `{"model":"m","input":[` +
+		`{"type":"message","role":"user","content":"spawn a helper"},` +
+		`{"type":"function_call","id":"fc_1","call_id":"call_1","namespace":"multi_agent_v1","name":"spawn_agent","arguments":"{}"},` +
+		`{"type":"function_call_output","call_id":"call_1","output":"agent-7"}],` +
+		`"tools":[{"type":"namespace","name":"multi_agent_v1","description":"Sub-agents.","tools":[` +
+		`{"type":"function","name":"spawn_agent","parameters":{"type":"object"}}]}]}`
+	responses, _ := routeResponsesRequestDiagnostics(t, body, llmprotocol.OpenAIResponsesV1)
+	if !bytes.Contains(responses, []byte(`"name":"spawn_agent","namespace":"multi_agent_v1"`)) {
+		t.Fatalf("the call lost its namespace on Responses: %s", responses)
+	}
+	for _, target := range []llmprotocol.WireFormat{llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1} {
+		routed, _ := routeResponsesRequestDiagnostics(t, body, target)
+		if bytes.Count(routed, []byte(`"multi_agent_v1__spawn_agent"`)) != 2 {
+			t.Fatalf("%s did not get the qualified name on both the tool and the call: %s", target, routed)
+		}
+	}
+
+	request, _, _, err := NewBuiltinEngine().DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespaces := llmprotocol.ToolNamespaces(request.Tools)
+	returned := &llmprotocol.ToolCall{ID: "call_2", Name: "multi_agent_v1__spawn_agent", Arguments: "{}"}
+	if !llmprotocol.RestoreToolNamespace(returned, namespaces) || returned.Namespace != "multi_agent_v1" || returned.Name != "spawn_agent" {
+		t.Fatalf("restored call = %+v", returned)
+	}
+	undeclared := &llmprotocol.ToolCall{Name: "other__tool"}
+	if llmprotocol.RestoreToolNamespace(undeclared, namespaces) || undeclared.Name != "other__tool" {
+		t.Fatalf("an undeclared name was split: %+v", undeclared)
 	}
 }
