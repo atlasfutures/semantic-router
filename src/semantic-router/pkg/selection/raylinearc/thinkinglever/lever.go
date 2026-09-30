@@ -56,6 +56,27 @@ const (
 	EmitEveryTurn EmitMode = "every_turn"
 	// EmitOnChange writes an item only when the level changes.
 	EmitOnChange EmitMode = "on_change"
+	// EmitOnChangeV1 is ADR 0109's rule: on_change, except that a change
+	// from a steered level to the neutral level writes the binding's neutral
+	// text, since writing nothing cannot cancel an instruction in force.
+	EmitOnChangeV1 EmitMode = "on_change_v1"
+)
+
+// InstructionState says what steering instruction the worker sees after a
+// turn (ADR 0109 decision 4): none written this epoch, the neutral marker,
+// or a steered level's text.
+type InstructionState string
+
+const (
+	InstructionNever         InstructionState = "never"
+	InstructionNeutralMarker InstructionState = "neutral_marker"
+	InstructionSteered       InstructionState = "steered"
+)
+
+// Written says which kind of item a turn wrote.
+const (
+	WrittenInstruction   = "instruction"
+	WrittenNeutralMarker = "neutral_marker"
 )
 
 // Placement records where an item sits relative to the client
@@ -125,9 +146,12 @@ type Binding struct {
 	// Neutral names the level that restores default depth. Empty means the
 	// ladder has none, and a return to default cannot be expressed once an
 	// instruction is in force.
-	Neutral    string      `json:"neutral_level,omitempty"`
-	Placements []Placement `json:"placements"`
-	Levels     []Level     `json:"levels"`
+	Neutral string `json:"neutral_level,omitempty"`
+	// NeutralText is the neutral marker an on_change_v1 binding writes on a
+	// change from a steered level to the neutral level.
+	NeutralText string      `json:"neutral_text,omitempty"`
+	Placements  []Placement `json:"placements"`
+	Levels      []Level     `json:"levels"`
 }
 
 // Validate refuses a binding the ledger could not replay deterministically.
@@ -138,7 +162,7 @@ func (binding Binding) Validate() error {
 		return fmt.Errorf("unknown thinking lever %q", binding.Lever)
 	}
 	switch binding.Emit {
-	case EmitEveryTurn, EmitOnChange:
+	case EmitEveryTurn, EmitOnChange, EmitOnChangeV1:
 	default:
 		return fmt.Errorf("unknown thinking emit mode %q", binding.Emit)
 	}
@@ -158,7 +182,42 @@ func (binding Binding) Validate() error {
 	if binding.Neutral != "" && !seen[binding.Neutral] {
 		return fmt.Errorf("neutral thinking level %q is not declared", binding.Neutral)
 	}
+	if err := binding.validateNeutralText(); err != nil {
+		return err
+	}
 	return binding.validatePlacements()
+}
+
+// validateNeutralText admits a neutral marker exactly where on_change_v1 needs
+// one: a steering-suffix binding whose neutral level writes nothing, so the
+// marker is the only item a return to neutral can write.
+func (binding Binding) validateNeutralText() error {
+	if binding.Emit != EmitOnChangeV1 {
+		if binding.NeutralText != "" {
+			return fmt.Errorf("neutral_text needs emit %q", EmitOnChangeV1)
+		}
+		return nil
+	}
+	if binding.Lever != LeverSteeringSuffix {
+		return fmt.Errorf("emit %q needs lever %q", EmitOnChangeV1, LeverSteeringSuffix)
+	}
+	neutral, declared := binding.Level(binding.Neutral)
+	if !declared || neutral.Suffix != "" {
+		return fmt.Errorf("emit %q needs a neutral level that writes nothing", EmitOnChangeV1)
+	}
+	if strings.TrimSpace(binding.NeutralText) == "" || len(binding.NeutralText) > MaxSuffixBytes {
+		return fmt.Errorf("emit %q needs a nonblank neutral_text of at most %d bytes", EmitOnChangeV1, MaxSuffixBytes)
+	}
+	return nil
+}
+
+// neutralMarker is the item a return to neutral writes, when the binding has
+// one.
+func (binding Binding) neutralMarker() (Payload, bool) {
+	if binding.Emit != EmitOnChangeV1 {
+		return Payload{}, false
+	}
+	return Payload{Lever: LeverSteeringSuffix, Suffix: binding.NeutralText}, true
 }
 
 func (binding Binding) validatePlacements() error {
@@ -436,15 +495,20 @@ type Plan struct {
 	Next Ledger
 	// LevelInForce and ControlInForce describe the binding's lever after
 	// this turn: what the worker is actually being asked, which is not
-	// always what the policy requested.
+	// always what the policy requested. With nothing written this epoch the
+	// neutral level is in force.
 	LevelInForce   string
 	ControlInForce string
-	Emitted        bool
-	Retry          bool
-	Placement      Placement
-	ResetReason    string
-	Skipped        string
-	Replayed       int
+	// InstructionState is set for a steering-suffix binding only.
+	InstructionState InstructionState
+	// Written is WrittenInstruction or WrittenNeutralMarker when Emitted.
+	Written     string
+	Emitted     bool
+	Retry       bool
+	Placement   Placement
+	ResetReason string
+	Skipped     string
+	Replayed    int
 }
 
 // PlanTurn verifies the ledger against the client transcript, decides
@@ -469,7 +533,7 @@ func PlanTurn(turn Turn) (plan Plan, err error) {
 	}
 	plan.Replayed = countLever(plan.Next, turn.Binding.Lever)
 	// Every return below reports the lever's state after this turn.
-	defer plan.describe(turn.Binding.Lever)
+	defer plan.describe(turn.Binding)
 	if entry, ok := retriedEntry(plan.Next, turn.Messages); ok {
 		plan.Retry = true
 		plan.Placement = entry.Placement
@@ -483,8 +547,7 @@ func PlanTurn(turn Turn) (plan Plan, err error) {
 		}
 		return plan, nil
 	}
-	payload := turn.Binding.payloadFor(requested)
-	emit, skipped := shouldEmit(turn, plan.Next, requested, payload, plan.ResetReason != "")
+	payload, emit, skipped := shouldEmit(turn, plan.Next, requested, turn.Binding.payloadFor(requested), plan.ResetReason != "")
 	plan.Skipped = skipped
 	if !emit {
 		return plan, nil
@@ -494,15 +557,40 @@ func PlanTurn(turn Turn) (plan Plan, err error) {
 		return plan, nil
 	}
 	plan.Emitted = true
+	plan.Written = WrittenInstruction
+	if marker, ok := turn.Binding.neutralMarker(); ok && payload == marker {
+		plan.Written = WrittenNeutralMarker
+	}
 	plan.Placement = placement
 	return plan, nil
 }
 
-func (plan *Plan) describe(lever Lever) {
-	state, _ := plan.Next.state(lever)
-	plan.LevelInForce = state.Level
-	if state.Payload >= 0 {
+// describe reports the lever's state after the turn. The neutral level, with
+// nothing written or under a neutral marker, is attributed the neutral
+// level's own control, as the registry resolves it, not the marker's bytes.
+func (plan *Plan) describe(binding Binding) {
+	state, _ := plan.Next.state(binding.Lever)
+	marker, hasMarker := binding.neutralMarker()
+	markerInForce := hasMarker && state.Payload >= 0 && plan.Next.Payloads[state.Payload] == marker
+	switch {
+	case state.Payload >= 0 && !markerInForce:
+		plan.LevelInForce = state.Level
 		plan.ControlInForce = plan.Next.Payloads[state.Payload].ControlSHA256()
+	case binding.Neutral != "":
+		plan.LevelInForce = binding.Neutral
+		neutral, _ := binding.Level(binding.Neutral)
+		plan.ControlInForce = binding.ControlSHA256(neutral)
+	}
+	if binding.Lever != LeverSteeringSuffix {
+		return
+	}
+	switch {
+	case markerInForce:
+		plan.InstructionState = InstructionNeutralMarker
+	case state.Payload >= 0 && plan.Next.Payloads[state.Payload].writes():
+		plan.InstructionState = InstructionSteered
+	default:
+		plan.InstructionState = InstructionNever
 	}
 }
 
@@ -594,15 +682,18 @@ func placementFor(lever Lever, messages []Message) (Placement, bool) {
 	}
 }
 
+// shouldEmit decides whether this turn writes an item, and which: the
+// requested level's bytes, or, on an on_change_v1 return to neutral, the
+// neutral marker.
 func shouldEmit(
 	turn Turn,
 	ledger Ledger,
 	requested Level,
 	payload Payload,
 	reset bool,
-) (bool, string) {
+) (Payload, bool, string) {
 	if turn.Binding.Emit == EmitEveryTurn {
-		return payload.writes(), ""
+		return payload, payload.writes(), ""
 	}
 	state, _ := ledger.state(turn.Binding.Lever)
 	// Nothing written yet: at the start of an episode that is the neutral
@@ -613,19 +704,24 @@ func shouldEmit(
 	// binding change, is a change and is re-asserted too.
 	if state.Payload < 0 {
 		if !payload.writes() || (requested.Name == turn.Binding.Neutral && ledger.Epoch == 0) {
-			return false, ""
+			return payload, false, ""
 		}
-		return true, ""
+		return payload, true, ""
+	}
+	if marker, ok := turn.Binding.neutralMarker(); ok && !payload.writes() {
+		// A return to neutral over an instruction in force is written as the
+		// neutral marker; over the marker itself it is a repeat.
+		payload = marker
 	}
 	if ledger.Payloads[state.Payload] == payload {
-		return false, ""
+		return payload, false, ""
 	}
 	if !reset && turn.TurnIndex-state.LastChangeTurn < turn.MinTurnsBetweenChanges {
-		return false, SkipChangeTooSoon
+		return payload, false, SkipChangeTooSoon
 	}
 	if !payload.writes() {
 		// Writing nothing cannot cancel an instruction already in force.
-		return false, SkipNeutralInexpressible
+		return payload, false, SkipNeutralInexpressible
 	}
-	return true, ""
+	return payload, true, ""
 }

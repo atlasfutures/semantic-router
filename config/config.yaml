@@ -1717,14 +1717,18 @@ routing:
                 export_sha256: ""
                 admission: certified
                 lever: prompt_steering_suffix
-                emit: on_change
-                neutral_level: neutral
+                # on_change_v1 (ADR 0109) writes an item only when the level
+                # in force changes; a return from a steer to neutral_level
+                # writes neutral_text, the neutral marker. on_change skips
+                # such a return instead; every_turn states every turn.
+                emit: on_change_v1
+                neutral_level: none
+                neutral_text: "Until the next steering instruction, use your normal judgement."
                 placements: [append_tail_user_text, insert_user_after_tool_run]
                 levels:
                   # control_sha256 is the registry's digest of each level's
                   # bytes; the router recomputes it and refuses a mismatch.
                   - {level: none, rank: 0, control_sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855}
-                  - {level: neutral, rank: 0, suffix: "Until the next steering instruction, use your normal judgement.", control_sha256: 3706b3ac244e71be7d77e4bb7113a17cbda5cb0fa7c69fc4654940d4d789650c}
                   - {level: down, rank: -1, suffix: "Until the next steering instruction, use minimal deliberation.", control_sha256: 99fca31cf4f665d12f6695cb8c46311be0cc6e4a34829347d4cc9298b24cccf6}
                   - {level: up, rank: 1, suffix: "Until the next steering instruction, reason more thoroughly.", control_sha256: 68a03386f70205c97e7a0002afa023c2b99b8ba98487a134c49824dd85d427be}
           # worker_thinking fixes a thinking worker's base reasoning level on

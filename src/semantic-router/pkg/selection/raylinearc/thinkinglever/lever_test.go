@@ -460,3 +460,107 @@ func TestNeutralIsStatedAfterAResetButNotAtEpisodeStart(t *testing.T) {
 		t.Fatalf("retry after the reset not recognised: %+v", plan)
 	}
 }
+
+const neutralMarkerText = "Until the next steering instruction, use your normal judgement."
+
+func onChangeV1Binding() Binding {
+	binding := suffixBinding(EmitOnChangeV1, "none")
+	binding.NeutralText = neutralMarkerText
+	return binding
+}
+
+// The receipts of pathfinder's ledger_multi_turn and none_sequence golden
+// corpora (tests/fixtures/thinking_control_golden): none at the start writes
+// nothing, a steer, a hold, none after it writes the neutral marker, a quiet
+// none, a new steer, and a rewrite that re-asserts the steer; a rewrite under
+// the marker leaves nothing in force.
+func TestOnChangeV1FollowsTheGoldenReceipts(t *testing.T) {
+	e := &episode{t: t, binding: onChangeV1Binding()}
+	type receipt struct {
+		level   string
+		state   InstructionState
+		written string
+		epoch   uint32
+		reset   string
+	}
+	messages := []llmprotocol.Message{text(llmprotocol.RoleUser, "go")}
+	step := func(level string, want receipt) []llmprotocol.Message {
+		t.Helper()
+		plan, provider := e.serve(messages, level)
+		got := receipt{plan.LevelInForce, plan.InstructionState, plan.Written, plan.Next.Epoch, plan.ResetReason}
+		if got != want {
+			t.Fatalf("turn %d (%s): receipt %+v, want %+v", e.turn, level, got, want)
+		}
+		e.commit(plan)
+		messages = append(messages, text(llmprotocol.RoleAssistant, "ok"), text(llmprotocol.RoleUser, "more"))
+		return provider
+	}
+	tail := func(provider []llmprotocol.Message) string {
+		last := provider[len(provider)-1].Content
+		return last[len(last)-1].Text
+	}
+	step("none", receipt{"none", InstructionNever, "", 0, ""})
+	step("up", receipt{"up", InstructionSteered, WrittenInstruction, 0, ""})
+	step("up", receipt{"up", InstructionSteered, "", 0, ""})
+	if provider := step("none", receipt{"none", InstructionNeutralMarker, WrittenNeutralMarker, 0, ""}); tail(provider) != neutralMarkerText {
+		t.Fatalf("the neutral marker is not the tail: %q", tail(provider))
+	}
+	step("none", receipt{"none", InstructionNeutralMarker, "", 0, ""})
+	step("down", receipt{"down", InstructionSteered, WrittenInstruction, 0, ""})
+	messages = []llmprotocol.Message{text(llmprotocol.RoleUser, "summary"), text(llmprotocol.RoleUser, "continue")}
+	step("down", receipt{"down", InstructionSteered, WrittenInstruction, 1, ResetTranscriptRewrite})
+	step("none", receipt{"none", InstructionNeutralMarker, WrittenNeutralMarker, 1, ""})
+	messages = []llmprotocol.Message{text(llmprotocol.RoleUser, "another summary")}
+	step("none", receipt{"none", InstructionNever, "", 2, ResetTranscriptRewrite})
+}
+
+// The neutral level's control is in force under the marker, as with nothing
+// written: the marker realises that level, it is not a level of its own.
+func TestNeutralMarkerIsAttributedTheNeutralControl(t *testing.T) {
+	e := &episode{t: t, binding: onChangeV1Binding()}
+	neutral, _ := e.binding.Level("none")
+	messages := []llmprotocol.Message{text(llmprotocol.RoleUser, "go")}
+	next := func() {
+		messages = append(messages, text(llmprotocol.RoleAssistant, "ok"), text(llmprotocol.RoleUser, "more"))
+	}
+	plan, _ := e.serve(messages, "none")
+	if plan.ControlInForce != e.binding.ControlSHA256(neutral) {
+		t.Fatalf("control at episode start = %q", plan.ControlInForce)
+	}
+	e.commit(plan)
+	next()
+	plan, _ = e.serve(messages, "up")
+	e.commit(plan)
+	next()
+	plan, _ = e.serve(messages, "none")
+	if !plan.Emitted || plan.ControlInForce != e.binding.ControlSHA256(neutral) {
+		t.Fatalf("control under the marker = %q (emitted %v)", plan.ControlInForce, plan.Emitted)
+	}
+}
+
+func TestOnChangeV1BindingValidation(t *testing.T) {
+	withText := func(mutate func(*Binding)) Binding {
+		binding := onChangeV1Binding()
+		mutate(&binding)
+		return binding
+	}
+	onChange := suffixBinding(EmitOnChange, "none")
+	onChange.NeutralText = neutralMarkerText
+	effort := effortBinding()
+	effort.Emit, effort.NeutralText = EmitOnChangeV1, neutralMarkerText
+	for name, binding := range map[string]Binding{
+		"no neutral text":           withText(func(b *Binding) { b.NeutralText = "" }),
+		"blank neutral text":        withText(func(b *Binding) { b.NeutralText = "  " }),
+		"no neutral level":          withText(func(b *Binding) { b.Neutral = "" }),
+		"neutral level with text":   withText(func(b *Binding) { b.Neutral = "up" }),
+		"neutral text on on_change": onChange,
+		"effort lever":              effort,
+	} {
+		if err := binding.Validate(); err == nil {
+			t.Errorf("%s: validated", name)
+		}
+	}
+	if err := onChangeV1Binding().Validate(); err != nil {
+		t.Fatalf("a valid on_change_v1 binding: %v", err)
+	}
+}
