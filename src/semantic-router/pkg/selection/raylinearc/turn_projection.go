@@ -358,10 +358,13 @@ func renderToolCallBlock(
 			"tool call block carries no call",
 		)
 	}
+	// A namespaced call is named as its tool is declared (Tool.Identity), so
+	// the projection shows the call and the declaration as one tool.
+	name := llmprotocol.QualifiedToolName(call.Namespace, call.Name)
 	if err := recordToolName(
 		toolNames,
 		call.ID,
-		call.Name,
+		name,
 		path,
 	); err != nil {
 		return "", err
@@ -370,7 +373,7 @@ func renderToolCallBlock(
 	if err != nil {
 		return "", err
 	}
-	return renderToolCall(call.Name, arguments), nil
+	return renderToolCall(name, arguments), nil
 }
 
 func renderToolResultBlock(
