@@ -5605,6 +5605,9 @@
         },
         "model_schedule": {
           "type": "string"
+        },
+        "dispatch_effort": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
