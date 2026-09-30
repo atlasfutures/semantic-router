@@ -247,11 +247,10 @@ func decodeResponsesOutputItem(item responsesItemWire, index int, policy llmprot
 		return llmprotocol.OutputItem{}, err
 	}
 	appendProviderFieldOmissions(diagnostics, policy, llmprotocol.OpenAIResponsesV1, map[string]bool{
-		"output.caller":            len(item.Caller) > 0,
-		"output.encrypted_content": len(item.EncryptedContent) > 0,
-		"output.namespace":         item.Namespace != "",
-		"output.phase":             len(item.Phase) > 0,
-		"output.status":            item.Status != "" && item.Type != "image_generation_call",
+		"output.caller":    len(item.Caller) > 0,
+		"output.namespace": item.Namespace != "",
+		"output.phase":     len(item.Phase) > 0,
+		"output.status":    item.Status != "" && item.Type != "image_generation_call",
 	}, "response item metadata has no protocol-neutral representation")
 	id := item.ID
 	if id == "" && policy.MissingStableIDs == llmprotocol.MissingIDGenerateStable {
@@ -327,8 +326,71 @@ func decodeResponsesReasoningOutput(
 	if err != nil {
 		return llmprotocol.OutputItem{}, err
 	}
-	output.Content = append(content, reasoning...)
+	output.Content = withEncryptedReasoning(append(content, reasoning...), item.EncryptedContent)
 	return output, nil
+}
+
+// withEncryptedReasoning keeps a reasoning item's encrypted_content on the
+// first of its reasoning contents, as a member only the Responses contract
+// names. A Responses client asked for it with include and must resend it on
+// the next turn; any other client format has nowhere to put it. An item with
+// no summary and no text still carries the blob, on a reasoning content that
+// holds nothing else.
+func withEncryptedReasoning(contents []llmprotocol.Content, encrypted json.RawMessage) []llmprotocol.Content {
+	carrier := encryptedReasoningFields(encrypted)
+	if carrier == nil {
+		return contents
+	}
+	if len(contents) == 0 {
+		return []llmprotocol.Content{{
+			Kind: llmprotocol.ContentReasoning, Reasoning: llmprotocol.ReasoningScopeSummary, Extensions: carrier,
+		}}
+	}
+	contents[0].Extensions = carrier
+	return contents
+}
+
+func encryptedReasoningFields(encrypted json.RawMessage) *llmprotocol.UnmodeledFields {
+	if !hasJSONValue(encrypted) {
+		return nil
+	}
+	return &llmprotocol.UnmodeledFields{
+		Format: llmprotocol.OpenAIResponsesV1,
+		Fields: map[string]json.RawMessage{"encrypted_content": append(json.RawMessage(nil), encrypted...)},
+	}
+}
+
+// withoutEncryptedReasoningCarriers removes the reasoning contents that hold
+// only an encrypted_content, for a client format that cannot carry one. The
+// carrier has no text, so what that client sees is unchanged from before the
+// blob was kept.
+func withoutEncryptedReasoningCarriers(output []llmprotocol.OutputItem) []llmprotocol.OutputItem {
+	trimmed := make([]llmprotocol.OutputItem, 0, len(output))
+	for _, item := range output {
+		contents := make([]llmprotocol.Content, 0, len(item.Content))
+		for _, content := range item.Content {
+			if _, carrierOnly := encryptedReasoningOf(content); !carrierOnly {
+				contents = append(contents, content)
+			}
+		}
+		item.Content = contents
+		trimmed = append(trimmed, item)
+	}
+	return trimmed
+}
+
+// encryptedReasoningOf returns the encrypted_content a reasoning content
+// carries for a Responses client, and whether the content is only that
+// carrier, with no text of its own to encode.
+func encryptedReasoningOf(content llmprotocol.Content) (json.RawMessage, bool) {
+	if content.Extensions == nil || content.Extensions.Format != llmprotocol.OpenAIResponsesV1 {
+		return nil, false
+	}
+	encrypted := content.Extensions.Fields["encrypted_content"]
+	if !hasJSONValue(encrypted) {
+		return nil, false
+	}
+	return encrypted, content.Text == ""
 }
 
 func responsesContentFieldPresent(raw json.RawMessage, field string) bool {

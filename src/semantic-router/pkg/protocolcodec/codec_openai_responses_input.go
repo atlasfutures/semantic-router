@@ -58,11 +58,32 @@ func carriedResponsesInputItem(body json.RawMessage) (llmprotocol.Message, bool)
 	if itemType == "item_reference" {
 		return llmprotocol.Message{}, false
 	}
+	if itemType == "reasoning" && hasResponsesEncryptedReasoning(body) {
+		return carriedItemMessage(llmprotocol.OpenAIResponsesV1, itemType, body), true
+	}
 	if isSupportedResponsesItemType(itemType, false) &&
 		!(hasUnnamedMembers(body, responsesItemWire{}) && !hasResponsesRefusedMember(body)) {
 		return llmprotocol.Message{}, false
 	}
 	return carriedItemMessage(llmprotocol.OpenAIResponsesV1, itemType, body), true
+}
+
+// hasResponsesEncryptedReasoning reports whether a reasoning item holds the
+// encrypted_content a store:false client (Codex) asks for with include and
+// resends on every later turn. The blob is opaque, and only the provider that
+// issued it can read it, so the item is carried whole: a Responses target gets
+// it back byte for byte, and any other target drops and counts it. A reasoning
+// summary is no use to another provider's model, and an Anthropic target
+// refuses a thinking block with no signature, so nothing of use is lost.
+//
+// A Responses target is assumed to be the issuer. That holds while a model
+// routes to one Responses backend and ARC serves no Responses arm; see
+// raylineARCPolicyActionsCarriable for what serving one would need.
+func hasResponsesEncryptedReasoning(body json.RawMessage) bool {
+	var item struct {
+		EncryptedContent json.RawMessage `json:"encrypted_content"`
+	}
+	return json.Unmarshal(body, &item) == nil && hasJSONValue(item.EncryptedContent)
 }
 
 // hasResponsesRefusedMember reports whether an item names a member the codec

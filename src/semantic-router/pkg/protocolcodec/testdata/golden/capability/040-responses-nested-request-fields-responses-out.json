@@ -23,11 +23,29 @@
     {
       "name": "reasoning_summary",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_reasoning_summary"
-        }
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "input_text"
+                }
+              ],
+              "id": "item_6a32e29c376158d871e9638e",
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "reasoning.summary",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {
@@ -184,10 +202,17 @@
     {
       "name": "encrypted_reasoning_item",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_input_encrypted_content"
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "encrypted_content": "encrypted",
+              "id": "reasoning_1",
+              "summary": [],
+              "type": "reasoning"
+            }
+          ],
+          "model": "routed-model"
         }
       }
     },

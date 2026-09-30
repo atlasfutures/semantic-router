@@ -3,6 +3,7 @@
 package extproc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -503,5 +504,68 @@ func TestPolicyDecidesAResponsesRequest(t *testing.T) {
 	assertJSONField(t, body, "reasoning", `{"effort":"high"}`)
 	if !strings.Contains(string(body["messages"]), policyTestUp) {
 		t.Fatalf("the provider body does not carry the steer: %s", body["messages"])
+	}
+}
+
+// A Codex CLI turn, as captured: store:false, include of encrypted reasoning,
+// a prompt cache key, a reasoning summary, the web_search and namespace tools,
+// and a resent reasoning item that carries its blob. It routes through
+// ext_proc to a Chat arm and to an Anthropic arm, neither of which can use
+// those members, so each is dropped and the turn is decided and dispatched.
+func TestPolicyDispatchesACodexTurn(t *testing.T) {
+	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
+	actions := map[string]config.RaylineARCPolicyBinding{
+		"think":  policyAction("think", "none", "think-trained", policyTestEffort("high"), nil, ""),
+		"claude": policyAction("claude", "none", "claude-opus-5", policyTestEffort("medium"), nil, ""),
+		"off":    policyAction("off", "none", "off-trained", policyTestEffort("none"), nil, ""),
+	}
+	fake := newFakePolicyService(t, policyTestAlias, policyTestPackage,
+		[]string{actions["think"].ActionID, actions["claude"].ActionID, actions["off"].ActionID})
+	router, err := NewOpenAIRouter(writePolicyDispatchConfig(t, fake.URL(), actions))
+	if err != nil {
+		t.Fatalf("build router: %v", err)
+	}
+	awaitPolicySelectorArmed(t, router)
+	codex, err := os.ReadFile("../protocolcodec/testdata/codex/turn2-request.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Codex names the model it is configured with; pointed at the router, that
+	// is the router's model.
+	codex = bytes.Replace(codex, []byte(`"model": "gpt-5-codex"`), []byte(`"model": "auto"`), 1)
+	for _, arm := range []string{"think", "claude"} {
+		t.Run(arm, func(t *testing.T) {
+			fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return actions[arm].ActionID })
+			ctx := &RequestContext{Headers: map[string]string{}, RequestID: "policy-e2e-codex-" + arm, StartTime: time.Now(), TraceContext: context.Background()}
+			headers := &ext_proc.ProcessingRequest_RequestHeaders{RequestHeaders: &ext_proc.HttpHeaders{
+				Headers: &core.HeaderMap{Headers: []*core.HeaderValue{
+					{Key: ":method", Value: "POST"},
+					{Key: ":path", Value: "/v1/responses"},
+					{Key: "content-type", Value: "application/json"},
+					{Key: "x-rayline-session", Value: "episode-codex-" + arm},
+				}},
+			}}
+			if response, err := router.handleRequestHeaders(headers, ctx); err != nil || response.GetImmediateResponse() != nil {
+				t.Fatalf("request headers: err=%v immediate=%v", err, response.GetImmediateResponse())
+			}
+			response, err := router.handleRequestBody(&ext_proc.ProcessingRequest_RequestBody{
+				RequestBody: &ext_proc.HttpBody{Body: codex, EndOfStream: true},
+			}, ctx)
+			if err != nil {
+				t.Fatalf("request body: %v", err)
+			}
+			if immediate := response.GetImmediateResponse(); immediate != nil {
+				t.Fatalf("request refused: %d %s", immediate.GetStatus().GetCode(), immediate.GetBody())
+			}
+			body := string(response.GetRequestBody().GetResponse().GetBodyMutation().GetBody())
+			for _, gone := range []string{"gAAAAB", "prompt_cache_key", "web_search", "multi_agent_v1", "reasoning.encrypted_content"} {
+				if strings.Contains(body, gone) {
+					t.Fatalf("%s reached the %s arm: %s", gone, arm, body)
+				}
+			}
+			if !strings.Contains(body, "exec_command") || !strings.Contains(body, "call_1") {
+				t.Fatalf("the tool turn was lost: %s", body)
+			}
+		})
 	}
 }

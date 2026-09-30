@@ -565,6 +565,11 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesContent(
 	if err != nil {
 		return nil, nil, err
 	}
+	if outputKey.kind == responsesOutputReasoning && event.Content != nil {
+		if encrypted, _ := encryptedReasoningOf(*event.Content); encrypted != nil {
+			item.EncryptedContent = encrypted
+		}
+	}
 	wire := responsesEventWire{
 		Type: "response.output_item.done", Sequence: encoder.nextWireSequence(),
 		OutputIndex: responsesOutputIndex(index), Item: marshalResponsesEventItem(item),

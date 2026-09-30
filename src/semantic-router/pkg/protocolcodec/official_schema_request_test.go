@@ -232,8 +232,9 @@ func TestOfficialUnsupportedRequestFieldsFailWithTypedErrors(t *testing.T) {
 			format: llmprotocol.OpenAIResponsesV1,
 			base:   map[string]any{"model": "m", "input": "hello"},
 			fields: fields(
-				"background", "context_management", "include", "max_tool_calls", "moderation", "prompt",
-				"prompt_cache_key", "prompt_cache_options", "prompt_cache_retention", "safety_identifier",
+				// include and prompt_cache_key are carried: see codex_responses_test.go.
+				"background", "context_management", "max_tool_calls", "moderation", "prompt",
+				"prompt_cache_options", "prompt_cache_retention", "safety_identifier",
 				"service_tier", "top_logprobs",
 			),
 		},

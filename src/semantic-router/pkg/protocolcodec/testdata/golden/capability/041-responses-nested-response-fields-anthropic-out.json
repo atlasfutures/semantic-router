@@ -41,14 +41,10 @@
       "outcome": {
         "status": "error",
         "error": {
-          "category": "upstream_unavailable",
-          "code": "empty_output_item"
+          "category": "unsupported_feature",
+          "code": "lossy_translation"
         },
         "diagnostics": [
-          {
-            "field": "output.encrypted_content",
-            "action": "dropped"
-          },
           {
             "field": "output.status",
             "action": "dropped"

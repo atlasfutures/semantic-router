@@ -28,12 +28,44 @@ func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope 
 	appendRequestDispositions(&diagnostics, request, llmprotocol.OpenAIResponsesV1, policy)
 	appendUnchoosableToolChoiceDrop(&diagnostics, policy, request, llmprotocol.OpenAIResponsesV1, len(wire.Tools))
 	appendToolExtensionDrops(&diagnostics, request.Tools, llmprotocol.OpenAIResponsesV1, policy)
+	appendCarriedToolDrops(&diagnostics, request.CarriedTools, llmprotocol.OpenAIResponsesV1, policy)
 	for _, message := range request.Messages {
 		appendContentExtensionDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
 		appendCarriedBlockDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
 	}
+	if wire.Reasoning == nil {
+		request.Unmodeled = withoutCarriedReasoning(request.Unmodeled, &diagnostics, policy)
+	}
 	body, err = mergeUnmodeledFields(body, request, llmprotocol.OpenAIResponsesV1, &diagnostics, policy)
 	return body, diagnostics, err
+}
+
+// withoutCarriedReasoning removes a carried reasoning member, such as
+// reasoning.summary, when the encoded request sends no reasoning object. The
+// merge would otherwise create one, and a reasoning object on an arm dispatched
+// without reasoning turns it back on at the provider's default effort.
+func withoutCarriedReasoning(
+	carrier *llmprotocol.UnmodeledFields,
+	diagnostics *llmprotocol.Diagnostics,
+	policy llmprotocol.Policy,
+) *llmprotocol.UnmodeledFields {
+	if carrier == nil || carrier.Children["reasoning"].Empty() {
+		return carrier
+	}
+	for _, path := range unnamedMemberPaths(carrier.Children["reasoning"], "reasoning.") {
+		appendPresentationDrop(
+			diagnostics, policy, carrier.Format, llmprotocol.OpenAIResponsesV1, path,
+			"the request sends no reasoning object to carry it in",
+		)
+	}
+	trimmed := *carrier
+	trimmed.Children = make(map[string]*llmprotocol.UnmodeledFields, len(carrier.Children))
+	for name, child := range carrier.Children {
+		if name != "reasoning" {
+			trimmed.Children[name] = child
+		}
+	}
+	return &trimmed
 }
 
 func validateResponsesEncodableRequest(request llmprotocol.Request) error {
@@ -81,7 +113,7 @@ func encodeResponsesRequestWire(request llmprotocol.Request) (responsesRequestWi
 		return responsesRequestWire{}, err
 	}
 	wire.Input, _ = json.Marshal(items)
-	wire.Tools = encodeResponsesTools(request.Tools, request.ImageGeneration)
+	wire.Tools = encodeResponsesTools(request.Tools, request.ImageGeneration, request.CarriedTools)
 	// Gated on the tools this target encoded; see encodeChatRequestOptions for
 	// why a server-tool-only turn otherwise states a choice with no tools.
 	if len(wire.Tools) > 0 {
@@ -128,8 +160,12 @@ func encodeResponsesRequestItems(request llmprotocol.Request) ([]json.RawMessage
 	return items, nil
 }
 
-func encodeResponsesTools(input []llmprotocol.Tool, imageGeneration *llmprotocol.ImageGenerationOptions) json.RawMessage {
-	if len(input) == 0 && imageGeneration == nil {
+func encodeResponsesTools(
+	input []llmprotocol.Tool,
+	imageGeneration *llmprotocol.ImageGenerationOptions,
+	carried []llmprotocol.UnmodeledBlock,
+) json.RawMessage {
+	if len(input) == 0 && imageGeneration == nil && len(carried) == 0 {
 		return nil
 	}
 	tools := make([]responsesToolWire, 0, len(input)+1)
@@ -161,14 +197,24 @@ func encodeResponsesTools(input []llmprotocol.Tool, imageGeneration *llmprotocol
 		}
 		tools = append(tools, tool)
 	}
-	if len(tools) == 0 {
+	encoded := make([]json.RawMessage, 0, len(tools)+len(carried))
+	for _, tool := range tools {
+		body, _ := json.Marshal(tool)
+		encoded = append(encoded, body)
+	}
+	for _, tool := range carried {
+		if tool.Format == llmprotocol.OpenAIResponsesV1 {
+			encoded = append(encoded, append(json.RawMessage(nil), tool.Raw...))
+		}
+	}
+	if len(encoded) == 0 {
 		// Every declared tool was one this target cannot express. An empty
 		// list says nothing the absent member does not, and leaving it out is
 		// what lets the tool choice be gated on it.
 		return nil
 	}
-	encoded, _ := json.Marshal(tools)
-	return encoded
+	body, _ := json.Marshal(encoded)
+	return body
 }
 
 func encodeResponsesOutputFormat(output llmprotocol.OutputFormat) *responsesTextWire {
@@ -342,6 +388,12 @@ func (state *responsesMessageEncodingState) flushReasoning() error {
 	summaries := make([]map[string]string, 0, len(state.reasoning))
 	texts := make([]map[string]string, 0, len(state.reasoning))
 	for _, content := range state.reasoning {
+		if encrypted, carrierOnly := encryptedReasoningOf(content); encrypted != nil {
+			item.EncryptedContent = encrypted
+			if carrierOnly {
+				continue
+			}
+		}
 		if content.Reasoning == llmprotocol.ReasoningScopeSummary {
 			summaries = append(summaries, map[string]string{"type": "summary_text", "text": content.Text})
 		} else {

@@ -19,7 +19,6 @@ func TestOfficialNestedUnsupportedFieldsFailWithTypedErrors(t *testing.T) {
 		{"Chat cache breakpoint", llmprotocol.OpenAIChatV1, `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hello","prompt_cache_breakpoint":{"mode":"explicit"}}]}]}`},
 		{"Responses deferred tool", llmprotocol.OpenAIResponsesV1, `{"model":"m","input":"hello","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"},"defer_loading":true}]}`},
 		{"Responses reasoning mode", llmprotocol.OpenAIResponsesV1, `{"model":"m","input":"hello","reasoning":{"mode":"pro"}}`},
-		{"Responses reasoning summary", llmprotocol.OpenAIResponsesV1, `{"model":"m","input":"hello","reasoning":{"summary":"concise"}}`},
 		{"Responses reasoning context", llmprotocol.OpenAIResponsesV1, `{"model":"m","input":"hello","reasoning":{"context":"all_turns"}}`},
 		{"Responses deprecated reasoning summary", llmprotocol.OpenAIResponsesV1, `{"model":"m","input":"hello","reasoning":{"generate_summary":"auto"}}`},
 		{"Responses text verbosity", llmprotocol.OpenAIResponsesV1, `{"model":"m","input":"hello","text":{"verbosity":"high"}}`},
@@ -663,10 +662,12 @@ func TestOfficialResponsesItemVariantsRejectCrossVariantFields(t *testing.T) {
 func TestOfficialUnsupportedResponsesToolDiscriminatorsAreTyped(t *testing.T) {
 	unsupported := fields(
 		"apply_patch", "code_interpreter", "computer", "computer_use_preview", "custom",
-		"file_search", "local_shell", "mcp", "namespace",
-		"programmatic_tool_calling", "shell", "tool_search", "web_search", "web_search_preview",
+		"file_search", "local_shell", "mcp",
+		"programmatic_tool_calling", "shell", "tool_search", "web_search_preview",
 	)
-	assertClosedDiscriminatorInventory(t, "OpenAI Responses tool", 16, fields("function", "image_generation"), unsupported)
+	// namespace and web_search are carried whole: see carriedResponsesToolTypes.
+	assertClosedDiscriminatorInventory(t, "OpenAI Responses tool", 16,
+		fields("function", "image_generation", "namespace", "web_search"), unsupported)
 	engine := NewBuiltinEngine()
 	for _, toolType := range unsupported {
 		t.Run(toolType, func(t *testing.T) {

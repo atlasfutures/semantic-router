@@ -216,8 +216,8 @@ func (OpenAIResponsesCodec) DecodeRequest(body []byte, policy llmprotocol.Policy
 	}
 	if err := rejectUnsupportedRequestFields(map[string]json.RawMessage{
 		"background": wire.Background, "context_management": wire.ContextManagement,
-		"include": wire.Include, "max_tool_calls": wire.MaxToolCalls, "moderation": wire.Moderation,
-		"prompt": wire.Prompt, "prompt_cache_key": wire.PromptCacheKey,
+		"max_tool_calls": wire.MaxToolCalls, "moderation": wire.Moderation,
+		"prompt":                 wire.Prompt,
 		"prompt_cache_retention": wire.PromptCacheRetention,
 		"prompt_cache_options":   wire.PromptCacheOptions, "safety_identifier": wire.SafetyIdentifier,
 		"service_tier": wire.ServiceTier,
@@ -238,7 +238,7 @@ func (OpenAIResponsesCodec) DecodeRequest(body []byte, policy llmprotocol.Policy
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}
 	request := decodeResponsesBaseRequest(wire, conversationID)
-	request.Unmodeled = unmodeled
+	request.Unmodeled = carryResponsesClientMembers(unmodeled, wire)
 	if err := decodeResponsesReasoningRequest(wire.Reasoning, &request); err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}
@@ -279,13 +279,51 @@ func decodeResponsesReasoningRequest(reasoning *responsesReasoningWire, request 
 	request.ReasoningEffort = reasoning.Effort
 	if err := rejectUnsupportedRequestFields(map[string]json.RawMessage{
 		"reasoning.mode":             reasoning.Mode,
-		"reasoning.summary":          reasoning.Summary,
 		"reasoning.context":          reasoning.Context,
 		"reasoning.generate_summary": reasoning.GenerateSummary,
 	}); err != nil {
 		return err
 	}
 	return nil
+}
+
+// carryResponsesClientMembers puts three members Codex sends on every turn on
+// the carrier that holds the members no contract names, so a Responses target
+// gets them back byte for byte and any other target drops and counts them.
+// include asks for encrypted reasoning, prompt_cache_key names a cache shard,
+// and reasoning.summary asks for reasoning summaries: each shapes what the
+// provider returns or caches, not what the model is asked, so none of them is
+// a reason to refuse the turn.
+func carryResponsesClientMembers(carrier *llmprotocol.UnmodeledFields, wire responsesRequestWire) *llmprotocol.UnmodeledFields {
+	carry := func(fields *llmprotocol.UnmodeledFields, name string, value json.RawMessage) *llmprotocol.UnmodeledFields {
+		if !hasJSONValue(value) {
+			return fields
+		}
+		if fields == nil {
+			fields = &llmprotocol.UnmodeledFields{Format: llmprotocol.OpenAIResponsesV1}
+		}
+		if fields.Fields == nil {
+			fields.Fields = map[string]json.RawMessage{}
+		}
+		fields.Fields[name] = append(json.RawMessage(nil), value...)
+		return fields
+	}
+	carrier = carry(carrier, "include", wire.Include)
+	carrier = carry(carrier, "prompt_cache_key", wire.PromptCacheKey)
+	if wire.Reasoning != nil && hasJSONValue(wire.Reasoning.Summary) {
+		if carrier == nil {
+			carrier = &llmprotocol.UnmodeledFields{Format: llmprotocol.OpenAIResponsesV1}
+		}
+		if carrier.Children == nil {
+			carrier.Children = map[string]*llmprotocol.UnmodeledFields{}
+		}
+		child := carrier.Children["reasoning"]
+		if child == nil {
+			child = &llmprotocol.UnmodeledFields{Format: llmprotocol.OpenAIResponsesV1}
+		}
+		carrier.Children["reasoning"] = carry(child, "summary", wire.Reasoning.Summary)
+	}
+	return carrier
 }
 
 func decodeResponsesInstructions(raw json.RawMessage, request *llmprotocol.Request, policy llmprotocol.Policy) error {
@@ -335,11 +373,27 @@ func decodeResponsesTool(body json.RawMessage, request *llmprotocol.Request, pol
 	if toolType == "image_generation" {
 		return decodeResponsesImageGenerationTool(body, request, policy)
 	}
+	if carriedResponsesToolTypes[toolType] {
+		request.CarriedTools = append(request.CarriedTools, llmprotocol.UnmodeledBlock{
+			Format: llmprotocol.OpenAIResponsesV1, Type: toolType,
+			Raw: append(json.RawMessage(nil), body...),
+		})
+		return nil
+	}
 	if toolType != "function" {
 		return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_tool", "only function tools enter the model protocol", nil)
 	}
 	return decodeResponsesFunctionTool(body, request, policy)
 }
+
+// carriedResponsesToolTypes are the tool kinds Codex declares on every turn
+// that the contract does not model. Each is carried whole to a Responses arm
+// and dropped elsewhere: web search runs at the provider, and a namespace
+// groups sub-agent functions under a name only Responses spells. Losing either
+// costs the model a tool, not the turn. A caller-run kind such as custom or
+// apply_patch stays refused: dropping it would silently take away a tool the
+// client expects the model to call.
+var carriedResponsesToolTypes = map[string]bool{"web_search": true, "namespace": true}
 
 func responsesToolDiscriminator(body json.RawMessage) (string, error) {
 	var discriminator struct {
