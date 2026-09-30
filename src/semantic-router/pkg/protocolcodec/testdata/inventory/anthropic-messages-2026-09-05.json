@@ -60,6 +60,16 @@
       "note": "The breakpoint a client marks on a tool block. Refusing it answered 500 to every follow-up turn of a tool-using session on 2026-09-04. Beta attribution is operator-owed: the member predates the captures on disk."
     },
     {
+      "path": "content.tool_result.cache_control",
+      "leg": "request",
+      "first_seen": "2026-09-30",
+      "targets": {
+        "openai.chat.v1": "transform",
+        "openai.responses.v1": "drop"
+      },
+      "note": "US-003d, upstream sync 2026-09-30: upstream #4125/#4201 moves the outer tool_result breakpoint onto the result's last text part on Chat. A breakpoint on an empty result is dropped and an inner one that disagrees yields to the outer, never refused."
+    },
+    {
       "path": "content.cache_control.evict_on_complete",
       "leg": "request",
       "beta": "prompt-caching-evict-2026-05-12",

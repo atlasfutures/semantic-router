@@ -2,6 +2,7 @@ package protocolcodec
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
@@ -166,6 +167,17 @@ func validateAnthropicContentExtensions(block anthropicContentWire, location str
 			"Anthropic citations are not supported by the neutral contract",
 			location, "content.citations",
 		)
+	}
+	if err := validateAnthropicToolCaller(block.Caller, providerOutput); err != nil {
+		var refusal *llmprotocol.ProtocolError
+		if errors.As(err, &refusal) {
+			located := llmprotocol.NewFieldError(refusal.Category, refusal.Code, refusal.Message, location, fieldContentCaller)
+			if refusal.Cause != nil {
+				located.Cause = refusal.Cause
+			}
+			return located
+		}
+		return err
 	}
 	return nil
 }

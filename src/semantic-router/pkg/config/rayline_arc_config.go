@@ -613,6 +613,9 @@ func validateRaylineARCDecisionContract(cfg *RouterConfig, decision Decision) er
 	if decision.Algorithm == nil || strings.TrimSpace(decision.Algorithm.Type) != RaylineARCAlgorithmType {
 		return nil
 	}
+	if err := validateRaylineARCFallbackContract(cfg, decision); err != nil {
+		return err
+	}
 	if decision.Adaptations.EffectiveMode() != DecisionAdaptationModeBypass {
 		return fmt.Errorf(
 			"decision '%s': algorithm.type=%s requires adaptations.mode=%s so Router Learning cannot override the artifact decision",

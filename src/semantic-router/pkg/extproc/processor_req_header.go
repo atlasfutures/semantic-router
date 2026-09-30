@@ -20,11 +20,13 @@ func (r *OpenAIRouter) handleRequestHeaders(v *ext_proc.ProcessingRequest_Reques
 	ctx.StartTime = time.Now()
 
 	span := startRequestHeaderSpan(v, ctx)
-	defer span.End()
 
 	method, path := captureRequestHeaders(v, ctx, r.skipProcessingEnabled())
-
 	setRequestHeaderSpanAttributes(span, ctx, method, path)
+	if rejected := r.benchmarkConfigPrecondition(ctx); rejected != nil {
+		return rejected, nil
+	}
+
 	detectSourceFormat(path, ctx)
 	applyHeaderPassThroughPolicy(ctx)
 
@@ -48,7 +50,20 @@ func (r *OpenAIRouter) handleRequestHeaders(v *ext_proc.ProcessingRequest_Reques
 	// could be answered 200 against a POST-only contract.
 	if ctx.SkipProcessing && !isRaylineRoutesRequest(ctx) {
 		detectStreamingExpectation(ctx)
-		return newContinueRequestHeadersResponse(buildLooperInternalHeaderRemovalMutation()), nil
+		mutation := buildLooperInternalHeaderRemovalMutation()
+		mutation.RemoveHeaders = append(mutation.RemoveHeaders, headers.SelectedModel)
+		if isAzureOpenAIPath(path) {
+			mutation.RemoveHeaders = append(mutation.RemoveHeaders, azureAPIKeyHeader)
+		}
+		response := newContinueRequestHeadersResponse(mutation)
+		if headerValueCI(ctx, headers.SelectedModel) != "" {
+			// A caller-supplied selected-model header may have selected a provider
+			// route before ext_proc ran. Skip-processing does not materialize a
+			// provider path, so remove the untrusted selector and re-evaluate onto
+			// the default route, which owns the ingress path-prefix rewrite.
+			response.GetRequestHeaders().GetResponse().ClearRouteCache = true
+		}
+		return response, nil
 	}
 
 	detectStreamingExpectation(ctx)
@@ -58,24 +73,18 @@ func (r *OpenAIRouter) handleRequestHeaders(v *ext_proc.ProcessingRequest_Reques
 	if responseAPIResp, err := r.handleResponseAPIRequestHeaders(method, path, ctx); err != nil || responseAPIResp != nil {
 		return responseAPIResp, err
 	}
-	if validationResp := r.validateRequestHeaders(method, path, ctx); validationResp != nil {
+	if routesResp, handled := r.answerRaylineRoutesRequestHeaders(method, path, v, ctx); handled {
+		return routesResp, nil
+	}
+	if validationResp := r.validateRequestHeaders(method, path); validationResp != nil {
 		return validationResp, nil
 	}
-	// A route lookup is answered entirely from its body, and Envoy sends no
-	// body callback for a header message that already ended the stream. A
-	// bodyless POST therefore passes method validation, finds no body phase
-	// to answer it, and is continued upstream -- forwarding a request to an
-	// endpoint that exists only here and executes nothing. Refusing it now is
-	// the only place left that still can.
-	if isRaylineRoutesRequest(ctx) && v.RequestHeaders.GetEndOfStream() {
-		return r.createRaylineRoutesError(
-			ctx,
-			400,
-			"invalid_request_error",
-			"request body is required",
-		), nil
+	mutation := buildIdentityEncodingRequestMutation()
+	if isAzureOpenAIPath(path) {
+		// The Azure client key authenticates to the Router, never to a provider.
+		mutation.RemoveHeaders = append(mutation.RemoveHeaders, azureAPIKeyHeader)
 	}
-	return newContinueRequestHeadersResponse(buildIdentityEncodingRequestMutation()), nil
+	return newContinueRequestHeadersResponse(mutation), nil
 }
 
 func startRequestHeaderSpan(
@@ -94,10 +103,11 @@ func startRequestHeaderSpan(
 	ctx.TraceContext = tracing.ExtractTraceContext(baseCtx, headerMap)
 	spanCtx, span := tracing.StartSpan(
 		ctx.TraceContext,
-		tracing.SpanRequestReceived,
+		tracing.SpanRequest,
 		trace.WithSpanKind(trace.SpanKindServer),
 	)
 	ctx.TraceContext = spanCtx
+	ctx.RequestSpan = span
 	return span
 }
 
@@ -151,6 +161,16 @@ func setRequestHeaderSpanAttributes(
 	method string,
 	path string,
 ) {
+	route, kind := requestTraceRoute(path)
+	if kind == "inference" && ctx.LooperRequest {
+		kind = "inference_internal"
+	}
+	ctx.TraceTrafficKind = kind
+	switch method {
+	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS":
+	default:
+		method = "OTHER"
+	}
 	if ctx.RequestID != "" {
 		tracing.SetSpanAttributes(
 			span,
@@ -161,7 +181,9 @@ func setRequestHeaderSpanAttributes(
 	tracing.SetSpanAttributes(
 		span,
 		attribute.String(tracing.AttrHTTPMethod, method),
-		attribute.String(tracing.AttrHTTPPath, path),
+		attribute.String(tracing.AttrHTTPPath, route),
+		attribute.String("http.route", route),
+		attribute.String("traffic.kind", kind),
 	)
 }
 

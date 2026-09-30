@@ -147,7 +147,7 @@ func reasoningBodyForProfile(
 ) map[string]interface{} {
 	t.Helper()
 	router := newArmReasoningRouter()
-	encoded, err := router.setReasoningModeToRequestBodyForModelAndProvider(
+	encoded, err := raylineReasoningProjectionForTest(router,
 		[]byte(body), "gpt-5-mini", enabled, router.Config.GetDecisionByName("arc"), profile, nil,
 	)
 	require.NoError(t, err)
@@ -254,7 +254,7 @@ func TestArmBoundComesFromTheClientAllowanceNotTheFloor(t *testing.T) {
 	ctx := &RequestContext{SemanticRequest: &llmprotocol.Request{
 		ClientMaxOutputTokens: llmprotocol.Int64(512),
 	}}
-	encoded, err := router.setReasoningModeToRequestBodyForModelAndProvider(
+	encoded, err := raylineReasoningProjectionForTest(router,
 		[]byte(`{"model":"gpt-5-mini","messages":[{"role":"user","content":"hi"}],`+
 			`"max_completion_tokens":65536}`),
 		"gpt-5-mini", true, router.Config.GetDecisionByName("arc"),
@@ -290,7 +290,7 @@ func TestThinkingOffArmCarriesNoReasoningRequest(t *testing.T) {
 	}
 	router := newArmReasoningRouter()
 	// The body the Chat encoder renders for Claude Code's default request.
-	encoded, err := router.setReasoningModeToRequestBodyForModelAndProvider(
+	encoded, err := raylineReasoningProjectionForTest(router,
 		[]byte(`{"model":"gpt-5-mini","messages":[{"role":"user","content":"hi"}],`+
 			`"max_completion_tokens":32000,"reasoning":{"max_tokens":32000},`+
 			`"reasoning_effort":"high"}`),

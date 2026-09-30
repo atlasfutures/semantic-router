@@ -32,6 +32,9 @@ func validateRequestTools(tools []Tool, limits Limits) (map[string]struct{}, int
 				"tool names must be unique", location, "tools.name")
 		}
 		schemaBytes += len(materialized.InputSchema)
+		if tool.CustomFormat != nil {
+			schemaBytes += len(tool.CustomFormat.Definition)
+		}
 		if limits.SchemaBytes > 0 && schemaBytes > limits.SchemaBytes {
 			return nil, 0, NewFieldError(ErrorInvalidRequest, "schema_limit",
 				"total schema limit exceeded", location, "tools.input_schema")
@@ -76,6 +79,13 @@ func refusalNameBudget(limits Limits) int {
 // whole declaration -- {"type":"web_search_20250305"} is the shape Claude Code
 // sends. Refusing that shape refused the turn around it.
 func validateRequestTool(tool Tool, limits Limits, location string) error {
+	if tool.Kind == ToolKindCustom {
+		return validateCustomTool(tool, limits, location)
+	}
+	if tool.Kind != "" || tool.CustomFormat != nil {
+		return NewFieldError(ErrorInvalidRequest, "invalid_tool",
+			"tool kind is unsupported", location, "tools.type")
+	}
 	if err := validateToolDeclaration(tool, location); err != nil {
 		return err
 	}
@@ -89,6 +99,29 @@ func validateRequestTool(tool Tool, limits Limits, location string) error {
 		return nil
 	}
 	return validateSchemaObject(tool.InputSchema, "tool schema", location, "tools.input_schema", limits)
+}
+
+// validateCustomTool checks an OpenAI custom tool: a named function that takes
+// free-form text, optionally constrained by a lark or regex grammar.
+func validateCustomTool(tool Tool, limits Limits, location string) error {
+	if strings.TrimSpace(tool.Name) == "" || len(tool.InputSchema) != 0 || tool.Strict != nil {
+		return NewFieldError(ErrorInvalidRequest, "invalid_tool",
+			"custom tools require a name and take no JSON Schema", location, "tools.name")
+	}
+	if err := validateToolTextLimits(tool, limits, location); err != nil {
+		return err
+	}
+	if format := tool.CustomFormat; format != nil {
+		if format.Syntax != "lark" && format.Syntax != "regex" || strings.TrimSpace(format.Definition) == "" {
+			return NewFieldError(ErrorInvalidRequest, "invalid_tool",
+				"custom tool grammar requires lark or regex syntax and a definition", location, "tools.format")
+		}
+		if limits.SchemaBytes > 0 && len(format.Definition) > limits.SchemaBytes {
+			return NewFieldError(ErrorInvalidRequest, "schema_limit",
+				"tool grammar limit exceeded", location, "tools.format.definition")
+		}
+	}
+	return validateCacheDirective(tool.Cache, location, "tools.cache_control")
 }
 
 // validateToolDeclaration checks what a tool must state to be usable at all.
@@ -146,23 +179,44 @@ func toolTextLimit(location, field string, observed, limit int) error {
 	).WithCount("bytes", observed, limit)
 }
 
-func validateToolChoice(choice ToolChoice, namedTools map[string]struct{}, toolCount int, hasImageGeneration bool) error {
+// validateRequestToolChoice checks the choice against every declaration the
+// target can call. A carried declaration is one too, so it satisfies a
+// required choice; a target that drops it also drops the choice it could not
+// honour.
+func validateRequestToolChoice(request Request, namedTools map[string]struct{}) error {
+	err := validateToolChoice(request.ToolChoice, namedTools, request.Tools, request.ImageGeneration != nil)
+	if refusal, ok := err.(*ProtocolError); ok && refusal.Code == "tools_required" && len(request.CarriedTools) > 0 {
+		return nil
+	}
+	return err
+}
+
+func validateToolChoice(choice ToolChoice, namedTools map[string]struct{}, tools []Tool, hasImageGeneration bool) error {
 	if !validToolChoiceMode(choice.Mode) {
 		return NewFieldError(ErrorInvalidRequest, "invalid_tool_choice",
 			"tool choice is invalid", "", "tool_choice")
 	}
 	if choice.Mode == ToolChoiceNamed {
-		return validateNamedToolChoice(choice.Name, namedTools)
+		if err := validateNamedToolChoice(choice.Name, namedTools); err != nil {
+			return err
+		}
+		for _, tool := range tools {
+			if tool.Name == choice.Name && tool.Kind != choice.Kind {
+				return NewFieldError(ErrorInvalidRequest, "tool_choice_kind_mismatch",
+					"named tool choice kind does not match the declared tool", "", "tool_choice")
+			}
+		}
+		return nil
 	}
-	if choice.Name != "" {
+	if choice.Name != "" || choice.Kind != "" {
 		return NewFieldError(ErrorInvalidRequest, "invalid_tool_choice",
-			"only named tool choice may contain a name", "", "tool_choice.name")
+			"only named tool choice may contain a name or kind", "", "tool_choice.name")
 	}
 	if choice.Mode == ToolChoiceImageGeneration && !hasImageGeneration {
 		return NewFieldError(ErrorInvalidRequest, "image_generation_tool_required",
 			"image-generation tool choice requires a declared image-generation tool", "", "tool_choice")
 	}
-	if choice.Mode == ToolChoiceRequired && toolCount == 0 && !hasImageGeneration {
+	if choice.Mode == ToolChoiceRequired && len(tools) == 0 && !hasImageGeneration {
 		return NewFieldError(ErrorInvalidRequest, "tools_required",
 			"tool choice requires at least one declared tool", "", "tool_choice")
 	}

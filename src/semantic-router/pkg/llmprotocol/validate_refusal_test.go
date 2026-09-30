@@ -377,6 +377,7 @@ func outputFormatRefusalCases() []refusalCase {
 func samplingRefusalCases() []refusalCase {
 	outOfRange := 5.0
 	negative := int64(-1)
+	belowTopKSentinel := int64(-2)
 	return []refusalCase{
 		{
 			name:    "temperature outside its range",
@@ -389,8 +390,9 @@ func samplingRefusalCases() []refusalCase {
 			code:    "invalid_top_p", field: "top_p",
 		},
 		{
-			name:    "negative top_k",
-			request: withRequest(func(request *Request) { request.Sampling.TopK = &negative }),
+			// -1 is vLLM's "disabled" sentinel; anything below it is refused.
+			name:    "top_k below -1",
+			request: withRequest(func(request *Request) { request.Sampling.TopK = &belowTopKSentinel }),
 			code:    "invalid_top_k", field: "top_k",
 		},
 		{

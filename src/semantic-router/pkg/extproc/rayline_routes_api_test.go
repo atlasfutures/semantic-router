@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -67,12 +66,12 @@ func TestRaylineRoutesIsNotFoundWhileDisabled(t *testing.T) {
 	t.Parallel()
 	router := routesRouter(false)
 	for _, method := range []string{"POST", "GET", "DELETE"} {
-		response := router.validateRequestHeaders(method, raylineRoutesAPIPath, &RequestContext{Headers: map[string]string{}})
+		response := routesHeaderResponse(router, method, &RequestContext{Headers: map[string]string{}})
 		if response == nil {
-			t.Fatalf("validateRequestHeaders(%q, &RequestContext{Headers: map[string]string{}}) = nil, want 404", method)
+			t.Fatalf("routes header phase(%q, &RequestContext{Headers: map[string]string{}}) = nil, want 404", method)
 		}
 		if code := immediateStatusCode(t, response); code != 404 {
-			t.Fatalf("validateRequestHeaders(%q, &RequestContext{Headers: map[string]string{}}) status = %d, want 404", method, code)
+			t.Fatalf("routes header phase(%q, &RequestContext{Headers: map[string]string{}}) status = %d, want 404", method, code)
 		}
 	}
 }
@@ -80,15 +79,15 @@ func TestRaylineRoutesIsNotFoundWhileDisabled(t *testing.T) {
 func TestRaylineRoutesAdmitsOnlyPost(t *testing.T) {
 	t.Parallel()
 	router := routesRouter(true)
-	if response := router.validateRequestHeaders("POST", raylineRoutesAPIPath, &RequestContext{Headers: map[string]string{}}); response != nil {
-		t.Fatalf("validateRequestHeaders(POST, &RequestContext{Headers: map[string]string{}}) = %v, want nil", response)
+	if response := routesHeaderResponse(router, "POST", &RequestContext{Headers: map[string]string{}}); response != nil {
+		t.Fatalf("routes header phase(POST, &RequestContext{Headers: map[string]string{}}) = %v, want nil", response)
 	}
-	response := router.validateRequestHeaders("GET", raylineRoutesAPIPath, &RequestContext{Headers: map[string]string{}})
+	response := routesHeaderResponse(router, "GET", &RequestContext{Headers: map[string]string{}})
 	if response == nil {
-		t.Fatal("validateRequestHeaders(GET, &RequestContext{Headers: map[string]string{}}) = nil, want 405")
+		t.Fatal("routes header phase(GET, &RequestContext{Headers: map[string]string{}}) = nil, want 405")
 	}
 	if code := immediateStatusCode(t, response); code != 405 {
-		t.Fatalf("validateRequestHeaders(GET, &RequestContext{Headers: map[string]string{}}) status = %d, want 405", code)
+		t.Fatalf("routes header phase(GET, &RequestContext{Headers: map[string]string{}}) status = %d, want 405", code)
 	}
 }
 
@@ -675,9 +674,9 @@ func TestRaylineRoutesHeaderErrorsUseTheRoutesEnvelope(t *testing.T) {
 			t.Parallel()
 			ctx := routesContext(nil)
 			response := routesRouter(testCase.enabled).
-				validateRequestHeaders(testCase.method, raylineRoutesAPIPath, ctx)
+				validateRaylineRoutesMethod(testCase.method, ctx)
 			if response == nil {
-				t.Fatalf("validateRequestHeaders() = nil, want %d", testCase.status)
+				t.Fatalf("routes header phase() = nil, want %d", testCase.status)
 			}
 			if code := immediateStatusCode(t, response); code != testCase.status {
 				t.Fatalf("status = %d, want %d", code, testCase.status)
@@ -1391,29 +1390,43 @@ func TestTimedOutLookupLearnsWhetherTheCommitLanded(t *testing.T) {
 	}
 }
 
-// A guard breach on a streamed body must be answered here. Returning the
-// error closes the ExtProc stream, and Envoy then applies failure_mode_allow
-// -- true in the shipped local and operator configurations -- which forwards
-// the lookup upstream and executes the request this endpoint is defined by
-// never executing.
+// A guard breach on a streamed body must be answered here, in the endpoint's
+// own envelope, at both guard sites: the chunk path and the full-duplex
+// trailers path. The generic guard answers with an immediate response so
+// failure_mode_allow cannot forward the lookup; without the route branch that
+// answer would be the Chat-shaped protocol error instead of this endpoint's.
 func TestRaylineRoutesAnswersItsOwnStreamedBodyGuardBreaches(t *testing.T) {
 	t.Parallel()
 	for name, testCase := range map[string]struct {
-		err    error
-		status int
+		maxBytes  int64
+		expired   bool
+		trailers  bool
+		status    int
+		errorType string
 	}{
-		"too large": {err: ErrStreamedBodyTooLarge, status: 413},
-		"timed out": {err: ErrStreamedBodyTimeout, status: 504},
-		// Wrapped, as checkGuards returns them.
-		"wrapped timeout": {
-			err:    fmt.Errorf("%w after 10 bytes", ErrStreamedBodyTimeout),
-			status: 504,
-		},
+		"too large":             {maxBytes: 4, status: 413, errorType: "request_too_large"},
+		"timed out":             {expired: true, status: 408, errorType: "timeout_error"},
+		"timed out at trailers": {expired: true, trailers: true, status: 408, errorType: "timeout_error"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			ctx := routesContext(nil)
-			response := routesRouter(true).raylineRoutesGuardBreach(ctx, testCase.err)
+			handler := newStreamedBodyHandler(routesRouter(true), ctx)
+			handler.maxBytes = testCase.maxBytes
+			if testCase.expired {
+				handler.deadline = time.Now().Add(-time.Second)
+			}
+			var response *ext_proc.ProcessingResponse
+			var err error
+			if testCase.trailers {
+				handler.buf.WriteString(`{"model":"x"}`)
+				response, err = handler.finishAtTrailers()
+			} else {
+				response, err = handler.HandleChunk(&ext_proc.HttpBody{Body: []byte(`{"model":"x"}`)}, ctx)
+			}
+			if err != nil {
+				t.Fatalf("guard breach returned error %v, so Envoy decides", err)
+			}
 			if response.GetImmediateResponse() == nil {
 				t.Fatal("the guard breach was not answered here, so Envoy decides")
 			}
@@ -1423,6 +1436,34 @@ func TestRaylineRoutesAnswersItsOwnStreamedBodyGuardBreaches(t *testing.T) {
 			if !ctx.ImmediateResponseEncoded {
 				t.Fatal("the refusal was not claimed, so it will be re-encoded")
 			}
+			var envelope struct {
+				Type  string `json:"type"`
+				Error struct {
+					Type string `json:"type"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(response.GetImmediateResponse().GetBody(), &envelope); err != nil {
+				t.Fatalf("body is not JSON: %v", err)
+			}
+			if envelope.Type != "error" || envelope.Error.Type != testCase.errorType {
+				t.Fatalf("envelope = %+v, want type error / %s", envelope, testCase.errorType)
+			}
 		})
 	}
+}
+
+// routesHeaderResponse answers the header phase of a POST-shaped lookup
+// (a body follows) the way handleRequestHeaders does.
+func routesHeaderResponse(router *OpenAIRouter, method string, ctx *RequestContext) *ext_proc.ProcessingResponse {
+	response, handled := router.answerRaylineRoutesRequestHeaders(
+		method, raylineRoutesAPIPath, &ext_proc.ProcessingRequest_RequestHeaders{
+			RequestHeaders: &ext_proc.HttpHeaders{},
+		}, ctx)
+	if !handled {
+		return nil
+	}
+	if response.GetRequestHeaders() != nil {
+		return nil
+	}
+	return response
 }

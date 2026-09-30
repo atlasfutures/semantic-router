@@ -1,6 +1,9 @@
 package extproc
 
-import "github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+import (
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
+)
 
 // requestToolNamespaces maps the qualified names of this request's namespaced
 // tools back to their namespace and function; nil when it declares none. A
@@ -23,5 +26,45 @@ func restoreResponseToolNamespaces(response *llmprotocol.Response, namespaces ma
 		for contentIndex := range response.Output[itemIndex].Content {
 			llmprotocol.RestoreToolNamespace(response.Output[itemIndex].Content[contentIndex].ToolCall, namespaces)
 		}
+	}
+}
+
+// withResponseToolNamespaces chains namespace restoration after the client
+// response mutation, so a namespaced call is returned to the client that
+// declared it under its namespace whatever else the mutation does.
+func withResponseToolNamespaces(
+	mutation protocolcodec.ResponseMutation,
+	namespaces map[string][2]string,
+) protocolcodec.ResponseMutation {
+	if namespaces == nil {
+		return mutation
+	}
+	return func(response *llmprotocol.Response) error {
+		if mutation != nil {
+			if err := mutation(response); err != nil {
+				return err
+			}
+		}
+		restoreResponseToolNamespaces(response, namespaces)
+		return nil
+	}
+}
+
+// withStreamToolNamespaces is withResponseToolNamespaces for stream events.
+func withStreamToolNamespaces(
+	mutation protocolcodec.StreamEventMutation,
+	namespaces map[string][2]string,
+) protocolcodec.StreamEventMutation {
+	if namespaces == nil {
+		return mutation
+	}
+	return func(event *llmprotocol.Event) error {
+		if mutation != nil {
+			if err := mutation(event); err != nil {
+				return err
+			}
+		}
+		llmprotocol.RestoreToolNamespace(event.ToolCall, namespaces)
+		return nil
 	}
 }

@@ -14,7 +14,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -31,6 +30,33 @@
           "category": "unsupported_feature",
           "code": "unsupported_background"
         }
+      }
+    },
+    {
+      "name": "client_metadata",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "input_text"
+                }
+              ],
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "client_metadata",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {
@@ -57,7 +83,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -82,7 +107,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -104,7 +128,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -126,7 +149,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "developer",
               "type": "message"
             },
@@ -137,7 +159,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -159,7 +180,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -192,7 +212,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -217,7 +236,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -249,7 +267,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -272,7 +289,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -305,7 +321,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -348,7 +363,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -393,7 +407,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -416,7 +429,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -439,7 +451,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -465,7 +476,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -488,7 +498,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -515,7 +524,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -543,7 +551,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -585,7 +592,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -608,7 +614,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -631,7 +636,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }

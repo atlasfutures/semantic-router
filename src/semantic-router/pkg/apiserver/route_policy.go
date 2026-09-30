@@ -6,23 +6,20 @@ package apiserver
 type RoutePermission string
 
 const (
-	PermHealthRead     RoutePermission = "health.read"
-	PermReadyRead      RoutePermission = "ready.read"
-	PermDocsRead       RoutePermission = "docs.read"
-	PermClassifyInvoke RoutePermission = "classify.invoke"
-	PermConfigRead     RoutePermission = "config.read"
-	PermConfigWrite    RoutePermission = "config.write"
-	PermSecretView     RoutePermission = "secret_view"
-	PermLearningIngest RoutePermission = "learning.ingest"
-	PermReplayRead     RoutePermission = "replay.read"
-	PermReplayDetail   RoutePermission = "replay.detail"
-	PermDataRead       RoutePermission = "data.read"
-	PermDataWrite      RoutePermission = "data.write"
-	PermMetricsRead    RoutePermission = "metrics.read"
-	// PermRouteDecision gates decision-only routing. It is deliberately absent
-	// from the built-in viewer and operator roles: the caller is a trusted
-	// proxy, not a console user, so a deployment must grant it on purpose.
-	PermRouteDecision      RoutePermission = "route.decision"
+	PermHealthRead         RoutePermission = "health.read"
+	PermReadyRead          RoutePermission = "ready.read"
+	PermDocsRead           RoutePermission = "docs.read"
+	PermClassifyInvoke     RoutePermission = "classify.invoke"
+	PermConfigRead         RoutePermission = "config.read"
+	PermConfigWrite        RoutePermission = "config.write"
+	PermSecretView         RoutePermission = "secret_view"
+	PermLearningIngest     RoutePermission = "learning.ingest"
+	PermReplayRead         RoutePermission = "replay.read"
+	PermReplayDetail       RoutePermission = "replay.detail"
+	PermDataRead           RoutePermission = "data.read"
+	PermDataWrite          RoutePermission = "data.write"
+	PermMetricsRead        RoutePermission = "metrics.read"
+	PermAuditRead          RoutePermission = "audit.read"
 	PermCacheRead          RoutePermission = "cache.read"
 	PermCacheInvalidate    RoutePermission = "cache.invalidate"
 	PermCacheManage        RoutePermission = "cache.manage"
@@ -74,7 +71,7 @@ func managedRoute(
 	meta EndpointMetadata,
 	policy routePolicy,
 	handler apiRouteHandler,
-	body ...apiRequestBody,
+	options ...apiRouteOption,
 ) apiRoute {
 	route := apiRoute{
 		EndpointMetadata: meta,
@@ -83,8 +80,8 @@ func managedRoute(
 		Sensitivity:      policy.Sensitivity,
 		AuditAction:      policy.AuditAction,
 	}
-	if len(body) > 0 {
-		route.RequestBody = body[0]
+	for _, option := range options {
+		option.applyRoute(&route)
 	}
 	return route
 }

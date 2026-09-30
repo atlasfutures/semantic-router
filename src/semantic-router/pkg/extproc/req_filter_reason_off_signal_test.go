@@ -38,7 +38,7 @@ func TestThinkingOffArmStatesTheOffSignalOpenRouterReads(t *testing.T) {
 
 	t.Run("the chat-template flag does not travel beside it", func(t *testing.T) {
 		router := newChatTemplateArmReasoningRouter()
-		encoded, err := router.setReasoningModeToRequestBodyForModelAndProvider(
+		encoded, err := raylineReasoningProjectionForTest(router,
 			[]byte(claudeCodeBody), "qwen3-model", false,
 			router.Config.GetDecisionByName("arc"), openRouterProviderProfile(), nil,
 		)
@@ -122,7 +122,7 @@ func TestThinkingOffArmCountsAnEffortOnlyRequestAsDropped(t *testing.T) {
 	router := newArmReasoningRouter()
 	ctx := &RequestContext{}
 	body := `{"model":"gpt-5-mini","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"high"}`
-	encoded, err := router.setReasoningModeToRequestBodyForModelAndProvider(
+	encoded, err := raylineReasoningProjectionForTest(router,
 		[]byte(body), "gpt-5-mini", false, router.Config.GetDecisionByName("arc"), openRouterProviderProfile(), ctx,
 	)
 	require.NoError(t, err)

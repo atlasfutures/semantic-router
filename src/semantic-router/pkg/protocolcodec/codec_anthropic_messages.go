@@ -3,7 +3,6 @@ package protocolcodec
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"reflect"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
@@ -32,29 +31,31 @@ func (AnthropicMessagesCodec) Capabilities() llmprotocol.CapabilitySet {
 }
 
 type anthropicRequestWire struct {
-	Model         string                     `json:"model"`
-	System        json.RawMessage            `json:"system,omitempty"`
-	Messages      []anthropicMessageWire     `json:"messages"`
-	MaxTokens     *int64                     `json:"max_tokens"`
-	Temperature   *float64                   `json:"temperature,omitempty"`
-	TopP          *float64                   `json:"top_p,omitempty"`
-	TopK          *int64                     `json:"top_k,omitempty"`
-	StopSequences []string                   `json:"stop_sequences,omitempty"`
-	Tools         json.RawMessage            `json:"tools,omitempty"`
-	ToolChoice    *anthropicToolChoiceWire   `json:"tool_choice,omitempty"`
-	Metadata      *anthropicMetadataWire     `json:"metadata,omitempty"`
-	Thinking      *anthropicThinkingWire     `json:"thinking,omitempty"`
-	Stream        bool                       `json:"stream,omitempty"`
-	InferenceGeo  json.RawMessage            `json:"inference_geo,omitempty"`
-	Container     json.RawMessage            `json:"container,omitempty"`
-	CacheControl  json.RawMessage            `json:"cache_control,omitempty"`
-	OutputConfig  *anthropicOutputConfigWire `json:"output_config,omitempty"`
-	ServiceTier   json.RawMessage            `json:"service_tier,omitempty"`
+	Model             string                     `json:"model"`
+	System            json.RawMessage            `json:"system,omitempty"`
+	Messages          []anthropicMessageWire     `json:"messages"`
+	MaxTokens         *int64                     `json:"max_tokens"`
+	Temperature       *float64                   `json:"temperature,omitempty"`
+	TopP              *float64                   `json:"top_p,omitempty"`
+	TopK              *int64                     `json:"top_k,omitempty"`
+	StopSequences     []string                   `json:"stop_sequences,omitempty"`
+	Tools             json.RawMessage            `json:"tools,omitempty"`
+	ToolChoice        *anthropicToolChoiceWire   `json:"tool_choice,omitempty"`
+	Metadata          *anthropicMetadataWire     `json:"metadata,omitempty"`
+	Thinking          *anthropicThinkingWire     `json:"thinking,omitempty"`
+	Stream            bool                       `json:"stream,omitempty"`
+	InferenceGeo      json.RawMessage            `json:"inference_geo,omitempty"`
+	Container         json.RawMessage            `json:"container,omitempty"`
+	CacheControl      json.RawMessage            `json:"cache_control,omitempty"`
+	OutputConfig      *anthropicOutputConfigWire `json:"output_config,omitempty"`
+	ServiceTier       json.RawMessage            `json:"service_tier,omitempty"`
+	ContextManagement json.RawMessage            `json:"context_management,omitempty"`
 }
 
 type anthropicMessageWire struct {
-	Role    string          `json:"role"`
-	Content json.RawMessage `json:"content"`
+	Role         string                     `json:"role"`
+	Content      json.RawMessage            `json:"content"`
+	OutputConfig *anthropicOutputConfigWire `json:"output_config,omitempty"`
 }
 
 type anthropicContentWire struct {
@@ -172,6 +173,9 @@ func (AnthropicMessagesCodec) DecodeRequest(body []byte, policy llmprotocol.Poli
 }
 
 func validateAnthropicRequestWire(wire anthropicRequestWire) error {
+	if wire.TopK != nil && *wire.TopK < 0 {
+		return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_top_k", "Messages top_k cannot be negative", nil)
+	}
 	if err := rejectUnsupportedRequestFields(map[string]json.RawMessage{
 		"inference_geo": wire.InferenceGeo, "container": wire.Container,
 		"cache_control": wire.CacheControl,
@@ -279,7 +283,8 @@ func decodeAnthropicBaseRequest(wire anthropicRequestWire) llmprotocol.Request {
 			Temperature: wire.Temperature, TopP: wire.TopP, TopK: wire.TopK,
 			MaxOutputTokens: llmprotocol.Int64(*wire.MaxTokens), Stop: append([]string(nil), wire.StopSequences...),
 		},
-		Trusted: llmprotocol.TrustedMetadata{SourceFormat: llmprotocol.AnthropicMessagesV1},
+		Trusted:           llmprotocol.TrustedMetadata{SourceFormat: llmprotocol.AnthropicMessagesV1},
+		ContextManagement: append(json.RawMessage(nil), wire.ContextManagement...),
 	}
 	if wire.Metadata != nil && wire.Metadata.UserID != "" {
 		request.EndUserID = wire.Metadata.UserID
@@ -354,8 +359,8 @@ func decodeAnthropicSystem(raw json.RawMessage, request *llmprotocol.Request, po
 }
 
 func decodeAnthropicMessages(messages []anthropicMessageWire, request *llmprotocol.Request, policy llmprotocol.Policy) error {
-	for index, messageWire := range messages {
-		message, err := decodeAnthropicMessage(messageWire, index, policy)
+	for _, messageWire := range messages {
+		message, err := decodeAnthropicMessage(messageWire, policy)
 		if err != nil {
 			return err
 		}
@@ -455,7 +460,7 @@ func invalidAnthropicToolChoiceVariant(field string) error {
 	)
 }
 
-func decodeAnthropicMessage(wire anthropicMessageWire, messageIndex int, policy llmprotocol.Policy) ([]llmprotocol.Message, error) {
+func decodeAnthropicMessage(wire anthropicMessageWire, policy llmprotocol.Policy) ([]llmprotocol.Message, error) {
 	role, err := canonicalRole(wire.Role)
 	if err != nil {
 		return nil, llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_anthropic_role", "Anthropic message role is not a role the protocol names", err)
@@ -471,6 +476,13 @@ func decodeAnthropicMessage(wire anthropicMessageWire, messageIndex int, policy 
 		// content. Anthropic carries tool results inside a user message.
 		role = llmprotocol.RoleUser
 	}
+	effort := ""
+	if wire.OutputConfig != nil {
+		if role != llmprotocol.RoleSystem || wire.OutputConfig.Effort == "" || wire.OutputConfig.Format != nil {
+			return nil, llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_message_output_config", "per-message output_config requires system role and effort only", nil)
+		}
+		effort = wire.OutputConfig.Effort
+	}
 	contents, err := decodeAnthropicRequestContent(wire.Content, policy)
 	if err != nil {
 		return nil, err
@@ -484,15 +496,25 @@ func decodeAnthropicMessage(wire anthropicMessageWire, messageIndex int, policy 
 		result = append(result, llmprotocol.Message{Role: role, Content: ordinary})
 		ordinary = nil
 	}
-	for blockIndex, content := range contents {
+	for _, content := range contents {
 		if content.Kind == llmprotocol.ContentToolResult {
 			flush()
-			result = append(result, llmprotocol.Message{ID: llmprotocol.StableID("anthropic-message", fmt.Sprint(messageIndex), fmt.Sprint(blockIndex)), Role: llmprotocol.RoleTool, Content: []llmprotocol.Content{content}})
+			result = append(result, llmprotocol.Message{Role: llmprotocol.RoleTool, Content: []llmprotocol.Content{content}})
 			continue
 		}
 		ordinary = append(ordinary, content)
 	}
 	flush()
+	if effort != "" {
+		if len(result) == 0 {
+			result = append(result, llmprotocol.Message{Role: role})
+		}
+		result[0].ReasoningEffort = effort
+	}
+	// A message whose content renders to nothing (null, absent or []) is
+	// dropped, not refused: Claude Code sends such turns, and the fork has
+	// always routed them without the empty message (decision 36). Upstream
+	// 5cf0e928e refuses it with empty_message.
 	return result, nil
 }
 

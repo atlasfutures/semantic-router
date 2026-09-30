@@ -13,6 +13,7 @@ import (
 )
 
 type reasoningRequestMutation struct {
+	familyConfig            *config.ReasoningFamilyConfig
 	requestMap              map[string]json.RawMessage
 	chatTemplateKwargs      map[string]json.RawMessage
 	chatTemplateKwargsDirty bool
@@ -40,7 +41,7 @@ func (r *OpenAIRouter) setReasoningModeToRequestBodyForProvider(
 	profile *config.ProviderProfile,
 ) ([]byte, error) {
 	return r.setReasoningModeToRequestBodyForModelAndProvider(
-		requestBody, "", enabled, decision, profile, nil,
+		requestBody, "", enabled, decision, profile,
 	)
 }
 
@@ -50,11 +51,26 @@ func (r *OpenAIRouter) setReasoningModeToRequestBodyForModelAndProvider(
 	enabled bool,
 	decision *config.Decision,
 	profile *config.ProviderProfile,
-	ctx *RequestContext,
 ) ([]byte, error) {
+	body, mutation, err := r.projectReasoningRequest(requestBody, logicalModel, enabled, decision, profile)
+	if err == nil && mutation != nil {
+		r.observeReasoningMutation(mutation, enabled)
+	}
+	return body, err
+}
+
+// projectReasoningRequest is also used by provider rendering. Projection alone
+// must not record an executed reasoning decision or update live counters.
+func (r *OpenAIRouter) projectReasoningRequest(
+	requestBody []byte,
+	logicalModel string,
+	enabled bool,
+	decision *config.Decision,
+	profile *config.ProviderProfile,
+) ([]byte, *reasoningRequestMutation, error) {
 	mutation, err := parseReasoningRequestMutation(requestBody)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if logicalModel != "" {
 		mutation.model = logicalModel
@@ -64,37 +80,34 @@ func (r *OpenAIRouter) setReasoningModeToRequestBodyForModelAndProvider(
 		// A model without a reasoning family is operator-defined and has no
 		// projection contract. Preserve its request byte-for-byte, including any
 		// provider-specific reasoning fields supplied by the client.
-		return requestBody, nil
+		return requestBody, nil, nil
 	}
+	mutation.familyConfig = familyConfig
 	transport := resolveProviderReasoningTransport(profile)
-	// The catalog-driven mutation rewrites the reasoning object; what the
-	// client asked for is read first, so the bound and the diagnostics below
-	// speak about the request as it arrived.
-	clientReasoning := snapshotClientReasoningRequest(mutation)
 	if enabled {
 		r.applyEnabledReasoningMutation(mutation, familyConfig, decision, transport)
-		applyOpenRouterReasoningBound(mutation, transport, clientReasoning, clientOutputAllowance(ctx))
 	} else {
 		r.applyDisabledReasoningMutation(mutation, familyConfig, transport)
-		dropReasoningRequestFromDisabledArm(mutation, transport, clientReasoning, ctx)
 	}
-
-	logReasoningMutation(mutation, enabled)
-	r.recordReasoningMutationMetrics(mutation, enabled, familyConfig)
 
 	if mutation.chatTemplateKwargsDirty {
 		kwargs, marshalErr := json.Marshal(mutation.chatTemplateKwargs)
 		if marshalErr != nil {
-			return nil, fmt.Errorf("failed to serialize chat template kwargs: %w", marshalErr)
+			return nil, nil, fmt.Errorf("failed to serialize chat template kwargs: %w", marshalErr)
 		}
 		mutation.requestMap["chat_template_kwargs"] = kwargs
 	}
 	modifiedBody, err := json.Marshal(mutation.requestMap)
 	if err != nil {
-		return nil, fmt.Errorf("failed to serialize modified request: %w", err)
+		return nil, nil, fmt.Errorf("failed to serialize modified request: %w", err)
 	}
 
-	return modifiedBody, nil
+	return modifiedBody, mutation, nil
+}
+
+func (r *OpenAIRouter) observeReasoningMutation(mutation *reasoningRequestMutation, enabled bool) {
+	logReasoningMutation(mutation, enabled)
+	r.recordReasoningMutationMetrics(mutation, enabled, mutation.familyConfig)
 }
 
 func parseReasoningRequestMutation(requestBody []byte) (*reasoningRequestMutation, error) {

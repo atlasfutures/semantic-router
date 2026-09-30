@@ -25,7 +25,8 @@ def _validate_headers(prefix, episode) -> list[ValidationError]:
                 field=f"{prefix}.id_header",
             )
         )
-    if episode.close_header is not None:
+    # Empty means no close header, as in the Go loader (omitempty).
+    if episode.close_header:
         if not _HEADER_NAME.fullmatch(episode.close_header):
             errors.append(
                 ValidationError(

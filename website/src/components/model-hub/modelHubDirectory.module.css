@@ -336,25 +336,51 @@
 }
 
 .tableFrame {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
 }
 
-.tableFrame table {
+.tableFrame > table {
+  display: table;
   width: 100%;
   min-width: 52rem;
   margin: 0;
   border-collapse: collapse;
   border: 0;
   font-size: var(--text-sm);
+  table-layout: fixed;
+}
+
+.modelColumn {
+  width: 38%;
+}
+
+.distributionColumn {
+  width: 16%;
+}
+
+.contextColumn,
+.providersColumn,
+.releasedColumn {
+  width: 12%;
+}
+
+.resultsColumn {
+  width: 10%;
 }
 
 .tableFrame th,
 .tableFrame td {
+  overflow: hidden;
   padding: 0.7rem 0.9rem;
   border: 0;
   border-bottom: 1px solid var(--site-border);
   text-align: left;
+  text-overflow: ellipsis;
   vertical-align: middle;
+  white-space: nowrap;
 }
 
 .tableFrame th {
@@ -380,7 +406,8 @@
 
 .tableModel {
   display: flex;
-  min-width: 18rem;
+  min-width: 0;
+  width: 100%;
   align-items: center;
   gap: var(--space-3);
   padding: 0;
@@ -401,6 +428,13 @@
   overflow: hidden;
   color: var(--site-muted);
   font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tableModel strong {
+  overflow: hidden;
+  color: var(--site-text-strong);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -427,6 +461,29 @@
 @media (max-width: 780px) {
   .modelRow > button {
     grid-template-columns: 1fr;
+  }
+
+  .distributionColumn,
+  .releasedColumn,
+  .tableFrame th:nth-child(2),
+  .tableFrame td:nth-child(2),
+  .tableFrame th:nth-child(6),
+  .tableFrame td:nth-child(6) {
+    display: none;
+  }
+
+  .tableFrame > table {
+    min-width: 36rem;
+  }
+
+  .modelColumn {
+    width: 52%;
+  }
+
+  .contextColumn,
+  .providersColumn,
+  .resultsColumn {
+    width: 16%;
   }
 }
 
@@ -456,6 +513,27 @@
     order: 4;
     width: 100%;
     margin-left: 0;
+  }
+
+  .contextColumn,
+  .providersColumn,
+  .tableFrame th:nth-child(3),
+  .tableFrame td:nth-child(3),
+  .tableFrame th:nth-child(4),
+  .tableFrame td:nth-child(4) {
+    display: none;
+  }
+
+  .tableFrame > table {
+    min-width: 20rem;
+  }
+
+  .modelColumn {
+    width: 76%;
+  }
+
+  .resultsColumn {
+    width: 24%;
   }
 }
 

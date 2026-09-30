@@ -321,9 +321,16 @@ func validateToolCallContent(content Content, location string, limits Limits) er
 		return NewFieldError(ErrorInvalidRequest, "invalid_tool_call",
 			"tool call requires an ID, name, and JSON arguments", location, "content.name")
 	}
-	if err := ValidateJSONObject([]byte(call.Arguments), limits.JSONDepth); err != nil {
+	if call.Kind != "" && call.Kind != ToolKindCustom {
 		return NewFieldError(ErrorInvalidRequest, "invalid_tool_call",
-			"tool call arguments must be one strict JSON object", location, "content.input")
+			"tool call kind is invalid", location, "content.type")
+	}
+	// A custom call carries the model's free-form input, not a JSON object.
+	if call.Kind == "" {
+		if err := ValidateJSONObject([]byte(call.Arguments), limits.JSONDepth); err != nil {
+			return NewFieldError(ErrorInvalidRequest, "invalid_tool_call",
+				"tool call arguments must be one strict JSON object", location, "content.input")
+		}
 	}
 	if err := validateToolCallBounds(call, location, limits); err != nil {
 		return err
@@ -365,6 +372,10 @@ func validateToolResultContent(content Content, location string, blocks *int, li
 	if result == nil || strings.TrimSpace(result.CallID) == "" {
 		return NewFieldError(ErrorInvalidRequest, "invalid_tool_result",
 			"tool result requires a call ID", location, "content.tool_use_id")
+	}
+	if result.Kind != "" && result.Kind != ToolKindCustom {
+		return NewFieldError(ErrorInvalidRequest, "invalid_tool_result",
+			"tool result kind is invalid", location, "content.type")
 	}
 	if exceeds(result.CallID, limits.IdentifierBytes) {
 		return NewFieldError(ErrorInvalidRequest, "tool_result_id_limit",

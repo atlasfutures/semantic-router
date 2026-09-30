@@ -11,18 +11,49 @@ func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope 
 	if !holdsWhatEveryTargetDrops(request) && envelope.CanReplay(llmprotocol.OpenAIResponsesV1, request.Generation, policy, false) {
 		return append([]byte(nil), envelope.Request...), nil, nil
 	}
+	// The engine projects an Anthropic client's breakpoints away before this
+	// point (ProjectAnthropicCacheDirectives), so this guards only a direct
+	// codec call.
+	if llmprotocol.RequiredCapabilities(request).Supports(llmprotocol.CapabilityCacheDirectives) {
+		return nil, nil, llmprotocol.NewError(
+			llmprotocol.ErrorUnsupportedFeature,
+			"unsupported_cache_directive",
+			"Responses cannot encode per-block cache directives without an explicit projection",
+			nil,
+		)
+	}
 	if err := validateResponsesEncodableRequest(request); err != nil {
 		return nil, nil, err
 	}
+	var diagnostics llmprotocol.Diagnostics
+	for _, message := range request.Messages {
+		if message.ReasoningEffort != "" {
+			appendProviderFieldOmission(&diagnostics, policy, request.Trusted.SourceFormat,
+				"messages[].output_config.effort", "Responses cannot apply Anthropic per-message effort")
+		}
+	}
+	if len(request.ContextManagement) > 0 {
+		if err := appendLossy(&diagnostics, policy, request.Trusted.SourceFormat, llmprotocol.OpenAIResponsesV1,
+			"context_management", "Responses cannot apply Anthropic context edits"); err != nil {
+			return nil, diagnostics, err
+		}
+	}
 	wire, err := encodeResponsesRequestWire(request)
 	if err != nil {
-		return nil, nil, err
+		return nil, diagnostics, err
+	}
+	// A summary alone would put back a reasoning object the router took away
+	// for this arm, turning reasoning on at the provider's default effort.
+	// See clientStatedReasoningEffort.
+	if wire.Reasoning != nil && wire.Reasoning.Effort == "" && clientStatedReasoningEffort(envelope) {
+		wire.Reasoning = nil
+		appendPresentationDrop(&diagnostics, policy, request.Trusted.SourceFormat, llmprotocol.OpenAIResponsesV1,
+			"reasoning.summary", "the request sends no reasoning object to carry it in")
 	}
 	body, err := marshalWire(wire)
 	if err != nil {
-		return nil, nil, err
+		return nil, diagnostics, err
 	}
-	var diagnostics llmprotocol.Diagnostics
 	// See chatRequestDiagnostics: the table states what Responses cannot
 	// express, and the two carriers hold what no contract names.
 	appendRequestDispositions(&diagnostics, request, llmprotocol.OpenAIResponsesV1, policy)
@@ -110,7 +141,7 @@ func withoutCarriedReasoning(
 }
 
 func validateResponsesEncodableRequest(request llmprotocol.Request) error {
-	if err := refuseConfigurationUpdates(request, "Responses"); err != nil {
+	if err := rejectChatOnlyControls(request); err != nil {
 		return err
 	}
 	if request.ReasoningDisplay != "" {
@@ -136,7 +167,7 @@ func encodeResponsesRequestWire(request llmprotocol.Request) (responsesRequestWi
 	wire := responsesRequestWire{
 		Model: request.Model, Stream: request.Stream, Metadata: request.Metadata,
 		Store: request.Store, AutoStore: request.AutoStore, PreviousResponseID: request.PreviousResponseID,
-		Truncation: request.Truncation, User: request.EndUserID,
+		Truncation: request.Truncation, User: request.EndUserID, PromptCacheKey: request.PromptCacheKey,
 		ParallelToolCalls: request.ParallelToolCalls, Temperature: request.Sampling.Temperature,
 		TopP: request.Sampling.TopP, MaxOutputTokens: request.Sampling.MaxOutputTokens,
 	}
@@ -146,8 +177,11 @@ func encodeResponsesRequestWire(request llmprotocol.Request) (responsesRequestWi
 	if request.ConversationID != "" {
 		wire.Conversation, _ = json.Marshal(request.ConversationID)
 	}
-	if request.ReasoningEffort != "" {
+	if request.ReasoningEffort != "" || request.ReasoningSummary != "" {
 		wire.Reasoning = &responsesReasoningWire{Effort: request.ReasoningEffort}
+		if request.ReasoningSummary != "" {
+			wire.Reasoning.Summary, _ = json.Marshal(request.ReasoningSummary)
+		}
 	}
 	items, err := encodeResponsesRequestItems(request)
 	if err != nil {
@@ -160,12 +194,13 @@ func encodeResponsesRequestWire(request llmprotocol.Request) (responsesRequestWi
 	if len(wire.Tools) > 0 {
 		wire.ToolChoice = encodeResponsesToolChoice(request.ToolChoice)
 	}
-	wire.Text = encodeResponsesOutputFormat(request.OutputFormat)
+	wire.Text = encodeResponsesOutputFormat(request.OutputFormat, request.TextVerbosity)
 	return wire, nil
 }
 
 func encodeResponsesRequestItems(request llmprotocol.Request) ([]json.RawMessage, error) {
 	items := make([]json.RawMessage, 0, len(request.Messages))
+	callKinds := make(map[string]llmprotocol.ToolKind)
 	appendMessage := func(message llmprotocol.Message) error {
 		if carriesEncryptedReasoning(message) {
 			return nil
@@ -197,6 +232,28 @@ func encodeResponsesRequestItems(request llmprotocol.Request) ([]json.RawMessage
 		}
 	}
 	for _, message := range request.Messages {
+		for _, content := range message.Content {
+			if content.Kind == llmprotocol.ContentToolCall && content.ToolCall != nil {
+				callKinds[content.ToolCall.ID] = content.ToolCall.Kind
+			}
+		}
+		if len(message.Content) == 0 && message.ReasoningEffort != "" {
+			// Omitted and counted in EncodeRequest.
+			continue
+		}
+		// Chat tool messages do not carry a result kind. A preceding custom
+		// call identifies the correct Responses output variant.
+		message.Content = append([]llmprotocol.Content(nil), message.Content...)
+		for index := range message.Content {
+			content := &message.Content[index]
+			if content.Kind == llmprotocol.ContentToolResult && content.ToolResult != nil && content.ToolResult.Kind == "" {
+				if kind := callKinds[content.ToolResult.CallID]; kind == llmprotocol.ToolKindCustom {
+					copy := *content.ToolResult
+					copy.Kind = kind
+					content.ToolResult = &copy
+				}
+			}
+		}
 		if err := appendMessage(message); err != nil {
 			return nil, err
 		}
@@ -215,6 +272,14 @@ func encodeResponsesTools(
 	tools := make([]responsesToolWire, 0, len(input)+1)
 	namespaces := map[string]int{}
 	for _, tool := range input {
+		if tool.Kind == llmprotocol.ToolKindCustom {
+			encoded := responsesToolWire{Type: "custom", Name: tool.Name, Description: tool.Description}
+			if tool.CustomFormat != nil {
+				encoded.Format = &responsesCustomToolFormat{Type: "grammar", Syntax: tool.CustomFormat.Syntax, Definition: tool.CustomFormat.Definition}
+			}
+			tools = append(tools, encoded)
+			continue
+		}
 		// An Anthropic-defined tool comes back callable, counted as a transform
 		// in the request dispositions; a server tool comes back as it was and
 		// is dropped, counted there too.
@@ -276,14 +341,21 @@ func encodeResponsesTools(
 	return body
 }
 
-func encodeResponsesOutputFormat(output llmprotocol.OutputFormat) *responsesTextWire {
-	if output.Kind == "" || output.Kind == llmprotocol.OutputText {
+func encodeResponsesOutputFormat(output llmprotocol.OutputFormat, verbosity string) *responsesTextWire {
+	if (output.Kind == "" || output.Kind == llmprotocol.OutputText) && verbosity == "" {
 		return nil
 	}
-	return &responsesTextWire{Format: responsesFormatWire{
-		Type: string(output.Kind), Name: output.Name,
-		Description: output.Description, Strict: output.Strict, Schema: output.Schema,
-	}}
+	wire := &responsesTextWire{}
+	if verbosity != "" {
+		wire.Verbosity, _ = json.Marshal(verbosity)
+	}
+	if output.Kind != "" && output.Kind != llmprotocol.OutputText {
+		wire.Format = &responsesFormatWire{
+			Type: string(output.Kind), Name: output.Name,
+			Description: output.Description, Strict: output.Strict, Schema: output.Schema,
+		}
+	}
+	return wire
 }
 
 func encodeResponsesMessage(message llmprotocol.Message, textDirection string) ([]responsesItemWire, error) {
@@ -387,7 +459,7 @@ func (state *responsesMessageEncodingState) appendGeneratedImage(image *llmproto
 	}
 	item := responsesItemWire{
 		Type:   "image_generation_call",
-		ID:     responsesItemID(state.messageID, len(state.items), "image_generation_call"),
+		ID:     state.itemID("image_generation_call"),
 		Status: string(image.Status),
 	}
 	if image.Result != nil {
@@ -407,7 +479,7 @@ func (state *responsesMessageEncodingState) flushOrdinary() error {
 		return err
 	}
 	item := responsesItemWire{
-		Type: "message", ID: responsesItemID(state.messageID, len(state.items), "message"),
+		Type: "message", ID: state.itemID("message"),
 		Role: state.role, Content: content,
 	}
 	if state.textDirection == "output" {
@@ -422,10 +494,15 @@ func (state *responsesMessageEncodingState) appendToolCall(call *llmprotocol.Too
 	if call == nil {
 		return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_tool_call", "tool call is invalid", nil)
 	}
-	state.items = append(state.items, responsesItemWire{
-		Type: "function_call", ID: responsesItemID(state.messageID, len(state.items), "function_call"),
+	item := responsesItemWire{
+		Type: "function_call", ID: state.itemID("function_call"),
 		CallID: call.ID, Name: call.Name, Arguments: call.Arguments, Namespace: call.Namespace,
-	})
+	}
+	if call.Kind == llmprotocol.ToolKindCustom {
+		item.Type, item.Input = "custom_tool_call", call.Arguments
+		item.Arguments = ""
+	}
+	state.items = append(state.items, item)
 	return nil
 }
 
@@ -437,10 +514,14 @@ func (state *responsesMessageEncodingState) appendToolResult(result *llmprotocol
 	if err != nil {
 		return err
 	}
-	state.items = append(state.items, responsesItemWire{
-		Type: "function_call_output", ID: responsesItemID(state.messageID, len(state.items), "function_call_output"),
+	item := responsesItemWire{
+		Type: "function_call_output", ID: state.itemID("function_call_output"),
 		CallID: result.CallID, Output: output,
-	})
+	}
+	if result.Kind == llmprotocol.ToolKindCustom {
+		item.Type = "custom_tool_call_output"
+	}
+	state.items = append(state.items, item)
 	return nil
 }
 
@@ -449,7 +530,7 @@ func (state *responsesMessageEncodingState) flushReasoning() error {
 		return nil
 	}
 	item := responsesItemWire{
-		Type: "reasoning", ID: responsesItemID(state.messageID, len(state.items), "reasoning"),
+		Type: "reasoning", ID: state.itemID("reasoning"),
 	}
 	summaries := make([]map[string]string, 0, len(state.reasoning))
 	texts := make([]map[string]string, 0, len(state.reasoning))
@@ -487,6 +568,16 @@ func responsesItemID(messageID string, index int, kind string) string {
 		return messageID
 	}
 	return llmprotocol.StableID("responses-item", messageID, fmt.Sprint(index), kind)
+}
+
+func (state *responsesMessageEncodingState) itemID(kind string) string {
+	if state.textDirection == "input" {
+		if len(state.items) == 0 {
+			return state.messageID
+		}
+		return ""
+	}
+	return responsesItemID(state.messageID, len(state.items), kind)
 }
 
 func decodeResponsesReasoning(
@@ -560,7 +651,11 @@ func encodeResponsesToolChoice(choice llmprotocol.ToolChoice) json.RawMessage {
 		body, _ := json.Marshal(choice.Mode)
 		return body
 	case llmprotocol.ToolChoiceNamed:
-		body, _ := json.Marshal(map[string]string{"type": "function", "name": choice.Name})
+		kind := "function"
+		if choice.Kind == llmprotocol.ToolKindCustom {
+			kind = "custom"
+		}
+		body, _ := json.Marshal(map[string]string{"type": kind, "name": choice.Name})
 		return body
 	case llmprotocol.ToolChoiceImageGeneration:
 		body, _ := json.Marshal(map[string]string{"type": "image_generation"})

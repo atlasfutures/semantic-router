@@ -15,6 +15,12 @@ const (
 	OpenAIChatV1        WireFormat = "openai.chat.v1"
 	OpenAIResponsesV1   WireFormat = "openai.responses.v1"
 	AnthropicMessagesV1 WireFormat = "anthropic.messages.v1"
+	// OpenAIImagesV1 is the DALL-E-compatible image-generation dialect exposed
+	// by diffusion-style backends (e.g. vLLM-Omni image servers). It is a
+	// sink dialect: a responses hosted image_generation request is re-encoded
+	// to /v1/images/generations, and the generated image is decoded back into
+	// the protocol-neutral GeneratedImage output item.
+	OpenAIImagesV1 WireFormat = "openai.images.v1"
 )
 
 type Role string
@@ -99,7 +105,8 @@ type Content struct {
 // CacheDirective marks a request block or tool definition as an explicit
 // prompt-cache boundary. It is semantic request state rather than an opaque
 // provider extension, so same-format routing mutations cannot silently erase
-// it. A target format without cache directives must reject the translation.
+// it. A target format without cache directives must reject the translation
+// unless a narrow cross-format projection reports the omitted boundaries.
 type CacheDirective struct {
 	Type string
 	TTL  string
@@ -126,17 +133,12 @@ type Message struct {
 	ID      string
 	Role    Role
 	Content []Content
-	// Configuration marks a content-less system message that changes
-	// generation settings from its position on. Only the router writes one;
-	// no decoder produces it.
-	Configuration *ConfigurationUpdate
-}
-
-// ConfigurationUpdate is a mid-conversation settings change. Only the
-// reasoning effort is modelled: providers that document it apply the new
-// effort from that point on without invalidating the cached prefix, which a
-// request-level effort change always does.
-type ConfigurationUpdate struct {
+	// ReasoningEffort marks a content-less system message that changes the
+	// reasoning effort from its position on: Anthropic's per-message
+	// output_config.effort, or the Router's per-turn thinking lever. Providers
+	// that document it apply the new effort without invalidating the cached
+	// prefix, which a request-level effort change always does. See
+	// Request.MessageEffortUpdates for where Chat can carry it.
 	ReasoningEffort string
 }
 
@@ -146,6 +148,12 @@ type InstructionBlock struct {
 }
 
 type ToolCall struct {
+	// Kind is empty for a function call. A custom call carries the model's
+	// free-form input in Arguments instead of a JSON object.
+	Kind ToolKind
+	// KindKnown distinguishes a streamed function declaration from an early
+	// fragment that has not yet declared its kind. It is not a wire field.
+	KindKnown bool `json:"-"`
 	ID        string
 	Name      string
 	Arguments string
@@ -161,6 +169,9 @@ type ToolCall struct {
 }
 
 type ToolResult struct {
+	// Kind preserves the call's wire kind when a Responses tool output is
+	// supplied without its call (for example with previous_response_id).
+	Kind    ToolKind
 	CallID  string
 	Content []Content
 	IsError *bool
@@ -171,12 +182,21 @@ type ToolResult struct {
 	DeferredLink bool
 }
 
+// ToolKind separates JSON Schema function tools, the empty kind, from OpenAI
+// custom tools, which take free-form text that a grammar may constrain.
+type ToolKind string
+
+const ToolKindCustom ToolKind = "custom"
+
 type Tool struct {
+	Kind        ToolKind
 	Name        string
 	Description string
 	Strict      *bool
 	InputSchema json.RawMessage
-	Cache       *CacheDirective
+	// CustomFormat constrains a custom tool's input. Nil means unconstrained text.
+	CustomFormat *CustomToolFormat
+	Cache        *CacheDirective
 	// Type is the tool's own discriminator. An empty value and "custom" both
 	// mean a tool the model calls and the caller runs. A value in the
 	// Anthropic-defined table names a tool the caller runs too, declared by
@@ -285,6 +305,11 @@ func (tool Tool) Identity() string {
 	return tool.Type
 }
 
+type CustomToolFormat struct {
+	Syntax     string
+	Definition string
+}
+
 type ToolChoiceMode string
 
 const (
@@ -298,6 +323,8 @@ const (
 type ToolChoice struct {
 	Mode ToolChoiceMode
 	Name string
+	// Kind distinguishes a named free-form custom tool from a function.
+	Kind ToolKind
 }
 
 type OutputFormatKind string
@@ -325,14 +352,22 @@ const (
 )
 
 type Sampling struct {
-	Temperature      *float64
-	TopP             *float64
-	TopK             *int64
-	MaxOutputTokens  *int64
-	Seed             *int64
-	FrequencyPenalty *float64
-	PresencePenalty  *float64
-	Stop             []string
+	Temperature       *float64
+	TopP              *float64
+	TopK              *int64 // -1 disables the limit for supporting providers.
+	MinP              *float64
+	RepetitionPenalty *float64
+	MaxOutputTokens   *int64
+	Seed              *int64
+	FrequencyPenalty  *float64
+	PresencePenalty   *float64
+	Stop              []string
+
+	// AutomaticOutput is router policy, never populated from or encoded onto
+	// a provider wire. Retaining it permits recalculation after model reroutes.
+	AutomaticOutput      bool
+	AutomaticOutputCap   *int64
+	AutomaticInputTokens *int64
 }
 
 // StreamOptions contains public response-stream preferences. These options
@@ -376,9 +411,14 @@ type Request struct {
 	// the turn think longer. No wire format carries it.
 	ClientMaxOutputTokens *int64
 	OutputFormat          OutputFormat
+	// TextVerbosity is the OpenAI output detail control: low, medium or high.
+	TextVerbosity         string
 	ReasoningMode         ReasoningMode
 	ReasoningEffort       string
 	ReasoningBudgetTokens *int64
+	// ReasoningSummary asks a Responses provider for a reasoning summary: auto,
+	// concise or detailed. Chat Completions and Messages cannot carry it.
+	ReasoningSummary string
 	// ReasoningDisplay controls whether a provider returns summarized reasoning
 	// content or only its signed continuation token. It is distinct from whether
 	// reasoning itself is enabled.
@@ -408,6 +448,23 @@ type Request struct {
 	// carried declaration of one reaches a target of its own format only
 	// when named here. The router sets it per dispatch; no decoder does.
 	HostedTools []string
+	// ChatTemplateKwargs carries provider-specific chat template arguments
+	// (e.g. vLLM enable_thinking) opaquely from decode to encode. It is not
+	// interpreted by the router.
+	ChatTemplateKwargs json.RawMessage
+	// ContextManagement carries Anthropic context edits through routing and
+	// same-format re-encoding. Other wire formats must reject or report its loss.
+	ContextManagement json.RawMessage
+	// CacheSalt isolates backend prefix-cache entries; it is never prompt text.
+	CacheSalt *string
+	// PromptCacheKey is an OpenAI cache-routing hint. It never changes model
+	// output, but targets that cannot carry it must reject it, not drop it.
+	PromptCacheKey string
+	// MessageEffortUpdates says the dispatched Chat provider applies a
+	// per-message effort (Message.ReasoningEffort) as OpenRouter's
+	// configuration_update. Only the Router sets it; no decoder does. Without
+	// it a Chat target omits the message with a diagnostic.
+	MessageEffortUpdates bool
 }
 
 type StopReason string

@@ -56,8 +56,37 @@ var (
 	executedModelPattern = regexp.MustCompile(`\A[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}\z`)
 )
 
+// PermRouteDecision gates decision-only routing. It is deliberately absent
+// from the built-in viewer and operator roles: the caller is a trusted proxy,
+// not a console user, so a deployment must grant it on purpose. It lives here,
+// beside its only route, so upstream's permission list stays untouched.
+const PermRouteDecision RoutePermission = "route.decision"
+
+// routeDecisionRequestBody documents the request shape for the route's typed
+// body contract. The handler reads the raw bytes and forwards them unmutated;
+// this type only describes them.
+type routeDecisionRequestBody struct {
+	Model    string                   `json:"model,omitempty"`
+	Messages []map[string]interface{} `json:"messages"`
+}
+
+// forkAPIRoutes is the fork-owned management route list. It is mounted by
+// setupRoutes beside upstream's apiRoutes() catalog rather than inside it:
+// these paths are fixed by external clients, so they sit outside upstream's
+// /api/v1 namespace, its discovery document, and its generated OpenAPI.
+func forkAPIRoutes() []apiRoute {
+	return apiRouteDecisionRoutes()
+}
+
+// mountForkRoutes is setupRoutes' single hook into the fork route list.
+func (s *ClassificationAPIServer) mountForkRoutes(mux *http.ServeMux) {
+	for _, route := range forkAPIRoutes() {
+		mux.HandleFunc(route.pattern(), route.bind(s))
+	}
+}
+
 func apiRouteDecisionRoutes() []apiRoute {
-	return []apiRoute{
+	return applyRouteContract([]apiRoute{
 		managedRoute(
 			EndpointMetadata{
 				Path:        routeDecisionPath,
@@ -69,9 +98,9 @@ func apiRouteDecisionRoutes() []apiRoute {
 				Sensitivity: SensitivityOperational,
 			},
 			(*ClassificationAPIServer).handleRouteDecision,
-			jsonBodyWithLimit(routeDecisionBodyLimit),
+			jsonBodyWithLimitFor[routeDecisionRequestBody](routeDecisionBodyLimit),
 		),
-	}
+	}, routeContract("routing", APIPlaneManagement, APIVisibilityAdvanced, APIAudienceInternal))
 }
 
 // handleRouteDecision answers one decision-only consult: it runs the routing

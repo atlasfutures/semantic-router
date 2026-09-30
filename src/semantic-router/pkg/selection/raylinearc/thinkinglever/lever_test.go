@@ -235,8 +235,7 @@ func TestPerTurnEffortStatesTheLevelEveryTurn(t *testing.T) {
 	e := &episode{t: t, binding: effortBinding()}
 	turn0 := []llmprotocol.Message{text(llmprotocol.RoleUser, "plan it")}
 	plan, provider0 := e.serve(turn0, "max")
-	if plan.Placement != PlaceSystemBeforeTurn || provider0[0].Configuration == nil ||
-		provider0[0].Configuration.ReasoningEffort != "max" {
+	if plan.Placement != PlaceSystemBeforeTurn || provider0[0].ReasoningEffort != "max" {
 		t.Fatalf("turn 0 plan = %+v, first message = %+v", plan, provider0[0])
 	}
 	e.commit(plan)
@@ -248,7 +247,7 @@ func TestPerTurnEffortStatesTheLevelEveryTurn(t *testing.T) {
 	}
 	requireExtension(t, provider0, provider1)
 	last := provider1[len(provider1)-1]
-	if last.Configuration == nil || last.Configuration.ReasoningEffort != "max" {
+	if last.ReasoningEffort != "max" {
 		t.Fatalf("turn 1 tail = %+v", last)
 	}
 	e.commit(plan)
@@ -345,7 +344,7 @@ func TestWorkerSwitchReplaysOnlyTheWorkersOwnLever(t *testing.T) {
 	plan, a2 := e.serve(turn2, "down")
 	requireExtension(t, a0, a2)
 	for _, message := range a2 {
-		if message.Configuration != nil {
+		if message.ReasoningEffort != "" {
 			t.Fatal("the suffix worker received an effort item")
 		}
 	}

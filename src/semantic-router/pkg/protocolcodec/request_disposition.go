@@ -57,9 +57,12 @@ type requestFieldRow struct {
 const (
 	fieldContentCitations    = "content.citations"
 	fieldContentCacheControl = "content.cache_control"
-	fieldContentCaller       = "content.caller"
-	fieldContentDocumentText = "content.document"
-	fieldToolsType           = "tools.type"
+	// fieldToolResultCacheControl is the breakpoint on a tool_result block,
+	// which Chat can move onto the result's last text part (US-003d).
+	fieldToolResultCacheControl = "content.tool_result.cache_control"
+	fieldContentCaller          = "content.caller"
+	fieldContentDocumentText    = "content.document"
+	fieldToolsType              = "tools.type"
 	// fieldToolsTypeAnthropicDefined is the second row keyed by what a member
 	// says rather than by its presence: a tools.type value naming one of
 	// Anthropic's own caller-run tools, which the neutral contract can spell
@@ -120,6 +123,23 @@ var anthropicRequestDispositions = []requestFieldRow{
 			llmprotocol.OpenAIResponsesV1: {
 				Action: dispositionDrop,
 				Reason: "a Responses tool call carries no cache breakpoint",
+			},
+		},
+	},
+	{
+		// The breakpoint on a tool_result block. Chat keeps the boundary by
+		// moving it onto the result's last text part, which OpenRouter
+		// providers that honour cache_control on Chat parts read as the same
+		// prefix. Responses has no per-block directive.
+		Path: fieldToolResultCacheControl,
+		Targets: map[llmprotocol.WireFormat]targetDisposition{
+			llmprotocol.OpenAIChatV1: {
+				Action: dispositionTransform,
+				Reason: "the tool_result breakpoint moves onto the result's last text part",
+			},
+			llmprotocol.OpenAIResponsesV1: {
+				Action: dispositionDrop,
+				Reason: "a Responses tool result carries no cache breakpoint",
 			},
 		},
 	},
@@ -340,7 +360,9 @@ func presentContentFields(contents []llmprotocol.Content) []string {
 		if content.Kind != llmprotocol.ContentToolCall && content.Kind != llmprotocol.ContentToolResult {
 			continue
 		}
-		if content.Cache != nil {
+		if content.Cache != nil && content.Kind == llmprotocol.ContentToolResult {
+			paths = append(paths, fieldToolResultCacheControl)
+		} else if content.Cache != nil {
 			paths = append(paths, fieldContentCacheControl)
 		}
 		if content.Kind == llmprotocol.ContentToolCall && content.ToolCall != nil &&

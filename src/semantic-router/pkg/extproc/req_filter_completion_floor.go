@@ -7,30 +7,36 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 )
 
-// applyDispatchRequestParams runs the request_params plugin at provider
-// dispatch: first the upstream blocking and capping, then the floor. It lives
-// here rather than in the routing file so the floor keeps its own seam and the
-// routing hotspot keeps its size.
 func (r *OpenAIRouter) applyDispatchRequestParams(
+	request *llmprotocol.Request,
+	ctx *RequestContext,
+) (bool, error) {
+	if ctx.VSRSelectedDecision != nil && ctx.VSRSelectedDecision.GetRequestParamsConfig() != nil {
+		return r.applySemanticRequestParams(
+			ctx.VSRSelectedDecision, request, ctx.Routing.RecipeName(),
+		)
+	}
+	return false, nil
+}
+
+// applyDispatchCompletionFloor raises the output allowance to the floor the
+// dispatched model declares, after the request_params plugin has blocked and
+// capped. It is its own seam so the upstream request_params step keeps its
+// signature; the floor needs the dispatched logical model.
+func applyDispatchCompletionFloor(
 	request *llmprotocol.Request,
 	dispatch *providerDispatch,
 	ctx *RequestContext,
-) (bool, error) {
-	if ctx.VSRSelectedDecision == nil {
-		return false, nil
+) bool {
+	if dispatch == nil || ctx == nil || ctx.VSRSelectedDecision == nil {
+		return false
 	}
 	params := ctx.VSRSelectedDecision.GetRequestParamsConfig()
 	if params == nil {
-		return false, nil
+		return false
 	}
-	recipe := ctx.Routing.RecipeName()
-	changed, err := r.applySemanticRequestParams(ctx.VSRSelectedDecision, request, recipe)
-	if err != nil {
-		return changed, err
-	}
-	decisionKey := config.RoutingDecisionKey(recipe, ctx.VSRSelectedDecision.Name)
-	raised := applyCompletionTokenFloor(params, request, dispatch.logicalModel, decisionKey)
-	return raised || changed, nil
+	decisionKey := config.RoutingDecisionKey(ctx.Routing.RecipeName(), ctx.VSRSelectedDecision.Name)
+	return applyCompletionTokenFloor(params, request, dispatch.logicalModel, decisionKey)
 }
 
 // applyCompletionTokenFloor raises the completion budget to the floor the

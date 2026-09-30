@@ -319,7 +319,6 @@ global:
         model_ref: ""
         model_id: ""
         jailbreak_mapping_path: ""
-        use_mmbert_32k: false
       classifier:
         domain:
           model_ref: ""

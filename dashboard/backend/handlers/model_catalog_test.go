@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	modelcatalog "github.com/vllm-project/semantic-router/src/semantic-router/pkg/catalog"
 )
@@ -315,6 +319,86 @@ func TestCatalogProviderBindingMustProjectCompleteReasoningContract(t *testing.T
 	}
 }
 
+func TestCatalogProviderBindingValidatesProtocolReasoningEfforts(t *testing.T) {
+	t.Parallel()
+
+	const (
+		chat      = "openai/chat-completions@1"
+		responses = "openai/responses@1"
+	)
+	models := map[string]struct{}{"example/model": {}}
+	protocols := map[string]struct{}{chat: {}, responses: {}}
+	definitions := []modelcatalog.ModelCard{{
+		ID: "example/model", Kind: "physical", Lifecycle: "active", ReasoningFamily: "effort",
+	}}
+	reasoning := map[string]modelcatalog.ReasoningFamilyDefinition{
+		"effort": {
+			ID: "effort", Type: "reasoning_effort", Parameter: "reasoning_effort",
+			Levels: []string{"low", "max"}, Default: "low",
+			Modes: []string{"enabled"}, DefaultMode: "enabled",
+		},
+	}
+
+	for _, test := range []struct {
+		name       string
+		efforts    []string
+		byProtocol map[string][]string
+		wantError  bool
+	}{
+		{
+			name: "valid narrowing", efforts: []string{"low", "max"},
+			byProtocol: map[string][]string{chat: {"low"}},
+		},
+		{
+			name: "empty overrides", efforts: []string{"low", "max"},
+			byProtocol: map[string][]string{}, wantError: true,
+		},
+		{
+			name:       "requires provider efforts",
+			byProtocol: map[string][]string{chat: {"low"}}, wantError: true,
+		},
+		{
+			name: "requires bound protocol", efforts: []string{"low", "max"},
+			byProtocol: map[string][]string{"anthropic/messages@1": {"low"}}, wantError: true,
+		},
+		{
+			name: "cannot expand provider efforts", efforts: []string{"low"},
+			byProtocol: map[string][]string{chat: {"max"}}, wantError: true,
+		},
+		{
+			name: "requires nonempty effort set", efforts: []string{"low", "max"},
+			byProtocol: map[string][]string{chat: {}}, wantError: true,
+		},
+		{
+			name: "preserves family default", efforts: []string{"low", "max"},
+			byProtocol: map[string][]string{chat: {"max"}}, wantError: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			provider := modelcatalog.ProviderDefinition{
+				ID: "example", Protocols: []string{chat, responses},
+				ReasoningTransport: modelcatalog.ReasoningTransportTopLevelEffort,
+				Models: []modelcatalog.CatalogModelBinding{{
+					Catalog: "example/model", Relationship: modelcatalog.CatalogModelRelationshipFirstParty,
+					ID: "example-model", Protocols: []string{chat, responses},
+					ReasoningEfforts: test.efforts, ReasoningEffortsByProtocol: test.byProtocol,
+					Lifecycle: "active", Verification: modelcatalog.CatalogBindingVerification{Status: "claimed"},
+				}},
+			}
+			err := validateCatalogProviderBindings(
+				[]modelcatalog.ProviderDefinition{provider}, models, protocols, definitions, reasoning,
+			)
+			if test.wantError && (err == nil || !strings.Contains(err.Error(), "malformed provider catalog model")) {
+				t.Fatalf("malformed protocol effort contract accepted: %v", err)
+			}
+			if !test.wantError && err != nil {
+				t.Fatalf("valid protocol effort contract rejected: %v", err)
+			}
+		})
+	}
+}
+
 func TestCatalogHTTPSURLsAllowDocumentFragments(t *testing.T) {
 	t.Parallel()
 
@@ -371,13 +455,91 @@ func TestGeneratedPublicModelCatalogSatisfiesDashboardContract(t *testing.T) {
 	if unmarshalErr := json.Unmarshal(normalized, &document); unmarshalErr != nil {
 		t.Fatalf("decode normalized public catalog: %v", unmarshalErr)
 	}
-	if len(document.Models) != 88 || len(document.Providers) != 60 || len(document.Evaluations) != 1360 {
-		t.Fatalf(
-			"unexpected generated inventory: models=%d providers=%d evaluations=%d",
-			len(document.Models),
-			len(document.Providers),
-			len(document.Evaluations),
-		)
+	want := authoredCatalogInventory(t, repositoryRoot)
+	got := map[string]int{
+		"models":      len(document.Models),
+		"providers":   len(document.Providers),
+		"evaluations": len(document.Evaluations),
+	}
+	for _, kind := range authoredCatalogKinds {
+		if got[kind] != want[kind] {
+			t.Fatalf(
+				"generated %s = %d, authored sources under config/catalog/resources have %d; regenerate the catalog",
+				kind, got[kind], want[kind],
+			)
+		}
+	}
+}
+
+var authoredCatalogKinds = []string{"models", "providers", "evaluations"}
+
+// authoredCatalogInventory counts resources in the YAML sources that the
+// catalog generator reads, so an intended inventory change needs no edit here.
+func authoredCatalogInventory(t *testing.T, repositoryRoot string) map[string]int {
+	t.Helper()
+	sourceRoot := filepath.Join(repositoryRoot, "config", "catalog")
+	manifestPayload, err := os.ReadFile(filepath.Join(sourceRoot, "manifest.yaml"))
+	if err != nil {
+		t.Fatalf("read catalog manifest: %v", err)
+	}
+	var manifest struct {
+		Resources map[string]string `yaml:"resources"`
+	}
+	if unmarshalErr := yaml.Unmarshal(manifestPayload, &manifest); unmarshalErr != nil {
+		t.Fatalf("decode catalog manifest: %v", unmarshalErr)
+	}
+	counts := map[string]int{}
+	for _, kind := range authoredCatalogKinds {
+		relative, ok := manifest.Resources[kind]
+		if !ok {
+			t.Fatalf("catalog manifest has no resources.%s", kind)
+		}
+		resources := os.DirFS(filepath.Join(sourceRoot, relative))
+		walkErr := fs.WalkDir(resources, ".", func(path string, entry fs.DirEntry, err error) error {
+			if err != nil || entry.IsDir() || filepath.Ext(path) != ".yaml" {
+				return err
+			}
+			payload, err := fs.ReadFile(resources, path)
+			if err != nil {
+				return err
+			}
+			var node yaml.Node
+			if err := yaml.Unmarshal(payload, &node); err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+			if len(node.Content) == 1 && node.Content[0].Kind == yaml.SequenceNode {
+				counts[kind] += len(node.Content[0].Content)
+			} else if len(node.Content) == 1 {
+				counts[kind]++
+			}
+			return nil
+		})
+		if walkErr != nil {
+			t.Fatalf("count authored %s: %v", kind, walkErr)
+		}
+		if counts[kind] == 0 {
+			t.Fatalf("no authored %s found under %s", kind, relative)
+		}
+	}
+	return counts
+}
+
+func TestDashboardAcceptsOrderedIndexProfilesAndIncompleteCoverage(t *testing.T) {
+	t.Parallel()
+
+	payload := strings.Replace(
+		validModelCatalogPayload(""),
+		`"benchmark_profile":"published-standard"`,
+		`"benchmark_profiles":["published-standard"]`,
+		1,
+	)
+	payload = strings.Replace(payload, `"status":"available",
+    "score":50,
+    "coverage":1`, `"status":"partial",
+    "score":null,
+    "coverage":0.5`, 1)
+	if _, err := normalizeModelCatalogDocument([]byte(payload)); err != nil {
+		t.Fatalf("valid incomplete catalog rejected: %v", err)
 	}
 }
 

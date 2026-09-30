@@ -184,7 +184,15 @@
         },
         "diagnostics": [
           {
+            "field": "stream.provider",
+            "action": "dropped"
+          },
+          {
             "field": "stream.kv_transfer",
+            "action": "dropped"
+          },
+          {
+            "field": "stream.x_groq",
             "action": "dropped"
           },
           {

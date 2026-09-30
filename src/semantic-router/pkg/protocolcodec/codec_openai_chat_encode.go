@@ -71,6 +71,28 @@ func chatRequestDiagnostics(request llmprotocol.Request, policy llmprotocol.Poli
 	for _, message := range request.Messages {
 		appendContentExtensionDrops(&diagnostics, message.Content, llmprotocol.OpenAIChatV1, policy)
 		appendCarriedBlockDrops(&diagnostics, message.Content, llmprotocol.OpenAIChatV1, policy)
+		// A per-message effort reaches a Chat provider only as OpenRouter's
+		// configuration_update, which the Router enables per dispatch.
+		if message.ReasoningEffort != "" && !request.MessageEffortUpdates {
+			appendProviderFieldOmission(&diagnostics, policy, request.Trusted.SourceFormat,
+				"messages[].output_config.effort", "Chat Completions cannot apply Anthropic per-message effort")
+		}
+	}
+	if request.ReasoningSummary != "" {
+		appendProviderFieldOmission(&diagnostics, policy, request.Trusted.SourceFormat, "reasoning.summary", "Chat Completions cannot request a reasoning summary")
+	}
+	// A Responses client's prompt_cache_key names a Responses cache shard.
+	// Chat arms are reached through aggregators that do not document it, so
+	// it is dropped and counted rather than forwarded (fork #106). A Chat
+	// client's own key goes back to a Chat target unchanged.
+	if request.PromptCacheKey != "" && request.Trusted.SourceFormat != llmprotocol.OpenAIChatV1 {
+		appendProviderFieldOmission(&diagnostics, policy, request.Trusted.SourceFormat, "prompt_cache_key", "Chat arms do not take a Responses cache-shard key")
+	}
+	if len(request.ContextManagement) > 0 {
+		if err := appendLossy(&diagnostics, policy, request.Trusted.SourceFormat, llmprotocol.OpenAIChatV1,
+			"context_management", "Chat Completions cannot apply Anthropic context edits"); err != nil {
+			return diagnostics, err
+		}
 	}
 	if request.PreviousResponseID == "" && request.ConversationID == "" && request.Truncation == "" {
 		return diagnostics, nil
@@ -91,6 +113,14 @@ func encodeChatBaseRequest(request llmprotocol.Request) chatRequestWire {
 		MaxCompletionTokens: request.Sampling.MaxOutputTokens, Seed: request.Sampling.Seed,
 		FrequencyPenalty: request.Sampling.FrequencyPenalty, PresencePenalty: request.Sampling.PresencePenalty,
 		ReasoningEffort: request.ReasoningEffort, ReasoningBudget: request.ReasoningBudgetTokens,
+		ChatTemplateKwargs: request.ChatTemplateKwargs, CacheSalt: request.CacheSalt,
+		TopK: request.Sampling.TopK, MinP: request.Sampling.MinP, RepetitionPenalty: request.Sampling.RepetitionPenalty,
+	}
+	if request.Trusted.SourceFormat == llmprotocol.OpenAIChatV1 {
+		wire.PromptCacheKey = request.PromptCacheKey
+	}
+	if request.TextVerbosity != "" {
+		wire.Verbosity, _ = json.Marshal(request.TextVerbosity)
 	}
 	if request.Stream && (request.StreamOptions.IncludeUsage != nil || request.StreamOptions.IncludeObfuscation != nil) {
 		wire.StreamOptions = &chatStreamOptionsWire{
@@ -237,8 +267,10 @@ func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) erro
 		wire.Messages = append(wire.Messages, encoded)
 	}
 	for _, message := range request.Messages {
-		if message.Configuration != nil {
-			wire.Messages = append(wire.Messages, encodeChatConfigurationMessage(message))
+		if len(message.Content) == 0 && message.ReasoningEffort != "" {
+			if request.MessageEffortUpdates {
+				wire.Messages = append(wire.Messages, encodeChatConfigurationMessage(message))
+			}
 			continue
 		}
 		if messageDropsWhole(message.Content, llmprotocol.OpenAIChatV1) {
@@ -253,33 +285,17 @@ func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) erro
 	return nil
 }
 
-// encodeChatConfigurationMessage writes the content-less system message that
-// carries a configuration update. The empty content string is part of the
-// documented shape, so it is written rather than omitted.
+// encodeChatConfigurationMessage writes a per-message effort as OpenRouter's
+// content-less system message carrying configuration_update. The empty content
+// string is part of the documented shape, so it is written rather than
+// omitted. Only a dispatch with Request.MessageEffortUpdates reaches here.
 func encodeChatConfigurationMessage(message llmprotocol.Message) chatMessageWire {
 	return chatMessageWire{
 		ID: message.ID, Role: "system", Content: json.RawMessage(`""`),
 		ConfigurationUpdate: &chatConfigurationUpdateWire{
-			Reasoning: chatConfigurationReasoningWire{Effort: message.Configuration.ReasoningEffort},
+			Reasoning: chatConfigurationReasoningWire{Effort: message.ReasoningEffort},
 		},
 	}
-}
-
-// refuseConfigurationUpdates stops a configuration update reaching a wire
-// whose encoding of it is not implemented yet. Dropping it would silently
-// serve the turn at the wrong reasoning effort.
-func refuseConfigurationUpdates(request llmprotocol.Request, wire string) error {
-	for _, message := range request.Messages {
-		if message.Configuration != nil {
-			return llmprotocol.NewError(
-				llmprotocol.ErrorUnsupportedFeature,
-				"unsupported_configuration_update",
-				wire+" encoding of a configuration update is not implemented",
-				nil,
-			)
-		}
-	}
-	return nil
 }
 
 // appendChatTools writes the tools Chat Completions can express. A server tool
@@ -295,6 +311,10 @@ func refuseConfigurationUpdates(request llmprotocol.Request, wire string) error 
 // The transform is counted in the same diagnostics.
 func appendChatTools(wire *chatRequestWire, tools []llmprotocol.Tool) {
 	for _, tool := range tools {
+		if tool.Kind == llmprotocol.ToolKindCustom {
+			wire.Tools = append(wire.Tools, encodeChatCustomTool(tool))
+			continue
+		}
 		tool = tool.Materialized()
 		if tool.ServerTool() {
 			continue
@@ -369,7 +389,7 @@ func (state *chatMessageEncodingState) appendContent(content llmprotocol.Content
 	case llmprotocol.ContentImage:
 		return state.appendImage(content)
 	case llmprotocol.ContentAudio:
-		state.parts = append(state.parts, chatContentWire{Type: "input_audio", InputAudio: &chatInputAudioWire{Data: content.Data, Format: content.MediaType}, CacheControl: encodeAnthropicCacheControl(content.Cache)})
+		return state.appendAudio(content)
 	case llmprotocol.ContentFile:
 		return state.appendFile(content)
 	case llmprotocol.ContentToolCall:
@@ -377,7 +397,7 @@ func (state *chatMessageEncodingState) appendContent(content llmprotocol.Content
 		// counted in chatRequestDiagnostics and go no further.
 		return state.appendToolCall(content.ToolCall)
 	case llmprotocol.ContentToolResult:
-		return state.appendToolResult(content.ToolResult)
+		return state.appendToolResult(content.ToolResult, content.Cache)
 	case llmprotocol.ContentUnmodeled:
 		// A carried block belongs to the contract it came from, and Chat
 		// Completions names none of them, so the block is dropped here and the
@@ -452,18 +472,21 @@ func (state *chatMessageEncodingState) appendToolCall(call *llmprotocol.ToolCall
 	if call == nil {
 		return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_tool_call", "tool call content is invalid", nil)
 	}
-	state.wire.ToolCalls = append(state.wire.ToolCalls, chatToolCallWire{
-		ID: call.ID, Type: "function",
-		Function: chatFunctionCallWire{Name: llmprotocol.QualifiedToolName(call.Namespace, call.Name), Arguments: call.Arguments},
-	})
+	encoded := encodeChatToolCall(*call)
+	if encoded.Custom == nil {
+		// A namespaced call goes out under the qualified name Chat can carry.
+		encoded.Function.Name = llmprotocol.QualifiedToolName(call.Namespace, call.Name)
+	}
+	state.wire.ToolCalls = append(state.wire.ToolCalls, encoded)
 	return nil
 }
 
-func (state *chatMessageEncodingState) appendToolResult(result *llmprotocol.ToolResult) error {
+func (state *chatMessageEncodingState) appendToolResult(result *llmprotocol.ToolResult, outerCache *llmprotocol.CacheDirective) error {
 	if result == nil {
 		return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_tool_result", "tool result content is invalid", nil)
 	}
 	state.wire.ToolCallID = result.CallID
+	firstPart := len(state.parts)
 	for _, resultContent := range result.Content {
 		if resultContent.Kind == llmprotocol.ContentUnmodeled {
 			// The block belongs to the contract it came from. Dropping it keeps
@@ -478,6 +501,16 @@ func (state *chatMessageEncodingState) appendToolResult(result *llmprotocol.Tool
 			CacheControl: encodeAnthropicCacheControl(resultContent.Cache),
 		})
 	}
+	if outerCache != nil {
+		// US-003d: Anthropic's outer tool_result boundary is after the entire
+		// result, and Chat's last result text part marks the same prompt
+		// prefix boundary. An empty result has no part to hold it, so the
+		// breakpoint is dropped; an inner breakpoint that disagrees yields to
+		// the outer one. Neither refuses the turn.
+		if len(state.parts) > firstPart {
+			state.parts[len(state.parts)-1].CacheControl = encodeAnthropicCacheControl(outerCache)
+		}
+	}
 	return nil
 }
 
@@ -487,7 +520,11 @@ func encodeChatToolChoice(choice llmprotocol.ToolChoice) json.RawMessage {
 		body, _ := json.Marshal(choice.Mode)
 		return body
 	case llmprotocol.ToolChoiceNamed:
-		body, _ := json.Marshal(map[string]any{"type": "function", "function": map[string]string{"name": choice.Name}})
+		kind, key := "function", "function"
+		if choice.Kind == llmprotocol.ToolKindCustom {
+			kind, key = "custom", "custom"
+		}
+		body, _ := json.Marshal(map[string]any{"type": kind, key: map[string]string{"name": choice.Name}})
 		return body
 	default:
 		return nil

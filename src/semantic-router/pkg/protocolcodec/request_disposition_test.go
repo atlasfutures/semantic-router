@@ -121,7 +121,14 @@ func TestToolBlockMembersAreTableRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Chat refused a tool turn carrying a cache breakpoint: %v", err)
 	}
-	assertDroppedDiagnosticField(t, result.Diagnostics, "content.cache_control")
+	// US-003d: a tool_result breakpoint is moved onto the result's last text
+	// part on Chat, counted as a transform, not dropped.
+	if !hasDiagnostic(result.Diagnostics, fieldToolResultCacheControl, llmprotocol.DiagnosticApproximated) {
+		t.Fatalf("diagnostics %+v do not count %q as transformed", result.Diagnostics, fieldToolResultCacheControl)
+	}
+	if !strings.Contains(string(result.Body), `"text":"ok","cache_control":{"type":"ephemeral"}`) {
+		t.Fatalf("the tool_result breakpoint did not reach the last text part: %s", result.Body)
+	}
 	if dispositionFor("content.cache_control", llmprotocol.AnthropicMessagesV1).Action != dispositionCarry {
 		t.Fatal("Messages must carry a cache breakpoint")
 	}

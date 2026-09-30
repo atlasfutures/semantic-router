@@ -1,7 +1,6 @@
 package protocolcodec
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -17,49 +16,26 @@ type openAITransportErrorWire struct {
 }
 
 type openAITransportErrorDetailWire struct {
-	Type    string               `json:"type"`
-	Code    *openAIErrorCodeWire `json:"code"`
-	Message string               `json:"message"`
-	Param   *string              `json:"param"`
-}
-
-// openAIErrorCodeWire accepts the code as the string the OpenAI contract
-// documents and as the HTTP status integer several providers send in its
-// place. Both name the same thing, and rejecting one shape loses the message
-// the envelope exists to carry.
-type openAIErrorCodeWire struct {
-	Value string
-}
-
-func (code *openAIErrorCodeWire) UnmarshalJSON(raw []byte) error {
-	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return nil
-	}
-	var text string
-	if err := json.Unmarshal(raw, &text); err == nil {
-		code.Value = text
-		return nil
-	}
-	var number json.Number
-	if err := json.Unmarshal(raw, &number); err == nil {
-		if _, convErr := strconv.ParseInt(number.String(), 10, 64); convErr == nil {
-			code.Value = number.String()
-			return nil
-		}
-	}
-	return fmt.Errorf("upstream error code must be a string or an integer")
+	Type    string           `json:"type"`
+	Code    *openAIErrorCode `json:"code"`
+	Message string           `json:"message"`
+	Param   *string          `json:"param"`
 }
 
 func decodeOpenAITransportError(
 	body []byte,
 	policy llmprotocol.Policy,
+	format llmprotocol.WireFormat,
 ) (llmprotocol.TransportError, llmprotocol.Diagnostics, error) {
 	var wire openAITransportErrorWire
-	if err := decodeProviderWire(body, &wire, policy); err != nil {
+	_, vendorExtensions, err := decodeProviderWireVendorAware(body, &wire, policy)
+	if err != nil {
 		return llmprotocol.TransportError{}, nil, err
 	}
+	var diagnostics llmprotocol.Diagnostics
+	appendVendorExtensionDiagnostics(&diagnostics, policy, format, vendorExtensions)
 	if wire.Error == nil {
-		return llmprotocol.TransportError{}, nil, llmprotocol.NewError(
+		return llmprotocol.TransportError{}, diagnostics, llmprotocol.NewError(
 			llmprotocol.ErrorUpstreamUnavailable,
 			"upstream_error_required",
 			"upstream transport error body is missing error details",
@@ -72,11 +48,11 @@ func decodeOpenAITransportError(
 	// envelope for a missing type would replace an actionable upstream answer
 	// with a generic one.
 	if err := validateTransportErrorMessage(wire.Error.Message); err != nil {
-		return llmprotocol.TransportError{}, nil, err
+		return llmprotocol.TransportError{}, diagnostics, err
 	}
 	code, parameter := "", ""
 	if wire.Error.Code != nil {
-		code = wire.Error.Code.Value
+		code = string(*wire.Error.Code)
 	}
 	if wire.Error.Param != nil {
 		parameter = *wire.Error.Param
@@ -86,7 +62,7 @@ func decodeOpenAITransportError(
 		Code:      code,
 		Message:   wire.Error.Message,
 		Parameter: parameter,
-	}}, nil, nil
+	}}, diagnostics, nil
 }
 
 func encodeOpenAITransportError(transportError llmprotocol.TransportError) []byte {
@@ -102,23 +78,10 @@ func encodeOpenAITransportError(transportError llmprotocol.TransportError) []byt
 func openAITransportErrorEnvelope(protocolError *llmprotocol.ProtocolError) openAITransportErrorWire {
 	return openAITransportErrorWire{Error: &openAITransportErrorDetailWire{
 		Type:    canonicalOpenAIErrorType(protocolError.Category),
-		Code:    optionalErrorCode(protocolError.Code),
+		Code:    (*openAIErrorCode)(optionalString(protocolError.Code)),
 		Message: protocolError.Message,
 		Param:   optionalString(protocolError.Parameter),
 	}}
-}
-
-// The encoder re-emits the code as the string the OpenAI contract documents,
-// whatever shape it arrived in. A client reading the envelope sees one type.
-func optionalErrorCode(value string) *openAIErrorCodeWire {
-	if value == "" {
-		return nil
-	}
-	return &openAIErrorCodeWire{Value: value}
-}
-
-func (code openAIErrorCodeWire) MarshalJSON() ([]byte, error) {
-	return json.Marshal(code.Value)
 }
 
 func optionalString(value string) *string {
@@ -142,4 +105,23 @@ func canonicalOpenAIErrorType(category llmprotocol.ErrorCategory) string {
 	default:
 		return "server_error"
 	}
+}
+
+// openAIErrorCode accepts string codes and the integral HTTP error statuses
+// emitted by vLLM. The neutral and public contracts always use string codes.
+// Arbitrary numbers, booleans and structured values remain malformed errors.
+type openAIErrorCode string
+
+func (code *openAIErrorCode) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		*code = openAIErrorCode(text)
+		return nil
+	}
+	var status int
+	if err := json.Unmarshal(data, &status); err != nil || status < 400 || status > 599 {
+		return fmt.Errorf("error code must be a string or an integral HTTP error status")
+	}
+	*code = openAIErrorCode(strconv.Itoa(status))
+	return nil
 }

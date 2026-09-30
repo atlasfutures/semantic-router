@@ -6,20 +6,18 @@ import (
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 )
 
-func (r *OpenAIRouter) validateRequestHeaders(method string, path string, ctx *RequestContext) *ext_proc.ProcessingResponse {
+func (r *OpenAIRouter) validateRequestHeaders(method string, path string) *ext_proc.ProcessingResponse {
 	normalizedPath := normalizeRequestPath(path)
 
 	switch normalizedPath {
-	case "/v1/chat/completions":
+	case "/v1/chat/completions", azureV1ChatPath:
 		return validateAllowedMethod(r, method, "POST")
 	case "/v1/messages":
 		return validateAllowedMethod(r, method, "POST")
 	case "/v1/models":
 		return validateAllowedMethod(r, method, "GET")
-	case "/v1/responses":
+	case "/v1/responses", azureResponsesPath, azureV1ResponsesPath:
 		return r.validateResponseAPICollectionMethod(method)
-	case raylineRoutesAPIPath:
-		return r.validateRaylineRoutesMethod(method, ctx)
 	}
 
 	if extractResponseIDFromInputItemsPath(normalizedPath) != "" {
@@ -30,6 +28,14 @@ func (r *OpenAIRouter) validateRequestHeaders(method string, path string, ctx *R
 		return r.validateResponseAPIItemMethod(method)
 	}
 
+	if _, ok := azureChatDeployment(normalizedPath); ok {
+		return validateAllowedMethod(r, method, "POST")
+	}
+
+	if isAzureOpenAIPath(normalizedPath) {
+		return r.createErrorResponse(404, "endpoint not found")
+	}
+
 	if normalizedPath == routerReplayAPIBasePath || strings.HasPrefix(normalizedPath, routerReplayAPIBasePath+"/") {
 		return r.createErrorResponse(404, "endpoint not found")
 	}
@@ -38,27 +44,6 @@ func (r *OpenAIRouter) validateRequestHeaders(method string, path string, ctx *R
 		return r.createErrorResponse(404, "endpoint not found")
 	}
 
-	return nil
-}
-
-// validateRaylineRoutesMethod keeps the endpoint invisible where it is not
-// configured: a disabled cell answers 404 for every method, so probing it
-// cannot distinguish "off here" from "never existed".
-func (r *OpenAIRouter) validateRaylineRoutesMethod(
-	method string,
-	ctx *RequestContext,
-) *ext_proc.ProcessingResponse {
-	// Both refusals use this endpoint's own envelope. They are produced in
-	// the header phase, before the body-phase producer runs, so without this
-	// they are rewritten into the source format's error shape -- which for
-	// this path resolves to Chat -- and a caller sees a different contract
-	// for a 404 or 405 than for every other status.
-	if !r.raylineRoutesAPIEnabled() {
-		return r.createRaylineRoutesError(ctx, 404, "not_found_error", "endpoint not found")
-	}
-	if method != "POST" {
-		return r.createRaylineRoutesError(ctx, 405, "invalid_request_error", "method not allowed")
-	}
 	return nil
 }
 

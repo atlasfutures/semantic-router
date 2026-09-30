@@ -16,13 +16,14 @@ func (OpenAIResponsesCodec) Capabilities() llmprotocol.CapabilitySet {
 	return llmprotocol.Capabilities(
 		llmprotocol.CapabilityText, llmprotocol.CapabilityImageInput, llmprotocol.CapabilityFileInput,
 		llmprotocol.CapabilityImageGeneration,
-		llmprotocol.CapabilityTools, llmprotocol.CapabilityParallelTools, llmprotocol.CapabilityReasoning,
+		llmprotocol.CapabilityTools, llmprotocol.CapabilityParallelTools, llmprotocol.CapabilityCustomTools, llmprotocol.CapabilityReasoning,
 		llmprotocol.CapabilityStructuredJSON, llmprotocol.CapabilityStrictJSONSchema, llmprotocol.CapabilityStrictToolSchema,
 		llmprotocol.CapabilityStreaming, llmprotocol.CapabilityCacheAccounting,
 		llmprotocol.CapabilityReasoningAccounting, llmprotocol.CapabilityAuthoritativeUsage,
 		llmprotocol.CapabilityReasoningEffort, llmprotocol.CapabilityRequestMetadata,
 		llmprotocol.CapabilityRequestStorage, llmprotocol.CapabilityAutomaticStorage,
 		llmprotocol.CapabilityConversationState,
+		llmprotocol.CapabilityTextVerbosity,
 	)
 }
 
@@ -52,13 +53,14 @@ type responsesRequestWire struct {
 	MaxToolCalls         json.RawMessage             `json:"max_tool_calls,omitempty"`
 	Moderation           json.RawMessage             `json:"moderation,omitempty"`
 	Prompt               json.RawMessage             `json:"prompt,omitempty"`
-	PromptCacheKey       json.RawMessage             `json:"prompt_cache_key,omitempty"`
+	PromptCacheKey       string                      `json:"prompt_cache_key,omitempty"`
 	PromptCacheRetention json.RawMessage             `json:"prompt_cache_retention,omitempty"`
 	PromptCacheOptions   json.RawMessage             `json:"prompt_cache_options,omitempty"`
 	SafetyIdentifier     json.RawMessage             `json:"safety_identifier,omitempty"`
 	ServiceTier          json.RawMessage             `json:"service_tier,omitempty"`
 	StreamOptions        *responsesStreamOptionsWire `json:"stream_options,omitempty"`
 	TopLogprobs          json.RawMessage             `json:"top_logprobs,omitempty"`
+	ClientMetadata       map[string]string           `json:"client_metadata,omitempty"`
 }
 
 type responsesReasoningWire struct {
@@ -74,8 +76,8 @@ type responsesStreamOptionsWire struct {
 }
 
 type responsesTextWire struct {
-	Format    responsesFormatWire `json:"format,omitempty"`
-	Verbosity json.RawMessage     `json:"verbosity,omitempty"`
+	Format    *responsesFormatWire `json:"format,omitempty"`
+	Verbosity json.RawMessage      `json:"verbosity,omitempty"`
 }
 
 type responsesFormatWire struct {
@@ -90,6 +92,7 @@ type responsesToolWire struct {
 	Type              string                     `json:"type"`
 	Name              string                     `json:"name,omitempty"`
 	Description       string                     `json:"description,omitempty"`
+	Format            *responsesCustomToolFormat `json:"format,omitempty"`
 	Parameters        json.RawMessage            `json:"parameters,omitempty"`
 	Strict            *bool                      `json:"strict,omitempty"`
 	AllowedCallers    json.RawMessage            `json:"allowed_callers,omitempty"`
@@ -110,6 +113,13 @@ type responsesToolWire struct {
 	Tools []json.RawMessage `json:"tools,omitempty"`
 }
 
+// Responses uses a flattened grammar object, unlike Chat's nested grammar.
+type responsesCustomToolFormat struct {
+	Type       string `json:"type"`
+	Syntax     string `json:"syntax,omitempty"`
+	Definition string `json:"definition,omitempty"`
+}
+
 type responsesImageGenMaskWire struct {
 	ImageURL string `json:"image_url,omitempty"`
 	FileID   string `json:"file_id,omitempty"`
@@ -126,6 +136,7 @@ type responsesItemWire struct {
 	Caller           json.RawMessage `json:"caller,omitempty"`
 	Namespace        string          `json:"namespace,omitempty"`
 	Arguments        string          `json:"arguments,omitempty"`
+	Input            string          `json:"input,omitempty"`
 	Output           json.RawMessage `json:"output,omitempty"`
 	Summary          json.RawMessage `json:"summary,omitempty"`
 	Phase            json.RawMessage `json:"phase,omitempty"`
@@ -157,6 +168,12 @@ func (wire responsesItemWire) MarshalJSON() ([]byte, error) {
 			return nil, err
 		}
 		object["arguments"] = arguments
+	case "custom_tool_call":
+		input, err := json.Marshal(wire.Input)
+		if err != nil {
+			return nil, err
+		}
+		object["input"] = input
 	case "reasoning":
 		if len(wire.Summary) == 0 {
 			object["summary"] = json.RawMessage(`[]`)
@@ -231,6 +248,10 @@ func (OpenAIResponsesCodec) DecodeRequest(body []byte, policy llmprotocol.Policy
 	}); err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}
+	diagnostics, err := decodeResponsesDroppedFields(wire, policy)
+	if err != nil {
+		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
+	}
 	if wire.MaxOutputTokens != nil && *wire.MaxOutputTokens < 16 {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, llmprotocol.NewError(
 			llmprotocol.ErrorInvalidRequest,
@@ -263,15 +284,28 @@ func (OpenAIResponsesCodec) DecodeRequest(body []byte, policy llmprotocol.Policy
 	if err := decodeResponsesRequestOptions(wire, &request, policy); err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}
-	return request, requestEnvelope(llmprotocol.OpenAIResponsesV1, body, request.Generation, policy), nil, nil
+	return request, requestEnvelope(llmprotocol.OpenAIResponsesV1, body, request.Generation, policy), diagnostics, nil
+}
+
+// decodeResponsesDroppedFields accepts client_metadata without forwarding it:
+// client telemetry is not model input, and the drop is reported instead of
+// discarded silently. include is not dropped here: the fork carries it to a
+// Responses target byte for byte (see carryResponsesClientMembers), where
+// upstream accepted only reasoning.encrypted_content and refused the rest.
+func decodeResponsesDroppedFields(wire responsesRequestWire, policy llmprotocol.Policy) (llmprotocol.Diagnostics, error) {
+	var diagnostics llmprotocol.Diagnostics
+	if len(wire.ClientMetadata) > 0 {
+		appendProviderFieldOmission(&diagnostics, policy, llmprotocol.OpenAIResponsesV1, "client_metadata", "client telemetry is not model input")
+	}
+	return diagnostics, nil
 }
 
 func decodeResponsesBaseRequest(wire responsesRequestWire, conversationID string) llmprotocol.Request {
 	request := llmprotocol.Request{
 		Generation: 1, Model: wire.Model, Stream: wire.Stream, Metadata: wire.Metadata,
 		EndUserID: wire.User, PreviousResponseID: wire.PreviousResponseID, ConversationID: conversationID,
-		Truncation: wire.Truncation,
-		Store:      wire.Store, AutoStore: wire.AutoStore, ParallelToolCalls: wire.ParallelToolCalls,
+		Truncation: wire.Truncation, PromptCacheKey: wire.PromptCacheKey,
+		Store: wire.Store, AutoStore: wire.AutoStore, ParallelToolCalls: wire.ParallelToolCalls,
 		Sampling: llmprotocol.Sampling{Temperature: wire.Temperature, TopP: wire.TopP, MaxOutputTokens: wire.MaxOutputTokens},
 		Trusted:  llmprotocol.TrustedMetadata{SourceFormat: llmprotocol.OpenAIResponsesV1},
 	}
@@ -293,6 +327,15 @@ func decodeResponsesReasoningRequest(reasoning *responsesReasoningWire, request 
 	}); err != nil {
 		return err
 	}
+	if len(reasoning.Summary) == 0 || bytes.Equal(bytes.TrimSpace(reasoning.Summary), []byte("null")) {
+		return nil
+	}
+	if err := json.Unmarshal(reasoning.Summary, &request.ReasoningSummary); err != nil {
+		return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_reasoning_summary", "reasoning summary must be auto, concise, or detailed", err)
+	}
+	if request.ReasoningSummary == "" {
+		return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_reasoning_summary", "reasoning summary must be auto, concise, or detailed", nil)
+	}
 	return nil
 }
 
@@ -311,23 +354,16 @@ func validateResponsesClientMembers(wire responsesRequestWire) error {
 			return invalid("include")
 		}
 	}
-	var text string
-	if hasJSONValue(wire.PromptCacheKey) && json.Unmarshal(wire.PromptCacheKey, &text) != nil {
-		return invalid("prompt_cache_key")
-	}
-	if wire.Reasoning != nil && hasJSONValue(wire.Reasoning.Summary) && json.Unmarshal(wire.Reasoning.Summary, &text) != nil {
-		return invalid("reasoning.summary")
-	}
 	return nil
 }
 
-// carryResponsesClientMembers puts three members Codex sends on every turn on
-// the carrier that holds the members no contract names, so a Responses target
-// gets them back byte for byte and any other target drops and counts them.
-// include asks for encrypted reasoning, prompt_cache_key names a cache shard,
-// and reasoning.summary asks for reasoning summaries: each shapes what the
-// provider returns or caches, not what the model is asked, so none of them is
-// a reason to refuse the turn.
+// carryResponsesClientMembers puts include, which Codex sends on every turn,
+// on the carrier that holds the members no contract names, so a Responses
+// target gets it back byte for byte and any other target drops and counts it.
+// include asks for encrypted reasoning: it shapes what the provider returns,
+// not what the model is asked, so it is no reason to refuse the turn.
+// prompt_cache_key and reasoning.summary are named fields since upstream v0.4
+// (Request.PromptCacheKey, Request.ReasoningSummary).
 func carryResponsesClientMembers(carrier *llmprotocol.UnmodeledFields, wire responsesRequestWire) *llmprotocol.UnmodeledFields {
 	carry := func(fields *llmprotocol.UnmodeledFields, name string, value json.RawMessage) *llmprotocol.UnmodeledFields {
 		if !hasJSONValue(value) {
@@ -343,20 +379,6 @@ func carryResponsesClientMembers(carrier *llmprotocol.UnmodeledFields, wire resp
 		return fields
 	}
 	carrier = carry(carrier, "include", wire.Include)
-	carrier = carry(carrier, "prompt_cache_key", wire.PromptCacheKey)
-	if wire.Reasoning != nil && hasJSONValue(wire.Reasoning.Summary) {
-		if carrier == nil {
-			carrier = &llmprotocol.UnmodeledFields{Format: llmprotocol.OpenAIResponsesV1}
-		}
-		if carrier.Children == nil {
-			carrier.Children = map[string]*llmprotocol.UnmodeledFields{}
-		}
-		child := carrier.Children["reasoning"]
-		if child == nil {
-			child = &llmprotocol.UnmodeledFields{Format: llmprotocol.OpenAIResponsesV1}
-		}
-		carrier.Children["reasoning"] = carry(child, "summary", wire.Reasoning.Summary)
-	}
 	return carrier
 }
 
@@ -417,6 +439,9 @@ func decodeResponsesTool(body json.RawMessage, request *llmprotocol.Request, pol
 		})
 		return nil
 	}
+	if toolType == "custom" {
+		return decodeResponsesCustomTool(body, request, policy)
+	}
 	if toolType != "function" {
 		return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_tool", "only function tools enter the model protocol", nil)
 	}
@@ -465,9 +490,39 @@ func decodeResponsesNamespaceTool(body json.RawMessage, request *llmprotocol.Req
 // hosted_tools, handed to the codec as Request.HostedTools); every other
 // target drops and counts it. Web search changes what a turn costs and does,
 // so it stays off an arm that was never evaluated with it. A caller-run kind
-// such as custom or apply_patch stays refused: dropping it would silently
+// such as apply_patch stays refused: dropping it would silently
 // take away a tool the client expects the model to call.
 var carriedResponsesToolTypes = map[string]bool{"web_search": true}
+
+func decodeResponsesCustomTool(body json.RawMessage, request *llmprotocol.Request, policy llmprotocol.Policy) error {
+	var wire responsesToolWire
+	if err := decodeWireValue(body, &wire, policy); err != nil {
+		return err
+	}
+	if err := rejectUnsupportedRequestFields(map[string]json.RawMessage{
+		"tools.allowed_callers": wire.AllowedCallers,
+		"tools.defer_loading":   wire.DeferLoading,
+	}); err != nil {
+		return err
+	}
+	var format *llmprotocol.CustomToolFormat
+	if wire.Format != nil {
+		switch wire.Format.Type {
+		case "text":
+			if wire.Format.Syntax != "" || wire.Format.Definition != "" {
+				return invalidCustomToolFormat("custom tool text format cannot carry a grammar")
+			}
+		case "grammar":
+			format = &llmprotocol.CustomToolFormat{Syntax: wire.Format.Syntax, Definition: wire.Format.Definition}
+		default:
+			return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_tool_format", "custom tool format must be text or grammar", nil)
+		}
+	}
+	request.Tools = append(request.Tools, llmprotocol.Tool{
+		Kind: llmprotocol.ToolKindCustom, Name: wire.Name, Description: wire.Description, CustomFormat: format,
+	})
+	return nil
+}
 
 func responsesToolDiscriminator(body json.RawMessage) (string, error) {
 	var discriminator struct {
@@ -531,6 +586,8 @@ func validateResponsesToolVariant(body json.RawMessage, toolType string) error {
 	switch toolType {
 	case "function":
 		names = []string{"name", "description", "parameters", "strict", "allowed_callers", "defer_loading", "output_schema"}
+	case "custom":
+		names = []string{"name", "description", "format", "allowed_callers", "defer_loading"}
 	case "image_generation":
 		names = []string{
 			"model", "quality", "size", "output_format", "output_compression", "moderation",
@@ -543,7 +600,7 @@ func validateResponsesToolVariant(body json.RawMessage, toolType string) error {
 		allowed[name] = struct{}{}
 	}
 	known := []string{
-		"name", "description", "parameters", "strict", "allowed_callers", "defer_loading", "output_schema",
+		"name", "description", "parameters", "strict", "format", "allowed_callers", "defer_loading", "output_schema",
 		"model", "quality", "size", "output_format", "output_compression", "moderation",
 		"background", "input_fidelity", "input_image_mask", "partial_images", "action",
 	}
@@ -587,12 +644,14 @@ func decodeResponsesRequestOptions(wire responsesRequestWire, request *llmprotoc
 	}
 	request.ToolChoice = choice
 	if wire.Text != nil {
-		if err := rejectUnsupportedRequestField("text.verbosity", wire.Text.Verbosity); err != nil {
+		if err := decodeTextVerbosity(wire.Text.Verbosity, &request.TextVerbosity); err != nil {
 			return err
 		}
-		request.OutputFormat = llmprotocol.OutputFormat{
-			Kind: llmprotocol.OutputFormatKind(wire.Text.Format.Type), Name: wire.Text.Format.Name,
-			Description: wire.Text.Format.Description, Strict: wire.Text.Format.Strict, Schema: wire.Text.Format.Schema,
+		if wire.Text.Format != nil {
+			request.OutputFormat = llmprotocol.OutputFormat{
+				Kind: llmprotocol.OutputFormatKind(wire.Text.Format.Type), Name: wire.Text.Format.Name,
+				Description: wire.Text.Format.Description, Strict: wire.Text.Format.Strict, Schema: wire.Text.Format.Schema,
+			}
 		}
 		switch request.OutputFormat.Kind {
 		case "json_schema":

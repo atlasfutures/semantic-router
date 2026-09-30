@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -866,28 +867,29 @@ func raylineRoutesConsult(
 }
 
 // raylineRoutesGuardBreach answers a streamed body that broke an accumulation
-// guard, in this endpoint's own envelope.
+// guard, in this endpoint's own envelope. The generic guard already answers
+// with an immediate response (so failure_mode_allow can never forward the
+// lookup); this keeps the status and gives it the Anthropic envelope the
+// endpoint documents instead of the Chat-shaped protocol error.
 //
-// It exists because the generic handling -- return the error, close the
-// ExtProc stream, let Envoy decide -- resolves to "forward upstream" under
-// failure_mode_allow, and forwarding is the one outcome this endpoint is
-// defined by never producing.
+// A body that did not arrive in time is the caller's slowness, so it is 408
+// timeout_error; 504 stays reserved for the lookup's own deadline.
 func (r *OpenAIRouter) raylineRoutesGuardBreach(
 	ctx *RequestContext,
-	err error,
+	status int,
 ) *ext_proc.ProcessingResponse {
-	if errors.Is(err, ErrStreamedBodyTimeout) {
+	if status == http.StatusRequestTimeout {
 		return r.createRaylineRoutesError(
 			ctx,
-			504,
+			http.StatusRequestTimeout,
 			"timeout_error",
 			"route lookup body did not arrive within the accumulation deadline",
 		)
 	}
 	return r.createRaylineRoutesError(
 		ctx,
-		413,
-		"invalid_request_error",
+		http.StatusRequestEntityTooLarge,
+		"request_too_large",
 		"route lookup body exceeds the accumulation limit",
 	)
 }

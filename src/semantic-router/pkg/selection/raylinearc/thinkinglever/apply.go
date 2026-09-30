@@ -146,8 +146,8 @@ func applyEntry(
 
 func effortMessage(payload Payload) llmprotocol.Message {
 	return llmprotocol.Message{
-		Role:          llmprotocol.RoleSystem,
-		Configuration: &llmprotocol.ConfigurationUpdate{ReasoningEffort: payload.Effort},
+		Role:            llmprotocol.RoleSystem,
+		ReasoningEffort: payload.Effort,
 	}
 }
 

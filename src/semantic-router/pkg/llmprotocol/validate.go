@@ -1,6 +1,7 @@
 package llmprotocol
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -37,10 +38,7 @@ func ValidateRequest(request Request, limits Limits) error {
 	if err != nil {
 		return err
 	}
-	// A carried declaration is a tool the source format's target can call, so
-	// it counts toward a required choice; a target that drops it also drops
-	// the choice it could not honour.
-	if err := validateToolChoice(request.ToolChoice, namedTools, len(request.Tools)+len(request.CarriedTools), request.ImageGeneration != nil); err != nil {
+	if err := validateRequestToolChoice(request, namedTools); err != nil {
 		return err
 	}
 	if err := locateRefusal(
@@ -53,6 +51,18 @@ func ValidateRequest(request Request, limits Limits) error {
 	}
 	if err := validateSampling(request.Sampling, limits); err != nil {
 		return err
+	}
+	if err := validateCacheSalt(request.CacheSalt); err != nil {
+		return err
+	}
+	if len(request.ContextManagement) > 0 {
+		value := bytes.TrimSpace(request.ContextManagement)
+		if !json.Valid(value) || len(value) == 0 || value[0] != '{' {
+			return NewError(ErrorInvalidRequest, "invalid_context_management", "context management must be a JSON object", nil)
+		}
+		if limits.MetadataBytes > 0 && len(value) > limits.MetadataBytes {
+			return NewError(ErrorInvalidRequest, "context_management_limit", "context management exceeds the configured limit", nil)
+		}
 	}
 	return validateReasoning(request, limits)
 }
@@ -72,6 +82,10 @@ func instructionLocation(index int) string {
 func validateRequestEnvelope(request Request, limits Limits) (int, error) {
 	if err := validateRequestIdentity(request, limits); err != nil {
 		return 0, err
+	}
+	if request.TextVerbosity != "" && request.TextVerbosity != "low" &&
+		request.TextVerbosity != "medium" && request.TextVerbosity != "high" {
+		return 0, NewError(ErrorInvalidRequest, "invalid_text_verbosity", "text verbosity must be low, medium or high", nil)
 	}
 	if err := validateRequestCardinality(request, limits); err != nil {
 		return 0, err
@@ -110,6 +124,9 @@ func validateRequestIdentity(request Request, limits Limits) error {
 		return NewFieldError(ErrorInvalidRequest, "end_user_id_limit",
 			"end-user ID exceeds the configured limit", "", "end_user_id").
 			WithCount("bytes", len(request.EndUserID), limits.IdentifierBytes)
+	}
+	if exceeds(request.PromptCacheKey, limits.IdentifierBytes) {
+		return NewError(ErrorInvalidRequest, "prompt_cache_key_limit", "prompt_cache_key exceeds the configured limit", nil)
 	}
 	if request.PreviousResponseID != "" && request.ConversationID != "" {
 		return NewFieldError(ErrorInvalidRequest, "conflicting_conversation_state",
@@ -230,8 +247,8 @@ func validateMessageEnvelope(message Message, location string, limits Limits) er
 		return NewFieldError(ErrorInvalidRequest, "invalid_role",
 			"message role is invalid", location, "messages.role")
 	}
-	if message.Configuration != nil {
-		return validateConfigurationMessage(message, location)
+	if message.ReasoningEffort != "" {
+		return validateMessageEffort(message, location, limits)
 	}
 	if len(message.Content) == 0 {
 		return NewFieldError(ErrorInvalidRequest, "empty_message",
@@ -244,14 +261,25 @@ func validateMessageEnvelope(message Message, location string, limits Limits) er
 	return nil
 }
 
-func validateConfigurationMessage(message Message, location string) error {
-	if message.Role != RoleSystem || len(message.Content) != 0 {
-		return NewFieldError(ErrorInvalidRequest, "invalid_configuration_message",
-			"a configuration update is a system message without content", location, "messages.configuration")
+// validateMessageEffort checks a per-message effort: a content-less system
+// message whose effort applies from its position on. The value set is any
+// plain lowercase name, as wide as the Router's thinking lever and the
+// request-level effort (none, minimal) allow; the provider owns the vocabulary.
+func validateMessageEffort(message Message, location string, limits Limits) error {
+	if message.Role != RoleSystem {
+		return NewFieldError(ErrorInvalidRequest, "invalid_message_reasoning_effort",
+			"per-message effort requires a system message", location, "messages.output_config.effort")
 	}
-	if message.Configuration.ReasoningEffort == "" {
-		return NewFieldError(ErrorInvalidRequest, "invalid_configuration_message",
-			"a configuration update must change the reasoning effort", location, "messages.configuration")
+	if exceeds(message.ReasoningEffort, limits.ReasoningEffortBytes) {
+		return NewFieldError(ErrorInvalidRequest, "invalid_message_reasoning_effort",
+			"per-message effort exceeds the configured limit", location, "messages.output_config.effort").
+			WithCount("bytes", len(message.ReasoningEffort), limits.ReasoningEffortBytes)
+	}
+	for _, r := range message.ReasoningEffort {
+		if (r < 'a' || r > 'z') && r != '_' {
+			return NewFieldError(ErrorInvalidRequest, "invalid_message_reasoning_effort",
+				"per-message effort is invalid", location, "messages.output_config.effort")
+		}
 	}
 	return nil
 }
@@ -348,6 +376,12 @@ func validateSampling(sampling Sampling, limits Limits) error {
 }
 
 func validateSamplingScalars(sampling Sampling) error {
+	if sampling.MinP != nil && (!finiteFloat(*sampling.MinP) || *sampling.MinP < 0 || *sampling.MinP > 1) {
+		return NewError(ErrorInvalidRequest, "invalid_min_p", "min_p must be between 0 and 1", nil)
+	}
+	if sampling.RepetitionPenalty != nil && (!finiteFloat(*sampling.RepetitionPenalty) || *sampling.RepetitionPenalty <= 0) {
+		return NewError(ErrorInvalidRequest, "invalid_repetition_penalty", "repetition_penalty must be finite and positive", nil)
+	}
 	if err := validateSamplingProbability(sampling); err != nil {
 		return err
 	}
@@ -386,9 +420,9 @@ func finiteFloat(value float64) bool {
 }
 
 func validateSamplingCounts(sampling Sampling) error {
-	if sampling.TopK != nil && *sampling.TopK < 0 {
+	if sampling.TopK != nil && *sampling.TopK < -1 {
 		return NewFieldError(ErrorInvalidRequest, "invalid_top_k",
-			"top_k cannot be negative", "", "top_k")
+			"top_k must be -1, zero, or positive", "", "top_k")
 	}
 	if sampling.MaxOutputTokens != nil && *sampling.MaxOutputTokens < 0 {
 		return NewFieldError(ErrorInvalidRequest, "invalid_max_output_tokens",
@@ -424,6 +458,9 @@ func validateReasoning(request Request, limits Limits) error {
 		return err
 	}
 	if err := validateReasoningDisplay(request); err != nil {
+		return err
+	}
+	if err := validateReasoningSummary(request); err != nil {
 		return err
 	}
 	return validateReasoningMode(request)
@@ -462,6 +499,14 @@ func validateReasoningDisplay(request Request) error {
 			"reasoning display requires enabled or adaptive reasoning", "", "reasoning_display")
 	}
 	return nil
+}
+
+func validateReasoningSummary(request Request) error {
+	switch request.ReasoningSummary {
+	case "", "auto", "concise", "detailed":
+		return nil
+	}
+	return NewError(ErrorInvalidRequest, "invalid_reasoning_summary", "reasoning summary must be auto, concise, or detailed", nil)
 }
 
 func validateReasoningMode(request Request) error {

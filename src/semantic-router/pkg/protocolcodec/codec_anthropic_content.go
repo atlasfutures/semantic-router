@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"bytes"
 	"encoding/json"
 	"reflect"
 
@@ -101,6 +102,40 @@ func decodeAnthropicContentBlock(
 	}
 	content.Extensions = captureUnnamedMembers(body, reflect.TypeOf(anthropicContentWire{}), llmprotocol.AnthropicMessagesV1)
 	return content, nil
+}
+
+// validateAnthropicToolCaller keeps upstream's shape check -- a caller is an
+// object with a string type -- and nothing more (US-003b). Every well-formed
+// caller, direct or programmatic, is carried: it names who issued the call and
+// does not change what the model is asked, so a target that cannot express it
+// drops and counts it instead of refusing the turn or a billed completion.
+func validateAnthropicToolCaller(raw json.RawMessage, providerOutput bool) error {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil
+	}
+
+	var caller map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &caller); err != nil || caller == nil {
+		return invalidAnthropicToolCaller(providerOutput, err)
+	}
+	var callerType string
+	if err := json.Unmarshal(caller["type"], &callerType); err != nil || callerType == "" {
+		return invalidAnthropicToolCaller(providerOutput, err)
+	}
+	return nil
+}
+
+func invalidAnthropicToolCaller(providerOutput bool, cause error) error {
+	category := llmprotocol.ErrorInvalidRequest
+	code := "invalid_content_variant"
+	message := "Anthropic tool_use caller must be an object with a type"
+	if providerOutput {
+		category = llmprotocol.ErrorUpstreamUnavailable
+		code = "invalid_response_content"
+		message = "Anthropic provider output has an invalid tool_use caller"
+	}
+	return llmprotocol.NewError(category, code, message, cause)
 }
 
 func decodeAnthropicTypedContent(
@@ -257,8 +292,11 @@ func (AnthropicMessagesCodec) EncodeRequest(request llmprotocol.Request, envelop
 }
 
 func validateAnthropicEncodableRequest(request llmprotocol.Request) error {
-	if err := refuseConfigurationUpdates(request, "Anthropic Messages"); err != nil {
+	if err := rejectChatOnlyControls(request); err != nil {
 		return err
+	}
+	if request.Sampling.TopK != nil && *request.Sampling.TopK < 0 {
+		return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_top_k", "Messages cannot represent top_k=-1", nil)
 	}
 	if request.Sampling.Temperature != nil && *request.Sampling.Temperature > 1 {
 		return llmprotocol.NewError(
@@ -293,7 +331,7 @@ func buildAnthropicRequestWire(
 	if baseErr != nil {
 		return anthropicRequestWire{}, diagnostics, baseErr
 	}
-	if instructionErr := encodeAnthropicInstructions(&wire, request, policy, &diagnostics); instructionErr != nil {
+	if instructionErr := encodeAnthropicInstructions(&wire, request); instructionErr != nil {
 		return anthropicRequestWire{}, diagnostics, instructionErr
 	}
 	if messagesErr := appendAnthropicMessages(&wire, request.Messages); messagesErr != nil {
@@ -317,6 +355,12 @@ func buildAnthropicRequestWire(
 
 func anthropicRequestDiagnostics(request llmprotocol.Request, policy llmprotocol.Policy) (llmprotocol.Diagnostics, error) {
 	var diagnostics llmprotocol.Diagnostics
+	if request.PromptCacheKey != "" {
+		appendProviderFieldOmission(&diagnostics, policy, request.Trusted.SourceFormat, "prompt_cache_key", "Messages does not use client cache-affinity keys")
+	}
+	if request.ReasoningSummary != "" {
+		appendProviderFieldOmission(&diagnostics, policy, request.Trusted.SourceFormat, "reasoning.summary", "Messages cannot request a reasoning summary")
+	}
 	if err := appendAnthropicContentDiagnostics(&diagnostics, request, policy); err != nil {
 		return diagnostics, err
 	}
@@ -396,6 +440,7 @@ func encodeAnthropicBaseRequest(request llmprotocol.Request) (anthropicRequestWi
 	wire := anthropicRequestWire{
 		Model: request.Model, Stream: request.Stream, Temperature: request.Sampling.Temperature,
 		TopP: request.Sampling.TopP, TopK: request.Sampling.TopK, StopSequences: append([]string(nil), request.Sampling.Stop...),
+		ContextManagement: append(json.RawMessage(nil), request.ContextManagement...),
 	}
 	var diagnostics llmprotocol.Diagnostics
 	if request.Sampling.MaxOutputTokens == nil {
@@ -470,22 +515,14 @@ func validateAnthropicReasoningBudget(
 	)
 }
 
-func encodeAnthropicInstructions(
-	wire *anthropicRequestWire,
-	request llmprotocol.Request,
-	policy llmprotocol.Policy,
-	diagnostics *llmprotocol.Diagnostics,
-) error {
+func encodeAnthropicInstructions(wire *anthropicRequestWire, request llmprotocol.Request) error {
 	if len(request.Instructions) == 0 {
 		return nil
 	}
+	// developer is OpenAI's successor to system and Anthropic's system field is
+	// the same channel, so every instruction role maps onto it equivalently.
 	contents := make([]llmprotocol.Content, 0)
 	for _, instruction := range request.Instructions {
-		if instruction.Role == llmprotocol.RoleDeveloper {
-			if err := appendLossy(diagnostics, policy, request.Trusted.SourceFormat, llmprotocol.AnthropicMessagesV1, "instructions.role", "Messages cannot preserve developer authority"); err != nil {
-				return err
-			}
-		}
 		contents = append(contents, instruction.Content...)
 	}
 	encoded, err := encodeAnthropicContent(contents)
@@ -501,7 +538,9 @@ func appendAnthropicMessages(wire *anthropicRequestWire, messages []llmprotocol.
 		// resent Responses reasoning item, leaves nothing to send, and
 		// Anthropic refuses a message with empty content. Chat and Responses
 		// skip it the same way.
-		if messageDropsWhole(message.Content, llmprotocol.AnthropicMessagesV1) {
+		// A content-less per-message effort is not such a message: Messages
+		// carries it as output_config.effort.
+		if message.ReasoningEffort == "" && messageDropsWhole(message.Content, llmprotocol.AnthropicMessagesV1) {
 			continue
 		}
 		encoded, err := encodeAnthropicMessage(message)
@@ -590,7 +629,11 @@ func encodeAnthropicMessage(message llmprotocol.Message) ([]anthropicMessageWire
 	if err != nil {
 		return nil, err
 	}
-	return []anthropicMessageWire{{Role: string(role), Content: content}}, nil
+	wire := anthropicMessageWire{Role: string(role), Content: content}
+	if message.ReasoningEffort != "" {
+		wire.OutputConfig = &anthropicOutputConfigWire{Effort: message.ReasoningEffort}
+	}
+	return []anthropicMessageWire{wire}, nil
 }
 
 func encodeAnthropicContent(contents []llmprotocol.Content) (json.RawMessage, error) {

@@ -140,6 +140,15 @@ def test_rayline_arc_cli_treats_empty_reference_membership_as_absent():
     assert parsed.encoder.membership is None
 
 
+def test_rayline_arc_cli_treats_empty_close_header_as_absent():
+    # The Go loader reads close_header "" as no close header (omitempty), and
+    # the reference config spells it that way in artifact mode.
+    decision = _valid_decision()
+    decision.algorithm.rayline_arc.episode.close_header = ""
+
+    assert _validate_rayline_arc_decision(decision) == []
+
+
 def _valid_decision():
     return SimpleNamespace(
         name="arc-route",

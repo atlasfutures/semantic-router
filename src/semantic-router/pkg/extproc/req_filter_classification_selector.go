@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 )
 
@@ -24,23 +25,62 @@ const (
 
 // selectModelFromCandidates uses the configured selection algorithm to choose
 // a model. Invalid or unavailable selection falls back to the first configured
-// candidate while recording an explicit diagnostic, except for authoritative
-// fail-closed algorithms (Rayline ARC), which surface a bounded error
-// instead of silently downgrading to the default candidate.
+// candidate while recording an explicit diagnostic.
+//
+// A Router Learning rejection is fail-closed and is checked once here, so the
+// selector, single-candidate and fallback paths all honour it.
 func (r *OpenAIRouter) selectModelFromCandidates(
 	selCtx *selection.SelectionContext,
 	algorithm *config.AlgorithmConfig,
 	ctx *RequestContext,
+) (chosen *config.ModelRef, chosenMethod string, selectionErr error) {
+	if ctx != nil {
+		ctx.VSRSelectedCandidate = nil
+		ctx.VSRSelectionTrace = nil
+		ctx.pendingSessionDecision = nil
+	}
+	defer func() {
+		if ctx != nil && chosen != nil && selectionErr == nil {
+			ctx.VSRSelectedCandidate = (&selection.SelectionResult{}).WithCandidate(*chosen).SelectedCandidate
+		}
+	}()
+	selected, method, err := r.selectModelFromCandidatesInner(selCtx, algorithm, ctx)
+	if err != nil {
+		return nil, method, err
+	}
+	if ctx != nil && ctx.VSRProgressGateError != nil {
+		return nil, method, ctx.VSRProgressGateError
+	}
+	return selected, method, nil
+}
+
+func (r *OpenAIRouter) selectModelFromCandidatesInner(
+	selCtx *selection.SelectionContext,
+	algorithm *config.AlgorithmConfig,
+	ctx *RequestContext,
 ) (*config.ModelRef, string, error) {
+	method := r.getSelectionMethod(algorithm)
+	if err := selectionRequestContext(ctx).Err(); err != nil {
+		return nil, string(method), err
+	}
+	if raylineARCSelection(algorithm) {
+		return r.selectRaylineARCModel(selCtx, algorithm, method, ctx)
+	}
+	filtered, err := r.capabilityEligibleSelectionContext(selCtx, algorithm, ctx)
+	if err != nil {
+		return nil, string(method), err
+	}
+	selCtx = filtered
 	defaultCandidate := firstValidCandidateModelRef(selCtx)
 	if defaultCandidate == nil {
-		return nil, "", selectionFailureForAlgorithm(algorithm, "no_candidate")
+		return nil, "", nil
 	}
-	method := r.getSelectionMethod(algorithm)
+	if err := r.validateProtectedCandidateOwnership(selCtx, ctx); err != nil {
+		return nil, string(method), err
+	}
 	if err := selection.ValidateSelectionContext(selCtx); err != nil {
-		return r.handleSelectionFallback(
-			algorithm,
-			"invalid_context",
+		logging.Warnf("[ModelSelection] Invalid selection context: %v, using default candidate", err)
+		selected, fallbackErr := r.recordSelectionFallback(
 			method,
 			selectionFallbackInvalidContext,
 			selCtx,
@@ -48,19 +88,19 @@ func (r *OpenAIRouter) selectModelFromCandidates(
 			defaultCandidate,
 			nil,
 			ctx,
-			"[ModelSelection] Invalid selection context: %v, using default candidate",
-			err,
 		)
+		return selected, string(method), fallbackErr
 	}
-	if len(selCtx.CandidateModels) == 1 && !failClosedSelection(algorithm) {
-		return r.selectSingleCandidateModel(selCtx, defaultCandidate, ctx)
+	// multi_factor applies eligibility policy as well as ranking. A sole
+	// candidate must still satisfy the configured SLO and quality constraints.
+	if len(selCtx.CandidateModels) == 1 && method != selection.MethodMultiFactor {
+		return r.selectSingleCandidateModel(selCtx, method, defaultCandidate, ctx)
 	}
 
 	selector := r.selectorForDecisionMethod(method, algorithm, ctx)
 	if selector == nil {
-		return r.handleSelectionFallback(
-			algorithm,
-			"missing_selector",
+		logging.Warnf("[ModelSelection] No selector available for method %s, using default candidate", method)
+		selected, fallbackErr := r.recordSelectionFallback(
 			method,
 			selectionFallbackUnavailable,
 			selCtx,
@@ -68,13 +108,11 @@ func (r *OpenAIRouter) selectModelFromCandidates(
 			defaultCandidate,
 			nil,
 			ctx,
-			"[ModelSelection] No selector available for method %s, using default candidate",
-			method,
 		)
+		return selected, string(method), fallbackErr
 	}
 	return r.selectWithSelector(
 		selCtx,
-		algorithm,
 		method,
 		selector,
 		defaultCandidate,
@@ -84,7 +122,6 @@ func (r *OpenAIRouter) selectModelFromCandidates(
 
 func (r *OpenAIRouter) selectWithSelector(
 	selCtx *selection.SelectionContext,
-	algorithm *config.AlgorithmConfig,
 	method selection.SelectionMethod,
 	selector selection.Selector,
 	defaultCandidate *config.ModelRef,
@@ -98,13 +135,16 @@ func (r *OpenAIRouter) selectWithSelector(
 		selector.Tier(),
 		time.Since(selectionStart),
 	)
+	if requestCtx.Err() != nil {
+		return nil, string(method), requestCtx.Err()
+	}
 	if err != nil {
-		if requestCtx.Err() != nil {
-			return nil, string(method), requestCtx.Err()
+		if errors.Is(err, selection.ErrNoEligibleCandidates) {
+			logging.Warnf("[ModelSelection] Selection rejected all candidates: %v", err)
+			return nil, string(method), err
 		}
-		return r.handleSelectionFallback(
-			algorithm,
-			authoritativeSelectionFailureClass(algorithm, err),
+		logging.Warnf("[ModelSelection] Selection failed: %v, using default candidate", err)
+		selected, fallbackErr := r.recordSelectionFallback(
 			method,
 			selectionFallbackReasonForError(err),
 			selCtx,
@@ -112,14 +152,15 @@ func (r *OpenAIRouter) selectWithSelector(
 			defaultCandidate,
 			selector,
 			ctx,
-			"[ModelSelection] Selection failed: %v, using default candidate",
-			err,
 		)
+		return selected, string(method), fallbackErr
 	}
-	if err := selection.ValidateSelectionResult(selCtx, result); err != nil {
-		return r.handleSelectionFallback(
-			algorithm,
-			"invalid_result",
+	if validationErr := selection.ValidateSelectionResult(selCtx, result); validationErr != nil {
+		if errors.Is(validationErr, selection.ErrNoEligibleCandidates) {
+			return nil, string(method), validationErr
+		}
+		logging.Warnf("[ModelSelection] Invalid selection result: %v, using default candidate", validationErr)
+		selected, fallbackErr := r.recordSelectionFallback(
 			method,
 			selectionFallbackInvalidResult,
 			selCtx,
@@ -127,16 +168,14 @@ func (r *OpenAIRouter) selectWithSelector(
 			defaultCandidate,
 			selector,
 			ctx,
-			"[ModelSelection] Invalid selection result: %v, using default candidate",
-			err,
 		)
+		return selected, string(method), fallbackErr
 	}
 
 	selectedModel := selectedModelRefFromResult(selCtx, result)
 	if selectedModel == nil {
-		return r.handleSelectionFallback(
-			algorithm,
-			"unknown_model",
+		logging.Warnf("[ModelSelection] Selected model %s not found in candidates, using default candidate", result.SelectedModel)
+		selected, fallbackErr := r.recordSelectionFallback(
 			method,
 			selectionFallbackUnknownModel,
 			selCtx,
@@ -144,27 +183,41 @@ func (r *OpenAIRouter) selectWithSelector(
 			defaultCandidate,
 			selector,
 			ctx,
-			"[ModelSelection] Selected model %s not found in candidates, using default candidate",
-			result.SelectedModel,
 		)
+		return selected, string(method), fallbackErr
 	}
-	if err := bindRaylineARCDispatchContract(
-		selector,
-		algorithm,
-		result,
-		selectedModel,
-		ctx,
-	); err != nil {
-		return nil, "", err
+	selCtx, err = applySelectionEligibility(selCtx, result, ctx)
+	if err != nil {
+		return nil, string(method), err
 	}
-	return r.completeModelSelection(
+	if err := r.validateProtectedCandidateOwnership(selCtx, ctx); err != nil {
+		return nil, string(method), err
+	}
+	ctx.VSRSelectionTrace = result.MultiFactor.Clone()
+	recordCtx, result, selectedModel, learningApplied, learningErr := r.applyRouterLearning(
 		selCtx,
-		algorithm,
-		ctx,
-		method,
-		result,
+		result.WithCandidate(*selectedModel),
 		selectedModel,
+		ctx,
 	)
+	if learningErr != nil {
+		return nil, string(method), learningErr
+	}
+	ctx.VSRSelectionReasoning = selectionReasoningForDiagnostics(
+		method,
+		result.Reasoning,
+	)
+	recordPromptHelperTelemetry(ctx, result)
+	logSelectionResult(method, result, selectedModel, learningApplied)
+	selection.RecordSelection(
+		string(method),
+		selectionDecisionStateKey(selCtx),
+		selectedModel.Model,
+		result.Tier,
+		result.Score,
+	)
+	stageAgenticSessionDecision(recordCtx, result, selectedModel, ctx)
+	return selectedModel, string(method), nil
 }
 
 func recordPromptHelperTelemetry(
@@ -207,29 +260,34 @@ func selectionRequestContext(ctx *RequestContext) context.Context {
 
 func (r *OpenAIRouter) selectSingleCandidateModel(
 	selCtx *selection.SelectionContext,
+	method selection.SelectionMethod,
 	defaultCandidate *config.ModelRef,
 	ctx *RequestContext,
 ) (*config.ModelRef, string, error) {
 	result := &selection.SelectionResult{
-		SelectedModel: defaultCandidate.Model,
-		LoRAName:      defaultCandidate.LoRAName,
-		Score:         1.0,
-		Confidence:    1.0,
-		Method:        selection.MethodStatic,
-		Tier:          selection.TierSupported,
-		Reasoning:     "single candidate",
-		AllScores:     map[string]float64{defaultCandidate.Model: 1.0},
+		SelectedModel:     defaultCandidate.Model,
+		SelectedCandidate: defaultCandidate,
+		LoRAName:          defaultCandidate.LoRAName,
+		Score:             1.0,
+		Confidence:        1.0,
+		Method:            method,
+		Tier:              selection.TierSupported,
+		Reasoning:         "single candidate",
+		AllScores:         map[string]float64{defaultCandidate.Model: 1.0},
 	}
-	recordCtx, result, selectedModel, learningApplied := r.applyRouterLearning(
+	recordCtx, result, selectedModel, learningApplied, learningErr := r.applyRouterLearning(
 		selCtx,
 		result,
 		defaultCandidate,
 		ctx,
 	)
+	if learningErr != nil {
+		return nil, string(method), learningErr
+	}
 	ctx.VSRSelectionReasoning = boundedSelectionReasoning(result.Reasoning)
-	logSelectionResult(selection.MethodStatic, result, selectedModel, learningApplied)
-	recordAgenticSessionDecision(recordCtx, result, selectedModel, ctx)
-	return selectedModel, "single", nil
+	logSelectionResult(method, result, selectedModel, learningApplied)
+	stageAgenticSessionDecision(recordCtx, result, selectedModel, ctx)
+	return selectedModel, string(method), nil
 }
 
 func boundedSelectionReasoning(value string) string {
@@ -265,25 +323,29 @@ func (r *OpenAIRouter) recordSelectionFallback(
 	fallback *config.ModelRef,
 	selector selection.Selector,
 	ctx *RequestContext,
-) *config.ModelRef {
+) (*config.ModelRef, error) {
 	tier := selection.TierSupported
 	if selector != nil {
 		tier = selector.Tier()
 	}
 	fallbackResult := &selection.SelectionResult{
-		SelectedModel: fallback.Model,
-		LoRAName:      fallback.LoRAName,
-		Method:        method,
-		Tier:          tier,
-		Reasoning:     reason,
-		AllScores:     map[string]float64{fallback.Model: 0},
+		SelectedModel:     fallback.Model,
+		SelectedCandidate: fallback,
+		LoRAName:          fallback.LoRAName,
+		Method:            method,
+		Tier:              tier,
+		Reasoning:         reason,
+		AllScores:         map[string]float64{fallback.Model: 0},
 	}
-	recordCtx, fallbackResult, selected, learningApplied := r.applyRouterLearning(
+	recordCtx, fallbackResult, selected, learningApplied, learningErr := r.applyRouterLearning(
 		selCtx,
 		fallbackResult,
 		fallback,
 		ctx,
 	)
+	if learningErr != nil {
+		return nil, learningErr
+	}
 	if ctx != nil {
 		ctx.VSRSelectionReasoning = boundedSelectionReasoning(reason)
 	}
@@ -300,6 +362,6 @@ func (r *OpenAIRouter) recordSelectionFallback(
 		reason,
 	)
 	logSelectionResult(method, fallbackResult, selected, learningApplied)
-	recordAgenticSessionDecision(recordCtx, fallbackResult, selected, ctx)
-	return selected
+	stageAgenticSessionDecision(recordCtx, fallbackResult, selected, ctx)
+	return selected, nil
 }

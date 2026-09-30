@@ -37,7 +37,7 @@ import (
 // before the trailer is answered, because Envoy completes the exchange on that
 // reply.
 
-func processRequestTrailers(
+func answerRequestTrailers(
 	stream ext_proc.ExternalProcessor_ProcessServer,
 	_ *ext_proc.ProcessingRequest_RequestTrailers,
 ) error {

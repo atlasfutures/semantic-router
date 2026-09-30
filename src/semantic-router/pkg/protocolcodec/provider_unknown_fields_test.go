@@ -226,14 +226,11 @@ func TestOpenRouterUnknownFieldsAreNamed(t *testing.T) {
 	_, dropped := pruneUnknownProviderFields(
 		loadProviderFixture(t, openRouterResponseReasoning), reflect.TypeOf(&chatResponseWire{}),
 	)
+	// Upstream v0.4 names OpenRouter's native_finish_reason, cost, is_byok,
+	// cost_details and token detail members (US-002), so they are decoded, not
+	// dropped. What remains unnamed is still dropped and named here.
 	want := []string{
 		"choices[].message.reasoning_details",
-		"choices[].native_finish_reason",
-		"usage.completion_tokens_details.image_tokens",
-		"usage.cost",
-		"usage.cost_details",
-		"usage.is_byok",
-		"usage.prompt_tokens_details.video_tokens",
 	}
 	if !reflect.DeepEqual(dropped, want) {
 		t.Fatalf("dropped fields are %v, want %v", dropped, want)
@@ -252,13 +249,15 @@ func TestOpenRouterStreamUnknownFieldsAreNamed(t *testing.T) {
 			seen[field] = true
 		}
 	}
+	if !seen["choices[].delta.reasoning_details"] {
+		t.Fatalf("stream did not report reasoning_details as dropped; reported %v", seen)
+	}
+	// Named by upstream v0.4 (US-002): decoded, so never counted as dropped.
 	for _, field := range []string{
-		"choices[].delta.reasoning_details", "choices[].native_finish_reason",
-		"usage.completion_tokens_details.image_tokens", "usage.cost", "usage.cost_details",
-		"usage.is_byok", "usage.prompt_tokens_details.video_tokens",
+		"choices[].native_finish_reason", "usage.cost", "usage.cost_details", "usage.is_byok",
 	} {
-		if !seen[field] {
-			t.Fatalf("stream did not report %q as dropped; reported %v", field, seen)
+		if seen[field] {
+			t.Fatalf("stream reported the named member %q as dropped", field)
 		}
 	}
 }

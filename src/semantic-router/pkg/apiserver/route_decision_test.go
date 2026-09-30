@@ -517,8 +517,18 @@ func TestRouteDecisionAllowsAGrantedRoleUnderBearerAuth(t *testing.T) {
 	}
 }
 
-func TestRouteDecisionRouteCarriesItsOwnPermission(t *testing.T) {
+// The route is fork-owned: it must stay out of upstream's catalog (and so out
+// of its discovery document and generated OpenAPI) while still being mounted.
+func TestRouteDecisionStaysOutOfTheUpstreamCatalog(t *testing.T) {
 	for _, route := range apiRoutes() {
+		if route.Path == routeDecisionPath {
+			t.Fatalf("%s is registered in apiRoutes(); mount it from forkAPIRoutes() instead", route.pattern())
+		}
+	}
+}
+
+func TestRouteDecisionRouteCarriesItsOwnPermission(t *testing.T) {
+	for _, route := range forkAPIRoutes() {
 		if route.Path != routeDecisionPath {
 			continue
 		}

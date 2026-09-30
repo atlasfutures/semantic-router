@@ -164,9 +164,18 @@ func TestToolBlockCacheBreakpointIsDroppedAndCountedForChat(t *testing.T) {
 	if err := json.Unmarshal(result.Body, &wire); err != nil {
 		t.Fatal(err)
 	}
+	// US-003d: the tool_use breakpoint is dropped and counted; the tool_result
+	// breakpoint moves onto the result's last text part, which is the same
+	// prompt prefix boundary on Chat.
 	for _, message := range wire.Messages {
+		if message.Role == "tool" {
+			if !bytes.Contains(message.Content, []byte(`"text":"def add","cache_control":{"type":"ephemeral","ttl":"1h"}`)) {
+				t.Fatalf("the tool_result boundary was lost on Chat: %s", message.Content)
+			}
+			continue
+		}
 		if bytes.Contains(message.Content, []byte(`"cache_control"`)) {
-			t.Fatalf("a Chat message still carries cache_control: %s", message.Content)
+			t.Fatalf("a non-tool Chat message carries cache_control: %s", message.Content)
 		}
 	}
 	requireDroppedField(t, result.Diagnostics, "content.cache_control")

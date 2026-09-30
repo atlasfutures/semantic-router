@@ -1,8 +1,11 @@
 package catalog
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"sync"
 )
@@ -36,9 +39,17 @@ func BuiltIn() (*Registry, error) {
 			builtInErr = fmt.Errorf("decode generated model catalog: %w", err)
 			return
 		}
-		builtIn, builtInErr = registryFromSnapshot(document, builtInCatalogDigest)
+		builtIn, builtInErr = registryFromSnapshot(document, builtInCatalogDigest())
 	})
 	return builtIn, builtInErr
+}
+
+// builtInCatalogDigest equals the SHA-256 of the published public catalog. It is
+// computed rather than generated so concurrent catalog changes do not conflict
+// on a stored hash.
+func builtInCatalogDigest() string {
+	sum := sha256.Sum256([]byte(builtInCatalogJSON + "\n"))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func registryFromSnapshot(document snapshot, digest string) (*Registry, error) {
@@ -64,6 +75,14 @@ func registryFromSnapshot(document snapshot, digest string) (*Registry, error) {
 		registry.protocols[definition.ID] = definition
 	}
 	for _, definition := range document.Providers {
+		for _, operation := range sortedKeys(definition.OperationOverrides) {
+			if _, exists := definition.PathOverrides[operation]; exists {
+				return nil, fmt.Errorf(
+					"provider %q declares %q in both path_overrides and operation_overrides",
+					definition.ID, operation,
+				)
+			}
+		}
 		registry.providers[definition.ID] = definition
 	}
 	for _, definition := range document.ReasoningFamilies {
@@ -79,8 +98,11 @@ func registryFromSnapshot(document snapshot, digest string) (*Registry, error) {
 		registry.indices[definition.ID] = definition
 	}
 	for _, result := range document.IndexResults {
-		if result.Status != "available" || result.Score == nil {
-			return nil, fmt.Errorf("generated model catalog contains a placeholder index result")
+		if !validIndexResultState(result) {
+			return nil, fmt.Errorf("generated model catalog contains an invalid index result")
+		}
+		if result.Status != "available" {
+			continue
 		}
 		if registry.indexResults[result.Model] == nil {
 			registry.indexResults[result.Model] = map[string]map[string]IndexResult{}
@@ -91,6 +113,25 @@ func registryFromSnapshot(document snapshot, digest string) (*Registry, error) {
 		registry.indexResults[result.Model][result.ReasoningEffort][result.Index] = result
 	}
 	return registry, nil
+}
+
+func validIndexResultState(result IndexResult) bool {
+	validCoverage := !math.IsNaN(result.Coverage) && !math.IsInf(result.Coverage, 0) &&
+		result.Coverage >= 0 && result.Coverage <= 1
+	if !validCoverage {
+		return false
+	}
+	switch result.Status {
+	case "available":
+		return result.Score != nil && !math.IsNaN(*result.Score) && !math.IsInf(*result.Score, 0) &&
+			result.Coverage > 0
+	case "partial":
+		return result.Score == nil && result.Coverage > 0 && result.Coverage < 1
+	case "missing":
+		return result.Score == nil && result.Coverage == 0
+	default:
+		return false
+	}
 }
 
 func (registry *Registry) Digest() string { return registry.digest }
@@ -246,12 +287,14 @@ func cloneProvider(value ProviderDefinition) ProviderDefinition {
 	value.Protocols = append([]string(nil), value.Protocols...)
 	value.SupportedOperations = append([]string(nil), value.SupportedOperations...)
 	value.PathOverrides = cloneMap(value.PathOverrides)
+	value.OperationOverrides = cloneMap(value.OperationOverrides)
 	value.DefaultHeaders = cloneMap(value.DefaultHeaders)
 	value.Models = append([]CatalogModelBinding(nil), value.Models...)
 	for index := range value.Models {
 		value.Models[index].Protocols = append([]string(nil), value.Models[index].Protocols...)
 		value.Models[index].ReasoningModes = append([]string(nil), value.Models[index].ReasoningModes...)
 		value.Models[index].ReasoningEfforts = append([]string(nil), value.Models[index].ReasoningEfforts...)
+		value.Models[index].ReasoningEffortsByProtocol = cloneStringSliceMap(value.Models[index].ReasoningEffortsByProtocol)
 		value.Models[index].Restrictions = cloneArbitraryMap(value.Models[index].Restrictions)
 		value.Models[index].Pricing.CacheWritePer1M = cloneFloatPointer(value.Models[index].Pricing.CacheWritePer1M)
 	}
@@ -283,6 +326,9 @@ func cloneIndex(value IndexDefinition) IndexDefinition {
 	value.Domains = cloneMap(value.Domains)
 	value.Components = append([]IndexComponent(nil), value.Components...)
 	for index := range value.Components {
+		value.Components[index].BenchmarkProfiles = append(
+			[]string(nil), value.Components[index].BenchmarkProfiles...,
+		)
 		value.Components[index].Normalization = cloneNormalization(value.Components[index].Normalization)
 	}
 	return value
@@ -310,6 +356,9 @@ func cloneIndexResult(value IndexResult) IndexResult {
 	value.Score = cloneFloatPointer(value.Score)
 	value.Components = append([]IndexComponentResult(nil), value.Components...)
 	for index := range value.Components {
+		value.Components[index].BenchmarkProfiles = append(
+			[]string(nil), value.Components[index].BenchmarkProfiles...,
+		)
 		value.Components[index].Value = cloneFloatPointer(value.Components[index].Value)
 		value.Components[index].Normalized = cloneFloatPointer(value.Components[index].Normalized)
 	}
@@ -375,6 +424,17 @@ func cloneMap[Value any](source map[string]Value) map[string]Value {
 	result := make(map[string]Value, len(source))
 	for key, value := range source {
 		result[key] = value
+	}
+	return result
+}
+
+func cloneStringSliceMap(source map[string][]string) map[string][]string {
+	if source == nil {
+		return nil
+	}
+	result := make(map[string][]string, len(source))
+	for key, value := range source {
+		result[key] = append([]string(nil), value...)
 	}
 	return result
 }

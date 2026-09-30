@@ -22,88 +22,83 @@ func (failure *modelSelectionFailure) Error() string {
 		",class=" + failure.class + ")"
 }
 
-// completeModelSelection finishes a successful selection. ARC owns bounded
-// ordinal telemetry: the generic selection metric uses model IDs as
-// Prometheus labels, which would export artifact arm identity and create
-// artifact-controlled cardinality, and Router Learning must not post-select.
-func (r *OpenAIRouter) completeModelSelection(
+// selectRaylineARCModel is the whole selection for a rayline_arc decision.
+// ARC is authoritative and fail-closed: every failure surfaces a bounded
+// error instead of downgrading to the default candidate, and Router Learning,
+// the capability pre-filter and the agentic session record never re-select or
+// re-index its arms (ARC owns capability exclusion and its own commit seam).
+// It owns bounded ordinal telemetry: the generic selection metric uses model
+// IDs as Prometheus labels, which would export artifact arm identity and
+// create artifact-controlled cardinality.
+func (r *OpenAIRouter) selectRaylineARCModel(
 	selCtx *selection.SelectionContext,
 	algorithm *config.AlgorithmConfig,
-	ctx *RequestContext,
 	method selection.SelectionMethod,
-	result *selection.SelectionResult,
-	selectedModelRef *config.ModelRef,
-) (*config.ModelRef, string, error) {
-	if raylineARCSelection(algorithm) {
-		if ctx != nil {
-			ctx.VSRRaylineARC = result.RaylineARC
-			if ctx.RaylineARCTransaction != nil &&
-				result.RaylineARC != nil {
-				ctx.RaylineARCTransaction.markSelectionWithAffinity(
-					result.RaylineARC.SelectedArm,
-					result.RaylineARC.SerializedTokens,
-					result.RaylineARC.EncoderReplicaID,
-					result.RaylineARC.EncoderVisitedReplicaIDs,
-				)
-				ctx.RaylineARCTransaction.markPolicyState(result.RaylineARC.PolicyNextState)
-			}
-		}
-		observeRaylineARCSelection(ctx, result.RaylineARC)
-		return selectedModelRef, string(method), nil
-	}
-	recordSelCtx, result, selectedModelRef, learningApplied := r.applyRouterLearning(selCtx, result, selectedModelRef, ctx)
-	if ctx != nil {
-		ctx.VSRSelectionReasoning = selectionReasoningForDiagnostics(method, result.Reasoning)
-	}
-	recordPromptHelperTelemetry(ctx, result)
-	logSelectionResult(method, result, selectedModelRef, learningApplied)
-	selection.RecordSelection(
-		string(method),
-		selectionDecisionStateKey(selCtx),
-		selectedModelRef.Model,
-		result.Tier,
-		result.Score,
-	)
-	recordAgenticSessionDecision(recordSelCtx, result, selectedModelRef, ctx)
-	return selectedModelRef, string(method), nil
-}
-
-// handleSelectionFallback either surfaces a bounded failure for fail-closed
-// algorithms or records the generic default-candidate fallback.
-func (r *OpenAIRouter) handleSelectionFallback(
-	algorithm *config.AlgorithmConfig,
-	class string,
-	method selection.SelectionMethod,
-	reason string,
-	selCtx *selection.SelectionContext,
-	result *selection.SelectionResult,
-	defaultCandidate *config.ModelRef,
-	selector selection.Selector,
 	ctx *RequestContext,
-	warning string,
-	arguments ...interface{},
 ) (*config.ModelRef, string, error) {
-	if failure := selectionFailureForAlgorithm(
-		algorithm,
-		class,
-	); failure != nil {
-		failedMethod := method
-		if failedMethod == "" {
-			failedMethod = selectionMethodForAuthoritativeAlgorithm(algorithm)
-		}
-		return nil, string(failedMethod), failure
+	failedMethod := string(method)
+	if failedMethod == "" {
+		failedMethod = string(selectionMethodForAuthoritativeAlgorithm(algorithm))
 	}
-	logging.Warnf(warning, arguments...)
-	selected := r.recordSelectionFallback(
-		method,
-		reason,
-		selCtx,
-		result,
-		defaultCandidate,
+	if firstValidCandidateModelRef(selCtx) == nil {
+		return nil, "", selectionFailureForAlgorithm(algorithm, "no_candidate")
+	}
+	if err := selection.ValidateSelectionContext(selCtx); err != nil {
+		logging.Warnf("[ModelSelection] Invalid selection context: %v", err)
+		return nil, failedMethod, selectionFailureForAlgorithm(algorithm, "invalid_context")
+	}
+	selector := r.selectorForDecisionMethod(method, algorithm, ctx)
+	if selector == nil {
+		logging.Warnf("[ModelSelection] No selector available for method %s", method)
+		return nil, failedMethod, selectionFailureForAlgorithm(algorithm, "missing_selector")
+	}
+	requestCtx := selectionRequestContext(ctx)
+	selectionStart := time.Now()
+	result, err := selector.Select(requestCtx, selCtx)
+	selection.RecordSelectionDuration(method, selector.Tier(), time.Since(selectionStart))
+	if requestCtx.Err() != nil {
+		return nil, string(method), requestCtx.Err()
+	}
+	if err != nil {
+		logging.Warnf("[ModelSelection] Selection failed: %v", err)
+		return nil, failedMethod, selectionFailureForAlgorithm(
+			algorithm,
+			authoritativeSelectionFailureClass(algorithm, err),
+		)
+	}
+	if err := selection.ValidateSelectionResult(selCtx, result); err != nil {
+		logging.Warnf("[ModelSelection] Invalid selection result: %v", err)
+		return nil, failedMethod, selectionFailureForAlgorithm(algorithm, "invalid_result")
+	}
+	selectedModelRef := selectedModelRefFromResult(selCtx, result)
+	if selectedModelRef == nil {
+		logging.Warnf("[ModelSelection] Selected model %s not found in candidates", result.SelectedModel)
+		return nil, failedMethod, selectionFailureForAlgorithm(algorithm, "unknown_model")
+	}
+	if err := bindRaylineARCDispatchContract(
 		selector,
+		algorithm,
+		result,
+		selectedModelRef,
 		ctx,
-	)
-	return selected, string(method), nil
+	); err != nil {
+		return nil, "", err
+	}
+	if ctx != nil {
+		ctx.VSRRaylineARC = result.RaylineARC
+		if ctx.RaylineARCTransaction != nil &&
+			result.RaylineARC != nil {
+			ctx.RaylineARCTransaction.markSelectionWithAffinity(
+				result.RaylineARC.SelectedArm,
+				result.RaylineARC.SerializedTokens,
+				result.RaylineARC.EncoderReplicaID,
+				result.RaylineARC.EncoderVisitedReplicaIDs,
+			)
+			ctx.RaylineARCTransaction.markPolicyState(result.RaylineARC.PolicyNextState)
+		}
+	}
+	observeRaylineARCSelection(ctx, result.RaylineARC)
+	return selectedModelRef, string(method), nil
 }
 
 func failClosedSelection(algorithm *config.AlgorithmConfig) bool {
