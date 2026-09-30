@@ -1,0 +1,71 @@
+name: vsr-next Go tests
+
+# pr.yml and main.yml run Test And Build only for main, so PRs to and pushes
+# on vsr-next ran no Go tests. This job builds the CPU Rust bindings and runs
+# the router packages vsr-next changes: config, the ext_proc pipeline,
+# selection (Rayline ARC), and the protocol codec.
+on:
+  pull_request:
+    branches: [vsr-next]
+  push:
+    branches: [vsr-next]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vsr-next-go-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-tests:
+    name: Router Go tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: src/semantic-router/go.sum
+
+      - name: Cache Rust builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            candle-binding/target/
+            ml-binding/target/
+            nlp-binding/target/
+          key: ${{ runner.os }}-vsr-cargo-${{ hashFiles('candle-binding/**/Cargo.lock', 'ml-binding/**/Cargo.lock', 'nlp-binding/**/Cargo.lock', 'candle-binding/src/**', 'ml-binding/src/**', 'nlp-binding/src/**') }}
+          restore-keys: |
+            ${{ runner.os }}-vsr-cargo-
+
+      - name: Build Rust bindings (CPU-only)
+        run: make rust-ci
+
+      - name: Run router Go tests
+        working-directory: src/semantic-router
+        env:
+          CGO_ENABLED: 1
+          LD_LIBRARY_PATH: ${{ github.workspace }}/candle-binding/target/release:${{ github.workspace }}/ml-binding/target/release:${{ github.workspace }}/nlp-binding/target/release
+        run: |
+          go test -count=1 \
+            ./pkg/config/... \
+            ./pkg/extproc/... \
+            ./pkg/selection/... \
+            ./pkg/protocolcodec/... \
+            ./pkg/llmprotocol/... \
+            ./pkg/responseapi/... \
+            ./pkg/catalog/...
