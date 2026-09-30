@@ -72,7 +72,7 @@ func responsesOutputItemRequiredFields(item responsesItemWire) ([]string, error)
 		required = append(required, "call_id", "name", "arguments")
 	case "reasoning":
 		required = append(required, "id", "summary")
-	case "image_generation_call":
+	case "image_generation_call", "web_search_call":
 		required = append(required, "id", "status")
 	default:
 		return nil, invalidProviderResponse("invalid_response_item", "Responses output item type is unsupported")

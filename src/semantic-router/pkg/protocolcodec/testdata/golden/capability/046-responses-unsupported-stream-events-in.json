@@ -270,36 +270,6 @@
           "event: response.shell_call_output_content.done\ndata: {\"type\":\"response.shell_call_output_content.done\",\"sequence_number\":0}\n\n"
         ]
       }
-    },
-    {
-      "name": "response.web_search_call.completed",
-      "stream": {
-        "public_model": "public-model",
-        "provider_model": "provider-model",
-        "chunks": [
-          "event: response.web_search_call.completed\ndata: {\"type\":\"response.web_search_call.completed\",\"sequence_number\":0}\n\n"
-        ]
-      }
-    },
-    {
-      "name": "response.web_search_call.in_progress",
-      "stream": {
-        "public_model": "public-model",
-        "provider_model": "provider-model",
-        "chunks": [
-          "event: response.web_search_call.in_progress\ndata: {\"type\":\"response.web_search_call.in_progress\",\"sequence_number\":0}\n\n"
-        ]
-      }
-    },
-    {
-      "name": "response.web_search_call.searching",
-      "stream": {
-        "public_model": "public-model",
-        "provider_model": "provider-model",
-        "chunks": [
-          "event: response.web_search_call.searching\ndata: {\"type\":\"response.web_search_call.searching\",\"sequence_number\":0}\n\n"
-        ]
-      }
     }
   ]
 }

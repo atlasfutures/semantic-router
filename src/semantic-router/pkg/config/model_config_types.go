@@ -406,6 +406,12 @@ type ModelParams struct {
 	// refs all index by the same ordinal. It is a pointer for the same reason
 	// Vision is: an absent flag is not a verdict.
 	Disabled *bool `yaml:"disabled,omitempty"`
+	// HostedTools names the provider-run tools a client may declare that this
+	// model is sent: web_search, which Codex declares on every turn. Absent or
+	// empty sends none; the declaration is dropped and counted, so a tool that
+	// changes what a turn costs and does reaches only a model admitted with it.
+	// It is separate from Capabilities, a gate on what the model may serve.
+	HostedTools []string `yaml:"hosted_tools,omitempty"`
 	// ProviderPreferences pins which OpenRouter providers may serve this arm.
 	// Absent leaves the choice to OpenRouter's own ranking; see
 	// OpenRouterProviderPreferences.
@@ -445,6 +451,35 @@ func (params ModelParams) SupportsCapability(name string) bool {
 		}
 	}
 	return false
+}
+
+// AdmitsHostedTool reports whether this model may be sent a provider-run tool.
+func (params ModelParams) AdmitsHostedTool(name string) bool {
+	for _, tool := range params.HostedTools {
+		if tool == name {
+			return true
+		}
+	}
+	return false
+}
+
+// knownHostedTools are the provider-run tools a model card may admit.
+var knownHostedTools = map[string]bool{"web_search": true}
+
+// validateHostedToolContracts refuses a hosted tool no router path knows, so
+// a misspelt entry fails at load instead of silently admitting nothing.
+func validateHostedToolContracts(cfg *RouterConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	for name, params := range cfg.ModelConfig {
+		for _, tool := range params.HostedTools {
+			if !knownHostedTools[tool] {
+				return fmt.Errorf("model %q hosted_tools names %q; known hosted tools: web_search", name, tool)
+			}
+		}
+	}
+	return nil
 }
 
 // IsDisabled reports whether an operator has taken this model out of service.

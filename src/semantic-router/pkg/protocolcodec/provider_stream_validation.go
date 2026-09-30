@@ -232,6 +232,9 @@ func validateResponsesEventFieldPresence(eventType string, body []byte) error {
 		"response.image_generation_call.in_progress": {"output_index", "item_id"},
 		"response.image_generation_call.generating":  {"output_index", "item_id"},
 		"response.image_generation_call.completed":   {"output_index", "item_id"},
+		"response.web_search_call.in_progress":       {"output_index", "item_id"},
+		"response.web_search_call.searching":         {"output_index", "item_id"},
+		"response.web_search_call.completed":         {"output_index", "item_id"},
 		"response.image_generation_call.partial_image": {
 			"output_index", "item_id", "partial_image_index", "partial_image_b64",
 		},

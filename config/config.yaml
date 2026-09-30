@@ -206,6 +206,10 @@ routing:
       # model out without deleting its card, which is what a fixed, indexed
       # arm set such as Rayline ARC requires.
       disabled: false
+      # Provider-run tools this model may be sent: web_search, which Codex
+      # declares on every turn. Absent sends none (the declaration is dropped
+      # and counted); it is separate from capabilities.
+      hosted_tools: [web_search]
       tags: [multimodal, omni]
     - name: sdxl-image
       param_size: 3B

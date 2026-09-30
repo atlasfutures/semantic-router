@@ -269,36 +269,6 @@
           "code": "unknown_stream_event"
         }
       }
-    },
-    {
-      "name": "response.web_search_call.completed",
-      "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unknown_stream_event"
-        }
-      }
-    },
-    {
-      "name": "response.web_search_call.in_progress",
-      "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unknown_stream_event"
-        }
-      }
-    },
-    {
-      "name": "response.web_search_call.searching",
-      "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unknown_stream_event"
-        }
-      }
     }
   ]
 }

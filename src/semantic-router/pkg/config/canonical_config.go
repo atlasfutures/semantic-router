@@ -90,6 +90,9 @@ type RoutingModel struct {
 	// Disabled takes the model out of service. Absent means it serves; see
 	// ModelParams.IsDisabled.
 	Disabled *bool `yaml:"disabled,omitempty"`
+	// HostedTools names the provider-run tools this model may be sent; see
+	// ModelParams.HostedTools.
+	HostedTools []string `yaml:"hosted_tools,omitempty"`
 }
 
 func isCanonicalConfig(raw map[string]interface{}) bool {

@@ -100,6 +100,12 @@ func (encoder *responsesStreamEncoder) encodeResponsesItemStart(event llmprotoco
 		frames, _, err := encoder.ensureResponsesOutputStarted(event, responsesOutputImage)
 		return frames, err
 	}
+	if event.Content != nil {
+		if _, webSearch := carriedWebSearchCall(*event.Content); webSearch {
+			frames, _, err := encoder.ensureResponsesOutputStarted(event, responsesOutputWebSearch)
+			return frames, err
+		}
+	}
 	if event.Content != nil && event.Content.Kind == llmprotocol.ContentReasoning {
 		key := contentKey(event)
 		encoder.encodedKinds[key] = llmprotocol.ContentReasoning
@@ -502,6 +508,9 @@ func responsesCompletionOutputKind(event llmprotocol.Event) responsesOutputKind 
 	if event.Content == nil {
 		return responsesOutputMessage
 	}
+	if _, webSearch := carriedWebSearchCall(*event.Content); webSearch {
+		return responsesOutputWebSearch
+	}
 	switch event.Content.Kind {
 	case llmprotocol.ContentReasoning:
 		return responsesOutputReasoning
@@ -510,6 +519,31 @@ func responsesCompletionOutputKind(event llmprotocol.Event) responsesOutputKind 
 	default:
 		return responsesOutputMessage
 	}
+}
+
+// encodeCompletedResponsesWebSearch writes a carried web_search_call item's
+// done event, as the provider completed it, under this stream's output index
+// and item ID.
+func (encoder *responsesStreamEncoder) encodeCompletedResponsesWebSearch(
+	event llmprotocol.Event,
+	key responsesOutputKey,
+) ([][]byte, llmprotocol.Diagnostics, error) {
+	var item responsesItemWire
+	if event.Content != nil {
+		item, _ = carriedWebSearchCall(*event.Content)
+	}
+	index := encoder.outputIndexes[key]
+	item.Type, item.ID = "web_search_call", encoder.outputIDs[key]
+	if item.Status == "" {
+		item.Status = "completed"
+	}
+	wire := responsesEventWire{
+		Type: "response.output_item.done", Sequence: encoder.nextWireSequence(),
+		OutputIndex: responsesOutputIndex(index), Item: marshalResponsesEventItem(item),
+	}
+	encoder.recordResponsesCompletedOutput(index, wire.Item)
+	frame, err := encoder.encodeResponsesStreamFrame(wire)
+	return [][]byte{frame}, nil, err
 }
 
 func (encoder *responsesStreamEncoder) encodeCompletedResponsesOutput(
@@ -521,6 +555,9 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesOutput(
 	}
 	if key.kind == responsesOutputImage {
 		return encoder.encodeCompletedResponsesImage(event, key)
+	}
+	if key.kind == responsesOutputWebSearch {
+		return encoder.encodeCompletedResponsesWebSearch(event, key)
 	}
 	if event.ToolCall == nil {
 		return nil, nil, llmprotocol.NewError(llmprotocol.ErrorInternal, "tool_event_invalid", "tool event is invalid", nil)

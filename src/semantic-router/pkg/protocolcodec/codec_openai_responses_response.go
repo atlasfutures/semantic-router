@@ -271,6 +271,8 @@ func decodeResponsesOutputItem(item responsesItemWire, index int, policy llmprot
 			Kind:           llmprotocol.ContentGeneratedImage,
 			GeneratedImage: decodeResponsesGeneratedImage(item),
 		}}
+	case "web_search_call":
+		output.Content = []llmprotocol.Content{webSearchCallContent(item)}
 	default:
 		return llmprotocol.OutputItem{}, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_output_item", "Responses output item is unsupported", nil)
 	}
@@ -362,18 +364,22 @@ func encryptedReasoningFields(encrypted json.RawMessage) *llmprotocol.UnmodeledF
 	}
 }
 
-// withoutEncryptedReasoningCarriers removes the reasoning contents that hold
-// only an encrypted_content, for a client format that cannot carry one. The
-// carrier has no text, so what that client sees is unchanged from before the
-// blob was kept.
-func withoutEncryptedReasoningCarriers(output []llmprotocol.OutputItem) []llmprotocol.OutputItem {
+// withoutResponsesOnlyOutput removes what only a Responses client can be
+// shown, for any other client format: a reasoning content that holds only an
+// encrypted_content, and a carried web_search_call item. Neither has text of
+// its own, so what that client sees is its answer, citations included.
+func withoutResponsesOnlyOutput(output []llmprotocol.OutputItem) []llmprotocol.OutputItem {
 	trimmed := make([]llmprotocol.OutputItem, 0, len(output))
 	for _, item := range output {
 		contents := make([]llmprotocol.Content, 0, len(item.Content))
 		for _, content := range item.Content {
-			if _, carrierOnly := encryptedReasoningOf(content); !carrierOnly {
-				contents = append(contents, content)
+			if _, carrierOnly := encryptedReasoningOf(content); carrierOnly {
+				continue
 			}
+			if _, webSearch := carriedWebSearchCall(content); webSearch {
+				continue
+			}
+			contents = append(contents, content)
 		}
 		item.Content = contents
 		trimmed = append(trimmed, item)
@@ -554,7 +560,38 @@ func encodeResponsesOutputText(items []llmprotocol.OutputItem) json.RawMessage {
 	return encoded
 }
 
+// webSearchCallContent carries a provider's web_search_call item whole: the
+// search ran at the provider, so the item only reports it, and only a
+// Responses client can be shown it. Any other client format drops it; the
+// answer text and its url_citation annotations are ordinary output.
+func webSearchCallContent(item responsesItemWire) llmprotocol.Content {
+	raw, _ := json.Marshal(responsesItemWire{Type: item.Type, ID: item.ID, Status: item.Status, Action: item.Action})
+	return llmprotocol.Content{Kind: llmprotocol.ContentUnmodeled, Unmodeled: &llmprotocol.UnmodeledBlock{
+		Format: llmprotocol.OpenAIResponsesV1, Type: "web_search_call", Raw: raw,
+	}}
+}
+
+// carriedWebSearchCall returns the item a carried web_search_call content
+// holds, for a Responses client.
+func carriedWebSearchCall(content llmprotocol.Content) (responsesItemWire, bool) {
+	block := content.Unmodeled
+	if content.Kind != llmprotocol.ContentUnmodeled || block == nil ||
+		block.Format != llmprotocol.OpenAIResponsesV1 || block.Type != "web_search_call" {
+		return responsesItemWire{}, false
+	}
+	var item responsesItemWire
+	if json.Unmarshal(block.Raw, &item) != nil {
+		return responsesItemWire{}, false
+	}
+	return item, true
+}
+
 func encodeResponsesOutputItem(item llmprotocol.OutputItem) ([]responsesItemWire, error) {
+	if len(item.Content) == 1 {
+		if call, carried := carriedWebSearchCall(item.Content[0]); carried {
+			return []responsesItemWire{call}, nil
+		}
+	}
 	message := llmprotocol.Message{ID: item.ID, Role: item.Role, Content: item.Content}
 	return encodeResponsesMessage(message, "output")
 }

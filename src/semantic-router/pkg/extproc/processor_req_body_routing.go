@@ -251,6 +251,9 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	if dispatch == nil || response == nil {
 		return nil, status.Error(codes.Internal, "provider dispatch is unavailable")
 	}
+	if r.Config != nil {
+		ctx.DispatchHostedTools = r.Config.ModelConfig[dispatch.logicalModel].HostedTools
+	}
 	body, err := r.encodeDispatchRequest(ctx)
 	if err != nil {
 		metrics.RecordRequestError(dispatch.logicalModel, "serialization_error")

@@ -1,0 +1,27 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "Go releases twice a year.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 100,
+  "id": "response_web_search_1",
+  "model": "routed-model",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 3,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 5,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 8
+  }
+}

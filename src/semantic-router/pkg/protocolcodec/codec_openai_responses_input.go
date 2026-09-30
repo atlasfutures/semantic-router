@@ -114,7 +114,7 @@ func hasResponsesRefusedMember(body json.RawMessage) bool {
 }
 
 var responsesItemUnionFields = []string{
-	"arguments", "call_id", "caller", "content", "encrypted_content", "id", "name", "namespace",
+	"action", "arguments", "call_id", "caller", "content", "encrypted_content", "id", "name", "namespace",
 	"output", "phase", "result", "role", "status", "summary", "type",
 }
 
@@ -156,7 +156,8 @@ func decodeResponsesItemWire(body json.RawMessage, policy llmprotocol.Policy, pr
 
 func isSupportedResponsesItemType(itemType string, providerOutput bool) bool {
 	if providerOutput {
-		return itemType == "message" || itemType == "function_call" || itemType == "reasoning" || itemType == "image_generation_call"
+		return itemType == "message" || itemType == "function_call" || itemType == "reasoning" ||
+			itemType == "image_generation_call" || itemType == "web_search_call"
 	}
 	switch itemType {
 	case "message", "function_call", "function_call_output", "reasoning", "item_reference", "image_generation_call":
@@ -213,6 +214,8 @@ func responsesItemAllowedFields(itemType string) []string {
 		return []string{"id", "type"}
 	case "image_generation_call":
 		return []string{"id", "result", "status", "type"}
+	case "web_search_call":
+		return []string{"action", "id", "status", "type"}
 	default:
 		return nil
 	}

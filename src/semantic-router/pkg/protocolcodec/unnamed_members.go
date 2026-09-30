@@ -3,6 +3,7 @@ package protocolcodec
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 
@@ -322,18 +323,36 @@ func appendContentExtensionDrops(
 	}
 }
 
-// appendCarriedToolDrops counts each carried tool declaration, by the tool
-// type the client wrote. No target is sent one yet, not even the format it
-// came from: see carriedResponsesToolTypes.
+// appendCarriedToolDrops counts each carried tool declaration this target is
+// not sent, by the tool type the client wrote; see forwardedCarriedTools.
 func appendCarriedToolDrops(
 	diagnostics *llmprotocol.Diagnostics,
-	tools []llmprotocol.UnmodeledBlock,
+	request llmprotocol.Request,
 	target llmprotocol.WireFormat,
 	policy llmprotocol.Policy,
 ) {
-	for _, tool := range tools {
-		appendUnmodeledDrop(diagnostics, policy, tool.Format, target, "tools."+tool.Type)
+	for _, tool := range request.CarriedTools {
+		if !carriedToolForwarded(tool, target, request.HostedTools) {
+			appendUnmodeledDrop(diagnostics, policy, tool.Format, target, "tools."+tool.Type)
+		}
 	}
+}
+
+// forwardedCarriedTools returns the carried tool declarations this target is
+// sent: those of its own format that the arm is admitted with
+// (Request.HostedTools). Everything else is dropped and counted.
+func forwardedCarriedTools(request llmprotocol.Request, target llmprotocol.WireFormat) []llmprotocol.UnmodeledBlock {
+	var forwarded []llmprotocol.UnmodeledBlock
+	for _, tool := range request.CarriedTools {
+		if carriedToolForwarded(tool, target, request.HostedTools) {
+			forwarded = append(forwarded, tool)
+		}
+	}
+	return forwarded
+}
+
+func carriedToolForwarded(tool llmprotocol.UnmodeledBlock, target llmprotocol.WireFormat, hosted []string) bool {
+	return tool.Format == target && slices.Contains(hosted, tool.Type)
 }
 
 // appendToolExtensionDrops counts the carried members of each tool definition

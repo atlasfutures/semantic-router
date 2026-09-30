@@ -21,6 +21,9 @@ var officialSupportedResponsesStreamEvents = fields(
 	"response.reasoning_summary_text.delta", "response.reasoning_summary_text.done",
 	"response.reasoning_text.delta", "response.reasoning_text.done",
 	"response.refusal.delta", "response.refusal.done",
+	// A web search's progress is read and not carried: see
+	// decodeResponsesLifecycleEvent.
+	"response.web_search_call.completed", "response.web_search_call.in_progress", "response.web_search_call.searching",
 )
 
 var officialUnsupportedResponsesStreamEvents = fields(
@@ -34,7 +37,6 @@ var officialUnsupportedResponsesStreamEvents = fields(
 	"response.mcp_list_tools.completed", "response.mcp_list_tools.failed", "response.mcp_list_tools.in_progress",
 	"response.shell_call_command.added", "response.shell_call_command.delta", "response.shell_call_command.done",
 	"response.shell_call_output_content.delta", "response.shell_call_output_content.done",
-	"response.web_search_call.completed", "response.web_search_call.in_progress", "response.web_search_call.searching",
 )
 
 func TestOfficialResponsesStreamDiscriminatorInventoryIsClosed(t *testing.T) {

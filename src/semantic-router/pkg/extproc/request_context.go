@@ -161,11 +161,14 @@ type RequestContext struct {
 	Routing RequestRoutingContext
 
 	// VSR decision tracking
-	VSRSelectedCategory             string                                      // The category from domain classification (MMLU category)
-	VSRSelectedDecisionName         string                                      // The decision name from DecisionEngine evaluation
-	VSRSelectedDecisionConfidence   float64                                     // Confidence score from DecisionEngine evaluation
-	VSRReasoningMode                string                                      // "on" or "off" - whether reasoning mode was determined to be used
-	VSRSelectedModel                string                                      // The model selected by VSR
+	VSRSelectedCategory           string  // The category from domain classification (MMLU category)
+	VSRSelectedDecisionName       string  // The decision name from DecisionEngine evaluation
+	VSRSelectedDecisionConfidence float64 // Confidence score from DecisionEngine evaluation
+	VSRReasoningMode              string  // "on" or "off" - whether reasoning mode was determined to be used
+	VSRSelectedModel              string  // The model selected by VSR
+	// DispatchHostedTools names the provider-run tools the dispatched model's
+	// card admits (hosted_tools); encodeDispatchRequest hands it to the codec.
+	DispatchHostedTools             []string
 	VSRSelectionMethod              string                                      // Model selection algorithm used (e.g., "elo", "static", "router_dc")
 	VSRSelectionReasoning           string                                      // Bounded human-readable selector rationale for replay
 	VSRFusionQuorum                 *routerreplay.FusionQuorumDiagnostics       // Content-free Fusion panel quorum evidence for replay

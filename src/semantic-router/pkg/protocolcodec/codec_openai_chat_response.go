@@ -193,7 +193,7 @@ func (OpenAIChatCodec) EncodeResponse(response llmprotocol.Response, envelope ll
 	if err := appendChatStopReasonDiagnostic(&diagnostics, response.StopReason, envelope.Format, policy); err != nil {
 		return nil, diagnostics, err
 	}
-	response.Output = withoutEncryptedReasoningCarriers(response.Output)
+	response.Output = withoutResponsesOnlyOutput(response.Output)
 	wire := chatResponseWire{ID: response.ID, Object: "chat.completion", Model: response.Model}
 	if !response.CreatedAt.IsZero() {
 		wire.Created = response.CreatedAt.Unix()
