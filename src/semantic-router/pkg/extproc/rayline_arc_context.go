@@ -19,9 +19,10 @@ package extproc
 import (
 	"context"
 	"errors"
-	"github.com/google/uuid"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"

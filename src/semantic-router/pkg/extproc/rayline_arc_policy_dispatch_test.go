@@ -257,8 +257,10 @@ func TestPolicyActionsMustBeCarriableByTheirProvider(t *testing.T) {
 	routerWith := func(apiFormat string, profile config.ProviderProfile) *config.RouterConfig {
 		return &config.RouterConfig{BackendModels: config.BackendModels{
 			ModelConfig: map[string]config.ModelParams{"think": {PreferredEndpoints: []string{"backend"}, APIFormat: apiFormat}},
-			VLLMEndpoints: []config.VLLMEndpoint{{Name: "backend", Address: "provider", Port: 443, Type: profile.Type,
-				ProviderProfileName: "profile"}},
+			VLLMEndpoints: []config.VLLMEndpoint{{
+				Name: "backend", Address: "provider", Port: 443, Type: profile.Type,
+				ProviderProfileName: "profile",
+			}},
 			ProviderProfiles: map[string]config.ProviderProfile{"profile": profile},
 		}}
 	}

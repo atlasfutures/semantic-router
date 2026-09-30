@@ -296,6 +296,7 @@ func (client *EncoderClient) Encode(
 	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = response.Body.Close() }()
 	return client.consumeResponse(response)
 }
 
@@ -401,6 +402,7 @@ func (client *EncoderClient) closeSession(
 	for attempt := 0; ; attempt++ {
 		response, requestErr := client.doCloseAttempt(ctx, endpoint)
 		if requestErr == nil {
+			defer func() { _ = response.Body.Close() }()
 			return client.consumeCloseResponse(response)
 		}
 		failure, retry := requestAttemptFailure(
@@ -478,7 +480,6 @@ func (client *EncoderClient) doCloseAttempt(
 }
 
 func (client *EncoderClient) consumeCloseResponse(response *http.Response) error {
-	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < http.StatusOK ||
 		response.StatusCode >= http.StatusMultipleChoices {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
@@ -603,7 +604,6 @@ func (client *EncoderClient) Probe(
 func (client *EncoderClient) consumeResponse(
 	response *http.Response,
 ) (*EncoderResult, error) {
-	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < http.StatusOK ||
 		response.StatusCode >= http.StatusMultipleChoices {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))

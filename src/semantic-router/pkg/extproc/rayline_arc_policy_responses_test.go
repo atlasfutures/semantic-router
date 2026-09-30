@@ -259,10 +259,10 @@ func TestPolicyResponsesStoredOutputKeepsWhatTheCanonicalizerReads(t *testing.T)
 		Output []json.RawMessage `json:"output"`
 	}
 	var persisted responseapi.ResponseAPIResponse
-	if err := json.Unmarshal(encoded.Body, &wire); err != nil {
+	if err = json.Unmarshal(encoded.Body, &wire); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(encoded.Body, &persisted); err != nil {
+	if err = json.Unmarshal(encoded.Body, &persisted); err != nil {
 		t.Fatal(err)
 	}
 	stored := storeRoundTrip(t, &responseapi.StoredResponse{ID: "resp_1", Output: persisted.Output})

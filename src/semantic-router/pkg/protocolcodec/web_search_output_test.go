@@ -88,7 +88,11 @@ func TestWebSearchCallStreams(t *testing.T) {
 			t.Fatalf("%s did not reach the Responses client:\n%s", mark, responses)
 		}
 	}
-	completed := responses[bytes.Index(responses, []byte("event: response.completed")):]
+	completedAt := bytes.Index(responses, []byte("event: response.completed"))
+	if completedAt < 0 {
+		t.Fatalf("no response.completed event:\n%s", responses)
+	}
+	completed := responses[completedAt:]
 	if !bytes.Contains(completed, []byte(`"query":"go release history"`)) {
 		t.Fatalf("the completed response lost the search item:\n%s", completed)
 	}

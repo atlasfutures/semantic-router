@@ -79,9 +79,10 @@ func (encoder *anthropicStreamEncoder) encodeAnthropicItemStart(
 	kind llmprotocol.ContentKind,
 ) anthropicEventWire {
 	block := &anthropicContentWire{Type: "text", Text: ""}
-	if kind == llmprotocol.ContentToolCall {
+	switch kind {
+	case llmprotocol.ContentToolCall:
 		block.Type, block.ID, block.Name, block.Input = "tool_use", event.ToolCall.ID, event.ToolCall.Name, json.RawMessage(`{}`)
-	} else if kind == llmprotocol.ContentReasoning {
+	case llmprotocol.ContentReasoning:
 		signature := ""
 		if event.Content != nil {
 			signature = event.Content.Signature

@@ -38,7 +38,8 @@ func routeFactsCatalog() fixedWorkerCatalog {
 	return fixedWorkerCatalog{
 		{ID: "arm-0", Model: "deepseek/deepseek-v4-pro"},
 		{ID: "arm-1", Model: "z-ai/glm-5.3-flash"},
-		{ID: "arm-2", Model: "anthropic/claude-sonnet-5",
+		{
+			ID: "arm-2", Model: "anthropic/claude-sonnet-5",
 			EstimatedInputCostPerToken:  0.000003,
 			EstimatedOutputCostPerToken: 0.000015,
 		},

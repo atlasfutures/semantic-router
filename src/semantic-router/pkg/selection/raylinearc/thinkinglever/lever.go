@@ -521,7 +521,8 @@ func (ledger *Ledger) append(turn Turn, placement Placement, payload Payload, le
 	}
 	tail := len(turn.Messages) - 1
 	ledger.Entries = append(ledger.Entries, LedgerEntry{
-		Index: uint32(tail), Placement: placement, Digest: turn.Messages[tail].Digest,
+		Index:     uint32(tail), //nolint:gosec // tail indexes an in-memory request transcript, far below MaxUint32
+		Placement: placement, Digest: turn.Messages[tail].Digest,
 		Payload: index, Turn: turn.TurnIndex,
 	})
 	state, _ := ledger.state(payload.Lever)

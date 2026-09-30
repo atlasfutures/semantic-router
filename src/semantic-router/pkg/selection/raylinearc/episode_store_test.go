@@ -426,8 +426,10 @@ func TestEpisodeStateWireCarriesPolicyStateUnderV3(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.Policy = &PolicyEpisodeState{Epoch: 1, PrefixLen: 2, PrefixDigest: strings.Repeat("a", 64),
-		Ledger: []PolicyLedgerEntry{{Message: 1, ActionID: strings.Repeat("b", 64), ArmID: "arm"}}}
+	state.Policy = &PolicyEpisodeState{
+		Epoch: 1, PrefixLen: 2, PrefixDigest: strings.Repeat("a", 64),
+		Ledger: []PolicyLedgerEntry{{Message: 1, ActionID: strings.Repeat("b", 64), ArmID: "arm"}},
+	}
 	payload, err := marshalEpisodeState(state, 3, now)
 	if err != nil {
 		t.Fatal(err)

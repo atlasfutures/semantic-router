@@ -51,8 +51,10 @@ func policyDispatchFixture() (*RouterConfig, Decision) {
 			Placements:   []string{"append_tail_user_text"},
 			Levels: []RaylineARCThinkingLevelConfig{
 				{Level: "none", Rank: 0, ControlSHA256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
-				{Level: "up", Rank: 1, Suffix: policyTestUpSuffix,
-					ControlSHA256: "8ffbd70c1da1d9dfb87da0b2b5bf1b95e03c4bc05b7a2f2e5ba7e4e1b5f35c5c"},
+				{
+					Level: "up", Rank: 1, Suffix: policyTestUpSuffix,
+					ControlSHA256: "8ffbd70c1da1d9dfb87da0b2b5bf1b95e03c4bc05b7a2f2e5ba7e4e1b5f35c5c",
+				},
 			},
 		}},
 	}
@@ -120,10 +122,14 @@ func TestRaylineARCPolicyActionIDMatchesPathfinder(t *testing.T) {
 		want   string
 	}{
 		{"anthropic/claude-opus-5", policyTestString("high"), nil, "", "7799b8725ba01fa57e4b7effbdfb1b2c96d09878c141276eec78db4fede501b9"},
-		{"qwen/qwen3.8-27b", nil, policyTestInt(4096), "Répondez brièvement — ok\n\t\"q\" \\ \U0001d11e \x7f",
-			"563702649cd0744dc16599a2a9cb0d031e96709abb8b41fe84f91eb56e2f44fc"},
-		{"vendor/modèle-\U0001d11e\"\\\n\x01\x7f", policyTestString("x_high"), nil, "",
-			"32d6e0d4ff60f445848c695423875a574a5f1b9b7ec0089213e8799eb2906e89"},
+		{
+			"qwen/qwen3.8-27b", nil, policyTestInt(4096), "Répondez brièvement — ok\n\t\"q\" \\ \U0001d11e \x7f",
+			"563702649cd0744dc16599a2a9cb0d031e96709abb8b41fe84f91eb56e2f44fc",
+		},
+		{
+			"vendor/modèle-\U0001d11e\"\\\n\x01\x7f", policyTestString("x_high"), nil, "",
+			"32d6e0d4ff60f445848c695423875a574a5f1b9b7ec0089213e8799eb2906e89",
+		},
 	} {
 		if got := RaylineARCPolicyActionID(golden.model, golden.effort, golden.budget, golden.suffix); got != golden.want {
 			t.Fatalf("%q: action_id = %s, want %s", golden.model, got, golden.want)

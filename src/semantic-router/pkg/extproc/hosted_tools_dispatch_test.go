@@ -54,7 +54,7 @@ func TestSearchedAnswerStreamsThroughTheRouter(t *testing.T) {
 	var fixture struct {
 		Chunks []string `json:"chunks"`
 	}
-	if err := json.Unmarshal(stream, &fixture); err != nil {
+	if err = json.Unmarshal(stream, &fixture); err != nil {
 		t.Fatal(err)
 	}
 	router := &OpenAIRouter{}
@@ -62,7 +62,7 @@ func TestSearchedAnswerStreamsThroughTheRouter(t *testing.T) {
 		SourceFormat: llmprotocol.OpenAIResponsesV1, TargetFormat: llmprotocol.OpenAIResponsesV1,
 		RequestModel: "public-model", TraceContext: t.Context(),
 	}
-	if err := router.ensureSemanticResponseStream(ctx); err != nil {
+	if err = router.ensureSemanticResponseStream(ctx); err != nil {
 		t.Fatal(err)
 	}
 	wire := pushExtProcStreamFixture(t, ctx, []byte(strings.Join(fixture.Chunks, "")))

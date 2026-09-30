@@ -117,7 +117,7 @@ func (engine *StreamEngine) prepareFinalization(reason error) streamFinalization
 	case reason != nil:
 		result.events = engine.transportFailureEvents(events, reason)
 	case engine.pendingCompletion != nil:
-		result.events = append(events, *engine.pendingCompletion)
+		result.events = append(result.events, *engine.pendingCompletion)
 		engine.pendingCompletion = nil
 	}
 	return result

@@ -81,7 +81,7 @@ func writeARCArtifact(t *testing.T, providerBaseURL string) string {
 	if err != nil {
 		t.Fatalf("encode golden: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "head_golden.json"), golden, 0o600); err != nil {
+	if err = os.WriteFile(filepath.Join(dir, "head_golden.json"), golden, 0o600); err != nil {
 		t.Fatalf("write golden: %v", err)
 	}
 

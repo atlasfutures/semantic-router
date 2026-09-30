@@ -45,7 +45,7 @@ func runUnofferedActionCase(t *testing.T, mutate func(map[string]any), disabled 
 	}
 	if mutate != nil {
 		var response map[string]any
-		if err := json.Unmarshal(fixture, &response); err != nil {
+		if err = json.Unmarshal(fixture, &response); err != nil {
 			t.Fatal(err)
 		}
 		mutate(response)

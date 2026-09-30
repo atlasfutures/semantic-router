@@ -474,8 +474,8 @@ func TestPolicyDecidesAResponsesRequest(t *testing.T) {
 			{Key: "x-rayline-session", Value: "episode-responses"},
 		}},
 	}}
-	if response, err := router.handleRequestHeaders(headers, ctx); err != nil || response.GetImmediateResponse() != nil {
-		t.Fatalf("request headers: err=%v immediate=%v", err, response.GetImmediateResponse())
+	if response, headerErr := router.handleRequestHeaders(headers, ctx); headerErr != nil || response.GetImmediateResponse() != nil {
+		t.Fatalf("request headers: err=%v immediate=%v", headerErr, response.GetImmediateResponse())
 	}
 	client := `{"model":"auto","max_output_tokens":32000,"instructions":"You are Codex.","input":[` +
 		`{"type":"message","role":"user","content":"List the files."},` +

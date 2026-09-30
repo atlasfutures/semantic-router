@@ -21,10 +21,14 @@ func validThinkingLeverConfig() *RaylineARCThinkingLeverConfig {
 				Placements: []string{"append_tail_user_text", "insert_user_after_tool_run"},
 				Levels: []RaylineARCThinkingLevelConfig{
 					{Level: "none", Rank: 0, ControlSHA256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
-					{Level: "down", Rank: -1, Suffix: "Until the next steering instruction, use minimal deliberation.",
-						ControlSHA256: "99fca31cf4f665d12f6695cb8c46311be0cc6e4a34829347d4cc9298b24cccf6"},
-					{Level: "up", Rank: 1, Suffix: "Until the next steering instruction, reason more thoroughly.",
-						ControlSHA256: "68a03386f70205c97e7a0002afa023c2b99b8ba98487a134c49824dd85d427be"},
+					{
+						Level: "down", Rank: -1, Suffix: "Until the next steering instruction, use minimal deliberation.",
+						ControlSHA256: "99fca31cf4f665d12f6695cb8c46311be0cc6e4a34829347d4cc9298b24cccf6",
+					},
+					{
+						Level: "up", Rank: 1, Suffix: "Until the next steering instruction, reason more thoroughly.",
+						ControlSHA256: "68a03386f70205c97e7a0002afa023c2b99b8ba98487a134c49824dd85d427be",
+					},
 				},
 			},
 		},

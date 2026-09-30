@@ -405,7 +405,7 @@ func TestUnsteerableTailsWriteNothing(t *testing.T) {
 }
 
 func TestAFullLedgerHoldsInsteadOfResetting(t *testing.T) {
-	e := &episode{t: t, binding: effortBinding()}
+	e := &episode{binding: effortBinding()}
 	messages := []llmprotocol.Message{text(llmprotocol.RoleUser, "q0")}
 	var previous []llmprotocol.Message
 	for turn := 0; turn < 3; turn++ {

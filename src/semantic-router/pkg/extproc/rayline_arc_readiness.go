@@ -100,8 +100,7 @@ func createRaylineARCSelector(
 	if failureClass != "" {
 		return unavailable(failureClass)
 	}
-	selector, episodeStore, closeResources, closeSession, failureClass :=
-		probeRaylineARCReadiness(arcConfig, runtime, encoder)
+	selector, episodeStore, closeResources, closeSession, failureClass := probeRaylineARCReadiness(arcConfig, runtime, encoder)
 	if selector == nil {
 		return unavailable(failureClass)
 	}

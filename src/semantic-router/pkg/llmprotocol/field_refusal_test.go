@@ -64,8 +64,8 @@ func TestToolRefusalsNameTheToolAndTheField(t *testing.T) {
 
 func assertToolRefusalNames(t *testing.T, err error, code string, message []string) {
 	t.Helper()
-	protocolError, ok := err.(*ProtocolError)
-	if !ok {
+	var protocolError *ProtocolError
+	if !errors.As(err, &protocolError) {
 		t.Fatalf("validateRequestTools() error = %v, want a protocol error", err)
 	}
 	if protocolError.Code != code {
@@ -96,8 +96,8 @@ func TestFieldRefusalsCarryNoRequestValues(t *testing.T) {
 	_, _, err := validateRequestTools([]Tool{{
 		Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`), Description: secret,
 	}}, limits)
-	protocolError, ok := err.(*ProtocolError)
-	if !ok {
+	var protocolError *ProtocolError
+	if !errors.As(err, &protocolError) {
 		t.Fatalf("validateRequestTools() error = %v, want a protocol error", err)
 	}
 	if strings.Contains(protocolError.Error(), secret) {

@@ -43,7 +43,7 @@ func TestPolicyDispatchAtProviderDefaultEffort(t *testing.T) {
 		t.Fatal("the config template changed; update the dispatch_effort anchor")
 	}
 	rendered := strings.Replace(string(raw), anchor, anchor+"            dispatch_effort: provider_default\n", 1)
-	if err := os.WriteFile(path, []byte(rendered), 0o600); err != nil {
+	if err = os.WriteFile(path, []byte(rendered), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	router, err := NewOpenAIRouter(path)

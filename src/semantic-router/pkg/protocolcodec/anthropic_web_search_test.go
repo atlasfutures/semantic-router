@@ -38,8 +38,10 @@ func translateAnthropicResponse(t *testing.T, body string, client llmprotocol.Wi
 // as Anthropic sent them; before this, the response failed to decode.
 func TestAnthropicWebSearchRoundTripsForAnAnthropicClient(t *testing.T) {
 	routed := translateAnthropicResponse(t, anthropicWebSearchResponse, llmprotocol.AnthropicMessagesV1)
-	for _, mark := range []string{`"type":"server_tool_use"`, `"query":"go release history"`, `"type":"web_search_tool_result"`,
-		`"encrypted_content":"abc"`, `"encrypted_index":"xyz"`, "Go releases twice a year."} {
+	for _, mark := range []string{
+		`"type":"server_tool_use"`, `"query":"go release history"`, `"type":"web_search_tool_result"`,
+		`"encrypted_content":"abc"`, `"encrypted_index":"xyz"`, "Go releases twice a year.",
+	} {
 		if !bytes.Contains(routed, []byte(mark)) {
 			t.Fatalf("%s did not reach the Anthropic client: %s", mark, routed)
 		}
@@ -50,8 +52,10 @@ func TestAnthropicWebSearchRoundTripsForAnAnthropicClient(t *testing.T) {
 // result's source, and the answer with a url_citation.
 func TestAnthropicWebSearchBecomesAResponsesWebSearchCall(t *testing.T) {
 	routed := translateAnthropicResponse(t, anthropicWebSearchResponse, llmprotocol.OpenAIResponsesV1)
-	for _, mark := range []string{`"type":"web_search_call"`, `"id":"srvtoolu_1"`, `"query":"go release history"`,
-		`"url":"https://go.dev/doc/devel/release"`, `"type":"url_citation"`, "Go releases twice a year."} {
+	for _, mark := range []string{
+		`"type":"web_search_call"`, `"id":"srvtoolu_1"`, `"query":"go release history"`,
+		`"url":"https://go.dev/doc/devel/release"`, `"type":"url_citation"`, "Go releases twice a year.",
+	} {
 		if !bytes.Contains(routed, []byte(mark)) {
 			t.Fatalf("%s did not reach the Responses client: %s", mark, routed)
 		}
@@ -110,15 +114,19 @@ func runAnthropicWebSearchStream(t *testing.T, client llmprotocol.WireFormat) []
 // and a Chat client as the answer.
 func TestAnthropicWebSearchStreams(t *testing.T) {
 	anthropic := runAnthropicWebSearchStream(t, llmprotocol.AnthropicMessagesV1)
-	for _, mark := range []string{`"type":"server_tool_use"`, `"partial_json":"{\"query\":\"go release history\"}"`,
-		`"type":"web_search_tool_result"`, `"encrypted_content":"abc"`, `"type":"citations_delta"`, `"encrypted_index":"xyz"`, "Go releases twice a year."} {
+	for _, mark := range []string{
+		`"type":"server_tool_use"`, `"partial_json":"{\"query\":\"go release history\"}"`,
+		`"type":"web_search_tool_result"`, `"encrypted_content":"abc"`, `"type":"citations_delta"`, `"encrypted_index":"xyz"`, "Go releases twice a year.",
+	} {
 		if !bytes.Contains(anthropic, []byte(mark)) {
 			t.Fatalf("%s did not reach the Anthropic client:\n%s", mark, anthropic)
 		}
 	}
 	responses := runAnthropicWebSearchStream(t, llmprotocol.OpenAIResponsesV1)
-	for _, mark := range []string{`"type":"web_search_call"`, `"query":"go release history"`, `"url":"https://go.dev/doc/devel/release"`,
-		`"url_citation"`, "Go releases twice a year."} {
+	for _, mark := range []string{
+		`"type":"web_search_call"`, `"query":"go release history"`, `"url":"https://go.dev/doc/devel/release"`,
+		`"url_citation"`, "Go releases twice a year.",
+	} {
 		if !bytes.Contains(responses, []byte(mark)) {
 			t.Fatalf("%s did not reach the Responses client:\n%s", mark, responses)
 		}
@@ -234,7 +242,11 @@ func TestAnthropicWebSearchStreamFailureAndPause(t *testing.T) {
 		frame("message_delta", `{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":2}}`) +
 		frame("message_stop", `{"type":"message_stop"}`)
 	routed := runAnthropicStream(t, paused, llmprotocol.OpenAIResponsesV1)
-	completed := routed[bytes.Index(routed, []byte("event: response.completed")):]
+	completedAt := bytes.Index(routed, []byte("event: response.completed"))
+	if completedAt < 0 {
+		t.Fatalf("no response.completed event:\n%s", routed)
+	}
+	completed := routed[completedAt:]
 	if !bytes.Contains(routed, []byte(`"status":"in_progress","type":"web_search_call"`)) && !bytes.Contains(routed, []byte(`"type":"web_search_call"`)) {
 		t.Fatalf("a streamed unanswered search was not reported:\n%s", routed)
 	}

@@ -199,7 +199,7 @@ func TestValidationReadsTheMaterializedTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := validateNamedToolChoice("str_replace_based_edit_tool", namedTools); err != nil {
+	if err = validateNamedToolChoice("str_replace_based_edit_tool", namedTools); err != nil {
 		t.Fatalf("a choice naming the documented name was refused: %v", err)
 	}
 	if schemaBytes == 0 {

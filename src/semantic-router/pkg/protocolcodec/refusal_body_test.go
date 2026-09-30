@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -20,8 +21,8 @@ import (
 
 func encodedRefusalBody(t *testing.T, format llmprotocol.WireFormat, err error) string {
 	t.Helper()
-	protocolError, ok := err.(*llmprotocol.ProtocolError)
-	if !ok {
+	var protocolError *llmprotocol.ProtocolError
+	if !errors.As(err, &protocolError) {
 		t.Fatalf("error = %v, want a protocol error", err)
 	}
 	body, encodeErr := NewBuiltinEngine().EncodeError(format, protocolError)
@@ -110,8 +111,8 @@ func TestRefusalBodiesNameTheFieldOnEveryClientFormat(t *testing.T) {
 // The log line half.
 func assertRefusalCauseNames(t *testing.T, err error, want []string) {
 	t.Helper()
-	protocolError, ok := err.(*llmprotocol.ProtocolError)
-	if !ok {
+	var protocolError *llmprotocol.ProtocolError
+	if !errors.As(err, &protocolError) {
 		t.Fatalf("error = %v, want a protocol error", err)
 	}
 	if protocolError.Cause == nil {
@@ -173,8 +174,8 @@ func TestRefusalsSetTheFieldAsTheErrorParameter(t *testing.T) {
 	engine := NewBuiltinEngine()
 	body := `{"model":"m","max_tokens":16,"messages":[{"role":"user","content":[{"type":"text"}]}]}`
 	_, _, _, err := engine.DecodeRequestForMutation(llmprotocol.AnthropicMessagesV1, []byte(body))
-	protocolError, ok := err.(*llmprotocol.ProtocolError)
-	if !ok {
+	var protocolError *llmprotocol.ProtocolError
+	if !errors.As(err, &protocolError) {
 		t.Fatalf("error = %v, want a protocol error", err)
 	}
 	if protocolError.Parameter != "content.text" {

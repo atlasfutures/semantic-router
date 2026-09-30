@@ -28,8 +28,11 @@ func TestOpenRouterWebPluginNeedsAdmissionAndAnUnrestrictedDeclaration(t *testin
 	}{
 		"admitted and unrestricted": {openRouter, llmprotocol.OpenAIChatV1, []string{"web_search"}, declaration(`{"type":"web_search"}`), true},
 		"not admitted":              {openRouter, llmprotocol.OpenAIChatV1, nil, declaration(`{"type":"web_search"}`), false},
-		"restricted (Codex default)": {openRouter, llmprotocol.OpenAIChatV1, []string{"web_search"},
-			declaration(`{"type":"web_search","external_web_access":false}`), false},
+		"restricted (Codex default)": {
+			openRouter, llmprotocol.OpenAIChatV1,
+			[]string{"web_search"},
+			declaration(`{"type":"web_search","external_web_access":false}`), false,
+		},
 		"not OpenRouter": {&config.ProviderProfile{Type: "openai"}, llmprotocol.OpenAIChatV1, []string{"web_search"}, declaration(`{"type":"web_search"}`), false},
 		"no declaration": {openRouter, llmprotocol.OpenAIChatV1, []string{"web_search"}, &llmprotocol.Request{}, false},
 	} {

@@ -46,7 +46,7 @@ func applyRaylineARCWorkerThinking(
 		return body, err
 	}
 	var requestMap map[string]json.RawMessage
-	if err := json.Unmarshal(body, &requestMap); err != nil {
+	if err = json.Unmarshal(body, &requestMap); err != nil {
 		return nil, fmt.Errorf("failed to parse request body: %w", err)
 	}
 	delete(requestMap, "reasoning_effort")

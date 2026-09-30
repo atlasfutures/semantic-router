@@ -81,10 +81,10 @@ func decodeAnthropicContentBlock(
 		return llmprotocol.Content{}, err
 	}
 	location := anthropicBlockLocation(typeName, index)
-	if err := validateAnthropicContentVariant(body, typeName, location, providerOutput); err != nil {
+	if err = validateAnthropicContentVariant(body, typeName, location, providerOutput); err != nil {
 		return llmprotocol.Content{}, err
 	}
-	if err := validateAnthropicContentExtensions(block, location, providerOutput); err != nil {
+	if err = validateAnthropicContentExtensions(block, location, providerOutput); err != nil {
 		return llmprotocol.Content{}, err
 	}
 	content, err := decodeAnthropicTypedContent(typeName, block, policy)

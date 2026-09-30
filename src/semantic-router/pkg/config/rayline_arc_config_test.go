@@ -650,8 +650,7 @@ func validDynamicRaylineARCDecision() Decision {
 
 func TestValidateRaylineARCAlgorithmConfigAcceptsOneReplica(t *testing.T) {
 	decision := validReplicatedRaylineARCDecision()
-	decision.Algorithm.RaylineARC.Encoder.Replicas =
-		decision.Algorithm.RaylineARC.Encoder.Replicas[:1]
+	decision.Algorithm.RaylineARC.Encoder.Replicas = decision.Algorithm.RaylineARC.Encoder.Replicas[:1]
 	if err := validateDecisionAlgorithmConfig(
 		decision.Name,
 		decision.ModelRefs,

@@ -342,8 +342,10 @@ global:
 func TestRaylineARCRecipeRefusal(t *testing.T) {
 	policy := &config.RaylineARCAlgorithmConfig{PolicyService: &config.RaylineARCPolicyServiceConfig{}}
 	redis := func(prefix string) config.RaylineARCEpisodeConfig {
-		return config.RaylineARCEpisodeConfig{Backend: config.RaylineARCBackendRedis, KeyPrefix: prefix,
-			Redis: config.RaylineARCRedisConfig{Address: "10.0.0.1:6379"}}
+		return config.RaylineARCEpisodeConfig{
+			Backend: config.RaylineARCBackendRedis, KeyPrefix: prefix,
+			Redis: config.RaylineARCRedisConfig{Address: "10.0.0.1:6379"},
+		}
 	}
 	taken := map[string]config.RecipeName{raylineARCEpisodeNamespace(redis("vsr:keep:")): config.DefaultRecipeName}
 	cases := map[string]struct {

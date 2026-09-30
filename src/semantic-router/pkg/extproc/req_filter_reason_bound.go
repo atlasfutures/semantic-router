@@ -3,8 +3,8 @@ package extproc
 import (
 	"encoding/json"
 	"fmt"
-	modelcatalog "github.com/vllm-project/semantic-router/src/semantic-router/pkg/catalog"
 
+	modelcatalog "github.com/vllm-project/semantic-router/src/semantic-router/pkg/catalog"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )

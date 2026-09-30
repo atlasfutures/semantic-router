@@ -18,6 +18,7 @@ package extproc
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -119,8 +120,8 @@ func TestRaylineARCSelectorShedsWithItsOwnFailureClass(t *testing.T) {
 	if err == nil {
 		t.Fatal("second decision was admitted while the only slot was held")
 	}
-	failure, ok := err.(*raylineARCSelectionFailure)
-	if !ok {
+	var failure *raylineARCSelectionFailure
+	if !errors.As(err, &failure) {
 		t.Fatalf("shed error = %T, want *raylineARCSelectionFailure", err)
 	}
 	wantClass := "encoder_" + string(raylinearc.EncoderFailureAdmission)

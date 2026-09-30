@@ -44,7 +44,7 @@ func applyProviderPreferences(
 		return nil, fmt.Errorf("failed to serialize provider preferences: %w", err)
 	}
 	var requestMap map[string]json.RawMessage
-	if err := json.Unmarshal(body, &requestMap); err != nil {
+	if err = json.Unmarshal(body, &requestMap); err != nil {
 		return nil, fmt.Errorf("failed to parse request body: %w", err)
 	}
 	requestMap[providerPreferencesField] = encoded

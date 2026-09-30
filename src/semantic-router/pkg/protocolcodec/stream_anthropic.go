@@ -744,9 +744,9 @@ func (encoder *anthropicStreamEncoder) encodeAnthropicTextDelta(
 		return nil, diagnostics, err
 	}
 	if event.Content != nil && len(event.Content.CitationsRaw) > 0 {
-		citations, err := encoder.encodeAnthropicCitationDeltas(key, event.Content.CitationsRaw)
-		if err != nil {
-			return frames, diagnostics, err
+		citations, citationErr := encoder.encodeAnthropicCitationDeltas(key, event.Content.CitationsRaw)
+		if citationErr != nil {
+			return frames, diagnostics, citationErr
 		}
 		frames = append(frames, citations...)
 	}

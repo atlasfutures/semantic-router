@@ -88,8 +88,8 @@ func (store *MemoryEpisodeStore) Prepare(
 	}()
 	// A caller already gone takes nothing, and nothing held the episode, so
 	// the bare context error keeps it out of contention.
-	if err := ctx.Err(); err != nil {
-		return Lease{}, nil, err
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return Lease{}, nil, ctxErr
 	}
 	// Take a free gate before waiting, so running out of time is reported as
 	// contention only when another request's lease actually held the gate.

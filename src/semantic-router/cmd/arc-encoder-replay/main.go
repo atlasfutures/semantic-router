@@ -15,6 +15,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"math/rand"
@@ -176,7 +177,8 @@ func main() {
 			}
 			if err != nil {
 				o.Error = err.Error()
-				if f, ok := err.(*raylinearc.EncoderFailure); ok {
+				var f *raylinearc.EncoderFailure
+				if errors.As(err, &f) {
 					o.ErrorClass = string(f.Class)
 				}
 			} else {
@@ -228,7 +230,9 @@ func buildPool(spec string) fleet {
 		if !ok {
 			panic("replica must be id=url: " + part)
 		}
-		client, err := raylinearc.NewEncoderClient(raylinearc.EncoderClientConfig{
+		// The pinned revisions below are public model and build identifiers;
+		// the Modal credentials come from the environment.
+		client, err := raylinearc.NewEncoderClient(raylinearc.EncoderClientConfig{ //nolint:gosec // G101: no hardcoded credential
 			BaseURL:               url,
 			Model:                 "Qwen/Qwen3.5-0.8B",
 			ModelRevision:         "2fc06364715b967f1860aea9cf38778875588b17",

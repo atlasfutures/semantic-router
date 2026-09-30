@@ -238,18 +238,6 @@ func requireDroppedField(t *testing.T, diagnostics llmprotocol.Diagnostics, fiel
 	t.Fatalf("no dropped diagnostic for %q; recorded: %s", field, strings.Join(names, ", "))
 }
 
-func requireApproximatedField(t *testing.T, diagnostics llmprotocol.Diagnostics, field string) {
-	t.Helper()
-	names := make([]string, 0, len(diagnostics))
-	for _, diagnostic := range diagnostics {
-		names = append(names, string(diagnostic.Action)+" "+diagnostic.Field)
-		if diagnostic.Field == field && diagnostic.Action == llmprotocol.DiagnosticApproximated {
-			return
-		}
-	}
-	t.Fatalf("no approximated diagnostic for %q; recorded: %s", field, strings.Join(names, ", "))
-}
-
 func anthropicToolUseBlock(t *testing.T, body []byte) anthropicContentWire {
 	t.Helper()
 	for _, block := range anthropicRequestBlocks(t, body) {

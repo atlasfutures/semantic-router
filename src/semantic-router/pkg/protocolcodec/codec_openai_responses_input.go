@@ -63,7 +63,7 @@ func carriedResponsesInputItem(body json.RawMessage) (llmprotocol.Message, bool)
 		return carriedItemMessage(llmprotocol.OpenAIResponsesV1, itemType, body), true
 	}
 	if isSupportedResponsesItemType(itemType, false) &&
-		!(hasUnnamedMembers(body, responsesItemWire{}) && !hasResponsesRefusedMember(body)) {
+		(!hasUnnamedMembers(body, responsesItemWire{}) || hasResponsesRefusedMember(body)) {
 		return llmprotocol.Message{}, false
 	}
 	return carriedItemMessage(llmprotocol.OpenAIResponsesV1, itemType, body), true

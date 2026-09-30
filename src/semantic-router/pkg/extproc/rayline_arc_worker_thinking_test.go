@@ -62,11 +62,14 @@ func TestWorkerThinkingBaseReplacesTheDerivedBound(t *testing.T) {
 		want string
 	}{
 		"named effort reaches the model": {
-			config.RaylineARCWorkerThinkingConfig{Level: "high", Wire: "effort", Effort: "high"}, `{"effort":"high"}`},
+			config.RaylineARCWorkerThinkingConfig{Level: "high", Wire: "effort", Effort: "high"}, `{"effort":"high"}`,
+		},
 		"simulated low is a budget alone": {
-			config.RaylineARCWorkerThinkingConfig{Level: "cap_4096", Wire: "budget", MaxTokens: 4096}, `{"max_tokens":4096}`},
+			config.RaylineARCWorkerThinkingConfig{Level: "cap_4096", Wire: "budget", MaxTokens: 4096}, `{"max_tokens":4096}`,
+		},
 		"provider default is uncapped": {
-			config.RaylineARCWorkerThinkingConfig{Level: "default", Wire: "provider_default"}, ``},
+			config.RaylineARCWorkerThinkingConfig{Level: "default", Wire: "provider_default"}, ``,
+		},
 	}
 	for name, test := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -2,6 +2,7 @@ package llmprotocol
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -185,7 +186,8 @@ func toolTextLimit(location, field string, observed, limit int) error {
 // honour.
 func validateRequestToolChoice(request Request, namedTools map[string]struct{}) error {
 	err := validateToolChoice(request.ToolChoice, namedTools, request.Tools, request.ImageGeneration != nil)
-	if refusal, ok := err.(*ProtocolError); ok && refusal.Code == "tools_required" && len(request.CarriedTools) > 0 {
+	var refusal *ProtocolError
+	if errors.As(err, &refusal) && refusal.Code == "tools_required" && len(request.CarriedTools) > 0 {
 		return nil
 	}
 	return err

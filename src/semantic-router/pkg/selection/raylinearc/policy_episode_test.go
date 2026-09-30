@@ -73,8 +73,15 @@ func TestModelChangeAllowedFollowsTaskTurnCompaction(t *testing.T) {
 		completed, epochStart uint64
 		allowed               bool
 	}{
-		{0, 0, true}, {1, 0, false}, {4, 0, false}, {5, 0, true}, {6, 0, false},
-		{8, 8, true}, {9, 8, false}, {13, 8, true}, {14, 8, false},
+		{0, 0, true},
+		{1, 0, false},
+		{4, 0, false},
+		{5, 0, true},
+		{6, 0, false},
+		{8, 8, true},
+		{9, 8, false},
+		{13, 8, true},
+		{14, 8, false},
 	}
 	for _, c := range cases {
 		if got := ModelChangeAllowed(c.completed, c.epochStart); got != c.allowed {
@@ -91,7 +98,7 @@ func TestPolicyStateSurvivesTheEpisodeStore(t *testing.T) {
 	messages, _ := rawMessages(t, user1)
 	state.Policy = (&PolicyEpisodeState{Epoch: 3, EpochStartTurn: 7}).Next(messages, policyTestActionA, "arm-a")
 	now := time.Now().UTC()
-	if err := state.Commit(1, 10, now); err != nil {
+	if err = state.Commit(1, 10, now); err != nil {
 		t.Fatal(err)
 	}
 	payload, err := marshalEpisodeState(state, 1, now)
@@ -122,8 +129,10 @@ const policyTestActionA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 // writes; reading one back must refuse it rather than panic slicing a request.
 func TestPolicyStateRefusesMalformedPersistedRecords(t *testing.T) {
 	now := time.Now().UTC()
-	good := &PolicyEpisodeState{PrefixLen: 2, PrefixDigest: policyTestActionA,
-		Ledger: []PolicyLedgerEntry{{Message: 1, ActionID: policyTestActionA, ArmID: "arm"}}}
+	good := &PolicyEpisodeState{
+		PrefixLen: 2, PrefixDigest: policyTestActionA,
+		Ledger: []PolicyLedgerEntry{{Message: 1, ActionID: policyTestActionA, ArmID: "arm"}},
+	}
 	if err := good.Validate(); err != nil {
 		t.Fatalf("a well-formed state was refused: %v", err)
 	}

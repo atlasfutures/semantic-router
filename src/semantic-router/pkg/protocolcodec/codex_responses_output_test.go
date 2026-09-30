@@ -134,7 +134,11 @@ func TestStreamNamespaceLearnedAtCompletion(t *testing.T) {
 		t.Fatalf("finalize: %v", err)
 	}
 	wire := bytes.Join(append(frames, final...), nil)
-	done := wire[bytes.Index(wire, []byte("response.output_item.done")):]
+	doneAt := bytes.Index(wire, []byte("response.output_item.done"))
+	if doneAt < 0 {
+		t.Fatalf("no response.output_item.done event:\n%s", wire)
+	}
+	done := wire[doneAt:]
 	if !bytes.Contains(done, []byte(`"namespace":"multi_agent_v1"`)) {
 		t.Fatalf("the namespace learned at completion did not reach the client:\n%s", wire)
 	}
