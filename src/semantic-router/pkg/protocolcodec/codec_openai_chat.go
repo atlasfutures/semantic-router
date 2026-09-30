@@ -135,6 +135,9 @@ type chatURLCitationAnnotationWire struct {
 	Title      string `json:"title,omitempty"`
 	StartIndex int64  `json:"start_index"`
 	EndIndex   int64  `json:"end_index"`
+	// Content is the cited page text OpenRouter's web plugin adds. It is read
+	// and not carried: a URL citation names its source, not the source's text.
+	Content string `json:"content,omitempty"`
 }
 
 type chatContentWire struct {

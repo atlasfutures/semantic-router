@@ -385,24 +385,37 @@ func anthropicHostedTool(tool llmprotocol.UnmodeledBlock, target llmprotocol.Wir
 	if target != llmprotocol.AnthropicMessagesV1 || tool.Format != llmprotocol.OpenAIResponsesV1 || tool.Type != "web_search" {
 		return nil
 	}
-	// Anthropic's tool searches the live web and has no knob for anything
-	// else the declaration may say. A declaration that restricts the search
-	// -- external_web_access: false, which Codex sends, or any other member
-	// -- is one Anthropic cannot honour, so it is not mapped: dropping it
-	// keeps the turn, where mapping it would widen what the model may do.
+	if !UnrestrictedWebSearch(tool) {
+		return nil
+	}
+	return json.RawMessage(`{"type":"web_search_20250305","name":"web_search"}`)
+}
+
+// UnrestrictedWebSearch reports whether a carried Responses web_search
+// declaration asks for nothing beyond a live web search. A provider's own
+// search -- Anthropic's tool, OpenRouter's web plugin -- searches the live web
+// and has no knob for anything else the declaration may say. A declaration
+// that restricts the search (external_web_access: false, which Codex sends)
+// or says anything else is one those providers cannot honour, so it is not
+// mapped onto them: dropping it keeps the turn, where mapping it would widen
+// what the model may do.
+func UnrestrictedWebSearch(tool llmprotocol.UnmodeledBlock) bool {
+	if tool.Format != llmprotocol.OpenAIResponsesV1 || tool.Type != "web_search" {
+		return false
+	}
 	var declared map[string]json.RawMessage
 	if json.Unmarshal(tool.Raw, &declared) != nil {
-		return nil
+		return false
 	}
 	for name, value := range declared {
 		switch {
 		case name == "type":
 		case name == "external_web_access" && string(value) == "true":
 		default:
-			return nil
+			return false
 		}
 	}
-	return json.RawMessage(`{"type":"web_search_20250305","name":"web_search"}`)
+	return true
 }
 
 // appendToolExtensionDrops counts the carried members of each tool definition

@@ -13,19 +13,31 @@
             "index": 0,
             "finish_reason": "stop",
             "stop_reason": 106,
-            "token_ids": [13],
+            "token_ids": [
+              13
+            ],
             "routed_experts": null,
             "logprobs": {
               "content": [
                 {
                   "token": "done",
                   "logprob": -0.1,
-                  "bytes": [100, 111, 110, 101],
+                  "bytes": [
+                    100,
+                    111,
+                    110,
+                    101
+                  ],
                   "top_logprobs": [
                     {
                       "token": "done",
                       "logprob": -0.1,
-                      "bytes": [100, 111, 110, 101]
+                      "bytes": [
+                        100,
+                        111,
+                        110,
+                        101
+                      ]
                     }
                   ]
                 }
@@ -106,6 +118,42 @@
             }
           }
         ]
+      }
+    },
+    {
+      "name": "openrouter_web_citation_content",
+      "body": {
+        "id": "gen_web_1",
+        "object": "chat.completion",
+        "created": 100,
+        "model": "provider-model",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "Go releases twice a year.",
+              "annotations": [
+                {
+                  "type": "url_citation",
+                  "url_citation": {
+                    "url": "https://go.dev/doc/devel/release",
+                    "title": "Release History",
+                    "content": "Go releases a new major version every six months.",
+                    "start_index": 0,
+                    "end_index": 25
+                  }
+                }
+              ]
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 5,
+          "completion_tokens": 3,
+          "total_tokens": 8
+        }
       }
     }
   ]
