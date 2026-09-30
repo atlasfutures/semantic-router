@@ -51,7 +51,20 @@ func applyOpenRouterWebSearch(body []byte, dispatch *providerDispatch, ctx *Requ
 		return nil, err
 	}
 	request["plugins"] = encoded
+	reconcileWebSearchDiagnostic(ctx)
 	return json.Marshal(request)
+}
+
+// reconcileWebSearchDiagnostic rewrites the drop the codec recorded for the
+// declaration, which it could not put in a Chat body, as what happened: the
+// search went, as OpenRouter's web plugin.
+func reconcileWebSearchDiagnostic(ctx *RequestContext) {
+	for index, diagnostic := range ctx.ProtocolDiagnostics {
+		if diagnostic.Field == "tools.web_search" && diagnostic.Action == llmprotocol.DiagnosticDropped {
+			ctx.ProtocolDiagnostics[index].Action = llmprotocol.DiagnosticApproximated
+			ctx.ProtocolDiagnostics[index].Reason = "sent as OpenRouter's web plugin"
+		}
+	}
 }
 
 func declaresUnrestrictedWebSearch(request *llmprotocol.Request) bool {
