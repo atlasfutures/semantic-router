@@ -24,7 +24,11 @@ var openRouterWebPlugin = json.RawMessage(`{"id":"web"}`)
 func applyOpenRouterWebSearch(body []byte, dispatch *providerDispatch, ctx *RequestContext) ([]byte, error) {
 	if dispatch == nil || ctx == nil || ctx.SemanticRequest == nil ||
 		dispatch.targetFormat != llmprotocol.OpenAIChatV1 || !providerIsOpenRouter(dispatch.profile) ||
-		!slices.Contains(ctx.DispatchHostedTools, "web_search") || !declaresUnrestrictedWebSearch(ctx.SemanticRequest) {
+		!slices.Contains(ctx.DispatchHostedTools, "web_search") || !declaresUnrestrictedWebSearch(ctx.SemanticRequest) ||
+		ctx.SemanticRequest.ToolChoice.Mode == llmprotocol.ToolChoiceNone {
+		// tool_choice: none turns every tool off, the search included. The
+		// plugin runs before the model answers and cannot be told otherwise,
+		// so it is not sent.
 		return body, nil
 	}
 	var request map[string]json.RawMessage

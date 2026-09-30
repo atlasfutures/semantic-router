@@ -81,3 +81,32 @@ func TestOpenRouterWebSearchDispatchFlow(t *testing.T) {
 		}
 	}
 }
+
+// A caller that turned every tool off with tool_choice: none gets no search.
+func TestOpenRouterWebSearchHonoursToolChoiceNone(t *testing.T) {
+	request, envelope, _, err := protocolcodec.NewBuiltinEngine().DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1,
+		[]byte(`{"model":"m","input":"q","tool_choice":"none","tools":[{"type":"web_search"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Model = "provider-model"
+	request.Generation++
+	ctx := &RequestContext{
+		SourceFormat: llmprotocol.OpenAIResponsesV1, TargetFormat: llmprotocol.OpenAIChatV1,
+		SemanticRequest: &request, ProtocolEnvelope: envelope, DispatchHostedTools: []string{"web_search"},
+	}
+	router := &OpenAIRouter{}
+	body, err := router.encodeDispatchRequest(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err = router.adaptProviderRequest(body, &providerDispatch{
+		profile: &config.ProviderProfile{Type: "openrouter"}, targetFormat: llmprotocol.OpenAIChatV1,
+	}, ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(body, []byte("plugins")) {
+		t.Fatalf("a search was sent despite tool_choice: none: %s", body)
+	}
+}
