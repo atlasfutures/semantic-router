@@ -715,9 +715,10 @@ func shouldEmit(
 		}
 		return payload, true, ""
 	}
-	if marker, ok := turn.Binding.neutralMarker(); ok && !payload.writes() {
+	if marker, ok := turn.Binding.neutralMarker(); ok && requested.Name == turn.Binding.Neutral {
 		// A return to neutral over an instruction in force is written as the
-		// neutral marker; over the marker itself it is a repeat.
+		// neutral marker; over the marker itself it is a repeat. Another
+		// level that writes nothing is not neutral, and stays inexpressible.
 		payload = marker
 	}
 	if ledger.Payloads[state.Payload] == payload {

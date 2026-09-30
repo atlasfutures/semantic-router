@@ -538,6 +538,23 @@ func TestNeutralMarkerIsAttributedTheNeutralControl(t *testing.T) {
 	}
 }
 
+// Only the neutral level becomes the marker: another level that writes
+// nothing, requested over a steer, holds the steer as before.
+func TestOnlyTheNeutralLevelWritesTheMarker(t *testing.T) {
+	binding := onChangeV1Binding()
+	binding.Levels = append(binding.Levels, Level{Name: "quiet", Rank: 0})
+	e := &episode{t: t, binding: binding}
+	messages := []llmprotocol.Message{text(llmprotocol.RoleUser, "go")}
+	plan, _ := e.serve(messages, "up")
+	e.commit(plan)
+	messages = append(messages, text(llmprotocol.RoleAssistant, "ok"), text(llmprotocol.RoleUser, "more"))
+	plan, _ = e.serve(messages, "quiet")
+	if plan.Emitted || plan.Skipped != SkipNeutralInexpressible || plan.LevelInForce != "up" ||
+		plan.InstructionState != InstructionSteered {
+		t.Fatalf("a non-neutral empty level over a steer = %+v", plan)
+	}
+}
+
 func TestOnChangeV1BindingValidation(t *testing.T) {
 	withText := func(mutate func(*Binding)) Binding {
 		binding := onChangeV1Binding()
