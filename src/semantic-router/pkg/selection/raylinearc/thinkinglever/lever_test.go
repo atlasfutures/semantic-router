@@ -553,6 +553,7 @@ func TestOnChangeV1BindingValidation(t *testing.T) {
 		"blank neutral text":        withText(func(b *Binding) { b.NeutralText = "  " }),
 		"no neutral level":          withText(func(b *Binding) { b.Neutral = "" }),
 		"neutral level with text":   withText(func(b *Binding) { b.Neutral = "up" }),
+		"marker equals a steer":     withText(func(b *Binding) { b.NeutralText = steerUp }),
 		"neutral text on on_change": onChange,
 		"effort lever":              effort,
 	} {

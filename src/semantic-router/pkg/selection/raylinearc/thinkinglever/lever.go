@@ -208,6 +208,13 @@ func (binding Binding) validateNeutralText() error {
 	if strings.TrimSpace(binding.NeutralText) == "" || len(binding.NeutralText) > MaxSuffixBytes {
 		return fmt.Errorf("emit %q needs a nonblank neutral_text of at most %d bytes", EmitOnChangeV1, MaxSuffixBytes)
 	}
+	// The marker is recognised by its bytes, so a level writing the same
+	// bytes would be attributed as the neutral level.
+	for _, level := range binding.Levels {
+		if level.Suffix == binding.NeutralText {
+			return fmt.Errorf("neutral_text duplicates level %q's suffix", level.Name)
+		}
+	}
 	return nil
 }
 
