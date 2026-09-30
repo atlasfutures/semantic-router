@@ -69,7 +69,14 @@ func (fake *fakePolicyService) received() []raylinearc.PolicyDecisionRequest {
 func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.Request) {
 	switch request.URL.Path {
 	case "/v1/rayline/arc/policy/packages":
-		fake.writeJSON(writer, http.StatusOK, fake.packages())
+		// Like pathfinder's store-mode service, the package is listed only
+		// for the pin that names it; a bare listing loads nothing.
+		query := request.URL.Query()
+		listing := fake.packages()
+		if query.Get("alias") != fake.alias || query.Get("package_sha256") != fake.sha256 {
+			listing.Packages = listing.Packages[:0]
+		}
+		fake.writeJSON(writer, http.StatusOK, listing)
 	case "/v1/rayline/arc/policy/decide":
 		body, err := io.ReadAll(request.Body)
 		if err != nil {

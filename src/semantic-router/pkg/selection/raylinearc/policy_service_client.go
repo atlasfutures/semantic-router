@@ -25,6 +25,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -100,9 +101,16 @@ func NewPolicyServiceClient(config PolicyServiceConfig) *PolicyServiceClient {
 	return &PolicyServiceClient{config: config, http: &http.Client{Transport: transport}}
 }
 
-// Packages reads the service's loaded packages.
-func (client *PolicyServiceClient) Packages(ctx context.Context) (*PolicyPackagesResponse, error) {
-	body, err := client.do(ctx, http.MethodGet, "/v1/rayline/arc/policy/packages", nil)
+// Packages reads the service's loaded packages, naming the pin it needs. A
+// store-mode service (one app hot-loading packages from a volume) loads and
+// lists a package only for the pin that names it, and a service that serves
+// a fixed set ignores the query and lists what it has.
+func (client *PolicyServiceClient) Packages(ctx context.Context, alias, sha256 string) (*PolicyPackagesResponse, error) {
+	path := "/v1/rayline/arc/policy/packages"
+	if alias != "" {
+		path += "?" + url.Values{"alias": {alias}, "package_sha256": {sha256}}.Encode()
+	}
+	body, err := client.do(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +123,7 @@ func (client *PolicyServiceClient) Packages(ctx context.Context) (*PolicyPackage
 
 // RequirePackage fails unless the service has loaded exactly this package.
 func (client *PolicyServiceClient) RequirePackage(ctx context.Context, alias, sha256 string) error {
-	packages, err := client.Packages(ctx)
+	packages, err := client.Packages(ctx, alias, sha256)
 	if err != nil {
 		return err
 	}
@@ -166,8 +174,8 @@ func (client *PolicyServiceClient) do(
 	if payload != nil {
 		reader = bytes.NewReader(payload)
 	}
-	url := strings.TrimRight(client.config.BaseURL, "/") + path
-	request, err := http.NewRequestWithContext(ctx, method, url, reader)
+	endpoint := strings.TrimRight(client.config.BaseURL, "/") + path
+	request, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if err != nil {
 		return nil, &PolicyServiceError{Class: "request"}
 	}
