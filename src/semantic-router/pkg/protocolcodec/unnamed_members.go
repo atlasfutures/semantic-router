@@ -332,10 +332,29 @@ func appendCarriedToolDrops(
 	policy llmprotocol.Policy,
 ) {
 	for _, tool := range request.CarriedTools {
-		if !carriedToolForwarded(tool, target, request.HostedTools) {
+		if !carriedToolSent(request, tool, target) {
 			appendUnmodeledDrop(diagnostics, policy, tool.Format, target, "tools."+tool.Type)
 		}
 	}
+}
+
+// carriedToolSent reports whether this target is sent a carried declaration:
+// it must be admitted and expressible there, and, where it is sent under a
+// name, that name must not be one the request's own functions already use --
+// a provider refuses two tools of one name.
+func carriedToolSent(request llmprotocol.Request, tool llmprotocol.UnmodeledBlock, target llmprotocol.WireFormat) bool {
+	if !carriedToolForwarded(tool, target, request.HostedTools) {
+		return false
+	}
+	if anthropicHostedTool(tool, target) == nil {
+		return true
+	}
+	for _, declared := range request.Tools {
+		if llmprotocol.QualifiedToolName(declared.Namespace, declared.Name) == tool.Type {
+			return false
+		}
+	}
+	return true
 }
 
 // forwardedCarriedTools returns the carried tool declarations this target is
@@ -344,7 +363,7 @@ func appendCarriedToolDrops(
 func forwardedCarriedTools(request llmprotocol.Request, target llmprotocol.WireFormat) []llmprotocol.UnmodeledBlock {
 	var forwarded []llmprotocol.UnmodeledBlock
 	for _, tool := range request.CarriedTools {
-		if carriedToolForwarded(tool, target, request.HostedTools) {
+		if carriedToolSent(request, tool, target) {
 			forwarded = append(forwarded, tool)
 		}
 	}

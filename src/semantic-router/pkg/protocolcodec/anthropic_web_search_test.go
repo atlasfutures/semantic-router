@@ -241,3 +241,24 @@ func TestAnthropicWebSearchStreamFailureAndPause(t *testing.T) {
 		t.Fatalf("the completed response lost the unanswered search:\n%s", completed)
 	}
 }
+
+// A request whose own function is named web_search keeps it; the built-in
+// search is not mapped beside it under the same name.
+func TestMappedWebSearchYieldsToAFunctionOfTheSameName(t *testing.T) {
+	body := `{"model":"m","input":"q","tools":[{"type":"web_search"},` +
+		`{"type":"function","name":"web_search","parameters":{"type":"object"}}]}`
+	engine := NewBuiltinEngine()
+	request, envelope, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.HostedTools = []string{"web_search"}
+	request.Generation++
+	result, err := engine.EncodeRequest(llmprotocol.AnthropicMessagesV1, request, envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Count(result.Body, []byte(`"name":"web_search"`)) != 1 || bytes.Contains(result.Body, []byte("web_search_20250305")) {
+		t.Fatalf("the tools collide: %s", result.Body)
+	}
+}
