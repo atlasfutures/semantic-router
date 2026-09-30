@@ -156,6 +156,31 @@ func webSearchCallFor(use anthropicServerToolUseWire, outcome anthropicWebSearch
 // is reported in progress, as the stream reports it at completion. The result
 // blocks are consumed.
 func anthropicWebSearchAsResponses(contents []llmprotocol.Content) []llmprotocol.Content {
+	return rewriteAnthropicWebSearch(contents, anthropicWebSearchOutcomes(contents))
+}
+
+// anthropicWebSearchOutputAsResponses is anthropicWebSearchAsResponses over a
+// whole response: a search and its result may sit in different output items
+// -- a response rebuilt from a stream keeps one item per content block -- so
+// results are matched across every item before any is rewritten.
+func anthropicWebSearchOutputAsResponses(output []llmprotocol.OutputItem) []llmprotocol.OutputItem {
+	var all []llmprotocol.Content
+	for _, item := range output {
+		all = append(all, item.Content...)
+	}
+	outcomes := anthropicWebSearchOutcomes(all)
+	rewritten := make([]llmprotocol.OutputItem, 0, len(output))
+	for _, item := range output {
+		item.Content = rewriteAnthropicWebSearch(item.Content, outcomes)
+		if len(item.Content) == 0 {
+			continue
+		}
+		rewritten = append(rewritten, item)
+	}
+	return rewritten
+}
+
+func anthropicWebSearchOutcomes(contents []llmprotocol.Content) map[string]anthropicWebSearchOutcome {
 	outcomes := map[string]anthropicWebSearchOutcome{}
 	for _, content := range contents {
 		block := content.Unmodeled
@@ -169,6 +194,10 @@ func anthropicWebSearchAsResponses(contents []llmprotocol.Content) []llmprotocol
 		}
 		outcomes[result.ToolUseID] = result.outcome()
 	}
+	return outcomes
+}
+
+func rewriteAnthropicWebSearch(contents []llmprotocol.Content, outcomes map[string]anthropicWebSearchOutcome) []llmprotocol.Content {
 	rewritten := make([]llmprotocol.Content, 0, len(contents))
 	for _, content := range contents {
 		block := content.Unmodeled
@@ -242,13 +271,13 @@ func (decoder *anthropicStreamDecoder) decodeAnthropicWebSearchEvent(
 			return nil, true, nil
 		}
 		if wire.Delta != nil && wire.Delta.Type == "citations_delta" {
-			return decoder.decodeAnthropicCitationDelta(index, wire.Delta.Citation)
+			return decoder.holdAnthropicCitation(index, wire.Delta.Citation)
 		}
 		return nil, false, nil
 	case "content_block_stop":
 		pending := decoder.serverBlocks[index]
 		if pending == nil {
-			return nil, false, nil
+			return decoder.releaseAnthropicCitations(index)
 		}
 		delete(decoder.serverBlocks, index)
 		if input := strings.TrimSpace(pending.input.String()); input != "" {
@@ -281,11 +310,9 @@ func (decoder *anthropicStreamDecoder) countText(index int, text string) {
 	decoder.textRunes[index] += int64(utf8.RuneCountInString(text))
 }
 
-// decodeAnthropicCitationDelta turns one streamed web search citation into a
-// text delta that carries it: raw, for an Anthropic client, and as a URL
-// citation over the block's text so far, for any other. Any other citation
-// kind still fails closed.
-func (decoder *anthropicStreamDecoder) decodeAnthropicCitationDelta(
+// holdAnthropicCitation keeps one streamed web search citation until its text
+// block stops. Any other citation kind still fails closed.
+func (decoder *anthropicStreamDecoder) holdAnthropicCitation(
 	index int,
 	citation json.RawMessage,
 ) ([]llmprotocol.Event, bool, error) {
@@ -294,15 +321,36 @@ func (decoder *anthropicStreamDecoder) decodeAnthropicCitationDelta(
 		return nil, true, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_citations",
 			"Anthropic citations are not supported by the neutral contract", nil)
 	}
-	delta := llmprotocol.Event{
+	if decoder.pendingCitations == nil {
+		decoder.pendingCitations = map[int][]json.RawMessage{}
+	}
+	decoder.pendingCitations[index] = append(decoder.pendingCitations[index], citation)
+	return nil, true, nil
+}
+
+// releaseAnthropicCitations completes a text block that held web search
+// citations: one text delta carries them -- raw, for an Anthropic client,
+// and as URL citations over the whole block, for any other -- then the block
+// completes. A block that held none is left to the caller.
+func (decoder *anthropicStreamDecoder) releaseAnthropicCitations(index int) ([]llmprotocol.Event, bool, error) {
+	held := decoder.pendingCitations[index]
+	if len(held) == 0 {
+		return nil, false, nil
+	}
+	delete(decoder.pendingCitations, index)
+	raw, _ := json.Marshal(held)
+	events, _, err := decoder.emitAnthropicEvent(llmprotocol.Event{
 		Type: llmprotocol.EventOutputTextDelta, ItemIndex: index,
 		Content: &llmprotocol.Content{
 			Kind: llmprotocol.ContentText, CitationsRaw: raw,
 			Citations: webSearchURLCitationsTo(raw, decoder.textRunes[index]),
 		},
+	})
+	if err != nil {
+		return nil, true, err
 	}
-	events, _, err := decoder.emitAnthropicEvent(delta)
-	return events, true, err
+	completed, _, err := decoder.emitAnthropicEvent(llmprotocol.Event{Type: llmprotocol.EventOutputItemCompleted, ItemIndex: index})
+	return append(events, completed...), true, err
 }
 
 // carriedAnthropicServerBlock returns the carried Anthropic web search block a

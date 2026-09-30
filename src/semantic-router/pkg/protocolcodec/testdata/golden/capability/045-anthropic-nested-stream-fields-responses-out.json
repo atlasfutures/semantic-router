@@ -81,42 +81,10 @@
             },
             {
               "data": {
-                "content_index": 0,
-                "item_id": "item_fe6b4a8b4ea5422e38a15ded",
-                "output_index": 0,
-                "part": {
-                  "annotations": [],
-                  "text": "",
-                  "type": "output_text"
-                },
-                "sequence_number": 3,
-                "type": "response.content_part.added"
-              },
-              "event": "response.content_part.added"
-            },
-            {
-              "data": {
-                "annotation": {
-                  "end_index": 0,
-                  "start_index": 0,
-                  "type": "url_citation",
-                  "url": "https://example.com/source"
-                },
-                "annotation_index": 0,
-                "content_index": 0,
-                "item_id": "item_fe6b4a8b4ea5422e38a15ded",
-                "output_index": 0,
-                "sequence_number": 4,
-                "type": "response.output_text.annotation.added"
-              },
-              "event": "response.output_text.annotation.added"
-            },
-            {
-              "data": {
                 "code": "stream_incomplete",
                 "message": "upstream stream ended before completion",
                 "param": null,
-                "sequence_number": 5,
+                "sequence_number": 3,
                 "type": "error"
               },
               "event": "error"

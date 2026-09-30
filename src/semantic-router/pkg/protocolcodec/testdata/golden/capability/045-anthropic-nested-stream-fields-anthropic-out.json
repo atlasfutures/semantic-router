@@ -180,20 +180,6 @@
             },
             {
               "data": {
-                "delta": {
-                  "citation": {
-                    "type": "web_search_result_location",
-                    "url": "https://example.com/source"
-                  },
-                  "type": "citations_delta"
-                },
-                "index": 0,
-                "type": "content_block_delta"
-              },
-              "event": "content_block_delta"
-            },
-            {
-              "data": {
                 "index": 0,
                 "type": "content_block_stop"
               },

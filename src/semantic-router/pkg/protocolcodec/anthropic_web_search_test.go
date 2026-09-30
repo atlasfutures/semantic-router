@@ -3,6 +3,7 @@ package protocolcodec
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -260,5 +261,45 @@ func TestMappedWebSearchYieldsToAFunctionOfTheSameName(t *testing.T) {
 	}
 	if bytes.Count(result.Body, []byte(`"name":"web_search"`)) != 1 || bytes.Contains(result.Body, []byte("web_search_20250305")) {
 		t.Fatalf("the tools collide: %s", result.Body)
+	}
+}
+
+// A search and its result in different output items -- as a response rebuilt
+// from a stream holds them -- still match: the call is completed, with sources.
+func TestAnthropicWebSearchMatchesAcrossOutputItems(t *testing.T) {
+	engine := NewBuiltinEngine()
+	response, envelope, _, err := engine.DecodeResponse(llmprotocol.AnthropicMessagesV1, []byte(anthropicWebSearchResponse))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := response.Output[0]
+	split := make([]llmprotocol.OutputItem, 0, len(item.Content))
+	for index, content := range item.Content {
+		split = append(split, llmprotocol.OutputItem{ID: fmt.Sprintf("item_%d", index), Role: item.Role, Content: []llmprotocol.Content{content}})
+	}
+	response.Output = split
+	response.Generation++
+	encoded, err := engine.EncodeResponse(llmprotocol.OpenAIResponsesV1, response, envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(encoded.Body, []byte(`"sources":[{"type":"url","url":"https://go.dev/doc/devel/release"}]`)) {
+		t.Fatalf("a split search did not match its result: %s", encoded.Body)
+	}
+	if bytes.Contains(encoded.Body, []byte(`"in_progress"`)) {
+		t.Fatalf("a split search was reported in progress: %s", encoded.Body)
+	}
+}
+
+// A citation that arrives before the text it supports still covers the whole
+// block, as it does in a buffered response.
+func TestEarlyStreamedCitationCoversTheWholeBlock(t *testing.T) {
+	stream := anthropicWebSearchStream()
+	citation := `event: content_block_delta` + "\n" + `data: {"type":"content_block_delta","index":2,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","url":"https://go.dev/doc/devel/release","title":"Release History","encrypted_index":"xyz","cited_text":"twice a year"}}}` + "\n\n"
+	text := `event: content_block_delta` + "\n" + `data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Go releases twice a year."}}` + "\n\n"
+	stream = strings.Replace(stream, text+citation, citation+text, 1)
+	routed := runAnthropicStream(t, stream, llmprotocol.OpenAIResponsesV1)
+	if !bytes.Contains(routed, []byte(`"end_index":25`)) {
+		t.Fatalf("an early citation does not cover the whole block:\n%s", routed)
 	}
 }

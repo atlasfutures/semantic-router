@@ -14,9 +14,12 @@ type anthropicStreamDecoder struct {
 	// serverBlocks holds each open server web search block until it stops:
 	// its start frame, and the input a server_tool_use streams as JSON deltas.
 	serverBlocks map[int]*anthropicServerBlock
-	// textRunes counts each text block's characters so far, which is the span
-	// a streamed web search citation covers.
-	textRunes map[int]int64
+	// textRunes counts each text block's characters, and pendingCitations
+	// holds its streamed web search citations until the block stops: a
+	// citation may arrive before the text it supports, and it covers the
+	// whole block, as a buffered response's does.
+	textRunes        map[int]int64
+	pendingCitations map[int][]json.RawMessage
 	// data is the JSON of the event being decoded.
 	data []byte
 }
