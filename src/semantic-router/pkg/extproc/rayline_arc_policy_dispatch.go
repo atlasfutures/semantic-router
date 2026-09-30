@@ -39,17 +39,20 @@ func raylineARCPolicyAction(ctx *RequestContext) (config.RaylineARCPolicyBinding
 }
 
 // raylineARCPolicyDispatchAction is the action as it is dispatched. Under
-// dispatch_effort: provider_default its effort and budget are withheld, so
-// the provider's default applies; a thinking-off action (effort none) keeps
-// its effort, since off is not an effort level. The level, and so the
-// steering suffix, is untouched, as is what the decision records.
+// dispatch_effort: provider_default its effort is withheld, so the provider's
+// default applies. Only effort: the v4 training turns lost the effort member
+// (output_config on Messages, pathfinder #2655) while a reasoning budget,
+// which travels in its own field, reached the provider, so a budget action
+// keeps its budget. A thinking-off action (effort none) keeps its effort,
+// since off is not an effort level. The level, and so the steering suffix, is
+// untouched, as is what the decision records.
 func raylineARCPolicyDispatchAction(ctx *RequestContext) (config.RaylineARCPolicyBinding, bool) {
 	action, declared := raylineARCPolicyAction(ctx)
 	if !declared || !ctx.VSRSelectedDecision.Algorithm.RaylineARC.PolicyService.DispatchesProviderDefaultEffort() {
 		return action, declared
 	}
-	if action.Effort == nil || *action.Effort != raylineARCPolicyActionEffortOff {
-		action.Effort, action.ReasoningMaxTokens = nil, nil
+	if action.Effort != nil && *action.Effort != raylineARCPolicyActionEffortOff {
+		action.Effort = nil
 	}
 	return action, true
 }

@@ -57,13 +57,14 @@ type RaylineARCPolicyServiceConfig struct {
 	// varies. Empty lets every turn choose any action.
 	ModelSchedule string `yaml:"model_schedule,omitempty"`
 	// DispatchEffort chooses what reasoning an action's dispatch carries:
-	// "declared" (the default) sends the effort or budget the binding
-	// declares; "provider_default" sends none, so the provider's default
-	// applies. v4 packages were trained on turns whose effort never reached
-	// the provider (pathfinder #2655), so they are served at the provider's
-	// default until v5. Either way the loader checks the declared effort
-	// against the action_id, the steering suffix still renders from the
-	// level, and a thinking-off action (effort none) stays off.
+	// "declared" (the default) sends the effort and budget the binding
+	// declares; "provider_default" withholds the effort, so the provider's
+	// default applies, and keeps a budget. v4 packages were trained on turns
+	// whose effort never reached the provider while budgets did (pathfinder
+	// #2655), so they are served this way until v5. Either way the loader
+	// checks the declared effort against the action_id, the steering suffix
+	// still renders from the level, and a thinking-off action (effort none)
+	// stays off.
 	DispatchEffort string `yaml:"dispatch_effort,omitempty"`
 }
 

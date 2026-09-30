@@ -13,9 +13,9 @@ import (
 )
 
 // Under dispatch_effort: provider_default, v4 actions reach the provider
-// without their declared effort or budget, as the package's training turns
-// did, while the steering suffix still renders and a thinking-off action
-// stays off.
+// without their declared effort, as the package's training turns did, while a
+// budget still travels, the steering suffix still renders, and a thinking-off
+// action stays off.
 func TestPolicyDispatchAtProviderDefaultEffort(t *testing.T) {
 	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
 	budget := int64(4096)
@@ -23,6 +23,7 @@ func TestPolicyDispatchAtProviderDefaultEffort(t *testing.T) {
 		"think-up":      policyAction("think", "up", "think-trained", policyTestEffort("high"), nil, policyTestUp),
 		"think-budget":  policyAction("think", "none", "think-trained", nil, &budget, ""),
 		"claude":        policyAction("claude", "none", "claude-opus-5", policyTestEffort("medium"), nil, ""),
+		"claude-budget": policyAction("claude", "none", "claude-opus-5", nil, &budget, ""),
 		"off":           policyAction("off", "none", "off-trained", policyTestEffort("none"), nil, ""),
 		"off-up":        policyAction("off", "up", "off-trained", policyTestEffort("none"), nil, policyTestUp),
 		"claude-off-up": policyAction("claude-off", "up", "claude-opus-5", policyTestEffort("none"), nil, policyTestUp),
@@ -70,9 +71,14 @@ func TestPolicyDispatchAtProviderDefaultEffort(t *testing.T) {
 			t.Fatalf("the steer was lost: %s", last)
 		}
 	})
-	t.Run("a budget action on Chat sends no budget", func(t *testing.T) {
-		if body := dispatch(t, "think-budget"); body["reasoning"] != nil {
-			t.Fatalf("the declared budget travelled: %s", body["reasoning"])
+	t.Run("a budget action on Chat keeps its budget", func(t *testing.T) {
+		assertJSONField(t, dispatch(t, "think-budget"), "reasoning", `{"max_tokens":4096}`)
+	})
+	t.Run("a budget action on Messages keeps enabled thinking with its budget", func(t *testing.T) {
+		body := dispatch(t, "claude-budget")
+		assertJSONField(t, body, "thinking", `{"type":"enabled","budget_tokens":4096}`)
+		if strings.Contains(string(body["output_config"]), "effort") {
+			t.Fatalf("an effort travelled beside the budget: %s", body["output_config"])
 		}
 	})
 	t.Run("an effort action on Messages sends no effort", func(t *testing.T) {
