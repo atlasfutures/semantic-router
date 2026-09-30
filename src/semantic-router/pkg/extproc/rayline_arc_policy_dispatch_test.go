@@ -312,3 +312,27 @@ func TestPolicyBudgetActionKeepsRoomBelowMaxTokens(t *testing.T) {
 		}
 	}
 }
+
+// Under dispatch_effort: provider_default a withheld effort on Messages sends
+// adaptive thinking without it, whatever mode the router derived: a derived
+// enabled mode with no budget would be refused by the encoder.
+func TestPolicyActionWithheldEffortOnMessagesIsAdaptive(t *testing.T) {
+	action := policyAction("claude", "none", "claude-opus-5", policyTestEffort("medium"), nil, "")
+	decision := policyDecisionWithActions(action)
+	decision.Algorithm.RaylineARC.PolicyService.DispatchEffort = config.RaylineARCPolicyDispatchEffortProviderDefault
+	for name, derived := range map[string]llmprotocol.ReasoningMode{
+		"derived enabled":  llmprotocol.ReasoningModeEnabled,
+		"derived adaptive": llmprotocol.ReasoningModeAdaptive,
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := &llmprotocol.Request{ReasoningMode: derived, ReasoningEffort: "high"}
+			if _, err := applyRaylineARCPolicyActionReasoning(request, llmprotocol.AnthropicMessagesV1, policyDispatchContext(decision, action)); err != nil {
+				t.Fatal(err)
+			}
+			if request.ReasoningMode != llmprotocol.ReasoningModeAdaptive || request.ReasoningEffort != "" || request.ReasoningBudgetTokens != nil {
+				t.Fatalf("mode %q effort %q budget %v, want adaptive with no effort or budget",
+					request.ReasoningMode, request.ReasoningEffort, request.ReasoningBudgetTokens)
+			}
+		})
+	}
+}

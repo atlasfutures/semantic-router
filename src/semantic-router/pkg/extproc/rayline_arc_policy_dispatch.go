@@ -140,7 +140,10 @@ func policyActionChatWire(
 // On Messages an effort travels as output_config.effort with adaptive
 // thinking, a budget as enabled thinking with that budget_tokens, and the
 // thinking-off action as disabled thinking. A null effort sends no effort
-// and leaves the derived thinking mode alone.
+// and leaves the derived thinking mode alone. An effort withheld under
+// dispatch_effort: provider_default sends adaptive thinking without it, as the
+// v4 training turns reached the provider once their output_config was dropped,
+// and so a derived enabled mode is never left without a budget.
 func applyRaylineARCPolicyActionReasoning(
 	request *llmprotocol.Request,
 	targetFormat llmprotocol.WireFormat,
@@ -153,6 +156,8 @@ func applyRaylineARCPolicyActionReasoning(
 	if targetFormat != llmprotocol.AnthropicMessagesV1 {
 		return false, errPolicyActionFormat
 	}
+	chosen, _ := raylineARCPolicyAction(ctx)
+	effortWithheld := chosen.Effort != nil && action.Effort == nil
 	before := *request
 	switch {
 	case action.Effort != nil && *action.Effort == "none":
@@ -177,6 +182,8 @@ func applyRaylineARCPolicyActionReasoning(
 		}
 	case action.Effort != nil:
 		request.ReasoningMode, request.ReasoningEffort, request.ReasoningBudgetTokens = llmprotocol.ReasoningModeAdaptive, *action.Effort, nil
+	case effortWithheld:
+		request.ReasoningMode, request.ReasoningEffort, request.ReasoningBudgetTokens = llmprotocol.ReasoningModeAdaptive, "", nil
 	default:
 		request.ReasoningEffort = ""
 	}
