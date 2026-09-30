@@ -8,6 +8,7 @@ import (
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
@@ -37,6 +38,47 @@ func selectionFailureIsContended(class string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// selectionFailureHeader tells the caller WHY a selection failed, in a small
+// public vocabulary, so it can choose between waiting for its own in-flight
+// turn, backing off, warming up and giving up. The status and body alone
+// cannot: every contended class shares one 429 and one message, and every
+// other class shares one 503. The value never carries the internal class,
+// which names private components.
+const selectionFailureHeader = headers.VSRFailureClass
+
+const (
+	// Another request holds this session: wait for it, do not resend it.
+	selectionFailureSessionBusy = "session_busy"
+	// The router or a decision service is at its concurrency limit: back off.
+	selectionFailureCapacity = "capacity"
+	// A decision dependency is still starting: retry after it warms.
+	selectionFailureNotReady = "not_ready"
+	// The request named no session: retrying the same request cannot succeed.
+	selectionFailureMissingSession = "missing_session"
+	// Anything else: waiting is not known to help.
+	selectionFailureUnavailable = "unavailable"
+)
+
+// publicSelectionFailureClass maps an internal failure class onto the public
+// vocabulary. Every contended class lands on session_busy or capacity, so the
+// header never contradicts the 429 it rides on.
+func publicSelectionFailureClass(class string) string {
+	switch class {
+	case "episode_timeout", "policy_service_session_busy":
+		return selectionFailureSessionBusy
+	case "episode_capacity",
+		arcEncoderFailureClassAdmission,
+		"policy_service_session_capacity":
+		return selectionFailureCapacity
+	case "not_ready":
+		return selectionFailureNotReady
+	case arcFailureMissingEpisodeID:
+		return selectionFailureMissingSession
+	default:
+		return selectionFailureUnavailable
 	}
 }
 
@@ -91,23 +133,26 @@ func (r *OpenAIRouter) authoritativeSelectionFailureResponse(
 		return nil
 	}
 	recordSelectionLifecycleFailure(ctx, "selection", err)
-	if selectionFailureIsCallerError(failure.class) {
+	var response *ext_proc.ProcessingResponse
+	switch {
+	case selectionFailureIsCallerError(failure.class):
 		// The bounded class is already counted where it is constructed, which
 		// is the one place that sees both entrypoints. Counting it again here
 		// would count the ExtProc path twice.
-		return r.missingEpisodeHeaderResponse(ctx)
-	}
-	if !selectionFailureIsContended(failure.class) {
-		return r.createErrorResponse(
+		response = r.missingEpisodeHeaderResponse(ctx)
+	case !selectionFailureIsContended(failure.class):
+		response = r.createErrorResponse(
 			http.StatusServiceUnavailable,
 			selectionUnavailableMessage(ctx),
 		)
+	default:
+		response = r.createErrorResponse(
+			http.StatusTooManyRequests,
+			selectionContendedMessage(ctx),
+		)
+		appendRetryAfterHeader(response, selectionContendedRetryAfterSeconds)
 	}
-	response := r.createErrorResponse(
-		http.StatusTooManyRequests,
-		selectionContendedMessage(ctx),
-	)
-	appendRetryAfterHeader(response, selectionContendedRetryAfterSeconds)
+	appendImmediateHeader(response, selectionFailureHeader, publicSelectionFailureClass(failure.class))
 	return response
 }
 
@@ -122,15 +167,28 @@ func (r *OpenAIRouter) selectionDispatchGateResponse(
 		return nil
 	}
 	recordSelectionLifecycleFailure(ctx, "dispatch", err)
-	return r.createErrorResponse(
+	response := r.createErrorResponse(
 		http.StatusServiceUnavailable,
 		selectionUnavailableMessage(ctx),
 	)
+	// Not session_busy: the gate cannot tell a competing owner from a renewal
+	// that failed on transport or timeout, and a caller told session_busy
+	// would wait for an in-flight turn that may not exist.
+	appendImmediateHeader(response, selectionFailureHeader, selectionFailureUnavailable)
+	return response
 }
 
 func appendRetryAfterHeader(
 	response *ext_proc.ProcessingResponse,
 	seconds int,
+) {
+	appendImmediateHeader(response, "retry-after", strconv.Itoa(seconds))
+}
+
+func appendImmediateHeader(
+	response *ext_proc.ProcessingResponse,
+	key string,
+	value string,
 ) {
 	immediate := response.GetImmediateResponse()
 	if immediate == nil {
@@ -142,8 +200,8 @@ func appendRetryAfterHeader(
 	immediate.Headers.SetHeaders = append(
 		immediate.Headers.SetHeaders,
 		&core.HeaderValueOption{Header: &core.HeaderValue{
-			Key:      "retry-after",
-			RawValue: []byte(strconv.Itoa(seconds)),
+			Key:      key,
+			RawValue: []byte(value),
 		}},
 	)
 }

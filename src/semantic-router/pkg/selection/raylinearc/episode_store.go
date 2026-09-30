@@ -46,6 +46,10 @@ const (
 var (
 	ErrEpisodeLeaseLost = errors.New("ARC episode lease lost")
 	ErrEpisodeCapacity  = errors.New("ARC episode store capacity reached")
+	// ErrEpisodeLeaseHeld is joined with the context error when Prepare ran
+	// out of time AFTER observing another owner's lease. A timeout without it
+	// may be the store itself stalling, which is not contention.
+	ErrEpisodeLeaseHeld = errors.New("ARC episode lease held by another request")
 )
 
 // Lease is an opaque fenced ownership grant. Its owner token and key are kept

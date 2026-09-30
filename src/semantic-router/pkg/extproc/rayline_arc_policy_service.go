@@ -184,7 +184,7 @@ func createRaylineARCPolicySelector(
 	unavailable := func(class string) (
 		selection.Selector, raylinearc.EpisodeStore, func() error, raylineARCSessionCloseFunc, string,
 	) {
-		return newRaylineARCSelector(nil, nil, nil, policy.PackageSHA256), nil, nil, nil, class
+		return newUnrecoverableRaylineARCSelector(policy.PackageSHA256), nil, nil, nil, class
 	}
 	if !raylineARCPolicyDispatchReady(cfg, decision) || !raylineARCPolicyActionsCarriable(cfg, decision) {
 		return unavailable("dispatch_contract")

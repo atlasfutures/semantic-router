@@ -153,6 +153,8 @@ func (store *RedisEpisodeStore) Prepare(
 			owner,
 			workerCount,
 		)
+		// A deadline hit inside the Redis call is left bare: whatever an
+		// earlier poll saw, the store may have stalled on this one.
 		if err != nil || acquired {
 			return lease, state, err
 		}
@@ -160,8 +162,15 @@ func (store *RedisEpisodeStore) Prepare(
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return Lease{}, nil, ctx.Err()
 		case <-timer.C:
+		}
+		// Out of time while waiting behind a lease the last poll found held:
+		// that, and only that, is contention. Checked after the wait whichever
+		// case won, because when the timer and the deadline are both ready the
+		// select may take the timer and the next Redis call would then report
+		// the deadline bare.
+		if ctx.Err() != nil {
+			return Lease{}, nil, errors.Join(ErrEpisodeLeaseHeld, ctx.Err())
 		}
 	}
 }

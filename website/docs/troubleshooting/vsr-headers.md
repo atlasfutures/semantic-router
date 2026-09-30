@@ -44,6 +44,7 @@ Cache-hit responses can emit cache headers, but they do not re-run routing and t
 | `x-vsr-upstream-protocol` | Protocol shape sent to the selected upstream backend. Emitted only on cross-protocol handling, or when `x-vsr-debug` is set. |
 | `x-vsr-protocol-warnings` | Comma-separated protocol translation warnings encoded as `severity;reason;field`. Emitted only when warnings exist. |
 | `x-vsr-replay-id` | Opaque router replay record identifier for correlating a response with replay/Insights data. |
+| `x-vsr-failure-class` | Why an authoritative model selection (Rayline ARC) refused the request, and how to react: `session_busy` (429; another request holds this session, so wait for it and do not resend), `capacity` (429; back off for `retry-after`), `not_ready` (503; a decision dependency is starting, so retry once it is warm), `missing_session` (400; the request named no session, so resending cannot succeed) or `unavailable` (503; anything else). Emitted only on those refusals. |
 
 ## Response warnings
 

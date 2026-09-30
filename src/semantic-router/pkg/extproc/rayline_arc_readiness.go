@@ -55,10 +55,7 @@ func createRaylineARCSelector(
 		raylineARCSessionCloseFunc,
 		string,
 	) {
-		return newRaylineARCSelector(
-			nil,
-			nil,
-			nil,
+		return newUnrecoverableRaylineARCSelector(
 			arcConfig.ArtifactRevision,
 		), nil, nil, nil, class
 	}

@@ -143,6 +143,10 @@ type raylineARCSelector struct {
 	// default recipe, which alone owns the process readiness gauge. It is
 	// set before arming starts and never changes.
 	recipe config.RecipeName
+	// unrecoverable marks a selector built unarmed because construction
+	// failed (conflicting config, a bad artifact, missing credentials). No
+	// recovery loop will arm it, so its refusals must not read as a warm-up.
+	unrecoverable bool
 }
 
 type raylineARCSelectionFailure struct {
@@ -180,6 +184,15 @@ func newRaylineARCSelector(
 			admission: admission,
 		})
 	}
+	return selector
+}
+
+// newUnrecoverableRaylineARCSelector builds the selector a failed construction
+// serves: unarmed for good, refusing every request as unavailable rather than
+// not_ready, which would invite a retry after a warm-up that never comes.
+func newUnrecoverableRaylineARCSelector(artifactRevision string) *raylineARCSelector {
+	selector := newRaylineARCSelector(nil, nil, nil, artifactRevision)
+	selector.unrecoverable = true
 	return selector
 }
 
@@ -401,6 +414,9 @@ func (selector *raylineARCSelector) prepareSelection(
 	error,
 ) {
 	if armed == nil {
+		if selector.unrecoverable {
+			return nil, nil, nil, arcSelectionFailure(arcFailureSelectorUnavailable)
+		}
 		return nil, nil, nil, arcSelectionFailure("not_ready")
 	}
 	if selCtx == nil || selCtx.RaylineARC == nil {

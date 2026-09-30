@@ -86,11 +86,25 @@ func (store *MemoryEpisodeStore) Prepare(
 			store.releaseReference(entry)
 		}
 	}()
+	// A caller already gone takes nothing, and nothing held the episode, so
+	// the bare context error keeps it out of contention.
+	if err := ctx.Err(); err != nil {
+		return Lease{}, nil, err
+	}
+	// Take a free gate before waiting, so running out of time is reported as
+	// contention only when another request's lease actually held the gate.
 	select {
-	case <-ctx.Done():
-		return Lease{}, nil, ctx.Err()
 	case <-entry.gate:
 		acquired = true
+	default:
+		select {
+		case <-ctx.Done():
+			// Only another request's lease holds the gate, so a wait that
+			// runs out of time here is contention.
+			return Lease{}, nil, errors.Join(ErrEpisodeLeaseHeld, ctx.Err())
+		case <-entry.gate:
+			acquired = true
+		}
 	}
 	lease, state, err := store.beginLease(
 		episodeIDHash,

@@ -43,6 +43,10 @@ const arcFailureMissingEpisodeID = "missing_episode_id"
 // while a replayable status sends it to the fallback provider intact.
 const arcFailureNoCapableArm = "no_capable_arm"
 
+// arcFailureSelectorUnavailable is a request refused by a selector that
+// construction left unarmed for good; unlike not_ready, it will not recover.
+const arcFailureSelectorUnavailable = "selector_unavailable"
+
 // requestedFault reads the failure this request asked for. It answers empty
 // unless the cell opted in, so the header is inert everywhere else and no
 // caller can make a serving cell refuse a request. It is read once, here, and
@@ -476,8 +480,13 @@ func boundedARCPrepareFailure(err error) string {
 	switch {
 	case errors.Is(err, context.Canceled):
 		return "episode_canceled"
-	case errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, raylinearc.ErrEpisodeLeaseHeld) &&
+		errors.Is(err, context.DeadlineExceeded):
 		return "episode_timeout"
+	case errors.Is(err, context.DeadlineExceeded):
+		// Out of time without ever seeing another owner: the store stalled.
+		// Not contention, so it must not answer session_busy or 429.
+		return "episode_store_timeout"
 	case errors.Is(err, raylinearc.ErrEpisodeCapacity):
 		return "episode_capacity"
 	default:
