@@ -141,3 +141,32 @@ func TestPrepareTimeoutIsContentionOnlyWhenTheLeaseWasHeld(t *testing.T) {
 		t.Fatalf("stalled timeout published as %q", got)
 	}
 }
+
+// A selector still being probed may arm later, so its refusal is a warm-up. One
+// that construction left unarmed for good never will, and must not tell the
+// caller to wait for a warm-up that cannot complete.
+func TestUnarmedSelectorDistinguishesWarmUpFromPermanentFailure(t *testing.T) {
+	probing := newRaylineARCSelector(nil, nil, nil, "rev")
+	_, _, _, err := probing.prepareSelection(nil, nil)
+	if got := publicSelectionFailureClass(selectionFailureClassOf(t, err)); got != selectionFailureNotReady {
+		t.Fatalf("probing selector published %q", got)
+	}
+	failed := newUnrecoverableRaylineARCSelector("rev")
+	_, _, _, err = failed.prepareSelection(nil, nil)
+	class := selectionFailureClassOf(t, err)
+	if selectionFailureIsContended(class) {
+		t.Fatalf("an unrecoverable selector must not answer 429")
+	}
+	if got := publicSelectionFailureClass(class); got != selectionFailureUnavailable {
+		t.Fatalf("unrecoverable selector published %q", got)
+	}
+}
+
+func selectionFailureClassOf(t *testing.T, err error) string {
+	t.Helper()
+	var failure *raylineARCSelectionFailure
+	if !errors.As(err, &failure) {
+		t.Fatalf("error %v is not a selection failure", err)
+	}
+	return failure.class
+}

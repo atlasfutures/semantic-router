@@ -180,7 +180,7 @@ func createRaylineARCRecipePolicySelector(
 	for index := 1; index < len(decisions); index++ {
 		if !sameRaylineARCSelectionConfig(decisions[0].Algorithm.RaylineARC, decisions[index].Algorithm.RaylineARC) ||
 			!raylineARCDecisionsShareWorkers(decisions) {
-			selector := newRaylineARCSelector(nil, nil, nil, decisions[0].Algorithm.RaylineARC.PolicyService.PackageSHA256)
+			selector := newUnrecoverableRaylineARCSelector(decisions[0].Algorithm.RaylineARC.PolicyService.PackageSHA256)
 			selector.recipe = recipe
 			return selector, nil, nil, nil, "conflicting_config"
 		}
