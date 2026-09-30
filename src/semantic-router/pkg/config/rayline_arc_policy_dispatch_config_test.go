@@ -167,10 +167,6 @@ func TestRaylineARCPolicyDispatchRefusesWhatItCannotSend(t *testing.T) {
 			d.Algorithm.RaylineARC.PolicyService.Bindings[1].ActionID = RaylineARCPolicyActionID(
 				policyTestThinkModel, policyTestString("high"), nil, "a suffix the lever does not send")
 		}, "does not reproduce the action"},
-		{"a steered thinking-off action", func(_ *RouterConfig, d *Decision) {
-			d.Algorithm.RaylineARC.PolicyService.Bindings = append(d.Algorithm.RaylineARC.PolicyService.Bindings,
-				policyTestBinding("arm-think", "up", policyTestThinkModel, policyTestString("none"), nil, policyTestUpSuffix))
-		}, "thinking-off action (effort none) cannot be steered"},
 		{"a thinking-off action on a reasoning worker", func(_ *RouterConfig, d *Decision) {
 			d.Algorithm.RaylineARC.PolicyService.Bindings[0] = policyTestBinding(
 				"arm-think", "none", policyTestThinkModel, policyTestString("none"), nil, "")
@@ -249,11 +245,24 @@ func TestRaylineARCPolicyDispatchRefusesWhatItCannotSend(t *testing.T) {
 // A refusal names the action, so the operator can find it in the package.
 func TestRaylineARCPolicyDispatchRefusalNamesTheAction(t *testing.T) {
 	cfg, decision := policyDispatchFixture()
-	steered := policyTestBinding("arm-think", "up", policyTestThinkModel, policyTestString("none"), nil, policyTestUpSuffix)
-	decision.Algorithm.RaylineARC.PolicyService.Bindings = append(decision.Algorithm.RaylineARC.PolicyService.Bindings, steered)
+	refused := policyTestBinding("arm-think", "none", policyTestThinkModel, policyTestString("none"), nil, "")
+	decision.Algorithm.RaylineARC.PolicyService.Bindings[0] = refused
 	err := validatePolicyDispatch(cfg, decision)
-	if err == nil || !strings.Contains(err.Error(), steered.ActionID) {
-		t.Fatalf("error = %v, want it to name action %s", err, steered.ActionID)
+	if err == nil || !strings.Contains(err.Error(), refused.ActionID) {
+		t.Fatalf("error = %v, want it to name action %s", err, refused.ActionID)
+	}
+}
+
+// A thinking-off action may carry a steer: the lever binds the thinking-off
+// worker, and the action digests its suffix.
+func TestRaylineARCPolicyDispatchAcceptsASteeredThinkingOffAction(t *testing.T) {
+	cfg, decision := policyDispatchFixture()
+	lever := decision.Algorithm.RaylineARC.ThinkingLever
+	lever.Workers["arm-off"] = lever.Workers["arm-think"]
+	decision.Algorithm.RaylineARC.PolicyService.Bindings = append(decision.Algorithm.RaylineARC.PolicyService.Bindings,
+		policyTestBinding("arm-off", "up", policyTestOffModel, policyTestString("none"), nil, policyTestUpSuffix))
+	if err := validatePolicyDispatch(cfg, decision); err != nil {
+		t.Fatalf("a steered thinking-off action refused: %v", err)
 	}
 }
 

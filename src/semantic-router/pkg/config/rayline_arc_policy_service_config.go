@@ -330,10 +330,9 @@ func validateRaylineARCPolicyBindingDispatch(
 	if err != nil {
 		return err
 	}
+	// A thinking-off action may carry a steer: a model with reasoning
+	// disabled still reads a steering instruction as part of its prompt.
 	thinkingOff := binding.Effort != nil && *binding.Effort == raylineARCPolicyNeutralLevel
-	if thinkingOff && suffix != "" {
-		return fmt.Errorf("a thinking-off action (effort none) cannot be steered, and level %q carries a steering suffix", binding.Level)
-	}
 	if thinkingOff && binding.ReasoningMaxTokens != nil {
 		return fmt.Errorf("a thinking-off action (effort none) cannot carry reasoning_max_tokens")
 	}

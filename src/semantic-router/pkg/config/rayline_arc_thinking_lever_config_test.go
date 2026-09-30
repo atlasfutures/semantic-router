@@ -121,6 +121,24 @@ func TestRaylineARCThinkingLeverRoundTripsStrictly(t *testing.T) {
 	}
 }
 
+// A per_turn_effort lever sets a reasoning effort, which a thinking-off
+// worker's off signal would contradict.
+func TestRaylineARCPerTurnEffortLeverNeedsAReasoningWorker(t *testing.T) {
+	off := false
+	decision := validRaylineARCDecision()
+	decision.ModelRefs = []ModelRef{
+		{Model: "arm-off", ModelReasoningControl: ModelReasoningControl{UseReasoning: &off}},
+		{Model: "arm-b"},
+	}
+	lever := validThinkingLeverConfig()
+	lever.Workers = map[string]RaylineARCThinkingBindingConfig{"arm-off": {Lever: "per_turn_effort"}}
+	decision.Algorithm.RaylineARC.ThinkingLever = lever
+	err := validateRaylineARCDecisionContract(&RouterConfig{}, decision)
+	if err == nil || !strings.Contains(err.Error(), "per_turn_effort lever cannot set its effort") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestRaylineARCThinkingLeverBindsOnlySelectableThinkingWorkers(t *testing.T) {
 	on, off := true, false
 	binding := validThinkingLeverConfig().Workers["z-ai/glm-5.3-flash@default"]
@@ -131,7 +149,7 @@ func TestRaylineARCThinkingLeverBindsOnlySelectableThinkingWorkers(t *testing.T)
 	}
 	for worker, wantErr := range map[string]string{
 		"arm-on":   "",
-		"arm-off":  "does not reason",
+		"arm-off":  "", // a steering suffix may bind a thinking-off worker
 		"arm-typo": "not one of the decision's modelRefs",
 	} {
 		lever := validThinkingLeverConfig()

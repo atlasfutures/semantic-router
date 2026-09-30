@@ -90,8 +90,9 @@ name), `effort` and `reasoning_max_tokens` as the catalog states them, and
 `level`, whose steering suffix comes from a `thinking_lever` with source
 `policy`. The loader recomputes pathfinder's `action_id` from those fields and
 refuses a binding that does not reproduce it. Any worker may serve the trained
-model; selection logs `policy_action_model` beside `worker_provider_model`. It also refuses a thinking-off
-action (`effort: none`) that carries a steer. At dispatch the effort or budget
+model; selection logs `policy_action_model` beside `worker_provider_model`. A thinking-off action
+(`effort: none`) may carry a steer: it dispatches with thinking disabled and
+the suffix, and its worker's lever must be a `prompt_steering_suffix`. At dispatch the effort or budget
 replaces the derived reasoning controls: OpenRouter's `reasoning` object on
 Chat, and `output_config.effort` with adaptive thinking, or enabled thinking
 with the budget, on Messages. A decide response that scores an action with no
