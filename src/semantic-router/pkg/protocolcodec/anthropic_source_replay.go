@@ -3,6 +3,8 @@ package protocolcodec
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 
 	"github.com/tidwall/sjson"
 
@@ -61,10 +63,28 @@ func replayEquivalentAnthropicSource(
 	// because Messages names only user, assistant and system. Two bodies that
 	// decode alike can still spell a role differently, and only the canonical
 	// spelling is valid on the wire.
-	if !sameAnthropicWireRoles(canonical, source) {
+	if !sameAnthropicWireRoles(canonical, source) || holdsJSONNull(source) {
 		return canonical
 	}
 	return source
+}
+
+// holdsJSONNull reports whether a body states any member as null. The decoder
+// reads an explicit null as the member's zero value and the encoder omits it,
+// so a null the provider may refuse (stop_sequences, metadata) decodes like an
+// absent member; such a body is encoded, never replayed.
+func holdsJSONNull(body []byte) bool {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			// io.EOF ends a body with no null; anything else is not replayed.
+			return !errors.Is(err, io.EOF)
+		}
+		if token == nil {
+			return true
+		}
+	}
 }
 
 func sameAnthropicWireRoles(canonical, source []byte) bool {

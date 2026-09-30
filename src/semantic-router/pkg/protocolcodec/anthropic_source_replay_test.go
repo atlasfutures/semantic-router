@@ -77,6 +77,19 @@ func TestAnthropicRouteThatChangesMoreThanTheModelIsEncoded(t *testing.T) {
 	}
 }
 
+// An explicit null decodes like an absent member, but the provider may refuse
+// it where it expects an array or object, so such a body is encoded.
+func TestAnthropicRouteNeverReplaysAnExplicitNull(t *testing.T) {
+	for _, member := range []string{"stop_sequences", "metadata"} {
+		t.Run(member, func(t *testing.T) {
+			body := anthropicReplayPrefix + `{"role":"user","content":"List the files."}],"` + member + `":null,"stream":true}`
+			if routed := routeAnthropicBody(t, body, nil); strings.Contains(routed, "null") {
+				t.Fatalf("an explicit null reached the provider: %s", routed)
+			}
+		})
+	}
+}
+
 // The decoder normalises role spellings Messages does not accept on the wire;
 // a client body that relies on that is encoded, never replayed, so the
 // provider only ever sees user, assistant and system.
