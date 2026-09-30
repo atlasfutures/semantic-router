@@ -324,10 +324,10 @@ type Request struct {
 	Unmodeled *UnmodeledFields
 	// CarriedTools holds, whole, the tool declarations of a kind this contract
 	// does not model: a Responses web_search or namespace tool, which Codex
-	// declares on every turn. Like Unmodeled they reach at most the wire format
-	// they came from, and a target that does not get one drops and counts it. They do not
-	// gate which arm serves the turn: without them the turn still works, and
-	// the model only cannot call them.
+	// declares on every turn. Every target drops and counts them for now (see
+	// protocolcodec's carriedResponsesToolTypes). They do not gate which arm
+	// serves the turn: without them the turn still works, and the model only
+	// cannot call them.
 	CarriedTools []UnmodeledBlock
 }
 

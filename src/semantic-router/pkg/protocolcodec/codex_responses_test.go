@@ -64,17 +64,20 @@ func droppedFields(diagnostics llmprotocol.Diagnostics) []string {
 }
 
 // A Codex turn routes to every target format. A Responses arm gets include,
-// prompt_cache_key, reasoning.summary, store:false, the namespace tool, and
-// the resent encrypted reasoning item back as Codex sent them; another format
-// drops and counts each one instead of refusing the turn. web_search is
-// dropped on every target.
+// prompt_cache_key, reasoning.summary, store:false and the resent encrypted
+// reasoning item back as Codex sent them; another format drops and counts
+// each one instead of refusing the turn. The web_search and namespace tools
+// are dropped on every target.
 func TestCodexTurnRoutesToEveryFormat(t *testing.T) {
 	body := codexBody(t, codexRequestFixture(t, "turn2"))
 
 	t.Run("responses", func(t *testing.T) {
 		routed, diagnostics := routeResponsesRequestDiagnostics(t, body, llmprotocol.OpenAIResponsesV1)
-		if dropped := strings.Join(droppedFields(diagnostics), ","); !strings.Contains(dropped, "tools.web_search") {
-			t.Errorf("the web_search drop was not counted; dropped: %s", dropped)
+		dropped := strings.Join(droppedFields(diagnostics), ",")
+		for _, field := range []string{"tools.web_search", "tools.namespace"} {
+			if !strings.Contains(dropped, field) {
+				t.Errorf("the %s drop was not counted; dropped: %s", field, dropped)
+			}
 		}
 		var wire map[string]json.RawMessage
 		if err := json.Unmarshal(routed, &wire); err != nil {
@@ -90,13 +93,13 @@ func TestCodexTurnRoutesToEveryFormat(t *testing.T) {
 				t.Errorf("%s = %s, want %s", field, got, want)
 			}
 		}
-		for _, tool := range []string{`"name":"multi_agent_v1"`, `"name":"exec_command"`} {
-			if !bytes.Contains(routed, []byte(tool)) {
-				t.Errorf("tool %s did not reach the Responses arm: %s", tool, routed)
-			}
+		if !bytes.Contains(routed, []byte(`"name":"exec_command"`)) {
+			t.Errorf("the function tool did not reach the Responses arm: %s", routed)
 		}
-		if bytes.Contains(routed, []byte("web_search")) {
-			t.Errorf("web_search reached the Responses arm: %s", routed)
+		for _, tool := range []string{"web_search", "multi_agent_v1"} {
+			if bytes.Contains(routed, []byte(tool)) {
+				t.Errorf("%s reached the Responses arm: %s", tool, routed)
+			}
 		}
 		if !bytes.Contains(routed, []byte(`"encrypted_content":"gAAAAB-fake-encrypted-content-for-capture"`)) {
 			t.Fatalf("the resent reasoning item lost its encrypted_content: %s", routed)
@@ -209,5 +212,16 @@ func TestAnthropicDropsAChoiceOverDroppedTools(t *testing.T) {
 	}
 	if dropped := strings.Join(droppedFields(diagnostics), ","); !strings.Contains(dropped, "tool_choice") {
 		t.Fatalf("the choice drop was not counted; dropped: %s", dropped)
+	}
+}
+
+// An encrypted reasoning item is still checked against its variant before it
+// is carried: a member of another item kind is refused, not forwarded.
+func TestEncryptedReasoningStillChecksItsVariant(t *testing.T) {
+	body := `{"model":"m","input":[{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"blob","call_id":"call_1"}]}`
+	_, _, _, err := NewBuiltinEngine().DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(body))
+	var protocolError *llmprotocol.ProtocolError
+	if !errors.As(err, &protocolError) || protocolError.Code != "invalid_input_item_variant" {
+		t.Fatalf("a cross-variant member returned %v, want invalid_input_item_variant", err)
 	}
 }

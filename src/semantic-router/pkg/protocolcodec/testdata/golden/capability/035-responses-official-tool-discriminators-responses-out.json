@@ -175,13 +175,14 @@
               "type": "message"
             }
           ],
-          "model": "routed-model",
-          "tools": [
-            {
-              "type": "namespace"
-            }
-          ]
-        }
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "tools.namespace",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {

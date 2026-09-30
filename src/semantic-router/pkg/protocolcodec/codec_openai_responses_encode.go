@@ -113,7 +113,7 @@ func encodeResponsesRequestWire(request llmprotocol.Request) (responsesRequestWi
 		return responsesRequestWire{}, err
 	}
 	wire.Input, _ = json.Marshal(items)
-	wire.Tools = encodeResponsesTools(request.Tools, request.ImageGeneration, request.CarriedTools)
+	wire.Tools = encodeResponsesTools(request.Tools, request.ImageGeneration)
 	// Gated on the tools this target encoded; see encodeChatRequestOptions for
 	// why a server-tool-only turn otherwise states a choice with no tools.
 	if len(wire.Tools) > 0 {
@@ -160,12 +160,8 @@ func encodeResponsesRequestItems(request llmprotocol.Request) ([]json.RawMessage
 	return items, nil
 }
 
-func encodeResponsesTools(
-	input []llmprotocol.Tool,
-	imageGeneration *llmprotocol.ImageGenerationOptions,
-	carried []llmprotocol.UnmodeledBlock,
-) json.RawMessage {
-	if len(input) == 0 && imageGeneration == nil && len(carried) == 0 {
+func encodeResponsesTools(input []llmprotocol.Tool, imageGeneration *llmprotocol.ImageGenerationOptions) json.RawMessage {
+	if len(input) == 0 && imageGeneration == nil {
 		return nil
 	}
 	tools := make([]responsesToolWire, 0, len(input)+1)
@@ -197,24 +193,14 @@ func encodeResponsesTools(
 		}
 		tools = append(tools, tool)
 	}
-	encoded := make([]json.RawMessage, 0, len(tools)+len(carried))
-	for _, tool := range tools {
-		body, _ := json.Marshal(tool)
-		encoded = append(encoded, body)
-	}
-	for _, tool := range carried {
-		if carriedToolForwarded(tool, llmprotocol.OpenAIResponsesV1) {
-			encoded = append(encoded, append(json.RawMessage(nil), tool.Raw...))
-		}
-	}
-	if len(encoded) == 0 {
+	if len(tools) == 0 {
 		// Every declared tool was one this target cannot express. An empty
 		// list says nothing the absent member does not, and leaving it out is
 		// what lets the tool choice be gated on it.
 		return nil
 	}
-	body, _ := json.Marshal(encoded)
-	return body
+	encoded, _ := json.Marshal(tools)
+	return encoded
 }
 
 func encodeResponsesOutputFormat(output llmprotocol.OutputFormat) *responsesTextWire {

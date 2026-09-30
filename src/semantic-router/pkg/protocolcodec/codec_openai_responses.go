@@ -387,11 +387,13 @@ func decodeResponsesTool(body json.RawMessage, request *llmprotocol.Request, pol
 }
 
 // carriedResponsesToolTypes are the tool kinds Codex declares on every turn
-// that the contract does not model. A namespace, which groups sub-agent
-// functions under a name only Responses spells, is carried whole to a
-// Responses arm and dropped elsewhere; web_search is dropped on every target
-// (see carriedToolForwarded). Losing either costs the model a tool, not the
-// turn. A caller-run kind such as custom or
+// that the contract does not model. Each is kept whole on the request, counted
+// toward the tool limit and a required choice, and dropped on every target,
+// the Responses one included: when the model uses one, the provider returns
+// output the router does not yet carry back -- web_search_call items, and a
+// namespace on the function call -- so the turn would fail or the client could
+// not dispatch the call. Losing either costs the model a tool, not the turn.
+// Carrying them is atlasfutures/semantic-router#107. A caller-run kind such as custom or
 // apply_patch stays refused: dropping it would silently take away a tool the
 // client expects the model to call.
 var carriedResponsesToolTypes = map[string]bool{"web_search": true, "namespace": true}
