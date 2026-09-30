@@ -218,6 +218,19 @@ func (binding Binding) validateNeutralText() error {
 	return nil
 }
 
+// markerInForce reports whether the item in force is a neutral marker. The
+// ledger records the level each item was written for, so a marker is known by
+// that level -- the neutral one, written as text although the level writes
+// nothing -- and stays one when a later binding changes neutral_text.
+func (binding Binding) markerInForce(ledger Ledger, state LeverState) bool {
+	if binding.Lever != LeverSteeringSuffix || binding.Neutral == "" || state.Payload < 0 ||
+		state.Level != binding.Neutral || !ledger.Payloads[state.Payload].writes() {
+		return false
+	}
+	neutral, _ := binding.Level(binding.Neutral)
+	return neutral.Suffix == ""
+}
+
 // neutralMarker is the item a return to neutral writes, when the binding has
 // one.
 func (binding Binding) neutralMarker() (Payload, bool) {
@@ -577,8 +590,7 @@ func PlanTurn(turn Turn) (plan Plan, err error) {
 // level's own control, as the registry resolves it, not the marker's bytes.
 func (plan *Plan) describe(binding Binding) {
 	state, _ := plan.Next.state(binding.Lever)
-	marker, hasMarker := binding.neutralMarker()
-	markerInForce := hasMarker && state.Payload >= 0 && plan.Next.Payloads[state.Payload] == marker
+	markerInForce := binding.markerInForce(plan.Next, state)
 	switch {
 	case state.Payload >= 0 && !markerInForce:
 		plan.LevelInForce = state.Level
@@ -717,8 +729,12 @@ func shouldEmit(
 	}
 	if marker, ok := turn.Binding.neutralMarker(); ok && requested.Name == turn.Binding.Neutral {
 		// A return to neutral over an instruction in force is written as the
-		// neutral marker; over the marker itself it is a repeat. Another
-		// level that writes nothing is not neutral, and stays inexpressible.
+		// neutral marker; over a marker -- whatever text a binding it was
+		// written under gave it -- it is a repeat. Another level that writes
+		// nothing is not neutral, and stays inexpressible.
+		if turn.Binding.markerInForce(ledger, state) {
+			return payload, false, ""
+		}
 		payload = marker
 	}
 	if ledger.Payloads[state.Payload] == payload {

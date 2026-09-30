@@ -555,6 +555,33 @@ func TestOnlyTheNeutralLevelWritesTheMarker(t *testing.T) {
 	}
 }
 
+// A marker is known by the level it was written for, so it stays the neutral
+// marker after a reload that changes neutral_text: a retry and a repeated
+// neutral turn write nothing and are attributed the neutral level.
+func TestNeutralMarkerSurvivesANeutralTextChange(t *testing.T) {
+	e := &episode{t: t, binding: onChangeV1Binding()}
+	messages := []llmprotocol.Message{text(llmprotocol.RoleUser, "go")}
+	plan, _ := e.serve(messages, "up")
+	e.commit(plan)
+	messages = append(messages, text(llmprotocol.RoleAssistant, "ok"), text(llmprotocol.RoleUser, "more"))
+	plan, _ = e.serve(messages, "none")
+	e.commit(plan)
+	e.binding.NeutralText = "Return to your usual depth of reasoning."
+	neutral, _ := e.binding.Level("none")
+	check := func(what string, plan Plan) {
+		t.Helper()
+		if plan.Emitted || plan.InstructionState != InstructionNeutralMarker || plan.LevelInForce != "none" ||
+			plan.ControlInForce != e.binding.ControlSHA256(neutral) {
+			t.Fatalf("%s after a neutral_text change = %+v", what, plan)
+		}
+	}
+	plan, _ = e.serve(messages, "none")
+	check("retry", plan)
+	messages = append(messages, text(llmprotocol.RoleAssistant, "ok"), text(llmprotocol.RoleUser, "again"))
+	plan, _ = e.serve(messages, "none")
+	check("repeated neutral", plan)
+}
+
 func TestOnChangeV1BindingValidation(t *testing.T) {
 	withText := func(mutate func(*Binding)) Binding {
 		binding := onChangeV1Binding()
