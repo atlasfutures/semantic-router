@@ -293,7 +293,7 @@ const raylineARCPolicyNeutralLevel = "none"
 // validateRaylineARCPolicyDispatch refuses, at load, every binding the router
 // could not dispatch as the package's action: a native effort or budget the
 // worker cannot carry, a level its lever cannot express, or a thinking-off
-// action with a steer. Then it recomputes the action_id from what would
+// action with a budget. A thinking-off action may carry a steer. Then it recomputes the action_id from what would
 // travel, so a binding that loads is exactly its action. Which worker serves
 // the trained model is configuration, and is not checked here.
 func validateRaylineARCPolicyDispatch(cfg *RouterConfig, decision Decision) error {
@@ -330,10 +330,9 @@ func validateRaylineARCPolicyBindingDispatch(
 	if err != nil {
 		return err
 	}
+	// A thinking-off action may carry a steer: a model with reasoning
+	// disabled still reads a steering instruction as part of its prompt.
 	thinkingOff := binding.Effort != nil && *binding.Effort == raylineARCPolicyNeutralLevel
-	if thinkingOff && suffix != "" {
-		return fmt.Errorf("a thinking-off action (effort none) cannot be steered, and level %q carries a steering suffix", binding.Level)
-	}
 	if thinkingOff && binding.ReasoningMaxTokens != nil {
 		return fmt.Errorf("a thinking-off action (effort none) cannot carry reasoning_max_tokens")
 	}

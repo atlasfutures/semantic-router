@@ -31,10 +31,12 @@ func TestPolicyActionReachesTheProviderBody(t *testing.T) {
 	budget := int64(4096)
 	actions := map[string]config.RaylineARCPolicyBinding{
 		// Actions name trained models; the cards serve provider model ids.
-		"think-up":     policyAction("think", "up", "think-trained", policyTestEffort("high"), nil, policyTestUp),
-		"think-budget": policyAction("think", "none", "think-trained", nil, &budget, ""),
-		"claude":       policyAction("claude", "none", "claude-opus-5", policyTestEffort("medium"), nil, ""),
-		"off":          policyAction("off", "none", "off-trained", policyTestEffort("none"), nil, ""),
+		"think-up":      policyAction("think", "up", "think-trained", policyTestEffort("high"), nil, policyTestUp),
+		"think-budget":  policyAction("think", "none", "think-trained", nil, &budget, ""),
+		"claude":        policyAction("claude", "none", "claude-opus-5", policyTestEffort("medium"), nil, ""),
+		"off":           policyAction("off", "none", "off-trained", policyTestEffort("none"), nil, ""),
+		"off-up":        policyAction("off", "up", "off-trained", policyTestEffort("none"), nil, policyTestUp),
+		"claude-off-up": policyAction("claude-off", "up", "claude-opus-5", policyTestEffort("none"), nil, policyTestUp),
 	}
 	catalog := make([]string, 0, len(actions))
 	for _, action := range actions {
@@ -81,6 +83,28 @@ func TestPolicyActionReachesTheProviderBody(t *testing.T) {
 		assertJSONField(t, body, "model", `"vendor/off"`)
 		if _, present := body["reasoning"]; present {
 			t.Fatalf("a thinking-off action added reasoning controls: %s", body["reasoning"])
+		}
+	})
+	t.Run("a steered thinking-off action on Chat", func(t *testing.T) {
+		body := chat(t, "off-up")
+		assertJSONField(t, body, "model", `"vendor/off"`)
+		if _, present := body["reasoning"]; present {
+			t.Fatalf("a thinking-off action added reasoning controls: %s", body["reasoning"])
+		}
+		messages := chatMessages(t, body)
+		if last := string(messages[len(messages)-1]); !strings.Contains(last, policyTestUp) {
+			t.Fatalf("the tail user message does not carry the steer: %s", last)
+		}
+	})
+	t.Run("a steered thinking-off action on Messages", func(t *testing.T) {
+		body := chat(t, "claude-off-up")
+		assertJSONField(t, body, "model", `"anthropic/claude-opus-5"`)
+		assertJSONField(t, body, "thinking", `{"type":"disabled"}`)
+		if _, present := body["output_config"]; present {
+			t.Fatalf("a thinking-off action carried an effort: %s", body["output_config"])
+		}
+		if !strings.Contains(string(body["messages"]), policyTestUp) {
+			t.Fatalf("the messages do not carry the steer: %s", body["messages"])
 		}
 	})
 	t.Run("an effort action on Messages", func(t *testing.T) {
@@ -190,7 +214,7 @@ func writePolicyDispatchConfig(t *testing.T, policyURL string, actions map[strin
 	upBinding := thinkinglever.Binding{Lever: thinkinglever.LeverSteeringSuffix}
 	var bindings strings.Builder
 	for _, action := range actions {
-		fmt.Fprintf(&bindings, "              - action_id: %s\n                worker: %s\n                level: %s\n                model: %s\n",
+		fmt.Fprintf(&bindings, "              - action_id: %s\n                worker: %q\n                level: %s\n                model: %s\n",
 			action.ActionID, action.Worker, action.Level, action.Model)
 		if action.Effort != nil {
 			fmt.Fprintf(&bindings, "                effort: %s\n", *action.Effort)
@@ -235,7 +259,7 @@ providers:
           base_url: https://openrouter.ai/api/v1
           provider: openrouter
           api_key_env: POLICY_E2E_PROVIDER_KEY
-    - name: off
+    - name: "off"
       provider_model_id: vendor/off
       api_format: openai
       pricing:
@@ -263,14 +287,30 @@ providers:
           base_url: https://api.anthropic.com
           provider: anthropic
           api_key_env: POLICY_E2E_PROVIDER_KEY
+    - name: claude-off
+      provider_model_id: anthropic/claude-opus-5
+      api_format: anthropic
+      pricing:
+        currency: USD
+        prompt_per_1m: 1
+        cached_input_per_1m: 0.1
+        cache_write_per_1m: 1.25
+        completion_per_1m: 5
+      backend_refs:
+        - name: anthropic-claude-off
+          base_url: https://api.anthropic.com
+          provider: anthropic
+          api_key_env: POLICY_E2E_PROVIDER_KEY
 
 routing:
   modelCards:
     - name: think
       modality: text
-    - name: off
+    - name: "off"
       modality: text
     - name: claude
+      modality: text
+    - name: claude-off
       modality: text
   decisions:
     - name: rayline-arc-policy-e2e
@@ -282,10 +322,12 @@ routing:
       modelRefs:
         - model: think
           use_reasoning: true
-        - model: off
+        - model: "off"
           use_reasoning: false
         - model: claude
           use_reasoning: true
+        - model: claude-off
+          use_reasoning: false
       adaptations:
         mode: bypass
       plugins:
@@ -315,6 +357,36 @@ routing:
                 placements:
                   - append_tail_user_text
                   - insert_user_after_tool_run
+                levels:
+                  - level: none
+                    rank: 0
+                    control_sha256: {{NONE_SHA}}
+                  - level: up
+                    rank: 1
+                    suffix: "{{UP_SUFFIX}}"
+                    control_sha256: {{UP_SHA}}
+              "off":
+                admission: certified
+                lever: prompt_steering_suffix
+                emit: on_change
+                neutral_level: none
+                placements:
+                  - append_tail_user_text
+                levels:
+                  - level: none
+                    rank: 0
+                    control_sha256: {{NONE_SHA}}
+                  - level: up
+                    rank: 1
+                    suffix: "{{UP_SUFFIX}}"
+                    control_sha256: {{UP_SHA}}
+              claude-off:
+                admission: certified
+                lever: prompt_steering_suffix
+                emit: on_change
+                neutral_level: none
+                placements:
+                  - append_tail_user_text
                 levels:
                   - level: none
                     rank: 0
@@ -379,12 +451,13 @@ global:
 func TestPolicyDecidesAResponsesRequest(t *testing.T) {
 	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
 	actions := map[string]config.RaylineARCPolicyBinding{
-		"think":  policyAction("think", "up", "think-trained", policyTestEffort("high"), nil, policyTestUp),
-		"off":    policyAction("off", "none", "off-trained", policyTestEffort("none"), nil, ""),
-		"claude": policyAction("claude", "none", "claude-opus-5", policyTestEffort("medium"), nil, ""),
+		"think":      policyAction("think", "up", "think-trained", policyTestEffort("high"), nil, policyTestUp),
+		"off":        policyAction("off", "none", "off-trained", policyTestEffort("none"), nil, ""),
+		"claude":     policyAction("claude", "none", "claude-opus-5", policyTestEffort("medium"), nil, ""),
+		"claude-off": policyAction("claude-off", "none", "claude-opus-5", policyTestEffort("none"), nil, ""),
 	}
 	fake := newFakePolicyService(t, policyTestAlias, policyTestPackage,
-		[]string{actions["think"].ActionID, actions["off"].ActionID, actions["claude"].ActionID})
+		[]string{actions["think"].ActionID, actions["off"].ActionID, actions["claude"].ActionID, actions["claude-off"].ActionID})
 	router, err := NewOpenAIRouter(writePolicyDispatchConfig(t, fake.URL(), actions))
 	if err != nil {
 		t.Fatalf("build router: %v", err)
