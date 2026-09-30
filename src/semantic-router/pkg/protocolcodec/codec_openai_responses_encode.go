@@ -8,7 +8,9 @@ import (
 )
 
 func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope llmprotocol.Envelope, policy llmprotocol.Policy) ([]byte, llmprotocol.Diagnostics, error) {
-	if envelope.CanReplay(llmprotocol.OpenAIResponsesV1, request.Generation, policy, false) {
+	// Carried tools are dropped on every target, so the client bytes that
+	// still declare them are never replayed.
+	if len(request.CarriedTools) == 0 && envelope.CanReplay(llmprotocol.OpenAIResponsesV1, request.Generation, policy, false) {
 		return append([]byte(nil), envelope.Request...), nil, nil
 	}
 	if err := validateResponsesEncodableRequest(request); err != nil {
@@ -33,17 +35,40 @@ func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope 
 		appendContentExtensionDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
 		appendCarriedBlockDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
 	}
-	if wire.Reasoning == nil {
+	if wire.Reasoning == nil && clientStatedReasoningEffort(envelope) {
 		request.Unmodeled = withoutCarriedReasoning(request.Unmodeled, &diagnostics, policy)
 	}
 	body, err = mergeUnmodeledFields(body, request, llmprotocol.OpenAIResponsesV1, &diagnostics, policy)
 	return body, diagnostics, err
 }
 
+// clientStatedReasoningEffort reports whether the client's own reasoning
+// object named an effort. When it did and the encoded request sends none, the
+// router took reasoning away for this arm, and a carried summary must not put
+// it back. When it did not -- reasoning: {summary: "auto"} alone -- the client
+// asked for the provider's default effort with a summary, and the carried
+// summary rebuilds exactly that. Without the client bytes, the answer is yes,
+// which drops the summary rather than risk turning reasoning on.
+func clientStatedReasoningEffort(envelope llmprotocol.Envelope) bool {
+	if len(envelope.Request) == 0 {
+		return true
+	}
+	var client struct {
+		Reasoning *struct {
+			Effort json.RawMessage `json:"effort"`
+		} `json:"reasoning"`
+	}
+	if json.Unmarshal(envelope.Request, &client) != nil || client.Reasoning == nil {
+		return true
+	}
+	return hasJSONValue(client.Reasoning.Effort)
+}
+
 // withoutCarriedReasoning removes a carried reasoning member, such as
-// reasoning.summary, when the encoded request sends no reasoning object. The
-// merge would otherwise create one, and a reasoning object on an arm dispatched
-// without reasoning turns it back on at the provider's default effort.
+// reasoning.summary, when the encoded request sends no reasoning object and
+// the router took the client's reasoning away. The merge would otherwise
+// create one, and a reasoning object on an arm dispatched without reasoning
+// turns it back on at the provider's default effort.
 func withoutCarriedReasoning(
 	carrier *llmprotocol.UnmodeledFields,
 	diagnostics *llmprotocol.Diagnostics,

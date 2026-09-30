@@ -225,3 +225,42 @@ func TestEncryptedReasoningStillChecksItsVariant(t *testing.T) {
 		t.Fatalf("a cross-variant member returned %v, want invalid_input_item_variant", err)
 	}
 }
+
+// A summary-only reasoning object is the client's own request for the default
+// effort with a summary; routing it keeps the summary.
+func TestSummaryOnlyReasoningKeepsItsSummary(t *testing.T) {
+	engine := NewBuiltinEngine()
+	request, envelope, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1,
+		[]byte(`{"model":"m","input":"hello","reasoning":{"summary":"auto"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Model = "selected-arm"
+	request.Generation++
+	result, err := engine.EncodeRequest(llmprotocol.OpenAIResponsesV1, request, envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(result.Body, []byte(`"reasoning":{"summary":"auto"}`)) {
+		t.Fatalf("the summary-only reasoning object was lost: %s", result.Body)
+	}
+}
+
+// A request that routes unchanged is normally replayed byte for byte, but not
+// when it declares a carried tool: the client bytes would hand the provider
+// the web_search and namespace tools every target drops.
+func TestCarriedToolsDisableReplay(t *testing.T) {
+	engine := NewBuiltinEngine()
+	body := `{"model":"m","input":"hello","tools":[{"type":"web_search"},{"type":"namespace","name":"multi_agent_v1","tools":[]}]}`
+	request, envelope, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.EncodeRequest(llmprotocol.OpenAIResponsesV1, request, envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(result.Body, []byte("web_search")) || bytes.Contains(result.Body, []byte("multi_agent_v1")) {
+		t.Fatalf("an unchanged request replayed its carried tools: %s", result.Body)
+	}
+}

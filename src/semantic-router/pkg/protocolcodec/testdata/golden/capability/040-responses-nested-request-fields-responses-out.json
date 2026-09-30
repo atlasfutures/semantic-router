@@ -38,14 +38,11 @@
               "type": "message"
             }
           ],
-          "model": "routed-model"
-        },
-        "diagnostics": [
-          {
-            "field": "reasoning.summary",
-            "action": "dropped"
+          "model": "routed-model",
+          "reasoning": {
+            "summary": "concise"
           }
-        ]
+        }
       }
     },
     {
