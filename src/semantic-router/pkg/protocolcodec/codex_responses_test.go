@@ -366,3 +366,30 @@ func TestNamespacedCallsRoundTrip(t *testing.T) {
 		t.Fatalf("an undeclared name was split: %+v", undeclared)
 	}
 }
+
+// A namespace's name and description are bounded like the tool's own: the
+// qualified name is what a format without namespaces is sent.
+func TestNamespaceMetadataCountsTowardToolLimits(t *testing.T) {
+	policy := llmprotocol.DefaultPolicy()
+	long := strings.Repeat("n", policy.Limits.ToolNameBytes)
+	body := `{"model":"m","input":"hi","tools":[{"type":"namespace","name":"` + long + `","tools":[` +
+		`{"type":"function","name":"f","parameters":{"type":"object"}}]}]}`
+	_, _, _, err := NewBuiltinEngine().DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(body))
+	var protocolError *llmprotocol.ProtocolError
+	if !errors.As(err, &protocolError) || protocolError.Code != "tool_text_limit" {
+		t.Fatalf("an oversized qualified name returned %v, want tool_text_limit", err)
+	}
+}
+
+// A buffered namespaced call replayed as a Responses stream names its
+// namespace from the first event on.
+func TestSyntheticStreamStartsANamespacedCallWithItsNamespace(t *testing.T) {
+	events, err := neutralToolCallEvents(llmprotocol.Event{Type: llmprotocol.EventOutputItemStarted}, llmprotocol.Event{},
+		llmprotocol.Content{Kind: llmprotocol.ContentToolCall, ToolCall: &llmprotocol.ToolCall{ID: "c", Name: "spawn_agent", Namespace: "multi_agent_v1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events[0].ToolCall == nil || events[0].ToolCall.Namespace != "multi_agent_v1" {
+		t.Fatalf("the start event lost the namespace: %+v", events[0].ToolCall)
+	}
+}

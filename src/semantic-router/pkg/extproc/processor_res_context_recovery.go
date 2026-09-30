@@ -212,6 +212,9 @@ func (r *OpenAIRouter) executeContextRecoveryFollowup(
 	if err != nil {
 		return nil, fmt.Errorf("decode context recovery followup: %w", err)
 	}
+	// The follow-up is a Chat provider response, so a namespaced call in it
+	// comes back under its qualified name, like the first response did.
+	restoreResponseToolNamespaces(&decoded.Response, requestToolNamespaces(requestCtx))
 	decoded.Response.Usage, err = mergeContextRecoveryUsage(initial.Usage, decoded.Response.Usage)
 	if err != nil {
 		return nil, err

@@ -102,3 +102,13 @@ func TestToolPolicyMatchesNamespacedTools(t *testing.T) {
 		t.Fatalf("allowing the function name kept %+v", kept)
 	}
 }
+
+// Two namespaces' same-named functions embed differently: the text names the
+// qualified identity and the namespace's purpose.
+func TestToolEmbeddingTextNamesTheNamespace(t *testing.T) {
+	files := toolEmbeddingText(llmprotocol.Tool{Name: "close", Namespace: "files", NamespaceDescription: "File handles."})
+	agents := toolEmbeddingText(llmprotocol.Tool{Name: "close", Namespace: "agents", NamespaceDescription: "Sub-agents."})
+	if files == agents || files != "files__close File handles." {
+		t.Fatalf("embedding texts = %q and %q", files, agents)
+	}
+}
