@@ -59,4 +59,6 @@ jobs:
         env:
           CGO_ENABLED: 1
           LD_LIBRARY_PATH: ${{ github.workspace }}/candle-binding/target/release:${{ github.workspace }}/ml-binding/target/release:${{ github.workspace }}/nlp-binding/target/release
-        run: go test -count=1 ./pkg/...
+        # pkg/cache is left out: its Milvus, hybrid and Valkey tests need
+        # those servers, which Test And Build starts and this job does not.
+        run: go test -count=1 $(go list ./pkg/... | grep -v '/pkg/cache$')
