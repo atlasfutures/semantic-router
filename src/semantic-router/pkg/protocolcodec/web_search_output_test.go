@@ -144,3 +144,42 @@ func TestWebSearchDeclarationNeedsAdmission(t *testing.T) {
 		}
 	}
 }
+
+// A buffered searched answer, as the response cache holds it, replays as a
+// Responses stream with its web_search_call item.
+func TestCachedSearchedAnswerReplaysAsAStream(t *testing.T) {
+	engine := NewBuiltinEngine()
+	response, _, _, err := engine.DecodeResponse(llmprotocol.OpenAIResponsesV1, []byte(webSearchResponse))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, _, err := engine.EncodeResponseStream(llmprotocol.OpenAIResponsesV1, response, llmprotocol.StreamContext{
+		Context: context.Background(), PublicModel: "public-model",
+	})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if !bytes.Contains(wire, []byte(`"type":"web_search_call"`)) || !bytes.Contains(wire, []byte("Go 1.30 shipped in August.")) {
+		t.Fatalf("the replayed stream lost the search item or the answer:\n%s", wire)
+	}
+}
+
+// A store:false client resends the search item on its next turn: a Responses
+// arm gets it back whole, and any other arm drops it with the conversation
+// intact.
+func TestResentWebSearchCallRoutes(t *testing.T) {
+	body := `{"model":"m","input":[{"type":"message","role":"user","content":"q"},` +
+		`{"type":"web_search_call","id":"ws_1","status":"completed","action":{"type":"search","query":"go release history"}},` +
+		`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Go releases twice a year.","annotations":[]}]},` +
+		`{"type":"message","role":"user","content":"and the next one?"}]}`
+	responses := routeResponsesRequest(t, body, llmprotocol.OpenAIResponsesV1)
+	if !bytes.Contains(responses, []byte(`"query":"go release history"`)) {
+		t.Fatalf("the resent search item did not reach a Responses arm: %s", responses)
+	}
+	for _, target := range []llmprotocol.WireFormat{llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1} {
+		routed := routeResponsesRequest(t, body, target)
+		if bytes.Contains(routed, []byte("web_search_call")) || !bytes.Contains(routed, []byte("and the next one?")) {
+			t.Fatalf("%s: %s", target, routed)
+		}
+	}
+}

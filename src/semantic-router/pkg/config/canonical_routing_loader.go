@@ -66,6 +66,9 @@ func ParseRoutingYAMLBytes(data []byte) (*RouterConfig, error) {
 	if err := validateModalityContracts(&cfg); err != nil {
 		return nil, err
 	}
+	if err := validateHostedToolContracts(&cfg); err != nil {
+		return nil, err
+	}
 
 	return &cfg, nil
 }

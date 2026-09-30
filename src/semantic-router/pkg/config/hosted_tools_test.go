@@ -48,3 +48,16 @@ routing:
 		t.Fatalf("a misspelt hosted tool returned %v", err)
 	}
 }
+
+// A routing-only fragment, as the DSL compiles, refuses the same misspelling.
+func TestRoutingFragmentRefusesAnUnknownHostedTool(t *testing.T) {
+	_, err := ParseRoutingYAMLBytes([]byte(`
+routing:
+  modelCards:
+    - name: searcher
+      hosted_tools: [web_serch]
+`))
+	if err == nil || !strings.Contains(err.Error(), "hosted_tools") {
+		t.Fatalf("a misspelt hosted tool in a routing fragment returned %v", err)
+	}
+}
