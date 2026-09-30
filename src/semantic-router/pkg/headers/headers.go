@@ -303,6 +303,15 @@ const (
 	// explicit APIFormat was resolved.
 	VSRUpstreamProtocol = "x-vsr-upstream-protocol"
 
+	// VSRFailureClass says why an authoritative model selection (Rayline ARC)
+	// refused a request, in a public vocabulary that tells the caller how to
+	// react: "session_busy" (another request holds this session; wait for it,
+	// do not resend), "capacity" (back off), "not_ready" (a decision
+	// dependency is starting; retry once warm), "missing_session" (the request
+	// named no session; resending cannot succeed) or "unavailable" (anything
+	// else). Emitted only on those refusals, never with an internal class.
+	VSRFailureClass = "x-vsr-failure-class"
+
 	// VSRProtocolWarnings carries a structured, comma-separated list
 	// of translation observations emitted by the inbound parser during
 	// a lossy translation. Each entry is "severity;reason;field".

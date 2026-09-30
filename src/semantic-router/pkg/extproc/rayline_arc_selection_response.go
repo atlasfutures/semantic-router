@@ -8,6 +8,7 @@ import (
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
@@ -46,7 +47,7 @@ func selectionFailureIsContended(class string) bool {
 // cannot: every contended class shares one 429 and one message, and every
 // other class shares one 503. The value never carries the internal class,
 // which names private components.
-const selectionFailureHeader = "x-vsr-failure-class"
+const selectionFailureHeader = headers.VSRFailureClass
 
 const (
 	// Another request holds this session: wait for it, do not resend it.
