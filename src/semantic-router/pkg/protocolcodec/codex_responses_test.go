@@ -305,3 +305,23 @@ func TestMalformedCarriedMembersAreRefused(t *testing.T) {
 		})
 	}
 }
+
+// A resent encrypted reasoning item is dropped on Messages without leaving an
+// empty message behind: Anthropic refuses a message with no content.
+func TestDroppedCarriedItemLeavesNoEmptyAnthropicMessage(t *testing.T) {
+	body := codexBody(t, codexRequestFixture(t, "turn2"))
+	routed, _ := routeResponsesRequestDiagnostics(t, body, llmprotocol.AnthropicMessagesV1)
+	var wire struct {
+		Messages []struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(routed, &wire); err != nil {
+		t.Fatal(err)
+	}
+	for index, message := range wire.Messages {
+		if string(message.Content) == "[]" {
+			t.Fatalf("message %d reached Messages with empty content: %s", index, routed)
+		}
+	}
+}

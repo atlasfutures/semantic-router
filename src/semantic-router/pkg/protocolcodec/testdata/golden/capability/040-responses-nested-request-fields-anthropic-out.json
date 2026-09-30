@@ -235,16 +235,10 @@
     {
       "name": "encrypted_reasoning_item",
       "outcome": {
-        "status": "ok",
-        "body": {
-          "max_tokens": 4096,
-          "messages": [
-            {
-              "content": [],
-              "role": "user"
-            }
-          ],
-          "model": "routed-model"
+        "status": "error",
+        "error": {
+          "category": "unsupported_feature",
+          "code": "anthropic_messages_required"
         },
         "diagnostics": [
           {
