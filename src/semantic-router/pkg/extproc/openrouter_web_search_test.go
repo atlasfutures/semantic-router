@@ -82,10 +82,18 @@ func TestOpenRouterWebSearchDispatchFlow(t *testing.T) {
 	}
 }
 
-// A caller that turned every tool off with tool_choice: none gets no search.
-func TestOpenRouterWebSearchHonoursToolChoiceNone(t *testing.T) {
+// A caller that turned every tool off, or forced one function, gets no search.
+func TestOpenRouterWebSearchHonoursToolChoice(t *testing.T) {
+	for name, choice := range map[string]string{"none": `"none"`, "named function": `{"type":"function","name":"lookup"}`} {
+		t.Run(name, func(t *testing.T) { assertNoWebPluginFor(t, choice) })
+	}
+}
+
+func assertNoWebPluginFor(t *testing.T, choice string) {
+	t.Helper()
 	request, envelope, _, err := protocolcodec.NewBuiltinEngine().DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1,
-		[]byte(`{"model":"m","input":"q","tool_choice":"none","tools":[{"type":"web_search"}]}`))
+		[]byte(`{"model":"m","input":"q","tool_choice":`+choice+`,"tools":[{"type":"web_search"},`+
+			`{"type":"function","name":"lookup","parameters":{"type":"object"}}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,6 +115,6 @@ func TestOpenRouterWebSearchHonoursToolChoiceNone(t *testing.T) {
 		t.Fatal(err)
 	}
 	if bytes.Contains(body, []byte("plugins")) {
-		t.Fatalf("a search was sent despite tool_choice: none: %s", body)
+		t.Fatalf("a search was sent despite tool_choice %s: %s", choice, body)
 	}
 }

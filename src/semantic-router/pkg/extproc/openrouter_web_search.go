@@ -25,10 +25,7 @@ func applyOpenRouterWebSearch(body []byte, dispatch *providerDispatch, ctx *Requ
 	if dispatch == nil || ctx == nil || ctx.SemanticRequest == nil ||
 		dispatch.targetFormat != llmprotocol.OpenAIChatV1 || !providerIsOpenRouter(dispatch.profile) ||
 		!slices.Contains(ctx.DispatchHostedTools, "web_search") || !declaresUnrestrictedWebSearch(ctx.SemanticRequest) ||
-		ctx.SemanticRequest.ToolChoice.Mode == llmprotocol.ToolChoiceNone {
-		// tool_choice: none turns every tool off, the search included. The
-		// plugin runs before the model answers and cannot be told otherwise,
-		// so it is not sent.
+		!toolChoicePermitsSearch(ctx.SemanticRequest.ToolChoice) {
 		return body, nil
 	}
 	var request map[string]json.RawMessage
@@ -68,6 +65,19 @@ func reconcileWebSearchDiagnostic(ctx *RequestContext) {
 			ctx.ProtocolDiagnostics[index].Action = llmprotocol.DiagnosticApproximated
 			ctx.ProtocolDiagnostics[index].Reason = "sent as OpenRouter's web plugin"
 		}
+	}
+}
+
+// toolChoicePermitsSearch reports whether the caller's tool choice leaves the
+// model free to search: unset, auto, or required. none turns every tool off,
+// and a named choice forces one function; the plugin runs before the model
+// answers and cannot be told either, so it is not sent for them.
+func toolChoicePermitsSearch(choice llmprotocol.ToolChoice) bool {
+	switch choice.Mode {
+	case "", llmprotocol.ToolChoiceAuto, llmprotocol.ToolChoiceRequired:
+		return true
+	default:
+		return false
 	}
 }
 
