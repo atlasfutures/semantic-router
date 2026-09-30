@@ -447,3 +447,23 @@ func TestEpisodeStateWireCarriesPolicyStateUnderV3(t *testing.T) {
 		t.Fatal("a v2 record carrying policy state was accepted")
 	}
 }
+
+// A cancelled caller must not take a free episode: nothing is served, and a
+// lease it held would block the next request for the same session.
+func TestMemoryEpisodeStoreCancelledCallerTakesNoFreeGate(t *testing.T) {
+	store := newTestMemoryEpisodeStore(t, 1, time.Now)
+	episode := HashEpisodeID("free")
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := store.Prepare(cancelled, episode, 2); !errors.Is(err, context.Canceled) ||
+		errors.Is(err, ErrEpisodeLeaseHeld) {
+		t.Fatalf("cancelled prepare error = %v", err)
+	}
+	lease, _, err := store.Prepare(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatalf("the episode stayed held after a cancelled prepare: %v", err)
+	}
+	if err := store.Abort(context.Background(), lease); err != nil {
+		t.Fatal(err)
+	}
+}
