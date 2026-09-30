@@ -90,6 +90,17 @@ func TestAnthropicRouteNeverReplaysAnExplicitNull(t *testing.T) {
 	}
 }
 
+// A member the decoder synthesizes, such as a custom tool's missing
+// input_schema, is required on the wire, so a body that omits it is encoded
+// with it rather than replayed without. (A tool_use without input is refused
+// at ingress, so it never reaches dispatch.)
+func TestAnthropicRouteNeverReplaysAMemberTheDecoderSynthesized(t *testing.T) {
+	body := anthropicReplayPrefix + `{"role":"user","content":"Look it up."}],"tools":[{"name":"lookup"}],"stream":true}`
+	if routed := routeAnthropicBody(t, body, nil); !strings.Contains(routed, `"input_schema":{"type":"object"}`) {
+		t.Fatalf("the synthesized input_schema did not reach the provider: %s", routed)
+	}
+}
+
 // The decoder normalises role spellings Messages does not accept on the wire;
 // a client body that relies on that is encoded, never replayed, so the
 // provider only ever sees user, assistant and system.

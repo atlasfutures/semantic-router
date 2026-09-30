@@ -2,12 +2,7 @@
   "max_tokens": 32,
   "messages": [
     {
-      "content": [
-        {
-          "text": "look it up",
-          "type": "text"
-        }
-      ],
+      "content": "look it up",
       "role": "user"
     },
     {
@@ -43,9 +38,6 @@
     }
   ],
   "model": "routed-model",
-  "tool_choice": {
-    "type": "auto"
-  },
   "tools": [
     {
       "description": "Look up a value",

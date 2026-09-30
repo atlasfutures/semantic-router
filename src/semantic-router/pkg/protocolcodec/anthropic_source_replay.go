@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
 
 	"github.com/tidwall/sjson"
 
@@ -12,16 +13,19 @@ import (
 )
 
 // replayEquivalentAnthropicSource returns the client's own Messages body, with
-// only its model member rewritten, when that body says exactly what the
-// canonical encoding says: both decode to the same request. A routed turn
-// that changed nothing but the model then reaches the provider as the client
-// wrote it -- string content stays a string, members keep their order -- so
-// the provider's prompt cache sees the bytes the client's own history built.
+// only its model member rewritten, when that body is the canonical encoding
+// spelled differently. A routed turn that changed nothing but the model then
+// reaches the provider as the client wrote it -- string content stays a
+// string, members keep their order -- so the provider's prompt cache sees the
+// bytes the client's own history built.
 //
-// The comparison is of the two decodings, not of the request the router
-// holds, so whatever the encoder drops or rewrites (a hosted tool no model
-// admitted, a member carried for another format) makes them differ and the
-// canonical body is sent instead. So does any other change the router made.
+// The two bodies are compared as JSON values, which already ignores member
+// order, spacing and escaping. On top of that only the rewrites the encoder
+// makes without changing meaning are allowed (anthropicReplayForm). Every
+// other difference sends the canonical body: whatever the router changed,
+// whatever the encoder dropped, and whatever the decoder repaired or
+// normalised on the way in (a role spelling, an explicit null, a synthesized
+// input_schema), since only the canonical spelling is known to be valid.
 func replayEquivalentAnthropicSource(
 	canonical []byte,
 	request llmprotocol.Request,
@@ -32,75 +36,77 @@ func replayEquivalentAnthropicSource(
 		envelope.Format != llmprotocol.AnthropicMessagesV1 || len(envelope.Request) == 0 {
 		return canonical
 	}
-	codec := AnthropicMessagesCodec{}
-	sent, _, _, err := codec.DecodeRequest(canonical, policy)
-	if err != nil {
-		return canonical
-	}
 	source, err := sjson.SetBytes(append([]byte(nil), envelope.Request...), "model", request.Model)
 	if err != nil {
 		return canonical
 	}
-	client, _, _, err := codec.DecodeRequest(source, policy)
-	if err != nil {
+	sent, sentErr := decodeJSONValue(canonical)
+	client, clientErr := decodeJSONValue(source)
+	if sentErr != nil || clientErr != nil {
 		return canonical
 	}
-	// The engine makes documented defaults explicit after every decode (an
-	// unstated tool choice is auto), and the encoder writes them out; the
-	// client's omission means the same.
-	applyRequestSemanticDefaults(&sent)
-	applyRequestSemanticDefaults(&client)
-	// The decodings are compared as JSON: the request holds no unexported
-	// state, and marshalling normalises how raw members (tool schemas) are
-	// escaped, which the encoder and the client may spell differently.
-	sentJSON, sentErr := json.Marshal(sent)
-	clientJSON, clientErr := json.Marshal(client)
-	if sentErr != nil || clientErr != nil || !bytes.Equal(sentJSON, clientJSON) {
+	sentObject, sentOK := sent.(map[string]any)
+	clientObject, clientOK := client.(map[string]any)
+	if !sentOK || !clientOK {
 		return canonical
 	}
-	// Roles are the one wire value the decoder normalises rather than reads:
-	// it folds case and space, and maps tool to user and developer to system,
-	// because Messages names only user, assistant and system. Two bodies that
-	// decode alike can still spell a role differently, and only the canonical
-	// spelling is valid on the wire.
-	if !sameAnthropicWireRoles(canonical, source) || holdsJSONNull(source) {
+	// The engine makes an unstated tool choice explicit (auto), and the
+	// encoder writes it out; the client's omission means the same.
+	if _, stated := clientObject["tool_choice"]; !stated &&
+		reflect.DeepEqual(sentObject["tool_choice"], map[string]any{"type": "auto"}) {
+		delete(sentObject, "tool_choice")
+	}
+	if !reflect.DeepEqual(anthropicReplayForm(sentObject), anthropicReplayForm(clientObject)) {
 		return canonical
 	}
 	return source
 }
 
-// holdsJSONNull reports whether a body states any member as null. The decoder
-// reads an explicit null as the member's zero value and the encoder omits it,
-// so a null the provider may refuse (stop_sequences, metadata) decodes like an
-// absent member; such a body is encoded, never replayed.
-func holdsJSONNull(body []byte) bool {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	for {
-		token, err := decoder.Token()
-		if err != nil {
-			// io.EOF ends a body with no null; anything else is not replayed.
-			return !errors.Is(err, io.EOF)
+// anthropicReplayForm rewrites the one shorthand Messages allows and the
+// encoder never writes: string content, in a message, the system prompt or a
+// tool result, is one text block. Nothing else is rewritten.
+func anthropicReplayForm(body map[string]any) map[string]any {
+	if system, ok := body["system"].(string); ok {
+		body["system"] = textBlocks(system)
+	}
+	messages, _ := body["messages"].([]any)
+	for _, raw := range messages {
+		message, ok := raw.(map[string]any)
+		if !ok {
+			continue
 		}
-		if token == nil {
-			return true
+		if content, ok := message["content"].(string); ok {
+			message["content"] = textBlocks(content)
+		}
+		blocks, _ := message["content"].([]any)
+		for _, rawBlock := range blocks {
+			block, ok := rawBlock.(map[string]any)
+			if !ok || block["type"] != "tool_result" {
+				continue
+			}
+			if content, ok := block["content"].(string); ok {
+				block["content"] = textBlocks(content)
+			}
 		}
 	}
+	return body
 }
 
-func sameAnthropicWireRoles(canonical, source []byte) bool {
-	var sent, client struct {
-		Messages []struct {
-			Role string `json:"role"`
-		} `json:"messages"`
+func textBlocks(text string) []any {
+	return []any{map[string]any{"type": "text", "text": text}}
+}
+
+// decodeJSONValue reads one JSON document keeping numbers as written, so a
+// number the encoder respells counts as a difference.
+func decodeJSONValue(body []byte) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
 	}
-	if json.Unmarshal(canonical, &sent) != nil || json.Unmarshal(source, &client) != nil ||
-		len(sent.Messages) != len(client.Messages) {
-		return false
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return nil, errors.New("trailing data")
 	}
-	for index := range sent.Messages {
-		if sent.Messages[index].Role != client.Messages[index].Role {
-			return false
-		}
-	}
-	return true
+	return value, nil
 }
