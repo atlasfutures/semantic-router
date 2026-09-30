@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -196,5 +197,109 @@ func TestPolicyResponsesInputRefusesUnresolvableHistory(t *testing.T) {
 	_, _, err = (&OpenAIRouter{}).raylineARCPolicyResponsesInput(&RequestContext{RaylineARCRawBody: body, SemanticRequest: request})
 	if !errors.Is(err, errPolicyResponsesHistoryUnavailable) {
 		t.Fatalf("error = %v, want errPolicyResponsesHistoryUnavailable", err)
+	}
+}
+
+// canonicalResponsesItem keeps exactly what pathfinder's canonicalizer reads
+// from a Responses item (curation/canonical_conversation.py::_responses_item):
+// a message's role and content parts (type, text, non-empty annotations,
+// refusal), a call's call_id, name and arguments, an output's call_id and
+// output, and reasoning's summary and content.
+func canonicalResponsesItem(t *testing.T, raw json.RawMessage) map[string]any {
+	t.Helper()
+	var item map[string]any
+	if err := json.Unmarshal(raw, &item); err != nil {
+		t.Fatal(err)
+	}
+	parts := func(value any) []any {
+		list, _ := value.([]any)
+		kept := make([]any, 0, len(list))
+		for _, rawPart := range list {
+			part, _ := rawPart.(map[string]any)
+			entry := map[string]any{"type": part["type"], "text": part["text"], "refusal": part["refusal"]}
+			if annotations, ok := part["annotations"].([]any); ok && len(annotations) > 0 {
+				entry["annotations"] = annotations
+			}
+			kept = append(kept, entry)
+		}
+		return kept
+	}
+	switch item["type"] {
+	case "function_call":
+		return map[string]any{"type": item["type"], "call_id": item["call_id"], "name": item["name"], "arguments": item["arguments"]}
+	case "function_call_output":
+		return map[string]any{"type": item["type"], "call_id": item["call_id"], "output": item["output"]}
+	case "reasoning":
+		return map[string]any{"type": item["type"], "summary": parts(item["summary"]), "content": parts(item["content"])}
+	default:
+		return map[string]any{"type": item["type"], "role": item["role"], "content": parts(item["content"])}
+	}
+}
+
+// A reply read back from the object store gives the policy service every
+// field the canonicalizer reads, exactly as the Responses encoder wrote it:
+// reasoning summary and text, output text with its citation, a refusal, and
+// a tool call.
+func TestPolicyResponsesStoredOutputKeepsWhatTheCanonicalizerReads(t *testing.T) {
+	providerBody := []byte(`{"id":"resp_1","object":"response","created_at":1,"model":"m","status":"completed","output":[` +
+		`{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"Use ls."}],"content":[{"type":"reasoning_text","text":"Listing is safe."}]},` +
+		`{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[` +
+		`{"type":"output_text","text":"See the docs.","annotations":[{"type":"url_citation","url":"https://example.com","title":"Docs","start_index":4,"end_index":8}]},` +
+		`{"type":"refusal","refusal":"Not that one."}]},` +
+		`{"type":"function_call","id":"fc_1","call_id":"call_1","name":"shell","arguments":"{\"command\":[\"ls\"]}","status":"completed"}]}`)
+	response, _, _, err := (protocolcodec.OpenAIResponsesCodec{}).DecodeResponse(providerBody, llmprotocol.DefaultPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := protocolcodec.NewBuiltinEngine().EncodeResponse(llmprotocol.OpenAIResponsesV1, response, llmprotocol.Envelope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Output []json.RawMessage `json:"output"`
+	}
+	var persisted responseapi.ResponseAPIResponse
+	if err := json.Unmarshal(encoded.Body, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(encoded.Body, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	stored := storeRoundTrip(t, &responseapi.StoredResponse{ID: "resp_1", Output: persisted.Output})
+	items, _, err := (&OpenAIRouter{}).raylineARCPolicyResponsesInput(&RequestContext{ResponseObjectState: &ResponseObjectState{
+		ConversationHistory: []*responseapi.StoredResponse{stored},
+		Input:               []responseapi.InputItem{responsesItem(t, `{"type":"message","role":"user","content":"next"}`)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != len(wire.Output)+1 {
+		t.Fatalf("%d items for %d outputs", len(items), len(wire.Output))
+	}
+	for index, output := range wire.Output {
+		want, got := canonicalResponsesItem(t, output), canonicalResponsesItem(t, items[index])
+		if !reflect.DeepEqual(want, got) {
+			t.Fatalf("output %d changed what the canonicalizer reads:\nencoder %v\npolicy  %v", index, want, got)
+		}
+	}
+}
+
+// An item type the canonicalizer does not read (image_generation_call,
+// web_search_call) is refused by the service; the turn fails closed with a
+// class that names it, not a generic error.
+func TestPolicyUnsupportedResponsesItemFailsWithANamedClass(t *testing.T) {
+	fixture := newPolicySelectorFixture(t, "")
+	fixture.fake.failNext("unsupported_request")
+	state, _ := raylinearc.NewEpisodeState(2)
+	_, err := fixture.selector.Select(context.Background(), &selection.SelectionContext{
+		DecisionName: fixture.decision.Name, CandidateModels: fixture.decision.ModelRefs,
+		RaylineARC: &selection.RaylineARCSelectionContext{
+			EpisodeIDHash: strings.Repeat("e", 64), State: state, RequestFormat: policyFormatResponses,
+			PolicyInput: []json.RawMessage{json.RawMessage(`{"type":"image_generation_call","result":"aGk="}`)},
+		},
+	})
+	var failure *raylineARCSelectionFailure
+	if !errors.As(err, &failure) || failure.class != "policy_service_unsupported_request" || selectionFailureIsContended(failure.class) {
+		t.Fatalf("error = %v, want class policy_service_unsupported_request (not contended)", err)
 	}
 }
