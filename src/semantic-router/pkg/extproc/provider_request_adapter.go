@@ -14,6 +14,10 @@ func (r *OpenAIRouter) adaptProviderRequest(
 	dispatch *providerDispatch,
 	ctx *RequestContext,
 ) ([]byte, error) {
+	body, err := applyOpenRouterWebSearch(body, dispatch, ctx)
+	if err != nil {
+		return nil, err
+	}
 	if dispatch == nil || ctx == nil || dispatch.decisionName == "" {
 		recordDispatchedReasoningControls(ctx, body)
 		return body, nil
@@ -27,7 +31,7 @@ func (r *OpenAIRouter) adaptProviderRequest(
 			return body, nil
 		}
 	}
-	body, err := r.setReasoningModeToRequestBodyForModelAndProvider(
+	body, err = r.setReasoningModeToRequestBodyForModelAndProvider(
 		body,
 		dispatch.logicalModel,
 		dispatch.useReasoning,

@@ -92,6 +92,64 @@
           "code": "unsupported_upstream_function_call"
         }
       }
+    },
+    {
+      "name": "openrouter_web_citation_content",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "created_at": 100,
+          "error": null,
+          "id": "gen_web_1",
+          "incomplete_details": null,
+          "instructions": null,
+          "metadata": {},
+          "model": "routed-model",
+          "object": "response",
+          "output": [
+            {
+              "content": [
+                {
+                  "annotations": [
+                    {
+                      "end_index": 25,
+                      "start_index": 0,
+                      "title": "Release History",
+                      "type": "url_citation",
+                      "url": "https://go.dev/doc/devel/release"
+                    }
+                  ],
+                  "text": "Go releases twice a year.",
+                  "type": "output_text"
+                }
+              ],
+              "id": "item_c04f4ffc71708cab93ba7602",
+              "role": "assistant",
+              "status": "completed",
+              "type": "message"
+            }
+          ],
+          "output_text": "Go releases twice a year.",
+          "parallel_tool_calls": true,
+          "status": "completed",
+          "temperature": null,
+          "tool_choice": "auto",
+          "tools": [],
+          "top_p": null,
+          "usage": {
+            "input_tokens": 5,
+            "input_tokens_details": {
+              "cache_write_tokens": 0,
+              "cached_tokens": 0
+            },
+            "output_tokens": 3,
+            "output_tokens_details": {
+              "reasoning_tokens": 0
+            },
+            "total_tokens": 8
+          }
+        }
+      }
     }
   ]
 }

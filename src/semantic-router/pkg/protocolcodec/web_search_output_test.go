@@ -213,3 +213,25 @@ func TestFailedWebSearchStillMatchesItsItem(t *testing.T) {
 		t.Fatalf("a message completed as a failed search returned %v", err)
 	}
 }
+
+// OpenRouter's web plugin answers with url_citation annotations carrying the
+// cited page's content; a Responses client gets the citations.
+func TestOpenRouterWebCitationsReachAResponsesClient(t *testing.T) {
+	body := `{"id":"gen-1","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant",` +
+		`"content":"Go releases twice a year.","annotations":[{"type":"url_citation","url_citation":{"url":"https://go.dev/doc/devel/release",` +
+		`"title":"Release History","content":"Go releases a new major version every six months.","start_index":0,"end_index":25}}]},` +
+		`"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`
+	engine := NewBuiltinEngine()
+	response, envelope, _, err := engine.DecodeResponse(llmprotocol.OpenAIChatV1, []byte(body))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	response.Generation++
+	encoded, err := engine.EncodeResponse(llmprotocol.OpenAIResponsesV1, response, envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(encoded.Body, []byte(`"type":"url_citation"`)) || !bytes.Contains(encoded.Body, []byte(`"url":"https://go.dev/doc/devel/release"`)) {
+		t.Fatalf("the citation did not reach the Responses client: %s", encoded.Body)
+	}
+}
