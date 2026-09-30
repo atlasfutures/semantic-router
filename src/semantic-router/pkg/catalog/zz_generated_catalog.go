@@ -2,7 +2,7 @@
 
 package catalog
 
-const builtInCatalogDigest = "sha256:8107b30319c355de69ae7c3905e57977a1e9f8b4313006b4c0974deff74d8ff1"
+const builtInCatalogDigest = "sha256:b4b46f333f2db6679e620c6171c850b9e7e39d26baa868473600473c96b4eacf"
 
 const builtInCatalogJSON = `{
   "benchmarks": [
@@ -42734,7 +42734,8 @@ const builtInCatalogJSON = `{
           "id": "anthropic/claude-fable-5",
           "lifecycle": "active",
           "protocols": [
-            "openai/chat-completions@1"
+            "openai/chat-completions@1",
+            "anthropic/messages@1"
           ],
           "relationship": "gateway",
           "verification": {
@@ -42748,7 +42749,8 @@ const builtInCatalogJSON = `{
           "id": "anthropic/claude-fable-5.1",
           "lifecycle": "active",
           "protocols": [
-            "openai/chat-completions@1"
+            "openai/chat-completions@1",
+            "anthropic/messages@1"
           ],
           "relationship": "gateway",
           "verification": {
@@ -42762,7 +42764,8 @@ const builtInCatalogJSON = `{
           "id": "anthropic/claude-opus-4.8",
           "lifecycle": "active",
           "protocols": [
-            "openai/chat-completions@1"
+            "openai/chat-completions@1",
+            "anthropic/messages@1"
           ],
           "relationship": "gateway",
           "verification": {
@@ -42776,7 +42779,8 @@ const builtInCatalogJSON = `{
           "id": "anthropic/claude-opus-5",
           "lifecycle": "active",
           "protocols": [
-            "openai/chat-completions@1"
+            "openai/chat-completions@1",
+            "anthropic/messages@1"
           ],
           "relationship": "gateway",
           "verification": {
@@ -42790,7 +42794,8 @@ const builtInCatalogJSON = `{
           "id": "anthropic/claude-sonnet-5",
           "lifecycle": "active",
           "protocols": [
-            "openai/chat-completions@1"
+            "openai/chat-completions@1",
+            "anthropic/messages@1"
           ],
           "relationship": "gateway",
           "verification": {
@@ -43163,7 +43168,8 @@ const builtInCatalogJSON = `{
       },
       "protocols": [
         "openai/chat-completions@1",
-        "openai/responses@1"
+        "openai/responses@1",
+        "anthropic/messages@1"
       ],
       "reasoning_transport": "reasoning_object",
       "support_tier": "compatible",
@@ -43171,7 +43177,8 @@ const builtInCatalogJSON = `{
         "openai/chat-completions@1#create",
         "openai/chat-completions@1#list_models",
         "openai/responses@1#create",
-        "openai/responses@1#list_models"
+        "openai/responses@1#list_models",
+        "anthropic/messages@1#create"
       ]
     },
     {

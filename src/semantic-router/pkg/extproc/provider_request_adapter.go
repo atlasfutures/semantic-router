@@ -22,6 +22,9 @@ func (r *OpenAIRouter) adaptProviderRequest(
 		recordDispatchedReasoningControls(ctx, body)
 		return body, nil
 	}
+	if dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 {
+		return r.adaptMessagesProviderRequest(body, dispatch, ctx)
+	}
 	if dispatch.targetFormat != llmprotocol.OpenAIChatV1 {
 		family := r.getModelReasoningFamily(dispatch.logicalModel)
 		transport := resolveProviderReasoningTransport(dispatch.profile)
@@ -56,6 +59,29 @@ func (r *OpenAIRouter) adaptProviderRequest(
 	}
 	// Read back rather than remember: the record then names the bytes that
 	// travel, whichever mutation put them there.
+	recordDispatchedReasoningControls(ctx, body)
+	recordDispatchedProviderPin(ctx, body)
+	return body, nil
+}
+
+// adaptMessagesProviderRequest applies the provider extensions a Messages body
+// carries. The Messages codec owns the reasoning controls, so only
+// OpenRouter's routing members are added: its Messages API reads the same
+// provider pin and session_id as its Chat API. Both self-gate on OpenRouter,
+// so a body bound for Anthropic itself is left as the codec rendered it.
+func (r *OpenAIRouter) adaptMessagesProviderRequest(
+	body []byte,
+	dispatch *providerDispatch,
+	ctx *RequestContext,
+) ([]byte, error) {
+	body, err := applyUpstreamSessionID(body, dispatch, ctx)
+	if err != nil {
+		return nil, err
+	}
+	body, err = applyProviderPreferences(body, dispatch, r.Config)
+	if err != nil {
+		return nil, err
+	}
 	recordDispatchedReasoningControls(ctx, body)
 	recordDispatchedProviderPin(ctx, body)
 	return body, nil
