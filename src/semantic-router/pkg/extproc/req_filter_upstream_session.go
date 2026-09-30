@@ -10,7 +10,7 @@ import (
 )
 
 // upstreamSessionIDField is OpenRouter's sticky routing key: a top-level
-// string on the Chat Completions body, at most 256 characters. When it is
+// string on the Chat Completions and Messages bodies, at most 256 characters. When it is
 // present OpenRouter sends every request in the session to the same provider
 // endpoint, so the provider-side prompt cache survives the turn boundary.
 // Documented at https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion

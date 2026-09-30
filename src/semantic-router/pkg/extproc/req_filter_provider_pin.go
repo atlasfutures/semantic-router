@@ -8,7 +8,7 @@ import (
 )
 
 // providerPreferencesField is OpenRouter's provider-routing instruction: a
-// top-level object on the Chat Completions body naming which providers may
+// top-level object on the Chat Completions and Messages bodies naming which providers may
 // serve the request and whether OpenRouter may fall back past them.
 // Documented at https://openrouter.ai/docs/features/provider-routing, read
 // 2026-09-05.
