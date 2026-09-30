@@ -218,19 +218,6 @@ func (binding Binding) validateNeutralText() error {
 	return nil
 }
 
-// markerInForce reports whether the item in force is a neutral marker. The
-// ledger records the level each item was written for, so a marker is known by
-// that level -- the neutral one, written as text although the level writes
-// nothing -- and stays one when a later binding changes neutral_text.
-func (binding Binding) markerInForce(ledger Ledger, state LeverState) bool {
-	if binding.Lever != LeverSteeringSuffix || binding.Neutral == "" || state.Payload < 0 ||
-		state.Level != binding.Neutral || !ledger.Payloads[state.Payload].writes() {
-		return false
-	}
-	neutral, _ := binding.Level(binding.Neutral)
-	return neutral.Suffix == ""
-}
-
 // neutralMarker is the item a return to neutral writes, when the binding has
 // one.
 func (binding Binding) neutralMarker() (Payload, bool) {
@@ -378,6 +365,11 @@ type LeverState struct {
 	Payload        int
 	Level          string
 	LastChangeTurn uint64
+	// Marker records that the item in force is the neutral marker. Marker
+	// identity is this flag alone, never the item's text or level name, both
+	// of which a later binding may change. A ledger written before markers
+	// existed has none, so absent means an ordinary item, as it always did.
+	Marker bool
 }
 
 // LedgerEntry locates one item by the client message it is anchored to.
@@ -462,6 +454,11 @@ func ValidateLedger(ledger *Ledger) error {
 			len(state.Level) > MaxLevelName ||
 			(state.Payload >= 0 && ledger.Payloads[state.Payload].Lever != state.Lever) {
 			return errors.New("thinking ledger lever state is invalid")
+		}
+		// Only a written steering-suffix item can be a neutral marker.
+		if state.Marker && (state.Payload < 0 || state.Lever != LeverSteeringSuffix ||
+			!ledger.Payloads[state.Payload].writes()) {
+			return errors.New("thinking ledger neutral marker is invalid")
 		}
 	}
 	return nil
@@ -567,18 +564,18 @@ func PlanTurn(turn Turn) (plan Plan, err error) {
 		}
 		return plan, nil
 	}
-	payload, emit, skipped := shouldEmit(turn, plan.Next, requested, turn.Binding.payloadFor(requested), plan.ResetReason != "")
-	plan.Skipped = skipped
-	if !emit {
+	item := shouldEmit(turn, plan.Next, requested, turn.Binding.payloadFor(requested), plan.ResetReason != "")
+	plan.Skipped = item.skipped
+	if !item.emit {
 		return plan, nil
 	}
-	if skip := plan.Next.append(turn, placement, payload, requested.Name); skip != "" {
+	if skip := plan.Next.append(turn, placement, item, requested.Name); skip != "" {
 		plan.Skipped = skip
 		return plan, nil
 	}
 	plan.Emitted = true
 	plan.Written = WrittenInstruction
-	if marker, ok := turn.Binding.neutralMarker(); ok && payload == marker {
+	if item.marker {
 		plan.Written = WrittenNeutralMarker
 	}
 	plan.Placement = placement
@@ -590,7 +587,7 @@ func PlanTurn(turn Turn) (plan Plan, err error) {
 // level's own control, as the registry resolves it, not the marker's bytes.
 func (plan *Plan) describe(binding Binding) {
 	state, _ := plan.Next.state(binding.Lever)
-	markerInForce := binding.markerInForce(plan.Next, state)
+	markerInForce := state.Payload >= 0 && state.Marker
 	switch {
 	case state.Payload >= 0 && !markerInForce:
 		plan.LevelInForce = state.Level
@@ -613,7 +610,8 @@ func (plan *Plan) describe(binding Binding) {
 	}
 }
 
-func (ledger *Ledger) append(turn Turn, placement Placement, payload Payload, level string) string {
+func (ledger *Ledger) append(turn Turn, placement Placement, item emission, level string) string {
+	payload := item.payload
 	limit := MaxLedgerLength
 	if turn.MaxEntries > 0 && turn.MaxEntries < limit {
 		limit = turn.MaxEntries
@@ -635,7 +633,7 @@ func (ledger *Ledger) append(turn Turn, placement Placement, payload Payload, le
 	if state.Payload != index {
 		state.LastChangeTurn = turn.TurnIndex
 	}
-	state.Payload, state.Level = index, level
+	state.Payload, state.Level, state.Marker = index, level, item.marker
 	ledger.setState(state)
 	return ""
 }
@@ -701,6 +699,15 @@ func placementFor(lever Lever, messages []Message) (Placement, bool) {
 	}
 }
 
+// emission is shouldEmit's decision: the item to write, if any, and whether
+// it is the neutral marker.
+type emission struct {
+	payload Payload
+	marker  bool
+	emit    bool
+	skipped string
+}
+
 // shouldEmit decides whether this turn writes an item, and which: the
 // requested level's bytes, or, on an on_change_v1 return to neutral, the
 // neutral marker.
@@ -710,9 +717,9 @@ func shouldEmit(
 	requested Level,
 	payload Payload,
 	reset bool,
-) (Payload, bool, string) {
+) emission {
 	if turn.Binding.Emit == EmitEveryTurn {
-		return payload, payload.writes(), ""
+		return emission{payload: payload, emit: payload.writes()}
 	}
 	state, _ := ledger.state(turn.Binding.Lever)
 	// Nothing written yet: at the start of an episode that is the neutral
@@ -723,29 +730,35 @@ func shouldEmit(
 	// binding change, is a change and is re-asserted too.
 	if state.Payload < 0 {
 		if !payload.writes() || (requested.Name == turn.Binding.Neutral && ledger.Epoch == 0) {
-			return payload, false, ""
+			return emission{payload: payload}
 		}
-		return payload, true, ""
+		return emission{payload: payload, emit: true}
 	}
-	if marker, ok := turn.Binding.neutralMarker(); ok && requested.Name == turn.Binding.Neutral {
+	neutral := requested.Name == turn.Binding.Neutral
+	if neutral && state.Marker {
+		// The neutral level over a marker is a repeat, whatever text or level
+		// name the binding it was written under gave it.
+		return emission{payload: payload}
+	}
+	item := emission{payload: payload}
+	if marker, ok := turn.Binding.neutralMarker(); ok && neutral {
 		// A return to neutral over an instruction in force is written as the
-		// neutral marker; over a marker -- whatever text a binding it was
-		// written under gave it -- it is a repeat. Another level that writes
-		// nothing is not neutral, and stays inexpressible.
-		if turn.Binding.markerInForce(ledger, state) {
-			return payload, false, ""
-		}
-		payload = marker
+		// neutral marker. Another level that writes nothing is not neutral,
+		// and stays inexpressible.
+		item = emission{payload: marker, marker: true}
 	}
-	if ledger.Payloads[state.Payload] == payload {
-		return payload, false, ""
+	if ledger.Payloads[state.Payload] == item.payload && !item.marker {
+		return item
 	}
 	if !reset && turn.TurnIndex-state.LastChangeTurn < turn.MinTurnsBetweenChanges {
-		return payload, false, SkipChangeTooSoon
+		item.skipped = SkipChangeTooSoon
+		return item
 	}
-	if !payload.writes() {
+	if !item.payload.writes() {
 		// Writing nothing cannot cancel an instruction already in force.
-		return payload, false, SkipNeutralInexpressible
+		item.skipped = SkipNeutralInexpressible
+		return item
 	}
-	return payload, true, ""
+	item.emit = true
+	return item
 }

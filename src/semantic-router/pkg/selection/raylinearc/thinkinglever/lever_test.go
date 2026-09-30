@@ -582,6 +582,61 @@ func TestNeutralMarkerSurvivesANeutralTextChange(t *testing.T) {
 	check("repeated neutral", plan)
 }
 
+// Marker identity is the ledger's flag, not the neutral level's name: after
+// a reload renames the neutral level (neutral_text unchanged), the committed
+// marker is still the neutral marker, and stays so across later turns.
+func TestNeutralMarkerSurvivesANeutralLevelRename(t *testing.T) {
+	e := &episode{t: t, binding: onChangeV1Binding()}
+	messages := []llmprotocol.Message{text(llmprotocol.RoleUser, "go")}
+	next := func() {
+		messages = append(messages, text(llmprotocol.RoleAssistant, "ok"), text(llmprotocol.RoleUser, "more"))
+	}
+	plan, _ := e.serve(messages, "up")
+	e.commit(plan)
+	next()
+	plan, _ = e.serve(messages, "none")
+	e.commit(plan)
+	for index := range e.binding.Levels {
+		if e.binding.Levels[index].Name == "none" {
+			e.binding.Levels[index].Name = "baseline"
+		}
+	}
+	e.binding.Neutral = "baseline"
+	neutral, _ := e.binding.Level("baseline")
+	for turn := 0; turn < 3; turn++ {
+		next()
+		plan, _ = e.serve(messages, "baseline")
+		if plan.Emitted || plan.InstructionState != InstructionNeutralMarker || plan.LevelInForce != "baseline" ||
+			plan.ControlInForce != e.binding.ControlSHA256(neutral) {
+			t.Fatalf("turn %d after the rename = %+v", turn, plan)
+		}
+		e.commit(plan)
+	}
+	// A steer after the rename is a change, and the marker's flag goes with it.
+	next()
+	plan, _ = e.serve(messages, "up")
+	if !plan.Emitted || plan.InstructionState != InstructionSteered || plan.LevelInForce != "up" {
+		t.Fatalf("a steer after the rename = %+v", plan)
+	}
+}
+
+// A ledger state may carry the marker flag only on a written steering item.
+func TestLedgerRefusesAMisplacedMarkerFlag(t *testing.T) {
+	ledger := &Ledger{
+		Payloads: []Payload{{Lever: LeverSteeringSuffix, Suffix: ""}, {Lever: LeverPerTurnEffort, Effort: "high"}},
+	}
+	for name, state := range map[string]LeverState{
+		"nothing in force": {Lever: LeverSteeringSuffix, Payload: -1, Marker: true},
+		"empty item":       {Lever: LeverSteeringSuffix, Payload: 0, Marker: true},
+		"effort item":      {Lever: LeverPerTurnEffort, Payload: 1, Marker: true},
+	} {
+		ledger.InForce = []LeverState{state}
+		if err := ValidateLedger(ledger); err == nil {
+			t.Errorf("%s: a misplaced marker flag validated", name)
+		}
+	}
+}
+
 func TestOnChangeV1BindingValidation(t *testing.T) {
 	withText := func(mutate func(*Binding)) Binding {
 		binding := onChangeV1Binding()
