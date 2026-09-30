@@ -86,7 +86,7 @@ func raylineARCWorkerThinkingFor(
 	}
 	transport := resolveProviderReasoningTransport(dispatch.profile)
 	reasoningObject := usesReasoningObjectTransport(transport)
-	if action, declared := raylineARCPolicyAction(ctx); declared {
+	if action, declared := raylineARCPolicyDispatchAction(ctx); declared {
 		return policyActionChatWire(action, transport)
 	}
 	if !dispatch.useReasoning || !reasoningObject {

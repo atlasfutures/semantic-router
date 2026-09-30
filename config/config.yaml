@@ -1908,6 +1908,10 @@ recipes:
                 # model_schedule: task_turn_compaction_v1 holds the model
                 # between schedule boundaries and lets only its level vary.
                 model_schedule: ""
+                # dispatch_effort: provider_default sends actions without their
+                # declared effort; budgets, the steer and thinking-off still
+                # apply (v4 packages). declared (the default) sends the effort.
+                dispatch_effort: declared
                 # Each binding maps a package action to a worker. model, effort
                 # and reasoning_max_tokens declare what the action dispatches,
                 # as the package's catalog states it: model is the trained

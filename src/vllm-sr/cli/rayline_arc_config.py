@@ -305,6 +305,9 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     package_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     bindings: list[RaylineARCPolicyBindingConfig] = Field(min_length=1)
     model_schedule: Literal["", "task_turn_compaction_v1"] = ""
+    # Mirrors RaylineARCPolicyServiceConfig.DispatchEffort in the Go loader:
+    # provider_default serves actions without their declared effort (v4).
+    dispatch_effort: Literal["", "declared", "provider_default"] = ""
 
 
 class RaylineARCAlgorithmConfig(BaseModel):

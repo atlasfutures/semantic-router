@@ -38,6 +38,49 @@ func raylineARCPolicyAction(ctx *RequestContext) (config.RaylineARCPolicyBinding
 	return binding, ok && binding.DeclaresDispatch()
 }
 
+// raylineARCPolicyDispatchAction is the action as it is dispatched. Under
+// dispatch_effort: provider_default its effort is withheld, so the provider's
+// default applies. Only effort: the v4 training turns lost the effort member
+// (output_config on Messages, pathfinder #2655) while a reasoning budget,
+// which travels in its own field, reached the provider, so a budget action
+// keeps its budget. A thinking-off action (effort none) keeps its effort,
+// since off is not an effort level. The level, and so the steering suffix, is
+// untouched, as is what the decision records.
+func raylineARCPolicyDispatchAction(ctx *RequestContext) (config.RaylineARCPolicyBinding, bool) {
+	action, declared := raylineARCPolicyAction(ctx)
+	if !declared || !ctx.VSRSelectedDecision.Algorithm.RaylineARC.PolicyService.DispatchesProviderDefaultEffort() {
+		return action, declared
+	}
+	if action.Effort != nil && *action.Effort != raylineARCPolicyActionEffortOff {
+		action.Effort = nil
+	}
+	return action, true
+}
+
+// addPolicyDispatchEffortFields records the action's declared effort and
+// budget beside the dispatch mode, so a provider_default turn still names what
+// the package chose.
+func addPolicyDispatchEffortFields(fields map[string]interface{}, ctx *RequestContext) {
+	action, declared := raylineARCPolicyAction(ctx)
+	if !declared {
+		return
+	}
+	mode := config.RaylineARCPolicyDispatchEffortDeclared
+	if ctx.VSRSelectedDecision.Algorithm.RaylineARC.PolicyService.DispatchesProviderDefaultEffort() {
+		mode = config.RaylineARCPolicyDispatchEffortProviderDefault
+	}
+	fields["policy_dispatch_effort"] = mode
+	if action.Effort != nil {
+		fields["policy_declared_effort"] = *action.Effort
+	}
+	if action.ReasoningMaxTokens != nil {
+		fields["policy_declared_reasoning_max_tokens"] = *action.ReasoningMaxTokens
+	}
+}
+
+// raylineARCPolicyActionEffortOff is the package's thinking-off effort.
+const raylineARCPolicyActionEffortOff = "none"
+
 // policyActionWorkerThinking is the action's native reasoning as one wire:
 // its effort, its budget, or -- for the package's null effort and null
 // budget -- no reasoning control at all. The loader refuses an effort and a
@@ -97,19 +140,24 @@ func policyActionChatWire(
 // On Messages an effort travels as output_config.effort with adaptive
 // thinking, a budget as enabled thinking with that budget_tokens, and the
 // thinking-off action as disabled thinking. A null effort sends no effort
-// and leaves the derived thinking mode alone.
+// and leaves the derived thinking mode alone. An effort withheld under
+// dispatch_effort: provider_default sends adaptive thinking without it, as the
+// v4 training turns reached the provider once their output_config was dropped,
+// and so a derived enabled mode is never left without a budget.
 func applyRaylineARCPolicyActionReasoning(
 	request *llmprotocol.Request,
 	targetFormat llmprotocol.WireFormat,
 	ctx *RequestContext,
 ) (bool, error) {
-	action, declared := raylineARCPolicyAction(ctx)
+	action, declared := raylineARCPolicyDispatchAction(ctx)
 	if !declared || targetFormat == llmprotocol.OpenAIChatV1 {
 		return false, nil
 	}
 	if targetFormat != llmprotocol.AnthropicMessagesV1 {
 		return false, errPolicyActionFormat
 	}
+	chosen, _ := raylineARCPolicyAction(ctx)
+	effortWithheld := chosen.Effort != nil && action.Effort == nil
 	before := *request
 	switch {
 	case action.Effort != nil && *action.Effort == "none":
@@ -134,6 +182,8 @@ func applyRaylineARCPolicyActionReasoning(
 		}
 	case action.Effort != nil:
 		request.ReasoningMode, request.ReasoningEffort, request.ReasoningBudgetTokens = llmprotocol.ReasoningModeAdaptive, *action.Effort, nil
+	case effortWithheld:
+		request.ReasoningMode, request.ReasoningEffort, request.ReasoningBudgetTokens = llmprotocol.ReasoningModeAdaptive, "", nil
 	default:
 		request.ReasoningEffort = ""
 	}
