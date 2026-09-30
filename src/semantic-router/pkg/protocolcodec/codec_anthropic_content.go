@@ -485,11 +485,26 @@ func encodeAnthropicInstructions(
 
 func appendAnthropicMessages(wire *anthropicRequestWire, messages []llmprotocol.Message) error {
 	for _, message := range messages {
+		// A message whose every block is carried for another format, such as a
+		// resent Responses reasoning item, leaves nothing to send, and
+		// Anthropic refuses a message with empty content. Chat and Responses
+		// skip it the same way.
+		if messageDropsWhole(message.Content, llmprotocol.AnthropicMessagesV1) {
+			continue
+		}
 		encoded, err := encodeAnthropicMessage(message)
 		if err != nil {
 			return err
 		}
 		wire.Messages = append(wire.Messages, encoded...)
+	}
+	if len(wire.Messages) == 0 && len(messages) > 0 {
+		return llmprotocol.NewError(
+			llmprotocol.ErrorUnsupportedFeature,
+			"anthropic_messages_required",
+			"Anthropic Messages requires at least one conversation message",
+			nil,
+		)
 	}
 	return nil
 }
