@@ -17,6 +17,7 @@ limitations under the License.
 package extproc
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -115,5 +116,28 @@ func TestDispatchGateLeaseLossIsUnavailable(t *testing.T) {
 	}
 	if got := immediateHeaderValue(response, selectionFailureHeader); got != selectionFailureUnavailable {
 		t.Fatalf("%s = %q, want %q", selectionFailureHeader, got, selectionFailureUnavailable)
+	}
+}
+
+// A prepare that ran out of time is contention only if the store saw another
+// owner's lease. A timeout inside a stalled store call is not, and must not
+// tell the caller to wait for an in-flight turn that does not exist.
+func TestPrepareTimeoutIsContentionOnlyWhenTheLeaseWasHeld(t *testing.T) {
+	held := errors.Join(raylinearc.ErrEpisodeLeaseHeld, context.DeadlineExceeded)
+	if got := boundedARCPrepareFailure(held); got != "episode_timeout" {
+		t.Fatalf("held timeout class = %q", got)
+	}
+	if got := publicSelectionFailureClass(boundedARCPrepareFailure(held)); got != selectionFailureSessionBusy {
+		t.Fatalf("held timeout published as %q", got)
+	}
+	stalled := boundedARCPrepareFailure(context.DeadlineExceeded)
+	if stalled != "episode_store_timeout" {
+		t.Fatalf("stalled timeout class = %q", stalled)
+	}
+	if selectionFailureIsContended(stalled) {
+		t.Fatalf("a stalled store must not answer 429")
+	}
+	if got := publicSelectionFailureClass(stalled); got != selectionFailureUnavailable {
+		t.Fatalf("stalled timeout published as %q", got)
 	}
 }

@@ -476,8 +476,13 @@ func boundedARCPrepareFailure(err error) string {
 	switch {
 	case errors.Is(err, context.Canceled):
 		return "episode_canceled"
-	case errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, raylinearc.ErrEpisodeLeaseHeld) &&
+		errors.Is(err, context.DeadlineExceeded):
 		return "episode_timeout"
+	case errors.Is(err, context.DeadlineExceeded):
+		// Out of time without ever seeing another owner: the store stalled.
+		// Not contention, so it must not answer session_busy or 429.
+		return "episode_store_timeout"
 	case errors.Is(err, raylinearc.ErrEpisodeCapacity):
 		return "episode_capacity"
 	default:

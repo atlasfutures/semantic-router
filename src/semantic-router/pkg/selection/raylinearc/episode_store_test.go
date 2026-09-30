@@ -117,7 +117,7 @@ func TestMemoryEpisodeStoreTimeoutStaleLeaseAndCapacity(t *testing.T) {
 	if _, _, err := store.Prepare(ctx, episode, 2); !errors.Is(
 		err,
 		context.DeadlineExceeded,
-	) {
+	) || !errors.Is(err, ErrEpisodeLeaseHeld) {
 		t.Fatalf("same-episode timeout error = %v", err)
 	}
 	if _, _, err := store.Prepare(

@@ -120,7 +120,8 @@ func TestRedisEpisodeStoreContentionAndStaleCommit(t *testing.T) {
 		timeoutContext,
 		episode,
 		2,
-	); !errors.Is(contentionErr, context.DeadlineExceeded) {
+	); !errors.Is(contentionErr, context.DeadlineExceeded) ||
+		!errors.Is(contentionErr, ErrEpisodeLeaseHeld) {
 		t.Fatalf("contention error = %v", contentionErr)
 	}
 	differentLease, _, err := store.Prepare(
