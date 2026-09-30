@@ -89,7 +89,7 @@ type policyChatRequestWire struct {
 
 type policyResponsesRequestWire struct {
 	Input        []json.RawMessage `json:"input"`
-	Instructions *string           `json:"instructions,omitempty"`
+	Instructions *string           `json:"instructions"`
 }
 
 // MarshalJSON writes the shape the request format carries: input items for

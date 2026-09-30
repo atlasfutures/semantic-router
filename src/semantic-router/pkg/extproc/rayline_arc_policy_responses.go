@@ -7,7 +7,13 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/responseapi"
 )
 
-var errPolicyResponsesInputEmpty = errors.New("a Responses request materialized no input items")
+var (
+	errPolicyResponsesInputEmpty = errors.New("a Responses request materialized no input items")
+	// errPolicyResponsesHistoryUnavailable refuses a request that names
+	// earlier turns this path cannot load: deciding on the current input
+	// alone would score, and commit, a truncated conversation.
+	errPolicyResponsesHistoryUnavailable = errors.New("previous_response_id history is not available on this path")
+)
 
 // raylineARCPolicyResponsesInput materializes a Responses request for the
 // policy service: the stored history previous_response_id resolves to, then
@@ -32,6 +38,9 @@ func (r *OpenAIRouter) raylineARCPolicyResponsesInput(reqCtx *RequestContext) ([
 		state := reqCtx.ResponseObjectState
 		history, input, instructions = state.ConversationHistory, state.Input, state.Instructions
 	case reqCtx.SemanticRequest != nil:
+		if reqCtx.SemanticRequest.PreviousResponseID != "" {
+			return nil, nil, errPolicyResponsesHistoryUnavailable
+		}
 		input, instructions = snapshotResponseObjectRequest(reqCtx.RaylineARCRawBody, *reqCtx.SemanticRequest)
 	}
 	items := make([]json.RawMessage, 0)

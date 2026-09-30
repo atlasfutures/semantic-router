@@ -169,6 +169,9 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 			input, instructions, err := r.raylineARCPolicyResponsesInput(reqCtx)
 			if err != nil {
 				result.PreparationFailure = "policy_request_body"
+				if errors.Is(err, errPolicyResponsesHistoryUnavailable) {
+					result.PreparationFailure = "turns_stored_history"
+				}
 				r.finalizeRaylineARCAbort(reqCtx, result.PreparationFailure)
 				return result
 			}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -182,4 +183,18 @@ func TestPolicySelectorSendsResponsesInput(t *testing.T) {
 func decodeResponsesForTest(body []byte) (*llmprotocol.Request, error) {
 	request, _, _, err := protocolcodec.NewBuiltinEngine().DecodeRequest(llmprotocol.OpenAIResponsesV1, body)
 	return &request, err
+}
+
+// A path with no stored object state cannot load the earlier turns a request
+// names, so it refuses rather than deciding on the current input alone.
+func TestPolicyResponsesInputRefusesUnresolvableHistory(t *testing.T) {
+	body := []byte(`{"model":"auto","previous_response_id":"resp_1","input":"and then?"}`)
+	request, err := decodeResponsesForTest(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = (&OpenAIRouter{}).raylineARCPolicyResponsesInput(&RequestContext{RaylineARCRawBody: body, SemanticRequest: request})
+	if !errors.Is(err, errPolicyResponsesHistoryUnavailable) {
+		t.Fatalf("error = %v, want errPolicyResponsesHistoryUnavailable", err)
+	}
 }

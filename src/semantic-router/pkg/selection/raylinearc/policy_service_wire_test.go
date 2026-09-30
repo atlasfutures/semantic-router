@@ -171,3 +171,19 @@ func TestPolicyServiceClientBoundsTheConnect(t *testing.T) {
 		}
 	}
 }
+
+// A Responses request without instructions states them as null, as every
+// nullable member of this wire is written.
+func TestPolicyResponsesRequestWritesNullInstructions(t *testing.T) {
+	encoded, err := json.Marshal(PolicyClientRequest{Input: []json.RawMessage{json.RawMessage(`{"type":"message","role":"user","content":"hi"}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != `{"input":[{"type":"message","role":"user","content":"hi"}],"instructions":null}` {
+		t.Fatalf("encoded %s", encoded)
+	}
+	var decoded PolicyClientRequest
+	if err := json.Unmarshal(encoded, &decoded); err != nil || decoded.Instructions != nil || len(decoded.Input) != 1 {
+		t.Fatalf("decoded %+v, %v", decoded, err)
+	}
+}
