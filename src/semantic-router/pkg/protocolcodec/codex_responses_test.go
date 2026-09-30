@@ -64,10 +64,10 @@ func droppedFields(diagnostics llmprotocol.Diagnostics) []string {
 }
 
 // A Codex turn routes to every target format. A Responses arm gets include,
-// prompt_cache_key, reasoning.summary, store:false and the resent encrypted
-// reasoning item back as Codex sent them; another format drops and counts
-// each one instead of refusing the turn. The web_search and namespace tools
-// are dropped on every target.
+// prompt_cache_key, reasoning.summary and store:false back as Codex sent them;
+// another format drops and counts each one instead of refusing the turn. The
+// web_search and namespace tools, and the resent encrypted reasoning item, are
+// dropped on every target.
 func TestCodexTurnRoutesToEveryFormat(t *testing.T) {
 	body := codexBody(t, codexRequestFixture(t, "turn2"))
 
@@ -101,8 +101,11 @@ func TestCodexTurnRoutesToEveryFormat(t *testing.T) {
 				t.Errorf("%s reached the Responses arm: %s", tool, routed)
 			}
 		}
-		if !bytes.Contains(routed, []byte(`"encrypted_content":"gAAAAB-fake-encrypted-content-for-capture"`)) {
-			t.Fatalf("the resent reasoning item lost its encrypted_content: %s", routed)
+		if bytes.Contains(routed, []byte("gAAAAB")) || bytes.Contains(routed, []byte(`"rs_1"`)) {
+			t.Fatalf("the resent encrypted reasoning item reached the Responses arm: %s", routed)
+		}
+		if !strings.Contains(dropped, "content.reasoning") {
+			t.Errorf("the encrypted reasoning drop was not counted; dropped: %s", dropped)
 		}
 	})
 	for _, target := range []llmprotocol.WireFormat{llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1} {

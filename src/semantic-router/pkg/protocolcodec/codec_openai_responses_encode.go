@@ -34,6 +34,9 @@ func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope 
 	for _, message := range request.Messages {
 		appendContentExtensionDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
 		appendCarriedBlockDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
+		if carriesEncryptedReasoning(message) {
+			appendUnmodeledDrop(&diagnostics, policy, llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1, "content.reasoning")
+		}
 	}
 	if wire.Reasoning == nil && clientStatedReasoningEffort(envelope) {
 		request.Unmodeled = withoutCarriedReasoning(request.Unmodeled, &diagnostics, policy)
@@ -151,6 +154,9 @@ func encodeResponsesRequestWire(request llmprotocol.Request) (responsesRequestWi
 func encodeResponsesRequestItems(request llmprotocol.Request) ([]json.RawMessage, error) {
 	items := make([]json.RawMessage, 0, len(request.Messages))
 	appendMessage := func(message llmprotocol.Message) error {
+		if carriesEncryptedReasoning(message) {
+			return nil
+		}
 		if carried, isCarried := carriedItemBytes(message, llmprotocol.OpenAIResponsesV1); isCarried {
 			items = append(items, carried)
 			return nil
