@@ -66,12 +66,62 @@ type PolicyEvaluation struct {
 	TaskID    string `json:"task_id"`
 }
 
-// PolicyClientRequest carries the client's system, tools and messages exactly
-// as received; the service projects them with pathfinder's training intake.
+// PolicyClientRequest carries the client's request as the service projects
+// it with pathfinder's training intake. For anthropic_messages and
+// openai_chat it is the client's system, tools and messages exactly as
+// received. For openai_responses it is Input, the fully materialized item
+// history (stored history resolved from previous_response_id, then this
+// turn's input), and Instructions; the other fields are absent.
 type PolicyClientRequest struct {
 	System   json.RawMessage `json:"system"`
 	Tools    json.RawMessage `json:"tools"`
 	Messages json.RawMessage `json:"messages"`
+
+	Input        []json.RawMessage `json:"-"`
+	Instructions *string           `json:"-"`
+}
+
+type policyChatRequestWire struct {
+	System   json.RawMessage `json:"system"`
+	Tools    json.RawMessage `json:"tools"`
+	Messages json.RawMessage `json:"messages"`
+}
+
+type policyResponsesRequestWire struct {
+	Input        []json.RawMessage `json:"input"`
+	Instructions *string           `json:"instructions"`
+}
+
+// MarshalJSON writes the shape the request format carries: input items for
+// Responses, messages otherwise.
+func (request PolicyClientRequest) MarshalJSON() ([]byte, error) {
+	if request.Input != nil {
+		return json.Marshal(policyResponsesRequestWire{Input: request.Input, Instructions: request.Instructions})
+	}
+	return json.Marshal(policyChatRequestWire{System: request.System, Tools: request.Tools, Messages: request.Messages})
+}
+
+// UnmarshalJSON reads either shape strictly: a request with input carries
+// only input and instructions.
+func (request *PolicyClientRequest) UnmarshalJSON(data []byte) error {
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(data, &keys); err != nil {
+		return err
+	}
+	if _, responses := keys["input"]; responses {
+		var wire policyResponsesRequestWire
+		if err := decodeStrict(data, &wire); err != nil {
+			return err
+		}
+		*request = PolicyClientRequest{Input: wire.Input, Instructions: wire.Instructions}
+		return nil
+	}
+	var wire policyChatRequestWire
+	if err := decodeStrict(data, &wire); err != nil {
+		return err
+	}
+	*request = PolicyClientRequest{System: wire.System, Tools: wire.Tools, Messages: wire.Messages}
+	return nil
 }
 
 type PolicyDecisionRequest struct {

@@ -165,6 +165,18 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	if algorithm.RaylineARC.PolicyService != nil {
 		result.RawRequest = reqCtx.RaylineARCRawBody
 		result.RequestFormat = policyRequestFormat(reqCtx.SourceFormat)
+		if result.RequestFormat == policyFormatResponses {
+			input, instructions, err := r.raylineARCPolicyResponsesInput(reqCtx)
+			if err != nil {
+				result.PreparationFailure = "policy_request_body"
+				if errors.Is(err, errPolicyResponsesHistoryUnavailable) {
+					result.PreparationFailure = "turns_stored_history"
+				}
+				r.finalizeRaylineARCAbort(reqCtx, result.PreparationFailure)
+				return result
+			}
+			result.PolicyInput, result.PolicyInstructions = input, instructions
+		}
 	}
 	result.ImageBearing = imageBearing
 	result.NonVisionArms = r.nonVisionArms(modelRefs)

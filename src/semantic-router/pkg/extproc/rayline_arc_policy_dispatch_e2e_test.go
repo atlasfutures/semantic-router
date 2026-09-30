@@ -314,6 +314,7 @@ routing:
                 neutral_level: none
                 placements:
                   - append_tail_user_text
+                  - insert_user_after_tool_run
                 levels:
                   - level: none
                     rank: 0
@@ -333,6 +334,10 @@ routing:
             development_mode: true
 
 global:
+  services:
+    response_api:
+      enabled: true
+      store_backend: memory
   stores:
     semantic_cache:
       enabled: false
@@ -368,3 +373,62 @@ global:
         model_id: ""
         use_mmbert_32k: false
 `
+
+// A client's Responses request is decided as openai_responses -- input items
+// and instructions -- and its chosen action reaches the provider body.
+func TestPolicyDecidesAResponsesRequest(t *testing.T) {
+	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
+	actions := map[string]config.RaylineARCPolicyBinding{
+		"think":  policyAction("think", "up", "think-trained", policyTestEffort("high"), nil, policyTestUp),
+		"off":    policyAction("off", "none", "off-trained", policyTestEffort("none"), nil, ""),
+		"claude": policyAction("claude", "none", "claude-opus-5", policyTestEffort("medium"), nil, ""),
+	}
+	fake := newFakePolicyService(t, policyTestAlias, policyTestPackage,
+		[]string{actions["think"].ActionID, actions["off"].ActionID, actions["claude"].ActionID})
+	router, err := NewOpenAIRouter(writePolicyDispatchConfig(t, fake.URL(), actions))
+	if err != nil {
+		t.Fatalf("build router: %v", err)
+	}
+	awaitPolicySelectorArmed(t, router)
+	fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return actions["think"].ActionID })
+
+	ctx := &RequestContext{Headers: map[string]string{}, RequestID: "policy-e2e-responses", StartTime: time.Now(), TraceContext: context.Background()}
+	headers := &ext_proc.ProcessingRequest_RequestHeaders{RequestHeaders: &ext_proc.HttpHeaders{
+		Headers: &core.HeaderMap{Headers: []*core.HeaderValue{
+			{Key: ":method", Value: "POST"},
+			{Key: ":path", Value: "/v1/responses"},
+			{Key: "content-type", Value: "application/json"},
+			{Key: "x-rayline-session", Value: "episode-responses"},
+		}},
+	}}
+	if response, err := router.handleRequestHeaders(headers, ctx); err != nil || response.GetImmediateResponse() != nil {
+		t.Fatalf("request headers: err=%v immediate=%v", err, response.GetImmediateResponse())
+	}
+	client := `{"model":"auto","max_output_tokens":32000,"instructions":"You are Codex.","input":[` +
+		`{"type":"message","role":"user","content":"List the files."},` +
+		`{"type":"function_call","call_id":"call_1","name":"shell","arguments":"{}"},` +
+		`{"type":"function_call_output","call_id":"call_1","output":"README.md"}]}`
+	response, err := router.handleRequestBody(&ext_proc.ProcessingRequest_RequestBody{
+		RequestBody: &ext_proc.HttpBody{Body: []byte(client), EndOfStream: true},
+	}, ctx)
+	if err != nil {
+		t.Fatalf("request body: %v", err)
+	}
+	if immediate := response.GetImmediateResponse(); immediate != nil {
+		t.Fatalf("request refused: %d %s", immediate.GetStatus().GetCode(), immediate.GetBody())
+	}
+	sent := fake.received()
+	if len(sent) != 1 || sent[0].RequestFormat != policyFormatResponses || len(sent[0].Request.Input) != 3 ||
+		sent[0].Request.Messages != nil || sent[0].Request.Instructions == nil || *sent[0].Request.Instructions != "You are Codex." {
+		t.Fatalf("decide requests = %+v", sent)
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(response.GetRequestBody().GetResponse().GetBodyMutation().GetBody(), &body); err != nil {
+		t.Fatal(err)
+	}
+	assertJSONField(t, body, "model", `"vendor/think"`)
+	assertJSONField(t, body, "reasoning", `{"effort":"high"}`)
+	if !strings.Contains(string(body["messages"]), policyTestUp) {
+		t.Fatalf("the provider body does not carry the steer: %s", body["messages"])
+	}
+}

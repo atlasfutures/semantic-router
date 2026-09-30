@@ -38,6 +38,7 @@ import (
 const (
 	policyFormatAnthropic = "anthropic_messages"
 	policyFormatOpenAI    = "openai_chat"
+	policyFormatResponses = "openai_responses"
 
 	arcFailurePolicyRequestFormat = "policy_request_format"
 )
@@ -157,6 +158,8 @@ func policyRequestFormat(format llmprotocol.WireFormat) string {
 		return policyFormatAnthropic
 	case llmprotocol.OpenAIChatV1:
 		return policyFormatOpenAI
+	case llmprotocol.OpenAIResponsesV1:
+		return policyFormatResponses
 	default:
 		return ""
 	}
@@ -255,11 +258,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if arcContext.RequestFormat == "" {
 		return nil, arcSelectionFailure(arcFailurePolicyRequestFormat)
 	}
-	var body policyClientRequest
-	if err := json.Unmarshal(arcContext.RawRequest, &body); err != nil || len(body.Messages) == 0 {
-		return nil, arcSelectionFailure("policy_request_body")
-	}
-	messages, roles, err := policyMessages(body.Messages)
+	clientRequest, messages, roles, err := policyClientRequestOf(arcContext)
 	if err != nil {
 		return nil, arcSelectionFailure("policy_request_body")
 	}
@@ -289,7 +288,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		EpisodeIDHash: arcContext.EpisodeIDHash,
 		ContextEpoch:  turn.ContextEpoch(),
 		RequestFormat: arcContext.RequestFormat,
-		Request:       raylinearc.PolicyClientRequest(body),
+		Request:       clientRequest,
 		Attribution:   attribution,
 		Selection: raylinearc.PolicySelection{
 			AvailableActionIDs:  available,
@@ -385,6 +384,36 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		messages, response.Decision.SelectedActionID, response.Decision.SelectedArmID,
 	)
 	return result, nil
+}
+
+// policyClientRequestOf is the request the service projects, with the
+// messages (Responses: items) attribution indexes and the role of each. A
+// Responses request was materialized when the selection context was built;
+// the others are the client's system, tools and messages exactly as received.
+func policyClientRequestOf(
+	arcContext *selection.RaylineARCSelectionContext,
+) (raylinearc.PolicyClientRequest, []json.RawMessage, []string, error) {
+	if arcContext.RequestFormat == policyFormatResponses {
+		if len(arcContext.PolicyInput) == 0 {
+			return raylinearc.PolicyClientRequest{}, nil, nil, errPolicyResponsesInputEmpty
+		}
+		roles, err := policyResponsesRoles(arcContext.PolicyInput)
+		if err != nil {
+			return raylinearc.PolicyClientRequest{}, nil, nil, err
+		}
+		return raylinearc.PolicyClientRequest{
+			Input: arcContext.PolicyInput, Instructions: arcContext.PolicyInstructions,
+		}, arcContext.PolicyInput, roles, nil
+	}
+	var body policyClientRequest
+	if err := json.Unmarshal(arcContext.RawRequest, &body); err != nil || len(body.Messages) == 0 {
+		return raylinearc.PolicyClientRequest{}, nil, nil, errors.New("messages must be a nonempty array")
+	}
+	messages, roles, err := policyMessages(body.Messages)
+	if err != nil {
+		return raylinearc.PolicyClientRequest{}, nil, nil, err
+	}
+	return raylinearc.PolicyClientRequest{System: body.System, Tools: body.Tools, Messages: body.Messages}, messages, roles, nil
 }
 
 // policyMessages splits the raw messages array without re-encoding any
