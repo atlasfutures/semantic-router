@@ -2,8 +2,7 @@ name: vsr-next Go tests
 
 # pr.yml and main.yml run Test And Build only for main, so PRs to and pushes
 # on vsr-next ran no Go tests. This job builds the CPU Rust bindings and runs
-# the router packages vsr-next changes: config, the ext_proc pipeline,
-# selection (Rayline ARC), and the protocol codec.
+# every router package's tests.
 on:
   pull_request:
     branches: [vsr-next]
@@ -60,12 +59,4 @@ jobs:
         env:
           CGO_ENABLED: 1
           LD_LIBRARY_PATH: ${{ github.workspace }}/candle-binding/target/release:${{ github.workspace }}/ml-binding/target/release:${{ github.workspace }}/nlp-binding/target/release
-        run: |
-          go test -count=1 \
-            ./pkg/config/... \
-            ./pkg/extproc/... \
-            ./pkg/selection/... \
-            ./pkg/protocolcodec/... \
-            ./pkg/llmprotocol/... \
-            ./pkg/responseapi/... \
-            ./pkg/catalog/...
+        run: go test -count=1 ./pkg/...
