@@ -584,6 +584,11 @@ func (encoder *chatStreamEncoder) Push(event llmprotocol.Event) ([][]byte, llmpr
 	if encoder.terminal {
 		return nil, nil, llmprotocol.NewError(llmprotocol.ErrorConflict, "stream_terminal", "stream is already terminal", nil)
 	}
+	// A provider-run web search is not something a Chat choice can show; the
+	// answer that follows it is.
+	if carriedAnthropicServerBlock(event.Content) != nil {
+		return nil, nil, nil
+	}
 	normalized, err := encoder.next(event)
 	if err != nil {
 		return nil, nil, err

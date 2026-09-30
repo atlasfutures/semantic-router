@@ -13,11 +13,45 @@
     {
       "name": "citation_delta",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unknown_stream_delta"
-        }
+        "status": "ok",
+        "body": {
+          "frames": [
+            {
+              "data": {
+                "choices": [
+                  {
+                    "delta": {
+                      "role": "assistant"
+                    },
+                    "finish_reason": null,
+                    "index": 0
+                  }
+                ],
+                "id": "msg_2",
+                "model": "public-model",
+                "object": "chat.completion.chunk"
+              },
+              "event": ""
+            },
+            {
+              "data": {
+                "error": {
+                  "code": "stream_incomplete",
+                  "message": "upstream stream ended before completion",
+                  "param": null,
+                  "type": "server_error"
+                }
+              },
+              "event": ""
+            }
+          ]
+        },
+        "diagnostics": [
+          {
+            "field": "usage",
+            "action": "dropped"
+          }
+        ]
       }
     }
   ]

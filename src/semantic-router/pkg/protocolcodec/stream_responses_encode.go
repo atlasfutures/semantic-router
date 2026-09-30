@@ -20,13 +20,19 @@ func (encoder *responsesStreamEncoder) Push(event llmprotocol.Event) ([][]byte, 
 	if frames, diagnostics, handled, directErr := encoder.encodeDirectResponsesEvent(event); handled {
 		return frames, diagnostics, directErr
 	}
+	var flushed [][]byte
+	if event.Type == llmprotocol.EventResponseCompleted {
+		if flushed, err = encoder.flushPendingAnthropicSearches(event); err != nil {
+			return nil, nil, err
+		}
+	}
 	wire, diagnostics, err := encoder.responsesWireForEvent(event)
 	if err != nil || wire.Type == "" {
-		return nil, diagnostics, err
+		return flushed, diagnostics, err
 	}
 	wire.Sequence = encoder.nextWireSequence()
 	frame, err := encoder.encodeResponsesStreamFrame(wire)
-	return [][]byte{frame}, diagnostics, err
+	return append(flushed, frame), diagnostics, err
 }
 
 func (encoder *responsesStreamEncoder) encodeDirectResponsesEvent(
@@ -92,6 +98,9 @@ func (encoder *responsesStreamEncoder) responsesWireForEvent(
 
 func (encoder *responsesStreamEncoder) encodeResponsesItemStart(event llmprotocol.Event) ([][]byte, error) {
 	encoder.neutralItemIDs[event.ItemIndex] = event.ItemID
+	if carriedAnthropicServerBlock(event.Content) != nil {
+		return nil, nil
+	}
 	if event.ToolCall != nil {
 		frames, _, err := encoder.ensureResponsesOutputStarted(event, responsesOutputTool)
 		return frames, err
@@ -480,6 +489,9 @@ func (encoder *responsesStreamEncoder) responsesContentWireIndex(
 func (encoder *responsesStreamEncoder) encodeCompletedResponsesItem(
 	event llmprotocol.Event,
 ) ([][]byte, llmprotocol.Diagnostics, error) {
+	if carried := carriedAnthropicServerBlock(event.Content); carried != nil {
+		return encoder.encodeResponsesAnthropicWebSearch(event, carried)
+	}
 	var frames [][]byte
 	keys := append([]responsesOutputKey(nil), encoder.itemOutputKeys[event.ItemIndex]...)
 	if len(keys) == 0 {

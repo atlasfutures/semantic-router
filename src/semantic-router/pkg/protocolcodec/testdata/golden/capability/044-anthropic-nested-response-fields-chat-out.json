@@ -13,10 +13,33 @@
     {
       "name": "server_tool_use",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_content"
+        "status": "ok",
+        "body": {
+          "choices": [
+            {
+              "finish_reason": "tool_calls",
+              "index": 0,
+              "message": {
+                "content": "",
+                "role": "assistant"
+              }
+            }
+          ],
+          "created": 0,
+          "id": "msg_2",
+          "model": "routed-model",
+          "object": "chat.completion",
+          "usage": {
+            "completion_tokens": 1,
+            "completion_tokens_details": {
+              "reasoning_tokens": 0
+            },
+            "prompt_tokens": 2,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "total_tokens": 3
+          }
         }
       }
     }

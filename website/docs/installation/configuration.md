@@ -244,10 +244,16 @@ routing:
   counted (`tools.web_search`), and the turn is served without it. Web search
   changes what a turn costs and does, so a model gets it only when its card
   admits it.
-- **Forwarded only on OpenAI Responses.** An admitted model on a Responses
-  backend gets the declaration unchanged, and the client gets the provider's
-  `web_search_call` items back, buffered or streamed. A Chat Completions or
-  Anthropic Messages backend drops it.
+- **Where it is sent.** An admitted model on an OpenAI Responses backend gets
+  the declaration unchanged, and the client gets the provider's
+  `web_search_call` items back, buffered or streamed. An admitted model on an
+  Anthropic Messages backend gets Anthropic's live web search tool
+  (`web_search_20250305`, billed by Anthropic per search), but only for a
+  declaration Anthropic can honour: one that states no restriction, or
+  `external_web_access: true`. A restricted declaration, such as Codex's
+  default `external_web_access: false`, is dropped there. A Responses client
+  gets Anthropic's searches back as `web_search_call` items and its citations
+  as `url_citation` annotations. A Chat Completions backend drops it.
 - **Separate from `capabilities`.** Admitting web search needs no
   `capabilities` list, and it does not gate which requests the model may
   serve.

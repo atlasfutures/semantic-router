@@ -332,10 +332,29 @@ func appendCarriedToolDrops(
 	policy llmprotocol.Policy,
 ) {
 	for _, tool := range request.CarriedTools {
-		if !carriedToolForwarded(tool, target, request.HostedTools) {
+		if !carriedToolSent(request, tool, target) {
 			appendUnmodeledDrop(diagnostics, policy, tool.Format, target, "tools."+tool.Type)
 		}
 	}
+}
+
+// carriedToolSent reports whether this target is sent a carried declaration:
+// it must be admitted and expressible there, and, where it is sent under a
+// name, that name must not be one the request's own functions already use --
+// a provider refuses two tools of one name.
+func carriedToolSent(request llmprotocol.Request, tool llmprotocol.UnmodeledBlock, target llmprotocol.WireFormat) bool {
+	if !carriedToolForwarded(tool, target, request.HostedTools) {
+		return false
+	}
+	if anthropicHostedTool(tool, target) == nil {
+		return true
+	}
+	for _, declared := range request.Tools {
+		if llmprotocol.QualifiedToolName(declared.Namespace, declared.Name) == tool.Type {
+			return false
+		}
+	}
+	return true
 }
 
 // forwardedCarriedTools returns the carried tool declarations this target is
@@ -344,7 +363,7 @@ func appendCarriedToolDrops(
 func forwardedCarriedTools(request llmprotocol.Request, target llmprotocol.WireFormat) []llmprotocol.UnmodeledBlock {
 	var forwarded []llmprotocol.UnmodeledBlock
 	for _, tool := range request.CarriedTools {
-		if carriedToolForwarded(tool, target, request.HostedTools) {
+		if carriedToolSent(request, tool, target) {
 			forwarded = append(forwarded, tool)
 		}
 	}
@@ -352,7 +371,38 @@ func forwardedCarriedTools(request llmprotocol.Request, target llmprotocol.WireF
 }
 
 func carriedToolForwarded(tool llmprotocol.UnmodeledBlock, target llmprotocol.WireFormat, hosted []string) bool {
-	return tool.Format == target && slices.Contains(hosted, tool.Type)
+	if !slices.Contains(hosted, tool.Type) {
+		return false
+	}
+	return tool.Format == target || anthropicHostedTool(tool, target) != nil
+}
+
+// anthropicHostedTool is the Anthropic server tool a carried Responses
+// declaration maps to on a Messages target, or nil: web_search becomes
+// Anthropic's web search tool, whose results come back as the server_tool_use
+// and web_search_tool_result blocks anthropic_web_search.go carries.
+func anthropicHostedTool(tool llmprotocol.UnmodeledBlock, target llmprotocol.WireFormat) json.RawMessage {
+	if target != llmprotocol.AnthropicMessagesV1 || tool.Format != llmprotocol.OpenAIResponsesV1 || tool.Type != "web_search" {
+		return nil
+	}
+	// Anthropic's tool searches the live web and has no knob for anything
+	// else the declaration may say. A declaration that restricts the search
+	// -- external_web_access: false, which Codex sends, or any other member
+	// -- is one Anthropic cannot honour, so it is not mapped: dropping it
+	// keeps the turn, where mapping it would widen what the model may do.
+	var declared map[string]json.RawMessage
+	if json.Unmarshal(tool.Raw, &declared) != nil {
+		return nil
+	}
+	for name, value := range declared {
+		switch {
+		case name == "type":
+		case name == "external_web_access" && string(value) == "true":
+		default:
+			return nil
+		}
+	}
+	return json.RawMessage(`{"type":"web_search_20250305","name":"web_search"}`)
 }
 
 // appendToolExtensionDrops counts the carried members of each tool definition
