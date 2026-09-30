@@ -195,3 +195,21 @@ func TestWebSearchCallStatusesAreCarried(t *testing.T) {
 		}
 	}
 }
+
+// A failed web search may end the item it started, and only that item: an
+// item started as a message may not complete as a failed search.
+func TestFailedWebSearchStillMatchesItsItem(t *testing.T) {
+	frame := func(event string, data string) string { return "event: " + event + "\ndata: " + data + "\n\n" }
+	body := frame("response.created", `{"type":"response.created","sequence_number":0,"response":{"id":"resp_1","object":"response","created_at":100,"model":"m","status":"in_progress","output":[]}}`) +
+		frame("response.output_item.added", `{"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"type":"message","id":"ws_1","status":"in_progress","role":"assistant","content":[]}}`) +
+		frame("response.output_item.done", `{"type":"response.output_item.done","sequence_number":2,"output_index":0,"item":{"type":"web_search_call","id":"ws_1","status":"failed"}}`)
+	stream, err := NewBuiltinEngine().NewStream(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1, llmprotocol.StreamContext{
+		Context: context.Background(), PublicModel: "public-model", ProviderModel: "m",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := stream.Push([]byte(body)); err == nil || !strings.Contains(err.Error(), "stream_item_kind_mismatch") {
+		t.Fatalf("a message completed as a failed search returned %v", err)
+	}
+}
