@@ -145,9 +145,6 @@ func (store *RedisEpisodeStore) Prepare(
 		return Lease{}, nil, err
 	}
 	keys := store.keys(episodeIDHash)
-	// Whether another owner's lease was ever seen. Only then is running out of
-	// time contention; a deadline hit inside a stalled Redis call is not.
-	observedHeld := false
 	for {
 		lease, state, acquired, err := store.tryPrepare(
 			ctx,
@@ -156,19 +153,16 @@ func (store *RedisEpisodeStore) Prepare(
 			owner,
 			workerCount,
 		)
-		if err != nil {
-			if observedHeld && ctx.Err() != nil {
-				return Lease{}, nil, errors.Join(ErrEpisodeLeaseHeld, err)
-			}
+		// A deadline hit inside the Redis call is left bare: whatever an
+		// earlier poll saw, the store may have stalled on this one.
+		if err != nil || acquired {
 			return lease, state, err
 		}
-		if acquired {
-			return lease, state, nil
-		}
-		observedHeld = true
 		timer := time.NewTimer(redisAcquirePoll)
 		select {
 		case <-ctx.Done():
+			// Out of time while waiting behind a lease the last poll found
+			// held: that, and only that, is contention.
 			timer.Stop()
 			return Lease{}, nil, errors.Join(ErrEpisodeLeaseHeld, ctx.Err())
 		case <-timer.C:
