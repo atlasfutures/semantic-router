@@ -300,7 +300,7 @@ func appendChatTools(wire *chatRequestWire, tools []llmprotocol.Tool) {
 			continue
 		}
 		wire.Tools = append(wire.Tools, chatToolWire{Type: "function", Function: chatFunctionDefinitionWire{
-			Name: llmprotocol.QualifiedToolName(tool.Namespace, tool.Name), Description: tool.Description,
+			Name: llmprotocol.QualifiedToolName(tool.Namespace, tool.Name), Description: llmprotocol.FlattenedToolDescription(tool),
 			Parameters: tool.InputSchema, Strict: tool.Strict,
 		}, CacheControl: encodeAnthropicCacheControl(tool.Cache)})
 	}

@@ -393,3 +393,31 @@ func TestSyntheticStreamStartsANamespacedCallWithItsNamespace(t *testing.T) {
 		t.Fatalf("the start event lost the namespace: %+v", events[0].ToolCall)
 	}
 }
+
+// Where the format has no namespaces, a function is declared with its
+// namespace's description ahead of its own, which may be the only place a
+// generic function says what it acts on.
+func TestFlattenedToolsKeepTheNamespaceDescription(t *testing.T) {
+	body := `{"model":"m","input":"hi","tools":[{"type":"namespace","name":"files","description":"Open file handles.",` +
+		`"tools":[{"type":"function","name":"close","description":"Close one.","parameters":{"type":"object"}}]}]}`
+	for _, target := range []llmprotocol.WireFormat{llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1} {
+		routed, _ := routeResponsesRequestDiagnostics(t, body, target)
+		if !bytes.Contains(routed, []byte(`"description":"Open file handles.\n\nClose one."`)) {
+			t.Fatalf("%s lost the namespace description: %s", target, routed)
+		}
+	}
+}
+
+// A call in history is bounded by its qualified name, the name a format
+// without namespaces is sent.
+func TestHistoricalNamespacedCallCountsTowardTheNameLimit(t *testing.T) {
+	long := strings.Repeat("n", llmprotocol.DefaultPolicy().Limits.ToolNameBytes)
+	body := `{"model":"m","input":[{"type":"message","role":"user","content":"hi"},` +
+		`{"type":"function_call","call_id":"c","namespace":"` + long + `","name":"f","arguments":"{}"},` +
+		`{"type":"function_call_output","call_id":"c","output":"ok"}]}`
+	_, _, _, err := NewBuiltinEngine().DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(body))
+	var protocolError *llmprotocol.ProtocolError
+	if !errors.As(err, &protocolError) || protocolError.Code != "tool_call_limit" {
+		t.Fatalf("an oversized qualified call name returned %v, want tool_call_limit", err)
+	}
+}

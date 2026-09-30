@@ -98,7 +98,7 @@ func extractSemanticRequestSignals(request *llmprotocol.Request) *requestSignalS
 	}
 	result.ToolDefinitionCount = len(request.Tools)
 	for _, tool := range request.Tools {
-		addContextBytes(result, len(tool.Name)+len(tool.Description), len(tool.InputSchema))
+		addContextBytes(result, len(tool.Identity())+len(tool.Description)+len(tool.NamespaceDescription), len(tool.InputSchema))
 	}
 	result.ContextTokenFloor = neutralContextTokenFloor(result, len(request.Messages)+len(request.Instructions))
 	result.ContextEquivalentBytes = saturatingNeutralMultiply(result.ContextTokenFloor, classification.RequestContextBytesPerToken)

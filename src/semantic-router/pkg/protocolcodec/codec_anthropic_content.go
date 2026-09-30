@@ -513,8 +513,9 @@ func appendAnthropicTools(wire *anthropicRequestWire, tools []llmprotocol.Tool) 
 	encoded := make([]json.RawMessage, 0, len(tools))
 	for _, tool := range tools {
 		body, err := json.Marshal(anthropicToolWire{
-			Name: llmprotocol.QualifiedToolName(tool.Namespace, tool.Name), Description: tool.Description, InputSchema: tool.InputSchema,
-			Strict: tool.Strict, Type: tool.Type, CacheControl: encodeAnthropicCacheControl(tool.Cache),
+			Name: llmprotocol.QualifiedToolName(tool.Namespace, tool.Name), Description: llmprotocol.FlattenedToolDescription(tool),
+			InputSchema: tool.InputSchema,
+			Strict:      tool.Strict, Type: tool.Type, CacheControl: encodeAnthropicCacheControl(tool.Cache),
 		})
 		if err != nil {
 			return llmprotocol.NewError(llmprotocol.ErrorInternal, "encode_wire", "wire request could not be encoded", err)

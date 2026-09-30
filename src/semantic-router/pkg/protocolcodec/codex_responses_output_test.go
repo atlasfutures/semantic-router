@@ -107,3 +107,35 @@ func TestEncryptedReasoningSurvivesAResponsesStream(t *testing.T) {
 		t.Fatalf("blob on reasoning done=%v, on completed output=%v:\n%s", itemDone, completed, bytes.Join(append(frames, final...), nil))
 	}
 }
+
+// A provider may name a call's namespace only when the item completes; the
+// client still gets it.
+func TestStreamNamespaceLearnedAtCompletion(t *testing.T) {
+	frame := func(event string, data string) string { return "event: " + event + "\ndata: " + data + "\n\n" }
+	body := frame("response.created", `{"type":"response.created","sequence_number":0,"response":{"id":"resp_1","object":"response","created_at":100,"model":"m","status":"in_progress","output":[]}}`) +
+		frame("response.output_item.added", `{"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"type":"function_call","id":"fc_1","status":"in_progress","call_id":"call_1","name":"spawn_agent","arguments":""}}`) +
+		frame("response.function_call_arguments.done", `{"type":"response.function_call_arguments.done","sequence_number":2,"output_index":0,"item_id":"fc_1","name":"spawn_agent","arguments":"{}"}`) +
+		frame("response.output_item.done", `{"type":"response.output_item.done","sequence_number":3,"output_index":0,"item":{"type":"function_call","id":"fc_1","status":"completed","call_id":"call_1","namespace":"multi_agent_v1","name":"spawn_agent","arguments":"{}"}}`) +
+		frame("response.completed", `{"type":"response.completed","sequence_number":4,"response":{"id":"resp_1","object":"response","created_at":100,"model":"m","status":"completed","output":[`+
+			`{"type":"function_call","id":"fc_1","status":"completed","call_id":"call_1","namespace":"multi_agent_v1","name":"spawn_agent","arguments":"{}"}],`+
+			`"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)
+	stream, err := NewBuiltinEngine().NewStream(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1, llmprotocol.StreamContext{
+		Context: context.Background(), PublicModel: "public-model", ProviderModel: "m",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frames, _, _, err := stream.Push([]byte(body))
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	final, _, _, err := stream.Finalize(nil)
+	if err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+	wire := bytes.Join(append(frames, final...), nil)
+	done := wire[bytes.Index(wire, []byte("response.output_item.done")):]
+	if !bytes.Contains(done, []byte(`"namespace":"multi_agent_v1"`)) {
+		t.Fatalf("the namespace learned at completion did not reach the client:\n%s", wire)
+	}
+}

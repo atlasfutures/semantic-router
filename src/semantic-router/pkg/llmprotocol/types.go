@@ -211,6 +211,21 @@ func QualifiedToolName(namespace, name string) string {
 	return namespace + namespaceSeparator + name
 }
 
+// FlattenedToolDescription is the description a namespaced tool is declared
+// with where the format has no namespaces: the namespace's description, which
+// may be the only place a generic function such as close says what it closes,
+// followed by the function's own.
+func FlattenedToolDescription(tool Tool) string {
+	switch {
+	case tool.NamespaceDescription == "":
+		return tool.Description
+	case tool.Description == "":
+		return tool.NamespaceDescription
+	default:
+		return tool.NamespaceDescription + "\n\n" + tool.Description
+	}
+}
+
 // ToolNamespaces maps each qualified name this request declares to the
 // namespace and function it stands for. The router uses it to restore the
 // namespace on a call a Chat or Messages provider returns under the qualified
