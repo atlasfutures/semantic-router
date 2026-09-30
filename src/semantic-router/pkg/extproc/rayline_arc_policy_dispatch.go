@@ -155,6 +155,15 @@ func sameInt64Pointer(left, right *int64) bool {
 // the selector arming instead of failing each turn that picks it. Messages
 // carries effort and budget itself; Chat needs a reasoning transport that
 // reads them (policyActionChatWire); Responses is not served.
+//
+// Serving Responses needs more than a reasoning transport. A Responses client
+// such as Codex resends each reasoning item's encrypted_content, which only
+// the provider account and model that issued it can read; the codec drops
+// those items on every target today. Forwarding them to their own issuer
+// needs the episode to record which workers issued the blobs it has seen, and
+// to drop the whole item -- not only the blob -- on a turn bound for another.
+// Serving Responses is item D of atlasfutures/semantic-router#108; the issuer
+// tracking is #109.
 func raylineARCPolicyActionsCarriable(cfg *config.RouterConfig, decision *config.Decision) bool {
 	for _, binding := range decision.Algorithm.RaylineARC.PolicyService.Bindings {
 		if !binding.DeclaresDispatch() {

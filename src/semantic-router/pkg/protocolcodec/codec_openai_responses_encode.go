@@ -8,7 +8,7 @@ import (
 )
 
 func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope llmprotocol.Envelope, policy llmprotocol.Policy) ([]byte, llmprotocol.Diagnostics, error) {
-	if envelope.CanReplay(llmprotocol.OpenAIResponsesV1, request.Generation, policy, false) {
+	if !holdsWhatEveryTargetDrops(request) && envelope.CanReplay(llmprotocol.OpenAIResponsesV1, request.Generation, policy, false) {
 		return append([]byte(nil), envelope.Request...), nil, nil
 	}
 	if err := validateResponsesEncodableRequest(request); err != nil {
@@ -28,12 +28,85 @@ func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope 
 	appendRequestDispositions(&diagnostics, request, llmprotocol.OpenAIResponsesV1, policy)
 	appendUnchoosableToolChoiceDrop(&diagnostics, policy, request, llmprotocol.OpenAIResponsesV1, len(wire.Tools))
 	appendToolExtensionDrops(&diagnostics, request.Tools, llmprotocol.OpenAIResponsesV1, policy)
+	appendCarriedToolDrops(&diagnostics, request.CarriedTools, llmprotocol.OpenAIResponsesV1, policy)
 	for _, message := range request.Messages {
 		appendContentExtensionDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
 		appendCarriedBlockDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
+		if carriesEncryptedReasoning(message) {
+			appendUnmodeledDrop(&diagnostics, policy, llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1, "content.reasoning")
+		}
+	}
+	if wire.Reasoning == nil && clientStatedReasoningEffort(envelope) {
+		request.Unmodeled = withoutCarriedReasoning(request.Unmodeled, &diagnostics, policy)
 	}
 	body, err = mergeUnmodeledFields(body, request, llmprotocol.OpenAIResponsesV1, &diagnostics, policy)
 	return body, diagnostics, err
+}
+
+// holdsWhatEveryTargetDrops reports whether the request carries something no
+// target is sent -- a carried tool, or a resent encrypted reasoning item -- so
+// the client bytes, which still hold it, are never replayed.
+func holdsWhatEveryTargetDrops(request llmprotocol.Request) bool {
+	if len(request.CarriedTools) > 0 {
+		return true
+	}
+	for _, message := range request.Messages {
+		if carriesEncryptedReasoning(message) {
+			return true
+		}
+	}
+	return false
+}
+
+// clientStatedReasoningEffort reports whether the client's own reasoning
+// object named an effort. When it did and the encoded request sends none, the
+// router took reasoning away for this arm, and a carried summary must not put
+// it back. When it did not -- reasoning: {summary: "auto"} alone -- the client
+// asked for the provider's default effort with a summary, and the carried
+// summary rebuilds exactly that. Without the client bytes, the answer is yes,
+// which drops the summary rather than risk turning reasoning on.
+func clientStatedReasoningEffort(envelope llmprotocol.Envelope) bool {
+	if len(envelope.Request) == 0 {
+		return true
+	}
+	var client struct {
+		Reasoning *struct {
+			Effort json.RawMessage `json:"effort"`
+		} `json:"reasoning"`
+	}
+	if json.Unmarshal(envelope.Request, &client) != nil || client.Reasoning == nil {
+		return true
+	}
+	return hasJSONValue(client.Reasoning.Effort)
+}
+
+// withoutCarriedReasoning removes a carried reasoning member, such as
+// reasoning.summary, when the encoded request sends no reasoning object and
+// the router took the client's reasoning away. The merge would otherwise
+// create one, and a reasoning object on an arm dispatched without reasoning
+// turns it back on at the provider's default effort.
+func withoutCarriedReasoning(
+	carrier *llmprotocol.UnmodeledFields,
+	diagnostics *llmprotocol.Diagnostics,
+	policy llmprotocol.Policy,
+) *llmprotocol.UnmodeledFields {
+	if carrier == nil || carrier.Children["reasoning"].Empty() {
+		return carrier
+	}
+	for _, path := range unnamedMemberPaths(carrier.Children["reasoning"], "reasoning.") {
+		appendPresentationDrop(
+			diagnostics, policy, carrier.Format, llmprotocol.OpenAIResponsesV1, path,
+			"the request sends no reasoning object to carry it in",
+		)
+	}
+	trimmed := *carrier
+	trimmed.Children = make(map[string]*llmprotocol.UnmodeledFields, len(carrier.Children))
+	for name, child := range carrier.Children {
+		if name != "reasoning" {
+			trimmed.Children[name] = child
+		}
+	}
+	return &trimmed
 }
 
 func validateResponsesEncodableRequest(request llmprotocol.Request) error {
@@ -94,6 +167,9 @@ func encodeResponsesRequestWire(request llmprotocol.Request) (responsesRequestWi
 func encodeResponsesRequestItems(request llmprotocol.Request) ([]json.RawMessage, error) {
 	items := make([]json.RawMessage, 0, len(request.Messages))
 	appendMessage := func(message llmprotocol.Message) error {
+		if carriesEncryptedReasoning(message) {
+			return nil
+		}
 		if carried, isCarried := carriedItemBytes(message, llmprotocol.OpenAIResponsesV1); isCarried {
 			items = append(items, carried)
 			return nil
@@ -342,6 +418,12 @@ func (state *responsesMessageEncodingState) flushReasoning() error {
 	summaries := make([]map[string]string, 0, len(state.reasoning))
 	texts := make([]map[string]string, 0, len(state.reasoning))
 	for _, content := range state.reasoning {
+		if encrypted, carrierOnly := encryptedReasoningOf(content); encrypted != nil {
+			item.EncryptedContent = encrypted
+			if carrierOnly {
+				continue
+			}
+		}
 		if content.Reasoning == llmprotocol.ReasoningScopeSummary {
 			summaries = append(summaries, map[string]string{"type": "summary_text", "text": content.Text})
 		} else {

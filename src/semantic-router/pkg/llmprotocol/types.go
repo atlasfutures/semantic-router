@@ -322,6 +322,13 @@ type Request struct {
 	// Unmodeled holds source-format members this contract does not name. It is
 	// opaque to the Router and survives only to the wire format it came from.
 	Unmodeled *UnmodeledFields
+	// CarriedTools holds, whole, the tool declarations of a kind this contract
+	// does not model: a Responses web_search or namespace tool, which Codex
+	// declares on every turn. Every target drops and counts them for now (see
+	// protocolcodec's carriedResponsesToolTypes). They do not gate which arm
+	// serves the turn: without them the turn still works, and the model only
+	// cannot call them.
+	CarriedTools []UnmodeledBlock
 }
 
 type StopReason string

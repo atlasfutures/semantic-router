@@ -265,7 +265,9 @@ func (decoder *responsesStreamDecoder) applyCompletedResponseItemKind(
 			return llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "stream_item_kind_mismatch", "upstream completed a tool item as a message", nil)
 		}
 	case "reasoning":
-		event.Content = &llmprotocol.Content{Kind: llmprotocol.ContentReasoning}
+		event.Content = &llmprotocol.Content{
+			Kind: llmprotocol.ContentReasoning, Extensions: encryptedReasoningFields(item.EncryptedContent),
+		}
 	case "image_generation_call":
 		event.Content = &llmprotocol.Content{
 			Kind:           llmprotocol.ContentGeneratedImage,

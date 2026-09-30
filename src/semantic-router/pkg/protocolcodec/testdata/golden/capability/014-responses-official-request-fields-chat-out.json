@@ -43,11 +43,22 @@
     {
       "name": "include",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_include"
-        }
+        "status": "ok",
+        "body": {
+          "messages": [
+            {
+              "content": "hello",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "include",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {
@@ -192,11 +203,22 @@
     {
       "name": "prompt_cache_key",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_prompt_cache_key"
-        }
+        "status": "ok",
+        "body": {
+          "messages": [
+            {
+              "content": "hello",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "prompt_cache_key",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {

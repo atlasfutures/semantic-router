@@ -58,11 +58,46 @@ func carriedResponsesInputItem(body json.RawMessage) (llmprotocol.Message, bool)
 	if itemType == "item_reference" {
 		return llmprotocol.Message{}, false
 	}
+	if itemType == "reasoning" && hasResponsesEncryptedReasoning(body) && !hasResponsesRefusedMember(body) &&
+		validateResponsesItemVariant(body, itemType, false) == nil {
+		return carriedItemMessage(llmprotocol.OpenAIResponsesV1, itemType, body), true
+	}
 	if isSupportedResponsesItemType(itemType, false) &&
 		!(hasUnnamedMembers(body, responsesItemWire{}) && !hasResponsesRefusedMember(body)) {
 		return llmprotocol.Message{}, false
 	}
 	return carriedItemMessage(llmprotocol.OpenAIResponsesV1, itemType, body), true
+}
+
+// hasResponsesEncryptedReasoning reports whether a reasoning item holds the
+// encrypted_content a store:false client (Codex) asks for with include and
+// resends on every later turn. The blob is opaque, and only the provider
+// account and model that issued it can read it. The router does not yet record
+// which target issued a blob, and a route can change targets between turns --
+// a fallback, or a decision over several Responses models -- so the item is
+// carried whole and every target, the Responses one included, drops and
+// counts it (carriesEncryptedReasoning). Removing only the blob is not an
+// option: under store:false a reasoning item that keeps its id and loses its
+// blob is one the provider tries to look up, and fails. The turn loses its
+// earlier reasoning, never the turn. Forwarding the blob to its own issuer
+// needs issuer tracking: atlasfutures/semantic-router#109.
+func hasResponsesEncryptedReasoning(body json.RawMessage) bool {
+	var item struct {
+		EncryptedContent json.RawMessage `json:"encrypted_content"`
+	}
+	return json.Unmarshal(body, &item) == nil && hasJSONValue(item.EncryptedContent)
+}
+
+// carriesEncryptedReasoning reports whether a message is a carried Responses
+// reasoning item holding encrypted_content, which no target is sent.
+func carriesEncryptedReasoning(message llmprotocol.Message) bool {
+	if len(message.Content) != 1 {
+		return false
+	}
+	block := message.Content[0].Unmodeled
+	return message.Content[0].Kind == llmprotocol.ContentUnmodeled && block != nil &&
+		block.Format == llmprotocol.OpenAIResponsesV1 && block.Type == "reasoning" &&
+		hasResponsesEncryptedReasoning(block.Raw)
 }
 
 // hasResponsesRefusedMember reports whether an item names a member the codec

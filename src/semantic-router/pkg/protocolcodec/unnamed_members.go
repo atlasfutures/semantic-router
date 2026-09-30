@@ -322,6 +322,20 @@ func appendContentExtensionDrops(
 	}
 }
 
+// appendCarriedToolDrops counts each carried tool declaration, by the tool
+// type the client wrote. No target is sent one yet, not even the format it
+// came from: see carriedResponsesToolTypes.
+func appendCarriedToolDrops(
+	diagnostics *llmprotocol.Diagnostics,
+	tools []llmprotocol.UnmodeledBlock,
+	target llmprotocol.WireFormat,
+	policy llmprotocol.Policy,
+) {
+	for _, tool := range tools {
+		appendUnmodeledDrop(diagnostics, policy, tool.Format, target, "tools."+tool.Type)
+	}
+}
+
 // appendToolExtensionDrops counts the carried members of each tool definition
 // that this target cannot express.
 func appendToolExtensionDrops(

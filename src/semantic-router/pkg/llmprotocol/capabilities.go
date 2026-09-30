@@ -183,7 +183,10 @@ func requestStateCapabilities(request Request) Capability {
 	if len(request.Metadata) > 0 {
 		required |= CapabilityRequestMetadata
 	}
-	if request.Store != nil {
+	// Only a request to store needs a target that can store. store: false,
+	// which Codex sends on every turn, asks for what a target that keeps
+	// nothing already does.
+	if request.Store != nil && *request.Store {
 		required |= CapabilityRequestStorage
 	}
 	if request.AutoStore != nil {

@@ -37,7 +37,10 @@ func ValidateRequest(request Request, limits Limits) error {
 	if err != nil {
 		return err
 	}
-	if err := validateToolChoice(request.ToolChoice, namedTools, len(request.Tools), request.ImageGeneration != nil); err != nil {
+	// A carried declaration is a tool the source format's target can call, so
+	// it counts toward a required choice; a target that drops it also drops
+	// the choice it could not honour.
+	if err := validateToolChoice(request.ToolChoice, namedTools, len(request.Tools)+len(request.CarriedTools), request.ImageGeneration != nil); err != nil {
 		return err
 	}
 	if err := locateRefusal(
@@ -131,10 +134,10 @@ func validateRequestCardinality(request Request, limits Limits) error {
 			"instruction limit exceeded", "", "instructions").
 			WithCount("", len(request.Instructions), limits.Instructions)
 	}
-	if limits.Tools > 0 && len(request.Tools) > limits.Tools {
+	if tools := len(request.Tools) + len(request.CarriedTools); limits.Tools > 0 && tools > limits.Tools {
 		return NewFieldError(ErrorInvalidRequest, "tools_limit",
 			"tool limit exceeded", "", "tools").
-			WithCount("", len(request.Tools), limits.Tools)
+			WithCount("", tools, limits.Tools)
 	}
 	return nil
 }

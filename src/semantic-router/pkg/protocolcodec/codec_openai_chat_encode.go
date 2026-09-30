@@ -64,6 +64,7 @@ func chatRequestDiagnostics(request llmprotocol.Request, policy llmprotocol.Poli
 	// contract names, which no table can enumerate.
 	appendRequestDispositions(&diagnostics, request, llmprotocol.OpenAIChatV1, policy)
 	appendToolExtensionDrops(&diagnostics, request.Tools, llmprotocol.OpenAIChatV1, policy)
+	appendCarriedToolDrops(&diagnostics, request.CarriedTools, llmprotocol.OpenAIChatV1, policy)
 	for _, instruction := range request.Instructions {
 		appendContentExtensionDrops(&diagnostics, instruction.Content, llmprotocol.OpenAIChatV1, policy)
 	}
