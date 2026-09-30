@@ -56,5 +56,31 @@ func replayEquivalentAnthropicSource(
 	if sentErr != nil || clientErr != nil || !bytes.Equal(sentJSON, clientJSON) {
 		return canonical
 	}
+	// Roles are the one wire value the decoder normalises rather than reads:
+	// it folds case and space, and maps tool to user and developer to system,
+	// because Messages names only user, assistant and system. Two bodies that
+	// decode alike can still spell a role differently, and only the canonical
+	// spelling is valid on the wire.
+	if !sameAnthropicWireRoles(canonical, source) {
+		return canonical
+	}
 	return source
+}
+
+func sameAnthropicWireRoles(canonical, source []byte) bool {
+	var sent, client struct {
+		Messages []struct {
+			Role string `json:"role"`
+		} `json:"messages"`
+	}
+	if json.Unmarshal(canonical, &sent) != nil || json.Unmarshal(source, &client) != nil ||
+		len(sent.Messages) != len(client.Messages) {
+		return false
+	}
+	for index := range sent.Messages {
+		if sent.Messages[index].Role != client.Messages[index].Role {
+			return false
+		}
+	}
+	return true
 }

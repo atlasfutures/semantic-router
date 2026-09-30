@@ -77,6 +77,21 @@ func TestAnthropicRouteThatChangesMoreThanTheModelIsEncoded(t *testing.T) {
 	}
 }
 
+// The decoder normalises role spellings Messages does not accept on the wire;
+// a client body that relies on that is encoded, never replayed, so the
+// provider only ever sees user, assistant and system.
+func TestAnthropicRouteNeverReplaysANormalisedRole(t *testing.T) {
+	for _, role := range []string{"tool", "User", " user "} {
+		t.Run(role, func(t *testing.T) {
+			body := anthropicReplayPrefix + `{"role":"` + role + `","content":"List the files."}],"stream":true}`
+			routed := routeAnthropicBody(t, body, nil)
+			if !strings.Contains(routed, `"role":"user"`) || strings.Contains(routed, `"role":"`+role+`"`) {
+				t.Fatalf("role %q reached the provider unnormalised: %s", role, routed)
+			}
+		})
+	}
+}
+
 // Canonical encoding keeps the client's grouping: the tool results and text
 // a client sent in one user message stay one message, and results the client
 // sent as separate messages stay separate.
