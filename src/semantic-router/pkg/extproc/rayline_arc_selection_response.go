@@ -171,8 +171,10 @@ func (r *OpenAIRouter) selectionDispatchGateResponse(
 		http.StatusServiceUnavailable,
 		selectionUnavailableMessage(ctx),
 	)
-	// A lost lease means another request now owns this session.
-	appendImmediateHeader(response, selectionFailureHeader, selectionFailureSessionBusy)
+	// Not session_busy: the gate cannot tell a competing owner from a renewal
+	// that failed on transport or timeout, and a caller told session_busy
+	// would wait for an in-flight turn that may not exist.
+	appendImmediateHeader(response, selectionFailureHeader, selectionFailureUnavailable)
 	return response
 }
 

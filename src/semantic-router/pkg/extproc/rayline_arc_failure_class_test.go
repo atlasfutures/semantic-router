@@ -17,6 +17,7 @@ limitations under the License.
 package extproc
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -95,5 +96,24 @@ func TestPublicClassNeverLeaksInternalClass(t *testing.T) {
 		if got := publicSelectionFailureClass(class); got == class {
 			t.Fatalf("internal class %q published verbatim", class)
 		}
+	}
+}
+
+// A lease lost at the dispatch gate is not known to be contention: renewal
+// also fails on transport errors and timeouts. Publishing session_busy there
+// would send the caller waiting for an in-flight turn that may not exist.
+func TestDispatchGateLeaseLossIsUnavailable(t *testing.T) {
+	ctx := &RequestContext{
+		SelectionTransaction: newSelectionTransactionOwner(
+			configRaylineARC,
+			&recordingSelectionTransaction{validateErr: errors.New("renewal failed")},
+		),
+	}
+	response := (&OpenAIRouter{}).selectionDispatchGateResponse(ctx)
+	if response.GetImmediateResponse() == nil {
+		t.Fatalf("response = %#v", response)
+	}
+	if got := immediateHeaderValue(response, selectionFailureHeader); got != selectionFailureUnavailable {
+		t.Fatalf("%s = %q, want %q", selectionFailureHeader, got, selectionFailureUnavailable)
 	}
 }
