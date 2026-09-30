@@ -8,9 +8,7 @@ import (
 )
 
 func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope llmprotocol.Envelope, policy llmprotocol.Policy) ([]byte, llmprotocol.Diagnostics, error) {
-	// Carried tools are dropped on every target, so the client bytes that
-	// still declare them are never replayed.
-	if len(request.CarriedTools) == 0 && envelope.CanReplay(llmprotocol.OpenAIResponsesV1, request.Generation, policy, false) {
+	if !holdsWhatEveryTargetDrops(request) && envelope.CanReplay(llmprotocol.OpenAIResponsesV1, request.Generation, policy, false) {
 		return append([]byte(nil), envelope.Request...), nil, nil
 	}
 	if err := validateResponsesEncodableRequest(request); err != nil {
@@ -43,6 +41,21 @@ func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope 
 	}
 	body, err = mergeUnmodeledFields(body, request, llmprotocol.OpenAIResponsesV1, &diagnostics, policy)
 	return body, diagnostics, err
+}
+
+// holdsWhatEveryTargetDrops reports whether the request carries something no
+// target is sent -- a carried tool, or a resent encrypted reasoning item -- so
+// the client bytes, which still hold it, are never replayed.
+func holdsWhatEveryTargetDrops(request llmprotocol.Request) bool {
+	if len(request.CarriedTools) > 0 {
+		return true
+	}
+	for _, message := range request.Messages {
+		if carriesEncryptedReasoning(message) {
+			return true
+		}
+	}
+	return false
 }
 
 // clientStatedReasoningEffort reports whether the client's own reasoning

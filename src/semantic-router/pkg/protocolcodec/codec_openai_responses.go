@@ -3,6 +3,7 @@ package protocolcodec
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
@@ -238,6 +239,9 @@ func (OpenAIResponsesCodec) DecodeRequest(body []byte, policy llmprotocol.Policy
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}
 	request := decodeResponsesBaseRequest(wire, conversationID)
+	if err := validateResponsesClientMembers(wire); err != nil {
+		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
+	}
 	request.Unmodeled = carryResponsesClientMembers(unmodeled, wire)
 	if err := decodeResponsesReasoningRequest(wire.Reasoning, &request); err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
@@ -283,6 +287,31 @@ func decodeResponsesReasoningRequest(reasoning *responsesReasoningWire, request 
 		"reasoning.generate_summary": reasoning.GenerateSummary,
 	}); err != nil {
 		return err
+	}
+	return nil
+}
+
+// validateResponsesClientMembers checks the shapes the Responses API defines
+// for the three carried client members, so a malformed one is refused at
+// ingress rather than forwarded to a provider or silently dropped: include is
+// an array of strings, and prompt_cache_key and reasoning.summary are strings.
+func validateResponsesClientMembers(wire responsesRequestWire) error {
+	invalid := func(field string) error {
+		return llmprotocol.NewFieldError(llmprotocol.ErrorInvalidRequest, "invalid_"+strings.ReplaceAll(field, ".", "_"),
+			"Responses "+field+" has the wrong type", "", field)
+	}
+	if hasJSONValue(wire.Include) {
+		var include []string
+		if json.Unmarshal(wire.Include, &include) != nil {
+			return invalid("include")
+		}
+	}
+	var text string
+	if hasJSONValue(wire.PromptCacheKey) && json.Unmarshal(wire.PromptCacheKey, &text) != nil {
+		return invalid("prompt_cache_key")
+	}
+	if wire.Reasoning != nil && hasJSONValue(wire.Reasoning.Summary) && json.Unmarshal(wire.Reasoning.Summary, &text) != nil {
+		return invalid("reasoning.summary")
 	}
 	return nil
 }

@@ -267,3 +267,41 @@ func TestCarriedToolsDisableReplay(t *testing.T) {
 		t.Fatalf("an unchanged request replayed its carried tools: %s", result.Body)
 	}
 }
+
+// A request that routes unchanged is not replayed when it resends an encrypted
+// reasoning item: the client bytes would hand the provider a blob no target
+// is sent.
+func TestEncryptedReasoningDisablesReplay(t *testing.T) {
+	engine := NewBuiltinEngine()
+	body := `{"model":"m","input":[{"type":"message","role":"user","content":"hi"},` +
+		`{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"blob"}]}`
+	request, envelope, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.EncodeRequest(llmprotocol.OpenAIResponsesV1, request, envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(result.Body, []byte("blob")) {
+		t.Fatalf("an unchanged request replayed its encrypted reasoning: %s", result.Body)
+	}
+}
+
+// The carried client members are checked against the shapes the Responses
+// API defines before they are accepted.
+func TestMalformedCarriedMembersAreRefused(t *testing.T) {
+	for field, body := range map[string]string{
+		"include":           `{"model":"m","input":"hi","include":{}}`,
+		"prompt_cache_key":  `{"model":"m","input":"hi","prompt_cache_key":[]}`,
+		"reasoning.summary": `{"model":"m","input":"hi","reasoning":{"effort":"low","summary":{}}}`,
+	} {
+		t.Run(field, func(t *testing.T) {
+			_, _, _, err := NewBuiltinEngine().DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(body))
+			var protocolError *llmprotocol.ProtocolError
+			if !errors.As(err, &protocolError) || protocolError.Category != llmprotocol.ErrorInvalidRequest {
+				t.Fatalf("malformed %s returned %v, want invalid_request", field, err)
+			}
+		})
+	}
+}
