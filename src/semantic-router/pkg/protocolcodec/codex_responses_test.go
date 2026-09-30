@@ -3,6 +3,7 @@ package protocolcodec
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -157,5 +158,36 @@ func TestCarriedReasoningSummaryNeedsAReasoningObject(t *testing.T) {
 	}
 	if dropped := droppedFields(result.Diagnostics); len(dropped) != 1 || dropped[0] != "reasoning.summary" {
 		t.Fatalf("dropped = %v, want [reasoning.summary]", dropped)
+	}
+}
+
+// A carried tool is a declared tool: it satisfies a required choice and counts
+// toward the tool limit.
+func TestCarriedToolsCountAsDeclaredTools(t *testing.T) {
+	engine := NewBuiltinEngine()
+	required := `{"model":"m","input":"hello","tool_choice":"required","tools":[{"type":"web_search"}]}`
+	if _, _, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(required)); err != nil {
+		t.Fatalf("a required choice over a carried tool was refused: %v", err)
+	}
+	policy := llmprotocol.DefaultPolicy()
+	tools := make([]string, policy.Limits.Tools+1)
+	for index := range tools {
+		tools[index] = `{"type":"web_search"}`
+	}
+	overLimit := `{"model":"m","input":"hello","tools":[` + strings.Join(tools, ",") + `]}`
+	_, _, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(overLimit))
+	var protocolError *llmprotocol.ProtocolError
+	if !errors.As(err, &protocolError) || protocolError.Code != "tools_limit" {
+		t.Fatalf("carried tools past the limit returned %v, want tools_limit", err)
+	}
+}
+
+// A reasoning item that carries encrypted_content is still refused when it
+// also names a member the codec refuses on purpose.
+func TestEncryptedReasoningStillRefusesARefusedMember(t *testing.T) {
+	body := `{"model":"m","input":[{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"blob",` +
+		`"prompt_cache_breakpoint":{"mode":"explicit"}}]}`
+	if _, _, _, err := NewBuiltinEngine().DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(body)); err == nil {
+		t.Fatal("a refused member rode the encrypted-reasoning carrier")
 	}
 }

@@ -515,12 +515,13 @@ func TestPolicyDecidesAResponsesRequest(t *testing.T) {
 func TestPolicyDispatchesACodexTurn(t *testing.T) {
 	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
 	actions := map[string]config.RaylineARCPolicyBinding{
-		"think":  policyAction("think", "none", "think-trained", policyTestEffort("high"), nil, ""),
-		"claude": policyAction("claude", "none", "claude-opus-5", policyTestEffort("medium"), nil, ""),
-		"off":    policyAction("off", "none", "off-trained", policyTestEffort("none"), nil, ""),
+		"think":      policyAction("think", "none", "think-trained", policyTestEffort("high"), nil, ""),
+		"claude":     policyAction("claude", "none", "claude-opus-5", policyTestEffort("medium"), nil, ""),
+		"off":        policyAction("off", "none", "off-trained", policyTestEffort("none"), nil, ""),
+		"claude-off": policyAction("claude-off", "none", "claude-opus-5", policyTestEffort("none"), nil, ""),
 	}
 	fake := newFakePolicyService(t, policyTestAlias, policyTestPackage,
-		[]string{actions["think"].ActionID, actions["claude"].ActionID, actions["off"].ActionID})
+		[]string{actions["think"].ActionID, actions["claude"].ActionID, actions["off"].ActionID, actions["claude-off"].ActionID})
 	router, err := NewOpenAIRouter(writePolicyDispatchConfig(t, fake.URL(), actions))
 	if err != nil {
 		t.Fatalf("build router: %v", err)

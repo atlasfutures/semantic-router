@@ -58,7 +58,7 @@ func carriedResponsesInputItem(body json.RawMessage) (llmprotocol.Message, bool)
 	if itemType == "item_reference" {
 		return llmprotocol.Message{}, false
 	}
-	if itemType == "reasoning" && hasResponsesEncryptedReasoning(body) {
+	if itemType == "reasoning" && hasResponsesEncryptedReasoning(body) && !hasResponsesRefusedMember(body) {
 		return carriedItemMessage(llmprotocol.OpenAIResponsesV1, itemType, body), true
 	}
 	if isSupportedResponsesItemType(itemType, false) &&
