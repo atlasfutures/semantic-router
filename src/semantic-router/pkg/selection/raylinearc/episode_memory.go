@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -51,6 +52,11 @@ type MemoryEpisodeStore struct {
 	idleTTL     time.Duration
 	now         func() time.Time
 	generations uint64
+	// removals counts entries the store has dropped, by reap or capacity
+	// eviction. A read that found an episode absent records it: if nothing
+	// was removed since, the episode cannot have been created and dropped in
+	// between, so it is still the absence that was read.
+	removals uint64
 }
 
 func NewMemoryEpisodeStore(
@@ -285,6 +291,7 @@ func (store *MemoryEpisodeStore) reapLocked(now time.Time) {
 		}
 		if now.Sub(entry.lastAccess) >= store.idleTTL {
 			delete(store.entries, key)
+			store.removals++
 		}
 	}
 }
@@ -305,6 +312,7 @@ func (store *MemoryEpisodeStore) evictOldestUnlocked() bool {
 		return false
 	}
 	delete(store.entries, oldestKey)
+	store.removals++
 	return true
 }
 
@@ -328,7 +336,7 @@ func (store *MemoryEpisodeStore) Snapshot(
 			return nil, EpisodeReadToken{}, err
 		}
 		if entry == nil {
-			return state, EpisodeReadToken{readAt: store.now()}, nil
+			return state, EpisodeReadToken{tag: memoryAbsentTag(store.removals), readAt: store.now()}, nil
 		}
 		return state, memoryReadToken(entry, store.now()), nil
 	}
@@ -336,6 +344,11 @@ func (store *MemoryEpisodeStore) Snapshot(
 		return nil, EpisodeReadToken{}, errors.New("ARC episode worker count changed")
 	}
 	return cloneEpisodeState(entry.state), memoryReadToken(entry, store.now()), nil
+}
+
+// memoryAbsentTag names an absent read by the store's removal count.
+func memoryAbsentTag(removals uint64) string {
+	return "absent:" + strconv.FormatUint(removals, 10)
 }
 
 // memoryReadToken names an entry by its generation and version, read at now.
@@ -364,10 +377,13 @@ func (store *MemoryEpisodeStore) CommitIfUnchanged(
 	if err := validatePersistedEpisodeState(state, now); err != nil {
 		return err
 	}
-	absentRead := read.version == 0 && read.tag == ""
+	absentRead := strings.HasPrefix(read.tag, "absent:")
 	entry := store.entries[episodeIDHash]
 	if entry == nil {
-		if !absentRead {
+		// Absent then and absent now is the same absence only if no entry
+		// was dropped in between; otherwise this episode may have been
+		// created and dropped, and the read is stale.
+		if !absentRead || read.tag != memoryAbsentTag(store.removals) {
 			return ErrEpisodeConflict
 		}
 		store.reapLocked(now)
