@@ -155,7 +155,12 @@ func TestRelaxedCellStartsAndServesWithItsStoreDown(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = closeStore() })
 
+	if raylineARCEpisodeStoreReady(store) {
+		t.Fatal("a store that did not answer at startup is reported ready")
+	}
+
 	router, algorithm := relaxedRouter(t)
+	memory := router.RaylineARCEpisodeStore
 	router.RaylineARCEpisodeStore = store
 	ctx := relaxedTurn(t, router, algorithm, `{"turn":"a"}`, 1)
 	if !ctx.RaylineARCTransaction.stateless {
@@ -164,4 +169,17 @@ func TestRelaxedCellStartsAndServesWithItsStoreDown(t *testing.T) {
 	if err := ctx.RaylineARCTransaction.commit(context.Background(), ctx); err != nil {
 		t.Fatalf("stateless commit = %v", err)
 	}
+	if got := episodeStoreGauge(); got != 0 {
+		t.Fatalf("episode_store gauge = %v while reads fail, want 0", got)
+	}
+	// The store answering again turns the gauge back on.
+	router.RaylineARCEpisodeStore = memory
+	relaxedTurn(t, router, algorithm, `{"turn":"b"}`, 0)
+	if got := episodeStoreGauge(); got != 1 {
+		t.Fatalf("episode_store gauge = %v once reads succeed, want 1", got)
+	}
+}
+
+func episodeStoreGauge() float64 {
+	return testutil.ToFloat64(metrics.RaylineARCComponentReady.WithLabelValues("episode_store"))
 }
