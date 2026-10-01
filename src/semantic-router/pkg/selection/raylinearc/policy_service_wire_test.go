@@ -56,8 +56,8 @@ func TestPolicyFixturesMatchTheirPinnedDigests(t *testing.T) {
 		}
 		seen++
 	}
-	if seen != 7 {
-		t.Fatalf("SHA256SUMS pins %d fixtures, want 7", seen)
+	if seen != 8 {
+		t.Fatalf("SHA256SUMS pins %d fixtures, want 8", seen)
 	}
 }
 
@@ -65,13 +65,15 @@ func TestPolicyFixturesMatchTheirPinnedDigests(t *testing.T) {
 // field is dropped, renamed or defaulted on the Go side.
 func TestPolicyWireTypesRoundTripTheFixtures(t *testing.T) {
 	cases := map[string]any{
-		"package_manifest.v4.json":           &PolicyPackageManifest{},
-		"package_manifest.v5.json":           &PolicyPackageManifestV5{},
-		"decision_request.v1.json":           &PolicyDecisionRequest{},
-		"decision_request_responses.v1.json": &PolicyDecisionRequest{},
-		"decision_response.v1.json":          &PolicyDecisionResponse{},
-		"packages_response.v1.json":          &PolicyPackagesResponse{},
-		"error_responses.v1.json":            &[]PolicyErrorResponse{},
+		"package_manifest.v4.json": &PolicyPackageManifest{},
+		"package_manifest.v5.json": &PolicyPackageManifestV5{},
+		// The v5 fixture with both optional encoding_profile members.
+		"package_manifest.v5.canonical_v1.json": &PolicyPackageManifestV5{},
+		"decision_request.v1.json":              &PolicyDecisionRequest{},
+		"decision_request_responses.v1.json":    &PolicyDecisionRequest{},
+		"decision_response.v1.json":             &PolicyDecisionResponse{},
+		"packages_response.v1.json":             &PolicyPackagesResponse{},
+		"error_responses.v1.json":               &[]PolicyErrorResponse{},
 	}
 	for name, target := range cases {
 		body := readPolicyFixture(t, name)
@@ -260,5 +262,21 @@ func TestDecodePolicyPackageConversation(t *testing.T) {
 		if err := decode(body); err != nil {
 			t.Errorf("%s without conversation: %v", fixture, err)
 		}
+	}
+}
+
+// pathfinder's canonical_v1 fixture decodes, carrying both optional
+// encoding_profile members with the contract's values.
+func TestDecodePolicyPackageManifestV5CanonicalFixture(t *testing.T) {
+	manifest, err := DecodePolicyPackageManifestV5(readPolicyFixture(t, "package_manifest.v5.canonical_v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := manifest.EncodingProfile
+	if string(profile.Conversation) != `"canonical_v1"` || string(profile.HarnessInjections) != `"strip_claude_code_2_1_v1"` {
+		t.Fatalf("encoding_profile = %s, %s", profile.Conversation, profile.HarnessInjections)
+	}
+	if len(manifest.Actions) != 3 {
+		t.Fatalf("decoded %d actions", len(manifest.Actions))
 	}
 }

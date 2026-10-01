@@ -22,12 +22,12 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
-// The shared v5 fixture's actions: Opus native-only, and GLM at the neutral
-// level and at "up", all at the default base.
+// The shared v5 fixture's actions (pathfinder 9e6e236): Opus native-only, and
+// GLM at the neutral level and at "up", all at the default base.
 const (
-	v5OpusAction = "0527fe7631783f956fc850185d3130926ed252b9e49e005eba68a8f884152321"
-	v5GLMNone    = "9d2b81063cac1733ef6859b8fc061ba5192366aa0966c7ca5e055110041aa332"
-	v5GLMUp      = "b18e89bdb29cfb16b9cf71e46207ebde0ad463e5256f4b2c837280d84f13d7d7"
+	v5OpusAction = "864cc7a8eab47911b61a2b3b5d79dcb8ed81c8ae9f8a90e941aea5bf38fc21d8"
+	v5GLMNone    = "20b6cddd7ae7cedc3ba8321cac7d962dca24b3c98dcf0408076adf40549e4a80"
+	v5GLMUp      = "cf5bc08ecfab91cdc1e26c1c2b98e7256e4a9e64183210ceb619e9c4745ff055"
 	v5UpText     = "Until the next steering instruction, reason more thoroughly before acting."
 	v5Neutral    = "Until the next steering instruction, use your normal judgement."
 	v5Golden     = "../selection/raylinearc/thinkingcontrol/testdata/golden"
@@ -46,17 +46,12 @@ func v5Router(t *testing.T, glmFormat string) (*OpenAIRouter, *fakePolicyService
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Published packages name actions by trained model, unlike the
-	// provider model ids the workers serve and the registry keys on; each
-	// turn must admit on the served id.
-	trained := strings.NewReplacer(
-		`"model": "anthropic/claude-opus-5"`, `"model": "claude-opus-5"`,
-		`"model": "z-ai/glm-5.3-flash"`, `"model": "glm-5.3-flash"`,
-	).Replace(string(manifest))
-	if strings.Contains(trained, `"model": "anthropic/`) || strings.Contains(trained, `"model": "z-ai/`) {
-		t.Fatal("the fixture still names a provider model id")
+	// The fixture names actions by trained model, as published packages do,
+	// unlike the provider model ids the workers serve and the registry keys
+	// on; each turn must admit on the served id.
+	if strings.Contains(string(manifest), `"model": "anthropic/`) || strings.Contains(string(manifest), `"model": "z-ai/`) {
+		t.Fatal("the fixture names a provider model id")
 	}
-	manifest = []byte(trained)
 	dir := t.TempDir()
 	manifestPath := filepath.Join(dir, "package.json")
 	if err := os.WriteFile(manifestPath, manifest, 0o600); err != nil {
