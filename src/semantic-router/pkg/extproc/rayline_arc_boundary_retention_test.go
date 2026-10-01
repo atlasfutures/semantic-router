@@ -283,3 +283,46 @@ const arcCacheTestCompletion = `{
   "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "hi"}}],
   "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4}
 }`
+
+// A completed stream whose turn fails to commit is not cached either.
+func TestRaylineARCStreamReplyIsNotCachedWhenTheTurnFailsToCommit(t *testing.T) {
+	for _, commitFails := range []bool{true, false} {
+		mockCache, router, decision := statusCacheRouter()
+		store, episode := newLedgerTestStore(t)
+		lease, state, err := store.Prepare(context.Background(), episode, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := withSelectedDecision(&RequestContext{
+			RequestID:          "req-arc-stream-cache",
+			RequestModel:       "test",
+			RequestQuery:       "hello",
+			SemanticRequest:    testNeutralRequest("test", "hello"),
+			SourceFormat:       llmprotocol.OpenAIChatV1,
+			TargetFormat:       llmprotocol.OpenAIChatV1,
+			TraceContext:       context.Background(),
+			UpstreamStatusCode: 200,
+			RaylineARCTransaction: newRaylineARCEpisodeTransaction(
+				store, lease, state, episode, time.Minute, nil,
+			),
+		}, decision)
+		ctx.RaylineARCTransaction.markSelection(0, 10)
+		if commitFails {
+			ctx.RaylineARCTransaction.leaseLost.Store(true)
+		}
+		bindRaylineARCSelectionTransaction(ctx)
+		stream := &semanticResponseStreamState{
+			responseID: "chatcmpl-arc-stream", model: "test", stop: llmprotocol.StopEndTurn,
+			items: map[int]*semanticStreamItem{}, terminal: true,
+			usage: llmprotocol.Usage{State: llmprotocol.UsageUnavailable},
+		}
+		item := stream.item(0)
+		item.text, item.completed = "hi", true
+		ctx.SemanticStreamState = stream
+		router.finalizeSemanticStreamingResponse(ctx, nil)
+		if mockCache.addEntryCalled == commitFails {
+			t.Fatalf("commit fails=%v: cached=%v", commitFails, mockCache.addEntryCalled)
+		}
+		finalizeSelectionProcessTerminal(ctx)
+	}
+}

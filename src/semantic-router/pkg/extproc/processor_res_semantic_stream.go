@@ -472,6 +472,7 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 	} else {
 		ctx.StreamingAborted = true
 	}
+	commitFailed := false
 	if !ctx.StreamingAborted {
 		// The terminal event arrived and nothing broke: the client has the
 		// whole reply, which is the only point at which the turn exists. The
@@ -479,6 +480,7 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 		// reported, and the turn stays unrecorded.
 		if err := finalizeSelectionCompletion(ctx); err != nil {
 			recordSelectionLifecycleFailure(ctx, "response_complete", err)
+			commitFailed = true
 		}
 	}
 	completionLatency := time.Duration(0)
@@ -516,7 +518,11 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 		})
 		return
 	}
-	r.updateResponseCache(ctx, encoded)
+	// An unrecorded turn is not cached: a retry served from the cache would
+	// leave it unrecorded for good.
+	if !commitFailed {
+		r.updateResponseCache(ctx, encoded)
+	}
 	r.scheduleSemanticResponseMemoryStore(ctx, semanticResponse)
 	r.persistResponseObject(ctx)
 	r.attachRouterReplayResponse(ctx, encoded, true)
