@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
 )
 
@@ -98,6 +99,149 @@ type episodeStateWire struct {
 	Thinking             *episodeThinkingWire  `json:"thinking,omitempty"`
 	Upstream             []episodeUpstreamWire `json:"upstream,omitempty"`
 	Policy               *PolicyEpisodeState   `json:"policy,omitempty"`
+	Controls             []episodeControlWire  `json:"controls,omitempty"`
+}
+
+// episodeControlWire is one thinking-control placer. Its ledger names each
+// instruction by an index into Texts: a ladder has a handful of texts, and a
+// long episode writes them many times.
+type episodeControlWire struct {
+	Key             string                   `json:"key"`
+	Format          string                   `json:"format"`
+	First           *episodeControlFirstWire `json:"first,omitempty"`
+	Texts           []string                 `json:"texts"`
+	Ledger          []episodeControlItemWire `json:"ledger"`
+	Epoch           int                      `json:"epoch"`
+	InForce         *string                  `json:"in_force,omitempty"`
+	PreviousAnchor  *thinkingcontrol.Anchor  `json:"previous_anchor,omitempty"`
+	PreviousControl *string                  `json:"previous_control,omitempty"`
+	Calls           int                      `json:"calls"`
+}
+
+// episodeControlFirstWire is what the placer checks of the episode's first
+// control: its base, budget and whether it has a lever.
+type episodeControlFirstWire struct {
+	Native       string `json:"native"`
+	BudgetTokens *int64 `json:"budget_tokens,omitempty"`
+	Lever        bool   `json:"lever"`
+}
+
+type episodeControlItemWire struct {
+	Anchor    int    `json:"a"`
+	Digest    string `json:"d"`
+	Placement string `json:"p"`
+	Text      int    `json:"t"`
+	Kind      string `json:"k"`
+}
+
+var (
+	controlPlacementCodes = map[string]string{
+		thinkingcontrol.PlacementAppend: "a", thinkingcontrol.PlacementInsertAfter: "i",
+	}
+	controlKindCodes = map[string]string{
+		thinkingcontrol.WrittenInstruction: "i", thinkingcontrol.WrittenNeutralMarker: "m",
+	}
+)
+
+func controlPlacementsToWire(placements []ControlPlacement) []episodeControlWire {
+	out := make([]episodeControlWire, 0, len(placements))
+	for _, placement := range placements {
+		state := placement.State
+		wire := episodeControlWire{
+			Key: placement.Key, Format: state.Format, Texts: []string{}, Ledger: []episodeControlItemWire{},
+			Epoch: state.Epoch, InForce: state.InForce, PreviousAnchor: state.PreviousAnchor,
+			PreviousControl: state.PreviousControl, Calls: state.Calls,
+		}
+		if state.First != nil {
+			wire.First = &episodeControlFirstWire{
+				Native: state.First.Native, BudgetTokens: state.First.BudgetTokens, Lever: state.First.Instruction != nil,
+			}
+		}
+		texts := map[string]int{}
+		for _, item := range state.Ledger {
+			index, ok := texts[item.Text]
+			if !ok {
+				index = len(wire.Texts)
+				texts[item.Text] = index
+				wire.Texts = append(wire.Texts, item.Text)
+			}
+			wire.Ledger = append(wire.Ledger, episodeControlItemWire{
+				Anchor: item.Anchor, Digest: item.PrefixDigest, Placement: controlPlacementCodes[item.Placement],
+				Text: index, Kind: controlKindCodes[item.Kind],
+			})
+		}
+		out = append(out, wire)
+	}
+	return out
+}
+
+func controlPlacementsFromWire(wires []episodeControlWire) ([]ControlPlacement, error) {
+	if len(wires) == 0 {
+		return nil, nil
+	}
+	if len(wires) > MaxControlPlacements {
+		return nil, errors.New("ARC episode state holds too many control placements")
+	}
+	out := make([]ControlPlacement, 0, len(wires))
+	seen := make(map[string]bool, len(wires))
+	for _, wire := range wires {
+		if wire.Key == "" || seen[wire.Key] {
+			return nil, errors.New("ARC episode control placement key is empty or repeated")
+		}
+		seen[wire.Key] = true
+		state := thinkingcontrol.PlacerState{
+			Format: wire.Format, Ledger: []thinkingcontrol.LedgerItem{}, Epoch: wire.Epoch, InForce: wire.InForce,
+			PreviousAnchor: wire.PreviousAnchor, PreviousControl: wire.PreviousControl, Calls: wire.Calls,
+		}
+		if wire.First != nil {
+			first := thinkingcontrol.Control{Native: wire.First.Native, BudgetTokens: wire.First.BudgetTokens}
+			if wire.First.Lever {
+				first.Instruction = &thinkingcontrol.Instruction{}
+			}
+			state.First = &first
+		}
+		for _, item := range wire.Ledger {
+			placement, kind := codeName(controlPlacementCodes, item.Placement), codeName(controlKindCodes, item.Kind)
+			if placement == "" || kind == "" || item.Text < 0 || item.Text >= len(wire.Texts) {
+				return nil, errors.New("ARC episode control ledger is malformed")
+			}
+			state.Ledger = append(state.Ledger, thinkingcontrol.LedgerItem{
+				Anchor: item.Anchor, PrefixDigest: item.Digest, Placement: placement, Text: wire.Texts[item.Text], Kind: kind,
+			})
+		}
+		if _, err := thinkingcontrol.ResumePlacer(state); err != nil {
+			return nil, errors.New("ARC episode control placement is malformed")
+		}
+		out = append(out, ControlPlacement{Key: wire.Key, State: state})
+	}
+	return out, nil
+}
+
+func codeName(codes map[string]string, code string) string {
+	for name, candidate := range codes {
+		if candidate == code {
+			return name
+		}
+	}
+	return ""
+}
+
+func cloneControlPlacements(placements []ControlPlacement) []ControlPlacement {
+	if placements == nil {
+		return nil
+	}
+	out := make([]ControlPlacement, len(placements))
+	for index, placement := range placements {
+		state := placement.State
+		state.Ledger = append([]thinkingcontrol.LedgerItem(nil), state.Ledger...)
+		out[index] = ControlPlacement{Key: placement.Key, State: state}
+	}
+	return out
+}
+
+// CloneControlPlacements is a copy the caller may extend.
+func CloneControlPlacements(placements []ControlPlacement) []ControlPlacement {
+	return cloneControlPlacements(placements)
 }
 
 type episodeUpstreamWire struct {
@@ -172,6 +316,7 @@ func cloneEpisodeState(state *EpisodeState) *EpisodeState {
 		Policy:               state.Policy.Clone(),
 		Thinking:             state.Thinking.Clone(),
 		Upstream:             append([]UpstreamPrefix(nil), state.Upstream...),
+		Controls:             cloneControlPlacements(state.Controls),
 	}
 	for index, warmth := range state.Warmth {
 		if warmth == nil {
@@ -220,6 +365,10 @@ func marshalEpisodeState(
 			wire.Upstream = append(wire.Upstream, episodeUpstreamWire(prefix))
 		}
 	}
+	if len(state.Controls) > 0 {
+		wire.SchemaVersion = episodeStateSchema
+		wire.Controls = controlPlacementsToWire(state.Controls)
+	}
 	owner := state.EncoderOwner
 	visited := append([]string{}, state.EncoderVisitedOwners...)
 	wire.EncoderOwner = &owner
@@ -267,6 +416,9 @@ func unmarshalEpisodeState(
 		return nil, 0, err
 	}
 	state := episodeStateFromWire(wire, workerCount, owner, visited)
+	if state.Controls, err = controlPlacementsFromWire(wire.Controls); err != nil {
+		return nil, 0, err
+	}
 	if err := validatePersistedEpisodeState(state, now); err != nil {
 		return nil, 0, err
 	}
@@ -276,7 +428,8 @@ func unmarshalEpisodeState(
 func decodeEpisodeStateAffinity(
 	wire episodeStateWire,
 ) (string, []string, error) {
-	if (wire.Thinking != nil || len(wire.Upstream) > 0 || wire.Policy != nil) != (wire.SchemaVersion == episodeStateSchema) {
+	if (wire.Thinking != nil || len(wire.Upstream) > 0 || wire.Policy != nil || len(wire.Controls) > 0) !=
+		(wire.SchemaVersion == episodeStateSchema) {
 		return "", nil, errors.New("ARC episode state contract mismatch")
 	}
 	switch wire.SchemaVersion {
@@ -342,6 +495,14 @@ func validatePersistedEpisodeState(
 	}
 	if err := state.Policy.Validate(); err != nil {
 		return err
+	}
+	if len(state.Controls) > MaxControlPlacements {
+		return errors.New("ARC episode state holds too many control placements")
+	}
+	for _, placement := range state.Controls {
+		if _, err := thinkingcontrol.ResumePlacer(placement.State); err != nil || placement.Key == "" {
+			return errors.New("ARC episode control placement is malformed")
+		}
 	}
 	futureLimit := now.Add(maxFutureClockSkew)
 	for _, warmth := range state.Warmth {

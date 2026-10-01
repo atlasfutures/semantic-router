@@ -56,8 +56,8 @@ func TestPolicyFixturesMatchTheirPinnedDigests(t *testing.T) {
 		}
 		seen++
 	}
-	if seen != 6 {
-		t.Fatalf("SHA256SUMS pins %d fixtures, want 6", seen)
+	if seen != 7 {
+		t.Fatalf("SHA256SUMS pins %d fixtures, want 7", seen)
 	}
 }
 
@@ -66,6 +66,7 @@ func TestPolicyFixturesMatchTheirPinnedDigests(t *testing.T) {
 func TestPolicyWireTypesRoundTripTheFixtures(t *testing.T) {
 	cases := map[string]any{
 		"package_manifest.v4.json":           &PolicyPackageManifest{},
+		"package_manifest.v5.json":           &PolicyPackageManifestV5{},
 		"decision_request.v1.json":           &PolicyDecisionRequest{},
 		"decision_request_responses.v1.json": &PolicyDecisionRequest{},
 		"decision_response.v1.json":          &PolicyDecisionResponse{},
@@ -143,6 +144,43 @@ func TestDecodePolicyPackageManifestRefusesLivePrices(t *testing.T) {
 	}
 	if _, err := DecodePolicyPackageManifest(live); err == nil {
 		t.Fatal("a package letting live prices affect decisions was accepted")
+	}
+}
+
+// A v5 manifest decodes, and each action's control_id is recomputed from its
+// control: a control edited without its id, or a level that is not the
+// instruction's, is refused (ADR 0107 decision 8).
+func TestDecodePolicyPackageManifestV5RecomputesControlIDs(t *testing.T) {
+	body := readPolicyFixture(t, "package_manifest.v5.json")
+	manifest, err := DecodePolicyPackageManifestV5(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Actions) != 3 || manifest.ThinkingControlsSHA256 == "" {
+		t.Fatalf("decoded %+v", manifest)
+	}
+	if schema, err := PolicyPackageSchemaOf(body); err != nil || schema != PolicyPackageSchemaV5 {
+		t.Fatalf("schema = %q, %v", schema, err)
+	}
+	if _, err := DecodePolicyPackageManifest(body); err == nil {
+		t.Fatal("the v4 decoder accepted a v5 manifest")
+	}
+	for name, edit := range map[string][2]string{
+		"control edited without its id": {`"native": "default"`, `"native": "high"`},
+		"level not the instruction's": {`"level": "up",
+      "trained_arm_ids"`, `"level": "down",
+      "trained_arm_ids"`},
+		"a control member omitted": {`"budget_tokens": null,
+        "instruction": null`, `"instruction": null`},
+		"unknown action field": {`"control_id": "628d`, `"surprise": 1, "control_id": "628d`},
+	} {
+		changed := bytes.Replace(body, []byte(edit[0]), []byte(edit[1]), 1)
+		if bytes.Equal(changed, body) {
+			t.Fatalf("%s: the fixture no longer holds %q", name, edit[0])
+		}
+		if _, err := DecodePolicyPackageManifestV5(changed); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
 	}
 }
 

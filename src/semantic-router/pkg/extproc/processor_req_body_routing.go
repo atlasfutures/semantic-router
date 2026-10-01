@@ -176,7 +176,11 @@ func (r *OpenAIRouter) applyDispatchDecision(
 		return false, nil
 	}
 	changed := false
-	if dispatch.targetFormat != llmprotocol.OpenAIChatV1 {
+	// A v5 action's control renders every thinking field at the provider
+	// boundary (applyRaylineARCThinkingControl); a derived mode here could
+	// still move max_tokens.
+	_, _, v5, _ := raylineARCPolicyControlAction(ctx)
+	if dispatch.targetFormat != llmprotocol.OpenAIChatV1 && !v5 {
 		changed = r.applySemanticReasoningMode(
 			request, dispatch.logicalModel, dispatch.targetFormat, dispatch.useReasoning, ctx.VSRSelectedDecision,
 		)

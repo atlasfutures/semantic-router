@@ -107,6 +107,34 @@ against the `action_id`. The steering suffix still renders from the level, a
 thinking-off action (`effort: none`) stays off, and the selection log records
 `policy_declared_effort` beside `policy_dispatch_effort`.
 
+**Package v5.** A v5 package (`rayline.arc-policy-package.v5`, pathfinder's
+"Policy package v5"; ADR 0109) names each action by a model and a
+format-agnostic thinking control. `package_manifest` points at the package's
+`package.json`, whose sha256 must be `package_sha256`. At load VSR:
+
+- recomputes each action's `control_id` from its control (RFC 8785) and refuses
+  a mismatch;
+- requires each control in the compiled registry it serves from (pathfinder's
+  `configs/thinking_controls.compiled.json`, embedded and pinned in
+  `pkg/selection/raylinearc/thinkingcontrol`);
+- requires every package action bound, and each bound control admitted for its
+  worker's (model, provider, format) cell; an experimental instruction needs
+  `allow_experimental_controls`.
+
+`thinking_controls_sha256` is informational. A v5 binding is only `action_id`
+and `worker`. The v4 fields, `dispatch_effort`, `thinking_lever` and
+`worker_thinking` are refused with a v5 package.
+
+On dispatch the control is rendered from the registry at the provider boundary,
+after the codec. The cell's base wire replaces every thinking field (the
+client's `thinking`, `reasoning`, `reasoning_effort` and
+`output_config.effort`), so a Messages effort gets no adaptive thinking block.
+The instruction is placed by `turn_tail_v2`, written by `on_change_v1` and
+replayed by `ledger_v1`. The placer's state lives in the episode, one per worker
+and control shape. The renderer is pathfinder's reference renderer ported to Go
+and held to its golden corpora byte for byte. Messages and Chat workers are
+served; Responses is item D.
+
 Under `emit: on_change_v1` (ADR 0109) an item is written only when the level
 in force changes. A return from a steer to the neutral level writes the
 binding's `neutral_text`, the neutral marker; the neutral level at epoch start,
