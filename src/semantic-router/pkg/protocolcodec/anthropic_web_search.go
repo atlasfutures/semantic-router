@@ -50,18 +50,58 @@ func appendUncarriedCitationDiagnostic(
 	output []llmprotocol.OutputItem,
 ) {
 	for _, item := range output {
-		for _, content := range item.Content {
-			if content.Kind != llmprotocol.ContentText || len(content.CitationsRaw) == 0 {
-				continue
-			}
-			var raw []json.RawMessage
-			if json.Unmarshal(content.CitationsRaw, &raw) == nil && len(raw) > len(content.Citations) {
-				appendAccountingOmission(diagnostics, policy, source, target, fieldContentCitations,
-					"a citation without a URL has no neutral source; the text is delivered without it")
+		for index := range item.Content {
+			if uncarriedCitation(&item.Content[index]) {
+				*diagnostics = appendDiagnostics(*diagnostics, llmprotocol.Diagnostics{
+					uncarriedCitationDiagnostic(source, target),
+				}, policy.Limits.Diagnostics)
 				return
 			}
 		}
 	}
+}
+
+// uncarriedCitation reports whether a text part holds a citation without a URL
+// form, one a client of another format cannot receive.
+func uncarriedCitation(content *llmprotocol.Content) bool {
+	if content == nil || content.Kind != llmprotocol.ContentText || len(content.CitationsRaw) == 0 {
+		return false
+	}
+	var raw []json.RawMessage
+	return json.Unmarshal(content.CitationsRaw, &raw) == nil && len(raw) > len(content.Citations)
+}
+
+func uncarriedCitationDiagnostic(source, target llmprotocol.WireFormat) llmprotocol.Diagnostic {
+	return llmprotocol.Diagnostic{
+		Source: source, Target: target, Field: fieldContentCitations, Action: llmprotocol.DiagnosticDropped,
+		Reason: "a citation without a URL has no neutral source; the text is delivered without it",
+	}
+}
+
+// validProviderCitations reports whether a provider text block's citations
+// member is null or a list of objects that each state a type. Any type name is
+// carried, including ones not named yet; anything else is malformed provider
+// output, refused as a streamed citation is.
+func validProviderCitations(raw json.RawMessage) bool {
+	var list []json.RawMessage
+	if json.Unmarshal(raw, &list) != nil {
+		return false
+	}
+	for _, citation := range list {
+		if !typedCitationObject(citation) {
+			return false
+		}
+	}
+	return true
+}
+
+func typedCitationObject(citation json.RawMessage) bool {
+	var object map[string]json.RawMessage
+	var kind struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(citation, &object) == nil && object != nil &&
+		json.Unmarshal(citation, &kind) == nil && kind.Type != ""
 }
 
 // webSearchURLCitationsTo is webSearchURLCitations for a span ending at end.
@@ -336,12 +376,7 @@ func (decoder *anthropicStreamDecoder) holdAnthropicCitation(
 	// Any citation kind is carried, including ones not named yet, but it must
 	// be an object stating its type: anything else would reach an Anthropic
 	// client as a malformed citation.
-	var object map[string]json.RawMessage
-	var kind struct {
-		Type string `json:"type"`
-	}
-	if json.Unmarshal(citation, &object) != nil || object == nil ||
-		json.Unmarshal(citation, &kind) != nil || kind.Type == "" {
+	if !typedCitationObject(citation) {
 		return nil, true, invalidProviderResponse("invalid_stream_delta", "Anthropic citation delta is not a typed citation object")
 	}
 	if decoder.pendingCitations == nil {

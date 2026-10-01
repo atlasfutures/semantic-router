@@ -401,3 +401,74 @@ func TestUncarriedCitationIsReported(t *testing.T) {
 		}
 	}
 }
+
+// A buffered provider citations member must be null or a list of typed
+// objects, as a streamed citation must; any type name is carried.
+func TestBufferedCitationsMustBeTypedObjects(t *testing.T) {
+	engine := NewBuiltinEngine()
+	for citations, valid := range map[string]bool{
+		`null`: true, `[]`: true, `[{"type":"future_location","x":1}]`: true,
+		`[{"url":"https://example.com"}]`: false, `[{"type":7}]`: false, `[null]`: false, `["x"]`: false, `{}`: false, `"x"`: false,
+	} {
+		body := `{"id":"msg_1","type":"message","role":"assistant","model":"source-model",` +
+			`"content":[{"type":"text","text":"done","citations":` + citations + `}],` +
+			`"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`
+		_, _, _, err := engine.DecodeResponse(llmprotocol.AnthropicMessagesV1, []byte(body))
+		if valid && err != nil {
+			t.Errorf("citations %s refused: %v", citations, err)
+		}
+		if !valid {
+			assertProtocolError(t, err, llmprotocol.ErrorUpstreamUnavailable, "invalid_citations")
+		}
+	}
+}
+
+// Streamed to a Chat or Responses client, a citation it cannot carry is
+// reported as dropped, as it is buffered.
+func TestStreamedUncarriedCitationIsReported(t *testing.T) {
+	stream := `event: message_start
+data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The handbook says ten."}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"citations_delta","citation":` + strings.TrimSuffix(strings.TrimPrefix(charLocationCitations, "["), "]") + `}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":5}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+	for _, client := range []llmprotocol.WireFormat{llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1} {
+		s, err := NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, client, llmprotocol.StreamContext{
+			Context: context.Background(), PublicModel: "public-model", ProviderModel: "claude",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, pushed, err := s.Push([]byte(stream))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, final, err := s.Finalize(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, diagnostic := range append(pushed, final...) {
+			found = found || (diagnostic.Field == "content.citations" && diagnostic.Action == llmprotocol.DiagnosticDropped)
+		}
+		if !found {
+			t.Fatalf("%s: no dropped content.citations diagnostic in %+v", client, append(pushed, final...))
+		}
+	}
+}
