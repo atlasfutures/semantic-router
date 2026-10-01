@@ -18,11 +18,13 @@ package extproc
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -215,3 +217,69 @@ func TestRaylineARCRelaxedBoundaryDecisionIsStoredAndCommitted(t *testing.T) {
 		t.Fatalf("the staging turn's own commit was dropped: turn %d boundary %+v", state.TurnIndex, state.PolicyBoundary)
 	}
 }
+
+// A side call during a boundary main turn's stream holds the arm that turn
+// decided and stored, not the previous turn's.
+func TestRaylineARCSideCallHoldsTheStagedBoundaryArm(t *testing.T) {
+	fixture, _, _ := boundaryFixture(t)
+	state := heldEpisode(t)
+	state.TurnIndex = 5
+	messages := []json.RawMessage{json.RawMessage(`{"role":"user","content":"fix the bug"}`)}
+	turn := state.Policy.Clone()
+	state.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(1, 5, turn, messages)
+	title := policyTestRequest(t, map[string]any{"role": "user", "content": "write a title"})
+	result, err := fixture.selectWithHeaders(t, state, title, map[string]string{raylineARCCallKindHeader: "side"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offered := offeredActions(fixture, 0); len(offered) != 1 || result.RaylineARC.SelectedArm != 1 {
+		t.Fatalf("side call offered %v and chose arm %d; want the staged boundary arm 1", offered, result.RaylineARC.SelectedArm)
+	}
+}
+
+// A non-stream reply is cached only once its turn is recorded: a reply
+// cached before a failed commit would serve the client's retry from the
+// cache, and that turn would never be recorded.
+func TestRaylineARCNonStreamReplyIsNotCachedWhenTheTurnFailsToCommit(t *testing.T) {
+	for _, commitFails := range []bool{true, false} {
+		mockCache, router, decision := statusCacheRouter()
+		store, episode := newLedgerTestStore(t)
+		lease, state, err := store.Prepare(context.Background(), episode, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := withSelectedDecision(&RequestContext{
+			RequestID:          "req-arc-cache",
+			RequestModel:       "test",
+			RequestQuery:       "hello",
+			SemanticRequest:    testNeutralRequest("test", "hello"),
+			SourceFormat:       llmprotocol.OpenAIChatV1,
+			TargetFormat:       llmprotocol.OpenAIChatV1,
+			TraceContext:       context.Background(),
+			UpstreamStatusCode: 200,
+			RaylineARCTransaction: newRaylineARCEpisodeTransaction(
+				store, lease, state, episode, time.Minute, nil,
+			),
+		}, decision)
+		ctx.RaylineARCTransaction.markSelection(0, 10)
+		if commitFails {
+			ctx.RaylineARCTransaction.leaseLost.Store(true)
+		}
+		bindRaylineARCSelectionTransaction(ctx)
+		response := router.handleNonStreamingResponseBody([]byte(arcCacheTestCompletion), ctx, time.Second)
+		failed := response.GetImmediateResponse() != nil
+		if failed != commitFails || mockCache.addEntryCalled == commitFails {
+			t.Fatalf("commit fails=%v: refused=%v cached=%v", commitFails, failed, mockCache.addEntryCalled)
+		}
+		finalizeSelectionProcessTerminal(ctx)
+	}
+}
+
+const arcCacheTestCompletion = `{
+  "id": "chatcmpl-arc-cache",
+  "object": "chat.completion",
+  "created": 1757030000,
+  "model": "test",
+  "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "hi"}}],
+  "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4}
+}`

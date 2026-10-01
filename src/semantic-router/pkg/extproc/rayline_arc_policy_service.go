@@ -384,6 +384,10 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	switch {
 	case retained:
 		held = retainedArm
+	case sideCall && state.PolicyBoundary != nil && state.PolicyBoundary.TurnIndex == state.TurnIndex:
+		// A main turn decided this boundary and has not committed yet: its
+		// arm is the one in use.
+		held = state.PolicyBoundary.Arm
 	case state.PreviousArm != nil && (sideCall || scheduled && !atBoundary):
 		held = *state.PreviousArm
 	}

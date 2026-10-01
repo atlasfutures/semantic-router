@@ -48,7 +48,14 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	r.reportNonStreamingUsage(ctx, completionLatency, usage)
 	r.calibrateTokenEstimator(ctx, usage.promptTokens)
 
-	r.updateResponseCache(ctx, clientBody)
+	// A turn with a selection to commit caches its reply only once the turn
+	// is recorded: a reply cached before a failed commit would serve the
+	// client's retry from the cache, and that turn would never be recorded.
+	ensureSelectionTransactionBound(ctx)
+	cacheAfterCommit := ctx.SelectionTransaction != nil
+	if !cacheAfterCommit {
+		r.updateResponseCache(ctx, clientBody)
+	}
 
 	// The response-stage signal is scored from the declared rules before any
 	// plugin runs, so the observation exists whether or not the selected
@@ -73,6 +80,9 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	if err := finalizeSelectionCompletion(ctx); err != nil {
 		recordSelectionLifecycleFailure(ctx, "response_complete", err)
 		return r.bodyPhaseErrorResponse(ctx, http.StatusServiceUnavailable, selectionUnavailableMessage(ctx))
+	}
+	if cacheAfterCommit {
+		r.updateResponseCache(ctx, clientBody)
 	}
 
 	r.scheduleSemanticResponseMemoryStore(ctx, semanticResponse)
