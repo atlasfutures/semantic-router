@@ -68,12 +68,12 @@ type raylineARCEpisodeTransaction struct {
 	renewDone              chan struct{}
 	leaseLost              atomic.Bool
 	// relaxed marks a turn on a relaxed episode: it read the episode without a
-	// lease at readVersion and commits only if the episode is still there. It
+	// lease as read and commits only if the episode is still that. It
 	// never fails the request over episode state: a lost race or a store error
 	// drops this turn's state update and is counted.
-	relaxed     bool
-	readVersion uint64
-	snapshots   raylinearc.EpisodeSnapshotStore
+	relaxed   bool
+	read      raylinearc.EpisodeReadToken
+	snapshots raylinearc.EpisodeSnapshotStore
 	// stateless marks a relaxed turn whose read failed; it decided from a fresh
 	// state and commits nothing.
 	stateless bool
@@ -112,14 +112,14 @@ func newRaylineARCEpisodeTransaction(
 func newRelaxedRaylineARCEpisodeTransaction(
 	snapshots raylinearc.EpisodeSnapshotStore,
 	state *raylinearc.EpisodeState,
-	readVersion uint64,
+	read raylinearc.EpisodeReadToken,
 	episodeIDHash string,
 	stateless bool,
 ) *raylineARCEpisodeTransaction {
 	return &raylineARCEpisodeTransaction{
 		snapshots:     snapshots,
 		state:         state,
-		readVersion:   readVersion,
+		read:          read,
 		episodeIDHash: episodeIDHash,
 		relaxed:       true,
 		stateless:     stateless,
@@ -330,7 +330,7 @@ func (transaction *raylineARCEpisodeTransaction) commitRelaxed(
 		metrics.RecordRaylineARCEpisodeTransaction("relaxed_dropped", "state")
 		return
 	}
-	err = transaction.snapshots.CommitIfUnchanged(ctx, transaction.episodeIDHash, transaction.readVersion, nextState)
+	err = transaction.snapshots.CommitIfUnchanged(ctx, transaction.episodeIDHash, transaction.read, nextState)
 	switch {
 	case errors.Is(err, raylinearc.ErrEpisodeConflict):
 		metrics.RecordRaylineARCEpisodeTransaction("relaxed_dropped", "conflict")

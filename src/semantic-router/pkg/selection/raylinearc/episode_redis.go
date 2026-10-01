@@ -18,7 +18,9 @@ package raylinearc
 
 import (
 	"context"
+	"crypto/sha1" // #nosec G505 -- equality tag matching Redis's sha1hex.
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
@@ -58,11 +60,16 @@ return 1
 	redisSnapshotScript = redis.NewScript(`
 return {redis.call("GET", KEYS[1]) or "0", redis.call("GET", KEYS[2]) or ""}
 `)
-	// A relaxed commit lands only if no strict lease holds the episode and
-	// the fence is still the version read; it then advances the fence.
+	// A relaxed commit lands only if no strict lease holds the episode, the
+	// fence is still the version read, and the stored state is byte for byte
+	// the state read (by digest), which an expired and recreated episode
+	// cannot repeat. It then advances the fence.
 	redisCommitIfUnchangedScript = redis.NewScript(`
 if redis.call("EXISTS", KEYS[1]) == 1 then return 0 end
 if tonumber(redis.call("GET", KEYS[2]) or "0") ~= tonumber(ARGV[1]) then
+  return 0
+end
+if redis.sha1hex(redis.call("GET", KEYS[3]) or "") ~= ARGV[5] then
   return 0
 end
 redis.call("SET", KEYS[2], ARGV[2], "PX", ARGV[4])
@@ -406,34 +413,35 @@ func (store *RedisEpisodeStore) Snapshot(
 	ctx context.Context,
 	episodeIDHash string,
 	workerCount int,
-) (*EpisodeState, uint64, error) {
+) (*EpisodeState, EpisodeReadToken, error) {
 	if store == nil || !validEpisodeIDHash(episodeIDHash) || workerCount <= 0 {
-		return nil, 0, errors.New("invalid ARC Redis snapshot request")
+		return nil, EpisodeReadToken{}, errors.New("invalid ARC Redis snapshot request")
 	}
 	keys := store.keys(episodeIDHash)
 	raw, err := redisSnapshotScript.Run(ctx, store.client, keys[1:]).Slice()
 	if err != nil {
-		return nil, 0, boundedRedisEpisodeError("snapshot", err)
+		return nil, EpisodeReadToken{}, boundedRedisEpisodeError("snapshot", err)
 	}
 	if len(raw) != 2 {
-		return nil, 0, errors.New("ARC Redis snapshot response contract mismatch")
+		return nil, EpisodeReadToken{}, errors.New("ARC Redis snapshot response contract mismatch")
 	}
 	version, err := redisResultUint64(raw[0])
 	if err != nil {
-		return nil, 0, err
+		return nil, EpisodeReadToken{}, err
 	}
 	payload, ok := raw[1].(string)
 	if !ok {
-		return nil, 0, errors.New("ARC Redis state response contract mismatch")
+		return nil, EpisodeReadToken{}, errors.New("ARC Redis state response contract mismatch")
 	}
 	state, storedVersion, err := unmarshalEpisodeState([]byte(payload), workerCount, store.now())
 	if err != nil {
-		return nil, 0, err
+		return nil, EpisodeReadToken{}, err
 	}
 	if storedVersion > version {
-		return nil, 0, errors.New("ARC Redis state fence is invalid")
+		return nil, EpisodeReadToken{}, errors.New("ARC Redis state fence is invalid")
 	}
-	return state, version, nil
+	digest := sha1.Sum([]byte(payload)) // #nosec G401 -- equality tag matching Redis's sha1hex, not a security boundary.
+	return state, EpisodeReadToken{version: version, tag: hex.EncodeToString(digest[:])}, nil
 }
 
 // CommitIfUnchanged writes state as the episode's next version, provided the
@@ -441,13 +449,13 @@ func (store *RedisEpisodeStore) Snapshot(
 func (store *RedisEpisodeStore) CommitIfUnchanged(
 	ctx context.Context,
 	episodeIDHash string,
-	readVersion uint64,
+	read EpisodeReadToken,
 	state *EpisodeState,
 ) error {
 	if store == nil || !validEpisodeIDHash(episodeIDHash) {
 		return errors.New("invalid ARC Redis relaxed commit request")
 	}
-	next := readVersion + 1
+	next := read.version + 1
 	payload, err := marshalEpisodeState(state, next, store.now())
 	if err != nil {
 		return err
@@ -456,10 +464,11 @@ func (store *RedisEpisodeStore) CommitIfUnchanged(
 		ctx,
 		store.client,
 		store.keys(episodeIDHash),
-		readVersion,
+		read.version,
 		next,
 		payload,
 		store.idleTTL.Milliseconds(),
+		read.tag,
 	).Int()
 	if err != nil {
 		return boundedRedisEpisodeError("relaxed_commit", err)

@@ -49,7 +49,7 @@ var (
 	// ErrEpisodeConflict is a relaxed commit that lost to another turn: the
 	// episode changed, or a strict lease holds it, since it was read.
 	ErrEpisodeConflict = errors.New("ARC episode changed since it was read")
-	ErrEpisodeCapacity  = errors.New("ARC episode store capacity reached")
+	ErrEpisodeCapacity = errors.New("ARC episode store capacity reached")
 	// ErrEpisodeLeaseHeld is joined with the context error when Prepare ran
 	// out of time AFTER observing another owner's lease. A timeout without it
 	// may be the store itself stalling, which is not contention.
@@ -92,13 +92,28 @@ type EpisodeSnapshotStore interface {
 		ctx context.Context,
 		episodeIDHash string,
 		workerCount int,
-	) (*EpisodeState, uint64, error)
+	) (*EpisodeState, EpisodeReadToken, error)
 	CommitIfUnchanged(
 		ctx context.Context,
 		episodeIDHash string,
-		readVersion uint64,
+		read EpisodeReadToken,
 		state *EpisodeState,
 	) error
+}
+
+// EpisodeReadToken names exactly what a relaxed read saw. A version alone is
+// not enough: an episode can expire or be evicted and be recreated back to the
+// same version, and a stale turn must still lose. So the token also carries
+// something recreation cannot repeat: a digest of the stored state (Redis) or
+// the entry's store-wide generation (memory).
+type EpisodeReadToken struct {
+	version uint64
+	tag     string
+}
+
+// Version is the episode version the read saw.
+func (token EpisodeReadToken) Version() uint64 {
+	return token.version
 }
 
 type EpisodeLeaseRenewer interface {

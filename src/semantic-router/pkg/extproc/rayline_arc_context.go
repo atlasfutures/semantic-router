@@ -593,7 +593,7 @@ func (r *OpenAIRouter) prepareRelaxedRaylineARCTransaction(
 		time.Duration(arcConfig.Episode.AcquireTimeoutSeconds)*time.Second,
 	)
 	defer cancel()
-	state, version, err := snapshots.Snapshot(readContext, episodeIDHash, workerCount)
+	state, read, err := snapshots.Snapshot(readContext, episodeIDHash, workerCount)
 	stateless := false
 	if err != nil {
 		logging.ComponentWarnEvent("extproc", "rayline_arc_relaxed_read_failed", map[string]interface{}{
@@ -603,12 +603,12 @@ func (r *OpenAIRouter) prepareRelaxedRaylineARCTransaction(
 		if err != nil {
 			return nil, "episode_store"
 		}
-		version, stateless = 0, true
+		read, stateless = raylinearc.EpisodeReadToken{}, true
 	}
 	reqCtx.RaylineARCTransaction = newRelaxedRaylineARCEpisodeTransaction(
 		snapshots,
 		state,
-		version,
+		read,
 		episodeIDHash,
 		stateless,
 	)

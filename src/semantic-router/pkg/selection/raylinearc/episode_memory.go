@@ -19,6 +19,7 @@ package raylinearc
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -30,6 +31,10 @@ type MemoryEpisodeStoreConfig struct {
 }
 
 type memoryEpisodeEntry struct {
+	// generation is unique for the life of the store; a recreated entry never
+	// repeats it, so a relaxed read of an evicted entry can never commit to
+	// its replacement.
+	generation uint64
 	gate       chan struct{}
 	state      *EpisodeState
 	version    uint64
@@ -45,6 +50,7 @@ type MemoryEpisodeStore struct {
 	maxEpisodes int
 	idleTTL     time.Duration
 	now         func() time.Time
+	generations uint64
 }
 
 func NewMemoryEpisodeStore(
@@ -193,7 +199,9 @@ func (store *MemoryEpisodeStore) referenceEntry(
 				return nil, ErrEpisodeCapacity
 			}
 		}
+		store.generations++
 		entry = &memoryEpisodeEntry{
+			generation: store.generations,
 			gate:       make(chan struct{}, 1),
 			lastAccess: now,
 		}
@@ -306,9 +314,9 @@ func (store *MemoryEpisodeStore) Snapshot(
 	_ context.Context,
 	episodeIDHash string,
 	workerCount int,
-) (*EpisodeState, uint64, error) {
+) (*EpisodeState, EpisodeReadToken, error) {
 	if !validEpisodeIDHash(episodeIDHash) || workerCount <= 0 {
-		return nil, 0, errors.New("invalid ARC episode snapshot request")
+		return nil, EpisodeReadToken{}, errors.New("invalid ARC episode snapshot request")
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -317,17 +325,23 @@ func (store *MemoryEpisodeStore) Snapshot(
 	if entry == nil || entry.state == nil {
 		state, err := NewEpisodeState(workerCount)
 		if err != nil {
-			return nil, 0, err
+			return nil, EpisodeReadToken{}, err
 		}
 		if entry == nil {
-			return state, 0, nil
+			return state, EpisodeReadToken{}, nil
 		}
-		return state, entry.version, nil
+		return state, memoryReadToken(entry), nil
 	}
 	if len(entry.state.Warmth) != workerCount {
-		return nil, 0, errors.New("ARC episode worker count changed")
+		return nil, EpisodeReadToken{}, errors.New("ARC episode worker count changed")
 	}
-	return cloneEpisodeState(entry.state), entry.version, nil
+	return cloneEpisodeState(entry.state), memoryReadToken(entry), nil
+}
+
+// memoryReadToken names an entry by its generation and version. An entry the
+// store has never seen reads as the zero token.
+func memoryReadToken(entry *memoryEpisodeEntry) EpisodeReadToken {
+	return EpisodeReadToken{version: entry.version, tag: strconv.FormatUint(entry.generation, 10)}
 }
 
 // CommitIfUnchanged writes state as the episode's next version, provided the
@@ -335,7 +349,7 @@ func (store *MemoryEpisodeStore) Snapshot(
 func (store *MemoryEpisodeStore) CommitIfUnchanged(
 	_ context.Context,
 	episodeIDHash string,
-	readVersion uint64,
+	read EpisodeReadToken,
 	state *EpisodeState,
 ) error {
 	if !validEpisodeIDHash(episodeIDHash) {
@@ -349,19 +363,27 @@ func (store *MemoryEpisodeStore) CommitIfUnchanged(
 	}
 	entry := store.entries[episodeIDHash]
 	if entry == nil {
-		if readVersion != 0 {
+		if read != (EpisodeReadToken{}) {
 			return ErrEpisodeConflict
 		}
 		store.reapLocked(now)
 		if len(store.entries) >= store.maxEpisodes && !store.evictOldestUnlocked() {
 			return ErrEpisodeCapacity
 		}
-		entry = &memoryEpisodeEntry{gate: make(chan struct{}, 1), lastAccess: now}
+		store.generations++
+		entry = &memoryEpisodeEntry{generation: store.generations, gate: make(chan struct{}, 1), lastAccess: now}
 		entry.gate <- struct{}{}
 		store.entries[episodeIDHash] = entry
 	}
-	if entry.leased || entry.version != readVersion {
+	if entry.leased {
 		return ErrEpisodeConflict
+	}
+	// A read of an entry the store had not seen carries the zero token; it
+	// may commit only to the entry this commit creates, not one created since.
+	if read != (EpisodeReadToken{}) || entry.version != 0 || entry.state != nil {
+		if read != memoryReadToken(entry) {
+			return ErrEpisodeConflict
+		}
 	}
 	entry.version++
 	entry.state = cloneEpisodeState(state)
