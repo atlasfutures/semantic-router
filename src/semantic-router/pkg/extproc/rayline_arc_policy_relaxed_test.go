@@ -254,3 +254,36 @@ func TestRelaxedPolicyCellArmsOnlyOnceTheServiceServesRelaxed(t *testing.T) {
 	fake.refuseRelaxed("")
 	awaitPolicySelectorArmed(t, router)
 }
+
+// A service that predates episode_mode may accept the field and serve the
+// call strict. The probe refuses such an answer, as it does one naming
+// another package, and a relaxed selection refuses a revisioned decision.
+func TestRelaxedPolicyCellRefusesAServiceThatIgnoresTheMode(t *testing.T) {
+	fixture := newPolicySelectorFixtureWith(t, config.RaylineARCConsistencyRelaxed)
+	actionID := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings[0].ActionID
+	fixture.fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return actionID })
+	scorer := newPolicyServiceScorer(&config.RouterConfig{}, fixture.decision)
+	client := raylinearc.NewPolicyServiceClient(raylinearc.PolicyServiceConfig{
+		BaseURL: fixture.fake.URL(), TotalTimeout: 5 * time.Second,
+	})
+
+	fixture.fake.mu.Lock()
+	fixture.fake.ignoreEpisodeMode = true
+	fixture.fake.mu.Unlock()
+	if err := probeRelaxedPolicyDecide(context.Background(), client, scorer); !errors.Is(err, errRelaxedPolicyIgnored) {
+		t.Fatalf("probe against a service ignoring episode_mode = %v", err)
+	}
+	state, _ := raylinearc.NewEpisodeState(2)
+	_, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"}))
+	if err == nil || !strings.Contains(err.Error(), "policy_session_revision") {
+		t.Fatalf("relaxed select answered strict = %v", err)
+	}
+
+	fixture.fake.mu.Lock()
+	fixture.fake.ignoreEpisodeMode = false
+	fixture.fake.answerAs = &raylinearc.PolicyPackageRef{Alias: "other", PackageSHA256: policyTestPackage}
+	fixture.fake.mu.Unlock()
+	if err := probeRelaxedPolicyDecide(context.Background(), client, scorer); !errors.Is(err, errRelaxedPolicyIgnored) {
+		t.Fatalf("probe answered for another package = %v", err)
+	}
+}

@@ -43,6 +43,9 @@ type fakePolicyService struct {
 	// nullRevision answers every decide with session_revision null, as only
 	// a relaxed call may.
 	nullRevision bool
+	// ignoreEpisodeMode answers a relaxed decide as a strict one, with a
+	// session revision, as a service that predates episode_mode.
+	ignoreEpisodeMode bool
 	// barrier, when set, holds each decide call until that many are in
 	// flight at once (or it times out), and inflight/maxInflight count them.
 	barrier     int
@@ -189,7 +192,7 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 	if fake.encodeUnreported {
 		response.TimingMillis.Encode = nil
 	}
-	nullRevision := fake.nullRevision
+	nullRevision, ignoreEpisodeMode := fake.nullRevision, fake.ignoreEpisodeMode
 	fake.mu.Unlock()
 	response.Shadow = []raylinearc.PolicyShadowResult{}
 	available := make(map[string]bool, len(request.Selection.AvailableActionIDs))
@@ -206,7 +209,7 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 	response.Decision.SelectedActionID = selected
 	response.Decision.SelectedArmID = "arm-" + selected[:8]
 	// A relaxed call advances no session (pathfinder#3068).
-	if request.EpisodeMode == raylinearc.PolicyEpisodeModeRelaxed || nullRevision {
+	if (request.EpisodeMode == raylinearc.PolicyEpisodeModeRelaxed && !ignoreEpisodeMode) || nullRevision {
 		response.Encoding.SessionRevision = nil
 		response.Encoding.SessionAction = "rebuilt"
 	}
