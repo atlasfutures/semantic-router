@@ -245,6 +245,14 @@ const (
 	RaylineARCConsistencyRelaxed = "relaxed"
 )
 
+// EffectiveConsistency is the consistency in force: an omitted value is strict.
+func (cfg RaylineARCEpisodeConfig) EffectiveConsistency() string {
+	if cfg.Consistency == "" {
+		return RaylineARCConsistencyStrict
+	}
+	return cfg.Consistency
+}
+
 // RelaxedConsistency reports whether the episode is configured relaxed.
 func (cfg RaylineARCEpisodeConfig) RelaxedConsistency() bool {
 	return cfg.Consistency == RaylineARCConsistencyRelaxed

@@ -652,6 +652,9 @@ func sameRaylineARCSelectionConfig(left, right *config.RaylineARCAlgorithmConfig
 	rightSelection := *right
 	leftSelection.RoutesAPI = config.RaylineARCRoutesAPIConfig{}
 	rightSelection.RoutesAPI = config.RaylineARCRoutesAPIConfig{}
+	// An omitted consistency is strict; the two spellings are one setting.
+	leftSelection.Episode.Consistency = leftSelection.Episode.EffectiveConsistency()
+	rightSelection.Episode.Consistency = rightSelection.Episode.EffectiveConsistency()
 	return reflect.DeepEqual(leftSelection, rightSelection)
 }
 
