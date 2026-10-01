@@ -167,8 +167,9 @@ Relaxed episode state is best effort. In one narrow race at that boundary, a
 stale first turn can still land on an episode that has just expired from
 disuse; no live state is lost when it does.
 
-`relaxed` does not yet accept `close_header`, and is not yet served in the
-policy-service mode.
+`relaxed` does not yet accept `close_header` or the `resumable_causal_mean`
+encoder capability (a retained encoder session serializes same-episode
+encodes), and is not yet served in the policy-service mode.
 
 ### Static retained-encoder replicas
 

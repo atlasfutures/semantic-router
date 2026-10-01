@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -284,6 +285,13 @@ func validateRaylineARCAlgorithmConfig(cfg *RaylineARCAlgorithmConfig) error {
 	}
 	if err := validateRaylineARCEpisodeConfig(cfg.Episode); err != nil {
 		return fmt.Errorf("episode: %w", err)
+	}
+	// A retained encoder session serializes same-episode encodes on the
+	// encoder side, so relaxed turns on one episode would wait on each other
+	// there after all.
+	if cfg.Episode.RelaxedConsistency() &&
+		slices.Contains(cfg.Encoder.RequiredCapabilities, RaylineARCCapabilityResumableMean) {
+		return fmt.Errorf("episode: consistency=relaxed is not served with the %s encoder capability", RaylineARCCapabilityResumableMean)
 	}
 	if cfg.Encoder.usesReplicaMembership() && cfg.Episode.CloseHeader == "" {
 		return fmt.Errorf("episode: close_header is required with encoder replicas")

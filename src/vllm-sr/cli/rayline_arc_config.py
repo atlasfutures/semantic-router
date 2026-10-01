@@ -374,6 +374,21 @@ class RaylineARCAlgorithmConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def _relaxed_not_with_retained_encoder_sessions(self):
+        # A retained encoder session serializes same-episode encodes on the
+        # encoder side, so relaxed turns on one episode would wait there.
+        if (
+            self.episode.consistency == "relaxed"
+            and self.encoder is not None
+            and "resumable_causal_mean" in self.encoder.required_pooling_capabilities
+        ):
+            raise ValueError(
+                "episode: consistency=relaxed is not served with the "
+                "resumable_causal_mean encoder capability"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _relaxed_not_yet_in_policy_service_mode(self):
         # The policy service refuses a second in-flight call for one session;
         # a relaxed policy cell needs its lock-free call (router-infra#56).
