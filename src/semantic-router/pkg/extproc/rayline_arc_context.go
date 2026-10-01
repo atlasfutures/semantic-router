@@ -171,6 +171,10 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	if algorithm.RaylineARC.PolicyService != nil {
 		result.RawRequest = reqCtx.RaylineARCRawBody
 		result.RequestFormat = policyRequestFormat(reqCtx.SourceFormat)
+		result.PolicySignalHeaders = map[string]string{
+			raylineARCCallKindHeader:   reqCtx.Headers[raylineARCCallKindHeader],
+			raylineARCCompactionHeader: reqCtx.Headers[raylineARCCompactionHeader],
+		}
 		if result.RequestFormat == policyFormatResponses {
 			input, instructions, err := r.raylineARCPolicyResponsesInput(reqCtx)
 			if err != nil {

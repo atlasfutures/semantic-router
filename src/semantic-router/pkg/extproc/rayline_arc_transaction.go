@@ -42,7 +42,11 @@ type raylineARCEpisodeTransaction struct {
 	selectedArm   int
 	// policyNext is the policy-service ledger and epoch to commit with this
 	// turn; nil outside that mode.
-	policyNext       *raylinearc.PolicyEpisodeState
+	policyNext *raylinearc.PolicyEpisodeState
+	// sideCall marks a call outside the main conversation. It commits
+	// nothing: the turn count, previous arm, ledger and every per-turn
+	// record stay as they were, and a strict lease is released unwritten.
+	sideCall         bool
 	serializedTokens int
 	encoderOwner     string
 	encoderVisited   []string
@@ -184,14 +188,19 @@ func (transaction *raylineARCEpisodeTransaction) markSelectionWithAffinity(
 }
 
 // markPolicyState stages the policy-service ledger and epoch this turn
-// commits. It is a no-op outside the policy-service mode.
+// commits, or marks the request a side call that commits nothing. It is a
+// no-op outside the policy-service mode.
 func (transaction *raylineARCEpisodeTransaction) markPolicyState(
 	next *raylinearc.PolicyEpisodeState,
+	sideCall bool,
 ) {
-	if transaction == nil || next == nil {
+	if transaction == nil {
 		return
 	}
-	transaction.policyNext = next.Clone()
+	transaction.sideCall = sideCall
+	if next != nil {
+		transaction.policyNext = next.Clone()
+	}
 }
 
 // stageThinkingLedger records the ledger this turn's lever plan produced.
@@ -273,6 +282,10 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			metrics.RecordRaylineARCEpisodeTransaction("coalesced", "")
 			return
 		}
+		if transaction.sideCall {
+			transaction.commitSideCall(ctx)
+			return
+		}
 		if transaction.relaxed {
 			transaction.commitRelaxed(ctx, requestContext)
 			return
@@ -309,6 +322,21 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 		recordCommittedARCEpisodeTelemetry(requestContext, transaction)
 	})
 	return transaction.finalizeErr
+}
+
+// commitSideCall finishes a side call without touching the episode. A strict
+// episode's lease is released unwritten, so a concurrent relaxed turn's
+// conditional commit is not invalidated by a version bump either.
+func (transaction *raylineARCEpisodeTransaction) commitSideCall(ctx context.Context) {
+	if !transaction.relaxed {
+		transaction.stopRenewal()
+		err := transaction.store.Abort(ctx, transaction.lease)
+		if err != nil && !errors.Is(err, raylinearc.ErrEpisodeLeaseLost) {
+			transaction.finalizeErr = err
+			return
+		}
+	}
+	metrics.RecordRaylineARCEpisodeTransaction("commit", "side_call")
 }
 
 // commitRelaxed records a relaxed turn if the episode is still at the version

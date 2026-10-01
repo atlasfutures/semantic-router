@@ -63,6 +63,9 @@ type RaylineARCSelectionContext struct {
 	// for the policy service; set only for request format openai_responses.
 	PolicyInput        []json.RawMessage
 	PolicyInstructions *string
+	// PolicySignalHeaders holds the request's explicit turn-signal headers
+	// (call kind, compaction ordinal), keyed by lower-case name.
+	PolicySignalHeaders map[string]string
 }
 
 // RaylineARCTrace records bounded, privacy-safe artifact policy diagnostics.
@@ -87,6 +90,9 @@ type RaylineARCTrace struct {
 	EncoderLatencyUnknown bool
 	// PolicyNextState is the ledger and epoch to commit with this turn.
 	PolicyNextState *raylinearc.PolicyEpisodeState
+	// PolicySideCall marks a call outside the main conversation: it commits
+	// nothing to the episode, neither a turn nor a ledger entry.
+	PolicySideCall bool
 	// ArtifactID and ArtifactRevision hold SHA256-derived hashes of the
 	// deployment-private artifact identity, never the raw pins.
 	ArtifactID          string

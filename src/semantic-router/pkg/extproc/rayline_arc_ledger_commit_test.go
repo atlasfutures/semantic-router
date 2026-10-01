@@ -72,7 +72,7 @@ func runLedgerTestTurn(
 	if err != nil {
 		t.Fatal(err)
 	}
-	turn, _ := raylinearc.PolicyTurn(state.Policy, ledgerTestMessages, ledgerTestRoles, state.TurnIndex)
+	turn, _, _ := raylinearc.PolicyTurn(state.Policy, ledgerTestMessages, ledgerTestRoles, state.TurnIndex, raylinearc.PolicyTurnSignals{})
 	ctx := &RequestContext{
 		Headers: make(map[string]string),
 		RaylineARCTransaction: newRaylineARCEpisodeTransaction(
@@ -81,7 +81,7 @@ func runLedgerTestTurn(
 	}
 	ctx.RaylineARCTransaction.markSelection(1, 123)
 	ctx.RaylineARCTransaction.markPolicyState(
-		turn.Next(ledgerTestMessages, strings.Repeat("a", 64), "arm-b"),
+		turn.Next(ledgerTestMessages, strings.Repeat("a", 64), "arm-b"), false,
 	)
 	bindRaylineARCSelectionTransaction(ctx)
 	router := &OpenAIRouter{}

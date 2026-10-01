@@ -271,12 +271,19 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if err != nil {
 		return nil, arcSelectionFailure("policy_request_body")
 	}
-	turn, attribution := raylinearc.PolicyTurn(state.Policy, messages, roles, state.TurnIndex)
+	signals := raylineARCPolicyTurnSignals(
+		arcContext.PolicySignalHeaders, arcContext.RequestFormat, clientRequest, messages, arcContext.EpisodeIDHash,
+	)
+	turn, attribution, transition := raylinearc.PolicyTurn(state.Policy, messages, roles, state.TurnIndex, signals)
+	sideCall := signals.CallKind == raylinearc.PolicyCallSide
 	held := -1
-	if scorer.schedule != "" && state.PreviousArm != nil &&
-		!raylinearc.ModelChangeAllowed(state.TurnIndex, turn.EpochStartTurn) {
+	// A side call keeps the held arm whatever the schedule says; a turn holds
+	// it between the schedule's boundaries.
+	if state.PreviousArm != nil && (sideCall || scorer.schedule != "" &&
+		!raylinearc.ModelChangeAllowed(state.TurnIndex, turn.EpochStartTurn, turn.CompactionCount)) {
 		held = *state.PreviousArm
 	}
+	logRaylineARCPolicyTurn(arcContext.EpisodeIDHash, signals, transition, state.TurnIndex, turn, held >= 0)
 	available := make([]string, 0, len(scorer.actionOrder))
 	for _, actionID := range scorer.actionOrder {
 		arm := scorer.bindings[actionID].arm
@@ -389,9 +396,12 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.ThinkingLevel = binding.level
 	result.RaylineARC.PolicyActionModel = binding.model
 	result.RaylineARC.WorkerProviderModel = scorer.workers[binding.arm].Model
-	result.RaylineARC.PolicyNextState = turn.Next(
-		messages, response.Decision.SelectedActionID, response.Decision.SelectedArmID,
-	)
+	result.RaylineARC.PolicySideCall = sideCall
+	if !sideCall {
+		result.RaylineARC.PolicyNextState = turn.Next(
+			messages, response.Decision.SelectedActionID, response.Decision.SelectedArmID,
+		)
+	}
 	return result, nil
 }
 
