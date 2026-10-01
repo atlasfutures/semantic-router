@@ -134,6 +134,14 @@ func ResumePlacer(state PlacerState) (*Placer, error) {
 	if (state.InForce != nil || len(state.Ledger) > 0) && (state.First == nil || state.First.Instruction == nil) {
 		return nil, malformed
 	}
+	// A steered level is in force exactly when the last written item is an
+	// instruction: a hold writes nothing, and a return to none writes the
+	// marker and clears it. Anything else would report a steer the body
+	// does not carry, or carry one the receipt does not report.
+	lastIsInstruction := len(state.Ledger) > 0 && state.Ledger[len(state.Ledger)-1].Kind == WrittenInstruction
+	if (state.InForce != nil) != lastIsInstruction {
+		return nil, malformed
+	}
 	for _, item := range state.Ledger {
 		if item.Anchor < 0 || (item.Placement != PlacementAppend && item.Placement != PlacementInsertAfter) ||
 			(item.Kind != WrittenInstruction && item.Kind != WrittenNeutralMarker) {

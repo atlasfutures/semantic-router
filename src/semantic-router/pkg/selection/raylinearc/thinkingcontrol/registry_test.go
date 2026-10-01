@@ -57,6 +57,24 @@ func TestRegistryRefusesAnUnknownAdmissionLevel(t *testing.T) {
 	}
 }
 
+// A repeated (model, provider, format) cell would let the later one decide
+// admission, so the artifact is refused.
+func TestRegistryRefusesARepeatedCell(t *testing.T) {
+	parsed, err := parseJSON(embeddedArtifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cells := parsed.get("cells")
+	cells.items = append(cells.items, cells.items[0].clone())
+	repeated, err := jcs(parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(repeated); err == nil || !strings.Contains(err.Error(), "appears twice") {
+		t.Fatalf("a repeated cell loaded: %v", err)
+	}
+}
+
 func TestAdmissionIsPerModelProviderAndFormat(t *testing.T) {
 	reg, err := Embedded()
 	if err != nil {
@@ -202,5 +220,16 @@ func TestPlacerStateResumesTheEpisode(t *testing.T) {
 	nativeOnly.First, nativeOnly.InForce = &native, nil
 	if _, err := ResumePlacer(nativeOnly); err == nil {
 		t.Fatal("a native-only episode with a ledger resumed")
+	}
+	// A level in force must be the last written instruction.
+	unbacked := resumed.State()
+	unbacked.Ledger = nil
+	if _, err := ResumePlacer(unbacked); err == nil {
+		t.Fatal("a level in force with no instruction in the ledger resumed")
+	}
+	cleared := resumed.State()
+	cleared.InForce = nil
+	if _, err := ResumePlacer(cleared); err == nil {
+		t.Fatal("a written instruction with no level in force resumed")
 	}
 }

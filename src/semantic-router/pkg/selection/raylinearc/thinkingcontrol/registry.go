@@ -133,7 +133,12 @@ func Load(raw []byte) (*Registry, error) {
 		if err != nil {
 			return nil, err
 		}
-		reg.cells[cellKey{cell.Model, cell.Provider, cell.Format}] = cell
+		key := cellKey{cell.Model, cell.Provider, cell.Format}
+		if _, repeated := reg.cells[key]; repeated {
+			// The later cell would silently decide admission.
+			return nil, refuse("cell %s %sx%s appears twice", cell.Model, cell.Provider, cell.Format)
+		}
+		reg.cells[key] = cell
 	}
 	return reg, nil
 }
