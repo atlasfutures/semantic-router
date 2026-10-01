@@ -315,6 +315,8 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     package_manifest: str = ""
     # Admits v5 instructions whose registry cell is experimental.
     allow_experimental_controls: bool = False
+    # Per bound worker, the trained model it serves (v5 only).
+    trained_models: dict[str, str] = Field(default_factory=dict)
 
 
 class RaylineARCAlgorithmConfig(BaseModel):

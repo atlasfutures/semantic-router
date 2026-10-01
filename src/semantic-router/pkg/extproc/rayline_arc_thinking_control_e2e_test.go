@@ -310,6 +310,9 @@ routing:
             package_manifest: {{MANIFEST}}
             allow_experimental_controls: true
             model_schedule: task_turn_compaction_v1
+            trained_models:
+              opus: anthropic/claude-opus-5
+              glm: z-ai/glm-5.3-flash
             bindings:
               - action_id: {{OPUS}}
                 worker: opus

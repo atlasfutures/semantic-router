@@ -37,8 +37,16 @@ func policyV5Decision(t *testing.T, manifest []byte) (*RouterConfig, Decision) {
 	on := true
 	cfg := &RouterConfig{BackendModels: BackendModels{
 		ModelConfig: map[string]ModelParams{
-			"arm-opus": {PreferredEndpoints: []string{"openrouter"}, APIFormat: APIFormatAnthropic},
-			"arm-glm":  {PreferredEndpoints: []string{"openrouter"}, APIFormat: APIFormatOpenAI},
+			// The served provider model ids, which admission keys on; the
+			// endpoints carry no type, so they resolve under "vllm".
+			"arm-opus": {
+				PreferredEndpoints: []string{"openrouter"}, APIFormat: APIFormatAnthropic,
+				ExternalModelIDs: map[string]string{"vllm": "anthropic/claude-opus-5"},
+			},
+			"arm-glm": {
+				PreferredEndpoints: []string{"openrouter"}, APIFormat: APIFormatOpenAI,
+				ExternalModelIDs: map[string]string{"vllm": "z-ai/glm-5.3-flash"},
+			},
 		},
 		VLLMEndpoints: []VLLMEndpoint{
 			{Name: "openrouter", Address: "openrouter.ai", Port: 443, ProviderProfileName: "openrouter"},
@@ -64,6 +72,7 @@ func policyV5Decision(t *testing.T, manifest []byte) (*RouterConfig, Decision) {
 		PackageManifest:           path,
 		AllowExperimentalControls: true,
 		ModelSchedule:             RaylineARCModelScheduleTaskTurnCompaction,
+		TrainedModels:             map[string]string{"arm-opus": "anthropic/claude-opus-5", "arm-glm": "z-ai/glm-5.3-flash"},
 		Bindings: []RaylineARCPolicyBinding{
 			{ActionID: policyV5OpusAction, Worker: "arm-opus"},
 			{ActionID: policyV5GLMNone, Worker: "arm-glm"},
@@ -279,9 +288,14 @@ func TestRaylineARCPolicyPackageV5BoundsControlShapes(t *testing.T) {
 	decision.ModelRefs = nil
 	policy := decision.Algorithm.RaylineARC.PolicyService
 	policy.Bindings = nil
+	policy.TrainedModels = map[string]string{}
 	for index := 0; index < 17; index++ {
 		worker := fmt.Sprintf("arm-%d", index)
-		cfg.ModelConfig[worker] = ModelParams{PreferredEndpoints: []string{"openrouter"}, APIFormat: APIFormatOpenAI}
+		cfg.ModelConfig[worker] = ModelParams{
+			PreferredEndpoints: []string{"openrouter"}, APIFormat: APIFormatOpenAI,
+			ExternalModelIDs: map[string]string{"vllm": "z-ai/glm-5.3-flash"},
+		}
+		policy.TrainedModels[worker] = "z-ai/glm-5.3-flash"
 		decision.ModelRefs = append(decision.ModelRefs, ModelRef{Model: worker, ModelReasoningControl: ModelReasoningControl{UseReasoning: &on}})
 		policy.Bindings = append(policy.Bindings, RaylineARCPolicyBinding{ActionID: fmt.Sprintf("%064x", index+1), Worker: worker})
 	}
@@ -327,5 +341,60 @@ func TestRaylineARCPolicyPackageV5EncodingProfileMembersAtStartup(t *testing.T) 
 		if !accepted && (err == nil || !strings.Contains(err.Error(), "encoding_profile")) {
 			t.Errorf("%s: err = %v, want an encoding_profile refusal", members, err)
 		}
+	}
+}
+
+// An action's model is the trained name, decoupled from providers (as in
+// published packages such as c27e1796); admission keys on the model the bound
+// worker serves.
+func TestRaylineARCPolicyPackageV5AdmitsOnTheServedModel(t *testing.T) {
+	trained := bytes.ReplaceAll(readPolicyV5Fixture(t), []byte(`"model": "anthropic/claude-opus-5"`), []byte(`"model": "claude-opus-5"`))
+	trained = bytes.ReplaceAll(trained, []byte(`"model": "z-ai/glm-5.3-flash"`), []byte(`"model": "glm-5.3-flash"`))
+	if bytes.Contains(trained, []byte(`"model": "anthropic/`)) || bytes.Contains(trained, []byte(`"model": "z-ai/`)) {
+		t.Fatal("the fixture still names a provider-qualified model")
+	}
+	cfg, decision := policyV5Decision(t, trained)
+	decision.Algorithm.RaylineARC.PolicyService.TrainedModels = map[string]string{
+		"arm-opus": "claude-opus-5", "arm-glm": "glm-5.3-flash",
+	}
+	if err := validatePolicyDispatch(cfg, decision); err != nil {
+		t.Fatalf("trained action names refused: %v", err)
+	}
+	if action, _ := decision.Algorithm.RaylineARC.PolicyService.PackageV5Action(policyV5GLMUp); action.Model != "glm-5.3-flash" {
+		t.Fatalf("action model = %q, want the trained name", action.Model)
+	}
+
+	// A worker serving a model the registry has no cell for is refused, even
+	// though the action's own model has one.
+	cfg, decision = policyV5Decision(t, readPolicyV5Fixture(t))
+	opus := cfg.ModelConfig["arm-opus"]
+	opus.ExternalModelIDs = map[string]string{"vllm": "vendor/unregistered"}
+	cfg.ModelConfig["arm-opus"] = opus
+	if err := validatePolicyDispatch(cfg, decision); err == nil || !strings.Contains(err.Error(), "arm-opus") {
+		t.Fatalf("an unregistered served model: err = %v", err)
+	}
+}
+
+// Which trained model a worker serves is declared, never inferred.
+func TestRaylineARCPolicyPackageV5TrainedModelsAreDeclared(t *testing.T) {
+	for name, test := range map[string]struct {
+		trained map[string]string
+		want    string
+	}{
+		"a worker without a declaration": {map[string]string{"arm-glm": "z-ai/glm-5.3-flash"}, `declares no trained model for worker "arm-opus"`},
+		"a worker serving another trained model": {
+			map[string]string{"arm-opus": "anthropic/claude-opus-5", "arm-glm": "glm-5.3-flash"}, `serves trained model "glm-5.3-flash"`,
+		},
+		"a declaration no binding uses": {
+			map[string]string{"arm-opus": "anthropic/claude-opus-5", "arm-glm": "z-ai/glm-5.3-flash", "arm-spare": "x"}, `"arm-spare", which no binding uses`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, decision := policyV5Decision(t, readPolicyV5Fixture(t))
+			decision.Algorithm.RaylineARC.PolicyService.TrainedModels = test.trained
+			if err := validatePolicyDispatch(cfg, decision); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("err = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
