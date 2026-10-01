@@ -218,3 +218,34 @@ func TestPolicyDecisionStillRefusedWhenBusyOutlastsTheTimeout(t *testing.T) {
 		t.Fatalf("waited %v on a busy service, beyond the 1s acquire timeout", elapsed)
 	}
 }
+
+// A Responses request may send its input as one string; codex's compaction
+// directive sent that way is still its summarization side call.
+func TestRaylineARCPolicyCallKindReadsResponsesStringInput(t *testing.T) {
+	var fixture struct {
+		Input []json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(wireSignalFixture(t, "codex_0.154.0_compaction_request.json"), &fixture); err != nil {
+		t.Fatal(err)
+	}
+	var directive struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(fixture.Input[len(fixture.Input)-1], &directive); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{"model": "auto", "input": directive.Content[0].Text})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kind, source := raylineARCPolicyCallKindOfBody(nil, policyFormatResponses, body, "episode")
+	if kind != raylinearc.PolicyCallSide || source != callKindSourceCodexCompactionRq {
+		t.Fatalf("string-input compaction directive = %q %q, want a codex side call", kind, source)
+	}
+	plain, _ := json.Marshal(map[string]any{"model": "auto", "input": "fix the bug"})
+	if kind, _ := raylineARCPolicyCallKindOfBody(nil, policyFormatResponses, plain, "episode"); kind != raylinearc.PolicyCallUnknown {
+		t.Fatalf("plain string input = %q, want unknown", kind)
+	}
+}

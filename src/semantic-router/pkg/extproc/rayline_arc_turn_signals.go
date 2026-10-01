@@ -140,7 +140,14 @@ func raylineARCPolicyCallKindOfBody(
 		_ = json.Unmarshal(request.Messages, &messages)
 	}
 	if format == policyFormatResponses {
-		_ = json.Unmarshal(request.Input, &input)
+		// The Responses shorthand: a string input is one user message.
+		var text string
+		if json.Unmarshal(request.Input, &text) == nil {
+			item, _ := json.Marshal(map[string]string{"type": "message", "role": "user", "content": text})
+			input = []json.RawMessage{item}
+		} else {
+			_ = json.Unmarshal(request.Input, &input)
+		}
 	}
 	return raylineARCPolicyCallKind(headers, format, request.System, messages, input, episodeIDHash)
 }

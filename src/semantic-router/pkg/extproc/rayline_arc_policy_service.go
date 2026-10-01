@@ -362,9 +362,10 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	signals := raylineARCPolicyTurnSignals(
 		arcContext.PolicySignalHeaders, arcContext.RequestFormat, clientRequest, messages, arcContext.EpisodeIDHash,
 	)
-	// The episode was prepared for the kind classified ahead of it (a side
-	// call holds no lease), so the request is served as that kind.
-	if arcContext.PolicyCallKind != "" {
+	// A request classified as a side call ahead of the episode read holds no
+	// lease, so it is served as one. An unknown pre-classification holds the
+	// lease and stays open to a positive reading of the materialized request.
+	if arcContext.PolicyCallKind != "" && arcContext.PolicyCallKind != raylinearc.PolicyCallUnknown {
 		signals.CallKind, signals.CallKindSource = arcContext.PolicyCallKind, arcContext.PolicyCallKindSource
 	}
 	turn, attribution, transition := raylinearc.PolicyTurn(state.Policy, messages, roles, state.TurnIndex, signals)
