@@ -45,7 +45,7 @@
         "openai.chat.v1": "drop",
         "openai.responses.v1": "drop"
       },
-      "note": "OpenRouter's own billing figure. The cell prices from its own table, so carrying this would give a client two disagreeing numbers."
+      "note": "OpenRouter's own billing figure. The Router decodes it into its usage record as the provider-reported charge, beside its own rate-card price; no codec publishes it, so a client never sees two disagreeing numbers."
     },
     {
       "path": "usage.cost_details",
@@ -55,7 +55,30 @@
         "anthropic.messages.v1": "drop",
         "openai.chat.v1": "drop",
         "openai.responses.v1": "drop"
-      }
+      },
+      "note": "Only upstream_inference_cost is decoded, into the usage record. No codec publishes it."
+    },
+    {
+      "path": "usage.cost_details.upstream_inference_completions_cost",
+      "leg": "response",
+      "first_seen": "2026-09-03",
+      "targets": {
+        "anthropic.messages.v1": "drop",
+        "openai.chat.v1": "drop",
+        "openai.responses.v1": "drop"
+      },
+      "note": "The per-direction split of upstream_inference_cost. Pruned and named; the Router records the total only."
+    },
+    {
+      "path": "usage.cost_details.upstream_inference_prompt_cost",
+      "leg": "response",
+      "first_seen": "2026-09-03",
+      "targets": {
+        "anthropic.messages.v1": "drop",
+        "openai.chat.v1": "drop",
+        "openai.responses.v1": "drop"
+      },
+      "note": "The per-direction split of upstream_inference_cost. Pruned and named; the Router records the total only."
     },
     {
       "path": "usage.is_byok",
@@ -65,7 +88,8 @@
         "anthropic.messages.v1": "drop",
         "openai.chat.v1": "drop",
         "openai.responses.v1": "drop"
-      }
+      },
+      "note": "Decoded into the usage record: on a BYOK call usage.cost is OpenRouter's fee alone. No codec publishes it."
     },
     {
       "path": "usage.prompt_tokens_details.video_tokens",
@@ -120,7 +144,7 @@
         "openai.chat.v1": "drop",
         "openai.responses.v1": "drop"
       },
-      "note": "OpenRouter's own billing figure. The cell prices from its own table, so carrying this would give a client two disagreeing numbers."
+      "note": "OpenRouter's own billing figure. The Router decodes it into its usage record as the provider-reported charge, beside its own rate-card price; no codec publishes it, so a client never sees two disagreeing numbers."
     },
     {
       "path": "usage.cost_details",
@@ -130,7 +154,30 @@
         "anthropic.messages.v1": "drop",
         "openai.chat.v1": "drop",
         "openai.responses.v1": "drop"
-      }
+      },
+      "note": "Only upstream_inference_cost is decoded, into the usage record. No codec publishes it."
+    },
+    {
+      "path": "usage.cost_details.upstream_inference_completions_cost",
+      "leg": "stream",
+      "first_seen": "2026-09-03",
+      "targets": {
+        "anthropic.messages.v1": "drop",
+        "openai.chat.v1": "drop",
+        "openai.responses.v1": "drop"
+      },
+      "note": "The per-direction split of upstream_inference_cost. Pruned and named; the Router records the total only."
+    },
+    {
+      "path": "usage.cost_details.upstream_inference_prompt_cost",
+      "leg": "stream",
+      "first_seen": "2026-09-03",
+      "targets": {
+        "anthropic.messages.v1": "drop",
+        "openai.chat.v1": "drop",
+        "openai.responses.v1": "drop"
+      },
+      "note": "The per-direction split of upstream_inference_cost. Pruned and named; the Router records the total only."
     },
     {
       "path": "usage.is_byok",
@@ -140,7 +187,8 @@
         "anthropic.messages.v1": "drop",
         "openai.chat.v1": "drop",
         "openai.responses.v1": "drop"
-      }
+      },
+      "note": "Decoded into the usage record: on a BYOK call usage.cost is OpenRouter's fee alone. No codec publishes it."
     },
     {
       "path": "usage.prompt_tokens_details.video_tokens",

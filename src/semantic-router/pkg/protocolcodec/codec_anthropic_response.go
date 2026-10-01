@@ -31,6 +31,7 @@ type anthropicUsageWire struct {
 	OutputTokensDetails      anthropicOutputUsageDetailsWire `json:"output_tokens_details"`
 	ServerToolUse            anthropicServerToolUsageWire    `json:"server_tool_use"`
 	ServiceTier              string                          `json:"service_tier"`
+	providerUsageCostWire
 }
 
 type anthropicCacheCreationUsageWire struct {
@@ -137,6 +138,7 @@ func decodeAnthropicUsage(wire anthropicUsageWire) llmprotocol.Usage {
 		InputUncached: authoritative(wire.InputTokens), InputCacheRead: authoritative(wire.CacheReadInputTokens), InputCacheWrite: authoritative(wire.CacheCreationInputTokens),
 		OutputReasoning: reasoning, OutputOther: other,
 		InputTotal: authoritative(inputTotal), OutputTotal: authoritative(wire.OutputTokens), Total: llmprotocol.TokenCount{Value: llmprotocol.Int64(inputTotal + wire.OutputTokens), Provenance: llmprotocol.UsageDerived},
+		ProviderCost: wire.providerUsageCostWire.decode(),
 	}
 }
 
