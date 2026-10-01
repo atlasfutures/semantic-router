@@ -142,7 +142,12 @@ func ResumePlacer(state PlacerState) (*Placer, error) {
 	if (state.InForce != nil) != lastIsInstruction {
 		return nil, malformed
 	}
-	for _, item := range state.Ledger {
+	for index, item := range state.Ledger {
+		// The placer appends at a later tail each time, so anchors strictly
+		// increase; only then is the last item the one in force.
+		if index > 0 && item.Anchor <= state.Ledger[index-1].Anchor {
+			return nil, malformed
+		}
 		if item.Anchor < 0 || (item.Placement != PlacementAppend && item.Placement != PlacementInsertAfter) ||
 			(item.Kind != WrittenInstruction && item.Kind != WrittenNeutralMarker) {
 			return nil, malformed

@@ -232,4 +232,51 @@ func TestPlacerStateResumesTheEpisode(t *testing.T) {
 	if _, err := ResumePlacer(cleared); err == nil {
 		t.Fatal("a written instruction with no level in force resumed")
 	}
+	// [instruction@0, neutral_marker@2] stored reversed: the instruction is
+	// last in the slice, so it would read as in force; the order is refused.
+	reversed := resumed.State()
+	item := reversed.Ledger[0]
+	reversed.Ledger = []LedgerItem{
+		{Anchor: 2, PrefixDigest: item.PrefixDigest, Placement: item.Placement, Text: "neutral", Kind: WrittenNeutralMarker},
+		{Anchor: 0, PrefixDigest: item.PrefixDigest, Placement: item.Placement, Text: item.Text, Kind: WrittenInstruction},
+	}
+	if _, err := ResumePlacer(reversed); err == nil {
+		t.Fatal("a ledger with decreasing anchors resumed")
+	}
+}
+
+// A cell whose instruction admission is refused lists native controls only.
+func TestRegistryRefusesAnInstructionOnARefusedCell(t *testing.T) {
+	reg, err := Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := parseJSON(embeddedArtifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var steered string
+	for _, raw := range parsed.get("cells").items {
+		if raw.get("instruction").str != AdmissionRefused {
+			for _, id := range raw.get("controls").items {
+				if c, _ := reg.Control(id.str); c.Instruction != nil {
+					steered = id.str
+				}
+			}
+		}
+	}
+	for _, raw := range parsed.get("cells").items {
+		if raw.get("instruction").str == AdmissionRefused {
+			ids := raw.get("controls")
+			ids.items = append(ids.items, stringValue(steered))
+			break
+		}
+	}
+	tampered, err := jcs(parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(tampered); err == nil || !strings.Contains(err.Error(), "refuses instructions") {
+		t.Fatalf("an instruction on a refused cell loaded: %v", err)
+	}
 }

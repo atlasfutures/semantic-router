@@ -180,6 +180,10 @@ func loadCell(raw *value, controls map[string]Control) (*Cell, error) {
 			unknown = true
 			continue
 		}
+		if control.Instruction != nil && cell.Instruction == AdmissionRefused {
+			// A refused cell admits native controls only.
+			return nil, refuse("%s refuses instructions and lists instruction control %s", where, prefix12(id.str))
+		}
 		cell.controls[id.str] = true
 		bases[control.Native] = true
 	}
