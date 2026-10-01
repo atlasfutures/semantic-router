@@ -61,7 +61,7 @@ type member struct {
 	val *value
 }
 
-func nullValue() *value          { return &value{kind: kindNull} }
+func nullValue() *value           { return &value{kind: kindNull} }
 func stringValue(s string) *value { return &value{kind: kindString, str: s} }
 func intValue(n int64) *value     { return &value{kind: kindInt, integer: big.NewInt(n)} }
 func arrayValue(items ...*value) *value {
