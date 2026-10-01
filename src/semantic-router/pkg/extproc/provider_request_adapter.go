@@ -31,6 +31,9 @@ func (r *OpenAIRouter) adaptProviderRequest(
 	if err != nil {
 		return nil, err
 	}
+	if rendered, handled, err := r.adaptPlannedThinkingControl(body, dispatch, ctx); handled {
+		return rendered, err
+	}
 	encoded := body
 	body, mutation, err := r.projectProviderRequest(body, dispatch, ctx)
 	if err != nil {

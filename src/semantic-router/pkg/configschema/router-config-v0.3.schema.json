@@ -5614,6 +5614,12 @@
         },
         "dispatch_effort": {
           "type": "string"
+        },
+        "package_manifest": {
+          "type": "string"
+        },
+        "allow_experimental_controls": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,

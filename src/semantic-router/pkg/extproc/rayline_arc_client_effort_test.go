@@ -268,3 +268,29 @@ func TestShadowDispatchOnAnARCTurnCarriesNoClientEffort(t *testing.T) {
 		t.Fatalf("the shadow body carries the client's per-message effort: %s", backend.bodies[0])
 	}
 }
+
+// On a v5 turn the client's per-message effort is cleared before the planned
+// control renders, so only the control's thinking fields travel: the steer
+// is placed, and the client's effort and its system carrier are gone, on both
+// Messages and Chat workers.
+func TestV5TurnRendersItsControlWithoutTheClientsEffort(t *testing.T) {
+	client := `{"model":"auto","max_tokens":1024,"messages":[{"role":"user","content":"fix the failing test"},` +
+		`{"role":"assistant","content":"Looking."},` +
+		`{"role":"system","content":[],"output_config":{"effort":"max"}},` +
+		`{"role":"user","content":"go on"}]}`
+	for _, format := range []string{"anthropic", "openai"} {
+		t.Run(format, func(t *testing.T) {
+			router, fake := v5Router(t, format)
+			body, ctx := v5Turn(t, router, fake, v5GLMUp, "v5-client-effort-"+format, client)
+			if bytes.Contains(body, []byte(`"max"`)) || bytes.Contains(body, []byte("configuration_update")) {
+				t.Fatalf("the client's per-message effort reached the provider: %s", body)
+			}
+			if !bytes.Contains(body, []byte(v5UpText)) {
+				t.Fatalf("the v5 control was not rendered: %s", body)
+			}
+			if ctx.RaylineARCThinking == nil || ctx.RaylineARCThinking.Written == "" {
+				t.Fatalf("no control trace: %+v", ctx.RaylineARCThinking)
+			}
+		})
+	}
+}

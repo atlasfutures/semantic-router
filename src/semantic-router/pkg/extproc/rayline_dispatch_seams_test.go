@@ -11,6 +11,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/fallback"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/looper"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
 )
 
 const qualifiedToolCallChat = `{"id":"chatcmpl-1","object":"chat.completion","created":1,"model":"model-fallback-1","choices":[{"index":0,` +
@@ -119,6 +120,35 @@ func TestLooperResponseRestoresToolNamespaces(t *testing.T) {
 			}
 			if !bytes.Contains(body, []byte(`"namespace":"multi_agent_v1"`)) {
 				t.Fatalf("the looper call did not come back with its namespace: %s", body)
+			}
+		})
+	}
+}
+
+// A planned v5 control's thinking budget keeps Messages output room above
+// it after request_params, on the dispatch path (prepareProviderRequest); a
+// Chat dispatch is left alone.
+func TestPlannedControlBudgetRaisesTheMessagesAllowanceOnDispatch(t *testing.T) {
+	budget := int64(4096)
+	for name, tc := range map[string]struct {
+		format llmprotocol.WireFormat
+		want   int64
+	}{
+		"messages": {llmprotocol.AnthropicMessagesV1, budget + 1024},
+		"chat":     {llmprotocol.OpenAIChatV1, 1024},
+	} {
+		t.Run(name, func(t *testing.T) {
+			router, model := routingTestRouterForFormat(tc.format)
+			allowance := int64(1024)
+			request := &llmprotocol.Request{Model: "auto", Generation: 1, Sampling: llmprotocol.Sampling{MaxOutputTokens: &allowance}}
+			ctx := routingTestContext(llmprotocol.AnthropicMessagesV1, request)
+			ctx.RaylineARCThinkingControl = &plannedThinkingControl{control: thinkingcontrol.Control{BudgetTokens: &budget}}
+			dispatch := &providerDispatch{logicalModel: model, upstreamModel: "provider-model", targetFormat: tc.format}
+			if _, err := router.prepareProviderRequest(request, dispatch, ctx); err != nil {
+				t.Fatal(err)
+			}
+			if got := *request.Sampling.MaxOutputTokens; got != tc.want {
+				t.Fatalf("max output tokens = %d, want %d", got, tc.want)
 			}
 		})
 	}

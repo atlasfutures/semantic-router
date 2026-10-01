@@ -213,7 +213,8 @@ func (r *OpenAIRouter) prepareProviderRequest(
 		return paramsChanged || changed, err
 	}
 	floorRaised := applyDispatchCompletionFloor(request, dispatch, ctx)
-	return floorRaised || paramsChanged || changed, nil
+	controlRaised := raiseRaylineARCControlAllowance(request, dispatch, ctx)
+	return controlRaised || floorRaised || paramsChanged || changed, nil
 }
 
 func (r *OpenAIRouter) applyDispatchDecision(
@@ -224,8 +225,19 @@ func (r *OpenAIRouter) applyDispatchDecision(
 	if dispatch.decisionName == "" {
 		return false, nil
 	}
-	changed := false
-	if dispatch.targetFormat != llmprotocol.OpenAIChatV1 {
+	// The client's per-message effort goes first, so only the ARC action's
+	// own controls (the lever, or a v5 control rendered later) carry one.
+	cleared := clearClientMessageEffortForARC(request, ctx)
+	// A v5 action's control is planned here, with the route: its admission
+	// for this dispatch's (model, provider, format) and the episode's placer.
+	// The provider boundary only renders it, and it owns every thinking
+	// field, so the router's derived mode is not applied.
+	planned, changed, err := planRaylineARCThinkingControl(request, dispatch, ctx, r.Config)
+	if err != nil {
+		return false, err
+	}
+	ctx.RaylineARCThinkingControl = planned
+	if dispatch.targetFormat != llmprotocol.OpenAIChatV1 && planned == nil {
 		changed = r.applySemanticReasoningMode(
 			request, dispatch.logicalModel, dispatch.targetFormat, dispatch.useReasoning, ctx.decisionForCandidate(dispatch.logicalModel),
 		)
@@ -241,8 +253,8 @@ func (r *OpenAIRouter) applyDispatchDecision(
 	if err != nil {
 		return false, err
 	}
-	cleared := clearClientMessageEffortForARC(request, ctx)
 	steered, err := r.applyRaylineARCThinkingLever(request, ctx)
+	r.applyRaylineARCReasoningIssuer(request, dispatch, ctx)
 	return changed || injected || cleared || steered, err
 }
 

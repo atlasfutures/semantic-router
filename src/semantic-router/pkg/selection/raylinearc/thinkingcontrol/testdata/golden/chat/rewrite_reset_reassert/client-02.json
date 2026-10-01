@@ -1,0 +1,1 @@
+{"model":"agent-default","messages":[{"role":"system","content":"You are an agent."},{"role":"user","content":"Summary: listed the files."},{"role":"user","content":"Continue from the summary."}],"max_tokens":32000,"stream":true}

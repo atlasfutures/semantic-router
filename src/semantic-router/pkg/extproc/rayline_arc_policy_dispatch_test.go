@@ -172,10 +172,45 @@ func TestPolicyActionReasoningLeavesOtherTurnsAlone(t *testing.T) {
 		policyDispatchContext(policyDecisionWithActions(decisionOnly), decisionOnly)); changed || err != nil || request.ReasoningEffort != "max" {
 		t.Fatalf("decision-only binding changed=%v err=%v effort=%q", changed, err, request.ReasoningEffort)
 	}
-	// Responses dispatch is not served for a declared action.
+	// Responses has no reasoning budget, so a budget action cannot travel.
+	budget := int64(4096)
+	budgeted := policyAction("think", "none", "vendor/think", nil, &budget, "")
 	if _, err := applyRaylineARCPolicyActionReasoning(request, llmprotocol.OpenAIResponsesV1,
-		policyDispatchContext(policyDecisionWithActions(action), action)); !errors.Is(err, errPolicyActionFormat) {
-		t.Fatalf("responses error = %v", err)
+		policyDispatchContext(policyDecisionWithActions(budgeted), budgeted)); !errors.Is(err, errPolicyActionFormat) {
+		t.Fatalf("responses budget error = %v", err)
+	}
+}
+
+// On Responses the action's effort replaces the client's reasoning.effort; a
+// null or withheld effort sends none, and the thinking-off action sends the
+// off signal whatever the client asked for.
+func TestPolicyActionReasoningReachesTheResponsesRequest(t *testing.T) {
+	cases := map[string]struct {
+		action          config.RaylineARCPolicyBinding
+		providerDefault bool
+		wantEffort      string
+	}{
+		"effort":           {policyAction("think", "none", "vendor/think", policyTestEffort("high"), nil, ""), false, "high"},
+		"null effort":      {policyAction("think", "none", "vendor/think", nil, nil, ""), false, ""},
+		"provider default": {policyAction("think", "none", "vendor/think", policyTestEffort("high"), nil, ""), true, ""},
+		"thinking off":     {policyAction("off", "none", "vendor/off", policyTestEffort("none"), nil, ""), false, "none"},
+	}
+	for name, test := range cases {
+		t.Run(name, func(t *testing.T) {
+			decision := policyDecisionWithActions(test.action)
+			if test.providerDefault {
+				decision.Algorithm.RaylineARC.PolicyService.DispatchEffort = config.RaylineARCPolicyDispatchEffortProviderDefault
+			}
+			// What the client sent, and a familyless worker leaves in place.
+			request := &llmprotocol.Request{ReasoningEffort: "minimal"}
+			if _, err := applyRaylineARCPolicyActionReasoning(request, llmprotocol.OpenAIResponsesV1,
+				policyDispatchContext(decision, test.action)); err != nil {
+				t.Fatal(err)
+			}
+			if request.ReasoningEffort != test.wantEffort {
+				t.Fatalf("effort = %q, want %q", request.ReasoningEffort, test.wantEffort)
+			}
+		})
 	}
 }
 
@@ -276,6 +311,16 @@ func TestPolicyActionsMustBeCarriableByTheirProvider(t *testing.T) {
 	anthropic := config.ProviderProfile{Type: "anthropic", BaseURL: "https://api.anthropic.com"}
 	effort := policyAction("think", "none", "think-trained", policyTestEffort("high"), nil, "")
 	budgeted := policyAction("think", "none", "think-trained", nil, &budget, "")
+	off := policyAction("think", "none", "think-trained", policyTestEffort("none"), nil, "")
+	withOffFamily := func(cfg *config.RouterConfig) *config.RouterConfig {
+		params := cfg.ModelConfig["think"]
+		params.ReasoningFamily = "gpt"
+		cfg.ModelConfig["think"] = params
+		cfg.ReasoningFamilies = map[string]config.ReasoningFamilyConfig{
+			"gpt": {Type: config.ReasoningFamilyTypeReasoningEffort, Parameter: "reasoning_effort", Disabled: "none"},
+		}
+		return cfg
+	}
 	cases := []struct {
 		name    string
 		cfg     *config.RouterConfig
@@ -291,6 +336,12 @@ func TestPolicyActionsMustBeCarriableByTheirProvider(t *testing.T) {
 		// so the action must be carriable in both.
 		{"budget on Messages and a top-level Chat transport", acceptingBoth(routerWith(config.APIFormatAnthropic, topLevel)), budgeted, false},
 		{"effort on Messages and a top-level Chat transport", acceptingBoth(routerWith(config.APIFormatAnthropic, topLevel)), effort, true},
+		// Responses carries an effort, but has no reasoning budget.
+		{"effort on Responses", routerWith(config.APIFormatResponses, topLevel), effort, true},
+		{"budget on Responses", routerWith(config.APIFormatResponses, topLevel), budgeted, false},
+		// Thinking-off needs an off signal the worker's family can say.
+		{"thinking off on Responses with no reasoning family", routerWith(config.APIFormatResponses, topLevel), off, false},
+		{"thinking off on Responses with an off signal", withOffFamily(routerWith(config.APIFormatResponses, topLevel)), off, true},
 	}
 	for _, test := range cases {
 		if got := raylineARCPolicyActionsCarriable(test.cfg, policyDecisionWithActions(test.action)); got != test.carries {

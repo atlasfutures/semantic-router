@@ -310,6 +310,11 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     # Mirrors RaylineARCPolicyServiceConfig.DispatchEffort in the Go loader:
     # provider_default serves actions without their declared effort (v4).
     dispatch_effort: Literal["", "declared", "provider_default"] = ""
+    # A v5 package's manifest path (its sha256 is package_sha256); its
+    # bindings are only action_id and worker. Empty serves a v4 package.
+    package_manifest: str = ""
+    # Admits v5 instructions whose registry cell is experimental.
+    allow_experimental_controls: bool = False
 
 
 class RaylineARCAlgorithmConfig(BaseModel):

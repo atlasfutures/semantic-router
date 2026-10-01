@@ -66,6 +66,19 @@ type RaylineARCPolicyServiceConfig struct {
 	// still renders from the level, and a thinking-off action (effort none)
 	// stays off.
 	DispatchEffort string `yaml:"dispatch_effort,omitempty"`
+	// PackageManifest is the path of the package's manifest (package.json).
+	// A v5 package (rayline.arc-policy-package.v5) needs it: its actions name
+	// thinking controls, not wire fields, so VSR reads the model and control
+	// of each action from the manifest. The file's sha256 must be
+	// package_sha256, the package's identity. Empty serves a v4 package,
+	// whose bindings declare their dispatch.
+	PackageManifest string `yaml:"package_manifest,omitempty"`
+	// AllowExperimentalControls admits a v5 action whose steering
+	// instruction is admitted only experimentally on its worker's (model,
+	// provider, format) cell. Without it such an action is refused at load.
+	AllowExperimentalControls bool `yaml:"allow_experimental_controls,omitempty"`
+
+	packageV5 *raylineARCPolicyPackageV5
 }
 
 // Dispatch effort modes; see RaylineARCPolicyServiceConfig.DispatchEffort.
@@ -153,6 +166,11 @@ func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) e
 	}
 	if len(cfg.Bindings) == 0 {
 		return fmt.Errorf("bindings are required")
+	}
+	if cfg.IsPackageV5() {
+		if err := validateRaylineARCPolicyPackageV5Bindings(cfg); err != nil {
+			return err
+		}
 	}
 	seen := make(map[string]bool, len(cfg.Bindings))
 	for _, binding := range cfg.Bindings {
@@ -327,6 +345,9 @@ const raylineARCPolicyNeutralLevel = "none"
 func validateRaylineARCPolicyDispatch(cfg *RouterConfig, decision Decision) error {
 	arc := decision.Algorithm.RaylineARC
 	policy := arc.PolicyService
+	if policy.IsPackageV5() {
+		return validateRaylineARCPolicyPackageV5Dispatch(cfg, decision)
+	}
 	if len(policy.Bindings) == 0 || !policy.Bindings[0].DeclaresDispatch() {
 		if lever := arc.ThinkingLever; lever != nil && lever.Enabled {
 			return fmt.Errorf("thinking_lever with source policy needs bindings that declare model, effort and reasoning_max_tokens")

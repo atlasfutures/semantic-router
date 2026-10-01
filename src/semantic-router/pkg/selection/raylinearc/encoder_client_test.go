@@ -501,7 +501,7 @@ func TestEncoderClientProbeHonoursTheCallerDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	// Accept the connection and never answer, which is what a cold encoder
 	// behind a warm edge looks like.
 	go func() {
@@ -510,7 +510,7 @@ func TestEncoderClientProbeHonoursTheCallerDeadline(t *testing.T) {
 			if acceptErr != nil {
 				return
 			}
-			defer conn.Close()
+			defer func() { _ = conn.Close() }()
 		}
 	}()
 

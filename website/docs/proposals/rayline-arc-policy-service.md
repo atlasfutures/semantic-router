@@ -94,9 +94,31 @@ model; selection logs `policy_action_model` beside `worker_provider_model`. A th
 (`effort: none`) may carry a steer: it dispatches with thinking disabled and
 the suffix, and its worker's lever must be a `prompt_steering_suffix`. At dispatch the effort or budget
 replaces the derived reasoning controls: OpenRouter's `reasoning` object on
-Chat, and `output_config.effort` with adaptive thinking, or enabled thinking
-with the budget, on Messages. A decide response that scores an action with no
+Chat, `output_config.effort` with adaptive thinking, or enabled thinking
+with the budget, on Messages, and `reasoning.effort` on Responses. Responses
+has no reasoning budget, so readiness refuses a budget action bound to a
+worker that accepts Responses. A thinking-off action sends effort `none` on
+Responses, whatever the client asked for, and readiness admits it only on a
+worker whose reasoning family has that off signal. A decide response that scores an action with no
 binding fails the turn.
+
+A Responses client running with `store: false`, such as Codex, resends every
+reasoning item it has received with its `encrypted_content`, which only the
+target that issued it can read. The episode records the set of targets that
+issued the blobs its client can still hold (`reasoning_issuers`: at most two
+truncated digests of worker, backend, provider model and the credential the
+turn is sent with, since a blob is readable only by the account that issued
+it), and a turn forwards the items unchanged only when that set is exactly its
+own target. A rotated or per-user key is another issuer. An
+OpenRouter target has no such identity: OpenRouter chooses the serving
+provider per request, and providers cannot read each other's blobs. So
+nothing is forwarded to one, and blobs it issues are recorded as of unknown
+issuer and never forwarded anywhere.
+On any other target the whole item is dropped, as on every route without an
+episode, and logged as `rayline_arc_encrypted_reasoning_dropped` with a reason.
+The set is written only with the turn's 2xx commit. A turn that resends no
+encrypted reasoning restarts the set; once it holds two issuers it stays so,
+and the episode's later turns drop the items, until such a turn.
 
 `dispatch_effort: provider_default` sends each action without its declared
 effort, so the provider's default applies; a declared reasoning budget still
@@ -106,6 +128,36 @@ provider while budgets did (pathfinder #2655: the proxy dropped
 against the `action_id`. The steering suffix still renders from the level, a
 thinking-off action (`effort: none`) stays off, and the selection log records
 `policy_declared_effort` beside `policy_dispatch_effort`.
+
+**Package v5.** A v5 package (`rayline.arc-policy-package.v5`, pathfinder's
+"Policy package v5"; ADR 0109) names each action by a model and a
+format-agnostic thinking control. `package_manifest` points at the package's
+`package.json`, whose sha256 must be `package_sha256`. At load VSR:
+
+- recomputes each action's `control_id` from its control (RFC 8785) and refuses
+  a mismatch;
+- requires each control in the compiled registry it serves from (pathfinder's
+  `configs/thinking_controls.compiled.json`, embedded and pinned in
+  `pkg/selection/raylinearc/thinkingcontrol`);
+- requires every package action bound, and each bound control admitted on its
+  worker's (model, provider, format) cell for every format the worker accepts,
+  since the target format is chosen per request; an experimental instruction
+  needs `allow_experimental_controls`.
+
+`thinking_controls_sha256` is informational. A v5 binding is only `action_id`
+and `worker`. The v4 fields, `dispatch_effort`, `thinking_lever` and
+`worker_thinking` are refused with a v5 package.
+
+Route construction admits the control on the cell of the request's target
+format and resumes the episode's placer. The provider boundary then renders it
+from the registry, after the codec. The cell's base wire replaces every thinking field (the
+client's `thinking`, `reasoning`, `reasoning_effort` and
+`output_config.effort`), so a Messages effort gets no adaptive thinking block.
+The instruction is placed by `turn_tail_v2`, written by `on_change_v1` and
+replayed by `ledger_v1`. The placer's state lives in the episode, one per worker
+and control shape. The renderer is pathfinder's reference renderer ported to Go
+and held to its golden corpora byte for byte. Messages and Chat workers are
+served; Responses is item D.
 
 Under `emit: on_change_v1` (ADR 0109) an item is written only when the level
 in force changes. A return from a steer to the neutral level writes the

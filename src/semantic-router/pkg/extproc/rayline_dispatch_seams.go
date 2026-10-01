@@ -75,3 +75,44 @@ func (r *OpenAIRouter) applyShadowProviderProjection(
 	}
 	return applyRaylineMessagesProviderRouting(body, dispatch, &ctx, r.Config)
 }
+
+// adaptPlannedThinkingControl is the provider boundary for a turn whose v5
+// policy action planned a thinking control (#124). The control owns every
+// thinking field, so it is rendered from the registry and the router's own
+// reasoning projection, reasoning controls and worker thinking are skipped;
+// OpenRouter's routing members (session id, provider pin) still apply, and
+// the record reads back what travels. It runs once per dispatch: render
+// stages the placer for the turn's commit, which is why it sits in the
+// dispatch adapter and not in projectProviderRequest (automatic output
+// projects without dispatching). handled is false on every other turn.
+func (r *OpenAIRouter) adaptPlannedThinkingControl(
+	body []byte,
+	dispatch *providerDispatch,
+	ctx *RequestContext,
+) (rendered []byte, handled bool, err error) {
+	if dispatch == nil || ctx == nil || ctx.RaylineARCThinkingControl == nil {
+		return nil, false, nil
+	}
+	if body, err = ctx.RaylineARCThinkingControl.render(body, ctx); err != nil {
+		return nil, true, err
+	}
+	if body, err = applyUpstreamSessionID(body, dispatch, ctx); err != nil {
+		return nil, true, err
+	}
+	if body, err = applyProviderPreferences(body, dispatch, r.Config); err != nil {
+		return nil, true, err
+	}
+	recordDispatchedProviderControls(ctx, body)
+	return body, true, nil
+}
+
+// raiseRaylineARCControlAllowance keeps Messages output room above a planned
+// v5 control's thinking budget. It runs after request_params and the
+// completion floor, which may cap or raise max_tokens.
+func raiseRaylineARCControlAllowance(request *llmprotocol.Request, dispatch *providerDispatch, ctx *RequestContext) bool {
+	if ctx == nil || dispatch == nil || ctx.RaylineARCThinkingControl == nil ||
+		dispatch.targetFormat != llmprotocol.AnthropicMessagesV1 {
+		return false
+	}
+	return raiseMessagesAllowance(request, ctx.RaylineARCThinkingControl.control.BudgetTokens)
+}

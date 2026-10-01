@@ -153,6 +153,9 @@ func applyRaylineARCPolicyActionReasoning(
 	if !declared || targetFormat == llmprotocol.OpenAIChatV1 {
 		return false, nil
 	}
+	if targetFormat == llmprotocol.OpenAIResponsesV1 {
+		return applyPolicyActionResponsesReasoning(request, action, ctx)
+	}
 	if targetFormat != llmprotocol.AnthropicMessagesV1 {
 		return false, errPolicyActionFormat
 	}
@@ -193,6 +196,56 @@ func applyRaylineARCPolicyActionReasoning(
 		!sameInt64Pointer(before.ReasoningBudgetTokens, request.ReasoningBudgetTokens), nil
 }
 
+// applyPolicyActionResponsesReasoning puts the action's effort on a request
+// bound for Responses, as reasoning.effort in place of what the router or the
+// client set. A null effort, and one withheld under dispatch_effort:
+// provider_default, send no effort, so the provider's default applies. The
+// thinking-off action sends effort none, the off signal the router derives
+// for a use_reasoning:false worker, so a client's own effort can never turn
+// the off arm back on; readiness admits it only on a worker whose reasoning
+// family can say off. Responses has no reasoning budget, so a budget action
+// has no faithful shape; readiness refuses one before any turn can pick it
+// (policyActionResponsesCarriable).
+func applyPolicyActionResponsesReasoning(
+	request *llmprotocol.Request,
+	action config.RaylineARCPolicyBinding,
+	ctx *RequestContext,
+) (bool, error) {
+	if action.ReasoningMaxTokens != nil {
+		return false, errPolicyActionFormat
+	}
+	effort := ""
+	if action.Effort != nil {
+		effort = *action.Effort
+	}
+	base := policyActionWorkerThinking(action)
+	ctx.RaylineARCWorkerThinking = &base
+	if request.ReasoningEffort == effort {
+		return false, nil
+	}
+	request.ReasoningEffort = effort
+	return true, nil
+}
+
+// policyActionResponsesCarriable reports whether Responses can carry the
+// action to its worker: an effort or no reasoning control, and the
+// thinking-off action only on a worker whose reasoning family has an off
+// signal (semanticDisabledOpenAIReasoningControls). It has no budget.
+func policyActionResponsesCarriable(cfg *config.RouterConfig, action config.RaylineARCPolicyBinding) bool {
+	if action.ReasoningMaxTokens != nil {
+		return false
+	}
+	if action.Effort == nil || *action.Effort != raylineARCPolicyActionEffortOff {
+		return true
+	}
+	family := cfg.GetModelReasoningFamily(action.Worker)
+	if family == nil {
+		return false
+	}
+	off, _ := semanticDisabledOpenAIReasoningControls(family)
+	return off == raylineARCPolicyActionEffortOff
+}
+
 func sameInt64Pointer(left, right *int64) bool {
 	if left == nil || right == nil {
 		return left == right
@@ -204,18 +257,28 @@ func sameInt64Pointer(left, right *int64) bool {
 // travel to its worker's provider, so an action no provider can carry stops
 // the selector arming instead of failing each turn that picks it. Messages
 // carries effort and budget itself; Chat needs a reasoning transport that
-// reads them (policyActionChatWire); Responses is not served.
+// reads them (policyActionChatWire); Responses carries an effort but no
+// budget (policyActionResponsesCarriable).
 //
-// Serving Responses needs more than a reasoning transport. A Responses client
-// such as Codex resends each reasoning item's encrypted_content, which only
-// the provider account and model that issued it can read; the codec drops
-// those items on every target today. Forwarding them to their own issuer
-// needs the episode to record which workers issued the blobs it has seen, and
-// to drop the whole item -- not only the blob -- on a turn bound for another.
-// Serving Responses is item D of atlasfutures/semantic-router#108; the issuer
-// tracking is #109.
+// A Responses client such as Codex also resends each reasoning item's
+// encrypted_content, which only the target that issued it can read. The
+// episode records which targets issued the blobs its client holds, and a turn
+// forwards them only to that same target, dropping the whole item on any
+// other (applyRaylineARCReasoningIssuer, atlasfutures/semantic-router#109).
 func raylineARCPolicyActionsCarriable(cfg *config.RouterConfig, decision *config.Decision) bool {
-	for _, binding := range decision.Algorithm.RaylineARC.PolicyService.Bindings {
+	policy := decision.Algorithm.RaylineARC.PolicyService
+	for _, binding := range policy.Bindings {
+		// A v5 control is rendered from the registry on Messages and Chat;
+		// Responses is not served, for the reason below.
+		if policy.IsPackageV5() {
+			for _, accepted := range cfg.GetModelAcceptedFormats(binding.Worker) {
+				format, err := wireFormatForModel(accepted)
+				if err != nil || (format != llmprotocol.AnthropicMessagesV1 && format != llmprotocol.OpenAIChatV1) {
+					return false
+				}
+			}
+			continue
+		}
 		if !binding.DeclaresDispatch() {
 			continue
 		}
@@ -230,7 +293,7 @@ func raylineARCPolicyActionsCarriable(cfg *config.RouterConfig, decision *config
 		// The format is chosen per request from the worker's accepted
 		// formats, so the action must be carriable in every one of them.
 		for _, accepted := range cfg.GetModelAcceptedFormats(binding.Worker) {
-			if !policyActionCarriableIn(binding, accepted, profile) {
+			if !policyActionCarriableIn(cfg, binding, accepted, profile) {
 				return false
 			}
 		}
@@ -238,7 +301,12 @@ func raylineARCPolicyActionsCarriable(cfg *config.RouterConfig, decision *config
 	return true
 }
 
-func policyActionCarriableIn(binding config.RaylineARCPolicyBinding, apiFormat string, profile *config.ProviderProfile) bool {
+func policyActionCarriableIn(
+	cfg *config.RouterConfig,
+	binding config.RaylineARCPolicyBinding,
+	apiFormat string,
+	profile *config.ProviderProfile,
+) bool {
 	format, err := wireFormatForModel(apiFormat)
 	if err != nil {
 		return false
@@ -249,6 +317,8 @@ func policyActionCarriableIn(binding config.RaylineARCPolicyBinding, apiFormat s
 	case llmprotocol.OpenAIChatV1:
 		_, _, err := policyActionChatWire(binding, resolveProviderReasoningTransport(profile))
 		return err == nil
+	case llmprotocol.OpenAIResponsesV1:
+		return policyActionResponsesCarriable(cfg, binding)
 	default:
 		return false
 	}

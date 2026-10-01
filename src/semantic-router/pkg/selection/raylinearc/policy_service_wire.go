@@ -25,10 +25,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
 )
 
 const (
 	PolicyPackageSchema          = "rayline.arc-policy-package.v4"
+	PolicyPackageSchemaV5        = "rayline.arc-policy-package.v5"
 	PolicyDecisionRequestSchema  = "rayline.arc.policy-decision-request.v1"
 	PolicyDecisionResponseSchema = "rayline.arc.policy-decision-response.v1"
 	PolicyPackagesSchema         = "rayline.arc.policy-packages.v1"
@@ -280,7 +283,36 @@ type PolicyCatalogAction struct {
 	TrainedArmIDs      []string `json:"trained_arm_ids"`
 }
 
+// PolicyPackageManifest is a v4 manifest.
 type PolicyPackageManifest struct {
+	PolicyPackageCommon
+	Actions []PolicyCatalogAction `json:"actions"`
+}
+
+// PolicyCatalogActionV5 is one v5 action: a model and a thinking control
+// (ADR 0109). Control keeps the manifest's bytes, so its control_id is
+// recomputed over exactly what the package names; ActionID and TrainedArmIDs
+// are opaque to VSR.
+type PolicyCatalogActionV5 struct {
+	ActionID      string          `json:"action_id"`
+	Model         string          `json:"model"`
+	Control       json.RawMessage `json:"control"`
+	ControlID     string          `json:"control_id"`
+	Level         *string         `json:"level"`
+	TrainedArmIDs []string        `json:"trained_arm_ids"`
+}
+
+// PolicyPackageManifestV5 is a v5 manifest. ThinkingControlsSHA256 names the
+// compiled registry the actions were resolved from; it is informational.
+type PolicyPackageManifestV5 struct {
+	PolicyPackageCommon
+	ThinkingControlsSHA256 string                  `json:"thinking_controls_sha256"`
+	Actions                []PolicyCatalogActionV5 `json:"actions"`
+}
+
+// PolicyPackageCommon is every manifest section v4 and v5 share; v5 differs
+// only in its actions and thinking_controls_sha256.
+type PolicyPackageCommon struct {
 	SchemaVersion string `json:"schema_version"`
 	PackageID     string `json:"package_id"`
 	ServingPolicy struct {
@@ -317,7 +349,6 @@ type PolicyPackageManifest struct {
 		OperatingBounds    map[string][]float64 `json:"operating_bounds"`
 		ModelSchedule      *string              `json:"model_schedule"`
 	} `json:"decision"`
-	Actions []PolicyCatalogAction `json:"actions"`
 	Pricing struct {
 		ScenarioID                string `json:"scenario_id"`
 		PricingIdentity           string `json:"pricing_identity"`
@@ -410,6 +441,61 @@ func DecodePolicyPackageManifest(body []byte) (*PolicyPackageManifest, error) {
 		return nil, fmt.Errorf("policy package lets live prices affect decisions")
 	}
 	return &manifest, nil
+}
+
+// DecodePolicyPackageManifestV5 refuses unknown fields, another schema, live
+// prices, and an action whose control is not a thinking control, whose
+// control_id does not recompute from it (ADR 0107 decision 8), or whose level
+// is not its instruction's. Whether each control is in the loaded registry
+// and admitted for its worker is the binding's check.
+func DecodePolicyPackageManifestV5(body []byte) (*PolicyPackageManifestV5, error) {
+	var manifest PolicyPackageManifestV5
+	if err := decodeStrict(body, &manifest); err != nil {
+		return nil, err
+	}
+	if manifest.SchemaVersion != PolicyPackageSchemaV5 {
+		return nil, fmt.Errorf("policy package schema %q", manifest.SchemaVersion)
+	}
+	if manifest.Pricing.LivePricesAffectDecisions {
+		return nil, fmt.Errorf("policy package lets live prices affect decisions")
+	}
+	if len(manifest.Actions) == 0 {
+		return nil, fmt.Errorf("policy package has no actions")
+	}
+	seen := make(map[string]bool, len(manifest.Actions))
+	for _, action := range manifest.Actions {
+		if action.ActionID == "" || seen[action.ActionID] {
+			return nil, fmt.Errorf("action %q is empty or repeated", action.ActionID)
+		}
+		seen[action.ActionID] = true
+		if action.Model == "" {
+			return nil, fmt.Errorf("action %s names no model", action.ActionID)
+		}
+		control, err := thinkingcontrol.ParseControl(action.Control)
+		if err != nil {
+			return nil, fmt.Errorf("action %s: %w", action.ActionID, err)
+		}
+		id, err := thinkingcontrol.ControlIDOf(action.Control)
+		if err != nil || id != action.ControlID || control.ID() != action.ControlID {
+			return nil, fmt.Errorf("action %s: control_id %s does not recompute from its control", action.ActionID, action.ControlID)
+		}
+		if (control.Instruction == nil) != (action.Level == nil) ||
+			(control.Instruction != nil && *action.Level != control.Instruction.Level) {
+			return nil, fmt.Errorf("action %s: level is not its control's instruction level", action.ActionID)
+		}
+	}
+	return &manifest, nil
+}
+
+// PolicyPackageSchemaOf reads a manifest's schema_version.
+func PolicyPackageSchemaOf(body []byte) (string, error) {
+	var head struct {
+		SchemaVersion string `json:"schema_version"`
+	}
+	if err := json.Unmarshal(body, &head); err != nil {
+		return "", err
+	}
+	return head.SchemaVersion, nil
 }
 
 func decodeStrict(body []byte, target any) error {

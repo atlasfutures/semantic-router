@@ -1,0 +1,43 @@
+{
+ "description": "one turn with two tool results",
+ "format": "messages",
+ "provider": "openrouter",
+ "model": "z-ai/glm-5.3-flash",
+ "wire_model": "z-ai/glm-5.3-flash",
+ "admission": "enforced",
+ "allow_experimental": true,
+ "registry_pin": "3083a4b6bd857c951177f973b41900798ba22f4968e224b4a29ad3e9c297cff2",
+ "calls": [
+  {
+   "client_body": "client-00.json",
+   "control_id": "ed143fc8288b25589866829f3a7f4caa1382220286b0100383f49f87a3722e79",
+   "expected_body": "provider-00.json",
+   "receipt": {
+    "call": 0,
+    "control_id": "ed143fc8288b25589866829f3a7f4caa1382220286b0100383f49f87a3722e79",
+    "level_in_force": "none",
+    "instruction_state": "never",
+    "written": null,
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  },
+  {
+   "client_body": "client-01.json",
+   "control_id": "fb5c5369da0f33329ac598d3709e070527d0f4b1b1406d109659eb870882c367",
+   "expected_body": "provider-01.json",
+   "receipt": {
+    "call": 1,
+    "control_id": "fb5c5369da0f33329ac598d3709e070527d0f4b1b1406d109659eb870882c367",
+    "level_in_force": "down",
+    "instruction_state": "steered",
+    "written": "instruction",
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  }
+ ],
+ "refusal": null
+}

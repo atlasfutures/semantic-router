@@ -1,0 +1,19 @@
+{
+ "description": "thinking off with a steer; admitted only where off is measured (messages)",
+ "format": "responses",
+ "provider": "openrouter",
+ "model": "qwen/qwen3.8-27b",
+ "wire_model": "qwen/qwen3.8-27b",
+ "admission": "enforced",
+ "allow_experimental": true,
+ "registry_pin": "3083a4b6bd857c951177f973b41900798ba22f4968e224b4a29ad3e9c297cff2",
+ "calls": [
+  {
+   "client_body": "client-00.json",
+   "control_id": "cf02bc303509da34e45726227d39f0c8f4896b40dad43b298d1cf9bd231a4742"
+  }
+ ],
+ "refusal": {
+  "error": "control cf02bc303509 is not admitted for qwen/qwen3.8-27b on openrouterxresponses"
+ }
+}

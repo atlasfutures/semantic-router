@@ -26,6 +26,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/sessiontelemetry"
 )
@@ -54,11 +55,18 @@ type raylineARCEpisodeTransaction struct {
 	thinkingLedger *thinkinglever.Ledger
 	// upstreamPrefix is this turn's body shape, committed only with the turn.
 	upstreamPrefix *raylinearc.UpstreamPrefix
-	finalizeOnce   sync.Once
-	finalizeErr    error
-	renewCancel    context.CancelFunc
-	renewDone      chan struct{}
-	leaseLost      atomic.Bool
+	// controlPlacement is the thinking-control placer this turn advanced,
+	// committed only with the turn.
+	controlPlacement *raylinearc.ControlPlacement
+	// reasoningIssuers is the issuer set this turn leaves behind, committed
+	// only with the turn; unstaged leaves the stored set as it was.
+	reasoningIssuers       []string
+	reasoningIssuersStaged bool
+	finalizeOnce           sync.Once
+	finalizeErr            error
+	renewCancel            context.CancelFunc
+	renewDone              chan struct{}
+	leaseLost              atomic.Bool
 	// onFinalize is an optional terminal-path hook; the stream-level hold in
 	// processWithContext is what keeps the episode store open.
 	onFinalize func()
@@ -155,6 +163,37 @@ func (transaction *raylineARCEpisodeTransaction) stageUpstreamPrefix(prefix rayl
 	transaction.upstreamPrefix = &prefix
 }
 
+// stageControlPlacement records the placer state this turn's render left.
+func (transaction *raylineARCEpisodeTransaction) stageControlPlacement(placement raylinearc.ControlPlacement) {
+	if transaction == nil {
+		return
+	}
+	cloned := raylinearc.CloneControlPlacements([]raylinearc.ControlPlacement{placement})[0]
+	transaction.controlPlacement = &cloned
+}
+
+// committedControlPlacement returns the placer state the prepared state
+// carries for key, and whether there is an episode at all.
+func (transaction *raylineARCEpisodeTransaction) committedControlPlacement(
+	key string,
+) (thinkingcontrol.PlacerState, bool, bool) {
+	if transaction == nil || transaction.state == nil {
+		return thinkingcontrol.PlacerState{}, false, false
+	}
+	state, found := transaction.state.ControlPlacementFor(key)
+	return state, found, true
+}
+
+// stageReasoningIssuers records the encrypted reasoning issuer set this turn
+// leaves behind (raylinearc.NextReasoningIssuers).
+func (transaction *raylineARCEpisodeTransaction) stageReasoningIssuers(issuers []string) {
+	if transaction == nil {
+		return
+	}
+	transaction.reasoningIssuers = append([]string(nil), issuers...)
+	transaction.reasoningIssuersStaged = true
+}
+
 // committedThinking returns the ledger the prepared state carries, and the
 // committed turn count the planner measures spacing against.
 func (transaction *raylineARCEpisodeTransaction) committedThinking() (*thinkinglever.Ledger, uint64, bool) {
@@ -203,6 +242,12 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 		}
 		if transaction.upstreamPrefix != nil {
 			nextState.Upstream = raylinearc.WithUpstreamPrefix(nextState.Upstream, *transaction.upstreamPrefix)
+		}
+		if transaction.controlPlacement != nil {
+			nextState.Controls = raylinearc.WithControlPlacement(nextState.Controls, *transaction.controlPlacement)
+		}
+		if transaction.reasoningIssuersStaged {
+			nextState.ReasoningIssuers = append([]string(nil), transaction.reasoningIssuers...)
 		}
 		if err := nextState.Commit(
 			transaction.selectedArm,
@@ -398,6 +443,8 @@ func cloneARCState(
 		Policy:               state.Policy.Clone(),
 		Thinking:             state.Thinking.Clone(),
 		Upstream:             append([]raylinearc.UpstreamPrefix(nil), state.Upstream...),
+		Controls:             raylinearc.CloneControlPlacements(state.Controls),
+		ReasoningIssuers:     append([]string(nil), state.ReasoningIssuers...),
 	}
 	if state.PreviousArm != nil {
 		value := *state.PreviousArm

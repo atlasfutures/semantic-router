@@ -104,7 +104,16 @@ func newPolicyServiceScorer(
 		scorer.workers = append(scorer.workers, policyWorkerManifest(cfg, modelRef))
 	}
 	for _, binding := range policy.Bindings {
-		scorer.bindings[binding.ActionID] = policyBinding{arm: index[binding.Worker], level: binding.Level, model: binding.Model}
+		level, model := binding.Level, binding.Model
+		// A v5 binding is only its action and worker; the package names the
+		// model and the control's level.
+		if action, ok := policy.PackageV5Action(binding.ActionID); ok {
+			level, model = "", action.Model
+			if action.Control.Instruction != nil {
+				level = action.Control.Instruction.Level
+			}
+		}
+		scorer.bindings[binding.ActionID] = policyBinding{arm: index[binding.Worker], level: level, model: model}
 		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
 	}
 	return scorer

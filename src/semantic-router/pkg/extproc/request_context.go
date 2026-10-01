@@ -255,6 +255,7 @@ type RequestContext struct {
 	RaylineARCCloseRequested        bool                                   // Exact configured final-turn signal; triggers post-2xx session close fanout.
 	RaylineARCThinking              *raylineARCThinkingTrace               // What the thinking lever did this turn; non-nil once it ran.
 	RaylineARCWorkerThinking        *config.RaylineARCWorkerThinkingConfig // The worker base level this turn's body carries, when one applied.
+	RaylineARCThinkingControl       *plannedThinkingControl                // A v5 action's admitted control and placer for this dispatch; rendered at the provider boundary.
 	RaylineARCUpstreamAudit         *raylineARCUpstreamAudit               // Whether this turn's body extends the worker's last one; counts and digests only.
 	SelectionTransaction            *selectionTransactionOwner             // Shared authoritative selector lifecycle owner; at most one per request.
 	SelectionSettlement             selectionActualOutcome                 // Bounded actual outcome facts; unknown fields remain nil.

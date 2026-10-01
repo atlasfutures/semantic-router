@@ -22,6 +22,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
 )
 
@@ -51,6 +52,57 @@ type EpisodeState struct {
 	// Upstream is, per worker, the shape of the last body this episode sent
 	// it, so the next turn can check the provider transcript only grew.
 	Upstream []UpstreamPrefix
+	// Controls is, per placement key, the thinking-control placer of a v5
+	// package's actions (ADR 0109); nil until the first such turn.
+	Controls []ControlPlacement
+	// ReasoningIssuers names the targets that issued the encrypted reasoning
+	// the client may still resend (see NextReasoningIssuers); nil when it
+	// holds none the episode knows of.
+	ReasoningIssuers []string
+}
+
+// ControlPlacement is one placer's state. A placer governs one worker's
+// transcript under one control shape (base, budget, lever presence), which
+// pathfinder fixes per episode: a shape change on a worker is an arm change
+// and starts its own placer.
+type ControlPlacement struct {
+	Key   string
+	State thinkingcontrol.PlacerState
+}
+
+// MaxControlPlacements bounds the placers an episode keeps; the least
+// recently dispatched is dropped first.
+const MaxControlPlacements = 16
+
+// ControlPlacementFor returns the placer state for key, if the episode has
+// one.
+func (state *EpisodeState) ControlPlacementFor(key string) (thinkingcontrol.PlacerState, bool) {
+	if state == nil {
+		return thinkingcontrol.PlacerState{}, false
+	}
+	for _, placement := range state.Controls {
+		if placement.Key == key {
+			return placement.State, true
+		}
+	}
+	return thinkingcontrol.PlacerState{}, false
+}
+
+// WithControlPlacement returns the placements with placement as the most
+// recent, replacing its key's previous state and dropping the oldest beyond
+// the bound.
+func WithControlPlacement(placements []ControlPlacement, placement ControlPlacement) []ControlPlacement {
+	next := make([]ControlPlacement, 0, len(placements)+1)
+	for _, existing := range placements {
+		if existing.Key != placement.Key {
+			next = append(next, existing)
+		}
+	}
+	next = append(next, placement)
+	if len(next) > MaxControlPlacements {
+		next = next[len(next)-MaxControlPlacements:]
+	}
+	return next
 }
 
 // UpstreamPrefix identifies the messages of the last provider-bound body
@@ -307,6 +359,9 @@ func validateEpisodeState(state *EpisodeState, workerCount int) error {
 		return err
 	}
 	if err := validateUpstreamPrefixes(state.Upstream); err != nil {
+		return err
+	}
+	if err := validateReasoningIssuers(state.ReasoningIssuers); err != nil {
 		return err
 	}
 	return validateWarmth(state.Warmth)

@@ -472,6 +472,12 @@ type Request struct {
 	// configuration_update. Only the Router sets it; no decoder does. Without
 	// it a Chat target omits the message with a diagnostic.
 	MessageEffortUpdates bool
+	// ForwardsEncryptedReasoning lets resent Responses reasoning items that
+	// hold encrypted_content reach a Responses target, unchanged. Without it
+	// every target drops and counts them. The router sets it per dispatch,
+	// only when that target issued every blob the request resends; no
+	// decoder does.
+	ForwardsEncryptedReasoning bool
 }
 
 type StopReason string
