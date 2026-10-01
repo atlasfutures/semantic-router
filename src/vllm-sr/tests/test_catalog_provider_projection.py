@@ -798,3 +798,18 @@ def test_accepted_formats_every_backend_serves_project(tmp_path):
     (projected,) = project_provider_models_for_envoy(config)
     assert projected.api_format == "anthropic"
     assert projected.accepted_formats == ["anthropic", "openai"]
+
+
+def test_empty_accepted_formats_mean_the_single_api_format(tmp_path):
+    config = _accepted_formats_config(
+        tmp_path,
+        """    - name: claude
+      provider_model_id: anthropic/claude-opus-5
+      api_format: anthropic
+      accepted_formats: []
+      backend_refs:
+        - provider: openrouter
+          api_key_env: OPENROUTER_API_KEY""",
+    )
+    (projected,) = project_provider_models_for_envoy(config)
+    assert projected.api_format == "anthropic"

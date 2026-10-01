@@ -1829,10 +1829,9 @@ class Model(BaseModel):
 
     @model_validator(mode="after")
     def validate_accepted_formats(self):
-        if self.accepted_formats is None:
-            return self
+        # An empty list means the single api_format, as the Go loader reads it.
         if not self.accepted_formats:
-            raise ValueError("accepted_formats must list at least one format")
+            return self
         if len(set(self.accepted_formats)) != len(self.accepted_formats):
             raise ValueError("accepted_formats lists a format twice")
         if self.api_format and self.api_format != self.accepted_formats[0]:
