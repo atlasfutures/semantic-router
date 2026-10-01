@@ -150,6 +150,13 @@ func loadCell(raw *value, controls map[string]Control) (*Cell, error) {
 		baseWire: map[string]*value{}, controls: map[string]bool{},
 	}
 	where := "cell " + cell.Model + " " + cell.Provider + "x" + cell.Format
+	switch cell.Instruction {
+	case AdmissionCertified, AdmissionExperimental, AdmissionRefused:
+	default:
+		// Admit gates only "experimental"; any other spelling would admit
+		// its instructions without the opt-in.
+		return nil, refuse("%s: instruction admission %q is not certified, experimental or refused", where, cell.Instruction)
+	}
 	ids := raw.get("controls")
 	wire := raw.get("base_wire")
 	endpoints := raw.get("base_endpoints")

@@ -45,6 +45,18 @@ func TestRegistryRefusesAControlThatDoesNotHashToItsID(t *testing.T) {
 	}
 }
 
+// An admission level other than certified, experimental or refused would
+// slip past the experimental opt-in, so the artifact is refused.
+func TestRegistryRefusesAnUnknownAdmissionLevel(t *testing.T) {
+	tampered := bytes.Replace(embeddedArtifact, []byte(`"instruction":"experimental"`), []byte(`"instruction":"experimenta1"`), 1)
+	if bytes.Equal(tampered, embeddedArtifact) {
+		t.Fatal("the artifact holds no experimental cell; pick another")
+	}
+	if _, err := Load(tampered); err == nil || !strings.Contains(err.Error(), "is not certified, experimental or refused") {
+		t.Fatalf("an unknown admission level loaded: %v", err)
+	}
+}
+
 func TestAdmissionIsPerModelProviderAndFormat(t *testing.T) {
 	reg, err := Embedded()
 	if err != nil {
@@ -170,5 +182,18 @@ func TestPlacerStateResumesTheEpisode(t *testing.T) {
 	}
 	if !bytes.Contains(body, []byte(`{"role":"user","content":[{"type":"text","text":"Start."},{"type":"text","text":"Until the next steering instruction, reason more thoroughly`)) {
 		t.Fatalf("the steer was not replayed at its anchor: %s", body)
+	}
+
+	// A state with calls but no first control, or a fresh state that already
+	// holds a ledger, would let the next call re-found the episode.
+	headless := resumed.State()
+	headless.First = nil
+	if _, err := ResumePlacer(headless); err == nil {
+		t.Fatal("a state with calls and no first control resumed")
+	}
+	fresh := resumed.State()
+	fresh.Calls, fresh.First, fresh.PreviousAnchor, fresh.PreviousControl, fresh.InForce = 0, nil, nil, nil, nil
+	if _, err := ResumePlacer(fresh); err == nil {
+		t.Fatal("a state with no calls and a ledger resumed")
 	}
 }

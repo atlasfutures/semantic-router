@@ -116,6 +116,22 @@ func ResumePlacer(state PlacerState) (*Placer, error) {
 	if !knownFormat(state.Format) || state.Epoch < 0 || state.Calls < 0 {
 		return nil, malformed
 	}
+	// The first call fixes the episode's base, budget and lever presence, and
+	// every call records its anchor and control; a state that has calls
+	// without them, or them without calls, would let the next call re-found
+	// the episode.
+	if state.Calls == 0 {
+		if state.First != nil || len(state.Ledger) > 0 || state.Epoch != 0 || state.InForce != nil ||
+			state.PreviousAnchor != nil || state.PreviousControl != nil {
+			return nil, malformed
+		}
+	} else if state.First == nil || state.First.Native == "" || state.PreviousAnchor == nil ||
+		state.PreviousControl == nil {
+		return nil, malformed
+	}
+	if state.InForce != nil && (state.First == nil || state.First.Instruction == nil) {
+		return nil, malformed
+	}
 	for _, item := range state.Ledger {
 		if item.Anchor < 0 || (item.Placement != PlacementAppend && item.Placement != PlacementInsertAfter) ||
 			(item.Kind != WrittenInstruction && item.Kind != WrittenNeutralMarker) {
