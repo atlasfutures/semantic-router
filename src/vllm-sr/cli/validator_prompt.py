@@ -81,7 +81,12 @@ def _prompt_model_errors(
                 field=field,
             )
         ]
-    if (helper_model.api_format or "").strip().lower() == "anthropic":
+    # The looper sends the helper a Chat request; only a helper that accepts
+    # nothing but Messages cannot take it.
+    helper_formats = helper_model.accepted_formats or [
+        (helper_model.api_format or "").strip().lower()
+    ]
+    if all(format == "anthropic" for format in helper_formats):
         return [
             ValidationError(
                 f"Decision '{decision_name}' prompt helper must use an OpenAI-compatible API format",

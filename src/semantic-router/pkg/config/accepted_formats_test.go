@@ -149,3 +149,74 @@ func TestRaylineARCWorkerThinkingNeedsChatForEveryAcceptedFormat(t *testing.T) {
 		t.Fatalf("a Chat-only worker refused: %v", err)
 	}
 }
+
+// An external-gateway model may declare only its accepted formats; it loads,
+// and canonical export keeps it.
+func TestAcceptedFormatsAloneAreModelMetadata(t *testing.T) {
+	cfg, err := ParseYAMLBytes([]byte(`
+version: v0.3
+listeners: []
+providers:
+  defaults:
+    model: gateway-model
+  models:
+    - name: gateway-model
+      accepted_formats: [responses, openai]
+routing:
+  modelCards:
+    - name: gateway-model
+      modality: ar
+  decisions:
+    - name: default
+      rules:
+        operator: AND
+      modelRefs:
+        - model: gateway-model
+`))
+	if err != nil {
+		t.Fatalf("a metadata-only accepted_formats model was refused: %v", err)
+	}
+	if got := cfg.GetModelAcceptedFormats("gateway-model"); !reflect.DeepEqual(got, []string{APIFormatResponses, APIFormatOpenAI}) {
+		t.Fatalf("accepted formats = %v", got)
+	}
+	// Export from the materialized params, as for a programmatic model.
+	params := cfg.ModelConfig["gateway-model"]
+	params.AuthoredModel = nil
+	cfg.ModelConfig["gateway-model"] = params
+	exported := CanonicalConfigFromRouterConfig(cfg)
+	for _, model := range exported.Providers.Models {
+		if model.Name == "gateway-model" {
+			if !reflect.DeepEqual(model.AcceptedFormats, []string{APIFormatResponses, APIFormatOpenAI}) {
+				t.Fatalf("exported accepted formats = %v", model.AcceptedFormats)
+			}
+			return
+		}
+	}
+	t.Fatal("canonical export dropped the model")
+}
+
+// A prompt helper that also accepts Chat takes the looper's Chat request,
+// whatever its preference order; a Messages-only helper cannot.
+func TestPromptHelperNeedsToAcceptChat(t *testing.T) {
+	formatRefusal := func(params ModelParams) error {
+		params.Modality = "text"
+		cfg := &RouterConfig{
+			Looper:        LooperConfig{Endpoint: "http://router:8899"},
+			BackendModels: BackendModels{ModelConfig: map[string]ModelParams{"helper": params}},
+		}
+		err := validateDecisionPromptModel(cfg, Decision{
+			Name:      "prompt-route",
+			Algorithm: &AlgorithmConfig{Prompt: &PromptSelectionConfig{Model: "helper", Instructions: "Choose."}},
+		})
+		if err != nil && strings.Contains(err.Error(), "OpenAI-compatible API format") {
+			return err
+		}
+		return nil
+	}
+	if err := formatRefusal(ModelParams{APIFormat: APIFormatAnthropic, AcceptedFormats: []string{APIFormatAnthropic, APIFormatOpenAI}}); err != nil {
+		t.Fatalf("a helper accepting Chat second was refused: %v", err)
+	}
+	if formatRefusal(ModelParams{APIFormat: APIFormatAnthropic}) == nil {
+		t.Fatal("a Messages-only helper was accepted")
+	}
+}
