@@ -158,3 +158,30 @@ func TestRedisStreamSinkRoundTripsThroughRedis(t *testing.T) {
 		t.Fatalf("stream entries = %+v, want the one record", entries)
 	}
 }
+
+// Shutdown that runs out of time counts what it leaves behind, so a durable
+// record lost at exit is visible in the metric.
+func TestCloseCountsRecordsItAbandons(t *testing.T) {
+	fake := &recordingXAdder{block: make(chan struct{})}
+	sink := newRedisStreamSink(fake, nil, config.UsageRecordsRedisConfig{QueueSize: 8})
+	before := testutil.ToFloat64(recordsTotal.WithLabelValues("abandoned"))
+	for range 3 {
+		sink.Publish([]byte(`{}`))
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		sink.Close(50 * time.Millisecond)
+		close(closed)
+	}()
+	time.Sleep(200 * time.Millisecond) // past the drain timeout; the first write is still stalled
+	close(fake.block)
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return")
+	}
+	if abandoned := testutil.ToFloat64(recordsTotal.WithLabelValues("abandoned")) - before; abandoned != 2 {
+		t.Fatalf("abandoned = %v, want the 2 records still queued behind the stalled write", abandoned)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -167,12 +168,28 @@ func addUsageRecordARCAttribution(record *llmUsageRecord, ctx *RequestContext) {
 	}
 }
 
+// pricingSnapshotCache holds the snapshot id of the last config asked about.
+// A config is not changed in place once loaded, and a reload installs a new
+// one, so the id is computed once per config rather than once per call.
+type pricingSnapshotCache struct {
+	config *config.RouterConfig
+	id     string
+}
+
+var lastPricingSnapshot atomic.Pointer[pricingSnapshotCache]
+
 // pricingSnapshot names the rate table this Router prices with.
 func (r *OpenAIRouter) pricingSnapshot() string {
-	if r == nil {
-		return (*config.RouterConfig)(nil).PricingSnapshotID()
+	var cfg *config.RouterConfig
+	if r != nil {
+		cfg = r.Config
 	}
-	return r.Config.PricingSnapshotID()
+	if cached := lastPricingSnapshot.Load(); cached != nil && cached.config == cfg {
+		return cached.id
+	}
+	id := cfg.PricingSnapshotID()
+	lastPricingSnapshot.Store(&pricingSnapshotCache{config: cfg, id: id})
+	return id
 }
 
 // priceUsageRecord prices the call from the rate card, when it can be priced,

@@ -29,7 +29,7 @@ const writeTimeout = 2 * time.Second
 
 var recordsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "llm_usage_records_total",
-	Help: "Usage records offered to the durable sink, by outcome (written, queue_full, write_failed, closed).",
+	Help: "Usage records offered to the durable sink, by outcome (written, queue_full, write_failed, closed, abandoned).",
 }, []string{"outcome"})
 
 // Sink takes one encoded usage record. Publish must not block.
@@ -79,6 +79,9 @@ type RedisStreamSink struct {
 	maxLen int64
 	queue  chan []byte
 	done   chan struct{}
+	// abandon tells the writer that shutdown ran out of time: what is still
+	// queued is counted abandoned rather than written.
+	abandon chan struct{}
 	// mu orders Publish against Close: a record offered after Close is
 	// counted dropped instead of sent on a closed queue.
 	mu     sync.RWMutex
@@ -125,7 +128,7 @@ func newRedisStreamSink(client redisXAdder, closer func() error, cfg config.Usag
 	}
 	sink := &RedisStreamSink{
 		client: client, closer: closer, stream: stream, maxLen: maxLen,
-		queue: make(chan []byte, queueSize), done: make(chan struct{}),
+		queue: make(chan []byte, queueSize), done: make(chan struct{}), abandon: make(chan struct{}),
 	}
 	go sink.run()
 	return sink
@@ -149,7 +152,12 @@ func (sink *RedisStreamSink) Publish(record []byte) {
 func (sink *RedisStreamSink) run() {
 	defer close(sink.done)
 	for record := range sink.queue {
-		sink.write(record)
+		select {
+		case <-sink.abandon:
+			recordsTotal.WithLabelValues("abandoned").Inc()
+		default:
+			sink.write(record)
+		}
 	}
 }
 
@@ -173,8 +181,8 @@ func (sink *RedisStreamSink) write(record []byte) {
 	recordsTotal.WithLabelValues("written").Inc()
 }
 
-// Close stops taking records, writes what is queued for up to timeout, and
-// closes the connection.
+// Close stops taking records, writes what is queued for up to timeout, counts
+// whatever is still queued after that as abandoned, and closes the connection.
 func (sink *RedisStreamSink) Close(timeout time.Duration) {
 	sink.mu.Lock()
 	if sink.closed {
@@ -187,6 +195,14 @@ func (sink *RedisStreamSink) Close(timeout time.Duration) {
 	select {
 	case <-sink.done:
 	case <-time.After(timeout):
+		// Out of time: the writer counts what is left as abandoned. It is
+		// at most one write from noticing, so wait that long for the count
+		// to be complete before the process may exit.
+		close(sink.abandon)
+		select {
+		case <-sink.done:
+		case <-time.After(writeTimeout):
+		}
 	}
 	if sink.closer != nil {
 		_ = sink.closer()

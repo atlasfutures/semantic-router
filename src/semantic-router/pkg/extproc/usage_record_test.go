@@ -257,3 +257,19 @@ func TestDurableUsageRecordMatchesTheLogLine(t *testing.T) {
 		t.Fatalf("durable record = %s", sink.records[0])
 	}
 }
+
+// A reloaded config is a new config: its rows name its own snapshot, not the
+// one cached for the config before it.
+func TestPricingSnapshotFollowsAConfigReload(t *testing.T) {
+	before := usageRecordRouter()
+	after := usageRecordRouter()
+	after.Config.ModelConfig["priced-model"] = config.ModelParams{Pricing: config.ModelPricing{PromptPer1M: 4}}
+	for range 2 {
+		if got := before.pricingSnapshot(); got != before.Config.PricingSnapshotID() {
+			t.Fatalf("before reload: %s, want %s", got, before.Config.PricingSnapshotID())
+		}
+		if got := after.pricingSnapshot(); got != after.Config.PricingSnapshotID() || got == before.pricingSnapshot() {
+			t.Fatalf("after reload: %s, want %s", got, after.Config.PricingSnapshotID())
+		}
+	}
+}
