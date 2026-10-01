@@ -111,3 +111,19 @@ func TestStrictCellStillContends(t *testing.T) {
 	}
 	_ = first.RaylineARCTransaction.abort(context.Background(), "test")
 }
+
+// Omitted and "strict" are one setting, so two decisions that spell it
+// differently share a selector; strict and relaxed still conflict.
+func TestOmittedConsistencyIsTheSameSelectionConfigAsStrict(t *testing.T) {
+	omitted := *raylineARCAlgorithmConfigForTest().RaylineARC
+	strict := omitted
+	strict.Episode.Consistency = config.RaylineARCConsistencyStrict
+	if !sameRaylineARCSelectionConfig(&omitted, &strict) {
+		t.Fatal("omitted and strict consistency read as conflicting selector configs")
+	}
+	relaxed := omitted
+	relaxed.Episode.Consistency = config.RaylineARCConsistencyRelaxed
+	if sameRaylineARCSelectionConfig(&strict, &relaxed) {
+		t.Fatal("strict and relaxed consistency read as one selector config")
+	}
+}
