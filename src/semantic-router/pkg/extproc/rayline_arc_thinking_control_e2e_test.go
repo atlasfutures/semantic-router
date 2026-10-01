@@ -37,6 +37,12 @@ const (
 // accepted_formats line) and Opus on OpenRouter's Messages wire, and returns
 // the fake service.
 func v5Router(t *testing.T, glmFormat string) (*OpenAIRouter, *fakePolicyService) {
+	t.Helper()
+	return v5RouterWith(t, glmFormat, nil)
+}
+
+// v5RouterWith is v5Router with edit applied to the rendered config.
+func v5RouterWith(t *testing.T, glmFormat string, edit func(string) string) (*OpenAIRouter, *fakePolicyService) {
 	if !strings.Contains(glmFormat, ":") {
 		glmFormat = "api_format: " + glmFormat
 	}
@@ -65,6 +71,9 @@ func v5Router(t *testing.T, glmFormat string) (*OpenAIRouter, *fakePolicyService
 		"{{MANIFEST}}", manifestPath, "{{GLM_FORMAT}}", glmFormat,
 		"{{OPUS}}", v5OpusAction, "{{GLM_NONE}}", v5GLMNone, "{{GLM_UP}}", v5GLMUp,
 	).Replace(v5ConfigTemplate)
+	if edit != nil {
+		rendered = edit(rendered)
+	}
 	path := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(path, []byte(rendered), 0o600); err != nil {
 		t.Fatal(err)
