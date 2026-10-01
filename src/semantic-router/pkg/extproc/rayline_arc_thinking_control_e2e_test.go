@@ -120,6 +120,7 @@ func v5Turn(t *testing.T, router *OpenAIRouter, fake *fakePolicyService, action,
 	if _, err := router.handleResponseHeaders(arcResponseHeaders("200"), ctx); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
+	completeTestResponse(t, ctx)
 	finalizeSelectionProcessTerminal(ctx)
 	return mutation.GetBody(), ctx
 }

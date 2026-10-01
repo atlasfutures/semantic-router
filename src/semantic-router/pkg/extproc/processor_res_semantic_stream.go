@@ -472,6 +472,15 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 	} else {
 		ctx.StreamingAborted = true
 	}
+	if !ctx.StreamingAborted {
+		// The terminal event arrived and nothing broke: the client has the
+		// whole reply, which is the only point at which the turn exists. The
+		// stream has already been forwarded, so a failed commit can only be
+		// reported, and the turn stays unrecorded.
+		if err := finalizeSelectionCompletion(ctx); err != nil {
+			recordSelectionLifecycleFailure(ctx, "response_complete", err)
+		}
+	}
 	completionLatency := time.Duration(0)
 	if !ctx.StartTime.IsZero() {
 		completionLatency = time.Since(ctx.StartTime)

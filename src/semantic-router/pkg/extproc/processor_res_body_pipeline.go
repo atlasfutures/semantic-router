@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 
@@ -63,6 +64,15 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	}
 	if hallucinationResponse := r.performSemanticHallucinationDetection(ctx, semanticResponse); hallucinationResponse != nil {
 		return hallucinationResponse
+	}
+
+	// The full body was read, decoded and passed every response check, so
+	// the client is about to receive the reply: the turn commits here. The
+	// body has not been forwarded yet, so a turn that cannot be recorded
+	// still fails as unavailable rather than as a provider success.
+	if err := finalizeSelectionCompletion(ctx); err != nil {
+		recordSelectionLifecycleFailure(ctx, "response_complete", err)
+		return r.bodyPhaseErrorResponse(ctx, http.StatusServiceUnavailable, selectionUnavailableMessage(ctx))
 	}
 
 	r.scheduleSemanticResponseMemoryStore(ctx, semanticResponse)

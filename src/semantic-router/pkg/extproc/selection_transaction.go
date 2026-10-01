@@ -21,7 +21,11 @@ type selectionActualOutcome struct {
 
 type selectionTransaction interface {
 	ValidateDispatch(context.Context) error
-	CommitOnHeaders(context.Context, int) error
+	// Commit records the turn. It runs once the client has the whole 2xx
+	// response: the stream reached its terminal event, or the full body was
+	// read. A response that failed, broke mid-stream or was refused commits
+	// nothing, so a client retry of the same prefix is the turn's only record.
+	Commit(context.Context, int) error
 	Abort(context.Context, string) error
 	Settle(context.Context, selectionActualOutcome) error
 }
@@ -60,7 +64,7 @@ func (owner *selectionTransactionOwner) validateDispatch(
 	return owner.transaction.ValidateDispatch(ctx)
 }
 
-func (owner *selectionTransactionOwner) commitOnHeaders(
+func (owner *selectionTransactionOwner) commit(
 	ctx context.Context,
 	statusCode int,
 ) (bool, error) {
@@ -75,7 +79,7 @@ func (owner *selectionTransactionOwner) commitOnHeaders(
 	if owner.aborted {
 		return false, errors.New("selection transaction was aborted")
 	}
-	if err := owner.transaction.CommitOnHeaders(
+	if err := owner.transaction.Commit(
 		ctx,
 		statusCode,
 	); err != nil {
@@ -147,7 +151,7 @@ func (adapter *raylineARCSelectionTransactionAdapter) ValidateDispatch(
 	return nil
 }
 
-func (adapter *raylineARCSelectionTransactionAdapter) CommitOnHeaders(
+func (adapter *raylineARCSelectionTransactionAdapter) Commit(
 	ctx context.Context,
 	_ int,
 ) error {
@@ -242,6 +246,11 @@ func finalizeSelectionAbort(
 	}
 }
 
+// finalizeSelectionResponseHeaders is the response-header seam. A non-2xx
+// status ends the transaction without a commit. A 2xx status commits nothing
+// yet: headers say the provider accepted the call, not that the client will
+// receive the reply. It only checks the lease is still held, so a turn that
+// can no longer commit fails now, while the client can still be told.
 func finalizeSelectionResponseHeaders(
 	ctx *RequestContext,
 	successful bool,
@@ -250,13 +259,9 @@ func finalizeSelectionResponseHeaders(
 	if ctx == nil || ctx.SelectionTransaction == nil {
 		return nil
 	}
-	finalizeTimeout := episodeFinalizeTimeout
-	if ctx.RaylineARCTransaction != nil {
-		finalizeTimeout = ctx.RaylineARCTransaction.finalizeTimeout()
-	}
 	finalizeContext, cancel := context.WithTimeout(
 		context.Background(),
-		finalizeTimeout,
+		selectionFinalizeTimeout(ctx),
 	)
 	defer cancel()
 	if !successful {
@@ -273,7 +278,34 @@ func finalizeSelectionResponseHeaders(
 		}
 		return err
 	}
-	performed, err := ctx.SelectionTransaction.commitOnHeaders(
+	if err := ctx.SelectionTransaction.validateDispatch(finalizeContext); err != nil {
+		if _, abortErr := ctx.SelectionTransaction.abort(
+			finalizeContext,
+			"lease_lost",
+		); abortErr != nil {
+			logSelectionTransactionFailure(ctx.SelectionTransaction.kind, "abort", abortErr)
+		}
+		return err
+	}
+	return nil
+}
+
+// finalizeSelectionCompletion commits the turn once the client has the whole
+// 2xx response. It is a no-op for a request without a transaction, for a
+// non-2xx response (already aborted at the headers) and for a turn already
+// committed.
+func finalizeSelectionCompletion(ctx *RequestContext) error {
+	ensureSelectionTransactionBound(ctx)
+	if ctx == nil || ctx.SelectionTransaction == nil ||
+		ctx.UpstreamStatusCode < 200 || ctx.UpstreamStatusCode >= 300 {
+		return nil
+	}
+	finalizeContext, cancel := context.WithTimeout(
+		context.Background(),
+		selectionFinalizeTimeout(ctx),
+	)
+	defer cancel()
+	performed, err := ctx.SelectionTransaction.commit(
 		finalizeContext,
 		ctx.UpstreamStatusCode,
 	)
@@ -285,6 +317,13 @@ func finalizeSelectionResponseHeaders(
 		)
 	}
 	return err
+}
+
+func selectionFinalizeTimeout(ctx *RequestContext) time.Duration {
+	if ctx.RaylineARCTransaction != nil {
+		return ctx.RaylineARCTransaction.finalizeTimeout()
+	}
+	return episodeFinalizeTimeout
 }
 
 func finalizeSelectionSettlement(

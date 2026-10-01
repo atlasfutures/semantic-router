@@ -157,8 +157,8 @@ func NewEpisodeState(workerCount int) (*EpisodeState, error) {
 	}, nil
 }
 
-// Commit advances episode state after the caller has observed upstream 2xx
-// response headers. Selection itself never mutates the state.
+// Commit advances episode state after the client has received a complete
+// 2xx response. Selection itself never mutates the state.
 func (state *EpisodeState) Commit(
 	arm int,
 	inputTokens int,
