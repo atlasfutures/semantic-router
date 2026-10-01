@@ -256,3 +256,28 @@ func TestRelaxedAbsentReadLosesToACreatedAndEvictedEpisode(t *testing.T) {
 		t.Fatalf("stale absent read after create-and-evict = %v, want ErrEpisodeConflict", err)
 	}
 }
+
+// A relaxed read taken while a strict lease holds a memory entry must not
+// commit over the strict turn's commit.
+func TestRelaxedReadDuringAStrictLeaseCannotOverwriteItsCommit(t *testing.T) {
+	store := newTestMemoryEpisodeStore(t, 4, time.Now)
+	episode := HashEpisodeID("leased")
+	lease, prepared, err := store.Prepare(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relaxed, relaxedRead, err := store.Snapshot(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit(context.Background(), lease, lease.Version(), committedTurn(t, prepared, 0)); err != nil {
+		t.Fatalf("strict commit = %v", err)
+	}
+	if err := store.CommitIfUnchanged(context.Background(), episode, relaxedRead, committedTurn(t, relaxed, 1)); !errors.Is(err, ErrEpisodeConflict) {
+		t.Fatalf("relaxed commit after the strict commit = %v, want ErrEpisodeConflict", err)
+	}
+	after, _, err := store.Snapshot(context.Background(), episode, 2)
+	if err != nil || after.PreviousArm == nil || *after.PreviousArm != 0 {
+		t.Fatalf("the strict commit was overwritten: %+v err %v", after, err)
+	}
+}
