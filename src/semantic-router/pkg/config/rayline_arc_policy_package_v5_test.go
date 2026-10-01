@@ -153,10 +153,36 @@ func TestRaylineARCPolicyPackageV5AdmitsEveryAcceptedFormat(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "is not admitted for anthropic/claude-opus-5 on openrouterxchat") {
 		t.Fatalf("a worker accepting an unverified Chat cell loaded: %v", err)
 	}
+	// Every Responses cell in registry 3083a4b6 refuses instructions, so a
+	// steer on a worker that accepts Responses is refused on that cell.
 	params.AcceptedFormats = []string{APIFormatAnthropic, APIFormatResponses}
 	cfg.ModelConfig["arm-opus"] = params
-	if err := validatePolicyDispatch(cfg, decision); err == nil || !strings.Contains(err.Error(), "accepts responses") {
-		t.Fatalf("a worker accepting Responses loaded: %v", err)
+	err = validatePolicyDispatch(cfg, decision)
+	if err == nil || !strings.Contains(err.Error(), "is not admitted for anthropic/claude-opus-5 on openrouterxresponses") {
+		t.Fatalf("a steer on a worker accepting Responses loaded: %v", err)
+	}
+}
+
+// v5 controls are served on Responses workers where the registry admits
+// them: every Responses cell admits the native-default control (Opus's
+// action), and none admits an instruction.
+func TestRaylineARCPolicyPackageV5OnResponsesWorkers(t *testing.T) {
+	cfg, decision := policyV5Decision(t, readPolicyV5Fixture(t))
+	for _, formats := range [][]string{{APIFormatResponses}, {APIFormatResponses, APIFormatAnthropic}} {
+		params := cfg.ModelConfig["arm-opus"]
+		params.APIFormat, params.AcceptedFormats = formats[0], formats
+		cfg.ModelConfig["arm-opus"] = params
+		if err := validatePolicyDispatch(cfg, decision); err != nil {
+			t.Fatalf("the native-only Opus action on a %v worker refused: %v", formats, err)
+		}
+	}
+
+	params := cfg.ModelConfig["arm-glm"]
+	params.APIFormat, params.AcceptedFormats = APIFormatResponses, nil
+	cfg.ModelConfig["arm-glm"] = params
+	err := validatePolicyDispatch(cfg, decision)
+	if err == nil || !strings.Contains(err.Error(), "is not admitted for z-ai/glm-5.3-flash on openrouterxresponses") {
+		t.Fatalf("GLM's steered actions on a Responses worker: %v", err)
 	}
 }
 
