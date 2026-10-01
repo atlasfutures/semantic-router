@@ -151,7 +151,9 @@ func applyRaylineMessagesProviderRouting(
 	ctx *RequestContext,
 	cfg *config.RouterConfig,
 ) ([]byte, error) {
-	if dispatch == nil || dispatch.targetFormat != llmprotocol.AnthropicMessagesV1 {
+	// A direct-model request (no decision) is dispatched as the client sent
+	// it, the same rule projectProviderRequest applies to the other wires.
+	if dispatch == nil || dispatch.targetFormat != llmprotocol.AnthropicMessagesV1 || dispatch.decisionName == "" {
 		return body, nil
 	}
 	body, err := applyUpstreamSessionID(body, dispatch, ctx)

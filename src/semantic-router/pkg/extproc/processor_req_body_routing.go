@@ -240,8 +240,9 @@ func (r *OpenAIRouter) applyDispatchDecision(
 	if err != nil {
 		return false, err
 	}
+	cleared := clearClientMessageEffortForARC(request, ctx)
 	steered, err := r.applyRaylineARCThinkingLever(request, ctx)
-	return changed || injected || steered, err
+	return changed || injected || cleared || steered, err
 }
 
 func wireFormatForModel(apiFormat string) (llmprotocol.WireFormat, error) {
