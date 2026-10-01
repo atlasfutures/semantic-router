@@ -340,3 +340,27 @@ func TestOpenRouterResponsesWorkerIsNeverSentEncryptedReasoning(t *testing.T) {
 	}
 	finishCodexTurn(t, router, ctx, "200")
 }
+
+// A blob is readable only by the account that issued it, so the credential
+// a turn is sent with is part of its issuer: a rotated or per-user key is
+// another issuer, and a turn whose credential cannot be resolved forwards
+// nothing.
+func TestReasoningIssuerFollowsTheCredential(t *testing.T) {
+	dispatch := &providerDispatch{
+		logicalModel: "gpt", backendName: "openai-gpt", upstreamModel: "gpt-5.5",
+		profile: &config.ProviderProfile{Type: "openai", BaseURL: "https://api.openai.com/v1"},
+	}
+	first := reasoningIssuerFor(dispatch, dispatchCredential{key: "key-one", known: true})
+	if first == raylinearc.ReasoningIssuerUnknown || first != reasoningIssuerFor(dispatch, dispatchCredential{key: "key-one", known: true}) {
+		t.Fatalf("one target and key named issuer %q inconsistently", first)
+	}
+	if rotated := reasoningIssuerFor(dispatch, dispatchCredential{key: "key-two", known: true}); rotated == first {
+		t.Fatal("a rotated key is the same issuer")
+	}
+	if unresolved := reasoningIssuerFor(dispatch, dispatchCredential{}); unresolved != raylinearc.ReasoningIssuerUnknown {
+		t.Fatalf("an unresolved credential named issuer %q", unresolved)
+	}
+	if strings.Contains(first, "key-one") {
+		t.Fatal("the issuer carries the key")
+	}
+}

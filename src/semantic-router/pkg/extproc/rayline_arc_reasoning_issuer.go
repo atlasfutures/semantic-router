@@ -20,7 +20,7 @@ import (
 // from this turn's target. Otherwise the codec drops the whole item, as it
 // does on every route without an episode. The set is staged here and written
 // only with the turn's 2xx commit, so a failed turn leaves it as it was.
-func applyRaylineARCReasoningIssuer(
+func (r *OpenAIRouter) applyRaylineARCReasoningIssuer(
 	request *llmprotocol.Request,
 	dispatch *providerDispatch,
 	ctx *RequestContext,
@@ -30,7 +30,7 @@ func applyRaylineARCReasoningIssuer(
 		return
 	}
 	previous := ctx.RaylineARCTransaction.state.ReasoningIssuers
-	issuer := reasoningIssuerFor(dispatch)
+	issuer := reasoningIssuerFor(dispatch, r.dispatchCredential(dispatch, ctx))
 	held := protocolcodec.HoldsEncryptedReasoning(*request)
 	issues := dispatch.targetFormat == llmprotocol.OpenAIResponsesV1
 	forwarded := held && issues && raylinearc.ReasoningIssuersAre(previous, issuer)
@@ -48,22 +48,50 @@ func applyRaylineARCReasoningIssuer(
 }
 
 // reasoningIssuerFor names the target that reads and issues a dispatch's
-// encrypted reasoning: the worker, the backend it reaches and the model id
-// that backend serves, as a truncated digest so the episode record carries no
-// configuration names.
+// encrypted reasoning: the worker, the backend it reaches, the model id that
+// backend serves, and the credential the turn is sent with, because a blob is
+// readable only by the account that issued it. A rotated key, or a per-user
+// key injected by an auth backend, is another issuer. It is a truncated
+// digest, so the record carries neither configuration names nor any secret.
 //
 // OpenRouter has no such name. It chooses the serving provider per request,
 // even under a pin (and its Responses path does not send the pin), and
 // providers cannot read each other's blobs. So an OpenRouter target is the
 // unknown issuer: nothing is forwarded to it, and blobs it issues are never
 // forwarded anywhere.
-func reasoningIssuerFor(dispatch *providerDispatch) string {
-	if providerIsOpenRouter(dispatch.profile) {
+func reasoningIssuerFor(dispatch *providerDispatch, credential dispatchCredential) string {
+	if providerIsOpenRouter(dispatch.profile) || !credential.known {
 		return raylinearc.ReasoningIssuerUnknown
 	}
-	parts := []string{dispatch.logicalModel, dispatch.backendName, dispatch.upstreamModel}
+	parts := []string{dispatch.logicalModel, dispatch.backendName, dispatch.upstreamModel, credential.key}
 	digest := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(digest[:8])
+}
+
+// dispatchCredential is the credential a dispatch will be sent with, resolved
+// as appendProviderCredential resolves it. known is false when it cannot be
+// resolved, and no blob is then forwarded.
+type dispatchCredential struct {
+	key   string
+	known bool
+}
+
+func (r *OpenAIRouter) dispatchCredential(dispatch *providerDispatch, ctx *RequestContext) dispatchCredential {
+	provider, providerAuth, err := resolveProviderAuth(dispatch.profile)
+	if err != nil {
+		return dispatchCredential{}
+	}
+	if providerAuth.Strategy == "none" {
+		return dispatchCredential{known: true}
+	}
+	if r.CredentialResolver == nil {
+		return dispatchCredential{}
+	}
+	key, err := r.CredentialResolver.KeyForProvider(provider, dispatch.logicalModel, ctx.Headers)
+	if err != nil {
+		return dispatchCredential{}
+	}
+	return dispatchCredential{key: key, known: true}
 }
 
 func encryptedReasoningDropReason(previous []string, issuer string, issues bool) string {

@@ -200,20 +200,19 @@ func applyRaylineARCPolicyActionReasoning(
 // bound for Responses, as reasoning.effort in place of what the router or the
 // client set. A null effort, and one withheld under dispatch_effort:
 // provider_default, send no effort, so the provider's default applies. The
-// thinking-off action keeps the off signal the router derived for its
-// use_reasoning:false worker, as on Chat. Responses has no reasoning budget,
-// so a budget action has no faithful shape; readiness refuses one
-// (policyActionResponsesCarriable) before any turn can pick it.
+// thinking-off action sends effort none, the off signal the router derives
+// for a use_reasoning:false worker, so a client's own effort can never turn
+// the off arm back on; readiness admits it only on a worker whose reasoning
+// family can say off. Responses has no reasoning budget, so a budget action
+// has no faithful shape; readiness refuses one before any turn can pick it
+// (policyActionResponsesCarriable).
 func applyPolicyActionResponsesReasoning(
 	request *llmprotocol.Request,
 	action config.RaylineARCPolicyBinding,
 	ctx *RequestContext,
 ) (bool, error) {
-	if !policyActionResponsesCarriable(action) {
+	if action.ReasoningMaxTokens != nil {
 		return false, errPolicyActionFormat
-	}
-	if action.Effort != nil && *action.Effort == raylineARCPolicyActionEffortOff {
-		return false, nil
 	}
 	effort := ""
 	if action.Effort != nil {
@@ -229,10 +228,22 @@ func applyPolicyActionResponsesReasoning(
 }
 
 // policyActionResponsesCarriable reports whether Responses can carry the
-// action: an effort, the thinking-off action, or no reasoning control. It has
-// no budget.
-func policyActionResponsesCarriable(action config.RaylineARCPolicyBinding) bool {
-	return action.ReasoningMaxTokens == nil
+// action to its worker: an effort or no reasoning control, and the
+// thinking-off action only on a worker whose reasoning family has an off
+// signal (semanticDisabledOpenAIReasoningControls). It has no budget.
+func policyActionResponsesCarriable(cfg *config.RouterConfig, action config.RaylineARCPolicyBinding) bool {
+	if action.ReasoningMaxTokens != nil {
+		return false
+	}
+	if action.Effort == nil || *action.Effort != raylineARCPolicyActionEffortOff {
+		return true
+	}
+	family := cfg.GetModelReasoningFamily(action.Worker)
+	if family == nil {
+		return false
+	}
+	off, _ := semanticDisabledOpenAIReasoningControls(family)
+	return off == raylineARCPolicyActionEffortOff
 }
 
 func sameInt64Pointer(left, right *int64) bool {
@@ -282,7 +293,7 @@ func raylineARCPolicyActionsCarriable(cfg *config.RouterConfig, decision *config
 		// The format is chosen per request from the worker's accepted
 		// formats, so the action must be carriable in every one of them.
 		for _, accepted := range cfg.GetModelAcceptedFormats(binding.Worker) {
-			if !policyActionCarriableIn(binding, accepted, profile) {
+			if !policyActionCarriableIn(cfg, binding, accepted, profile) {
 				return false
 			}
 		}
@@ -290,7 +301,12 @@ func raylineARCPolicyActionsCarriable(cfg *config.RouterConfig, decision *config
 	return true
 }
 
-func policyActionCarriableIn(binding config.RaylineARCPolicyBinding, apiFormat string, profile *config.ProviderProfile) bool {
+func policyActionCarriableIn(
+	cfg *config.RouterConfig,
+	binding config.RaylineARCPolicyBinding,
+	apiFormat string,
+	profile *config.ProviderProfile,
+) bool {
 	format, err := wireFormatForModel(apiFormat)
 	if err != nil {
 		return false
@@ -302,7 +318,7 @@ func policyActionCarriableIn(binding config.RaylineARCPolicyBinding, apiFormat s
 		_, _, err := policyActionChatWire(binding, resolveProviderReasoningTransport(profile))
 		return err == nil
 	case llmprotocol.OpenAIResponsesV1:
-		return policyActionResponsesCarriable(binding)
+		return policyActionResponsesCarriable(cfg, binding)
 	default:
 		return false
 	}
