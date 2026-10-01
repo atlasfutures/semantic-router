@@ -117,6 +117,14 @@ type EpisodeReadToken struct {
 
 // staleRead reports whether a relaxed read is too old to commit: a newer
 // incarnation created after it could have expired by now.
+//
+// Accepted residual risk (operator decision, router-infra#55): on Redis the
+// bound is checked before the commit's round trip, not inside the script. A
+// read that found the episode absent can therefore still commit if, within
+// that round trip and at exactly the idle-TTL boundary, a newer incarnation
+// was created after the read, idled a full TTL and expired. The stale turn's
+// state then lands on an episode that had already expired from disuse, so no
+// live state is lost; relaxed episode state is best effort by contract.
 func staleRead(read EpisodeReadToken, now time.Time, idleTTL time.Duration) bool {
 	return read.readAt.IsZero() || now.Sub(read.readAt) >= idleTTL
 }
