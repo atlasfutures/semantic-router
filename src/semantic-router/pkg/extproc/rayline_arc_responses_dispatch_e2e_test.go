@@ -130,8 +130,8 @@ func codexTurn(t *testing.T, router *OpenAIRouter, episode, fixture string) (str
 			{Key: "x-rayline-session", Value: episode},
 		}},
 	}}
-	if response, err := router.handleRequestHeaders(headers, ctx); err != nil || response.GetImmediateResponse() != nil {
-		t.Fatalf("request headers: err=%v immediate=%v", err, response.GetImmediateResponse())
+	if response, headerErr := router.handleRequestHeaders(headers, ctx); headerErr != nil || response.GetImmediateResponse() != nil {
+		t.Fatalf("request headers: err=%v immediate=%v", headerErr, response.GetImmediateResponse())
 	}
 	response, err := router.handleRequestBody(&ext_proc.ProcessingRequest_RequestBody{
 		RequestBody: &ext_proc.HttpBody{Body: codex, EndOfStream: true},

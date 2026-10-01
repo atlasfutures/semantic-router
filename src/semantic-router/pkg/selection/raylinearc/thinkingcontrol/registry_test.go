@@ -176,7 +176,7 @@ func TestPlacerStateResumesTheEpisode(t *testing.T) {
 	first := []byte(`{"model":"m","messages":[{"role":"user","content":"Start."}]}`)
 	second := []byte(`{"model":"m","messages":[{"role":"user","content":"Start."},{"role":"assistant","content":[{"type":"text","text":"ok"}]},{"role":"user","content":"Next."}]}`)
 	placer, _ := NewPlacer(FormatMessages)
-	if _, _, err := placer.Render(first, steer, cell, "w"); err != nil {
+	if _, _, err = placer.Render(first, steer, cell, "w"); err != nil {
 		t.Fatal(err)
 	}
 	encoded, err := json.Marshal(placer.State())
@@ -184,7 +184,7 @@ func TestPlacerStateResumesTheEpisode(t *testing.T) {
 		t.Fatal(err)
 	}
 	var state PlacerState
-	if err := json.Unmarshal(encoded, &state); err != nil {
+	if err = json.Unmarshal(encoded, &state); err != nil {
 		t.Fatal(err)
 	}
 	resumed, err := ResumePlacer(state)

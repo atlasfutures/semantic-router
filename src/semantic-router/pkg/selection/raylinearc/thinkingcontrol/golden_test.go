@@ -66,9 +66,9 @@ func TestGoldenCorporaArePinned(t *testing.T) {
 			if !ok {
 				t.Fatalf("%s: malformed SHA256SUMS line %q", format, line)
 			}
-			raw, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(name)))
-			if err != nil {
-				t.Fatal(err)
+			raw, readErr := os.ReadFile(filepath.Join(dir, filepath.FromSlash(name)))
+			if readErr != nil {
+				t.Fatal(readErr)
 			}
 			if got := sha256.Sum256(raw); hex.EncodeToString(got[:]) != want {
 				t.Fatalf("%s/%s does not match its pinned sha256", format, name)
@@ -129,7 +129,7 @@ func runGoldenCase(t *testing.T, reg *Registry, dir string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(raw, &c); err != nil {
+	if err = json.Unmarshal(raw, &c); err != nil {
 		t.Fatal(err)
 	}
 	if c.RegistryPin != reg.SHA256 {
@@ -154,9 +154,9 @@ func runGoldenCase(t *testing.T, reg *Registry, dir string) {
 	switch c.Admission {
 	case "no_lever":
 		for _, body := range bodies {
-			out, err := Passthrough(body, c.WireModel)
-			if err != nil {
-				t.Fatal(err)
+			out, passErr := Passthrough(body, c.WireModel)
+			if passErr != nil {
+				t.Fatal(passErr)
 			}
 			got = append(got, out)
 		}

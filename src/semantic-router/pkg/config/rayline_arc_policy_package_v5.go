@@ -95,7 +95,7 @@ func (cfg *RaylineARCPolicyServiceConfig) loadPackageV5() (*raylineARCPolicyPack
 	if got := hex.EncodeToString(sum[:]); got != cfg.PackageSHA256 {
 		return nil, fmt.Errorf("package_manifest's sha256 is %s, not package_sha256", got)
 	}
-	if schema, err := raylinearc.PolicyPackageSchemaOf(raw); err != nil || schema != raylinearc.PolicyPackageSchemaV5 {
+	if schema, schemaErr := raylinearc.PolicyPackageSchemaOf(raw); schemaErr != nil || schema != raylinearc.PolicyPackageSchemaV5 {
 		return nil, fmt.Errorf("package_manifest must be a %s package (a v4 package's bindings declare their dispatch)",
 			raylinearc.PolicyPackageSchemaV5)
 	}

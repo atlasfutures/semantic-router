@@ -48,7 +48,7 @@ func v5Router(t *testing.T, glmFormat string) (*OpenAIRouter, *fakePolicyService
 	}
 	dir := t.TempDir()
 	manifestPath := filepath.Join(dir, "package.json")
-	if err := os.WriteFile(manifestPath, manifest, 0o600); err != nil {
+	if err = os.WriteFile(manifestPath, manifest, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(manifest)
@@ -60,7 +60,7 @@ func v5Router(t *testing.T, glmFormat string) (*OpenAIRouter, *fakePolicyService
 		"{{OPUS}}", v5OpusAction, "{{GLM_NONE}}", v5GLMNone, "{{GLM_UP}}", v5GLMUp,
 	).Replace(v5ConfigTemplate)
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte(rendered), 0o600); err != nil {
+	if err = os.WriteFile(path, []byte(rendered), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	router, err := NewOpenAIRouter(path)
@@ -82,8 +82,10 @@ func v5Turn(t *testing.T, router *OpenAIRouter, fake *fakePolicyService, action,
 	}
 	headers := &ext_proc.ProcessingRequest_RequestHeaders{RequestHeaders: &ext_proc.HttpHeaders{
 		Headers: &core.HeaderMap{Headers: []*core.HeaderValue{
-			{Key: ":method", Value: "POST"}, {Key: ":path", Value: "/v1/messages"},
-			{Key: "content-type", Value: "application/json"}, {Key: "x-rayline-session", Value: episode},
+			{Key: ":method", Value: "POST"},
+			{Key: ":path", Value: "/v1/messages"},
+			{Key: "content-type", Value: "application/json"},
+			{Key: "x-rayline-session", Value: episode},
 		}},
 	}}
 	if response, err := router.handleRequestHeaders(headers, ctx); err != nil || response.GetImmediateResponse() != nil {

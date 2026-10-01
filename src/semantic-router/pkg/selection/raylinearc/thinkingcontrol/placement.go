@@ -235,9 +235,9 @@ func (p *Placer) place(body *value, control *Control) (*value, Receipt, error) {
 	if instruction != nil && !retry {
 		level := instruction.Level
 		write := func(kind, text string) error {
-			placement, err := placementFor(units[tail], format)
-			if err != nil {
-				return err
+			placement, placeErr := placementFor(units[tail], format)
+			if placeErr != nil {
+				return placeErr
 			}
 			next.Ledger = append(next.Ledger, LedgerItem{
 				Anchor: anchor.Index, PrefixDigest: anchor.Digest, Placement: placement, Text: text, Kind: kind,
@@ -247,11 +247,11 @@ func (p *Placer) place(body *value, control *Control) (*value, Receipt, error) {
 		}
 		switch {
 		case level != InstructionNone && (next.InForce == nil || *next.InForce != level):
-			if err := write(WrittenInstruction, instruction.Text); err != nil {
+			if err = write(WrittenInstruction, instruction.Text); err != nil {
 				return nil, Receipt{}, err
 			}
 		case level == InstructionNone && next.InForce != nil:
-			if err := write(WrittenNeutralMarker, instruction.NeutralText); err != nil {
+			if err = write(WrittenNeutralMarker, instruction.NeutralText); err != nil {
 				return nil, Receipt{}, err
 			}
 		}

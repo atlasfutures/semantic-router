@@ -132,7 +132,7 @@ func TestPolicyActionFollowsThePerRequestFormat(t *testing.T) {
 		}
 		rendered = strings.Replace(rendered, from, to, 1)
 	}
-	if err := os.WriteFile(path, []byte(rendered), 0o600); err != nil {
+	if err = os.WriteFile(path, []byte(rendered), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	router, err := NewOpenAIRouter(path)

@@ -73,8 +73,8 @@ func TestEpisodeStateWireCarriesReasoningIssuersUnderV3(t *testing.T) {
 	if strings.Contains(string(plain), "reasoning_issuers") || !strings.Contains(string(plain), "episode-state.v2") {
 		t.Fatalf("an episode without issuers changed shape: %s", plain)
 	}
-	if decoded, _, err := unmarshalEpisodeState(plain, 1, now); err != nil || decoded.ReasoningIssuers != nil {
-		t.Fatalf("an earlier record decoded as %v, %v", decoded, err)
+	if decoded, _, decodeErr := unmarshalEpisodeState(plain, 1, now); decodeErr != nil || decoded.ReasoningIssuers != nil {
+		t.Fatalf("an earlier record decoded as %v, %v", decoded, decodeErr)
 	}
 
 	state.ReasoningIssuers = []string{issuerA, ReasoningIssuerUnknown}

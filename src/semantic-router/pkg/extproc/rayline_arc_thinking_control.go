@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -194,7 +195,7 @@ func thinkingControlTrace(cell *thinkingcontrol.Cell, receipt thinkingcontrol.Re
 		ControlInForce: receipt.ControlID,
 		Propensity:     1,
 		Retry:          receipt.Retry,
-		Epoch:          uint32(receipt.Epoch),
+		Epoch:          boundedControlEpoch(receipt.Epoch),
 	}
 	if receipt.LevelInForce != nil {
 		trace.LevelRequested, trace.LevelInForce = *receipt.LevelInForce, *receipt.LevelInForce
@@ -209,4 +210,17 @@ func thinkingControlTrace(cell *thinkingcontrol.Cell, receipt thinkingcontrol.Re
 		trace.ResetReason = *receipt.EpochResetReason
 	}
 	return trace
+}
+
+// boundedControlEpoch narrows a placer epoch to the trace's width. The placer
+// refuses a negative epoch and counts one per reset, so the bounds never bind
+// in practice; they make the conversion total.
+func boundedControlEpoch(epoch int) uint32 {
+	if epoch <= 0 {
+		return 0
+	}
+	if epoch >= math.MaxUint32 {
+		return math.MaxUint32
+	}
+	return uint32(epoch)
 }

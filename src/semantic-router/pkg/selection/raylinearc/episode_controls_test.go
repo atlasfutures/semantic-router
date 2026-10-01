@@ -57,7 +57,7 @@ func TestEpisodeStateCarriesControlPlacementsUnderV3(t *testing.T) {
 	}
 	live, _ := thinkingcontrol.NewPlacer(thinkingcontrol.FormatMessages)
 	for i, level := range []string{"up", "none"} {
-		if _, _, err := live.Render([]byte(turns[i]), control(level), cell, "w"); err != nil {
+		if _, _, err = live.Render([]byte(turns[i]), control(level), cell, "w"); err != nil {
 			t.Fatal(err)
 		}
 	}
