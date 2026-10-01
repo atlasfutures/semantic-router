@@ -3,10 +3,8 @@ package extproc
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"strings"
 
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
@@ -26,14 +24,13 @@ func applyRaylineARCReasoningIssuer(
 	request *llmprotocol.Request,
 	dispatch *providerDispatch,
 	ctx *RequestContext,
-	routerConfig *config.RouterConfig,
 ) {
 	if request == nil || dispatch == nil || ctx == nil || ctx.RaylineARCTransaction == nil ||
 		ctx.RaylineARCTransaction.state == nil {
 		return
 	}
 	previous := ctx.RaylineARCTransaction.state.ReasoningIssuers
-	issuer := reasoningIssuerFor(dispatch, routerConfig)
+	issuer := reasoningIssuerFor(dispatch)
 	held := protocolcodec.HoldsEncryptedReasoning(*request)
 	issues := dispatch.targetFormat == llmprotocol.OpenAIResponsesV1
 	forwarded := held && issues && raylinearc.ReasoningIssuersAre(previous, issuer)
@@ -45,32 +42,36 @@ func applyRaylineARCReasoningIssuer(
 		logging.ComponentEvent("extproc", "rayline_arc_encrypted_reasoning_dropped", map[string]interface{}{
 			"request_id": ctx.RequestID,
 			"worker":     dispatch.logicalModel,
-			"reason":     encryptedReasoningDropReason(previous, issues),
+			"reason":     encryptedReasoningDropReason(previous, issuer, issues),
 		})
 	}
 }
 
 // reasoningIssuerFor names the target that reads and issues a dispatch's
-// encrypted reasoning: the worker, the backend it reaches, the model id that
-// backend serves, and on OpenRouter the providers the arm pins. It is a
-// truncated digest, so the episode record carries no configuration names.
-func reasoningIssuerFor(dispatch *providerDispatch, routerConfig *config.RouterConfig) string {
-	parts := []string{dispatch.logicalModel, dispatch.backendName, dispatch.upstreamModel}
-	if preferences := providerPreferencesForDispatch(dispatch, routerConfig); preferences != nil {
-		// The whole pin, not only its order: which providers may serve the
-		// arm, and whether OpenRouter may fall back past them, both decide
-		// who can read the blob.
-		encoded, _ := json.Marshal(preferences)
-		parts = append(parts, string(encoded))
+// encrypted reasoning: the worker, the backend it reaches and the model id
+// that backend serves, as a truncated digest so the episode record carries no
+// configuration names.
+//
+// OpenRouter has no such name. It chooses the serving provider per request,
+// even under a pin (and its Responses path does not send the pin), and
+// providers cannot read each other's blobs. So an OpenRouter target is the
+// unknown issuer: nothing is forwarded to it, and blobs it issues are never
+// forwarded anywhere.
+func reasoningIssuerFor(dispatch *providerDispatch) string {
+	if providerIsOpenRouter(dispatch.profile) {
+		return raylinearc.ReasoningIssuerUnknown
 	}
+	parts := []string{dispatch.logicalModel, dispatch.backendName, dispatch.upstreamModel}
 	digest := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(digest[:8])
 }
 
-func encryptedReasoningDropReason(previous []string, issues bool) string {
+func encryptedReasoningDropReason(previous []string, issuer string, issues bool) string {
 	switch {
 	case !issues:
 		return "target_not_responses"
+	case issuer == raylinearc.ReasoningIssuerUnknown:
+		return "target_provider_varies"
 	case len(previous) > 1:
 		return "issuers_mixed"
 	case len(previous) == 0 || previous[0] == raylinearc.ReasoningIssuerUnknown:

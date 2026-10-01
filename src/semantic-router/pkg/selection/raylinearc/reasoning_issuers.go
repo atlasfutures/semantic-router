@@ -20,10 +20,11 @@ import (
 // MaxReasoningIssuers bounds the issuer set an episode keeps.
 const MaxReasoningIssuers = 2
 
-// ReasoningIssuerUnknown stands for blobs the episode did not see issued: the
-// client resent encrypted reasoning before the episode recorded any issuer
-// (an episode older than the record, or blobs from outside the route). It
-// never equals a target, so those blobs are never forwarded.
+// ReasoningIssuerUnknown stands for blobs whose issuer the episode cannot
+// name: ones the client resent before the episode recorded any issuer (an
+// episode older than the record, or blobs from outside the route), and ones
+// a target issued whose serving provider varies per request (OpenRouter). No
+// target is ever this issuer, so those blobs are never forwarded.
 const ReasoningIssuerUnknown = "unknown"
 
 var reasoningIssuerPattern = regexp.MustCompile(`^(unknown|[0-9a-f]{16})$`)
@@ -31,7 +32,7 @@ var reasoningIssuerPattern = regexp.MustCompile(`^(unknown|[0-9a-f]{16})$`)
 // ReasoningIssuersAre reports whether the set is exactly issuer, the only case
 // in which every blob the client resends was issued by that target.
 func ReasoningIssuersAre(issuers []string, issuer string) bool {
-	return len(issuers) == 1 && issuers[0] == issuer
+	return issuer != ReasoningIssuerUnknown && len(issuers) == 1 && issuers[0] == issuer
 }
 
 // NextReasoningIssuers is the issuer set after a turn commits.

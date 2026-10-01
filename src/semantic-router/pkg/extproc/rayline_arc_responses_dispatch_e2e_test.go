@@ -49,11 +49,28 @@ const responsesWorkersModels = `    - name: gpt
           provider: openai
           api_key_env: POLICY_E2E_PROVIDER_KEY
 
+    - name: gpt-or
+      provider_model_id: vendor/responses
+      api_format: responses
+      pricing:
+        currency: USD
+        prompt_per_1m: 1
+        cached_input_per_1m: 0.1
+        cache_write_per_1m: 1.25
+        completion_per_1m: 5
+      backend_refs:
+        - name: openrouter-gpt
+          base_url: https://openrouter.ai/api/v1
+          provider: openrouter
+          api_key_env: POLICY_E2E_PROVIDER_KEY
+
 routing:
   modelCards:
     - name: gpt
       modality: text
     - name: gpt-b
+      modality: text
+    - name: gpt-or
       modality: text
 `
 
@@ -61,6 +78,8 @@ const responsesWorkersModelRefs = `      modelRefs:
         - model: gpt
           use_reasoning: true
         - model: gpt-b
+          use_reasoning: true
+        - model: gpt-or
           use_reasoning: true
 `
 
@@ -140,10 +159,11 @@ func responsesPolicyRouter(t *testing.T, providerDefault bool) (*OpenAIRouter, *
 	t.Helper()
 	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
 	actions := map[string]config.RaylineARCPolicyBinding{
-		"think": policyAction("think", "none", "think-trained", policyTestEffort("high"), nil, ""),
-		"gpt":   policyAction("gpt", "none", "gpt-trained", policyTestEffort("high"), nil, ""),
-		"gpt-b": policyAction("gpt-b", "none", "gpt-b-trained", policyTestEffort("low"), nil, ""),
-		"off":   policyAction("off", "none", "off-trained", policyTestEffort("none"), nil, ""),
+		"think":  policyAction("think", "none", "think-trained", policyTestEffort("high"), nil, ""),
+		"gpt":    policyAction("gpt", "none", "gpt-trained", policyTestEffort("high"), nil, ""),
+		"gpt-b":  policyAction("gpt-b", "none", "gpt-b-trained", policyTestEffort("low"), nil, ""),
+		"gpt-or": policyAction("gpt-or", "none", "gpt-or-trained", policyTestEffort("low"), nil, ""),
+		"off":    policyAction("off", "none", "off-trained", policyTestEffort("none"), nil, ""),
 		// Every modelRef serves an action.
 		"claude":     policyAction("claude", "none", "claude-opus-5", policyTestEffort("medium"), nil, ""),
 		"claude-off": policyAction("claude-off", "none", "claude-opus-5", policyTestEffort("none"), nil, ""),
@@ -291,6 +311,32 @@ func TestChatTurnKeepsTheReasoningIssuer(t *testing.T) {
 	body, ctx = codexTurn(t, router, episode, "turn2-request.json")
 	if !strings.Contains(body, codexBlob) {
 		t.Fatalf("a Chat turn moved the issuer record: %s", body)
+	}
+	finishCodexTurn(t, router, ctx, "200")
+}
+
+// OpenRouter picks the serving provider per request, and providers cannot
+// read each other's blobs, so a blob an OpenRouter worker issued is never
+// forwarded, not even back to that worker.
+func TestOpenRouterResponsesWorkerIsNeverSentEncryptedReasoning(t *testing.T) {
+	router, fake, actions := responsesPolicyRouter(t, false)
+	fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return actions["gpt-or"].ActionID })
+	const episode = "codex-issuer-openrouter"
+
+	_, ctx := codexTurn(t, router, episode, "turn1-request.json")
+	finishCodexTurn(t, router, ctx, "200")
+	body, ctx := codexTurn(t, router, episode, "turn2-request.json")
+	if strings.Contains(body, codexBlob) {
+		t.Fatalf("a blob reached an OpenRouter worker: %s", body)
+	}
+	finishCodexTurn(t, router, ctx, "200")
+
+	// The client's blobs came from OpenRouter, so a direct worker does not
+	// get them either.
+	fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return actions["gpt"].ActionID })
+	body, ctx = codexTurn(t, router, episode, "turn2-request.json")
+	if strings.Contains(body, codexBlob) {
+		t.Fatalf("a blob OpenRouter issued reached another worker: %s", body)
 	}
 	finishCodexTurn(t, router, ctx, "200")
 }

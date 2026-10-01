@@ -104,8 +104,12 @@ A Responses client running with `store: false`, such as Codex, resends every
 reasoning item it has received with its `encrypted_content`, which only the
 target that issued it can read. The episode records the set of targets that
 issued the blobs its client can still hold (`reasoning_issuers`: at most two
-truncated digests of worker, backend, provider model and OpenRouter pin), and a
-turn forwards the items unchanged only when that set is exactly its own target.
+truncated digests of worker, backend and provider model), and a turn forwards
+the items unchanged only when that set is exactly its own target. An
+OpenRouter target has no such identity: OpenRouter chooses the serving
+provider per request, and providers cannot read each other's blobs. So
+nothing is forwarded to one, and blobs it issues are recorded as of unknown
+issuer and never forwarded anywhere.
 On any other target the whole item is dropped, as on every route without an
 episode, and logged as `rayline_arc_encrypted_reasoning_dropped` with a reason.
 The set is written only with the turn's 2xx commit. A turn that resends no

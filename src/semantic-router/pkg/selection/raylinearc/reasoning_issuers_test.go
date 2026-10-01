@@ -48,6 +48,10 @@ func TestReasoningIssuersAreExactlyOneTarget(t *testing.T) {
 			t.Fatalf("%v forwards to %s", issuers, issuerB)
 		}
 	}
+	// The unknown issuer is no target, so its blobs never travel.
+	if ReasoningIssuersAre([]string{ReasoningIssuerUnknown}, ReasoningIssuerUnknown) {
+		t.Fatal("blobs of unknown provenance are forwarded")
+	}
 	if !ReasoningIssuersAre([]string{issuerB}, issuerB) {
 		t.Fatal("the target's own blobs are not forwarded to it")
 	}
