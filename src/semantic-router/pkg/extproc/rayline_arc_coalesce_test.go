@@ -2,9 +2,11 @@ package extproc
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/authz"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
@@ -304,5 +306,55 @@ func TestEqualBodiesWithDifferentTurnInputsDoNotCoalesce(t *testing.T) {
 			}
 			_ = leaderCtx.RaylineARCTransaction.abort(context.Background(), "test")
 		})
+	}
+}
+
+// A caller's provider credential decides who issues encrypted reasoning, so
+// equal bodies sent with different credentials are different turns. Equal
+// credentials still coalesce.
+func TestEqualBodiesWithDifferentCredentialsDoNotCoalesce(t *testing.T) {
+	router, _, algorithm := missingSessionRequestContext(t, "")
+	router.CredentialResolver = authz.NewCredentialResolver(
+		authz.NewHeaderInjectionProvider(map[string]string{"openai": "x-user-openai-key"}),
+	)
+	withKey := func(key string) *RequestContext {
+		ctx := coalesceRequestContext(`{"turn":1}`)
+		ctx.Headers["x-user-openai-key"] = key
+		return ctx
+	}
+	leaderCtx := withKey("key-a")
+	if failure := router.buildRaylineARCSelectionContext(algorithm, leaderCtx, missingSessionModelRefs(), raylineARCEpisodeRequired).PreparationFailure; failure != "" {
+		t.Fatalf("leader failure = %q", failure)
+	}
+
+	other := withKey("key-b")
+	bounded, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	other.TraceContext = bounded
+	arc := router.buildRaylineARCSelectionContext(algorithm, other, missingSessionModelRefs(), raylineARCEpisodeRequired)
+	if arc.Coalesced != nil || arc.PreparationFailure != "episode_timeout" {
+		t.Fatalf("different credential: coalesced=%v failure=%q, want a contended, separate turn", arc.Coalesced, arc.PreparationFailure)
+	}
+
+	same := make(chan *selection.RaylineARCSelectionContext, 1)
+	go func() {
+		same <- router.buildRaylineARCSelectionContext(algorithm, withKey("key-a"), missingSessionModelRefs(), raylineARCEpisodeRequired)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	leaderCtx.RaylineARCTransaction.markSelection(2, 11)
+	router.publishRaylineARCDecision(leaderCtx, coalesceDecision("arm-2", 2))
+	if joined := <-same; joined.Coalesced == nil {
+		t.Fatalf("same credential did not coalesce: failure=%q", joined.PreparationFailure)
+	}
+	_ = leaderCtx.RaylineARCTransaction.abort(context.Background(), "test")
+}
+
+// The key carries a digest of the credential, never the credential.
+func TestCoalescingKeyHoldsNoCredential(t *testing.T) {
+	ctx := coalesceRequestContext(`{"turn":1}`)
+	ctx.Headers["x-user-openai-key"] = "sk-secret-value"
+	inputs := raylineARCTurnInputs(raylineARCAlgorithmConfigForTest().RaylineARC, ctx, []string{"x-user-openai-key"})
+	if strings.Contains(inputs, "sk-secret-value") {
+		t.Fatalf("coalescing key leaks the credential: %s", inputs)
 	}
 }
