@@ -161,6 +161,9 @@ header.
 In either mode, an identical resend of a turn still being decided joins that
 turn's decision instead of competing with it.
 
+A relaxed turn whose decision takes longer than `idle_ttl_seconds` also drops
+its update: by then the episode it read could have expired and been recreated.
+
 `relaxed` does not yet accept `close_header`, and is not yet served in the
 policy-service mode.
 

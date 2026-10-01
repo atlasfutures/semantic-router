@@ -101,14 +101,24 @@ type EpisodeSnapshotStore interface {
 	) error
 }
 
-// EpisodeReadToken names exactly what a relaxed read saw. A version alone is
-// not enough: an episode can expire or be evicted and be recreated back to the
-// same version, and a stale turn must still lose. So the token also carries
-// something recreation cannot repeat: a digest of the stored state (Redis) or
-// the entry's store-wide generation (memory).
+// EpisodeReadToken names exactly what a relaxed read saw, and when. A version
+// alone is not enough: an episode can expire or be evicted and be recreated
+// back to the same version, and a stale turn must still lose. So the token
+// carries something recreation cannot repeat, a digest of the stored state
+// (Redis) or the entry's store-wide generation (memory), and the time of the
+// read: a commit whose read is older than the idle TTL is refused, because
+// only then could a newer incarnation of the episode have come and gone,
+// including one created after a read that found the episode absent.
 type EpisodeReadToken struct {
 	version uint64
 	tag     string
+	readAt  time.Time
+}
+
+// staleRead reports whether a relaxed read is too old to commit: a newer
+// incarnation created after it could have expired by now.
+func staleRead(read EpisodeReadToken, now time.Time, idleTTL time.Duration) bool {
+	return read.readAt.IsZero() || now.Sub(read.readAt) >= idleTTL
 }
 
 // Version is the episode version the read saw.

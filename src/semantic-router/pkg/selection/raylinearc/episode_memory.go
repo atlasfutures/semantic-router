@@ -328,20 +328,20 @@ func (store *MemoryEpisodeStore) Snapshot(
 			return nil, EpisodeReadToken{}, err
 		}
 		if entry == nil {
-			return state, EpisodeReadToken{}, nil
+			return state, EpisodeReadToken{readAt: store.now()}, nil
 		}
-		return state, memoryReadToken(entry), nil
+		return state, memoryReadToken(entry, store.now()), nil
 	}
 	if len(entry.state.Warmth) != workerCount {
 		return nil, EpisodeReadToken{}, errors.New("ARC episode worker count changed")
 	}
-	return cloneEpisodeState(entry.state), memoryReadToken(entry), nil
+	return cloneEpisodeState(entry.state), memoryReadToken(entry, store.now()), nil
 }
 
-// memoryReadToken names an entry by its generation and version. An entry the
-// store has never seen reads as the zero token.
-func memoryReadToken(entry *memoryEpisodeEntry) EpisodeReadToken {
-	return EpisodeReadToken{version: entry.version, tag: strconv.FormatUint(entry.generation, 10)}
+// memoryReadToken names an entry by its generation and version, read at now.
+// An entry the store has never seen reads as a token with no generation.
+func memoryReadToken(entry *memoryEpisodeEntry, now time.Time) EpisodeReadToken {
+	return EpisodeReadToken{version: entry.version, tag: strconv.FormatUint(entry.generation, 10), readAt: now}
 }
 
 // CommitIfUnchanged writes state as the episode's next version, provided the
@@ -358,12 +358,16 @@ func (store *MemoryEpisodeStore) CommitIfUnchanged(
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	now := store.now()
+	if staleRead(read, now, store.idleTTL) {
+		return ErrEpisodeConflict
+	}
 	if err := validatePersistedEpisodeState(state, now); err != nil {
 		return err
 	}
+	absentRead := read.version == 0 && read.tag == ""
 	entry := store.entries[episodeIDHash]
 	if entry == nil {
-		if read != (EpisodeReadToken{}) {
+		if !absentRead {
 			return ErrEpisodeConflict
 		}
 		store.reapLocked(now)
@@ -378,10 +382,10 @@ func (store *MemoryEpisodeStore) CommitIfUnchanged(
 	if entry.leased {
 		return ErrEpisodeConflict
 	}
-	// A read of an entry the store had not seen carries the zero token; it
-	// may commit only to the entry this commit creates, not one created since.
-	if read != (EpisodeReadToken{}) || entry.version != 0 || entry.state != nil {
-		if read != memoryReadToken(entry) {
+	// A read of an entry the store had not seen may commit only to the entry
+	// this commit creates, not one created since.
+	if !absentRead || entry.version != 0 || entry.state != nil {
+		if read.version != entry.version || read.tag != strconv.FormatUint(entry.generation, 10) {
 			return ErrEpisodeConflict
 		}
 	}

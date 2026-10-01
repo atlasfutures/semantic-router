@@ -441,7 +441,7 @@ func (store *RedisEpisodeStore) Snapshot(
 		return nil, EpisodeReadToken{}, errors.New("ARC Redis state fence is invalid")
 	}
 	digest := sha1.Sum([]byte(payload)) // #nosec G401 -- equality tag matching Redis's sha1hex, not a security boundary.
-	return state, EpisodeReadToken{version: version, tag: hex.EncodeToString(digest[:])}, nil
+	return state, EpisodeReadToken{version: version, tag: hex.EncodeToString(digest[:]), readAt: store.now()}, nil
 }
 
 // CommitIfUnchanged writes state as the episode's next version, provided the
@@ -454,6 +454,9 @@ func (store *RedisEpisodeStore) CommitIfUnchanged(
 ) error {
 	if store == nil || !validEpisodeIDHash(episodeIDHash) {
 		return errors.New("invalid ARC Redis relaxed commit request")
+	}
+	if staleRead(read, store.now(), store.idleTTL) {
+		return ErrEpisodeConflict
 	}
 	next := read.version + 1
 	payload, err := marshalEpisodeState(state, next, store.now())
