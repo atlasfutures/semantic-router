@@ -281,9 +281,10 @@ func probeRelaxedPolicyDecide(
 	client *raylinearc.PolicyServiceClient,
 	scorer *policyServiceScorer,
 ) error {
-	_, err := client.Decide(ctx, raylinearc.PolicyDecisionRequest{
+	pkg := raylinearc.PolicyPackageRef{Alias: scorer.alias, PackageSHA256: scorer.sha256}
+	response, err := client.Decide(ctx, raylinearc.PolicyDecisionRequest{
 		SchemaVersion: raylinearc.PolicyDecisionRequestSchema,
-		Package:       raylinearc.PolicyPackageRef{Alias: scorer.alias, PackageSHA256: scorer.sha256},
+		Package:       pkg,
 		EpisodeIDHash: relaxedProbeEpisodeIDHash,
 		ContextEpoch:  "0",
 		RequestFormat: policyFormatAnthropic,
@@ -301,11 +302,29 @@ func probeRelaxedPolicyDecide(
 	})
 	var failure *raylinearc.PolicyServiceError
 	if errors.As(err, &failure) && failure.Class == raylinearc.PolicyRelaxedUnsupportedClass {
-		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_relaxed_unsupported", map[string]interface{}{
-			"package_alias": scorer.alias,
-		})
+		logRelaxedPolicyUnsupported(scorer, failure.Class)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	// A service that predates episode_mode may accept the field and serve the
+	// call strict. Only an answer for this package with no session revision
+	// shows the call ran unretained.
+	if response.Package != pkg || response.Encoding.SessionRevision != nil {
+		logRelaxedPolicyUnsupported(scorer, errRelaxedPolicyIgnored.Class)
+		return errRelaxedPolicyIgnored
+	}
+	return nil
+}
+
+// errRelaxedPolicyIgnored is a relaxed probe the service answered as strict.
+var errRelaxedPolicyIgnored = &raylinearc.PolicyServiceError{Class: "relaxed_ignored"}
+
+func logRelaxedPolicyUnsupported(scorer *policyServiceScorer, class string) {
+	logging.ComponentErrorEvent("extproc", "rayline_arc_policy_relaxed_unsupported", map[string]interface{}{
+		"package_alias": scorer.alias,
+		"class":         class,
+	})
 }
 
 type policyClientRequest struct {
@@ -429,9 +448,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		!policySelectedActionAvailable(response) {
 		return nil, arcSelectionFailure("policy_action_not_offered")
 	}
-	// A strict call advances the service's session; only a relaxed one may
-	// answer without a revision.
-	if response.Encoding.SessionRevision == nil && scorer.episodeMode != raylinearc.PolicyEpisodeModeRelaxed {
+	// A strict call advances the service's session and a relaxed one advances
+	// none, so the revision says which the service actually served. A
+	// service that ignored episode_mode would otherwise hold a relaxed cell's
+	// episodes exclusively without anyone seeing it.
+	if (response.Encoding.SessionRevision == nil) != (scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed) {
 		return nil, arcSelectionFailure("policy_session_revision")
 	}
 	decision := policyDecision(scorer, response, binding, workerIDs, excluded)
