@@ -46,6 +46,9 @@ const (
 
 var (
 	ErrEpisodeLeaseLost = errors.New("ARC episode lease lost")
+	// ErrEpisodeConflict is a relaxed commit that lost to another turn: the
+	// episode changed, or a strict lease holds it, since it was read.
+	ErrEpisodeConflict = errors.New("ARC episode changed since it was read")
 	ErrEpisodeCapacity  = errors.New("ARC episode store capacity reached")
 	// ErrEpisodeLeaseHeld is joined with the context error when Prepare ran
 	// out of time AFTER observing another owner's lease. A timeout without it
@@ -78,6 +81,24 @@ type EpisodeStore interface {
 		*EpisodeState,
 	) error
 	Abort(context.Context, Lease) error
+}
+
+// EpisodeSnapshotStore serves relaxed episodes: a read that takes no lease, and
+// a commit that succeeds only if the episode is still at the version read.
+// A relaxed turn never waits on another; when two collide, one commit loses
+// with ErrEpisodeConflict and only that turn's state update is dropped.
+type EpisodeSnapshotStore interface {
+	Snapshot(
+		ctx context.Context,
+		episodeIDHash string,
+		workerCount int,
+	) (*EpisodeState, uint64, error)
+	CommitIfUnchanged(
+		ctx context.Context,
+		episodeIDHash string,
+		readVersion uint64,
+		state *EpisodeState,
+	) error
 }
 
 type EpisodeLeaseRenewer interface {

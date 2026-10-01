@@ -299,3 +299,72 @@ func (store *MemoryEpisodeStore) evictOldestUnlocked() bool {
 	delete(store.entries, oldestKey)
 	return true
 }
+
+// Snapshot reads the episode and its version without a lease. An episode the
+// store has never seen reads as a fresh state at version zero.
+func (store *MemoryEpisodeStore) Snapshot(
+	_ context.Context,
+	episodeIDHash string,
+	workerCount int,
+) (*EpisodeState, uint64, error) {
+	if !validEpisodeIDHash(episodeIDHash) || workerCount <= 0 {
+		return nil, 0, errors.New("invalid ARC episode snapshot request")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.reapLocked(store.now())
+	entry := store.entries[episodeIDHash]
+	if entry == nil || entry.state == nil {
+		state, err := NewEpisodeState(workerCount)
+		if err != nil {
+			return nil, 0, err
+		}
+		if entry == nil {
+			return state, 0, nil
+		}
+		return state, entry.version, nil
+	}
+	if len(entry.state.Warmth) != workerCount {
+		return nil, 0, errors.New("ARC episode worker count changed")
+	}
+	return cloneEpisodeState(entry.state), entry.version, nil
+}
+
+// CommitIfUnchanged writes state as the episode's next version, provided the
+// episode is still at readVersion and no strict lease holds it.
+func (store *MemoryEpisodeStore) CommitIfUnchanged(
+	_ context.Context,
+	episodeIDHash string,
+	readVersion uint64,
+	state *EpisodeState,
+) error {
+	if !validEpisodeIDHash(episodeIDHash) {
+		return errors.New("invalid ARC episode relaxed commit request")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	now := store.now()
+	if err := validatePersistedEpisodeState(state, now); err != nil {
+		return err
+	}
+	entry := store.entries[episodeIDHash]
+	if entry == nil {
+		if readVersion != 0 {
+			return ErrEpisodeConflict
+		}
+		store.reapLocked(now)
+		if len(store.entries) >= store.maxEpisodes && !store.evictOldestUnlocked() {
+			return ErrEpisodeCapacity
+		}
+		entry = &memoryEpisodeEntry{gate: make(chan struct{}, 1), lastAccess: now}
+		entry.gate <- struct{}{}
+		store.entries[episodeIDHash] = entry
+	}
+	if entry.leased || entry.version != readVersion {
+		return ErrEpisodeConflict
+	}
+	entry.version++
+	entry.state = cloneEpisodeState(state)
+	entry.lastAccess = now
+	return nil
+}

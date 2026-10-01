@@ -54,6 +54,21 @@ redis.call("PEXPIRE", KEYS[2], ARGV[4])
 redis.call("DEL", KEYS[1])
 return 1
 `)
+	// The fence is the episode's version. A relaxed read takes no lease.
+	redisSnapshotScript = redis.NewScript(`
+return {redis.call("GET", KEYS[1]) or "0", redis.call("GET", KEYS[2]) or ""}
+`)
+	// A relaxed commit lands only if no strict lease holds the episode and
+	// the fence is still the version read; it then advances the fence.
+	redisCommitIfUnchangedScript = redis.NewScript(`
+if redis.call("EXISTS", KEYS[1]) == 1 then return 0 end
+if tonumber(redis.call("GET", KEYS[2]) or "0") ~= tonumber(ARGV[1]) then
+  return 0
+end
+redis.call("SET", KEYS[2], ARGV[2], "PX", ARGV[4])
+redis.call("SET", KEYS[3], ARGV[3], "PX", ARGV[4])
+return 1
+`)
 	redisAbortScript = redis.NewScript(`
 local owner = redis.call("GET", KEYS[1])
 if not owner then return 2 end
@@ -384,4 +399,73 @@ func boundedRedisEpisodeError(stage string, err error) error {
 		return err
 	}
 	return fmt.Errorf("ARC Redis episode %s failed", stage)
+}
+
+// Snapshot reads the episode and its version without a lease.
+func (store *RedisEpisodeStore) Snapshot(
+	ctx context.Context,
+	episodeIDHash string,
+	workerCount int,
+) (*EpisodeState, uint64, error) {
+	if store == nil || !validEpisodeIDHash(episodeIDHash) || workerCount <= 0 {
+		return nil, 0, errors.New("invalid ARC Redis snapshot request")
+	}
+	keys := store.keys(episodeIDHash)
+	raw, err := redisSnapshotScript.Run(ctx, store.client, keys[1:]).Slice()
+	if err != nil {
+		return nil, 0, boundedRedisEpisodeError("snapshot", err)
+	}
+	if len(raw) != 2 {
+		return nil, 0, errors.New("ARC Redis snapshot response contract mismatch")
+	}
+	version, err := redisResultUint64(raw[0])
+	if err != nil {
+		return nil, 0, err
+	}
+	payload, ok := raw[1].(string)
+	if !ok {
+		return nil, 0, errors.New("ARC Redis state response contract mismatch")
+	}
+	state, storedVersion, err := unmarshalEpisodeState([]byte(payload), workerCount, store.now())
+	if err != nil {
+		return nil, 0, err
+	}
+	if storedVersion > version {
+		return nil, 0, errors.New("ARC Redis state fence is invalid")
+	}
+	return state, version, nil
+}
+
+// CommitIfUnchanged writes state as the episode's next version, provided the
+// episode is still at readVersion and no strict lease holds it.
+func (store *RedisEpisodeStore) CommitIfUnchanged(
+	ctx context.Context,
+	episodeIDHash string,
+	readVersion uint64,
+	state *EpisodeState,
+) error {
+	if store == nil || !validEpisodeIDHash(episodeIDHash) {
+		return errors.New("invalid ARC Redis relaxed commit request")
+	}
+	next := readVersion + 1
+	payload, err := marshalEpisodeState(state, next, store.now())
+	if err != nil {
+		return err
+	}
+	result, err := redisCommitIfUnchangedScript.Run(
+		ctx,
+		store.client,
+		store.keys(episodeIDHash),
+		readVersion,
+		next,
+		payload,
+		store.idleTTL.Milliseconds(),
+	).Int()
+	if err != nil {
+		return boundedRedisEpisodeError("relaxed_commit", err)
+	}
+	if result != 1 {
+		return ErrEpisodeConflict
+	}
+	return nil
 }
