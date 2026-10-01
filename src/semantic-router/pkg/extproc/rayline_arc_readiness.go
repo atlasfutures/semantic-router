@@ -280,7 +280,7 @@ func raylineARCWorkerDispatchMatches(
 	thinking, exists := thinkingByWorker[worker.ID]
 	if !exists ||
 		thinking != (worker.ThinkingMode == "on") ||
-		cfg.GetModelAPIFormat(worker.ID) != config.APIFormatOpenAI ||
+		!cfg.ModelAcceptsOnlyAPIFormat(worker.ID, config.APIFormatOpenAI) ||
 		!raylineARCPriceIdentityMatches(cfg, worker) {
 		return false
 	}

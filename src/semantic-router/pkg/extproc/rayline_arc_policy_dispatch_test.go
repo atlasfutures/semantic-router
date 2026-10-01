@@ -262,6 +262,12 @@ func TestPolicyActionsMustBeCarriableByTheirProvider(t *testing.T) {
 			ProviderProfiles: map[string]config.ProviderProfile{"profile": profile},
 		}}
 	}
+	acceptingBoth := func(cfg *config.RouterConfig) *config.RouterConfig {
+		params := cfg.ModelConfig["think"]
+		params.AcceptedFormats = []string{config.APIFormatAnthropic, config.APIFormatOpenAI}
+		cfg.ModelConfig["think"] = params
+		return cfg
+	}
 	openRouter := config.ProviderProfile{Type: "openrouter", BaseURL: "https://openrouter.ai/api/v1"}
 	topLevel := config.ProviderProfile{Type: "openai", BaseURL: "https://api.openai.com/v1", ReasoningTransport: "top_level_effort"}
 	chatTemplate := config.ProviderProfile{Type: "vllm", BaseURL: "http://vllm.internal:8000/v1"}
@@ -279,6 +285,10 @@ func TestPolicyActionsMustBeCarriableByTheirProvider(t *testing.T) {
 		{"budget on a top-level transport", routerWith(config.APIFormatOpenAI, topLevel), budgeted, false},
 		{"effort on a chat-template transport", routerWith(config.APIFormatOpenAI, chatTemplate), effort, false},
 		{"budget on Messages", routerWith(config.APIFormatAnthropic, anthropic), budgeted, true},
+		// A worker that accepts Messages and Chat is sent either, per request,
+		// so the action must be carriable in both.
+		{"budget on Messages and a top-level Chat transport", acceptingBoth(routerWith(config.APIFormatAnthropic, topLevel)), budgeted, false},
+		{"effort on Messages and a top-level Chat transport", acceptingBoth(routerWith(config.APIFormatAnthropic, topLevel)), effort, true},
 	}
 	for _, test := range cases {
 		if got := raylineARCPolicyActionsCarriable(test.cfg, policyDecisionWithActions(test.action)); got != test.carries {

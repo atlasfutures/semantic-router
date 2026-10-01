@@ -144,6 +144,17 @@ func awaitPolicySelectorArmed(t *testing.T, router *OpenAIRouter) {
 // phases and returns the provider-bound body.
 func dispatchPolicyRequest(t *testing.T, router *OpenAIRouter, episode string) map[string]json.RawMessage {
 	t.Helper()
+	client := `{"model":"auto","max_tokens":32000,"messages":[` +
+		`{"role":"user","content":"fix the failing test"},` +
+		`{"role":"assistant","content":"Looking at it."},` +
+		`{"role":"user","content":"go on"}]}`
+	return dispatchPolicyClientRequest(t, router, episode, "/v1/messages", client)
+}
+
+// dispatchPolicyClientRequest runs one client request, sent to path, through
+// the request phases and returns the provider-bound body.
+func dispatchPolicyClientRequest(t *testing.T, router *OpenAIRouter, episode, path, client string) map[string]json.RawMessage {
+	t.Helper()
 	ctx := &RequestContext{
 		Headers:      map[string]string{},
 		RequestID:    "policy-e2e-" + episode,
@@ -153,7 +164,7 @@ func dispatchPolicyRequest(t *testing.T, router *OpenAIRouter, episode string) m
 	headers := &ext_proc.ProcessingRequest_RequestHeaders{RequestHeaders: &ext_proc.HttpHeaders{
 		Headers: &core.HeaderMap{Headers: []*core.HeaderValue{
 			{Key: ":method", Value: "POST"},
-			{Key: ":path", Value: "/v1/messages"},
+			{Key: ":path", Value: path},
 			{Key: "content-type", Value: "application/json"},
 			{Key: "x-rayline-session", Value: episode},
 		}},
@@ -161,10 +172,6 @@ func dispatchPolicyRequest(t *testing.T, router *OpenAIRouter, episode string) m
 	if response, err := router.handleRequestHeaders(headers, ctx); err != nil || response.GetImmediateResponse() != nil {
 		t.Fatalf("request headers: err=%v immediate=%v", err, response.GetImmediateResponse())
 	}
-	client := `{"model":"auto","max_tokens":32000,"messages":[` +
-		`{"role":"user","content":"fix the failing test"},` +
-		`{"role":"assistant","content":"Looking at it."},` +
-		`{"role":"user","content":"go on"}]}`
 	response, err := router.handleRequestBody(&ext_proc.ProcessingRequest_RequestBody{
 		RequestBody: &ext_proc.HttpBody{Body: []byte(client), EndOfStream: true},
 	}, ctx)

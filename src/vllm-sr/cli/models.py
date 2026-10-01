@@ -1821,8 +1821,22 @@ class Model(BaseModel):
     pricing: Optional[ModelPricing] = None
     reliability: Optional[ProviderReliability] = None
     api_format: Optional[str] = None
+    # Mirrors CanonicalProviderModel.AcceptedFormats in the Go loader: the
+    # formats every backend accepts, in preference order, api_format first.
+    accepted_formats: Optional[List[Literal["openai", "responses", "anthropic"]]] = None
     external_model_ids: Optional[Dict[str, str]] = None
     provider_preferences: Optional[OpenRouterProviderPreferences] = None
+
+    @model_validator(mode="after")
+    def validate_accepted_formats(self):
+        # An empty list means the single api_format, as the Go loader reads it.
+        if not self.accepted_formats:
+            return self
+        if len(set(self.accepted_formats)) != len(self.accepted_formats):
+            raise ValueError("accepted_formats lists a format twice")
+        if self.api_format and self.api_format != self.accepted_formats[0]:
+            raise ValueError("api_format must be the first of accepted_formats")
+        return self
 
 
 class LoRAAdapter(BaseModel):

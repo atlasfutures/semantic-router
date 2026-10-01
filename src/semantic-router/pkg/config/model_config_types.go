@@ -379,22 +379,25 @@ type ModelParams struct {
 	// AuthoredModel preserves the typed user declaration across materialization.
 	// Effective catalog defaults must not leak into exported user YAML, and an
 	// api_key_env reference must not be replaced by its expanded secret value.
-	AuthoredModel     *CanonicalProviderModel             `yaml:"-" json:"-"`
-	LoRAs             []LoRAAdapter                       `yaml:"loras,omitempty"`
-	AccessKey         string                              `yaml:"access_key,omitempty" json:"-"`
-	AccessKeys        map[string]string                   `yaml:"-" json:"-"`
-	Catalog           string                              `yaml:"catalog,omitempty"`
-	ParamSize         string                              `yaml:"param_size,omitempty"`
-	ContextWindowSize int                                 `yaml:"context_window_size,omitempty"`
-	APIFormat         string                              `yaml:"api_format,omitempty"`
-	Description       string                              `yaml:"description,omitempty"`
-	Capabilities      []string                            `yaml:"capabilities,omitempty"`
-	Tags              []string                            `yaml:"tags,omitempty"`
-	Evaluations       []modelcatalog.UserEvaluation       `yaml:"-" json:"-"`
-	IndexResults      map[string]modelcatalog.IndexResult `yaml:"-" json:"-"`
-	QualityIndex      string                              `yaml:"-" json:"-"`
-	ExternalModelIDs  map[string]string                   `yaml:"external_model_ids,omitempty"`
-	Modality          string                              `yaml:"modality,omitempty"`
+	AuthoredModel     *CanonicalProviderModel `yaml:"-" json:"-"`
+	LoRAs             []LoRAAdapter           `yaml:"loras,omitempty"`
+	AccessKey         string                  `yaml:"access_key,omitempty" json:"-"`
+	AccessKeys        map[string]string       `yaml:"-" json:"-"`
+	Catalog           string                  `yaml:"catalog,omitempty"`
+	ParamSize         string                  `yaml:"param_size,omitempty"`
+	ContextWindowSize int                     `yaml:"context_window_size,omitempty"`
+	APIFormat         string                  `yaml:"api_format,omitempty"`
+	// AcceptedFormats is providers.models[].accepted_formats: the formats the
+	// backends accept, in preference order, with APIFormat first.
+	AcceptedFormats  []string                            `yaml:"accepted_formats,omitempty"`
+	Description      string                              `yaml:"description,omitempty"`
+	Capabilities     []string                            `yaml:"capabilities,omitempty"`
+	Tags             []string                            `yaml:"tags,omitempty"`
+	Evaluations      []modelcatalog.UserEvaluation       `yaml:"-" json:"-"`
+	IndexResults     map[string]modelcatalog.IndexResult `yaml:"-" json:"-"`
+	QualityIndex     string                              `yaml:"-" json:"-"`
+	ExternalModelIDs map[string]string                   `yaml:"external_model_ids,omitempty"`
+	Modality         string                              `yaml:"modality,omitempty"`
 	// Vision declares whether the model accepts image input. It is a pointer
 	// because an absent flag means "assumed vision-capable": a catalog that
 	// has never been audited must not start refusing image turns. Only an

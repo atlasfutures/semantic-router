@@ -372,6 +372,9 @@ func mergeCanonicalProviderMetadata(
 	if overlay.APIFormat != "" {
 		existing.APIFormat = overlay.APIFormat
 	}
+	if len(overlay.AcceptedFormats) > 0 {
+		existing.AcceptedFormats = overlay.AcceptedFormats
+	}
 	if len(overlay.ExternalModelIDs) > 0 {
 		existing.ExternalModelIDs = overlay.ExternalModelIDs
 	}

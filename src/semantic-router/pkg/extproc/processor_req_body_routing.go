@@ -53,7 +53,7 @@ func (r *OpenAIRouter) prepareProviderDispatch(
 	if request == nil || ctx == nil || r == nil || r.Config == nil {
 		return nil, status.Error(codes.Internal, "neutral inference request is unavailable")
 	}
-	dispatch, err := r.resolveProviderDispatch(logicalModel, decisionName, useReasoning)
+	dispatch, err := r.resolveProviderDispatch(logicalModel, decisionName, useReasoning, ctx.SourceFormat)
 	if err != nil {
 		return nil, err
 	}
@@ -116,6 +116,7 @@ func (r *OpenAIRouter) resolveProviderDispatch(
 	logicalModel string,
 	decisionName string,
 	useReasoning bool,
+	clientFormat llmprotocol.WireFormat,
 ) (*providerDispatch, error) {
 	backendAddress, backendName, found, err := r.Config.ResolvePrimaryBackendForModel(logicalModel)
 	if err != nil {
@@ -128,7 +129,7 @@ func (r *OpenAIRouter) resolveProviderDispatch(
 	if err != nil {
 		return nil, fmt.Errorf("resolve provider profile for model %q: %w", logicalModel, err)
 	}
-	targetFormat, err := wireFormatForModel(r.Config.GetModelAPIFormat(logicalModel))
+	targetFormat, err := r.dispatchTargetFormat(logicalModel, clientFormat)
 	if err != nil {
 		return nil, fmt.Errorf("model %q: %w", logicalModel, err)
 	}
@@ -193,6 +194,28 @@ func (r *OpenAIRouter) applyDispatchDecision(
 	}
 	steered, err := r.applyRaylineARCThinkingLever(request, ctx)
 	return changed || injected || steered, err
+}
+
+// dispatchTargetFormat is the wire format a request goes to the model in: the
+// client's own when the model accepts it, otherwise the model's first
+// accepted format (providers.models[].accepted_formats, or its single
+// api_format). Every per-request guard reads providerDispatch.targetFormat,
+// never the model's configured format.
+func (r *OpenAIRouter) dispatchTargetFormat(model string, clientFormat llmprotocol.WireFormat) (llmprotocol.WireFormat, error) {
+	return wireFormatForModel(r.Config.ResolveModelTargetAPIFormat(model, apiFormatForWire(clientFormat)))
+}
+
+func apiFormatForWire(format llmprotocol.WireFormat) string {
+	switch format {
+	case llmprotocol.OpenAIChatV1:
+		return config.APIFormatOpenAI
+	case llmprotocol.OpenAIResponsesV1:
+		return config.APIFormatResponses
+	case llmprotocol.AnthropicMessagesV1:
+		return config.APIFormatAnthropic
+	default:
+		return ""
+	}
 }
 
 func wireFormatForModel(apiFormat string) (llmprotocol.WireFormat, error) {

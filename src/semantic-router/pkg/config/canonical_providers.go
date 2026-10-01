@@ -16,15 +16,20 @@ type CanonicalProviderDefaults struct {
 // CanonicalProviderModel binds a logical routing model to concrete access
 // details without mixing those access details into provider-wide defaults.
 type CanonicalProviderModel struct {
-	Name             string                `yaml:"name"`
-	Catalog          string                `yaml:"catalog,omitempty"`
-	Reasoning        *CanonicalReasoning   `yaml:"reasoning,omitempty"`
-	ProviderModelID  string                `yaml:"provider_model_id,omitempty"`
-	BackendRefs      []CanonicalBackendRef `yaml:"backend_refs,omitempty"`
-	Pricing          ModelPricing          `yaml:"pricing,omitempty"`
-	Reliability      ProviderReliability   `yaml:"reliability,omitempty"`
-	APIFormat        string                `yaml:"api_format,omitempty"`
-	ExternalModelIDs map[string]string     `yaml:"external_model_ids,omitempty"`
+	Name            string                `yaml:"name"`
+	Catalog         string                `yaml:"catalog,omitempty"`
+	Reasoning       *CanonicalReasoning   `yaml:"reasoning,omitempty"`
+	ProviderModelID string                `yaml:"provider_model_id,omitempty"`
+	BackendRefs     []CanonicalBackendRef `yaml:"backend_refs,omitempty"`
+	Pricing         ModelPricing          `yaml:"pricing,omitempty"`
+	Reliability     ProviderReliability   `yaml:"reliability,omitempty"`
+	APIFormat       string                `yaml:"api_format,omitempty"`
+	// AcceptedFormats lists the wire formats every backend of this model
+	// accepts, in preference order. A request goes out in the client's own
+	// format when it is listed, otherwise in the first. Empty means the
+	// single api_format.
+	AcceptedFormats  []string          `yaml:"accepted_formats,omitempty"`
+	ExternalModelIDs map[string]string `yaml:"external_model_ids,omitempty"`
 	// ProviderPreferences pins the OpenRouter providers this binding may use.
 	// It sits with the access binding rather than on the routing model card
 	// because which provider serves an arm is an access detail, not a routing

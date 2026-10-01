@@ -232,8 +232,9 @@ func validateRaylineARCThinkingLeverTransports(cfg *RouterConfig, arc *RaylineAR
 		if binding.Lever != string(thinkinglever.LeverPerTurnEffort) {
 			continue
 		}
-		if format := strings.ToLower(strings.TrimSpace(cfg.GetModelAPIFormat(worker))); format != APIFormatOpenAI {
-			return fmt.Errorf("workers[%q] dispatches %s, and per_turn_effort needs OpenRouter's Chat wire", worker, format)
+		if !cfg.ModelAcceptsOnlyAPIFormat(worker, APIFormatOpenAI) {
+			return fmt.Errorf("workers[%q] dispatches %s, and per_turn_effort needs OpenRouter's Chat wire",
+				worker, strings.Join(cfg.GetModelAcceptedFormats(worker), ", "))
 		}
 		for _, endpoint := range cfg.GetEndpointsForModel(worker) {
 			profile, err := cfg.GetProviderProfileForEndpoint(endpoint.Name)
