@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -35,6 +36,22 @@ type fakePolicyService struct {
 	choose   func(raylinearc.PolicyDecisionRequest) string
 	failWith string
 	requests []raylinearc.PolicyDecisionRequest
+	// relaxedUnsupported, when set, answers every relaxed decide with 422
+	// unsupported_request and this detail.reason, as a service whose
+	// package cannot serve relaxed calls.
+	relaxedUnsupported string
+	// nullRevision answers every decide with session_revision null, as only
+	// a relaxed call may.
+	nullRevision bool
+	// ignoreEpisodeMode answers a relaxed decide as a strict one, with a
+	// session revision, as a service that predates episode_mode.
+	ignoreEpisodeMode bool
+	// barrier, when set, holds each decide call until that many are in
+	// flight at once (or it times out), and inflight/maxInflight count them.
+	barrier     int
+	inflight    int
+	maxInflight int
+	arrived     chan struct{}
 }
 
 func newFakePolicyService(t *testing.T, alias, sha256 string, catalog []string) *fakePolicyService {
@@ -90,8 +107,15 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 		}
 		fake.mu.Lock()
 		fake.requests = append(fake.requests, decide)
-		choose, failWith := fake.choose, fake.failWith
+		choose, failWith, relaxedUnsupported := fake.choose, fake.failWith, fake.relaxedUnsupported
 		fake.mu.Unlock()
+		if relaxedUnsupported != "" && decide.EpisodeMode == raylinearc.PolicyEpisodeModeRelaxed {
+			fake.writeJSON(writer, http.StatusUnprocessableEntity, map[string]any{
+				"error": "unsupported_request", "detail": map[string]any{"reason": relaxedUnsupported},
+			})
+			return
+		}
+		fake.awaitBarrier()
 		if failWith != "" {
 			fake.writeJSON(writer, http.StatusServiceUnavailable, map[string]any{"error": failWith, "detail": map[string]any{}})
 			return
@@ -100,6 +124,49 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 	default:
 		http.NotFound(writer, request)
 	}
+}
+
+// refuseRelaxed answers relaxed decide calls with this relaxed_* reason, or
+// serves them again when reason is empty.
+func (fake *fakePolicyService) refuseRelaxed(reason string) {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	fake.relaxedUnsupported = reason
+}
+
+// holdUntilConcurrent makes each later decide call wait until n are in flight.
+func (fake *fakePolicyService) holdUntilConcurrent(n int) {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	fake.barrier, fake.arrived = n, make(chan struct{})
+}
+
+func (fake *fakePolicyService) peakConcurrency() int {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	return fake.maxInflight
+}
+
+func (fake *fakePolicyService) awaitBarrier() {
+	fake.mu.Lock()
+	if fake.barrier == 0 {
+		fake.mu.Unlock()
+		return
+	}
+	fake.inflight++
+	fake.maxInflight = max(fake.maxInflight, fake.inflight)
+	arrived := fake.arrived
+	if fake.inflight == fake.barrier {
+		close(arrived)
+	}
+	fake.mu.Unlock()
+	select {
+	case <-arrived:
+	case <-time.After(3 * time.Second):
+	}
+	fake.mu.Lock()
+	fake.inflight--
+	fake.mu.Unlock()
 }
 
 func (fake *fakePolicyService) packages() raylinearc.PolicyPackagesResponse {
@@ -125,6 +192,7 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 	if fake.encodeUnreported {
 		response.TimingMillis.Encode = nil
 	}
+	nullRevision, ignoreEpisodeMode := fake.nullRevision, fake.ignoreEpisodeMode
 	fake.mu.Unlock()
 	response.Shadow = []raylinearc.PolicyShadowResult{}
 	available := make(map[string]bool, len(request.Selection.AvailableActionIDs))
@@ -140,6 +208,11 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 	}
 	response.Decision.SelectedActionID = selected
 	response.Decision.SelectedArmID = "arm-" + selected[:8]
+	// A relaxed call advances no session (pathfinder#3068).
+	if (request.EpisodeMode == raylinearc.PolicyEpisodeModeRelaxed && !ignoreEpisodeMode) || nullRevision {
+		response.Encoding.SessionRevision = nil
+		response.Encoding.SessionAction = "rebuilt"
+	}
 	return response
 }
 

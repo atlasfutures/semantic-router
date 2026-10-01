@@ -387,13 +387,3 @@ class RaylineARCAlgorithmConfig(BaseModel):
                 "resumable_causal_mean encoder capability"
             )
         return self
-
-    @model_validator(mode="after")
-    def _relaxed_not_yet_in_policy_service_mode(self):
-        # The policy service refuses a second in-flight call for one session;
-        # a relaxed policy cell needs its lock-free call (router-infra#56).
-        if self.policy_service is not None and self.episode.consistency == "relaxed":
-            raise ValueError(
-                "episode: consistency=relaxed is not yet served in the policy-service mode"
-            )
-        return self

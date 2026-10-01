@@ -169,7 +169,16 @@ disuse; no live state is lost when it does.
 
 `relaxed` does not yet accept `close_header` or the `resumable_causal_mean`
 encoder capability (a retained encoder session serializes same-episode
-encodes), and is not yet served in the policy-service mode.
+encodes).
+
+In the policy-service mode, a relaxed cell sends `episode_mode: relaxed` on
+each decide call, so the service takes no session lock and keeps no session
+state for it: concurrent turns on one episode are all decided, each with a
+full encode. Not every policy service can do that (a package on the vLLM
+encoder, or pinned to a runtime without unretained prediction, answers
+`unsupported_request`). A relaxed policy cell therefore asks for one relaxed
+decision before it arms, and stays not ready, logging
+`rayline_arc_policy_relaxed_unsupported`, until the service serves one.
 
 ### Static retained-encoder replicas
 

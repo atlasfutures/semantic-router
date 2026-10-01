@@ -138,7 +138,16 @@ type PolicyDecisionRequest struct {
 	Selection     PolicySelection     `json:"selection"`
 	Evaluation    *PolicyEvaluation   `json:"evaluation"`
 	Shadow        []PolicyPackageRef  `json:"shadow"`
+	// EpisodeMode is "relaxed" for a relaxed cell: the service takes no lock
+	// and keeps no session, so concurrent calls on one episode are all
+	// served. Strict is the field's absence, the form every caller sent
+	// before it existed (pathfinder#3068).
+	EpisodeMode string `json:"episode_mode,omitempty"`
 }
+
+// PolicyEpisodeModeRelaxed is the decide request's episode_mode for a relaxed
+// cell.
+const PolicyEpisodeModeRelaxed = "relaxed"
 
 type PolicyPredictedUsage struct {
 	UncachedInput float64 `json:"uncached_input"`
@@ -215,8 +224,9 @@ type PolicyEncoding struct {
 	RepresentationID string `json:"representation_id"`
 	TokenCount       int    `json:"token_count"`
 	SessionAction    string `json:"session_action"`
-	SessionRevision  int    `json:"session_revision"`
-	EngineBuildID    string `json:"engine_build_id"`
+	// SessionRevision is null for a relaxed call, which advances no session.
+	SessionRevision *int   `json:"session_revision"`
+	EngineBuildID   string `json:"engine_build_id"`
 }
 
 type PolicyTiming struct {

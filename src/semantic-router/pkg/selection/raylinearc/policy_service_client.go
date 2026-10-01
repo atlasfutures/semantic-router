@@ -90,6 +90,21 @@ func PolicyServiceErrorClass(code string) string {
 	return "service_error"
 }
 
+// PolicyRelaxedUnsupportedClass is the class of a relaxed decide the service
+// cannot serve: its package runs on the vLLM encoder, or is pinned to a
+// runtime without unretained prediction (unsupported_request with a
+// relaxed_* detail.reason).
+const PolicyRelaxedUnsupportedClass = "relaxed_unsupported"
+
+func policyFailureClass(failure PolicyErrorResponse) string {
+	if failure.Error == "unsupported_request" {
+		if reason, _ := failure.Detail["reason"].(string); strings.HasPrefix(reason, "relaxed_") {
+			return PolicyRelaxedUnsupportedClass
+		}
+	}
+	return PolicyServiceErrorClass(failure.Error)
+}
+
 func NewPolicyServiceClient(config PolicyServiceConfig) *PolicyServiceClient {
 	connect := config.ConnectTimeout
 	if connect <= 0 {
@@ -201,7 +216,7 @@ func (client *PolicyServiceClient) do(
 	if response.StatusCode != http.StatusOK {
 		var failure PolicyErrorResponse
 		if json.Unmarshal(body, &failure) == nil && failure.Error != "" {
-			return nil, &PolicyServiceError{Class: PolicyServiceErrorClass(failure.Error), Status: response.StatusCode}
+			return nil, &PolicyServiceError{Class: policyFailureClass(failure), Status: response.StatusCode}
 		}
 		return nil, &PolicyServiceError{Class: "status", Status: response.StatusCode}
 	}
