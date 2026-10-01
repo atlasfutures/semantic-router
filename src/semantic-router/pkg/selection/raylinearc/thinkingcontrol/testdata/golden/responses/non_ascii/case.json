@@ -1,0 +1,28 @@
+{
+ "description": "non-ASCII client text; the instruction stays exact UTF-8",
+ "format": "responses",
+ "provider": "openai",
+ "model": "openai/gpt-6-sol",
+ "wire_model": "gpt-6-sol",
+ "admission": "placement_only",
+ "allow_experimental": true,
+ "registry_pin": "3083a4b6bd857c951177f973b41900798ba22f4968e224b4a29ad3e9c297cff2",
+ "calls": [
+  {
+   "client_body": "client-00.json",
+   "control_id": "77f4674fea6c3b4f3f53ab0337b61fc725ef66e045f317767efdbf94b6979d48",
+   "expected_body": "provider-00.json",
+   "receipt": {
+    "call": 0,
+    "control_id": "77f4674fea6c3b4f3f53ab0337b61fc725ef66e045f317767efdbf94b6979d48",
+    "level_in_force": "down",
+    "instruction_state": "steered",
+    "written": "instruction",
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  }
+ ],
+ "refusal": null
+}
