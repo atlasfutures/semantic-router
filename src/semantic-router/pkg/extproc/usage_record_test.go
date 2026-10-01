@@ -273,3 +273,20 @@ func TestPricingSnapshotFollowsAConfigReload(t *testing.T) {
 		}
 	}
 }
+
+// A cut stream whose counts are estimated keeps the charge the upstream did
+// state before the cut.
+func TestEstimatedCutStreamKeepsTheStatedCharge(t *testing.T) {
+	charged := 0.0031
+	ctx := attributedStreamContext("rt_cut_charged", "partial answer text")
+	ctx.StreamingAborted = true
+	ctx.SemanticStreamState.usage = llmprotocol.Usage{
+		State: llmprotocol.UsageUnavailable, ProviderCost: llmprotocol.ProviderCost{Charged: &charged},
+	}
+
+	usage := truncatedStreamUsage(ctx, invalidResponseTerminalUsage("stream_cut"))
+
+	if !usage.estimated || usage.providerCost.Charged == nil || *usage.providerCost.Charged != charged {
+		t.Fatalf("estimated = %v, charge = %v; want an estimate that keeps %v", usage.estimated, usage.providerCost.Charged, charged)
+	}
+}

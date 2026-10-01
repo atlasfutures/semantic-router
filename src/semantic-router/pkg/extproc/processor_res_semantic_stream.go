@@ -534,6 +534,9 @@ func truncatedStreamUsage(ctx *RequestContext, usage responseUsageMetrics) respo
 		return usage
 	}
 	if estimated, carried := estimatedTruncatedStreamUsage(ctx); carried {
+		// The counts are the Router's estimate; a charge the upstream
+		// stated before the cut is still the upstream's.
+		estimated.providerCost = usage.providerCost
 		return estimated
 	}
 	logging.ComponentWarnEvent("extproc", "stream_truncated_uncounted", map[string]interface{}{
