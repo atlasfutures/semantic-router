@@ -244,6 +244,9 @@ func (selector *raylineARCSelector) Select(
 	ctx context.Context,
 	selCtx *selection.SelectionContext,
 ) (*selection.SelectionResult, error) {
+	if selCtx != nil && selCtx.RaylineARC != nil && selCtx.RaylineARC.Coalesced != nil {
+		return cloneRaylineARCSelectionResult(selCtx.RaylineARC.Coalesced), nil
+	}
 	armed := selector.armedComponents()
 	arcContext, workerIDs, state, err := selector.prepareSelection(armed, selCtx)
 	if err != nil {

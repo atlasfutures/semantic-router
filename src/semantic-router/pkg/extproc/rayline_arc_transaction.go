@@ -67,6 +67,10 @@ type raylineARCEpisodeTransaction struct {
 	renewCancel            context.CancelFunc
 	renewDone              chan struct{}
 	leaseLost              atomic.Bool
+	// borrowed marks a resend that joined an identical in-flight turn: it holds
+	// no lease, renews nothing and commits nothing, and its state is a
+	// read-only copy of what the first copy prepared.
+	borrowed bool
 	// onFinalize is an optional terminal-path hook; the stream-level hold in
 	// processWithContext is what keeps the episode store open.
 	onFinalize func()
@@ -91,6 +95,20 @@ func newRaylineARCEpisodeTransaction(
 	}
 	transaction.startRenewal()
 	return transaction
+}
+
+// newBorrowedRaylineARCEpisodeTransaction is the transaction a coalesced
+// resend dispatches under. It reads like the first copy's prepared one, so the
+// resend renders the same controls and ledger, and finalizes to nothing.
+func newBorrowedRaylineARCEpisodeTransaction(
+	state *raylinearc.EpisodeState,
+	episodeIDHash string,
+) *raylineARCEpisodeTransaction {
+	return &raylineARCEpisodeTransaction{
+		state:         state,
+		episodeIDHash: episodeIDHash,
+		borrowed:      true,
+	}
 }
 
 func (transaction *raylineARCEpisodeTransaction) releaseHold() {
@@ -222,6 +240,10 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 	}
 	transaction.finalizeOnce.Do(func() {
 		defer transaction.releaseHold()
+		if transaction.borrowed {
+			metrics.RecordRaylineARCEpisodeTransaction("coalesced", "")
+			return
+		}
 		transaction.stopRenewal()
 		if !transaction.selectionReady || transaction.leaseLost.Load() {
 			transaction.finalizeErr = ErrRaylineARCEpisodeLeaseLost
@@ -289,6 +311,9 @@ func (transaction *raylineARCEpisodeTransaction) abort(
 	}
 	transaction.finalizeOnce.Do(func() {
 		defer transaction.releaseHold()
+		if transaction.borrowed {
+			return
+		}
 		transaction.stopRenewal()
 		transaction.finalizeErr = transaction.store.Abort(
 			ctx,

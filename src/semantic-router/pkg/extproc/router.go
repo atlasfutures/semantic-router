@@ -78,7 +78,10 @@ type OpenAIRouter struct {
 	// one per recipe whose ARC decision uses a policy service.
 	RaylineARCRecipeEpisodeStores map[config.RecipeName]raylinearc.EpisodeStore
 	raylineARCSessionClose        raylineARCSessionCloseFunc
-	ProtocolCodecs                *protocolcodec.Registry
+	// raylineARCInflight joins an identical resend to the decision its first
+	// copy is still making, instead of contending for the episode lease.
+	raylineARCInflight raylineARCInflightRegistry
+	ProtocolCodecs     *protocolcodec.Registry
 
 	// CredentialResolver resolves per-user LLM API keys from multiple sources
 	// (ext_authz injected headers -> static config fallback).
