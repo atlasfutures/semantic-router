@@ -104,8 +104,9 @@ type RequestContext struct {
 	// context recovery answered. The recovered body is re-encoded for the
 	// client, which drops it, so the usage report reads it from here.
 	ContextRecoveryProviderCost *llmprotocol.ProviderCost
-	PublicChatUsageFilter     *protocolcodec.ChatUsageStreamFilter
-	SemanticStreamState       *semanticResponseStreamState
+
+	PublicChatUsageFilter *protocolcodec.ChatUsageStreamFilter
+	SemanticStreamState   *semanticResponseStreamState
 
 	// DispatchedReasoningEffort and DispatchedReasoningBound are the reasoning
 	// controls the rendered upstream body carries, read back off that body
