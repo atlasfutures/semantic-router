@@ -1,6 +1,6 @@
 {
   "schema_version": "rayline.arc-policy-package.v5",
-  "package_id": "681df3d2f1e3cf9e50c74ebca7db53daa3e14858164066a8a8f22f6a6b58ea36",
+  "package_id": "c2c3bd90dc3c8a29a3db0241258c8c859ddb56b71adb5d40a7582ce0edec36d5",
   "serving_policy": {
     "schema_version": "pathfinder.serving-policy.v1",
     "policy_id": "f0203b98f859dced93cb2e0bb6b7d4acdf2fd00aef2d1a5d42215cc138874912",
@@ -23,6 +23,8 @@
     "serializer": "arc-role-blocks-v1",
     "projection": "pathfinder.input-projection.v1",
     "tool_definitions": "include_recorded",
+    "conversation": "canonical_v1",
+    "harness_injections": "strip_claude_code_2_1_v1",
     "encoder_model": "Qwen/Qwen3.5-0.8B",
     "encoder_revision": "2fc06364715b967f1860aea9cf38778875588b17",
     "dtype": "bfloat16",

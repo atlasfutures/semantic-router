@@ -12,15 +12,18 @@ import (
 	"testing"
 )
 
-// The shared v5 fixture: an Opus native-only action and two GLM actions (the
-// neutral level and "up"), all at the default base, under registry
-// 3083a4b6...cff2. Both models' OpenRouter cells admit their instructions
-// experimentally.
+// The shared v5 fixture (pathfinder 9e6e236): an Opus native-only action and
+// two GLM actions (the neutral level and "up"), all at the default base, under
+// registry 3083a4b6...cff2. Actions name trained models (claude-opus-5,
+// glm-5.3-flash), as published packages do; the workers serve, and the
+// registry keys, provider model ids. Both models' OpenRouter cells admit their
+// instructions experimentally.
 const (
 	policyV5Fixture      = "../selection/raylinearc/testdata/policy_service/package_manifest.v5.json"
-	policyV5OpusAction   = "0527fe7631783f956fc850185d3130926ed252b9e49e005eba68a8f884152321"
-	policyV5GLMNone      = "9d2b81063cac1733ef6859b8fc061ba5192366aa0966c7ca5e055110041aa332"
-	policyV5GLMUp        = "b18e89bdb29cfb16b9cf71e46207ebde0ad463e5256f4b2c837280d84f13d7d7"
+	policyV5Canonical    = "../selection/raylinearc/testdata/policy_service/package_manifest.v5.canonical_v1.json"
+	policyV5OpusAction   = "864cc7a8eab47911b61a2b3b5d79dcb8ed81c8ae9f8a90e941aea5bf38fc21d8"
+	policyV5GLMNone      = "20b6cddd7ae7cedc3ba8321cac7d962dca24b3c98dcf0408076adf40549e4a80"
+	policyV5GLMUp        = "cf5bc08ecfab91cdc1e26c1c2b98e7256e4a9e64183210ceb619e9c4745ff055"
 	policyV5OpenRouter   = "https://openrouter.ai/api/v1"
 	policyV5AnthropicURL = "https://api.anthropic.com"
 )
@@ -72,7 +75,7 @@ func policyV5Decision(t *testing.T, manifest []byte) (*RouterConfig, Decision) {
 		PackageManifest:           path,
 		AllowExperimentalControls: true,
 		ModelSchedule:             RaylineARCModelScheduleTaskTurnCompaction,
-		TrainedModels:             map[string]string{"arm-opus": "anthropic/claude-opus-5", "arm-glm": "z-ai/glm-5.3-flash"},
+		TrainedModels:             map[string]string{"arm-opus": "claude-opus-5", "arm-glm": "glm-5.3-flash"},
 		Bindings: []RaylineARCPolicyBinding{
 			{ActionID: policyV5OpusAction, Worker: "arm-opus"},
 			{ActionID: policyV5GLMNone, Worker: "arm-glm"},
@@ -98,7 +101,7 @@ func TestRaylineARCPolicyPackageV5Loads(t *testing.T) {
 	}
 	policy := decision.Algorithm.RaylineARC.PolicyService
 	action, ok := policy.PackageV5Action(policyV5GLMUp)
-	if !ok || action.Model != "z-ai/glm-5.3-flash" || action.Control.Instruction == nil ||
+	if !ok || action.Model != "glm-5.3-flash" || action.Control.Instruction == nil ||
 		action.Control.Instruction.Level != "up" {
 		t.Fatalf("PackageV5Action = %+v, %v", action, ok)
 	}
@@ -118,7 +121,7 @@ func TestRaylineARCPolicyPackageV5AdmitsEveryAcceptedFormat(t *testing.T) {
 	// The fixture's GLM "up" control, as an Opus action; action ids are
 	// opaque to VSR.
 	manifest := bytes.Replace(readPolicyV5Fixture(t),
-		[]byte(`"model": "z-ai/glm-5.3-flash",
+		[]byte(`"model": "glm-5.3-flash",
       "control": {
         "base": {
           "native": "default"
@@ -126,7 +129,7 @@ func TestRaylineARCPolicyPackageV5AdmitsEveryAcceptedFormat(t *testing.T) {
         "budget_tokens": null,
         "instruction": {
           "level": "up"`),
-		[]byte(`"model": "anthropic/claude-opus-5",
+		[]byte(`"model": "claude-opus-5",
       "control": {
         "base": {
           "native": "default"
@@ -295,7 +298,7 @@ func TestRaylineARCPolicyPackageV5BoundsControlShapes(t *testing.T) {
 			PreferredEndpoints: []string{"openrouter"}, APIFormat: APIFormatOpenAI,
 			ExternalModelIDs: map[string]string{"vllm": "z-ai/glm-5.3-flash"},
 		}
-		policy.TrainedModels[worker] = "z-ai/glm-5.3-flash"
+		policy.TrainedModels[worker] = "glm-5.3-flash"
 		decision.ModelRefs = append(decision.ModelRefs, ModelRef{Model: worker, ModelReasoningControl: ModelReasoningControl{UseReasoning: &on}})
 		policy.Bindings = append(policy.Bindings, RaylineARCPolicyBinding{ActionID: fmt.Sprintf("%064x", index+1), Worker: worker})
 	}
@@ -344,19 +347,15 @@ func TestRaylineARCPolicyPackageV5EncodingProfileMembersAtStartup(t *testing.T) 
 	}
 }
 
-// An action's model is the trained name, decoupled from providers (as in
-// published packages such as c27e1796); admission keys on the model the bound
-// worker serves.
+// An action's model is the trained name, decoupled from providers (as in the
+// fixture and published packages such as c27e1796); admission keys on the
+// model the bound worker serves.
 func TestRaylineARCPolicyPackageV5AdmitsOnTheServedModel(t *testing.T) {
-	trained := bytes.ReplaceAll(readPolicyV5Fixture(t), []byte(`"model": "anthropic/claude-opus-5"`), []byte(`"model": "claude-opus-5"`))
-	trained = bytes.ReplaceAll(trained, []byte(`"model": "z-ai/glm-5.3-flash"`), []byte(`"model": "glm-5.3-flash"`))
-	if bytes.Contains(trained, []byte(`"model": "anthropic/`)) || bytes.Contains(trained, []byte(`"model": "z-ai/`)) {
-		t.Fatal("the fixture still names a provider-qualified model")
+	fixture := readPolicyV5Fixture(t)
+	if bytes.Contains(fixture, []byte(`"model": "anthropic/`)) || bytes.Contains(fixture, []byte(`"model": "z-ai/`)) {
+		t.Fatal("the fixture names a provider-qualified model")
 	}
-	cfg, decision := policyV5Decision(t, trained)
-	decision.Algorithm.RaylineARC.PolicyService.TrainedModels = map[string]string{
-		"arm-opus": "claude-opus-5", "arm-glm": "glm-5.3-flash",
-	}
+	cfg, decision := policyV5Decision(t, fixture)
 	if err := validatePolicyDispatch(cfg, decision); err != nil {
 		t.Fatalf("trained action names refused: %v", err)
 	}
@@ -381,12 +380,13 @@ func TestRaylineARCPolicyPackageV5TrainedModelsAreDeclared(t *testing.T) {
 		trained map[string]string
 		want    string
 	}{
-		"a worker without a declaration": {map[string]string{"arm-glm": "z-ai/glm-5.3-flash"}, `declares no trained model for worker "arm-opus"`},
-		"a worker serving another trained model": {
-			map[string]string{"arm-opus": "anthropic/claude-opus-5", "arm-glm": "glm-5.3-flash"}, `serves trained model "glm-5.3-flash"`,
+		"a worker without a declaration": {map[string]string{"arm-glm": "glm-5.3-flash"}, `declares no trained model for worker "arm-opus"`},
+		// The served provider model id is not the trained name.
+		"a worker declaring its served id": {
+			map[string]string{"arm-opus": "claude-opus-5", "arm-glm": "z-ai/glm-5.3-flash"}, `serves trained model "z-ai/glm-5.3-flash"`,
 		},
 		"a declaration no binding uses": {
-			map[string]string{"arm-opus": "anthropic/claude-opus-5", "arm-glm": "z-ai/glm-5.3-flash", "arm-spare": "x"}, `"arm-spare", which no binding uses`,
+			map[string]string{"arm-opus": "claude-opus-5", "arm-glm": "glm-5.3-flash", "arm-spare": "x"}, `"arm-spare", which no binding uses`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -396,5 +396,22 @@ func TestRaylineARCPolicyPackageV5TrainedModelsAreDeclared(t *testing.T) {
 				t.Fatalf("err = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+// pathfinder's canonical_v1 fixture states both optional encoding_profile
+// members; it loads through startup validation under the same bindings.
+func TestRaylineARCPolicyPackageV5CanonicalFixtureLoads(t *testing.T) {
+	raw, err := os.ReadFile(policyV5Canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte(`"conversation": "canonical_v1"`)) ||
+		!bytes.Contains(raw, []byte(`"harness_injections": "strip_claude_code_2_1_v1"`)) {
+		t.Fatal("the canonical_v1 fixture no longer states both encoding_profile members")
+	}
+	cfg, decision := policyV5Decision(t, raw)
+	if err := validatePolicyDispatch(cfg, decision); err != nil {
+		t.Fatalf("the canonical_v1 fixture refused: %v", err)
 	}
 }
