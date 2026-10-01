@@ -2,6 +2,7 @@ package protocolcodec
 
 import (
 	"encoding/json"
+	"net/url"
 	"strings"
 	"unicode/utf8"
 
@@ -112,7 +113,10 @@ func webSearchURLCitationsTo(raw json.RawMessage, end int64) []llmprotocol.Citat
 	}
 	citations := make([]llmprotocol.Citation, 0, len(wire))
 	for _, citation := range wire {
-		if citation.URL == "" {
+		// Only a web search result location with an http(s) URL has the
+		// neutral citation's shape; any other kind, a future one with a url
+		// member included, stays raw, so it can never fail the response.
+		if citation.Type != "web_search_result_location" || !httpURL(citation.URL) {
 			continue
 		}
 		citations = append(citations, llmprotocol.Citation{
@@ -120,6 +124,14 @@ func webSearchURLCitationsTo(raw json.RawMessage, end int64) []llmprotocol.Citat
 		})
 	}
 	return citations
+}
+
+func httpURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	// The neutral citation contract takes an absolute http(s) URL without
+	// credentials; anything else would fail validation of the whole response.
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" &&
+		parsed.User == nil
 }
 
 // withoutForeignServerToolOutput removes the carried Anthropic web search

@@ -472,3 +472,24 @@ data: {"type":"message_stop"}
 		}
 	}
 }
+
+// A future citation kind with a url member that is not a web URL stays raw:
+// it reaches an Anthropic client, is reported for others, and never fails the
+// response by being projected into a neutral URL citation.
+func TestUnknownURLBearingCitationStaysRaw(t *testing.T) {
+	future := `[{"type":"future_location","url":"document:1"},{"type":"web_search_result_location","url":"ftp://example.com/x","title":"t"},` +
+		`{"type":"web_search_result_location","url":"https://user:pw@example.com/","title":"t"}]`
+	body := `{"id":"msg_1","type":"message","role":"assistant","model":"source-model",` +
+		`"content":[{"type":"text","text":"The handbook says ten.","citations":` + future + `}],` +
+		`"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`
+	if anthropic := string(translateAnthropicResponse(t, body, llmprotocol.AnthropicMessagesV1)); !strings.Contains(anthropic, `"document:1"`) {
+		t.Fatalf("the Anthropic client lost the future citation: %s", anthropic)
+	}
+	for _, client := range []llmprotocol.WireFormat{llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1} {
+		out := string(translateAnthropicResponse(t, body, client))
+		if !strings.Contains(out, "The handbook says ten.") || strings.Contains(out, "document:1") || strings.Contains(out, "ftp://") ||
+			strings.Contains(out, "user:pw") {
+			t.Fatalf("%s: %s", client, out)
+		}
+	}
+}
