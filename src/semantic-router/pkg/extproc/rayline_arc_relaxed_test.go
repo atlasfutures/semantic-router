@@ -127,3 +127,41 @@ func TestOmittedConsistencyIsTheSameSelectionConfigAsStrict(t *testing.T) {
 		t.Fatal("strict and relaxed consistency read as one selector config")
 	}
 }
+
+func unreachableRedisEpisodeConfig(consistency string) config.RaylineARCEpisodeConfig {
+	return config.RaylineARCEpisodeConfig{
+		IDHeader:              testEpisodeIDHeader,
+		Backend:               config.RaylineARCBackendRedis,
+		KeyPrefix:             "test:rayline-arc-unready:",
+		AcquireTimeoutSeconds: 1,
+		LeaseTTLSeconds:       60,
+		IdleTTLSeconds:        900,
+		Consistency:           consistency,
+		// Nothing listens on the discard port.
+		Redis: config.RaylineARCRedisConfig{Address: "127.0.0.1:9"},
+	}
+}
+
+// A relaxed cell whose Redis is down at startup keeps its store and serves:
+// each turn decides statelessly until the store is back. A strict cell still
+// refuses to start without its store.
+func TestRelaxedCellStartsAndServesWithItsStoreDown(t *testing.T) {
+	if _, _, err := createRaylineARCEpisodeStore(unreachableRedisEpisodeConfig(config.RaylineARCConsistencyStrict)); err == nil {
+		t.Fatal("a strict cell started without its store")
+	}
+	store, closeStore, err := createRaylineARCEpisodeStore(unreachableRedisEpisodeConfig(config.RaylineARCConsistencyRelaxed))
+	if err != nil || store == nil {
+		t.Fatalf("relaxed cell store = %v, err %v; want the store kept", store, err)
+	}
+	t.Cleanup(func() { _ = closeStore() })
+
+	router, algorithm := relaxedRouter(t)
+	router.RaylineARCEpisodeStore = store
+	ctx := relaxedTurn(t, router, algorithm, `{"turn":"a"}`, 1)
+	if !ctx.RaylineARCTransaction.stateless {
+		t.Fatal("a relaxed turn with its store down must decide statelessly")
+	}
+	if err := ctx.RaylineARCTransaction.commit(context.Background(), ctx); err != nil {
+		t.Fatalf("stateless commit = %v", err)
+	}
+}
