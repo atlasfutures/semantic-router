@@ -130,8 +130,9 @@ thinking-off action (`effort: none`) stays off, and the selection log records
 `policy_declared_effort` beside `policy_dispatch_effort`.
 
 **Package v5.** A v5 package (`rayline.arc-policy-package.v5`, pathfinder's
-"Policy package v5"; ADR 0109) names each action by a model and a
-format-agnostic thinking control. `package_manifest` points at the package's
+"Policy package v5"; ADR 0109) names each action by a trained model (the name
+its rows were fit on, such as `claude-opus-5`) and a format-agnostic thinking
+control. `package_manifest` points at the package's
 `package.json`, whose sha256 must be `package_sha256`. At load VSR:
 
 - recomputes each action's `control_id` from its control (RFC 8785) and refuses
@@ -140,13 +141,20 @@ format-agnostic thinking control. `package_manifest` points at the package's
   `configs/thinking_controls.compiled.json`, embedded and pinned in
   `pkg/selection/raylinearc/thinkingcontrol`);
 - requires every package action bound, and each bound control admitted on its
-  worker's (model, provider, format) cell for every format the worker accepts,
-  since the target format is chosen per request; an experimental instruction
-  needs `allow_experimental_controls`.
+  worker's (served model, provider, format) cell for every format the worker
+  accepts, since the target format is chosen per request. The served model is
+  the worker's provider model id (what its dispatch sends, such as
+  `anthropic/claude-opus-5`), never the action's trained name; an experimental
+  instruction needs `allow_experimental_controls`;
+- requires `trained_models` to declare, for every bound worker, the trained
+  model it serves, equal to its actions' model. Trained names are decoupled
+  from providers, so the pairing is declared, never inferred; a missing or
+  different declaration, or one no binding uses, is refused.
 
 `thinking_controls_sha256` is informational. A v5 binding is only `action_id`
-and `worker`. The v4 fields, `dispatch_effort`, `thinking_lever` and
-`worker_thinking` are refused with a v5 package.
+and `worker`, beside `trained_models: {<worker>: <trained name>}`. The v4
+fields, `dispatch_effort`, `thinking_lever` and `worker_thinking` are refused
+with a v5 package, and `trained_models` with a v4 one.
 
 Route construction admits the control on the cell of the request's target
 format and resumes the episode's placer. The provider boundary then renders it

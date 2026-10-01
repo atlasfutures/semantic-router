@@ -5620,6 +5620,12 @@
         },
         "allow_experimental_controls": {
           "type": "boolean"
+        },
+        "trained_models": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
         }
       },
       "additionalProperties": false,
