@@ -107,10 +107,21 @@ against the `action_id`. The steering suffix still renders from the level, a
 thinking-off action (`effort: none`) stays off, and the selection log records
 `policy_declared_effort` beside `policy_dispatch_effort`.
 
-On the neutral level the lever writes nothing, so a steer written on an earlier
-turn stays in force. The record carries both `thinking_level_requested` and
-`thinking_level_in_force`. This matches collection, where a "none" draw also
-appended nothing.
+Under `emit: on_change_v1` (ADR 0109) an item is written only when the level
+in force changes. A return from a steer to the neutral level writes the
+binding's `neutral_text`, the neutral marker; the neutral level at epoch start,
+or repeated, writes nothing, and a transcript rewrite re-asserts a steered
+level only. Each call's routing record attributes the level in force, not the
+one requested: `thinking_level_in_force`, its `thinking_control_sha256` (the
+neutral level's own control under the marker), and
+`thinking_instruction_state` (`never`, `neutral_marker` or `steered`), beside
+`thinking_level_requested` and `thinking_written`. Under the older
+`emit: on_change` the neutral level writes nothing, so a steer written on an
+earlier turn stays in force (`thinking_skipped: neutral_inexpressible`).
+
+The selection log's `thinking_level` and the routes API's `thinking_level` are
+the decision's level: both are produced before, or without, any dispatch, when
+no level is yet in force.
 
 A remap still changes cost and quality, because cache share and effort
 handling differ by endpoint. So a remap on a production alias is canaried. If

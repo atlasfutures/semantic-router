@@ -225,3 +225,55 @@ func TestDisabledThinkingLeverChangesNothing(t *testing.T) {
 		t.Fatal("a disabled lever stored a ledger, which would move the episode to v3")
 	}
 }
+
+// Under on_change_v1 a return from a steer to the neutral level writes the
+// neutral marker at the tail, the marker survives the episode store, and the
+// routing record attributes the call to the level in force and its
+// instruction state.
+func TestThinkingLeverWritesTheNeutralMarkerOnReturnToNeutral(t *testing.T) {
+	const marker = "Until the next steering instruction, use your normal judgement."
+	e := newLeverEpisode(t, true)
+	lever := e.decision.Algorithm.RaylineARC.ThinkingLever
+	binding := lever.Workers[leverWorker]
+	binding.Emit, binding.NeutralLevel, binding.NeutralText = "on_change_v1", "none", marker
+	lever.Workers[leverWorker] = binding
+	record := func(ctx *RequestContext) map[string]interface{} {
+		fields := map[string]interface{}{}
+		appendRaylineARCThinkingFields(fields, ctx)
+		return fields
+	}
+
+	turn0 := []llmprotocol.Message{leverText(llmprotocol.RoleUser, "fix it")}
+	_, ctx0 := e.turn(leverWorker, turn0, true)
+	if fields := record(ctx0); fields["thinking_instruction_state"] != "steered" || fields["thinking_written"] != "instruction" {
+		t.Fatalf("steered turn record = %v", fields)
+	}
+
+	lever.Level = "none"
+	turn1 := append(append([]llmprotocol.Message(nil), turn0...),
+		leverText(llmprotocol.RoleAssistant, "done"), leverText(llmprotocol.RoleUser, "next"))
+	provider1, ctx1 := e.turn(leverWorker, turn1, true)
+	tail := provider1[len(provider1)-1].Content
+	if tail[len(tail)-1].Text != marker {
+		t.Fatalf("the neutral marker is not the tail: %+v", tail)
+	}
+	fields := record(ctx1)
+	if fields["thinking_level_requested"] != "none" || fields["thinking_level_in_force"] != "none" ||
+		fields["thinking_instruction_state"] != "neutral_marker" || fields["thinking_written"] != "neutral_marker" {
+		t.Fatalf("return-to-neutral record = %v", fields)
+	}
+
+	turn2 := append(append([]llmprotocol.Message(nil), turn1...),
+		leverText(llmprotocol.RoleAssistant, "ok"), leverText(llmprotocol.RoleUser, "again"))
+	provider2, ctx2 := e.turn(leverWorker, turn2, true)
+	if ctx2.RaylineARCThinking.Emitted || ctx2.RaylineARCThinking.Replayed != 2 ||
+		ctx2.RaylineARCThinking.InstructionState != "neutral_marker" {
+		t.Fatalf("a repeated neutral turn = %+v", ctx2.RaylineARCThinking)
+	}
+	before, after := encodedChatMessages(t, provider1), encodedChatMessages(t, provider2)
+	for index := range before {
+		if !bytes.Equal(before[index], after[index]) {
+			t.Fatalf("provider message %d changed after the marker:\n%s\n%s", index, before[index], after[index])
+		}
+	}
+}

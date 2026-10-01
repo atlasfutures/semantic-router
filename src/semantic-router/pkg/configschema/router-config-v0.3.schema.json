@@ -5669,6 +5669,9 @@
         "neutral_level": {
           "type": "string"
         },
+        "neutral_text": {
+          "type": "string"
+        },
         "placements": {
           "items": {
             "type": "string"

@@ -225,8 +225,10 @@ class RaylineARCThinkingBindingConfig(BaseModel):
     export_sha256: str = ""
     admission: Literal["certified", "experimental"]
     lever: Literal["prompt_steering_suffix", "per_turn_effort"]
-    emit: Literal["every_turn", "on_change"]
+    emit: Literal["every_turn", "on_change", "on_change_v1"]
     neutral_level: str = ""
+    # The marker an on_change_v1 binding writes on a return to neutral.
+    neutral_text: str = ""
     placements: list[
         Literal[
             "append_tail_user_text",
