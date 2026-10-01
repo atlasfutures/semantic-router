@@ -241,6 +241,7 @@ def _resolve_binding(
         ),
         None,
     )
+    _validate_accepted_formats(model, provider, matching_binding, path)
     if not model_id and matching_binding is not None:
         if _provider_model_id_kind(matching_binding, f"{path}.model"):
             raise CatalogProviderProjectionError(
@@ -385,6 +386,33 @@ def _infer_protocol(
         f"{card_id!r} through {', '.join(protocols)} and its default protocol is "
         "not one of them; set api_format explicitly"
     )
+
+
+def _validate_accepted_formats(
+    model: Model,
+    provider: dict[str, Any],
+    matching_binding: dict[str, Any] | None,
+    path: str,
+) -> None:
+    """Mirror validateAcceptedFormatBindings in the Go loader.
+
+    The endpoint is chosen after the request is encoded, so every backend must
+    create requests in every accepted format, and a backend's catalog mapping
+    must list each one.
+    """
+
+    provider_id = _required_string(provider, "id", f"{path}.provider")
+    for api_format in model.accepted_formats or []:
+        protocol = _protocol_for_api_format(api_format, path)
+        _validate_protocol(provider, protocol, "", path)
+        if matching_binding is not None and protocol not in _string_list(
+            matching_binding.get("protocols"), path
+        ):
+            raise CatalogProviderProjectionError(
+                f"{path}: accepted_formats {api_format!r}: provider {provider_id!r}'s "
+                f"catalog mapping of {matching_binding.get('id')!r} does not list "
+                f"{protocol}"
+            )
 
 
 def _validate_protocol(

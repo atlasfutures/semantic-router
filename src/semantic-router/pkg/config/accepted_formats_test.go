@@ -219,4 +219,11 @@ func TestPromptHelperNeedsToAcceptChat(t *testing.T) {
 	if formatRefusal(ModelParams{APIFormat: APIFormatAnthropic}) == nil {
 		t.Fatal("a Messages-only helper was accepted")
 	}
+	// Without Chat, the looper's request takes the first format, Messages.
+	if formatRefusal(ModelParams{APIFormat: APIFormatAnthropic, AcceptedFormats: []string{APIFormatAnthropic, APIFormatResponses}}) == nil {
+		t.Fatal("a helper whose Chat request would go out as Messages was accepted")
+	}
+	if err := formatRefusal(ModelParams{APIFormat: APIFormatResponses, AcceptedFormats: []string{APIFormatResponses, APIFormatAnthropic}}); err != nil {
+		t.Fatalf("a helper whose Chat request goes out as Responses was refused: %v", err)
+	}
 }

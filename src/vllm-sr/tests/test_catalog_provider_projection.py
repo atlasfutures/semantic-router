@@ -169,8 +169,7 @@ def test_router_owned_physical_model_requires_explicit_provider(
     tmp_path, api_format, model_name
 ):
     config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        f"""
+    config_path.write_text(f"""
 version: v0.3
 listeners:
   - name: public
@@ -181,8 +180,7 @@ providers:
     - name: {model_name}
       api_format: {api_format}
 routing: {{}}
-"""
-    )
+""")
     config = parse_user_config(str(config_path))
 
     errors = validate_user_config(config, log_summary=False)
@@ -204,8 +202,7 @@ routing: {{}}
 
 def test_router_owned_virtual_model_may_resolve_its_recipe_pool(tmp_path):
     config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        """
+    config_path.write_text("""
 version: v0.3
 listeners:
   - name: public
@@ -216,8 +213,7 @@ providers:
     - name: auto
       catalog: vllm-sr/mom-v1-lite
 routing: {}
-"""
-    )
+""")
 
     errors = validate_user_config(
         parse_user_config(str(config_path)),
@@ -229,8 +225,7 @@ routing: {}
 
 def test_backendless_api_model_is_valid_metadata_but_cannot_generate_envoy(tmp_path):
     config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        """
+    config_path.write_text("""
 version: v0.3
 listeners: []
 providers:
@@ -238,8 +233,7 @@ providers:
     - name: claude-test
       api_format: anthropic
 routing: {}
-"""
-    )
+""")
 
     config = parse_user_config(str(config_path))
 
@@ -290,8 +284,7 @@ routing: {}
 
 def test_explicit_empty_auth_prefix_overrides_catalog_default(tmp_path):
     config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        """
+    config_path.write_text("""
 version: v0.3
 providers:
   models:
@@ -305,8 +298,7 @@ providers:
           auth_prefix: ""
           api_key_env: PRIVATE_API_KEY
 routing: {}
-"""
-    )
+""")
 
     projected = project_provider_models_for_envoy(parse_user_config(str(config_path)))
 
@@ -353,8 +345,7 @@ routing:
 
 def test_catalog_provider_projection_rejects_missing_model_mapping(tmp_path):
     config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        """
+    config_path.write_text("""
 version: v0.3
 providers:
   models:
@@ -364,8 +355,7 @@ providers:
         - provider: anthropic
           api_key_env: ANTHROPIC_API_KEY
 routing: {}
-"""
-    )
+""")
     config = parse_user_config(str(config_path))
 
     with pytest.raises(
@@ -380,8 +370,7 @@ routing: {}
 
 def test_catalog_provider_projection_rejects_provider_without_endpoint(tmp_path):
     config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        """
+    config_path.write_text("""
 version: v0.3
 providers:
   models:
@@ -392,8 +381,7 @@ providers:
         - provider: azure-openai
           api_key_env: AZURE_OPENAI_API_KEY
 routing: {}
-"""
-    )
+""")
     config = parse_user_config(str(config_path))
 
     with pytest.raises(
@@ -435,8 +423,7 @@ def test_catalog_provider_projection_rejects_invalid_backend_url(
     tmp_path, base_url, expected_error
 ):
     config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        f"""
+    config_path.write_text(f"""
 version: v0.3
 listeners: []
 providers:
@@ -447,8 +434,7 @@ providers:
         - provider: vllm
           base_url: {base_url}
 routing: {{}}
-"""
-    )
+""")
 
     with pytest.raises(ValueError) as error:
         project_provider_models_for_envoy(parse_user_config(str(config_path)))
@@ -457,8 +443,7 @@ routing: {{}}
 
 def test_catalog_provider_projection_rejects_base_url_with_endpoint(tmp_path):
     config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        """
+    config_path.write_text("""
 version: v0.3
 listeners: []
 providers:
@@ -470,8 +455,7 @@ providers:
           base_url: http://base.example/v1
           endpoint: endpoint.example:8000/v1
 routing: {}
-"""
-    )
+""")
 
     with pytest.raises(ValueError, match="cannot set both base_url and endpoint"):
         project_provider_models_for_envoy(parse_user_config(str(config_path)))
@@ -479,8 +463,7 @@ routing: {}
 
 def test_catalog_provider_projection_accepts_backend_url_templates(tmp_path):
     config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        """
+    config_path.write_text("""
 version: v0.3
 listeners: []
 providers:
@@ -493,8 +476,7 @@ providers:
           base_url: https://${AZURE_RESOURCE}.openai.azure.com/openai/deployments/${AZURE_DEPLOYMENT}
           api_version: "2025-04-01"
 routing: {}
-"""
-    )
+""")
 
     projected = project_provider_models_for_envoy(parse_user_config(str(config_path)))
 
@@ -573,8 +555,7 @@ routing: {{}}
 
 def test_catalog_deployment_name_requires_explicit_provider_model_id(tmp_path):
     config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        """
+    config_path.write_text("""
 version: v0.3
 providers:
   models:
@@ -584,8 +565,7 @@ providers:
         - provider: microsoft-foundry
           base_url: https://foundry.example.test
 routing: {}
-"""
-    )
+""")
     config = parse_user_config(str(config_path))
 
     with pytest.raises(
@@ -597,8 +577,7 @@ routing: {}
 
 def test_catalog_deployment_name_preserves_operator_provider_model_id(tmp_path):
     config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        """
+    config_path.write_text("""
 version: v0.3
 providers:
   models:
@@ -609,8 +588,7 @@ providers:
         - provider: microsoft-foundry
           base_url: https://foundry.example.test
 routing: {}
-"""
-    )
+""")
     config = parse_user_config(str(config_path))
 
     projected = project_provider_models_for_envoy(config)
@@ -623,8 +601,7 @@ routing: {}
 
 def test_backend_ref_rejects_negative_weight_during_cli_parse(tmp_path):
     config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        """
+    config_path.write_text("""
 version: v0.3
 providers:
   models:
@@ -634,8 +611,7 @@ providers:
           endpoint: localhost:8000
           weight: -1
 routing: {}
-"""
-    )
+""")
 
     with pytest.raises(ConfigParseError, match="greater than or equal to 0"):
         parse_user_config(str(config_path))
@@ -759,3 +735,66 @@ def test_reference_config_projects_a_homogeneous_weighted_pool(tmp_path, monkeyp
         endpoint["endpoint"]["address"]["socket_address"]["address"]
         for endpoint in endpoints
     } == {"127.0.0.1"}
+
+
+def _accepted_formats_config(tmp_path, model_block):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(f"""
+version: v0.3
+providers:
+  models:
+{model_block}
+routing: {{}}
+""")
+    return parse_user_config(str(config_path))
+
+
+def test_accepted_formats_need_every_backend_to_serve_each_format(tmp_path):
+    config = _accepted_formats_config(
+        tmp_path,
+        """    - name: custom
+      provider_model_id: custom-model
+      accepted_formats: [openai, anthropic]
+      backend_refs:
+        - provider: openai
+          base_url: https://api.openai.com/v1
+          api_key_env: OPENAI_API_KEY""",
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"protocol 'anthropic/messages@1' is not supported by provider 'openai'",
+    ):
+        project_provider_models_for_envoy(config)
+
+
+def test_accepted_formats_need_the_catalog_mapping(tmp_path):
+    config = _accepted_formats_config(
+        tmp_path,
+        """    - name: kimi
+      catalog: moonshot/kimi-k2.7-code
+      accepted_formats: [openai, anthropic]
+      backend_refs:
+        - provider: openrouter
+          api_key_env: OPENROUTER_API_KEY""",
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"catalog mapping of 'moonshotai/kimi-k2.7-code' does not list "
+        r"anthropic/messages@1",
+    ):
+        project_provider_models_for_envoy(config)
+
+
+def test_accepted_formats_every_backend_serves_project(tmp_path):
+    config = _accepted_formats_config(
+        tmp_path,
+        """    - name: claude
+      provider_model_id: anthropic/claude-opus-5
+      accepted_formats: [anthropic, openai]
+      backend_refs:
+        - provider: openrouter
+          api_key_env: OPENROUTER_API_KEY""",
+    )
+    (projected,) = project_provider_models_for_envoy(config)
+    assert projected.api_format == "anthropic"
+    assert projected.accepted_formats == ["anthropic", "openai"]
