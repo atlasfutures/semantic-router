@@ -99,9 +99,9 @@ func controlPlacementKey(worker, format string, control thinkingcontrol.Control)
 
 // planRaylineARCThinkingControl resolves this dispatch's v5 control: the
 // cell of the request's target format must admit it, and the episode's
-// placer is resumed. It returns nil outside a v5 turn. On Messages a
-// budgeted base keeps the caller's output allowance above the budget, which
-// Messages requires; changed reports that edit.
+// placer is resumed. It returns nil outside a v5 turn. A budgeted base's
+// Messages allowance is raised after request_params
+// (prepareProviderRequest).
 func planRaylineARCThinkingControl(
 	request *llmprotocol.Request,
 	dispatch *providerDispatch,
@@ -141,11 +141,7 @@ func planRaylineARCThinkingControl(
 	if err != nil {
 		return nil, false, err
 	}
-	changed := false
-	if dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 {
-		changed = raiseMessagesAllowance(request, action.Control.BudgetTokens)
-	}
-	return &plannedThinkingControl{key: key, control: action.Control, cell: cell, placer: placer}, changed, nil
+	return &plannedThinkingControl{key: key, control: action.Control, cell: cell, placer: placer}, false, nil
 }
 
 // raiseMessagesAllowance keeps the caller's output allowance on top of a

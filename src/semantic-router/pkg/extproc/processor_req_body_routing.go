@@ -164,7 +164,15 @@ func (r *OpenAIRouter) prepareProviderRequest(
 	}
 	changed = decisionChanged || changed
 	paramsChanged, err := r.applyDispatchRequestParams(request, dispatch, ctx)
-	return paramsChanged || changed, err
+	if err != nil {
+		return false, err
+	}
+	// After request_params, which may cap or drop max_tokens: Messages
+	// needs room above a v5 control's thinking budget.
+	if planned := ctx.RaylineARCThinkingControl; planned != nil && dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 {
+		paramsChanged = raiseMessagesAllowance(request, planned.control.BudgetTokens) || paramsChanged
+	}
+	return paramsChanged || changed, nil
 }
 
 func (r *OpenAIRouter) applyDispatchDecision(
