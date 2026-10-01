@@ -215,7 +215,19 @@ func sameInt64Pointer(left, right *int64) bool {
 // Serving Responses is item D of atlasfutures/semantic-router#108; the issuer
 // tracking is #109.
 func raylineARCPolicyActionsCarriable(cfg *config.RouterConfig, decision *config.Decision) bool {
-	for _, binding := range decision.Algorithm.RaylineARC.PolicyService.Bindings {
+	policy := decision.Algorithm.RaylineARC.PolicyService
+	for _, binding := range policy.Bindings {
+		// A v5 control is rendered from the registry on Messages and Chat;
+		// Responses is not served, for the reason below.
+		if policy.IsPackageV5() {
+			for _, accepted := range cfg.GetModelAcceptedFormats(binding.Worker) {
+				format, err := wireFormatForModel(accepted)
+				if err != nil || (format != llmprotocol.AnthropicMessagesV1 && format != llmprotocol.OpenAIChatV1) {
+					return false
+				}
+			}
+			continue
+		}
 		if !binding.DeclaresDispatch() {
 			continue
 		}

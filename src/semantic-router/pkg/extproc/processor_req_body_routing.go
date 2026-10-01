@@ -164,7 +164,15 @@ func (r *OpenAIRouter) prepareProviderRequest(
 	}
 	changed = decisionChanged || changed
 	paramsChanged, err := r.applyDispatchRequestParams(request, dispatch, ctx)
-	return paramsChanged || changed, err
+	if err != nil {
+		return false, err
+	}
+	// After request_params, which may cap or drop max_tokens: Messages
+	// needs room above a v5 control's thinking budget.
+	if planned := ctx.RaylineARCThinkingControl; planned != nil && dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 {
+		paramsChanged = raiseMessagesAllowance(request, planned.control.BudgetTokens) || paramsChanged
+	}
+	return paramsChanged || changed, nil
 }
 
 func (r *OpenAIRouter) applyDispatchDecision(
@@ -175,8 +183,16 @@ func (r *OpenAIRouter) applyDispatchDecision(
 	if dispatch.decisionName == "" {
 		return false, nil
 	}
-	changed := false
-	if dispatch.targetFormat != llmprotocol.OpenAIChatV1 {
+	// A v5 action's control is planned here, with the route: its admission
+	// for this dispatch's (model, provider, format) and the episode's placer.
+	// The provider boundary only renders it, and it owns every thinking
+	// field, so the router's derived mode is not applied.
+	planned, changed, err := planRaylineARCThinkingControl(request, dispatch, ctx, r.Config)
+	if err != nil {
+		return false, err
+	}
+	ctx.RaylineARCThinkingControl = planned
+	if dispatch.targetFormat != llmprotocol.OpenAIChatV1 && planned == nil {
 		changed = r.applySemanticReasoningMode(
 			request, dispatch.logicalModel, dispatch.targetFormat, dispatch.useReasoning, ctx.VSRSelectedDecision,
 		)

@@ -1921,6 +1921,15 @@ recipes:
                 # declared effort; budgets, the steer and thinking-off still
                 # apply (v4 packages). declared (the default) sends the effort.
                 dispatch_effort: declared
+                # package_manifest is the path of a v5 package's package.json
+                # (sha256 must be package_sha256). A v5 action names a thinking
+                # control, which VSR resolves in its registry and admits per
+                # worker (model, provider, format); its bindings are only
+                # action_id and worker. Empty serves a v4 package, as here.
+                package_manifest: ""
+                # allow_experimental_controls admits v5 instructions whose
+                # registry cell is experimental; without it they are refused.
+                allow_experimental_controls: false
                 # Each binding maps a package action to a worker. model, effort
                 # and reasoning_max_tokens declare what the action dispatches,
                 # as the package's catalog states it: model is the trained
