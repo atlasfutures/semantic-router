@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/usagerecords"
 )
 
 // llmUsageRecordSchema versions the shape below. A consumer reading the
@@ -199,9 +201,22 @@ func (r *OpenAIRouter) priceUsageRecord(record *llmUsageRecord, model string, us
 	record.PricingCompletionPer1M = &pricing.CompletionPer1M
 }
 
-// emitLLMUsageRecord writes the record as the llm_usage log line.
+// emitLLMUsageRecord writes the record as the llm_usage log line and, when a
+// durable sink is configured, as one entry there.
 func emitLLMUsageRecord(record llmUsageRecord) {
 	logging.LogEvent("llm_usage", record.fields())
+	if !usagerecords.Active() {
+		return
+	}
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		logging.ComponentWarnEvent("extproc", "usage_record_encode_failed", map[string]interface{}{
+			"request_id": record.RequestID,
+			"error":      err.Error(),
+		})
+		return
+	}
+	usagerecords.Publish(encoded)
 }
 
 // fields is the record keyed by its JSON names, with a null member as nil,

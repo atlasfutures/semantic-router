@@ -17,6 +17,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/profiling"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/tracing"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/usagerecords"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerruntime"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/startupstatus"
 )
@@ -364,6 +365,33 @@ func startProfilingServerIfEnabled(cfg *config.RouterConfig, opts runtimeOptions
 	}
 	logging.ComponentEvent("router", "profiling_server_starting", map[string]interface{}{
 		"address": server.Addr(),
+	})
+}
+
+// startUsageRecordsSinkIfEnabled sends every usage record to the configured
+// Redis stream. A sink that cannot be built is logged and skipped: the
+// llm_usage log line still carries every record.
+func startUsageRecordsSinkIfEnabled(cfg *config.RouterConfig, shutdownHooks *[]func()) {
+	recordsCfg := cfg.Observability.UsageRecords
+	if !recordsCfg.Enabled() {
+		return
+	}
+	sink, err := usagerecords.NewRedisStreamSink(recordsCfg.Redis)
+	if err != nil {
+		logging.ComponentErrorEvent("router", "usage_records_sink_failed", map[string]interface{}{
+			"error": err.Error(),
+		})
+		return
+	}
+	restore := usagerecords.Install(sink)
+	if shutdownHooks != nil {
+		*shutdownHooks = append(*shutdownHooks, func() {
+			restore()
+			sink.Close(5 * time.Second)
+		})
+	}
+	logging.ComponentEvent("router", "usage_records_sink_started", map[string]interface{}{
+		"stream": recordsCfg.Redis.Stream,
 	})
 }
 

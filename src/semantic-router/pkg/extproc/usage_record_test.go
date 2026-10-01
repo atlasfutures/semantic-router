@@ -8,6 +8,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/usagerecords"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 )
 
@@ -214,5 +215,45 @@ func TestContextRecoveryChargesBothCalls(t *testing.T) {
 	partial := mergeContextRecoveryProviderCost(llmprotocol.ProviderCost{Charged: &first}, llmprotocol.ProviderCost{})
 	if partial.Charged != nil {
 		t.Fatalf("charged = %v, want unknown when one call stated none", *partial.Charged)
+	}
+}
+
+type capturedUsageRecords struct{ records [][]byte }
+
+func (sink *capturedUsageRecords) Publish(record []byte) {
+	sink.records = append(sink.records, append([]byte(nil), record...))
+}
+
+// The durable record and the log line are one value: one record per call,
+// with the same members, and null where the line is null.
+func TestDurableUsageRecordMatchesTheLogLine(t *testing.T) {
+	logs := captureLogs(t)
+	sink := &capturedUsageRecords{}
+	t.Cleanup(usagerecords.Install(sink))
+	ctx := &RequestContext{RequestID: "rt_durable-000", RequestModel: "unpriced-model"}
+
+	usageRecordRouter().reportNonStreamingUsage(ctx, time.Second, responseUsageMetrics{invalid: true})
+
+	if len(sink.records) != 1 {
+		t.Fatalf("durable records = %d, want exactly one for the call", len(sink.records))
+	}
+	var durable map[string]interface{}
+	if err := json.Unmarshal(sink.records[0], &durable); err != nil {
+		t.Fatal(err)
+	}
+	line := findLogEvent(t, logs, "llm_usage")
+	delete(line, "event")
+	if len(durable) != len(line) {
+		t.Fatalf("durable record has %d members, log line %d", len(durable), len(line))
+	}
+	for key, value := range line {
+		stored, present := durable[key]
+		if !present || (value == nil) != (stored == nil) {
+			t.Errorf("%s: log %v, durable %v (present %v)", key, value, stored, present)
+		}
+	}
+	if durable["request_id"] != "rt_durable-000" || durable["record_schema"] != llmUsageRecordSchema ||
+		durable["cost"] != nil || durable["pricing_snapshot"] == nil {
+		t.Fatalf("durable record = %s", sink.records[0])
 	}
 }

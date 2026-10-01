@@ -153,6 +153,39 @@ Notes:
 - This switch is read once at startup. Changing it requires a Router restart;
   config hot reload does not take over the profiling listener.
 
+### Usage Records
+
+Every upstream call writes one `llm_usage` record: its token counts, the
+cache-aware rate-card cost, the charge the provider reported (OpenRouter's
+`usage.cost`), and the id of the rate table it was priced under. Every member
+is always present, and a value nobody stated is `null`, never `0`.
+`pricing_snapshot` is `sha256:` and a digest of the model rate table, so a
+record can be repriced against exactly the rates it was priced with.
+`request_id` is the caller's `x-request-id`.
+
+The record is always written as the `llm_usage` log line. It can also be
+appended to a Redis stream:
+
+```yaml
+global:
+  services:
+    observability:
+      usage_records:
+        redis:
+          address: redis:6379     # unset (default) keeps records on the log only
+          password_env: USAGE_RECORDS_REDIS_PASSWORD
+          stream: vsr:llm_usage   # default
+          max_len: 1000000        # default; approximate trim
+          queue_size: 4096        # default
+```
+
+Each stream entry holds the record's JSON in its `record` field. Records are
+written from a bounded queue, so a slow or unreachable Redis never delays a
+response; a record it cannot take is counted in
+`llm_usage_records_total{outcome}` and remains on the log line. The stream is
+as durable as the Redis behind it, so enable persistence there. The sink is
+configured once at startup.
+
 ### Skip Processing Header
 
 `global.router.skip_processing.enabled` is the deployment-level gate that
