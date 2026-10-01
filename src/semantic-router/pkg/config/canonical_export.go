@@ -496,6 +496,7 @@ func canonicalProviderModelFromRuntime(
 		Name:             name,
 		Catalog:          params.Catalog,
 		APIFormat:        params.APIFormat,
+		AcceptedFormats:  append([]string(nil), params.AcceptedFormats...),
 		Pricing:          params.Pricing,
 		Reliability:      params.Reliability,
 		ExternalModelIDs: copyStringMap(params.ExternalModelIDs),
@@ -531,6 +532,7 @@ func cloneCanonicalProviderModel(model *CanonicalProviderModel) *CanonicalProvid
 	clone := *model
 	clone.Reasoning = cloneCanonicalReasoning(model.Reasoning)
 	clone.ExternalModelIDs = copyStringMap(model.ExternalModelIDs)
+	clone.AcceptedFormats = append([]string(nil), model.AcceptedFormats...)
 	clone.BackendRefs = make([]CanonicalBackendRef, len(model.BackendRefs))
 	for index, backend := range model.BackendRefs {
 		clone.BackendRefs[index] = backend

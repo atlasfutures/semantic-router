@@ -274,6 +274,9 @@ func validateCanonicalProviderModelMetadata(model CanonicalProviderModel) error 
 	if err := validateCanonicalReasoning(model.Name, model.Reasoning); err != nil {
 		return err
 	}
+	if err := validateAcceptedFormats(model.Name, model.APIFormat, model.AcceptedFormats); err != nil {
+		return err
+	}
 	if err := validateProviderReliability(model.Name, model.Reliability); err != nil {
 		return err
 	}

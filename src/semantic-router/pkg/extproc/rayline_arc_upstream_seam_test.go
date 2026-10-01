@@ -36,7 +36,7 @@ import (
 // dispatch headers to no ARC at all, and must add no body mutation.
 func TestARCSelectionAddsNothingToProviderDispatch(t *testing.T) {
 	router, model := seamTestRouter()
-	dispatch, err := router.resolveProviderDispatch(model, "arc-decision", false)
+	dispatch, err := router.resolveProviderDispatch(model, "arc-decision", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}

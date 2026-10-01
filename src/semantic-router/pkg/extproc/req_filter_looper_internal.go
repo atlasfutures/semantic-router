@@ -78,7 +78,7 @@ func (r *OpenAIRouter) modifyRequestBodyForLooper(
 	request.Stream = ctx.ExpectStreamingResponse
 
 	if decisionName != "" {
-		targetFormat, err := wireFormatForModel(r.Config.GetModelAPIFormat(modelName))
+		targetFormat, err := r.dispatchTargetFormat(modelName, ctx.SourceFormat)
 		if err != nil {
 			return fmt.Errorf("resolve looper target format: %w", err)
 		}

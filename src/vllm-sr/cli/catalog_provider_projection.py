@@ -154,6 +154,8 @@ def _project_provider_models(
                 external_ids.setdefault(backend.provider, model_id)
                 projected.external_model_ids = external_ids
 
+        if projected.accepted_formats and not projected.api_format:
+            projected.api_format = projected.accepted_formats[0]
         if selected_protocol and not projected.api_format:
             projected.api_format = _api_format_for_protocol(
                 selected_protocol,
@@ -216,8 +218,11 @@ def _resolve_binding(
     available_protocols = _binding_protocols(bindings, path)
 
     explicit_protocol = ""
-    if model.api_format:
-        explicit_protocol = _protocol_for_api_format(model.api_format, path)
+    # Backends are bound in the first accepted format; the Go loader checks
+    # the others against each backend.
+    api_format = model.api_format or (model.accepted_formats or [""])[0]
+    if api_format:
+        explicit_protocol = _protocol_for_api_format(api_format, path)
     protocol = explicit_protocol or _infer_protocol(
         provider,
         card,

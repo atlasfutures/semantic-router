@@ -370,8 +370,7 @@ func validateRaylineARCPolicyBindingDispatch(
 	if thinkingOff && useReasoning {
 		return fmt.Errorf("worker %q reasons (use_reasoning is true) but the action is thinking-off (effort none)", binding.Worker)
 	}
-	if binding.Effort != nil && binding.ReasoningMaxTokens != nil &&
-		strings.EqualFold(strings.TrimSpace(cfg.GetModelAPIFormat(binding.Worker)), APIFormatOpenAI) {
+	if binding.Effort != nil && binding.ReasoningMaxTokens != nil && cfg.ModelAcceptsAPIFormat(binding.Worker, APIFormatOpenAI) {
 		return fmt.Errorf("worker %q dispatches Chat, where OpenRouter refuses an effort and a reasoning budget together", binding.Worker)
 	}
 	if err := validateRaylineARCPolicyMessagesMode(cfg, binding); err != nil {
@@ -389,7 +388,7 @@ func validateRaylineARCPolicyBindingDispatch(
 // and effort none with disabled thinking. A worker with no declared modes is
 // not constrained here.
 func validateRaylineARCPolicyMessagesMode(cfg *RouterConfig, binding RaylineARCPolicyBinding) error {
-	if cfg == nil || !strings.EqualFold(strings.TrimSpace(cfg.GetModelAPIFormat(binding.Worker)), APIFormatAnthropic) {
+	if cfg == nil || !cfg.ModelAcceptsAPIFormat(binding.Worker, APIFormatAnthropic) {
 		return nil
 	}
 	if binding.Effort == nil && binding.ReasoningMaxTokens == nil {

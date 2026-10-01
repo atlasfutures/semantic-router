@@ -150,7 +150,10 @@ func validateModelProviderProtocol(protocol, path, selected string, provider Eff
 		return fmt.Errorf("%s.protocol %q cannot create requests through provider %q", path, protocol, provider.Definition.ID)
 	}
 	if selected != "" && protocol != selected {
-		return fmt.Errorf("%s.protocol %q conflicts with %q; one alias must use one wire protocol", path, protocol, selected)
+		return fmt.Errorf(
+			"%s.protocol %q conflicts with %q; an alias's backends are bound in one protocol, and further formats every backend accepts go in accepted_formats",
+			path, protocol, selected,
+		)
 	}
 	return nil
 }

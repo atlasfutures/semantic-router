@@ -75,6 +75,11 @@ func (builder *catalogInputBuilder) addModel(model CanonicalProviderModel, model
 			modelIndex, model.APIFormat,
 		)
 	}
+	if model.APIFormat == "" && len(model.AcceptedFormats) > 0 {
+		// The backends are bound in the first accepted format; the others are
+		// checked against them when the model materializes.
+		model.APIFormat = model.AcceptedFormats[0]
+	}
 	cardID := effectiveCanonicalCardID(model)
 	alias := catalogModelAlias(model, cardID)
 	for backendIndex, backend := range model.BackendRefs {

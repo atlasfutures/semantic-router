@@ -115,8 +115,9 @@ func validateRaylineARCWorkerThinkingTransports(cfg *RouterConfig, arc *RaylineA
 		return nil
 	}
 	for worker := range arc.WorkerThinking {
-		if format := strings.ToLower(strings.TrimSpace(cfg.GetModelAPIFormat(worker))); format != APIFormatOpenAI {
-			return fmt.Errorf("%q dispatches %s; a base travels only on OpenRouter's Chat reasoning object", worker, format)
+		if !cfg.ModelAcceptsOnlyAPIFormat(worker, APIFormatOpenAI) {
+			return fmt.Errorf("%q dispatches %s; a base travels only on OpenRouter's Chat reasoning object",
+				worker, strings.Join(cfg.GetModelAcceptedFormats(worker), ", "))
 		}
 		for _, endpoint := range cfg.GetEndpointsForModel(worker) {
 			profile, err := cfg.GetProviderProfileForEndpoint(endpoint.Name)
