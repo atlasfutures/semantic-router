@@ -153,6 +153,9 @@ func applyRaylineARCPolicyActionReasoning(
 	if !declared || targetFormat == llmprotocol.OpenAIChatV1 {
 		return false, nil
 	}
+	if targetFormat == llmprotocol.OpenAIResponsesV1 {
+		return applyPolicyActionResponsesReasoning(request, action, ctx)
+	}
 	if targetFormat != llmprotocol.AnthropicMessagesV1 {
 		return false, errPolicyActionFormat
 	}
@@ -193,6 +196,45 @@ func applyRaylineARCPolicyActionReasoning(
 		!sameInt64Pointer(before.ReasoningBudgetTokens, request.ReasoningBudgetTokens), nil
 }
 
+// applyPolicyActionResponsesReasoning puts the action's effort on a request
+// bound for Responses, as reasoning.effort in place of what the router or the
+// client set. A null effort, and one withheld under dispatch_effort:
+// provider_default, send no effort, so the provider's default applies. The
+// thinking-off action keeps the off signal the router derived for its
+// use_reasoning:false worker, as on Chat. Responses has no reasoning budget,
+// so a budget action has no faithful shape; readiness refuses one
+// (policyActionResponsesCarriable) before any turn can pick it.
+func applyPolicyActionResponsesReasoning(
+	request *llmprotocol.Request,
+	action config.RaylineARCPolicyBinding,
+	ctx *RequestContext,
+) (bool, error) {
+	if !policyActionResponsesCarriable(action) {
+		return false, errPolicyActionFormat
+	}
+	if action.Effort != nil && *action.Effort == raylineARCPolicyActionEffortOff {
+		return false, nil
+	}
+	effort := ""
+	if action.Effort != nil {
+		effort = *action.Effort
+	}
+	base := policyActionWorkerThinking(action)
+	ctx.RaylineARCWorkerThinking = &base
+	if request.ReasoningEffort == effort {
+		return false, nil
+	}
+	request.ReasoningEffort = effort
+	return true, nil
+}
+
+// policyActionResponsesCarriable reports whether Responses can carry the
+// action: an effort, the thinking-off action, or no reasoning control. It has
+// no budget.
+func policyActionResponsesCarriable(action config.RaylineARCPolicyBinding) bool {
+	return action.ReasoningMaxTokens == nil
+}
+
 func sameInt64Pointer(left, right *int64) bool {
 	if left == nil || right == nil {
 		return left == right
@@ -204,16 +246,14 @@ func sameInt64Pointer(left, right *int64) bool {
 // travel to its worker's provider, so an action no provider can carry stops
 // the selector arming instead of failing each turn that picks it. Messages
 // carries effort and budget itself; Chat needs a reasoning transport that
-// reads them (policyActionChatWire); Responses is not served.
+// reads them (policyActionChatWire); Responses carries an effort but no
+// budget (policyActionResponsesCarriable).
 //
-// Serving Responses needs more than a reasoning transport. A Responses client
-// such as Codex resends each reasoning item's encrypted_content, which only
-// the provider account and model that issued it can read; the codec drops
-// those items on every target today. Forwarding them to their own issuer
-// needs the episode to record which workers issued the blobs it has seen, and
-// to drop the whole item -- not only the blob -- on a turn bound for another.
-// Serving Responses is item D of atlasfutures/semantic-router#108; the issuer
-// tracking is #109.
+// A Responses client such as Codex also resends each reasoning item's
+// encrypted_content, which only the target that issued it can read. The
+// episode records which targets issued the blobs its client holds, and a turn
+// forwards them only to that same target, dropping the whole item on any
+// other (applyRaylineARCReasoningIssuer, atlasfutures/semantic-router#109).
 func raylineARCPolicyActionsCarriable(cfg *config.RouterConfig, decision *config.Decision) bool {
 	policy := decision.Algorithm.RaylineARC.PolicyService
 	for _, binding := range policy.Bindings {
@@ -261,6 +301,8 @@ func policyActionCarriableIn(binding config.RaylineARCPolicyBinding, apiFormat s
 	case llmprotocol.OpenAIChatV1:
 		_, _, err := policyActionChatWire(binding, resolveProviderReasoningTransport(profile))
 		return err == nil
+	case llmprotocol.OpenAIResponsesV1:
+		return policyActionResponsesCarriable(binding)
 	default:
 		return false
 	}

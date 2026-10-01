@@ -291,6 +291,41 @@ func TestEncryptedReasoningDisablesReplay(t *testing.T) {
 	}
 }
 
+// When the router finds the target issued every blob the request resends, the
+// encrypted reasoning item reaches it unchanged and is not counted as dropped;
+// a Chat or Messages target still drops it whatever the router found.
+func TestForwardedEncryptedReasoningReachesItsIssuer(t *testing.T) {
+	engine := NewBuiltinEngine()
+	item := `{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"blob"}`
+	body := `{"model":"m","input":[{"type":"message","role":"user","content":"hi"},` + item + `]}`
+	request, envelope, _, err := engine.DecodeRequestForMutation(llmprotocol.OpenAIResponsesV1, []byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Model = "issuer"
+	request.Generation++
+	request.ForwardsEncryptedReasoning = true
+	result, err := engine.EncodeRequest(llmprotocol.OpenAIResponsesV1, request, envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(result.Body, []byte(item)) {
+		t.Fatalf("the forwarded item was not sent unchanged: %s", result.Body)
+	}
+	if dropped := droppedFields(result.Diagnostics); len(dropped) != 0 {
+		t.Fatalf("a forwarded item was counted as dropped: %v", dropped)
+	}
+	for _, target := range []llmprotocol.WireFormat{llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1} {
+		routed, err := engine.EncodeRequest(target, request, envelope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(routed.Body, []byte("blob")) {
+			t.Fatalf("%s was sent a Responses blob: %s", target, routed.Body)
+		}
+	}
+}
+
 // The carried client members are checked against the shapes the Responses
 // API defines before they are accepted.
 func TestMalformedCarriedMembersAreRefused(t *testing.T) {

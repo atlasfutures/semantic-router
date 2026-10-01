@@ -1,0 +1,81 @@
+package extproc
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"strings"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
+)
+
+// applyRaylineARCReasoningIssuer decides whether this turn forwards the
+// encrypted reasoning its client resends, and stages the issuer set the turn
+// leaves behind (atlasfutures/semantic-router#109).
+//
+// A blob is readable only by the target that issued it, so it is forwarded
+// only when the episode's record says every blob the client can hold came
+// from this turn's target. Otherwise the codec drops the whole item, as it
+// does on every route without an episode. The set is staged here and written
+// only with the turn's 2xx commit, so a failed turn leaves it as it was.
+func applyRaylineARCReasoningIssuer(
+	request *llmprotocol.Request,
+	dispatch *providerDispatch,
+	ctx *RequestContext,
+	routerConfig *config.RouterConfig,
+) {
+	if request == nil || dispatch == nil || ctx == nil || ctx.RaylineARCTransaction == nil ||
+		ctx.RaylineARCTransaction.state == nil {
+		return
+	}
+	previous := ctx.RaylineARCTransaction.state.ReasoningIssuers
+	issuer := reasoningIssuerFor(dispatch, routerConfig)
+	held := protocolcodec.HoldsEncryptedReasoning(*request)
+	issues := dispatch.targetFormat == llmprotocol.OpenAIResponsesV1
+	forwarded := held && issues && raylinearc.ReasoningIssuersAre(previous, issuer)
+	request.ForwardsEncryptedReasoning = forwarded
+	ctx.RaylineARCTransaction.stageReasoningIssuers(
+		raylinearc.NextReasoningIssuers(previous, held, forwarded, issues, issuer),
+	)
+	if held && !forwarded {
+		logging.ComponentEvent("extproc", "rayline_arc_encrypted_reasoning_dropped", map[string]interface{}{
+			"request_id": ctx.RequestID,
+			"worker":     dispatch.logicalModel,
+			"reason":     encryptedReasoningDropReason(previous, issues),
+		})
+	}
+}
+
+// reasoningIssuerFor names the target that reads and issues a dispatch's
+// encrypted reasoning: the worker, the backend it reaches, the model id that
+// backend serves, and on OpenRouter the providers the arm pins. It is a
+// truncated digest, so the episode record carries no configuration names.
+func reasoningIssuerFor(dispatch *providerDispatch, routerConfig *config.RouterConfig) string {
+	parts := []string{dispatch.logicalModel, dispatch.backendName, dispatch.upstreamModel}
+	if preferences := providerPreferencesForDispatch(dispatch, routerConfig); preferences != nil {
+		// The whole pin, not only its order: which providers may serve the
+		// arm, and whether OpenRouter may fall back past them, both decide
+		// who can read the blob.
+		encoded, _ := json.Marshal(preferences)
+		parts = append(parts, string(encoded))
+	}
+	digest := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return hex.EncodeToString(digest[:8])
+}
+
+func encryptedReasoningDropReason(previous []string, issues bool) string {
+	switch {
+	case !issues:
+		return "target_not_responses"
+	case len(previous) > 1:
+		return "issuers_mixed"
+	case len(previous) == 0 || previous[0] == raylinearc.ReasoningIssuerUnknown:
+		return "issuer_unknown"
+	default:
+		return "issuer_other_target"
+	}
+}

@@ -33,8 +33,8 @@ const (
 	episodeStateSchemaV1 = "rayline.arc.episode-state.v1"
 	episodeStateSchemaV2 = "rayline.arc.episode-state.v2"
 	// episodeStateSchema adds the thinking-lever ledger, the upstream prefix
-	// records and the policy-service state. It is written only for an episode
-	// that carries one of them, so an episode none of them touched keeps its
+	// records, the policy-service state and the reasoning issuers. It is
+	// written only for an episode that carries one of them, so an episode none of them touched keeps its
 	// v2 bytes and an older router can still read it -- and an older router
 	// refuses a v3 record by its schema rather than by a field it does not
 	// know.
@@ -100,6 +100,7 @@ type episodeStateWire struct {
 	Upstream             []episodeUpstreamWire `json:"upstream,omitempty"`
 	Policy               *PolicyEpisodeState   `json:"policy,omitempty"`
 	Controls             []episodeControlWire  `json:"controls,omitempty"`
+	ReasoningIssuers     []string              `json:"reasoning_issuers,omitempty"`
 }
 
 // episodeControlWire is one thinking-control placer. Its ledger names each
@@ -317,6 +318,7 @@ func cloneEpisodeState(state *EpisodeState) *EpisodeState {
 		Thinking:             state.Thinking.Clone(),
 		Upstream:             append([]UpstreamPrefix(nil), state.Upstream...),
 		Controls:             cloneControlPlacements(state.Controls),
+		ReasoningIssuers:     append([]string(nil), state.ReasoningIssuers...),
 	}
 	for index, warmth := range state.Warmth {
 		if warmth == nil {
@@ -368,6 +370,10 @@ func marshalEpisodeState(
 	if len(state.Controls) > 0 {
 		wire.SchemaVersion = episodeStateSchema
 		wire.Controls = controlPlacementsToWire(state.Controls)
+	}
+	if len(state.ReasoningIssuers) > 0 {
+		wire.SchemaVersion = episodeStateSchema
+		wire.ReasoningIssuers = append([]string(nil), state.ReasoningIssuers...)
 	}
 	owner := state.EncoderOwner
 	visited := append([]string{}, state.EncoderVisitedOwners...)
@@ -428,7 +434,8 @@ func unmarshalEpisodeState(
 func decodeEpisodeStateAffinity(
 	wire episodeStateWire,
 ) (string, []string, error) {
-	if (wire.Thinking != nil || len(wire.Upstream) > 0 || wire.Policy != nil || len(wire.Controls) > 0) !=
+	if (wire.Thinking != nil || len(wire.Upstream) > 0 || wire.Policy != nil || len(wire.Controls) > 0 ||
+		len(wire.ReasoningIssuers) > 0) !=
 		(wire.SchemaVersion == episodeStateSchema) {
 		return "", nil, errors.New("ARC episode state contract mismatch")
 	}
@@ -464,6 +471,9 @@ func episodeStateFromWire(
 		EncoderVisitedOwners: visited,
 		Policy:               wire.Policy.Clone(),
 		Thinking:             thinkingLedgerFromWire(wire.Thinking),
+	}
+	if len(wire.ReasoningIssuers) > 0 {
+		state.ReasoningIssuers = append([]string(nil), wire.ReasoningIssuers...)
 	}
 	for _, prefix := range wire.Upstream {
 		state.Upstream = append(state.Upstream, UpstreamPrefix(prefix))

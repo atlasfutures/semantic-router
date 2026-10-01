@@ -55,6 +55,10 @@ type EpisodeState struct {
 	// Controls is, per placement key, the thinking-control placer of a v5
 	// package's actions (ADR 0109); nil until the first such turn.
 	Controls []ControlPlacement
+	// ReasoningIssuers names the targets that issued the encrypted reasoning
+	// the client may still resend (see NextReasoningIssuers); nil when it
+	// holds none the episode knows of.
+	ReasoningIssuers []string
 }
 
 // ControlPlacement is one placer's state. A placer governs one worker's
@@ -355,6 +359,9 @@ func validateEpisodeState(state *EpisodeState, workerCount int) error {
 		return err
 	}
 	if err := validateUpstreamPrefixes(state.Upstream); err != nil {
+		return err
+	}
+	if err := validateReasoningIssuers(state.ReasoningIssuers); err != nil {
 		return err
 	}
 	return validateWarmth(state.Warmth)

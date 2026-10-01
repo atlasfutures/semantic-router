@@ -94,9 +94,23 @@ model; selection logs `policy_action_model` beside `worker_provider_model`. A th
 (`effort: none`) may carry a steer: it dispatches with thinking disabled and
 the suffix, and its worker's lever must be a `prompt_steering_suffix`. At dispatch the effort or budget
 replaces the derived reasoning controls: OpenRouter's `reasoning` object on
-Chat, and `output_config.effort` with adaptive thinking, or enabled thinking
-with the budget, on Messages. A decide response that scores an action with no
+Chat, `output_config.effort` with adaptive thinking, or enabled thinking
+with the budget, on Messages, and `reasoning.effort` on Responses. Responses
+has no reasoning budget, so readiness refuses a budget action bound to a
+worker that accepts Responses. A decide response that scores an action with no
 binding fails the turn.
+
+A Responses client running with `store: false`, such as Codex, resends every
+reasoning item it has received with its `encrypted_content`, which only the
+target that issued it can read. The episode records the set of targets that
+issued the blobs its client can still hold (`reasoning_issuers`: at most two
+truncated digests of worker, backend, provider model and OpenRouter pin), and a
+turn forwards the items unchanged only when that set is exactly its own target.
+On any other target the whole item is dropped, as on every route without an
+episode, and logged as `rayline_arc_encrypted_reasoning_dropped` with a reason.
+The set is written only with the turn's 2xx commit. A turn that resends no
+encrypted reasoning restarts the set; once it holds two issuers it stays so,
+and the episode's later turns drop the items, until such a turn.
 
 `dispatch_effort: provider_default` sends each action without its declared
 effort, so the provider's default applies; a declared reasoning budget still
