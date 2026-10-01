@@ -174,3 +174,66 @@ func TestRelaxedCommitLosesToARecreatedRedisEpisode(t *testing.T) {
 		t.Fatalf("stale commit to a recreated episode = %v, want ErrEpisodeConflict", err)
 	}
 }
+
+// A read that found the episode absent cannot tell an episode that was never
+// created from one created and expired since; both look absent. Only a read
+// older than the idle TTL could have seen a newer incarnation come and go, so
+// such a read is refused, and a fresh one still commits.
+func TestRelaxedAbsentReadOlderThanIdleTTLLoses(t *testing.T) {
+	clock := time.Now()
+	now := func() time.Time { return clock }
+	store, err := NewMemoryEpisodeStore(MemoryEpisodeStoreConfig{MaxEpisodes: 4, IdleTTL: time.Minute, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	episode := HashEpisodeID("absent")
+	stale, staleRead, err := store.Snapshot(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A newer incarnation is created, then idles out.
+	advanceRelaxed(t, store, episode, 1)
+	clock = clock.Add(time.Minute + time.Second)
+	if _, read, _ := store.Snapshot(context.Background(), episode, 2); read.Version() != 0 {
+		t.Fatalf("the newer incarnation did not expire: version %d", read.Version())
+	}
+	if err := store.CommitIfUnchanged(context.Background(), episode, staleRead, committedTurn(t, stale, 1)); !errors.Is(err, ErrEpisodeConflict) {
+		t.Fatalf("stale absent-read commit = %v, want ErrEpisodeConflict", err)
+	}
+	fresh, freshRead, err := store.Snapshot(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CommitIfUnchanged(context.Background(), episode, freshRead, committedTurn(t, fresh, 0)); err != nil {
+		t.Fatalf("fresh absent-read commit = %v", err)
+	}
+}
+
+// The same bound on Redis, whose expiry runs on its own TTL.
+func TestRelaxedRedisReadOlderThanIdleTTLLoses(t *testing.T) {
+	address := os.Getenv("RAYLINE_ARC_TEST_REDIS_ADDR")
+	if address == "" {
+		t.Skip("RAYLINE_ARC_TEST_REDIS_ADDR is not set")
+	}
+	clock := time.Now()
+	store, err := NewRedisEpisodeStore(RedisEpisodeStoreConfig{
+		Address:   address,
+		KeyPrefix: "test:rayline-arc-stale:" + HashEpisodeID(t.Name()+clock.String()) + ":",
+		LeaseTTL:  time.Second,
+		IdleTTL:   time.Minute,
+		Now:       func() time.Time { return clock },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	episode := HashEpisodeID("absent")
+	stale, staleRead, err := store.Snapshot(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock = clock.Add(time.Minute)
+	if err := store.CommitIfUnchanged(context.Background(), episode, staleRead, committedTurn(t, stale, 1)); !errors.Is(err, ErrEpisodeConflict) {
+		t.Fatalf("commit of a read one idle TTL old = %v, want ErrEpisodeConflict", err)
+	}
+}
