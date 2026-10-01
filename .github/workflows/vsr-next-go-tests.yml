@@ -47,7 +47,8 @@ jobs:
             candle-binding/target/
             ml-binding/target/
             nlp-binding/target/
-          key: ${{ runner.os }}-vsr-cargo-${{ hashFiles('candle-binding/**/Cargo.lock', 'ml-binding/**/Cargo.lock', 'nlp-binding/**/Cargo.lock', 'candle-binding/src/**', 'ml-binding/src/**', 'nlp-binding/src/**') }}
+            onnx-binding/target/
+          key: ${{ runner.os }}-vsr-cargo-${{ hashFiles('candle-binding/**/Cargo.lock', 'ml-binding/**/Cargo.lock', 'nlp-binding/**/Cargo.lock', 'onnx-binding/**/Cargo.lock', 'candle-binding/src/**', 'ml-binding/src/**', 'nlp-binding/src/**', 'onnx-binding/src/**') }}
           restore-keys: |
             ${{ runner.os }}-vsr-cargo-
 
@@ -58,7 +59,11 @@ jobs:
         working-directory: src/semantic-router
         env:
           CGO_ENABLED: 1
-          LD_LIBRARY_PATH: ${{ github.workspace }}/candle-binding/target/release:${{ github.workspace }}/ml-binding/target/release:${{ github.workspace }}/nlp-binding/target/release
+          # The same native search paths as the Makefile's NATIVE_ENV: the
+          # router links all four bindings, onnx-binding included, and ort
+          # copies libonnxruntime next to libonnx_semantic_router.
+          LD_LIBRARY_PATH: ${{ github.workspace }}/candle-binding/target/release:${{ github.workspace }}/onnx-binding/target/release:${{ github.workspace }}/ml-binding/target/release:${{ github.workspace }}/nlp-binding/target/release
+          CGO_LDFLAGS: -L${{ github.workspace }}/candle-binding/target/release -L${{ github.workspace }}/onnx-binding/target/release -L${{ github.workspace }}/ml-binding/target/release -L${{ github.workspace }}/nlp-binding/target/release
         # pkg/cache is left out: its Milvus, hybrid and Valkey tests need
         # those servers, which Test And Build starts and this job does not.
         run: go test -count=1 $(go list ./pkg/... | grep -v '/pkg/cache$')

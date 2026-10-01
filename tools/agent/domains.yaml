@@ -323,7 +323,7 @@ domains:
     paths:
       - src/vllm-plugins/**
     checks: [make rayline-encoder-test]
-    ci_jobs: []
+    verifications: []
 
   native-bindings:
     owner: native-bindings
