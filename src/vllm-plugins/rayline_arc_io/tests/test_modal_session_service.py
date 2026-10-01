@@ -85,6 +85,8 @@ def test_session_service_is_authenticated_and_bounded() -> None:
     # faster. Re-pin only with a measurement that clears a placement gate.
     assert "region" not in function_keywords
     assert ast.unparse(function_keyword_values["min_containers"]) == "MIN_CONTAINERS"
+    assert ast.unparse(function_keyword_values["cpu"]) == "CPU_CORES"
+    assert ast.unparse(function_keyword_values["memory"]) == "MEMORY_MIB"
     assert ast.literal_eval(function_keyword_values["max_containers"]) == MAX_CONTAINERS
     # The ingress cap is app-conditional (PERF034 widens it), so the decorator
     # must reference the module constant whose definition the freeze test pins.

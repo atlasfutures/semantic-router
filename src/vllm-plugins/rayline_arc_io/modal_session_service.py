@@ -235,6 +235,21 @@ if APP_NAME in PROD_RTX_APP_PROFILES:
     MAX_CONCURRENT_INPUTS = 64
     MIN_CONTAINERS = 1
 
+# Host CPU/memory requests. Every recorded run keeps 8 cores / 64 GiB. The
+# standing dev and prod apps request 4 / 32 GiB: the warm dev L4 encoder was
+# measured on 2026-10-01 at ~1.2 cores and ~12 GiB RSS (session state lives on
+# the GPU). Requests are not hard limits, and Modal bills max(request, usage),
+# so a busier container can still exceed them.
+CPU_CORES = 8.0
+MEMORY_MIB = 65_536
+if (
+    APP_NAME in DEV_APP_PROFILES
+    or APP_NAME in PROD_APP_PROFILES
+    or APP_NAME in PROD_RTX_APP_PROFILES
+):
+    CPU_CORES = 4.0
+    MEMORY_MIB = 32_768
+
 _THIS_DIR = Path(__file__).resolve().parent
 _REMOTE_PLUGIN_DIR = "/opt/rayline_arc_io"
 _REMOTE_VLLM_DIR = "/opt/vllm-rsp005"
@@ -332,8 +347,8 @@ vllm_cache = modal.Volume.from_name("rayline-vllm-cache", create_if_missing=True
 @app.cls(
     image=image,
     gpu=GPU_TYPE,
-    cpu=8.0,
-    memory=65_536,
+    cpu=CPU_CORES,
+    memory=MEMORY_MIB,
     timeout=31 * 60,
     min_containers=MIN_CONTAINERS,
     scaledown_window=300,
