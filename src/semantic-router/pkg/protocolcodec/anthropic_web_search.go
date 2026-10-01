@@ -26,26 +26,15 @@ type anthropicWebSearchCitationWire struct {
 	Title string `json:"title"`
 }
 
-// webSearchResultCitations reports whether every citation on a provider text
-// block is a web search result location: the one kind whose source, a URL,
-// has a neutral shape. Any other kind still fails closed.
-func webSearchResultCitations(raw json.RawMessage) bool {
-	var citations []anthropicWebSearchCitationWire
-	if json.Unmarshal(raw, &citations) != nil || len(citations) == 0 {
-		return false
-	}
-	for _, citation := range citations {
-		if citation.Type != "web_search_result_location" || citation.URL == "" {
-			return false
-		}
-	}
-	return true
-}
-
-// webSearchURLCitations turns web search result locations into URL citations.
-// Anthropic does not say which span of the answer a result supports, so each
-// cites the whole block: the span is derived, which is why only this kind is
-// admitted, and an Anthropic client gets the raw citations back instead.
+// webSearchURLCitations turns a provider text block's citations into URL
+// citations for a client of another format. Every citation kind is carried raw
+// (CitationsRaw), so an Anthropic client gets them back unchanged; only a kind
+// that names a URL -- a web search result location -- has a neutral shape, and
+// Anthropic does not say which span of the answer it supports, so each cites
+// the whole block. A kind without a URL (a document's char, page or block
+// location) has no neutral source and is left to the Anthropic carry; the
+// block's text still reaches every client. Refusing them instead failed
+// billed provider turns (kimi-k3 on OpenRouter Messages, 2026-10-01).
 func webSearchURLCitations(raw json.RawMessage, text string) []llmprotocol.Citation {
 	return webSearchURLCitationsTo(raw, int64(utf8.RuneCountInString(text)))
 }
@@ -58,6 +47,9 @@ func webSearchURLCitationsTo(raw json.RawMessage, end int64) []llmprotocol.Citat
 	}
 	citations := make([]llmprotocol.Citation, 0, len(wire))
 	for _, citation := range wire {
+		if citation.URL == "" {
+			continue
+		}
 		citations = append(citations, llmprotocol.Citation{
 			URL: citation.URL, Title: citation.Title, StartIndex: 0, EndIndex: end,
 		})
@@ -310,16 +302,14 @@ func (decoder *anthropicStreamDecoder) countText(index int, text string) {
 	decoder.textRunes[index] += int64(utf8.RuneCountInString(text))
 }
 
-// holdAnthropicCitation keeps one streamed web search citation until its text
-// block stops. Any other citation kind still fails closed.
+// holdAnthropicCitation keeps one streamed citation, of any kind, until its
+// text block stops (see webSearchURLCitations).
 func (decoder *anthropicStreamDecoder) holdAnthropicCitation(
 	index int,
 	citation json.RawMessage,
 ) ([]llmprotocol.Event, bool, error) {
-	raw := append(append(json.RawMessage("["), citation...), ']')
-	if !webSearchResultCitations(raw) {
-		return nil, true, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_citations",
-			"Anthropic citations are not supported by the neutral contract", nil)
+	if !json.Valid(citation) {
+		return nil, true, invalidProviderResponse("invalid_stream_delta", "Anthropic citation delta is not JSON")
 	}
 	if decoder.pendingCitations == nil {
 		decoder.pendingCitations = map[int][]json.RawMessage{}

@@ -157,17 +157,68 @@ func TestAnthropicRequestCarriesUnknownSiblingAndRefusesCaseFolded(t *testing.T)
 	assertProtocolError(t, err, llmprotocol.ErrorInvalidRequest, "invalid_json")
 }
 
-// Response-side citations still fail closed. Carrying them would mean
-// generating spans the Router cannot derive, so only the request side accepts.
-func TestAnthropicResponseCitationsStayRefused(t *testing.T) {
-	engine := NewBuiltinEngine()
-	body := []byte(`{"id":"msg_1","type":"message","role":"assistant","model":"source-model",` +
+// A provider text block's citations of any kind are carried, never refused:
+// refusing them failed billed turns (kimi-k3 on OpenRouter Messages). An
+// Anthropic client gets them back as sent; a client of another format gets the
+// text, with a URL citation for each citation that names a URL.
+func TestAnthropicResponseCitationsOfAnyKindAreCarried(t *testing.T) {
+	mixed := `[` + strings.TrimSuffix(strings.TrimPrefix(charLocationCitations, "["), "]") + `,` +
+		strings.TrimSuffix(strings.TrimPrefix(webSearchCitations, "["), "]") + `]`
+	body := `{"id":"msg_1","type":"message","role":"assistant","model":"source-model",` +
 		`"content":[{"type":"text","text":"first"},` +
-		`{"type":"text","text":"The handbook says ten.","citations":` + charLocationCitations + `}],` +
-		`"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
-	_, _, _, err := engine.DecodeResponse(llmprotocol.AnthropicMessagesV1, body)
-	assertProtocolError(t, err, llmprotocol.ErrorUnsupportedFeature, "unsupported_citations")
-	assertRefusalNamesBlock(t, err, `content block 1 of type "text"`, `"content.citations"`)
+		`{"type":"text","text":"The handbook says ten.","citations":` + mixed + `}],` +
+		`"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`
+
+	anthropic := string(translateAnthropicResponse(t, body, llmprotocol.AnthropicMessagesV1))
+	for _, want := range []string{`"char_location"`, `"document_title":"Handbook"`, `"web_search_result_location"`} {
+		if !strings.Contains(anthropic, want) {
+			t.Fatalf("the Anthropic client lost %s: %s", want, anthropic)
+		}
+	}
+	chat := string(translateAnthropicResponse(t, body, llmprotocol.OpenAIChatV1))
+	if !strings.Contains(chat, "The handbook says ten.") || !strings.Contains(chat, "https://example.com/release") {
+		t.Fatalf("the Chat client lost the text or the URL citation: %s", chat)
+	}
+	if strings.Contains(chat, "char_location") || strings.Contains(chat, `"url":""`) {
+		t.Fatalf("a citation without a URL leaked to Chat: %s", chat)
+	}
+	documentOnly := strings.Replace(body, mixed, charLocationCitations, 1)
+	responses := string(translateAnthropicResponse(t, documentOnly, llmprotocol.OpenAIResponsesV1))
+	if !strings.Contains(responses, "The handbook says ten.") || strings.Contains(responses, "url_citation") {
+		t.Fatalf("a document citation: %s", responses)
+	}
+}
+
+// Streamed, a citation of any kind is held to its block's end and carried.
+func TestStreamedDocumentCitationIsCarried(t *testing.T) {
+	stream := `event: message_start
+data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The handbook says ten."}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"citations_delta","citation":` + strings.TrimSuffix(strings.TrimPrefix(charLocationCitations, "["), "]") + `}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":5}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+	if anthropic := string(runAnthropicStream(t, stream, llmprotocol.AnthropicMessagesV1)); !strings.Contains(anthropic, `"char_location"`) {
+		t.Fatalf("the Anthropic client lost the citation: %s", anthropic)
+	}
+	if chat := string(runAnthropicStream(t, stream, llmprotocol.OpenAIChatV1)); !strings.Contains(chat, "The handbook says ten.") {
+		t.Fatalf("the Chat client lost the text: %s", chat)
+	}
 }
 
 // Every refusal raised for a content block names the block: the unsupported
@@ -270,5 +321,20 @@ func assertSameJSON(t *testing.T, actual, expected []byte) {
 	expectedText, _ := json.Marshal(expectedValue)
 	if !bytes.Equal(actualText, expectedText) {
 		t.Fatalf("citations = %s, want %s", actualText, expectedText)
+	}
+}
+
+// A text block stating an empty or null citations list -- as OpenRouter
+// Messages replies do -- decodes for every client; it used to fail the turn.
+func TestAnthropicResponseEmptyCitationsAreNotRefused(t *testing.T) {
+	for _, citations := range []string{`[]`, `null`} {
+		body := `{"id":"msg_1","type":"message","role":"assistant","model":"source-model",` +
+			`"content":[{"type":"text","text":"done","citations":` + citations + `}],` +
+			`"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`
+		for _, client := range []llmprotocol.WireFormat{llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1} {
+			if out := string(translateAnthropicResponse(t, body, client)); !strings.Contains(out, "done") {
+				t.Fatalf("citations %s to %s: %s", citations, client, out)
+			}
+		}
 	}
 }

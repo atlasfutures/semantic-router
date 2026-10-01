@@ -83,9 +83,6 @@ func decodeAnthropicContentBlock(
 	if err := validateAnthropicContentVariant(body, typeName, location, providerOutput); err != nil {
 		return llmprotocol.Content{}, err
 	}
-	if err := validateAnthropicContentExtensions(block, location, providerOutput); err != nil {
-		return llmprotocol.Content{}, err
-	}
 	content, err := decodeAnthropicTypedContent(typeName, block, policy)
 	if err == nil && providerOutput && typeName == "text" {
 		// Provider citations reach here only as web search result locations;
