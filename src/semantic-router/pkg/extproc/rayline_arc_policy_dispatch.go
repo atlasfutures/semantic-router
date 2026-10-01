@@ -268,12 +268,13 @@ func sameInt64Pointer(left, right *int64) bool {
 func raylineARCPolicyActionsCarriable(cfg *config.RouterConfig, decision *config.Decision) bool {
 	policy := decision.Algorithm.RaylineARC.PolicyService
 	for _, binding := range policy.Bindings {
-		// A v5 control is rendered from the registry on Messages and Chat;
-		// Responses is not served, for the reason below.
+		// A v5 control is rendered from the registry in each format it
+		// knows: Messages, Chat and Responses. Whether the worker's cells
+		// admit it is checked at load (validateRaylineARCPolicyPackageV5Dispatch).
 		if policy.IsPackageV5() {
 			for _, accepted := range cfg.GetModelAcceptedFormats(binding.Worker) {
 				format, err := wireFormatForModel(accepted)
-				if err != nil || (format != llmprotocol.AnthropicMessagesV1 && format != llmprotocol.OpenAIChatV1) {
+				if err != nil || registryFormatOf(format) == "" {
 					return false
 				}
 			}

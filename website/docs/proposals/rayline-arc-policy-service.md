@@ -164,8 +164,13 @@ client's `thinking`, `reasoning`, `reasoning_effort` and
 The instruction is placed by `turn_tail_v2`, written by `on_change_v1` and
 replayed by `ledger_v1`. The placer's state lives in the episode, one per worker
 and control shape. The renderer is pathfinder's reference renderer ported to Go
-and held to its golden corpora byte for byte. Messages and Chat workers are
-served; Responses is item D.
+and held to its golden corpora byte for byte. Messages, Chat and Responses
+workers are served wherever the worker's cells admit the control. In registry
+3083a4b6 every Responses cell admits only the native-default control (no
+instruction, empty base wire), so a Responses worker can bind a package's
+native-only action and is refused an instruction-bearing one; Responses steers
+become servable once pathfinder admits those cells. A Codex turn's encrypted
+reasoning still follows the episode's issuer record (#109).
 
 Under `emit: on_change_v1` (ADR 0109) an item is written only when the level
 in force changes. A return from a steer to the neutral level writes the

@@ -28,10 +28,29 @@ import (
 	"testing"
 )
 
-// The corpora are pathfinder's tests/fixtures/thinking_control_golden at
-// 1655db9a2d (unchanged since a045d9a43), mirrored byte for byte; each
-// format's SHA256SUMS pins the copy, so drift is a diff to review.
+// The corpora are pathfinder's tests/fixtures/thinking_control_golden and
+// thinking_control_placement at 09c42c1e, mirrored byte for byte; each
+// directory's SHA256SUMS pins the copy, so drift is a diff to review.
+//
+// The golden corpus respects admission: a case whose control its cell
+// refuses records the registry's refusal and no bytes. The placement corpus
+// holds those same cases rendered without admission
+// (placement_only_not_admitted), so the renderer's placement keeps its byte
+// coverage; it is never a router oracle.
 var goldenFormats = []string{FormatMessages, FormatChat, FormatResponses}
+
+var placementFormats = []string{FormatChat, FormatResponses}
+
+func corpusDirs() []string {
+	var dirs []string
+	for _, format := range goldenFormats {
+		dirs = append(dirs, filepath.Join("testdata", "golden", format))
+	}
+	for _, format := range placementFormats {
+		dirs = append(dirs, filepath.Join("testdata", "placement", format))
+	}
+	return dirs
+}
 
 type goldenCase struct {
 	Description       string `json:"description"`
@@ -54,8 +73,8 @@ type goldenCase struct {
 }
 
 func TestGoldenCorporaArePinned(t *testing.T) {
-	for _, format := range goldenFormats {
-		dir := filepath.Join("testdata", "golden", format)
+	for _, dir := range corpusDirs() {
+		format := dir
 		sums, err := os.ReadFile(filepath.Join(dir, "SHA256SUMS"))
 		if err != nil {
 			t.Fatal(err)
@@ -91,9 +110,32 @@ func TestGoldenCorporaArePinned(t *testing.T) {
 	}
 }
 
-// Every case of every corpus renders to pathfinder's provider bytes and
-// receipts, or refuses where pathfinder refuses.
+// Every case of every golden corpus renders to pathfinder's provider bytes
+// and receipts, or refuses where pathfinder refuses.
 func TestGoldenParity(t *testing.T) {
+	runCorpus(t, "golden", goldenFormats)
+}
+
+// Every placement case renders to pathfinder's bytes and receipts without
+// admission, and every golden case its cell refuses has one, so a refusal
+// never costs the renderer's placement its byte coverage.
+func TestPlacementParity(t *testing.T) {
+	runCorpus(t, "placement", placementFormats)
+	for _, format := range goldenFormats {
+		dir := filepath.Join("testdata", "golden", format)
+		for _, name := range caseNames(t, dir) {
+			if readCase(t, filepath.Join(dir, name)).Refusal == nil {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join("testdata", "placement", format, name, "case.json")); err != nil {
+				t.Errorf("golden %s/%s is refused and has no placement case", format, name)
+			}
+		}
+	}
+}
+
+func runCorpus(t *testing.T, corpus string, formats []string) {
+	t.Helper()
 	reg, err := Embedded()
 	if err != nil {
 		t.Fatalf("load the embedded registry: %v", err)
@@ -101,20 +143,9 @@ func TestGoldenParity(t *testing.T) {
 	if reg.SHA256 != EmbeddedSHA256 {
 		t.Fatalf("embedded registry sha256 %s, want %s", reg.SHA256, EmbeddedSHA256)
 	}
-	for _, format := range goldenFormats {
-		dir := filepath.Join("testdata", "golden", format)
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var names []string
-		for _, entry := range entries {
-			if entry.IsDir() {
-				names = append(names, entry.Name())
-			}
-		}
-		sort.Strings(names)
-		for _, name := range names {
+	for _, format := range formats {
+		dir := filepath.Join("testdata", corpus, format)
+		for _, name := range caseNames(t, dir) {
 			t.Run(format+"/"+name, func(t *testing.T) {
 				runGoldenCase(t, reg, filepath.Join(dir, name))
 			})
@@ -122,7 +153,23 @@ func TestGoldenParity(t *testing.T) {
 	}
 }
 
-func runGoldenCase(t *testing.T, reg *Registry, dir string) {
+func caseNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			names = append(names, entry.Name())
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func readCase(t *testing.T, dir string) goldenCase {
 	t.Helper()
 	var c goldenCase
 	raw, err := os.ReadFile(filepath.Join(dir, "case.json"))
@@ -132,6 +179,13 @@ func runGoldenCase(t *testing.T, reg *Registry, dir string) {
 	if err = json.Unmarshal(raw, &c); err != nil {
 		t.Fatal(err)
 	}
+	return c
+}
+
+func runGoldenCase(t *testing.T, reg *Registry, dir string) {
+	t.Helper()
+	c := readCase(t, dir)
+	var err error
 	if c.RegistryPin != reg.SHA256 {
 		t.Fatalf("case pins registry %s, loaded %s", c.RegistryPin, reg.SHA256)
 	}
@@ -163,7 +217,7 @@ func runGoldenCase(t *testing.T, reg *Registry, dir string) {
 	case "enforced":
 		got, receipts, err = RenderAdmitted(reg, bodies, controls, c.Model, c.Provider, c.Format, c.WireModel,
 			c.AllowExperimental)
-	case "placement_only":
+	case "placement_only", "placement_only_not_admitted":
 		baseWire := map[string]*value{controls[0].Native: objectValue()}
 		got, receipts, err = renderEpisode(bodies, controls, baseWire, c.Format, c.WireModel)
 	default:

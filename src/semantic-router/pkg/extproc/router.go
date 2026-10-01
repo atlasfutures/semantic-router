@@ -89,8 +89,11 @@ type OpenAIRouter struct {
 	// one per recipe whose ARC decision uses a policy service.
 	RaylineARCRecipeEpisodeStores map[config.RecipeName]raylinearc.EpisodeStore
 	raylineARCSessionClose        raylineARCSessionCloseFunc
-	ProtocolCodecs                *protocolcodec.Registry
-	looperClient                  *looper.Client
+	// raylineARCInflight joins an identical resend to the decision its first
+	// copy is still making, instead of contending for the episode lease.
+	raylineARCInflight raylineARCInflightRegistry
+	ProtocolCodecs     *protocolcodec.Registry
+	looperClient       *looper.Client
 
 	memoryPersistence *memory.PersistenceRunner
 

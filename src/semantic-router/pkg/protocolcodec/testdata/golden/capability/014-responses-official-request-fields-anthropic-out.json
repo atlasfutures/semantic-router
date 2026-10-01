@@ -41,12 +41,12 @@
         },
         "diagnostics": [
           {
-            "field": "client_metadata",
-            "action": "dropped"
-          },
-          {
             "field": "max_tokens",
             "action": "generated"
+          },
+          {
+            "field": "client_metadata",
+            "action": "dropped"
           }
         ]
       }

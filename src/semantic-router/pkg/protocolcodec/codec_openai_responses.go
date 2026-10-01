@@ -60,7 +60,7 @@ type responsesRequestWire struct {
 	ServiceTier          json.RawMessage             `json:"service_tier,omitempty"`
 	StreamOptions        *responsesStreamOptionsWire `json:"stream_options,omitempty"`
 	TopLogprobs          json.RawMessage             `json:"top_logprobs,omitempty"`
-	ClientMetadata       map[string]string           `json:"client_metadata,omitempty"`
+	ClientMetadata       json.RawMessage             `json:"client_metadata,omitempty"`
 }
 
 type responsesReasoningWire struct {
@@ -287,17 +287,14 @@ func (OpenAIResponsesCodec) DecodeRequest(body []byte, policy llmprotocol.Policy
 	return request, requestEnvelope(llmprotocol.OpenAIResponsesV1, body, request.Generation, policy), diagnostics, nil
 }
 
-// decodeResponsesDroppedFields accepts client_metadata without forwarding it:
-// client telemetry is not model input, and the drop is reported instead of
-// discarded silently. include is not dropped here: the fork carries it to a
-// Responses target byte for byte (see carryResponsesClientMembers), where
-// upstream accepted only reasoning.encrypted_content and refused the rest.
-func decodeResponsesDroppedFields(wire responsesRequestWire, policy llmprotocol.Policy) (llmprotocol.Diagnostics, error) {
-	var diagnostics llmprotocol.Diagnostics
-	if len(wire.ClientMetadata) > 0 {
-		appendProviderFieldOmission(&diagnostics, policy, llmprotocol.OpenAIResponsesV1, "client_metadata", "client telemetry is not model input")
-	}
-	return diagnostics, nil
+// decodeResponsesDroppedFields reports nothing today. include and
+// client_metadata are carried to a Responses target byte for byte (see
+// carryResponsesClientMembers) and dropped and counted elsewhere, where
+// upstream accepted only encrypted-reasoning include values and dropped
+// client_metadata. Carrying both keeps a routed Codex turn byte-faithful
+// (#131).
+func decodeResponsesDroppedFields(responsesRequestWire, llmprotocol.Policy) (llmprotocol.Diagnostics, error) {
+	return nil, nil
 }
 
 func decodeResponsesBaseRequest(wire responsesRequestWire, conversationID string) llmprotocol.Request {
@@ -357,8 +354,8 @@ func validateResponsesClientMembers(wire responsesRequestWire) error {
 	return nil
 }
 
-// carryResponsesClientMembers puts include, which Codex sends on every turn,
-// on the carrier that holds the members no contract names, so a Responses
+// carryResponsesClientMembers puts include and client_metadata, which Codex
+// sends on every turn, on the carrier that holds the members no contract names, so a Responses
 // target gets it back byte for byte and any other target drops and counts it.
 // include asks for encrypted reasoning: it shapes what the provider returns,
 // not what the model is asked, so it is no reason to refuse the turn.
@@ -379,6 +376,7 @@ func carryResponsesClientMembers(carrier *llmprotocol.UnmodeledFields, wire resp
 		return fields
 	}
 	carrier = carry(carrier, "include", wire.Include)
+	carrier = carry(carrier, "client_metadata", wire.ClientMetadata)
 	return carrier
 }
 

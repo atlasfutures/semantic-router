@@ -5,20 +5,8 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "input_text"
-                }
-              ],
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "Use the selected tool.",
           "model": "routed-model",
-          "tool_choice": "auto",
           "tools": [
             {
               "description": "Look up a value",
@@ -77,20 +65,8 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "input_text"
-                }
-              ],
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "Use the selected tool.",
           "model": "routed-model",
-          "tool_choice": "auto",
           "tools": [
             {
               "format": {
@@ -120,18 +96,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "input_text"
-                }
-              ],
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "Use the selected tool.",
           "model": "routed-model",
           "tool_choice": {
             "type": "image_generation"

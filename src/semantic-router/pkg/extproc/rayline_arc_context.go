@@ -135,7 +135,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	// written to the episode store. prepareSelection builds a fresh episode
 	// state when it finds none here.
 	if rawEpisodeID != "" {
-		state, failure := r.prepareRaylineARCTransaction(
+		state, coalesced, failure := r.prepareOrJoinRaylineARCTurn(
 			algorithm.RaylineARC,
 			reqCtx,
 			result.EpisodeIDHash,
@@ -146,6 +146,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 			return result
 		}
 		result.State = state
+		result.Coalesced = coalesced
 	}
 	turns, imageBearing, err := r.projectRaylineARCTurns(
 		reqCtx,
@@ -329,6 +330,77 @@ func (r *OpenAIRouter) raylineARCEpisodeStoreFor(reqCtx *RequestContext) rayline
 		}
 	}
 	return r.RaylineARCEpisodeStore
+}
+
+// prepareOrJoinRaylineARCTurn prepares this turn's episode transaction, unless
+// an identical request on the same episode is already being decided. Then it
+// waits for that decision and returns it with a borrowed transaction instead:
+// a resend joins the turn in flight rather than contending for its lease.
+//
+// The wait is bounded by the request's own context, not acquire_timeout: the
+// resend is waiting for its own turn, which may legitimately take as long as a
+// cold decision does. If the first copy gives up without deciding, the resend
+// starts over and may lead the next attempt.
+func (r *OpenAIRouter) prepareOrJoinRaylineARCTurn(
+	arcConfig *config.RaylineARCAlgorithmConfig,
+	reqCtx *RequestContext,
+	episodeIDHash string,
+	workerCount int,
+) (*raylinearc.EpisodeState, *selection.SelectionResult, string) {
+	store := r.raylineARCEpisodeStoreFor(reqCtx)
+	if store == nil || len(reqCtx.RaylineARCRawBody) == 0 {
+		state, failure := r.prepareRaylineARCTransaction(arcConfig, reqCtx, episodeIDHash, workerCount)
+		return state, nil, failure
+	}
+	waitContext := reqCtx.TraceContext
+	if waitContext == nil {
+		waitContext = context.Background()
+	}
+	key := raylineARCInflightKey(store, episodeIDHash, reqCtx.RaylineARCRawBody, raylineARCTurnInputs(arcConfig, reqCtx, r.CredentialResolver.HeadersToStrip()))
+	for {
+		entry, leader := r.raylineARCInflight.join(key)
+		if leader {
+			state, failure := r.prepareRaylineARCTransaction(arcConfig, reqCtx, episodeIDHash, workerCount)
+			if failure != "" {
+				r.raylineARCInflight.finish(entry)
+				return nil, nil, failure
+			}
+			reqCtx.RaylineARCInflight = entry
+			reqCtx.RaylineARCTransaction.onFinalize = chainFinalize(
+				reqCtx.RaylineARCTransaction.onFinalize,
+				func() { r.raylineARCInflight.finish(entry) },
+			)
+			return state, nil, ""
+		}
+		decided, state, ok, err := entry.wait(waitContext)
+		if err != nil {
+			return nil, nil, boundedARCPrepareFailure(err)
+		}
+		if !ok {
+			// The leader gave up without deciding: this request decides for
+			// itself. Wait for the entry to leave the registry first, or the
+			// next join would find it again.
+			if err := entry.awaitFinished(waitContext); err != nil {
+				return nil, nil, boundedARCPrepareFailure(err)
+			}
+			continue
+		}
+		reqCtx.RaylineARCTransaction = newBorrowedRaylineARCEpisodeTransaction(state, episodeIDHash)
+		bindRaylineARCSelectionTransaction(reqCtx)
+		logging.ComponentEvent("extproc", "rayline_arc_selection_coalesced", map[string]interface{}{})
+		return state, decided, ""
+	}
+}
+
+// chainFinalize runs first, then next, on the transaction's terminal path.
+func chainFinalize(first func(), next func()) func() {
+	if first == nil {
+		return next
+	}
+	return func() {
+		first()
+		next()
+	}
 }
 
 func (r *OpenAIRouter) prepareRaylineARCTransaction(

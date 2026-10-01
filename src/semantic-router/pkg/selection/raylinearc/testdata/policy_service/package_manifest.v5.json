@@ -1,6 +1,6 @@
 {
   "schema_version": "rayline.arc-policy-package.v5",
-  "package_id": "24129282b6315c2dfdcd6075bd31a73ca4433191874537d8c7a745794501b7d8",
+  "package_id": "681df3d2f1e3cf9e50c74ebca7db53daa3e14858164066a8a8f22f6a6b58ea36",
   "serving_policy": {
     "schema_version": "pathfinder.serving-policy.v1",
     "policy_id": "f0203b98f859dced93cb2e0bb6b7d4acdf2fd00aef2d1a5d42215cc138874912",
@@ -39,9 +39,9 @@
     "selection": "supported_utility_or_reference_v1",
     "horizon": "policy_continuation",
     "cost_weight": 0.3,
-    "fallback_action_id": "0527fe7631783f956fc850185d3130926ed252b9e49e005eba68a8f884152321",
+    "fallback_action_id": "864cc7a8eab47911b61a2b3b5d79dcb8ed81c8ae9f8a90e941aea5bf38fc21d8",
     "reference_action_ids": {
-      "opus": "0527fe7631783f956fc850185d3130926ed252b9e49e005eba68a8f884152321"
+      "opus": "864cc7a8eab47911b61a2b3b5d79dcb8ed81c8ae9f8a90e941aea5bf38fc21d8"
     },
     "operating_bounds": {
       "cost_weight": [
@@ -56,24 +56,8 @@
   "thinking_controls_sha256": "3083a4b6bd857c951177f973b41900798ba22f4968e224b4a29ad3e9c297cff2",
   "actions": [
     {
-      "action_id": "0527fe7631783f956fc850185d3130926ed252b9e49e005eba68a8f884152321",
-      "model": "anthropic/claude-opus-5",
-      "control": {
-        "base": {
-          "native": "default"
-        },
-        "budget_tokens": null,
-        "instruction": null
-      },
-      "control_id": "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0",
-      "level": null,
-      "trained_arm_ids": [
-        "d1d548596b8609ffb4f1e0f1eca73e02449cbcc153381dd55b9b90836aaed9bd"
-      ]
-    },
-    {
-      "action_id": "9d2b81063cac1733ef6859b8fc061ba5192366aa0966c7ca5e055110041aa332",
-      "model": "z-ai/glm-5.3-flash",
+      "action_id": "20b6cddd7ae7cedc3ba8321cac7d962dca24b3c98dcf0408076adf40549e4a80",
+      "model": "glm-5.3-flash",
       "control": {
         "base": {
           "native": "default"
@@ -93,12 +77,28 @@
       "control_id": "17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1",
       "level": "none",
       "trained_arm_ids": [
-        "f81e77c690d486aa213dd9dfb49cda1dbf95b1cb209829e64092599eaf183e0e"
+        "406a8d2938eeb4c115f4eb758f768106d13be95e86755f5b1a3a7c0e7b68c7f8"
       ]
     },
     {
-      "action_id": "b18e89bdb29cfb16b9cf71e46207ebde0ad463e5256f4b2c837280d84f13d7d7",
-      "model": "z-ai/glm-5.3-flash",
+      "action_id": "864cc7a8eab47911b61a2b3b5d79dcb8ed81c8ae9f8a90e941aea5bf38fc21d8",
+      "model": "claude-opus-5",
+      "control": {
+        "base": {
+          "native": "default"
+        },
+        "budget_tokens": null,
+        "instruction": null
+      },
+      "control_id": "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0",
+      "level": null,
+      "trained_arm_ids": [
+        "c030fdb7d91326a7fe5ba93b61e9e940df15c6f2a179eb4f81324eb012794fc9"
+      ]
+    },
+    {
+      "action_id": "cf5bc08ecfab91cdc1e26c1c2b98e7256e4a9e64183210ceb619e9c4745ff055",
+      "model": "glm-5.3-flash",
       "control": {
         "base": {
           "native": "default"
@@ -118,7 +118,7 @@
       "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b",
       "level": "up",
       "trained_arm_ids": [
-        "3cf6563c1b297535b3e156ef08c44f053e34962dddaa86dd4a6c9b32a80cfbde"
+        "df4cb2a4ae3ef6441d48de39afc94d30cd2d2104c4475d3c6e2ea7e0aa46b8d0"
       ]
     }
   ],

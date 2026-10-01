@@ -244,11 +244,6 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 			if err != nil {
 				return fmt.Errorf("policy_service binding for action %s on worker %q: %w", binding.ActionID, binding.Worker, err)
 			}
-			if format == thinkingcontrol.FormatResponses {
-				// Serving Responses is #108 item D.
-				return fmt.Errorf("policy_service binding for action %s: worker %q accepts responses, where v5 controls are not served yet",
-					binding.ActionID, binding.Worker)
-			}
 			if _, err := registry.Admit(served, provider, format, action.Control, policy.AllowExperimentalControls); err != nil {
 				return fmt.Errorf("policy_service binding for action %s on worker %q: %w", binding.ActionID, binding.Worker, err)
 			}

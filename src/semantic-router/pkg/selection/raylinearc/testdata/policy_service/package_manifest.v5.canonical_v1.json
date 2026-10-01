@@ -1,0 +1,148 @@
+{
+  "schema_version": "rayline.arc-policy-package.v5",
+  "package_id": "c2c3bd90dc3c8a29a3db0241258c8c859ddb56b71adb5d40a7582ce0edec36d5",
+  "serving_policy": {
+    "schema_version": "pathfinder.serving-policy.v1",
+    "policy_id": "f0203b98f859dced93cb2e0bb6b7d4acdf2fd00aef2d1a5d42215cc138874912",
+    "files": {
+      "policy.json": "89b73d7f849510a59cfe8dd9380ebf6e7ace4f72f7414f58721e8c1d8bd95819",
+      "candidate.pt": "9dcd07af41b3973eada83718ae0a7abac67f52fd78c7292b009d119719391a10",
+      "evidence.json": "b137e6fcdce72f43c2c56700149cfa056756a931d3d99d3dc82204081fb48f61"
+    }
+  },
+  "head": {
+    "file": "head.pt2",
+    "sha256": "975d15975eae32e09d39ab8156edcb08b0849f404a7ba4c364f1748340f0ba26",
+    "format": "torch.export",
+    "torch_version": "2.9.0",
+    "dynamic_dimensions": [
+      "blocks"
+    ]
+  },
+  "encoding_profile": {
+    "serializer": "arc-role-blocks-v1",
+    "projection": "pathfinder.input-projection.v1",
+    "tool_definitions": "include_recorded",
+    "conversation": "canonical_v1",
+    "harness_injections": "strip_claude_code_2_1_v1",
+    "encoder_model": "Qwen/Qwen3.5-0.8B",
+    "encoder_revision": "2fc06364715b967f1860aea9cf38778875588b17",
+    "dtype": "bfloat16",
+    "max_tokens": 262144,
+    "readout": "final_layer_block_last_token",
+    "dimension": 1024
+  },
+  "inference_package": {
+    "name": "rayline-router",
+    "source_digest": "d70a42423cc21804b8234c3ff8cb3d1a04817c0690dd1920f39e724a9d091ced"
+  },
+  "decision": {
+    "mode": "factored",
+    "selection": "supported_utility_or_reference_v1",
+    "horizon": "policy_continuation",
+    "cost_weight": 0.3,
+    "fallback_action_id": "864cc7a8eab47911b61a2b3b5d79dcb8ed81c8ae9f8a90e941aea5bf38fc21d8",
+    "reference_action_ids": {
+      "opus": "864cc7a8eab47911b61a2b3b5d79dcb8ed81c8ae9f8a90e941aea5bf38fc21d8"
+    },
+    "operating_bounds": {
+      "cost_weight": [
+        0.0,
+        1.0
+      ],
+      "max_quality_drop": null,
+      "quality_margin": null
+    },
+    "model_schedule": "task_turn_compaction_v1"
+  },
+  "thinking_controls_sha256": "3083a4b6bd857c951177f973b41900798ba22f4968e224b4a29ad3e9c297cff2",
+  "actions": [
+    {
+      "action_id": "20b6cddd7ae7cedc3ba8321cac7d962dca24b3c98dcf0408076adf40549e4a80",
+      "model": "glm-5.3-flash",
+      "control": {
+        "base": {
+          "native": "default"
+        },
+        "budget_tokens": null,
+        "instruction": {
+          "level": "none",
+          "text": "",
+          "neutral_text": "Until the next steering instruction, use your normal judgement.",
+          "rules": {
+            "emit": "on_change_v1",
+            "placement": "turn_tail_v2",
+            "replay": "ledger_v1"
+          }
+        }
+      },
+      "control_id": "17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1",
+      "level": "none",
+      "trained_arm_ids": [
+        "406a8d2938eeb4c115f4eb758f768106d13be95e86755f5b1a3a7c0e7b68c7f8"
+      ]
+    },
+    {
+      "action_id": "864cc7a8eab47911b61a2b3b5d79dcb8ed81c8ae9f8a90e941aea5bf38fc21d8",
+      "model": "claude-opus-5",
+      "control": {
+        "base": {
+          "native": "default"
+        },
+        "budget_tokens": null,
+        "instruction": null
+      },
+      "control_id": "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0",
+      "level": null,
+      "trained_arm_ids": [
+        "c030fdb7d91326a7fe5ba93b61e9e940df15c6f2a179eb4f81324eb012794fc9"
+      ]
+    },
+    {
+      "action_id": "cf5bc08ecfab91cdc1e26c1c2b98e7256e4a9e64183210ceb619e9c4745ff055",
+      "model": "glm-5.3-flash",
+      "control": {
+        "base": {
+          "native": "default"
+        },
+        "budget_tokens": null,
+        "instruction": {
+          "level": "up",
+          "text": "Until the next steering instruction, reason more thoroughly before acting. Check assumptions, consider alternatives, and verify the proposed action against the task requirements.",
+          "neutral_text": "Until the next steering instruction, use your normal judgement.",
+          "rules": {
+            "emit": "on_change_v1",
+            "placement": "turn_tail_v2",
+            "replay": "ledger_v1"
+          }
+        }
+      },
+      "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b",
+      "level": "up",
+      "trained_arm_ids": [
+        "df4cb2a4ae3ef6441d48de39afc94d30cd2d2104c4475d3c6e2ea7e0aa46b8d0"
+      ]
+    }
+  ],
+  "pricing": {
+    "scenario_id": "openrouter-example-20260928",
+    "pricing_identity": "fe81f9390ffe3dc8daa4888a7dc430ce4a41f164281d15449a24840a70b5f2c2",
+    "live_prices_affect_decisions": false
+  },
+  "calibration": null,
+  "goldens": {
+    "file": "goldens.jsonl",
+    "sha256": "532a32f73d888288722914d941783b51cf6bd2a0fb3549d672203bb7bbabd473",
+    "cases": 200,
+    "required_selection_parity": 1.0,
+    "score_tolerance": 0.0001
+  },
+  "provenance": {
+    "registry_id": "example-registry-id",
+    "hf_repo": "rayline-ai/router-artifacts",
+    "hf_path": "arc/example/fold0",
+    "hf_revision": "0000000000000000000000000000000000000000",
+    "dataset_id": "example-dataset",
+    "fold": 0
+  }
+}

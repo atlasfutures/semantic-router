@@ -25,18 +25,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model",
           "reasoning": {
             "summary": "concise"
@@ -49,18 +38,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model",
           "text": {
             "format": {

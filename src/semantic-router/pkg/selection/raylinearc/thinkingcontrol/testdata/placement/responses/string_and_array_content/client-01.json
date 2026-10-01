@@ -1,0 +1,1 @@
+{"model":"gpt-6-sol","instructions":"You are Codex.","input":[{"type":"message","role":"user","content":"List the files."},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done.","annotations":[]}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"Count them."}]}],"stream":true}

@@ -150,25 +150,11 @@ func anthropicResponseContentType(body json.RawMessage) (string, error) {
 	}
 }
 
-// validateAnthropicContentExtensions holds the one block member the neutral
-// contract still refuses, and only on the provider leg. A request block
-// carries its citations unread; refusing them failed real turns on the dev
-// cell on 2026-09-05. Provider output is different: the Router would have to
-// generate the response-side spans it cannot derive.
-//
-// Every other extension member -- context, title, toolset_name,
-// transformations, and whatever the next beta adds -- is carried by the block
-// carrier instead of named here. That is what stops this function from growing
-// one branch per beta.
-func validateAnthropicContentExtensions(block anthropicContentWire, location string, providerOutput bool) error {
-	if providerOutput && len(block.Citations) > 0 && !webSearchResultCitations(block.Citations) {
-		return llmprotocol.NewFieldError(
-			llmprotocol.ErrorUnsupportedFeature, "unsupported_citations",
-			"Anthropic citations are not supported by the neutral contract",
-			location, "content.citations",
-		)
-	}
-	if err := validateAnthropicToolCaller(block.Caller, providerOutput); err != nil {
+// validateLocatedAnthropicToolCaller checks a tool_use caller's shape (US-003b)
+// and names the block a refusal came from. Citations are no longer refused
+// here: #132 carries provider citations (validProviderCitations).
+func validateLocatedAnthropicToolCaller(caller json.RawMessage, location string, providerOutput bool) error {
+	if err := validateAnthropicToolCaller(caller, providerOutput); err != nil {
 		var refusal *llmprotocol.ProtocolError
 		if errors.As(err, &refusal) {
 			located := llmprotocol.NewFieldError(refusal.Category, refusal.Code, refusal.Message, location, fieldContentCaller)

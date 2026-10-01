@@ -45,16 +45,22 @@ func TestCodexToolLoopDecodesUnderEitherLossyPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatalf("lossy=%s turn %d: Codex request rejected: %v", lossy, turn+1, err)
 			}
-			// include is carried to a Responses target and counted where it is
-			// dropped, at encode; see codex_responses_test.go.
-			assertDroppedFields(t, diagnostics, "client_metadata")
+			// include and client_metadata are carried to a Responses target and
+			// counted where they are dropped, at encode; see
+			// codex_responses_test.go.
+			for _, diagnostic := range diagnostics {
+				if diagnostic.Field == "include" || diagnostic.Field == "client_metadata" {
+					t.Fatalf("lossy=%s turn %d: %s was dropped at decode", lossy, turn+1, diagnostic.Field)
+				}
+			}
 		}
 	}
 }
 
-// prompt_cache_key and include reach a Responses arm and are dropped and
-// counted on Chat and Messages arms (fork #106): they name a Responses cache
-// shard and Responses reasoning output. client_metadata reaches no arm.
+// prompt_cache_key, include and client_metadata reach a Responses arm and are
+// dropped and counted on Chat and Messages arms (fork #106, #131): they name a
+// Responses cache shard, Responses reasoning output and Codex's own turn
+// metadata, which a byte-faithful Responses replay keeps.
 func TestCodexToolLoopDispatchCarriesCacheKeyAndIncludeOnlyToResponses(t *testing.T) {
 	engine := NewBuiltinEngine()
 	for turn, body := range loadCodexToolLoop(t) {
@@ -76,24 +82,23 @@ func TestCodexToolLoopDispatchCarriesCacheKeyAndIncludeOnlyToResponses(t *testin
 			if unmarshalErr := json.Unmarshal(encoded.Body, &dispatch); unmarshalErr != nil {
 				t.Fatal(unmarshalErr)
 			}
-			if _, forwarded := dispatch["client_metadata"]; forwarded {
-				t.Fatalf("turn %d to %s forwarded client_metadata: %s", turn+1, format, encoded.Body)
-			}
 			if format == llmprotocol.OpenAIResponsesV1 {
 				if string(dispatch["prompt_cache_key"]) != `"`+codexPromptCacheKey+`"` {
 					t.Fatalf("turn %d to %s: prompt_cache_key = %s", turn+1, format, dispatch["prompt_cache_key"])
 				}
-				if _, carried := dispatch["include"]; !carried {
-					t.Fatalf("turn %d to %s lost include: %s", turn+1, format, encoded.Body)
+				for _, carriedField := range []string{"include", "client_metadata"} {
+					if _, carried := dispatch[carriedField]; !carried {
+						t.Fatalf("turn %d to %s lost %s: %s", turn+1, format, carriedField, encoded.Body)
+					}
 				}
 				continue
 			}
-			for _, dropped := range []string{"prompt_cache_key", "include"} {
+			for _, dropped := range []string{"prompt_cache_key", "include", "client_metadata"} {
 				if _, forwarded := dispatch[dropped]; forwarded {
 					t.Fatalf("turn %d to %s forwarded %s: %s", turn+1, format, dropped, encoded.Body)
 				}
 			}
-			assertDroppedFields(t, encoded.Diagnostics, "prompt_cache_key", "include")
+			assertDroppedFields(t, encoded.Diagnostics, "prompt_cache_key", "include", "client_metadata")
 		}
 	}
 }

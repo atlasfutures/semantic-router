@@ -1,16 +1,5 @@
 {
-  "input": [
-    {
-      "content": [
-        {
-          "text": "Return the weather as JSON.",
-          "type": "input_text"
-        }
-      ],
-      "role": "user",
-      "type": "message"
-    }
-  ],
+  "input": "Return the weather as JSON.",
   "max_output_tokens": 48,
   "model": "routed-model",
   "reasoning": {
