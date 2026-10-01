@@ -237,3 +237,22 @@ func TestRelaxedRedisReadOlderThanIdleTTLLoses(t *testing.T) {
 		t.Fatalf("commit of a read one idle TTL old = %v, want ErrEpisodeConflict", err)
 	}
 }
+
+// Capacity eviction is immediate, not TTL-bounded: an episode created after
+// an absent read and evicted right away must not let the stale read commit.
+func TestRelaxedAbsentReadLosesToACreatedAndEvictedEpisode(t *testing.T) {
+	store := newTestMemoryEpisodeStore(t, 1, time.Now)
+	episode := HashEpisodeID("absent-evicted")
+	stale, staleRead, err := store.Snapshot(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	advanceRelaxed(t, store, episode, 1)
+	advanceRelaxed(t, store, HashEpisodeID("evictor"), 1)
+	if _, read, _ := store.Snapshot(context.Background(), episode, 2); read.Version() != 0 {
+		t.Fatalf("the episode was not evicted: version %d", read.Version())
+	}
+	if err := store.CommitIfUnchanged(context.Background(), episode, staleRead, committedTurn(t, stale, 1)); !errors.Is(err, ErrEpisodeConflict) {
+		t.Fatalf("stale absent read after create-and-evict = %v, want ErrEpisodeConflict", err)
+	}
+}
