@@ -302,3 +302,30 @@ func TestRaylineARCPolicyPackageManifestMustBeV5(t *testing.T) {
 		t.Fatalf("a v4 manifest loaded as v5: %v", err)
 	}
 }
+
+// A configured package stating the optional encoding_profile members loads
+// through startup validation when each holds its contract value, and is
+// refused at startup otherwise.
+func TestRaylineARCPolicyPackageV5EncodingProfileMembersAtStartup(t *testing.T) {
+	const anchor = `"tool_definitions": "include_recorded",`
+	fixture := readPolicyV5Fixture(t)
+	if !bytes.Contains(fixture, []byte(anchor)) {
+		t.Fatalf("the fixture no longer holds %q", anchor)
+	}
+	for members, accepted := range map[string]bool{
+		`"conversation": "canonical_v1", "harness_injections": "strip_claude_code_2_1_v1",`: true,
+		`"conversation": "canonical_v1",`: true,
+		`"conversation": "recorded",`:     false,
+		`"harness_injections": null,`:     false,
+	} {
+		manifest := bytes.Replace(fixture, []byte(anchor), []byte(anchor+" "+members), 1)
+		cfg, decision := policyV5Decision(t, manifest)
+		err := validatePolicyDispatch(cfg, decision)
+		if accepted && err != nil {
+			t.Errorf("%s: refused: %v", members, err)
+		}
+		if !accepted && (err == nil || !strings.Contains(err.Error(), "encoding_profile")) {
+			t.Errorf("%s: err = %v, want an encoding_profile refusal", members, err)
+		}
+	}
+}
