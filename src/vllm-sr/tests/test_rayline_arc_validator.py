@@ -452,3 +452,18 @@ def test_relaxed_is_not_yet_served_in_policy_service_mode():
         ValidationError, match="not yet served in the policy-service mode"
     ):
         RaylineARCAlgorithmConfig.model_validate(arc)
+
+
+def test_relaxed_is_not_served_with_retained_encoder_sessions():
+    arc = _valid_decision().algorithm.rayline_arc.model_dump()
+    arc["encoder"]["serving_rung"] = "B"
+    arc["encoder"]["required_pooling_capabilities"] = [
+        "chunked_causal_mean",
+        "resumable_causal_mean",
+    ]
+    RaylineARCAlgorithmConfig.model_validate(arc)
+    arc["episode"]["consistency"] = "relaxed"
+    with pytest.raises(
+        ValidationError, match="resumable_causal_mean encoder capability"
+    ):
+        RaylineARCAlgorithmConfig.model_validate(arc)

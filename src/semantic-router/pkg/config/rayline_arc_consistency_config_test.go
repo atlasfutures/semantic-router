@@ -47,3 +47,20 @@ func TestRaylineARCRelaxedNotYetServedInPolicyServiceMode(t *testing.T) {
 		t.Fatalf("relaxed policy-service error = %v", err)
 	}
 }
+
+// A retained encoder session serializes same-episode encodes, which relaxed
+// turns must not wait on.
+func TestRaylineARCRelaxedRefusesRetainedEncoderSessions(t *testing.T) {
+	decision := validRaylineARCDecision()
+	arc := decision.Algorithm.RaylineARC
+	arc.Encoder.ServingRung = RaylineARCServingRungB
+	arc.Encoder.RequiredCapabilities = []string{RaylineARCCapabilityChunkedMean, RaylineARCCapabilityResumableMean}
+	if err := validateRaylineARCAlgorithmConfig(arc); err != nil {
+		t.Fatalf("strict retained-session fixture refused: %v", err)
+	}
+	arc.Episode.Consistency = RaylineARCConsistencyRelaxed
+	if err := validateRaylineARCAlgorithmConfig(arc); err == nil ||
+		!strings.Contains(err.Error(), "not served with the resumable_causal_mean encoder capability") {
+		t.Fatalf("relaxed with retained sessions error = %v", err)
+	}
+}
