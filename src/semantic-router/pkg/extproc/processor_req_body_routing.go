@@ -175,12 +175,16 @@ func (r *OpenAIRouter) applyDispatchDecision(
 	if dispatch.decisionName == "" {
 		return false, nil
 	}
-	changed := false
-	// A v5 action's control renders every thinking field at the provider
-	// boundary (applyRaylineARCThinkingControl); a derived mode here could
-	// still move max_tokens.
-	_, _, v5, _ := raylineARCPolicyControlAction(ctx)
-	if dispatch.targetFormat != llmprotocol.OpenAIChatV1 && !v5 {
+	// A v5 action's control is planned here, with the route: its admission
+	// for this dispatch's (model, provider, format) and the episode's placer.
+	// The provider boundary only renders it, and it owns every thinking
+	// field, so the router's derived mode is not applied.
+	planned, changed, err := planRaylineARCThinkingControl(request, dispatch, ctx, r.Config)
+	if err != nil {
+		return false, err
+	}
+	ctx.RaylineARCThinkingControl = planned
+	if dispatch.targetFormat != llmprotocol.OpenAIChatV1 && planned == nil {
 		changed = r.applySemanticReasoningMode(
 			request, dispatch.logicalModel, dispatch.targetFormat, dispatch.useReasoning, ctx.VSRSelectedDecision,
 		)

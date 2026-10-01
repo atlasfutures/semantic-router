@@ -183,8 +183,8 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 		reasons[modelRef.Model] = modelRef.UseReasoning != nil && *modelRef.UseReasoning
 	}
 	bound := make(map[string]bool, len(policy.Bindings))
-	// An episode keeps one placer per worker and control shape, up to a
-	// bound; more shapes than that would evict a placer whose instructions
+	// An episode keeps one placer per worker, wire format and control shape,
+	// up to a bound; more than that would evict a placer whose instructions
 	// still need replaying.
 	shapes := map[string]bool{}
 	for _, binding := range policy.Bindings {
@@ -194,11 +194,13 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 			if control.BudgetTokens != nil {
 				budget = *control.BudgetTokens
 			}
-			shapes[fmt.Sprintf("%s|%s|%d|%t", binding.Worker, control.Native, budget, control.Instruction != nil)] = true
+			for _, format := range cfg.GetModelAcceptedFormats(binding.Worker) {
+				shapes[fmt.Sprintf("%s|%s|%s|%d|%t", binding.Worker, format, control.Native, budget, control.Instruction != nil)] = true
+			}
 		}
 	}
 	if len(shapes) > raylinearc.MaxControlPlacements {
-		return fmt.Errorf("the bindings put %d control shapes on their workers, and an episode keeps %d",
+		return fmt.Errorf("the bindings put %d control shapes on their workers' formats, and an episode keeps %d",
 			len(shapes), raylinearc.MaxControlPlacements)
 	}
 	for _, binding := range policy.Bindings {
@@ -207,12 +209,25 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 			return fmt.Errorf("policy_service binding names action %s, which is not in the package", binding.ActionID)
 		}
 		bound[binding.ActionID] = true
-		provider, format, err := RaylineARCRegistryCell(cfg, binding.Worker)
+		provider, err := RaylineARCRegistryProvider(cfg, binding.Worker)
 		if err != nil {
 			return fmt.Errorf("policy_service binding for action %s: %w", binding.ActionID, err)
 		}
-		if _, err := registry.Admit(action.Model, provider, format, action.Control, policy.AllowExperimentalControls); err != nil {
-			return fmt.Errorf("policy_service binding for action %s on worker %q: %w", binding.ActionID, binding.Worker, err)
+		// The target format is chosen per request from the worker's accepted
+		// formats, so the control must be admitted on the cell of each one.
+		for _, apiFormat := range cfg.GetModelAcceptedFormats(binding.Worker) {
+			format, err := RaylineARCRegistryFormat(apiFormat)
+			if err != nil {
+				return fmt.Errorf("policy_service binding for action %s on worker %q: %w", binding.ActionID, binding.Worker, err)
+			}
+			if format == thinkingcontrol.FormatResponses {
+				// Serving Responses is #108 item D.
+				return fmt.Errorf("policy_service binding for action %s: worker %q accepts responses, where v5 controls are not served yet",
+					binding.ActionID, binding.Worker)
+			}
+			if _, err := registry.Admit(action.Model, provider, format, action.Control, policy.AllowExperimentalControls); err != nil {
+				return fmt.Errorf("policy_service binding for action %s on worker %q: %w", binding.ActionID, binding.Worker, err)
+			}
 		}
 		off := action.Control.Native == raylineARCRegistryBaseOff
 		if off == reasons[binding.Worker] {
@@ -231,31 +246,33 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 // raylineARCRegistryBaseOff is the registry's thinking-off base.
 const raylineARCRegistryBaseOff = "off"
 
-// RaylineARCRegistryCell is the registry provider and wire format a worker
-// dispatches with: the provider every one of its endpoints reaches
-// (openrouter, anthropic or openai) and its api_format. It is the one place
-// a worker's admission cell is read, so a per-request target format
-// (#108 C) re-keys it here.
-func RaylineARCRegistryCell(cfg *RouterConfig, worker string) (provider, format string, err error) {
-	switch strings.ToLower(strings.TrimSpace(cfg.GetModelAPIFormat(worker))) {
+// RaylineARCRegistryFormat is the registry's name for an api_format.
+func RaylineARCRegistryFormat(apiFormat string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(apiFormat)) {
 	case "", APIFormatOpenAI, "openai.chat", string(llmprotocol.OpenAIChatV1):
-		format = thinkingcontrol.FormatChat
+		return thinkingcontrol.FormatChat, nil
 	case APIFormatAnthropic, "anthropic.messages", string(llmprotocol.AnthropicMessagesV1):
-		format = thinkingcontrol.FormatMessages
+		return thinkingcontrol.FormatMessages, nil
 	case APIFormatResponses, "openai.responses", string(llmprotocol.OpenAIResponsesV1):
-		format = thinkingcontrol.FormatResponses
+		return thinkingcontrol.FormatResponses, nil
 	default:
-		return "", "", fmt.Errorf("worker %q has api_format %q, which the thinking-control registry does not name",
-			worker, cfg.GetModelAPIFormat(worker))
+		return "", fmt.Errorf("api_format %q is not a format the thinking-control registry names", apiFormat)
 	}
+}
+
+// RaylineARCRegistryProvider is the registry provider a worker dispatches
+// to: the one every one of its endpoints reaches (openrouter, anthropic or
+// openai). With the request's target format it names the worker's admission
+// cell.
+func RaylineARCRegistryProvider(cfg *RouterConfig, worker string) (provider string, err error) {
 	endpoints := cfg.GetEndpointsForModel(worker)
 	if len(endpoints) == 0 {
-		return "", "", fmt.Errorf("worker %q has no endpoint", worker)
+		return "", fmt.Errorf("worker %q has no endpoint", worker)
 	}
 	for _, endpoint := range endpoints {
 		profile, err := cfg.GetProviderProfileForEndpoint(endpoint.Name)
 		if err != nil {
-			return "", "", fmt.Errorf("worker %q endpoint %q: %w", worker, endpoint.Name, err)
+			return "", fmt.Errorf("worker %q endpoint %q: %w", worker, endpoint.Name, err)
 		}
 		name := ""
 		switch {
@@ -266,13 +283,13 @@ func RaylineARCRegistryCell(cfg *RouterConfig, worker string) (provider, format 
 		case strings.EqualFold(strings.TrimSpace(profile.Type), "openai"):
 			name = "openai"
 		default:
-			return "", "", fmt.Errorf("worker %q endpoint %q is provider type %q, which the thinking-control registry does not name",
+			return "", fmt.Errorf("worker %q endpoint %q is provider type %q, which the thinking-control registry does not name",
 				worker, endpoint.Name, profile.Type)
 		}
 		if provider != "" && provider != name {
-			return "", "", fmt.Errorf("worker %q reaches both %s and %s; its admission cell is ambiguous", worker, provider, name)
+			return "", fmt.Errorf("worker %q reaches both %s and %s; its admission cell is ambiguous", worker, provider, name)
 		}
 		provider = name
 	}
-	return provider, format, nil
+	return provider, nil
 }

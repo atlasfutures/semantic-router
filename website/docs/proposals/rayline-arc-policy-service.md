@@ -117,16 +117,18 @@ format-agnostic thinking control. `package_manifest` points at the package's
 - requires each control in the compiled registry it serves from (pathfinder's
   `configs/thinking_controls.compiled.json`, embedded and pinned in
   `pkg/selection/raylinearc/thinkingcontrol`);
-- requires every package action bound, and each bound control admitted for its
-  worker's (model, provider, format) cell; an experimental instruction needs
-  `allow_experimental_controls`.
+- requires every package action bound, and each bound control admitted on its
+  worker's (model, provider, format) cell for every format the worker accepts,
+  since the target format is chosen per request; an experimental instruction
+  needs `allow_experimental_controls`.
 
 `thinking_controls_sha256` is informational. A v5 binding is only `action_id`
 and `worker`. The v4 fields, `dispatch_effort`, `thinking_lever` and
 `worker_thinking` are refused with a v5 package.
 
-On dispatch the control is rendered from the registry at the provider boundary,
-after the codec. The cell's base wire replaces every thinking field (the
+Route construction admits the control on the cell of the request's target
+format and resumes the episode's placer. The provider boundary then renders it
+from the registry, after the codec. The cell's base wire replaces every thinking field (the
 client's `thinking`, `reasoning`, `reasoning_effort` and
 `output_config.effort`), so a Messages effort gets no adaptive thinking block.
 The instruction is placed by `turn_tail_v2`, written by `on_change_v1` and

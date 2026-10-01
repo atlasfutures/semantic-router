@@ -18,6 +18,7 @@ import (
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -32,9 +33,13 @@ const (
 	v5Golden     = "../selection/raylinearc/thinkingcontrol/testdata/golden"
 )
 
-// v5Router serves the v5 fixture with GLM on glmFormat (openai or anthropic)
-// and Opus on OpenRouter's Messages wire, and returns the fake service.
+// v5Router serves the v5 fixture with GLM on glmFormat (an api_format or an
+// accepted_formats line) and Opus on OpenRouter's Messages wire, and returns
+// the fake service.
 func v5Router(t *testing.T, glmFormat string) (*OpenAIRouter, *fakePolicyService) {
+	if !strings.Contains(glmFormat, ":") {
+		glmFormat = "api_format: " + glmFormat
+	}
 	t.Helper()
 	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
 	manifest, err := os.ReadFile("../selection/raylinearc/testdata/policy_service/package_manifest.v5.json")
@@ -177,6 +182,41 @@ func TestV5DispatchPlacesAndReplaysOnChat(t *testing.T) {
 	}
 }
 
+// The control is rendered in each request's target format: a GLM worker that
+// accepts Chat and Messages takes a Messages client in Messages, so the steer
+// is a text block on the tail user message, not a Chat part.
+func TestV5RendersInTheRequestsTargetFormat(t *testing.T) {
+	router, fake := v5Router(t, "accepted_formats: [openai, anthropic]")
+	client := `{"model":"auto","max_tokens":1024,"messages":[{"role":"user","content":"fix the failing test"}]}`
+	body, ctx := v5Turn(t, router, fake, v5GLMUp, "v5-per-request", client)
+	want := `{"model":"z-ai/glm-5.3-flash","max_tokens":1024,"messages":[{"role":"user","content":[` +
+		`{"type":"text","text":"fix the failing test"},{"type":"text","text":"` + v5UpText
+	if !strings.HasPrefix(string(body), want) {
+		t.Fatalf("not a Messages body steered on its tail:\n%s", body)
+	}
+	if trace := ctx.RaylineARCThinking; trace == nil || trace.Written != "instruction" {
+		t.Fatalf("trace = %+v", ctx.RaylineARCThinking)
+	}
+}
+
+// On Messages a budgeted base keeps the output allowance above its budget,
+// which Messages requires: Opus's OpenRouter Messages cell has no budgeted
+// base, so this is checked on the plan directly.
+func TestV5BudgetedBaseRaisesTheMessagesAllowance(t *testing.T) {
+	budget := int64(4096)
+	allowance := int64(1024)
+	request := &llmprotocol.Request{Sampling: llmprotocol.Sampling{MaxOutputTokens: &allowance}}
+	raised := raiseMessagesAllowance(request, &budget)
+	if !raised || *request.Sampling.MaxOutputTokens != budget+allowance {
+		t.Fatalf("allowance = %d, raised %v", *request.Sampling.MaxOutputTokens, raised)
+	}
+	roomy := int64(32000)
+	request.Sampling.MaxOutputTokens = &roomy
+	if raiseMessagesAllowance(request, &budget) || *request.Sampling.MaxOutputTokens != roomy {
+		t.Fatal("an allowance above the budget was changed")
+	}
+}
+
 // A native-only action renders no instruction, and its base owns the
 // thinking fields: a default base sends none of the client's.
 func TestV5NativeOnlyActionStripsTheClientsThinking(t *testing.T) {
@@ -207,7 +247,7 @@ providers:
   models:
     - name: glm
       provider_model_id: z-ai/glm-5.3-flash
-      api_format: {{GLM_FORMAT}}
+      {{GLM_FORMAT}}
       pricing:
         currency: USD
         prompt_per_1m: 1

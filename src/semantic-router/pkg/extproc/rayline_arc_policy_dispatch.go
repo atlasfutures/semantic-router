@@ -220,9 +220,11 @@ func raylineARCPolicyActionsCarriable(cfg *config.RouterConfig, decision *config
 		// A v5 control is rendered from the registry on Messages and Chat;
 		// Responses is not served, for the reason below.
 		if policy.IsPackageV5() {
-			format, err := wireFormatForModel(cfg.GetModelAPIFormat(binding.Worker))
-			if err != nil || (format != llmprotocol.AnthropicMessagesV1 && format != llmprotocol.OpenAIChatV1) {
-				return false
+			for _, accepted := range cfg.GetModelAcceptedFormats(binding.Worker) {
+				format, err := wireFormatForModel(accepted)
+				if err != nil || (format != llmprotocol.AnthropicMessagesV1 && format != llmprotocol.OpenAIChatV1) {
+					return false
+				}
 			}
 			continue
 		}

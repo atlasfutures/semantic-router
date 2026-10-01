@@ -37,6 +37,17 @@ var (
 	errThinkingControlEpisode = errors.New("a v5 control is placed on the episode's transcript, and the turn has no episode")
 )
 
+// plannedThinkingControl is a v5 action's control as route construction
+// resolved it for one dispatch: admitted on the dispatch's (model, provider,
+// format) cell, with the episode's placer for the worker and control shape.
+// The provider boundary only renders it.
+type plannedThinkingControl struct {
+	key     string
+	control thinkingcontrol.Control
+	cell    *thinkingcontrol.Cell
+	placer  *thinkingcontrol.Placer
+}
+
 // raylineARCPolicyControlAction is the v5 action this turn's policy decision
 // chose. v5 is false outside a v5 package; an action id the package does not
 // hold is an error.
@@ -86,68 +97,94 @@ func controlPlacementKey(worker, format string, control thinkingcontrol.Control)
 	return fmt.Sprintf("%s|%s|%s|%s|%t", worker, format, control.Native, budget, control.Instruction != nil)
 }
 
-// applyRaylineARCThinkingControl renders a v5 action's control onto the
-// provider-bound body from the compiled registry (ADR 0109): the cell's base
-// wire replaces every thinking field, and the instruction is placed by
-// turn_tail_v2, written on change and replayed from the episode's ledger.
-// It returns false outside a v5 turn. A control the worker's cell does not
-// admit, or a body the placer cannot govern, fails the turn: serving it
-// without its control would serve another policy.
-func applyRaylineARCThinkingControl(
-	body []byte,
+// planRaylineARCThinkingControl resolves this dispatch's v5 control: the
+// cell of the request's target format must admit it, and the episode's
+// placer is resumed. It returns nil outside a v5 turn. On Messages a
+// budgeted base keeps the caller's output allowance above the budget, which
+// Messages requires; changed reports that edit.
+func planRaylineARCThinkingControl(
+	request *llmprotocol.Request,
 	dispatch *providerDispatch,
 	ctx *RequestContext,
 	cfg *config.RouterConfig,
-) ([]byte, bool, error) {
+) (*plannedThinkingControl, bool, error) {
 	policy, action, v5, err := raylineARCPolicyControlAction(ctx)
 	if !v5 || err != nil {
-		return nil, v5, err
+		return nil, false, err
 	}
 	if ctx.RaylineARCDispatch == nil {
-		return nil, true, errThinkingControlUnbound
+		return nil, false, errThinkingControlUnbound
 	}
 	worker := ctx.RaylineARCDispatch.ID
-	provider, format, err := config.RaylineARCRegistryCell(cfg, worker)
+	provider, err := config.RaylineARCRegistryProvider(cfg, worker)
 	if err != nil {
-		return nil, true, err
+		return nil, false, err
 	}
-	if format != registryFormatOf(dispatch.targetFormat) {
-		return nil, true, fmt.Errorf("worker %q dispatches %s, and its registry cell is %s", worker, dispatch.targetFormat, format)
-	}
+	format := registryFormatOf(dispatch.targetFormat)
 	registry, err := thinkingcontrol.Embedded()
 	if err != nil {
-		return nil, true, err
+		return nil, false, err
 	}
 	cell, err := registry.Admit(action.Model, provider, format, action.Control, policy.AllowExperimentalControls)
 	if err != nil {
-		return nil, true, err
+		return nil, false, err
 	}
 	key := controlPlacementKey(worker, format, action.Control)
 	committed, found, hasEpisode := ctx.RaylineARCTransaction.committedControlPlacement(key)
 	if !hasEpisode {
-		return nil, true, errThinkingControlEpisode
+		return nil, false, errThinkingControlEpisode
 	}
 	placer, err := thinkingcontrol.NewPlacer(format)
 	if found {
 		placer, err = thinkingcontrol.ResumePlacer(committed)
 	}
 	if err != nil {
-		return nil, true, err
+		return nil, false, err
 	}
+	changed := false
+	if dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 {
+		changed = raiseMessagesAllowance(request, action.Control.BudgetTokens)
+	}
+	return &plannedThinkingControl{key: key, control: action.Control, cell: cell, placer: placer}, changed, nil
+}
+
+// raiseMessagesAllowance keeps the caller's output allowance on top of a
+// thinking budget: Messages counts thinking inside max_tokens and refuses a
+// budget that leaves no room below it.
+func raiseMessagesAllowance(request *llmprotocol.Request, budget *int64) bool {
+	if budget == nil {
+		return false
+	}
+	allowance := raylineARCDefaultMessagesMaxTokens
+	if request.Sampling.MaxOutputTokens != nil {
+		allowance = *request.Sampling.MaxOutputTokens
+	}
+	if allowance > *budget {
+		return false
+	}
+	raised := *budget + allowance
+	request.Sampling.MaxOutputTokens = &raised
+	return true
+}
+
+// render places the planned control on the provider-bound body and stages
+// the placer for the turn's commit. A body the placer cannot govern fails
+// the turn: serving it without its control would serve another policy.
+func (planned *plannedThinkingControl) render(body []byte, ctx *RequestContext) ([]byte, error) {
 	var head struct {
 		Model string `json:"model"`
 	}
 	if err := json.Unmarshal(body, &head); err != nil || head.Model == "" {
-		return nil, true, fmt.Errorf("the provider-bound body names no model")
+		return nil, fmt.Errorf("the provider-bound body names no model")
 	}
-	rendered, receipt, err := placer.Render(body, &action.Control, cell, head.Model)
+	rendered, receipt, err := planned.placer.Render(body, &planned.control, planned.cell, head.Model)
 	if err != nil {
-		return nil, true, err
+		return nil, err
 	}
-	ctx.RaylineARCTransaction.stageControlPlacement(raylinearc.ControlPlacement{Key: key, State: placer.State()})
-	ctx.RaylineARCThinking = thinkingControlTrace(cell, receipt)
+	ctx.RaylineARCTransaction.stageControlPlacement(raylinearc.ControlPlacement{Key: planned.key, State: planned.placer.State()})
+	ctx.RaylineARCThinking = thinkingControlTrace(planned.cell, receipt)
 	recordThinkingLeverTurn(ctx.RaylineARCThinking)
-	return rendered, true, nil
+	return rendered, nil
 }
 
 // thinkingControlTrace attributes the call with the control in force and

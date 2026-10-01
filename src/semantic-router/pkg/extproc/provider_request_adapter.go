@@ -22,14 +22,14 @@ func (r *OpenAIRouter) adaptProviderRequest(
 		recordDispatchedReasoningControls(ctx, body)
 		return body, nil
 	}
-	// A v5 action's control owns every thinking field, rendered from the
-	// registry, so the router's own reasoning mutations are skipped; the
-	// provider's routing members still apply.
-	rendered, v5, err := applyRaylineARCThinkingControl(body, dispatch, ctx, r.Config)
-	if err != nil {
-		return nil, err
-	}
-	if v5 {
+	// A planned v5 control owns every thinking field: it is rendered here,
+	// and the router's own reasoning mutations are skipped; the provider's
+	// routing members still apply.
+	if planned := ctx.RaylineARCThinkingControl; planned != nil {
+		rendered, err := planned.render(body, ctx)
+		if err != nil {
+			return nil, err
+		}
 		return r.adaptMessagesProviderRequest(rendered, dispatch, ctx)
 	}
 	if dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 {

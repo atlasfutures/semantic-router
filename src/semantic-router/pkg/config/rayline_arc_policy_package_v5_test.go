@@ -96,9 +96,55 @@ func TestRaylineARCPolicyPackageV5Loads(t *testing.T) {
 	if policy.PackageV5RegistryDiffers() {
 		t.Fatal("the fixture names the registry VSR serves")
 	}
-	provider, format, err := RaylineARCRegistryCell(cfg, "arm-opus")
-	if err != nil || provider != "openrouter" || format != "messages" {
-		t.Fatalf("arm-opus cell = %s x %s, %v", provider, format, err)
+	provider, err := RaylineARCRegistryProvider(cfg, "arm-opus")
+	if err != nil || provider != "openrouter" {
+		t.Fatalf("arm-opus provider = %s, %v", provider, err)
+	}
+}
+
+// A worker's target format is chosen per request from its accepted formats,
+// so its control must be admitted on the cell of every one: Opus's
+// OpenRouter Messages cell admits the steer, and its Chat cell does not.
+func TestRaylineARCPolicyPackageV5AdmitsEveryAcceptedFormat(t *testing.T) {
+	// The fixture's GLM "up" control, as an Opus action; action ids are
+	// opaque to VSR.
+	manifest := bytes.Replace(readPolicyV5Fixture(t),
+		[]byte(`"model": "z-ai/glm-5.3-flash",
+      "control": {
+        "base": {
+          "native": "default"
+        },
+        "budget_tokens": null,
+        "instruction": {
+          "level": "up"`),
+		[]byte(`"model": "anthropic/claude-opus-5",
+      "control": {
+        "base": {
+          "native": "default"
+        },
+        "budget_tokens": null,
+        "instruction": {
+          "level": "up"`), 1)
+	if bytes.Equal(manifest, readPolicyV5Fixture(t)) {
+		t.Fatal("the fixture no longer holds the GLM up action")
+	}
+	cfg, decision := policyV5Decision(t, manifest)
+	policy := decision.Algorithm.RaylineARC.PolicyService
+	policy.Bindings[2].Worker = "arm-opus"
+	if err := validatePolicyDispatch(cfg, decision); err != nil {
+		t.Fatalf("a Messages-only Opus worker refused the steer: %v", err)
+	}
+	params := cfg.ModelConfig["arm-opus"]
+	params.AcceptedFormats = []string{APIFormatAnthropic, APIFormatOpenAI}
+	cfg.ModelConfig["arm-opus"] = params
+	err := validatePolicyDispatch(cfg, decision)
+	if err == nil || !strings.Contains(err.Error(), "is not admitted for anthropic/claude-opus-5 on openrouterxchat") {
+		t.Fatalf("a worker accepting an unverified Chat cell loaded: %v", err)
+	}
+	params.AcceptedFormats = []string{APIFormatAnthropic, APIFormatResponses}
+	cfg.ModelConfig["arm-opus"] = params
+	if err := validatePolicyDispatch(cfg, decision); err == nil || !strings.Contains(err.Error(), "accepts responses") {
+		t.Fatalf("a worker accepting Responses loaded: %v", err)
 	}
 }
 
