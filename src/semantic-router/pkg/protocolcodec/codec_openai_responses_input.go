@@ -72,15 +72,16 @@ func carriedResponsesInputItem(body json.RawMessage) (llmprotocol.Message, bool)
 // hasResponsesEncryptedReasoning reports whether a reasoning item holds the
 // encrypted_content a store:false client (Codex) asks for with include and
 // resends on every later turn. The blob is opaque, and only the provider
-// account and model that issued it can read it. The router does not yet record
-// which target issued a blob, and a route can change targets between turns --
-// a fallback, or a decision over several Responses models -- so the item is
-// carried whole and every target, the Responses one included, drops and
-// counts it (carriesEncryptedReasoning). Removing only the blob is not an
-// option: under store:false a reasoning item that keeps its id and loses its
-// blob is one the provider tries to look up, and fails. The turn loses its
-// earlier reasoning, never the turn. Forwarding the blob to its own issuer
-// needs issuer tracking: atlasfutures/semantic-router#109.
+// account and model that issued it can read it, and a route can change
+// targets between turns -- a fallback, a decision over several Responses
+// models, or an ARC episode moving between arms. So the item is carried
+// whole, and every target drops and counts it (dropsEncryptedReasoning)
+// unless the router found that this target issued every blob the request
+// resends (Request.ForwardsEncryptedReasoning, which a Rayline ARC episode
+// sets from its issuer record: atlasfutures/semantic-router#109). Removing
+// only the blob is not an option: under store:false a reasoning item that
+// keeps its id and loses its blob is one the provider tries to look up, and
+// fails. The turn loses its earlier reasoning, never the turn.
 func hasResponsesEncryptedReasoning(body json.RawMessage) bool {
 	var item struct {
 		EncryptedContent json.RawMessage `json:"encrypted_content"`
@@ -88,8 +89,25 @@ func hasResponsesEncryptedReasoning(body json.RawMessage) bool {
 	return json.Unmarshal(body, &item) == nil && hasJSONValue(item.EncryptedContent)
 }
 
+// HoldsEncryptedReasoning reports whether the request resends a Responses
+// reasoning item holding encrypted_content.
+func HoldsEncryptedReasoning(request llmprotocol.Request) bool {
+	for _, message := range request.Messages {
+		if carriesEncryptedReasoning(message) {
+			return true
+		}
+	}
+	return false
+}
+
+// dropsEncryptedReasoning reports whether a message is a carried encrypted
+// reasoning item this request does not forward.
+func dropsEncryptedReasoning(request llmprotocol.Request, message llmprotocol.Message) bool {
+	return !request.ForwardsEncryptedReasoning && carriesEncryptedReasoning(message)
+}
+
 // carriesEncryptedReasoning reports whether a message is a carried Responses
-// reasoning item holding encrypted_content, which no target is sent.
+// reasoning item holding encrypted_content.
 func carriesEncryptedReasoning(message llmprotocol.Message) bool {
 	if len(message.Content) != 1 {
 		return false

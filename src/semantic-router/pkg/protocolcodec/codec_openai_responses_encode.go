@@ -32,7 +32,7 @@ func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope 
 	for _, message := range request.Messages {
 		appendContentExtensionDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
 		appendCarriedBlockDrops(&diagnostics, message.Content, llmprotocol.OpenAIResponsesV1, policy)
-		if carriesEncryptedReasoning(message) {
+		if dropsEncryptedReasoning(request, message) {
 			appendUnmodeledDrop(&diagnostics, policy, llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1, "content.reasoning")
 		}
 	}
@@ -44,14 +44,15 @@ func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope 
 }
 
 // holdsWhatEveryTargetDrops reports whether the request carries something no
-// target is sent -- a carried tool, or a resent encrypted reasoning item -- so
-// the client bytes, which still hold it, are never replayed.
+// target is sent -- a carried tool, or a resent encrypted reasoning item this
+// dispatch does not forward -- so the client bytes, which still hold it, are
+// never replayed.
 func holdsWhatEveryTargetDrops(request llmprotocol.Request) bool {
 	if len(request.CarriedTools) > 0 {
 		return true
 	}
 	for _, message := range request.Messages {
-		if carriesEncryptedReasoning(message) {
+		if dropsEncryptedReasoning(request, message) {
 			return true
 		}
 	}
@@ -167,7 +168,7 @@ func encodeResponsesRequestWire(request llmprotocol.Request) (responsesRequestWi
 func encodeResponsesRequestItems(request llmprotocol.Request) ([]json.RawMessage, error) {
 	items := make([]json.RawMessage, 0, len(request.Messages))
 	appendMessage := func(message llmprotocol.Message) error {
-		if carriesEncryptedReasoning(message) {
+		if dropsEncryptedReasoning(request, message) {
 			return nil
 		}
 		if carried, isCarried := carriedItemBytes(message, llmprotocol.OpenAIResponsesV1); isCarried {

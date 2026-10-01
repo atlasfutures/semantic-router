@@ -415,6 +415,12 @@ type Request struct {
 	// carried declaration of one reaches a target of its own format only
 	// when named here. The router sets it per dispatch; no decoder does.
 	HostedTools []string
+	// ForwardsEncryptedReasoning lets resent Responses reasoning items that
+	// hold encrypted_content reach a Responses target, unchanged. Without it
+	// every target drops and counts them. The router sets it per dispatch,
+	// only when that target issued every blob the request resends; no
+	// decoder does.
+	ForwardsEncryptedReasoning bool
 }
 
 type StopReason string

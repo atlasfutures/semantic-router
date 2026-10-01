@@ -58,11 +58,15 @@ type raylineARCEpisodeTransaction struct {
 	// controlPlacement is the thinking-control placer this turn advanced,
 	// committed only with the turn.
 	controlPlacement *raylinearc.ControlPlacement
-	finalizeOnce     sync.Once
-	finalizeErr      error
-	renewCancel      context.CancelFunc
-	renewDone        chan struct{}
-	leaseLost        atomic.Bool
+	// reasoningIssuers is the issuer set this turn leaves behind, committed
+	// only with the turn; unstaged leaves the stored set as it was.
+	reasoningIssuers       []string
+	reasoningIssuersStaged bool
+	finalizeOnce           sync.Once
+	finalizeErr            error
+	renewCancel            context.CancelFunc
+	renewDone              chan struct{}
+	leaseLost              atomic.Bool
 	// onFinalize is an optional terminal-path hook; the stream-level hold in
 	// processWithContext is what keeps the episode store open.
 	onFinalize func()
@@ -180,6 +184,16 @@ func (transaction *raylineARCEpisodeTransaction) committedControlPlacement(
 	return state, found, true
 }
 
+// stageReasoningIssuers records the encrypted reasoning issuer set this turn
+// leaves behind (raylinearc.NextReasoningIssuers).
+func (transaction *raylineARCEpisodeTransaction) stageReasoningIssuers(issuers []string) {
+	if transaction == nil {
+		return
+	}
+	transaction.reasoningIssuers = append([]string(nil), issuers...)
+	transaction.reasoningIssuersStaged = true
+}
+
 // committedThinking returns the ledger the prepared state carries, and the
 // committed turn count the planner measures spacing against.
 func (transaction *raylineARCEpisodeTransaction) committedThinking() (*thinkinglever.Ledger, uint64, bool) {
@@ -231,6 +245,9 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 		}
 		if transaction.controlPlacement != nil {
 			nextState.Controls = raylinearc.WithControlPlacement(nextState.Controls, *transaction.controlPlacement)
+		}
+		if transaction.reasoningIssuersStaged {
+			nextState.ReasoningIssuers = append([]string(nil), transaction.reasoningIssuers...)
 		}
 		if err := nextState.Commit(
 			transaction.selectedArm,
@@ -427,6 +444,7 @@ func cloneARCState(
 		Thinking:             state.Thinking.Clone(),
 		Upstream:             append([]raylinearc.UpstreamPrefix(nil), state.Upstream...),
 		Controls:             raylinearc.CloneControlPlacements(state.Controls),
+		ReasoningIssuers:     append([]string(nil), state.ReasoningIssuers...),
 	}
 	if state.PreviousArm != nil {
 		value := *state.PreviousArm
