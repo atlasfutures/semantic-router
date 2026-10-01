@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,6 +63,7 @@ func policyV5Decision(t *testing.T, manifest []byte) (*RouterConfig, Decision) {
 		PackageSHA256:             hex.EncodeToString(sum[:]),
 		PackageManifest:           path,
 		AllowExperimentalControls: true,
+		ModelSchedule:             RaylineARCModelScheduleTaskTurnCompaction,
 		Bindings: []RaylineARCPolicyBinding{
 			{ActionID: policyV5OpusAction, Worker: "arm-opus"},
 			{ActionID: policyV5GLMNone, Worker: "arm-glm"},
@@ -141,6 +144,10 @@ func TestRaylineARCPolicyPackageV5Refusals(t *testing.T) {
 			},
 			want: "only action_id and worker",
 		},
+		"a model_schedule the package does not declare": {
+			edit: func(_ *RouterConfig, d *Decision) { d.Algorithm.RaylineARC.PolicyService.ModelSchedule = "" },
+			want: "the package declares",
+		},
 		"dispatch_effort on a v5 package": {
 			edit: func(_ *RouterConfig, d *Decision) {
 				d.Algorithm.RaylineARC.PolicyService.DispatchEffort = RaylineARCPolicyDispatchEffortProviderDefault
@@ -194,6 +201,46 @@ func TestRaylineARCPolicyPackageV5Refusals(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+// An episode keeps a bounded number of placers, one per worker and control
+// shape; bindings that could need more are refused rather than evicting a
+// placer whose instructions still need replaying.
+func TestRaylineARCPolicyPackageV5BoundsControlShapes(t *testing.T) {
+	var manifest map[string]any
+	if err := json.Unmarshal(readPolicyV5Fixture(t), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	glm := manifest["actions"].([]any)[2].(map[string]any)
+	var actions []any
+	for index := 0; index < 17; index++ {
+		action := map[string]any{}
+		for key, value := range glm {
+			action[key] = value
+		}
+		action["action_id"] = fmt.Sprintf("%064x", index+1)
+		actions = append(actions, action)
+	}
+	manifest["actions"] = actions
+	manifest["decision"].(map[string]any)["fallback_action_id"] = fmt.Sprintf("%064x", 1)
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, decision := policyV5Decision(t, raw)
+	on := true
+	decision.ModelRefs = nil
+	policy := decision.Algorithm.RaylineARC.PolicyService
+	policy.Bindings = nil
+	for index := 0; index < 17; index++ {
+		worker := fmt.Sprintf("arm-%d", index)
+		cfg.ModelConfig[worker] = ModelParams{PreferredEndpoints: []string{"openrouter"}, APIFormat: APIFormatOpenAI}
+		decision.ModelRefs = append(decision.ModelRefs, ModelRef{Model: worker, ModelReasoningControl: ModelReasoningControl{UseReasoning: &on}})
+		policy.Bindings = append(policy.Bindings, RaylineARCPolicyBinding{ActionID: fmt.Sprintf("%064x", index+1), Worker: worker})
+	}
+	if err := validatePolicyDispatch(cfg, decision); err == nil || !strings.Contains(err.Error(), "control shapes") {
+		t.Fatalf("17 control shapes loaded: %v", err)
 	}
 }
 

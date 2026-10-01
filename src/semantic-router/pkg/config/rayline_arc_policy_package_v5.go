@@ -137,6 +137,16 @@ func validateRaylineARCPolicyPackageV5Bindings(cfg *RaylineARCPolicyServiceConfi
 	if cfg.DispatchEffort != "" {
 		return fmt.Errorf("dispatch_effort serves v4 packages; a v5 control names its own base")
 	}
+	// The package's schedule is part of what it was trained under, and VSR
+	// enforces the configured one; they must be the same.
+	pkg, _ := cfg.loadPackageV5()
+	declared := ""
+	if schedule := pkg.manifest.Decision.ModelSchedule; schedule != nil {
+		declared = *schedule
+	}
+	if cfg.ModelSchedule != declared {
+		return fmt.Errorf("model_schedule is %q, and the package declares %q", cfg.ModelSchedule, declared)
+	}
 	for _, binding := range cfg.Bindings {
 		if binding.Level != "" || binding.Model != "" || binding.Effort != nil || binding.ReasoningMaxTokens != nil {
 			return fmt.Errorf("binding for action %s: a v5 binding is only action_id and worker; the package names the model and control",
@@ -173,6 +183,24 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 		reasons[modelRef.Model] = modelRef.UseReasoning != nil && *modelRef.UseReasoning
 	}
 	bound := make(map[string]bool, len(policy.Bindings))
+	// An episode keeps one placer per worker and control shape, up to a
+	// bound; more shapes than that would evict a placer whose instructions
+	// still need replaying.
+	shapes := map[string]bool{}
+	for _, binding := range policy.Bindings {
+		if action, ok := pkg.actions[binding.ActionID]; ok {
+			control := action.Control
+			budget := int64(0)
+			if control.BudgetTokens != nil {
+				budget = *control.BudgetTokens
+			}
+			shapes[fmt.Sprintf("%s|%s|%d|%t", binding.Worker, control.Native, budget, control.Instruction != nil)] = true
+		}
+	}
+	if len(shapes) > raylinearc.MaxControlPlacements {
+		return fmt.Errorf("the bindings put %d control shapes on their workers, and an episode keeps %d",
+			len(shapes), raylinearc.MaxControlPlacements)
+	}
 	for _, binding := range policy.Bindings {
 		action, ok := pkg.actions[binding.ActionID]
 		if !ok {

@@ -269,6 +269,7 @@ routing:
             package_sha256: {{PACKAGE}}
             package_manifest: {{MANIFEST}}
             allow_experimental_controls: true
+            model_schedule: task_turn_compaction_v1
             bindings:
               - action_id: {{OPUS}}
                 worker: opus
