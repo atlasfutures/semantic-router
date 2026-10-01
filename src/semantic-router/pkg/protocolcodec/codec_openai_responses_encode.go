@@ -391,7 +391,7 @@ func (state *responsesMessageEncodingState) appendGeneratedImage(image *llmproto
 	}
 	item := responsesItemWire{
 		Type:   "image_generation_call",
-		ID:     responsesItemID(state.messageID, len(state.items), "image_generation_call"),
+		ID:     state.itemID("image_generation_call"),
 		Status: string(image.Status),
 	}
 	if image.Result != nil {
@@ -411,7 +411,7 @@ func (state *responsesMessageEncodingState) flushOrdinary() error {
 		return err
 	}
 	item := responsesItemWire{
-		Type: "message", ID: responsesItemID(state.messageID, len(state.items), "message"),
+		Type: "message", ID: state.itemID("message"),
 		Role: state.role, Content: content,
 	}
 	if state.textDirection == "output" {
@@ -427,7 +427,7 @@ func (state *responsesMessageEncodingState) appendToolCall(call *llmprotocol.Too
 		return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_tool_call", "tool call is invalid", nil)
 	}
 	state.items = append(state.items, responsesItemWire{
-		Type: "function_call", ID: responsesItemID(state.messageID, len(state.items), "function_call"),
+		Type: "function_call", ID: state.itemID("function_call"),
 		CallID: call.ID, Name: call.Name, Arguments: call.Arguments, Namespace: call.Namespace,
 	})
 	return nil
@@ -442,7 +442,7 @@ func (state *responsesMessageEncodingState) appendToolResult(result *llmprotocol
 		return err
 	}
 	state.items = append(state.items, responsesItemWire{
-		Type: "function_call_output", ID: responsesItemID(state.messageID, len(state.items), "function_call_output"),
+		Type: "function_call_output", ID: state.itemID("function_call_output"),
 		CallID: result.CallID, Output: output,
 	})
 	return nil
@@ -453,7 +453,7 @@ func (state *responsesMessageEncodingState) flushReasoning() error {
 		return nil
 	}
 	item := responsesItemWire{
-		Type: "reasoning", ID: responsesItemID(state.messageID, len(state.items), "reasoning"),
+		Type: "reasoning", ID: state.itemID("reasoning"),
 	}
 	summaries := make([]map[string]string, 0, len(state.reasoning))
 	texts := make([]map[string]string, 0, len(state.reasoning))
@@ -491,6 +491,21 @@ func responsesItemID(messageID string, index int, kind string) string {
 		return messageID
 	}
 	return llmprotocol.StableID("responses-item", messageID, fmt.Sprint(index), kind)
+}
+
+// itemID is the id of the message's next item. On input, ids are optional and
+// the Router invents none: the first item keeps the client's message id and
+// the rest carry none, as upstream v0.4 does. Invented input ids were derived
+// from the message alone, so every id-less message's first item shared one.
+// Output items always have an id (validation requires one upstream).
+func (state *responsesMessageEncodingState) itemID(kind string) string {
+	if state.textDirection == "input" {
+		if len(state.items) == 0 {
+			return state.messageID
+		}
+		return ""
+	}
+	return responsesItemID(state.messageID, len(state.items), kind)
 }
 
 func decodeResponsesReasoning(
