@@ -352,8 +352,13 @@ func memoryAbsentTag(removals uint64) string {
 }
 
 // memoryReadToken names an entry by its generation and version, read at now.
-// An entry the store has never seen reads as a token with no generation.
+// A read taken while a strict lease holds the entry can never commit: the
+// lease already advanced the version, and its commit will change the state
+// without advancing it again, so no later check could tell them apart.
 func memoryReadToken(entry *memoryEpisodeEntry, now time.Time) EpisodeReadToken {
+	if entry.leased {
+		return EpisodeReadToken{version: entry.version, tag: "leased", readAt: now}
+	}
 	return EpisodeReadToken{version: entry.version, tag: strconv.FormatUint(entry.generation, 10), readAt: now}
 }
 
