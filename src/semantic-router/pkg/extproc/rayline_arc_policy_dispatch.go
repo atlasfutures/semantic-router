@@ -227,19 +227,29 @@ func raylineARCPolicyActionsCarriable(cfg *config.RouterConfig, decision *config
 		if err != nil {
 			return false
 		}
-		format, err := wireFormatForModel(cfg.GetModelAPIFormat(binding.Worker))
-		if err != nil {
-			return false
-		}
-		switch format {
-		case llmprotocol.AnthropicMessagesV1:
-		case llmprotocol.OpenAIChatV1:
-			if _, _, err := policyActionChatWire(binding, resolveProviderReasoningTransport(profile)); err != nil {
+		// The format is chosen per request from the worker's accepted
+		// formats, so the action must be carriable in every one of them.
+		for _, accepted := range cfg.GetModelAcceptedFormats(binding.Worker) {
+			if !policyActionCarriableIn(binding, accepted, profile) {
 				return false
 			}
-		default:
-			return false
 		}
 	}
 	return true
+}
+
+func policyActionCarriableIn(binding config.RaylineARCPolicyBinding, apiFormat string, profile *config.ProviderProfile) bool {
+	format, err := wireFormatForModel(apiFormat)
+	if err != nil {
+		return false
+	}
+	switch format {
+	case llmprotocol.AnthropicMessagesV1:
+		return true
+	case llmprotocol.OpenAIChatV1:
+		_, _, err := policyActionChatWire(binding, resolveProviderReasoningTransport(profile))
+		return err == nil
+	default:
+		return false
+	}
 }

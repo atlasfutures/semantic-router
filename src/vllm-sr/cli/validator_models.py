@@ -214,6 +214,7 @@ def _provider_model_has_metadata(model: Any) -> bool:
         or model.reasoning is not None
         or model.provider_model_id
         or model.api_format
+        or model.accepted_formats
         or model.external_model_ids
     ):
         return True

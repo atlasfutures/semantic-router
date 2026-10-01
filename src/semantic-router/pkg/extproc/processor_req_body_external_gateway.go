@@ -30,7 +30,7 @@ func (r *OpenAIRouter) handleExternalGatewayModelRouting(
 	model string,
 	ctx *RequestContext,
 ) (*ext_proc.ProcessingResponse, error) {
-	targetFormat, err := wireFormatForModel(r.Config.GetModelAPIFormat(model))
+	targetFormat, err := r.dispatchTargetFormat(model, ctx.SourceFormat)
 	if err != nil {
 		return nil, err
 	}

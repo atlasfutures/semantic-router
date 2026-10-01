@@ -96,7 +96,7 @@ func (r *OpenAIRouter) renderAutomaticCandidates(ctx *RequestContext, refs []con
 			return nil, nil, automaticOutputUnsupported("a non-LoRA single-backend candidate")
 		}
 		useReasoning := ref.UseReasoning != nil && *ref.UseReasoning
-		dispatch, err := r.resolveProviderDispatch(ref.Model, ctx.VSRSelectedDecision.Name, useReasoning)
+		dispatch, err := r.resolveProviderDispatch(ref.Model, ctx.VSRSelectedDecision.Name, useReasoning, ctx.SourceFormat)
 		if err != nil {
 			return nil, nil, err
 		}

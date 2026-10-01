@@ -449,7 +449,7 @@ routing: {}
 			common := response.GetRequestBody().GetResponse()
 			require.NotNil(t, common)
 			emitted := headerValuesByName(common.GetHeaderMutation().GetSetHeaders())
-			dispatch, err := router.resolveProviderDispatch("routed", decision.Name, true)
+			dispatch, err := router.resolveProviderDispatch("routed", decision.Name, true, "")
 			require.NoError(t, err)
 			baseURL := providerEndpointScheme(cfg, dispatch.backendName, dispatch.profile) + "://" + dispatch.backendAddress
 			require.Equal(t, fixture.URL, baseURL)

@@ -95,7 +95,7 @@ func (d *shadowDispatcher) failShadow(result shadowResult, reason string, err er
 // prepareShadowCall resolves the shadow backend, its connector, and the
 // encoded body once; the connector then owns every transport attempt.
 func (d *shadowDispatcher) prepareShadowCall(job *shadowJob) (*preparedShadowCall, string, error) {
-	target, err := resolveShadowTarget(job.routerConfig, job.cfg.Model)
+	target, err := resolveShadowTarget(job.routerConfig, job.cfg.Model, job.request.Trusted.SourceFormat)
 	if err != nil {
 		return nil, shadowReasonBackendUnresolved, err
 	}
@@ -206,7 +206,7 @@ func shadowConnectorFailure(callCtx, rootCtx context.Context, err error) (reason
 
 // resolveShadowTarget reuses the primary backend resolution so a shadow can
 // only ever reach a backend the operator configured for that model.
-func resolveShadowTarget(cfg *config.RouterConfig, model string) (*shadowTarget, error) {
+func resolveShadowTarget(cfg *config.RouterConfig, model string, clientFormat llmprotocol.WireFormat) (*shadowTarget, error) {
 	address, backendName, found, err := cfg.ResolvePrimaryBackendForModel(model)
 	if err != nil {
 		return nil, fmt.Errorf("resolve backend for shadow model %q: %w", model, err)
@@ -218,7 +218,9 @@ func resolveShadowTarget(cfg *config.RouterConfig, model string) (*shadowTarget,
 	if err != nil {
 		return nil, fmt.Errorf("resolve provider profile for shadow model %q: %w", model, err)
 	}
-	format, err := wireFormatForModel(cfg.GetModelAPIFormat(model))
+	// The shadow goes out in the format primary dispatch would choose for
+	// this client (accepted_formats, #123), not the model's first format.
+	format, err := wireFormatForModel(cfg.ResolveModelTargetAPIFormat(model, apiFormatForWire(clientFormat)))
 	if err != nil {
 		return nil, fmt.Errorf("shadow model %q: %w", model, err)
 	}

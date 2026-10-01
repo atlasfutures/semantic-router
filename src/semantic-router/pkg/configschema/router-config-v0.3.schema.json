@@ -1004,6 +1004,12 @@
         "api_format": {
           "type": "string"
         },
+        "accepted_formats": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "external_model_ids": {
           "additionalProperties": {
             "type": "string"

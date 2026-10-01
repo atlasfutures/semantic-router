@@ -52,7 +52,7 @@ func (r *OpenAIRouter) candidateCapabilityMismatch(ref config.ModelRef, request 
 	if request == nil {
 		return nil // Eval/selector-only callers have no full inference envelope.
 	}
-	format, err := wireFormatForModel(r.Config.GetModelAPIFormat(ref.Model))
+	format, err := r.dispatchTargetFormat(ref.Model, request.Trusted.SourceFormat)
 	if err != nil {
 		return err
 	}

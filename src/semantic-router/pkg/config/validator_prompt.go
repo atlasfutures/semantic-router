@@ -74,7 +74,9 @@ func validateDecisionPromptModel(cfg *RouterConfig, decision Decision) error {
 			model,
 		)
 	}
-	if strings.EqualFold(modelConfig.APIFormat, ClientProtocolAnthropic) {
+	// The looper sends the helper a Chat request, which goes out as Chat when
+	// the helper accepts it and in its first format otherwise.
+	if cfg.ResolveModelTargetAPIFormat(model, APIFormatOpenAI) == APIFormatAnthropic {
 		return fmt.Errorf(
 			"decision '%s', algorithm.prompt.model %q must use an OpenAI-compatible API format",
 			decision.Name,

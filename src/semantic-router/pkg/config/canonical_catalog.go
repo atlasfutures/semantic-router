@@ -64,6 +64,12 @@ func applyEffectiveModelRegistry(
 				return err
 			}
 		}
+		if authored := params.AuthoredModel; authored != nil && len(authored.AcceptedFormats) > 0 {
+			if err := validateAcceptedFormatBindings(model.Alias, authored.AcceptedFormats, model.Providers); err != nil {
+				return err
+			}
+			params.AcceptedFormats = append([]string(nil), authored.AcceptedFormats...)
+		}
 		cfg.ModelConfig[model.Alias] = params
 	}
 	if len(cfg.ProviderProfiles) == 0 {
@@ -166,7 +172,7 @@ func applyBindingAPIFormat(modelAlias string, bindingIndex int, protocol string,
 	}
 	if params.APIFormat != "" && params.APIFormat != apiFormat {
 		return fmt.Errorf(
-			"providers.models[%s] backend_refs resolve to mixed API formats %q and %q",
+			"providers.models[%s] backend_refs resolve to mixed API formats %q and %q; bind them in one, and list further formats every backend accepts in accepted_formats",
 			modelAlias, params.APIFormat, apiFormat,
 		)
 	}

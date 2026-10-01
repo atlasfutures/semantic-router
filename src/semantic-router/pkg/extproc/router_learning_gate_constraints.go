@@ -24,12 +24,12 @@ func (r *OpenAIRouter) progressCandidateReason(ctx *RequestContext, selCtx *sele
 		return "context_limit"
 	}
 	if ctx.SemanticRequest != nil {
-		format, err := wireFormatForModel(r.Config.GetModelAPIFormat(ref.Model))
+		format, err := r.dispatchTargetFormat(ref.Model, ctx.SourceFormat)
 		if err != nil {
 			return "capability"
 		}
 		projected, err := r.projectRequestForBackend(*ctx.SemanticRequest, ref.Model, format)
-		if err != nil || !r.modelCanServeCapabilities(ref.Model, llmprotocol.RequiredCapabilities(projected)) {
+		if err != nil || r.providerCapabilityMismatch(ref.Model, format, llmprotocol.RequiredCapabilities(projected)) != nil {
 			return "capability"
 		}
 	}
@@ -43,17 +43,6 @@ func (r *OpenAIRouter) progressCandidateReason(ctx *RequestContext, selCtx *sele
 		}
 	}
 	return ""
-}
-
-// modelCanServeCapabilities reports whether the model can express every
-// required capability: the wire format's codec set must cover them, narrowed
-// by the model's own declared capabilities when annotated.
-func (r *OpenAIRouter) modelCanServeCapabilities(model string, required llmprotocol.CapabilitySet) bool {
-	format, err := wireFormatForModel(r.Config.GetModelAPIFormat(model))
-	if err != nil {
-		return false
-	}
-	return r.providerCapabilityMismatch(model, format, required) == nil
 }
 
 func progressHardLock(selCtx *selection.SelectionContext) string {

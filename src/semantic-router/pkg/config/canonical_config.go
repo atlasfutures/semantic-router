@@ -385,6 +385,9 @@ func validateCanonicalProviderModelMetadata(model CanonicalProviderModel) error 
 	if err := validateCanonicalReasoning(model.Name, model.Reasoning); err != nil {
 		return err
 	}
+	if err := validateAcceptedFormats(model.Name, model.APIFormat, model.AcceptedFormats); err != nil {
+		return err
+	}
 	if err := validateProviderReliability(model.Name, model.Reliability); err != nil {
 		return err
 	}
@@ -579,7 +582,7 @@ func canonicalProviderModelHasMetadata(model CanonicalProviderModel) bool {
 	if model.Catalog != "" || model.Reasoning != nil || model.ProviderModelID != "" || model.APIFormat != "" || len(model.ExternalModelIDs) > 0 {
 		return true
 	}
-	if model.ProviderPreferences != nil {
+	if model.ProviderPreferences != nil || len(model.AcceptedFormats) > 0 {
 		return true
 	}
 	return model.Pricing != (ModelPricing{}) ||

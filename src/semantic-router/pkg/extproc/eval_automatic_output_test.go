@@ -232,7 +232,7 @@ func TestNativePreviewUsesConfiguredSystemReasoningAndBlockedCap(t *testing.T) {
 	require.Equal(t, before, after, "configured defaults cannot mutate prompt or nested tool schemas")
 	require.Equal(t, 1, calls)
 	require.Equal(t, metricsBefore, nativePreviewObservationCounters(t), "rendering must not record a reasoning decision")
-	dispatch, err := r.resolveProviderDispatch(first, ctx.VSRSelectedDecision.Name, true)
+	dispatch, err := r.resolveProviderDispatch(first, ctx.VSRSelectedDecision.Name, true, ctx.SourceFormat)
 	require.NoError(t, err)
 	body := []byte(`{"model":"provider-model","messages":[{"role":"user","content":"hello"}]}`)
 	projected, _, err := r.projectProviderRequest(body, dispatch, ctx)

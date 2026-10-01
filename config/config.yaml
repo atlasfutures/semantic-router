@@ -71,6 +71,11 @@ providers:
     - name: remote-openai-reference
       provider_model_id: remote-openai-reference
       api_format: openai
+      # accepted_formats lists the wire formats every backend accepts, in
+      # preference order: a request goes out in the client's own format when
+      # it is listed (a Responses client stays on Responses), otherwise in the
+      # first, which api_format must match. Omit it for a single api_format.
+      accepted_formats: [openai, responses]
       backend_refs:
         - name: remote-primary
           base_url: https://api.example.com/v1

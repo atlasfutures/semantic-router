@@ -92,7 +92,7 @@ func (r *OpenAIRouter) recordPrimarySuccess(ctx *RequestContext) {
 		primaryModel = ctx.RequestModel
 	}
 	backendName := primaryModel
-	if dispatch, err := r.resolveProviderDispatch(primaryModel, ctx.VSRSelectedDecisionName, false); err == nil && dispatch != nil {
+	if dispatch, err := r.resolveProviderDispatch(primaryModel, ctx.VSRSelectedDecisionName, false, ctx.SourceFormat); err == nil && dispatch != nil {
 		backendName = dispatch.backendName
 	}
 	orch.CircuitBreaker().RecordSuccess(backendName)
@@ -132,7 +132,7 @@ func (r *OpenAIRouter) maybeExecuteFallback(body []byte, ctx *RequestContext) *e
 		primaryModel = ctx.RequestModel
 	}
 	backendName := primaryModel
-	if dispatch, err := r.resolveProviderDispatch(primaryModel, ctx.VSRSelectedDecisionName, false); err == nil && dispatch != nil {
+	if dispatch, err := r.resolveProviderDispatch(primaryModel, ctx.VSRSelectedDecisionName, false, ctx.SourceFormat); err == nil && dispatch != nil {
 		backendName = dispatch.backendName
 	}
 
@@ -219,11 +219,11 @@ func (r *OpenAIRouter) maybeExecuteFallback(body []byte, ctx *RequestContext) *e
 			func(i int) string { return candidateModelIdentity(ctx.VSREligibleModelRefs[i]) },
 			func(model string) (string, error) {
 				useReasoning := r.candidateReasoningChoice(ctx, model)
-				dispatch, err := r.resolveProviderDispatch(model, ctx.VSRSelectedDecisionName, useReasoning)
+				dispatch, err := r.resolveProviderDispatch(model, ctx.VSRSelectedDecisionName, useReasoning, ctx.SourceFormat)
 				if err != nil {
 					for _, ref := range ctx.VSREligibleModelRefs {
 						if candidateModelIdentity(ref) == model && ref.Model != "" {
-							if baseDispatch, baseErr := r.resolveProviderDispatch(ref.Model, ctx.VSRSelectedDecisionName, useReasoning); baseErr == nil {
+							if baseDispatch, baseErr := r.resolveProviderDispatch(ref.Model, ctx.VSRSelectedDecisionName, useReasoning, ctx.SourceFormat); baseErr == nil {
 								return baseDispatch.backendName, nil
 							}
 						}
@@ -319,9 +319,9 @@ func (r *OpenAIRouter) executeFallbackCandidate(
 	origPath := ctx.ResponsePath
 	wasStreaming := ctx.IsStreamingResponse
 	useReasoning := r.candidateReasoningChoice(ctx, candidateModel)
-	dispatch, err := r.resolveProviderDispatch(candidateModel, ctx.VSRSelectedDecisionName, useReasoning)
+	dispatch, err := r.resolveProviderDispatch(candidateModel, ctx.VSRSelectedDecisionName, useReasoning, ctx.SourceFormat)
 	if err != nil && candidateRef.LoRAName != "" && candidateRef.Model != "" {
-		if baseDispatch, baseErr := r.resolveProviderDispatch(candidateRef.Model, ctx.VSRSelectedDecisionName, useReasoning); baseErr == nil {
+		if baseDispatch, baseErr := r.resolveProviderDispatch(candidateRef.Model, ctx.VSRSelectedDecisionName, useReasoning, ctx.SourceFormat); baseErr == nil {
 			dispatch = baseDispatch
 			dispatch.logicalModel = candidateModel
 			dispatch.upstreamModel = r.Config.ResolveExternalModelID(candidateModel, baseDispatch.backendName)

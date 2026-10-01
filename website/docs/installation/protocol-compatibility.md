@@ -45,6 +45,37 @@ contract implemented by that model endpoint, not the provider brand.
 | `responses` | OpenAI Responses | `/v1/responses` | The backend itself must implement the Responses wire contract; enabling the Router's Responses service does not add that API to a backend. |
 | `anthropic` | Anthropic Messages | `/v1/messages` | Configure provider authentication and required version headers on the backend ref. |
 
+### Several accepted formats
+
+A model whose backends accept more than one format lists them in
+`accepted_formats`, in preference order. Each request then goes out in the
+client's own format when it is listed, and otherwise in the first one:
+
+```yaml
+providers:
+  models:
+    - name: claude
+      provider_model_id: anthropic/claude-opus-5
+      accepted_formats: [anthropic, openai]
+      backend_refs:
+        - name: openrouter-claude
+          provider: openrouter
+          api_key_env: OPENROUTER_API_KEY
+```
+
+A Chat client reaches this model as Chat and a Messages client as Messages; a
+Responses client, whose format is not listed, is translated to Messages. The
+backends are bound in the first format, so `api_format`, if set, must equal it.
+Every backend must serve every listed format, and a backend with a catalog
+mapping must list the format on that mapping; the loader refuses the model
+otherwise. On an OpenAI backend, list `responses` first so a client in an
+unlisted format, such as Messages, is translated to Responses. Without
+`accepted_formats` the model takes every request in its single `api_format`.
+
+Rayline ARC checks that depend on the format (a `worker_thinking` base, a
+`per_turn_effort` lever, a policy action's reasoning) must hold for every
+accepted format of the worker, since any of them may be chosen per request.
+
 These fields are easy to confuse:
 
 - model `api_format` selects the request, response, error, and streaming codec;
