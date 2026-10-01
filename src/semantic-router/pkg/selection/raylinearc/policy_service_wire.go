@@ -310,6 +310,33 @@ type PolicyPackageManifestV5 struct {
 	Actions                []PolicyCatalogActionV5 `json:"actions"`
 }
 
+// The encoding profile's optional members and the one value each may state;
+// absent selects the recorded-form projection and keeps harness injections.
+const (
+	PolicyConversationCanonicalV1          = "canonical_v1"
+	PolicyHarnessInjectionsStripClaudeCode = "strip_claude_code_2_1_v1"
+)
+
+func (common *PolicyPackageCommon) checkConversation() error {
+	profile := common.EncodingProfile
+	for name, member := range map[string]struct {
+		raw     json.RawMessage
+		allowed string
+	}{
+		"conversation":       {profile.Conversation, PolicyConversationCanonicalV1},
+		"harness_injections": {profile.HarnessInjections, PolicyHarnessInjectionsStripClaudeCode},
+	} {
+		if member.raw == nil {
+			continue
+		}
+		var value string
+		if err := json.Unmarshal(member.raw, &value); err != nil || value != member.allowed {
+			return fmt.Errorf("policy package encoding_profile.%s %s is not one the contract defines", name, member.raw)
+		}
+	}
+	return nil
+}
+
 // PolicyPackageCommon is every manifest section v4 and v5 share; v5 differs
 // only in its actions and thinking_controls_sha256.
 type PolicyPackageCommon struct {
@@ -331,12 +358,22 @@ type PolicyPackageCommon struct {
 		Serializer      string `json:"serializer"`
 		Projection      string `json:"projection"`
 		ToolDefinitions string `json:"tool_definitions"`
-		EncoderModel    string `json:"encoder_model"`
-		EncoderRevision string `json:"encoder_revision"`
-		DType           string `json:"dtype"`
-		MaxTokens       int    `json:"max_tokens"`
-		Readout         string `json:"readout"`
-		Dimension       int    `json:"dimension"`
+		// Conversation and HarnessInjections name how the policy service
+		// encodes the request: conversation absent is the recorded-form
+		// transcript projection and canonical_v1 the bundle recipe's
+		// canonical projection; harness_injections absent keeps harness
+		// injections and strip_claude_code_2_1_v1 strips Claude Code's. The
+		// service applies them; VSR only requires values the contract
+		// defines.
+		// Raw, so an explicit null is told apart from an omitted member.
+		Conversation      json.RawMessage `json:"conversation,omitempty"`
+		HarnessInjections json.RawMessage `json:"harness_injections,omitempty"`
+		EncoderModel      string          `json:"encoder_model"`
+		EncoderRevision   string          `json:"encoder_revision"`
+		DType             string          `json:"dtype"`
+		MaxTokens         int             `json:"max_tokens"`
+		Readout           string          `json:"readout"`
+		Dimension         int             `json:"dimension"`
 	} `json:"encoding_profile"`
 	InferencePackage PolicyInferencePackage `json:"inference_package"`
 	Decision         struct {
@@ -440,6 +477,9 @@ func DecodePolicyPackageManifest(body []byte) (*PolicyPackageManifest, error) {
 	if manifest.Pricing.LivePricesAffectDecisions {
 		return nil, fmt.Errorf("policy package lets live prices affect decisions")
 	}
+	if err := manifest.checkConversation(); err != nil {
+		return nil, err
+	}
 	return &manifest, nil
 }
 
@@ -458,6 +498,9 @@ func DecodePolicyPackageManifestV5(body []byte) (*PolicyPackageManifestV5, error
 	}
 	if manifest.Pricing.LivePricesAffectDecisions {
 		return nil, fmt.Errorf("policy package lets live prices affect decisions")
+	}
+	if err := manifest.checkConversation(); err != nil {
+		return nil, err
 	}
 	if len(manifest.Actions) == 0 {
 		return nil, fmt.Errorf("policy package has no actions")

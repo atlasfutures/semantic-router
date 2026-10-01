@@ -225,3 +225,40 @@ func TestPolicyResponsesRequestWritesNullInstructions(t *testing.T) {
 		t.Fatalf("decoded %+v, %v", decoded, err)
 	}
 }
+
+// Published packages state encoding_profile.conversation (pathfinder's
+// "canonical_v1" projection) and may state harness_injections; both decoders
+// read them, accept the value the contract defines for each, and refuse any
+// other.
+func TestDecodePolicyPackageConversation(t *testing.T) {
+	const anchor = `"tool_definitions": "include_recorded",`
+	decoders := map[string]func([]byte) error{
+		"package_manifest.v4.json": func(b []byte) error { _, err := DecodePolicyPackageManifest(b); return err },
+		"package_manifest.v5.json": func(b []byte) error { _, err := DecodePolicyPackageManifestV5(b); return err },
+	}
+	for fixture, decode := range decoders {
+		body := readPolicyFixture(t, fixture)
+		if !bytes.Contains(body, []byte(anchor)) {
+			t.Fatalf("%s no longer holds %q", fixture, anchor)
+		}
+		for member, values := range map[string]map[string]bool{
+			"conversation":       {`"canonical_v1"`: true, `"transcript_v9"`: false, `""`: false, `null`: false, `1`: false},
+			"harness_injections": {`"strip_claude_code_2_1_v1"`: true, `"keep"`: false, `""`: false, `null`: false},
+		} {
+			for value, accepted := range values {
+				changed := bytes.Replace(body, []byte(anchor), []byte(anchor+` "`+member+`": `+value+`,`), 1)
+				if err := decode(changed); (err == nil) != accepted {
+					t.Errorf("%s %s %q: err = %v", fixture, member, value, err)
+				}
+			}
+		}
+		both := bytes.Replace(body, []byte(anchor),
+			[]byte(anchor+` "conversation": "canonical_v1", "harness_injections": "strip_claude_code_2_1_v1",`), 1)
+		if err := decode(both); err != nil {
+			t.Errorf("%s with both members: %v", fixture, err)
+		}
+		if err := decode(body); err != nil {
+			t.Errorf("%s without conversation: %v", fixture, err)
+		}
+	}
+}
