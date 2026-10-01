@@ -1,0 +1,100 @@
+{
+  "schema_version": "rayline.arc.policy-decision-request.v1",
+  "package": {
+    "alias": "rayline/arc-example-fold0",
+    "package_sha256": "81e4a7af2c28c3be9ecbe850888c6773d196d58cad100474cbfb48622af7abe4"
+  },
+  "episode_id_hash": "7e414e6ac41ac7a0658ce2807548af8fb48b145f9b74aa77c9b526c569804bbc",
+  "context_epoch": "epoch-0",
+  "request_format": "anthropic_messages",
+  "request": {
+    "system": [
+      {
+        "type": "text",
+        "text": "You are Claude Code."
+      }
+    ],
+    "tools": [
+      {
+        "name": "Bash",
+        "description": "Run a shell command",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "command"
+          ]
+        }
+      }
+    ],
+    "messages": [
+      {
+        "role": "user",
+        "content": "List the files."
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "toolu_01",
+            "name": "Bash",
+            "input": {
+              "command": "ls"
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_01",
+            "content": "README.md"
+          }
+        ]
+      }
+    ]
+  },
+  "attribution": [
+    {
+      "message": 1,
+      "action_id": "b779e919d4709c8bc766f1cc7b4228ed1cd8a5d1f230acfb2453e4f37df6e1f1",
+      "arm_id": "4951fcf2b0d2c10050e8d69681e8deda04f2e3a7b5c3e8b2945bf291be9b9279"
+    }
+  ],
+  "selection": {
+    "available_action_ids": [
+      "b779e919d4709c8bc766f1cc7b4228ed1cd8a5d1f230acfb2453e4f37df6e1f1",
+      "be83da527f7beb71e86f23fdcac94c8365ba49df2ae09050ba7e74958c6b1f90",
+      "569bf3701d341b1945954bf38e0686b23e404ab2a857983402706a40b2a0fad9"
+    ],
+    "held_action_id": null,
+    "reference": null,
+    "operating_point": {
+      "name": "default",
+      "cost_weight": null,
+      "reference": null,
+      "max_quality_drop": null,
+      "quality_margin": null
+    },
+    "preference_dimension": "overall"
+  },
+  "evaluation": null,
+  "shadow": [
+    {
+      "alias": "rayline/arc-example-fold1",
+      "package_sha256": "cbff17fda21ece1386a8bf32ebdf251933a1481d5f6c021055ad75147335e48c"
+    },
+    {
+      "alias": "rayline/arc-example-fold2",
+      "package_sha256": "6c6e140787fce7558cc445fa19aea3f744a0141192dd267f9ec82118dbecf99a"
+    }
+  ],
+  "episode_mode": "relaxed"
+}
