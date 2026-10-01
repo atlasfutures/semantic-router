@@ -35,15 +35,7 @@ func (r *OpenAIRouter) validateModelDemand(requirements *config.CandidateRequire
 	if requirementErr != nil && !errors.As(requirementErr, &budgetError) {
 		return requirementErr
 	}
-	format, err := wireFormatForModel(r.Config.GetModelAPIFormat(model))
-	if err != nil {
-		return fmt.Errorf("%w: %w", selection.ErrNoEligibleCandidates, err)
-	}
-	supported, ok := r.codecCapabilitiesForFormat(format)
-	if !ok {
-		return fmt.Errorf("%w: model %q has no request codec", selection.ErrNoEligibleCandidates, model)
-	}
-	if err := selection.ValidateCandidateCodec(requirements, model, supported, demand); err != nil {
+	if err := r.validateAcceptedFormatsCodec(requirements, model, demand); err != nil {
 		return err
 	}
 	// A caller budget error must not hide an unavailable or incompatible codec.
