@@ -225,3 +225,29 @@ func TestPolicyResponsesRequestWritesNullInstructions(t *testing.T) {
 		t.Fatalf("decoded %+v, %v", decoded, err)
 	}
 }
+
+// Published packages state encoding_profile.conversation (pathfinder's
+// "canonical_v1" projection); both decoders read it, accept the values the
+// contract defines, and refuse any other.
+func TestDecodePolicyPackageConversation(t *testing.T) {
+	const anchor = `"tool_definitions": "include_recorded",`
+	decoders := map[string]func([]byte) error{
+		"package_manifest.v4.json": func(b []byte) error { _, err := DecodePolicyPackageManifest(b); return err },
+		"package_manifest.v5.json": func(b []byte) error { _, err := DecodePolicyPackageManifestV5(b); return err },
+	}
+	for fixture, decode := range decoders {
+		body := readPolicyFixture(t, fixture)
+		if !bytes.Contains(body, []byte(anchor)) {
+			t.Fatalf("%s no longer holds %q", fixture, anchor)
+		}
+		for value, accepted := range map[string]bool{"canonical_v1": true, "transcript_v9": false, "": false} {
+			changed := bytes.Replace(body, []byte(anchor), []byte(anchor+` "conversation": "`+value+`",`), 1)
+			if err := decode(changed); (err == nil) != accepted {
+				t.Errorf("%s conversation %q: err = %v", fixture, value, err)
+			}
+		}
+		if err := decode(body); err != nil {
+			t.Errorf("%s without conversation: %v", fixture, err)
+		}
+	}
+}

@@ -310,6 +310,18 @@ type PolicyPackageManifestV5 struct {
 	Actions                []PolicyCatalogActionV5 `json:"actions"`
 }
 
+// PolicyConversationCanonicalV1 is the encoding profile's canonical
+// conversation projection; absent selects the recorded-form projection.
+const PolicyConversationCanonicalV1 = "canonical_v1"
+
+func (common *PolicyPackageCommon) checkConversation() error {
+	conversation := common.EncodingProfile.Conversation
+	if conversation == nil || *conversation == PolicyConversationCanonicalV1 {
+		return nil
+	}
+	return fmt.Errorf("policy package encoding_profile.conversation %q is not one the contract defines", *conversation)
+}
+
 // PolicyPackageCommon is every manifest section v4 and v5 share; v5 differs
 // only in its actions and thinking_controls_sha256.
 type PolicyPackageCommon struct {
@@ -331,6 +343,11 @@ type PolicyPackageCommon struct {
 		Serializer      string `json:"serializer"`
 		Projection      string `json:"projection"`
 		ToolDefinitions string `json:"tool_definitions"`
+		// Conversation names how the policy service encodes the request:
+		// absent is the recorded-form transcript projection, canonical_v1
+		// the bundle recipe's canonical projection. The service applies it;
+		// VSR only requires a value the contract defines.
+		Conversation *string `json:"conversation,omitempty"`
 		EncoderModel    string `json:"encoder_model"`
 		EncoderRevision string `json:"encoder_revision"`
 		DType           string `json:"dtype"`
@@ -440,6 +457,9 @@ func DecodePolicyPackageManifest(body []byte) (*PolicyPackageManifest, error) {
 	if manifest.Pricing.LivePricesAffectDecisions {
 		return nil, fmt.Errorf("policy package lets live prices affect decisions")
 	}
+	if err := manifest.checkConversation(); err != nil {
+		return nil, err
+	}
 	return &manifest, nil
 }
 
@@ -458,6 +478,9 @@ func DecodePolicyPackageManifestV5(body []byte) (*PolicyPackageManifestV5, error
 	}
 	if manifest.Pricing.LivePricesAffectDecisions {
 		return nil, fmt.Errorf("policy package lets live prices affect decisions")
+	}
+	if err := manifest.checkConversation(); err != nil {
+		return nil, err
 	}
 	if len(manifest.Actions) == 0 {
 		return nil, fmt.Errorf("policy package has no actions")
