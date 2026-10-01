@@ -169,7 +169,11 @@ func withoutGeneratedItemIDs(sent, client map[string]any, instructions int) {
 		case !stated:
 			delete(sentItem, "id")
 		case index < instructions:
-			sentItem["id"] = id
+			// Only an id the provider can take: a null or empty one is
+			// normalised away by the decoder, so its difference stays.
+			if text, ok := id.(string); ok && text != "" {
+				sentItem["id"] = id
+			}
 		}
 	}
 }

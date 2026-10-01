@@ -145,6 +145,16 @@ func TestResponsesRouteNeverReplaysWhatChanged(t *testing.T) {
 			t.Fatalf("the explicit null travelled:\n%s", got)
 		}
 	})
+	for name, id := range map[string]string{"a null": `null`, "an empty": `""`} {
+		t.Run(name+" instruction item id the decoder normalises away", func(t *testing.T) {
+			body := `{"model":"client-model","input":[{"type":"message","id":` + id + `,"role":"developer",` +
+				`"content":[{"type":"input_text","text":"Sandbox: read-only."}]},{"type":"message","role":"user","content":"Hi"}]}`
+			got := routeResponsesBody(t, body, "routed-model", nil)
+			if strings.Contains(got, `"id":`+id) {
+				t.Fatalf("the normalised-away id travelled:\n%s", got)
+			}
+		})
+	}
 	t.Run("a developer message the decoder moves to the front", func(t *testing.T) {
 		body := `{"model":"client-model","input":[{"type":"message","role":"user","content":"Hi"},` +
 			`{"type":"message","role":"developer","content":"Sandbox: read-only."}]}`
