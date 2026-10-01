@@ -27,6 +27,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -594,6 +595,9 @@ func (r *OpenAIRouter) prepareRelaxedRaylineARCTransaction(
 	)
 	defer cancel()
 	state, read, err := snapshots.Snapshot(readContext, episodeIDHash, workerCount)
+	// A relaxed cell keeps serving while its store is down, so each read is
+	// also the store's readiness probe.
+	metrics.SetRaylineARCNamedComponentReady("episode_store", err == nil)
 	stateless := false
 	if err != nil {
 		logging.ComponentWarnEvent("extproc", "rayline_arc_relaxed_read_failed", map[string]interface{}{

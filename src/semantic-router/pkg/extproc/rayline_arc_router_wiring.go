@@ -148,7 +148,7 @@ func registerRaylineARCRecipeSelector(
 		// Each component reports its own readiness. An encoder that is not
 		// answering yet must not read as a broken episode store, or the two
 		// gauges cannot tell an operator which dependency is late.
-		metrics.SetRaylineARCNamedComponentReady("episode_store", episodeStore != nil)
+		metrics.SetRaylineARCNamedComponentReady("episode_store", raylineARCEpisodeStoreReady(episodeStore))
 	}
 	switch readinessFailure {
 	case "":

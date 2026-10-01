@@ -479,7 +479,7 @@ func createRaylineARCEpisodeStore(
 			logging.ComponentWarnEvent("extproc", "rayline_arc_relaxed_store_unready", map[string]interface{}{
 				"backend": episodeConfig.Backend,
 			})
-			return store, closeStore, nil
+			return unreadyRaylineARCEpisodeStore{store}, closeStore, nil
 		}
 		if closeStore != nil {
 			_ = closeStore()
@@ -487,6 +487,48 @@ func createRaylineARCEpisodeStore(
 		return nil, nil, err
 	}
 	return store, closeStore, nil
+}
+
+// unreadyRaylineARCEpisodeStore is a relaxed cell's store that did not answer
+// at startup. It behaves exactly like the store it wraps; the wrapper only
+// tells the readiness gauge not to report it ready until a relaxed read
+// succeeds.
+type unreadyRaylineARCEpisodeStore struct {
+	raylinearc.EpisodeStore
+}
+
+// Snapshot and CommitIfUnchanged forward to the wrapped store, which serves
+// relaxed episodes whenever its cell can be configured relaxed.
+func (store unreadyRaylineARCEpisodeStore) Snapshot(
+	ctx context.Context,
+	episodeIDHash string,
+	workerCount int,
+) (*raylinearc.EpisodeState, raylinearc.EpisodeReadToken, error) {
+	return store.EpisodeStore.(raylinearc.EpisodeSnapshotStore).Snapshot(ctx, episodeIDHash, workerCount)
+}
+
+func (store unreadyRaylineARCEpisodeStore) CommitIfUnchanged(
+	ctx context.Context,
+	episodeIDHash string,
+	read raylinearc.EpisodeReadToken,
+	state *raylinearc.EpisodeState,
+) error {
+	return store.EpisodeStore.(raylinearc.EpisodeSnapshotStore).CommitIfUnchanged(ctx, episodeIDHash, read, state)
+}
+
+// Ready forwards to the wrapped store's own probe.
+func (store unreadyRaylineARCEpisodeStore) Ready(ctx context.Context) error {
+	return store.EpisodeStore.(raylinearc.EpisodeStoreReadiness).Ready(ctx)
+}
+
+// raylineARCEpisodeStoreReady is the readiness the gauge reports for a store
+// at wiring time.
+func raylineARCEpisodeStoreReady(store raylinearc.EpisodeStore) bool {
+	if store == nil {
+		return false
+	}
+	_, unready := store.(unreadyRaylineARCEpisodeStore)
+	return !unready
 }
 
 func raylineARCRedisPassword(
