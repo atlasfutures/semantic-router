@@ -46,6 +46,17 @@ func v5Router(t *testing.T, glmFormat string) (*OpenAIRouter, *fakePolicyService
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Published packages name actions by trained model, unlike the
+	// provider model ids the workers serve and the registry keys on; each
+	// turn must admit on the served id.
+	trained := strings.NewReplacer(
+		`"model": "anthropic/claude-opus-5"`, `"model": "claude-opus-5"`,
+		`"model": "z-ai/glm-5.3-flash"`, `"model": "glm-5.3-flash"`,
+	).Replace(string(manifest))
+	if strings.Contains(trained, `"model": "anthropic/`) || strings.Contains(trained, `"model": "z-ai/`) {
+		t.Fatal("the fixture still names a provider model id")
+	}
+	manifest = []byte(trained)
 	dir := t.TempDir()
 	manifestPath := filepath.Join(dir, "package.json")
 	if err := os.WriteFile(manifestPath, manifest, 0o600); err != nil {
@@ -311,8 +322,8 @@ routing:
             allow_experimental_controls: true
             model_schedule: task_turn_compaction_v1
             trained_models:
-              opus: anthropic/claude-opus-5
-              glm: z-ai/glm-5.3-flash
+              opus: claude-opus-5
+              glm: glm-5.3-flash
             bindings:
               - action_id: {{OPUS}}
                 worker: opus
