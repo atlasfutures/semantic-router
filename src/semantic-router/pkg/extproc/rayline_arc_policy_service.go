@@ -274,16 +274,31 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	signals := raylineARCPolicyTurnSignals(
 		arcContext.PolicySignalHeaders, arcContext.RequestFormat, clientRequest, messages, arcContext.EpisodeIDHash,
 	)
+	// The episode was prepared for the kind classified ahead of it (a side
+	// call holds no lease), so the request is served as that kind.
+	if arcContext.PolicyCallKind != "" {
+		signals.CallKind, signals.CallKindSource = arcContext.PolicyCallKind, arcContext.PolicyCallKindSource
+	}
 	turn, attribution, transition := raylinearc.PolicyTurn(state.Policy, messages, roles, state.TurnIndex, signals)
 	sideCall := signals.CallKind == raylinearc.PolicyCallSide
+	scheduled := scorer.schedule != "" && !sideCall
+	atBoundary := scheduled &&
+		raylinearc.ModelChangeAllowed(state.TurnIndex, turn.EpochStartTurn, turn.CompactionCount)
+	retainedArm, retained := -1, false
+	if atBoundary {
+		retainedArm, retained = state.PolicyBoundary.RetainedArm(messages, state.TurnIndex, turn)
+	}
 	held := -1
 	// A side call keeps the held arm whatever the schedule says; a turn holds
-	// it between the schedule's boundaries.
-	if state.PreviousArm != nil && (sideCall || scorer.schedule != "" &&
-		!raylinearc.ModelChangeAllowed(state.TurnIndex, turn.EpochStartTurn, turn.CompactionCount)) {
+	// it between the schedule's boundaries; a retry at a boundary keeps the
+	// arm that boundary already decided.
+	switch {
+	case retained:
+		held = retainedArm
+	case state.PreviousArm != nil && (sideCall || scheduled && !atBoundary):
 		held = *state.PreviousArm
 	}
-	logRaylineARCPolicyTurn(arcContext.EpisodeIDHash, signals, transition, state.TurnIndex, turn, held >= 0)
+	logRaylineARCPolicyTurn(arcContext.EpisodeIDHash, signals, transition, state.TurnIndex, turn, held >= 0, retained)
 	available := make([]string, 0, len(scorer.actionOrder))
 	for _, actionID := range scorer.actionOrder {
 		arm := scorer.bindings[actionID].arm
@@ -401,6 +416,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		result.RaylineARC.PolicyNextState = turn.Next(
 			messages, response.Decision.SelectedActionID, response.Decision.SelectedArmID,
 		)
+	}
+	if atBoundary && !retained {
+		result.RaylineARC.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(binding.arm, state.TurnIndex, turn, messages)
 	}
 	return result, nil
 }

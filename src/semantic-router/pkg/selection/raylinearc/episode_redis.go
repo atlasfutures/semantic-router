@@ -56,6 +56,16 @@ redis.call("PEXPIRE", KEYS[2], ARGV[4])
 redis.call("DEL", KEYS[1])
 return 1
 `)
+	// Stage writes the state under the held lease and leaves the lease and
+	// fence as they are.
+	redisStageScript = redis.NewScript(`
+if redis.call("GET", KEYS[1]) ~= ARGV[1] then return 0 end
+if tonumber(redis.call("GET", KEYS[2]) or "-1") ~= tonumber(ARGV[2]) then
+  return 0
+end
+redis.call("SET", KEYS[3], ARGV[3], "PX", ARGV[4])
+return 1
+`)
 	// The fence is the episode's version. A relaxed read takes no lease, but
 	// it is episode activity: it restarts the idle TTL of an existing episode,
 	// so a turn that read it in time is not dropped because the previous
@@ -229,6 +239,34 @@ func (store *RedisEpisodeStore) Commit(
 	).Int()
 	if err != nil {
 		return boundedRedisEpisodeError("commit", err)
+	}
+	if result != 1 {
+		return ErrEpisodeLeaseLost
+	}
+	return nil
+}
+
+// Stage writes state under the held lease and keeps the lease.
+func (store *RedisEpisodeStore) Stage(
+	ctx context.Context,
+	lease Lease,
+	state *EpisodeState,
+) error {
+	payload, err := marshalEpisodeState(state, lease.version, store.now())
+	if err != nil {
+		return err
+	}
+	result, err := redisStageScript.Run(
+		ctx,
+		store.client,
+		store.keys(lease.episodeIDHash),
+		lease.ownerToken,
+		lease.version,
+		payload,
+		store.idleTTL.Milliseconds(),
+	).Int()
+	if err != nil {
+		return boundedRedisEpisodeError("stage", err)
 	}
 	if result != 1 {
 		return ErrEpisodeLeaseLost

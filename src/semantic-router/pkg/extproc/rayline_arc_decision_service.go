@@ -339,7 +339,7 @@ func (service *raylineARCDecisionService) resolveWorker(
 		result.RaylineARC.EncoderReplicaID,
 		result.RaylineARC.EncoderVisitedReplicaIDs,
 	)
-	requestContext.RaylineARCTransaction.markPolicyState(result.RaylineARC.PolicyNextState, result.RaylineARC.PolicySideCall)
+	stageRaylineARCPolicySelection(requestContext, result.RaylineARC)
 	service.router.publishRaylineARCDecision(requestContext, result)
 	route := selectedRoute{worker: worker, result: result, catalog: provider}
 	if baseline, ok := selector.(raylineARCReferenceWorkerProvider); ok {

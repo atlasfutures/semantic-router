@@ -152,6 +152,26 @@ func (store *MemoryEpisodeStore) Commit(
 	return nil
 }
 
+// Stage writes state under the held lease and keeps the lease.
+func (store *MemoryEpisodeStore) Stage(
+	_ context.Context,
+	lease Lease,
+	state *EpisodeState,
+) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	entry, ok := store.entries[lease.episodeIDHash]
+	if !ok || !memoryLeaseMatches(entry, lease, lease.version) {
+		return ErrEpisodeLeaseLost
+	}
+	if err := validatePersistedEpisodeState(state, store.now()); err != nil {
+		return err
+	}
+	entry.state = cloneEpisodeState(state)
+	entry.lastAccess = store.now()
+	return nil
+}
+
 func (store *MemoryEpisodeStore) Abort(
 	_ context.Context,
 	lease Lease,

@@ -40,9 +40,11 @@ const (
 
 // Sources a call kind can come from, as logged.
 const (
-	callKindSourceHeader            = "header"
-	callKindSourceClaudeSubagent    = "claude_code_subagent"
-	callKindSourceCodexCompactionRq = "codex_compaction_request"
+	callKindSourceHeader             = "header"
+	callKindSourceClaudeSubagent     = "claude_code_subagent"
+	callKindSourceClaudeCompactionRq = "claude_code_compaction_request"
+	callKindSourceClaudeTitle        = "claude_code_title"
+	callKindSourceCodexCompactionRq  = "codex_compaction_request"
 )
 
 // raylineARCPolicyTurnSignals reads what this request says about itself:
@@ -56,25 +58,10 @@ func raylineARCPolicyTurnSignals(
 	messages []json.RawMessage,
 	episodeIDHash string,
 ) raylinearc.PolicyTurnSignals {
-	signals := raylinearc.PolicyTurnSignals{CallKind: raylinearc.PolicyCallUnknown}
-	switch value := strings.ToLower(strings.TrimSpace(headers[raylineARCCallKindHeader])); value {
-	case "":
-	case string(raylinearc.PolicyCallMain), string(raylinearc.PolicyCallSide):
-		signals.CallKind = raylinearc.PolicyCallKind(value)
-		signals.CallKindSource = callKindSourceHeader
-	default:
-		logInvalidTurnSignal(raylineARCCallKindHeader, episodeIDHash)
-	}
-	if signals.CallKindSource == "" {
-		switch {
-		case format == policyFormatAnthropic && raylinearc.ClaudeCodeSubagentClaim(request.System):
-			signals.CallKind = raylinearc.PolicyCallSide
-			signals.CallKindSource = callKindSourceClaudeSubagent
-		case format == policyFormatResponses && raylinearc.IsCodexCompactionRequest(request.Input):
-			signals.CallKind = raylinearc.PolicyCallSide
-			signals.CallKindSource = callKindSourceCodexCompactionRq
-		}
-	}
+	signals := raylinearc.PolicyTurnSignals{}
+	signals.CallKind, signals.CallKindSource = raylineARCPolicyCallKind(
+		headers, format, request.System, messages, request.Input, episodeIDHash,
+	)
 	compaction := raylinearc.PolicyCompactionSignal{}
 	if raw := strings.TrimSpace(headers[raylineARCCompactionHeader]); raw != "" {
 		if ordinal, err := strconv.Atoi(raw); err == nil && ordinal > 0 {
@@ -83,13 +70,79 @@ func raylineARCPolicyTurnSignals(
 			logInvalidTurnSignal(raylineARCCompactionHeader, episodeIDHash)
 		}
 	}
-	if format == policyFormatAnthropic {
+	switch format {
+	case policyFormatAnthropic:
 		compaction.SummaryDigest = raylinearc.ClaudeCodeCompactionSummaryDigest(messages)
+	case policyFormatResponses:
+		compaction.SummaryDigest = raylinearc.CodexCompactionSummaryDigest(request.Input)
 	}
 	if compaction.Ordinal > 0 || compaction.SummaryDigest != "" {
 		signals.Compaction = &compaction
 	}
 	return signals
+}
+
+// raylineARCPolicyCallKind classifies a request as a main turn or a side
+// call. The header wins; otherwise a harness literal decides; otherwise the
+// call is unknown.
+func raylineARCPolicyCallKind(
+	headers map[string]string,
+	format string,
+	system json.RawMessage,
+	messages []json.RawMessage,
+	input []json.RawMessage,
+	episodeIDHash string,
+) (raylinearc.PolicyCallKind, string) {
+	switch value := strings.ToLower(strings.TrimSpace(headers[raylineARCCallKindHeader])); value {
+	case "":
+	case string(raylinearc.PolicyCallMain), string(raylinearc.PolicyCallSide):
+		return raylinearc.PolicyCallKind(value), callKindSourceHeader
+	default:
+		logInvalidTurnSignal(raylineARCCallKindHeader, episodeIDHash)
+	}
+	switch format {
+	case policyFormatAnthropic:
+		switch {
+		case raylinearc.ClaudeCodeSubagentClaim(system):
+			return raylinearc.PolicyCallSide, callKindSourceClaudeSubagent
+		case raylinearc.IsClaudeCodeTitleRequest(system):
+			return raylinearc.PolicyCallSide, callKindSourceClaudeTitle
+		case raylinearc.IsClaudeCodeCompactionRequest(messages):
+			return raylinearc.PolicyCallSide, callKindSourceClaudeCompactionRq
+		}
+	case policyFormatResponses:
+		if raylinearc.IsCodexCompactionRequest(input) {
+			return raylinearc.PolicyCallSide, callKindSourceCodexCompactionRq
+		}
+	}
+	return raylinearc.PolicyCallUnknown, ""
+}
+
+// raylineARCPolicyCallKindOfBody classifies the request from its body as
+// received, before the episode is read, so a side call never takes the
+// episode lease. It reads the same fields selection does: a Responses
+// request's retained history is prepended, so its last input item is the
+// body's.
+func raylineARCPolicyCallKindOfBody(
+	headers map[string]string,
+	format string,
+	body []byte,
+	episodeIDHash string,
+) (raylinearc.PolicyCallKind, string) {
+	var request struct {
+		System   json.RawMessage `json:"system"`
+		Messages json.RawMessage `json:"messages"`
+		Input    json.RawMessage `json:"input"`
+	}
+	_ = json.Unmarshal(body, &request)
+	var messages, input []json.RawMessage
+	if format == policyFormatAnthropic {
+		_ = json.Unmarshal(request.Messages, &messages)
+	}
+	if format == policyFormatResponses {
+		_ = json.Unmarshal(request.Input, &input)
+	}
+	return raylineARCPolicyCallKind(headers, format, request.System, messages, input, episodeIDHash)
 }
 
 func logInvalidTurnSignal(header string, episodeIDHash string) {
@@ -108,16 +161,18 @@ func logRaylineARCPolicyTurn(
 	completedTurns uint64,
 	turn *raylinearc.PolicyEpisodeState,
 	held bool,
+	boundaryRetained bool,
 ) {
 	logging.ComponentEvent("extproc", "rayline_arc_policy_turn", map[string]interface{}{
-		"episode_id_hash":  episodeIDHash,
-		"call_kind":        string(signals.CallKind),
-		"call_kind_source": signals.CallKindSource,
-		"transition":       transition,
-		"completed_turns":  completedTurns,
-		"epoch_start_turn": turn.EpochStartTurn,
-		"compaction_count": turn.CompactionCount,
-		"context_epoch":    turn.Epoch,
-		"model_held":       held,
+		"episode_id_hash":   episodeIDHash,
+		"call_kind":         string(signals.CallKind),
+		"call_kind_source":  signals.CallKindSource,
+		"transition":        transition,
+		"completed_turns":   completedTurns,
+		"epoch_start_turn":  turn.EpochStartTurn,
+		"compaction_count":  turn.CompactionCount,
+		"context_epoch":     turn.Epoch,
+		"model_held":        held,
+		"boundary_retained": boundaryRetained,
 	})
 }

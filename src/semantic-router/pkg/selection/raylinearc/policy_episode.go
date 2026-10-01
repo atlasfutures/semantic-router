@@ -60,6 +60,22 @@ type PolicyEpisodeState struct {
 	Ledger            []PolicyLedgerEntry `json:"ledger"`
 }
 
+// PolicyBoundaryDecision is a model decision taken at a schedule boundary.
+// It is stored before dispatch, so a retry of the same request after the
+// boundary request failed reuses the decided arm instead of deciding again:
+// pathfinder's ModelRoutingState persists its boundary decision before
+// dispatch, and a physical retry never re-opens the boundary. It holds only
+// while the episode's turn clock is where it was decided and the request
+// still extends the prefix it was decided for; any committed turn clears it.
+type PolicyBoundaryDecision struct {
+	Arm             int    `json:"arm"`
+	TurnIndex       uint64 `json:"turn_index"`
+	EpochStartTurn  uint64 `json:"epoch_start_turn"`
+	CompactionCount int    `json:"compaction_count"`
+	PrefixLen       int    `json:"prefix_len"`
+	PrefixDigest    string `json:"prefix_digest"`
+}
+
 func (state *PolicyEpisodeState) Clone() *PolicyEpisodeState {
 	if state == nil {
 		return nil
@@ -67,6 +83,54 @@ func (state *PolicyEpisodeState) Clone() *PolicyEpisodeState {
 	cloned := *state
 	cloned.Ledger = append([]PolicyLedgerEntry(nil), state.Ledger...)
 	return &cloned
+}
+
+// NewPolicyBoundaryDecision records arm as the decision for this request at
+// the boundary turn resolved: turnIndex completed turns, in turn's
+// compaction epoch.
+func NewPolicyBoundaryDecision(
+	arm int,
+	turnIndex uint64,
+	turn *PolicyEpisodeState,
+	messages []json.RawMessage,
+) *PolicyBoundaryDecision {
+	return &PolicyBoundaryDecision{
+		Arm: arm, TurnIndex: turnIndex, EpochStartTurn: turn.EpochStartTurn, CompactionCount: turn.CompactionCount,
+		PrefixLen: len(messages), PrefixDigest: MessagesDigest(messages, len(messages)),
+	}
+}
+
+// RetainedArm returns the stored arm if this decision is this request's: the
+// same completed-turn count and compaction epoch, and a request that still
+// extends the prefix it was decided for. A changed prefix or a moved clock
+// leaves it unused.
+func (boundary *PolicyBoundaryDecision) RetainedArm(
+	messages []json.RawMessage,
+	turnIndex uint64,
+	turn *PolicyEpisodeState,
+) (int, bool) {
+	if boundary == nil || turn == nil {
+		return -1, false
+	}
+	if boundary.TurnIndex != turnIndex || boundary.EpochStartTurn != turn.EpochStartTurn ||
+		boundary.CompactionCount != turn.CompactionCount || boundary.PrefixLen > len(messages) ||
+		MessagesDigest(messages, boundary.PrefixLen) != boundary.PrefixDigest {
+		return -1, false
+	}
+	return boundary.Arm, true
+}
+
+// Validate refuses a stored boundary decision Next could not have produced.
+func (boundary *PolicyBoundaryDecision) Validate(workerCount int) error {
+	if boundary == nil {
+		return nil
+	}
+	if boundary.Arm < 0 || boundary.Arm >= workerCount || boundary.CompactionCount < 0 ||
+		boundary.PrefixLen < 1 || boundary.EpochStartTurn > boundary.TurnIndex ||
+		!isLowerHex64(boundary.PrefixDigest) {
+		return errors.New("ARC policy episode boundary decision is malformed")
+	}
+	return nil
 }
 
 // maxPolicyArmIDBytes bounds a trained arm id; pathfinder's are 64 hex.

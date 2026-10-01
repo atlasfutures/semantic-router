@@ -216,6 +216,10 @@ func cloneRaylineARCSelectionResult(result *selection.SelectionResult) *selectio
 		if result.RaylineARC.PolicyNextState != nil {
 			trace.PolicyNextState = result.RaylineARC.PolicyNextState.Clone()
 		}
+		if result.RaylineARC.PolicyBoundary != nil {
+			boundary := *result.RaylineARC.PolicyBoundary
+			trace.PolicyBoundary = &boundary
+		}
 		cloned.RaylineARC = &trace
 	}
 	return &cloned

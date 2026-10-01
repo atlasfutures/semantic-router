@@ -25,6 +25,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
@@ -85,6 +86,9 @@ type raylineARCEpisodeTransaction struct {
 	// no lease, renews nothing and commits nothing, and its state is a
 	// read-only copy of what the first copy prepared.
 	borrowed bool
+	// leaseless marks a side call on a strict episode: it read the episode
+	// without the lease, and commits and releases nothing.
+	leaseless bool
 	// onFinalize is an optional terminal-path hook; the stream-level hold in
 	// processWithContext is what keeps the episode store open.
 	onFinalize func()
@@ -144,6 +148,21 @@ func newBorrowedRaylineARCEpisodeTransaction(
 	}
 }
 
+// newSideCallRaylineARCEpisodeTransaction is a side call's transaction on a
+// strict episode: a lease-free read that finalizes to nothing.
+func newSideCallRaylineARCEpisodeTransaction(
+	state *raylinearc.EpisodeState,
+	episodeIDHash string,
+) *raylineARCEpisodeTransaction {
+	return &raylineARCEpisodeTransaction{
+		state:         state,
+		episodeIDHash: episodeIDHash,
+		selectedArm:   -1,
+		sideCall:      true,
+		leaseless:     true,
+	}
+}
+
 func (transaction *raylineARCEpisodeTransaction) releaseHold() {
 	if transaction.onFinalize != nil {
 		transaction.onFinalize()
@@ -197,10 +216,89 @@ func (transaction *raylineARCEpisodeTransaction) markPolicyState(
 	if transaction == nil {
 		return
 	}
-	transaction.sideCall = sideCall
+	transaction.sideCall = transaction.sideCall || sideCall
 	if next != nil {
 		transaction.policyNext = next.Clone()
 	}
+}
+
+// stageRaylineARCPolicySelection stages what a policy-service decision
+// commits with the turn and, at a schedule boundary, stores the decision
+// before the request is dispatched.
+func stageRaylineARCPolicySelection(ctx *RequestContext, trace *selection.RaylineARCTrace) {
+	transaction := ctx.RaylineARCTransaction
+	transaction.markPolicyState(trace.PolicyNextState, trace.PolicySideCall)
+	if trace.PolicyBoundary == nil {
+		return
+	}
+	parent := ctx.TraceContext
+	if parent == nil {
+		parent = context.Background()
+	}
+	stageContext, cancel := context.WithTimeout(parent, episodeFinalizeTimeout)
+	defer cancel()
+	transaction.retainPolicyBoundary(stageContext, trace.PolicyBoundary)
+}
+
+// retainPolicyBoundary stores the episode as prepared plus this boundary's
+// decision, so a retry of the request reuses it if this one fails. The
+// turn's commit replaces it. Storing it is best effort: a failure leaves the
+// retry to decide again, as before, except that a strict lease found lost
+// stops the dispatch, as any lost lease does.
+func (transaction *raylineARCEpisodeTransaction) retainPolicyBoundary(
+	ctx context.Context,
+	boundary *raylinearc.PolicyBoundaryDecision,
+) {
+	if transaction == nil || transaction.state == nil || transaction.borrowed ||
+		transaction.sideCall || transaction.stateless {
+		return
+	}
+	staged := cloneARCState(transaction.state)
+	staged.PolicyBoundary = raylinearc.ClonePolicyBoundary(boundary)
+	if transaction.relaxed {
+		transaction.retainRelaxedPolicyBoundary(ctx, staged)
+		return
+	}
+	stager, ok := transaction.store.(raylinearc.EpisodeStateStager)
+	if !ok {
+		return
+	}
+	err := stager.Stage(ctx, transaction.lease, staged)
+	switch {
+	case errors.Is(err, raylinearc.ErrEpisodeLeaseLost):
+		transaction.leaseLost.Store(true)
+		metrics.RecordRaylineARCEpisodeTransaction("lease_lost", "stage")
+	case err != nil:
+		logging.ComponentWarnEvent("extproc", "rayline_arc_boundary_stage_failed", map[string]interface{}{
+			"failure_class": boundedARCEpisodeFailure(err),
+		})
+	default:
+		transaction.state = staged
+	}
+}
+
+// retainRelaxedPolicyBoundary stores a relaxed episode's boundary decision
+// with a conditional commit, then reads the episode back so the turn's own
+// commit is conditional on the staged version. If anything else wrote in
+// between, the turn keeps its original read and its commit loses, as any
+// relaxed turn that raced does.
+func (transaction *raylineARCEpisodeTransaction) retainRelaxedPolicyBoundary(
+	ctx context.Context,
+	staged *raylinearc.EpisodeState,
+) {
+	err := transaction.snapshots.CommitIfUnchanged(ctx, transaction.episodeIDHash, transaction.read, staged)
+	if err != nil {
+		logging.ComponentWarnEvent("extproc", "rayline_arc_boundary_stage_failed", map[string]interface{}{
+			"failure_class": boundedARCEpisodeFailure(err), "relaxed": true,
+		})
+		return
+	}
+	_, read, err := transaction.snapshots.Snapshot(ctx, transaction.episodeIDHash, len(staged.Warmth))
+	if err != nil || read.Version() != transaction.read.Version()+1 {
+		return
+	}
+	transaction.read = read
+	transaction.state = staged
 }
 
 // stageThinkingLedger records the ledger this turn's lever plan produced.
@@ -328,7 +426,7 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 // episode's lease is released unwritten, so a concurrent relaxed turn's
 // conditional commit is not invalidated by a version bump either.
 func (transaction *raylineARCEpisodeTransaction) commitSideCall(ctx context.Context) {
-	if !transaction.relaxed {
+	if !transaction.relaxed && !transaction.leaseless {
 		transaction.stopRenewal()
 		err := transaction.store.Abort(ctx, transaction.lease)
 		if err != nil && !errors.Is(err, raylinearc.ErrEpisodeLeaseLost) {
@@ -416,7 +514,7 @@ func (transaction *raylineARCEpisodeTransaction) abort(
 	}
 	transaction.finalizeOnce.Do(func() {
 		defer transaction.releaseHold()
-		if transaction.borrowed || transaction.relaxed {
+		if transaction.borrowed || transaction.relaxed || transaction.leaseless {
 			return
 		}
 		transaction.stopRenewal()
@@ -575,6 +673,7 @@ func cloneARCState(
 		Upstream:             append([]raylinearc.UpstreamPrefix(nil), state.Upstream...),
 		Controls:             raylinearc.CloneControlPlacements(state.Controls),
 		ReasoningIssuers:     append([]string(nil), state.ReasoningIssuers...),
+		PolicyBoundary:       raylinearc.ClonePolicyBoundary(state.PolicyBoundary),
 	}
 	if state.PreviousArm != nil {
 		value := *state.PreviousArm

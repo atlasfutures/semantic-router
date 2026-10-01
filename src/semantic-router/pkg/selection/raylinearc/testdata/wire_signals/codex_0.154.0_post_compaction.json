@@ -1,0 +1,59 @@
+{
+ "provenance": "codex 0.154.0 Responses input, captured 2026-09-30 from the release binary against a local stub (model_auto_compact_token_limit=250; no provider). Strings not read by the detectors are shortened to a prefix and a digest.",
+ "body": {
+  "input": [
+   {
+    "content": [
+     {
+      "text": "<skills_instructions>\n## Skills\nA skill is a set of local instructions to follow that is stored in a `SKILL.md` file. Be...[sha256:f647f0f6ed2e9c81]",
+      "type": "input_text"
+     },
+     {
+      "text": "<permissions instructions>\nFilesystem sandboxing defines which files can be read or written. `sandbox_mode` is `danger-f...[sha256:681b5ba580483b28]",
+      "type": "input_text"
+     },
+     {
+      "text": "<collaboration_mode># Collaboration Mode: Default\n\nYou are now in Default mode. Any previous instructions for other mode...[sha256:bec8e7b5358a20b4]",
+      "type": "input_text"
+     }
+    ],
+    "id": "msg_01a0f434-e1ba-7d61-a694-0e959a1f52a9",
+    "role": "developer",
+    "type": "message"
+   },
+   {
+    "content": [
+     {
+      "text": "<environment_context>\n  <cwd>/testbed</cwd>\n  <shell>bash</shell>\n  <current_date>2026-09-30</current_date>\n  <timezone>...[sha256:3764285f6ccd0c25]",
+      "type": "input_text"
+     }
+    ],
+    "id": "msg_01a0f434-e1ba-7d61-a694-0ea380fdc38c",
+    "role": "user",
+    "type": "message"
+   },
+   {
+    "content": [
+     {
+      "text": "Issue: `line_total(\"apple\", 2)` returns 2.4 but should be 5.4 (two apples at 3 each with the documented 10% bulk discoun...[sha256:ee26d3c1bf1c0ae8]",
+      "type": "input_text"
+     }
+    ],
+    "id": "msg_01a0f434-e1ba-7d61-a694-0eb73474473f",
+    "role": "user",
+    "type": "message"
+   },
+   {
+    "content": [
+     {
+      "text": "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\nSUMMARY-OF-CONTEXT-2",
+      "type": "input_text"
+     }
+    ],
+    "id": "msg_01a0f434-e1ba-7d61-a694-0ec5dcaff4c1",
+    "role": "user",
+    "type": "message"
+   }
+  ]
+ }
+}
