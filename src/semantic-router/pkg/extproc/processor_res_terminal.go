@@ -10,7 +10,13 @@ func (r *OpenAIRouter) takeNeutralResponseUsage(ctx *RequestContext) responseUsa
 	if r == nil || ctx == nil || response == nil {
 		return invalidResponseTerminalUsage("authoritative_usage_missing")
 	}
-	return responseUsageFromSemanticUsage(response.Usage)
+	usage := responseUsageFromSemanticUsage(response.Usage)
+	if ctx.ContextRecoveryProviderCost != nil {
+		// The body the usage was decoded from was re-encoded for the
+		// client, and no client encoding carries the charge.
+		usage.providerCost = *ctx.ContextRecoveryProviderCost
+	}
+	return usage
 }
 
 func invalidResponseTerminalUsage(reason string) responseUsageMetrics {

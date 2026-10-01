@@ -219,6 +219,8 @@ func (r *OpenAIRouter) executeContextRecoveryFollowup(
 	if err != nil {
 		return nil, err
 	}
+	charge := decoded.Response.Usage.ProviderCost
+	requestCtx.ContextRecoveryProviderCost = &charge
 	decoded.Response.Model = requestCtx.RequestModel
 	decoded.Response.Generation++
 	format := requestCtx.SourceFormat

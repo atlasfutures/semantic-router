@@ -100,6 +100,10 @@ type RequestContext struct {
 	// It is set when preparation fails for want of it, so the refusal can
 	// tell the caller which header to send.
 	RaylineARCEpisodeIDHeader string
+	// ContextRecoveryProviderCost is the charge for both calls of a turn
+	// context recovery answered. The recovered body is re-encoded for the
+	// client, which drops it, so the usage report reads it from here.
+	ContextRecoveryProviderCost *llmprotocol.ProviderCost
 	PublicChatUsageFilter     *protocolcodec.ChatUsageStreamFilter
 	SemanticStreamState       *semanticResponseStreamState
 
