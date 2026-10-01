@@ -330,11 +330,6 @@ func validateRaylineARCPolicyServiceMode(cfg *RaylineARCAlgorithmConfig) error {
 	if cfg.Episode.CloseHeader != "" {
 		return fmt.Errorf("episode: close_header is not served in the policy-service mode")
 	}
-	// The policy service refuses a second in-flight call for one session, so
-	// a relaxed policy cell needs its lock-free serving call (router-infra#56).
-	if cfg.Episode.RelaxedConsistency() {
-		return fmt.Errorf("episode: consistency=relaxed is not yet served in the policy-service mode")
-	}
 	if err := validateRaylineARCRoutesAPIConfig(cfg.RoutesAPI); err != nil {
 		return fmt.Errorf("routes_api: %w", err)
 	}

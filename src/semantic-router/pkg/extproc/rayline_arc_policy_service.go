@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -68,6 +69,9 @@ type policyServiceScorer struct {
 	workers     []raylinearc.WorkerManifest
 	bindings    map[string]policyBinding
 	actionOrder []string
+	// episodeMode is the decide request's episode_mode: empty (strict) or
+	// relaxed.
+	episodeMode string
 }
 
 func (scorer *policyServiceScorer) WorkerIDs() []string { return scorer.workerIDs }
@@ -100,6 +104,9 @@ func newPolicyServiceScorer(
 		alias:    policy.PackageAlias,
 		sha256:   policy.PackageSHA256,
 		bindings: make(map[string]policyBinding, len(policy.Bindings)),
+	}
+	if decision.Algorithm.RaylineARC.Episode.RelaxedConsistency() {
+		scorer.episodeMode = raylinearc.PolicyEpisodeModeRelaxed
 	}
 	index := make(map[string]int, len(decision.ModelRefs))
 	for arm, modelRef := range decision.ModelRefs {
@@ -233,8 +240,15 @@ func createRaylineARCPolicySelector(
 		admission: raylinearc.NewAdmissionGate(policy.MaxInflightCalls),
 		policy:    client,
 	}
+	scorer := armed.scorer.(*policyServiceScorer)
 	probe := func(ctx context.Context) error {
-		return client.RequirePackage(ctx, policy.PackageAlias, policy.PackageSHA256)
+		if err := client.RequirePackage(ctx, policy.PackageAlias, policy.PackageSHA256); err != nil {
+			return err
+		}
+		if scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed {
+			return probeRelaxedPolicyDecide(ctx, client, scorer)
+		}
+		return nil
 	}
 	raylineARCArmInBackground(
 		probeContext,
@@ -245,6 +259,76 @@ func createRaylineARCPolicySelector(
 		raylineARCWait,
 	)
 	return selector, episodeStore, closeResources, nil, raylineARCReadinessPendingClass
+}
+
+// policySessionRevision is the trace's session revision: a relaxed call has
+// none, and reports 0 as a first call would.
+func policySessionRevision(revision *int) int {
+	if revision == nil {
+		return 0
+	}
+	return *revision
+}
+
+// relaxedProbeEpisodeIDHash names the readiness probe's episode. A relaxed
+// call touches no session state, so it collides with nothing.
+var relaxedProbeEpisodeIDHash = strings.Repeat("0", 64)
+
+// probeRelaxedPolicyDecide asks for one relaxed decision before a relaxed
+// cell arms, because only a decide call shows whether the service can serve
+// relaxed: a package on the vLLM encoder, or pinned to a runtime without
+// unretained prediction, answers unsupported_request. Until it can, the cell
+// stays not ready rather than failing every turn. A relaxed call holds no
+// session, so the probe leaves the service's state as it found it.
+func probeRelaxedPolicyDecide(
+	ctx context.Context,
+	client *raylinearc.PolicyServiceClient,
+	scorer *policyServiceScorer,
+) error {
+	pkg := raylinearc.PolicyPackageRef{Alias: scorer.alias, PackageSHA256: scorer.sha256}
+	response, err := client.Decide(ctx, raylinearc.PolicyDecisionRequest{
+		SchemaVersion: raylinearc.PolicyDecisionRequestSchema,
+		Package:       pkg,
+		EpisodeIDHash: relaxedProbeEpisodeIDHash,
+		ContextEpoch:  "0",
+		RequestFormat: policyFormatAnthropic,
+		Request: raylinearc.PolicyClientRequest{
+			Messages: json.RawMessage(`[{"role":"user","content":"readiness probe"}]`),
+		},
+		Attribution: []raylinearc.PolicyAttribution{},
+		Selection: raylinearc.PolicySelection{
+			AvailableActionIDs:  append([]string(nil), scorer.actionOrder...),
+			OperatingPoint:      raylinearc.PolicyOperatingPoint{Name: "default"},
+			PreferenceDimension: "overall",
+		},
+		Shadow:      []raylinearc.PolicyPackageRef{},
+		EpisodeMode: raylinearc.PolicyEpisodeModeRelaxed,
+	})
+	var failure *raylinearc.PolicyServiceError
+	if errors.As(err, &failure) && failure.Class == raylinearc.PolicyRelaxedUnsupportedClass {
+		logRelaxedPolicyUnsupported(scorer, failure.Class)
+	}
+	if err != nil {
+		return err
+	}
+	// A service that predates episode_mode may accept the field and serve the
+	// call strict. Only an answer for this package with no session revision
+	// shows the call ran unretained.
+	if response.Package != pkg || response.Encoding.SessionRevision != nil {
+		logRelaxedPolicyUnsupported(scorer, errRelaxedPolicyIgnored.Class)
+		return errRelaxedPolicyIgnored
+	}
+	return nil
+}
+
+// errRelaxedPolicyIgnored is a relaxed probe the service answered as strict.
+var errRelaxedPolicyIgnored = &raylinearc.PolicyServiceError{Class: "relaxed_ignored"}
+
+func logRelaxedPolicyUnsupported(scorer *policyServiceScorer, class string) {
+	logging.ComponentErrorEvent("extproc", "rayline_arc_policy_relaxed_unsupported", map[string]interface{}{
+		"package_alias": scorer.alias,
+		"class":         class,
+	})
 }
 
 type policyClientRequest struct {
@@ -330,7 +414,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			OperatingPoint:      raylinearc.PolicyOperatingPoint{Name: "default"},
 			PreferenceDimension: "overall",
 		},
-		Shadow: []raylinearc.PolicyPackageRef{},
+		Shadow:      []raylinearc.PolicyPackageRef{},
+		EpisodeMode: scorer.episodeMode,
 	}
 	// Admission is checked after the episode lease and before the service
 	// call, as the artifact mode checks it before encoding: a shed request
@@ -389,6 +474,13 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		!policySelectedActionAvailable(response) {
 		return nil, arcSelectionFailure("policy_action_not_offered")
 	}
+	// A strict call advances the service's session and a relaxed one advances
+	// none, so the revision says which the service actually served. A
+	// service that ignored episode_mode would otherwise hold a relaxed cell's
+	// episodes exclusively without anyone seeing it.
+	if (response.Encoding.SessionRevision == nil) != (scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed) {
+		return nil, arcSelectionFailure("policy_session_revision")
+	}
 	decision := policyDecision(scorer, response, binding, workerIDs, excluded)
 	if !validARCDecision(decision, workerIDs) {
 		return nil, arcSelectionFailure("artifact_result")
@@ -397,7 +489,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		SerializedTokens:  response.Encoding.TokenCount,
 		FullHistoryTokens: response.Encoding.TokenCount,
 		SessionAction:     boundedPolicySessionAction(response.Encoding.SessionAction),
-		SessionRevision:   response.Encoding.SessionRevision,
+		SessionRevision:   policySessionRevision(response.Encoding.SessionRevision),
 		EngineBuildID:     response.Encoding.EngineBuildID,
 	}
 	// encoder_latency keeps its artifact-mode meaning, the encode alone, as

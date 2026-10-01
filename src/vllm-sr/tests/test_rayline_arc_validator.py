@@ -445,13 +445,10 @@ def test_relaxed_episode_refuses_a_close_header():
         )
 
 
-def test_relaxed_is_not_yet_served_in_policy_service_mode():
+def test_relaxed_is_served_in_policy_service_mode():
     arc = _policy_service_decision().algorithm.rayline_arc.model_dump()
     arc["episode"]["consistency"] = "relaxed"
-    with pytest.raises(
-        ValidationError, match="not yet served in the policy-service mode"
-    ):
-        RaylineARCAlgorithmConfig.model_validate(arc)
+    RaylineARCAlgorithmConfig.model_validate(arc)
 
 
 def test_relaxed_is_not_served_with_retained_encoder_sessions():

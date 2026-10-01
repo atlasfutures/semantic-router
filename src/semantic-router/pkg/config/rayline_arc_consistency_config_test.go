@@ -34,17 +34,13 @@ func TestRaylineARCRelaxedRefusesCloseHeader(t *testing.T) {
 	}
 }
 
-// The policy service refuses a second in-flight call for one session, so a
-// relaxed policy-service cell is refused until its lock-free call exists.
-func TestRaylineARCRelaxedNotYetServedInPolicyServiceMode(t *testing.T) {
+// The policy service serves relaxed decide calls (episode_mode: relaxed), so
+// a relaxed policy-service cell loads; close_header stays refused there.
+func TestRaylineARCRelaxedServedInPolicyServiceMode(t *testing.T) {
 	_, decision := policyDispatchFixture()
-	if err := validateRaylineARCAlgorithmConfig(decision.Algorithm.RaylineARC); err != nil {
-		t.Fatalf("strict policy fixture refused: %v", err)
-	}
 	decision.Algorithm.RaylineARC.Episode.Consistency = RaylineARCConsistencyRelaxed
-	if err := validateRaylineARCAlgorithmConfig(decision.Algorithm.RaylineARC); err == nil ||
-		!strings.Contains(err.Error(), "consistency=relaxed is not yet served in the policy-service mode") {
-		t.Fatalf("relaxed policy-service error = %v", err)
+	if err := validateRaylineARCAlgorithmConfig(decision.Algorithm.RaylineARC); err != nil {
+		t.Fatalf("relaxed policy-service cell refused: %v", err)
 	}
 }
 
