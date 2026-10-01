@@ -140,6 +140,13 @@ type Message struct {
 	// prefix, which a request-level effort change always does. See
 	// Request.MessageEffortUpdates for where Chat can carry it.
 	ReasoningEffort string
+	// WireGroup names the client wire message this message was decoded from,
+	// as its 1-based position, when that wire message held tool results.
+	// Anthropic carries a turn's tool results, and any text beside them, in
+	// one user message that the decoder splits into one tool message per
+	// result; the Messages encoder rejoins consecutive messages of one group,
+	// so the provider sees the client's grouping. Zero is no group.
+	WireGroup int
 }
 
 type InstructionBlock struct {

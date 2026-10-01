@@ -8,19 +8,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "description": "Look up a value",
@@ -42,19 +34,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "bash_20250124"
@@ -71,19 +55,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "browser_toolset_20260801"
@@ -100,19 +76,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "code_execution_20250522"
@@ -129,19 +97,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "code_execution_20250825"
@@ -158,19 +118,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "code_execution_20260120"
@@ -187,19 +139,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "code_execution_20260521"
@@ -216,19 +160,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "computer_toolset_20260801"
@@ -245,19 +181,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "memory_20250818"
@@ -274,19 +202,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "text_editor_20250124"
@@ -303,19 +223,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "text_editor_20250429"
@@ -332,19 +244,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "text_editor_20250728"
@@ -361,19 +265,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "tool_search_tool_bm25_20251119"
@@ -390,19 +286,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "tool_search_tool_regex_20251119"
@@ -419,19 +307,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "web_fetch_20250910"
@@ -448,19 +328,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "web_fetch_20260209"
@@ -477,19 +349,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "web_fetch_20260309"
@@ -506,19 +370,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "web_fetch_20260318"
@@ -535,19 +391,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "web_search_20250305"
@@ -564,19 +412,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "web_search_20260209"
@@ -593,19 +433,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Use the selected tool.",
-                  "type": "text"
-                }
-              ],
+              "content": "Use the selected tool.",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "type": "web_search_20260318"

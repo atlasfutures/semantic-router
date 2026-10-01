@@ -2,30 +2,15 @@
   "max_tokens": 32,
   "messages": [
     {
-      "content": [
-        {
-          "text": "before",
-          "type": "text"
-        }
-      ],
+      "content": "before",
       "role": "user"
     },
     {
-      "content": [
-        {
-          "text": "policy update",
-          "type": "text"
-        }
-      ],
+      "content": "policy update",
       "role": "system"
     },
     {
-      "content": [
-        {
-          "text": "after",
-          "type": "text"
-        }
-      ],
+      "content": "after",
       "role": "user"
     }
   ],

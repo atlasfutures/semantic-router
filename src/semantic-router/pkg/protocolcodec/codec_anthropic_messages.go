@@ -359,14 +359,35 @@ func decodeAnthropicSystem(raw json.RawMessage, request *llmprotocol.Request, po
 }
 
 func decodeAnthropicMessages(messages []anthropicMessageWire, request *llmprotocol.Request, policy llmprotocol.Policy) error {
-	for _, messageWire := range messages {
+	for index, messageWire := range messages {
 		message, err := decodeAnthropicMessage(messageWire, policy)
 		if err != nil {
 			return err
 		}
+		markAnthropicWireGroup(message, index)
 		request.Messages = append(request.Messages, message...)
 	}
 	return nil
+}
+
+// markAnthropicWireGroup records which client wire message a decoded group
+// came from when that wire message held tool results, which the decoder split
+// into one tool message per result (see Message.WireGroup, #121). It is kept
+// beside the upstream decoder rather than as a new parameter of it.
+func markAnthropicWireGroup(messages []llmprotocol.Message, wireIndex int) {
+	grouped := false
+	for _, message := range messages {
+		if message.Role == llmprotocol.RoleTool {
+			grouped = true
+			break
+		}
+	}
+	if !grouped {
+		return
+	}
+	for index := range messages {
+		messages[index].WireGroup = wireIndex + 1
+	}
 }
 
 // decodeAnthropicTools accepts every tool the source API accepts. A tool type

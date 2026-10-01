@@ -8,12 +8,7 @@
           "max_tokens": 2048,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Think carefully.",
-                  "type": "text"
-                }
-              ],
+              "content": "Think carefully.",
               "role": "user"
             }
           ],
@@ -34,12 +29,7 @@
           "max_tokens": 2048,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "Think carefully.",
-                  "type": "text"
-                }
-              ],
+              "content": "Think carefully.",
               "role": "user"
             }
           ],

@@ -36,12 +36,7 @@
           "max_tokens": 2048,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
@@ -67,12 +62,7 @@
           "max_tokens": 64,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
@@ -109,12 +99,7 @@
           "max_tokens": 2048,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
@@ -133,12 +118,7 @@
           "max_tokens": 2048,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
@@ -154,12 +134,7 @@
           "max_tokens": 2048,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
@@ -194,12 +169,7 @@
           "max_tokens": 2048,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
@@ -219,12 +189,7 @@
           "max_tokens": 2048,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
@@ -241,12 +206,7 @@
           "max_tokens": 2048,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
@@ -268,12 +228,7 @@
           "max_tokens": 2048,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
@@ -290,12 +245,7 @@
           "max_tokens": 2048,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
@@ -315,12 +265,7 @@
           "max_tokens": 2048,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
@@ -349,19 +294,11 @@
           "max_tokens": 2048,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "input_schema": {
@@ -381,12 +318,7 @@
           "max_tokens": 2048,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
@@ -403,12 +335,7 @@
           "max_tokens": 2048,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
