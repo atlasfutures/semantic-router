@@ -1,0 +1,1 @@
+{"model":"claude-opus-5-5","max_tokens":32000,"system":[{"type":"text","text":"You are Claude Code."}],"messages":[{"role":"user","content":"Summary: listed four directories."},{"role":"assistant","content":[{"type":"tool_use","id":"c5","name":"Bash","input":{"command":"ls e"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"c5","content":"e"}]}],"stream":true}

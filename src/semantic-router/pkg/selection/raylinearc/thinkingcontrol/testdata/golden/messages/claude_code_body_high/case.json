@@ -1,0 +1,28 @@
+{
+ "description": "a captured Claude Code body at base high: its own thinking and output_config.effort are replaced by the base's; the trailing in-band system message stays after the steered turn",
+ "format": "messages",
+ "provider": "openrouter",
+ "model": "z-ai/glm-5.3-flash",
+ "wire_model": "z-ai/glm-5.3-flash",
+ "admission": "enforced",
+ "allow_experimental": true,
+ "registry_pin": "3083a4b6bd857c951177f973b41900798ba22f4968e224b4a29ad3e9c297cff2",
+ "calls": [
+  {
+   "client_body": "client-00.json",
+   "control_id": "81d08d646c9db5bbb2b10590c16064f63d8b39c7ce25a91744925a78d34855dd",
+   "expected_body": "provider-00.json",
+   "receipt": {
+    "call": 0,
+    "control_id": "81d08d646c9db5bbb2b10590c16064f63d8b39c7ce25a91744925a78d34855dd",
+    "level_in_force": "up",
+    "instruction_state": "steered",
+    "written": "instruction",
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  }
+ ],
+ "refusal": null
+}

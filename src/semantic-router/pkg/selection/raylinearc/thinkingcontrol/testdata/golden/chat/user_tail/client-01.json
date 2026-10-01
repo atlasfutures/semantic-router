@@ -1,0 +1,1 @@
+{"model":"agent-default","messages":[{"role":"system","content":"You are an agent."},{"role":"user","content":"List the files."},{"role":"assistant","content":"Here they are."},{"role":"user","content":"Now count them."}],"max_tokens":32000,"stream":true}

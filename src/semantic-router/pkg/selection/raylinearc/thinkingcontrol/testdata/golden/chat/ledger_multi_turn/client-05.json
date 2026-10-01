@@ -1,0 +1,1 @@
+{"model":"agent-default","messages":[{"role":"system","content":"You are an agent."},{"role":"user","content":"Summary: listed four directories."},{"role":"assistant","content":null,"tool_calls":[{"id":"c5","type":"function","function":{"name":"Bash","arguments":"{\"command\": \"ls e\"}"}}]},{"role":"tool","tool_call_id":"c5","content":"e"}],"max_tokens":32000,"stream":true}
