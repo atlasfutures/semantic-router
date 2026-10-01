@@ -114,6 +114,10 @@ routing:
             idle_ttl_seconds: 900
             max_in_memory_episodes: 1024
             development_mode: false
+            # strict (default): turns on one episode run one at a time behind
+            # the lease (eval and training). relaxed: no lease, a commit lands
+            # only if no other turn committed meanwhile (serving).
+            consistency: strict
             redis:
               address: redis:6379
               db: 0

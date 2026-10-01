@@ -471,12 +471,64 @@ func createRaylineARCEpisodeStore(
 	if err := store.(raylinearc.EpisodeStoreReadiness).Ready(
 		readinessContext,
 	); err != nil {
+		// A relaxed cell serves without its store: a turn whose read fails
+		// decides from a fresh state and commits nothing. So an unreachable
+		// store at startup must not leave the cell unarmed for good; keep the
+		// client, which reconnects on its own once the store is back.
+		if episodeConfig.RelaxedConsistency() {
+			logging.ComponentWarnEvent("extproc", "rayline_arc_relaxed_store_unready", map[string]interface{}{
+				"backend": episodeConfig.Backend,
+			})
+			return unreadyRaylineARCEpisodeStore{store}, closeStore, nil
+		}
 		if closeStore != nil {
 			_ = closeStore()
 		}
 		return nil, nil, err
 	}
 	return store, closeStore, nil
+}
+
+// unreadyRaylineARCEpisodeStore is a relaxed cell's store that did not answer
+// at startup. It behaves exactly like the store it wraps; the wrapper only
+// tells the readiness gauge not to report it ready until a relaxed read
+// succeeds.
+type unreadyRaylineARCEpisodeStore struct {
+	raylinearc.EpisodeStore
+}
+
+// Snapshot and CommitIfUnchanged forward to the wrapped store, which serves
+// relaxed episodes whenever its cell can be configured relaxed.
+func (store unreadyRaylineARCEpisodeStore) Snapshot(
+	ctx context.Context,
+	episodeIDHash string,
+	workerCount int,
+) (*raylinearc.EpisodeState, raylinearc.EpisodeReadToken, error) {
+	return store.EpisodeStore.(raylinearc.EpisodeSnapshotStore).Snapshot(ctx, episodeIDHash, workerCount)
+}
+
+func (store unreadyRaylineARCEpisodeStore) CommitIfUnchanged(
+	ctx context.Context,
+	episodeIDHash string,
+	read raylinearc.EpisodeReadToken,
+	state *raylinearc.EpisodeState,
+) error {
+	return store.EpisodeStore.(raylinearc.EpisodeSnapshotStore).CommitIfUnchanged(ctx, episodeIDHash, read, state)
+}
+
+// Ready forwards to the wrapped store's own probe.
+func (store unreadyRaylineARCEpisodeStore) Ready(ctx context.Context) error {
+	return store.EpisodeStore.(raylinearc.EpisodeStoreReadiness).Ready(ctx)
+}
+
+// raylineARCEpisodeStoreReady is the readiness the gauge reports for a store
+// at wiring time.
+func raylineARCEpisodeStoreReady(store raylinearc.EpisodeStore) bool {
+	if store == nil {
+		return false
+	}
+	_, unready := store.(unreadyRaylineARCEpisodeStore)
+	return !unready
 }
 
 func raylineARCRedisPassword(
@@ -652,6 +704,9 @@ func sameRaylineARCSelectionConfig(left, right *config.RaylineARCAlgorithmConfig
 	rightSelection := *right
 	leftSelection.RoutesAPI = config.RaylineARCRoutesAPIConfig{}
 	rightSelection.RoutesAPI = config.RaylineARCRoutesAPIConfig{}
+	// An omitted consistency is strict; the two spellings are one setting.
+	leftSelection.Episode.Consistency = leftSelection.Episode.EffectiveConsistency()
+	rightSelection.Episode.Consistency = rightSelection.Episode.EffectiveConsistency()
 	return reflect.DeepEqual(leftSelection, rightSelection)
 }
 

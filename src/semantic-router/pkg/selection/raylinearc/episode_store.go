@@ -46,7 +46,10 @@ const (
 
 var (
 	ErrEpisodeLeaseLost = errors.New("ARC episode lease lost")
-	ErrEpisodeCapacity  = errors.New("ARC episode store capacity reached")
+	// ErrEpisodeConflict is a relaxed commit that lost to another turn: the
+	// episode changed, or a strict lease holds it, since it was read.
+	ErrEpisodeConflict = errors.New("ARC episode changed since it was read")
+	ErrEpisodeCapacity = errors.New("ARC episode store capacity reached")
 	// ErrEpisodeLeaseHeld is joined with the context error when Prepare ran
 	// out of time AFTER observing another owner's lease. A timeout without it
 	// may be the store itself stalling, which is not contention.
@@ -78,6 +81,57 @@ type EpisodeStore interface {
 		*EpisodeState,
 	) error
 	Abort(context.Context, Lease) error
+}
+
+// EpisodeSnapshotStore serves relaxed episodes: a read that takes no lease, and
+// a commit that succeeds only if the episode is still at the version read.
+// A relaxed turn never waits on another; when two collide, one commit loses
+// with ErrEpisodeConflict and only that turn's state update is dropped.
+type EpisodeSnapshotStore interface {
+	Snapshot(
+		ctx context.Context,
+		episodeIDHash string,
+		workerCount int,
+	) (*EpisodeState, EpisodeReadToken, error)
+	CommitIfUnchanged(
+		ctx context.Context,
+		episodeIDHash string,
+		read EpisodeReadToken,
+		state *EpisodeState,
+	) error
+}
+
+// EpisodeReadToken names exactly what a relaxed read saw, and when. A version
+// alone is not enough: an episode can expire or be evicted and be recreated
+// back to the same version, and a stale turn must still lose. So the token
+// carries something recreation cannot repeat, a digest of the stored state
+// (Redis) or the entry's store-wide generation (memory), and the time of the
+// read: a commit whose read is older than the idle TTL is refused, because
+// only then could a newer incarnation of the episode have come and gone,
+// including one created after a read that found the episode absent.
+type EpisodeReadToken struct {
+	version uint64
+	tag     string
+	readAt  time.Time
+}
+
+// staleRead reports whether a relaxed read is too old to commit: a newer
+// incarnation created after it could have expired by now.
+//
+// Accepted residual risk (operator decision, router-infra#55): on Redis the
+// bound is checked before the commit's round trip, not inside the script. A
+// read that found the episode absent can therefore still commit if, within
+// that round trip and at exactly the idle-TTL boundary, a newer incarnation
+// was created after the read, idled a full TTL and expired. The stale turn's
+// state then lands on an episode that had already expired from disuse, so no
+// live state is lost; relaxed episode state is best effort by contract.
+func staleRead(read EpisodeReadToken, now time.Time, idleTTL time.Duration) bool {
+	return read.readAt.IsZero() || now.Sub(read.readAt) >= idleTTL
+}
+
+// Version is the episode version the read saw.
+func (token EpisodeReadToken) Version() uint64 {
+	return token.version
 }
 
 type EpisodeLeaseRenewer interface {
