@@ -343,6 +343,8 @@ func (store *MemoryEpisodeStore) Snapshot(
 	if len(entry.state.Warmth) != workerCount {
 		return nil, EpisodeReadToken{}, errors.New("ARC episode worker count changed")
 	}
+	// A relaxed read is episode activity: it restarts the idle window.
+	entry.lastAccess = store.now()
 	return cloneEpisodeState(entry.state), memoryReadToken(entry, store.now()), nil
 }
 

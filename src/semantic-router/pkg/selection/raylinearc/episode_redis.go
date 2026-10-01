@@ -56,9 +56,16 @@ redis.call("PEXPIRE", KEYS[2], ARGV[4])
 redis.call("DEL", KEYS[1])
 return 1
 `)
-	// The fence is the episode's version. A relaxed read takes no lease.
+	// The fence is the episode's version. A relaxed read takes no lease, but
+	// it is episode activity: it restarts the idle TTL of an existing episode,
+	// so a turn that read it in time is not dropped because the previous
+	// access was old.
 	redisSnapshotScript = redis.NewScript(`
-return {redis.call("GET", KEYS[1]) or "0", redis.call("GET", KEYS[2]) or ""}
+local fence = redis.call("GET", KEYS[1])
+local state = redis.call("GET", KEYS[2])
+if fence then redis.call("PEXPIRE", KEYS[1], ARGV[1]) end
+if state then redis.call("PEXPIRE", KEYS[2], ARGV[1]) end
+return {fence or "0", state or ""}
 `)
 	// A relaxed commit lands only if no strict lease holds the episode, the
 	// fence is still the version read, and the stored state is byte for byte
@@ -418,7 +425,7 @@ func (store *RedisEpisodeStore) Snapshot(
 		return nil, EpisodeReadToken{}, errors.New("invalid ARC Redis snapshot request")
 	}
 	keys := store.keys(episodeIDHash)
-	raw, err := redisSnapshotScript.Run(ctx, store.client, keys[1:]).Slice()
+	raw, err := redisSnapshotScript.Run(ctx, store.client, keys[1:], store.idleTTL.Milliseconds()).Slice()
 	if err != nil {
 		return nil, EpisodeReadToken{}, boundedRedisEpisodeError("snapshot", err)
 	}
