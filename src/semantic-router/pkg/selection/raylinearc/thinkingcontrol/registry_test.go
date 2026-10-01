@@ -196,4 +196,11 @@ func TestPlacerStateResumesTheEpisode(t *testing.T) {
 	if _, err := ResumePlacer(fresh); err == nil {
 		t.Fatal("a state with no calls and a ledger resumed")
 	}
+	nativeOnly := resumed.State()
+	native := *nativeOnly.First
+	native.Instruction = nil
+	nativeOnly.First, nativeOnly.InForce = &native, nil
+	if _, err := ResumePlacer(nativeOnly); err == nil {
+		t.Fatal("a native-only episode with a ledger resumed")
+	}
 }

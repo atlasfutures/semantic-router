@@ -129,7 +129,9 @@ func ResumePlacer(state PlacerState) (*Placer, error) {
 		state.PreviousControl == nil {
 		return nil, malformed
 	}
-	if state.InForce != nil && (state.First == nil || state.First.Instruction == nil) {
+	// Only a lever episode writes instructions; a ledger or a level in force
+	// on a native-only episode would put text on its provider requests.
+	if (state.InForce != nil || len(state.Ledger) > 0) && (state.First == nil || state.First.Instruction == nil) {
 		return nil, malformed
 	}
 	for _, item := range state.Ledger {
