@@ -460,6 +460,7 @@ func (OpenAIResponsesCodec) EncodeResponse(response llmprotocol.Response, envelo
 			return nil, diagnostics, err
 		}
 	}
+	appendUncarriedCitationDiagnostic(&diagnostics, policy, envelope.Format, llmprotocol.OpenAIResponsesV1, response.Output)
 	wire, err := encodeResponsesSuccessResource(response, envelope)
 	if err != nil {
 		return nil, diagnostics, err

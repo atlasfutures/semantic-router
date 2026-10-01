@@ -382,6 +382,7 @@ func (engine *Engine) NewStreamWithMutation(
 		decoder:            sourcePair.stream.NewDecoder(context, streamPolicy),
 		encoder:            targetPair.stream.NewEncoder(context, streamPolicy),
 		mutation:           mutation,
+		sourceFormat:       source,
 		targetFormat:       target,
 		targetCapabilities: targetPair.buffered.Capabilities(),
 		maxDiagnostics:     engine.policy.Limits.Diagnostics,
@@ -567,6 +568,7 @@ type StreamEngine struct {
 	decoder            llmprotocol.StreamDecoder
 	encoder            llmprotocol.StreamEncoder
 	mutation           StreamEventMutation
+	sourceFormat       llmprotocol.WireFormat
 	targetFormat       llmprotocol.WireFormat
 	targetCapabilities llmprotocol.CapabilitySet
 	maxDiagnostics     int
@@ -648,6 +650,11 @@ func (engine *StreamEngine) encodeEvents(
 	for index := range events {
 		if err := engine.prepareEvent(&events[index]); err != nil {
 			return frames, accepted, diagnostics, err
+		}
+		if engine.targetFormat != llmprotocol.AnthropicMessagesV1 && uncarriedCitation(events[index].Content) {
+			diagnostics = appendDiagnostics(diagnostics, llmprotocol.Diagnostics{uncarriedCitationDiagnostic(
+				engine.sourceFormat, engine.targetFormat,
+			)}, engine.maxDiagnostics)
 		}
 		encoded, eventDiagnostics, err := engine.encoder.Push(events[index])
 		diagnostics = appendDiagnostics(diagnostics, eventDiagnostics, engine.maxDiagnostics)

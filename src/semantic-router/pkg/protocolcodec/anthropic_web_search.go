@@ -2,6 +2,7 @@ package protocolcodec
 
 import (
 	"encoding/json"
+	"net/url"
 	"strings"
 	"unicode/utf8"
 
@@ -26,28 +27,82 @@ type anthropicWebSearchCitationWire struct {
 	Title string `json:"title"`
 }
 
-// webSearchResultCitations reports whether every citation on a provider text
-// block is a web search result location: the one kind whose source, a URL,
-// has a neutral shape. Any other kind still fails closed.
-func webSearchResultCitations(raw json.RawMessage) bool {
-	var citations []anthropicWebSearchCitationWire
-	if json.Unmarshal(raw, &citations) != nil || len(citations) == 0 {
+// webSearchURLCitations turns a provider text block's citations into URL
+// citations for a client of another format. Every citation kind is carried raw
+// (CitationsRaw), so an Anthropic client gets them back unchanged; only a kind
+// that names a URL -- a web search result location -- has a neutral shape, and
+// Anthropic does not say which span of the answer it supports, so each cites
+// the whole block. A kind without a URL (a document's char, page or block
+// location) has no neutral source and is left to the Anthropic carry; the
+// block's text still reaches every client. Refusing them instead failed
+// billed provider turns (kimi-k3 on OpenRouter Messages, 2026-10-01).
+func webSearchURLCitations(raw json.RawMessage, text string) []llmprotocol.Citation {
+	return webSearchURLCitationsTo(raw, int64(utf8.RuneCountInString(text)))
+}
+
+// appendUncarriedCitationDiagnostic records, for a client of another format,
+// that a provider text block held a citation without a URL: its source has no
+// neutral shape, so it reaches only an Anthropic client, and the text is
+// delivered without it.
+func appendUncarriedCitationDiagnostic(
+	diagnostics *llmprotocol.Diagnostics,
+	policy llmprotocol.Policy,
+	source, target llmprotocol.WireFormat,
+	output []llmprotocol.OutputItem,
+) {
+	for _, item := range output {
+		for index := range item.Content {
+			if uncarriedCitation(&item.Content[index]) {
+				*diagnostics = appendDiagnostics(*diagnostics, llmprotocol.Diagnostics{
+					uncarriedCitationDiagnostic(source, target),
+				}, policy.Limits.Diagnostics)
+				return
+			}
+		}
+	}
+}
+
+// uncarriedCitation reports whether a text part holds a citation without a URL
+// form, one a client of another format cannot receive.
+func uncarriedCitation(content *llmprotocol.Content) bool {
+	if content == nil || content.Kind != llmprotocol.ContentText || len(content.CitationsRaw) == 0 {
 		return false
 	}
-	for _, citation := range citations {
-		if citation.Type != "web_search_result_location" || citation.URL == "" {
+	var raw []json.RawMessage
+	return json.Unmarshal(content.CitationsRaw, &raw) == nil && len(raw) > len(content.Citations)
+}
+
+func uncarriedCitationDiagnostic(source, target llmprotocol.WireFormat) llmprotocol.Diagnostic {
+	return llmprotocol.Diagnostic{
+		Source: source, Target: target, Field: fieldContentCitations, Action: llmprotocol.DiagnosticDropped,
+		Reason: "a citation without a URL has no neutral source; the text is delivered without it",
+	}
+}
+
+// validProviderCitations reports whether a provider text block's citations
+// member is null or a list of objects that each state a type. Any type name is
+// carried, including ones not named yet; anything else is malformed provider
+// output, refused as a streamed citation is.
+func validProviderCitations(raw json.RawMessage) bool {
+	var list []json.RawMessage
+	if json.Unmarshal(raw, &list) != nil {
+		return false
+	}
+	for _, citation := range list {
+		if !typedCitationObject(citation) {
 			return false
 		}
 	}
 	return true
 }
 
-// webSearchURLCitations turns web search result locations into URL citations.
-// Anthropic does not say which span of the answer a result supports, so each
-// cites the whole block: the span is derived, which is why only this kind is
-// admitted, and an Anthropic client gets the raw citations back instead.
-func webSearchURLCitations(raw json.RawMessage, text string) []llmprotocol.Citation {
-	return webSearchURLCitationsTo(raw, int64(utf8.RuneCountInString(text)))
+func typedCitationObject(citation json.RawMessage) bool {
+	var object map[string]json.RawMessage
+	var kind struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(citation, &object) == nil && object != nil &&
+		json.Unmarshal(citation, &kind) == nil && kind.Type != ""
 }
 
 // webSearchURLCitationsTo is webSearchURLCitations for a span ending at end.
@@ -58,11 +113,25 @@ func webSearchURLCitationsTo(raw json.RawMessage, end int64) []llmprotocol.Citat
 	}
 	citations := make([]llmprotocol.Citation, 0, len(wire))
 	for _, citation := range wire {
+		// Only a web search result location with an http(s) URL has the
+		// neutral citation's shape; any other kind, a future one with a url
+		// member included, stays raw, so it can never fail the response.
+		if citation.Type != "web_search_result_location" || !httpURL(citation.URL) {
+			continue
+		}
 		citations = append(citations, llmprotocol.Citation{
 			URL: citation.URL, Title: citation.Title, StartIndex: 0, EndIndex: end,
 		})
 	}
 	return citations
+}
+
+func httpURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	// The neutral citation contract takes an absolute http(s) URL without
+	// credentials; anything else would fail validation of the whole response.
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" &&
+		parsed.User == nil
 }
 
 // withoutForeignServerToolOutput removes the carried Anthropic web search
@@ -310,16 +379,17 @@ func (decoder *anthropicStreamDecoder) countText(index int, text string) {
 	decoder.textRunes[index] += int64(utf8.RuneCountInString(text))
 }
 
-// holdAnthropicCitation keeps one streamed web search citation until its text
-// block stops. Any other citation kind still fails closed.
+// holdAnthropicCitation keeps one streamed citation, of any kind, until its
+// text block stops (see webSearchURLCitations).
 func (decoder *anthropicStreamDecoder) holdAnthropicCitation(
 	index int,
 	citation json.RawMessage,
 ) ([]llmprotocol.Event, bool, error) {
-	raw := append(append(json.RawMessage("["), citation...), ']')
-	if !webSearchResultCitations(raw) {
-		return nil, true, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_citations",
-			"Anthropic citations are not supported by the neutral contract", nil)
+	// Any citation kind is carried, including ones not named yet, but it must
+	// be an object stating its type: anything else would reach an Anthropic
+	// client as a malformed citation.
+	if !typedCitationObject(citation) {
+		return nil, true, invalidProviderResponse("invalid_stream_delta", "Anthropic citation delta is not a typed citation object")
 	}
 	if decoder.pendingCitations == nil {
 		decoder.pendingCitations = map[int][]json.RawMessage{}

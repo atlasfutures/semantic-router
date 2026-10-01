@@ -107,14 +107,6 @@ type unsupportedAnthropicStreamCase struct {
 func officialUnsupportedAnthropicStreamCases() []unsupportedAnthropicStreamCase {
 	return []unsupportedAnthropicStreamCase{
 		{
-			name: "citation delta",
-			event: map[string]any{
-				"type": "content_block_delta", "index": 0,
-				"delta": map[string]any{"type": "citations_delta", "citation": map[string]any{"type": "char_location"}},
-			},
-			code: "unsupported_citations",
-		},
-		{
 			name: "redacted thinking block",
 			event: map[string]any{
 				"type": "content_block_start", "index": 0,

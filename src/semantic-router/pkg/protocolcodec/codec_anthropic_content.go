@@ -83,13 +83,13 @@ func decodeAnthropicContentBlock(
 	if err := validateAnthropicContentVariant(body, typeName, location, providerOutput); err != nil {
 		return llmprotocol.Content{}, err
 	}
-	if err := validateAnthropicContentExtensions(block, location, providerOutput); err != nil {
-		return llmprotocol.Content{}, err
+	if providerOutput && len(block.Citations) > 0 && !validProviderCitations(block.Citations) {
+		return llmprotocol.Content{}, invalidProviderResponse("invalid_citations",
+			location+": content.citations is not a list of typed citation objects")
 	}
 	content, err := decodeAnthropicTypedContent(typeName, block, policy)
 	if err == nil && providerOutput && typeName == "text" {
-		// Provider citations reach here only as web search result locations;
-		// see validateAnthropicContentExtensions.
+		// Provider citations of any kind are carried; see webSearchURLCitations.
 		content.CitationsRaw = carriedAnthropicCitations(block.Citations)
 	}
 	if err != nil || providerOutput {
