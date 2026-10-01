@@ -40,7 +40,10 @@ func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope 
 		request.Unmodeled = withoutCarriedReasoning(request.Unmodeled, &diagnostics, policy)
 	}
 	body, err = mergeUnmodeledFields(body, request, llmprotocol.OpenAIResponsesV1, &diagnostics, policy)
-	return body, diagnostics, err
+	if err != nil {
+		return body, diagnostics, err
+	}
+	return replayEquivalentResponsesSource(body, request, envelope, policy), diagnostics, nil
 }
 
 // holdsWhatEveryTargetDrops reports whether the request carries something no

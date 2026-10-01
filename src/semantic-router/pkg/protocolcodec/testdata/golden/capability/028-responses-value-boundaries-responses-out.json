@@ -5,19 +5,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model",
           "temperature": 0
         }
@@ -28,19 +16,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model",
           "temperature": 2
         }
@@ -51,19 +27,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model",
           "top_p": 0
         }
@@ -74,19 +38,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model",
           "top_p": 1
         }
@@ -97,19 +49,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "max_output_tokens": 16,
           "model": "routed-model"
         }
