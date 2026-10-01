@@ -1,0 +1,1 @@
+{"model":"gpt-6-sol","instructions":"You are Codex.","input":[{"type":"message","role":"user","content":"List the files."},{"type":"function_call","call_id":"c1","name":"shell","arguments":"{\"command\": [\"ls\"]}"},{"type":"function_call_output","call_id":"c1","output":"README.md"}],"stream":true}
