@@ -6,19 +6,7 @@
         "status": "ok",
         "body": {
           "auto_store": true,
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model"
         }
       }
@@ -49,19 +37,7 @@
         "status": "ok",
         "body": {
           "conversation": "conv-1",
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model"
         }
       }
@@ -74,19 +50,7 @@
           "include": [
             "reasoning.encrypted_content"
           ],
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model"
         }
       }
@@ -104,7 +68,6 @@
                   "type": "input_text"
                 }
               ],
-              "id": "item_6a32e29c376158d871e9638e",
               "role": "user",
               "type": "message"
             }
@@ -118,30 +81,8 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "Be concise.",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "developer",
-              "type": "message"
-            },
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
+          "instructions": "Be concise.",
           "model": "routed-model"
         }
       }
@@ -151,19 +92,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "max_output_tokens": 64,
           "model": "routed-model"
         }
@@ -184,19 +113,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "metadata": {
             "trace": "field-matrix"
           },
@@ -209,19 +126,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model"
         }
       }
@@ -241,19 +146,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model",
           "parallel_tool_calls": false
         }
@@ -264,19 +157,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model",
           "previous_response_id": "resp_previous"
         }
@@ -297,19 +178,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model",
           "prompt_cache_key": "cache-key"
         }
@@ -340,19 +209,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model",
           "reasoning": {
             "effort": "high"
@@ -385,19 +242,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model",
           "store": true
         }
@@ -408,19 +253,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model",
           "stream": true
         }
@@ -431,19 +264,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model",
           "stream": true,
           "stream_options": {
@@ -457,19 +278,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model",
           "temperature": 0.2
         }
@@ -480,19 +289,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model",
           "text": {
             "format": {
@@ -535,21 +332,8 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model",
-          "tool_choice": "auto",
           "tools": [
             {
               "name": "lookup",
@@ -577,19 +361,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model",
           "top_p": 0.9
         }
@@ -600,19 +372,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model",
           "truncation": "auto"
         }
@@ -623,19 +383,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "input": [
-            {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "input_text"
-                }
-              ],
-              "id": "item_6a32e29c376158d871e9638e",
-              "role": "user",
-              "type": "message"
-            }
-          ],
+          "input": "hello",
           "model": "routed-model",
           "user": "user-2"
         }

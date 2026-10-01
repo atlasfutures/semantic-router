@@ -363,8 +363,13 @@ func routeResponsesRequest(t *testing.T, body string, target llmprotocol.WireFor
 
 func TestResponsesUnmodeledInputItemsReachTheSameFormat(t *testing.T) {
 	routed := routeResponsesRequest(t, responsesUnmodeledInputBody, llmprotocol.OpenAIResponsesV1)
+	// A model-only route sends the client's own (indented) bytes.
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, routed); err != nil {
+		t.Fatal(err)
+	}
 	for _, mark := range []string{`"shell_call"`, `"is_error":true`, `"patch it"`} {
-		if !bytes.Contains(routed, []byte(mark)) {
+		if !bytes.Contains(compact.Bytes(), []byte(mark)) {
 			t.Fatalf("%s did not survive routing to the same wire format: %s", mark, routed)
 		}
 	}
