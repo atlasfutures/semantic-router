@@ -157,3 +157,114 @@ func TestMessagesProviderRoutingNeedsADecision(t *testing.T) {
 		})
 	}
 }
+
+// The clearing runs before the lever, so the lever's own writes survive it:
+// under #118's on_change_v1 emit, a return to neutral writes the neutral
+// marker at the tail, and it travels while the client's per-message effort
+// (and its content-less carrier) does not. Runs through applyDispatchDecision,
+// where the two are ordered.
+func TestClientEffortClearingLeavesTheLeversOnChangeV1MarkerInPlace(t *testing.T) {
+	const marker = "Until the next steering instruction, use your normal judgement."
+	e := newLeverEpisode(t, true)
+	lever := e.decision.Algorithm.RaylineARC.ThinkingLever
+	binding := lever.Workers[leverWorker]
+	binding.Emit, binding.NeutralLevel, binding.NeutralText = "on_change_v1", "none", marker
+	lever.Workers[leverWorker] = binding
+
+	turn0 := []llmprotocol.Message{leverText(llmprotocol.RoleUser, "fix it")}
+	e.turn(leverWorker, turn0, true) // steer in force
+
+	lever.Level = "none"
+	turn1 := append(append([]llmprotocol.Message(nil), turn0...),
+		leverText(llmprotocol.RoleAssistant, "done"),
+		llmprotocol.Message{Role: llmprotocol.RoleSystem, ReasoningEffort: "max"},
+		leverText(llmprotocol.RoleUser, "next"))
+	lease, state, err := e.store.Prepare(context.Background(), e.episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction := newRaylineARCEpisodeTransaction(e.store, lease, state, e.episode, time.Minute, nil)
+	transaction.markSelection(0, 10)
+	t.Cleanup(func() { _ = transaction.abort(context.Background(), "test") })
+	ctx := &RequestContext{
+		Headers: map[string]string{}, VSRSelectedDecision: e.decision,
+		RaylineARCDispatch: &raylinearc.WorkerManifest{ID: leverWorker}, RaylineARCTransaction: transaction,
+	}
+	request := &llmprotocol.Request{Model: "m", Generation: 1, Messages: turn1}
+	router, _ := routingTestRouterForFormat(llmprotocol.OpenAIChatV1)
+	dispatch := &providerDispatch{logicalModel: "m", targetFormat: llmprotocol.OpenAIChatV1, decisionName: e.decision.Name}
+	if _, err := router.applyDispatchDecision(request, dispatch, ctx); err != nil {
+		t.Fatal(err)
+	}
+	tail := request.Messages[len(request.Messages)-1].Content
+	if tail[len(tail)-1].Text != marker {
+		t.Fatalf("the lever's neutral marker did not survive: %+v", request.Messages)
+	}
+	if ctx.RaylineARCThinking == nil || ctx.RaylineARCThinking.Written != "neutral_marker" {
+		t.Fatalf("the lever did not write the marker: %+v", ctx.RaylineARCThinking)
+	}
+	for index, message := range request.Messages {
+		if message.ReasoningEffort != "" || len(message.Content) == 0 {
+			t.Fatalf("message %d still carries the client's effort: %+v", index, message)
+		}
+	}
+}
+
+// Only a content-less system message is a carrier. A content-less user or
+// assistant message keeps its place and loses only the effort, so dropping it
+// cannot join two same-role turns on Messages.
+func TestClientEffortClearingDropsOnlyTheSystemCarrier(t *testing.T) {
+	request := &llmprotocol.Request{Messages: []llmprotocol.Message{
+		{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: "a"}}},
+		{Role: llmprotocol.RoleAssistant, ReasoningEffort: "max"},
+		{Role: llmprotocol.RoleSystem, ReasoningEffort: "max"},
+		{Role: llmprotocol.RoleUser, ReasoningEffort: "max"},
+	}}
+	ctx := &RequestContext{VSRSelectedDecision: clientEffortDecision("arc")}
+	if !clearClientMessageEffortForARC(request, ctx) {
+		t.Fatal("nothing was cleared")
+	}
+	roles := []llmprotocol.Role{}
+	for _, message := range request.Messages {
+		if message.ReasoningEffort != "" {
+			t.Fatalf("an effort survived: %+v", message)
+		}
+		roles = append(roles, message.Role)
+	}
+	want := []llmprotocol.Role{llmprotocol.RoleUser, llmprotocol.RoleAssistant, llmprotocol.RoleUser}
+	if len(roles) != len(want) || roles[0] != want[0] || roles[1] != want[1] || roles[2] != want[2] {
+		t.Fatalf("roles = %v, want %v (only the system carrier dropped)", roles, want)
+	}
+}
+
+// Shadow requests on an ARC turn are copied from the request after
+// applyDispatchDecision cleared the client's per-message effort, so a
+// Messages shadow target (which renders per-message effort) receives none.
+func TestShadowDispatchOnAnARCTurnCarriesNoClientEffort(t *testing.T) {
+	backend := newShadowTestBackend(t)
+	router, primaryModel := newShadowTestRouter(t, backend)
+	router.Config.ProviderProfiles["shadow-anthropic"] = config.ProviderProfile{Type: "anthropic", BaseURL: backend.server.URL}
+	for i := range router.Config.VLLMEndpoints {
+		if router.Config.VLLMEndpoints[i].Name == "shadow-backend" {
+			router.Config.VLLMEndpoints[i].ProviderProfileName = "shadow-anthropic"
+		}
+	}
+	shadowParams := router.Config.ModelConfig[shadowTestModel]
+	shadowParams.APIFormat = config.APIFormatAnthropic
+	router.Config.ModelConfig[shadowTestModel] = shadowParams
+	runShadowRequest(t, router, primaryModel, shadowTestPluginConfig(), func(ctx *RequestContext) {
+		ctx.VSRSelectedDecision.Algorithm = &config.AlgorithmConfig{
+			Type: config.RaylineARCAlgorithmType, OnError: "fail_closed", RaylineARC: &config.RaylineARCAlgorithmConfig{},
+		}
+		ctx.SemanticRequest.Messages = append(ctx.SemanticRequest.Messages,
+			llmprotocol.Message{Role: llmprotocol.RoleSystem, ReasoningEffort: "max"},
+			llmprotocol.Message{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: "go on"}}})
+	})
+	waitForShadow(t, router)
+	if backend.requestCount() != 1 {
+		t.Fatalf("shadow backend requests = %d, want 1", backend.requestCount())
+	}
+	if bytes.Contains(backend.bodies[0], []byte("configuration_update")) || bytes.Contains(backend.bodies[0], []byte(`"max"`)) {
+		t.Fatalf("the shadow body carries the client's per-message effort: %s", backend.bodies[0])
+	}
+}

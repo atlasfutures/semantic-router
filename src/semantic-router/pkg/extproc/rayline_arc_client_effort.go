@@ -15,7 +15,8 @@ import (
 // output_config.effort into Message.ReasoningEffort, which would reach the
 // provider as configuration_update (OpenRouter Chat) or output_config.effort
 // (Messages) and override the action. A message that existed only to carry
-// that effort is dropped rather than sent empty. Non-ARC decisions keep
+// that effort (a content-less system message) is dropped rather than sent
+// empty; any other message only loses the effort. Non-ARC decisions keep
 // upstream's behaviour and forward the client's effort.
 func clearClientMessageEffortForARC(request *llmprotocol.Request, ctx *RequestContext) bool {
 	if request == nil || ctx == nil || ctx.VSRSelectedDecision == nil ||
@@ -29,7 +30,10 @@ func clearClientMessageEffortForARC(request *llmprotocol.Request, ctx *RequestCo
 		if message.ReasoningEffort != "" {
 			message.ReasoningEffort = ""
 			changed = true
-			if len(message.Content) == 0 {
+			// Only the carrier shape goes: a system message that existed to
+			// hold the effort. A content-less user or assistant message stays,
+			// so Messages never sees two same-role turns side by side.
+			if message.Role == llmprotocol.RoleSystem && len(message.Content) == 0 {
 				continue
 			}
 		}
