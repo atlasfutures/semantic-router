@@ -8,12 +8,7 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
@@ -39,12 +34,7 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
@@ -66,12 +56,7 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],

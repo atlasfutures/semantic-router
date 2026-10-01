@@ -2,12 +2,7 @@
   "max_tokens": 48,
   "messages": [
     {
-      "content": [
-        {
-          "text": "Return the weather as JSON.",
-          "type": "text"
-        }
-      ],
+      "content": "Return the weather as JSON.",
       "role": "user"
     }
   ],

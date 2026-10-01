@@ -484,15 +484,22 @@ func decodeAnthropicMessage(wire anthropicMessageWire, messageIndex int, policy 
 		result = append(result, llmprotocol.Message{Role: role, Content: ordinary})
 		ordinary = nil
 	}
+	grouped := false
 	for blockIndex, content := range contents {
 		if content.Kind == llmprotocol.ContentToolResult {
 			flush()
+			grouped = true
 			result = append(result, llmprotocol.Message{ID: llmprotocol.StableID("anthropic-message", fmt.Sprint(messageIndex), fmt.Sprint(blockIndex)), Role: llmprotocol.RoleTool, Content: []llmprotocol.Content{content}})
 			continue
 		}
 		ordinary = append(ordinary, content)
 	}
 	flush()
+	if grouped {
+		for index := range result {
+			result[index].WireGroup = messageIndex + 1
+		}
+	}
 	return result, nil
 }
 

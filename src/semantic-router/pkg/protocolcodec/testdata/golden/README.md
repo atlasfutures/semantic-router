@@ -41,6 +41,13 @@ targets and replayed one byte at a time independently.
 and Messages source inputs for every core buffered and streaming scenario; each
 listed input is still translated to all three targets by the golden harness.
 
+A Messages input translated to Messages is sent as the client's own bytes with
+only the model rewritten whenever those bytes decode to exactly what the
+canonical encoding decodes to, so most `anthropic`-to-`anthropic` outputs equal
+their inputs (string content stays a string). Canonical encoding itself keeps
+the client's grouping of tool results and the text beside them in one user
+message.
+
 Generation is opt-in. CI only compares fixtures and fails on any semantic JSON
 drift. It also requires an exact three-target output inventory for every input,
 so missing results and stale files from removed cases both fail the gate. The

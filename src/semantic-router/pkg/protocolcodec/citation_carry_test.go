@@ -238,18 +238,23 @@ func droppedCitationCount(diagnostics llmprotocol.Diagnostics) int {
 
 func encodedBlockCitations(t *testing.T, body []byte) json.RawMessage {
 	t.Helper()
+	// Earlier messages may keep the client's string content, so only the
+	// last message, which carries the citations, is read as blocks.
 	var wire struct {
 		Messages []struct {
-			Content []struct {
-				Citations json.RawMessage `json:"citations"`
-			} `json:"content"`
+			Content json.RawMessage `json:"content"`
 		} `json:"messages"`
 	}
 	if err := json.Unmarshal(body, &wire); err != nil {
 		t.Fatalf("encoded body is not a Messages request: %v", err)
 	}
-	last := wire.Messages[len(wire.Messages)-1]
-	return last.Content[0].Citations
+	var blocks []struct {
+		Citations json.RawMessage `json:"citations"`
+	}
+	if err := json.Unmarshal(wire.Messages[len(wire.Messages)-1].Content, &blocks); err != nil {
+		t.Fatalf("the cited message's content is not blocks: %v", err)
+	}
+	return blocks[0].Citations
 }
 
 func assertSameJSON(t *testing.T, actual, expected []byte) {

@@ -28,9 +28,6 @@
         "type": "text"
       }
     ],
-    "tool_choice": {
-      "type": "auto"
-    },
     "tools": [
       {
         "cache_control": {

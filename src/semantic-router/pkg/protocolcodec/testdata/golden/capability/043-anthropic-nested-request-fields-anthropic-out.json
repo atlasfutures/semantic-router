@@ -182,19 +182,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "allowed_callers": [
@@ -218,19 +210,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "defer_loading": true,
@@ -251,19 +235,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "eager_input_streaming": true,
@@ -284,19 +260,11 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
           "model": "routed-model",
-          "tool_choice": {
-            "type": "auto"
-          },
           "tools": [
             {
               "input_examples": [

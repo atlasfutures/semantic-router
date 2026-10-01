@@ -8,12 +8,7 @@
           "max_tokens": 64,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
@@ -30,12 +25,7 @@
           "max_tokens": 64,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
@@ -52,12 +42,7 @@
           "max_tokens": 64,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
@@ -74,12 +59,7 @@
           "max_tokens": 64,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
@@ -96,12 +76,7 @@
           "max_tokens": 64,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],
@@ -118,12 +93,7 @@
           "max_tokens": 1,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             }
           ],

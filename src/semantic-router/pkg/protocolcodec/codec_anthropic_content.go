@@ -253,7 +253,10 @@ func (AnthropicMessagesCodec) EncodeRequest(request llmprotocol.Request, envelop
 	}
 	appendCarriedToolDrops(&diagnostics, request, llmprotocol.AnthropicMessagesV1, policy)
 	body, encodeErr = mergeUnmodeledFields(body, request, llmprotocol.AnthropicMessagesV1, &diagnostics, policy)
-	return body, diagnostics, encodeErr
+	if encodeErr != nil {
+		return body, diagnostics, encodeErr
+	}
+	return replayEquivalentAnthropicSource(body, request, envelope, policy), diagnostics, nil
 }
 
 func validateAnthropicEncodableRequest(request llmprotocol.Request) error {
@@ -496,14 +499,7 @@ func encodeAnthropicInstructions(
 }
 
 func appendAnthropicMessages(wire *anthropicRequestWire, messages []llmprotocol.Message) error {
-	for _, message := range messages {
-		// A message whose every block is carried for another format, such as a
-		// resent Responses reasoning item, leaves nothing to send, and
-		// Anthropic refuses a message with empty content. Chat and Responses
-		// skip it the same way.
-		if messageDropsWhole(message.Content, llmprotocol.AnthropicMessagesV1) {
-			continue
-		}
+	for _, message := range regroupAnthropicMessages(messages) {
 		encoded, err := encodeAnthropicMessage(message)
 		if err != nil {
 			return err
@@ -573,6 +569,38 @@ func encodeAnthropicToolChoice(wire *anthropicRequestWire, request llmprotocol.R
 		}
 	}
 	return nil
+}
+
+// regroupAnthropicMessages rejoins consecutive messages of one wire group --
+// the tool results a client sent in one user message, the text beside them,
+// and a steer placed after them -- into one user message, so the provider
+// receives the client's grouping rather than one message per result. A
+// message whose every block is carried for another format, such as a resent
+// Responses reasoning item, leaves nothing to send, and Anthropic refuses a
+// message with empty content, so it is skipped; Chat and Responses skip it
+// the same way.
+func regroupAnthropicMessages(messages []llmprotocol.Message) []llmprotocol.Message {
+	grouped := make([]llmprotocol.Message, 0, len(messages))
+	for _, message := range messages {
+		if messageDropsWhole(message.Content, llmprotocol.AnthropicMessagesV1) {
+			continue
+		}
+		last := len(grouped) - 1
+		if last >= 0 && message.WireGroup != 0 && grouped[last].WireGroup == message.WireGroup &&
+			anthropicUserSide(grouped[last].Role) && anthropicUserSide(message.Role) {
+			joined := grouped[last]
+			joined.Role = llmprotocol.RoleUser
+			joined.Content = append(append([]llmprotocol.Content(nil), joined.Content...), message.Content...)
+			grouped[last] = joined
+			continue
+		}
+		grouped = append(grouped, message)
+	}
+	return grouped
+}
+
+func anthropicUserSide(role llmprotocol.Role) bool {
+	return role == llmprotocol.RoleUser || role == llmprotocol.RoleTool
 }
 
 func encodeAnthropicMessage(message llmprotocol.Message) ([]anthropicMessageWire, error) {

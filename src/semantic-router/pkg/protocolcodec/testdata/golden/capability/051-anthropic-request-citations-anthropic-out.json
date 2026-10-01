@@ -8,12 +8,7 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "what does the handbook say?",
-                  "type": "text"
-                }
-              ],
+              "content": "what does the handbook say?",
               "role": "user"
             },
             {
@@ -48,12 +43,7 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "search the web",
-                  "type": "text"
-                }
-              ],
+              "content": "search the web",
               "role": "user"
             },
             {
@@ -115,12 +105,7 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             },
             {
@@ -146,12 +131,7 @@
           "max_tokens": 32,
           "messages": [
             {
-              "content": [
-                {
-                  "text": "hello",
-                  "type": "text"
-                }
-              ],
+              "content": "hello",
               "role": "user"
             },
             {
