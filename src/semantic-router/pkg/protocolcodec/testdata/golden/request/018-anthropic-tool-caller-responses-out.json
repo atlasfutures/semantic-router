@@ -14,7 +14,7 @@
     {
       "arguments": "{\n            \"query\": \"handbook\"\n          }",
       "call_id": "call_lookup",
-      "id": "item_3c86696367ede4d56c0da3b8",
+      "id": "item_9a47589ddd2ad44eeb205c75",
       "name": "lookup",
       "type": "function_call"
     },

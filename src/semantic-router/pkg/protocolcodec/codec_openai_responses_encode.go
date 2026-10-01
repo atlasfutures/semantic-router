@@ -181,7 +181,7 @@ func encodeResponsesRequestItems(request llmprotocol.Request) ([]json.RawMessage
 		if messageDropsWhole(message.Content, llmprotocol.OpenAIResponsesV1) {
 			return nil
 		}
-		encoded, err := encodeResponsesMessage(message, "input")
+		encoded, err := encodeResponsesMessage(message, "input", len(items))
 		if err != nil {
 			return err
 		}
@@ -290,12 +290,18 @@ func encodeResponsesOutputFormat(output llmprotocol.OutputFormat) *responsesText
 	}}
 }
 
-func encodeResponsesMessage(message llmprotocol.Message, textDirection string) ([]responsesItemWire, error) {
+// encodeResponsesMessage encodes one message as Responses items. position is
+// the index its first item takes in the list being built: an id-less
+// message's generated item ids include it, so no two of a request's items
+// share an id.
+func encodeResponsesMessage(message llmprotocol.Message, textDirection string, position int) ([]responsesItemWire, error) {
 	role, err := wireRole(message.Role)
 	if err != nil {
 		return nil, err
 	}
-	state := responsesMessageEncodingState{messageID: message.ID, role: role, textDirection: textDirection}
+	state := responsesMessageEncodingState{
+		messageID: message.ID, position: position, role: role, textDirection: textDirection,
+	}
 	for _, content := range message.Content {
 		if err := state.appendContent(content); err != nil {
 			return nil, err
@@ -312,6 +318,7 @@ func encodeResponsesMessage(message llmprotocol.Message, textDirection string) (
 
 type responsesMessageEncodingState struct {
 	messageID     string
+	position      int
 	role          string
 	textDirection string
 	ordinary      []llmprotocol.Content
@@ -391,7 +398,7 @@ func (state *responsesMessageEncodingState) appendGeneratedImage(image *llmproto
 	}
 	item := responsesItemWire{
 		Type:   "image_generation_call",
-		ID:     responsesItemID(state.messageID, len(state.items), "image_generation_call"),
+		ID:     state.itemID("image_generation_call"),
 		Status: string(image.Status),
 	}
 	if image.Result != nil {
@@ -411,7 +418,7 @@ func (state *responsesMessageEncodingState) flushOrdinary() error {
 		return err
 	}
 	item := responsesItemWire{
-		Type: "message", ID: responsesItemID(state.messageID, len(state.items), "message"),
+		Type: "message", ID: state.itemID("message"),
 		Role: state.role, Content: content,
 	}
 	if state.textDirection == "output" {
@@ -427,7 +434,7 @@ func (state *responsesMessageEncodingState) appendToolCall(call *llmprotocol.Too
 		return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_tool_call", "tool call is invalid", nil)
 	}
 	state.items = append(state.items, responsesItemWire{
-		Type: "function_call", ID: responsesItemID(state.messageID, len(state.items), "function_call"),
+		Type: "function_call", ID: state.itemID("function_call"),
 		CallID: call.ID, Name: call.Name, Arguments: call.Arguments, Namespace: call.Namespace,
 	})
 	return nil
@@ -442,7 +449,7 @@ func (state *responsesMessageEncodingState) appendToolResult(result *llmprotocol
 		return err
 	}
 	state.items = append(state.items, responsesItemWire{
-		Type: "function_call_output", ID: responsesItemID(state.messageID, len(state.items), "function_call_output"),
+		Type: "function_call_output", ID: state.itemID("function_call_output"),
 		CallID: result.CallID, Output: output,
 	})
 	return nil
@@ -453,7 +460,7 @@ func (state *responsesMessageEncodingState) flushReasoning() error {
 		return nil
 	}
 	item := responsesItemWire{
-		Type: "reasoning", ID: responsesItemID(state.messageID, len(state.items), "reasoning"),
+		Type: "reasoning", ID: state.itemID("reasoning"),
 	}
 	summaries := make([]map[string]string, 0, len(state.reasoning))
 	texts := make([]map[string]string, 0, len(state.reasoning))
@@ -486,11 +493,21 @@ func (state *responsesMessageEncodingState) flushReasoning() error {
 	return nil
 }
 
-func responsesItemID(messageID string, index int, kind string) string {
-	if index == 0 && messageID != "" {
-		return messageID
+// itemID is the id of the message's next item. A message with its own id
+// keeps it on its first item and derives the rest from it. An id-less
+// message's items derive theirs from their position in the list, which every
+// later turn's resend repeats, so they are unique within the request and
+// stable across turns; derived from the message alone, every id-less
+// message's first item shared one id.
+func (state *responsesMessageEncodingState) itemID(kind string) string {
+	index := len(state.items)
+	if state.messageID == "" {
+		return llmprotocol.StableID("responses-item", "", fmt.Sprint(state.position+index), kind)
 	}
-	return llmprotocol.StableID("responses-item", messageID, fmt.Sprint(index), kind)
+	if index == 0 {
+		return state.messageID
+	}
+	return llmprotocol.StableID("responses-item", state.messageID, fmt.Sprint(index), kind)
 }
 
 func decodeResponsesReasoning(
