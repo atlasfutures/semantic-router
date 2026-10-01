@@ -39,6 +39,31 @@ func webSearchURLCitations(raw json.RawMessage, text string) []llmprotocol.Citat
 	return webSearchURLCitationsTo(raw, int64(utf8.RuneCountInString(text)))
 }
 
+// appendUncarriedCitationDiagnostic records, for a client of another format,
+// that a provider text block held a citation without a URL: its source has no
+// neutral shape, so it reaches only an Anthropic client, and the text is
+// delivered without it.
+func appendUncarriedCitationDiagnostic(
+	diagnostics *llmprotocol.Diagnostics,
+	policy llmprotocol.Policy,
+	source, target llmprotocol.WireFormat,
+	output []llmprotocol.OutputItem,
+) {
+	for _, item := range output {
+		for _, content := range item.Content {
+			if content.Kind != llmprotocol.ContentText || len(content.CitationsRaw) == 0 {
+				continue
+			}
+			var raw []json.RawMessage
+			if json.Unmarshal(content.CitationsRaw, &raw) == nil && len(raw) > len(content.Citations) {
+				appendAccountingOmission(diagnostics, policy, source, target, fieldContentCitations,
+					"a citation without a URL has no neutral source; the text is delivered without it")
+				return
+			}
+		}
+	}
+}
+
 // webSearchURLCitationsTo is webSearchURLCitations for a span ending at end.
 func webSearchURLCitationsTo(raw json.RawMessage, end int64) []llmprotocol.Citation {
 	var wire []anthropicWebSearchCitationWire
@@ -308,8 +333,16 @@ func (decoder *anthropicStreamDecoder) holdAnthropicCitation(
 	index int,
 	citation json.RawMessage,
 ) ([]llmprotocol.Event, bool, error) {
-	if !json.Valid(citation) {
-		return nil, true, invalidProviderResponse("invalid_stream_delta", "Anthropic citation delta is not JSON")
+	// Any citation kind is carried, including ones not named yet, but it must
+	// be an object stating its type: anything else would reach an Anthropic
+	// client as a malformed citation.
+	var object map[string]json.RawMessage
+	var kind struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(citation, &object) != nil || object == nil ||
+		json.Unmarshal(citation, &kind) != nil || kind.Type == "" {
+		return nil, true, invalidProviderResponse("invalid_stream_delta", "Anthropic citation delta is not a typed citation object")
 	}
 	if decoder.pendingCitations == nil {
 		decoder.pendingCitations = map[int][]json.RawMessage{}

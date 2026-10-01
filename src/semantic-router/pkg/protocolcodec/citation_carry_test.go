@@ -2,6 +2,7 @@ package protocolcodec
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -335,6 +336,68 @@ func TestAnthropicResponseEmptyCitationsAreNotRefused(t *testing.T) {
 			if out := string(translateAnthropicResponse(t, body, client)); !strings.Contains(out, "done") {
 				t.Fatalf("citations %s to %s: %s", citations, client, out)
 			}
+		}
+	}
+}
+
+// A streamed citation must be an object stating its type; anything else is a
+// malformed provider stream, not a citation to carry.
+func TestStreamedCitationMustBeATypedObject(t *testing.T) {
+	for _, citation := range []string{`null`, `"x"`, `1`, `[]`, `{}`, `{"type":7}`, `{"type":""}`} {
+		stream := `event: message_start
+data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"citations_delta","citation":` + citation + `}}
+
+`
+		s, err := NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1, llmprotocol.StreamContext{
+			Context: context.Background(), PublicModel: "public-model", ProviderModel: "claude",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, _, err = s.Push([]byte(stream))
+		assertProtocolError(t, err, llmprotocol.ErrorUpstreamUnavailable, "invalid_stream_delta")
+	}
+}
+
+// A document citation a Chat or Responses client cannot carry is reported as
+// dropped, while the text is delivered.
+func TestUncarriedCitationIsReported(t *testing.T) {
+	body := `{"id":"msg_1","type":"message","role":"assistant","model":"source-model",` +
+		`"content":[{"type":"text","text":"The handbook says ten.","citations":` + charLocationCitations + `}],` +
+		`"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`
+	engine := NewBuiltinEngine()
+	for _, client := range []llmprotocol.WireFormat{llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1} {
+		response, envelope, _, err := engine.DecodeResponse(llmprotocol.AnthropicMessagesV1, []byte(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Generation++
+		encoded, err := engine.EncodeResponse(client, response, envelope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, diagnostic := range encoded.Diagnostics {
+			found = found || (diagnostic.Field == "content.citations" && diagnostic.Action == llmprotocol.DiagnosticDropped)
+		}
+		if !found || !strings.Contains(string(encoded.Body), "The handbook says ten.") {
+			t.Fatalf("%s: diagnostics %+v, body %s", client, encoded.Diagnostics, encoded.Body)
+		}
+	}
+	// A web search citation reaches them, so nothing is reported.
+	web := strings.Replace(body, charLocationCitations, webSearchCitations, 1)
+	response, envelope, _, _ := engine.DecodeResponse(llmprotocol.AnthropicMessagesV1, []byte(web))
+	response.Generation++
+	encoded, _ := engine.EncodeResponse(llmprotocol.OpenAIChatV1, response, envelope)
+	for _, diagnostic := range encoded.Diagnostics {
+		if diagnostic.Field == "content.citations" {
+			t.Fatalf("a carried web citation was reported: %+v", diagnostic)
 		}
 	}
 }

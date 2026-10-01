@@ -148,4 +148,3 @@ func anthropicResponseContentType(body json.RawMessage) (string, error) {
 		return "", llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_content", "Anthropic response content type is unsupported", nil)
 	}
 }
-
