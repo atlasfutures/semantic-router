@@ -120,12 +120,16 @@ func planRaylineARCThinkingControl(
 	if err != nil {
 		return nil, false, err
 	}
+	served, err := config.RaylineARCRegistryModel(cfg, worker)
+	if err != nil {
+		return nil, false, err
+	}
 	format := registryFormatOf(dispatch.targetFormat)
 	registry, err := thinkingcontrol.Embedded()
 	if err != nil {
 		return nil, false, err
 	}
-	cell, err := registry.Admit(action.Model, provider, format, action.Control, policy.AllowExperimentalControls)
+	cell, err := registry.Admit(served, provider, format, action.Control, policy.AllowExperimentalControls)
 	if err != nil {
 		return nil, false, err
 	}

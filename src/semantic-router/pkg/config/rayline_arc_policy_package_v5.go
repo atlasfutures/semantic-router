@@ -147,10 +147,30 @@ func validateRaylineARCPolicyPackageV5Bindings(cfg *RaylineARCPolicyServiceConfi
 	if cfg.ModelSchedule != declared {
 		return fmt.Errorf("model_schedule is %q, and the package declares %q", cfg.ModelSchedule, declared)
 	}
+	bound := make(map[string]bool, len(cfg.Bindings))
 	for _, binding := range cfg.Bindings {
 		if binding.Level != "" || binding.Model != "" || binding.Effort != nil || binding.ReasoningMaxTokens != nil {
 			return fmt.Errorf("binding for action %s: a v5 binding is only action_id and worker; the package names the model and control",
 				binding.ActionID)
+		}
+		bound[binding.Worker] = true
+		action, ok := pkg.actions[binding.ActionID]
+		if !ok {
+			continue // validateRaylineARCPolicyPackageV5Dispatch names it
+		}
+		trained, declared := cfg.TrainedModels[binding.Worker]
+		if !declared {
+			return fmt.Errorf("binding for action %s: trained_models declares no trained model for worker %q, and the action's is %q",
+				binding.ActionID, binding.Worker, action.Model)
+		}
+		if trained != action.Model {
+			return fmt.Errorf("binding for action %s: worker %q serves trained model %q, and the action's is %q",
+				binding.ActionID, binding.Worker, trained, action.Model)
+		}
+	}
+	for worker := range cfg.TrainedModels {
+		if !bound[worker] {
+			return fmt.Errorf("trained_models names worker %q, which no binding uses", worker)
 		}
 	}
 	return nil
@@ -213,6 +233,10 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 		if err != nil {
 			return fmt.Errorf("policy_service binding for action %s: %w", binding.ActionID, err)
 		}
+		served, err := RaylineARCRegistryModel(cfg, binding.Worker)
+		if err != nil {
+			return fmt.Errorf("policy_service binding for action %s: %w", binding.ActionID, err)
+		}
 		// The target format is chosen per request from the worker's accepted
 		// formats, so the control must be admitted on the cell of each one.
 		for _, apiFormat := range cfg.GetModelAcceptedFormats(binding.Worker) {
@@ -225,7 +249,7 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 				return fmt.Errorf("policy_service binding for action %s: worker %q accepts responses, where v5 controls are not served yet",
 					binding.ActionID, binding.Worker)
 			}
-			if _, err := registry.Admit(action.Model, provider, format, action.Control, policy.AllowExperimentalControls); err != nil {
+			if _, err := registry.Admit(served, provider, format, action.Control, policy.AllowExperimentalControls); err != nil {
 				return fmt.Errorf("policy_service binding for action %s on worker %q: %w", binding.ActionID, binding.Worker, err)
 			}
 		}
@@ -264,6 +288,26 @@ func RaylineARCRegistryFormat(apiFormat string) (string, error) {
 // to: the one every one of its endpoints reaches (openrouter, anthropic or
 // openai). With the request's target format it names the worker's admission
 // cell.
+// RaylineARCRegistryModel is the model a worker serves, as the registry's
+// admission cells name it: the provider model id its dispatch sends. An
+// action's model is the trained name its action_id digests, decoupled from
+// providers, so it is logged but never admitted on.
+func RaylineARCRegistryModel(cfg *RouterConfig, worker string) (string, error) {
+	endpoints := cfg.GetEndpointsForModel(worker)
+	if len(endpoints) == 0 {
+		return "", fmt.Errorf("worker %q has no endpoint", worker)
+	}
+	served := ""
+	for _, endpoint := range endpoints {
+		model := cfg.ResolveExternalModelID(worker, endpoint.Name)
+		if served != "" && served != model {
+			return "", fmt.Errorf("worker %q serves both %s and %s; its admission cell is ambiguous", worker, served, model)
+		}
+		served = model
+	}
+	return served, nil
+}
+
 func RaylineARCRegistryProvider(cfg *RouterConfig, worker string) (provider string, err error) {
 	endpoints := cfg.GetEndpointsForModel(worker)
 	if len(endpoints) == 0 {

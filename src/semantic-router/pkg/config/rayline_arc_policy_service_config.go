@@ -77,6 +77,13 @@ type RaylineARCPolicyServiceConfig struct {
 	// instruction is admitted only experimentally on its worker's (model,
 	// provider, format) cell. Without it such an action is refused at load.
 	AllowExperimentalControls bool `yaml:"allow_experimental_controls,omitempty"`
+	// TrainedModels declares, per bound worker, the trained model it serves:
+	// the name a v5 action's model states (e.g. claude-opus-5). Trained names
+	// are decoupled from providers, so the pairing is declared, never
+	// inferred; a binding whose worker declares another trained model than
+	// its action's is refused. Required for v5; a v4 binding declares its
+	// model itself.
+	TrainedModels map[string]string `yaml:"trained_models,omitempty"`
 
 	packageV5 *raylineARCPolicyPackageV5
 }
@@ -166,6 +173,9 @@ func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) e
 	}
 	if len(cfg.Bindings) == 0 {
 		return fmt.Errorf("bindings are required")
+	}
+	if !cfg.IsPackageV5() && len(cfg.TrainedModels) > 0 {
+		return fmt.Errorf("trained_models serves v5 packages; a v4 binding declares its model")
 	}
 	if cfg.IsPackageV5() {
 		if err := validateRaylineARCPolicyPackageV5Bindings(cfg); err != nil {

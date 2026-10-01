@@ -1930,6 +1930,10 @@ recipes:
                 # allow_experimental_controls admits v5 instructions whose
                 # registry cell is experimental; without it they are refused.
                 allow_experimental_controls: false
+                # trained_models declares, per bound worker, the trained model
+                # it serves (a v5 action's model, e.g. claude-opus-5); a binding
+                # whose worker declares another is refused. v5 only.
+                trained_models: {}
                 # Each binding maps a package action to a worker. model, effort
                 # and reasoning_max_tokens declare what the action dispatches,
                 # as the package's catalog states it: model is the trained
