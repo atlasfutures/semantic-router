@@ -281,3 +281,55 @@ func TestRelaxedReadDuringAStrictLeaseCannotOverwriteItsCommit(t *testing.T) {
 		t.Fatalf("the strict commit was overwritten: %+v err %v", after, err)
 	}
 }
+
+// A relaxed read is episode activity: an episode read shortly before its idle
+// deadline must still accept that read's commit afterwards.
+func TestRelaxedReadRestartsTheIdleWindow(t *testing.T) {
+	clock := time.Now()
+	store, err := NewMemoryEpisodeStore(MemoryEpisodeStoreConfig{MaxEpisodes: 4, IdleTTL: time.Minute, Now: func() time.Time { return clock }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	episode := HashEpisodeID("idle")
+	advanceRelaxed(t, store, episode, 1)
+	clock = clock.Add(50 * time.Second)
+	state, read, err := store.Snapshot(context.Background(), episode, 2)
+	if err != nil || read.Version() != 1 {
+		t.Fatalf("snapshot = version %d, err %v", read.Version(), err)
+	}
+	clock = clock.Add(20 * time.Second)
+	// Activity elsewhere reaps every entry past its idle deadline.
+	if _, _, err := store.Snapshot(context.Background(), HashEpisodeID("elsewhere"), 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CommitIfUnchanged(context.Background(), episode, read, committedTurn(t, state, 0)); err != nil {
+		t.Fatalf("commit 20 s after a read near the idle deadline = %v", err)
+	}
+}
+
+// On Redis a relaxed read restarts the idle TTL of both episode keys.
+func TestRelaxedRedisReadRestartsTheIdleTTL(t *testing.T) {
+	address := os.Getenv("RAYLINE_ARC_TEST_REDIS_ADDR")
+	if address == "" {
+		t.Skip("RAYLINE_ARC_TEST_REDIS_ADDR is not set")
+	}
+	prefix := "test:rayline-arc-idle:" + HashEpisodeID(t.Name()+time.Now().String()) + ":"
+	store := newTestRedisEpisodeStore(t, address, prefix, time.Second)
+	episode := HashEpisodeID("idle")
+	advanceRelaxed(t, store, episode, 1)
+	keys := store.keys(episode)
+	for _, key := range keys[1:] {
+		if err := store.client.PExpire(context.Background(), key, time.Second).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := store.Snapshot(context.Background(), episode, 2); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range keys[1:] {
+		ttl, err := store.client.PTTL(context.Background(), key).Result()
+		if err != nil || ttl < 30*time.Second {
+			t.Fatalf("%s TTL after a relaxed read = %v (err %v), want the idle TTL restarted", key, ttl, err)
+		}
+	}
+}
