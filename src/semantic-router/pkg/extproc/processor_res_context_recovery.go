@@ -219,8 +219,6 @@ func (r *OpenAIRouter) executeContextRecoveryFollowup(
 	if err != nil {
 		return nil, err
 	}
-	charge := decoded.Response.Usage.ProviderCost
-	requestCtx.ContextRecoveryProviderCost = &charge
 	decoded.Response.Model = requestCtx.RequestModel
 	decoded.Response.Generation++
 	format := requestCtx.SourceFormat
@@ -231,6 +229,11 @@ func (r *OpenAIRouter) executeContextRecoveryFollowup(
 	if err != nil {
 		return nil, fmt.Errorf("encode context recovery followup: %w", err)
 	}
+	// Only a body the client actually receives carries both calls. Set
+	// earlier, a failed encode would send the fail-open path the first
+	// call's counts with both calls' charge.
+	charge := decoded.Response.Usage.ProviderCost
+	requestCtx.ContextRecoveryProviderCost = &charge
 	return encoded.Body, nil
 }
 
