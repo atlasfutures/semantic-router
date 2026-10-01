@@ -268,7 +268,7 @@ func PolicyTurn(
 		}
 		return previous.Clone(), attribution, PolicyTransitionSideCall
 	}
-	if ordinal, summary, ok := newCompaction(previous, signals.Compaction); ok {
+	if ordinal, summary, ok := newCompaction(previous, signals.Compaction, len(messages)); ok {
 		return &PolicyEpisodeState{
 			Epoch:             nextPolicyEpoch(previous),
 			EpochStartTurn:    turnIndex,
@@ -299,10 +299,17 @@ func nextPolicyEpoch(previous *PolicyEpisodeState) int {
 // newCompaction reports whether signal is a compaction the episode has not
 // yet applied, with the ordinal and summary digest to record. An explicit
 // ordinal is authoritative and idempotent: one the episode already counted is
-// a repeat, not a new context. Without one, a recognised summary is new only
-// if it differs from the last one recorded, because every request of a
-// compacted context still opens with its summary.
-func newCompaction(previous *PolicyEpisodeState, signal *PolicyCompactionSignal) (int, string, bool) {
+// a repeat, not a new context. Without one, a recognised summary is new if it
+// differs from the last one recorded, because every request of a compacted
+// context still opens with its summary. The same summary is also new when the
+// request collapsed below the recorded prefix: two real compactions can write
+// byte-identical summaries, and a carried summary rides a growing request
+// while a new compaction shrinks it.
+func newCompaction(
+	previous *PolicyEpisodeState,
+	signal *PolicyCompactionSignal,
+	messageCount int,
+) (int, string, bool) {
 	if signal == nil {
 		return 0, "", false
 	}
@@ -316,7 +323,8 @@ func newCompaction(previous *PolicyEpisodeState, signal *PolicyCompactionSignal)
 	if signal.Ordinal > 0 {
 		return signal.Ordinal, summary, signal.Ordinal > count
 	}
-	if signal.SummaryDigest == "" || previous != nil && signal.SummaryDigest == previous.CompactionSummary {
+	if signal.SummaryDigest == "" ||
+		previous != nil && signal.SummaryDigest == previous.CompactionSummary && messageCount >= previous.PrefixLen {
 		return 0, "", false
 	}
 	return count + 1, summary, true

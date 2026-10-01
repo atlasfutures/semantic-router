@@ -19,6 +19,7 @@ package raylinearc
 import (
 	"encoding/json"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -131,6 +132,47 @@ func TestPolicyTurnClaudeCodeSummaryIsANewCompactionOnlyWhenItChanges(t *testing
 	turn, _, transition = PolicyTurn(state, compactedB, rolesB, 6, signalB)
 	if transition != PolicyTransitionCompaction || turn.EpochStartTurn != 6 || turn.CompactionCount != 2 {
 		t.Fatalf("second summary: %+v (%s)", turn, transition)
+	}
+}
+
+// Two real compactions can write byte-identical summaries. A carried summary
+// rides a growing request; a new compaction collapses the request below the
+// recorded prefix, and that collapse makes the repeated summary a new
+// compaction (pathfinder's
+// test_a_repeated_summary_on_a_collapsed_request_is_a_new_compaction).
+func TestPolicyTurnRepeatedSummaryOnACollapsedRequestIsANewCompaction(t *testing.T) {
+	summary := `{"role":"user","content":"` + ClaudeCodeContinuationMarker + ` the summary"}`
+	request := func(tail int) ([]json.RawMessage, []string) {
+		messages := []string{summary}
+		for index := 0; index < tail; index++ {
+			messages = append(messages, `{"role":"assistant","content":"a`+strconv.Itoa(index)+`"}`,
+				`{"role":"user","content":"m`+strconv.Itoa(index)+`"}`)
+		}
+		return rawMessages(t, messages...)
+	}
+	first, _ := rawMessages(t, user1)
+	state := (&PolicyEpisodeState{}).Next(first, "action-a", "arm-a")
+	compacted, roles := request(0)
+	signal := PolicyTurnSignals{Compaction: &PolicyCompactionSignal{SummaryDigest: ClaudeCodeCompactionSummaryDigest(compacted)}}
+	turn, _, transition := PolicyTurn(state, compacted, roles, 2, signal)
+	if transition != PolicyTransitionCompaction || turn.CompactionCount != 1 {
+		t.Fatalf("first compaction: %+v (%s)", turn, transition)
+	}
+	state = turn.Next(compacted, "action-a", "arm-a")
+	// It grows: the same summary carried on ordinary requests.
+	for completed, tail := uint64(3), 1; tail <= 3; completed, tail = completed+1, tail+1 {
+		grown, grownRoles := request(tail)
+		turn, _, transition = PolicyTurn(state, grown, grownRoles, completed, signal)
+		if transition != PolicyTransitionExtends || turn.CompactionCount != 1 {
+			t.Fatalf("carried summary at tail %d: %+v (%s)", tail, turn, transition)
+		}
+		state = turn.Next(grown, "action-a", "arm-a")
+	}
+	// It collapses with the identical summary: a second real compaction.
+	collapsed, collapsedRoles := request(1)
+	turn, _, transition = PolicyTurn(state, collapsed, collapsedRoles, 6, signal)
+	if transition != PolicyTransitionCompaction || turn.CompactionCount != 2 || turn.EpochStartTurn != 6 {
+		t.Fatalf("repeated summary on a collapsed request: %+v (%s)", turn, transition)
 	}
 }
 
