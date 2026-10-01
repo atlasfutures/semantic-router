@@ -499,7 +499,7 @@ func encodeResponsesSuccessResource(response llmprotocol.Response, envelope llmp
 	)
 	items := make([]responsesItemWire, 0, len(response.Output))
 	for _, item := range anthropicWebSearchOutputAsResponses(response.Output) {
-		encoded, err := encodeResponsesOutputItem(item, len(items))
+		encoded, err := encodeResponsesOutputItem(item)
 		if err != nil {
 			return responsesResponseWire{}, err
 		}
@@ -587,7 +587,7 @@ func carriedWebSearchCall(content llmprotocol.Content) (responsesItemWire, bool)
 	return item, true
 }
 
-func encodeResponsesOutputItem(item llmprotocol.OutputItem, position int) ([]responsesItemWire, error) {
+func encodeResponsesOutputItem(item llmprotocol.OutputItem) ([]responsesItemWire, error) {
 	item.Content = anthropicWebSearchAsResponses(item.Content)
 	if len(item.Content) == 1 {
 		if call, carried := carriedWebSearchCall(item.Content[0]); carried {
@@ -595,7 +595,7 @@ func encodeResponsesOutputItem(item llmprotocol.OutputItem, position int) ([]res
 		}
 	}
 	message := llmprotocol.Message{ID: item.ID, Role: item.Role, Content: item.Content}
-	return encodeResponsesMessage(message, "output", position)
+	return encodeResponsesMessage(message, "output")
 }
 
 func encodeResponsesUsage(usage llmprotocol.Usage) *responsesUsageWire {

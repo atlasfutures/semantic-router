@@ -7,11 +7,13 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
-// responsesInputIDs encodes a Chat history as a Responses request and returns
-// its input item ids in order.
-func responsesInputIDs(t *testing.T, chat string) []string {
-	t.Helper()
+// A request translated into Responses carries no item id its client did not
+// send: input ids are optional, and invented ones were duplicated across
+// id-less messages.
+func TestResponsesInputInventsNoItemIDs(t *testing.T) {
 	engine := NewBuiltinEngine()
+	chat := `{"model":"m","messages":[{"role":"user","content":"one"},{"role":"assistant","content":"two"},` +
+		`{"role":"user","content":"three"}]}`
 	request, envelope, _, err := engine.DecodeRequest(llmprotocol.OpenAIChatV1, []byte(chat))
 	if err != nil {
 		t.Fatal(err)
@@ -23,38 +25,14 @@ func responsesInputIDs(t *testing.T, chat string) []string {
 		t.Fatal(err)
 	}
 	var wire struct {
-		Input []struct {
-			ID string `json:"id"`
-		} `json:"input"`
+		Input []map[string]json.RawMessage `json:"input"`
 	}
-	if err := json.Unmarshal(encoded.Body, &wire); err != nil {
-		t.Fatal(err)
+	if err := json.Unmarshal(encoded.Body, &wire); err != nil || len(wire.Input) != 3 {
+		t.Fatalf("input = %s (%v)", encoded.Body, err)
 	}
-	ids := make([]string, 0, len(wire.Input))
 	for _, item := range wire.Input {
-		ids = append(ids, item.ID)
-	}
-	return ids
-}
-
-// Every item of a request translated into Responses has its own id, though
-// none of its messages had one; before, every id-less message's first item
-// shared one. Appending a turn keeps the earlier items' ids, so a resent
-// history repeats them.
-func TestResponsesItemIDsAreUniqueAndStable(t *testing.T) {
-	const turns = `{"role":"user","content":"one"},{"role":"assistant","content":"two"},{"role":"user","content":"three"}`
-	ids := responsesInputIDs(t, `{"model":"m","messages":[`+turns+`]}`)
-	seen := map[string]bool{}
-	for _, id := range ids {
-		if id == "" || seen[id] {
-			t.Fatalf("item ids are not unique: %v", ids)
-		}
-		seen[id] = true
-	}
-	longer := responsesInputIDs(t, `{"model":"m","messages":[`+turns+`,{"role":"assistant","content":"four"},{"role":"user","content":"five"}]}`)
-	for index, id := range ids {
-		if longer[index] != id {
-			t.Fatalf("item %d changed id when a turn was appended: %v then %v", index, ids, longer)
+		if _, present := item["id"]; present {
+			t.Fatalf("an input item carries an invented id: %s", encoded.Body)
 		}
 	}
 }

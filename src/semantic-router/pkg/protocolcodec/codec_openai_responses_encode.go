@@ -181,7 +181,7 @@ func encodeResponsesRequestItems(request llmprotocol.Request) ([]json.RawMessage
 		if messageDropsWhole(message.Content, llmprotocol.OpenAIResponsesV1) {
 			return nil
 		}
-		encoded, err := encodeResponsesMessage(message, "input", len(items))
+		encoded, err := encodeResponsesMessage(message, "input")
 		if err != nil {
 			return err
 		}
@@ -290,18 +290,12 @@ func encodeResponsesOutputFormat(output llmprotocol.OutputFormat) *responsesText
 	}}
 }
 
-// encodeResponsesMessage encodes one message as Responses items. position is
-// the index its first item takes in the list being built: an id-less
-// message's generated item ids include it, so no two of a request's items
-// share an id.
-func encodeResponsesMessage(message llmprotocol.Message, textDirection string, position int) ([]responsesItemWire, error) {
+func encodeResponsesMessage(message llmprotocol.Message, textDirection string) ([]responsesItemWire, error) {
 	role, err := wireRole(message.Role)
 	if err != nil {
 		return nil, err
 	}
-	state := responsesMessageEncodingState{
-		messageID: message.ID, position: position, role: role, textDirection: textDirection,
-	}
+	state := responsesMessageEncodingState{messageID: message.ID, role: role, textDirection: textDirection}
 	for _, content := range message.Content {
 		if err := state.appendContent(content); err != nil {
 			return nil, err
@@ -318,7 +312,6 @@ func encodeResponsesMessage(message llmprotocol.Message, textDirection string, p
 
 type responsesMessageEncodingState struct {
 	messageID     string
-	position      int
 	role          string
 	textDirection string
 	ordinary      []llmprotocol.Content
@@ -493,21 +486,26 @@ func (state *responsesMessageEncodingState) flushReasoning() error {
 	return nil
 }
 
-// itemID is the id of the message's next item. A message with its own id
-// keeps it on its first item and derives the rest from it. An id-less
-// message's items derive theirs from their position in the list, which every
-// later turn's resend repeats, so they are unique within the request and
-// stable across turns; derived from the message alone, every id-less
-// message's first item shared one id.
+func responsesItemID(messageID string, index int, kind string) string {
+	if index == 0 && messageID != "" {
+		return messageID
+	}
+	return llmprotocol.StableID("responses-item", messageID, fmt.Sprint(index), kind)
+}
+
+// itemID is the id of the message's next item. On input, ids are optional and
+// the Router invents none: the first item keeps the client's message id and
+// the rest carry none, as upstream v0.4 does. Invented input ids were derived
+// from the message alone, so every id-less message's first item shared one.
+// Output items always have an id (validation requires one upstream).
 func (state *responsesMessageEncodingState) itemID(kind string) string {
-	index := len(state.items)
-	if state.messageID == "" {
-		return llmprotocol.StableID("responses-item", "", fmt.Sprint(state.position+index), kind)
+	if state.textDirection == "input" {
+		if len(state.items) == 0 {
+			return state.messageID
+		}
+		return ""
 	}
-	if index == 0 {
-		return state.messageID
-	}
-	return llmprotocol.StableID("responses-item", state.messageID, fmt.Sprint(index), kind)
+	return responsesItemID(state.messageID, len(state.items), kind)
 }
 
 func decodeResponsesReasoning(
