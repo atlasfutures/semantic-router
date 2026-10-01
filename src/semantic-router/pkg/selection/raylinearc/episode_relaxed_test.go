@@ -14,7 +14,8 @@ func relaxedStores(t *testing.T, check func(t *testing.T, store interface {
 	EpisodeStore
 	EpisodeSnapshotStore
 },
-)) {
+),
+) {
 	t.Run("memory", func(t *testing.T) {
 		check(t, newTestMemoryEpisodeStore(t, 4, time.Now))
 	})
@@ -48,23 +49,23 @@ func TestRelaxedCommitLandsOnlyOnTheVersionRead(t *testing.T) {
 	) {
 		ctx := context.Background()
 		episode := HashEpisodeID("relaxed")
-		first, version, err := store.Snapshot(ctx, episode, 2)
-		if err != nil || version != 0 || first.TurnIndex != 0 {
-			t.Fatalf("fresh snapshot = turn %v, version %d, err %v", first, version, err)
+		first, read, err := store.Snapshot(ctx, episode, 2)
+		if err != nil || read.Version() != 0 || first.TurnIndex != 0 {
+			t.Fatalf("fresh snapshot = turn %v, version %d, err %v", first, read.Version(), err)
 		}
 		second, _, err := store.Snapshot(ctx, episode, 2)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := store.CommitIfUnchanged(ctx, episode, version, committedTurn(t, first, 0)); err != nil {
+		if err := store.CommitIfUnchanged(ctx, episode, read, committedTurn(t, first, 0)); err != nil {
 			t.Fatalf("first relaxed commit = %v", err)
 		}
-		if err := store.CommitIfUnchanged(ctx, episode, version, committedTurn(t, second, 1)); !errors.Is(err, ErrEpisodeConflict) {
-			t.Fatalf("second relaxed commit on the same version = %v, want ErrEpisodeConflict", err)
+		if err := store.CommitIfUnchanged(ctx, episode, read, committedTurn(t, second, 1)); !errors.Is(err, ErrEpisodeConflict) {
+			t.Fatalf("second relaxed commit on the same read = %v, want ErrEpisodeConflict", err)
 		}
-		after, afterVersion, err := store.Snapshot(ctx, episode, 2)
-		if err != nil || afterVersion != version+1 || after.TurnIndex != 1 || after.PreviousArm == nil || *after.PreviousArm != 0 {
-			t.Fatalf("after = %+v version %d err %v, want the first turn at version %d", after, afterVersion, err, version+1)
+		after, afterRead, err := store.Snapshot(ctx, episode, 2)
+		if err != nil || afterRead.Version() != read.Version()+1 || after.TurnIndex != 1 || after.PreviousArm == nil || *after.PreviousArm != 0 {
+			t.Fatalf("after = %+v version %d err %v, want the first turn at version %d", after, afterRead.Version(), err, read.Version()+1)
 		}
 	})
 }
@@ -80,11 +81,11 @@ func TestRelaxedAndStrictRespectEachOther(t *testing.T) {
 	) {
 		ctx := context.Background()
 		episode := HashEpisodeID("mixed")
-		state, version, err := store.Snapshot(ctx, episode, 2)
+		state, read, err := store.Snapshot(ctx, episode, 2)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := store.CommitIfUnchanged(ctx, episode, version, committedTurn(t, state, 1)); err != nil {
+		if err := store.CommitIfUnchanged(ctx, episode, read, committedTurn(t, state, 1)); err != nil {
 			t.Fatalf("relaxed commit = %v", err)
 		}
 		lease, prepared, err := store.Prepare(ctx, episode, 2)
@@ -94,15 +95,82 @@ func TestRelaxedAndStrictRespectEachOther(t *testing.T) {
 		if prepared.TurnIndex != 1 {
 			t.Fatalf("strict prepare read turn %d, want the relaxed commit's 1", prepared.TurnIndex)
 		}
-		snapshot, snapshotVersion, err := store.Snapshot(ctx, episode, 2)
+		snapshot, snapshotRead, err := store.Snapshot(ctx, episode, 2)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := store.CommitIfUnchanged(ctx, episode, snapshotVersion, committedTurn(t, snapshot, 0)); !errors.Is(err, ErrEpisodeConflict) {
+		if err := store.CommitIfUnchanged(ctx, episode, snapshotRead, committedTurn(t, snapshot, 0)); !errors.Is(err, ErrEpisodeConflict) {
 			t.Fatalf("relaxed commit under a strict lease = %v, want ErrEpisodeConflict", err)
 		}
 		if err := store.Abort(ctx, lease); err != nil {
 			t.Fatal(err)
 		}
 	})
+}
+
+// advanceRelaxed commits n relaxed turns to episode.
+func advanceRelaxed(t *testing.T, store EpisodeSnapshotStore, episode string, n int) {
+	t.Helper()
+	for i := range n {
+		state, read, err := store.Snapshot(context.Background(), episode, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.CommitIfUnchanged(context.Background(), episode, read, committedTurn(t, state, i%2)); err != nil {
+			t.Fatalf("advance %d = %v", i, err)
+		}
+	}
+}
+
+// A memory entry evicted and recreated back to the version a stale relaxed
+// turn read must not accept that turn's commit.
+func TestRelaxedCommitLosesToARecreatedMemoryEntry(t *testing.T) {
+	store := newTestMemoryEpisodeStore(t, 1, time.Now)
+	episode := HashEpisodeID("recreated")
+	advanceRelaxed(t, store, episode, 1)
+	stale, staleRead, err := store.Snapshot(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Capacity one: another episode evicts this one.
+	advanceRelaxed(t, store, HashEpisodeID("evictor"), 1)
+	advanceRelaxed(t, store, episode, 1)
+	_, recreated, err := store.Snapshot(context.Background(), episode, 2)
+	if err != nil || recreated.Version() != staleRead.Version() {
+		t.Fatalf("recreated at version %d, want the stale read's %d to exercise ABA", recreated.Version(), staleRead.Version())
+	}
+	if err := store.CommitIfUnchanged(context.Background(), episode, staleRead, committedTurn(t, stale, 1)); !errors.Is(err, ErrEpisodeConflict) {
+		t.Fatalf("stale commit to a recreated entry = %v, want ErrEpisodeConflict", err)
+	}
+}
+
+// A Redis episode that expired and was recreated back to the version a stale
+// relaxed turn read must not accept that turn's commit.
+func TestRelaxedCommitLosesToARecreatedRedisEpisode(t *testing.T) {
+	address := os.Getenv("RAYLINE_ARC_TEST_REDIS_ADDR")
+	if address == "" {
+		t.Skip("RAYLINE_ARC_TEST_REDIS_ADDR is not set")
+	}
+	prefix := "test:rayline-arc-aba:" + HashEpisodeID(t.Name()+time.Now().String()) + ":"
+	store := newTestRedisEpisodeStore(t, address, prefix, time.Minute)
+	episode := HashEpisodeID("recreated")
+	advanceRelaxed(t, store, episode, 1)
+	stale, staleRead, err := store.Snapshot(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Expiry: the fence and the state go away together.
+	keys := store.keys(episode)
+	if err := store.client.Del(context.Background(), keys[1], keys[2]).Err(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	advanceRelaxed(t, store, episode, 1)
+	_, recreated, err := store.Snapshot(context.Background(), episode, 2)
+	if err != nil || recreated.Version() != staleRead.Version() {
+		t.Fatalf("recreated at version %d, want the stale read's %d to exercise ABA", recreated.Version(), staleRead.Version())
+	}
+	if err := store.CommitIfUnchanged(context.Background(), episode, staleRead, committedTurn(t, stale, 1)); !errors.Is(err, ErrEpisodeConflict) {
+		t.Fatalf("stale commit to a recreated episode = %v, want ErrEpisodeConflict", err)
+	}
 }

@@ -70,8 +70,8 @@ type failingSnapshotStore struct {
 	*raylinearc.MemoryEpisodeStore
 }
 
-func (failingSnapshotStore) Snapshot(context.Context, string, int) (*raylinearc.EpisodeState, uint64, error) {
-	return nil, 0, errors.New("store unavailable")
+func (failingSnapshotStore) Snapshot(context.Context, string, int) (*raylinearc.EpisodeState, raylinearc.EpisodeReadToken, error) {
+	return nil, raylinearc.EpisodeReadToken{}, errors.New("store unavailable")
 }
 
 // A relaxed read that fails decides from a fresh state, as a first turn would,
