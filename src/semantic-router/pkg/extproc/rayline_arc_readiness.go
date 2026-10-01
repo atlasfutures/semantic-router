@@ -471,6 +471,16 @@ func createRaylineARCEpisodeStore(
 	if err := store.(raylinearc.EpisodeStoreReadiness).Ready(
 		readinessContext,
 	); err != nil {
+		// A relaxed cell serves without its store: a turn whose read fails
+		// decides from a fresh state and commits nothing. So an unreachable
+		// store at startup must not leave the cell unarmed for good; keep the
+		// client, which reconnects on its own once the store is back.
+		if episodeConfig.RelaxedConsistency() {
+			logging.ComponentWarnEvent("extproc", "rayline_arc_relaxed_store_unready", map[string]interface{}{
+				"backend": episodeConfig.Backend,
+			})
+			return store, closeStore, nil
+		}
 		if closeStore != nil {
 			_ = closeStore()
 		}

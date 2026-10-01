@@ -156,7 +156,7 @@ header.
 | Value | Behaviour | Use for |
 |---|---|---|
 | `strict` (default) | Turns on one episode take an exclusive lease and run one at a time. A turn that cannot take the lease within `acquire_timeout_seconds` is refused with 429 and `x-vsr-failure-class: session_busy`. Every turn is decided from the state the previous one committed. | Eval and training cells, where each reply must be on-policy and correctly attributed. |
-| `relaxed` | A turn reads the episode without a lease and commits only if no other turn committed in between. A turn never waits and is never refused over episode state: a lost race or an unavailable store only drops that turn's state update, counted as `relaxed_dropped`. | Serving cells, where availability matters more than exact continuity. |
+| `relaxed` | A turn reads the episode without a lease and commits only if no other turn committed in between. A turn never waits and is never refused over episode state: a lost race or an unavailable store only drops that turn's state update, counted as `relaxed_dropped`. A relaxed cell also starts while its store is down, and decides statelessly until the store is back. | Serving cells, where availability matters more than exact continuity. |
 
 In either mode, an identical resend of a turn still being decided joins that
 turn's decision instead of competing with it.
