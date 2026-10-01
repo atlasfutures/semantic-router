@@ -19,7 +19,9 @@ func invalidResponseTerminalUsage(reason string) responseUsageMetrics {
 
 func responseUsageFromSemanticUsage(usage llmprotocol.Usage) responseUsageMetrics {
 	if usage.State != llmprotocol.UsageAvailable {
-		return invalidResponseTerminalUsage("authoritative_usage_invalid")
+		invalid := invalidResponseTerminalUsage("authoritative_usage_invalid")
+		invalid.providerCost = usage.ProviderCost
+		return invalid
 	}
 	input, inputReported, inputOK := authoritativeTerminalTokenCount(usage.InputTotal)
 	output, outputReported, outputOK := authoritativeTerminalTokenCount(usage.OutputTotal)
@@ -28,9 +30,12 @@ func responseUsageFromSemanticUsage(usage llmprotocol.Usage) responseUsageMetric
 	cacheWrite, cacheWriteReported, cacheWriteOK := authoritativeTerminalTokenCount(usage.InputCacheWrite)
 	if !inputOK || !outputOK || !totalOK || !cacheReadOK || !cacheWriteOK ||
 		!inputReported || !outputReported {
-		return invalidResponseTerminalUsage("response_terminal_invalid")
+		invalid := invalidResponseTerminalUsage("response_terminal_invalid")
+		invalid.providerCost = usage.ProviderCost
+		return invalid
 	}
 	return normalizeResponseUsage(responseUsageMetrics{
+		providerCost: usage.ProviderCost,
 		promptTokens: input, promptTokensReported: inputReported,
 		completionTokens: output, completionTokensReported: outputReported,
 		totalTokens: total, totalTokensReported: totalReported,

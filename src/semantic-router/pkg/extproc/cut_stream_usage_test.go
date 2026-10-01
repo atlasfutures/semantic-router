@@ -138,7 +138,7 @@ func TestCutStreamThatCarriedNothingSaysSoRatherThanGuessing(t *testing.T) {
 	}
 }
 
-// A stream that ended normally is untouched: no truncation marker.
+// A stream that ended normally says so: the marker is present and false.
 func TestCompletedStreamCarriesNoTruncationMarker(t *testing.T) {
 	logs := captureLogs(t)
 	router := &OpenAIRouter{}
@@ -161,8 +161,8 @@ func TestCompletedStreamCarriesNoTruncationMarker(t *testing.T) {
 	router.finalizeSemanticStreamingResponse(ctx, nil)
 
 	fields := findLogEvent(t, logs, "llm_usage")
-	if _, present := fields["truncated"]; present {
-		t.Fatalf("a completed turn was marked truncated: %v", fields)
+	if truncated, present := fields["truncated"].(bool); !present || truncated {
+		t.Fatalf("a completed turn was not marked untruncated: %v", fields)
 	}
 }
 

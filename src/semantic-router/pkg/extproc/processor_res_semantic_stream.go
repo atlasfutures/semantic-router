@@ -549,7 +549,14 @@ func (r *OpenAIRouter) reportSemanticStreamingUsage(
 	completionLatency time.Duration,
 	usage responseUsageMetrics,
 ) {
-	if ctx == nil || usage.invalid {
+	if ctx == nil {
+		return
+	}
+	if usage.invalid {
+		// The turn still happened and the upstream may have billed it. It
+		// gets its usage record, with every count it never stated null, so
+		// no call goes unaccounted for.
+		r.recordResponseCost(ctx, completionLatency, responseUsageMetrics{providerCost: usage.providerCost})
 		return
 	}
 	totalTokens := responseUsageTotal(usage)

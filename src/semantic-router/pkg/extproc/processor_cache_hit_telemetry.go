@@ -47,22 +47,21 @@ func (r *OpenAIRouter) reportCacheHitTelemetry(
 		usage,
 		replayUsage,
 	)
-	logging.LogEvent("llm_usage", map[string]interface{}{
-		"request_id":        ctx.RequestID,
-		"model":             ctx.RequestModel,
-		"prompt_tokens":     usage.promptTokens,
-		"completion_tokens": usage.completionTokens,
-		"total_tokens":      totalTokens,
-		"cost":              0.0,
-		"from_cache":        true,
-		"cache_hit":         true,
-		// A cache hit never reaches recordResponseCost, so it carries the field
-		// itself or the turn is the absent-field case the flag exists to remove.
-		// On this path the request's declaration is the observed truth: the
-		// router is the thing streaming, and createCacheHitResponse re-encodes
-		// the cached body as SSE exactly when the request asked for it.
-		"streaming": ctx.ExpectStreamingResponse,
-	})
+	record := r.newLLMUsageRecord(ctx, usage)
+	latencyMillis := lookupLatency.Milliseconds()
+	record.CompletionLatencyMS = &latencyMillis
+	// No upstream was called, so the turn's upstream cost is a known zero;
+	// the provider charge stays null because no provider stated one.
+	zero := 0.0
+	record.Pricing = usagePricingCacheHit
+	record.Cost = &zero
+	record.FromCache, record.CacheHit = true, true
+	// A cache hit never reaches the response headers, so the request's
+	// declaration is the observed truth: the router is the thing streaming,
+	// and createCacheHitResponse re-encodes the cached body as SSE exactly
+	// when the request asked for it.
+	record.Streaming = ctx.ExpectStreamingResponse
+	emitLLMUsageRecord(record)
 }
 
 func (r *OpenAIRouter) buildCacheHitReplayUsage(
