@@ -12,6 +12,11 @@ import (
 // algorithm.
 type RaylineARCSelectionContext struct {
 	EpisodeIDHash string
+	// Coalesced is the decision an identical in-flight request on this
+	// episode already made. When set, the selector returns it instead of
+	// deciding again: the request is a resend of a turn being decided, not a
+	// new turn.
+	Coalesced *SelectionResult
 	// EncoderVisitedReplicaIDs names the replicas this turn's encode touched,
 	// recorded as soon as the encode returns rather than when a result is
 	// built.
