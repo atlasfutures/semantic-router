@@ -355,7 +355,7 @@ func (r *OpenAIRouter) prepareOrJoinRaylineARCTurn(
 	if waitContext == nil {
 		waitContext = context.Background()
 	}
-	key := raylineARCInflightKey(store, episodeIDHash, reqCtx.RaylineARCRawBody, raylineARCTurnInputs(arcConfig, reqCtx))
+	key := raylineARCInflightKey(store, episodeIDHash, reqCtx.RaylineARCRawBody, raylineARCTurnInputs(arcConfig, reqCtx, r.CredentialResolver.HeadersToStrip()))
 	for {
 		entry, leader := r.raylineARCInflight.join(key)
 		if leader {

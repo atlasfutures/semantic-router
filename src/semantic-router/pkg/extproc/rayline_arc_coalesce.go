@@ -38,7 +38,8 @@ import (
 // Identity is the episode store, the deciding ARC decision, the episode, the
 // exact request body and every request input outside the body that changes
 // how ARC treats the turn: the wire format, the episode close request, the
-// thinking-lever eligibility header and an injected fault. Any other request
+// thinking-lever eligibility header, an injected fault and the caller's
+// provider credentials, which decide who issues encrypted reasoning. Any other request
 // on the same episode, including one that differs by a byte, keeps today's
 // behaviour. The registry is process-local: two router instances do not
 // coalesce across each other.
@@ -76,19 +77,41 @@ func raylineARCInflightKey(store raylinearc.EpisodeStore, episodeIDHash string, 
 // The decision is named by its own ARC config: several decisions may share one
 // selector and episode store, and each routes with its own plugins and system
 // prompts.
-func raylineARCTurnInputs(arcConfig *config.RaylineARCAlgorithmConfig, reqCtx *RequestContext) string {
+//
+// Caller-supplied credentials (the credential resolver's injected headers)
+// enter only as a digest, so the key never holds a credential.
+func raylineARCTurnInputs(
+	arcConfig *config.RaylineARCAlgorithmConfig,
+	reqCtx *RequestContext,
+	credentialHeaders []string,
+) string {
 	eligibility := ""
 	if lever := arcConfig.ThinkingLever; lever != nil && lever.EligibilityHeader != "" {
 		eligibility = strings.TrimSpace(reqCtx.Headers[lever.EligibilityHeader])
 	}
 	return fmt.Sprintf(
-		"decision=%p|format=%s|close=%t|eligible=%q|fault=%s",
+		"decision=%p|format=%s|close=%t|eligible=%q|fault=%s|credentials=%s",
 		arcConfig,
 		reqCtx.SourceFormat,
 		reqCtx.RaylineARCCloseRequested,
 		eligibility,
 		requestedFault(arcConfig, reqCtx),
+		raylineARCCredentialDigest(reqCtx.Headers, credentialHeaders),
 	)
+}
+
+// raylineARCCredentialDigest fingerprints the values of the credential headers
+// a request carries, in a fixed order.
+func raylineARCCredentialDigest(headers map[string]string, names []string) string {
+	sorted := slices.Sorted(slices.Values(names))
+	digest := sha256.New()
+	for _, name := range sorted {
+		digest.Write([]byte(name))
+		digest.Write([]byte{0})
+		digest.Write([]byte(headers[name]))
+		digest.Write([]byte{0})
+	}
+	return hex.EncodeToString(digest.Sum(nil)[:8])
 }
 
 // join returns the pending entry for key and whether the caller leads it. A
