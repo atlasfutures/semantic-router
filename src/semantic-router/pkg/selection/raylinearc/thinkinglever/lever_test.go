@@ -620,6 +620,44 @@ func TestNeutralMarkerSurvivesANeutralLevelRename(t *testing.T) {
 	}
 }
 
+// A reload that gives the old marker's text to a steered level makes that
+// steer's bytes equal to the marker in force; requesting it is still a
+// change, so it is written, clears the flag and is attributed the steer.
+func TestASteerReusingMarkerBytesIsWritten(t *testing.T) {
+	e := &episode{t: t, binding: onChangeV1Binding()}
+	messages := []llmprotocol.Message{text(llmprotocol.RoleUser, "go")}
+	next := func() {
+		messages = append(messages, text(llmprotocol.RoleAssistant, "ok"), text(llmprotocol.RoleUser, "more"))
+	}
+	plan, _ := e.serve(messages, "up")
+	e.commit(plan)
+	next()
+	plan, _ = e.serve(messages, "none")
+	e.commit(plan)
+	e.binding.NeutralText = "Return to your usual depth of reasoning."
+	for index := range e.binding.Levels {
+		if e.binding.Levels[index].Name == "down" {
+			e.binding.Levels[index].Suffix = neutralMarkerText
+		}
+	}
+	if err := e.binding.Validate(); err != nil {
+		t.Fatalf("the reloaded binding: %v", err)
+	}
+	down, _ := e.binding.Level("down")
+	next()
+	plan, provider := e.serve(messages, "down")
+	state, _ := plan.Next.state(LeverSteeringSuffix)
+	if !plan.Emitted || plan.Written != WrittenInstruction || state.Marker ||
+		plan.InstructionState != InstructionSteered || plan.LevelInForce != "down" ||
+		plan.ControlInForce != e.binding.ControlSHA256(down) {
+		t.Fatalf("a steer reusing the marker's bytes = %+v (marker flag %v)", plan, state.Marker)
+	}
+	last := provider[len(provider)-1].Content
+	if last[len(last)-1].Text != neutralMarkerText {
+		t.Fatalf("the steer was not written at the tail: %+v", last)
+	}
+}
+
 // A ledger state may carry the marker flag only on a written steering item.
 func TestLedgerRefusesAMisplacedMarkerFlag(t *testing.T) {
 	ledger := &Ledger{

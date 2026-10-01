@@ -747,7 +747,9 @@ func shouldEmit(
 		// and stays inexpressible.
 		item = emission{payload: marker, marker: true}
 	}
-	if ledger.Payloads[state.Payload] == item.payload && !item.marker {
+	// Equal bytes are a repeat only with the same identity: a steer whose
+	// text a reload made equal to the marker in force is a change.
+	if ledger.Payloads[state.Payload] == item.payload && state.Marker == item.marker {
 		return item
 	}
 	if !reset && turn.TurnIndex-state.LastChangeTurn < turn.MinTurnsBetweenChanges {
