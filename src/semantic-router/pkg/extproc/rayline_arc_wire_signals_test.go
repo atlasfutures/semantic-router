@@ -19,6 +19,7 @@ package extproc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -164,5 +165,56 @@ func TestRaylineARCSideCallDoesNotWaitOnTheMainTurnLease(t *testing.T) {
 			}
 			_ = probe.RaylineARCTransaction.abort(context.Background(), "test")
 		})
+	}
+}
+
+// busyFixture is a policy selector whose episode acquire timeout is one
+// second, the bound on how long a decision waits out session_busy.
+func busyFixture(t *testing.T) *policySelectorFixture {
+	t.Helper()
+	fixture := newPolicySelectorFixture(t, "")
+	fixture.decision.Algorithm.RaylineARC.Episode.AcquireTimeoutSeconds = 1
+	fixture.selector.arm(&raylineARCArmedComponents{
+		scorer:    newPolicyServiceScorer(&config.RouterConfig{}, fixture.decision),
+		admission: raylinearc.NewAdmissionGate(0),
+		policy:    raylinearc.NewPolicyServiceClient(raylinearc.PolicyServiceConfig{BaseURL: fixture.fake.URL(), TotalTimeout: 5 * time.Second}),
+	})
+	fixture.fake.chooseWith(func(request raylinearc.PolicyDecisionRequest) string {
+		return request.Selection.AvailableActionIDs[0]
+	})
+	return fixture
+}
+
+// A side call takes no episode lease, so its decision can overlap a main
+// turn's at the service, which answers the later one session_busy. That
+// request waits the other decision out instead of being refused.
+func TestPolicyDecisionWaitsOutAnOverlappingDecision(t *testing.T) {
+	fixture := busyFixture(t)
+	fixture.fake.failFirstCalls("session_busy", 2)
+	state, _ := raylinearc.NewEpisodeState(2)
+	body := policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"})
+	if _, err := fixture.selectOn(t, state, body); err != nil {
+		t.Fatalf("a decision overlapping another was refused: %v", err)
+	}
+	if calls := len(fixture.fake.received()); calls != 3 {
+		t.Fatalf("decide calls = %d, want 3 (two busy, one served)", calls)
+	}
+}
+
+// A service that stays busy past the episode's acquire timeout is still
+// refused as session_busy.
+func TestPolicyDecisionStillRefusedWhenBusyOutlastsTheTimeout(t *testing.T) {
+	fixture := busyFixture(t)
+	fixture.fake.failNext("session_busy")
+	state, _ := raylinearc.NewEpisodeState(2)
+	body := policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"})
+	started := time.Now()
+	_, err := fixture.selectOn(t, state, body)
+	var failure *raylineARCSelectionFailure
+	if !errors.As(err, &failure) || failure.class != "policy_service_session_busy" {
+		t.Fatalf("persistently busy service = %v, want policy_service_session_busy", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("waited %v on a busy service, beyond the 1s acquire timeout", elapsed)
 	}
 }

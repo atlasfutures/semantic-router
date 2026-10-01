@@ -58,7 +58,10 @@ type policyBinding struct {
 // not score embeddings: the policy service decides, and Select branches to it
 // before any encode.
 type policyServiceScorer struct {
-	schedule    string
+	schedule string
+	// busyWait bounds how long a decision retries the service's
+	// session_busy (the episode's acquire timeout).
+	busyWait    time.Duration
 	alias       string
 	sha256      string
 	workerIDs   []string
@@ -93,6 +96,7 @@ func newPolicyServiceScorer(
 	policy := decision.Algorithm.RaylineARC.PolicyService
 	scorer := &policyServiceScorer{
 		schedule: policy.ModelSchedule,
+		busyWait: time.Duration(decision.Algorithm.RaylineARC.Episode.AcquireTimeoutSeconds) * time.Second,
 		alias:    policy.PackageAlias,
 		sha256:   policy.PackageSHA256,
 		bindings: make(map[string]policyBinding, len(policy.Bindings)),
@@ -342,7 +346,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}()
 	recordARCAdmission(armed.admission, true)
 	started := selector.now()
-	response, err := armed.policy.Decide(ctx, request)
+	response, err := decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait)
 	latency := selector.now().Sub(started)
 	if err != nil {
 		class := "transport"
@@ -421,6 +425,46 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		result.RaylineARC.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(binding.arm, state.TurnIndex, turn, messages)
 	}
 	return result, nil
+}
+
+const (
+	policyBusyRetryFirst = 25 * time.Millisecond
+	policyBusyRetryMax   = 400 * time.Millisecond
+)
+
+// decidePolicyThroughBusy asks the service for the decision and retries a
+// session_busy answer for up to wait. The service holds a strict episode for
+// the length of one decision. Two main turns never reach it at once, because
+// the episode lease serializes them, but a side call takes no lease: its
+// decision can overlap a main turn's (Claude Code sends its title call
+// alongside the first turn). Either one then waits out the other's decision,
+// which is short, instead of being refused.
+func decidePolicyThroughBusy(
+	ctx context.Context,
+	client *raylinearc.PolicyServiceClient,
+	request raylinearc.PolicyDecisionRequest,
+	wait time.Duration,
+) (*raylinearc.PolicyDecisionResponse, error) {
+	deadline := time.Now().Add(wait)
+	backoff := policyBusyRetryFirst
+	for {
+		response, err := client.Decide(ctx, request)
+		var failure *raylinearc.PolicyServiceError
+		if err == nil || !errors.As(err, &failure) || failure.Class != "session_busy" ||
+			time.Now().Add(backoff).After(deadline) {
+			return response, err
+		}
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return response, err
+		case <-timer.C:
+		}
+		if backoff *= 2; backoff > policyBusyRetryMax {
+			backoff = policyBusyRetryMax
+		}
+	}
 }
 
 // policyClientRequestOf is the request the service projects, with the

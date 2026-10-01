@@ -34,7 +34,10 @@ type fakePolicyService struct {
 	cold     atomic.Bool
 	choose   func(raylinearc.PolicyDecisionRequest) string
 	failWith string
-	requests []raylinearc.PolicyDecisionRequest
+	// failFirst answers the next failFirstLeft decide calls with this code.
+	failFirst     string
+	failFirstLeft int
+	requests      []raylinearc.PolicyDecisionRequest
 }
 
 func newFakePolicyService(t *testing.T, alias, sha256 string, catalog []string) *fakePolicyService {
@@ -58,6 +61,14 @@ func (fake *fakePolicyService) failNext(code string) {
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
 	fake.failWith = code
+}
+
+// failFirstCalls makes the next n decide calls answer with this contract
+// error and later ones succeed.
+func (fake *fakePolicyService) failFirstCalls(code string, n int) {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	fake.failFirst, fake.failFirstLeft = code, n
 }
 
 func (fake *fakePolicyService) received() []raylinearc.PolicyDecisionRequest {
@@ -91,6 +102,10 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 		fake.mu.Lock()
 		fake.requests = append(fake.requests, decide)
 		choose, failWith := fake.choose, fake.failWith
+		if fake.failFirstLeft > 0 {
+			fake.failFirstLeft--
+			failWith = fake.failFirst
+		}
 		fake.mu.Unlock()
 		if failWith != "" {
 			fake.writeJSON(writer, http.StatusServiceUnavailable, map[string]any{"error": failWith, "detail": map[string]any{}})
