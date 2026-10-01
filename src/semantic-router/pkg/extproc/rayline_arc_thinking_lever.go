@@ -47,16 +47,20 @@ type raylineARCThinkingTrace struct {
 	ExportSHA256   string
 	ControlInForce string
 	LevelRequested string
-	LevelInForce   string
-	Rank           int
-	Propensity     float64
-	Emitted        bool
-	Retry          bool
-	Placement      string
-	Replayed       int
-	Epoch          uint32
-	ResetReason    string
-	Skipped        string
+	// LevelInForce, ControlInForce and InstructionState attribute the call:
+	// what the worker was actually asked, not what was requested (ADR 0109).
+	LevelInForce     string
+	InstructionState string
+	Written          string
+	Rank             int
+	Propensity       float64
+	Emitted          bool
+	Retry            bool
+	Placement        string
+	Replayed         int
+	Epoch            uint32
+	ResetReason      string
+	Skipped          string
 }
 
 // applyRaylineARCThinkingLever writes this turn's lever items into the
@@ -143,6 +147,7 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 
 func fillThinkingTrace(trace *raylineARCThinkingTrace, binding thinkinglever.Binding, plan thinkinglever.Plan) {
 	trace.LevelInForce, trace.ControlInForce = plan.LevelInForce, plan.ControlInForce
+	trace.InstructionState, trace.Written = string(plan.InstructionState), plan.Written
 	if level, ok := binding.Level(plan.LevelInForce); ok {
 		trace.Rank = level.Rank
 	}
@@ -200,6 +205,12 @@ func appendRaylineARCThinkingFields(record map[string]interface{}, ctx *RequestC
 	record["thinking_lever"] = trace.Lever
 	record["thinking_admission"] = trace.Admission
 	record["thinking_level_in_force"] = trace.LevelInForce
+	if trace.InstructionState != "" {
+		record["thinking_instruction_state"] = trace.InstructionState
+	}
+	if trace.Written != "" {
+		record["thinking_written"] = trace.Written
+	}
 	if trace.ControlInForce != "" {
 		record["thinking_control_sha256"] = trace.ControlInForce
 	}

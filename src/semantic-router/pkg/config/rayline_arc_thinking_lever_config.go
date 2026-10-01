@@ -58,13 +58,16 @@ type RaylineARCThinkingLeverConfig struct {
 type RaylineARCThinkingBindingConfig struct {
 	// ExportSHA256 names the registry export this binding was compiled
 	// from, so a training row can be traced to its evidence.
-	ExportSHA256 string                          `yaml:"export_sha256,omitempty"`
-	Admission    string                          `yaml:"admission"`
-	Lever        string                          `yaml:"lever"`
-	Emit         string                          `yaml:"emit"`
-	NeutralLevel string                          `yaml:"neutral_level,omitempty"`
-	Placements   []string                        `yaml:"placements"`
-	Levels       []RaylineARCThinkingLevelConfig `yaml:"levels"`
+	ExportSHA256 string `yaml:"export_sha256,omitempty"`
+	Admission    string `yaml:"admission"`
+	Lever        string `yaml:"lever"`
+	Emit         string `yaml:"emit"`
+	NeutralLevel string `yaml:"neutral_level,omitempty"`
+	// NeutralText is the marker an on_change_v1 binding writes on a return
+	// from a steered level to the neutral level (ADR 0109).
+	NeutralText string                          `yaml:"neutral_text,omitempty"`
+	Placements  []string                        `yaml:"placements"`
+	Levels      []RaylineARCThinkingLevelConfig `yaml:"levels"`
 }
 
 type RaylineARCThinkingLevelConfig struct {
@@ -81,9 +84,10 @@ type RaylineARCThinkingLevelConfig struct {
 // Binding converts the configured binding to the planner's form.
 func (cfg RaylineARCThinkingBindingConfig) Binding() thinkinglever.Binding {
 	binding := thinkinglever.Binding{
-		Lever:   thinkinglever.Lever(cfg.Lever),
-		Emit:    thinkinglever.EmitMode(cfg.Emit),
-		Neutral: cfg.NeutralLevel,
+		Lever:       thinkinglever.Lever(cfg.Lever),
+		Emit:        thinkinglever.EmitMode(cfg.Emit),
+		Neutral:     cfg.NeutralLevel,
+		NeutralText: cfg.NeutralText,
 	}
 	for _, placement := range cfg.Placements {
 		binding.Placements = append(binding.Placements, thinkinglever.Placement(placement))

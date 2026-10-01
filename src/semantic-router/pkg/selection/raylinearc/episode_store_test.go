@@ -314,7 +314,7 @@ func fullThinkingLedger() *thinkinglever.Ledger {
 	}
 	ledger.InForce = []thinkinglever.LeverState{{
 		Lever: thinkinglever.LeverSteeringSuffix, Payload: thinkinglever.MaxPayloads - 1,
-		Level: strings.Repeat("l", thinkinglever.MaxLevelName), LastChangeTurn: 1 << 63,
+		Level: strings.Repeat("l", thinkinglever.MaxLevelName), LastChangeTurn: 1 << 63, Marker: true,
 	}}
 	return ledger
 }
@@ -354,6 +354,30 @@ func TestEpisodeStateWireV3CarriesTheThinkingLedger(t *testing.T) {
 	cloned.Thinking.Payloads[0].Suffix = "changed"
 	if decoded.Thinking.Payloads[0].Suffix == "changed" {
 		t.Fatal("clone shares ledger entries")
+	}
+}
+
+// The neutral-marker flag is written only when set, so a ledger without a
+// marker keeps the bytes earlier builds decode, and a record from before the
+// flag decodes as an ordinary item.
+func TestEpisodeStateWireWritesTheMarkerFlagOnlyWhenSet(t *testing.T) {
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	state, err := NewEpisodeState(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Thinking = fullThinkingLedger()
+	state.Thinking.InForce[0].Marker = false
+	payload, err := marshalEpisodeState(state, 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(payload), `"marker"`) {
+		t.Fatalf("a ledger without a marker wrote the flag: %.200s", payload)
+	}
+	decoded, _, err := unmarshalEpisodeState(payload, 1, now)
+	if err != nil || decoded.Thinking.InForce[0].Marker {
+		t.Fatalf("a record without the flag decoded as a marker (err %v)", err)
 	}
 }
 

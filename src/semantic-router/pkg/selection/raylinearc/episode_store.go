@@ -134,6 +134,9 @@ type episodeThinkingStateWire struct {
 	Payload        int    `json:"payload"`
 	Level          string `json:"level"`
 	LastChangeTurn uint64 `json:"last_change_turn"`
+	// Marker is written only when true, so a record without a neutral
+	// marker keeps the shape every earlier build decodes.
+	Marker bool `json:"marker,omitempty"`
 }
 
 var thinkingPlacementCodes = map[thinkinglever.Placement]string{
@@ -370,7 +373,7 @@ func thinkingLedgerToWire(ledger *thinkinglever.Ledger) *episodeThinkingWire {
 	for index, state := range ledger.InForce {
 		wire.InForce[index] = episodeThinkingStateWire{
 			Lever: string(state.Lever), Payload: state.Payload,
-			Level: state.Level, LastChangeTurn: state.LastChangeTurn,
+			Level: state.Level, LastChangeTurn: state.LastChangeTurn, Marker: state.Marker,
 		}
 	}
 	return wire
@@ -406,7 +409,7 @@ func thinkingLedgerFromWire(wire *episodeThinkingWire) *thinkinglever.Ledger {
 	for index, state := range wire.InForce {
 		ledger.InForce[index] = thinkinglever.LeverState{
 			Lever: thinkinglever.Lever(state.Lever), Payload: state.Payload,
-			Level: state.Level, LastChangeTurn: state.LastChangeTurn,
+			Level: state.Level, LastChangeTurn: state.LastChangeTurn, Marker: state.Marker,
 		}
 	}
 	return ledger
