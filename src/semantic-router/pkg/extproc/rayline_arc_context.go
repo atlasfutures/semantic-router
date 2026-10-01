@@ -412,6 +412,9 @@ func (r *OpenAIRouter) prepareRaylineARCTransaction(
 	if store == nil {
 		return nil, "episode_store"
 	}
+	if arcConfig.Episode.RelaxedConsistency() {
+		return r.prepareRelaxedRaylineARCTransaction(arcConfig, reqCtx, store, episodeIDHash, workerCount)
+	}
 	prepareContext := reqCtx.TraceContext
 	if prepareContext == nil {
 		prepareContext = context.Background()
@@ -564,4 +567,51 @@ func boundedARCPrepareFailure(err error) string {
 	default:
 		return "episode_store"
 	}
+}
+
+// prepareRelaxedRaylineARCTransaction reads a relaxed episode without a lease.
+// Nothing here waits on another turn, and nothing here fails the request over
+// episode state: if the read fails, the turn decides from a fresh state, as a
+// first turn would, and commits nothing.
+func (r *OpenAIRouter) prepareRelaxedRaylineARCTransaction(
+	arcConfig *config.RaylineARCAlgorithmConfig,
+	reqCtx *RequestContext,
+	store raylinearc.EpisodeStore,
+	episodeIDHash string,
+	workerCount int,
+) (*raylinearc.EpisodeState, string) {
+	snapshots, ok := store.(raylinearc.EpisodeSnapshotStore)
+	if !ok {
+		return nil, "episode_store"
+	}
+	readContext := reqCtx.TraceContext
+	if readContext == nil {
+		readContext = context.Background()
+	}
+	readContext, cancel := context.WithTimeout(
+		readContext,
+		time.Duration(arcConfig.Episode.AcquireTimeoutSeconds)*time.Second,
+	)
+	defer cancel()
+	state, version, err := snapshots.Snapshot(readContext, episodeIDHash, workerCount)
+	stateless := false
+	if err != nil {
+		logging.ComponentWarnEvent("extproc", "rayline_arc_relaxed_read_failed", map[string]interface{}{
+			"failure_class": boundedARCPrepareFailure(err),
+		})
+		state, err = raylinearc.NewEpisodeState(workerCount)
+		if err != nil {
+			return nil, "episode_store"
+		}
+		version, stateless = 0, true
+	}
+	reqCtx.RaylineARCTransaction = newRelaxedRaylineARCEpisodeTransaction(
+		snapshots,
+		state,
+		version,
+		episodeIDHash,
+		stateless,
+	)
+	bindRaylineARCSelectionTransaction(reqCtx)
+	return state, ""
 }

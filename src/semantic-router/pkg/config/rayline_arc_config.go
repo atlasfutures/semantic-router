@@ -231,6 +231,23 @@ type RaylineARCEpisodeConfig struct {
 	MaxInMemoryEpisodes   int                   `yaml:"max_in_memory_episodes"`
 	DevelopmentMode       bool                  `yaml:"development_mode,omitempty"`
 	Redis                 RaylineARCRedisConfig `yaml:"redis,omitempty"`
+	// Consistency chooses how concurrent turns on one episode are handled.
+	// Empty or "strict" serializes them behind the exclusive episode lease,
+	// which keeps every turn on-policy and correctly attributed (eval and
+	// training cells). "relaxed" reads the episode without the lease and
+	// commits only if no other turn committed meanwhile: a collision never
+	// fails a request, it only drops that turn's state update (serving).
+	Consistency string `yaml:"consistency,omitempty"`
+}
+
+const (
+	RaylineARCConsistencyStrict  = "strict"
+	RaylineARCConsistencyRelaxed = "relaxed"
+)
+
+// RelaxedConsistency reports whether the episode is configured relaxed.
+func (cfg RaylineARCEpisodeConfig) RelaxedConsistency() bool {
+	return cfg.Consistency == RaylineARCConsistencyRelaxed
 }
 
 // RaylineARCRedisConfig carries non-secret Redis connection settings. Passwords
@@ -296,6 +313,11 @@ func validateRaylineARCPolicyServiceMode(cfg *RaylineARCAlgorithmConfig) error {
 	}
 	if cfg.Episode.CloseHeader != "" {
 		return fmt.Errorf("episode: close_header is not served in the policy-service mode")
+	}
+	// The policy service refuses a second in-flight call for one session, so
+	// a relaxed policy cell needs its lock-free serving call (router-infra#56).
+	if cfg.Episode.RelaxedConsistency() {
+		return fmt.Errorf("episode: consistency=relaxed is not yet served in the policy-service mode")
 	}
 	if err := validateRaylineARCRoutesAPIConfig(cfg.RoutesAPI); err != nil {
 		return fmt.Errorf("routes_api: %w", err)
@@ -574,6 +596,16 @@ func validateRaylineARCEpisodeFields(cfg RaylineARCEpisodeConfig) error {
 	}
 	if cfg.IdleTTLSeconds < cfg.LeaseTTLSeconds {
 		return fmt.Errorf("idle_ttl_seconds cannot be less than lease_ttl_seconds")
+	}
+	switch cfg.Consistency {
+	case "", RaylineARCConsistencyStrict, RaylineARCConsistencyRelaxed:
+	default:
+		return fmt.Errorf("consistency must be %q or %q", RaylineARCConsistencyStrict, RaylineARCConsistencyRelaxed)
+	}
+	// A close fans out under the turn's lease before the commit; a relaxed
+	// turn holds no lease to close under.
+	if cfg.RelaxedConsistency() && cfg.CloseHeader != "" {
+		return fmt.Errorf("close_header is not served with consistency=relaxed")
 	}
 	return nil
 }

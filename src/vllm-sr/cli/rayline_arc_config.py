@@ -135,6 +135,18 @@ class RaylineARCEpisodeConfig(BaseModel):
     max_in_memory_episodes: int = Field(default=0, ge=0)
     development_mode: bool = False
     redis: RaylineARCRedisConfig | None = None
+    # How concurrent turns on one episode are handled; the Go loader holds the
+    # same contract. Omitted or "strict": serialized behind the episode lease
+    # (eval and training cells). "relaxed": read without the lease, committed
+    # only if unchanged; a collision drops that turn's state update instead of
+    # failing the request (serving cells).
+    consistency: Literal["strict", "relaxed"] | None = None
+
+    @model_validator(mode="after")
+    def _relaxed_holds_no_lease_to_close_under(self):
+        if self.consistency == "relaxed" and self.close_header:
+            raise ValueError("close_header is not served with consistency=relaxed")
+        return self
 
 
 _CHECKPOINT_LABEL = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -358,5 +370,15 @@ class RaylineARCAlgorithmConfig(BaseModel):
         ):
             raise ValueError(
                 "artifact_dir, artifact_revision and encoder are required without policy_service"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _relaxed_not_yet_in_policy_service_mode(self):
+        # The policy service refuses a second in-flight call for one session;
+        # a relaxed policy cell needs its lock-free call (router-infra#56).
+        if self.policy_service is not None and self.episode.consistency == "relaxed":
+            raise ValueError(
+                "episode: consistency=relaxed is not yet served in the policy-service mode"
             )
         return self
