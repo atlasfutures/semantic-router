@@ -117,7 +117,11 @@ func raylineARCPolicyTurnSignals(
 	if compaction.Ordinal > 0 || compaction.SummaryDigest != "" {
 		signals.Compaction = &compaction
 	}
-	if format == policyFormatAnthropic && raylinearc.ClaudeCodeSubagentClaim(request.System) {
+	// A subagent's link is recorded whenever the gateway keyed one (any
+	// harness: codex subagents are keyed on their own thread id) or Claude
+	// Code declared one in its billing block.
+	if strings.TrimSpace(headers[raylineARCAgentKeySourceHeader]) != "" ||
+		(format == policyFormatAnthropic && raylinearc.ClaudeCodeSubagentClaim(request.System)) {
 		signals.Subagent = raylineARCSubagentSignal(headers)
 	}
 	return signals

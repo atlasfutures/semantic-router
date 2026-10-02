@@ -68,6 +68,16 @@ func TestSubagentSignalRecordsTheParentLink(t *testing.T) {
 	if main.Subagent != nil {
 		t.Fatalf("a main conversation request carried a subagent signal: %+v", main.Subagent)
 	}
+	// A codex subagent has no body claim; the gateway's key source alone
+	// records its link, and it is served as the main turn it already was.
+	codex := raylineARCPolicyTurnSignals(map[string]string{
+		raylineARCAgentKeySourceHeader: "agent",
+		raylineARCParentSessionHeader:  "user-1:root-thread",
+	}, policyFormatResponses, raylinearc.PolicyClientRequest{}, nil, "e")
+	if codex.Subagent == nil || codex.Subagent.ParentEpisodeIDHash != raylinearc.HashEpisodeID("user-1:root-thread") ||
+		codex.CallKind == raylinearc.PolicyCallSide {
+		t.Fatalf("codex subagent signals = %+v", codex)
+	}
 }
 
 // End to end on a strict cell trusting its gateway: three concurrent
