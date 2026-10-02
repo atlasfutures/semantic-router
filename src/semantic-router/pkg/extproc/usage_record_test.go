@@ -381,3 +381,30 @@ func TestUncountedStreamWithoutAModelWritesNoRow(t *testing.T) {
 		}
 	}
 }
+
+// A cache hit calls no provider. A cached body that still holds its original
+// call's charge must not report that charge again on every hit.
+func TestCacheHitReportsNoProviderCharge(t *testing.T) {
+	logs := captureLogs(t)
+	body := []byte(`{"id":"chatcmpl_cached","object":"chat.completion","created":1,"model":"m",` +
+		`"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"a cached answer"}}],` +
+		`"usage":{"prompt_tokens":11,"completion_tokens":5,"total_tokens":16,"cost":0.0042,"is_byok":false,` +
+		`"cost_details":{"upstream_inference_cost":0.0042}}}`)
+	ctx := cacheHitContext("rt_cache_charged", false)
+	ctx.DispatchedToOpenRouter = true
+
+	usageRecordRouter().reportCacheHitTelemetry(ctx, body, time.Millisecond)
+
+	fields := findLogEvent(t, logs, "llm_usage")
+	if fields["from_cache"] != true {
+		t.Fatalf("this must be the cache-hit row: %v", fields)
+	}
+	for _, key := range []string{
+		"provider_reported_cost", "provider_reported_upstream_inference_cost",
+		"provider_reported_byok", "provider_reported_currency",
+	} {
+		if fields[key] != nil {
+			t.Errorf("%s = %v on a cache hit, want null", key, fields[key])
+		}
+	}
+}

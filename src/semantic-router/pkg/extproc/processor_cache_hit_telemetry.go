@@ -3,6 +3,7 @@ package extproc
 import (
 	"time"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/routerreplay"
@@ -47,6 +48,10 @@ func (r *OpenAIRouter) reportCacheHitTelemetry(
 		usage,
 		replayUsage,
 	)
+	// A cached body can still hold the charge its original call reported.
+	// No provider was called for this turn, so nothing was charged for it,
+	// and replaying the original charge would count it once per hit.
+	usage.providerCost = llmprotocol.ProviderCost{}
 	record := r.newLLMUsageRecord(ctx, usage)
 	latencyMillis := lookupLatency.Milliseconds()
 	record.CompletionLatencyMS = &latencyMillis
