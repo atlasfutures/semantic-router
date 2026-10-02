@@ -124,3 +124,35 @@ func TestOtherSideCallsStillDecide(t *testing.T) {
 		t.Fatalf("title call sent %d decide calls in all, want 2", calls)
 	}
 }
+
+// A gateway trusted to mark side calls says only that a subagent is a side
+// call; the body still says it is a subagent, so it holds the parent's action.
+func TestSubagentMarkedSideByATrustedHeaderHoldsTheParentsAction(t *testing.T) {
+	fixture := newPolicySelectorFixture(t, "task_turn_compaction_v1")
+	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
+	fixture.fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return bindings[0].ActionID })
+	state := subagentHeldEpisode(t, bindings[1].ActionID, 0)
+	body := `{"model":"auto","max_tokens":1024,"system":` + subagentSystem +
+		`,"messages":[{"role":"user","content":"find the config loader"}]}`
+	result, err := fixture.selector.Select(context.Background(), &selection.SelectionContext{
+		DecisionName:    fixture.decision.Name,
+		CandidateModels: fixture.decision.ModelRefs,
+		RaylineARC: &selection.RaylineARCSelectionContext{
+			EpisodeIDHash:        strings.Repeat("e", 64),
+			State:                state,
+			RawRequest:           []byte(body),
+			RequestFormat:        policyFormatAnthropic,
+			PolicyCallKind:       raylinearc.PolicyCallSide,
+			PolicyCallKindSource: callKindSourceHeader,
+		},
+	})
+	if err != nil {
+		t.Fatalf("subagent marked side by header: %v", err)
+	}
+	if got := result.RaylineARC.PolicyActionID; got != bindings[1].ActionID {
+		t.Fatalf("dispatched %s, want the parent's %s", got, bindings[1].ActionID)
+	}
+	if calls := len(fixture.fake.received()); calls != 0 {
+		t.Fatalf("sent %d decide calls, want 0", calls)
+	}
+}

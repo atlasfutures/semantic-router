@@ -431,7 +431,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// model and its in-force control. Training never decided a level for a
 	// subagent, so the service is not asked (operator ruling, 2026-10-02;
 	// pathfinder#3219 holds a trained subagent_start decision for later).
-	if sideCall && signals.CallKindSource == callKindSourceClaudeSubagent {
+	if sideCall && raylineARCSubagentCall(arcContext.RequestFormat, signals, clientRequest) {
 		if result, ok := selector.heldPolicyActionResult(armed, selCtx, arcContext, scorer, state, workerIDs, excluded); ok {
 			return result, nil
 		}
@@ -701,6 +701,21 @@ func policyMessages(raw json.RawMessage) ([]json.RawMessage, []string, error) {
 
 // policyDecision reports each arm's best action score, so the trace and the
 // alternatives rank workers the way the service ranked their actions.
+// raylineARCSubagentCall reports whether a side call is a Claude Code
+// subagent's: classified from its billing block, or marked side by a trusted
+// header while its billing block still claims a subagent. The header says
+// only that the call is a side call; which kind is the body's to say.
+func raylineARCSubagentCall(
+	format string,
+	signals raylinearc.PolicyTurnSignals,
+	request raylinearc.PolicyClientRequest,
+) bool {
+	if signals.CallKindSource == callKindSourceClaudeSubagent {
+		return true
+	}
+	return format == policyFormatAnthropic && raylinearc.ClaudeCodeSubagentClaim(request.System)
+}
+
 // heldPolicyActionResult dispatches the parent's held action without a
 // decide: the selection a side call commits nothing from, so the ledger and
 // the turn clock are untouched. ok is false when no held action is known or
