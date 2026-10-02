@@ -127,6 +127,9 @@ func trainedRoutesByModel(t *testing.T, fixture trainedRoutes) []trainedRoute {
 					t.Errorf("package %.8s action %.8s: trained %v is not the served route %v", pkg.PackageSHA256, action.ActionID, literal.Provider, served.Provider)
 				}
 			}
+			if v5 := pkg.SchemaVersion == "rayline.arc-policy-package.v5"; v5 && string(served.Reasoning) != "null" {
+				t.Errorf("package %.8s action %.8s: a v5 action renders reasoning %s", pkg.PackageSHA256, action.ActionID, served.Reasoning)
+			}
 			index, seen := byModel[action.Model]
 			if !seen {
 				byModel[action.Model] = len(routes)
@@ -139,12 +142,13 @@ func trainedRoutesByModel(t *testing.T, fixture trainedRoutes) []trainedRoute {
 				})
 				continue
 			}
+			if routes[index].wireModel != action.WireModel {
+				t.Errorf("package %.8s: %s actions name two wire models, %q and %q",
+					pkg.PackageSHA256, action.Model, routes[index].wireModel, action.WireModel)
+			}
 			if !reflect.DeepEqual(routes[index].provider, served.Provider) {
 				t.Errorf("package %.8s: %s actions were trained on two routes, %v and %v",
 					pkg.PackageSHA256, action.Model, routes[index].provider, served.Provider)
-			}
-			if v5 := pkg.SchemaVersion == "rayline.arc-policy-package.v5"; v5 && string(served.Reasoning) != "null" {
-				t.Errorf("package %.8s action %.8s: a v5 action renders reasoning %s", pkg.PackageSHA256, action.ActionID, served.Reasoning)
 			}
 		}
 	}
