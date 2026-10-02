@@ -37,6 +37,14 @@ func TestSubagentCallKindFollowsTheGatewayKeySource(t *testing.T) {
 			t.Fatalf("key source %q: %s/%s, want %s/%s", tc.keySource, kind, source, tc.wantKind, tc.wantSource)
 		}
 	}
+	// A subagent's own compaction helper stays a side call even when the
+	// subagent is agent-keyed: only its conversation turns are promoted.
+	compactionBody, _ := json.Marshal(map[string]any{"role": "user", "content": raylinearc.ClaudeCodeSummarizeDirective + "the work so far"})
+	kind, source := raylineARCPolicyCallKind(map[string]string{raylineARCAgentKeySourceHeader: "agent"},
+		policyFormatAnthropic, system, []json.RawMessage{compactionBody}, nil, "e")
+	if kind != raylinearc.PolicyCallSide || source != callKindSourceClaudeCompactionRq {
+		t.Fatalf("agent-keyed subagent compaction helper: %s/%s, want a side call", kind, source)
+	}
 	// The headers count only from a trusted gateway: a client cannot make
 	// its own subagent an episode.
 	untrusted := raylineARCTrustedSignalHeaders(&config.RaylineARCPolicyServiceConfig{},

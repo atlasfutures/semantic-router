@@ -164,6 +164,13 @@ func raylineARCPolicyCallKind(
 	switch format {
 	case policyFormatAnthropic:
 		switch {
+		// A subagent's own title and compaction helpers stay side calls
+		// whatever spawned them; only a subagent's conversation turn is
+		// promoted to its own episode.
+		case raylinearc.IsClaudeCodeTitleRequest(system):
+			return raylinearc.PolicyCallSide, callKindSourceClaudeTitle
+		case raylinearc.IsClaudeCodeCompactionRequest(messages):
+			return raylinearc.PolicyCallSide, callKindSourceClaudeCompactionRq
 		case raylinearc.ClaudeCodeSubagentClaim(system):
 			// A subagent keyed on its own agent id is its own conversation:
 			// a main turn of its own episode, deciding its own model and
@@ -173,10 +180,6 @@ func raylineARCPolicyCallKind(
 				return raylinearc.PolicyCallMain, callKindSourceClaudeSubagentOwn
 			}
 			return raylinearc.PolicyCallSide, callKindSourceClaudeSubagent
-		case raylinearc.IsClaudeCodeTitleRequest(system):
-			return raylinearc.PolicyCallSide, callKindSourceClaudeTitle
-		case raylinearc.IsClaudeCodeCompactionRequest(messages):
-			return raylinearc.PolicyCallSide, callKindSourceClaudeCompactionRq
 		}
 	case policyFormatResponses:
 		if raylinearc.IsCodexCompactionRequest(input) {
