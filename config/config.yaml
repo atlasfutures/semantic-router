@@ -48,6 +48,11 @@ providers:
           - novita
         require_parameters: true
         data_collection: deny
+        # The price ceiling the route was vetted and trained under (USD per
+        # million prompt/completion tokens, per request, per image).
+        max_price:
+          prompt: 0.5
+          completion: 1.5
       backend_refs:
         - name: local-primary
           endpoint: 127.0.0.1:8000
