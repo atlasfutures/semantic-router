@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/responseapi"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 var (
@@ -55,18 +56,18 @@ func (r *OpenAIRouter) raylineARCPolicyResponsesInput(reqCtx *RequestContext) ([
 		items = append(items, storedInput...)
 		for _, output := range stored.Output {
 			output.ID, output.Status = "", ""
-			encoded, err := json.Marshal(output)
+			encoded, err := raylinearc.MarshalUnescaped(output)
 			if err != nil {
 				return nil, nil, err
 			}
-			items = append(items, encoded)
+			items = append(items, raylinearc.UnescapeHTMLEscapes(encoded))
 		}
 		if len(stored.Output) == 0 && stored.OutputText != "" {
-			encoded, err := marshalStoredOutputText(stored.OutputText)
+			encoded, err := raylinearc.MarshalUnescaped(storedOutputTextItem(stored.OutputText))
 			if err != nil {
 				return nil, nil, err
 			}
-			items = append(items, encoded)
+			items = append(items, raylinearc.UnescapeHTMLEscapes(encoded))
 		}
 	}
 	current, err := policyResponsesInputItems(input)
@@ -83,15 +84,30 @@ func (r *OpenAIRouter) raylineARCPolicyResponsesInput(reqCtx *RequestContext) ([
 	return items, &instructions, nil
 }
 
+// storedOutputTextItem is a stored response's bare output text as the
+// assistant message item it stands for (marshalStoredOutputText's item).
+func storedOutputTextItem(text string) responseapi.OutputItem {
+	return responseapi.OutputItem{
+		Type: responseapi.ItemTypeMessage,
+		Role: responseapi.RoleAssistant,
+		Content: []responseapi.ContentPart{{
+			Type: responseapi.ContentTypeOutputText,
+			Text: text,
+		}},
+	}
+}
+
 func policyResponsesInputItems(items []responseapi.InputItem) ([]json.RawMessage, error) {
 	encoded := make([]json.RawMessage, 0, len(items))
 	for _, item := range items {
 		item.ID, item.Status = "", ""
-		body, err := json.Marshal(item)
+		body, err := raylinearc.MarshalUnescaped(item)
 		if err != nil {
 			return nil, err
 		}
-		encoded = append(encoded, body)
+		// A stored item's raw fields may hold another encoder's escapes;
+		// normalized, a turn's items stay a byte prefix of the next turn's.
+		encoded = append(encoded, raylinearc.UnescapeHTMLEscapes(body))
 	}
 	return encoded, nil
 }

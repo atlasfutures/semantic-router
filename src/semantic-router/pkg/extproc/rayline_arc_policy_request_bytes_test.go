@@ -10,6 +10,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/responseapi"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // The decide request forwards the client's system, tools and messages
@@ -73,4 +76,69 @@ func firstDifference(a, b []byte) int {
 		}
 	}
 	return min(len(a), len(b))
+}
+
+// Insignificant whitespace is the client's too: a pretty-printed body reaches
+// the service with its system and messages unchanged, not compacted.
+func TestPolicyDecideRequestKeepsTheClientsWhitespace(t *testing.T) {
+	router, fake := v5Router(t, "anthropic")
+	system := "[ {\n  \"type\" : \"text\",\n  \"text\" : \"<system-reminder> a & b </system-reminder>\"\n} ]"
+	messages := "[\n  { \"role\" : \"user\", \"content\" : \"fix <this> & that\" }\n]"
+	client := "{\"model\":\"auto\",\n \"max_tokens\" : 1024,\n \"system\" : " + system + ",\n \"messages\" : " + messages + "\n}"
+	v5Turn(t, router, fake, v5GLMUp, "request-bytes-whitespace", client)
+	received := fake.received()
+	request := received[len(received)-1].Request
+	if string(request.System) != system || string(request.Messages) != messages {
+		t.Fatalf("decide request differs from the client's bytes:\nsystem   %s\nmessages %s", request.System, request.Messages)
+	}
+}
+
+// A Responses decide body carries each materialized item and the
+// instructions in one encoding: neither is HTML-escaped.
+func TestPolicyResponsesDecideBodyIsUnescaped(t *testing.T) {
+	router := &OpenAIRouter{}
+	stored := storeRoundTrip(t, &responseapi.StoredResponse{
+		ID: "resp_1", Object: "response",
+		Input:      []responseapi.InputItem{responsesItem(t, `{"type":"message","role":"user","content":"read <a> & <b>"}`)},
+		OutputText: "saw <a> & <b>",
+	})
+	turn := &RequestContext{ResponseObjectState: &ResponseObjectState{
+		ConversationHistory: []*responseapi.StoredResponse{stored},
+		Input:               []responseapi.InputItem{responsesItem(t, `{"type":"message","role":"user","content":"now <c>"}`)},
+		Instructions:        "You are <Codex> & careful.",
+	}}
+	items, instructions, err := router.raylineARCPolicyResponsesInput(turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The stored item, read back from an escaping store, is byte-identical to
+	// the same item on the turn that sent it, so the prefix holds.
+	first, _, err := router.raylineARCPolicyResponsesInput(&RequestContext{ResponseObjectState: &ResponseObjectState{
+		Input: []responseapi.InputItem{responsesItem(t, `{"type":"message","role":"user","content":"read <a> & <b>"}`)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first[0], items[0]) {
+		t.Fatalf("a stored item's bytes changed between turns:\n%s\n%s", first[0], items[0])
+	}
+	body, err := raylinearc.EncodePolicyDecisionRequest(raylinearc.PolicyDecisionRequest{
+		SchemaVersion: raylinearc.PolicyDecisionRequestSchema, RequestFormat: policyFormatResponses,
+		Request: raylinearc.PolicyClientRequest{Input: items, Instructions: instructions},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"read <a> & <b>", "saw <a> & <b>", "now <c>", "You are <Codex> & careful."} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("decide body lacks %q", want)
+		}
+	}
+	if strings.Contains(string(body), `\u003c`) || strings.Contains(string(body), `\u0026`) {
+		t.Fatalf("decide body mixes in escaped text: %s", body)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("decide body is not JSON: %v", err)
+	}
 }

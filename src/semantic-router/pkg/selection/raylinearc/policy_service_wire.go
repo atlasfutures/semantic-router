@@ -24,7 +24,9 @@ package raylinearc
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
 )
@@ -96,19 +98,68 @@ type policyResponsesRequestWire struct {
 }
 
 // MarshalJSON writes the shape the request format carries: input items for
-// Responses, messages otherwise.
+// Responses, messages otherwise. The client's system, tools and messages
+// (and each input item) are written byte for byte as held, not re-encoded:
+// json.Marshal would escape '<', '>' and '&' and compact whitespace, so the
+// service would receive bytes the client never sent.
 func (request PolicyClientRequest) MarshalJSON() ([]byte, error) {
+	var buffer bytes.Buffer
 	if request.Input != nil {
-		return marshalUnescaped(policyResponsesRequestWire{Input: request.Input, Instructions: request.Instructions})
+		buffer.WriteString(`{"input":[`)
+		for index, item := range request.Input {
+			if index > 0 {
+				buffer.WriteByte(',')
+			}
+			if err := writeRawJSON(&buffer, item); err != nil {
+				return nil, err
+			}
+		}
+		instructions, err := MarshalUnescaped(request.Instructions)
+		if err != nil {
+			return nil, err
+		}
+		buffer.WriteString(`],"instructions":`)
+		buffer.Write(instructions)
+		buffer.WriteByte('}')
+		return buffer.Bytes(), nil
 	}
-	return marshalUnescaped(policyChatRequestWire{System: request.System, Tools: request.Tools, Messages: request.Messages})
+	for index, field := range []struct {
+		name string
+		raw  json.RawMessage
+	}{{"system", request.System}, {"tools", request.Tools}, {"messages", request.Messages}} {
+		if index == 0 {
+			buffer.WriteString(`{"`)
+		} else {
+			buffer.WriteString(`,"`)
+		}
+		buffer.WriteString(field.name)
+		buffer.WriteString(`":`)
+		if err := writeRawJSON(&buffer, field.raw); err != nil {
+			return nil, err
+		}
+	}
+	buffer.WriteByte('}')
+	return buffer.Bytes(), nil
 }
 
-// marshalUnescaped is json.Marshal without HTML escaping. json.Marshal
-// rewrites '<', '>' and '&' inside a json.RawMessage as \u003c, \u003e and
-// \u0026, so the client's bytes, which Claude Code fills with
-// <system-reminder> blocks, would reach the service rewritten.
-func marshalUnescaped(value any) ([]byte, error) {
+// writeRawJSON writes raw unchanged, or null when it is absent, refusing
+// bytes that are not one JSON value.
+func writeRawJSON(buffer *bytes.Buffer, raw json.RawMessage) error {
+	if len(raw) == 0 {
+		buffer.WriteString("null")
+		return nil
+	}
+	if !json.Valid(raw) {
+		return errors.New("a forwarded client field is not valid JSON")
+	}
+	buffer.Write(raw)
+	return nil
+}
+
+// MarshalUnescaped is json.Marshal without HTML escaping. json.Marshal
+// rewrites '<', '>' and '&' as \u003c, \u003e and \u0026, so text the client
+// sent with those characters would reach the service rewritten.
+func MarshalUnescaped(value any) ([]byte, error) {
 	var buffer bytes.Buffer
 	encoder := json.NewEncoder(&buffer)
 	encoder.SetEscapeHTML(false)
@@ -116,6 +167,88 @@ func marshalUnescaped(value any) ([]byte, error) {
 		return nil, err
 	}
 	return bytes.TrimSuffix(buffer.Bytes(), []byte("\n")), nil
+}
+
+// UnescapeHTMLEscapes rewrites the \u003c, \u003e and \u0026 escapes in a
+// JSON value's strings as the characters they stand for, leaving every other
+// byte as it is. The value decodes to the same thing either way; this makes
+// its bytes independent of whether some earlier encoder escaped them (a
+// response store that encoded with json.Marshal did).
+func UnescapeHTMLEscapes(value []byte) []byte {
+	out := make([]byte, 0, len(value))
+	inString := false
+	for index := 0; index < len(value); index++ {
+		c := value[index]
+		if !inString {
+			inString = c == '"'
+			out = append(out, c)
+			continue
+		}
+		switch c {
+		case '"':
+			inString = false
+			out = append(out, c)
+		case '\\':
+			if index+5 < len(value) && value[index+1] == 'u' {
+				switch strings.ToLower(string(value[index+2 : index+6])) {
+				case "003c":
+					out, index = append(out, '<'), index+5
+					continue
+				case "003e":
+					out, index = append(out, '>'), index+5
+					continue
+				case "0026":
+					out, index = append(out, '&'), index+5
+					continue
+				}
+			}
+			if index+1 < len(value) {
+				out = append(out, c, value[index+1])
+				index++
+			} else {
+				out = append(out, c)
+			}
+		default:
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// policyDecisionEnvelope is PolicyDecisionRequest without its request, which
+// EncodePolicyDecisionRequest writes itself: encoding/json compacts whatever
+// a MarshalJSON returns, so the client's bytes cannot pass through it intact.
+type policyDecisionEnvelope struct {
+	SchemaVersion string              `json:"schema_version"`
+	Package       PolicyPackageRef    `json:"package"`
+	EpisodeIDHash string              `json:"episode_id_hash"`
+	ContextEpoch  string              `json:"context_epoch"`
+	RequestFormat string              `json:"request_format"`
+	Request       PolicyClientRequest `json:"-"`
+	Attribution   []PolicyAttribution `json:"attribution"`
+	Selection     PolicySelection     `json:"selection"`
+	Evaluation    *PolicyEvaluation   `json:"evaluation"`
+	Shadow        []PolicyPackageRef  `json:"shadow"`
+	EpisodeMode   string              `json:"episode_mode,omitempty"`
+}
+
+// EncodePolicyDecisionRequest is the decide body: every field as json.Marshal
+// writes it, without HTML escaping, and the request carrying the client's
+// bytes unchanged.
+func EncodePolicyDecisionRequest(request PolicyDecisionRequest) ([]byte, error) {
+	envelope, err := MarshalUnescaped(policyDecisionEnvelope(request))
+	if err != nil {
+		return nil, err
+	}
+	client, err := request.Request.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	body := make([]byte, 0, len(envelope)+len(client)+16)
+	body = append(body, envelope[:len(envelope)-1]...)
+	body = append(body, `,"request":`...)
+	body = append(body, client...)
+	return append(body, '}'), nil
 }
 
 // UnmarshalJSON reads either shape strictly: a request with input carries
