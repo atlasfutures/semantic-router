@@ -164,6 +164,7 @@ type episodeStateWire struct {
 	Controls             []episodeControlWire    `json:"controls,omitempty"`
 	ReasoningIssuers     []string                `json:"reasoning_issuers,omitempty"`
 	PolicyBoundary       *PolicyBoundaryDecision `json:"policy_boundary,omitempty"`
+	ReasoningProvenance  []ReasoningProvenance   `json:"reasoning_provenance,omitempty"`
 }
 
 // episodeControlWire is one thinking-control placer. Its ledger names each
@@ -383,6 +384,7 @@ func cloneEpisodeState(state *EpisodeState) *EpisodeState {
 		Controls:             cloneControlPlacements(state.Controls),
 		ReasoningIssuers:     append([]string(nil), state.ReasoningIssuers...),
 		PolicyBoundary:       clonePolicyBoundary(state.PolicyBoundary),
+		ReasoningProvenance:  append([]ReasoningProvenance(nil), state.ReasoningProvenance...),
 	}
 	for index, warmth := range state.Warmth {
 		if warmth == nil {
@@ -456,6 +458,10 @@ func marshalEpisodeState(
 		wire.SchemaVersion = episodeStateSchema
 		wire.PolicyBoundary = clonePolicyBoundary(state.PolicyBoundary)
 	}
+	if len(state.ReasoningProvenance) > 0 {
+		wire.SchemaVersion = episodeStateSchema
+		wire.ReasoningProvenance = append([]ReasoningProvenance(nil), state.ReasoningProvenance...)
+	}
 	owner := state.EncoderOwner
 	visited := append([]string{}, state.EncoderVisitedOwners...)
 	wire.EncoderOwner = &owner
@@ -516,7 +522,7 @@ func decodeEpisodeStateAffinity(
 	wire episodeStateWire,
 ) (string, []string, error) {
 	if (wire.Thinking != nil || len(wire.Upstream) > 0 || wire.Policy != nil || len(wire.Controls) > 0 ||
-		len(wire.ReasoningIssuers) > 0 || wire.PolicyBoundary != nil) !=
+		len(wire.ReasoningIssuers) > 0 || wire.PolicyBoundary != nil || len(wire.ReasoningProvenance) > 0) !=
 		(wire.SchemaVersion == episodeStateSchema) {
 		return "", nil, errors.New("ARC episode state contract mismatch")
 	}
@@ -556,6 +562,9 @@ func episodeStateFromWire(
 	}
 	if len(wire.ReasoningIssuers) > 0 {
 		state.ReasoningIssuers = append([]string(nil), wire.ReasoningIssuers...)
+	}
+	if len(wire.ReasoningProvenance) > 0 {
+		state.ReasoningProvenance = append([]ReasoningProvenance(nil), wire.ReasoningProvenance...)
 	}
 	for _, prefix := range wire.Upstream {
 		state.Upstream = append(state.Upstream, UpstreamPrefix(prefix))

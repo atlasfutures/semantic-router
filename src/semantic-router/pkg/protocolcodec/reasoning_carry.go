@@ -1,6 +1,10 @@
 package protocolcodec
 
-import "github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+import (
+	"encoding/json"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+)
 
 // ReasoningCarry counts what CarryReasoningTo changed in a request's history.
 type ReasoningCarry struct {
@@ -65,4 +69,67 @@ func CarryReasoningTo(request *llmprotocol.Request, target llmprotocol.WireForma
 	}
 	request.Messages = messages
 	return carry
+}
+
+// OpaqueReasoningData returns the data of a carried Anthropic redacted_thinking
+// block: reasoning only its issuing model can read.
+func OpaqueReasoningData(content llmprotocol.Content) (string, bool) {
+	block := content.Unmodeled
+	if content.Kind != llmprotocol.ContentUnmodeled || block == nil ||
+		block.Format != llmprotocol.AnthropicMessagesV1 || block.Type != "redacted_thinking" {
+		return "", false
+	}
+	var wire struct {
+		Data string `json:"data"`
+	}
+	if json.Unmarshal(block.Raw, &wire) != nil || wire.Data == "" {
+		return "", false
+	}
+	return wire.Data, true
+}
+
+// ResponseOpaqueReasoning lists the opaque reasoning blocks a response holds.
+func ResponseOpaqueReasoning(response *llmprotocol.Response) []string {
+	if response == nil {
+		return nil
+	}
+	var blocks []string
+	for _, item := range response.Output {
+		for _, content := range item.Content {
+			if data, ok := OpaqueReasoningData(content); ok {
+				blocks = append(blocks, data)
+			}
+		}
+	}
+	return blocks
+}
+
+// DropOpaqueReasoning removes, on fresh slices, every opaque reasoning block
+// drop selects from a request's history, and any message it leaves empty. It
+// returns how many blocks it removed.
+func DropOpaqueReasoning(request *llmprotocol.Request, drop func(data string) bool) int {
+	if request == nil {
+		return 0
+	}
+	dropped := 0
+	messages := make([]llmprotocol.Message, 0, len(request.Messages))
+	for _, message := range request.Messages {
+		contents := make([]llmprotocol.Content, 0, len(message.Content))
+		for _, content := range message.Content {
+			if data, ok := OpaqueReasoningData(content); ok && drop(data) {
+				dropped++
+				continue
+			}
+			contents = append(contents, content)
+		}
+		if len(contents) == 0 && len(message.Content) > 0 {
+			continue
+		}
+		message.Content = contents
+		messages = append(messages, message)
+	}
+	if dropped > 0 {
+		request.Messages = messages
+	}
+	return dropped
 }

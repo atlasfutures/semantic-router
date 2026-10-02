@@ -72,6 +72,9 @@ func (r *OpenAIRouter) prepareProviderDispatch(
 			"signatures_stripped": carry.SignaturesStripped,
 		})
 	}
+	if r.dropRaylineARCOpaqueReasoningIssuedElsewhere(request, dispatch, ctx) {
+		changed = true
+	}
 	if changed {
 		request.Generation++
 	}

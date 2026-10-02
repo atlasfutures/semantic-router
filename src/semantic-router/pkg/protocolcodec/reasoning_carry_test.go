@@ -104,3 +104,28 @@ func (registry *Registry) mustCapabilities(t *testing.T, format llmprotocol.Wire
 	}
 	return capabilities
 }
+
+func redactedBlock(data string) llmprotocol.Content {
+	return carriedAnthropicBlock("redacted_thinking", []byte(`{"type":"redacted_thinking","data":"`+data+`"}`))
+}
+
+// Opaque reasoning is found in a response and dropped from a request by its
+// data, removing a message it leaves empty; other content is untouched.
+func TestOpaqueReasoningIsFoundAndDropped(t *testing.T) {
+	response := &llmprotocol.Response{Output: []llmprotocol.OutputItem{{Content: []llmprotocol.Content{
+		redactedBlock("blob-a"), {Kind: llmprotocol.ContentText, Text: "answer"},
+	}}}}
+	if blocks := ResponseOpaqueReasoning(response); len(blocks) != 1 || blocks[0] != "blob-a" {
+		t.Fatalf("response opaque reasoning = %v", blocks)
+	}
+	request := llmprotocol.Request{Messages: []llmprotocol.Message{
+		{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{redactedBlock("blob-a"), {Kind: llmprotocol.ContentText, Text: "a1"}}},
+		{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{redactedBlock("blob-a")}},
+		{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{redactedBlock("blob-b")}},
+	}}
+	dropped := DropOpaqueReasoning(&request, func(data string) bool { return data == "blob-a" })
+	if dropped != 2 || len(request.Messages) != 2 || len(request.Messages[0].Content) != 1 ||
+		request.Messages[0].Content[0].Text != "a1" {
+		t.Fatalf("dropped %d, messages %+v", dropped, request.Messages)
+	}
+}
