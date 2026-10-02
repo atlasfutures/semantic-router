@@ -2,6 +2,7 @@ package config
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	yamlv3 "gopkg.in/yaml.v3"
@@ -241,5 +242,19 @@ routing:
 	}
 	if preferences := parsed.ProviderPreferencesForModel("deepseek/deepseek-v4-flash"); preferences != nil {
 		t.Fatalf("the bare model name resolved a pin: %#v", preferences)
+	}
+}
+
+// A key the router does not know is refused at load, not dropped: a dropped
+// key is a routing constraint the config states and the wire never carries.
+func TestProviderPreferencesRefuseAnUnknownKey(t *testing.T) {
+	_, err := ParseYAMLBytes([]byte(providerPreferencesConfigYAML(`      provider_preferences:
+        order:
+          - deepinfra
+        allow_fallbacks: false
+        sort: price
+`)))
+	if err == nil || !strings.Contains(err.Error(), `unsupported field "sort"`) {
+		t.Fatalf("an unknown provider_preferences key was accepted: %v", err)
 	}
 }

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"strings"
 )
 
@@ -45,6 +46,35 @@ type OpenRouterProviderPreferences struct {
 	// OpenRouter serves only from providers at or below it, so a pin without
 	// the arm's ceiling can route to endpoints its training excluded.
 	MaxPrice map[string]float64 `yaml:"max_price,omitempty" json:"max_price,omitempty"`
+}
+
+// UnmarshalYAML refuses a provider_preferences key this router does not know
+// instead of letting yaml.v2 discard it. A dropped key is a routing constraint
+// the config states but the wire does not carry: a config written for a newer
+// router (max_price, say) loaded by an older one would look applied and route
+// without it. Refusing at load makes that mismatch a startup failure.
+func (preferences *OpenRouterProviderPreferences) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var raw map[interface{}]interface{}
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+	known := collectKnownFields(reflect.TypeOf(OpenRouterProviderPreferences{}))
+	for key := range raw {
+		name, ok := key.(string)
+		if !ok {
+			return fmt.Errorf("provider_preferences contains a non-string field name %v", key)
+		}
+		if _, ok := known[name]; !ok {
+			return fmt.Errorf("provider_preferences: unsupported field %q", name)
+		}
+	}
+	type preferencesAlias OpenRouterProviderPreferences
+	var decoded preferencesAlias
+	if err := unmarshal(&decoded); err != nil {
+		return err
+	}
+	*preferences = OpenRouterProviderPreferences(decoded)
+	return nil
 }
 
 // providerMaxPriceKeys are the price kinds OpenRouter's max_price accepts.
