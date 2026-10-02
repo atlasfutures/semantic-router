@@ -286,7 +286,32 @@ type PolicyTurnSignals struct {
 	CallKindSource string
 	// Compaction is nil when the request carries no compaction signal.
 	Compaction *PolicyCompactionSignal
+	// Subagent is set for a request a harness declared a subagent's.
+	Subagent *PolicySubagentSignal
 }
+
+// PolicySubagentSignal is how a subagent's request was keyed, and its link to
+// the conversation that spawned it. The link is metadata for analysis and
+// accounting; nothing routes on it.
+type PolicySubagentSignal struct {
+	// KeySource is how the gateway chose the subagent's episode: "agent"
+	// (the harness's agent id), "role", "task", or "unknown" when the
+	// gateway did not say. Only "agent" makes the subagent its own episode.
+	KeySource string
+	// ParentEpisodeIDHash and ParentAgentIDHash hash the parent's episode id
+	// and agent id as the gateway sent them; empty when it sent none.
+	ParentEpisodeIDHash string
+	ParentAgentIDHash   string
+}
+
+// OwnEpisode reports whether the subagent is its own episode.
+func (signal *PolicySubagentSignal) OwnEpisode() bool {
+	return signal != nil && signal.KeySource == SubagentKeySourceAgent
+}
+
+// SubagentKeySourceAgent is the key source that makes a subagent its own
+// episode: the gateway keyed it on the harness's agent id.
+const SubagentKeySourceAgent = "agent"
 
 // PolicyTurn transitions, as reported for one request.
 const (
