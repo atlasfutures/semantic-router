@@ -9,6 +9,7 @@ import (
 	"os"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -221,4 +222,76 @@ func trainedRouteRouter(t *testing.T, route trainedRoute) *OpenAIRouter {
 		t.Fatalf("the fixture names a model this test was not reviewed for: %s", route.model)
 	}
 	return router
+}
+
+// The model-level test above routes without a policy action. These three are
+// trained v5 actions of every served v5 package (VSR's shared v5 fixture), so
+// here each is chosen through the policy-service path, action-aware thinking
+// control included, as the cells serve them: both models on OpenRouter Chat
+// with their trained routes. A client that sends its own thinking controls
+// still reaches the provider with the trained model and route and none of
+// them, since every v5 action is on the native default.
+func TestTrainedV5ActionsReachTheWireAsTrained(t *testing.T) {
+	served := map[string]trainedRouteAction{}
+	for _, pkg := range loadTrainedRoutes(t).Packages {
+		if pkg.PackageSHA256[:8] != "e59af144" {
+			continue
+		}
+		for _, action := range pkg.Actions {
+			served[action.ActionID] = action
+		}
+	}
+	routeOf := func(model string) string {
+		for _, action := range served {
+			if action.Model == model {
+				raw, err := json.Marshal(action.ServedRoute.Wire.Provider)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return string(raw)
+			}
+		}
+		t.Fatalf("no trained %s action", model)
+		return ""
+	}
+	router, fake := v5RouterWith(t, "openai", func(rendered string) string {
+		for _, edit := range [][2]string{
+			{"      provider_model_id: z-ai/glm-5.3-flash\n", "      provider_model_id: z-ai/glm-5.3-flash\n      provider_preferences: " + routeOf("glm-5.3-flash") + "\n"},
+			{"      provider_model_id: anthropic/claude-opus-5\n      api_format: anthropic\n", "      provider_model_id: anthropic/claude-opus-5\n      api_format: openai\n      provider_preferences: " + routeOf("claude-opus-5") + "\n"},
+		} {
+			if strings.Count(rendered, edit[0]) != 1 {
+				t.Fatalf("the v5 config template changed: %q", edit[0])
+			}
+			rendered = strings.Replace(rendered, edit[0], edit[1], 1)
+		}
+		return rendered
+	})
+	client := `{"model":"auto","max_tokens":1024,"thinking":{"type":"adaptive"},"output_config":{"effort":"high"},` +
+		`"messages":[{"role":"user","content":"hello"}]}`
+	for _, id := range []string{v5OpusAction, v5GLMNone, v5GLMUp} {
+		action, ok := served[id]
+		if !ok {
+			t.Fatalf("action %.8s is not a trained action of the v5 packages", id)
+		}
+		raw, ctx := v5Turn(t, router, fake, id, "trained-"+id[:8], client)
+		if ctx.VSRRaylineARC == nil || ctx.VSRRaylineARC.PolicyActionID != id {
+			t.Fatalf("the turn was not dispatched as action %.8s: %+v", id, ctx.VSRRaylineARC)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Fatal(err)
+		}
+		if body["model"] != action.WireModel {
+			t.Fatalf("action %.8s: model = %v, want the trained %q", id, body["model"], action.WireModel)
+		}
+		provider, _ := body["provider"].(map[string]any)
+		if !reflect.DeepEqual(canonicalProviderRoute(provider), action.ServedRoute.Wire.Provider) {
+			t.Fatalf("action %.8s: provider = %v, want the trained route %v", id, provider, action.ServedRoute.Wire.Provider)
+		}
+		for _, key := range []string{"reasoning", "reasoning_effort", "thinking", "output_config"} {
+			if _, present := body[key]; present {
+				t.Fatalf("action %.8s sent %s: %v", id, key, body[key])
+			}
+		}
+	}
 }
