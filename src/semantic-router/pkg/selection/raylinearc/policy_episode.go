@@ -17,6 +17,7 @@ limitations under the License.
 package raylinearc
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -181,15 +182,75 @@ func (state *PolicyEpisodeState) ContextEpoch() string {
 	return strconv.Itoa(state.Epoch)
 }
 
-// MessagesDigest hashes the first n raw messages exactly as received.
+// MessagesDigest hashes the first n messages in their canonical form
+// (canonicalPrefixMessage), so a turn extends the recorded prefix whenever the
+// conversation is the same one the client sent before, even where the client
+// re-encodes a message it already sent. The bytes forwarded anywhere are
+// never changed; only this comparison is.
 func MessagesDigest(messages []json.RawMessage, n int) string {
 	hash := sha256.New()
 	for _, message := range messages[:n] {
-		hash.Write([]byte(strconv.Itoa(len(message))))
+		canonical := canonicalPrefixMessage(message)
+		hash.Write([]byte(strconv.Itoa(len(canonical))))
 		hash.Write([]byte{':'})
-		hash.Write(message)
+		hash.Write(canonical)
 	}
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+// canonicalPrefixMessage is a message as the prefix comparison sees it,
+// matching the training side's extends rule (pathfinder#3214):
+//
+//   - cache_control is removed wherever it appears: a client moves its cache
+//     breakpoints between turns without changing the conversation;
+//   - a system message whose content is one {"type":"text","text":X} block,
+//     with nothing else but cache_control, is the string X. Claude Code sends
+//     a mid-conversation system message that way while it is the last
+//     message and as a plain string once it is not, which read as a new
+//     context on about 70% of real turns. Text is compared exactly; a block
+//     with any other member, or more than one block, stays a list;
+//   - object key order and whitespace are insignificant.
+//
+// A message that is not a JSON object is compared as received.
+func canonicalPrefixMessage(message json.RawMessage) []byte {
+	decoder := json.NewDecoder(bytes.NewReader(message))
+	decoder.UseNumber()
+	var value map[string]any
+	if decoder.Decode(&value) != nil || value == nil {
+		return message
+	}
+	withoutCacheControl(value)
+	if role, _ := value["role"].(string); role == "system" {
+		if blocks, ok := value["content"].([]any); ok && len(blocks) == 1 {
+			if block, ok := blocks[0].(map[string]any); ok && len(block) == 2 && block["type"] == "text" {
+				if text, ok := block["text"].(string); ok {
+					value["content"] = text
+				}
+			}
+		}
+	}
+	var canonical bytes.Buffer
+	encoder := json.NewEncoder(&canonical)
+	encoder.SetEscapeHTML(false)
+	if encoder.Encode(value) != nil {
+		return message
+	}
+	return bytes.TrimSuffix(canonical.Bytes(), []byte("\n"))
+}
+
+// withoutCacheControl removes every cache_control member under value.
+func withoutCacheControl(value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		delete(typed, "cache_control")
+		for _, member := range typed {
+			withoutCacheControl(member)
+		}
+	case []any:
+		for _, element := range typed {
+			withoutCacheControl(element)
+		}
+	}
 }
 
 // PolicyCallKind is what a request is to the episode's main conversation.
