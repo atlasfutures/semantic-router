@@ -200,7 +200,10 @@ type RequestContext struct {
 	RaylineARCThinkingControl       *plannedThinkingControl                // A v5 action's admitted control and placer for this dispatch; rendered at the provider boundary.
 	RaylineARCUpstreamAudit         *raylineARCUpstreamAudit               // Whether this turn's body extends the worker's last one; counts and digests only.
 	SelectionTransaction            *selectionTransactionOwner             // Shared authoritative selector lifecycle owner; at most one per request.
-	SelectionSettlement             selectionActualOutcome                 // Bounded actual outcome facts; unknown fields remain nil.
+	// selectionCompletion is a policy-service turn's commit, held until the
+	// response that completes the turn has been sent to Envoy.
+	selectionCompletion *pendingSelectionCompletion
+	SelectionSettlement selectionActualOutcome // Bounded actual outcome facts; unknown fields remain nil.
 	// VSREligibleModelRefs is the selected decision's model set after applying
 	// request contracts. Loopers consume this exact set; broader Router Learning
 	// candidate sets must independently apply the same request contracts.

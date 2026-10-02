@@ -472,16 +472,12 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 	} else {
 		ctx.StreamingAborted = true
 	}
-	commitFailed := false
-	if !ctx.StreamingAborted {
-		// The terminal event arrived and nothing broke: the client has the
-		// whole reply, which is the only point at which the turn exists. The
-		// stream has already been forwarded, so a failed commit can only be
-		// reported, and the turn stays unrecorded.
-		if err := finalizeSelectionCompletion(ctx); err != nil {
-			recordSelectionLifecycleFailure(ctx, "response_complete", err)
-			commitFailed = true
-		}
+	// The terminal event arrived and nothing broke: a policy-service turn
+	// commits once the response's final frame has been sent, and only then
+	// caches its reply.
+	commitDeferred := !ctx.StreamingAborted && selectionCommitsOnCompletion(ctx)
+	if commitDeferred {
+		deferSelectionCompletion(ctx, nil)
 	}
 	completionLatency := time.Duration(0)
 	if !ctx.StartTime.IsZero() {
@@ -520,7 +516,9 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 	}
 	// An unrecorded turn is not cached: a retry served from the cache would
 	// leave it unrecorded for good.
-	if !commitFailed {
+	if commitDeferred {
+		deferSelectionCompletion(ctx, func() { r.updateResponseCache(ctx, encoded) })
+	} else {
 		r.updateResponseCache(ctx, encoded)
 	}
 	r.scheduleSemanticResponseMemoryStore(ctx, semanticResponse)

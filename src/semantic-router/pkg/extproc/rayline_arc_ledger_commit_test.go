@@ -19,6 +19,7 @@ package extproc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -112,13 +114,15 @@ func sendHeaders(t *testing.T, router *OpenAIRouter, ctx *RequestContext, header
 	}
 }
 
-// completeStream ends the stream the way a received terminal event does.
+// completeStream ends the stream the way a received terminal event does,
+// and its final frame is sent.
 func completeStream(router *OpenAIRouter, ctx *RequestContext) {
 	ctx.SemanticStreamState = &semanticResponseStreamState{
 		terminal: true,
 		items:    map[int]*semanticStreamItem{},
 	}
 	router.finalizeSemanticStreamingResponse(ctx, nil)
+	runPendingSelectionCompletion(ctx)
 }
 
 // breakStream ends the stream the way a cut connection does: before the
@@ -256,7 +260,8 @@ func TestRaylineARCLedgerStreamCommitsAtTheTerminalEventPerFormat(t *testing.T) 
 				sendHeaders(t, router, ctx, streamingResponseHeaders("200"))
 				payload := extProcStreamFixture(format)
 				half := len(payload) / 2
-				if _, err := router.handleResponseBody(&ext_proc.ProcessingRequest_ResponseBody{
+				stream := NewMockStream(nil)
+				if err := router.processResponseBody(stream, &ext_proc.ProcessingRequest_ResponseBody{
 					ResponseBody: &ext_proc.HttpBody{Body: payload[:half]},
 				}, ctx); err != nil {
 					t.Fatal(err)
@@ -264,7 +269,7 @@ func TestRaylineARCLedgerStreamCommitsAtTheTerminalEventPerFormat(t *testing.T) 
 				if readLedgerTestStateNoWait(store, episode) != nil {
 					t.Fatal("the turn committed mid-stream")
 				}
-				if _, err := router.handleResponseBody(&ext_proc.ProcessingRequest_ResponseBody{
+				if err := router.processResponseBody(stream, &ext_proc.ProcessingRequest_ResponseBody{
 					ResponseBody: &ext_proc.HttpBody{Body: payload[half:], EndOfStream: true},
 				}, ctx); err != nil {
 					t.Fatal(err)
@@ -314,5 +319,56 @@ func TestRaylineARCRelaxedTurnCommitsOnCompletion(t *testing.T) {
 		if after.TurnIndex != want || (ledgerLength(after) == 1) != complete {
 			t.Fatalf("complete=%v: turn=%d ledger=%d", complete, after.TurnIndex, ledgerLength(after))
 		}
+	}
+}
+
+// A policy turn commits only after its final response has been sent to
+// Envoy. When that send fails (a cancelled ext_proc stream), the turn records
+// nothing and its lease is released, so the client's retry of the same prefix
+// leaves exactly one ledger entry.
+func TestRaylineARCLedgerCommitsOnlyAfterTheFinalSend(t *testing.T) {
+	cases := []struct {
+		name    string
+		headers *ext_proc.ProcessingRequest_ResponseHeaders
+		body    []byte
+	}{
+		{"non-stream", arcResponseHeaders("200"), []byte(arcCacheTestCompletion)},
+		{"stream", streamingResponseHeaders("200"), extProcStreamFixture(llmprotocol.OpenAIChatV1)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			store, episode := newLedgerTestStore(t)
+			attempt := func(sendErr error) error {
+				var processErr error
+				runLedgerTestTurn(t, store, episode, func(router *OpenAIRouter, ctx *RequestContext) {
+					ctx.SourceFormat, ctx.TargetFormat = llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1
+					ctx.RequestModel, ctx.TraceContext = "public-model", context.Background()
+					sendHeaders(t, router, ctx, c.headers)
+					stream := NewMockStream(nil)
+					stream.SendError = sendErr
+					processErr = router.processResponseBody(stream, &ext_proc.ProcessingRequest_ResponseBody{
+						ResponseBody: &ext_proc.HttpBody{Body: c.body, EndOfStream: true},
+					}, ctx)
+				})
+				return processErr
+			}
+			if err := attempt(errors.New("ext_proc stream cancelled")); err == nil {
+				t.Fatal("a failed final send was not reported")
+			}
+			state := readLedgerTestStateNoWait(store, episode)
+			if state == nil {
+				t.Fatal("the turn whose final send failed kept the episode lease")
+			}
+			if ledgerLength(state) != 0 || state.TurnIndex != 0 {
+				t.Fatalf("a turn whose final send failed committed: turn=%d ledger=%d", state.TurnIndex, ledgerLength(state))
+			}
+			if err := attempt(nil); err != nil {
+				t.Fatal(err)
+			}
+			state = readLedgerTestState(t, store, episode)
+			if ledgerLength(state) != 1 || state.TurnIndex != 1 {
+				t.Fatalf("after the retry: turn=%d ledger=%d, want 1/1", state.TurnIndex, ledgerLength(state))
+			}
+		})
 	}
 }

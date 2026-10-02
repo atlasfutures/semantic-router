@@ -63,6 +63,7 @@ func (r *OpenAIRouter) processResponseTrailers(
 		if err := sendResponse(stream, final, "response body"); err != nil {
 			return err
 		}
+		runPendingSelectionCompletion(ctx)
 	}
 	response := &ext_proc.ProcessingResponse{
 		Response: &ext_proc.ProcessingResponse_ResponseTrailers{

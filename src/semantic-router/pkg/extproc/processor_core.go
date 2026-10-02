@@ -355,7 +355,11 @@ func (r *OpenAIRouter) processResponseBody(
 		return err
 	}
 	response = r.normalizeFullDuplexResponseBody(response, ctx, complete.ResponseBody)
-	return sendResponse(stream, response, "response body")
+	if err := sendResponse(stream, response, "response body"); err != nil {
+		return err
+	}
+	runPendingSelectionCompletion(ctx)
+	return nil
 }
 
 func processUnknownRequest(

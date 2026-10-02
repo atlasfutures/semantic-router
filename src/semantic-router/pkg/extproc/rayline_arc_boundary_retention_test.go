@@ -269,6 +269,7 @@ func TestRaylineARCNonStreamReplyIsNotCachedWhenTheTurnFailsToCommit(t *testing.
 		}
 		bindRaylineARCSelectionTransaction(ctx)
 		response := router.handleNonStreamingResponseBody([]byte(arcCacheTestCompletion), ctx, time.Second)
+		runPendingSelectionCompletion(ctx) // the reply was sent
 		failed := response.GetImmediateResponse() != nil
 		if failed != commitFails || mockCache.addEntryCalled == commitFails {
 			t.Fatalf("commit fails=%v: refused=%v cached=%v", commitFails, failed, mockCache.addEntryCalled)
@@ -323,6 +324,7 @@ func TestRaylineARCStreamReplyIsNotCachedWhenTheTurnFailsToCommit(t *testing.T) 
 		item.text, item.completed = "hi", true
 		ctx.SemanticStreamState = stream
 		router.finalizeSemanticStreamingResponse(ctx, nil)
+		runPendingSelectionCompletion(ctx) // the final frame was sent
 		if mockCache.addEntryCalled == commitFails {
 			t.Fatalf("commit fails=%v: cached=%v", commitFails, mockCache.addEntryCalled)
 		}

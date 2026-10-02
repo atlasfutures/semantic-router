@@ -327,6 +327,58 @@ func commitSelectionTransaction(finalizeContext context.Context, ctx *RequestCon
 	return err
 }
 
+// pendingSelectionCompletion is a policy-service turn whose response is
+// complete but not yet sent. Committing before the send would record a turn
+// the client may never receive: a cancelled stream or a failed send leaves
+// the transaction committed, the terminal finalizer cannot abort it, and the
+// client's retry of the same prefix records the turn twice.
+type pendingSelectionCompletion struct {
+	// onCommitted runs once the turn is recorded, for work that must not
+	// outlive an unrecorded turn (the response cache).
+	onCommitted func()
+}
+
+// deferSelectionCompletion marks this policy-service turn complete, to commit
+// once its final response has been sent. onCommitted replaces any earlier one.
+func deferSelectionCompletion(ctx *RequestContext, onCommitted func()) {
+	if ctx.selectionCompletion == nil {
+		ctx.selectionCompletion = &pendingSelectionCompletion{}
+	}
+	ctx.selectionCompletion.onCommitted = onCommitted
+}
+
+// runPendingSelectionCompletion commits a deferred turn after its response
+// was sent. A send that failed never reaches here: the turn stays uncommitted
+// and the process-terminal finalizer aborts it. A commit that fails now can
+// only be reported, as the client already has the reply.
+func runPendingSelectionCompletion(ctx *RequestContext) {
+	if ctx == nil || ctx.selectionCompletion == nil {
+		return
+	}
+	pending := ctx.selectionCompletion
+	ctx.selectionCompletion = nil
+	if err := finalizeSelectionCompletion(ctx); err != nil {
+		recordSelectionLifecycleFailure(ctx, "response_complete", err)
+		return
+	}
+	if pending.onCommitted != nil {
+		pending.onCommitted()
+	}
+}
+
+// selectionCompletionCommittable checks, before the final response is sent,
+// that a policy-service turn can still commit, so a turn whose lease is
+// already lost fails while the client can still be told.
+func selectionCompletionCommittable(ctx *RequestContext) error {
+	ensureSelectionTransactionBound(ctx)
+	if ctx == nil || ctx.SelectionTransaction == nil || !selectionCommitsOnCompletion(ctx) {
+		return nil
+	}
+	checkContext, cancel := context.WithTimeout(context.Background(), selectionFinalizeTimeout(ctx))
+	defer cancel()
+	return ctx.SelectionTransaction.validateDispatch(checkContext)
+}
+
 func selectionFinalizeTimeout(ctx *RequestContext) time.Duration {
 	if ctx.RaylineARCTransaction != nil {
 		return ctx.RaylineARCTransaction.finalizeTimeout()
