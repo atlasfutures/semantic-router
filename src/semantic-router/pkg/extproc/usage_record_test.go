@@ -290,3 +290,34 @@ func TestEstimatedCutStreamKeepsTheStatedCharge(t *testing.T) {
 		t.Fatalf("estimated = %v, charge = %v; want an estimate that keeps %v", usage.estimated, usage.providerCost.Charged, charged)
 	}
 }
+
+// A provider charge of an unexpected shape costs the record its charge, never
+// the client its paid completion or the call its usage row.
+func TestOddlyTypedProviderChargeStillServesTheCompletion(t *testing.T) {
+	for _, fragment := range []string{
+		`"cost":"0.0012"`, `"cost":{"amount":1}`, `"is_byok":"false"`,
+		`"cost_details":[1]`, `"cost_details":{"upstream_inference_cost":"0.001"}`,
+	} {
+		t.Run(fragment, func(t *testing.T) {
+			logs := captureLogs(t)
+			router := usageRecordRouter()
+			ctx := &RequestContext{
+				RequestID: "rt_odd_charge", RequestModel: "priced-model",
+				SourceFormat: llmprotocol.OpenAIChatV1, TargetFormat: llmprotocol.OpenAIChatV1,
+			}
+			body := []byte(`{"id":"chatcmpl_1","object":"chat.completion","created":1,"model":"m",` +
+				`"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"hi"}}],` +
+				`"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4,` + fragment + `}}`)
+
+			response := router.handleNonStreamingResponseBody(body, ctx, time.Second)
+
+			if immediate := response.GetImmediateResponse(); immediate != nil {
+				t.Fatalf("the completion was refused with %d", immediate.GetStatus().GetCode())
+			}
+			fields := findLogEvent(t, logs, "llm_usage")
+			if fields["prompt_tokens"] != int64(3) || fields["cost"] == nil {
+				t.Fatalf("usage row lost its counts or price: %v", fields)
+			}
+		})
+	}
+}

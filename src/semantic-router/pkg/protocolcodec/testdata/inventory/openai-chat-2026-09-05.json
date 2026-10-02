@@ -45,7 +45,7 @@
         "openai.chat.v1": "drop",
         "openai.responses.v1": "drop"
       },
-      "note": "OpenRouter's own billing figure. The Router decodes it into its usage record as the provider-reported charge, beside its own rate-card price; no codec publishes it, so a client never sees two disagreeing numbers."
+      "note": "OpenRouter's own billing figure. The Router reads it best-effort into its usage record as the provider-reported charge, beside its own rate-card price; a value that is not a number is left unknown, never a decode failure. No codec publishes it, so a client never sees two disagreeing numbers."
     },
     {
       "path": "usage.cost_details",
@@ -56,29 +56,7 @@
         "openai.chat.v1": "drop",
         "openai.responses.v1": "drop"
       },
-      "note": "Only upstream_inference_cost is decoded, into the usage record. No codec publishes it."
-    },
-    {
-      "path": "usage.cost_details.upstream_inference_completions_cost",
-      "leg": "response",
-      "first_seen": "2026-09-03",
-      "targets": {
-        "anthropic.messages.v1": "drop",
-        "openai.chat.v1": "drop",
-        "openai.responses.v1": "drop"
-      },
-      "note": "The per-direction split of upstream_inference_cost. Pruned and named; the Router records the total only."
-    },
-    {
-      "path": "usage.cost_details.upstream_inference_prompt_cost",
-      "leg": "response",
-      "first_seen": "2026-09-03",
-      "targets": {
-        "anthropic.messages.v1": "drop",
-        "openai.chat.v1": "drop",
-        "openai.responses.v1": "drop"
-      },
-      "note": "The per-direction split of upstream_inference_cost. Pruned and named; the Router records the total only."
+      "note": "Read best-effort as a raw member: only upstream_inference_cost is taken, into the usage record. The per-direction splits beside it are ignored, not pruned. No codec publishes it."
     },
     {
       "path": "usage.is_byok",
@@ -144,7 +122,7 @@
         "openai.chat.v1": "drop",
         "openai.responses.v1": "drop"
       },
-      "note": "OpenRouter's own billing figure. The Router decodes it into its usage record as the provider-reported charge, beside its own rate-card price; no codec publishes it, so a client never sees two disagreeing numbers."
+      "note": "OpenRouter's own billing figure. The Router reads it best-effort into its usage record as the provider-reported charge, beside its own rate-card price; a value that is not a number is left unknown, never a decode failure. No codec publishes it, so a client never sees two disagreeing numbers."
     },
     {
       "path": "usage.cost_details",
@@ -155,29 +133,7 @@
         "openai.chat.v1": "drop",
         "openai.responses.v1": "drop"
       },
-      "note": "Only upstream_inference_cost is decoded, into the usage record. No codec publishes it."
-    },
-    {
-      "path": "usage.cost_details.upstream_inference_completions_cost",
-      "leg": "stream",
-      "first_seen": "2026-09-03",
-      "targets": {
-        "anthropic.messages.v1": "drop",
-        "openai.chat.v1": "drop",
-        "openai.responses.v1": "drop"
-      },
-      "note": "The per-direction split of upstream_inference_cost. Pruned and named; the Router records the total only."
-    },
-    {
-      "path": "usage.cost_details.upstream_inference_prompt_cost",
-      "leg": "stream",
-      "first_seen": "2026-09-03",
-      "targets": {
-        "anthropic.messages.v1": "drop",
-        "openai.chat.v1": "drop",
-        "openai.responses.v1": "drop"
-      },
-      "note": "The per-direction split of upstream_inference_cost. Pruned and named; the Router records the total only."
+      "note": "Read best-effort as a raw member: only upstream_inference_cost is taken, into the usage record. The per-direction splits beside it are ignored, not pruned. No codec publishes it."
     },
     {
       "path": "usage.is_byok",
