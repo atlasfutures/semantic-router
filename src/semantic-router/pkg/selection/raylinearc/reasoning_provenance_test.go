@@ -54,3 +54,16 @@ func TestReasoningProvenancePersists(t *testing.T) {
 		t.Fatal("a malformed provenance entry was persisted")
 	}
 }
+
+// A block from an issuer whose provider can vary, or headed to such a target,
+// is never resent: neither side can be shown to read it.
+func TestReasoningIssuedElsewhereWithAnUnknownIssuer(t *testing.T) {
+	unknownBlock := WithReasoningProvenance(nil, ReasoningIssuerUnknown, []string{"blob"})
+	if !ReasoningIssuedElsewhere(unknownBlock, "blob", "claude") || !ReasoningIssuedElsewhere(unknownBlock, "blob", ReasoningIssuerUnknown) {
+		t.Fatal("a block from an unknown issuer was resent")
+	}
+	known := WithReasoningProvenance(nil, "claude", []string{"blob"})
+	if !ReasoningIssuedElsewhere(known, "blob", ReasoningIssuerUnknown) {
+		t.Fatal("a block was resent to a target whose provider can vary")
+	}
+}

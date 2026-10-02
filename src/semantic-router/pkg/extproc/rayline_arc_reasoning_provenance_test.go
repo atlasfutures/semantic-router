@@ -88,20 +88,62 @@ func TestOpaqueReasoningReachesOnlyItsIssuer(t *testing.T) {
 	}
 }
 
-// seedOpaqueReasoningIssuer commits an episode whose record says worker
-// issued the block holding data.
+// seedOpaqueReasoningIssuer commits an episode whose record says worker, as
+// the router would dispatch it, issued the block holding data.
 func seedOpaqueReasoningIssuer(t *testing.T, router *OpenAIRouter, episode, worker, data string) {
 	t.Helper()
+	dispatch, err := router.resolveProviderDispatch(worker, "", false, llmprotocol.AnthropicMessagesV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer := router.opaqueReasoningIssuerFor(dispatch)
+	if issuer == raylinearc.ReasoningIssuerUnknown {
+		t.Fatalf("worker %s has no fixed issuer in the test config", worker)
+	}
 	store := router.RaylineARCEpisodeStore
 	lease, state, err := store.Prepare(context.Background(), raylinearc.HashEpisodeID(episode), 4)
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.ReasoningProvenance = raylinearc.WithReasoningProvenance(nil, worker, []string{data})
+	state.ReasoningProvenance = raylinearc.WithReasoningProvenance(nil, issuer, []string{data})
 	if err := state.Commit(0, 10, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Commit(context.Background(), lease, lease.Version(), state); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// On OpenRouter the issuer is fixed only by a single pinned provider with no
+// fallbacks; otherwise OpenRouter may serve the next turn elsewhere.
+func TestOpaqueReasoningIssuerOnOpenRouter(t *testing.T) {
+	on, off := true, false
+	router := &OpenAIRouter{Config: &config.RouterConfig{}}
+	dispatch := &providerDispatch{
+		logicalModel: "gpt", upstreamModel: "openai/gpt-5.6",
+		profile: &config.ProviderProfile{Type: "openrouter", BaseURL: "https://openrouter.ai/api/v1"},
+	}
+	if issuer := router.opaqueReasoningIssuerFor(dispatch); issuer != raylinearc.ReasoningIssuerUnknown {
+		t.Fatalf("unpinned OpenRouter issuer = %q, want unknown", issuer)
+	}
+	for _, tc := range []struct {
+		pin  config.OpenRouterProviderPreferences
+		want bool
+	}{
+		{config.OpenRouterProviderPreferences{Order: []string{"openai"}, AllowFallbacks: &off}, true},
+		{config.OpenRouterProviderPreferences{Order: []string{"openai"}, AllowFallbacks: &on}, false},
+		{config.OpenRouterProviderPreferences{Order: []string{"openai", "azure"}, AllowFallbacks: &off}, false},
+	} {
+		router.Config = routerConfigWithPin("gpt", tc.pin)
+		known := router.opaqueReasoningIssuerFor(dispatch) != raylinearc.ReasoningIssuerUnknown
+		if known != tc.want {
+			t.Fatalf("pin %+v: issuer known = %v, want %v", tc.pin, known, tc.want)
+		}
+	}
+}
+
+func routerConfigWithPin(model string, pin config.OpenRouterProviderPreferences) *config.RouterConfig {
+	cfg := &config.RouterConfig{}
+	cfg.ModelConfig = map[string]config.ModelParams{model: {ProviderPreferences: &pin}}
+	return cfg
 }

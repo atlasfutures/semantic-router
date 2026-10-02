@@ -71,13 +71,17 @@ func WithReasoningProvenance(existing []ReasoningProvenance, worker string, bloc
 }
 
 // ReasoningIssuedElsewhere reports whether an opaque reasoning block is known
-// to have been issued by a worker other than target. A block the episode has
-// no record of is not: it is left as the client sent it.
+// not to be readable by target: it was issued by another issuer, or by one
+// whose serving provider could vary (ReasoningIssuerUnknown), or target's own
+// provider could vary. A block the episode has no record of is not: it is
+// left as the client sent it.
 func ReasoningIssuedElsewhere(provenance []ReasoningProvenance, data, target string) bool {
 	block := ReasoningBlockDigest(data)
+	unknown := ReasoningWorkerDigest(ReasoningIssuerUnknown)
 	for index := len(provenance) - 1; index >= 0; index-- {
 		if provenance[index].Block == block {
-			return provenance[index].Worker != ReasoningWorkerDigest(target)
+			issuer := provenance[index].Worker
+			return issuer == unknown || target == ReasoningIssuerUnknown || issuer != ReasoningWorkerDigest(target)
 		}
 	}
 	return false
