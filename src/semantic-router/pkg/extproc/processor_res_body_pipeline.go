@@ -48,11 +48,10 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	r.reportNonStreamingUsage(ctx, completionLatency, usage)
 	r.calibrateTokenEstimator(ctx, usage.promptTokens)
 
-	// A turn with a selection to commit caches its reply only once the turn
+	// A turn that commits at completion caches its reply only once the turn
 	// is recorded: a reply cached before a failed commit would serve the
 	// client's retry from the cache, and that turn would never be recorded.
-	ensureSelectionTransactionBound(ctx)
-	cacheAfterCommit := ctx.SelectionTransaction != nil
+	cacheAfterCommit := selectionCommitsOnCompletion(ctx)
 	if !cacheAfterCommit {
 		r.updateResponseCache(ctx, clientBody)
 	}

@@ -141,7 +141,7 @@ func TestRaylineARCTransactionRenewsRedisLease(t *testing.T) {
 	}
 }
 
-func TestRaylineARCEpisodeCommitsOnceOnCompleted2xx(t *testing.T) {
+func TestRaylineARCEpisodeCommitsOnceOnFirst2xxHeaders(t *testing.T) {
 	router, requestContext, store, episode := newTestARCEpisodeTransaction(t)
 	requestContext.RaylineARCTransaction.markSelectionWithAffinity(
 		1,
@@ -166,8 +166,6 @@ func TestRaylineARCEpisodeCommitsOnceOnCompleted2xx(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	completeTestResponse(t, requestContext)
-	completeTestResponse(t, requestContext)
 	router.finalizeRaylineARCAbort(requestContext, "stream_abort_after_2xx")
 
 	lease, state, err := store.Prepare(
@@ -237,7 +235,6 @@ func TestRaylineARCEpisodeCloseFansOutAfter2xxAndClearsAffinity(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	completeTestResponse(t, requestContext)
 	if closeCalls != 1 {
 		t.Fatalf("close calls = %d, want 1", closeCalls)
 	}
@@ -283,7 +280,6 @@ func TestRaylineARCEpisodeCloseFailurePreservesProviderSuccessAndAffinity(
 	if err != nil || response == nil || response.GetImmediateResponse() != nil {
 		t.Fatalf("successful provider response replaced by close failure: response=%#v err=%v", response, err)
 	}
-	completeTestResponse(t, requestContext)
 	lease, state, err := store.Prepare(context.Background(), episode, 2)
 	if err != nil {
 		t.Fatal(err)
@@ -309,14 +305,15 @@ func TestRaylineARCEpisodeCommitFailsAfterLeaseLoss(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A lost lease surfaces at the headers, while the client can still be
-	// told, and the turn can never commit afterwards.
 	if response.GetImmediateResponse() == nil ||
-		int(response.GetImmediateResponse().GetStatus().GetCode()) != 503 {
-		t.Fatalf("lease-loss response=%#v", response)
-	}
-	if err := finalizeSelectionCompletion(requestContext); err == nil ||
-		requestContext.SelectionTransaction.isCommitted() {
-		t.Fatalf("a turn whose lease was lost committed at completion: err=%v", err)
+		int(response.GetImmediateResponse().GetStatus().GetCode()) != 503 ||
+		boundedARCEpisodeFailure(
+			requestContext.RaylineARCTransaction.finalizeErr,
+		) != "lease_lost" {
+		t.Fatalf(
+			"lease-loss response=%#v finalize_error=%v",
+			response,
+			requestContext.RaylineARCTransaction.finalizeErr,
+		)
 	}
 }

@@ -72,15 +72,6 @@ func TestSelectionTransactionOwnerRunsEachTerminalOperationOnce(
 	if err := finalizeSelectionResponseHeaders(ctx, true); err != nil {
 		t.Fatal(err)
 	}
-	if transaction.commits != 0 {
-		t.Fatal("the turn committed at the response headers")
-	}
-	if err := finalizeSelectionCompletion(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := finalizeSelectionCompletion(ctx); err != nil {
-		t.Fatal(err)
-	}
 	inputTokens := 17
 	outcome := selectionActualOutcome{
 		OutcomeClass: "success",
@@ -91,7 +82,7 @@ func TestSelectionTransactionOwnerRunsEachTerminalOperationOnce(
 	finalizeSelectionSettlement(ctx, outcome)
 	finalizeSelectionProcessTerminal(ctx)
 
-	if transaction.validates != 2 ||
+	if transaction.validates != 1 ||
 		transaction.commits != 1 ||
 		transaction.aborts != 0 ||
 		transaction.settles != 1 {
@@ -155,7 +146,7 @@ func TestSelectionDispatchFailureRemainsPreCommit(t *testing.T) {
 	}
 }
 
-func TestSelectionProcessTerminalAbortsBrokenStream(
+func TestSelectionProcessTerminalSettlesCommittedBrokenStream(
 	t *testing.T,
 ) {
 	transaction := &recordingSelectionTransaction{}
@@ -171,12 +162,12 @@ func TestSelectionProcessTerminalAbortsBrokenStream(
 	if err := finalizeSelectionResponseHeaders(ctx, true); err != nil {
 		t.Fatal(err)
 	}
-	// The stream broke before its terminal event, so completion never ran.
 	finalizeSelectionProcessTerminal(ctx)
-	if transaction.commits != 0 ||
-		transaction.aborts != 1 ||
-		transaction.settles != 0 ||
-		transaction.reason != "stream_error" {
+	if transaction.aborts != 0 ||
+		transaction.settles != 1 ||
+		transaction.outcome.OutcomeClass != "stream_error" ||
+		transaction.outcome.InputTokens != nil ||
+		transaction.outcome.OutputTokens != nil {
 		t.Fatalf("terminal calls = %#v", transaction)
 	}
 }

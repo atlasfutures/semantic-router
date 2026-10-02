@@ -247,10 +247,11 @@ func finalizeSelectionAbort(
 }
 
 // finalizeSelectionResponseHeaders is the response-header seam. A non-2xx
-// status ends the transaction without a commit. A 2xx status commits nothing
-// yet: headers say the provider accepted the call, not that the client will
-// receive the reply. It only checks the lease is still held, so a turn that
-// can no longer commit fails now, while the client can still be told.
+// status ends the transaction without a commit. A 2xx status commits the turn
+// here, except a policy-service turn: its headers say the provider accepted
+// the call, not that the client will receive the reply, so it only checks the
+// lease is still held (a turn that can no longer commit fails now, while the
+// client can still be told) and commits at completion.
 func finalizeSelectionResponseHeaders(
 	ctx *RequestContext,
 	successful bool,
@@ -278,6 +279,9 @@ func finalizeSelectionResponseHeaders(
 		}
 		return err
 	}
+	if !selectionCommitsOnCompletion(ctx) {
+		return commitSelectionTransaction(finalizeContext, ctx)
+	}
 	if err := ctx.SelectionTransaction.validateDispatch(finalizeContext); err != nil {
 		if _, abortErr := ctx.SelectionTransaction.abort(
 			finalizeContext,
@@ -290,13 +294,13 @@ func finalizeSelectionResponseHeaders(
 	return nil
 }
 
-// finalizeSelectionCompletion commits the turn once the client has the whole
-// 2xx response. It is a no-op for a request without a transaction, for a
-// non-2xx response (already aborted at the headers) and for a turn already
-// committed.
+// finalizeSelectionCompletion commits a policy-service turn once the client
+// has the whole 2xx response. It is a no-op for a request without a
+// transaction, for a turn that committed at its headers, for a non-2xx
+// response (already aborted at the headers) and for a turn already committed.
 func finalizeSelectionCompletion(ctx *RequestContext) error {
 	ensureSelectionTransactionBound(ctx)
-	if ctx == nil || ctx.SelectionTransaction == nil ||
+	if ctx == nil || ctx.SelectionTransaction == nil || !selectionCommitsOnCompletion(ctx) ||
 		ctx.UpstreamStatusCode < 200 || ctx.UpstreamStatusCode >= 300 {
 		return nil
 	}
@@ -305,6 +309,10 @@ func finalizeSelectionCompletion(ctx *RequestContext) error {
 		selectionFinalizeTimeout(ctx),
 	)
 	defer cancel()
+	return commitSelectionTransaction(finalizeContext, ctx)
+}
+
+func commitSelectionTransaction(finalizeContext context.Context, ctx *RequestContext) error {
 	performed, err := ctx.SelectionTransaction.commit(
 		finalizeContext,
 		ctx.UpstreamStatusCode,

@@ -136,9 +136,11 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	// state when it finds none here.
 	// A side call commits nothing, so it is classified before the episode is
 	// read and never takes or waits on the episode lease.
+	var signalHeaders map[string]string
 	if algorithm.RaylineARC.PolicyService != nil {
+		signalHeaders = raylineARCTrustedSignalHeaders(algorithm.RaylineARC.PolicyService, reqCtx.Headers)
 		result.PolicyCallKind, result.PolicyCallKindSource = raylineARCPolicyCallKindOfBody(
-			reqCtx.Headers, policyRequestFormat(reqCtx.SourceFormat), reqCtx.RaylineARCRawBody, result.EpisodeIDHash,
+			signalHeaders, policyRequestFormat(reqCtx.SourceFormat), reqCtx.RaylineARCRawBody, result.EpisodeIDHash,
 		)
 	}
 	if rawEpisodeID != "" {
@@ -155,6 +157,12 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		}
 		result.State = state
 		result.Coalesced = coalesced
+		// A policy-service turn records its ledger entry, so it commits only
+		// once the client has the whole reply. Artifact-mode turns commit at
+		// the response headers, as they always have.
+		if algorithm.RaylineARC.PolicyService != nil && reqCtx.RaylineARCTransaction != nil {
+			reqCtx.RaylineARCTransaction.commitOnCompletion = true
+		}
 	}
 	turns, imageBearing, err := r.projectRaylineARCTurns(
 		reqCtx,
@@ -179,10 +187,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	if algorithm.RaylineARC.PolicyService != nil {
 		result.RawRequest = reqCtx.RaylineARCRawBody
 		result.RequestFormat = policyRequestFormat(reqCtx.SourceFormat)
-		result.PolicySignalHeaders = map[string]string{
-			raylineARCCallKindHeader:   reqCtx.Headers[raylineARCCallKindHeader],
-			raylineARCCompactionHeader: reqCtx.Headers[raylineARCCompactionHeader],
-		}
+		result.PolicySignalHeaders = signalHeaders
 		if result.RequestFormat == policyFormatResponses {
 			input, instructions, err := r.raylineARCPolicyResponsesInput(reqCtx)
 			if err != nil {

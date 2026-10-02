@@ -121,24 +121,15 @@ func TestSelectionCommitFailureBecomesTyped503(t *testing.T) {
 		commitErr: errors.New("private coordinator response"),
 	}
 	ctx := &RequestContext{
-		Headers: map[string]string{},
 		SelectionTransaction: newSelectionTransactionOwner(
 			configRaylineARC,
 			transaction,
 		),
 	}
-	router := &OpenAIRouter{}
-	if _, err := router.handleResponseHeaders(arcResponseHeaders("200"), ctx); err != nil {
-		t.Fatal(err)
-	}
-	// The commit runs once the full body is read, before it is forwarded, so
-	// a turn that cannot be recorded still fails as unavailable.
-	response, err := router.handleResponseBody(&ext_proc.ProcessingRequest_ResponseBody{
-		ResponseBody: &ext_proc.HttpBody{
-			Body:        []byte(`{"id":"c","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`),
-			EndOfStream: true,
-		},
-	}, ctx)
+	response, err := (&OpenAIRouter{}).handleResponseHeaders(
+		arcResponseHeaders("200"),
+		ctx,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

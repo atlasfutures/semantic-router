@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -37,6 +38,28 @@ const (
 	// repeat, not a new compaction.
 	raylineARCCompactionHeader = "x-rayline-compaction"
 )
+
+// raylineARCTrustedSignalHeaders returns the turn-signal headers this cell
+// reads: the request's, when a gateway is configured to set them, and none
+// otherwise, so a client cannot mark its own turns as side calls.
+func raylineARCTrustedSignalHeaders(
+	policy *config.RaylineARCPolicyServiceConfig,
+	requestHeaders map[string]string,
+) map[string]string {
+	if policy == nil || !policy.TrustTurnSignalHeaders {
+		return map[string]string{}
+	}
+	return map[string]string{
+		raylineARCCallKindHeader:   requestHeaders[raylineARCCallKindHeader],
+		raylineARCCompactionHeader: requestHeaders[raylineARCCompactionHeader],
+	}
+}
+
+// raylineARCTurnSignalHeadersForRemoval are never forwarded upstream: they
+// speak to this router, not to a provider.
+func raylineARCTurnSignalHeadersForRemoval() []string {
+	return []string{raylineARCCallKindHeader, raylineARCCompactionHeader}
+}
 
 // Sources a call kind can come from, as logged.
 const (

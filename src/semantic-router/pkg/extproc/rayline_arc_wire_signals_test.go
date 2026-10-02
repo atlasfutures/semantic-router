@@ -22,6 +22,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -95,7 +96,7 @@ func TestRaylineARCPolicyTurnSignalsReadCapturedHarnessCalls(t *testing.T) {
 func policyLeaseRouter(t *testing.T) (*OpenAIRouter, *config.AlgorithmConfig) {
 	t.Helper()
 	router, _, algorithm := missingSessionRequestContext(t, "")
-	algorithm.RaylineARC.PolicyService = &config.RaylineARCPolicyServiceConfig{}
+	algorithm.RaylineARC.PolicyService = &config.RaylineARCPolicyServiceConfig{TrustTurnSignalHeaders: true}
 	return router, algorithm
 }
 
@@ -247,5 +248,72 @@ func TestRaylineARCPolicyCallKindReadsResponsesStringInput(t *testing.T) {
 	plain, _ := json.Marshal(map[string]any{"model": "auto", "input": "fix the bug"})
 	if kind, _ := raylineARCPolicyCallKindOfBody(nil, policyFormatResponses, plain, "episode"); kind != raylinearc.PolicyCallUnknown {
 		t.Fatalf("plain string input = %q, want unknown", kind)
+	}
+}
+
+// An artifact-mode turn commits at its 2xx response headers and releases its
+// strict lease there, as before: a long stream must not hold the episode, so
+// a second request on it (a parallel subagent sharing the session) is served
+// while the first is still streaming.
+func TestRaylineARCArtifactTurnReleasesTheLeaseAtTheHeaders(t *testing.T) {
+	router, _, algorithm := missingSessionRequestContext(t, "")
+	first := coalesceRequestContext(`{"turn":"long stream"}`)
+	if failure := router.buildRaylineARCSelectionContext(algorithm, first, missingSessionModelRefs(), raylineARCEpisodeRequired).PreparationFailure; failure != "" {
+		t.Fatalf("first turn failure = %q", failure)
+	}
+	first.RaylineARCTransaction.markSelection(0, 5)
+	sendHeaders(t, &OpenAIRouter{}, first, streamingResponseHeaders("200"))
+	// The stream has started and has not ended.
+	started := time.Now()
+	second := coalesceRequestContext(`{"turn":"parallel subagent"}`)
+	if failure := router.buildRaylineARCSelectionContext(algorithm, second, missingSessionModelRefs(), raylineARCEpisodeRequired).PreparationFailure; failure != "" {
+		t.Fatalf("a second request during an artifact-mode stream failed with %q", failure)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("the second request waited %v for the streaming turn's lease", elapsed)
+	}
+	if turn := second.RaylineARCTransaction.state.TurnIndex; turn != 1 {
+		t.Fatalf("turn index = %d, want 1: the first turn commits at its headers", turn)
+	}
+	_ = second.RaylineARCTransaction.abort(context.Background(), "test")
+	completeStream(&OpenAIRouter{}, first)
+	finalizeSelectionProcessTerminal(first)
+}
+
+// The turn-signal headers are a gateway's to set. Unless the cell says a
+// gateway sets them, a client's own headers are ignored and the body decides,
+// so a client cannot mark its turns as side calls or compactions.
+func TestRaylineARCTurnSignalHeadersAreIgnoredUnlessTrusted(t *testing.T) {
+	spoofed := map[string]string{raylineARCCallKindHeader: "side", raylineARCCompactionHeader: "3"}
+	for _, trusted := range []bool{false, true} {
+		router, algorithm := policyLeaseRouter(t)
+		algorithm.RaylineARC.PolicyService.TrustTurnSignalHeaders = trusted
+		ctx := coalesceRequestContext(`{"turn":"main"}`)
+		for name, value := range spoofed {
+			ctx.Headers[name] = value
+		}
+		arc := router.buildRaylineARCSelectionContext(algorithm, ctx, missingSessionModelRefs(), raylineARCEpisodeRequired)
+		if arc.PreparationFailure != "" {
+			t.Fatalf("trusted=%v: failure %q", trusted, arc.PreparationFailure)
+		}
+		wantKind := raylinearc.PolicyCallUnknown
+		if trusted {
+			wantKind = raylinearc.PolicyCallSide
+		}
+		if arc.PolicyCallKind != wantKind || (arc.PolicySignalHeaders[raylineARCCompactionHeader] == "3") != trusted {
+			t.Fatalf("trusted=%v: kind %q signal headers %v", trusted, arc.PolicyCallKind, arc.PolicySignalHeaders)
+		}
+		_ = ctx.RaylineARCTransaction.abort(context.Background(), "test")
+	}
+}
+
+// Trusted or not, the turn-signal headers speak to this router and are never
+// forwarded to a provider.
+func TestRaylineARCTurnSignalHeadersAreNotForwarded(t *testing.T) {
+	removed := strings.Join(faultInjectionHeadersForRemoval(), ",")
+	for _, name := range []string{raylineARCCallKindHeader, raylineARCCompactionHeader} {
+		if !strings.Contains(removed, name) {
+			t.Fatalf("routed removal list %q does not strip %s", removed, name)
+		}
 	}
 }

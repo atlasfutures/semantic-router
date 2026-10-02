@@ -19,6 +19,7 @@ package extproc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -261,6 +262,7 @@ func TestRaylineARCNonStreamReplyIsNotCachedWhenTheTurnFailsToCommit(t *testing.
 				store, lease, state, episode, time.Minute, nil,
 			),
 		}, decision)
+		ctx.RaylineARCTransaction.commitOnCompletion = true
 		ctx.RaylineARCTransaction.markSelection(0, 10)
 		if commitFails {
 			ctx.RaylineARCTransaction.leaseLost.Store(true)
@@ -306,6 +308,7 @@ func TestRaylineARCStreamReplyIsNotCachedWhenTheTurnFailsToCommit(t *testing.T) 
 				store, lease, state, episode, time.Minute, nil,
 			),
 		}, decision)
+		ctx.RaylineARCTransaction.commitOnCompletion = true
 		ctx.RaylineARCTransaction.markSelection(0, 10)
 		if commitFails {
 			ctx.RaylineARCTransaction.leaseLost.Store(true)
@@ -324,5 +327,86 @@ func TestRaylineARCStreamReplyIsNotCachedWhenTheTurnFailsToCommit(t *testing.T) 
 			t.Fatalf("commit fails=%v: cached=%v", commitFails, mockCache.addEntryCalled)
 		}
 		finalizeSelectionProcessTerminal(ctx)
+	}
+}
+
+// failingAbortStore is a strict store whose lease release fails.
+type failingAbortStore struct {
+	*raylinearc.MemoryEpisodeStore
+}
+
+func (failingAbortStore) Abort(context.Context, raylinearc.Lease) error {
+	return errors.New("store unavailable")
+}
+
+// A finished side call whose lease cannot be released still succeeds: the
+// failure is logged and the lease is left to expire, never a 503.
+func TestRaylineARCSideCallLeaseReleaseFailureDoesNotFailTheReply(t *testing.T) {
+	store, episode := newLedgerTestStore(t)
+	lease, state, err := store.Prepare(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction := newRaylineARCEpisodeTransaction(failingAbortStore{store}, lease, state, episode, time.Minute, nil)
+	transaction.markSelection(0, 5)
+	transaction.markPolicyState(nil, true)
+	if err := transaction.commit(context.Background(), &RequestContext{}); err != nil {
+		t.Fatalf("a side call whose lease release failed = %v, want success", err)
+	}
+}
+
+// Each decide call holds its own admission slot and returns it before any
+// session_busy backoff, so a busy retry never keeps a slot while it sleeps.
+func TestPolicyBusyRetryReleasesAdmissionBetweenAttempts(t *testing.T) {
+	fixture := busyFixture(t)
+	fixture.fake.failFirstCalls("session_busy", 2)
+	gate := raylinearc.NewAdmissionGate(1)
+	admits, heldAtAdmit := 0, 0
+	admit := func() (func(), error) {
+		admits++
+		heldAtAdmit += gate.Inflight()
+		return gate.Acquire()
+	}
+	client := raylinearc.NewPolicyServiceClient(raylinearc.PolicyServiceConfig{BaseURL: fixture.fake.URL(), TotalTimeout: 5 * time.Second})
+	request := raylinearc.PolicyDecisionRequest{SchemaVersion: raylinearc.PolicyDecisionRequestSchema}
+	request.Selection.AvailableActionIDs = policyTestActionIDs(fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings)
+	if _, err := decidePolicyThroughBusy(context.Background(), client, request, time.Second, admit); err != nil {
+		t.Fatalf("a busy decision that cleared was refused: %v", err)
+	}
+	if admits != 3 || heldAtAdmit != 0 || gate.Inflight() != 0 {
+		t.Fatalf("admits=%d held-at-admit=%d inflight=%d; want 3 attempts, each admitted with no slot held", admits, heldAtAdmit, gate.Inflight())
+	}
+}
+
+// blockingSnapshotStore is a relaxed store whose conditional commit stalls
+// until its context ends.
+type blockingSnapshotStore struct {
+	*raylinearc.MemoryEpisodeStore
+}
+
+func (blockingSnapshotStore) CommitIfUnchanged(ctx context.Context, _ string, _ raylinearc.EpisodeReadToken, _ *raylinearc.EpisodeState) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// Storing a relaxed boundary decision has its own short bound, and a stage
+// that does not land is counted as a relaxed drop.
+func TestRaylineARCRelaxedBoundaryStageIsBoundedAndCounted(t *testing.T) {
+	_, store, episode := boundaryFixture(t)
+	state, read, err := store.Snapshot(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction := newRelaxedRaylineARCEpisodeTransaction(blockingSnapshotStore{store}, state, read, episode, false)
+	messages := []json.RawMessage{json.RawMessage(`{"role":"user","content":"fix the bug"}`)}
+	boundary := raylinearc.NewPolicyBoundaryDecision(1, 0, &raylinearc.PolicyEpisodeState{}, messages)
+	dropped := relaxedDrops("boundary_stage")
+	started := time.Now()
+	transaction.retainPolicyBoundary(context.Background(), boundary)
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("relaxed boundary stage took %v", elapsed)
+	}
+	if got := relaxedDrops("boundary_stage") - dropped; got != 1 {
+		t.Fatalf("boundary_stage drops = %v, want 1", got)
 	}
 }

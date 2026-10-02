@@ -34,6 +34,10 @@ import (
 
 const episodeFinalizeTimeout = 5 * time.Second
 
+// relaxedBoundaryStageTimeout bounds storing a relaxed episode's boundary
+// decision before dispatch.
+const relaxedBoundaryStageTimeout = 250 * time.Millisecond
+
 type raylineARCEpisodeTransaction struct {
 	store         raylinearc.EpisodeStore
 	lease         raylinearc.Lease
@@ -89,6 +93,10 @@ type raylineARCEpisodeTransaction struct {
 	// leaseless marks a side call on a strict episode: it read the episode
 	// without the lease, and commits and releases nothing.
 	leaseless bool
+	// commitOnCompletion marks a policy-service turn, which commits only once
+	// the client has the whole 2xx response. Every other turn commits at the
+	// 2xx response headers, and its strict lease is released there.
+	commitOnCompletion bool
 	// onFinalize is an optional terminal-path hook; the stream-level hold in
 	// processWithContext is what keeps the episode store open.
 	onFinalize func()
@@ -161,6 +169,12 @@ func newSideCallRaylineARCEpisodeTransaction(
 		sideCall:      true,
 		leaseless:     true,
 	}
+}
+
+// selectionCommitsOnCompletion reports whether this request's turn commits
+// at the end of the response rather than at its headers.
+func selectionCommitsOnCompletion(ctx *RequestContext) bool {
+	return ctx != nil && ctx.RaylineARCTransaction != nil && ctx.RaylineARCTransaction.commitOnCompletion
 }
 
 func (transaction *raylineARCEpisodeTransaction) releaseHold() {
@@ -283,11 +297,16 @@ func (transaction *raylineARCEpisodeTransaction) retainPolicyBoundary(
 // between, the turn keeps its original read and its commit loses, as any
 // relaxed turn that raced does.
 func (transaction *raylineARCEpisodeTransaction) retainRelaxedPolicyBoundary(
-	ctx context.Context,
+	parent context.Context,
 	staged *raylinearc.EpisodeState,
 ) {
+	// A relaxed turn never waits on episode state, so the stage gets a short
+	// bound of its own; losing it only means a retry decides again.
+	ctx, cancel := context.WithTimeout(parent, relaxedBoundaryStageTimeout)
+	defer cancel()
 	err := transaction.snapshots.CommitIfUnchanged(ctx, transaction.episodeIDHash, transaction.read, staged)
 	if err != nil {
+		metrics.RecordRaylineARCEpisodeTransaction("relaxed_dropped", "boundary_stage")
 		logging.ComponentWarnEvent("extproc", "rayline_arc_boundary_stage_failed", map[string]interface{}{
 			"failure_class": boundedARCEpisodeFailure(err), "relaxed": true,
 		})
@@ -428,10 +447,14 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 func (transaction *raylineARCEpisodeTransaction) commitSideCall(ctx context.Context) {
 	if !transaction.relaxed && !transaction.leaseless {
 		transaction.stopRenewal()
+		// The reply has been delivered and nothing is written, so a lease
+		// that cannot be released is logged and left to expire rather than
+		// failing a finished side call.
 		err := transaction.store.Abort(ctx, transaction.lease)
 		if err != nil && !errors.Is(err, raylinearc.ErrEpisodeLeaseLost) {
-			transaction.finalizeErr = err
-			return
+			logging.ComponentWarnEvent("extproc", "rayline_arc_side_call_release_failed", map[string]interface{}{
+				"failure_class": boundedARCEpisodeFailure(err),
+			})
 		}
 	}
 	metrics.RecordRaylineARCEpisodeTransaction("commit", "side_call")

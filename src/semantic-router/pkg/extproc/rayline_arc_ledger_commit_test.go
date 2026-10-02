@@ -79,6 +79,7 @@ func runLedgerTestTurn(
 			store, lease, state, episode, time.Minute, nil,
 		),
 	}
+	ctx.RaylineARCTransaction.commitOnCompletion = true
 	ctx.RaylineARCTransaction.markSelection(1, 123)
 	ctx.RaylineARCTransaction.markPolicyState(
 		turn.Next(ledgerTestMessages, strings.Repeat("a", 64), "arm-b"), false,
@@ -240,5 +241,78 @@ func completeTestResponse(t *testing.T, ctx *RequestContext) {
 	t.Helper()
 	if err := finalizeSelectionCompletion(ctx); err != nil {
 		t.Fatalf("response completion: %v", err)
+	}
+}
+
+// A streamed policy-service turn commits once, at the stream's terminal
+// event, through the real response seams, in each client wire format.
+func TestRaylineARCLedgerStreamCommitsAtTheTerminalEventPerFormat(t *testing.T) {
+	for _, format := range extProcMatrixFormats {
+		t.Run(string(format), func(t *testing.T) {
+			store, episode := newLedgerTestStore(t)
+			runLedgerTestTurn(t, store, episode, func(router *OpenAIRouter, ctx *RequestContext) {
+				ctx.SourceFormat, ctx.TargetFormat = format, format
+				ctx.RequestModel, ctx.TraceContext = "public-model", context.Background()
+				sendHeaders(t, router, ctx, streamingResponseHeaders("200"))
+				payload := extProcStreamFixture(format)
+				half := len(payload) / 2
+				if _, err := router.handleResponseBody(&ext_proc.ProcessingRequest_ResponseBody{
+					ResponseBody: &ext_proc.HttpBody{Body: payload[:half]},
+				}, ctx); err != nil {
+					t.Fatal(err)
+				}
+				if readLedgerTestStateNoWait(store, episode) != nil {
+					t.Fatal("the turn committed mid-stream")
+				}
+				if _, err := router.handleResponseBody(&ext_proc.ProcessingRequest_ResponseBody{
+					ResponseBody: &ext_proc.HttpBody{Body: payload[half:], EndOfStream: true},
+				}, ctx); err != nil {
+					t.Fatal(err)
+				}
+			})
+			state := readLedgerTestState(t, store, episode)
+			if ledgerLength(state) != 1 || state.TurnIndex != 1 {
+				t.Fatalf("%s stream: turn=%d ledger=%d, want 1/1", format, state.TurnIndex, ledgerLength(state))
+			}
+		})
+	}
+}
+
+// A relaxed policy-service turn also commits only once its reply completes.
+func TestRaylineARCRelaxedTurnCommitsOnCompletion(t *testing.T) {
+	store, episode := newLedgerTestStore(t)
+	for _, complete := range []bool{false, true} {
+		state, read, err := store.Snapshot(context.Background(), episode, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		turn, _, _ := raylinearc.PolicyTurn(state.Policy, ledgerTestMessages, ledgerTestRoles, state.TurnIndex, raylinearc.PolicyTurnSignals{})
+		ctx := &RequestContext{
+			Headers:               map[string]string{},
+			RaylineARCTransaction: newRelaxedRaylineARCEpisodeTransaction(store, state, read, episode, false),
+		}
+		ctx.RaylineARCTransaction.commitOnCompletion = true
+		ctx.RaylineARCTransaction.markSelection(1, 123)
+		ctx.RaylineARCTransaction.markPolicyState(turn.Next(ledgerTestMessages, strings.Repeat("a", 64), "arm-b"), false)
+		bindRaylineARCSelectionTransaction(ctx)
+		router := &OpenAIRouter{}
+		sendHeaders(t, router, ctx, streamingResponseHeaders("200"))
+		if after, _, _ := store.Snapshot(context.Background(), episode, 2); after.TurnIndex != 0 {
+			t.Fatal("a relaxed turn committed at its headers")
+		}
+		if complete {
+			completeStream(router, ctx)
+		} else {
+			breakStream(router, ctx)
+		}
+		finalizeSelectionProcessTerminal(ctx)
+		after, _, _ := store.Snapshot(context.Background(), episode, 2)
+		want := uint64(0)
+		if complete {
+			want = 1
+		}
+		if after.TurnIndex != want || (ledgerLength(after) == 1) != complete {
+			t.Fatalf("complete=%v: turn=%d ledger=%d", complete, after.TurnIndex, ledgerLength(after))
+		}
 	}
 }
