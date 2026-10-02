@@ -55,7 +55,9 @@ Provider selection belongs beside each concrete model too, under
 serve that model, and the Router encodes it as OpenRouter's top-level `provider`
 object on an OpenRouter backend only. Set `order` or `only` — the key must name
 at least one provider slug — plus the optional `allow_fallbacks`, `ignore`,
-`require_parameters`, and `data_collection` (`allow` or `deny`). An `order`
+`require_parameters`, `data_collection` (`allow` or `deny`), and `max_price` (a
+map of `prompt`, `completion`, `request` or `image` to a non-negative USD
+ceiling; OpenRouter serves only from providers at or below it). An `order`
 without `allow_fallbacks: false` is a preference rather than a pin: OpenRouter
 may still serve the request from an unlisted provider. See
 [Provider Routing](https://openrouter.ai/docs/features/provider-routing).

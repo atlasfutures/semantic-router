@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -39,7 +40,15 @@ type OpenRouterProviderPreferences struct {
 	Ignore            []string `yaml:"ignore,omitempty" json:"ignore,omitempty"`
 	RequireParameters *bool    `yaml:"require_parameters,omitempty" json:"require_parameters,omitempty"`
 	DataCollection    string   `yaml:"data_collection,omitempty" json:"data_collection,omitempty"`
+	// MaxPrice is the price ceiling the route was vetted and trained under
+	// (USD per million prompt or completion tokens, per request, per image):
+	// OpenRouter serves only from providers at or below it, so a pin without
+	// the arm's ceiling can route to endpoints its training excluded.
+	MaxPrice map[string]float64 `yaml:"max_price,omitempty" json:"max_price,omitempty"`
 }
+
+// providerMaxPriceKeys are the price kinds OpenRouter's max_price accepts.
+var providerMaxPriceKeys = map[string]bool{"prompt": true, "completion": true, "request": true, "image": true}
 
 // validateProviderPreferences refuses a pin the upstream would refuse, at load
 // rather than at dispatch. A cell that starts with an unusable pin serves every
@@ -61,6 +70,15 @@ func validateProviderPreferences(modelName string, preferences *OpenRouterProvid
 	} {
 		if err := validateProviderSlugs(modelName, field, slugs); err != nil {
 			return err
+		}
+	}
+	for kind, ceiling := range preferences.MaxPrice {
+		if !providerMaxPriceKeys[kind] || math.IsNaN(ceiling) || math.IsInf(ceiling, 0) || ceiling < 0 {
+			return fmt.Errorf(
+				"providers.models[%s].provider_preferences.max_price.%s must be prompt, completion, request or image with a non-negative price",
+				modelName,
+				kind,
+			)
 		}
 	}
 	switch preferences.DataCollection {
@@ -115,6 +133,12 @@ func copyProviderPreferences(preferences *OpenRouterProviderPreferences) *OpenRo
 		Ignore:            append([]string(nil), preferences.Ignore...),
 		RequireParameters: copyBool(preferences.RequireParameters),
 		DataCollection:    preferences.DataCollection,
+	}
+	if len(preferences.MaxPrice) > 0 {
+		copied.MaxPrice = make(map[string]float64, len(preferences.MaxPrice))
+		for kind, ceiling := range preferences.MaxPrice {
+			copied.MaxPrice[kind] = ceiling
+		}
 	}
 	return &copied
 }

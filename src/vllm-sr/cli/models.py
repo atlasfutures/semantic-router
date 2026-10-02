@@ -1791,6 +1791,9 @@ class OpenRouterProviderPreferences(BaseModel):
     ignore: Optional[List[str]] = None
     require_parameters: Optional[bool] = None
     data_collection: Optional[Literal["allow", "deny"]] = None
+    # The price ceiling the route was vetted and trained under; mirrors the
+    # Go loader's MaxPrice.
+    max_price: Optional[Dict[str, float]] = None
 
     @model_validator(mode="after")
     def validate_pin(self):
@@ -1805,6 +1808,14 @@ class OpenRouterProviderPreferences(BaseModel):
                     raise ValueError(
                         f"provider_preferences.{field}[{index}] must be a non-empty provider slug"
                     )
+        for kind, ceiling in (self.max_price or {}).items():
+            if kind not in ("prompt", "completion", "request", "image") or not (
+                math.isfinite(ceiling) and ceiling >= 0
+            ):
+                raise ValueError(
+                    f"provider_preferences.max_price.{kind} must be prompt, completion, "
+                    "request or image with a non-negative price"
+                )
         return self
 
 

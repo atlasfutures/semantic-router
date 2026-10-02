@@ -141,8 +141,24 @@ def test_provider_preferences_pin_parses_with_order():
         {"allow_fallbacks": False},
         {"order": [""]},
         {"only": ["deepinfra"], "ignore": ["  "]},
+        {"order": ["deepinfra"], "max_price": {"tokens": 1.0}},
+        {"order": ["deepinfra"], "max_price": {"prompt": -1.0}},
     ],
 )
 def test_provider_preferences_rejects_what_the_router_loader_rejects(preferences):
     with pytest.raises(ValueError):
         UserConfig(**_provider_model(**preferences))
+
+
+def test_provider_preferences_carry_max_price():
+    config = UserConfig(
+        **_provider_model(
+            order=["openai"],
+            allow_fallbacks=False,
+            max_price={"prompt": 0.5, "completion": 1.5},
+        )
+    )
+    assert config.providers.models[0].provider_preferences.max_price == {
+        "prompt": 0.5,
+        "completion": 1.5,
+    }

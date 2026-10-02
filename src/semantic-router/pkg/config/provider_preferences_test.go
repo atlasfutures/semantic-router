@@ -134,6 +134,14 @@ func TestProviderPreferencesRejectsUnusableValues(t *testing.T) {
 			name:        "a data_collection OpenRouter does not define",
 			preferences: OpenRouterProviderPreferences{Order: []string{"deepinfra"}, DataCollection: "maybe"},
 		},
+		{
+			name:        "a max_price kind OpenRouter does not define",
+			preferences: OpenRouterProviderPreferences{Order: []string{"deepinfra"}, MaxPrice: map[string]float64{"tokens": 1}},
+		},
+		{
+			name:        "a negative max_price",
+			preferences: OpenRouterProviderPreferences{Order: []string{"deepinfra"}, MaxPrice: map[string]float64{"prompt": -1}},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
