@@ -27,8 +27,10 @@ type costProbe struct {
 func costProbes() []costProbe {
 	charged, upstream, byok := 0.0012, 0.001, true
 	return []costProbe{
-		{name: "well formed", fragment: `"cost":0.0012,"is_byok":true,"cost_details":{"upstream_inference_cost":0.001}`,
-			charged: &charged, upstream: &upstream, byok: &byok},
+		{
+			name: "well formed", fragment: `"cost":0.0012,"is_byok":true,"cost_details":{"upstream_inference_cost":0.001}`,
+			charged: &charged, upstream: &upstream, byok: &byok,
+		},
 		{name: "cost as string", fragment: `"cost":"0.0012"`},
 		{name: "cost as object", fragment: `"cost":{"amount":0.0012}`},
 		{name: "is_byok as string", fragment: `"is_byok":"false"`},
