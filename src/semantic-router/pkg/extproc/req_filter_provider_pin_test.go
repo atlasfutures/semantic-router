@@ -202,3 +202,15 @@ func providerPinRouter(baseURL string, preferences *config.OpenRouterProviderPre
 	}
 	return &OpenAIRouter{Config: cfg, CredentialResolver: newTestCredentialResolver(cfg)}
 }
+
+// The arm's price ceiling travels in the provider object, verbatim: without
+// it OpenRouter may serve the arm from endpoints its training excluded.
+func TestPinnedArmSendsItsMaxPrice(t *testing.T) {
+	preferences := providerPinPreferences()
+	preferences.MaxPrice = map[string]float64{"prompt": 0.5, "completion": 1.5}
+	raw := providerPinRouteBytes(t, providerPinRouter("https://openrouter.ai/api/v1", preferences))
+	want := `"provider":{"order":["deepinfra","together"],"allow_fallbacks":false,"max_price":{"completion":1.5,"prompt":0.5}}`
+	if !bytes.Contains(raw, []byte(want)) {
+		t.Fatalf("the arm's max_price did not reach the wire:\n%s", raw)
+	}
+}
