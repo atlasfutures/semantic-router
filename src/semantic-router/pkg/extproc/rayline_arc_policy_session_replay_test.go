@@ -35,7 +35,7 @@ import (
 // bytes and answers it either from the script (oracle mode: each call names
 // the action to select) or from a recording of a real service's answers to
 // the same request bytes (playback mode). A playback replay whose every
-// decide request is found, byte for byte and in order, in the recording is
+// decide request is the recording's next one, byte for byte, is
 // the router and the service in closed loop: each answer the router consumed
 // is the one the service gave to that exact request.
 //
@@ -93,7 +93,7 @@ type sessionReplayCall struct {
 		// Decides, when set, is how many decide calls this exchange makes.
 		Decides *int `json:"decides"`
 	} `json:"expect"`
-	ExpectState *sessionReplayState `json:"expect_state"`
+	ExpectState *sessionReplayExpectedState `json:"expect_state"`
 }
 
 type sessionReplayState struct {
@@ -102,6 +102,17 @@ type sessionReplayState struct {
 	Ledger          int    `json:"ledger"`
 	EpochStartTurn  uint64 `json:"epoch_start_turn"`
 	CompactionCount int    `json:"compaction_count"`
+	PreviousArm     *int   `json:"previous_arm"`
+}
+
+// sessionReplayExpectedState is the committed state a call must leave.
+// CompactionCount and PreviousArm are checked only when the script sets them.
+type sessionReplayExpectedState struct {
+	TurnIndex       uint64 `json:"turn_index"`
+	Epoch           int    `json:"epoch"`
+	Ledger          int    `json:"ledger"`
+	EpochStartTurn  uint64 `json:"epoch_start_turn"`
+	CompactionCount *int   `json:"compaction_count"`
 	PreviousArm     *int   `json:"previous_arm"`
 }
 
@@ -273,11 +284,12 @@ func runSessionReplayCall(
 		if result.State == nil {
 			result.Mismatches = append(result.Mismatches, "episode state: none")
 		} else if got := *result.State; got.TurnIndex != want.TurnIndex || got.Epoch != want.Epoch ||
-			got.Ledger != want.Ledger || got.EpochStartTurn != want.EpochStartTurn {
-			result.Mismatches = append(result.Mismatches, fmt.Sprintf(
-				"episode state: got turns %d epoch %d ledger %d epoch start %d, want %d %d %d %d",
-				got.TurnIndex, got.Epoch, got.Ledger, got.EpochStartTurn,
-				want.TurnIndex, want.Epoch, want.Ledger, want.EpochStartTurn))
+			got.Ledger != want.Ledger || got.EpochStartTurn != want.EpochStartTurn ||
+			(want.CompactionCount != nil && got.CompactionCount != *want.CompactionCount) ||
+			(want.PreviousArm != nil && (got.PreviousArm == nil || *got.PreviousArm != *want.PreviousArm)) {
+			gotJSON, _ := json.Marshal(got)
+			wantJSON, _ := json.Marshal(want)
+			result.Mismatches = append(result.Mismatches, fmt.Sprintf("episode state: got %s, want %s", gotJSON, wantJSON))
 		}
 	}
 	return result
@@ -415,8 +427,10 @@ type sessionReplayService struct {
 	mu       sync.Mutex
 	current  sessionReplayCall
 	captured []sessionReplayExchange
-	// recorded holds, per request bytes, the recorded answers in order.
-	recorded  map[string][]sessionReplayExchange
+	// recorded is the recording in its global order, and next the index of
+	// the exchange the next decide request must match.
+	recorded  []sessionReplayExchange
+	next      int
 	unmatched int
 }
 
@@ -427,7 +441,7 @@ func newSessionReplayService(t *testing.T, spec sessionReplaySpec) *sessionRepla
 		listing: &fakePolicyService{t: t, alias: spec.Alias, sha256: spec.PackageSHA256, catalog: spec.Catalog},
 	}
 	if spec.Playback != "" {
-		service.recorded = map[string][]sessionReplayExchange{}
+		service.recorded = []sessionReplayExchange{}
 		file, err := os.Open(spec.Playback)
 		if err != nil {
 			t.Fatal(err)
@@ -440,7 +454,7 @@ func newSessionReplayService(t *testing.T, spec sessionReplaySpec) *sessionRepla
 			if err := json.Unmarshal(scanner.Bytes(), &exchange); err != nil {
 				t.Fatal(err)
 			}
-			service.recorded[exchange.Request] = append(service.recorded[exchange.Request], exchange)
+			service.recorded = append(service.recorded, exchange)
 		}
 		if err := scanner.Err(); err != nil {
 			t.Fatal(err)
@@ -477,11 +491,7 @@ func (service *sessionReplayService) unmatchedCount() int {
 func (service *sessionReplayService) unusedCount() int {
 	service.mu.Lock()
 	defer service.mu.Unlock()
-	left := 0
-	for _, exchanges := range service.recorded {
-		left += len(exchanges)
-	}
-	return left
+	return len(service.recorded) - service.next
 }
 
 func (service *sessionReplayService) serve(writer http.ResponseWriter, request *http.Request) {
@@ -497,9 +507,11 @@ func (service *sessionReplayService) serve(writer http.ResponseWriter, request *
 	exchange := sessionReplayExchange{Request: string(body)}
 	service.mu.Lock()
 	if service.recorded != nil {
-		if queue := service.recorded[exchange.Request]; len(queue) > 0 {
-			exchange.Status, exchange.Response = queue[0].Status, queue[0].Response
-			service.recorded[exchange.Request] = queue[1:]
+		// Playback is ordered: a request must be the recording's next one, so
+		// a router that sends the same requests in another order diverges.
+		if service.next < len(service.recorded) && service.recorded[service.next].Request == exchange.Request {
+			exchange.Status, exchange.Response = service.recorded[service.next].Status, service.recorded[service.next].Response
+			service.next++
 		} else {
 			exchange.Unmatched = true
 			exchange.Status = http.StatusServiceUnavailable
