@@ -49,6 +49,9 @@ type fakePolicyService struct {
 	// ignoreEpisodeMode answers a relaxed decide as a strict one, with a
 	// session revision, as a service that predates episode_mode.
 	ignoreEpisodeMode bool
+	// verification, when set, is reported on the packages listing and on
+	// every decide response, as a service from pathfinder#3120 on.
+	verification raylinearc.PolicyVerification
 	// barrier, when set, holds each decide call until that many are in
 	// flight at once (or it times out), and inflight/maxInflight count them.
 	barrier     int
@@ -193,6 +196,9 @@ func (fake *fakePolicyService) packages() raylinearc.PolicyPackagesResponse {
 		return listing
 	}
 	listing.Packages[0].Alias, listing.Packages[0].PackageSHA256 = fake.alias, fake.sha256
+	fake.mu.Lock()
+	listing.Packages[0].Verification = fake.verification
+	fake.mu.Unlock()
 	return listing
 }
 
@@ -208,6 +214,7 @@ func (fake *fakePolicyService) decision(request raylinearc.PolicyDecisionRequest
 		response.TimingMillis.Encode = nil
 	}
 	nullRevision, ignoreEpisodeMode := fake.nullRevision, fake.ignoreEpisodeMode
+	response.PackageVerification = fake.verification
 	fake.mu.Unlock()
 	response.Shadow = []raylinearc.PolicyShadowResult{}
 	available := make(map[string]bool, len(request.Selection.AvailableActionIDs))
