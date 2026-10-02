@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	"os"
 	"path/filepath"
 	"strings"
@@ -314,6 +315,29 @@ func TestRaylineARCTurnSignalHeadersAreNotForwarded(t *testing.T) {
 	for _, name := range []string{raylineARCCallKindHeader, raylineARCCompactionHeader} {
 		if !strings.Contains(removed, name) {
 			t.Fatalf("routed removal list %q does not strip %s", removed, name)
+		}
+	}
+}
+
+// The turn-signal headers are stripped at the request headers too, so a
+// request that opts out of processing does not forward them either.
+func TestRaylineARCTurnSignalHeadersAreStrippedAtTheRequestHeaders(t *testing.T) {
+	for _, skip := range []string{"true", "false"} {
+		router := newRouterWithSkipProcessingGate(true)
+		ctx := &RequestContext{Headers: make(map[string]string)}
+		request := newSkipProcessingRequestHeaders("POST", "/v1/chat/completions", skip)
+		request.RequestHeaders.Headers.Headers = append(request.RequestHeaders.Headers.Headers,
+			&core.HeaderValue{Key: raylineARCCallKindHeader, Value: "side"},
+			&core.HeaderValue{Key: raylineARCCompactionHeader, Value: "2"})
+		response, err := router.handleRequestHeaders(request, ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		removed := strings.Join(response.GetRequestHeaders().GetResponse().GetHeaderMutation().GetRemoveHeaders(), ",")
+		for _, name := range raylineARCTurnSignalHeadersForRemoval() {
+			if !strings.Contains(removed, name) {
+				t.Fatalf("skip-processing=%s: header removals %q do not strip %s", skip, removed, name)
+			}
 		}
 	}
 }

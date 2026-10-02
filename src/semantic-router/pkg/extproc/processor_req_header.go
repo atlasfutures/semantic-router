@@ -200,7 +200,7 @@ func buildIdentityEncodingRequestMutation() *ext_proc.HeaderMutation {
 				Value: "identity",
 			},
 		}},
-		RemoveHeaders: looperInternalHeadersForRemoval(),
+		RemoveHeaders: requestHeaderPhaseRemovals(),
 	}
 }
 

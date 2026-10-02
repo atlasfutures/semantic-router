@@ -372,3 +372,62 @@ func TestRaylineARCLedgerCommitsOnlyAfterTheFinalSend(t *testing.T) {
 		})
 	}
 }
+
+// failingSendStream fails its failOn-th Send (1-based) and accepts the rest.
+type failingSendStream struct {
+	*MockStream
+	sends  int
+	failOn int
+}
+
+func (stream *failingSendStream) Send(response *ext_proc.ProcessingResponse) error {
+	stream.sends++
+	if stream.sends == stream.failOn {
+		return errors.New("ext_proc stream cancelled")
+	}
+	return stream.MockStream.Send(response)
+}
+
+// A full-duplex response that ends at its trailers completes only when the
+// trailers reply is sent: the body frame before it is not terminal. A failed
+// trailers send records nothing, and the retry leaves exactly one entry.
+func TestRaylineARCLedgerCommitsOnlyAfterTheTrailersReply(t *testing.T) {
+	store, episode := newLedgerTestStore(t)
+	attempt := func(failTrailers bool) error {
+		var processErr error
+		runLedgerTestTurn(t, store, episode, func(router *OpenAIRouter, ctx *RequestContext) {
+			ctx.SourceFormat, ctx.TargetFormat = llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1
+			ctx.RequestModel, ctx.TraceContext = "public-model", context.Background()
+			ctx.FullDuplexResponseBody = true
+			sendHeaders(t, router, ctx, arcResponseHeaders("200"))
+			stream := &failingSendStream{MockStream: NewMockStream(nil)}
+			if failTrailers {
+				stream.failOn = 3 // held body chunk, final body frame, trailers reply
+			}
+			if err := router.processResponseBody(stream, &ext_proc.ProcessingRequest_ResponseBody{
+				ResponseBody: &ext_proc.HttpBody{Body: []byte(arcCacheTestCompletion)},
+			}, ctx); err != nil {
+				t.Fatal(err)
+			}
+			processErr = router.processResponseTrailers(stream, &ext_proc.ProcessingRequest_ResponseTrailers{}, ctx)
+			if !failTrailers && stream.sends != 3 {
+				t.Fatalf("sends = %d, want the held chunk, the body at the trailers and the trailers reply", stream.sends)
+			}
+		})
+		return processErr
+	}
+	if err := attempt(true); err == nil {
+		t.Fatal("a failed trailers send was not reported")
+	}
+	state := readLedgerTestStateNoWait(store, episode)
+	if state == nil || ledgerLength(state) != 0 || state.TurnIndex != 0 {
+		t.Fatalf("a turn whose trailers send failed committed or kept its lease: %+v", state)
+	}
+	if err := attempt(false); err != nil {
+		t.Fatal(err)
+	}
+	state = readLedgerTestState(t, store, episode)
+	if ledgerLength(state) != 1 || state.TurnIndex != 1 {
+		t.Fatalf("after the retry: turn=%d ledger=%d, want 1/1", state.TurnIndex, ledgerLength(state))
+	}
+}
