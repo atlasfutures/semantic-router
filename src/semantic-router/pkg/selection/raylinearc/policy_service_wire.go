@@ -99,9 +99,23 @@ type policyResponsesRequestWire struct {
 // Responses, messages otherwise.
 func (request PolicyClientRequest) MarshalJSON() ([]byte, error) {
 	if request.Input != nil {
-		return json.Marshal(policyResponsesRequestWire{Input: request.Input, Instructions: request.Instructions})
+		return marshalUnescaped(policyResponsesRequestWire{Input: request.Input, Instructions: request.Instructions})
 	}
-	return json.Marshal(policyChatRequestWire{System: request.System, Tools: request.Tools, Messages: request.Messages})
+	return marshalUnescaped(policyChatRequestWire{System: request.System, Tools: request.Tools, Messages: request.Messages})
+}
+
+// marshalUnescaped is json.Marshal without HTML escaping. json.Marshal
+// rewrites '<', '>' and '&' inside a json.RawMessage as \u003c, \u003e and
+// \u0026, so the client's bytes, which Claude Code fills with
+// <system-reminder> blocks, would reach the service rewritten.
+func marshalUnescaped(value any) ([]byte, error) {
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buffer.Bytes(), []byte("\n")), nil
 }
 
 // UnmarshalJSON reads either shape strictly: a request with input carries
