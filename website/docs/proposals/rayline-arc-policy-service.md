@@ -258,17 +258,28 @@ headers, the router classifies a request from harness literals in its body:
 Claude Code's subagent flag, session-title prompt and summarization
 directive, and codex's compaction directive and post-compaction summary.
 
-`trust_turn_signal_headers` (default false) makes the router read two
-headers instead:
+`trust_turn_signal_headers` (default false) makes the router read headers
+a gateway sets instead:
 
 - `x-rayline-call-kind: main | side`
 - `x-rayline-compaction: <ordinal>`, the positive ordinal of the compaction
   this request is the first request after.
+- `x-rayline-agent-key-source: agent | role | task`, how the gateway keyed a
+  harness subagent's episode (`episode.id_header`).
+- `x-rayline-parent-session` and `x-rayline-parent-agent`, the episode id and
+  agent id of the conversation a subagent was spawned from.
 
-Set it only when a gateway in front of the router sets both headers, or
-strips them from client requests. Otherwise a client could mark its own
-turns as side calls, which are not counted, or as compactions. With the
-setting off, the headers are ignored. Either way, neither header is
+A subagent the gateway keyed on its harness agent id (`agent`) is its own
+conversation: a main turn of its own episode, with its own ledger, schedule
+and decisions. Keyed any other way, or with no key source, it stays a side
+call of the episode it arrived on, and its key source is logged as
+`unknown`. The parent link is logged (hashed) on `rayline_arc_policy_turn`
+as metadata; nothing routes on it.
+
+Set the option only when a gateway in front of the router sets these
+headers, or strips them from client requests. Otherwise a client could mark
+its own turns as side calls, which are not counted, or as compactions. With
+the setting off, the headers are ignored. Either way, none of them is
 forwarded to a provider.
 
 ## Open questions

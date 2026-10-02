@@ -37,6 +37,16 @@ const (
 	// this request is the first request after. A repeated ordinal is a
 	// repeat, not a new compaction.
 	raylineARCCompactionHeader = "x-rayline-compaction"
+	// raylineARCAgentKeySourceHeader says how the gateway keyed a harness
+	// subagent's episode (x-rayline-session): "agent" when on the harness's
+	// agent id, otherwise "role" or "task". Only "agent" is an identity, so
+	// only it makes the subagent its own episode.
+	raylineARCAgentKeySourceHeader = "x-rayline-agent-key-source"
+	// raylineARCParentSessionHeader and raylineARCParentAgentHeader name the
+	// conversation a subagent was spawned from: its episode id and the
+	// parent's agent id. Recorded as metadata only.
+	raylineARCParentSessionHeader = "x-rayline-parent-session"
+	raylineARCParentAgentHeader   = "x-rayline-parent-agent"
 )
 
 // raylineARCTrustedSignalHeaders returns the turn-signal headers this cell
@@ -49,22 +59,29 @@ func raylineARCTrustedSignalHeaders(
 	if policy == nil || !policy.TrustTurnSignalHeaders {
 		return map[string]string{}
 	}
-	return map[string]string{
-		raylineARCCallKindHeader:   requestHeaders[raylineARCCallKindHeader],
-		raylineARCCompactionHeader: requestHeaders[raylineARCCompactionHeader],
+	trusted := map[string]string{}
+	for _, header := range raylineARCTurnSignalHeadersForRemoval() {
+		trusted[header] = requestHeaders[header]
 	}
+	return trusted
 }
 
 // raylineARCTurnSignalHeadersForRemoval are never forwarded upstream: they
 // speak to this router, not to a provider.
 func raylineARCTurnSignalHeadersForRemoval() []string {
-	return []string{raylineARCCallKindHeader, raylineARCCompactionHeader}
+	return []string{
+		raylineARCCallKindHeader, raylineARCCompactionHeader,
+		raylineARCAgentKeySourceHeader, raylineARCParentSessionHeader, raylineARCParentAgentHeader,
+	}
 }
 
 // Sources a call kind can come from, as logged.
 const (
 	callKindSourceHeader             = "header"
 	callKindSourceClaudeSubagent     = "claude_code_subagent"
+	callKindSourceClaudeSubagentOwn  = "claude_code_subagent_own_episode"
+	callKindSourceGatewaySubagentOwn = "gateway_subagent_own_episode"
+	callKindSourceGatewaySubagent    = "gateway_subagent_shared_key"
 	callKindSourceClaudeCompactionRq = "claude_code_compaction_request"
 	callKindSourceClaudeTitle        = "claude_code_title"
 	callKindSourceCodexCompactionRq  = "codex_compaction_request"
@@ -102,7 +119,30 @@ func raylineARCPolicyTurnSignals(
 	if compaction.Ordinal > 0 || compaction.SummaryDigest != "" {
 		signals.Compaction = &compaction
 	}
+	// A subagent's link is recorded whenever the gateway keyed one (any
+	// harness: codex subagents are keyed on their own thread id) or Claude
+	// Code declared one in its billing block.
+	if strings.TrimSpace(headers[raylineARCAgentKeySourceHeader]) != "" ||
+		(format == policyFormatAnthropic && raylinearc.ClaudeCodeSubagentClaim(request.System)) {
+		signals.Subagent = raylineARCSubagentSignal(headers)
+	}
 	return signals
+}
+
+// raylineARCSubagentSignal reads how a subagent was keyed and what spawned it.
+func raylineARCSubagentSignal(headers map[string]string) *raylinearc.PolicySubagentSignal {
+	signal := &raylinearc.PolicySubagentSignal{KeySource: "unknown"}
+	switch source := strings.TrimSpace(headers[raylineARCAgentKeySourceHeader]); source {
+	case raylinearc.SubagentKeySourceAgent, "role", "task":
+		signal.KeySource = source
+	}
+	if parent := strings.TrimSpace(headers[raylineARCParentSessionHeader]); parent != "" {
+		signal.ParentEpisodeIDHash = raylinearc.HashEpisodeID(parent)
+	}
+	if agent := strings.TrimSpace(headers[raylineARCParentAgentHeader]); agent != "" {
+		signal.ParentAgentIDHash = raylinearc.HashEpisodeID(agent)
+	}
+	return signal
 }
 
 // raylineARCPolicyCallKind classifies a request as a main turn or a side
@@ -126,17 +166,37 @@ func raylineARCPolicyCallKind(
 	switch format {
 	case policyFormatAnthropic:
 		switch {
-		case raylinearc.ClaudeCodeSubagentClaim(system):
-			return raylinearc.PolicyCallSide, callKindSourceClaudeSubagent
+		// A subagent's own title and compaction helpers stay side calls
+		// whatever spawned them; only a subagent's conversation turn is
+		// promoted to its own episode.
 		case raylinearc.IsClaudeCodeTitleRequest(system):
 			return raylinearc.PolicyCallSide, callKindSourceClaudeTitle
 		case raylinearc.IsClaudeCodeCompactionRequest(messages):
 			return raylinearc.PolicyCallSide, callKindSourceClaudeCompactionRq
+		case raylinearc.ClaudeCodeSubagentClaim(system):
+			// A subagent keyed on its own agent id is its own conversation:
+			// a main turn of its own episode, deciding its own model and
+			// level. Keyed any other way (a role, a task digest, nothing)
+			// it is not an identity, so it stays a side call as before.
+			if strings.TrimSpace(headers[raylineARCAgentKeySourceHeader]) == raylinearc.SubagentKeySourceAgent {
+				return raylinearc.PolicyCallMain, callKindSourceClaudeSubagentOwn
+			}
+			return raylinearc.PolicyCallSide, callKindSourceClaudeSubagent
 		}
 	case policyFormatResponses:
 		if raylinearc.IsCodexCompactionRequest(input) {
 			return raylinearc.PolicyCallSide, callKindSourceCodexCompactionRq
 		}
+	}
+	// A subagent the gateway keyed without a harness body claim (codex): on
+	// its agent id it is its own episode's main turn; on a role or a task
+	// digest, which several subagents can share, it is a side call, so no
+	// shared episode advances on it.
+	switch strings.TrimSpace(headers[raylineARCAgentKeySourceHeader]) {
+	case raylinearc.SubagentKeySourceAgent:
+		return raylinearc.PolicyCallMain, callKindSourceGatewaySubagentOwn
+	case "role", "task":
+		return raylinearc.PolicyCallSide, callKindSourceGatewaySubagent
 	}
 	return raylinearc.PolicyCallUnknown, ""
 }
@@ -193,7 +253,7 @@ func logRaylineARCPolicyTurn(
 	held bool,
 	boundaryRetained bool,
 ) {
-	logging.ComponentEvent("extproc", "rayline_arc_policy_turn", map[string]interface{}{
+	fields := map[string]interface{}{
 		"episode_id_hash":   episodeIDHash,
 		"call_kind":         string(signals.CallKind),
 		"call_kind_source":  signals.CallKindSource,
@@ -204,5 +264,11 @@ func logRaylineARCPolicyTurn(
 		"context_epoch":     turn.Epoch,
 		"model_held":        held,
 		"boundary_retained": boundaryRetained,
-	})
+	}
+	if subagent := signals.Subagent; subagent != nil {
+		fields["subagent_key_source"] = subagent.KeySource
+		fields["parent_episode_id_hash"] = subagent.ParentEpisodeIDHash
+		fields["parent_agent_id_hash"] = subagent.ParentAgentIDHash
+	}
+	logging.ComponentEvent("extproc", "rayline_arc_policy_turn", fields)
 }

@@ -92,7 +92,7 @@ func raylineARCTurnInputs(
 		eligibility = strings.TrimSpace(reqCtx.Headers[lever.EligibilityHeader])
 	}
 	return fmt.Sprintf(
-		"decision=%p|format=%s|close=%t|eligible=%q|fault=%s|credentials=%s|call_kind=%q|compaction=%q",
+		"decision=%p|format=%s|close=%t|eligible=%q|fault=%s|credentials=%s|call_kind=%q|compaction=%q|agent_key_source=%q",
 		arcConfig,
 		reqCtx.SourceFormat,
 		reqCtx.RaylineARCCloseRequested,
@@ -101,6 +101,10 @@ func raylineARCTurnInputs(
 		raylineARCCredentialDigest(reqCtx.Headers, credentialHeaders),
 		strings.TrimSpace(reqCtx.Headers[raylineARCCallKindHeader]),
 		strings.TrimSpace(reqCtx.Headers[raylineARCCompactionHeader]),
+		// The key source decides whether a subagent is a main turn of its
+		// own episode or a side call, so two requests that differ in it are
+		// different turns.
+		strings.TrimSpace(reqCtx.Headers[raylineARCAgentKeySourceHeader]),
 	)
 }
 

@@ -358,3 +358,17 @@ func TestCoalescingKeyHoldsNoCredential(t *testing.T) {
 		t.Fatalf("coalescing key leaks the credential: %s", inputs)
 	}
 }
+
+// Two otherwise identical requests that the gateway keyed differently are
+// different turns: one may be a subagent's own main turn, the other a side
+// call, so neither joins the other's decision.
+func TestCoalescingKeySeparatesSubagentKeySources(t *testing.T) {
+	config := raylineARCAlgorithmConfigForTest().RaylineARC
+	agent := coalesceRequestContext(`{"turn":1}`)
+	agent.Headers[raylineARCAgentKeySourceHeader] = "agent"
+	task := coalesceRequestContext(`{"turn":1}`)
+	task.Headers[raylineARCAgentKeySourceHeader] = "task"
+	if raylineARCTurnInputs(config, agent, nil) == raylineARCTurnInputs(config, task, nil) {
+		t.Fatal("requests keyed by agent and by task share a coalescing identity")
+	}
+}
