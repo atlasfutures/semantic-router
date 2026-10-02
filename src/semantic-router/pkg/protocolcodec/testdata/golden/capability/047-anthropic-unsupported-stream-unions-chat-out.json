@@ -31,16 +31,6 @@
       }
     },
     {
-      "name": "content_block:redacted_thinking",
-      "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_content"
-        }
-      }
-    },
-    {
       "name": "content_block:text_editor_code_execution_tool_result",
       "outcome": {
         "status": "error",

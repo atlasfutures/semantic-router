@@ -21,6 +21,17 @@ func anthropicServerToolBlock(typeName string) bool {
 	return typeName == "server_tool_use" || typeName == "web_search_tool_result"
 }
 
+// anthropicCarriedResponseBlock reports whether a provider block is carried
+// whole rather than modelled: a server web search block, or a
+// redacted_thinking block. OpenRouter's Messages surface returns the latter
+// for a model whose reasoning is encrypted (gpt-5.x); refusing it failed the
+// whole billed turn. An Anthropic client gets it back exactly as sent, so the
+// conversation can resend it; any other client has nowhere to show opaque
+// reasoning and drops it.
+func anthropicCarriedResponseBlock(typeName string) bool {
+	return anthropicServerToolBlock(typeName) || typeName == "redacted_thinking"
+}
+
 type anthropicWebSearchCitationWire struct {
 	Type  string `json:"type"`
 	URL   string `json:"url"`
@@ -145,7 +156,7 @@ func withoutForeignServerToolOutput(output []llmprotocol.OutputItem) []llmprotoc
 		dropped := false
 		for _, content := range item.Content {
 			if block := content.Unmodeled; content.Kind == llmprotocol.ContentUnmodeled && block != nil &&
-				block.Format == llmprotocol.AnthropicMessagesV1 && anthropicServerToolBlock(block.Type) {
+				block.Format == llmprotocol.AnthropicMessagesV1 && anthropicCarriedResponseBlock(block.Type) {
 				dropped = true
 				continue
 			}
@@ -311,7 +322,7 @@ func (decoder *anthropicStreamDecoder) decodeAnthropicWebSearchEvent(
 	index := anthropicEventIndex(wire)
 	switch wire.Type {
 	case "content_block_start":
-		if wire.ContentBlock == nil || !anthropicServerToolBlock(wire.ContentBlock.Type) {
+		if wire.ContentBlock == nil || !anthropicCarriedResponseBlock(wire.ContentBlock.Type) {
 			return nil, false, nil
 		}
 		var frame struct {
@@ -423,11 +434,11 @@ func (decoder *anthropicStreamDecoder) releaseAnthropicCitations(index int) ([]l
 	return append(events, completed...), true, err
 }
 
-// carriedAnthropicServerBlock returns the carried Anthropic web search block a
-// content holds, or nil.
+// carriedAnthropicServerBlock returns the carried whole Anthropic block a
+// content holds (a web search block or redacted_thinking), or nil.
 func carriedAnthropicServerBlock(content *llmprotocol.Content) *llmprotocol.UnmodeledBlock {
 	if content == nil || content.Kind != llmprotocol.ContentUnmodeled || content.Unmodeled == nil ||
-		content.Unmodeled.Format != llmprotocol.AnthropicMessagesV1 || !anthropicServerToolBlock(content.Unmodeled.Type) {
+		content.Unmodeled.Format != llmprotocol.AnthropicMessagesV1 || !anthropicCarriedResponseBlock(content.Unmodeled.Type) {
 		return nil
 	}
 	return content.Unmodeled

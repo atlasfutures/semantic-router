@@ -140,10 +140,8 @@ func anthropicResponseContentType(body json.RawMessage) (string, error) {
 		return "", err
 	}
 	switch typeName {
-	case "text", "thinking", "tool_use", "server_tool_use", "web_search_tool_result":
+	case "text", "thinking", "tool_use", "server_tool_use", "web_search_tool_result", "redacted_thinking":
 		return typeName, nil
-	case "redacted_thinking":
-		return "", llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "redacted_reasoning", "redacted reasoning cannot be translated", nil)
 	default:
 		return "", llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_content", "Anthropic response content type is unsupported", nil)
 	}

@@ -490,6 +490,10 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesItem(
 	event llmprotocol.Event,
 ) ([][]byte, llmprotocol.Diagnostics, error) {
 	if carried := carriedAnthropicServerBlock(event.Content); carried != nil {
+		// Opaque reasoning has no Responses item a client could resend.
+		if carried.Type == "redacted_thinking" {
+			return nil, nil, nil
+		}
 		return encoder.encodeResponsesAnthropicWebSearch(event, carried)
 	}
 	var frames [][]byte

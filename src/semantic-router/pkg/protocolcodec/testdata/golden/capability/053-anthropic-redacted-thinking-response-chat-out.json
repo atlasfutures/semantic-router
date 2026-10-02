@@ -1,0 +1,30 @@
+{
+  "status": "ok",
+  "body": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "message": {
+          "content": "final answer",
+          "role": "assistant"
+        }
+      }
+    ],
+    "created": 0,
+    "id": "message_1",
+    "model": "routed-model",
+    "object": "chat.completion",
+    "usage": {
+      "completion_tokens": 3,
+      "completion_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "prompt_tokens": 4,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "total_tokens": 7
+    }
+  }
+}
