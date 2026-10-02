@@ -265,9 +265,14 @@ func runSessionReplayCall(
 	result.State = readSessionReplayState(t, router, call.Episode, spec.Workers)
 
 	if expect := call.Expect; expect != nil {
-		if expect.Decides != nil && len(result.Decides) != *expect.Decides {
+		switch {
+		case expect.Decides != nil && len(result.Decides) != *expect.Decides:
 			result.Mismatches = append(result.Mismatches,
 				fmt.Sprintf("decide calls: got %d, want %d", len(result.Decides), *expect.Decides))
+		case expect.Decides == nil && len(result.Decides) == 0:
+			// Expected inputs with no decide call to compare them against is a
+			// failure, not a pass; a script that means zero calls says so.
+			result.Mismatches = append(result.Mismatches, "decide calls: none, but the call expects decide inputs")
 		}
 		if len(result.Decides) > 0 {
 			var sent raylinearc.PolicyDecisionRequest
