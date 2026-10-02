@@ -15,13 +15,15 @@ var officialAnthropicStreamEvents = fields(
 	"message_delta", "message_start", "message_stop", "ping",
 )
 
-// server_tool_use and web_search_tool_result are carried whole: see
-// anthropic_web_search.go.
-var officialSupportedAnthropicStreamContentBlocks = fields("server_tool_use", "text", "thinking", "tool_use", "web_search_tool_result")
+// server_tool_use, web_search_tool_result and redacted_thinking are carried
+// whole: see anthropic_web_search.go.
+var officialSupportedAnthropicStreamContentBlocks = fields(
+	"redacted_thinking", "server_tool_use", "text", "thinking", "tool_use", "web_search_tool_result",
+)
 
 var officialUnsupportedAnthropicStreamContentBlocks = fields(
 	"bash_code_execution_tool_result", "code_execution_tool_result", "container_upload",
-	"redacted_thinking", "text_editor_code_execution_tool_result",
+	"text_editor_code_execution_tool_result",
 	"tool_search_tool_result", "web_fetch_tool_result",
 )
 
@@ -106,14 +108,6 @@ type unsupportedAnthropicStreamCase struct {
 
 func officialUnsupportedAnthropicStreamCases() []unsupportedAnthropicStreamCase {
 	return []unsupportedAnthropicStreamCase{
-		{
-			name: "redacted thinking block",
-			event: map[string]any{
-				"type": "content_block_start", "index": 0,
-				"content_block": map[string]any{"type": "redacted_thinking", "data": "opaque"},
-			},
-			code: "unsupported_content",
-		},
 		{
 			name: "web fetch result block",
 			event: map[string]any{

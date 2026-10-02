@@ -593,12 +593,14 @@ func TestOfficialAnthropicContentBlockUnionsAreClosed(t *testing.T) {
 		"web_fetch_tool_result", "web_search_tool_result",
 	)
 	requestUnsupported := requestCarried
-	// server_tool_use and web_search_tool_result are carried whole: see
-	// anthropic_web_search.go.
-	responseSupported := fields("server_tool_use", "text", "thinking", "tool_use", "web_search_tool_result")
+	// server_tool_use, web_search_tool_result and redacted_thinking are
+	// carried whole: see anthropic_web_search.go.
+	responseSupported := fields(
+		"redacted_thinking", "server_tool_use", "text", "thinking", "tool_use", "web_search_tool_result",
+	)
 	responseUnsupported := fields(
 		"bash_code_execution_tool_result", "code_execution_tool_result", "container_upload",
-		"redacted_thinking", "text_editor_code_execution_tool_result",
+		"text_editor_code_execution_tool_result",
 		"tool_search_tool_result", "web_fetch_tool_result",
 	)
 	assertClosedDiscriminatorInventory(t, "Anthropic request content block", 16, requestSupported, requestUnsupported)

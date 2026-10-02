@@ -47,6 +47,7 @@
         "capability/043-anthropic-nested-request-fields-in.json",
         "capability/044-anthropic-nested-response-fields-in.json",
         "capability/047-anthropic-unsupported-stream-unions-in.json",
+        "capability/053-anthropic-redacted-thinking-response-in.json",
         "request/006-anthropic-tool-lifecycle-in.json",
         "request/009-anthropic-ordered-multimodal-in.json",
         "request/018-anthropic-tool-caller-in.json",
