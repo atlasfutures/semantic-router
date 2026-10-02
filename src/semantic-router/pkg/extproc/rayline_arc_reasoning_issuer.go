@@ -108,3 +108,39 @@ func encryptedReasoningDropReason(previous []string, issuer string, issues bool)
 		return "issuer_other_target"
 	}
 }
+
+// dropRaylineARCOpaqueReasoningIssuedElsewhere drops the opaque reasoning
+// (Anthropic-format redacted_thinking) in a request's history that the
+// episode recorded as issued by a worker other than this dispatch's. Such a
+// block is readable only by its issuer, so a conversation the policy moved
+// from, say, gpt-5.x to another Messages worker would otherwise fail its
+// turn. Blocks with no record, and every block on a route with no episode,
+// are left as the client sent them. It also notes the dispatch's worker so
+// the turn records which worker issued its own blocks.
+func (r *OpenAIRouter) dropRaylineARCOpaqueReasoningIssuedElsewhere(
+	request *llmprotocol.Request,
+	dispatch *providerDispatch,
+	ctx *RequestContext,
+) bool {
+	if request == nil || dispatch == nil || ctx == nil || ctx.RaylineARCTransaction == nil {
+		return false
+	}
+	transaction := ctx.RaylineARCTransaction
+	transaction.dispatchWorker = dispatch.logicalModel
+	if transaction.state == nil || len(transaction.state.ReasoningProvenance) == 0 {
+		return false
+	}
+	provenance := transaction.state.ReasoningProvenance
+	dropped := protocolcodec.DropOpaqueReasoning(request, func(data string) bool {
+		return raylinearc.ReasoningIssuedElsewhere(provenance, data, dispatch.logicalModel)
+	})
+	if dropped == 0 {
+		return false
+	}
+	logging.ComponentEvent("extproc", "rayline_arc_opaque_reasoning_dropped", map[string]interface{}{
+		"request_id": ctx.RequestID,
+		"worker":     dispatch.logicalModel,
+		"dropped":    dropped,
+	})
+	return true
+}

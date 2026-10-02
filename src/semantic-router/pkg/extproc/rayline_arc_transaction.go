@@ -25,6 +25,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
@@ -62,6 +63,11 @@ type raylineARCEpisodeTransaction struct {
 	// thinkingLedger is the lever ledger this turn staged, committed only
 	// with the turn; nil leaves the stored ledger as it was.
 	thinkingLedger *thinkinglever.Ledger
+	// dispatchWorker is the worker this turn was dispatched to, and
+	// opaqueReasoning the opaque reasoning blocks its response held; both
+	// record, with the turn, which worker issued each block.
+	dispatchWorker  string
+	opaqueReasoning []string
 	// upstreamPrefix is this turn's body shape, committed only with the turn.
 	upstreamPrefix *raylinearc.UpstreamPrefix
 	// controlPlacement is the thinking-control placer this turn advanced,
@@ -393,6 +399,7 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 	if transaction == nil {
 		return nil
 	}
+	transaction.observeOpaqueReasoning(requestContext)
 	transaction.finalizeOnce.Do(func() {
 		defer transaction.releaseHold()
 		if transaction.borrowed {
@@ -514,6 +521,11 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 	}
 	if transaction.controlPlacement != nil {
 		nextState.Controls = raylinearc.WithControlPlacement(nextState.Controls, *transaction.controlPlacement)
+	}
+	if len(transaction.opaqueReasoning) > 0 && transaction.dispatchWorker != "" {
+		nextState.ReasoningProvenance = raylinearc.WithReasoningProvenance(
+			nextState.ReasoningProvenance, transaction.dispatchWorker, transaction.opaqueReasoning,
+		)
 	}
 	if transaction.reasoningIssuersStaged {
 		nextState.ReasoningIssuers = append([]string(nil), transaction.reasoningIssuers...)
@@ -696,6 +708,7 @@ func cloneARCState(
 		Upstream:             append([]raylinearc.UpstreamPrefix(nil), state.Upstream...),
 		Controls:             raylinearc.CloneControlPlacements(state.Controls),
 		ReasoningIssuers:     append([]string(nil), state.ReasoningIssuers...),
+		ReasoningProvenance:  append([]raylinearc.ReasoningProvenance(nil), state.ReasoningProvenance...),
 		PolicyBoundary:       raylinearc.ClonePolicyBoundary(state.PolicyBoundary),
 	}
 	if state.PreviousArm != nil {
@@ -750,4 +763,14 @@ func arcTurnIndexForTelemetry(value uint64) int {
 		return int(maximum) // #nosec G115 -- maximum is the platform int bound.
 	}
 	return int(value) // #nosec G115 -- value is bounded above by maximum.
+}
+
+// observeOpaqueReasoning records the opaque reasoning blocks this turn's
+// response held, read from the response decoded for the client. A turn that
+// commits at its headers has none decoded yet and records nothing.
+func (transaction *raylineARCEpisodeTransaction) observeOpaqueReasoning(requestContext *RequestContext) {
+	if transaction == nil || requestContext == nil || requestContext.SemanticResponse == nil {
+		return
+	}
+	transaction.opaqueReasoning = protocolcodec.ResponseOpaqueReasoning(requestContext.SemanticResponse)
 }
