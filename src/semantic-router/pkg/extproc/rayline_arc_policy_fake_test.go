@@ -35,7 +35,10 @@ type fakePolicyService struct {
 	cold     atomic.Bool
 	choose   func(raylinearc.PolicyDecisionRequest) string
 	failWith string
-	requests []raylinearc.PolicyDecisionRequest
+	// failFirst answers the next failFirstLeft decide calls with this code.
+	failFirst     string
+	failFirstLeft int
+	requests      []raylinearc.PolicyDecisionRequest
 	// relaxedUnsupported, when set, answers every relaxed decide with 422
 	// unsupported_request and this detail.reason, as a service whose
 	// package cannot serve relaxed calls.
@@ -80,6 +83,14 @@ func (fake *fakePolicyService) failNext(code string) {
 	fake.failWith = code
 }
 
+// failFirstCalls makes the next n decide calls answer with this contract
+// error and later ones succeed.
+func (fake *fakePolicyService) failFirstCalls(code string, n int) {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	fake.failFirst, fake.failFirstLeft = code, n
+}
+
 func (fake *fakePolicyService) received() []raylinearc.PolicyDecisionRequest {
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
@@ -111,6 +122,10 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 		fake.mu.Lock()
 		fake.requests = append(fake.requests, decide)
 		choose, failWith, relaxedUnsupported := fake.choose, fake.failWith, fake.relaxedUnsupported
+		if fake.failFirstLeft > 0 {
+			fake.failFirstLeft--
+			failWith = fake.failFirst
+		}
 		fake.mu.Unlock()
 		if relaxedUnsupported != "" && decide.EpisodeMode == raylinearc.PolicyEpisodeModeRelaxed {
 			fake.writeJSON(writer, http.StatusUnprocessableEntity, map[string]any{

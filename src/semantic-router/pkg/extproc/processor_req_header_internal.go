@@ -60,6 +60,13 @@ func looperInternalHeadersForRemoval() []string {
 
 func buildLooperInternalHeaderRemovalMutation() *ext_proc.HeaderMutation {
 	return &ext_proc.HeaderMutation{
-		RemoveHeaders: looperInternalHeadersForRemoval(),
+		RemoveHeaders: requestHeaderPhaseRemovals(),
 	}
+}
+
+// requestHeaderPhaseRemovals are stripped from every request at its headers,
+// including one that opts out of processing: the looper's internal headers
+// and the ARC turn-signal headers, none of which is a provider's to see.
+func requestHeaderPhaseRemovals() []string {
+	return append(looperInternalHeadersForRemoval(), raylineARCTurnSignalHeadersForRemoval()...)
 }

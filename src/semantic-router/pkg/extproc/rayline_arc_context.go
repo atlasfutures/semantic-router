@@ -134,12 +134,22 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	// what makes it free: no lease to acquire, renew or release, and nothing
 	// written to the episode store. prepareSelection builds a fresh episode
 	// state when it finds none here.
+	// A side call commits nothing, so it is classified before the episode is
+	// read and never takes or waits on the episode lease.
+	var signalHeaders map[string]string
+	if algorithm.RaylineARC.PolicyService != nil {
+		signalHeaders = raylineARCTrustedSignalHeaders(algorithm.RaylineARC.PolicyService, reqCtx.Headers)
+		result.PolicyCallKind, result.PolicyCallKindSource = raylineARCPolicyCallKindOfBody(
+			signalHeaders, policyRequestFormat(reqCtx.SourceFormat), reqCtx.RaylineARCRawBody, result.EpisodeIDHash,
+		)
+	}
 	if rawEpisodeID != "" {
 		state, coalesced, failure := r.prepareOrJoinRaylineARCTurn(
 			algorithm.RaylineARC,
 			reqCtx,
 			result.EpisodeIDHash,
 			len(modelRefs),
+			result.PolicyCallKind == raylinearc.PolicyCallSide,
 		)
 		if failure != "" {
 			result.PreparationFailure = failure
@@ -147,6 +157,12 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		}
 		result.State = state
 		result.Coalesced = coalesced
+		// A policy-service turn records its ledger entry, so it commits only
+		// once the client has the whole reply. Artifact-mode turns commit at
+		// the response headers, as they always have.
+		if algorithm.RaylineARC.PolicyService != nil && reqCtx.RaylineARCTransaction != nil {
+			reqCtx.RaylineARCTransaction.commitOnCompletion = true
+		}
 	}
 	turns, imageBearing, err := r.projectRaylineARCTurns(
 		reqCtx,
@@ -171,6 +187,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	if algorithm.RaylineARC.PolicyService != nil {
 		result.RawRequest = reqCtx.RaylineARCRawBody
 		result.RequestFormat = policyRequestFormat(reqCtx.SourceFormat)
+		result.PolicySignalHeaders = signalHeaders
 		if result.RequestFormat == policyFormatResponses {
 			input, instructions, err := r.raylineARCPolicyResponsesInput(reqCtx)
 			if err != nil {
@@ -346,10 +363,11 @@ func (r *OpenAIRouter) prepareOrJoinRaylineARCTurn(
 	reqCtx *RequestContext,
 	episodeIDHash string,
 	workerCount int,
+	sideCall bool,
 ) (*raylinearc.EpisodeState, *selection.SelectionResult, string) {
 	store := r.raylineARCEpisodeStoreFor(reqCtx)
 	if store == nil || len(reqCtx.RaylineARCRawBody) == 0 {
-		state, failure := r.prepareRaylineARCTransaction(arcConfig, reqCtx, episodeIDHash, workerCount)
+		state, failure := r.prepareRaylineARCTransaction(arcConfig, reqCtx, episodeIDHash, workerCount, sideCall)
 		return state, nil, failure
 	}
 	waitContext := reqCtx.TraceContext
@@ -360,7 +378,7 @@ func (r *OpenAIRouter) prepareOrJoinRaylineARCTurn(
 	for {
 		entry, leader := r.raylineARCInflight.join(key)
 		if leader {
-			state, failure := r.prepareRaylineARCTransaction(arcConfig, reqCtx, episodeIDHash, workerCount)
+			state, failure := r.prepareRaylineARCTransaction(arcConfig, reqCtx, episodeIDHash, workerCount, sideCall)
 			if failure != "" {
 				r.raylineARCInflight.finish(entry)
 				return nil, nil, failure
@@ -408,10 +426,14 @@ func (r *OpenAIRouter) prepareRaylineARCTransaction(
 	reqCtx *RequestContext,
 	episodeIDHash string,
 	workerCount int,
+	sideCall bool,
 ) (*raylinearc.EpisodeState, string) {
 	store := r.raylineARCEpisodeStoreFor(reqCtx)
 	if store == nil {
 		return nil, "episode_store"
+	}
+	if sideCall && !arcConfig.Episode.RelaxedConsistency() {
+		return r.prepareSideCallRaylineARCTransaction(arcConfig, reqCtx, store, episodeIDHash, workerCount)
 	}
 	if arcConfig.Episode.RelaxedConsistency() {
 		return r.prepareRelaxedRaylineARCTransaction(arcConfig, reqCtx, store, episodeIDHash, workerCount)
@@ -452,6 +474,40 @@ func (r *OpenAIRouter) prepareRaylineARCTransaction(
 	reqCtx.RaylineARCTransaction.sessionCloseWait = time.Duration(
 		arcConfig.Encoder.TotalTimeoutSeconds,
 	) * time.Second
+	bindRaylineARCSelectionTransaction(reqCtx)
+	return state, ""
+}
+
+// prepareSideCallRaylineARCTransaction reads a strict episode for a side call
+// without its lease. A side call commits nothing, so it has no write to
+// serialize: it must neither wait behind a main turn's lease (a long stream
+// holds it for minutes) nor block the next main turn. A failed read fails the
+// request as a strict episode's failed prepare would.
+func (r *OpenAIRouter) prepareSideCallRaylineARCTransaction(
+	arcConfig *config.RaylineARCAlgorithmConfig,
+	reqCtx *RequestContext,
+	store raylinearc.EpisodeStore,
+	episodeIDHash string,
+	workerCount int,
+) (*raylinearc.EpisodeState, string) {
+	snapshots, ok := store.(raylinearc.EpisodeSnapshotStore)
+	if !ok {
+		return nil, "episode_store"
+	}
+	readContext := reqCtx.TraceContext
+	if readContext == nil {
+		readContext = context.Background()
+	}
+	readContext, cancel := context.WithTimeout(
+		readContext,
+		time.Duration(arcConfig.Episode.AcquireTimeoutSeconds)*time.Second,
+	)
+	defer cancel()
+	state, _, err := snapshots.Snapshot(readContext, episodeIDHash, workerCount)
+	if err != nil {
+		return nil, boundedARCPrepareFailure(err)
+	}
+	reqCtx.RaylineARCTransaction = newSideCallRaylineARCEpisodeTransaction(state, episodeIDHash)
 	bindRaylineARCSelectionTransaction(reqCtx)
 	return state, ""
 }

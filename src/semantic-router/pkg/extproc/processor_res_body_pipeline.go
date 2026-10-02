@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 
@@ -47,7 +48,13 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	r.reportNonStreamingUsage(ctx, completionLatency, usage)
 	r.calibrateTokenEstimator(ctx, usage.promptTokens)
 
-	r.updateResponseCache(ctx, clientBody)
+	// A turn that commits at completion caches its reply only once the turn
+	// is recorded: a reply cached before a failed commit would serve the
+	// client's retry from the cache, and that turn would never be recorded.
+	cacheAfterCommit := selectionCommitsOnCompletion(ctx)
+	if !cacheAfterCommit {
+		r.updateResponseCache(ctx, clientBody)
+	}
 
 	// The response-stage signal is scored from the declared rules before any
 	// plugin runs, so the observation exists whether or not the selected
@@ -63,6 +70,18 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	}
 	if hallucinationResponse := r.performSemanticHallucinationDetection(ctx, semanticResponse); hallucinationResponse != nil {
 		return hallucinationResponse
+	}
+
+	// The full body was read, decoded and passed every response check. A
+	// policy-service turn commits once this reply has been sent, and caches
+	// it only then; a turn that can no longer commit fails now, while the
+	// client can still be told.
+	if cacheAfterCommit {
+		if err := selectionCompletionCommittable(ctx); err != nil {
+			recordSelectionLifecycleFailure(ctx, "response_complete", err)
+			return r.bodyPhaseErrorResponse(ctx, http.StatusServiceUnavailable, selectionUnavailableMessage(ctx))
+		}
+		deferSelectionCompletion(ctx, func() { r.updateResponseCache(ctx, clientBody) })
 	}
 
 	r.scheduleSemanticResponseMemoryStore(ctx, semanticResponse)

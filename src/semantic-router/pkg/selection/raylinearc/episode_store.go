@@ -134,6 +134,14 @@ func (token EpisodeReadToken) Version() uint64 {
 	return token.version
 }
 
+// EpisodeStateStager writes state under a held lease without releasing it or
+// advancing the version, so the lease's own Commit still lands and an Abort
+// leaves the staged state in place. It persists what a turn must keep even if
+// the turn fails, such as a boundary decision taken before dispatch.
+type EpisodeStateStager interface {
+	Stage(context.Context, Lease, *EpisodeState) error
+}
+
 type EpisodeLeaseRenewer interface {
 	Renew(context.Context, Lease) error
 }
@@ -143,18 +151,19 @@ type EpisodeStoreReadiness interface {
 }
 
 type episodeStateWire struct {
-	SchemaVersion        string                `json:"schema_version"`
-	Version              uint64                `json:"version"`
-	PreviousArm          *int                  `json:"previous_arm"`
-	TurnIndex            uint64                `json:"turn_index"`
-	Warmth               []*episodeWarmthWire  `json:"warmth"`
-	EncoderOwner         *string               `json:"encoder_owner,omitempty"`
-	EncoderVisitedOwners *[]string             `json:"encoder_visited_owners,omitempty"`
-	Thinking             *episodeThinkingWire  `json:"thinking,omitempty"`
-	Upstream             []episodeUpstreamWire `json:"upstream,omitempty"`
-	Policy               *PolicyEpisodeState   `json:"policy,omitempty"`
-	Controls             []episodeControlWire  `json:"controls,omitempty"`
-	ReasoningIssuers     []string              `json:"reasoning_issuers,omitempty"`
+	SchemaVersion        string                  `json:"schema_version"`
+	Version              uint64                  `json:"version"`
+	PreviousArm          *int                    `json:"previous_arm"`
+	TurnIndex            uint64                  `json:"turn_index"`
+	Warmth               []*episodeWarmthWire    `json:"warmth"`
+	EncoderOwner         *string                 `json:"encoder_owner,omitempty"`
+	EncoderVisitedOwners *[]string               `json:"encoder_visited_owners,omitempty"`
+	Thinking             *episodeThinkingWire    `json:"thinking,omitempty"`
+	Upstream             []episodeUpstreamWire   `json:"upstream,omitempty"`
+	Policy               *PolicyEpisodeState     `json:"policy,omitempty"`
+	Controls             []episodeControlWire    `json:"controls,omitempty"`
+	ReasoningIssuers     []string                `json:"reasoning_issuers,omitempty"`
+	PolicyBoundary       *PolicyBoundaryDecision `json:"policy_boundary,omitempty"`
 }
 
 // episodeControlWire is one thinking-control placer. Its ledger names each
@@ -373,6 +382,7 @@ func cloneEpisodeState(state *EpisodeState) *EpisodeState {
 		Upstream:             append([]UpstreamPrefix(nil), state.Upstream...),
 		Controls:             cloneControlPlacements(state.Controls),
 		ReasoningIssuers:     append([]string(nil), state.ReasoningIssuers...),
+		PolicyBoundary:       clonePolicyBoundary(state.PolicyBoundary),
 	}
 	for index, warmth := range state.Warmth {
 		if warmth == nil {
@@ -382,6 +392,19 @@ func cloneEpisodeState(state *EpisodeState) *EpisodeState {
 		cloned.Warmth[index] = &value
 	}
 	return cloned
+}
+
+func clonePolicyBoundary(boundary *PolicyBoundaryDecision) *PolicyBoundaryDecision {
+	if boundary == nil {
+		return nil
+	}
+	cloned := *boundary
+	return &cloned
+}
+
+// ClonePolicyBoundary is a copy the caller may change.
+func ClonePolicyBoundary(boundary *PolicyBoundaryDecision) *PolicyBoundaryDecision {
+	return clonePolicyBoundary(boundary)
 }
 
 func cloneEpisodeArm(value *int) *int {
@@ -428,6 +451,10 @@ func marshalEpisodeState(
 	if len(state.ReasoningIssuers) > 0 {
 		wire.SchemaVersion = episodeStateSchema
 		wire.ReasoningIssuers = append([]string(nil), state.ReasoningIssuers...)
+	}
+	if state.PolicyBoundary != nil {
+		wire.SchemaVersion = episodeStateSchema
+		wire.PolicyBoundary = clonePolicyBoundary(state.PolicyBoundary)
 	}
 	owner := state.EncoderOwner
 	visited := append([]string{}, state.EncoderVisitedOwners...)
@@ -489,7 +516,7 @@ func decodeEpisodeStateAffinity(
 	wire episodeStateWire,
 ) (string, []string, error) {
 	if (wire.Thinking != nil || len(wire.Upstream) > 0 || wire.Policy != nil || len(wire.Controls) > 0 ||
-		len(wire.ReasoningIssuers) > 0) !=
+		len(wire.ReasoningIssuers) > 0 || wire.PolicyBoundary != nil) !=
 		(wire.SchemaVersion == episodeStateSchema) {
 		return "", nil, errors.New("ARC episode state contract mismatch")
 	}
@@ -525,6 +552,7 @@ func episodeStateFromWire(
 		EncoderVisitedOwners: visited,
 		Policy:               wire.Policy.Clone(),
 		Thinking:             thinkingLedgerFromWire(wire.Thinking),
+		PolicyBoundary:       clonePolicyBoundary(wire.PolicyBoundary),
 	}
 	if len(wire.ReasoningIssuers) > 0 {
 		state.ReasoningIssuers = append([]string(nil), wire.ReasoningIssuers...)
@@ -558,6 +586,9 @@ func validatePersistedEpisodeState(
 		return err
 	}
 	if err := state.Policy.Validate(); err != nil {
+		return err
+	}
+	if err := state.PolicyBoundary.Validate(len(state.Warmth)); err != nil {
 		return err
 	}
 	if len(state.Controls) > MaxControlPlacements {

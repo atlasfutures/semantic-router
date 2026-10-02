@@ -1065,7 +1065,7 @@ func twoARCDecisionRouter() *OpenAIRouter {
 	}}
 }
 
-// slowCommitTransaction blocks CommitOnHeaders until released, so a lookup
+// slowCommitTransaction blocks Commit until released, so a lookup
 // whose budget expires mid-commit can be observed without a real episode
 // store.
 type slowCommitTransaction struct {
@@ -1080,7 +1080,7 @@ type slowCommitTransaction struct {
 
 func (t *slowCommitTransaction) ValidateDispatch(context.Context) error { return nil }
 
-func (t *slowCommitTransaction) CommitOnHeaders(ctx context.Context, _ int) error {
+func (t *slowCommitTransaction) Commit(ctx context.Context, _ int) error {
 	select {
 	case <-t.release:
 		t.outcome <- nil
@@ -1334,7 +1334,7 @@ type uncancellableCommitTransaction struct {
 
 func (t *uncancellableCommitTransaction) ValidateDispatch(context.Context) error { return nil }
 
-func (t *uncancellableCommitTransaction) CommitOnHeaders(_ context.Context, _ int) error {
+func (t *uncancellableCommitTransaction) Commit(_ context.Context, _ int) error {
 	<-t.release
 	t.committed <- struct{}{}
 	return nil

@@ -59,7 +59,10 @@ type policyBinding struct {
 // not score embeddings: the policy service decides, and Select branches to it
 // before any encode.
 type policyServiceScorer struct {
-	schedule    string
+	schedule string
+	// busyWait bounds how long a decision retries the service's
+	// session_busy (the episode's acquire timeout).
+	busyWait    time.Duration
 	alias       string
 	sha256      string
 	workerIDs   []string
@@ -97,6 +100,7 @@ func newPolicyServiceScorer(
 	policy := decision.Algorithm.RaylineARC.PolicyService
 	scorer := &policyServiceScorer{
 		schedule: policy.ModelSchedule,
+		busyWait: time.Duration(decision.Algorithm.RaylineARC.Episode.AcquireTimeoutSeconds) * time.Second,
 		alias:    policy.PackageAlias,
 		sha256:   policy.PackageSHA256,
 		bindings: make(map[string]policyBinding, len(policy.Bindings)),
@@ -355,12 +359,39 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if err != nil {
 		return nil, arcSelectionFailure("policy_request_body")
 	}
-	turn, attribution := raylinearc.PolicyTurn(state.Policy, messages, roles, state.TurnIndex)
+	signals := raylineARCPolicyTurnSignals(
+		arcContext.PolicySignalHeaders, arcContext.RequestFormat, clientRequest, messages, arcContext.EpisodeIDHash,
+	)
+	// A request classified as a side call ahead of the episode read holds no
+	// lease, so it is served as one. An unknown pre-classification holds the
+	// lease and stays open to a positive reading of the materialized request.
+	if arcContext.PolicyCallKind != "" && arcContext.PolicyCallKind != raylinearc.PolicyCallUnknown {
+		signals.CallKind, signals.CallKindSource = arcContext.PolicyCallKind, arcContext.PolicyCallKindSource
+	}
+	turn, attribution, transition := raylinearc.PolicyTurn(state.Policy, messages, roles, state.TurnIndex, signals)
+	sideCall := signals.CallKind == raylinearc.PolicyCallSide
+	scheduled := scorer.schedule != "" && !sideCall
+	atBoundary := scheduled &&
+		raylinearc.ModelChangeAllowed(state.TurnIndex, turn.EpochStartTurn, turn.CompactionCount)
+	retainedArm, retained := -1, false
+	if atBoundary {
+		retainedArm, retained = state.PolicyBoundary.RetainedArm(messages, state.TurnIndex, turn)
+	}
 	held := -1
-	if scorer.schedule != "" && state.PreviousArm != nil &&
-		!raylinearc.ModelChangeAllowed(state.TurnIndex, turn.EpochStartTurn) {
+	// A side call keeps the held arm whatever the schedule says; a turn holds
+	// it between the schedule's boundaries; a retry at a boundary keeps the
+	// arm that boundary already decided.
+	switch {
+	case retained:
+		held = retainedArm
+	case sideCall && state.PolicyBoundary != nil && state.PolicyBoundary.TurnIndex == state.TurnIndex:
+		// A main turn decided this boundary and has not committed yet: its
+		// arm is the one in use.
+		held = state.PolicyBoundary.Arm
+	case state.PreviousArm != nil && (sideCall || scheduled && !atBoundary):
 		held = *state.PreviousArm
 	}
+	logRaylineARCPolicyTurn(arcContext.EpisodeIDHash, signals, transition, state.TurnIndex, turn, held >= 0, retained)
 	available := make([]string, 0, len(scorer.actionOrder))
 	for _, actionID := range scorer.actionOrder {
 		arm := scorer.bindings[actionID].arm
@@ -391,21 +422,28 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		Shadow:      []raylinearc.PolicyPackageRef{},
 		EpisodeMode: scorer.episodeMode,
 	}
-	// Admission is checked after the episode lease and before the service
+	// Admission is checked after the episode lease and before each service
 	// call, as the artifact mode checks it before encoding: a shed request
-	// answers 429 and never occupies the service.
-	release, admitErr := armed.admission.Acquire()
-	if admitErr != nil {
-		recordARCAdmission(armed.admission, false)
-		return nil, boundedARCEncoderFailure(admitErr)
-	}
-	defer func() {
-		release()
+	// answers 429 and never occupies the service. A slot is held for one
+	// call only, never through a session_busy backoff.
+	admit := func() (func(), error) {
+		release, acquireErr := armed.admission.Acquire()
+		recordARCAdmission(armed.admission, acquireErr == nil)
+		if acquireErr != nil {
+			return nil, acquireErr
+		}
 		metrics.SetRaylineARCEncoderInflight(armed.admission.Inflight())
-	}()
-	recordARCAdmission(armed.admission, true)
+		return func() {
+			release()
+			metrics.SetRaylineARCEncoderInflight(armed.admission.Inflight())
+		}, nil
+	}
 	started := selector.now()
-	response, err := armed.policy.Decide(ctx, request)
+	response, err := decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+	var shed *policyAdmissionError
+	if errors.As(err, &shed) {
+		return nil, boundedARCEncoderFailure(shed.err)
+	}
 	latency := selector.now().Sub(started)
 	if err != nil {
 		class := "transport"
@@ -481,10 +519,68 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.ThinkingLevel = binding.level
 	result.RaylineARC.PolicyActionModel = binding.model
 	result.RaylineARC.WorkerProviderModel = scorer.workers[binding.arm].Model
-	result.RaylineARC.PolicyNextState = turn.Next(
-		messages, response.Decision.SelectedActionID, response.Decision.SelectedArmID,
-	)
+	result.RaylineARC.PolicySideCall = sideCall
+	if !sideCall {
+		result.RaylineARC.PolicyNextState = turn.Next(
+			messages, response.Decision.SelectedActionID, response.Decision.SelectedArmID,
+		)
+	}
+	if atBoundary && !retained {
+		result.RaylineARC.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(binding.arm, state.TurnIndex, turn, messages)
+	}
 	return result, nil
+}
+
+const (
+	policyBusyRetryFirst = 25 * time.Millisecond
+	policyBusyRetryMax   = 400 * time.Millisecond
+)
+
+// policyAdmissionError is a decision refused admission before its call.
+type policyAdmissionError struct{ err error }
+
+func (err *policyAdmissionError) Error() string { return err.err.Error() }
+
+// decidePolicyThroughBusy asks the service for the decision and retries a
+// session_busy answer for up to wait. The service holds a strict episode for
+// the length of one decision. Two main turns never reach it at once, because
+// the episode lease serializes them, but a side call takes no lease: its
+// decision can overlap a main turn's (Claude Code sends its title call
+// alongside the first turn). Either one then waits out the other's decision,
+// which is short, instead of being refused. Each call takes its own admission
+// slot and returns it before any backoff.
+func decidePolicyThroughBusy(
+	ctx context.Context,
+	client *raylinearc.PolicyServiceClient,
+	request raylinearc.PolicyDecisionRequest,
+	wait time.Duration,
+	admit func() (func(), error),
+) (*raylinearc.PolicyDecisionResponse, error) {
+	deadline := time.Now().Add(wait)
+	backoff := policyBusyRetryFirst
+	for {
+		release, admitErr := admit()
+		if admitErr != nil {
+			return nil, &policyAdmissionError{err: admitErr}
+		}
+		response, err := client.Decide(ctx, request)
+		release()
+		var failure *raylinearc.PolicyServiceError
+		if err == nil || !errors.As(err, &failure) || failure.Class != "session_busy" ||
+			time.Now().Add(backoff).After(deadline) {
+			return response, err
+		}
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return response, err
+		case <-timer.C:
+		}
+		if backoff *= 2; backoff > policyBusyRetryMax {
+			backoff = policyBusyRetryMax
+		}
+	}
 }
 
 // policyClientRequestOf is the request the service projects, with the

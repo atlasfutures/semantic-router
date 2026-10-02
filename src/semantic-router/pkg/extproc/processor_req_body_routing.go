@@ -459,7 +459,7 @@ func appendContentLengthHeader(headersOut *[]*core.HeaderValueOption, bodyLength
 // or not the cell reads it, so a caller cannot learn from the provider's
 // behaviour whether this cell has the affordance turned on.
 func faultInjectionHeadersForRemoval() []string {
-	return []string{headers.VSRFault}
+	return append([]string{headers.VSRFault}, raylineARCTurnSignalHeadersForRemoval()...)
 }
 
 func (r *OpenAIRouter) applyDecisionHeaderMutations(state *routeHeaderState, ctx *RequestContext) {

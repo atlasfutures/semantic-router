@@ -18,6 +18,9 @@ package raylinearc
 
 import (
 	"encoding/json"
+	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -44,41 +47,183 @@ const (
 )
 
 // A reply is attributed on the next turn at the index it lands on; a request
-// that rewrites history starts a new epoch with nothing attributed.
+// that rewrites history starts a new epoch with nothing attributed, and is not
+// a compaction: the schedule's boundary does not move.
 func TestPolicyTurnAttributesRepliesAndResetsOnRewrite(t *testing.T) {
 	first, roles := rawMessages(t, user1)
-	turn, attribution := PolicyTurn(nil, first, roles, 0)
-	if turn.Epoch != 0 || len(attribution) != 0 {
-		t.Fatalf("first turn: epoch %d attribution %v", turn.Epoch, attribution)
+	turn, attribution, transition := PolicyTurn(nil, first, roles, 0, PolicyTurnSignals{})
+	if turn.Epoch != 0 || len(attribution) != 0 || transition != PolicyTransitionStart {
+		t.Fatalf("first turn: epoch %d attribution %v transition %s", turn.Epoch, attribution, transition)
 	}
 	committed := turn.Next(first, "action-a", "arm-a")
 
 	second, roles := rawMessages(t, user1, asst1, user2)
-	turn, attribution = PolicyTurn(committed, second, roles, 1)
+	turn, attribution, transition = PolicyTurn(committed, second, roles, 1, PolicyTurnSignals{})
 	if turn.Epoch != 0 || len(attribution) != 1 || attribution[0].Message != 1 ||
-		attribution[0].ActionID != "action-a" || *attribution[0].ArmID != "arm-a" {
-		t.Fatalf("extension: epoch %d attribution %+v", turn.Epoch, attribution)
+		attribution[0].ActionID != "action-a" || *attribution[0].ArmID != "arm-a" ||
+		transition != PolicyTransitionExtends {
+		t.Fatalf("extension: epoch %d attribution %+v transition %s", turn.Epoch, attribution, transition)
 	}
 
 	rewritten, roles := rawMessages(t, `{"role":"user","content":"summary of earlier work"}`, user2)
-	turn, attribution = PolicyTurn(turn.Next(second, "action-b", "arm-b"), rewritten, roles, 2)
-	if turn.Epoch != 1 || turn.EpochStartTurn != 2 || len(attribution) != 0 || len(turn.Ledger) != 0 {
-		t.Fatalf("rewrite: %+v attribution %v", turn, attribution)
+	turn, attribution, transition = PolicyTurn(turn.Next(second, "action-b", "arm-b"), rewritten, roles, 2, PolicyTurnSignals{})
+	if turn.Epoch != 1 || turn.EpochStartTurn != 0 || turn.CompactionCount != 0 ||
+		len(attribution) != 0 || len(turn.Ledger) != 0 || transition != PolicyTransitionPrefixBreak {
+		t.Fatalf("rewrite: %+v attribution %v transition %s", turn, attribution, transition)
 	}
 }
 
-// Pathfinder's task_turn_compaction_v1 boundaries, row for row.
+// A prefix break after a compaction keeps that compaction's boundary.
+func TestPolicyTurnPrefixBreakKeepsTheCompactionBoundary(t *testing.T) {
+	previous := &PolicyEpisodeState{Epoch: 2, EpochStartTurn: 7, CompactionCount: 1, CompactionSummary: strings.Repeat("c", 64)}
+	messages, _ := rawMessages(t, user1)
+	previous = previous.Next(messages, "action-a", "arm-a")
+	rewritten, roles := rawMessages(t, `{"role":"user","content":"/clear"}`)
+	turn, _, transition := PolicyTurn(previous, rewritten, roles, 9, PolicyTurnSignals{})
+	if transition != PolicyTransitionPrefixBreak || turn.Epoch != 3 || turn.EpochStartTurn != 7 ||
+		turn.CompactionCount != 1 || turn.CompactionSummary != previous.CompactionSummary || len(turn.Ledger) != 0 {
+		t.Fatalf("prefix break after compaction: %+v (%s)", turn, transition)
+	}
+}
+
+func TestPolicyTurnExplicitCompactionMovesTheBoundaryOnce(t *testing.T) {
+	first, _ := rawMessages(t, user1, asst1, user2)
+	committed := (&PolicyEpisodeState{}).Next(first, "action-a", "arm-a")
+	compacted, compactedRoles := rawMessages(t, `{"role":"user","content":"compacted"}`)
+	signal := PolicyTurnSignals{Compaction: &PolicyCompactionSignal{Ordinal: 1}}
+	turn, attribution, transition := PolicyTurn(committed, compacted, compactedRoles, 4, signal)
+	if transition != PolicyTransitionCompaction || turn.Epoch != 1 || turn.EpochStartTurn != 4 ||
+		turn.CompactionCount != 1 || len(attribution) != 0 || len(turn.Ledger) != 0 {
+		t.Fatalf("compaction: %+v (%s)", turn, transition)
+	}
+	// The next request of the compacted context still carries the ordinal: it
+	// is a repeat, so the transcript decides, and it extends.
+	next := turn.Next(compacted, "action-b", "arm-b")
+	grown, grownRoles := rawMessages(t, `{"role":"user","content":"compacted"}`, asst1, user2)
+	turn, attribution, transition = PolicyTurn(next, grown, grownRoles, 5, signal)
+	if transition != PolicyTransitionExtends || turn.Epoch != 1 || turn.EpochStartTurn != 4 ||
+		turn.CompactionCount != 1 || len(attribution) != 1 {
+		t.Fatalf("repeated ordinal: %+v (%s)", turn, transition)
+	}
+}
+
+func TestPolicyTurnClaudeCodeSummaryIsANewCompactionOnlyWhenItChanges(t *testing.T) {
+	summaryA := `{"role":"user","content":[{"type":"text","text":"<system-reminder>ctx</system-reminder>"},{"type":"text","text":"` +
+		ClaudeCodeContinuationMarker + ` Summary A."}]}`
+	summaryB := strings.Replace(summaryA, "Summary A.", "Summary B.", 1)
+	first, _ := rawMessages(t, user1)
+	state := (&PolicyEpisodeState{}).Next(first, "action-a", "arm-a")
+
+	compactedA, rolesA := rawMessages(t, summaryA)
+	signalA := PolicyTurnSignals{Compaction: &PolicyCompactionSignal{SummaryDigest: ClaudeCodeCompactionSummaryDigest(compactedA)}}
+	turn, _, transition := PolicyTurn(state, compactedA, rolesA, 3, signalA)
+	if transition != PolicyTransitionCompaction || turn.EpochStartTurn != 3 || turn.CompactionCount != 1 {
+		t.Fatalf("first summary: %+v (%s)", turn, transition)
+	}
+	state = turn.Next(compactedA, "action-a", "arm-a")
+	grownA, grownRoles := rawMessages(t, summaryA, asst1, user2)
+	turn, _, transition = PolicyTurn(state, grownA, grownRoles, 4, signalA)
+	if transition != PolicyTransitionExtends || turn.CompactionCount != 1 || turn.EpochStartTurn != 3 {
+		t.Fatalf("same summary: %+v (%s)", turn, transition)
+	}
+	state = turn.Next(grownA, "action-a", "arm-a")
+	compactedB, rolesB := rawMessages(t, summaryB)
+	signalB := PolicyTurnSignals{Compaction: &PolicyCompactionSignal{SummaryDigest: ClaudeCodeCompactionSummaryDigest(compactedB)}}
+	turn, _, transition = PolicyTurn(state, compactedB, rolesB, 6, signalB)
+	if transition != PolicyTransitionCompaction || turn.EpochStartTurn != 6 || turn.CompactionCount != 2 {
+		t.Fatalf("second summary: %+v (%s)", turn, transition)
+	}
+}
+
+// Two real compactions can write byte-identical summaries. A carried summary
+// rides a growing request; a new compaction collapses the request below the
+// recorded prefix, and that collapse makes the repeated summary a new
+// compaction (pathfinder's
+// test_a_repeated_summary_on_a_collapsed_request_is_a_new_compaction).
+func TestPolicyTurnRepeatedSummaryOnACollapsedRequestIsANewCompaction(t *testing.T) {
+	summary := `{"role":"user","content":"` + ClaudeCodeContinuationMarker + ` the summary"}`
+	request := func(tail int) ([]json.RawMessage, []string) {
+		messages := []string{summary}
+		for index := 0; index < tail; index++ {
+			messages = append(messages, `{"role":"assistant","content":"a`+strconv.Itoa(index)+`"}`,
+				`{"role":"user","content":"m`+strconv.Itoa(index)+`"}`)
+		}
+		return rawMessages(t, messages...)
+	}
+	first, _ := rawMessages(t, user1)
+	state := (&PolicyEpisodeState{}).Next(first, "action-a", "arm-a")
+	compacted, roles := request(0)
+	signal := PolicyTurnSignals{Compaction: &PolicyCompactionSignal{SummaryDigest: ClaudeCodeCompactionSummaryDigest(compacted)}}
+	turn, _, transition := PolicyTurn(state, compacted, roles, 2, signal)
+	if transition != PolicyTransitionCompaction || turn.CompactionCount != 1 {
+		t.Fatalf("first compaction: %+v (%s)", turn, transition)
+	}
+	state = turn.Next(compacted, "action-a", "arm-a")
+	// It grows: the same summary carried on ordinary requests.
+	for completed, tail := uint64(3), 1; tail <= 3; completed, tail = completed+1, tail+1 {
+		grown, grownRoles := request(tail)
+		turn, _, transition = PolicyTurn(state, grown, grownRoles, completed, signal)
+		if transition != PolicyTransitionExtends || turn.CompactionCount != 1 {
+			t.Fatalf("carried summary at tail %d: %+v (%s)", tail, turn, transition)
+		}
+		state = turn.Next(grown, "action-a", "arm-a")
+	}
+	// It collapses with the identical summary: a second real compaction.
+	collapsed, collapsedRoles := request(1)
+	turn, _, transition = PolicyTurn(state, collapsed, collapsedRoles, 6, signal)
+	if transition != PolicyTransitionCompaction || turn.CompactionCount != 2 || turn.EpochStartTurn != 6 {
+		t.Fatalf("repeated summary on a collapsed request: %+v (%s)", turn, transition)
+	}
+}
+
+// A side call leaves the episode exactly as it was, even when its transcript
+// does not extend the recorded prefix and it carries a compaction signal.
+func TestPolicyTurnSideCallIsTransparent(t *testing.T) {
+	messages, _ := rawMessages(t, user1, asst1, user2)
+	previous := (&PolicyEpisodeState{Epoch: 2, EpochStartTurn: 3, CompactionCount: 1}).Next(messages, "action-a", "arm-a")
+	side := PolicyTurnSignals{CallKind: PolicyCallSide, Compaction: &PolicyCompactionSignal{Ordinal: 2}}
+
+	title, titleRoles := rawMessages(t, `{"role":"user","content":"write a title"}`)
+	turn, attribution, transition := PolicyTurn(previous, title, titleRoles, 8, side)
+	if transition != PolicyTransitionSideCall || !reflect.DeepEqual(turn, previous) || len(attribution) != 0 {
+		t.Fatalf("non-extending side call: %+v attribution %v (%s)", turn, attribution, transition)
+	}
+	extended, extendedRoles := rawMessages(t, user1, asst1, user2, asst1, `{"role":"user","content":"summarize"}`)
+	turn, attribution, _ = PolicyTurn(previous, extended, extendedRoles, 8, side)
+	if !reflect.DeepEqual(turn, previous) || len(attribution) != 1 || attribution[0].Message != 3 {
+		t.Fatalf("extending side call: %+v attribution %v", turn, attribution)
+	}
+}
+
+// Pathfinder's task_turn_compaction_v1 boundaries, row for row, including
+// the counted-compaction cases ModelRoutingState adds: a compaction before
+// any completed turn.
 func TestModelChangeAllowedFollowsTaskTurnCompaction(t *testing.T) {
 	cases := []struct {
 		completed, epochStart uint64
+		compactions           int
 		allowed               bool
 	}{
-		{0, 0, true}, {1, 0, false}, {4, 0, false}, {5, 0, true}, {6, 0, false},
-		{8, 8, true}, {9, 8, false}, {13, 8, true}, {14, 8, false},
+		{0, 0, 0, true},
+		{1, 0, 0, false},
+		{4, 0, 0, false},
+		{5, 0, 0, true},
+		{6, 0, 0, false},
+		{8, 8, 1, true},
+		{9, 8, 1, false},
+		{13, 8, 1, true},
+		{14, 8, 1, false},
+		// RoutingSchedule: a compaction before turn five does not erase it.
+		{5, 3, 1, true},
+		{8, 3, 1, true},
+		// ModelRoutingState: a compaction before the first completed turn.
+		{0, 0, 1, true},
+		{5, 0, 1, true},
+		{6, 0, 1, false},
 	}
 	for _, c := range cases {
-		if got := ModelChangeAllowed(c.completed, c.epochStart); got != c.allowed {
-			t.Errorf("completed=%d epochStart=%d: got %v", c.completed, c.epochStart, got)
+		if got := ModelChangeAllowed(c.completed, c.epochStart, c.compactions); got != c.allowed {
+			t.Errorf("completed=%d epochStart=%d compactions=%d: got %v", c.completed, c.epochStart, c.compactions, got)
 		}
 	}
 }
@@ -122,8 +267,10 @@ const policyTestActionA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 // writes; reading one back must refuse it rather than panic slicing a request.
 func TestPolicyStateRefusesMalformedPersistedRecords(t *testing.T) {
 	now := time.Now().UTC()
-	good := &PolicyEpisodeState{PrefixLen: 2, PrefixDigest: policyTestActionA,
-		Ledger: []PolicyLedgerEntry{{Message: 1, ActionID: policyTestActionA, ArmID: "arm"}}}
+	good := &PolicyEpisodeState{
+		PrefixLen: 2, PrefixDigest: policyTestActionA,
+		Ledger: []PolicyLedgerEntry{{Message: 1, ActionID: policyTestActionA, ArmID: "arm"}},
+	}
 	if err := good.Validate(); err != nil {
 		t.Fatalf("a well-formed state was refused: %v", err)
 	}

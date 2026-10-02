@@ -28,7 +28,7 @@ func (transaction *recordingSelectionTransaction) ValidateDispatch(
 	return transaction.validateErr
 }
 
-func (transaction *recordingSelectionTransaction) CommitOnHeaders(
+func (transaction *recordingSelectionTransaction) Commit(
 	_ context.Context,
 	status int,
 ) error {

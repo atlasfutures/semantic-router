@@ -472,6 +472,13 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 	} else {
 		ctx.StreamingAborted = true
 	}
+	// The terminal event arrived and nothing broke: a policy-service turn
+	// commits once the response's final frame has been sent, and only then
+	// caches its reply.
+	commitDeferred := !ctx.StreamingAborted && selectionCommitsOnCompletion(ctx)
+	if commitDeferred {
+		deferSelectionCompletion(ctx, nil)
+	}
 	completionLatency := time.Duration(0)
 	if !ctx.StartTime.IsZero() {
 		completionLatency = time.Since(ctx.StartTime)
@@ -507,7 +514,13 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 		})
 		return
 	}
-	r.updateResponseCache(ctx, encoded)
+	// An unrecorded turn is not cached: a retry served from the cache would
+	// leave it unrecorded for good.
+	if commitDeferred {
+		deferSelectionCompletion(ctx, func() { r.updateResponseCache(ctx, encoded) })
+	} else {
+		r.updateResponseCache(ctx, encoded)
+	}
 	r.scheduleSemanticResponseMemoryStore(ctx, semanticResponse)
 	r.persistResponseObject(ctx)
 	r.attachRouterReplayResponse(ctx, encoded, true)

@@ -73,6 +73,8 @@ func raylineARCInflightKey(store raylinearc.EpisodeStore, episodeIDHash string, 
 
 // raylineARCTurnInputs names every request input outside the body that changes
 // how ARC treats a turn, so two requests that differ in one never coalesce.
+// That includes the explicit turn-signal headers: a side call and a main turn
+// with the same body are different turns.
 //
 // The decision is named by its own ARC config: several decisions may share one
 // selector and episode store, and each routes with its own plugins and system
@@ -90,13 +92,15 @@ func raylineARCTurnInputs(
 		eligibility = strings.TrimSpace(reqCtx.Headers[lever.EligibilityHeader])
 	}
 	return fmt.Sprintf(
-		"decision=%p|format=%s|close=%t|eligible=%q|fault=%s|credentials=%s",
+		"decision=%p|format=%s|close=%t|eligible=%q|fault=%s|credentials=%s|call_kind=%q|compaction=%q",
 		arcConfig,
 		reqCtx.SourceFormat,
 		reqCtx.RaylineARCCloseRequested,
 		eligibility,
 		requestedFault(arcConfig, reqCtx),
 		raylineARCCredentialDigest(reqCtx.Headers, credentialHeaders),
+		strings.TrimSpace(reqCtx.Headers[raylineARCCallKindHeader]),
+		strings.TrimSpace(reqCtx.Headers[raylineARCCompactionHeader]),
 	)
 }
 
@@ -211,6 +215,10 @@ func cloneRaylineARCSelectionResult(result *selection.SelectionResult) *selectio
 		trace.EncoderVisitedReplicaIDs = slices.Clone(trace.EncoderVisitedReplicaIDs)
 		if result.RaylineARC.PolicyNextState != nil {
 			trace.PolicyNextState = result.RaylineARC.PolicyNextState.Clone()
+		}
+		if result.RaylineARC.PolicyBoundary != nil {
+			boundary := *result.RaylineARC.PolicyBoundary
+			trace.PolicyBoundary = &boundary
 		}
 		cloned.RaylineARC = &trace
 	}

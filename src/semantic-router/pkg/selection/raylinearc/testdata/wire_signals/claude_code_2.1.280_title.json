@@ -1,0 +1,58 @@
+{
+ "provenance": "Claude Code 2.1.280 session-title request body, captured 2026-10-01 from the release binary run in a container against a local logging stub (no provider). Strings not read by the detectors are shortened to a prefix and a digest; metadata ids are zeroed; tool definitions are trimmed to their names.",
+ "body": {
+  "model": "claude-sonnet-4-5",
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "text",
+      "text": "<session>\nFix the bug in app.py: total should add.\n</session>\n\nWrite the title in the predominant language of the sessio...[sha256:fc42ea0988a2b0b3]"
+     }
+    ]
+   }
+  ],
+  "system": [
+   {
+    "type": "text",
+    "text": "x-anthropic-billing-header: cc_version=2.1.280.655; cc_entrypoint=cli;"
+   },
+   {
+    "type": "text",
+    "text": "You are Claude Code, Anthropic's official CLI for Claude."
+   },
+   {
+    "type": "text",
+    "text": "You are naming a coding session so the user can pick it out of a long list of sessions. The title is a name for what the session is about, not a sentence describing the task: a short noun phrase of two to five words, in sentence case (capitalize only the first word, plus proper nouns, acronyms, and code identifiers exactly as written). When a draft runs past five words, drop the least identifying ...[sha256:765b5ba2fa0a315a]"
+   }
+  ],
+  "tools": [],
+  "metadata": {
+   "user_id": "{\"device_id\": \"0000000000000000000000000000000000000000000000000000000000000000\", \"account_uuid\": \"\", \"session_id\": \"00000000-0000-0000-0000-000000000000\"}"
+  },
+  "max_tokens": 32000,
+  "thinking": {
+   "type": "disabled"
+  },
+  "temperature": 1,
+  "output_config": {
+   "format": {
+    "type": "json_schema",
+    "schema": {
+     "type": "object",
+     "properties": {
+      "title": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "title"
+     ],
+     "additionalProperties": false
+    }
+   }
+  },
+  "stream": true
+ }
+}

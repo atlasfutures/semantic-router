@@ -46,7 +46,7 @@ type raylineARCUpstreamAudit struct {
 // broken extension. Anything else that changes is.
 //
 // The new record is staged on the episode transaction and commits only with
-// a turn that reached a 2xx response, so a retry is judged against the last
+// a turn whose complete 2xx response reached the client, so a retry is judged against the last
 // committed body.
 func (r *OpenAIRouter) auditRaylineARCUpstream(body []byte, ctx *RequestContext) {
 	if ctx == nil || ctx.RaylineARCDispatch == nil || ctx.RaylineARCTransaction == nil {

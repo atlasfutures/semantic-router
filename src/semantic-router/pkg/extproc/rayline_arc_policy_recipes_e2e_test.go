@@ -66,6 +66,7 @@ func TestPolicyPackagesServeSideBySideByModelName(t *testing.T) {
 		if _, err := router.handleResponseHeaders(arcResponseHeaders("200"), ctx); err != nil {
 			t.Fatalf("commit %s: %v", model, err)
 		}
+		completeTestResponse(t, ctx)
 		finalizeSelectionProcessTerminal(ctx)
 		want := "vendor/think"
 		if model == stripModel {
