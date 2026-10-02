@@ -136,4 +136,7 @@ type RaylineARCTrace struct {
 	// state. They must never be logged or exported as metric labels.
 	EncoderReplicaID         string
 	EncoderVisitedReplicaIDs []string
+	// TurnIndex is the episode position this selection was made at: the
+	// number of turns the episode had committed before it.
+	TurnIndex uint64
 }

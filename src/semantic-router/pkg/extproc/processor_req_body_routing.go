@@ -255,6 +255,9 @@ func (r *OpenAIRouter) buildProviderDispatchResponse(
 	if dispatch == nil {
 		return r.createErrorResponse(500, "Internal routing error. Contact your administrator.")
 	}
+	if ctx != nil {
+		ctx.DispatchedToOpenRouter = providerIsOpenRouter(dispatch.profile)
+	}
 	state := &routeHeaderState{
 		setHeaders: r.startUpstreamSpanAndInjectHeaders(
 			dispatch.logicalModel, dispatch.backendAddress, ctx,

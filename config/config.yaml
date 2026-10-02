@@ -2148,6 +2148,17 @@ global:
         enabled: false
         port: 6060
         bind: 127.0.0.1
+      # Per-call usage records, also sent to a Redis stream when redis.address
+      # is set. Each entry's "record" field holds one llm_usage record as JSON.
+      usage_records:
+        redis:
+          address: ""
+          db: 0
+          password_env: ""
+          use_tls: false
+          stream: vsr:llm_usage
+          max_len: 1000000
+          queue_size: 4096
     authz:
       fail_open: false
       identity:

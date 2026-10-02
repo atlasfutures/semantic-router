@@ -229,6 +229,11 @@ func (r *OpenAIRouter) executeContextRecoveryFollowup(
 	if err != nil {
 		return nil, fmt.Errorf("encode context recovery followup: %w", err)
 	}
+	// Only a body the client actually receives carries both calls. Set
+	// earlier, a failed encode would send the fail-open path the first
+	// call's counts with both calls' charge.
+	charge := decoded.Response.Usage.ProviderCost
+	requestCtx.ContextRecoveryProviderCost = &charge
 	return encoded.Body, nil
 }
 
@@ -317,7 +322,30 @@ func mergeContextRecoveryUsage(
 		}
 		*pair.target = merged
 	}
+	result.ProviderCost = mergeContextRecoveryProviderCost(initial.ProviderCost, followup.ProviderCost)
 	return result, nil
+}
+
+// mergeContextRecoveryProviderCost charges the turn for both calls. A charge
+// either call left unstated leaves the sum unknown: half a bill is not the
+// turn's cost.
+func mergeContextRecoveryProviderCost(left, right llmprotocol.ProviderCost) llmprotocol.ProviderCost {
+	sum := func(a, b *float64) *float64 {
+		if a == nil || b == nil {
+			return nil
+		}
+		total := *a + *b
+		return &total
+	}
+	merged := llmprotocol.ProviderCost{
+		Charged:           sum(left.Charged, right.Charged),
+		UpstreamInference: sum(left.UpstreamInference, right.UpstreamInference),
+	}
+	if left.BYOK != nil && right.BYOK != nil && *left.BYOK == *right.BYOK {
+		byok := *left.BYOK
+		merged.BYOK = &byok
+	}
+	return merged
 }
 
 func mergeContextRecoveryTokenCount(left, right llmprotocol.TokenCount) (llmprotocol.TokenCount, error) {
