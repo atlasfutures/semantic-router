@@ -287,3 +287,34 @@ func TestRelaxedPolicyCellRefusesAServiceThatIgnoresTheMode(t *testing.T) {
 		t.Fatalf("probe answered for another package = %v", err)
 	}
 }
+
+// End to end: a policy service that reports package verification
+// (pathfinder#3120) on its listing and decide responses still arms the cell
+// and has its decisions dispatched.
+func TestPolicyCellServesAServiceReportingVerification(t *testing.T) {
+	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
+	for _, verification := range []raylinearc.PolicyVerification{
+		raylinearc.PolicyPackageVerified, raylinearc.PolicyPackageUnverified,
+	} {
+		t.Run(string(verification), func(t *testing.T) {
+			fake := newRelaxedPolicyFake(t)
+			fake.mu.Lock()
+			fake.verification = verification
+			fake.mu.Unlock()
+			if listing := fake.packages(); listing.Packages[0].Verification != verification {
+				t.Fatalf("the fake listing reports %q", listing.Packages[0].Verification)
+			}
+			router, err := NewOpenAIRouter(writeConsistentPolicyConfig(t, fake.URL(), config.RaylineARCConsistencyStrict))
+			if err != nil {
+				t.Fatalf("build router: %v", err)
+			}
+			awaitPolicySelectorArmed(t, router)
+			if status, err := policyTurnStatus(router, "episode-verified", "hello"); err != nil || status != 0 {
+				t.Fatalf("turn against a service reporting %q = %d, %v; want forwarded", verification, status, err)
+			}
+			if len(fake.received()) != 1 {
+				t.Fatalf("decide calls = %d, want 1", len(fake.received()))
+			}
+		})
+	}
+}
