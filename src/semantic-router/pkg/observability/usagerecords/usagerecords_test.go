@@ -2,13 +2,18 @@ package usagerecords
 
 import (
 	"context"
+	"errors"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 )
@@ -183,5 +188,53 @@ func TestCloseCountsRecordsItAbandons(t *testing.T) {
 	}
 	if abandoned := testutil.ToFloat64(recordsTotal.WithLabelValues("abandoned")) - before; abandoned != 2 {
 		t.Fatalf("abandoned = %v, want the 2 records still queued behind the stalled write", abandoned)
+	}
+}
+
+type failingXAdder struct{}
+
+func (failingXAdder) XAdd(context.Context, *redis.XAddArgs) *redis.StringCmd {
+	return redis.NewStringResult("", errors.New("connection refused"))
+}
+
+// A down Redis fails every record. Each failure is counted; the log names the
+// first and then one per interval, with how many it left out.
+func TestWriteFailureLogIsRateLimited(t *testing.T) {
+	core, logs := observer.New(zapcore.DebugLevel)
+	t.Cleanup(zap.ReplaceGlobals(zap.New(core)))
+	var clock atomic.Int64
+	clock.Store(time.Unix(1000, 0).UnixNano())
+	sink := newRedisStreamSink(failingXAdder{}, nil, config.UsageRecordsRedisConfig{})
+	sink.now = func() time.Time { return time.Unix(0, clock.Load()) }
+	before := testutil.ToFloat64(recordsTotal.WithLabelValues("write_failed"))
+
+	for range 5 {
+		sink.Publish([]byte(`{}`))
+	}
+	waitForCount(t, "write_failed", before+5)
+	clock.Add(int64(failureLogInterval + time.Second))
+	sink.Publish([]byte(`{}`))
+	sink.Close(time.Second)
+
+	if failed := testutil.ToFloat64(recordsTotal.WithLabelValues("write_failed")) - before; failed != 6 {
+		t.Fatalf("write_failed = %v, want every failure counted", failed)
+	}
+	entries := logs.FilterField(zap.String("event", "usage_record_write_failed")).All()
+	if len(entries) != 2 {
+		t.Fatalf("write-failure log lines = %d, want the first and one after the interval", len(entries))
+	}
+	if suppressed := entries[1].ContextMap()["suppressed_since_last"]; suppressed != int64(4) {
+		t.Fatalf("suppressed_since_last = %v, want 4", suppressed)
+	}
+}
+
+func waitForCount(t *testing.T, outcome string, want float64) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for testutil.ToFloat64(recordsTotal.WithLabelValues(outcome)) < want {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s did not reach %v", outcome, want)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

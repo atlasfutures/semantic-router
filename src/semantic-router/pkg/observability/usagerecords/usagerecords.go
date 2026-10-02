@@ -27,6 +27,11 @@ const recordField = "record"
 
 const writeTimeout = 2 * time.Second
 
+// failureLogInterval bounds the write-failure log. A down Redis fails every
+// record; the counter counts each one, and the log names the first and then
+// at most one per interval with how many it left out.
+const failureLogInterval = time.Minute
+
 var recordsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "llm_usage_records_total",
 	Help: "Usage records offered to the durable sink, by outcome (written, queue_full, write_failed, closed, abandoned).",
@@ -82,6 +87,10 @@ type RedisStreamSink struct {
 	// abandon tells the writer that shutdown ran out of time: what is still
 	// queued is counted abandoned rather than written.
 	abandon chan struct{}
+	// lastFailureLog and suppressedFailures belong to the writer goroutine.
+	lastFailureLog     time.Time
+	suppressedFailures int
+	now                func() time.Time
 	// mu orders Publish against Close: a record offered after Close is
 	// counted dropped instead of sent on a closed queue.
 	mu     sync.RWMutex
@@ -129,6 +138,7 @@ func newRedisStreamSink(client redisXAdder, closer func() error, cfg config.Usag
 	sink := &RedisStreamSink{
 		client: client, closer: closer, stream: stream, maxLen: maxLen,
 		queue: make(chan []byte, queueSize), done: make(chan struct{}), abandon: make(chan struct{}),
+		now: time.Now,
 	}
 	go sink.run()
 	return sink
@@ -172,13 +182,27 @@ func (sink *RedisStreamSink) write(record []byte) {
 	}).Err()
 	if err != nil {
 		recordsTotal.WithLabelValues("write_failed").Inc()
-		logging.ComponentWarnEvent("usagerecords", "usage_record_write_failed", map[string]interface{}{
-			"stream": sink.stream,
-			"error":  err.Error(),
-		})
+		sink.logWriteFailure(err)
 		return
 	}
 	recordsTotal.WithLabelValues("written").Inc()
+}
+
+// logWriteFailure logs the first failure and then at most one per interval,
+// naming how many failures it did not log in between.
+func (sink *RedisStreamSink) logWriteFailure(err error) {
+	now := sink.now()
+	if !sink.lastFailureLog.IsZero() && now.Sub(sink.lastFailureLog) < failureLogInterval {
+		sink.suppressedFailures++
+		return
+	}
+	logging.ComponentWarnEvent("usagerecords", "usage_record_write_failed", map[string]interface{}{
+		"stream":                sink.stream,
+		"error":                 err.Error(),
+		"suppressed_since_last": sink.suppressedFailures,
+	})
+	sink.lastFailureLog = now
+	sink.suppressedFailures = 0
 }
 
 // Close stops taking records, writes what is queued for up to timeout, counts
