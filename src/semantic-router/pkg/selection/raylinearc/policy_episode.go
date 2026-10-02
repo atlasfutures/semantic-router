@@ -69,7 +69,10 @@ type PolicyEpisodeState struct {
 // while the episode's turn clock is where it was decided and the request
 // still extends the prefix it was decided for; any committed turn clears it.
 type PolicyBoundaryDecision struct {
-	Arm             int    `json:"arm"`
+	Arm int `json:"arm"`
+	// ActionID is the action decided at the boundary, so a subagent call
+	// while the boundary turn is in flight holds that exact action.
+	ActionID        string `json:"action_id,omitempty"`
 	TurnIndex       uint64 `json:"turn_index"`
 	EpochStartTurn  uint64 `json:"epoch_start_turn"`
 	CompactionCount int    `json:"compaction_count"`
@@ -99,6 +102,23 @@ func NewPolicyBoundaryDecision(
 		Arm: arm, TurnIndex: turnIndex, EpochStartTurn: turn.EpochStartTurn, CompactionCount: turn.CompactionCount,
 		PrefixLen: len(messages), PrefixDigest: MessagesDigest(messages, len(messages)),
 	}
+}
+
+// HeldPolicyAction is the action the episode's main conversation is on: the
+// one a boundary turn still in flight decided, or else the one that produced
+// the last committed reply. ok is false when neither is known (no main turn
+// committed yet in this context).
+func HeldPolicyAction(state *EpisodeState) (actionID string, ok bool) {
+	if state == nil {
+		return "", false
+	}
+	if boundary := state.PolicyBoundary; boundary != nil && boundary.TurnIndex == state.TurnIndex && boundary.ActionID != "" {
+		return boundary.ActionID, true
+	}
+	if state.Policy != nil && len(state.Policy.Ledger) > 0 {
+		return state.Policy.Ledger[len(state.Policy.Ledger)-1].ActionID, true
+	}
+	return "", false
 }
 
 // RetainedArm returns the stored arm if this decision is this request's: the

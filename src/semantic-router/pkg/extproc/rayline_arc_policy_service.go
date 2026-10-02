@@ -427,6 +427,15 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		held = *state.PreviousArm
 	}
 	logRaylineARCPolicyTurn(arcContext.EpisodeIDHash, signals, transition, state.TurnIndex, turn, held >= 0, retained)
+	// A Claude Code subagent call runs on the parent's held action: its
+	// model and its in-force control. Training never decided a level for a
+	// subagent, so the service is not asked (operator ruling, 2026-10-02;
+	// pathfinder#3219 holds a trained subagent_start decision for later).
+	if sideCall && signals.CallKindSource == callKindSourceClaudeSubagent {
+		if result, ok := selector.heldPolicyActionResult(armed, selCtx, arcContext, scorer, state, workerIDs, excluded); ok {
+			return result, nil
+		}
+	}
 	available := make([]string, 0, len(scorer.actionOrder))
 	for _, actionID := range scorer.actionOrder {
 		arm := scorer.bindings[actionID].arm
@@ -583,6 +592,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	if atBoundary && !retained {
 		result.RaylineARC.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(binding.arm, state.TurnIndex, turn, messages)
+		result.RaylineARC.PolicyBoundary.ActionID = response.Decision.SelectedActionID
 	}
 	return result, nil
 }
@@ -691,6 +701,53 @@ func policyMessages(raw json.RawMessage) ([]json.RawMessage, []string, error) {
 
 // policyDecision reports each arm's best action score, so the trace and the
 // alternatives rank workers the way the service ranked their actions.
+// heldPolicyActionResult dispatches the parent's held action without a
+// decide: the selection a side call commits nothing from, so the ledger and
+// the turn clock are untouched. ok is false when no held action is known or
+// it cannot be served here (unbound or excluded), and the caller decides as
+// for any other side call.
+func (selector *raylineARCSelector) heldPolicyActionResult(
+	armed *raylineARCArmedComponents,
+	selCtx *selection.SelectionContext,
+	arcContext *selection.RaylineARCSelectionContext,
+	scorer *policyServiceScorer,
+	state *raylinearc.EpisodeState,
+	workerIDs []string,
+	excluded []bool,
+) (*selection.SelectionResult, bool) {
+	actionID, held := raylinearc.HeldPolicyAction(state)
+	binding, bound := scorer.bindings[actionID]
+	if !held || !bound || (len(excluded) == len(workerIDs) && excluded[binding.arm]) {
+		return nil, false
+	}
+	count := len(workerIDs)
+	excludedArms := make([]bool, count)
+	for arm := range excludedArms {
+		excludedArms[arm] = arm != binding.arm
+	}
+	decision := raylinearc.Decision{
+		SelectedArm: binding.arm, SelectedWorker: workerIDs[binding.arm],
+		RawScores: make([]float32, count), AdjustedScores: make([]float32, count),
+		SwitchCostUSD: make([]float64, count), CacheMissTokens: make([]int, count),
+		ColdSwitchUpgradeExemptions: make([]bool, count), ExcludedArms: excludedArms,
+	}
+	if !validARCDecision(decision, workerIDs) {
+		return nil, false
+	}
+	result := selector.selectionResult(armed, selCtx, arcContext, state, &raylinearc.EncoderResult{}, decision, 0)
+	result.RaylineARC.EncoderLatencyUnknown = true
+	result.Reasoning = "policy-service ARC held action (subagent side call)"
+	result.RaylineARC.PolicyActionID = actionID
+	result.RaylineARC.ThinkingLevel = binding.level
+	result.RaylineARC.PolicyActionModel = binding.model
+	result.RaylineARC.WorkerProviderModel = scorer.workers[binding.arm].Model
+	result.RaylineARC.PolicySideCall = true
+	logging.ComponentEvent("extproc", "rayline_arc_policy_subagent_held", map[string]interface{}{
+		"episode_id_hash": arcContext.EpisodeIDHash, "policy_action_id": actionID,
+	})
+	return result, true
+}
+
 func policyDecision(
 	scorer *policyServiceScorer,
 	response *raylinearc.PolicyDecisionResponse,
