@@ -181,10 +181,24 @@ type PolicyDecision struct {
 }
 
 type PolicyScoredPackage struct {
-	Package  PolicyPackageRef    `json:"package"`
-	PolicyID string              `json:"policy_id"`
-	Decision PolicyDecision      `json:"decision"`
-	Actions  []PolicyActionScore `json:"actions"`
+	Package             PolicyPackageRef    `json:"package"`
+	PolicyID            string              `json:"policy_id"`
+	Decision            PolicyDecision      `json:"decision"`
+	Actions             []PolicyActionScore `json:"actions"`
+	PackageVerification *string             `json:"package_verification,omitempty"`
+}
+
+// Package verification, as a policy service reports it (pathfinder#3120,
+// #3138): "verified" when the package's goldens reproduced on the replica at
+// load, "unverified" when it carries none. A service that predates
+// verification omits the field, which means unknown.
+const (
+	PolicyPackageVerified   = "verified"
+	PolicyPackageUnverified = "unverified"
+)
+
+func validPolicyVerification(value *string) bool {
+	return value == nil || *value == PolicyPackageVerified || *value == PolicyPackageUnverified
 }
 
 type PolicyShadowFailure struct {
@@ -251,6 +265,7 @@ type PolicyDecisionResponse struct {
 	TimingMillis             PolicyTiming         `json:"timing_ms"`
 	Shadow                   []PolicyShadowResult `json:"shadow"`
 	QualityParityEstablished bool                 `json:"quality_parity_established"`
+	PackageVerification      *string              `json:"package_verification,omitempty"`
 }
 
 type PolicyErrorResponse struct {
@@ -271,6 +286,8 @@ type PolicyLoadedPackage struct {
 	ProfileID     string `json:"profile_id"`
 	DecisionMode  string `json:"decision_mode"`
 	State         string `json:"state"`
+	// Verification is the package's verification; absent means unknown.
+	Verification *string `json:"verification,omitempty"`
 }
 
 type PolicyPackagesResponse struct {
@@ -433,9 +450,15 @@ func DecodePolicyDecisionResponse(body []byte) (*PolicyDecisionResponse, error) 
 	if err := requireOneSelected(response.Decision, response.Actions); err != nil {
 		return nil, err
 	}
+	if !validPolicyVerification(response.PackageVerification) {
+		return nil, fmt.Errorf("policy package_verification %q", *response.PackageVerification)
+	}
 	for _, shadow := range response.Shadow {
 		if shadow.Scored == nil {
 			continue
+		}
+		if !validPolicyVerification(shadow.Scored.PackageVerification) {
+			return nil, fmt.Errorf("shadow %s: package_verification %q", shadow.Scored.Package.Alias, *shadow.Scored.PackageVerification)
 		}
 		if err := requireOneSelected(shadow.Scored.Decision, shadow.Scored.Actions); err != nil {
 			return nil, fmt.Errorf("shadow %s: %w", shadow.Scored.Package.Alias, err)
@@ -471,6 +494,11 @@ func DecodePolicyPackagesResponse(body []byte) (*PolicyPackagesResponse, error) 
 	}
 	if response.SchemaVersion != PolicyPackagesSchema {
 		return nil, fmt.Errorf("policy packages schema %q", response.SchemaVersion)
+	}
+	for _, loaded := range response.Packages {
+		if !validPolicyVerification(loaded.Verification) {
+			return nil, fmt.Errorf("policy package %s verification %q", loaded.Alias, *loaded.Verification)
+		}
 	}
 	return &response, nil
 }
