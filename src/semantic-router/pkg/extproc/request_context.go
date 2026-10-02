@@ -118,7 +118,11 @@ type RequestContext struct {
 	// DispatchedProviderOrder is the OpenRouter provider order the rendered
 	// upstream body carries, read back the same way and for the same reason.
 	DispatchedProviderOrder []string
-	RoutingDecision         map[string]interface{}
+	// DispatchedToOpenRouter says the request was dispatched to an OpenRouter
+	// provider profile, by type or host. It is what gives a usage.cost its
+	// unit: OpenRouter states it in credits, and one credit is one US dollar.
+	DispatchedToOpenRouter bool
+	RoutingDecision        map[string]interface{}
 
 	// UpstreamStatusCode is the HTTP status the upstream returned, captured at
 	// the response-header phase. Zero means the status was never observed for

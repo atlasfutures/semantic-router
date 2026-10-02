@@ -558,8 +558,11 @@ func (r *OpenAIRouter) reportSemanticStreamingUsage(
 	if usage.invalid {
 		// The turn still happened and the upstream may have billed it. It
 		// gets its usage record, with every count it never stated null, so
-		// no call goes unaccounted for.
-		r.recordResponseCost(ctx, completionLatency, responseUsageMetrics{providerCost: usage.providerCost})
+		// no call goes unaccounted for. A request with no resolved model
+		// writes none, as on every other path.
+		if ctx.RequestModel != "" {
+			r.recordResponseCost(ctx, completionLatency, responseUsageMetrics{providerCost: usage.providerCost})
+		}
 		return
 	}
 	totalTokens := responseUsageTotal(usage)

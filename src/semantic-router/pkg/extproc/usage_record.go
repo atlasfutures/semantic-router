@@ -17,6 +17,10 @@ import (
 // durable stream can refuse a record it does not understand.
 const llmUsageRecordSchema = "vsr.llm_usage.v1"
 
+// openRouterChargeCurrency is the unit of OpenRouter's usage.cost: credits,
+// each worth one US dollar.
+const openRouterChargeCurrency = "USD"
+
 // Values of llmUsageRecord.Pricing.
 const (
 	usagePricingPriced               = "priced"
@@ -72,15 +76,20 @@ type llmUsageRecord struct {
 	// The rate-card price: Cost is cache-aware, from the rates beside it,
 	// which come from the table PricingSnapshot names. Cost is null whenever
 	// the call could not be priced; Pricing says why.
-	Pricing                  string   `json:"pricing"`
-	PricingSnapshot          string   `json:"pricing_snapshot"`
-	Cost                     *float64 `json:"cost"`
-	Currency                 *string  `json:"currency"`
-	PricingPromptPer1M       *float64 `json:"pricing_prompt_per_1m"`
-	PricingCachedInputPer1M  *float64 `json:"pricing_cached_input_per_1m"`
-	PricingCacheWritePer1M   *float64 `json:"pricing_cache_write_per_1m"`
-	PricingCompletionPer1M   *float64 `json:"pricing_completion_per_1m"`
-	ProviderReportedCost     *float64 `json:"provider_reported_cost"`
+	Pricing                 string   `json:"pricing"`
+	PricingSnapshot         string   `json:"pricing_snapshot"`
+	Cost                    *float64 `json:"cost"`
+	Currency                *string  `json:"currency"`
+	PricingPromptPer1M      *float64 `json:"pricing_prompt_per_1m"`
+	PricingCachedInputPer1M *float64 `json:"pricing_cached_input_per_1m"`
+	PricingCacheWritePer1M  *float64 `json:"pricing_cache_write_per_1m"`
+	PricingCompletionPer1M  *float64 `json:"pricing_completion_per_1m"`
+	ProviderReportedCost    *float64 `json:"provider_reported_cost"`
+	// ProviderReportedCurrency is the unit of the reported charge, set only
+	// where the unit is known: OpenRouter states usage.cost in credits of one
+	// US dollar each. A charge from any other upstream has no stated unit,
+	// and its currency stays null.
+	ProviderReportedCurrency *string  `json:"provider_reported_currency"`
 	ProviderReportedUpstream *float64 `json:"provider_reported_upstream_inference_cost"`
 	ProviderReportedBYOK     *bool    `json:"provider_reported_byok"`
 
@@ -120,6 +129,9 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	record.ProviderReportedBYOK = usage.providerCost.BYOK
 	if ctx == nil {
 		return record
+	}
+	if record.ProviderReportedCost != nil && ctx.DispatchedToOpenRouter {
+		record.ProviderReportedCurrency = nonEmpty(openRouterChargeCurrency)
 	}
 	record.RequestID = nonEmpty(ctx.RequestID)
 	record.Model = nonEmpty(ctx.RequestModel)

@@ -111,7 +111,7 @@ func TestUsageRecordCarriesRateCardAndProviderCost(t *testing.T) {
 	}
 	if fields["provider_reported_cost"] != charged ||
 		fields["provider_reported_upstream_inference_cost"] != upstream ||
-		fields["provider_reported_byok"] != false {
+		fields["provider_reported_byok"] != false || fields["provider_reported_currency"] != nil {
 		t.Fatalf("provider cost members = %v / %v / %v", fields["provider_reported_cost"],
 			fields["provider_reported_upstream_inference_cost"], fields["provider_reported_byok"])
 	}
@@ -319,5 +319,65 @@ func TestOddlyTypedProviderChargeStillServesTheCompletion(t *testing.T) {
 				t.Fatalf("usage row lost its counts or price: %v", fields)
 			}
 		})
+	}
+}
+
+// The charge's currency is recorded only where its unit is known: a call
+// dispatched to OpenRouter, which states usage.cost in USD credits.
+func TestProviderChargeCurrencyComesFromTheDispatch(t *testing.T) {
+	charged := 0.002
+	for _, tc := range []struct {
+		name       string
+		openRouter bool
+		charge     *float64
+		want       interface{}
+	}{
+		{"openrouter charge", true, &charged, "USD"},
+		{"charge of unknown unit", false, &charged, nil},
+		{"openrouter without a charge", true, nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := captureLogs(t)
+			ctx := &RequestContext{RequestID: "rt_currency", RequestModel: "priced-model", DispatchedToOpenRouter: tc.openRouter}
+			usage := streamingFlagUsage()
+			usage.providerCost.Charged = tc.charge
+			usageRecordRouter().reportNonStreamingUsage(ctx, time.Second, usage)
+			if got := findLogEvent(t, logs, "llm_usage")["provider_reported_currency"]; got != tc.want {
+				t.Fatalf("provider_reported_currency = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDispatchRecordsWhetherItWentToOpenRouter(t *testing.T) {
+	router := usageRecordRouter()
+	for _, tc := range []struct {
+		profile *config.ProviderProfile
+		want    bool
+	}{
+		{&config.ProviderProfile{Type: "openrouter"}, true},
+		{&config.ProviderProfile{BaseURL: "https://openrouter.ai/api/v1"}, true},
+		{&config.ProviderProfile{Type: "anthropic", BaseURL: "https://api.anthropic.com"}, false},
+	} {
+		ctx := &RequestContext{RequestID: "rt_dispatch", Headers: map[string]string{}}
+		router.buildProviderDispatchResponse(&providerDispatch{logicalModel: "priced-model", profile: tc.profile}, ctx)
+		if ctx.DispatchedToOpenRouter != tc.want {
+			t.Fatalf("%+v: DispatchedToOpenRouter = %v, want %v", tc.profile, ctx.DispatchedToOpenRouter, tc.want)
+		}
+	}
+}
+
+// A request with no resolved model writes no usage row on any path; the
+// uncounted-stream row follows the same rule.
+func TestUncountedStreamWithoutAModelWritesNoRow(t *testing.T) {
+	logs := captureLogs(t)
+	ctx := &RequestContext{RequestID: "rt_stream_no_model", IsStreamingResponse: true}
+
+	usageRecordRouter().reportSemanticStreamingUsage(ctx, time.Second, invalidResponseTerminalUsage("stream_cut"))
+
+	for _, entry := range logs.All() {
+		if entry.ContextMap()["event"] == "llm_usage" {
+			t.Fatalf("a request with no model wrote a usage row: %v", entry.ContextMap())
+		}
 	}
 }
