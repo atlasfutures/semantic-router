@@ -230,9 +230,6 @@ func TestOpenRouterUnknownFieldsAreNamed(t *testing.T) {
 		"choices[].message.reasoning_details",
 		"choices[].native_finish_reason",
 		"usage.completion_tokens_details.image_tokens",
-		"usage.cost",
-		"usage.cost_details",
-		"usage.is_byok",
 		"usage.prompt_tokens_details.video_tokens",
 	}
 	if !reflect.DeepEqual(dropped, want) {
@@ -254,8 +251,7 @@ func TestOpenRouterStreamUnknownFieldsAreNamed(t *testing.T) {
 	}
 	for _, field := range []string{
 		"choices[].delta.reasoning_details", "choices[].native_finish_reason",
-		"usage.completion_tokens_details.image_tokens", "usage.cost", "usage.cost_details",
-		"usage.is_byok", "usage.prompt_tokens_details.video_tokens",
+		"usage.completion_tokens_details.image_tokens", "usage.prompt_tokens_details.video_tokens",
 	} {
 		if !seen[field] {
 			t.Fatalf("stream did not report %q as dropped; reported %v", field, seen)

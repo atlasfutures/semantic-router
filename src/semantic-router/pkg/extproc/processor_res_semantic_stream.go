@@ -534,6 +534,9 @@ func truncatedStreamUsage(ctx *RequestContext, usage responseUsageMetrics) respo
 		return usage
 	}
 	if estimated, carried := estimatedTruncatedStreamUsage(ctx); carried {
+		// The counts are the Router's estimate; a charge the upstream
+		// stated before the cut is still the upstream's.
+		estimated.providerCost = usage.providerCost
 		return estimated
 	}
 	logging.ComponentWarnEvent("extproc", "stream_truncated_uncounted", map[string]interface{}{
@@ -549,7 +552,17 @@ func (r *OpenAIRouter) reportSemanticStreamingUsage(
 	completionLatency time.Duration,
 	usage responseUsageMetrics,
 ) {
-	if ctx == nil || usage.invalid {
+	if ctx == nil {
+		return
+	}
+	if usage.invalid {
+		// The turn still happened and the upstream may have billed it. It
+		// gets its usage record, with every count it never stated null, so
+		// no call goes unaccounted for. A request with no resolved model
+		// writes none, as on every other path.
+		if ctx.RequestModel != "" {
+			r.recordResponseCost(ctx, completionLatency, responseUsageMetrics{providerCost: usage.providerCost})
+		}
 		return
 	}
 	totalTokens := responseUsageTotal(usage)

@@ -349,6 +349,7 @@ func mergeMonotonicUsage(current, update llmprotocol.Usage) (llmprotocol.Usage, 
 		merged[index] = value
 	}
 	result := usageFromCounts(mergedUsageState(current.State, update.State), merged)
+	result.ProviderCost = mergeProviderCost(current.ProviderCost, update.ProviderCost)
 	if err := deriveUsageTotal(&result); err != nil {
 		return llmprotocol.Usage{}, err
 	}

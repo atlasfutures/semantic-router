@@ -155,6 +155,7 @@ func decodeChatUsage(wire chatUsageWire) llmprotocol.Usage {
 		InputTotal:      authoritative(wire.PromptTokens),
 		OutputTotal:     authoritative(wire.CompletionTokens),
 		Total:           authoritative(wire.TotalTokens),
+		ProviderCost:    wire.providerUsageCostWire.decode(),
 	}
 	if wire.PromptTokensDetails != nil {
 		cached, cacheWrite := wire.PromptTokensDetails.CachedTokens, wire.PromptTokensDetails.CacheWriteTokens

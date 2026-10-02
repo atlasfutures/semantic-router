@@ -140,6 +140,7 @@ type chatUsageWire struct {
 	ComputeUnits            json.RawMessage                  `json:"compute_units,omitempty"`
 	PromptTokensDetails     *chatPromptTokensDetailsWire     `json:"prompt_tokens_details,omitempty"`
 	CompletionTokensDetails *chatCompletionTokensDetailsWire `json:"completion_tokens_details,omitempty"`
+	providerUsageCostWire
 }
 
 type chatPromptTokensDetailsWire struct {

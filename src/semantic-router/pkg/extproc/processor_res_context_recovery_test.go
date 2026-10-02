@@ -70,7 +70,7 @@ func TestHandleContextRecoveryFollowupCallsLooper(t *testing.T) {
 		_, _ = writer.Write([]byte(`{
 			"id":"followup",
 			"model":"model",
-			"usage":{"prompt_tokens":20,"completion_tokens":5,"total_tokens":25},
+			"usage":{"prompt_tokens":20,"completion_tokens":5,"total_tokens":25,"cost":0.5},
 			"choices":[{"index":0,"message":{"role":"assistant","content":"final answer"},"finish_reason":"stop"}]
 		}`))
 	}))
@@ -116,7 +116,7 @@ func TestHandleContextRecoveryFollowupCallsLooper(t *testing.T) {
 	}
 	response := []byte(`{
 		"id":"initial","object":"chat.completion","created":1,"model":"model",
-		"usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13},
+		"usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13,"cost":0.25},
 		"choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"tool_calls":[{
 			"id":"retrieve-1",
 			"type":"function",
@@ -139,6 +139,18 @@ func TestHandleContextRecoveryFollowupCallsLooper(t *testing.T) {
 	usage := final["usage"].(map[string]interface{})
 	if usage["total_tokens"] != float64(38) {
 		t.Fatalf("merged usage = %#v", usage)
+	}
+	// The client body carries no charge, so the turn's charge for both calls
+	// has to reach the usage report another way.
+	if _, published := usage["cost"]; published {
+		t.Fatalf("client body publishes the provider charge: %#v", usage)
+	}
+	ctx.SemanticResponse, err = router.decodeClientResponse(got, ctx)
+	if err != nil {
+		t.Fatalf("decode recovered body: %v", err)
+	}
+	if charged := router.takeNeutralResponseUsage(ctx).providerCost.Charged; charged == nil || *charged != 0.75 {
+		t.Fatalf("reported charge = %v, want 0.75 for both calls", charged)
 	}
 	messages := received["messages"].([]interface{})
 	tool := messages[len(messages)-1].(map[string]interface{})
