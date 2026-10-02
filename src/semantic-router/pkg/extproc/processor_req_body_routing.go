@@ -61,6 +61,17 @@ func (r *OpenAIRouter) prepareProviderDispatch(
 	if err != nil {
 		return nil, err
 	}
+	// Reasoning another model left in history is made carriable by this
+	// target before the capability gate, which would otherwise refuse it.
+	if carry := protocolcodec.CarryReasoningTo(request, dispatch.targetFormat); carry.Changed() {
+		changed = true
+		logging.ComponentEvent("extproc", "reasoning_carried", map[string]interface{}{
+			"request_id":          ctx.RequestID,
+			"wire_format":         dispatch.targetFormat,
+			"unsigned_dropped":    carry.UnsignedDropped,
+			"signatures_stripped": carry.SignaturesStripped,
+		})
+	}
 	if changed {
 		request.Generation++
 	}

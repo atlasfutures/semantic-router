@@ -52,7 +52,7 @@ func decodeAnthropicResponseContentBlock(body json.RawMessage, index int, policy
 	if err != nil {
 		return llmprotocol.Content{}, err
 	}
-	if anthropicServerToolBlock(typeName) {
+	if anthropicCarriedResponseBlock(typeName) {
 		return carriedAnthropicBlock(typeName, body), nil
 	}
 	content, err := decodeAnthropicContentBlock(body, typeName, index, policy, true)
