@@ -216,6 +216,8 @@ func TestOfficialUsageFieldInventoriesAreClosed(t *testing.T) {
 				"compute_units", "input_tokens", "input_tokens_details", "output_tokens",
 				"output_tokens_details", "total_tokens",
 			),
+			// Provider charge evidence, read leniently on every format (#138).
+			extensions: fields("cost", "cost_details", "is_byok"),
 		},
 		{
 			name: "Anthropic Messages",
@@ -224,6 +226,8 @@ func TestOfficialUsageFieldInventoriesAreClosed(t *testing.T) {
 				"cache_creation", "cache_creation_input_tokens", "cache_read_input_tokens", "inference_geo",
 				"input_tokens", "iterations", "output_tokens", "output_tokens_details", "server_tool_use", "service_tier",
 			),
+			// Provider charge evidence, read leniently on every format (#138).
+			extensions: fields("cost", "cost_details", "is_byok"),
 		},
 	}
 

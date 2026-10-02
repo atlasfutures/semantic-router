@@ -35,7 +35,6 @@
     {"wire": "custom_tool_format", "official": ["grammar", "type"], "fixtures": ["capability/051-chat-custom-tool-lifecycle-in.json"]},
     {"wire": "custom_tool_grammar", "official": ["definition", "syntax"], "fixtures": ["capability/051-chat-custom-tool-lifecycle-in.json"]},
     {"wire": "chat_custom_tool_call", "official": ["input", "name"], "fixtures": ["capability/051-chat-custom-tool-lifecycle-in.json", "capability/052-chat-custom-tool-call-response-in.json", "capability/053-chat-custom-tool-call-stream-in.json"]},
-    {"wire": "chat_openrouter_cost_details", "official": [], "extensions": ["server_tool_cost", "upstream_inference_completions_cost", "upstream_inference_cost", "upstream_inference_prompt_cost"], "fixtures": ["contracts/openrouter-chat-response-in.json"]},
     {"wire": "chat_openrouter_server_tool_use", "official": [], "extensions": ["web_search_requests"], "fixtures": ["contracts/openrouter-chat-response-in.json"]}
   ]
 }

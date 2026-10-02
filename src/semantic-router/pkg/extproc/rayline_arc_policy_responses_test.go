@@ -85,8 +85,8 @@ func TestPolicyResponsesInputIsAByteStablePrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	committed := (&raylinearc.PolicyEpisodeState{}).Next(items1, strings.Repeat("a", 64), "arm")
-	_, attributionBefore := raylinearc.PolicyTurn(nil, items1, roles1, 0)
-	turn, attribution := raylinearc.PolicyTurn(committed, items2, roles2, 1)
+	_, attributionBefore, _ := raylinearc.PolicyTurn(nil, items1, roles1, 0, raylinearc.PolicyTurnSignals{})
+	turn, attribution, _ := raylinearc.PolicyTurn(committed, items2, roles2, 1, raylinearc.PolicyTurnSignals{})
 	if len(attributionBefore) != 0 || turn.Epoch != 0 || len(attribution) != 1 || attribution[0].Message != len(items1) {
 		t.Fatalf("epoch %d attribution %+v", turn.Epoch, attribution)
 	}

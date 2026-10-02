@@ -27,6 +27,10 @@ type responseUsageMetrics struct {
 	totalTokensReported        bool
 	invalid                    bool
 	invalidReason              string
+	// providerCost is the charge the upstream stated. It survives an invalid
+	// count: a provider that billed a turn the Router could not count still
+	// said what it charged.
+	providerCost llmprotocol.ProviderCost
 	// estimated marks counts the Router derived from what it saw of the stream
 	// rather than counts the upstream reported. See
 	// estimatedTruncatedStreamUsage.
@@ -80,7 +84,9 @@ func (r *OpenAIRouter) reportNonStreamingUsage(
 ) {
 	recordSessionTurnOutcome(ctx, usage, r.sessionTurnPricing(ctx.RequestModel))
 	if usage.invalid {
-		usage = responseUsageMetrics{}
+		// Nothing was counted, so every count is unreported and the usage
+		// record writes null for it. What the upstream charged still stands.
+		usage = responseUsageMetrics{providerCost: usage.providerCost}
 	}
 	totalTokens := responseUsageTotal(usage)
 
@@ -197,66 +203,13 @@ func (r *OpenAIRouter) recordResponseCost(
 	completionLatency time.Duration,
 	usage responseUsageMetrics,
 ) routerreplay.UsageCost {
-	totalTokens := responseUsageTotal(usage)
 	replayUsage := r.buildReplayUsageCost(ctx, usage)
-	eventFields := map[string]interface{}{
-		"request_id":            ctx.RequestID,
-		"model":                 ctx.RequestModel,
-		"prompt_tokens":         usage.promptTokens,
-		"cached_prompt_tokens":  usage.cachedPromptTokens,
-		"cache_write_tokens":    usage.cacheWriteTokens,
-		"completion_tokens":     usage.completionTokens,
-		"total_tokens":          totalTokens,
-		"completion_latency_ms": completionLatency.Milliseconds(),
-		"usage_source":          responseUsageSource(usage),
-		// Whether the turn streamed. Read from the response Content-Type at
-		// the header phase, so this is what the upstream actually did rather
-		// than what the request asked for. Always present: an absent field
-		// cannot be told apart from a turn nothing classified, which is what
-		// forced the CP9x traffic mix to be inferred from a side effect.
-		"streaming": ctx.IsStreamingResponse,
-	}
-	addUpstreamAttribution(eventFields, attributedResponse(ctx))
-	if ctx.ResponseFailureClass != "" {
-		// The counts are real and the turn is not usable. Anything reading
-		// these lines has to be able to tell the difference.
-		eventFields["failure_class"] = ctx.ResponseFailureClass
-	}
-	if ctx.StreamingAborted {
-		// The counts are real but the turn is not a whole one. Anything
-		// reading these lines has to be able to tell the difference.
-		eventFields["truncated"] = true
-	}
-
-	if r.Config != nil {
-		pricing, ok := r.Config.GetFullModelPricing(ctx.RequestModel)
-		if ok {
-			if !responseUsageHasPricableBreakdown(usage) {
-				eventFields["pricing"] = "usage_breakdown_unavailable"
-				logging.LogEvent("llm_usage", eventFields)
-				return replayUsage
-			}
-			costAmount := costForResponseUsage(usage, pricing)
-			currency := pricing.Currency
-			metrics.RecordModelCost(ctx.RequestModel, currency, costAmount)
-			ctx.RequestCost = costAmount
-			ctx.RequestCostCurrency = currency
-			ctx.RequestCostPriced = true
-			eventFields["cost"] = costAmount
-			eventFields["currency"] = currency
-			eventFields["pricing_prompt_per_1m"] = pricing.PromptPer1M
-			eventFields["pricing_cached_input_per_1m"] = pricing.CachedInputPer1M
-			eventFields["pricing_cache_write_per_1m"] = effectiveCacheWriteRate(pricing)
-			eventFields["pricing_completion_per_1m"] = pricing.CompletionPer1M
-			logging.LogEvent("llm_usage", eventFields)
-			return replayUsage
-		}
-	}
-
-	eventFields["cost"] = 0.0
-	eventFields["currency"] = "unknown"
-	eventFields["pricing"] = "not_configured"
-	logging.LogEvent("llm_usage", eventFields)
+	record := r.newLLMUsageRecord(ctx, usage)
+	latencyMillis := completionLatency.Milliseconds()
+	record.CompletionLatencyMS = &latencyMillis
+	r.priceUsageRecord(&record, ctx.RequestModel, usage)
+	bindRequestCostFromUsageRecord(ctx, record)
+	emitLLMUsageRecord(record)
 	return replayUsage
 }
 
@@ -305,32 +258,6 @@ func attributedResponse(ctx *RequestContext) *llmprotocol.Response {
 		return ctx.SemanticResponse
 	}
 	return ctx.UpstreamDecodedRemnant
-}
-
-// addUpstreamAttribution names what the upstream said about the turn: which
-// provider served it, what it stopped for, and how much of the completion was
-// reasoning. A turn billed for a bare stop token is otherwise indistinguishable
-// from one that reasoned to exhaustion.
-//
-// A fact the upstream did not state is absent rather than zero. Accounting and
-// attribution both read this line, and a zero here would assert a split or a
-// stop the provider never gave.
-func addUpstreamAttribution(fields map[string]interface{}, response *llmprotocol.Response) {
-	if response == nil {
-		return
-	}
-	if response.StopReason != "" {
-		fields["stop_reason"] = string(response.StopReason)
-	}
-	if response.SourceStopReason != "" {
-		fields["native_stop_reason"] = response.SourceStopReason
-	}
-	if response.UpstreamProvider != "" {
-		fields["upstream_provider"] = response.UpstreamProvider
-	}
-	if reasoning := response.Usage.OutputReasoning; reasoning.Value != nil {
-		fields["reasoning_tokens"] = *reasoning.Value
-	}
 }
 
 func clampCachedPromptTokensInt(promptTokens, cachedPromptTokens int) int {

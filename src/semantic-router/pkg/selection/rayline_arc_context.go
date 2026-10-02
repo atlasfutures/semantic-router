@@ -63,6 +63,14 @@ type RaylineARCSelectionContext struct {
 	// for the policy service; set only for request format openai_responses.
 	PolicyInput        []json.RawMessage
 	PolicyInstructions *string
+	// PolicySignalHeaders holds the request's explicit turn-signal headers
+	// (call kind, compaction ordinal), keyed by lower-case name.
+	PolicySignalHeaders map[string]string
+	// PolicyCallKind and PolicyCallKindSource are the request's call kind as
+	// classified before the episode was read; selection serves the request as
+	// that kind. Empty when the request was not classified ahead of selection.
+	PolicyCallKind       raylinearc.PolicyCallKind
+	PolicyCallKindSource string
 }
 
 // RaylineARCTrace records bounded, privacy-safe artifact policy diagnostics.
@@ -87,6 +95,13 @@ type RaylineARCTrace struct {
 	EncoderLatencyUnknown bool
 	// PolicyNextState is the ledger and epoch to commit with this turn.
 	PolicyNextState *raylinearc.PolicyEpisodeState
+	// PolicySideCall marks a call outside the main conversation: it commits
+	// nothing to the episode, neither a turn nor a ledger entry.
+	PolicySideCall bool
+	// PolicyBoundary is the model decision this turn took at a schedule
+	// boundary, to be stored before dispatch; nil off a boundary, for a side
+	// call, and for a retry that reused a stored one.
+	PolicyBoundary *raylinearc.PolicyBoundaryDecision
 	// ArtifactID and ArtifactRevision hold SHA256-derived hashes of the
 	// deployment-private artifact identity, never the raw pins.
 	ArtifactID          string
@@ -121,4 +136,7 @@ type RaylineARCTrace struct {
 	// state. They must never be logged or exported as metric labels.
 	EncoderReplicaID         string
 	EncoderVisitedReplicaIDs []string
+	// TurnIndex is the episode position this selection was made at: the
+	// number of turns the episode had committed before it.
+	TurnIndex uint64
 }

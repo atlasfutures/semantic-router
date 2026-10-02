@@ -18,10 +18,13 @@ package raylinearc
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -56,8 +59,8 @@ func TestPolicyFixturesMatchTheirPinnedDigests(t *testing.T) {
 		}
 		seen++
 	}
-	if seen != 8 {
-		t.Fatalf("SHA256SUMS pins %d fixtures, want 8", seen)
+	if seen != 9 {
+		t.Fatalf("SHA256SUMS pins %d fixtures, want 9", seen)
 	}
 }
 
@@ -71,6 +74,7 @@ func TestPolicyWireTypesRoundTripTheFixtures(t *testing.T) {
 		"package_manifest.v5.canonical_v1.json": &PolicyPackageManifestV5{},
 		"decision_request.v1.json":              &PolicyDecisionRequest{},
 		"decision_request_responses.v1.json":    &PolicyDecisionRequest{},
+		"decision_request_relaxed.v1.json":      &PolicyDecisionRequest{},
 		"decision_response.v1.json":             &PolicyDecisionResponse{},
 		"packages_response.v1.json":             &PolicyPackagesResponse{},
 		"error_responses.v1.json":               &[]PolicyErrorResponse{},
@@ -278,5 +282,148 @@ func TestDecodePolicyPackageManifestV5CanonicalFixture(t *testing.T) {
 	}
 	if len(manifest.Actions) != 3 {
 		t.Fatalf("decoded %d actions", len(manifest.Actions))
+	}
+}
+
+// A relaxed request carries episode_mode; a strict one omits the field, the
+// form every caller sent before it existed (pathfinder#3068).
+func TestPolicyDecisionRequestEpisodeMode(t *testing.T) {
+	var relaxed PolicyDecisionRequest
+	if err := decodeStrict(readPolicyFixture(t, "decision_request_relaxed.v1.json"), &relaxed); err != nil {
+		t.Fatal(err)
+	}
+	if relaxed.EpisodeMode != PolicyEpisodeModeRelaxed {
+		t.Fatalf("relaxed fixture episode_mode = %q", relaxed.EpisodeMode)
+	}
+	relaxed.EpisodeMode = ""
+	encoded, err := json.Marshal(relaxed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "episode_mode") {
+		t.Fatalf("a strict request names episode_mode: %s", encoded)
+	}
+}
+
+// A relaxed decision answers session_revision null, which decodes as absent.
+func TestDecodePolicyDecisionResponseAcceptsANullRevision(t *testing.T) {
+	var body map[string]any
+	if err := json.Unmarshal(readPolicyFixture(t, "decision_response.v1.json"), &body); err != nil {
+		t.Fatal(err)
+	}
+	body["encoding"].(map[string]any)["session_revision"] = nil
+	raw, _ := json.Marshal(body)
+	response, err := DecodePolicyDecisionResponse(raw)
+	if err != nil {
+		t.Fatalf("decode with a null revision: %v", err)
+	}
+	if response.Encoding.SessionRevision != nil {
+		t.Fatalf("session_revision = %d, want nil", *response.Encoding.SessionRevision)
+	}
+}
+
+// A relaxed call the service cannot serve gets its own bounded class; any
+// other unsupported_request keeps the contract's code.
+func TestPolicyServiceClassifiesRelaxedUnsupported(t *testing.T) {
+	for _, tc := range []struct {
+		detail map[string]any
+		want   string
+	}{
+		{map[string]any{"reason": "relaxed_unsupported_by_encoder"}, PolicyRelaxedUnsupportedClass},
+		{map[string]any{"reason": "relaxed_needs_unretained_runtime"}, PolicyRelaxedUnsupportedClass},
+		{map[string]any{"reason": "projection_refused"}, "unsupported_request"},
+		{map[string]any{}, "unsupported_request"},
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.WriteHeader(http.StatusUnprocessableEntity)
+			_ = json.NewEncoder(writer).Encode(map[string]any{"error": "unsupported_request", "detail": tc.detail})
+		}))
+		client := NewPolicyServiceClient(PolicyServiceConfig{BaseURL: server.URL, TotalTimeout: time.Second})
+		_, err := client.Decide(context.Background(), PolicyDecisionRequest{})
+		server.Close()
+		var failure *PolicyServiceError
+		if !errors.As(err, &failure) || failure.Class != tc.want {
+			t.Fatalf("detail %v: err = %v, want class %s", tc.detail, err, tc.want)
+		}
+	}
+}
+
+// fixtureWith is a fixture's JSON object with edit applied.
+func fixtureWith(t *testing.T, name string, edit func(map[string]any)) []byte {
+	t.Helper()
+	var body map[string]any
+	if err := json.Unmarshal(readPolicyFixture(t, name), &body); err != nil {
+		t.Fatal(err)
+	}
+	edit(body)
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+// A service from pathfinder#3120/#3138 on reports package verification on
+// decide responses, their shadow scores and the packages listing. VSR accepts
+// both values, and still accepts its absence (a service that predates it).
+func TestPolicyResponsesAcceptPackageVerification(t *testing.T) {
+	for _, value := range []PolicyVerification{PolicyPackageVerified, PolicyPackageUnverified} {
+		decide := fixtureWith(t, "decision_response.v1.json", func(body map[string]any) {
+			body["package_verification"] = value
+			for _, shadow := range body["shadow"].([]any) {
+				if scored := shadow.(map[string]any); scored["error"] == nil {
+					scored["package_verification"] = value
+				}
+			}
+		})
+		response, err := DecodePolicyDecisionResponse(decide)
+		if err != nil {
+			t.Fatalf("decide with package_verification %q: %v", value, err)
+		}
+		if response.PackageVerification != value || response.Shadow[0].Scored.PackageVerification != value {
+			t.Fatalf("package_verification = %q (shadow %q), want %q",
+				response.PackageVerification, response.Shadow[0].Scored.PackageVerification, value)
+		}
+		packages := fixtureWith(t, "packages_response.v1.json", func(body map[string]any) {
+			for _, loaded := range body["packages"].([]any) {
+				loaded.(map[string]any)["verification"] = value
+			}
+		})
+		listing, err := DecodePolicyPackagesResponse(packages)
+		if err != nil {
+			t.Fatalf("packages with verification %q: %v", value, err)
+		}
+		if got := listing.Packages[0].Verification; got != value {
+			t.Fatalf("verification = %q, want %q", got, value)
+		}
+	}
+	response, err := DecodePolicyDecisionResponse(readPolicyFixture(t, "decision_response.v1.json"))
+	if err != nil || response.PackageVerification != "" {
+		t.Fatalf("decide without package_verification = %v, %v", response, err)
+	}
+}
+
+// A verification outside the contract's two values, or an explicit null, is
+// refused, as any other malformed response is; only omission means unknown.
+func TestPolicyResponsesRefuseAnUnknownVerification(t *testing.T) {
+	for _, bad := range []any{"trusted", nil, 1} {
+		decide := fixtureWith(t, "decision_response.v1.json", func(body map[string]any) {
+			body["package_verification"] = bad
+		})
+		if _, err := DecodePolicyDecisionResponse(decide); err == nil {
+			t.Fatalf("decide accepted package_verification %v", bad)
+		}
+		shadow := fixtureWith(t, "decision_response.v1.json", func(body map[string]any) {
+			body["shadow"].([]any)[0].(map[string]any)["package_verification"] = bad
+		})
+		if _, err := DecodePolicyDecisionResponse(shadow); err == nil {
+			t.Fatalf("decide accepted shadow package_verification %v", bad)
+		}
+		packages := fixtureWith(t, "packages_response.v1.json", func(body map[string]any) {
+			body["packages"].([]any)[0].(map[string]any)["verification"] = bad
+		})
+		if _, err := DecodePolicyPackagesResponse(packages); err == nil {
+			t.Fatalf("packages accepted verification %v", bad)
+		}
 	}
 }

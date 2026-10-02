@@ -253,6 +253,11 @@
         "output_tokens_details",
         "server_tool_use"
       ],
+      "extensions": [
+        "cost",
+        "cost_details",
+        "is_byok"
+      ],
       "fixtures": [
         "stream/003-anthropic-text-in.json",
         "capability/019-anthropic-stop-sequence-stream-in.json",

@@ -147,6 +147,39 @@ because the session is optional acceleration state. Automatic prefix caching
 stays disabled: `resumable_causal_mean` describes a pinned live request, not a
 vLLM prefix-cache hit.
 
+### Concurrent turns on one episode
+
+`episode.consistency` chooses how a cell handles two turns of one conversation
+in flight at once. It is a per-cell choice made at deployment, never a request
+header.
+
+| Value | Behaviour | Use for |
+|---|---|---|
+| `strict` (default) | Turns on one episode take an exclusive lease and run one at a time. A turn that cannot take the lease within `acquire_timeout_seconds` is refused with 429 and `x-vsr-failure-class: session_busy`. Every turn is decided from the state the previous one committed. | Eval and training cells, where each reply must be on-policy and correctly attributed. |
+| `relaxed` | A turn reads the episode without a lease and commits only if no other turn committed in between. A turn never waits and is never refused over episode state: a lost race or an unavailable store only drops that turn's state update, counted as `relaxed_dropped`. A relaxed cell also starts while its store is down, and decides statelessly until the store is back. | Serving cells, where availability matters more than exact continuity. |
+
+In either mode, an identical resend of a turn still being decided joins that
+turn's decision instead of competing with it.
+
+A relaxed turn whose decision takes longer than `idle_ttl_seconds` also drops
+its update: by then the episode it read could have expired and been recreated.
+Relaxed episode state is best effort. In one narrow race at that boundary, a
+stale first turn can still land on an episode that has just expired from
+disuse; no live state is lost when it does.
+
+`relaxed` does not yet accept `close_header` or the `resumable_causal_mean`
+encoder capability (a retained encoder session serializes same-episode
+encodes).
+
+In the policy-service mode, a relaxed cell sends `episode_mode: relaxed` on
+each decide call, so the service takes no session lock and keeps no session
+state for it: concurrent turns on one episode are all decided, each with a
+full encode. Not every policy service can do that (a package on the vLLM
+encoder, or pinned to a runtime without unretained prediction, answers
+`unsupported_request`). A relaxed policy cell therefore asks for one relaxed
+decision before it arms, and stays not ready, logging
+`rayline_arc_policy_relaxed_unsupported`, until the service serves one.
+
 ### Static retained-encoder replicas
 
 For one to eight independent vLLM retained-session services, replace

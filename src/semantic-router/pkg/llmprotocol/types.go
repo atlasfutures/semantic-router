@@ -529,6 +529,23 @@ type Usage struct {
 	InputTotal      TokenCount
 	OutputTotal     TokenCount
 	Total           TokenCount
+	// ProviderCost is what the upstream itself said the call cost. It is
+	// never derived from the counts above.
+	ProviderCost ProviderCost
+}
+
+// ProviderCost is a charge an upstream states on its usage object, as
+// OpenRouter does with usage.cost (USD credits). Each member is nil when the
+// upstream did not state it, so a missing charge never reads as a free call.
+type ProviderCost struct {
+	// Charged is what the upstream charged for the call (usage.cost).
+	Charged *float64
+	// UpstreamInference is what the serving provider charged the aggregator
+	// (usage.cost_details.upstream_inference_cost).
+	UpstreamInference *float64
+	// BYOK says the call ran on the caller's own provider key (usage.is_byok),
+	// in which case Charged is the aggregator's fee alone.
+	BYOK *bool
 }
 
 type UsageState string

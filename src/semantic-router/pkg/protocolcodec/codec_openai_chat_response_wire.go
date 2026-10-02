@@ -178,19 +178,13 @@ type chatUsageWire struct {
 	PromptTime     *float64 `json:"prompt_time,omitempty"`
 	CompletionTime *float64 `json:"completion_time,omitempty"`
 	TotalTime      *float64 `json:"total_time,omitempty"`
-	// OpenRouter reports its own pricing and server-tool accounting beside
-	// canonical token usage. Keep these fields typed at the provider boundary.
-	Cost          *float64                         `json:"cost,omitempty"`
-	IsBYOK        *bool                            `json:"is_byok,omitempty"`
-	CostDetails   *chatOpenRouterCostDetailsWire   `json:"cost_details,omitempty"`
+	// OpenRouter reports its own pricing beside canonical token usage. The
+	// charge members (cost, is_byok, cost_details) are read leniently by
+	// providerUsageCostWire (#138): a value of the wrong shape is unknown and
+	// reported, never a failed completion (US-003c). Server-tool accounting
+	// stays typed at the provider boundary.
+	providerUsageCostWire
 	ServerToolUse *chatOpenRouterServerToolUseWire `json:"server_tool_use,omitempty"`
-}
-
-type chatOpenRouterCostDetailsWire struct {
-	UpstreamInferenceCost            *float64 `json:"upstream_inference_cost,omitempty"`
-	UpstreamInferencePromptCost      *float64 `json:"upstream_inference_prompt_cost,omitempty"`
-	UpstreamInferenceCompletionsCost *float64 `json:"upstream_inference_completions_cost,omitempty"`
-	ServerToolCost                   *float64 `json:"server_tool_cost,omitempty"`
 }
 
 type chatOpenRouterServerToolUseWire struct {

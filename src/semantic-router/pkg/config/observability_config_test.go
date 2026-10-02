@@ -58,3 +58,32 @@ func TestProfilingExplicitPortZeroSurvivesCanonicalDefaults(t *testing.T) {
 		t.Fatalf("profiling bind = %q, want the %q default to survive a port-only override", profiling.Bind, DefaultProfilingBind)
 	}
 }
+
+func TestUsageRecordsAreOffUnlessARedisAddressIsSet(t *testing.T) {
+	cfg, err := ParseYAMLBytes([]byte(profilingConfigBaseYAML))
+	if err != nil {
+		t.Fatalf("ParseYAMLBytes returned an error: %v", err)
+	}
+	if cfg.Observability.UsageRecords.Enabled() {
+		t.Fatal("usage records must stay on the log only unless a Redis address is set")
+	}
+
+	cfg, err = ParseYAMLBytes([]byte(profilingConfigBaseYAML + `global:
+  services:
+    observability:
+      usage_records:
+        redis:
+          address: redis:6379
+          password_env: USAGE_RECORDS_REDIS_PASSWORD
+          stream: usage
+          max_len: 500
+`))
+	if err != nil {
+		t.Fatalf("ParseYAMLBytes returned an error: %v", err)
+	}
+	redis := cfg.Observability.UsageRecords.Redis
+	if !cfg.Observability.UsageRecords.Enabled() || redis.Address != "redis:6379" ||
+		redis.PasswordEnv != "USAGE_RECORDS_REDIS_PASSWORD" || redis.Stream != "usage" || redis.MaxLen != 500 {
+		t.Fatalf("usage records config = %+v", cfg.Observability.UsageRecords)
+	}
+}

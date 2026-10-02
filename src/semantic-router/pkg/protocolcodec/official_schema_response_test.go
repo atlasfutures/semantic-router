@@ -477,7 +477,14 @@ func assertClosedFieldDisposition(
 func jsonFieldNames(value reflect.Type) []string {
 	result := make([]string, 0, value.NumField())
 	for index := 0; index < value.NumField(); index++ {
-		name := value.Field(index).Tag.Get("json")
+		field := value.Field(index)
+		name := field.Tag.Get("json")
+		// An untagged embedded struct contributes its own members, as
+		// encoding/json reads it (providerUsageCostWire, #138).
+		if field.Anonymous && name == "" && field.Type.Kind() == reflect.Struct {
+			result = append(result, jsonFieldNames(field.Type)...)
+			continue
+		}
 		if comma := len(name); comma > 0 {
 			for offset, char := range name {
 				if char == ',' {

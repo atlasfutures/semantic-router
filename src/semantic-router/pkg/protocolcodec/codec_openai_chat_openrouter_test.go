@@ -59,9 +59,16 @@ func TestOpenRouterBufferedReplyTranslatesAcrossClientFormats(t *testing.T) {
 
 func TestOpenRouterBufferedReplyKeepsUnknownFieldsClosed(t *testing.T) {
 	body := string(openRouterFixture(t, "openrouter-chat-response-in.json"))
+	// cost_details is read leniently as provider charge evidence (#138): an
+	// unknown member inside it is neither refused nor counted as a dropped
+	// response member, since the charge decoder only reads the members it
+	// names (US-003c).
+	if _, _, _, err := NewBuiltinEngine().DecodeResponse(llmprotocol.OpenAIChatV1,
+		[]byte(strings.Replace(body, `"server_tool_cost": null`, `"server_tool_cost": null, "unknown": true`, 1))); err != nil {
+		t.Fatalf("an unknown cost_details member failed the response: %v", err)
+	}
 	for name, changed := range map[string]string{
-		"top_level":    strings.Replace(body, `"provider": "OpenAI",`, `"provider": "OpenAI", "unknown": true,`, 1),
-		"cost_details": strings.Replace(body, `"server_tool_cost": null`, `"server_tool_cost": null, "unknown": true`, 1),
+		"top_level": strings.Replace(body, `"provider": "OpenAI",`, `"provider": "OpenAI", "unknown": true,`, 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, _, _, err := NewBuiltinEngine().DecodeResponse(llmprotocol.OpenAIChatV1, []byte(changed))

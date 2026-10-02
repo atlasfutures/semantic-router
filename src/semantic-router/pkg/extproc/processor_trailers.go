@@ -69,5 +69,11 @@ func (r *OpenAIRouter) processResponseTrailers(
 			ResponseTrailers: &ext_proc.TrailersResponse{},
 		},
 	}
-	return sendResponse(stream, response, "response trailers")
+	// The body frame sent above is not terminal: Envoy completes the exchange
+	// on the trailers reply, so a deferred policy turn commits only after it.
+	if err := sendResponse(stream, response, "response trailers"); err != nil {
+		return err
+	}
+	runPendingSelectionCompletion(ctx)
+	return nil
 }

@@ -79,6 +79,7 @@ type responsesUsageWire struct {
 	ComputeUnits        json.RawMessage              `json:"compute_units,omitempty"`
 	InputTokensDetails  *responsesInputUsageDetails  `json:"input_tokens_details"`
 	OutputTokensDetails *responsesOutputUsageDetails `json:"output_tokens_details"`
+	providerUsageCostWire
 }
 
 type responsesInputUsageDetails struct {
@@ -461,6 +462,7 @@ func decodeResponsesUsage(wire responsesUsageWire) (llmprotocol.Usage, error) {
 		InputUncached: unknownCount(), InputCacheRead: unknownCount(), InputCacheWrite: unknownCount(),
 		OutputReasoning: unknownCount(), OutputOther: unknownCount(),
 		InputTotal: authoritative(wire.InputTokens), OutputTotal: authoritative(wire.OutputTokens), Total: authoritative(wire.TotalTokens),
+		ProviderCost: wire.providerUsageCostWire.decode(),
 	}
 	if wire.InputTokensDetails != nil {
 		details := wire.InputTokensDetails

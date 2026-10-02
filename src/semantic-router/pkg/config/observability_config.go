@@ -13,9 +13,49 @@ type APIConfig struct {
 }
 
 type ObservabilityConfig struct {
-	Tracing   TracingConfig   `yaml:"tracing"`
-	Metrics   MetricsConfig   `yaml:"metrics"`
-	Profiling ProfilingConfig `yaml:"profiling"`
+	Tracing      TracingConfig      `yaml:"tracing"`
+	Metrics      MetricsConfig      `yaml:"metrics"`
+	Profiling    ProfilingConfig    `yaml:"profiling"`
+	UsageRecords UsageRecordsConfig `yaml:"usage_records,omitempty"`
+}
+
+const (
+	// DefaultUsageRecordsStream is the Redis stream usage records are added
+	// to when none is named.
+	DefaultUsageRecordsStream = "vsr:llm_usage"
+	// DefaultUsageRecordsMaxLen bounds the stream when no bound is named. The
+	// trim is approximate, so the stream may briefly hold a little more.
+	DefaultUsageRecordsMaxLen = 1000000
+	// DefaultUsageRecordsQueueSize bounds the records waiting to be written.
+	DefaultUsageRecordsQueueSize = 4096
+)
+
+// UsageRecordsConfig sends every llm_usage record to a durable Redis stream
+// as well as the log. It is off unless redis.address is set.
+//
+// The stream is as durable as the Redis behind it: enable AOF or snapshots
+// there. Records go through a bounded queue, so a slow or absent Redis never
+// delays a response; a record that cannot be written is counted and remains
+// on the log line.
+type UsageRecordsConfig struct {
+	Redis UsageRecordsRedisConfig `yaml:"redis,omitempty"`
+}
+
+// UsageRecordsRedisConfig carries non-secret connection settings. The password
+// is read only from PasswordEnv so serialized config never holds it.
+type UsageRecordsRedisConfig struct {
+	Address     string `yaml:"address,omitempty"`
+	DB          int    `yaml:"db,omitempty"`
+	PasswordEnv string `yaml:"password_env,omitempty"`
+	UseTLS      bool   `yaml:"use_tls,omitempty"`
+	Stream      string `yaml:"stream,omitempty"`
+	MaxLen      int64  `yaml:"max_len,omitempty"`
+	QueueSize   int    `yaml:"queue_size,omitempty"`
+}
+
+// Enabled reports whether usage records go to Redis.
+func (cfg UsageRecordsConfig) Enabled() bool {
+	return cfg.Redis.Address != ""
 }
 
 type MetricsConfig struct {

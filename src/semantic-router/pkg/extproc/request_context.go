@@ -135,8 +135,13 @@ type RequestContext struct {
 	// It is set when preparation fails for want of it, so the refusal can
 	// tell the caller which header to send.
 	RaylineARCEpisodeIDHeader string
-	PublicChatUsageFilter     *protocolcodec.ChatUsageStreamFilter
-	SemanticStreamState       *semanticResponseStreamState
+	// ContextRecoveryProviderCost is the charge for both calls of a turn
+	// context recovery answered. The recovered body is re-encoded for the
+	// client, which drops it, so the usage report reads it from here.
+	ContextRecoveryProviderCost *llmprotocol.ProviderCost
+
+	PublicChatUsageFilter *protocolcodec.ChatUsageStreamFilter
+	SemanticStreamState   *semanticResponseStreamState
 
 	// DispatchedReasoningEffort and DispatchedReasoningBound are the reasoning
 	// controls the rendered upstream body carries, read back off that body
@@ -148,7 +153,11 @@ type RequestContext struct {
 	// DispatchedProviderOrder is the OpenRouter provider order the rendered
 	// upstream body carries, read back the same way and for the same reason.
 	DispatchedProviderOrder []string
-	RoutingDecision         map[string]interface{}
+	// DispatchedToOpenRouter says the request was dispatched to an OpenRouter
+	// provider profile, by type or host. It is what gives a usage.cost its
+	// unit: OpenRouter states it in credits, and one credit is one US dollar.
+	DispatchedToOpenRouter bool
+	RoutingDecision        map[string]interface{}
 
 	// UpstreamStatusCode is the HTTP status the upstream returned, captured at
 	// the response-header phase. Zero means the status was never observed for
@@ -259,7 +268,10 @@ type RequestContext struct {
 	RaylineARCThinkingControl       *plannedThinkingControl                // A v5 action's admitted control and placer for this dispatch; rendered at the provider boundary.
 	RaylineARCUpstreamAudit         *raylineARCUpstreamAudit               // Whether this turn's body extends the worker's last one; counts and digests only.
 	SelectionTransaction            *selectionTransactionOwner             // Shared authoritative selector lifecycle owner; at most one per request.
-	SelectionSettlement             selectionActualOutcome                 // Bounded actual outcome facts; unknown fields remain nil.
+	// selectionCompletion is a policy-service turn's commit, held until the
+	// response that completes the turn has been sent to Envoy.
+	selectionCompletion *pendingSelectionCompletion
+	SelectionSettlement selectionActualOutcome // Bounded actual outcome facts; unknown fields remain nil.
 	// VSREligibleModelRefs is the selected decision's model set after applying
 	// request contracts. Loopers consume this exact set; broader Router Learning
 	// candidate sets must independently apply the same request contracts.

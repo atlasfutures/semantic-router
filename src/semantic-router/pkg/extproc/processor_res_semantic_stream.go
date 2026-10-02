@@ -472,6 +472,13 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 	} else {
 		ctx.StreamingAborted = true
 	}
+	// The terminal event arrived and nothing broke: a policy-service turn
+	// commits once the response's final frame has been sent, and only then
+	// caches its reply.
+	commitDeferred := !ctx.StreamingAborted && selectionCommitsOnCompletion(ctx)
+	if commitDeferred {
+		deferSelectionCompletion(ctx, nil)
+	}
 	completionLatency := time.Duration(0)
 	if !ctx.StartTime.IsZero() {
 		completionLatency = time.Since(ctx.StartTime)
@@ -513,7 +520,13 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 		r.recordUnscheduledResponseMemoryStore(ctx, "skipped", "stream_encode_failed", true)
 		return
 	}
-	r.updateResponseCache(ctx, encoded)
+	// An unrecorded turn is not cached: a retry served from the cache would
+	// leave it unrecorded for good.
+	if commitDeferred {
+		deferSelectionCompletion(ctx, func() { r.updateResponseCache(ctx, encoded) })
+	} else {
+		r.updateResponseCache(ctx, encoded)
+	}
 	r.scheduleSemanticResponseMemoryStore(ctx, semanticResponse)
 	r.persistResponseObject(ctx)
 	r.attachRouterReplayResponse(ctx, encoded, true)
@@ -540,6 +553,9 @@ func truncatedStreamUsage(ctx *RequestContext, usage responseUsageMetrics) respo
 		return usage
 	}
 	if estimated, carried := estimatedTruncatedStreamUsage(ctx); carried {
+		// The counts are the Router's estimate; a charge the upstream
+		// stated before the cut is still the upstream's.
+		estimated.providerCost = usage.providerCost
 		return estimated
 	}
 	logging.ComponentWarnEvent("extproc", "stream_truncated_uncounted", map[string]interface{}{
@@ -560,6 +576,13 @@ func (r *OpenAIRouter) reportSemanticStreamingUsage(
 	}
 	recordSessionTurnOutcome(ctx, usage, r.sessionTurnPricing(ctx.RequestModel))
 	if usage.invalid {
+		// The turn still happened and the upstream may have billed it. It
+		// gets its usage record, with every count it never stated null, so
+		// no call goes unaccounted for. A request with no resolved model
+		// writes none, as on every other path.
+		if ctx.RequestModel != "" {
+			r.recordResponseCost(ctx, completionLatency, responseUsageMetrics{providerCost: usage.providerCost})
+		}
 		return
 	}
 	totalTokens := responseUsageTotal(usage)

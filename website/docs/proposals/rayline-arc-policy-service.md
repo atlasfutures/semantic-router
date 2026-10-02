@@ -238,6 +238,39 @@ The service's own back-pressure errors, `session_busy` and
 failure class comes from the contract's error codes only; any other value is
 `service_error`.
 
+## Episode turns
+
+A policy-service turn commits its ledger entry, turn count and held arm only
+once the client has the whole 2xx response: the stream's terminal event, or
+the full non-stream body. A failed, non-2xx or broken response commits
+nothing. Artifact-mode turns commit at the 2xx response headers.
+
+A side call keeps the held arm, takes no episode lease and commits nothing.
+It is decided with `episode_mode: relaxed` even on a strict cell, so the
+service locks no session for it and leaves the main conversation's session
+as it was. A service that cannot serve relaxed (it refuses with
+`unsupported_request`, or predates `episode_mode` and answers with a session
+revision) gets that cell's side calls strict for ten minutes, then is asked
+relaxed again.
+Only an explicit compaction moves the schedule's boundary; a transcript that
+stops extending the recorded prefix only starts a new context epoch. Without
+headers, the router classifies a request from harness literals in its body:
+Claude Code's subagent flag, session-title prompt and summarization
+directive, and codex's compaction directive and post-compaction summary.
+
+`trust_turn_signal_headers` (default false) makes the router read two
+headers instead:
+
+- `x-rayline-call-kind: main | side`
+- `x-rayline-compaction: <ordinal>`, the positive ordinal of the compaction
+  this request is the first request after.
+
+Set it only when a gateway in front of the router sets both headers, or
+strips them from client requests. Otherwise a client could mark its own
+turns as side calls, which are not counted, or as compactions. With the
+setting off, the headers are ignored. Either way, neither header is
+forwarded to a provider.
+
 ## Open questions
 
 - A context over encoder capacity is refused, never truncated. Should VSR

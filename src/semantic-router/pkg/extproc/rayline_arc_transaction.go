@@ -25,6 +25,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
@@ -32,6 +33,10 @@ import (
 )
 
 const episodeFinalizeTimeout = 5 * time.Second
+
+// relaxedBoundaryStageTimeout bounds storing a relaxed episode's boundary
+// decision before dispatch.
+const relaxedBoundaryStageTimeout = 250 * time.Millisecond
 
 type raylineARCEpisodeTransaction struct {
 	store         raylinearc.EpisodeStore
@@ -42,7 +47,11 @@ type raylineARCEpisodeTransaction struct {
 	selectedArm   int
 	// policyNext is the policy-service ledger and epoch to commit with this
 	// turn; nil outside that mode.
-	policyNext       *raylinearc.PolicyEpisodeState
+	policyNext *raylinearc.PolicyEpisodeState
+	// sideCall marks a call outside the main conversation. It commits
+	// nothing: the turn count, previous arm, ledger and every per-turn
+	// record stay as they were, and a strict lease is released unwritten.
+	sideCall         bool
 	serializedTokens int
 	encoderOwner     string
 	encoderVisited   []string
@@ -67,10 +76,27 @@ type raylineARCEpisodeTransaction struct {
 	renewCancel            context.CancelFunc
 	renewDone              chan struct{}
 	leaseLost              atomic.Bool
+	// relaxed marks a turn on a relaxed episode: it read the episode without a
+	// lease as read and commits only if the episode is still that. It
+	// never fails the request over episode state: a lost race or a store error
+	// drops this turn's state update and is counted.
+	relaxed   bool
+	read      raylinearc.EpisodeReadToken
+	snapshots raylinearc.EpisodeSnapshotStore
+	// stateless marks a relaxed turn whose read failed; it decided from a fresh
+	// state and commits nothing.
+	stateless bool
 	// borrowed marks a resend that joined an identical in-flight turn: it holds
 	// no lease, renews nothing and commits nothing, and its state is a
 	// read-only copy of what the first copy prepared.
 	borrowed bool
+	// leaseless marks a side call on a strict episode: it read the episode
+	// without the lease, and commits and releases nothing.
+	leaseless bool
+	// commitOnCompletion marks a policy-service turn, which commits only once
+	// the client has the whole 2xx response. Every other turn commits at the
+	// 2xx response headers, and its strict lease is released there.
+	commitOnCompletion bool
 	// onFinalize is an optional terminal-path hook; the stream-level hold in
 	// processWithContext is what keeps the episode store open.
 	onFinalize func()
@@ -97,6 +123,25 @@ func newRaylineARCEpisodeTransaction(
 	return transaction
 }
 
+// newRelaxedRaylineARCEpisodeTransaction is a relaxed episode's turn: no lease,
+// no renewal, and a commit conditional on the version read.
+func newRelaxedRaylineARCEpisodeTransaction(
+	snapshots raylinearc.EpisodeSnapshotStore,
+	state *raylinearc.EpisodeState,
+	read raylinearc.EpisodeReadToken,
+	episodeIDHash string,
+	stateless bool,
+) *raylineARCEpisodeTransaction {
+	return &raylineARCEpisodeTransaction{
+		snapshots:     snapshots,
+		state:         state,
+		read:          read,
+		episodeIDHash: episodeIDHash,
+		relaxed:       true,
+		stateless:     stateless,
+	}
+}
+
 // newBorrowedRaylineARCEpisodeTransaction is the transaction a coalesced
 // resend dispatches under. It reads like the first copy's prepared one, so the
 // resend renders the same controls and ledger, and finalizes to nothing.
@@ -109,6 +154,27 @@ func newBorrowedRaylineARCEpisodeTransaction(
 		episodeIDHash: episodeIDHash,
 		borrowed:      true,
 	}
+}
+
+// newSideCallRaylineARCEpisodeTransaction is a side call's transaction on a
+// strict episode: a lease-free read that finalizes to nothing.
+func newSideCallRaylineARCEpisodeTransaction(
+	state *raylinearc.EpisodeState,
+	episodeIDHash string,
+) *raylineARCEpisodeTransaction {
+	return &raylineARCEpisodeTransaction{
+		state:         state,
+		episodeIDHash: episodeIDHash,
+		selectedArm:   -1,
+		sideCall:      true,
+		leaseless:     true,
+	}
+}
+
+// selectionCommitsOnCompletion reports whether this request's turn commits
+// at the end of the response rather than at its headers.
+func selectionCommitsOnCompletion(ctx *RequestContext) bool {
+	return ctx != nil && ctx.RaylineARCTransaction != nil && ctx.RaylineARCTransaction.commitOnCompletion
 }
 
 func (transaction *raylineARCEpisodeTransaction) releaseHold() {
@@ -155,14 +221,103 @@ func (transaction *raylineARCEpisodeTransaction) markSelectionWithAffinity(
 }
 
 // markPolicyState stages the policy-service ledger and epoch this turn
-// commits. It is a no-op outside the policy-service mode.
+// commits, or marks the request a side call that commits nothing. It is a
+// no-op outside the policy-service mode.
 func (transaction *raylineARCEpisodeTransaction) markPolicyState(
 	next *raylinearc.PolicyEpisodeState,
+	sideCall bool,
 ) {
-	if transaction == nil || next == nil {
+	if transaction == nil {
 		return
 	}
-	transaction.policyNext = next.Clone()
+	transaction.sideCall = transaction.sideCall || sideCall
+	if next != nil {
+		transaction.policyNext = next.Clone()
+	}
+}
+
+// stageRaylineARCPolicySelection stages what a policy-service decision
+// commits with the turn and, at a schedule boundary, stores the decision
+// before the request is dispatched.
+func stageRaylineARCPolicySelection(ctx *RequestContext, trace *selection.RaylineARCTrace) {
+	transaction := ctx.RaylineARCTransaction
+	transaction.markPolicyState(trace.PolicyNextState, trace.PolicySideCall)
+	if trace.PolicyBoundary == nil {
+		return
+	}
+	parent := ctx.TraceContext
+	if parent == nil {
+		parent = context.Background()
+	}
+	stageContext, cancel := context.WithTimeout(parent, episodeFinalizeTimeout)
+	defer cancel()
+	transaction.retainPolicyBoundary(stageContext, trace.PolicyBoundary)
+}
+
+// retainPolicyBoundary stores the episode as prepared plus this boundary's
+// decision, so a retry of the request reuses it if this one fails. The
+// turn's commit replaces it. Storing it is best effort: a failure leaves the
+// retry to decide again, as before, except that a strict lease found lost
+// stops the dispatch, as any lost lease does.
+func (transaction *raylineARCEpisodeTransaction) retainPolicyBoundary(
+	ctx context.Context,
+	boundary *raylinearc.PolicyBoundaryDecision,
+) {
+	if transaction == nil || transaction.state == nil || transaction.borrowed ||
+		transaction.sideCall || transaction.stateless {
+		return
+	}
+	staged := cloneARCState(transaction.state)
+	staged.PolicyBoundary = raylinearc.ClonePolicyBoundary(boundary)
+	if transaction.relaxed {
+		transaction.retainRelaxedPolicyBoundary(ctx, staged)
+		return
+	}
+	stager, ok := transaction.store.(raylinearc.EpisodeStateStager)
+	if !ok {
+		return
+	}
+	err := stager.Stage(ctx, transaction.lease, staged)
+	switch {
+	case errors.Is(err, raylinearc.ErrEpisodeLeaseLost):
+		transaction.leaseLost.Store(true)
+		metrics.RecordRaylineARCEpisodeTransaction("lease_lost", "stage")
+	case err != nil:
+		logging.ComponentWarnEvent("extproc", "rayline_arc_boundary_stage_failed", map[string]interface{}{
+			"failure_class": boundedARCEpisodeFailure(err),
+		})
+	default:
+		transaction.state = staged
+	}
+}
+
+// retainRelaxedPolicyBoundary stores a relaxed episode's boundary decision
+// with a conditional commit, then reads the episode back so the turn's own
+// commit is conditional on the staged version. If anything else wrote in
+// between, the turn keeps its original read and its commit loses, as any
+// relaxed turn that raced does.
+func (transaction *raylineARCEpisodeTransaction) retainRelaxedPolicyBoundary(
+	parent context.Context,
+	staged *raylinearc.EpisodeState,
+) {
+	// A relaxed turn never waits on episode state, so the stage gets a short
+	// bound of its own; losing it only means a retry decides again.
+	ctx, cancel := context.WithTimeout(parent, relaxedBoundaryStageTimeout)
+	defer cancel()
+	err := transaction.snapshots.CommitIfUnchanged(ctx, transaction.episodeIDHash, transaction.read, staged)
+	if err != nil {
+		metrics.RecordRaylineARCEpisodeTransaction("relaxed_dropped", "boundary_stage")
+		logging.ComponentWarnEvent("extproc", "rayline_arc_boundary_stage_failed", map[string]interface{}{
+			"failure_class": boundedARCEpisodeFailure(err), "relaxed": true,
+		})
+		return
+	}
+	_, read, err := transaction.snapshots.Snapshot(ctx, transaction.episodeIDHash, len(staged.Warmth))
+	if err != nil || read.Version() != transaction.read.Version()+1 {
+		return
+	}
+	transaction.read = read
+	transaction.state = staged
 }
 
 // stageThinkingLedger records the ledger this turn's lever plan produced.
@@ -244,38 +399,22 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			metrics.RecordRaylineARCEpisodeTransaction("coalesced", "")
 			return
 		}
+		if transaction.sideCall {
+			transaction.commitSideCall(ctx)
+			return
+		}
+		if transaction.relaxed {
+			transaction.commitRelaxed(ctx, requestContext)
+			return
+		}
 		transaction.stopRenewal()
 		if !transaction.selectionReady || transaction.leaseLost.Load() {
 			transaction.finalizeErr = ErrRaylineARCEpisodeLeaseLost
 			transaction.abortStore(ctx)
 			return
 		}
-		nextState := cloneARCState(transaction.state)
-		nextState.EncoderOwner = transaction.encoderOwner
-		nextState.EncoderVisitedOwners = append(
-			[]string(nil),
-			transaction.encoderVisited...,
-		)
-		if transaction.policyNext != nil {
-			nextState.Policy = transaction.policyNext.Clone()
-		}
-		if transaction.thinkingLedger != nil {
-			nextState.Thinking = transaction.thinkingLedger.Clone()
-		}
-		if transaction.upstreamPrefix != nil {
-			nextState.Upstream = raylinearc.WithUpstreamPrefix(nextState.Upstream, *transaction.upstreamPrefix)
-		}
-		if transaction.controlPlacement != nil {
-			nextState.Controls = raylinearc.WithControlPlacement(nextState.Controls, *transaction.controlPlacement)
-		}
-		if transaction.reasoningIssuersStaged {
-			nextState.ReasoningIssuers = append([]string(nil), transaction.reasoningIssuers...)
-		}
-		if err := nextState.Commit(
-			transaction.selectedArm,
-			transaction.serializedTokens,
-			time.Now().UTC(),
-		); err != nil {
+		nextState, err := transaction.nextState()
+		if err != nil {
 			transaction.finalizeErr = err
 			transaction.abortStore(ctx)
 			return
@@ -302,6 +441,93 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 	return transaction.finalizeErr
 }
 
+// commitSideCall finishes a side call without touching the episode. A strict
+// episode's lease is released unwritten, so a concurrent relaxed turn's
+// conditional commit is not invalidated by a version bump either.
+func (transaction *raylineARCEpisodeTransaction) commitSideCall(ctx context.Context) {
+	if !transaction.relaxed && !transaction.leaseless {
+		transaction.stopRenewal()
+		// The reply has been delivered and nothing is written, so a lease
+		// that cannot be released is logged and left to expire rather than
+		// failing a finished side call.
+		err := transaction.store.Abort(ctx, transaction.lease)
+		if err != nil && !errors.Is(err, raylinearc.ErrEpisodeLeaseLost) {
+			logging.ComponentWarnEvent("extproc", "rayline_arc_side_call_release_failed", map[string]interface{}{
+				"failure_class": boundedARCEpisodeFailure(err),
+			})
+		}
+	}
+	metrics.RecordRaylineARCEpisodeTransaction("commit", "side_call")
+}
+
+// commitRelaxed records a relaxed turn if the episode is still at the version
+// it read. Nothing here fails the request: the turn has been served, and a
+// lost race or a store error only drops its state update.
+func (transaction *raylineARCEpisodeTransaction) commitRelaxed(
+	ctx context.Context,
+	requestContext *RequestContext,
+) {
+	if !transaction.selectionReady {
+		return
+	}
+	if transaction.stateless {
+		metrics.RecordRaylineARCEpisodeTransaction("relaxed_dropped", "stateless")
+		return
+	}
+	nextState, err := transaction.nextState()
+	if err != nil {
+		metrics.RecordRaylineARCEpisodeTransaction("relaxed_dropped", "state")
+		return
+	}
+	err = transaction.snapshots.CommitIfUnchanged(ctx, transaction.episodeIDHash, transaction.read, nextState)
+	switch {
+	case errors.Is(err, raylinearc.ErrEpisodeConflict):
+		metrics.RecordRaylineARCEpisodeTransaction("relaxed_dropped", "conflict")
+		logging.ComponentEvent("extproc", "rayline_arc_relaxed_conflict", map[string]interface{}{})
+	case err != nil:
+		metrics.RecordRaylineARCEpisodeTransaction("relaxed_dropped", "episode_store")
+		logging.ComponentWarnEvent("extproc", "rayline_arc_relaxed_commit_failed", map[string]interface{}{"error": err.Error()})
+	default:
+		transaction.state = nextState
+		metrics.RecordRaylineARCEpisodeTransaction("commit", "relaxed")
+		recordCommittedARCEpisodeTelemetry(requestContext, transaction)
+	}
+}
+
+// nextState is the episode after this turn: the prepared state with the turn's
+// staging applied and the selection committed.
+func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.EpisodeState, error) {
+	nextState := cloneARCState(transaction.state)
+	nextState.EncoderOwner = transaction.encoderOwner
+	nextState.EncoderVisitedOwners = append(
+		[]string(nil),
+		transaction.encoderVisited...,
+	)
+	if transaction.policyNext != nil {
+		nextState.Policy = transaction.policyNext.Clone()
+	}
+	if transaction.thinkingLedger != nil {
+		nextState.Thinking = transaction.thinkingLedger.Clone()
+	}
+	if transaction.upstreamPrefix != nil {
+		nextState.Upstream = raylinearc.WithUpstreamPrefix(nextState.Upstream, *transaction.upstreamPrefix)
+	}
+	if transaction.controlPlacement != nil {
+		nextState.Controls = raylinearc.WithControlPlacement(nextState.Controls, *transaction.controlPlacement)
+	}
+	if transaction.reasoningIssuersStaged {
+		nextState.ReasoningIssuers = append([]string(nil), transaction.reasoningIssuers...)
+	}
+	if err := nextState.Commit(
+		transaction.selectedArm,
+		transaction.serializedTokens,
+		time.Now().UTC(),
+	); err != nil {
+		return nil, err
+	}
+	return nextState, nil
+}
+
 func (transaction *raylineARCEpisodeTransaction) abort(
 	ctx context.Context,
 	class string,
@@ -311,7 +537,7 @@ func (transaction *raylineARCEpisodeTransaction) abort(
 	}
 	transaction.finalizeOnce.Do(func() {
 		defer transaction.releaseHold()
-		if transaction.borrowed {
+		if transaction.borrowed || transaction.relaxed || transaction.leaseless {
 			return
 		}
 		transaction.stopRenewal()
@@ -470,6 +696,7 @@ func cloneARCState(
 		Upstream:             append([]raylinearc.UpstreamPrefix(nil), state.Upstream...),
 		Controls:             raylinearc.CloneControlPlacements(state.Controls),
 		ReasoningIssuers:     append([]string(nil), state.ReasoningIssuers...),
+		PolicyBoundary:       raylinearc.ClonePolicyBoundary(state.PolicyBoundary),
 	}
 	if state.PreviousArm != nil {
 		value := *state.PreviousArm

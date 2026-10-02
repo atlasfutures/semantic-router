@@ -5,8 +5,6 @@ import re
 from types import SimpleNamespace
 
 import pytest
-from pydantic import ValidationError
-
 from cli.algorithms import AlgorithmConfig, ModelRef
 from cli.rayline_arc_config import (
     _CHECKPOINT_LABEL,
@@ -15,6 +13,7 @@ from cli.rayline_arc_config import (
     RaylineARCEncoderFailoverConfig,
     RaylineARCEncoderMembershipConfig,
     RaylineARCEncoderReplicaConfig,
+    RaylineARCEpisodeConfig,
     RaylineARCRoutesAPIConfig,
 )
 from cli.validator_rayline_arc import (
@@ -24,6 +23,7 @@ from cli.validator_rayline_arc import (
     _validate_rayline_arc_decision,
     _validate_rayline_arc_replay,
 )
+from pydantic import ValidationError
 
 
 def test_valid_rayline_arc_decision():
@@ -415,3 +415,61 @@ def test_rayline_arc_cli_checks_policy_service_connection_fields():
         mutate(decision.algorithm.rayline_arc.policy_service)
         errors = _validate_rayline_arc_decision(decision)
         assert any(error.field.endswith(field) for error in errors), (field, errors)
+
+
+def _episode_with(**fields):
+    episode = {
+        "id_header": "x-rayline-episode-id",
+        "backend": "redis",
+        "key_prefix": "vsr:rayline-arc:",
+        "acquire_timeout_seconds": 30,
+        "lease_ttl_seconds": 60,
+        "idle_ttl_seconds": 900,
+        "redis": {
+            "address": "redis:6379",
+            "password_env": "RAYLINE_ARC_REDIS_PASSWORD",
+        },
+    }
+    episode.update(fields)
+    return episode
+
+
+def test_episode_consistency_matches_the_go_loader():
+    # Omitted, strict and relaxed are the Go loader's values; anything else is refused.
+    for value in (None, "strict", "relaxed"):
+        parsed = RaylineARCEpisodeConfig.model_validate(
+            _episode_with(consistency=value)
+        )
+        assert parsed.consistency == value
+    with pytest.raises(ValidationError):
+        RaylineARCEpisodeConfig.model_validate(_episode_with(consistency="eventual"))
+
+
+def test_relaxed_episode_refuses_a_close_header():
+    with pytest.raises(
+        ValidationError, match="close_header is not served with consistency=relaxed"
+    ):
+        RaylineARCEpisodeConfig.model_validate(
+            _episode_with(consistency="relaxed", close_header="x-rayline-episode-close")
+        )
+
+
+def test_relaxed_is_served_in_policy_service_mode():
+    arc = _policy_service_decision().algorithm.rayline_arc.model_dump()
+    arc["episode"]["consistency"] = "relaxed"
+    RaylineARCAlgorithmConfig.model_validate(arc)
+
+
+def test_relaxed_is_not_served_with_retained_encoder_sessions():
+    arc = _valid_decision().algorithm.rayline_arc.model_dump()
+    arc["encoder"]["serving_rung"] = "B"
+    arc["encoder"]["required_pooling_capabilities"] = [
+        "chunked_causal_mean",
+        "resumable_causal_mean",
+    ]
+    RaylineARCAlgorithmConfig.model_validate(arc)
+    arc["episode"]["consistency"] = "relaxed"
+    with pytest.raises(
+        ValidationError, match="resumable_causal_mean encoder capability"
+    ):
+        RaylineARCAlgorithmConfig.model_validate(arc)

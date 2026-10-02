@@ -138,7 +138,16 @@ type PolicyDecisionRequest struct {
 	Selection     PolicySelection     `json:"selection"`
 	Evaluation    *PolicyEvaluation   `json:"evaluation"`
 	Shadow        []PolicyPackageRef  `json:"shadow"`
+	// EpisodeMode is "relaxed" for a relaxed cell: the service takes no lock
+	// and keeps no session, so concurrent calls on one episode are all
+	// served. Strict is the field's absence, the form every caller sent
+	// before it existed (pathfinder#3068).
+	EpisodeMode string `json:"episode_mode,omitempty"`
 }
+
+// PolicyEpisodeModeRelaxed is the decide request's episode_mode for a relaxed
+// cell.
+const PolicyEpisodeModeRelaxed = "relaxed"
 
 type PolicyPredictedUsage struct {
 	UncachedInput float64 `json:"uncached_input"`
@@ -172,10 +181,38 @@ type PolicyDecision struct {
 }
 
 type PolicyScoredPackage struct {
-	Package  PolicyPackageRef    `json:"package"`
-	PolicyID string              `json:"policy_id"`
-	Decision PolicyDecision      `json:"decision"`
-	Actions  []PolicyActionScore `json:"actions"`
+	Package             PolicyPackageRef    `json:"package"`
+	PolicyID            string              `json:"policy_id"`
+	Decision            PolicyDecision      `json:"decision"`
+	Actions             []PolicyActionScore `json:"actions"`
+	PackageVerification PolicyVerification  `json:"package_verification,omitempty"`
+}
+
+// Package verification, as a policy service reports it (pathfinder#3120,
+// #3138): "verified" when the package's goldens reproduced on the replica at
+// load, "unverified" when it carries none. A service that predates
+// verification omits the field, which means unknown.
+type PolicyVerification string
+
+const (
+	PolicyPackageVerified   PolicyVerification = "verified"
+	PolicyPackageUnverified PolicyVerification = "unverified"
+)
+
+// UnmarshalJSON admits only the contract's two values. Omission stays the
+// empty value (unknown); an explicit null or any other value is malformed.
+func (verification *PolicyVerification) UnmarshalJSON(data []byte) error {
+	var value string
+	if string(data) == "null" || json.Unmarshal(data, &value) != nil {
+		return fmt.Errorf("policy package verification %s", data)
+	}
+	switch PolicyVerification(value) {
+	case PolicyPackageVerified, PolicyPackageUnverified:
+		*verification = PolicyVerification(value)
+		return nil
+	default:
+		return fmt.Errorf("policy package verification %q", value)
+	}
 }
 
 type PolicyShadowFailure struct {
@@ -215,8 +252,9 @@ type PolicyEncoding struct {
 	RepresentationID string `json:"representation_id"`
 	TokenCount       int    `json:"token_count"`
 	SessionAction    string `json:"session_action"`
-	SessionRevision  int    `json:"session_revision"`
-	EngineBuildID    string `json:"engine_build_id"`
+	// SessionRevision is null for a relaxed call, which advances no session.
+	SessionRevision *int   `json:"session_revision"`
+	EngineBuildID   string `json:"engine_build_id"`
 }
 
 type PolicyTiming struct {
@@ -241,6 +279,7 @@ type PolicyDecisionResponse struct {
 	TimingMillis             PolicyTiming         `json:"timing_ms"`
 	Shadow                   []PolicyShadowResult `json:"shadow"`
 	QualityParityEstablished bool                 `json:"quality_parity_established"`
+	PackageVerification      PolicyVerification   `json:"package_verification,omitempty"`
 }
 
 type PolicyErrorResponse struct {
@@ -261,6 +300,8 @@ type PolicyLoadedPackage struct {
 	ProfileID     string `json:"profile_id"`
 	DecisionMode  string `json:"decision_mode"`
 	State         string `json:"state"`
+	// Verification is the package's verification; absent means unknown.
+	Verification PolicyVerification `json:"verification,omitempty"`
 }
 
 type PolicyPackagesResponse struct {

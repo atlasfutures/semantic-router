@@ -19,6 +19,8 @@ package raylinearc
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -30,6 +32,10 @@ type MemoryEpisodeStoreConfig struct {
 }
 
 type memoryEpisodeEntry struct {
+	// generation is unique for the life of the store; a recreated entry never
+	// repeats it, so a relaxed read of an evicted entry can never commit to
+	// its replacement.
+	generation uint64
 	gate       chan struct{}
 	state      *EpisodeState
 	version    uint64
@@ -45,6 +51,12 @@ type MemoryEpisodeStore struct {
 	maxEpisodes int
 	idleTTL     time.Duration
 	now         func() time.Time
+	generations uint64
+	// removals counts entries the store has dropped, by reap or capacity
+	// eviction. A read that found an episode absent records it: if nothing
+	// was removed since, the episode cannot have been created and dropped in
+	// between, so it is still the absence that was read.
+	removals uint64
 }
 
 func NewMemoryEpisodeStore(
@@ -140,6 +152,26 @@ func (store *MemoryEpisodeStore) Commit(
 	return nil
 }
 
+// Stage writes state under the held lease and keeps the lease.
+func (store *MemoryEpisodeStore) Stage(
+	_ context.Context,
+	lease Lease,
+	state *EpisodeState,
+) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	entry, ok := store.entries[lease.episodeIDHash]
+	if !ok || !memoryLeaseMatches(entry, lease, lease.version) {
+		return ErrEpisodeLeaseLost
+	}
+	if err := validatePersistedEpisodeState(state, store.now()); err != nil {
+		return err
+	}
+	entry.state = cloneEpisodeState(state)
+	entry.lastAccess = store.now()
+	return nil
+}
+
 func (store *MemoryEpisodeStore) Abort(
 	_ context.Context,
 	lease Lease,
@@ -193,7 +225,9 @@ func (store *MemoryEpisodeStore) referenceEntry(
 				return nil, ErrEpisodeCapacity
 			}
 		}
+		store.generations++
 		entry = &memoryEpisodeEntry{
+			generation: store.generations,
 			gate:       make(chan struct{}, 1),
 			lastAccess: now,
 		}
@@ -277,6 +311,7 @@ func (store *MemoryEpisodeStore) reapLocked(now time.Time) {
 		}
 		if now.Sub(entry.lastAccess) >= store.idleTTL {
 			delete(store.entries, key)
+			store.removals++
 		}
 	}
 }
@@ -297,5 +332,108 @@ func (store *MemoryEpisodeStore) evictOldestUnlocked() bool {
 		return false
 	}
 	delete(store.entries, oldestKey)
+	store.removals++
 	return true
+}
+
+// Snapshot reads the episode and its version without a lease. An episode the
+// store has never seen reads as a fresh state at version zero.
+func (store *MemoryEpisodeStore) Snapshot(
+	_ context.Context,
+	episodeIDHash string,
+	workerCount int,
+) (*EpisodeState, EpisodeReadToken, error) {
+	if !validEpisodeIDHash(episodeIDHash) || workerCount <= 0 {
+		return nil, EpisodeReadToken{}, errors.New("invalid ARC episode snapshot request")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.reapLocked(store.now())
+	entry := store.entries[episodeIDHash]
+	if entry == nil || entry.state == nil {
+		state, err := NewEpisodeState(workerCount)
+		if err != nil {
+			return nil, EpisodeReadToken{}, err
+		}
+		if entry == nil {
+			return state, EpisodeReadToken{tag: memoryAbsentTag(store.removals), readAt: store.now()}, nil
+		}
+		return state, memoryReadToken(entry, store.now()), nil
+	}
+	if len(entry.state.Warmth) != workerCount {
+		return nil, EpisodeReadToken{}, errors.New("ARC episode worker count changed")
+	}
+	// A relaxed read is episode activity: it restarts the idle window.
+	entry.lastAccess = store.now()
+	return cloneEpisodeState(entry.state), memoryReadToken(entry, store.now()), nil
+}
+
+// memoryAbsentTag names an absent read by the store's removal count.
+func memoryAbsentTag(removals uint64) string {
+	return "absent:" + strconv.FormatUint(removals, 10)
+}
+
+// memoryReadToken names an entry by its generation and version, read at now.
+// A read taken while a strict lease holds the entry can never commit: the
+// lease already advanced the version, and its commit will change the state
+// without advancing it again, so no later check could tell them apart.
+func memoryReadToken(entry *memoryEpisodeEntry, now time.Time) EpisodeReadToken {
+	if entry.leased {
+		return EpisodeReadToken{version: entry.version, tag: "leased", readAt: now}
+	}
+	return EpisodeReadToken{version: entry.version, tag: strconv.FormatUint(entry.generation, 10), readAt: now}
+}
+
+// CommitIfUnchanged writes state as the episode's next version, provided the
+// episode is still at readVersion and no strict lease holds it.
+func (store *MemoryEpisodeStore) CommitIfUnchanged(
+	_ context.Context,
+	episodeIDHash string,
+	read EpisodeReadToken,
+	state *EpisodeState,
+) error {
+	if !validEpisodeIDHash(episodeIDHash) {
+		return errors.New("invalid ARC episode relaxed commit request")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	now := store.now()
+	if staleRead(read, now, store.idleTTL) {
+		return ErrEpisodeConflict
+	}
+	if err := validatePersistedEpisodeState(state, now); err != nil {
+		return err
+	}
+	absentRead := strings.HasPrefix(read.tag, "absent:")
+	entry := store.entries[episodeIDHash]
+	if entry == nil {
+		// Absent then and absent now is the same absence only if no entry
+		// was dropped in between; otherwise this episode may have been
+		// created and dropped, and the read is stale.
+		if !absentRead || read.tag != memoryAbsentTag(store.removals) {
+			return ErrEpisodeConflict
+		}
+		store.reapLocked(now)
+		if len(store.entries) >= store.maxEpisodes && !store.evictOldestUnlocked() {
+			return ErrEpisodeCapacity
+		}
+		store.generations++
+		entry = &memoryEpisodeEntry{generation: store.generations, gate: make(chan struct{}, 1), lastAccess: now}
+		entry.gate <- struct{}{}
+		store.entries[episodeIDHash] = entry
+	}
+	if entry.leased {
+		return ErrEpisodeConflict
+	}
+	// A read of an entry the store had not seen may commit only to the entry
+	// this commit creates, not one created since.
+	if !absentRead || entry.version != 0 || entry.state != nil {
+		if read.version != entry.version || read.tag != strconv.FormatUint(entry.generation, 10) {
+			return ErrEpisodeConflict
+		}
+	}
+	entry.version++
+	entry.state = cloneEpisodeState(state)
+	entry.lastAccess = now
+	return nil
 }

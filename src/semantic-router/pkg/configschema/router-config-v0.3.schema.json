@@ -4506,6 +4506,9 @@
         },
         "profiling": {
           "$ref": "#/$defs/ProfilingConfig"
+        },
+        "usage_records": {
+          "$ref": "#/$defs/UsageRecordsConfig"
         }
       },
       "additionalProperties": false,
@@ -5539,6 +5542,9 @@
         },
         "redis": {
           "$ref": "#/$defs/RaylineARCRedisConfig"
+        },
+        "consistency": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -5619,6 +5625,9 @@
           "type": "string"
         },
         "allow_experimental_controls": {
+          "type": "boolean"
+        },
+        "trust_turn_signal_headers": {
           "type": "boolean"
         },
         "trained_models": {
@@ -7318,6 +7327,42 @@
         },
         "rate": {
           "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "UsageRecordsConfig": {
+      "properties": {
+        "redis": {
+          "$ref": "#/$defs/UsageRecordsRedisConfig"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "UsageRecordsRedisConfig": {
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "db": {
+          "type": "integer"
+        },
+        "password_env": {
+          "type": "string"
+        },
+        "use_tls": {
+          "type": "boolean"
+        },
+        "stream": {
+          "type": "string"
+        },
+        "max_len": {
+          "type": "integer"
+        },
+        "queue_size": {
+          "type": "integer"
         }
       },
       "additionalProperties": false,

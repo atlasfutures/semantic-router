@@ -1945,6 +1945,10 @@ routing:
             idle_ttl_seconds: 900
             max_in_memory_episodes: 1024
             development_mode: false
+            # strict (default): turns on one episode run one at a time behind
+            # the lease (eval and training). relaxed: no lease, a commit lands
+            # only if no other turn committed meanwhile (serving).
+            consistency: strict
             redis:
               address: redis:6379
               db: 0
@@ -2096,6 +2100,11 @@ recipes:
                 # allow_experimental_controls admits v5 instructions whose
                 # registry cell is experimental; without it they are refused.
                 allow_experimental_controls: false
+                # trust_turn_signal_headers reads x-rayline-call-kind and
+                # x-rayline-compaction; set it only when a gateway sets them.
+                # Off, harness literals in the body classify side calls and
+                # compactions. Neither header is forwarded upstream.
+                trust_turn_signal_headers: false
                 # trained_models declares, per bound worker, the trained model
                 # it serves (a v5 action's model, e.g. claude-opus-5); a binding
                 # whose worker declares another is refused. v5 only.
@@ -2335,6 +2344,17 @@ global:
         enabled: false
         port: 6060
         bind: 127.0.0.1
+      # Per-call usage records, also sent to a Redis stream when redis.address
+      # is set. Each entry's "record" field holds one llm_usage record as JSON.
+      usage_records:
+        redis:
+          address: ""
+          db: 0
+          password_env: ""
+          use_tls: false
+          stream: vsr:llm_usage
+          max_len: 1000000
+          queue_size: 4096
     authz:
       fail_open: false
       identity:

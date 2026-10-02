@@ -64,12 +64,16 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	r.reportNonStreamingUsage(ctx, completionLatency, usage)
 	r.calibrateTokenEstimator(ctx, usage.promptTokens)
 
-	r.updateResponseCache(ctx, r.cacheableClientResponse(clientBody, rewriteClientBody, *semanticResponse, ctx))
+	cacheable := r.cacheableClientResponse(clientBody, rewriteClientBody, *semanticResponse, ctx)
+	r.cacheResponseUnlessCommitDeferred(ctx, cacheable)
 
 	blocked, finalBody, headerOptions := r.finalizeResponsePolicy(ctx, semanticResponse, clientBody)
 	lateWarning, hasLateDiagnostics := recordBufferedProtocolDiagnostics(ctx, diagnosticsBeforeBody)
 	if blocked != nil {
 		return blocked
+	}
+	if refused := r.deferSelectionCommitUntilSent(ctx, cacheable); refused != nil {
+		return refused
 	}
 
 	response := buildResponseBodyContinueResponse(nil, nil)

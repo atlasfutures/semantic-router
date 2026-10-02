@@ -236,6 +236,7 @@ func decodeChatUsage(wire chatUsageWire) (llmprotocol.Usage, error) {
 		InputTotal:      authoritative(wire.PromptTokens),
 		OutputTotal:     authoritative(wire.CompletionTokens),
 		Total:           authoritative(wire.TotalTokens),
+		ProviderCost:    wire.providerUsageCostWire.decode(),
 	}
 	if wire.PromptTokensDetails != nil {
 		details := wire.PromptTokensDetails

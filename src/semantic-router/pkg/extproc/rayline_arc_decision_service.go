@@ -339,7 +339,7 @@ func (service *raylineARCDecisionService) resolveWorker(
 		result.RaylineARC.EncoderReplicaID,
 		result.RaylineARC.EncoderVisitedReplicaIDs,
 	)
-	requestContext.RaylineARCTransaction.markPolicyState(result.RaylineARC.PolicyNextState)
+	stageRaylineARCPolicySelection(requestContext, result.RaylineARC)
 	service.router.publishRaylineARCDecision(requestContext, result)
 	route := selectedRoute{worker: worker, result: result, catalog: provider}
 	if baseline, ok := selector.(raylineARCReferenceWorkerProvider); ok {
@@ -433,7 +433,7 @@ func committedEpisodeTurnIndex(requestContext *RequestContext) int {
 }
 
 // commitDecisionOnlyEpisode advances the episode at decision time. The request
-// pipeline waits for upstream headers before committing, but a decision-only
+// pipeline waits for the complete upstream response before committing, but a decision-only
 // consult has no upstream: the caller executes the worker out of this router's
 // sight. Deferring would leave the lease pending forever and score the next
 // turn against a trajectory that never advanced, so the selected arm becomes
@@ -463,7 +463,7 @@ func commitDecisionOnlyEpisode(ctx context.Context, requestContext *RequestConte
 		// Cancelled from in here, not by this function returning: the point of
 		// detaching is that the commit outlives a caller who stopped waiting.
 		defer cancel()
-		_, err := requestContext.SelectionTransaction.commitOnHeaders(
+		_, err := requestContext.SelectionTransaction.commit(
 			commitContext,
 			http.StatusOK,
 		)

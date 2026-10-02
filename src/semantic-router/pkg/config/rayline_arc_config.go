@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -231,6 +232,31 @@ type RaylineARCEpisodeConfig struct {
 	MaxInMemoryEpisodes   int                   `yaml:"max_in_memory_episodes"`
 	DevelopmentMode       bool                  `yaml:"development_mode,omitempty"`
 	Redis                 RaylineARCRedisConfig `yaml:"redis,omitempty"`
+	// Consistency chooses how concurrent turns on one episode are handled.
+	// Empty or "strict" serializes them behind the exclusive episode lease,
+	// which keeps every turn on-policy and correctly attributed (eval and
+	// training cells). "relaxed" reads the episode without the lease and
+	// commits only if no other turn committed meanwhile: a collision never
+	// fails a request, it only drops that turn's state update (serving).
+	Consistency string `yaml:"consistency,omitempty"`
+}
+
+const (
+	RaylineARCConsistencyStrict  = "strict"
+	RaylineARCConsistencyRelaxed = "relaxed"
+)
+
+// EffectiveConsistency is the consistency in force: an omitted value is strict.
+func (cfg RaylineARCEpisodeConfig) EffectiveConsistency() string {
+	if cfg.Consistency == "" {
+		return RaylineARCConsistencyStrict
+	}
+	return cfg.Consistency
+}
+
+// RelaxedConsistency reports whether the episode is configured relaxed.
+func (cfg RaylineARCEpisodeConfig) RelaxedConsistency() bool {
+	return cfg.Consistency == RaylineARCConsistencyRelaxed
 }
 
 // RaylineARCRedisConfig carries non-secret Redis connection settings. Passwords
@@ -259,6 +285,13 @@ func validateRaylineARCAlgorithmConfig(cfg *RaylineARCAlgorithmConfig) error {
 	}
 	if err := validateRaylineARCEpisodeConfig(cfg.Episode); err != nil {
 		return fmt.Errorf("episode: %w", err)
+	}
+	// A retained encoder session serializes same-episode encodes on the
+	// encoder side, so relaxed turns on one episode would wait on each other
+	// there after all.
+	if cfg.Episode.RelaxedConsistency() &&
+		slices.Contains(cfg.Encoder.RequiredCapabilities, RaylineARCCapabilityResumableMean) {
+		return fmt.Errorf("episode: consistency=relaxed is not served with the %s encoder capability", RaylineARCCapabilityResumableMean)
 	}
 	if cfg.Encoder.usesReplicaMembership() && cfg.Episode.CloseHeader == "" {
 		return fmt.Errorf("episode: close_header is required with encoder replicas")
@@ -574,6 +607,16 @@ func validateRaylineARCEpisodeFields(cfg RaylineARCEpisodeConfig) error {
 	}
 	if cfg.IdleTTLSeconds < cfg.LeaseTTLSeconds {
 		return fmt.Errorf("idle_ttl_seconds cannot be less than lease_ttl_seconds")
+	}
+	switch cfg.Consistency {
+	case "", RaylineARCConsistencyStrict, RaylineARCConsistencyRelaxed:
+	default:
+		return fmt.Errorf("consistency must be %q or %q", RaylineARCConsistencyStrict, RaylineARCConsistencyRelaxed)
+	}
+	// A close fans out under the turn's lease before the commit; a relaxed
+	// turn holds no lease to close under.
+	if cfg.RelaxedConsistency() && cfg.CloseHeader != "" {
+		return fmt.Errorf("close_header is not served with consistency=relaxed")
 	}
 	return nil
 }

@@ -46,7 +46,10 @@ const (
 
 var (
 	ErrEpisodeLeaseLost = errors.New("ARC episode lease lost")
-	ErrEpisodeCapacity  = errors.New("ARC episode store capacity reached")
+	// ErrEpisodeConflict is a relaxed commit that lost to another turn: the
+	// episode changed, or a strict lease holds it, since it was read.
+	ErrEpisodeConflict = errors.New("ARC episode changed since it was read")
+	ErrEpisodeCapacity = errors.New("ARC episode store capacity reached")
 	// ErrEpisodeLeaseHeld is joined with the context error when Prepare ran
 	// out of time AFTER observing another owner's lease. A timeout without it
 	// may be the store itself stalling, which is not contention.
@@ -80,6 +83,65 @@ type EpisodeStore interface {
 	Abort(context.Context, Lease) error
 }
 
+// EpisodeSnapshotStore serves relaxed episodes: a read that takes no lease, and
+// a commit that succeeds only if the episode is still at the version read.
+// A relaxed turn never waits on another; when two collide, one commit loses
+// with ErrEpisodeConflict and only that turn's state update is dropped.
+type EpisodeSnapshotStore interface {
+	Snapshot(
+		ctx context.Context,
+		episodeIDHash string,
+		workerCount int,
+	) (*EpisodeState, EpisodeReadToken, error)
+	CommitIfUnchanged(
+		ctx context.Context,
+		episodeIDHash string,
+		read EpisodeReadToken,
+		state *EpisodeState,
+	) error
+}
+
+// EpisodeReadToken names exactly what a relaxed read saw, and when. A version
+// alone is not enough: an episode can expire or be evicted and be recreated
+// back to the same version, and a stale turn must still lose. So the token
+// carries something recreation cannot repeat, a digest of the stored state
+// (Redis) or the entry's store-wide generation (memory), and the time of the
+// read: a commit whose read is older than the idle TTL is refused, because
+// only then could a newer incarnation of the episode have come and gone,
+// including one created after a read that found the episode absent.
+type EpisodeReadToken struct {
+	version uint64
+	tag     string
+	readAt  time.Time
+}
+
+// staleRead reports whether a relaxed read is too old to commit: a newer
+// incarnation created after it could have expired by now.
+//
+// Accepted residual risk (operator decision, router-infra#55): on Redis the
+// bound is checked before the commit's round trip, not inside the script. A
+// read that found the episode absent can therefore still commit if, within
+// that round trip and at exactly the idle-TTL boundary, a newer incarnation
+// was created after the read, idled a full TTL and expired. The stale turn's
+// state then lands on an episode that had already expired from disuse, so no
+// live state is lost; relaxed episode state is best effort by contract.
+func staleRead(read EpisodeReadToken, now time.Time, idleTTL time.Duration) bool {
+	return read.readAt.IsZero() || now.Sub(read.readAt) >= idleTTL
+}
+
+// Version is the episode version the read saw.
+func (token EpisodeReadToken) Version() uint64 {
+	return token.version
+}
+
+// EpisodeStateStager writes state under a held lease without releasing it or
+// advancing the version, so the lease's own Commit still lands and an Abort
+// leaves the staged state in place. It persists what a turn must keep even if
+// the turn fails, such as a boundary decision taken before dispatch.
+type EpisodeStateStager interface {
+	Stage(context.Context, Lease, *EpisodeState) error
+}
+
 type EpisodeLeaseRenewer interface {
 	Renew(context.Context, Lease) error
 }
@@ -89,18 +151,19 @@ type EpisodeStoreReadiness interface {
 }
 
 type episodeStateWire struct {
-	SchemaVersion        string                `json:"schema_version"`
-	Version              uint64                `json:"version"`
-	PreviousArm          *int                  `json:"previous_arm"`
-	TurnIndex            uint64                `json:"turn_index"`
-	Warmth               []*episodeWarmthWire  `json:"warmth"`
-	EncoderOwner         *string               `json:"encoder_owner,omitempty"`
-	EncoderVisitedOwners *[]string             `json:"encoder_visited_owners,omitempty"`
-	Thinking             *episodeThinkingWire  `json:"thinking,omitempty"`
-	Upstream             []episodeUpstreamWire `json:"upstream,omitempty"`
-	Policy               *PolicyEpisodeState   `json:"policy,omitempty"`
-	Controls             []episodeControlWire  `json:"controls,omitempty"`
-	ReasoningIssuers     []string              `json:"reasoning_issuers,omitempty"`
+	SchemaVersion        string                  `json:"schema_version"`
+	Version              uint64                  `json:"version"`
+	PreviousArm          *int                    `json:"previous_arm"`
+	TurnIndex            uint64                  `json:"turn_index"`
+	Warmth               []*episodeWarmthWire    `json:"warmth"`
+	EncoderOwner         *string                 `json:"encoder_owner,omitempty"`
+	EncoderVisitedOwners *[]string               `json:"encoder_visited_owners,omitempty"`
+	Thinking             *episodeThinkingWire    `json:"thinking,omitempty"`
+	Upstream             []episodeUpstreamWire   `json:"upstream,omitempty"`
+	Policy               *PolicyEpisodeState     `json:"policy,omitempty"`
+	Controls             []episodeControlWire    `json:"controls,omitempty"`
+	ReasoningIssuers     []string                `json:"reasoning_issuers,omitempty"`
+	PolicyBoundary       *PolicyBoundaryDecision `json:"policy_boundary,omitempty"`
 }
 
 // episodeControlWire is one thinking-control placer. Its ledger names each
@@ -319,6 +382,7 @@ func cloneEpisodeState(state *EpisodeState) *EpisodeState {
 		Upstream:             append([]UpstreamPrefix(nil), state.Upstream...),
 		Controls:             cloneControlPlacements(state.Controls),
 		ReasoningIssuers:     append([]string(nil), state.ReasoningIssuers...),
+		PolicyBoundary:       clonePolicyBoundary(state.PolicyBoundary),
 	}
 	for index, warmth := range state.Warmth {
 		if warmth == nil {
@@ -328,6 +392,19 @@ func cloneEpisodeState(state *EpisodeState) *EpisodeState {
 		cloned.Warmth[index] = &value
 	}
 	return cloned
+}
+
+func clonePolicyBoundary(boundary *PolicyBoundaryDecision) *PolicyBoundaryDecision {
+	if boundary == nil {
+		return nil
+	}
+	cloned := *boundary
+	return &cloned
+}
+
+// ClonePolicyBoundary is a copy the caller may change.
+func ClonePolicyBoundary(boundary *PolicyBoundaryDecision) *PolicyBoundaryDecision {
+	return clonePolicyBoundary(boundary)
 }
 
 func cloneEpisodeArm(value *int) *int {
@@ -374,6 +451,10 @@ func marshalEpisodeState(
 	if len(state.ReasoningIssuers) > 0 {
 		wire.SchemaVersion = episodeStateSchema
 		wire.ReasoningIssuers = append([]string(nil), state.ReasoningIssuers...)
+	}
+	if state.PolicyBoundary != nil {
+		wire.SchemaVersion = episodeStateSchema
+		wire.PolicyBoundary = clonePolicyBoundary(state.PolicyBoundary)
 	}
 	owner := state.EncoderOwner
 	visited := append([]string{}, state.EncoderVisitedOwners...)
@@ -435,7 +516,7 @@ func decodeEpisodeStateAffinity(
 	wire episodeStateWire,
 ) (string, []string, error) {
 	if (wire.Thinking != nil || len(wire.Upstream) > 0 || wire.Policy != nil || len(wire.Controls) > 0 ||
-		len(wire.ReasoningIssuers) > 0) !=
+		len(wire.ReasoningIssuers) > 0 || wire.PolicyBoundary != nil) !=
 		(wire.SchemaVersion == episodeStateSchema) {
 		return "", nil, errors.New("ARC episode state contract mismatch")
 	}
@@ -471,6 +552,7 @@ func episodeStateFromWire(
 		EncoderVisitedOwners: visited,
 		Policy:               wire.Policy.Clone(),
 		Thinking:             thinkingLedgerFromWire(wire.Thinking),
+		PolicyBoundary:       clonePolicyBoundary(wire.PolicyBoundary),
 	}
 	if len(wire.ReasoningIssuers) > 0 {
 		state.ReasoningIssuers = append([]string(nil), wire.ReasoningIssuers...)
@@ -504,6 +586,9 @@ func validatePersistedEpisodeState(
 		return err
 	}
 	if err := state.Policy.Validate(); err != nil {
+		return err
+	}
+	if err := state.PolicyBoundary.Validate(len(state.Warmth)); err != nil {
 		return err
 	}
 	if len(state.Controls) > MaxControlPlacements {

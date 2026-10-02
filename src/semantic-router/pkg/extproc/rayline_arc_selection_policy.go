@@ -94,7 +94,7 @@ func (r *OpenAIRouter) selectRaylineARCModel(
 				result.RaylineARC.EncoderReplicaID,
 				result.RaylineARC.EncoderVisitedReplicaIDs,
 			)
-			ctx.RaylineARCTransaction.markPolicyState(result.RaylineARC.PolicyNextState)
+			stageRaylineARCPolicySelection(ctx, result.RaylineARC)
 			r.publishRaylineARCDecision(ctx, result)
 		}
 	}

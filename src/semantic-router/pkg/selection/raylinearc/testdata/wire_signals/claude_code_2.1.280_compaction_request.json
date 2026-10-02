@@ -1,0 +1,291 @@
+{
+ "provenance": "Claude Code 2.1.280 compaction summarization request body, captured 2026-10-01 from the release binary run in a container against a local logging stub (no provider). Strings not read by the detectors are shortened to a prefix and a digest; metadata ids are zeroed; tool definitions are trimmed to their names.",
+ "body": {
+  "model": "claude-sonnet-4-5",
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "text",
+      "text": "<system-reminder>\n# Environment\nYou have been invoked in the following environment: \n - Primary working directory: /work...[sha256:8ded75aeebebaf53]"
+     },
+     {
+      "type": "text",
+      "text": "<system-reminder>\nYou are powered by the model named Sonnet 4.5. The exact model ID is claude-sonnet-4-5. Assistant knowledge cutoff is January 2025.\n</system-reminder>"
+     },
+     {
+      "type": "text",
+      "text": "<system-reminder>\nAvailable agent types for the Agent tool:\n- claude: Catch-all for any task that doesn't fit a more spe...[sha256:b75d507ab14aed5d]"
+     },
+     {
+      "type": "text",
+      "text": "<system-reminder>\nThe following skills are available for use with the Skill tool:\n\n- dataviz: Use this skill whenever yo...[sha256:8375ac400606d064]"
+     },
+     {
+      "type": "text",
+      "text": "<system-reminder>\n<total_tokens>15000000 tokens left</total_tokens>\n</system-reminder>"
+     },
+     {
+      "type": "text",
+      "text": "<system-reminder>\nToday's date is 2026-10-01.\n</system-reminder>"
+     },
+     {
+      "type": "text",
+      "text": "<system-reminder>\nAttribution for git commits and pull requests you create from here on (this replaces Claude Code's own...[sha256:fa031aaa46b8e9e2]"
+     },
+     {
+      "type": "text",
+      "text": "Fix the bug in app.py: total should add."
+     }
+    ]
+   },
+   {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_use",
+      "id": "toolu_0001",
+      "name": "Bash",
+      "input": {
+       "command": "echo step 1",
+       "description": "Print a step"
+      },
+      "cache_control": {
+       "type": "ephemeral"
+      }
+     }
+    ]
+   },
+   {
+    "role": "user",
+    "content": [
+     {
+      "tool_use_id": "toolu_0001",
+      "type": "tool_result",
+      "content": "step 1\n\n<system-reminder>\n<total_tokens>14849980 tokens left</total_tokens>\n</system-reminder>",
+      "is_error": false
+     },
+     {
+      "type": "text",
+      "text": "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\n\n- Do NOT use Read, Bash, Grep, Glob, Edit, Write, or ANY other tool.\n- You already have all the context you need in the conversation above.\n- Tool calls will be REJECTED and will waste your only turn — you will fail the task.\n- Your entire response must be plain text: an <analysis> block followed by a <summary> block.\n\nYour task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.\nThis summary should be thorough in capturing technical details, code patterns, and architectural decisions that would be essential for continuing development work without losing context.\n\nBefore providing your final summary, wrap your analysis in <analysis> tags to organize your thoughts and ensure you've covered all necessary points. In your analysis process:\n\n1. Ch...[sha256:63e2bfb4ded280d5]"
+     }
+    ]
+   }
+  ],
+  "system": [
+   {
+    "type": "text",
+    "text": "x-anthropic-billing-header: cc_version=2.1.280.03c; cc_entrypoint=sdk-cli;"
+   },
+   {
+    "type": "text",
+    "text": "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
+    "cache_control": {
+     "type": "ephemeral"
+    }
+   },
+   {
+    "type": "text",
+    "text": "\nYou are an interactive agent that helps users with software engineering tasks. Use the instructions below and the tools...[sha256:744f646e9e67b302]",
+    "cache_control": {
+     "type": "ephemeral"
+    }
+   }
+  ],
+  "tools": [
+   {
+    "name": "Agent",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "Bash",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "CronCreate",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "CronDelete",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "CronList",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "DesignSync",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "Edit",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "EnterWorktree",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "ExitWorktree",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "ListAgents",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "NotebookEdit",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "Read",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "ReportFindings",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "ScheduleWakeup",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "SendMessage",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "Skill",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "TaskCreate",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "TaskGet",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "TaskList",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "TaskStop",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "TaskUpdate",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "WebFetch",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "WebSearch",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "Workflow",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   },
+   {
+    "name": "Write",
+    "description": "(trimmed)",
+    "input_schema": {
+     "type": "object"
+    }
+   }
+  ],
+  "metadata": {
+   "user_id": "{\"device_id\": \"0000000000000000000000000000000000000000000000000000000000000000\", \"account_uuid\": \"\", \"session_id\": \"00000000-0000-0000-0000-000000000000\"}"
+  },
+  "max_tokens": 32000,
+  "thinking": {
+   "budget_tokens": 31999,
+   "type": "enabled"
+  },
+  "context_management": {
+   "edits": [
+    {
+     "type": "clear_thinking_20251015",
+     "keep": "all"
+    }
+   ]
+  },
+  "stream": true
+ }
+}

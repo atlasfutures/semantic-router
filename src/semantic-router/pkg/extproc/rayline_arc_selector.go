@@ -603,6 +603,7 @@ func (selector *raylineARCSelector) selectionResult(
 				[]string(nil),
 				encoded.VisitedReplicaIDs...,
 			),
+			TurnIndex: state.TurnIndex,
 		},
 	}
 }

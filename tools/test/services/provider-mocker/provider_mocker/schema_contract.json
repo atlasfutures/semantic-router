@@ -457,6 +457,11 @@
         "output_tokens",
         "output_tokens_details",
         "total_tokens"
+      ],
+      "extension_usage_fields": [
+        "cost",
+        "cost_details",
+        "is_byok"
       ]
     },
     "anthropic_messages": {
@@ -516,6 +521,11 @@
         "output_tokens_details",
         "server_tool_use",
         "service_tier"
+      ],
+      "extension_usage_fields": [
+        "cost",
+        "cost_details",
+        "is_byok"
       ]
     },
     "openai_images": {

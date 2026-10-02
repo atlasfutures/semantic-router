@@ -65,7 +65,7 @@ func (r *OpenAIRouter) handleExternalGatewayModelRouting(
 
 	ctx.RequestModel = model
 
-	state := &routeHeaderState{removeHeaders: []string{"content-length"}}
+	state := &routeHeaderState{removeHeaders: append([]string{"content-length"}, raylineARCTurnSignalHeadersForRemoval()...)}
 	// Rewriting the protocol endpoint is part of request conversion. Envoy
 	// retains the already-selected route because this mode never clears the
 	// route cache, so upstream ownership remains with the external gateway.

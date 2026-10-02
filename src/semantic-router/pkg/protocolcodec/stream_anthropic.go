@@ -97,6 +97,7 @@ type anthropicMessageDeltaUsageWire struct {
 	OutputTokensDetails      anthropicOutputUsageDetailsWire `json:"output_tokens_details"`
 	ServerToolUse            anthropicServerToolUsageWire    `json:"server_tool_use"`
 	Iterations               []json.RawMessage               `json:"iterations,omitempty"`
+	providerUsageCostWire
 }
 
 type anthropicDeltaWire struct {
@@ -434,7 +435,7 @@ func decodeAnthropicContentDelta(wire anthropicEventWire) (llmprotocol.Event, er
 }
 
 func decodeAnthropicStreamUsage(wire anthropicUsageWire, initial bool) llmprotocol.Usage {
-	usage := llmprotocol.Usage{State: llmprotocol.UsageAvailable}
+	usage := llmprotocol.Usage{State: llmprotocol.UsageAvailable, ProviderCost: wire.providerUsageCostWire.decode()}
 	if initial || wire.InputTokens > 0 || wire.CacheReadInputTokens > 0 || wire.CacheCreationInputTokens > 0 {
 		usage.InputUncached = authoritative(wire.InputTokens)
 		usage.InputCacheRead = authoritative(wire.CacheReadInputTokens)
@@ -455,6 +456,7 @@ func decodeAnthropicMessageDeltaUsage(wire anthropicMessageDeltaUsageWire) llmpr
 		CacheReadInputTokens:     wire.CacheReadInputTokens,
 		OutputTokensDetails:      wire.OutputTokensDetails,
 		ServerToolUse:            wire.ServerToolUse,
+		providerUsageCostWire:    wire.providerUsageCostWire,
 	}, false)
 }
 

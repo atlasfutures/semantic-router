@@ -150,6 +150,7 @@ func finishCodexTurn(t *testing.T, router *OpenAIRouter, ctx *RequestContext, st
 	if _, err := router.handleResponseHeaders(arcResponseHeaders(status), ctx); err != nil {
 		t.Fatalf("response headers %s: %v", status, err)
 	}
+	completeTestResponse(t, ctx)
 	finalizeSelectionProcessTerminal(ctx)
 }
 

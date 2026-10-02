@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from rayline_arc_io.constants import MAX_SERIALIZED_TOKENS
 
 SERVICE_PATH = Path(__file__).resolve().parents[1] / "modal_session_service.py"
 MAX_CONTAINERS = 1
@@ -85,6 +89,8 @@ def test_session_service_is_authenticated_and_bounded() -> None:
     # faster. Re-pin only with a measurement that clears a placement gate.
     assert "region" not in function_keywords
     assert ast.unparse(function_keyword_values["min_containers"]) == "MIN_CONTAINERS"
+    assert ast.unparse(function_keyword_values["cpu"]) == "CPU_CORES"
+    assert ast.unparse(function_keyword_values["memory"]) == "MEMORY_MIB"
     assert ast.literal_eval(function_keyword_values["max_containers"]) == MAX_CONTAINERS
     # The ingress cap is app-conditional (PERF034 widens it), so the decorator
     # must reference the module constant whose definition the freeze test pins.
@@ -371,6 +377,60 @@ def test_only_the_standing_dev_app_holds_a_warm_container() -> None:
     function = decorator_call(service, "app.cls")
     keywords = {keyword.arg: keyword.value for keyword in function.keywords}
     assert ast.unparse(keywords["min_containers"]) == "MIN_CONTAINERS"
+
+
+def resolved_profile(app_name: str) -> dict[str, object]:
+    """Run the module's app-name selection for one name, without Modal.
+
+    Executes the top-level assignments and conditionals up to the image build,
+    so the result is what a deploy under that RAYLINE_ARC_SESSION_APP_NAME
+    would resolve, not what the source text happens to say.
+    """
+
+    selection: list[ast.stmt] = []
+    for node in ast.parse(source()).body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "_THIS_DIR"
+            for target in node.targets
+        ):
+            break
+        if isinstance(node, (ast.Assign, ast.If)):
+            selection.append(node)
+    namespace: dict[str, object] = {
+        "os": SimpleNamespace(environ={"RAYLINE_ARC_SESSION_APP_NAME": app_name}),
+        "MAX_SERIALIZED_TOKENS": MAX_SERIALIZED_TOKENS,
+    }
+    exec(  # noqa: S102 - the module's own selection block, under test
+        compile(ast.Module(body=selection, type_ignores=[]), str(SERVICE_PATH), "exec"),
+        namespace,
+    )
+    return namespace
+
+
+@pytest.mark.parametrize(
+    ("app_name", "cpu_cores", "memory_mib"),
+    [
+        # Standing apps: 4 cores / 32 GiB.
+        ("rayline-arc-session-encoder-dev", 4.0, 32_768),
+        ("rayline-arc-session-encoder-dev-d", 4.0, 32_768),
+        ("rayline-arc-session-encoder-prod", 4.0, 32_768),
+        ("rayline-arc-session-encoder-prod-rtx-a", 4.0, 32_768),
+        # Every recorded run's app keeps 8 cores / 64 GiB.
+        ("rayline-arc-session-encoder", 8.0, 65_536),
+        ("rayline-arc-session-encoder-a", 8.0, 65_536),
+        ("rayline-arc-session-encoder-flashinfer-perf034", 8.0, 65_536),
+        ("rayline-arc-session-encoder-flashinfer-perf035-l4", 8.0, 65_536),
+        ("rayline-arc-session-encoder-flashinfer-perf036-rtx6000", 8.0, 65_536),
+        ("rayline-arc-session-encoder-dev-rtx-a", 8.0, 65_536),
+    ],
+)
+def test_host_resources_resolve_per_app_name(
+    app_name: str, cpu_cores: float, memory_mib: int
+) -> None:
+    profile = resolved_profile(app_name)
+
+    assert profile["APP_NAME"] == app_name
+    assert (profile["CPU_CORES"], profile["MEMORY_MIB"]) == (cpu_cores, memory_mib)
 
 
 def test_allowed_app_names_extend_with_every_registered_experiment() -> None:

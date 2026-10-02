@@ -434,6 +434,7 @@ func (r *OpenAIRouter) processResponseBody(
 	if err := sendResponse(stream, response, "response body"); err != nil {
 		return err
 	}
+	runPendingSelectionCompletion(ctx)
 	finishImmediateResponseTrace(ctx, response)
 	if complete.ResponseBody.GetEndOfStream() || ctx.StreamingComplete {
 		finishRequestTrace(ctx, nil)

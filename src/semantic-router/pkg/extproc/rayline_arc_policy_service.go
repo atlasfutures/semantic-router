@@ -25,6 +25,8 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -58,13 +60,53 @@ type policyBinding struct {
 // not score embeddings: the policy service decides, and Select branches to it
 // before any encode.
 type policyServiceScorer struct {
-	schedule    string
+	schedule string
+	// busyWait bounds how long a decision retries the service's
+	// session_busy (the episode's acquire timeout).
+	busyWait    time.Duration
 	alias       string
 	sha256      string
 	workerIDs   []string
 	workers     []raylinearc.WorkerManifest
 	bindings    map[string]policyBinding
 	actionOrder []string
+	// episodeMode is the decide request's episode_mode: empty (strict) or
+	// relaxed.
+	episodeMode string
+	// sideStrictUntil (unix nanoseconds) is how long a strict cell sends its
+	// side calls strict after the service last showed it cannot serve them
+	// relaxed; zero or past means relaxed.
+	sideStrictUntil atomic.Int64
+}
+
+// policySideCallStrictFor is how long a strict cell keeps its side calls
+// strict once the service has shown it cannot serve them relaxed. The service
+// may be redeployed with relaxed support, so the router asks again after it.
+const policySideCallStrictFor = 10 * time.Minute
+
+// sideCallEpisodeMode is the episode_mode a side call is sent with. A side
+// call commits nothing and holds no lease, so it is decided relaxed: the
+// service takes no session lock and leaves the main conversation's session
+// untouched. Only a strict cell whose service recently could not serve
+// relaxed sends it strict, as before.
+func (scorer *policyServiceScorer) sideCallEpisodeMode(now time.Time) string {
+	if scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed ||
+		now.UnixNano() >= scorer.sideStrictUntil.Load() {
+		return raylinearc.PolicyEpisodeModeRelaxed
+	}
+	return scorer.episodeMode
+}
+
+// sideCallsRelaxedUnsupported records that the service served a relaxed side
+// call strict (it predates episode_mode) or refused it (its package cannot
+// serve relaxed), so side calls go strict for a while.
+func (scorer *policyServiceScorer) sideCallsRelaxedUnsupported(now time.Time, how string) {
+	scorer.sideStrictUntil.Store(now.Add(policySideCallStrictFor).UnixNano())
+	logging.ComponentWarnEvent("extproc", "rayline_arc_policy_side_call_strict", map[string]interface{}{
+		"package_alias": scorer.alias,
+		"reason":        how,
+		"retry_seconds": policySideCallStrictFor.Seconds(),
+	})
 }
 
 func (scorer *policyServiceScorer) WorkerIDs() []string { return scorer.workerIDs }
@@ -93,9 +135,13 @@ func newPolicyServiceScorer(
 	policy := decision.Algorithm.RaylineARC.PolicyService
 	scorer := &policyServiceScorer{
 		schedule: policy.ModelSchedule,
+		busyWait: time.Duration(decision.Algorithm.RaylineARC.Episode.AcquireTimeoutSeconds) * time.Second,
 		alias:    policy.PackageAlias,
 		sha256:   policy.PackageSHA256,
 		bindings: make(map[string]policyBinding, len(policy.Bindings)),
+	}
+	if decision.Algorithm.RaylineARC.Episode.RelaxedConsistency() {
+		scorer.episodeMode = raylinearc.PolicyEpisodeModeRelaxed
 	}
 	index := make(map[string]int, len(decision.ModelRefs))
 	for arm, modelRef := range decision.ModelRefs {
@@ -229,8 +275,15 @@ func createRaylineARCPolicySelector(
 		admission: raylinearc.NewAdmissionGate(policy.MaxInflightCalls),
 		policy:    client,
 	}
+	scorer := armed.scorer.(*policyServiceScorer)
 	probe := func(ctx context.Context) error {
-		return client.RequirePackage(ctx, policy.PackageAlias, policy.PackageSHA256)
+		if err := client.RequirePackage(ctx, policy.PackageAlias, policy.PackageSHA256); err != nil {
+			return err
+		}
+		if scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed {
+			return probeRelaxedPolicyDecide(ctx, client, scorer)
+		}
+		return nil
 	}
 	raylineARCArmInBackground(
 		probeContext,
@@ -241,6 +294,76 @@ func createRaylineARCPolicySelector(
 		raylineARCWait,
 	)
 	return selector, episodeStore, closeResources, nil, raylineARCReadinessPendingClass
+}
+
+// policySessionRevision is the trace's session revision: a relaxed call has
+// none, and reports 0 as a first call would.
+func policySessionRevision(revision *int) int {
+	if revision == nil {
+		return 0
+	}
+	return *revision
+}
+
+// relaxedProbeEpisodeIDHash names the readiness probe's episode. A relaxed
+// call touches no session state, so it collides with nothing.
+var relaxedProbeEpisodeIDHash = strings.Repeat("0", 64)
+
+// probeRelaxedPolicyDecide asks for one relaxed decision before a relaxed
+// cell arms, because only a decide call shows whether the service can serve
+// relaxed: a package on the vLLM encoder, or pinned to a runtime without
+// unretained prediction, answers unsupported_request. Until it can, the cell
+// stays not ready rather than failing every turn. A relaxed call holds no
+// session, so the probe leaves the service's state as it found it.
+func probeRelaxedPolicyDecide(
+	ctx context.Context,
+	client *raylinearc.PolicyServiceClient,
+	scorer *policyServiceScorer,
+) error {
+	pkg := raylinearc.PolicyPackageRef{Alias: scorer.alias, PackageSHA256: scorer.sha256}
+	response, err := client.Decide(ctx, raylinearc.PolicyDecisionRequest{
+		SchemaVersion: raylinearc.PolicyDecisionRequestSchema,
+		Package:       pkg,
+		EpisodeIDHash: relaxedProbeEpisodeIDHash,
+		ContextEpoch:  "0",
+		RequestFormat: policyFormatAnthropic,
+		Request: raylinearc.PolicyClientRequest{
+			Messages: json.RawMessage(`[{"role":"user","content":"readiness probe"}]`),
+		},
+		Attribution: []raylinearc.PolicyAttribution{},
+		Selection: raylinearc.PolicySelection{
+			AvailableActionIDs:  append([]string(nil), scorer.actionOrder...),
+			OperatingPoint:      raylinearc.PolicyOperatingPoint{Name: "default"},
+			PreferenceDimension: "overall",
+		},
+		Shadow:      []raylinearc.PolicyPackageRef{},
+		EpisodeMode: raylinearc.PolicyEpisodeModeRelaxed,
+	})
+	var failure *raylinearc.PolicyServiceError
+	if errors.As(err, &failure) && failure.Class == raylinearc.PolicyRelaxedUnsupportedClass {
+		logRelaxedPolicyUnsupported(scorer, failure.Class)
+	}
+	if err != nil {
+		return err
+	}
+	// A service that predates episode_mode may accept the field and serve the
+	// call strict. Only an answer for this package with no session revision
+	// shows the call ran unretained.
+	if response.Package != pkg || response.Encoding.SessionRevision != nil {
+		logRelaxedPolicyUnsupported(scorer, errRelaxedPolicyIgnored.Class)
+		return errRelaxedPolicyIgnored
+	}
+	return nil
+}
+
+// errRelaxedPolicyIgnored is a relaxed probe the service answered as strict.
+var errRelaxedPolicyIgnored = &raylinearc.PolicyServiceError{Class: "relaxed_ignored"}
+
+func logRelaxedPolicyUnsupported(scorer *policyServiceScorer, class string) {
+	logging.ComponentErrorEvent("extproc", "rayline_arc_policy_relaxed_unsupported", map[string]interface{}{
+		"package_alias": scorer.alias,
+		"class":         class,
+	})
 }
 
 type policyClientRequest struct {
@@ -271,12 +394,39 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if err != nil {
 		return nil, arcSelectionFailure("policy_request_body")
 	}
-	turn, attribution := raylinearc.PolicyTurn(state.Policy, messages, roles, state.TurnIndex)
+	signals := raylineARCPolicyTurnSignals(
+		arcContext.PolicySignalHeaders, arcContext.RequestFormat, clientRequest, messages, arcContext.EpisodeIDHash,
+	)
+	// A request classified as a side call ahead of the episode read holds no
+	// lease, so it is served as one. An unknown pre-classification holds the
+	// lease and stays open to a positive reading of the materialized request.
+	if arcContext.PolicyCallKind != "" && arcContext.PolicyCallKind != raylinearc.PolicyCallUnknown {
+		signals.CallKind, signals.CallKindSource = arcContext.PolicyCallKind, arcContext.PolicyCallKindSource
+	}
+	turn, attribution, transition := raylinearc.PolicyTurn(state.Policy, messages, roles, state.TurnIndex, signals)
+	sideCall := signals.CallKind == raylinearc.PolicyCallSide
+	scheduled := scorer.schedule != "" && !sideCall
+	atBoundary := scheduled &&
+		raylinearc.ModelChangeAllowed(state.TurnIndex, turn.EpochStartTurn, turn.CompactionCount)
+	retainedArm, retained := -1, false
+	if atBoundary {
+		retainedArm, retained = state.PolicyBoundary.RetainedArm(messages, state.TurnIndex, turn)
+	}
 	held := -1
-	if scorer.schedule != "" && state.PreviousArm != nil &&
-		!raylinearc.ModelChangeAllowed(state.TurnIndex, turn.EpochStartTurn) {
+	// A side call keeps the held arm whatever the schedule says; a turn holds
+	// it between the schedule's boundaries; a retry at a boundary keeps the
+	// arm that boundary already decided.
+	switch {
+	case retained:
+		held = retainedArm
+	case sideCall && state.PolicyBoundary != nil && state.PolicyBoundary.TurnIndex == state.TurnIndex:
+		// A main turn decided this boundary and has not committed yet: its
+		// arm is the one in use.
+		held = state.PolicyBoundary.Arm
+	case state.PreviousArm != nil && (sideCall || scheduled && !atBoundary):
 		held = *state.PreviousArm
 	}
+	logRaylineARCPolicyTurn(arcContext.EpisodeIDHash, signals, transition, state.TurnIndex, turn, held >= 0, retained)
 	available := make([]string, 0, len(scorer.actionOrder))
 	for _, actionID := range scorer.actionOrder {
 		arm := scorer.bindings[actionID].arm
@@ -304,23 +454,44 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			OperatingPoint:      raylinearc.PolicyOperatingPoint{Name: "default"},
 			PreferenceDimension: "overall",
 		},
-		Shadow: []raylinearc.PolicyPackageRef{},
+		Shadow:      []raylinearc.PolicyPackageRef{},
+		EpisodeMode: scorer.episodeMode,
 	}
-	// Admission is checked after the episode lease and before the service
+	if sideCall {
+		request.EpisodeMode = scorer.sideCallEpisodeMode(selector.now())
+	}
+	// Admission is checked after the episode lease and before each service
 	// call, as the artifact mode checks it before encoding: a shed request
-	// answers 429 and never occupies the service.
-	release, admitErr := armed.admission.Acquire()
-	if admitErr != nil {
-		recordARCAdmission(armed.admission, false)
-		return nil, boundedARCEncoderFailure(admitErr)
-	}
-	defer func() {
-		release()
+	// answers 429 and never occupies the service. A slot is held for one
+	// call only, never through a session_busy backoff.
+	admit := func() (func(), error) {
+		release, acquireErr := armed.admission.Acquire()
+		recordARCAdmission(armed.admission, acquireErr == nil)
+		if acquireErr != nil {
+			return nil, acquireErr
+		}
 		metrics.SetRaylineARCEncoderInflight(armed.admission.Inflight())
-	}()
-	recordARCAdmission(armed.admission, true)
+		return func() {
+			release()
+			metrics.SetRaylineARCEncoderInflight(armed.admission.Inflight())
+		}, nil
+	}
 	started := selector.now()
-	response, err := armed.policy.Decide(ctx, request)
+	response, err := decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+	// A strict cell's relaxed side call that the service refused as
+	// unsupported is decided strict instead, as it was before side calls
+	// went relaxed.
+	var refused *raylinearc.PolicyServiceError
+	if request.EpisodeMode != scorer.episodeMode && errors.As(err, &refused) &&
+		refused.Class == raylinearc.PolicyRelaxedUnsupportedClass {
+		scorer.sideCallsRelaxedUnsupported(selector.now(), "refused")
+		request.EpisodeMode = scorer.episodeMode
+		response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+	}
+	var shed *policyAdmissionError
+	if errors.As(err, &shed) {
+		return nil, boundedARCEncoderFailure(shed.err)
+	}
 	latency := selector.now().Sub(started)
 	if err != nil {
 		class := "transport"
@@ -363,6 +534,21 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		!policySelectedActionAvailable(response) {
 		return nil, arcSelectionFailure("policy_action_not_offered")
 	}
+	// A strict call advances the service's session and a relaxed one advances
+	// none, so the revision says which the service actually served. A
+	// service that ignored episode_mode would otherwise hold a relaxed cell's
+	// episodes exclusively without anyone seeing it.
+	// A strict cell's side call asked relaxed of a service that predates
+	// episode_mode is answered strict, with a revision: that is how side
+	// calls were served before, so it stands, and later ones go strict.
+	servedRelaxed := request.EpisodeMode == raylinearc.PolicyEpisodeModeRelaxed
+	if servedRelaxed && response.Encoding.SessionRevision != nil && request.EpisodeMode != scorer.episodeMode {
+		scorer.sideCallsRelaxedUnsupported(selector.now(), "served_strict")
+		servedRelaxed = false
+	}
+	if (response.Encoding.SessionRevision == nil) != servedRelaxed {
+		return nil, arcSelectionFailure("policy_session_revision")
+	}
 	decision := policyDecision(scorer, response, binding, workerIDs, excluded)
 	if !validARCDecision(decision, workerIDs) {
 		return nil, arcSelectionFailure("artifact_result")
@@ -371,7 +557,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		SerializedTokens:  response.Encoding.TokenCount,
 		FullHistoryTokens: response.Encoding.TokenCount,
 		SessionAction:     boundedPolicySessionAction(response.Encoding.SessionAction),
-		SessionRevision:   response.Encoding.SessionRevision,
+		SessionRevision:   policySessionRevision(response.Encoding.SessionRevision),
 		EngineBuildID:     response.Encoding.EngineBuildID,
 	}
 	// encoder_latency keeps its artifact-mode meaning, the encode alone, as
@@ -389,10 +575,68 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.ThinkingLevel = binding.level
 	result.RaylineARC.PolicyActionModel = binding.model
 	result.RaylineARC.WorkerProviderModel = scorer.workers[binding.arm].Model
-	result.RaylineARC.PolicyNextState = turn.Next(
-		messages, response.Decision.SelectedActionID, response.Decision.SelectedArmID,
-	)
+	result.RaylineARC.PolicySideCall = sideCall
+	if !sideCall {
+		result.RaylineARC.PolicyNextState = turn.Next(
+			messages, response.Decision.SelectedActionID, response.Decision.SelectedArmID,
+		)
+	}
+	if atBoundary && !retained {
+		result.RaylineARC.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(binding.arm, state.TurnIndex, turn, messages)
+	}
 	return result, nil
+}
+
+const (
+	policyBusyRetryFirst = 25 * time.Millisecond
+	policyBusyRetryMax   = 400 * time.Millisecond
+)
+
+// policyAdmissionError is a decision refused admission before its call.
+type policyAdmissionError struct{ err error }
+
+func (err *policyAdmissionError) Error() string { return err.err.Error() }
+
+// decidePolicyThroughBusy asks the service for the decision and retries a
+// session_busy answer for up to wait. The service holds a strict episode for
+// the length of one decision. Two main turns never reach it at once, because
+// the episode lease serializes them, but a side call takes no lease: its
+// decision can overlap a main turn's (Claude Code sends its title call
+// alongside the first turn). Either one then waits out the other's decision,
+// which is short, instead of being refused. Each call takes its own admission
+// slot and returns it before any backoff.
+func decidePolicyThroughBusy(
+	ctx context.Context,
+	client *raylinearc.PolicyServiceClient,
+	request raylinearc.PolicyDecisionRequest,
+	wait time.Duration,
+	admit func() (func(), error),
+) (*raylinearc.PolicyDecisionResponse, error) {
+	deadline := time.Now().Add(wait)
+	backoff := policyBusyRetryFirst
+	for {
+		release, admitErr := admit()
+		if admitErr != nil {
+			return nil, &policyAdmissionError{err: admitErr}
+		}
+		response, err := client.Decide(ctx, request)
+		release()
+		var failure *raylinearc.PolicyServiceError
+		if err == nil || !errors.As(err, &failure) || failure.Class != "session_busy" ||
+			time.Now().Add(backoff).After(deadline) {
+			return response, err
+		}
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return response, err
+		case <-timer.C:
+		}
+		if backoff *= 2; backoff > policyBusyRetryMax {
+			backoff = policyBusyRetryMax
+		}
+	}
 }
 
 // policyClientRequestOf is the request the service projects, with the

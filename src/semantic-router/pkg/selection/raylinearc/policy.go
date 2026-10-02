@@ -59,6 +59,10 @@ type EpisodeState struct {
 	// the client may still resend (see NextReasoningIssuers); nil when it
 	// holds none the episode knows of.
 	ReasoningIssuers []string
+	// PolicyBoundary is the model decision a policy-service turn took at a
+	// schedule boundary, stored before dispatch so a retry reuses it; Commit
+	// clears it.
+	PolicyBoundary *PolicyBoundaryDecision
 }
 
 // ControlPlacement is one placer's state. A placer governs one worker's
@@ -157,8 +161,8 @@ func NewEpisodeState(workerCount int) (*EpisodeState, error) {
 	}, nil
 }
 
-// Commit advances episode state after the caller has observed upstream 2xx
-// response headers. Selection itself never mutates the state.
+// Commit advances episode state after the client has received a complete
+// 2xx response. Selection itself never mutates the state.
 func (state *EpisodeState) Commit(
 	arm int,
 	inputTokens int,
@@ -178,6 +182,7 @@ func (state *EpisodeState) Commit(
 	}
 	selected := arm
 	state.PreviousArm = &selected
+	state.PolicyBoundary = nil
 	if state.TurnIndex < math.MaxUint64 {
 		state.TurnIndex++
 	}

@@ -135,6 +135,18 @@ class RaylineARCEpisodeConfig(BaseModel):
     max_in_memory_episodes: int = Field(default=0, ge=0)
     development_mode: bool = False
     redis: RaylineARCRedisConfig | None = None
+    # How concurrent turns on one episode are handled; the Go loader holds the
+    # same contract. Omitted or "strict": serialized behind the episode lease
+    # (eval and training cells). "relaxed": read without the lease, committed
+    # only if unchanged; a collision drops that turn's state update instead of
+    # failing the request (serving cells).
+    consistency: Literal["strict", "relaxed"] | None = None
+
+    @model_validator(mode="after")
+    def _relaxed_holds_no_lease_to_close_under(self):
+        if self.consistency == "relaxed" and self.close_header:
+            raise ValueError("close_header is not served with consistency=relaxed")
+        return self
 
 
 _CHECKPOINT_LABEL = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -315,6 +327,10 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     package_manifest: str = ""
     # Admits v5 instructions whose registry cell is experimental.
     allow_experimental_controls: bool = False
+    # Mirrors TrustTurnSignalHeaders in the Go loader: read the
+    # x-rayline-call-kind / x-rayline-compaction headers only when a gateway
+    # sets them.
+    trust_turn_signal_headers: bool = False
     # Per bound worker, the trained model it serves (v5 only).
     trained_models: dict[str, str] = Field(default_factory=dict)
 
@@ -358,5 +374,20 @@ class RaylineARCAlgorithmConfig(BaseModel):
         ):
             raise ValueError(
                 "artifact_dir, artifact_revision and encoder are required without policy_service"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _relaxed_not_with_retained_encoder_sessions(self):
+        # A retained encoder session serializes same-episode encodes on the
+        # encoder side, so relaxed turns on one episode would wait there.
+        if (
+            self.episode.consistency == "relaxed"
+            and self.encoder is not None
+            and "resumable_causal_mean" in self.encoder.required_pooling_capabilities
+        ):
+            raise ValueError(
+                "episode: consistency=relaxed is not served with the "
+                "resumable_causal_mean encoder capability"
             )
         return self

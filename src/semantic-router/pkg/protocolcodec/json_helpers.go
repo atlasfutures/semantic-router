@@ -329,7 +329,10 @@ func exactJSONStructFields(targetType reflect.Type) map[string]reflect.Type {
 	fields := make(map[string]reflect.Type)
 	for index := 0; index < targetType.NumField(); index++ {
 		field := targetType.Field(index)
-		if field.PkgPath != "" {
+		// encoding/json promotes the exported members of an embedded struct
+		// even when the struct type itself is unexported; only an unexported
+		// field that is not such an embedding is invisible to it.
+		if field.PkgPath != "" && (!field.Anonymous || dereferenceJSONType(field.Type).Kind() != reflect.Struct) {
 			continue
 		}
 		tag := field.Tag.Get("json")

@@ -61,7 +61,7 @@ func TestUsageLineNamesTheUpstreamAttribution(t *testing.T) {
 	}
 }
 
-// A split the provider never stated is absent, not zero. A zero would assert a
+// A split the provider never stated is null, not zero. A zero would assert a
 // turn that did not reason, and the empties are being told apart from turns
 // that reasoned to exhaustion.
 func TestUsageLineOmitsAnUnknownReasoningSplit(t *testing.T) {
@@ -75,8 +75,8 @@ func TestUsageLineOmitsAnUnknownReasoningSplit(t *testing.T) {
 	router.reportNonStreamingUsage(ctx, time.Second, router.takeNeutralResponseUsage(ctx))
 
 	fields := findLogEvent(t, logs, "llm_usage")
-	if _, present := fields["reasoning_tokens"]; present {
-		t.Fatalf("a reasoning split was invented for a turn that stated none: %v", fields)
+	if value, present := fields["reasoning_tokens"]; !present || value != nil {
+		t.Fatalf("reasoning_tokens = %v (present %v), want null for a turn that stated none", value, present)
 	}
 }
 
