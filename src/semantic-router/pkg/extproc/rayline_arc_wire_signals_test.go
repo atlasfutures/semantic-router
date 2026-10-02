@@ -20,12 +20,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
