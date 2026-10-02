@@ -367,7 +367,7 @@ func fixtureWith(t *testing.T, name string, edit func(map[string]any)) []byte {
 // decide responses, their shadow scores and the packages listing. VSR accepts
 // both values, and still accepts its absence (a service that predates it).
 func TestPolicyResponsesAcceptPackageVerification(t *testing.T) {
-	for _, value := range []string{PolicyPackageVerified, PolicyPackageUnverified} {
+	for _, value := range []PolicyVerification{PolicyPackageVerified, PolicyPackageUnverified} {
 		decide := fixtureWith(t, "decision_response.v1.json", func(body map[string]any) {
 			body["package_verification"] = value
 			for _, shadow := range body["shadow"].([]any) {
@@ -380,8 +380,9 @@ func TestPolicyResponsesAcceptPackageVerification(t *testing.T) {
 		if err != nil {
 			t.Fatalf("decide with package_verification %q: %v", value, err)
 		}
-		if response.PackageVerification == nil || *response.PackageVerification != value {
-			t.Fatalf("package_verification = %v, want %q", response.PackageVerification, value)
+		if response.PackageVerification != value || response.Shadow[0].Scored.PackageVerification != value {
+			t.Fatalf("package_verification = %q (shadow %q), want %q",
+				response.PackageVerification, response.Shadow[0].Scored.PackageVerification, value)
 		}
 		packages := fixtureWith(t, "packages_response.v1.json", func(body map[string]any) {
 			for _, loaded := range body["packages"].([]any) {
@@ -392,29 +393,37 @@ func TestPolicyResponsesAcceptPackageVerification(t *testing.T) {
 		if err != nil {
 			t.Fatalf("packages with verification %q: %v", value, err)
 		}
-		if got := listing.Packages[0].Verification; got == nil || *got != value {
-			t.Fatalf("verification = %v, want %q", got, value)
+		if got := listing.Packages[0].Verification; got != value {
+			t.Fatalf("verification = %q, want %q", got, value)
 		}
 	}
 	response, err := DecodePolicyDecisionResponse(readPolicyFixture(t, "decision_response.v1.json"))
-	if err != nil || response.PackageVerification != nil {
+	if err != nil || response.PackageVerification != "" {
 		t.Fatalf("decide without package_verification = %v, %v", response, err)
 	}
 }
 
-// A verification outside the contract's two values is refused, as any other
-// malformed response is.
+// A verification outside the contract's two values, or an explicit null, is
+// refused, as any other malformed response is; only omission means unknown.
 func TestPolicyResponsesRefuseAnUnknownVerification(t *testing.T) {
-	decide := fixtureWith(t, "decision_response.v1.json", func(body map[string]any) {
-		body["package_verification"] = "trusted"
-	})
-	if _, err := DecodePolicyDecisionResponse(decide); err == nil {
-		t.Fatal("decide accepted package_verification \"trusted\"")
-	}
-	packages := fixtureWith(t, "packages_response.v1.json", func(body map[string]any) {
-		body["packages"].([]any)[0].(map[string]any)["verification"] = "trusted"
-	})
-	if _, err := DecodePolicyPackagesResponse(packages); err == nil {
-		t.Fatal("packages accepted verification \"trusted\"")
+	for _, bad := range []any{"trusted", nil, 1} {
+		decide := fixtureWith(t, "decision_response.v1.json", func(body map[string]any) {
+			body["package_verification"] = bad
+		})
+		if _, err := DecodePolicyDecisionResponse(decide); err == nil {
+			t.Fatalf("decide accepted package_verification %v", bad)
+		}
+		shadow := fixtureWith(t, "decision_response.v1.json", func(body map[string]any) {
+			body["shadow"].([]any)[0].(map[string]any)["package_verification"] = bad
+		})
+		if _, err := DecodePolicyDecisionResponse(shadow); err == nil {
+			t.Fatalf("decide accepted shadow package_verification %v", bad)
+		}
+		packages := fixtureWith(t, "packages_response.v1.json", func(body map[string]any) {
+			body["packages"].([]any)[0].(map[string]any)["verification"] = bad
+		})
+		if _, err := DecodePolicyPackagesResponse(packages); err == nil {
+			t.Fatalf("packages accepted verification %v", bad)
+		}
 	}
 }
