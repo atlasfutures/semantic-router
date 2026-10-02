@@ -26,6 +26,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -72,6 +73,40 @@ type policyServiceScorer struct {
 	// episodeMode is the decide request's episode_mode: empty (strict) or
 	// relaxed.
 	episodeMode string
+	// sideStrictUntil (unix nanoseconds) is how long a strict cell sends its
+	// side calls strict after the service last showed it cannot serve them
+	// relaxed; zero or past means relaxed.
+	sideStrictUntil atomic.Int64
+}
+
+// policySideCallStrictFor is how long a strict cell keeps its side calls
+// strict once the service has shown it cannot serve them relaxed. The service
+// may be redeployed with relaxed support, so the router asks again after it.
+const policySideCallStrictFor = 10 * time.Minute
+
+// sideCallEpisodeMode is the episode_mode a side call is sent with. A side
+// call commits nothing and holds no lease, so it is decided relaxed: the
+// service takes no session lock and leaves the main conversation's session
+// untouched. Only a strict cell whose service recently could not serve
+// relaxed sends it strict, as before.
+func (scorer *policyServiceScorer) sideCallEpisodeMode(now time.Time) string {
+	if scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed ||
+		now.UnixNano() >= scorer.sideStrictUntil.Load() {
+		return raylinearc.PolicyEpisodeModeRelaxed
+	}
+	return scorer.episodeMode
+}
+
+// sideCallsRelaxedUnsupported records that the service served a relaxed side
+// call strict (it predates episode_mode) or refused it (its package cannot
+// serve relaxed), so side calls go strict for a while.
+func (scorer *policyServiceScorer) sideCallsRelaxedUnsupported(now time.Time, how string) {
+	scorer.sideStrictUntil.Store(now.Add(policySideCallStrictFor).UnixNano())
+	logging.ComponentWarnEvent("extproc", "rayline_arc_policy_side_call_strict", map[string]interface{}{
+		"package_alias": scorer.alias,
+		"reason":        how,
+		"retry_seconds": policySideCallStrictFor.Seconds(),
+	})
 }
 
 func (scorer *policyServiceScorer) WorkerIDs() []string { return scorer.workerIDs }
@@ -422,6 +457,9 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		Shadow:      []raylinearc.PolicyPackageRef{},
 		EpisodeMode: scorer.episodeMode,
 	}
+	if sideCall {
+		request.EpisodeMode = scorer.sideCallEpisodeMode(selector.now())
+	}
 	// Admission is checked after the episode lease and before each service
 	// call, as the artifact mode checks it before encoding: a shed request
 	// answers 429 and never occupies the service. A slot is held for one
@@ -440,6 +478,16 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	}
 	started := selector.now()
 	response, err := decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+	// A strict cell's relaxed side call that the service refused as
+	// unsupported is decided strict instead, as it was before side calls
+	// went relaxed.
+	var refused *raylinearc.PolicyServiceError
+	if request.EpisodeMode != scorer.episodeMode && errors.As(err, &refused) &&
+		refused.Class == raylinearc.PolicyRelaxedUnsupportedClass {
+		scorer.sideCallsRelaxedUnsupported(selector.now(), "refused")
+		request.EpisodeMode = scorer.episodeMode
+		response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+	}
 	var shed *policyAdmissionError
 	if errors.As(err, &shed) {
 		return nil, boundedARCEncoderFailure(shed.err)
@@ -490,7 +538,15 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// none, so the revision says which the service actually served. A
 	// service that ignored episode_mode would otherwise hold a relaxed cell's
 	// episodes exclusively without anyone seeing it.
-	if (response.Encoding.SessionRevision == nil) != (scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed) {
+	// A strict cell's side call asked relaxed of a service that predates
+	// episode_mode is answered strict, with a revision: that is how side
+	// calls were served before, so it stands, and later ones go strict.
+	servedRelaxed := request.EpisodeMode == raylinearc.PolicyEpisodeModeRelaxed
+	if servedRelaxed && response.Encoding.SessionRevision != nil && request.EpisodeMode != scorer.episodeMode {
+		scorer.sideCallsRelaxedUnsupported(selector.now(), "served_strict")
+		servedRelaxed = false
+	}
+	if (response.Encoding.SessionRevision == nil) != servedRelaxed {
 		return nil, arcSelectionFailure("policy_session_revision")
 	}
 	decision := policyDecision(scorer, response, binding, workerIDs, excluded)

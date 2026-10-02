@@ -246,6 +246,12 @@ the full non-stream body. A failed, non-2xx or broken response commits
 nothing. Artifact-mode turns commit at the 2xx response headers.
 
 A side call keeps the held arm, takes no episode lease and commits nothing.
+It is decided with `episode_mode: relaxed` even on a strict cell, so the
+service locks no session for it and leaves the main conversation's session
+as it was. A service that cannot serve relaxed (it refuses with
+`unsupported_request`, or predates `episode_mode` and answers with a session
+revision) gets that cell's side calls strict for ten minutes, then is asked
+relaxed again.
 Only an explicit compaction moves the schedule's boundary; a transcript that
 stops extending the recorded prefix only starts a new context epoch. Without
 headers, the router classifies a request from harness literals in its body:
