@@ -162,7 +162,7 @@ func (client *PolicyServiceClient) Decide(
 	ctx context.Context,
 	request PolicyDecisionRequest,
 ) (*PolicyDecisionResponse, error) {
-	payload, err := json.Marshal(request)
+	payload, err := EncodePolicyDecisionRequest(request)
 	if err != nil {
 		return nil, &PolicyServiceError{Class: "request"}
 	}

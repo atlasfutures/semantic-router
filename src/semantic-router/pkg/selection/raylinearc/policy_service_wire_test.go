@@ -427,3 +427,20 @@ func TestPolicyResponsesRefuseAnUnknownVerification(t *testing.T) {
 		}
 	}
 }
+
+func TestUnescapeHTMLEscapesRewritesOnlyThoseEscapes(t *testing.T) {
+	// e is a JSON \uXXXX escape, built so the source holds no literal one.
+	e := func(hex string) string { return string([]byte{92, 'u'}) + hex }
+	bs := string([]byte{92})
+	cases := map[string]string{
+		`{"a":"` + e("003c") + `x` + e("003e") + ` ` + e("0026") + ` ` + e("003C") + `"}`: `{"a":"<x> & <"}`,
+		`{"a":"` + bs + e("003c") + `"}`:                                     `{"a":"` + bs + e("003c") + `"}`,
+		`{"a":"` + bs + `"` + e("003c") + bs + `"","b":"` + e("00e9") + `"}`: `{"a":"` + bs + `"<` + bs + `"","b":"` + e("00e9") + `"}`,
+		`["` + e("003c") + `",1,{"` + e("0026") + `":true}]`:                 `["<",1,{"&":true}]`,
+	}
+	for in, want := range cases {
+		if got := string(UnescapeHTMLEscapes([]byte(in))); got != want {
+			t.Errorf("%s -> %s, want %s", in, got, want)
+		}
+	}
+}
