@@ -77,12 +77,14 @@ type RaylineARCPolicyServiceConfig struct {
 	// instruction is admitted only experimentally on its worker's (model,
 	// provider, format) cell. Without it such an action is refused at load.
 	AllowExperimentalControls bool `yaml:"allow_experimental_controls,omitempty"`
-	// TrustTurnSignalHeaders reads x-rayline-call-kind and
-	// x-rayline-compaction from the request. Set it only when a gateway in
-	// front of the router sets (or strips) both, since a client could
-	// otherwise claim any turn is a side call. Off, they are ignored and the
-	// harness literals in the body decide. Either way neither is forwarded
-	// upstream.
+	// TrustTurnSignalHeaders reads the gateway's turn-signal headers from
+	// the request: x-rayline-call-kind, x-rayline-compaction,
+	// x-rayline-agent-key-source, x-rayline-parent-session and
+	// x-rayline-parent-agent. Set it only when a gateway in front of the
+	// router sets (or strips) every one of them, since a client could
+	// otherwise claim any turn is a side call or its own subagent episode.
+	// Off, they are ignored and the harness literals in the body decide.
+	// Either way none is forwarded upstream.
 	TrustTurnSignalHeaders bool `yaml:"trust_turn_signal_headers,omitempty"`
 	// TrainedModels declares, per bound worker, the trained model it serves:
 	// the name a v5 action's model states (e.g. claude-opus-5). Trained names

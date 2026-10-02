@@ -1934,10 +1934,13 @@ recipes:
                 # allow_experimental_controls admits v5 instructions whose
                 # registry cell is experimental; without it they are refused.
                 allow_experimental_controls: false
-                # trust_turn_signal_headers reads x-rayline-call-kind and
-                # x-rayline-compaction; set it only when a gateway sets them.
-                # Off, harness literals in the body classify side calls and
-                # compactions. Neither header is forwarded upstream.
+                # trust_turn_signal_headers reads the gateway's turn-signal
+                # headers: x-rayline-call-kind, x-rayline-compaction,
+                # x-rayline-agent-key-source, x-rayline-parent-session and
+                # x-rayline-parent-agent. Set it only when a gateway sets or
+                # strips every one of them. Off, harness literals in the body
+                # classify side calls and compactions. None is forwarded
+                # upstream.
                 trust_turn_signal_headers: false
                 # trained_models declares, per bound worker, the trained model
                 # it serves (a v5 action's model, e.g. claude-opus-5); a binding

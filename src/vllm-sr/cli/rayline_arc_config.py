@@ -327,9 +327,10 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     package_manifest: str = ""
     # Admits v5 instructions whose registry cell is experimental.
     allow_experimental_controls: bool = False
-    # Mirrors TrustTurnSignalHeaders in the Go loader: read the
-    # x-rayline-call-kind / x-rayline-compaction headers only when a gateway
-    # sets them.
+    # Mirrors TrustTurnSignalHeaders in the Go loader: read the gateway's
+    # turn-signal headers (x-rayline-call-kind, x-rayline-compaction,
+    # x-rayline-agent-key-source, x-rayline-parent-session,
+    # x-rayline-parent-agent) only when a gateway sets or strips every one.
     trust_turn_signal_headers: bool = False
     # Per bound worker, the trained model it serves (v5 only).
     trained_models: dict[str, str] = Field(default_factory=dict)
