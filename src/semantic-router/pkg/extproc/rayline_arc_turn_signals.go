@@ -80,6 +80,8 @@ const (
 	callKindSourceHeader             = "header"
 	callKindSourceClaudeSubagent     = "claude_code_subagent"
 	callKindSourceClaudeSubagentOwn  = "claude_code_subagent_own_episode"
+	callKindSourceGatewaySubagentOwn = "gateway_subagent_own_episode"
+	callKindSourceGatewaySubagent    = "gateway_subagent_shared_key"
 	callKindSourceClaudeCompactionRq = "claude_code_compaction_request"
 	callKindSourceClaudeTitle        = "claude_code_title"
 	callKindSourceCodexCompactionRq  = "codex_compaction_request"
@@ -185,6 +187,16 @@ func raylineARCPolicyCallKind(
 		if raylinearc.IsCodexCompactionRequest(input) {
 			return raylinearc.PolicyCallSide, callKindSourceCodexCompactionRq
 		}
+	}
+	// A subagent the gateway keyed without a harness body claim (codex): on
+	// its agent id it is its own episode's main turn; on a role or a task
+	// digest, which several subagents can share, it is a side call, so no
+	// shared episode advances on it.
+	switch strings.TrimSpace(headers[raylineARCAgentKeySourceHeader]) {
+	case raylinearc.SubagentKeySourceAgent:
+		return raylinearc.PolicyCallMain, callKindSourceGatewaySubagentOwn
+	case "role", "task":
+		return raylinearc.PolicyCallSide, callKindSourceGatewaySubagent
 	}
 	return raylinearc.PolicyCallUnknown, ""
 }

@@ -187,3 +187,78 @@ func subagentTurn(router *OpenAIRouter, episode, agent string) (*RequestContext,
 	}
 	return ctx, 0, nil
 }
+
+// A subagent the gateway keyed without a body claim (codex on Responses):
+// its own episode on an agent id, a side call on a role or task key, which
+// several subagents can share; unkeyed requests stay unknown.
+func TestGatewayKeyedSubagentWithoutABodyClaim(t *testing.T) {
+	for _, tc := range []struct {
+		keySource string
+		wantKind  raylinearc.PolicyCallKind
+	}{
+		{"agent", raylinearc.PolicyCallMain},
+		{"role", raylinearc.PolicyCallSide},
+		{"task", raylinearc.PolicyCallSide},
+		{"", raylinearc.PolicyCallUnknown},
+	} {
+		kind, _ := raylineARCPolicyCallKind(map[string]string{raylineARCAgentKeySourceHeader: tc.keySource},
+			policyFormatResponses, nil, nil, nil, "e")
+		if kind != tc.wantKind {
+			t.Fatalf("Responses key source %q: %s, want %s", tc.keySource, kind, tc.wantKind)
+		}
+	}
+}
+
+// End to end on the Responses path of a cell trusting its gateway: a
+// role-keyed codex subagent takes no lease (a side call), an agent-keyed one
+// is its own episode's main turn.
+func TestCodexSubagentKeySourceEndToEnd(t *testing.T) {
+	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
+	fake := newRelaxedPolicyFake(t)
+	path := writeConsistentPolicyConfig(t, fake.URL(), config.RaylineARCConsistencyStrict)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor := "          policy_service:\n"
+	rendered := strings.Replace(string(raw), anchor, anchor+"            trust_turn_signal_headers: true\n", 1)
+	if err := os.WriteFile(path, []byte(rendered), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	router, err := NewOpenAIRouter(path)
+	if err != nil {
+		t.Fatalf("build router: %v", err)
+	}
+	awaitPolicySelectorArmed(t, router)
+	for _, tc := range []struct {
+		keySource string
+		wantSide  bool
+	}{
+		{"role", true},
+		{"agent", false},
+	} {
+		ctx := &RequestContext{Headers: map[string]string{}, RequestID: "codex-" + tc.keySource, TraceContext: context.Background()}
+		headers := &ext_proc.ProcessingRequest_RequestHeaders{RequestHeaders: &ext_proc.HttpHeaders{
+			Headers: &core.HeaderMap{Headers: []*core.HeaderValue{
+				{Key: ":method", Value: "POST"},
+				{Key: ":path", Value: "/v1/responses"},
+				{Key: "content-type", Value: "application/json"},
+				{Key: "x-rayline-session", Value: "user-1:root:" + tc.keySource},
+				{Key: raylineARCAgentKeySourceHeader, Value: tc.keySource},
+			}},
+		}}
+		if _, err := router.handleRequestHeaders(headers, ctx); err != nil {
+			t.Fatalf("%s: request headers: %v", tc.keySource, err)
+		}
+		body := `{"model":"auto","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"explore"}]}]}`
+		if _, err := router.handleRequestBody(&ext_proc.ProcessingRequest_RequestBody{
+			RequestBody: &ext_proc.HttpBody{Body: []byte(body), EndOfStream: true},
+		}, ctx); err != nil {
+			t.Fatalf("%s: request body: %v", tc.keySource, err)
+		}
+		transaction := ctx.RaylineARCTransaction
+		if transaction == nil || transaction.sideCall != tc.wantSide {
+			t.Fatalf("%s-keyed codex subagent: transaction %+v, want side call %v", tc.keySource, transaction, tc.wantSide)
+		}
+	}
+}
