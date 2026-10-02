@@ -155,6 +155,11 @@ func writeConsistentPolicyConfig(t *testing.T, policyURL string, consistency str
 // returns the immediate status the router answered, or 0 when it forwarded
 // the turn to a provider.
 func policyTurnStatus(router *OpenAIRouter, episode, content string) (int, error) {
+	return policyTurnStatusWithHeaders(router, episode, content, nil)
+}
+
+// policyTurnStatusWithHeaders is policyTurnStatus with extra request headers.
+func policyTurnStatusWithHeaders(router *OpenAIRouter, episode, content string, extra map[string]string) (int, error) {
 	ctx := &RequestContext{
 		Headers: map[string]string{}, RequestID: "relaxed-" + content,
 		StartTime: time.Now(), TraceContext: context.Background(),
@@ -167,6 +172,10 @@ func policyTurnStatus(router *OpenAIRouter, episode, content string) (int, error
 			{Key: "x-rayline-session", Value: episode},
 		}},
 	}}
+	for key, value := range extra {
+		headers.RequestHeaders.Headers.Headers = append(headers.RequestHeaders.Headers.Headers,
+			&core.HeaderValue{Key: key, Value: value})
+	}
 	if _, err := router.handleRequestHeaders(headers, ctx); err != nil {
 		return 0, err
 	}
