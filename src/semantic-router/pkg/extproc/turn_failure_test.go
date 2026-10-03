@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
@@ -104,6 +105,9 @@ func TestStreamFailureClasses(t *testing.T) {
 			failed: &llmprotocol.ProtocolError{Category: llmprotocol.ErrorRateLimited, Message: "overloaded"}}, nil, turnFailureRateLimited, false},
 		{"cut before output", &semanticResponseStreamState{items: map[int]*semanticStreamItem{}}, nil, turnFailureStreamCut, false},
 		{"cut after output", &semanticResponseStreamState{items: item}, nil, turnFailureStreamCut, true},
+		{"router deadline cut", &semanticResponseStreamState{items: item}, (&OpenAIRouter{}).truncatedStreamError(), turnFailureTimeout, true},
+		{"malformed provider stream", &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+			llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "invalid_provider_response", "bad frame", nil), turnFailureUpstreamError, false},
 		{"client cancelled", &semanticResponseStreamState{items: item}, errors.New("canceled"), "", false},
 		{"completed", &semanticResponseStreamState{terminal: true, stop: llmprotocol.StopEndTurn, items: map[int]*semanticStreamItem{}}, nil, "", false},
 	}
@@ -238,5 +242,21 @@ func TestResponseHeaderGateNamesTheCellFailure(t *testing.T) {
 			t.Fatal("the header-gate failure was not classed")
 		}
 		finalizeSelectionProcessTerminal(ctx)
+	}
+}
+
+// A response check that blocks the reply still leaves its usage line: the
+// line moved after the commit gate, and every early return writes it first.
+func TestBlockedReplyStillWritesItsUsageLine(t *testing.T) {
+	logs := captureLogs(t)
+	router, ctx := newResponseStageRouter(t, newJailbreakFailingServer(t), config.OnErrorBlock, "block")
+	ctx.RequestID, ctx.RequestModel, ctx.UpstreamStatusCode = "req-blocked", "test", 200
+	ctx.SourceFormat, ctx.TargetFormat = llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1
+	response := router.handleNonStreamingResponseBody([]byte(arcCacheTestCompletion), ctx, time.Second)
+	if response.GetImmediateResponse() == nil {
+		t.Fatal("the plugin did not block")
+	}
+	if usage := findLogEvent(t, logs, "llm_usage"); usage["prompt_tokens"] == nil {
+		t.Fatalf("the blocked reply's usage line = %#v", usage)
 	}
 }
