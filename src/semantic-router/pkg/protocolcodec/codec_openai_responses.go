@@ -226,7 +226,7 @@ func (OpenAIResponsesCodec) DecodeRequest(body []byte, policy llmprotocol.Policy
 		"prompt":                 wire.Prompt,
 		"prompt_cache_retention": wire.PromptCacheRetention,
 		"prompt_cache_options":   wire.PromptCacheOptions, "safety_identifier": wire.SafetyIdentifier,
-		"service_tier": wire.ServiceTier,
+		"service_tier": requestedServiceTier(wire.ServiceTier),
 		"top_logprobs": wire.TopLogprobs,
 	}); err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err

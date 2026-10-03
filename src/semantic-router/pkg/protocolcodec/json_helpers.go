@@ -775,3 +775,17 @@ func marshalWire(value any) ([]byte, error) {
 	}
 	return body, nil
 }
+
+// requestedServiceTier is the service tier a client actually asked for, or
+// nothing. "auto" is every source API's default -- the provider picks the
+// tier, as it does when the member is absent -- and many clients send it on
+// every request, so it asks for nothing and is dropped on dispatch. An
+// explicit tier (flex, priority, scale, default, standard_only) asks for a
+// cost or latency the neutral contract cannot promise, and stays refused.
+func requestedServiceTier(raw json.RawMessage) json.RawMessage {
+	var tier string
+	if json.Unmarshal(raw, &tier) == nil && tier == "auto" {
+		return nil
+	}
+	return raw
+}
