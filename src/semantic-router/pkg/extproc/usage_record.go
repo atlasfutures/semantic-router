@@ -15,7 +15,13 @@ import (
 
 // llmUsageRecordSchema versions the shape below. A consumer reading the
 // durable stream can refuse a record it does not understand.
-const llmUsageRecordSchema = "vsr.llm_usage.v1"
+//
+// v2 added content_sent_before_failure and failure_detail, and bounded
+// failure_class to the turn failure vocabulary (a v1 failure_class could
+// carry a protocol code, which v2 moves to failure_detail). A v2 record is
+// also written for a provider error, which v1 left without a line. Readers
+// accept both.
+const llmUsageRecordSchema = "vsr.llm_usage.v2"
 
 // openRouterChargeCurrency is the unit of OpenRouter's usage.cost: credits,
 // each worth one US dollar.
@@ -27,6 +33,8 @@ const (
 	usagePricingNotConfigured        = "not_configured"
 	usagePricingBreakdownUnavailable = "usage_breakdown_unavailable"
 	usagePricingCacheHit             = "cache_hit"
+	// usagePricingNoUsage is a call the provider failed without stating usage.
+	usagePricingNoUsage = "no_usage"
 )
 
 // llmUsageRecord is one upstream call as the Router accounted for it: the
@@ -65,6 +73,12 @@ type llmUsageRecord struct {
 	FromCache    bool    `json:"from_cache"`
 	CacheHit     bool    `json:"cache_hit"`
 	FailureClass *string `json:"failure_class"`
+	// ContentSentBeforeFailure is set with a turn failure class: whether the
+	// client had already received model output when the turn failed.
+	ContentSentBeforeFailure *bool `json:"content_sent_before_failure"`
+	// FailureDetail is the specific cause behind failure_class, such as the
+	// protocol code of a reply the Router could not use.
+	FailureDetail *string `json:"failure_detail"`
 
 	StopReason       *string `json:"stop_reason"`
 	NativeStopReason *string `json:"native_stop_reason"`
@@ -138,6 +152,8 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	record.Streaming = ctx.IsStreamingResponse
 	record.Truncated = ctx.StreamingAborted
 	record.FailureClass = nonEmpty(ctx.ResponseFailureClass)
+	record.ContentSentBeforeFailure = ctx.ContentSentBeforeFailure
+	record.FailureDetail = nonEmpty(ctx.ResponseFailureDetail)
 	if len(ctx.DispatchedProviderOrder) > 0 {
 		record.ProviderOrder = append([]string(nil), ctx.DispatchedProviderOrder...)
 	}
@@ -207,6 +223,11 @@ func (r *OpenAIRouter) pricingSnapshot() string {
 // priceUsageRecord prices the call from the rate card, when it can be priced,
 // and records the cost metric.
 func (r *OpenAIRouter) priceUsageRecord(record *llmUsageRecord, model string, usage responseUsageMetrics) {
+	// A call the provider stated no usage for has nothing to price.
+	if responseUsageSource(usage) == usageSourceUnknown {
+		record.Pricing = usagePricingNoUsage
+		return
+	}
 	if r == nil || r.Config == nil {
 		return
 	}

@@ -117,13 +117,15 @@ func (r *OpenAIRouter) reportNonStreamingUsage(
 		latency.UpdateTPOT(ctx.RequestModel, timePerToken)
 	}
 
+	// A call the backend failed counts against it in the load-balancing
+	// window; a refusal or the cell's own failure does not.
 	metrics.RecordModelWindowedRequest(
 		ctx.RequestModel,
 		completionLatency.Seconds(),
 		int64(usage.promptTokens),
 		int64(usage.completionTokens),
-		false,
-		false,
+		turnFailureIsBackendError(ctx.ResponseFailureClass),
+		ctx.ResponseFailureClass == turnFailureTimeout,
 	)
 	replayUsage := r.recordResponseCost(ctx, completionLatency, usage)
 	r.updateRouterReplayUsageCost(ctx, replayUsage)
@@ -223,17 +225,24 @@ func (r *OpenAIRouter) recordResponseCost(
 // empty completions of decision 30 were counted only by their refusal, which
 // says nothing about which arm or which upstream produced them.
 //
-// A body that never decoded is left alone. There is no remnant to read, and a
-// line built from nothing would assert counts no upstream stated.
+// A body that never decoded has no remnant to read: its line states no
+// counts (usage unknown, unpriced) rather than asserting ones no upstream
+// stated, so the call is still one line beside the gateway's row.
 func (r *OpenAIRouter) reportUnusableResponseUsage(
 	ctx *RequestContext,
 	completionLatency time.Duration,
 	err error,
 ) {
-	if r == nil || ctx == nil || ctx.UpstreamDecodedRemnant == nil {
+	if r == nil || ctx == nil {
 		return
 	}
-	ctx.ResponseFailureClass = responseFailureClass(err)
+	// The bounded class is upstream_error; the protocol code that refused the
+	// reply is kept as its detail.
+	recordTurnFailureDetail(ctx, turnFailureUpstreamError, responseFailureClass(err), false)
+	if ctx.UpstreamDecodedRemnant == nil {
+		r.reportNonStreamingUsage(ctx, completionLatency, responseUsageMetrics{})
+		return
+	}
 	r.reportNonStreamingUsage(ctx, completionLatency, r.takeNeutralResponseUsage(ctx))
 }
 

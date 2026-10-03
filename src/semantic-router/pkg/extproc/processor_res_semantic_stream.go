@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -502,6 +503,15 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 	inflight.End(ctx.RequestModel, ctx.InflightToken)
 	ctx.InflightToken = 0
 
+	r.classStreamFailure(ctx, semanticResponse, responseErr, streamErr)
+	if commitDeferred && ctx.ResponseFailureClass == "" {
+		// A policy turn whose lease was lost while it streamed cannot be
+		// recorded: the cell failed it. The frames are gone, so it is classed
+		// before its usage line, and the commit then fails as before.
+		if err := selectionCompletionCommittable(ctx); err != nil {
+			recordTurnFailure(ctx, selectionFailureUnavailable, ctx.SemanticStreamState != nil && len(ctx.SemanticStreamState.items) > 0)
+		}
+	}
 	usage := truncatedStreamUsage(ctx, r.takeNeutralResponseUsage(ctx))
 	r.reportSemanticStreamingUsage(ctx, completionLatency, usage)
 	if !usage.estimated {
@@ -537,6 +547,43 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 	r.scheduleSemanticResponseMemoryStore(ctx, semanticResponse)
 	r.persistResponseObject(ctx)
 	r.attachRouterReplayResponse(ctx, encoded, true)
+}
+
+// classStreamFailure classes a streamed turn that did not deliver a served
+// reply: a refusal, an error the provider raised mid-stream, or a 2xx stream
+// that ended without its terminal event, or an in-band stream error. A stream
+// the client or the proxy cancelled (a receive error) is not classed.
+func (r *OpenAIRouter) classStreamFailure(
+	ctx *RequestContext,
+	semanticResponse *llmprotocol.Response,
+	responseErr error,
+	streamErr error,
+) {
+	state := ctx.SemanticStreamState
+	sent := state != nil && len(state.items) > 0
+	var inBand *llmprotocol.ProtocolError
+	switch {
+	case responseErr == nil && responseRefused(semanticResponse):
+		recordTurnFailure(ctx, turnFailureRefusal, contentBeforeRefusal(semanticResponse))
+	case streamErr != nil && errors.As(streamErr, &inBand):
+		// An in-band stream error: the Router's own deadline cut, or a
+		// provider stream the codec rejected. A receive error (the client or
+		// the proxy cancelled the exchange) is not classed.
+		class := turnFailureUpstreamError
+		if inBand.Code == "stream_truncated" {
+			class = turnFailureTimeout
+		}
+		recordTurnFailure(ctx, class, sent)
+	case responseErr != nil && streamErr == nil && state != nil && state.terminal && state.failed == nil:
+		// The stream ended properly but its output cannot be reconstructed
+		// (an item never completed): the arm's reply is unusable.
+		recordTurnFailureDetail(ctx, turnFailureUpstreamError, "stream_reconstruction_failed", sent)
+	case streamErr != nil || state == nil:
+	case state.failed != nil:
+		recordTurnFailure(ctx, streamFailureClass(state.failed), len(state.items) > 0)
+	case !state.terminal:
+		recordTurnFailure(ctx, turnFailureStreamCut, len(state.items) > 0)
+	}
 }
 
 // truncatedStreamUsage settles what a turn the platform cut actually cost.
