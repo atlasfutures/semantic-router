@@ -176,7 +176,9 @@ func (transaction *raylineARCEpisodeTransaction) stageRefusal(ctx context.Contex
 	if transaction == nil || transaction.state == nil || transaction.sideCall || transaction.stateless {
 		return
 	}
-	if transaction.borrowed {
+	// A resend that borrowed the lease, or a turn whose lease is already
+	// given back, stages through a short lease of its own.
+	if transaction.borrowed || transaction.leaseReleased.Load() {
 		if transaction.state.PolicyBoundary != nil {
 			boundary := *transaction.state.PolicyBoundary
 			refusal.boundary = &boundary

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -246,6 +247,33 @@ func TestRaylineARCLateRefusalTellsCompactionSiblingsApart(t *testing.T) {
 		refusal := refusedTurn{arm: -1, exclude: "vendor/off", context: thisTurn, decidedFrom: read, committed: thisTurn}
 		if next, changed := refusal.apply(state); changed || next.Policy.Excludes("vendor/off") {
 			t.Fatalf("%s sibling took the late refusal", name)
+		}
+	}
+}
+
+// A provider that reports its refusal as an error (Alibaba's
+// data_inspection_failed) is a refusal like any other: with the fallback on,
+// the model is excluded, even though the turn was aborted at the error's
+// headers. Control: an ordinary provider error excludes no model.
+func TestRaylineARCProviderErrorRefusalExcludesTheModel(t *testing.T) {
+	for _, body := range []string{
+		`{"error":{"code":"data_inspection_failed","message":"Input data may contain inappropriate content."}}`,
+		`{"error":{"code":"invalid_request","message":"bad request"}}`,
+	} {
+		refusal := strings.Contains(body, "data_inspection_failed")
+		fixture, store, episode, _ := fallbackFixture(t, true)
+		attempt, decided := boundaryAttempt(t, fixture, store, episode,
+			policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"}))
+		attempt.RequestID, attempt.RequestModel, attempt.UpstreamStatusCode = "req-provider-refusal", "off", 400
+		attempt.SourceFormat, attempt.TargetFormat = llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1
+		attempt.StartTime, attempt.VSRRaylineARC, attempt.VSRSelectedDecision = time.Now(), decided.RaylineARC, fixture.decision
+		// The non-2xx headers abort the turn before its body is read.
+		if err := attempt.RaylineARCTransaction.abort(context.Background(), "upstream_status"); err != nil {
+			t.Fatal(err)
+		}
+		(&OpenAIRouter{}).handleUpstreamTransportError([]byte(body), attempt)
+		if excluded := readLedgerTestState(t, store, episode).Policy.Excludes("vendor/off"); excluded != refusal {
+			t.Fatalf("refusal=%v: excluded=%v", refusal, excluded)
 		}
 	}
 }

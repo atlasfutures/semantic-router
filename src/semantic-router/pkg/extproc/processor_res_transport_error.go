@@ -89,7 +89,13 @@ func (r *OpenAIRouter) recordUpstreamErrorTurn(ctx *RequestContext, protocolErro
 	if ctx == nil {
 		return
 	}
-	recordTurnFailure(ctx, upstreamFailureClass(ctx.UpstreamStatusCode, protocolError), false)
+	class := upstreamFailureClass(ctx.UpstreamStatusCode, protocolError)
+	if class == turnFailureRefusal {
+		// A refusal reported as an error is declined like any other: the
+		// fallback excludes its model.
+		declineRefusedTurn(ctx)
+	}
+	recordTurnFailure(ctx, class, false)
 	r.reportFailedCallUsage(ctx)
 }
 

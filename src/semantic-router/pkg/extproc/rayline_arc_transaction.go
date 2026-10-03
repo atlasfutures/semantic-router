@@ -112,6 +112,10 @@ type raylineARCEpisodeTransaction struct {
 	// handedOver is a refusal the commit took from inflight and then could
 	// not commit; the abort that follows stages it.
 	handedOver *refusedTurn
+	// leaseReleased is set once the strict lease is given back unwritten: a
+	// refusal classed after that (a provider error's body, read after its
+	// headers aborted the turn) stages through a short lease of its own.
+	leaseReleased atomic.Bool
 }
 
 func newRaylineARCEpisodeTransaction(
@@ -594,6 +598,7 @@ func (transaction *raylineARCEpisodeTransaction) abort(
 			ctx,
 			transaction.lease,
 		)
+		transaction.leaseReleased.Store(true)
 		if errors.Is(transaction.finalizeErr, raylinearc.ErrEpisodeLeaseLost) {
 			transaction.finalizeErr = nil
 		}
@@ -624,6 +629,7 @@ func (transaction *raylineARCEpisodeTransaction) abortStore(
 	// a refusal a coalesced resend handed over is cleared here too.
 	transaction.applyHandedOverRefusal(abortContext)
 	_ = transaction.store.Abort(abortContext, transaction.lease)
+	transaction.leaseReleased.Store(true)
 	metrics.RecordRaylineARCEpisodeTransaction("abort", "commit_failure")
 }
 
