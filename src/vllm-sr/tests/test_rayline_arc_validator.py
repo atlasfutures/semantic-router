@@ -504,3 +504,22 @@ def test_rayline_arc_cli_bounds_fallback_model_names(size, enabled):
         "bytes" in error.message for error in _validate_rayline_arc_decision(decision)
     )
     assert refused == (enabled and size > 128)
+
+
+@pytest.mark.parametrize("second", ["vendor/a", "vendor/b"])
+@pytest.mark.parametrize("enabled", [True, False])
+def test_rayline_arc_cli_fallback_needs_one_model_per_worker(second, enabled):
+    """Mirrors the Go loader: with the fallback on, a worker serves one model."""
+    decision = _policy_service_decision()
+    policy = decision.algorithm.rayline_arc.policy_service
+    policy.bindings = [
+        policy.bindings[0].model_copy(update={"model": "vendor/a"}),
+        policy.bindings[0].model_copy(update={"action_id": "c" * 64, "model": second}),
+        policy.bindings[1],
+    ]
+    policy.fallback = RaylineARCPolicyFallbackConfig(enabled=enabled)
+    refused = any(
+        "one model per worker" in error.message
+        for error in _validate_rayline_arc_decision(decision)
+    )
+    assert refused == (enabled and second != "vendor/a")

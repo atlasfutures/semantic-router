@@ -126,16 +126,35 @@ const RaylineARCMaxFallbackModelBytes = 128
 func (cfg *RaylineARCPolicyServiceConfig) policyModels() map[string]bool {
 	models := map[string]bool{}
 	for _, binding := range cfg.Bindings {
-		model := binding.Model
-		if model == "" {
-			model = cfg.TrainedModels[binding.Worker]
-		}
-		if model == "" {
-			model = binding.Worker
-		}
-		models[model] = true
+		models[cfg.bindingModel(binding)] = true
 	}
 	return models
+}
+
+func (cfg *RaylineARCPolicyServiceConfig) bindingModel(binding RaylineARCPolicyBinding) string {
+	if binding.Model != "" {
+		return binding.Model
+	}
+	if model := cfg.TrainedModels[binding.Worker]; model != "" {
+		return model
+	}
+	return binding.Worker
+}
+
+// fallbackWorkerModels refuses a worker that serves more than one model: the
+// fallback reads a held worker's model to know whether it is excluded, which
+// is only defined when each worker serves one.
+func (cfg *RaylineARCPolicyServiceConfig) fallbackWorkerModels() error {
+	served := map[string]string{}
+	for _, binding := range cfg.Bindings {
+		model := cfg.bindingModel(binding)
+		if other, seen := served[binding.Worker]; seen && other != model {
+			return fmt.Errorf("policy_service fallback needs one model per worker; worker %q serves %q and %q",
+				binding.Worker, other, model)
+		}
+		served[binding.Worker] = model
+	}
+	return nil
 }
 
 // FallbackEnabled reports whether the cell serves around failed arms.
@@ -344,6 +363,9 @@ func validateRaylineARCPolicyBindings(decision Decision) error {
 			if len(model) > RaylineARCMaxFallbackModelBytes {
 				return fmt.Errorf("policy_service fallback model %q exceeds %d bytes", model, RaylineARCMaxFallbackModelBytes)
 			}
+		}
+		if err := cfg.fallbackWorkerModels(); err != nil {
+			return err
 		}
 	}
 	refs := make(map[string]bool, len(decision.ModelRefs))

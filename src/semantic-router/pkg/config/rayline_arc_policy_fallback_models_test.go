@@ -47,3 +47,24 @@ func TestRaylineARCPolicyFallbackBoundsModelNames(t *testing.T) {
 		}
 	}
 }
+
+// With the fallback on, each worker serves one model, so a held worker names
+// the model it holds. Control: the fallback off, and one model on the worker.
+func TestRaylineARCPolicyFallbackNeedsOneModelPerWorker(t *testing.T) {
+	for _, second := range []string{"vendor/a", "vendor/b"} {
+		for _, enabled := range []bool{true, false} {
+			_, decision := policyDispatchFixture()
+			policy := decision.Algorithm.RaylineARC.PolicyService
+			policy.Bindings = []RaylineARCPolicyBinding{
+				{ActionID: "a", Worker: "arm-off", Model: "vendor/a"},
+				{ActionID: "b", Worker: "arm-off", Model: second},
+			}
+			policy.Fallback = &RaylineARCPolicyFallbackConfig{Enabled: enabled}
+			err := validateRaylineARCPolicyBindings(decision)
+			refused := err != nil && strings.Contains(err.Error(), "one model per worker")
+			if refused != (enabled && second != "vendor/a") {
+				t.Fatalf("second=%s enabled=%v: %v", second, enabled, err)
+			}
+		}
+	}
+}

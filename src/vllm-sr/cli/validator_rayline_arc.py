@@ -319,6 +319,23 @@ def _validate_policy_service(name, policy) -> list[ValidationError]:
                     field=f"{prefix}.fallback",
                 )
             )
+        served = {}
+        for binding in policy.bindings:
+            model = (
+                binding.model
+                or policy.trained_models.get(binding.worker)
+                or binding.worker
+            )
+            other = served.setdefault(binding.worker, model)
+            if other != model:
+                errors.append(
+                    ValidationError(
+                        "fallback needs one model per worker; worker "
+                        f"{binding.worker!r} serves {other!r} and {model!r}",
+                        field=f"{prefix}.fallback",
+                    )
+                )
+                break
         for model in sorted(models):
             if _byte_length(model) > _MAX_FALLBACK_MODEL_BYTES:
                 errors.append(
