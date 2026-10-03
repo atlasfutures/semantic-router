@@ -349,9 +349,18 @@ algorithm:
     hold_family_in_tool_loop: true
 ```
 
-Reasoning does not carry across model families, so a switch mid-loop drops
-the reasoning the loop was built on, and some providers (DeepSeek, MiMo)
-answer 400 when a tool history lacks their own reasoning content.
+A switch mid-loop changes the reasoning the loop was built on, by target:
+
+- to a Messages (Claude) arm: unsigned reasoning from another family is
+  dropped, because Messages accepts thinking only with a signature;
+- to a Chat or Responses arm: Claude's thinking keeps its text but loses its
+  signature, and its `redacted_thinking` is dropped; unsigned reasoning is
+  carried unchanged.
+
+So a loop that leaves Claude loses the thinking Claude can verify, and one
+that enters Claude loses the other model's reasoning. Some providers (DeepSeek,
+MiMo) also answer 400 when a tool history lacks their own reasoning content,
+which a switch to Claude and back removes.
 
 An arm's family is who made its model:
 

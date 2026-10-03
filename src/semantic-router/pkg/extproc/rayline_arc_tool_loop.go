@@ -15,10 +15,11 @@ import (
 //
 // A turn is mid-loop when its last message returns the result of a tool call
 // the assistant made, and the arm that made the call is the episode's
-// previous arm: the last turn the episode committed. Reasoning does not carry
-// across families (see protocolcodec's reasoning rows), so a switch there
-// costs the reasoning the loop was built on, and on DeepSeek and MiMo the
-// turn itself.
+// previous arm: the last turn the episode committed. A switch there changes
+// the reasoning the loop was built on (see protocolcodec's reasoning rows):
+// a Messages target drops unsigned reasoning, and a Chat or Responses target
+// strips Claude's signature and drops its redacted_thinking. On DeepSeek and
+// MiMo a tool history without their own reasoning costs the turn itself.
 
 // toolLoopForeignArms marks the arms outside the previous arm's family when
 // this turn answers that arm's tool call. It returns nil, and selection is
