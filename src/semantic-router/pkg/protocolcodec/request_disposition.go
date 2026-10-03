@@ -19,7 +19,9 @@ import (
 //
 // The members no contract names are not here and cannot be: they are unknown
 // by definition, and the carrier in unnamed_members.go handles them. This
-// table is for the members we do know and used to refuse. Four of those cost
+// table is for the members we do know and used to refuse. The reasoning rows
+// are the exception to "Messages carries everything": see
+// reasoningProvenanceRows. Four of those cost
 // an investigation each in the week of 2026-09-01, and the refusals were
 // hand-rolled branches with no field path, which is why locating them took a
 // log join.
@@ -69,7 +71,25 @@ const (
 	// rather than by a member it carries: a system text block that is Claude
 	// Code's billing attribution line. See billingAttributionLine.
 	fieldSystemBillingAttribution = "system.x-anthropic-billing-header"
+	// The three reasoning rows are keyed by who can verify a block, which is
+	// read off its shape: a signature or a redacted_thinking block is
+	// Anthropic's and only Anthropic can check it; reasoning with no signature
+	// is plain text any model can read. CarryReasoningTo applies them at
+	// dispatch, before the capability gate, and counts every drop by kind.
+	fieldReasoningSigned   = "content.thinking.signed"
+	fieldReasoningUnsigned = "content.thinking.unsigned"
+	fieldRedactedThinking  = "content.redacted_thinking"
 )
+
+// reasoningProvenanceRows are the rows that state a disposition for the
+// Messages target too. Every other row describes a member Messages can
+// express. Unsigned thinking is not one: a Messages host verifies thinking by
+// its signature and rejects a block that has none.
+var reasoningProvenanceRows = map[string]bool{
+	fieldReasoningSigned:   true,
+	fieldReasoningUnsigned: true,
+	fieldRedactedThinking:  true,
+}
 
 // billingAttributionPrefix opens the line Claude Code prepends as system[0]
 // of every request. The line names the client build and entrypoint, and since
@@ -214,6 +234,88 @@ var anthropicRequestDispositions = []requestFieldRow{
 			},
 		},
 	},
+	{
+		// Claude's thinking with its signature. The signature is a MAC under
+		// Anthropic's key, so no other host can check it: it is stripped and
+		// counted, and the text is carried as reasoning, as it was before the
+		// table existed. A signature never crosses to another model's host,
+		// and the text is never sent as visible text: pi did that on
+		// 2026-10-02, and the next model imitated it.
+		Path: fieldReasoningSigned,
+		Targets: map[llmprotocol.WireFormat]targetDisposition{
+			llmprotocol.OpenAIChatV1: {
+				Action: dispositionTransform,
+				Reason: "a Chat host cannot verify an Anthropic thinking signature; the text is carried as reasoning",
+			},
+			llmprotocol.OpenAIResponsesV1: {
+				Action: dispositionTransform,
+				Reason: "a Responses host cannot verify an Anthropic thinking signature; the text is carried as reasoning",
+			},
+		},
+	},
+	{
+		// Anthropic's encrypted thinking. Only its issuer can read it; an
+		// Anthropic target gets it as sent (and the ARC issuer ledger drops
+		// it for a different Anthropic-format issuer).
+		Path: fieldRedactedThinking,
+		Targets: map[llmprotocol.WireFormat]targetDisposition{
+			llmprotocol.OpenAIChatV1: {
+				Action: dispositionDrop,
+				Reason: "redacted_thinking is readable only by the model that issued it",
+			},
+			llmprotocol.OpenAIResponsesV1: {
+				Action: dispositionDrop,
+				Reason: "redacted_thinking is readable only by the model that issued it",
+			},
+		},
+	},
+	{
+		// Reasoning with no signature: an open-weight model's text, from a
+		// Chat arm or a Chat client. DeepSeek and MiMo need it back on the
+		// assistant messages of a tool loop and answer 400 without it, so a
+		// Chat target keeps it as reasoning_content. A Messages host rejects
+		// thinking with no signature, so that target drops it.
+		Path: fieldReasoningUnsigned,
+		Targets: map[llmprotocol.WireFormat]targetDisposition{
+			llmprotocol.AnthropicMessagesV1: {
+				Action: dispositionDrop,
+				Reason: "a Messages host rejects thinking that has no signature",
+			},
+			llmprotocol.OpenAIChatV1: {
+				Action: dispositionCarry,
+				Reason: "unsigned reasoning is sent back as reasoning_content, which DeepSeek and MiMo require in a tool history",
+			},
+			llmprotocol.OpenAIResponsesV1: {
+				Action: dispositionCarry,
+				Reason: "unsigned reasoning is sent as a reasoning item's reasoning_text",
+			},
+		},
+	},
+}
+
+// reasoningProvenance names the reasoning row a content block belongs to, or
+// "" for a block that is not reasoning. A reasoning content that carries only
+// OpenRouter reasoning_details or a Responses encrypted_content has no
+// signature and is unsigned here; its carrier has its own rules (see
+// reasoning_details.go), which this row does not change.
+func reasoningProvenance(content llmprotocol.Content) string {
+	switch {
+	case content.Kind == llmprotocol.ContentReasoning && content.Signature != "":
+		return fieldReasoningSigned
+	case content.Kind == llmprotocol.ContentReasoning:
+		return fieldReasoningUnsigned
+	case redactedThinkingBlock(content):
+		return fieldRedactedThinking
+	}
+	return ""
+}
+
+// redactedThinkingBlock reports whether a content is a carried Anthropic
+// redacted_thinking block, whatever its data holds.
+func redactedThinkingBlock(content llmprotocol.Content) bool {
+	block := content.Unmodeled
+	return content.Kind == llmprotocol.ContentUnmodeled && block != nil &&
+		block.Format == llmprotocol.AnthropicMessagesV1 && block.Type == "redacted_thinking"
 }
 
 var anthropicRequestDispositionIndex = indexRequestDispositions(anthropicRequestDispositions)

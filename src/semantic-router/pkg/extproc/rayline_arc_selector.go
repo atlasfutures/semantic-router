@@ -252,12 +252,13 @@ func (selector *raylineARCSelector) Select(
 	if err != nil {
 		return nil, err
 	}
-	excluded, err := excludedArms(arcContext, len(workerIDs))
+	hard, err := hardExcludedArms(arcContext, len(workerIDs))
 	if err != nil {
 		return nil, err
 	}
+	excluded := withToolLoopFamily(arcContext, len(workerIDs), hard)
 	if armed.policy != nil {
-		return selector.selectViaPolicyService(ctx, armed, selCtx, arcContext, workerIDs, state, excluded)
+		return selector.selectViaPolicyService(ctx, armed, selCtx, arcContext, workerIDs, state, excluded, hard)
 	}
 	encoded, latency, err := selector.encode(ctx, armed, arcContext, state)
 	if err != nil {
@@ -294,12 +295,28 @@ func (selector *raylineARCSelector) Select(
 // excludedArms is every hard constraint the artifact must honour, as one mask
 // indexed like the worker pool.
 //
-// The two constraints are not the same kind of fact. The vision flag answers
+// The tool-loop family hold (rayline_arc_tool_loop.go) comes last and is the
+// one constraint that yields: it is lifted rather than refusing a turn.
+//
+// The two hard constraints are not the same kind of fact. The vision flag answers
 // a question about this turn; the disabled flag is a standing operator verdict
 // that holds for every turn. They are applied in that order so that a basket
 // where no arm takes an image keeps saying so, which is the constraint an
 // operator can do nothing about.
 func excludedArms(
+	arcContext *selection.RaylineARCSelectionContext,
+	armCount int,
+) ([]bool, error) {
+	hard, err := hardExcludedArms(arcContext, armCount)
+	if err != nil {
+		return nil, err
+	}
+	return withToolLoopFamily(arcContext, armCount, hard), nil
+}
+
+// hardExcludedArms is excludedArms without the tool-loop family hold: the
+// constraints that refuse a turn rather than yield.
+func hardExcludedArms(
 	arcContext *selection.RaylineARCSelectionContext,
 	armCount int,
 ) ([]bool, error) {

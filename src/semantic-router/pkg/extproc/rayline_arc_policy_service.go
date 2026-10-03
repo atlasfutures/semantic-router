@@ -420,6 +420,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	workerIDs []string,
 	state *raylinearc.EpisodeState,
 	excluded []bool,
+	hard []bool,
 ) (*selection.SelectionResult, error) {
 	scorer, ok := armed.scorer.(*policyServiceScorer)
 	if !ok {
@@ -501,6 +502,15 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// the offer sets them aside.
 	loggedRoutes := cellOut
 	available, offeredHeld, forced := offer(cellOut)
+	if len(available) == 0 && !slices.Equal(excluded, hard) {
+		// The tool-loop family hold yields to the fallback's exclusions,
+		// a model's and a route's alike: when they leave its family nothing
+		// to serve, the turn leaves the family, before any failed route is
+		// offered again.
+		logToolLoopHold(arcContext, "lifted_by_exclusion", 0)
+		excluded = hard
+		available, offeredHeld, forced = offer(cellOut)
+	}
 	if len(available) == 0 && len(cellOut) > 0 {
 		// Route exclusions are advice: when they would leave nothing, the
 		// turn is offered as though no route had failed, rather than failing

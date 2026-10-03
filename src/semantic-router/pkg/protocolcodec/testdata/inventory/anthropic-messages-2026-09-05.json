@@ -91,6 +91,37 @@
       "note": "Claude Code echoes the citations of a web-search or document answer back in history on every later turn. Two operator turns were refused on 2026-09-05. No corpus entry carries it yet; the evidence is golden capability/051. Beta attribution is operator-owed."
     },
     {
+      "path": "content.redacted_thinking",
+      "leg": "request",
+      "first_seen": "2026-10-02",
+      "targets": {
+        "openai.chat.v1": "drop",
+        "openai.responses.v1": "drop"
+      },
+      "note": "Anthropic's encrypted thinking, readable only by its issuer. A Messages target gets it as sent (the ARC issuer ledger drops another issuer's); Chat and Responses drop it, counted as redacted_dropped in the reasoning_dropped log."
+    },
+    {
+      "path": "content.thinking.signed",
+      "leg": "request",
+      "first_seen": "2026-10-03",
+      "targets": {
+        "openai.chat.v1": "transform",
+        "openai.responses.v1": "transform"
+      },
+      "note": "Not a member but a block keyed by its provenance: thinking with an Anthropic signature. No other host can verify the signature, so it is stripped and counted (signatures_stripped in the reasoning_signature_stripped log); the text is carried as reasoning, never converted to visible text."
+    },
+    {
+      "path": "content.thinking.unsigned",
+      "leg": "request",
+      "first_seen": "2026-10-03",
+      "targets": {
+        "anthropic.messages.v1": "drop",
+        "openai.chat.v1": "carry",
+        "openai.responses.v1": "carry"
+      },
+      "note": "Reasoning with no signature: an open-weight arm's text, or a client's thinking with an empty signature (kimi, mimo). Chat keeps it as reasoning_content, which DeepSeek and MiMo require in a tool history; Responses keeps it as reasoning_text. Messages rejects unsigned thinking, so it is dropped and counted (unsigned_dropped)."
+    },
+    {
       "path": "content.document",
       "leg": "request",
       "first_seen": "2026-09-05",

@@ -55,8 +55,16 @@ type RaylineARCSelectionContext struct {
 	// IncapableArms marks, by arm ordinal, the candidates whose model card
 	// does not claim every capability this turn requires. It is nil when the
 	// turn requires none, which leaves selection exactly as it was.
-	IncapableArms      []bool
-	PreparationFailure string
+	IncapableArms []bool
+	// ToolLoopForeignArms marks, by arm ordinal, the candidates outside the
+	// model family of ToolLoopArm, the episode's previous arm, when this turn
+	// answers a tool call that arm made and the hold is configured. Nil
+	// otherwise, which leaves selection exactly as it was. Unlike the other
+	// masks it yields: when it would leave no eligible arm it is not applied.
+	ToolLoopForeignArms []bool
+	ToolLoopArm         int
+	ToolLoopFamily      string
+	PreparationFailure  string
 	// RawRequest and RequestFormat are the client body as received and its
 	// policy-service request format (anthropic_messages or openai_chat), set
 	// only for the policy-service mode.

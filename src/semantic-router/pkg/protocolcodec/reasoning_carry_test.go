@@ -48,7 +48,7 @@ func TestCarryReasoningToMessagesDropsUnsignedThinking(t *testing.T) {
 	request := reasoningHistory()
 	original := reasoningHistory()
 	carry := CarryReasoningTo(&request, llmprotocol.AnthropicMessagesV1)
-	if carry.UnsignedDropped != 2 || carry.SignaturesStripped != 0 {
+	if carry != (ReasoningCarry{UnsignedDropped: 2}) {
 		t.Fatalf("carry = %+v, want 2 unsigned dropped", carry)
 	}
 	if signed, unsigned := reasoningOf(request); signed != 1 || unsigned != 0 {
@@ -63,17 +63,25 @@ func TestCarryReasoningToMessagesDropsUnsignedThinking(t *testing.T) {
 	}
 }
 
-// A Chat or Responses target has nowhere to put a signature: it is stripped
-// and the reasoning text kept, so the capability gate no longer refuses it.
-func TestCarryReasoningToChatAndResponsesStripsSignatures(t *testing.T) {
+// A Chat or Responses target cannot verify an Anthropic signature: it is
+// stripped and counted, the thinking text is carried as reasoning (never as
+// visible text), and the capability gate no longer refuses the turn.
+// Unsigned reasoning stays reasoning: a Chat target needs it back.
+func TestCarryReasoningToChatAndResponsesStripsTheSignature(t *testing.T) {
 	for _, target := range []llmprotocol.WireFormat{llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1} {
 		request := reasoningHistory()
 		carry := CarryReasoningTo(&request, target)
-		if carry.SignaturesStripped != 1 || carry.UnsignedDropped != 0 {
-			t.Fatalf("%s: carry = %+v, want 1 signature stripped", target, carry)
+		if carry != (ReasoningCarry{SignaturesStripped: 1}) || carry.Dropped() != 0 || !carry.Changed() {
+			t.Fatalf("%s: carry = %+v, want 1 signature stripped and nothing dropped", target, carry)
 		}
 		if signed, unsigned := reasoningOf(request); signed != 0 || unsigned != 3 {
 			t.Fatalf("%s: %d signed, %d unsigned; want 0, 3", target, signed, unsigned)
+		}
+		first := request.Messages[1]
+		if len(first.Content) != 2 ||
+			first.Content[0].Kind != llmprotocol.ContentReasoning || first.Content[0].Text != "claude thought" || first.Content[0].Signature != "" ||
+			first.Content[1].Kind != llmprotocol.ContentText || first.Content[1].Text != "a1" {
+			t.Fatalf("%s: the signed message became %+v, want its thinking unsigned and its text", target, first.Content)
 		}
 		if len(request.Messages) != len(reasoningHistory().Messages) {
 			t.Fatalf("%s: a message was removed", target)
@@ -85,13 +93,70 @@ func TestCarryReasoningToChatAndResponsesStripsSignatures(t *testing.T) {
 	}
 }
 
+// redacted_thinking is readable only by its issuer: a Chat or Responses
+// target drops and counts it, removing a message it leaves empty; a Messages
+// target keeps it.
+func TestCarryReasoningToDropsRedactedThinkingForForeignTargets(t *testing.T) {
+	history := func() llmprotocol.Request {
+		return llmprotocol.Request{Messages: []llmprotocol.Message{
+			{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: "q"}}},
+			{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{redactedBlock("blob")}},
+			{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{redactedBlock("blob-2"), {Kind: llmprotocol.ContentText, Text: "a"}}},
+		}}
+	}
+	for _, target := range []llmprotocol.WireFormat{llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1} {
+		request := history()
+		if carry := CarryReasoningTo(&request, target); carry != (ReasoningCarry{RedactedDropped: 2}) {
+			t.Fatalf("%s: carry = %+v, want 2 redacted dropped", target, carry)
+		}
+		if len(request.Messages) != 2 || len(request.Messages[1].Content) != 1 || request.Messages[1].Content[0].Text != "a" {
+			t.Fatalf("%s: messages = %+v", target, request.Messages)
+		}
+	}
+	request := history()
+	if carry := CarryReasoningTo(&request, llmprotocol.AnthropicMessagesV1); carry.Changed() {
+		t.Fatalf("Messages dropped issuer-readable reasoning: %+v", carry)
+	}
+}
+
+// Every reasoning kind the table names has the disposition CarryReasoningTo
+// applies, and nothing a row drops is left behind.
+func TestCarryReasoningFollowsTheDispositionTable(t *testing.T) {
+	blocks := map[string]llmprotocol.Content{
+		fieldReasoningSigned:   {Kind: llmprotocol.ContentReasoning, Text: "t", Signature: "s", Reasoning: llmprotocol.ReasoningScopeText},
+		fieldReasoningUnsigned: {Kind: llmprotocol.ContentReasoning, Text: "t", Reasoning: llmprotocol.ReasoningScopeText},
+		fieldRedactedThinking:  redactedBlock("blob"),
+	}
+	for path, block := range blocks {
+		if reasoningProvenance(block) != path {
+			t.Fatalf("%s: provenance = %q", path, reasoningProvenance(block))
+		}
+		for _, target := range []llmprotocol.WireFormat{
+			llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1,
+		} {
+			request := llmprotocol.Request{Messages: []llmprotocol.Message{{
+				Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{block, {Kind: llmprotocol.ContentText, Text: "a"}},
+			}}}
+			carry := CarryReasoningTo(&request, target)
+			wantKept := 2
+			if dispositionFor(path, target).Action == dispositionDrop {
+				wantKept = 1
+			}
+			if carry.Dropped() != 2-wantKept || len(request.Messages[0].Content) != wantKept {
+				t.Fatalf("%s to %s: carry = %+v, content = %+v", path, target, carry, request.Messages[0].Content)
+			}
+		}
+	}
+}
+
 // The carry builds new slices: a request prepared for one target shares no
 // change with the request it came from.
 func TestCarryReasoningToLeavesTheSourceUntouched(t *testing.T) {
 	source := reasoningHistory()
 	request := source
 	CarryReasoningTo(&request, llmprotocol.OpenAIChatV1)
-	if signed, unsigned := reasoningOf(source); signed != 1 || unsigned != 2 || len(source.Messages) != 6 {
+	if signed, unsigned := reasoningOf(source); signed != 1 || unsigned != 2 || len(source.Messages) != 6 ||
+		len(source.Messages[1].Content) != 2 {
 		t.Fatalf("source changed: %d signed, %d unsigned, %d messages", signed, unsigned, len(source.Messages))
 	}
 }

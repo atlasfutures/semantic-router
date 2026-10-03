@@ -333,6 +333,56 @@ names. An eval against the current router decides that, not this probe.
 Turning it on changes what the selector is asked on every routed turn, not
 only on route lookups.
 
+## Holding a tool loop on its model family
+
+`hold_family_in_tool_loop` keeps a tool loop on the model family that opened
+it. A turn is mid-loop when its last message returns the result of a tool
+call that the episode's previous arm made: a Chat `tool` message, an
+Anthropic `tool_result` block, or a Responses `function_call_output`. Such a
+turn is scored only among the arms of the previous arm's family. The next user
+turn may switch families again.
+
+```yaml
+algorithm:
+  type: rayline_arc
+  rayline_arc:
+    hold_family_in_tool_loop: true
+```
+
+A switch mid-loop changes the reasoning the loop was built on, by target:
+
+- to a Messages (Claude) arm: unsigned reasoning from another family is
+  dropped, because Messages accepts thinking only with a signature;
+- to a Chat or Responses arm: Claude's thinking keeps its text but loses its
+  signature, and its `redacted_thinking` is dropped; unsigned reasoning is
+  carried unchanged.
+
+So a loop that leaves Claude loses the thinking Claude can verify, and one
+that enters Claude loses the other model's reasoning. Some providers (DeepSeek,
+MiMo) also answer 400 when a tool history lacks their own reasoning content,
+which a switch to Claude and back removes.
+
+An arm's family is who made its model:
+
+1. the model card's `publisher`, from the catalog or from
+   `routing.modelCards[].publisher`;
+2. otherwise, the first path segment of the provider model id the arm
+   dispatches to (`deepseek/deepseek-v4-flash` is `deepseek`), without any
+   `@variant` suffix.
+
+The fallback only holds where a provider namespaces models by vendor, as
+OpenRouter does. When a provider serves models under its own namespace
+(`local/...`, `accounts/<name>/...`), set `publisher` on each model's card, or
+every model behind that provider counts as one family.
+
+The hold yields to every hard constraint (disabled, non-vision and incapable
+arms, fallback exclusions). When it would leave no eligible arm, it is lifted
+for that turn rather than refusing it. Both outcomes are logged as
+`rayline_arc_tool_loop_family_hold`. In policy-service mode the hold narrows
+the offered actions instead of the scored arms.
+
+Off by default.
+
 ## Route lookup
 
 A caller that owns its own provider keys and its own LLM bill can ask for the

@@ -146,7 +146,9 @@ func TestDispositionTableRowsAreComplete(t *testing.T) {
 				t.Fatalf("row %q gives %s no reason", row.Path, target)
 			}
 		}
-		if _, stated := row.Targets[llmprotocol.AnthropicMessagesV1]; stated {
+		// A reasoning row is keyed by who can verify a block, not by a member,
+		// and Messages rejects thinking it cannot verify.
+		if _, stated := row.Targets[llmprotocol.AnthropicMessagesV1]; stated && !reasoningProvenanceRows[row.Path] {
 			t.Fatalf("row %q claims Messages cannot carry its own member", row.Path)
 		}
 	}
