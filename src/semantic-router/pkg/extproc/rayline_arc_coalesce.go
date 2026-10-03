@@ -213,6 +213,9 @@ func (registry *raylineARCInflightRegistry) finish(entry *raylineARCInflightEntr
 		return
 	}
 	entry.once.Do(func() { close(entry.done) })
+	// A finished leader takes no more hand-overs: a refusal noted now would
+	// have no one to stage it.
+	entry.refuseHandovers()
 	registry.mu.Lock()
 	if registry.entries[entry.key] == entry {
 		delete(registry.entries, entry.key)

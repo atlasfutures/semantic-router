@@ -299,3 +299,39 @@ func TestRaylineARCRefusalInANewContextLeavesOldExclusions(t *testing.T) {
 		}
 	}
 }
+
+// Every path that classes a turn's failure as a refusal declines it, once:
+// a provider's in-stream refusal error reaches recordTurnFailure only, and
+// still excludes the model. Control: a stream cut excludes nothing.
+func TestRaylineARCStreamedRefusalErrorExcludesTheModel(t *testing.T) {
+	for _, class := range []string{turnFailureRefusal, turnFailureStreamCut} {
+		fixture, store, episode, _ := fallbackFixture(t, true)
+		attempt, decided := boundaryAttempt(t, fixture, store, episode,
+			policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"}))
+		attempt.VSRRaylineARC, attempt.VSRSelectedDecision = decided.RaylineARC, fixture.decision
+		recordTurnFailure(attempt, class, true)
+		if err := attempt.RaylineARCTransaction.abort(context.Background(), "stream_error"); err != nil {
+			t.Fatal(err)
+		}
+		if excluded := readLedgerTestState(t, store, episode).Policy.Excludes("vendor/off"); excluded != (class == turnFailureRefusal) {
+			t.Fatalf("%s: excluded=%v", class, excluded)
+		}
+	}
+}
+
+// A finished coalescing entry takes no hand-over: its leader is gone, so the
+// refused request stages for itself.
+func TestRaylineARCFinishedEntryRefusesHandovers(t *testing.T) {
+	registry := &raylineARCInflightRegistry{entries: map[string]*raylineARCInflightEntry{}}
+	entry, leader := registry.join("key")
+	if !leader {
+		t.Fatal("the first request did not lead")
+	}
+	if !entry.noteRefusal(refusedTurn{arm: 1}) {
+		t.Fatal("a running strict leader refused the hand-over")
+	}
+	registry.finish(entry)
+	if entry.noteRefusal(refusedTurn{arm: 1}) {
+		t.Fatal("a finished entry took a hand-over")
+	}
+}
