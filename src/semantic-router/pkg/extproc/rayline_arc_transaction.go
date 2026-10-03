@@ -239,6 +239,13 @@ func (transaction *raylineARCEpisodeTransaction) markSelectionWithAffinity(
 	transaction.selectionReady = true
 }
 
+// takesHandovers reports whether this turn, leading a coalesced group, takes a
+// refused resend's hand-over as it finishes: only a strict main turn holds the
+// lease and stages on commit or abort.
+func (transaction *raylineARCEpisodeTransaction) takesHandovers() bool {
+	return transaction != nil && !transaction.relaxed && !transaction.sideCall
+}
+
 // markPolicyState stages the policy-service ledger and epoch this turn
 // commits, or marks the request a side call that commits nothing. It is a
 // no-op outside the policy-service mode.
@@ -250,6 +257,11 @@ func (transaction *raylineARCEpisodeTransaction) markPolicyState(
 		return
 	}
 	transaction.sideCall = transaction.sideCall || sideCall
+	if transaction.sideCall && transaction.inflight != nil {
+		// A side call stages nothing as it finishes, so it takes no
+		// hand-over.
+		transaction.inflight.refuseHandovers()
+	}
 	if next != nil {
 		transaction.policyNext = next.Clone()
 	}

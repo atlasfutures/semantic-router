@@ -73,6 +73,10 @@ type raylineARCInflightEntry struct {
 	// sealed is set when the lease owner takes the hand-over for the last
 	// time; a hand-over after it is refused, so the resend clears for itself.
 	sealed bool
+	// noHandover marks a leader that never takes a hand-over (a relaxed or
+	// side-call turn, whose finalizers stage nothing): every hand-over is
+	// refused, so the resend waits for it and stages for itself.
+	noHandover bool
 }
 
 // noteRefusal hands a refused resend's refusal to the request that holds
@@ -81,11 +85,19 @@ type raylineARCInflightEntry struct {
 func (entry *raylineARCInflightEntry) noteRefusal(refusal refusedTurn) bool {
 	entry.refusedMu.Lock()
 	defer entry.refusedMu.Unlock()
-	if entry.sealed {
+	if entry.sealed || entry.noHandover {
 		return false
 	}
 	entry.refused = &refusal
 	return true
+}
+
+// refuseHandovers marks the entry's leader as one that never takes a
+// hand-over.
+func (entry *raylineARCInflightEntry) refuseHandovers() {
+	entry.refusedMu.Lock()
+	defer entry.refusedMu.Unlock()
+	entry.noHandover = true
 }
 
 // takeRefusal returns a handed-over refusal and seals the entry: every

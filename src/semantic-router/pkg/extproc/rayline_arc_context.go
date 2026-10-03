@@ -386,6 +386,9 @@ func (r *OpenAIRouter) prepareOrJoinRaylineARCTurn(
 			}
 			reqCtx.RaylineARCInflight = entry
 			reqCtx.RaylineARCTransaction.inflight = entry
+			if !reqCtx.RaylineARCTransaction.takesHandovers() {
+				entry.refuseHandovers()
+			}
 			reqCtx.RaylineARCTransaction.onFinalize = chainFinalize(
 				reqCtx.RaylineARCTransaction.onFinalize,
 				func() { r.raylineARCInflight.finish(entry) },

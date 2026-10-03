@@ -203,3 +203,49 @@ func TestRaylineARCFallbackModelBoundMatchesTheEpisode(t *testing.T) {
 			raylinearc.MaxPolicyExclusions, raylinearc.MaxPolicyExclusionModelBytes)
 	}
 }
+
+// A leader that never takes a hand-over (a relaxed or side-call turn) refuses
+// it, so the refused resend stages for itself once the leader finishes.
+// Control: a strict leader takes it.
+func TestRaylineARCRefusalIsNotHandedToALeaderThatCannotTakeIt(t *testing.T) {
+	_, store, episode := boundaryFixture(t)
+	state, read, err := store.Snapshot(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relaxed := newRelaxedRaylineARCEpisodeTransaction(store, state, read, episode, false)
+	if relaxed.takesHandovers() || !(&raylineARCEpisodeTransaction{}).takesHandovers() {
+		t.Fatal("a relaxed leader takes hand-overs, or a strict one does not")
+	}
+	for _, takes := range []bool{true, false} {
+		entry := &raylineARCInflightEntry{done: make(chan struct{}), finished: make(chan struct{})}
+		leader := &raylineARCEpisodeTransaction{inflight: entry}
+		if !takes {
+			leader.markPolicyState(nil, true)
+		}
+		if handed := entry.noteRefusal(refusedTurn{arm: 1, exclude: "vendor/off"}); handed != takes {
+			t.Fatalf("leader takes=%v: handed over=%v", takes, handed)
+		}
+	}
+}
+
+// A sibling context a concurrent request opened from the same state, with the
+// same messages but another compaction, is not the refused turn.
+func TestRaylineARCLateRefusalTellsCompactionSiblingsApart(t *testing.T) {
+	task := []json.RawMessage{json.RawMessage(`{"role":"user","content":"fix the bug"}`)}
+	read := (&raylinearc.PolicyEpisodeState{}).Next(task, strings.Repeat("a", 64), "arm-a")
+	thisTurn := (&raylinearc.PolicyEpisodeState{Epoch: 1, EpochStartTurn: 3, CompactionCount: 1, CompactionSummary: strings.Repeat("1", 64)}).
+		Next(task, strings.Repeat("b", 64), "arm-b")
+	for name, sibling := range map[string]*raylinearc.PolicyEpisodeState{
+		"compaction count": {Epoch: 1, EpochStartTurn: 3, CompactionCount: 2, CompactionSummary: strings.Repeat("1", 64)},
+		"summary":          {Epoch: 1, EpochStartTurn: 3, CompactionCount: 1, CompactionSummary: strings.Repeat("2", 64)},
+		"start turn":       {Epoch: 1, EpochStartTurn: 4, CompactionCount: 1, CompactionSummary: strings.Repeat("1", 64)},
+	} {
+		state, _ := raylinearc.NewEpisodeState(2)
+		state.Policy = sibling.Next(task, strings.Repeat("c", 64), "arm-c")
+		refusal := refusedTurn{arm: -1, exclude: "vendor/off", context: thisTurn, decidedFrom: read, committed: thisTurn}
+		if next, changed := refusal.apply(state); changed || next.Policy.Excludes("vendor/off") {
+			t.Fatalf("%s sibling took the late refusal", name)
+		}
+	}
+}

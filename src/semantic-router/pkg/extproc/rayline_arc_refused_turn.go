@@ -143,8 +143,8 @@ func (refusal refusedTurn) apply(state *raylinearc.EpisodeState) (*raylinearc.Ep
 //     keeping what the store excluded since, so a late refusal never lifts a
 //     newer exclusion;
 //   - the store holds this very turn, committed by a coalesced copy that was
-//     answered (the same epoch and the same conversation, by digest): what it
-//     holds now;
+//     answered (the same epoch, compaction and conversation, by digest): what
+//     it holds now;
 //   - anything else: nothing. The store may hold another context (a
 //     compaction or a prefix break since), or a sibling one a concurrent
 //     relaxed request opened with the same epoch number, and a context starts
@@ -162,8 +162,8 @@ func (refusal refusedTurn) exclusionBase(stored *raylinearc.PolicyEpisodeState) 
 		}
 		return base, true
 	}
-	if committed := refusal.committed; stored != nil && committed != nil && stored.Epoch == committed.Epoch &&
-		stored.PrefixLen == committed.PrefixLen && stored.PrefixDigest == committed.PrefixDigest {
+	if committed := refusal.committed; stored != nil && committed != nil && samePolicyContext(stored, committed) &&
+		stored.EpochStartTurn == committed.EpochStartTurn && stored.CompactionSummary == committed.CompactionSummary {
 		return stored, true
 	}
 	return nil, false
