@@ -59,6 +59,55 @@ type PolicyEpisodeState struct {
 	PrefixLen         int                 `json:"prefix_len"`
 	PrefixDigest      string              `json:"prefix_digest"`
 	Ledger            []PolicyLedgerEntry `json:"ledger"`
+	// Exclusions are the models this context no longer offers: a model that
+	// refused a turn (ADR 0120). They live in the policy state, so they last
+	// exactly as long as the context does: a compaction or a prefix break
+	// starts a fresh state, and with it the full offer again.
+	Exclusions []PolicyExclusion `json:"exclusions,omitempty"`
+}
+
+// PolicyExclusion removes every action of a trained model from the offer,
+// with the failure class that excluded it.
+type PolicyExclusion struct {
+	Model string `json:"model"`
+	Class string `json:"class"`
+}
+
+// MaxPolicyExclusions bounds the exclusions an episode can carry; a package
+// serves far fewer models.
+const MaxPolicyExclusions = 16
+
+// Excludes reports whether model is excluded in this context.
+func (state *PolicyEpisodeState) Excludes(model string) bool {
+	if state == nil || model == "" {
+		return false
+	}
+	for _, exclusion := range state.Exclusions {
+		if exclusion.Model == model {
+			return true
+		}
+	}
+	return false
+}
+
+// WithExclusion is the state with model excluded for class, unchanged when
+// the model is already excluded or the bound is reached.
+func (state *PolicyEpisodeState) WithExclusion(model, class string) *PolicyEpisodeState {
+	next := state.Clone()
+	if next == nil {
+		next = &PolicyEpisodeState{}
+	}
+	if next.PrefixLen == 0 && next.PrefixDigest == "" {
+		// No turn has committed in this context yet. The state opens on the
+		// empty prefix, which every next request extends, so the exclusion is
+		// carried into it instead of read as a fresh context.
+		next.PrefixDigest = MessagesDigest(nil, 0)
+	}
+	if model == "" || next.Excludes(model) || len(next.Exclusions) >= MaxPolicyExclusions {
+		return next
+	}
+	next.Exclusions = append(next.Exclusions, PolicyExclusion{Model: model, Class: class})
+	return next
 }
 
 // PolicyBoundaryDecision is a model decision taken at a schedule boundary.
@@ -83,6 +132,10 @@ func (state *PolicyEpisodeState) Clone() *PolicyEpisodeState {
 	}
 	cloned := *state
 	cloned.Ledger = append([]PolicyLedgerEntry(nil), state.Ledger...)
+	cloned.Exclusions = append([]PolicyExclusion(nil), state.Exclusions...)
+	if len(cloned.Exclusions) == 0 {
+		cloned.Exclusions = nil
+	}
 	return &cloned
 }
 
@@ -160,6 +213,14 @@ func (state *PolicyEpisodeState) Validate() error {
 		if entry.Message < 0 || entry.Message > state.PrefixLen ||
 			!isLowerHex64(entry.ActionID) || len(entry.ArmID) > maxPolicyArmIDBytes {
 			return errors.New("ARC policy episode ledger entry is malformed")
+		}
+	}
+	if len(state.Exclusions) > MaxPolicyExclusions {
+		return errors.New("ARC policy episode exclusions exceed their bound")
+	}
+	for _, exclusion := range state.Exclusions {
+		if exclusion.Model == "" || len(exclusion.Model) > maxPolicyArmIDBytes || exclusion.Class == "" || len(exclusion.Class) > 64 {
+			return errors.New("ARC policy episode exclusion is malformed")
 		}
 	}
 	return nil
