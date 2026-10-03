@@ -173,7 +173,7 @@ func (decoder *anthropicStreamDecoder) pushFrame(frame []byte) ([]llmprotocol.Ev
 		return nil, nil, err
 	}
 	if decoder.terminal {
-		return nil, nil, invalidProviderResponse("stream_event_after_terminal", "Anthropic stream emitted data after message_stop")
+		return decoder.afterTerminal(parsed)
 	}
 	eventType, err := decodeProviderEventType(parsed.Data, parsed.Event, decoder.policy)
 	if err != nil {
@@ -851,4 +851,55 @@ func (encoder *anthropicStreamEncoder) terminateAnthropicStream(
 		return nil, err
 	}
 	return append(frames, failureFrame), nil
+}
+
+// afterTerminal handles a frame that arrives after message_stop. The message
+// is complete by then, so a frame that can add nothing to it -- an
+// OpenAI-style [DONE] sentinel, a ping, a repeated message_stop, a late
+// message_delta (usage or a restated stop) -- is dropped with a diagnostic
+// rather than cutting a stream whose answer the client already has. Anything
+// else (a new content block, an error) still fails the stream, and the
+// failure names the event type, so the frame a provider sent is on record.
+func (decoder *anthropicStreamDecoder) afterTerminal(parsed sseFrame) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	if bytes.Equal(bytes.TrimSpace(parsed.Data), []byte("[DONE]")) {
+		return nil, afterTerminalDiagnostic("[DONE]"), nil
+	}
+	eventType, err := decodeProviderEventType(parsed.Data, parsed.Event, decoder.policy)
+	if err != nil {
+		return nil, nil, invalidProviderResponse("stream_event_after_terminal", "Anthropic stream emitted an undecodable frame after message_stop")
+	}
+	switch eventType {
+	case "ping", "message_stop", "message_delta":
+		return nil, afterTerminalDiagnostic(eventType), nil
+	}
+	return nil, nil, invalidProviderResponse("stream_event_after_terminal",
+		"Anthropic stream emitted "+boundedEventName(eventType)+" after message_stop")
+}
+
+func afterTerminalDiagnostic(frame string) llmprotocol.Diagnostics {
+	return llmprotocol.Diagnostics{{
+		Source: llmprotocol.AnthropicMessagesV1, Field: "stream.after_message_stop", Action: llmprotocol.DiagnosticDropped,
+		Reason: "the provider sent " + frame + " after message_stop; the message was already complete",
+	}}
+}
+
+// boundedEventName keeps a provider-chosen event name fit for an error
+// message: at most 48 characters of [a-z0-9_.], anything else replaced.
+func boundedEventName(name string) string {
+	if len(name) > 48 {
+		name = name[:48]
+	}
+	out := make([]byte, 0, len(name))
+	for index := 0; index < len(name); index++ {
+		character := name[index]
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '_' || character == '.' {
+			out = append(out, character)
+		} else {
+			out = append(out, '?')
+		}
+	}
+	if len(out) == 0 {
+		return "an unnamed event"
+	}
+	return string(out)
 }
