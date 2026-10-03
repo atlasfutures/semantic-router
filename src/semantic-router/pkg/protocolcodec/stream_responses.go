@@ -92,8 +92,11 @@ type responsesStreamEncoder struct {
 	contentCitations       map[streamContentKey][]llmprotocol.Citation
 	completedOutput        map[int]json.RawMessage
 	imageProgressCompleted map[responsesOutputKey]bool
-	responseStarted        bool
-	wireSequence           uint64
+	// reasoningSignatures holds each neutral item's Anthropic thinking
+	// signature until the item's reasoning output is done.
+	reasoningSignatures map[int]string
+	responseStarted     bool
+	wireSequence        uint64
 }
 
 func (OpenAIResponsesCodec) NewDecoder(context llmprotocol.StreamContext, policy llmprotocol.Policy) llmprotocol.StreamDecoder {
@@ -129,6 +132,7 @@ func (OpenAIResponsesCodec) NewEncoder(context llmprotocol.StreamContext, policy
 		contentCitations:       make(map[streamContentKey][]llmprotocol.Citation),
 		completedOutput:        make(map[int]json.RawMessage),
 		imageProgressCompleted: make(map[responsesOutputKey]bool),
+		reasoningSignatures:    make(map[int]string),
 	}
 }
 

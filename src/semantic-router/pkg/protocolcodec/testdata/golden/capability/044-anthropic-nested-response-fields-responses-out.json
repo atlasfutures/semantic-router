@@ -3,10 +3,63 @@
     {
       "name": "signed_thinking",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_capability"
+        "status": "ok",
+        "body": {
+          "created_at": 0,
+          "error": null,
+          "id": "msg_1",
+          "incomplete_details": null,
+          "instructions": null,
+          "metadata": {},
+          "model": "routed-model",
+          "object": "response",
+          "output": [
+            {
+              "content": [
+                {
+                  "text": "inspect the evidence",
+                  "type": "reasoning_text"
+                }
+              ],
+              "format": "anthropic-claude-v1",
+              "id": "item_50fa17334b475f883a9970b7",
+              "signature": "signed-reasoning",
+              "summary": [],
+              "type": "reasoning"
+            },
+            {
+              "content": [
+                {
+                  "annotations": [],
+                  "text": "done",
+                  "type": "output_text"
+                }
+              ],
+              "id": "item_0f0f671df3c7589398acc08e",
+              "role": "assistant",
+              "status": "completed",
+              "type": "message"
+            }
+          ],
+          "output_text": "done",
+          "parallel_tool_calls": true,
+          "status": "completed",
+          "temperature": null,
+          "tool_choice": "auto",
+          "tools": [],
+          "top_p": null,
+          "usage": {
+            "input_tokens": 2,
+            "input_tokens_details": {
+              "cache_write_tokens": 0,
+              "cached_tokens": 0
+            },
+            "output_tokens": 5,
+            "output_tokens_details": {
+              "reasoning_tokens": 0
+            },
+            "total_tokens": 7
+          }
         }
       }
     },
