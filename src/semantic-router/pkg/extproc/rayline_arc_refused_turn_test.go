@@ -305,7 +305,8 @@ func (failingCommitStore) Commit(context.Context, raylinearc.Lease, uint64, *ray
 	return errors.New("episode store unavailable")
 }
 
-// A resend whose first wait ran out, and whose leader finished meanwhile,
+// A resend whose first wait ran out, and whose leader had already taken its
+// last look at the hand-over,
 // takes the lease on its retry and stages the clear under that retry's live
 // context. Control: with no leader finished, it hands the decision over and
 // leaves the store alone.
@@ -316,7 +317,8 @@ func TestRaylineARCRefusedResendRetryStagesUnderItsLiveContext(t *testing.T) {
 			policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"}))
 		entry := &raylineARCInflightEntry{done: make(chan struct{}), finished: make(chan struct{})}
 		if leaderFinished {
-			close(entry.finished)
+			// The leader has taken its last look at the hand-over.
+			entry.takeRefusedBoundary()
 		}
 		follower := &RequestContext{
 			RaylineARCTransaction: newBorrowedRaylineARCEpisodeTransaction(deadlineStore{store}, leader.RaylineARCTransaction.state, episode, entry),
@@ -356,5 +358,21 @@ func TestRaylineARCLeaderCommitFailureClearsAHandedOverRefusal(t *testing.T) {
 		if cleared := readLedgerTestState(t, store, episode).PolicyBoundary == nil; cleared != refusal {
 			t.Fatalf("refusal=%v: boundary cleared=%v after the failed commit", refusal, cleared)
 		}
+	}
+}
+
+// Every hand-over is either taken by the lease owner's last look or refused
+// after it, so none is left untaken.
+func TestRefusedHandOverIsTakenOrRefused(t *testing.T) {
+	entry := &raylineARCInflightEntry{}
+	boundary := raylinearc.PolicyBoundaryDecision{Arm: 1, PrefixDigest: strings.Repeat("a", 64)}
+	if !entry.noteRefusedBoundary(boundary) {
+		t.Fatal("a hand-over before the last look was refused")
+	}
+	if taken := entry.takeRefusedBoundary(); taken == nil || *taken != boundary {
+		t.Fatalf("the last look took %+v", taken)
+	}
+	if entry.noteRefusedBoundary(boundary) {
+		t.Fatal("a hand-over after the last look was accepted, and would never be taken")
 	}
 }
