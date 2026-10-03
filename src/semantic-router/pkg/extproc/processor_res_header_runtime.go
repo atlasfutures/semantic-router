@@ -50,6 +50,7 @@ func evaluateResponseHeaderOutcome(
 	outcome.statusCode = getStatusFromHeaders(v.ResponseHeaders.Headers)
 	outcome.isSuccessful = outcome.statusCode >= 200 && outcome.statusCode < 300
 	if ctx != nil {
+		ctx.UpstreamAttempts = upstreamAttemptsFromHeaders(v.ResponseHeaders.Headers)
 		ctx.IsStreamingResponse = outcome.isSuccessful &&
 			(isStreamingContentType(v.ResponseHeaders.Headers) || isResponseAPIStreamRequest(ctx))
 	}
@@ -183,6 +184,32 @@ func getStatusFromHeaders(headerMap *core.HeaderMap) int {
 			if code, err := strconv.Atoi(string(hv.RawValue)); err == nil {
 				return code
 			}
+		}
+	}
+	return 0
+}
+
+// upstreamAttemptsHeader carries the provider hop's attempt count, set by the
+// cell's Envoy (%UPSTREAM_REQUEST_ATTEMPT_COUNT%) and stripped before the
+// client.
+const upstreamAttemptsHeader = "x-vsr-upstream-attempts"
+
+// upstreamAttemptsFromHeaders reads the attempt count, 0 when absent or not a
+// positive count.
+func upstreamAttemptsFromHeaders(headerMap *core.HeaderMap) int {
+	if headerMap == nil {
+		return 0
+	}
+	for _, hv := range headerMap.Headers {
+		if !strings.EqualFold(hv.Key, upstreamAttemptsHeader) {
+			continue
+		}
+		value := hv.Value
+		if value == "" {
+			value = string(hv.RawValue)
+		}
+		if attempts, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && attempts > 0 {
+			return attempts
 		}
 	}
 	return 0

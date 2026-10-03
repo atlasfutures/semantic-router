@@ -93,6 +93,13 @@ var (
 		},
 		[]string{"component"},
 	)
+	TurnFailures = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_turn_failures_total",
+			Help: "Turns that did not deliver a served reply, by bounded failure class.",
+		},
+		[]string{"failure_class"},
+	)
 	RaylineARCEpisodeTransactions = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "llm_rayline_arc_episode_transactions_total",
@@ -270,6 +277,11 @@ func SetRaylineARCNamedComponentReady(
 		value = 1
 	}
 	RaylineARCComponentReady.WithLabelValues(component).Set(value)
+}
+
+// RecordTurnFailure counts a turn that failed, by its bounded failure class.
+func RecordTurnFailure(failureClass string) {
+	TurnFailures.WithLabelValues(failureClass).Inc()
 }
 
 func RecordRaylineARCEpisodeTransaction(

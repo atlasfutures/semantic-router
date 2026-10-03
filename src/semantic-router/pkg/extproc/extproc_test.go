@@ -2103,7 +2103,10 @@ func TestVSRHeadersNotAddedOnErrorResponse(t *testing.T) {
 	headerMutation := response.GetResponseHeaders().GetResponse().GetHeaderMutation()
 	require.NotNil(t, headerMutation, "HeaderMutation should carry keystone headers even on error")
 	setHeaders := headerMutation.GetSetHeaders()
-	assert.Len(t, setHeaders, 2, "Error response should have only the 2 keystone headers")
+	// The selected model also rides on an upstream error: it names the arm
+	// that failed, which a gateway needs to tell an arm's failure from the
+	// cell's (fallback Phase 0). The other decision headers stay off.
+	assert.Len(t, setHeaders, 3, "Error response should have the 2 keystone headers and the failed arm")
 	headerMap := make(map[string]string)
 	for _, header := range setHeaders {
 		headerMap[header.Header.Key] = string(header.Header.RawValue)
@@ -2113,7 +2116,7 @@ func TestVSRHeadersNotAddedOnErrorResponse(t *testing.T) {
 	assert.NotContains(t, headerMap, "x-vsr-client-protocol", "same-protocol response omits protocol markers")
 	assert.NotContains(t, headerMap, "x-vsr-upstream-protocol")
 	assert.NotContains(t, headerMap, "x-vsr-selected-category", "decision headers must not appear on error")
-	assert.NotContains(t, headerMap, "x-vsr-selected-model", "decision headers must not appear on error")
+	assert.Equal(t, "deepseek-v31", headerMap["x-vsr-selected-model"], "an upstream error names the arm that failed")
 }
 
 func TestVSRHeadersPartialInformation(t *testing.T) {

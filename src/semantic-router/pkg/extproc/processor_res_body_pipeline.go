@@ -36,17 +36,38 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 		})
 		return r.upstreamDecodeFailureResponse(ctx, err)
 	}
+	// A refused policy turn is declined before any response plugin can
+	// return early, so a blocked refusal still clears the boundary decision
+	// that chose the refusing arm.
+	refused := selectionCommitsOnCompletion(ctx) && responseRefused(semanticResponse)
+	if refused {
+		declineRefusedTurn(ctx)
+	}
+	// The usage line is written once the turn's outcome is known: after the
+	// commit gate below, which classes a policy turn that can no longer
+	// commit, or before a response check returns early.
+	usageReported := false
+	reportUsage := func() {
+		if usageReported {
+			return
+		}
+		usageReported = true
+		usage = r.takeNeutralResponseUsage(ctx)
+		r.reportNonStreamingUsage(ctx, completionLatency, usage)
+		r.calibrateTokenEstimator(ctx, usage.promptTokens)
+	}
 	clientBody := responseBody
 	rewriteClientBody := requiresClientResponseRewrite(ctx)
 	if rewriteClientBody {
 		clientBody, err = r.encodeClientResponse(*semanticResponse, ctx)
 		if err != nil {
+			// The arm's reply cannot be put in the client's format: an
+			// unusable reply, classed and settled before it is refused.
+			recordTurnFailureDetail(ctx, turnFailureUpstreamError, responseFailureClass(err), false)
+			reportUsage()
 			return r.bodyPhaseErrorResponse(ctx, 502, "The selected model returned an incompatible response")
 		}
 	}
-	usage = r.takeNeutralResponseUsage(ctx)
-	r.reportNonStreamingUsage(ctx, completionLatency, usage)
-	r.calibrateTokenEstimator(ctx, usage.promptTokens)
 
 	// A turn that commits at completion caches its reply only once the turn
 	// is recorded: a reply cached before a failed commit would serve the
@@ -66,9 +87,13 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	// evidence in Router Replay as a delivered one.
 	r.recordRouterReplayResponseJailbreak(ctx)
 	if jailbreakResponse != nil {
+		recordTurnFailureDetail(ctx, turnFailureResponseBlocked, "response_jailbreak", false)
+		reportUsage()
 		return jailbreakResponse
 	}
 	if hallucinationResponse := r.performSemanticHallucinationDetection(ctx, semanticResponse); hallucinationResponse != nil {
+		recordTurnFailureDetail(ctx, turnFailureResponseBlocked, "response_hallucination", false)
+		reportUsage()
 		return hallucinationResponse
 	}
 
@@ -76,13 +101,30 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	// policy-service turn commits once this reply has been sent, and caches
 	// it only then; a turn that can no longer commit fails now, while the
 	// client can still be told.
-	if cacheAfterCommit {
+	// A refused turn (declined above) is delivered but never recorded, and
+	// never cached.
+	if cacheAfterCommit && !refused {
 		if err := selectionCompletionCommittable(ctx); err != nil {
 			recordSelectionLifecycleFailure(ctx, "response_complete", err)
-			return r.bodyPhaseErrorResponse(ctx, http.StatusServiceUnavailable, selectionUnavailableMessage(ctx))
+			// The cell failed the turn, not the arm: the reply arrived but its
+			// turn can no longer be recorded. Checked after every response
+			// check, so a lease lost while they ran is still caught.
+			recordTurnFailure(ctx, selectionFailureUnavailable, false)
+			reportUsage()
+			response := r.bodyPhaseErrorResponse(ctx, http.StatusServiceUnavailable, selectionUnavailableMessage(ctx))
+			// The class header survives the cell's response scrub, so a
+			// gateway can tell this cell failure from an arm's.
+			appendImmediateHeader(response, selectionFailureHeader, selectionFailureUnavailable)
+			return response
 		}
 		deferSelectionCompletion(ctx, func() { r.updateResponseCache(ctx, clientBody) })
 	}
+	// A refusal is classed only once no response check blocked it, so one
+	// turn is one failure.
+	if responseRefused(semanticResponse) && ctx.ResponseFailureClass == "" {
+		recordTurnFailure(ctx, turnFailureRefusal, contentBeforeRefusal(semanticResponse))
+	}
+	reportUsage()
 
 	r.scheduleSemanticResponseMemoryStore(ctx, semanticResponse)
 	r.markUnverifiedFactualResponse(ctx)
