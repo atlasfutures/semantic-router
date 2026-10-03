@@ -133,7 +133,8 @@ func groupResponseStreamContent(contents []llmprotocol.Content) []responseStream
 	groups := make([]responseStreamContentGroup, 0, len(contents))
 	for _, content := range contents {
 		family := responseStreamContentFamily(content.Kind)
-		if family == llmprotocol.ContentToolCall || len(groups) == 0 || groups[len(groups)-1].family != family ||
+		if family == llmprotocol.ContentToolCall || family == llmprotocol.ContentUnmodeled ||
+			len(groups) == 0 || groups[len(groups)-1].family != family ||
 			endsSignedReasoning(groups[len(groups)-1]) || signedReasoning(content) {
 			groups = append(groups, responseStreamContentGroup{family: family})
 		}
@@ -195,9 +196,12 @@ func neutralContentGroupEvents(
 		return neutralToolCallEvents(started, completed, group.contents[0])
 	}
 	if len(group.contents) == 1 {
-		// A carried web_search_call replays as the item's start and
-		// completion, as it streamed from the provider.
-		if _, webSearch := carriedWebSearchCall(group.contents[0]); webSearch {
+		// A carried web_search_call, or a carried Anthropic redacted_thinking
+		// block, replays as the item's start and completion, as it streamed
+		// from the provider: neither has anything to stream in between.
+		_, webSearch := carriedWebSearchCall(group.contents[0])
+		_, redacted := OpaqueReasoningData(group.contents[0])
+		if webSearch || redacted {
 			content := group.contents[0]
 			started.Content, completed.Content = &content, &content
 			return []llmprotocol.Event{started, completed}, nil

@@ -335,3 +335,33 @@ func TestSignedThinkingStartsAFreshResponsesItem(t *testing.T) {
 		}
 	}
 }
+
+// A cached Claude answer with signed and redacted thinking replays as a
+// stream, as the live provider stream does: the redacted block arrives as
+// one item started and completed, carrying its data. Checked for a Responses
+// client and for an Anthropic one.
+func TestCachedRedactedThinkingReplaysAsAStream(t *testing.T) {
+	engine := NewBuiltinEngine()
+	response, _, _, err := engine.DecodeResponse(llmprotocol.AnthropicMessagesV1, []byte(`{
+		"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-5",
+		"content":[
+			{"type":"thinking","thinking":"plan","signature":"sigA"},
+			{"type":"redacted_thinking","data":"REDACTED_DATA_1"},
+			{"type":"text","text":"done"}
+		],
+		"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":3}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []llmprotocol.WireFormat{llmprotocol.OpenAIResponsesV1, llmprotocol.AnthropicMessagesV1} {
+		wire, _, err := engine.EncodeResponseStream(target, response, llmprotocol.StreamContext{
+			Context: context.Background(), PublicModel: "public-model",
+		})
+		if err != nil {
+			t.Fatalf("%s: replay: %v", target, err)
+		}
+		if !strings.Contains(string(wire), "REDACTED_DATA_1") || !strings.Contains(string(wire), "sigA") || !strings.Contains(string(wire), "done") {
+			t.Fatalf("%s: the replay lost a block:\n%s", target, wire)
+		}
+	}
+}
