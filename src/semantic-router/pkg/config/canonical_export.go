@@ -279,6 +279,7 @@ func routingModelsFromRuntimeConfig(cfg *RouterConfig) []RoutingModel {
 			Vision:            copyBool(params.Vision),
 			Disabled:          copyBool(params.Disabled),
 			HostedTools:       append([]string(nil), params.HostedTools...),
+			Publisher:         params.Publisher,
 		})
 	}
 	return models
