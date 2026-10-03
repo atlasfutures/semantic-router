@@ -576,6 +576,16 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		var failure *raylinearc.PolicyServiceError
 		if errors.As(err, &failure) {
 			class = failure.Class
+			// pathfinder#3329: a context the service's encoder cannot hold
+			// keeps the episode's held action rather than failing the turn.
+			if class == raylinearc.PolicyCapacityRefusalClass {
+				if held := selector.policyCapacityHold(
+					armed, selCtx, arcContext, state, scorer, failure, turn, messages, sideCall, atBoundary,
+					retained, available, workerIDs, latency,
+				); held != nil {
+					return held, nil
+				}
+			}
 		}
 		logging.ComponentErrorEvent("extproc", "rayline_arc_policy_service_failed", map[string]interface{}{
 			"class": class, "episode_id_hash": arcContext.EpisodeIDHash,
