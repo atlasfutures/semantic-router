@@ -563,7 +563,7 @@ func (transaction *raylineARCEpisodeTransaction) abort(
 			return
 		}
 		transaction.stopRenewal()
-		transaction.clearHandedOverRefusal(ctx)
+		transaction.applyHandedOverRefusal(ctx)
 		transaction.finalizeErr = transaction.store.Abort(
 			ctx,
 			transaction.lease,
@@ -596,7 +596,7 @@ func (transaction *raylineARCEpisodeTransaction) abortStore(
 	defer cancel()
 	// A commit that failed leaves the turn unrecorded, as an abort does, so
 	// a refusal a coalesced resend handed over is cleared here too.
-	transaction.clearHandedOverRefusal(abortContext)
+	transaction.applyHandedOverRefusal(abortContext)
 	_ = transaction.store.Abort(abortContext, transaction.lease)
 	metrics.RecordRaylineARCEpisodeTransaction("abort", "commit_failure")
 }

@@ -70,6 +70,9 @@ type policyServiceScorer struct {
 	workers     []raylinearc.WorkerManifest
 	bindings    map[string]policyBinding
 	actionOrder []string
+	// fallback is ADR 0120's fallback: excluded models leave the offer, and
+	// an excluded held model forces a decision.
+	fallback bool
 	// episodeMode is the decide request's episode_mode: empty (strict) or
 	// relaxed.
 	episodeMode string
@@ -134,6 +137,7 @@ func newPolicyServiceScorer(
 ) *policyServiceScorer {
 	policy := decision.Algorithm.RaylineARC.PolicyService
 	scorer := &policyServiceScorer{
+		fallback: policy.FallbackEnabled(),
 		schedule: policy.ModelSchedule,
 		busyWait: time.Duration(decision.Algorithm.RaylineARC.Episode.AcquireTimeoutSeconds) * time.Second,
 		alias:    policy.PackageAlias,
@@ -426,6 +430,15 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	case state.PreviousArm != nil && (sideCall || scheduled && !atBoundary):
 		held = *state.PreviousArm
 	}
+	// ADR 0120: a model this context excluded cannot be held. Its turn
+	// decides again among the rest, as at a schedule boundary, and that
+	// decision is held from here as a boundary decision is.
+	fallback := scorer.fallback && !sideCall && turn != nil && len(turn.Exclusions) > 0
+	forced := false
+	if fallback && held >= 0 && turn.Excludes(scorer.armModel(held)) {
+		held, retained, forced = -1, false, true
+		atBoundary = true
+	}
 	logRaylineARCPolicyTurn(arcContext.EpisodeIDHash, signals, transition, state.TurnIndex, turn, held >= 0, retained)
 	available := make([]string, 0, len(scorer.actionOrder))
 	for _, actionID := range scorer.actionOrder {
@@ -436,8 +449,14 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		if held >= 0 && arm != held {
 			continue
 		}
+		if fallback && turn.Excludes(scorer.actionModel(actionID)) {
+			continue
+		}
 		available = append(available, actionID)
 	}
+	// Every model excluded leaves nothing to serve, and the turn fails. The
+	// package's fallback action is one of these same actions, so it is never
+	// left when its peers are not.
 	if len(available) == 0 {
 		return nil, arcSelectionFailure("policy_no_available_action")
 	}
@@ -577,6 +596,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.WorkerProviderModel = scorer.workers[binding.arm].Model
 	result.RaylineARC.PolicySideCall = sideCall
 	if !sideCall {
+		result.RaylineARC.PolicyTurnState = turn.Clone()
 		result.RaylineARC.PolicyNextState = turn.Next(
 			messages, response.Decision.SelectedActionID, response.Decision.SelectedArmID,
 		)
@@ -584,7 +604,75 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	if atBoundary && !retained {
 		result.RaylineARC.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(binding.arm, state.TurnIndex, turn, messages)
 	}
+	if fallback {
+		logRaylineARCFallbackDecision(arcContext.EpisodeIDHash, state.TurnIndex, turn, forced, available, response)
+	}
 	return result, nil
+}
+
+// actionModel is the trained model an action serves: its binding's declared
+// model, or its worker when the binding declares none.
+func (scorer *policyServiceScorer) actionModel(actionID string) string {
+	binding, ok := scorer.bindings[actionID]
+	if !ok {
+		return ""
+	}
+	if binding.model != "" {
+		return binding.model
+	}
+	return scorer.armModel(binding.arm)
+}
+
+// armModel is the trained model a worker serves, read from its bindings.
+func (scorer *policyServiceScorer) armModel(arm int) string {
+	for _, actionID := range scorer.actionOrder {
+		if binding := scorer.bindings[actionID]; binding.arm == arm && binding.model != "" {
+			return binding.model
+		}
+	}
+	if arm >= 0 && arm < len(scorer.workerIDs) {
+		return scorer.workerIDs[arm]
+	}
+	return ""
+}
+
+// logRaylineARCFallbackDecision records a decision taken with exclusions in
+// force: what was excluded and why, what was offered, what was chosen and
+// how the package scored it, so Phase 2 can learn refusal risk from it
+// (ADR 0120). The request id joins it to the turn's llm_usage line.
+func logRaylineARCFallbackDecision(
+	episodeIDHash string,
+	turnIndex uint64,
+	turn *raylinearc.PolicyEpisodeState,
+	forced bool,
+	offered []string,
+	response *raylinearc.PolicyDecisionResponse,
+) {
+	excluded := make([]map[string]string, 0, len(turn.Exclusions))
+	for _, exclusion := range turn.Exclusions {
+		excluded = append(excluded, map[string]string{"model": exclusion.Model, "class": exclusion.Class})
+	}
+	scores := make([]map[string]interface{}, 0, len(response.Actions))
+	for _, action := range response.Actions {
+		scores = append(scores, map[string]interface{}{
+			"action_id": action.ActionID, "score": action.Score,
+			"available": action.Available, "supported": action.Supported,
+		})
+	}
+	reason := "excluded_offer"
+	if forced {
+		reason = "fallback_redecide"
+	}
+	logging.ComponentEvent("extproc", "rayline_arc_fallback_decision", map[string]interface{}{
+		"episode_id_hash":    episodeIDHash,
+		"turn_index":         turnIndex,
+		"reason":             reason,
+		"excluded":           excluded,
+		"offered_action_ids": offered,
+		"selected_action_id": response.Decision.SelectedActionID,
+		"decision_reason":    response.Decision.Reason,
+		"scores":             scores,
+	})
 }
 
 const (

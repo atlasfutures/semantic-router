@@ -69,29 +69,29 @@ type raylineARCInflightEntry struct {
 	// while the deciding request still held the lease. That request clears
 	// it if it aborts; a commit replaces it anyway.
 	refusedMu sync.Mutex
-	refused   *raylinearc.PolicyBoundaryDecision
+	refused   *refusedTurn
 	// sealed is set when the lease owner takes the hand-over for the last
 	// time; a hand-over after it is refused, so the resend clears for itself.
 	sealed bool
 }
 
-// noteRefusedBoundary hands a refused resend's boundary decision to the
-// request that holds the lease. It reports false once that request has
-// taken its last look, and the resend must then clear for itself.
-func (entry *raylineARCInflightEntry) noteRefusedBoundary(boundary raylinearc.PolicyBoundaryDecision) bool {
+// noteRefusal hands a refused resend's refusal to the request that holds
+// the lease. It reports false once that request has taken its last look, and
+// the resend must then apply it for itself.
+func (entry *raylineARCInflightEntry) noteRefusal(refusal refusedTurn) bool {
 	entry.refusedMu.Lock()
 	defer entry.refusedMu.Unlock()
 	if entry.sealed {
 		return false
 	}
-	entry.refused = &boundary
+	entry.refused = &refusal
 	return true
 }
 
-// takeRefusedBoundary returns a handed-over refused decision and seals the
-// entry: every hand-over either arrives before this and is returned, or is
-// refused after it.
-func (entry *raylineARCInflightEntry) takeRefusedBoundary() *raylinearc.PolicyBoundaryDecision {
+// takeRefusal returns a handed-over refusal and seals the entry: every
+// hand-over either arrives before this and is returned, or is refused after
+// it.
+func (entry *raylineARCInflightEntry) takeRefusal() *refusedTurn {
 	if entry == nil {
 		return nil
 	}
@@ -257,6 +257,7 @@ func cloneRaylineARCSelectionResult(result *selection.SelectionResult) *selectio
 		if result.RaylineARC.PolicyNextState != nil {
 			trace.PolicyNextState = result.RaylineARC.PolicyNextState.Clone()
 		}
+		trace.PolicyTurnState = result.RaylineARC.PolicyTurnState.Clone()
 		if result.RaylineARC.PolicyBoundary != nil {
 			boundary := *result.RaylineARC.PolicyBoundary
 			trace.PolicyBoundary = &boundary

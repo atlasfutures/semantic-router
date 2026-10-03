@@ -157,7 +157,7 @@ func TestRaylineARCRelaxedRefusalClearIsBounded(t *testing.T) {
 	state.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(1, 0, &raylinearc.PolicyEpisodeState{}, messages)
 	transaction := newRelaxedRaylineARCEpisodeTransaction(blockingSnapshotStore{store}, state, read, episode, false)
 	started := time.Now()
-	transaction.clearRefusedBoundary(context.Background(), 1)
+	transaction.stageRefusal(context.Background(), refusedTurn{arm: 1})
 	if elapsed := time.Since(started); elapsed < relaxedBoundaryStageTimeout/2 || elapsed > time.Second {
 		t.Fatalf("relaxed refusal clear took %v, want about %v", elapsed, relaxedBoundaryStageTimeout)
 	}
@@ -318,7 +318,7 @@ func TestRaylineARCRefusedResendRetryStagesUnderItsLiveContext(t *testing.T) {
 		entry := &raylineARCInflightEntry{done: make(chan struct{}), finished: make(chan struct{})}
 		if leaderFinished {
 			// The leader has taken its last look at the hand-over.
-			entry.takeRefusedBoundary()
+			entry.takeRefusal()
 		}
 		follower := &RequestContext{
 			RaylineARCTransaction: newBorrowedRaylineARCEpisodeTransaction(deadlineStore{store}, leader.RaylineARCTransaction.state, episode, entry),
@@ -349,7 +349,7 @@ func TestRaylineARCLeaderCommitFailureClearsAHandedOverRefusal(t *testing.T) {
 		leader.RaylineARCTransaction.inflight = entry
 		leader.RaylineARCTransaction.store = failingCommitStore{store}
 		if refusal {
-			entry.noteRefusedBoundary(*decided.RaylineARC.PolicyBoundary)
+			entry.noteRefusal(refusedTurn{arm: decided.RaylineARC.SelectedArm, boundary: decided.RaylineARC.PolicyBoundary})
 		}
 		leader.RaylineARCTransaction.markPolicyState(decided.RaylineARC.PolicyNextState, false)
 		if err := leader.RaylineARCTransaction.commit(context.Background(), leader); err == nil {
@@ -366,13 +366,13 @@ func TestRaylineARCLeaderCommitFailureClearsAHandedOverRefusal(t *testing.T) {
 func TestRefusedHandOverIsTakenOrRefused(t *testing.T) {
 	entry := &raylineARCInflightEntry{}
 	boundary := raylinearc.PolicyBoundaryDecision{Arm: 1, PrefixDigest: strings.Repeat("a", 64)}
-	if !entry.noteRefusedBoundary(boundary) {
+	if !entry.noteRefusal(refusedTurn{arm: 1, boundary: &boundary}) {
 		t.Fatal("a hand-over before the last look was refused")
 	}
-	if taken := entry.takeRefusedBoundary(); taken == nil || *taken != boundary {
+	if taken := entry.takeRefusal(); taken == nil || *taken.boundary != boundary {
 		t.Fatalf("the last look took %+v", taken)
 	}
-	if entry.noteRefusedBoundary(boundary) {
+	if entry.noteRefusal(refusedTurn{arm: 1, boundary: &boundary}) {
 		t.Fatal("a hand-over after the last look was accepted, and would never be taken")
 	}
 }

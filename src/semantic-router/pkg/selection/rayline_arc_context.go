@@ -95,6 +95,9 @@ type RaylineARCTrace struct {
 	EncoderLatencyUnknown bool
 	// PolicyNextState is the ledger and epoch to commit with this turn.
 	PolicyNextState *raylinearc.PolicyEpisodeState
+	// PolicyTurnState is the context this turn was decided in, before its
+	// reply: the state a refusal excludes the refusing model in (ADR 0120).
+	PolicyTurnState *raylinearc.PolicyEpisodeState
 	// PolicySideCall marks a call outside the main conversation: it commits
 	// nothing to the episode, neither a turn nor a ledger entry.
 	PolicySideCall bool
