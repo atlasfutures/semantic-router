@@ -1,0 +1,87 @@
+{
+  "max_completion_tokens": 32000,
+  "messages": [
+    {
+      "content": "What is in red.png and blue.png? Use view_image.",
+      "role": "user"
+    },
+    {
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"image\": \"red.png\"}",
+            "name": "view_image"
+          },
+          "id": "toolu_view_red",
+          "type": "function"
+        },
+        {
+          "function": {
+            "arguments": "{\"image\": \"blue.png\"}",
+            "name": "view_image"
+          },
+          "id": "toolu_view_blue",
+          "type": "function"
+        }
+      ]
+    },
+    {
+      "content": "Loaded 1 image into private model context for inspection; not displayed, attached, or sent to the user.",
+      "role": "tool",
+      "tool_call_id": "toolu_view_red"
+    },
+    {
+      "content": "Loaded 1 image into private model context for inspection; not displayed, attached, or sent to the user.",
+      "role": "tool",
+      "tool_call_id": "toolu_view_blue"
+    },
+    {
+      "content": [
+        {
+          "text": "Images returned by tool call toolu_view_red:",
+          "type": "text"
+        },
+        {
+          "image_url": {
+            "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+          },
+          "type": "image_url"
+        },
+        {
+          "text": "Images returned by tool call toolu_view_blue:",
+          "type": "text"
+        },
+        {
+          "image_url": {
+            "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYPgPAAEDAQAIicLsAAAAAElFTkSuQmCC"
+          },
+          "type": "image_url"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "routed-model",
+  "tool_choice": "auto",
+  "tools": [
+    {
+      "function": {
+        "description": "Load an image into model context for inspection.",
+        "name": "view_image",
+        "parameters": {
+          "properties": {
+            "image": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "image"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    }
+  ]
+}

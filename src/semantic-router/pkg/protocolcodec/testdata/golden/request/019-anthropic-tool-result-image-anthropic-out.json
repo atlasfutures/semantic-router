@@ -1,0 +1,96 @@
+{
+  "max_tokens": 32000,
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "What is in red.png and blue.png? Use view_image.",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "id": "toolu_view_red",
+          "input": {
+            "image": "red.png"
+          },
+          "name": "view_image",
+          "type": "tool_use"
+        },
+        {
+          "id": "toolu_view_blue",
+          "input": {
+            "image": "blue.png"
+          },
+          "name": "view_image",
+          "type": "tool_use"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "content": [
+            {
+              "text": "Loaded 1 image into private model context for inspection; not displayed, attached, or sent to the user.",
+              "type": "text"
+            },
+            {
+              "source": {
+                "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+                "media_type": "image/png",
+                "type": "base64"
+              },
+              "type": "image"
+            }
+          ],
+          "is_error": false,
+          "tool_use_id": "toolu_view_red",
+          "type": "tool_result"
+        },
+        {
+          "content": [
+            {
+              "text": "Loaded 1 image into private model context for inspection; not displayed, attached, or sent to the user.",
+              "type": "text"
+            },
+            {
+              "source": {
+                "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYPgPAAEDAQAIicLsAAAAAElFTkSuQmCC",
+                "media_type": "image/png",
+                "type": "base64"
+              },
+              "type": "image"
+            }
+          ],
+          "is_error": false,
+          "tool_use_id": "toolu_view_blue",
+          "type": "tool_result"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "routed-model",
+  "tools": [
+    {
+      "description": "Load an image into model context for inspection.",
+      "input_schema": {
+        "properties": {
+          "image": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "image"
+        ],
+        "type": "object"
+      },
+      "name": "view_image"
+    }
+  ]
+}

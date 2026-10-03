@@ -1,0 +1,48 @@
+{
+  "max_tokens": 32000,
+  "messages": [
+    {"role": "user", "content": [{"type": "text", "text": "What is in red.png and blue.png? Use view_image."}]},
+    {
+      "role": "assistant",
+      "content": [
+        {"type": "tool_use", "id": "toolu_view_red", "name": "view_image", "input": {"image": "red.png"}},
+        {"type": "tool_use", "id": "toolu_view_blue", "name": "view_image", "input": {"image": "blue.png"}}
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_view_red",
+          "content": [
+            {"type": "text", "text": "Loaded 1 image into private model context for inspection; not displayed, attached, or sent to the user."},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"}}
+          ],
+          "is_error": false
+        },
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_view_blue",
+          "content": [
+            {"type": "text", "text": "Loaded 1 image into private model context for inspection; not displayed, attached, or sent to the user."},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYPgPAAEDAQAIicLsAAAAAElFTkSuQmCC"}}
+          ],
+          "is_error": false
+        }
+      ]
+    }
+  ],
+  "model": "rayline-router",
+  "tools": [
+    {
+      "name": "view_image",
+      "description": "Load an image into model context for inspection.",
+      "input_schema": {
+        "type": "object",
+        "properties": {"image": {"type": "string"}},
+        "required": ["image"]
+      }
+    }
+  ]
+}
