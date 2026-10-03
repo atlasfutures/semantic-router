@@ -230,7 +230,7 @@ func (AnthropicMessagesCodec) EncodeResponse(response llmprotocol.Response, enve
 		stop = encodeAnthropicStop(llmprotocol.StopContentFilter)
 	}
 	wire := anthropicResponseWire{ID: response.ID, Type: "message", Role: "assistant", Model: response.Model, Content: content, StopReason: &stop, Usage: encodeAnthropicUsage(response.Usage)}
-	if response.StopReason == llmprotocol.StopSequence {
+	if response.StopReason == llmprotocol.StopSequence && !refusal {
 		wire.StopSequence = &response.MatchedStopSequence
 	}
 	if refusal && usageUnavailable(response.Usage) {

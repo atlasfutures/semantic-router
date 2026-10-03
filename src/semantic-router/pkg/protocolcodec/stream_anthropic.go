@@ -695,7 +695,7 @@ func (encoder *anthropicStreamEncoder) encodeAnthropicCompletion(
 		stop = encodeAnthropicStop(llmprotocol.StopContentFilter)
 	}
 	deltaWire := &anthropicDeltaWire{Type: "message_delta", StopReason: &stop}
-	if event.StopReason == llmprotocol.StopSequence {
+	if event.StopReason == llmprotocol.StopSequence && !refusal {
 		deltaWire.StopSequence = &event.MatchedStopSequence
 	}
 	delta := anthropicEventWire{Type: "message_delta", Delta: deltaWire, Usage: encodeAnthropicMessageDeltaUsage(*event.Usage)}

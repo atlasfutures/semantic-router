@@ -632,3 +632,23 @@ func TestRefusalWithoutUsageReachesMessagesAsARefusal(t *testing.T) {
 		t.Fatalf("an answered turn = %s, %v", translated.Body, err)
 	}
 }
+
+// A refusal that overrides a stop-sequence stop carries no stop_sequence:
+// Messages allows one only beside stop_reason "stop_sequence".
+func TestRefusalOverridingAStopSequenceDropsTheSequence(t *testing.T) {
+	text := "matched"
+	response := llmprotocol.Response{
+		ID: "r1", Model: "m", StopReason: llmprotocol.StopSequence, MatchedStopSequence: text,
+		Output: []llmprotocol.OutputItem{{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentRefusal, Text: "no"}}}},
+	}
+	body, _, err := AnthropicMessagesCodec{}.EncodeResponse(response, llmprotocol.Envelope{Format: llmprotocol.OpenAIChatV1}, llmprotocol.DefaultPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(body, []byte(`"stop_reason":"refusal"`)) || !bytes.Contains(body, []byte(`"stop_sequence":null`)) {
+		t.Fatalf("refusal over a stop sequence = %s", body)
+	}
+	if _, err := NewBuiltinEngine().TranslateResponse(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1, body, nil); err != nil {
+		t.Fatalf("not a valid Messages response: %v", err)
+	}
+}
