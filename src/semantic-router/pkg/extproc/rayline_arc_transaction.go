@@ -152,10 +152,15 @@ func newRelaxedRaylineARCEpisodeTransaction(
 // resend dispatches under. It reads like the first copy's prepared one, so the
 // resend renders the same controls and ledger, and finalizes to nothing.
 func newBorrowedRaylineARCEpisodeTransaction(
+	store raylinearc.EpisodeStore,
 	state *raylinearc.EpisodeState,
 	episodeIDHash string,
 ) *raylineARCEpisodeTransaction {
 	return &raylineARCEpisodeTransaction{
+		// The store is held only so a refused resend can clear the boundary
+		// decision that chose the refusing arm; a borrowed turn writes nothing
+		// else.
+		store:         store,
 		state:         state,
 		episodeIDHash: episodeIDHash,
 		borrowed:      true,

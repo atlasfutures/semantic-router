@@ -39,10 +39,13 @@ type semanticResponseStreamState struct {
 }
 
 type semanticStreamItem struct {
-	id           string
-	role         llmprotocol.Role
-	text         string
-	refusal      string
+	id      string
+	role    llmprotocol.Role
+	text    string
+	refusal string
+	// refused records a refusal part even when its text is empty, so the
+	// reconstructed response still says the model refused.
+	refused      bool
 	reasoning    string
 	reasoningSig string
 	toolCall     *llmprotocol.ToolCall
@@ -305,11 +308,15 @@ func (state *semanticResponseStreamState) observe(events []llmprotocol.Event) {
 			if event.Content != nil && event.Content.Kind == llmprotocol.ContentReasoning {
 				item.reasoningSig = event.Content.Signature
 			}
+			if event.Content != nil && event.Content.Kind == llmprotocol.ContentRefusal {
+				item.refused = true
+			}
 			item.observeCarried(event.Content)
 		case llmprotocol.EventOutputTextDelta:
 			item := state.item(event.ItemIndex)
 			if event.Content != nil && event.Content.Kind == llmprotocol.ContentRefusal {
 				item.refusal += event.Delta
+				item.refused = true
 			} else {
 				item.text += event.Delta
 			}
@@ -410,7 +417,7 @@ func (state *semanticResponseStreamState) response() (*llmprotocol.Response, err
 				Signature: item.reasoningSig,
 			})
 		}
-		if item.refusal != "" {
+		if item.refusal != "" || item.refused {
 			contents = append(contents, llmprotocol.Content{Kind: llmprotocol.ContentRefusal, Text: item.refusal})
 		}
 		if item.text != "" {

@@ -60,8 +60,11 @@ func declineRefusedTurn(ctx *RequestContext) {
 // a failure leaves the retry to reuse the decision, as before.
 func (transaction *raylineARCEpisodeTransaction) clearRefusedBoundary(ctx context.Context, arm int) {
 	if transaction == nil || transaction.state == nil || transaction.state.PolicyBoundary == nil ||
-		transaction.state.PolicyBoundary.Arm != arm ||
-		transaction.borrowed || transaction.sideCall || transaction.stateless {
+		transaction.state.PolicyBoundary.Arm != arm || transaction.sideCall || transaction.stateless {
+		return
+	}
+	if transaction.borrowed {
+		transaction.clearBorrowedRefusedBoundary(ctx, arm)
 		return
 	}
 	cleared := cloneARCState(transaction.state)
@@ -88,4 +91,33 @@ func (transaction *raylineARCEpisodeTransaction) clearRefusedBoundary(ctx contex
 	}
 	transaction.state = cleared
 	metrics.RecordRaylineARCEpisodeTransaction("boundary_cleared", selectionOutcomeRefusal)
+}
+
+// clearBorrowedRefusedBoundary clears the boundary decision for a coalesced
+// resend that was refused. The resend holds no lease: the request that
+// decided owns it, and if that request failed it aborted and kept the
+// decision, so the only refusal would otherwise leave the retry on the
+// refusing arm. The resend takes the lease briefly itself, and clears the
+// decision only if it still chose the refused arm. A lease still held means
+// the deciding request is running, and its own outcome decides.
+func (transaction *raylineARCEpisodeTransaction) clearBorrowedRefusedBoundary(parent context.Context, arm int) {
+	stager, ok := transaction.store.(raylinearc.EpisodeStateStager)
+	if !ok || transaction.store == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, relaxedBoundaryStageTimeout)
+	defer cancel()
+	lease, current, err := transaction.store.Prepare(ctx, transaction.episodeIDHash, len(transaction.state.Warmth))
+	if err != nil {
+		return
+	}
+	defer func() { _ = transaction.store.Abort(context.Background(), lease) }()
+	if current == nil || current.PolicyBoundary == nil || current.PolicyBoundary.Arm != arm {
+		return
+	}
+	cleared := cloneARCState(current)
+	cleared.PolicyBoundary = nil
+	if stager.Stage(ctx, lease, cleared) == nil {
+		metrics.RecordRaylineARCEpisodeTransaction("boundary_cleared", selectionOutcomeRefusal)
+	}
 }

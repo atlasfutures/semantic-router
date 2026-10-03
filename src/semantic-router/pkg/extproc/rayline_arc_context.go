@@ -403,7 +403,7 @@ func (r *OpenAIRouter) prepareOrJoinRaylineARCTurn(
 			}
 			continue
 		}
-		reqCtx.RaylineARCTransaction = newBorrowedRaylineARCEpisodeTransaction(state, episodeIDHash)
+		reqCtx.RaylineARCTransaction = newBorrowedRaylineARCEpisodeTransaction(store, state, episodeIDHash)
 		bindRaylineARCSelectionTransaction(reqCtx)
 		logging.ComponentEvent("extproc", "rayline_arc_selection_coalesced", map[string]interface{}{})
 		return state, decided, ""
