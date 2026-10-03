@@ -93,8 +93,24 @@ type RaylineARCPolicyServiceConfig struct {
 	// its action's is refused. Required for v5; a v4 binding declares its
 	// model itself.
 	TrainedModels map[string]string `yaml:"trained_models,omitempty"`
+	// Fallback serves around an arm that failed (ADR 0120): a model that
+	// refused a turn is excluded for the rest of its context, and the next
+	// turn decides again among the rest. Off by default, so an evaluation cell
+	// serves exactly what the policy chose and a refusal stays a failure, as
+	// in collection.
+	Fallback *RaylineARCPolicyFallbackConfig `yaml:"fallback,omitempty"`
 
 	packageV5 *raylineARCPolicyPackageV5
+}
+
+// RaylineARCPolicyFallbackConfig switches ADR 0120's fallback on for a cell.
+type RaylineARCPolicyFallbackConfig struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+// FallbackEnabled reports whether the cell serves around failed arms.
+func (cfg *RaylineARCPolicyServiceConfig) FallbackEnabled() bool {
+	return cfg != nil && cfg.Fallback != nil && cfg.Fallback.Enabled
 }
 
 // Dispatch effort modes; see RaylineARCPolicyServiceConfig.DispatchEffort.
