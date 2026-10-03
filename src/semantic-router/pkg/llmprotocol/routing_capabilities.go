@@ -7,9 +7,8 @@ package llmprotocol
 // this format express this request at all. It fails an encode. A routing
 // capability fails no encode: the target format can carry the rest of the
 // request perfectly well, and dropping the feature produces a body a provider
-// accepts and answers wrongly. A tool result that held a screenshot becomes an
-// empty tool result; a declared web search becomes no web search. The turn
-// succeeds and the answer is built on less than the caller sent.
+// accepts and answers wrongly: a declared web search becomes no web search.
+// The turn succeeds and the answer is built on less than the caller sent.
 //
 // So the decision belongs before the encode, at model selection: only an arm
 // that holds the capability is eligible. When no arm holds it the cell answers
@@ -23,9 +22,13 @@ const (
 	// not covered: the codec writes its schema out for any target, so a
 	// Chat arm serves it without holding anything.
 	RoutingCapabilityServerTools = "server_tools"
-	// RoutingCapabilityToolResultImages covers an image inside a tool result.
-	// Reading a PNG produces one, and so does any MCP tool that returns an
-	// image.
+	// RoutingCapabilityToolResultImages named an image inside a tool result.
+	// It is no longer derived: every encoder now carries tool-result media
+	// (Messages and Responses natively, Chat by moving it to a user message
+	// after the tool messages, see codec_openai_chat_tool_result_media.go), so
+	// no target drops it. What such a turn still needs is image input, and the
+	// vision gate already reads images nested in a tool result. The name stays
+	// so a model card that declares it still loads.
 	RoutingCapabilityToolResultImages = "tool_result_images"
 	// RoutingCapabilityCitationsGeneration is reserved for the response side:
 	// an arm that can produce the citation spans a request asked for. Nothing
@@ -41,9 +44,6 @@ func RequiredRoutingCapabilities(request Request) []string {
 	if declaresServerTool(request.Tools) {
 		required = append(required, RoutingCapabilityServerTools)
 	}
-	if carriesToolResultMedia(request) {
-		required = append(required, RoutingCapabilityToolResultImages)
-	}
 	return required
 }
 
@@ -51,39 +51,6 @@ func declaresServerTool(tools []Tool) bool {
 	for _, tool := range tools {
 		if tool.ServerTool() {
 			return true
-		}
-	}
-	return false
-}
-
-func carriesToolResultMedia(request Request) bool {
-	for _, instruction := range request.Instructions {
-		if contentCarriesToolResultMedia(instruction.Content) {
-			return true
-		}
-	}
-	for _, message := range request.Messages {
-		if contentCarriesToolResultMedia(message.Content) {
-			return true
-		}
-	}
-	return false
-}
-
-// contentCarriesToolResultMedia reports whether a tool result holds a part
-// that is not text. A carried block is not counted here: it belongs to the
-// source contract, is re-emitted only to that contract, and appendCarriedBlockDrops
-// counts it as a drop on any other target -- which it now does for a block
-// inside a tool result, not only for one beside it.
-func contentCarriesToolResultMedia(contents []Content) bool {
-	for _, content := range contents {
-		if content.Kind != ContentToolResult || content.ToolResult == nil {
-			continue
-		}
-		for _, nested := range content.ToolResult.Content {
-			if nested.Kind != ContentText && nested.Kind != ContentUnmodeled {
-				return true
-			}
 		}
 	}
 	return false
