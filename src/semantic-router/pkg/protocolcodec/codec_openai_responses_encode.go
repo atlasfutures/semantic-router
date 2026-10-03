@@ -309,7 +309,25 @@ func encodeResponsesMessage(message llmprotocol.Message, textDirection string) (
 	if err := state.flushReasoning(); err != nil {
 		return nil, err
 	}
+	state.keepMessageIDOnTheMessage()
 	return state.items, nil
+}
+
+// keepMessageIDOnTheMessage gives the message id back to the message item
+// when reasoning precedes it on output. The first item takes the id by
+// position, and with reasoning ordered before text that item is the
+// reasoning, which would leave the provider's message under a generated id.
+func (state *responsesMessageEncodingState) keepMessageIDOnTheMessage() {
+	if state.textDirection != "output" || state.messageID == "" ||
+		len(state.items) == 0 || state.items[0].Type != "reasoning" {
+		return
+	}
+	for index := range state.items {
+		if state.items[index].Type == "message" {
+			state.items[0].ID, state.items[index].ID = state.items[index].ID, state.items[0].ID
+			return
+		}
+	}
 }
 
 type responsesMessageEncodingState struct {
