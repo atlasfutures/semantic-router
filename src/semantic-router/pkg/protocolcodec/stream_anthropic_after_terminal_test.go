@@ -65,10 +65,12 @@ func TestAnthropicStreamToleratesFramesThatCannotAddToACompleteMessage(t *testin
 		t.Fatalf("usage after a restating late delta: %+v, %v", response.Usage, err)
 	}
 	for name, trailer := range map[string]string{
-		"content block": "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
-		"new counts":    "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":12}}\n\n",
-		"a charge":      "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":null},\"usage\":{\"output_tokens\":9,\"cost\":0.0042}}\n\n",
-		"another stop":  "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n",
+		"content block":   "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+		"new counts":      "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":12}}\n\n",
+		"a charge":        "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":null},\"usage\":{\"output_tokens\":9,\"cost\":0.0042}}\n\n",
+		"another stop":    "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n",
+		"a stop sequence": "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":\"END\"},\"usage\":{\"output_tokens\":9}}\n\n",
+		"usage_source":    "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":9},\"usage_source\":\"unknown\"}\n\n",
 	} {
 		stream, err := NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIResponsesV1,
 			llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
@@ -80,5 +82,20 @@ func TestAnthropicStreamToleratesFramesThatCannotAddToACompleteMessage(t *testin
 		if !strings.Contains(err.Error(), "after message_stop") {
 			t.Fatalf("%s: the error does not say where: %v", name, err)
 		}
+	}
+}
+
+// A terminal message_delta whose usage a Router marked unknown, repeated
+// exactly after message_stop, is a restatement like any other.
+func TestAnthropicStreamToleratesARepeatedUnknownUsageDelta(t *testing.T) {
+	unknown := "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":0},\"usage_source\":\"unknown\"}\n\n"
+	stream := strings.Replace(anthropicCompleteToolUseStream,
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":9}}\n\n", unknown, 1)
+	if stream == anthropicCompleteToolUseStream {
+		t.Fatal("the fixture did not take the unknown-usage delta")
+	}
+	if _, _, err := NewBuiltinEngine().DecodeResponseStream(llmprotocol.AnthropicMessagesV1, []byte(stream+unknown),
+		llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"}); err != nil {
+		t.Fatalf("a repeated unknown-usage delta failed the stream: %v", err)
 	}
 }

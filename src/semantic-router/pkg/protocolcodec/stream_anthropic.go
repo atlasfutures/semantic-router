@@ -32,9 +32,9 @@ type anthropicStreamDecoder struct {
 	// is dropped), otherwise the provider's evidence, applied before the
 	// next usage or terminal event so nothing it stated is lost.
 	pendingStartUsage *llmprotocol.Usage
-	// deltaUsage is the usage JSON of the last message_delta before
+	// terminalDelta is the JSON of the last message_delta before
 	// message_stop: a late message_delta that restates it adds nothing.
-	deltaUsage json.RawMessage
+	terminalDelta json.RawMessage
 }
 type anthropicStreamEncoder struct {
 	streamState
@@ -308,6 +308,7 @@ func anthropicUsageUncommitted(wire anthropicUsageWire) bool {
 func (decoder *anthropicStreamDecoder) decodeAnthropicMessageDelta(
 	wire anthropicEventWire,
 ) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	decoder.terminalDelta = append(json.RawMessage(nil), decoder.data...)
 	if err := decoder.observeAnthropicStop(wire.Delta); err != nil {
 		return nil, nil, err
 	}
@@ -327,12 +328,6 @@ func (decoder *anthropicStreamDecoder) decodeAnthropicMessageDelta(
 	}
 	if wire.Usage == nil {
 		return nil, diagnostics, nil
-	}
-	var raw struct {
-		Usage json.RawMessage `json:"usage"`
-	}
-	if json.Unmarshal(decoder.data, &raw) == nil {
-		decoder.deltaUsage = raw.Usage
 	}
 	usage := decodeAnthropicMessageDeltaUsage(*wire.Usage)
 	events, eventDiagnostics, err := decoder.emitAnthropicEvent(llmprotocol.Event{Type: llmprotocol.EventUsageUpdated, Usage: &usage})
@@ -924,24 +919,13 @@ func boundedEventName(name string) string {
 	return string(out)
 }
 
-// lateDeltaRestates reports whether a message_delta after message_stop says
-// nothing new: no stop reason other than the one recorded, and no usage, or
-// the same usage the terminal message_delta stated.
+// lateDeltaRestates reports whether a message_delta after message_stop is
+// the terminal message_delta again, as parsed JSON: its stop reason, matched
+// stop sequence, usage and usage_source all as already published. Any
+// difference is evidence the stream can no longer carry.
 func (decoder *anthropicStreamDecoder) lateDeltaRestates(data []byte) bool {
-	var late struct {
-		Delta *anthropicDeltaWire `json:"delta"`
-		Usage json.RawMessage     `json:"usage"`
-	}
-	if json.Unmarshal(data, &late) != nil {
-		return false
-	}
-	if late.Delta != nil && late.Delta.StopReason != nil && decodeAnthropicStop(*late.Delta.StopReason) != decoder.stop {
-		return false
-	}
-	if !hasJSONValue(late.Usage) {
-		return true
-	}
-	var stated, restated any
-	return json.Unmarshal(decoder.deltaUsage, &stated) == nil && json.Unmarshal(late.Usage, &restated) == nil &&
-		reflect.DeepEqual(stated, restated)
+	var late, terminal any
+	return len(decoder.terminalDelta) > 0 &&
+		json.Unmarshal(data, &late) == nil && json.Unmarshal(decoder.terminalDelta, &terminal) == nil &&
+		reflect.DeepEqual(late, terminal)
 }
