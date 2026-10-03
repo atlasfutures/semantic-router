@@ -273,10 +273,34 @@ func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) erro
 		if err != nil {
 			return err
 		}
+		if foldChatReasoningDetailsMessage(wire.Messages, &encoded) {
+			wire.Messages[len(wire.Messages)-1] = encoded
+			continue
+		}
 		wire.Messages = append(wire.Messages, encoded)
 	}
 	flushToolMedia()
 	return nil
+}
+
+// foldChatReasoningDetailsMessage moves an assistant message that holds only
+// reasoning (with reasoning_details) onto the assistant message that follows
+// it. A Responses history keeps reasoning as its own item, before the
+// function_call it led to; OpenRouter reads reasoning_details off the
+// assistant message whose tool calls they belong to (a Gemini thought
+// signature names its tool call), so on Chat they travel together. It reports
+// whether next now replaces the last message.
+func foldChatReasoningDetailsMessage(messages []chatMessageWire, next *chatMessageWire) bool {
+	if len(messages) == 0 || next.Role != "assistant" || next.Reasoning != nil || len(next.ReasoningDetails) > 0 {
+		return false
+	}
+	previous := messages[len(messages)-1]
+	if previous.Role != "assistant" || len(previous.ReasoningDetails) == 0 || len(previous.Content) > 0 ||
+		len(previous.ToolCalls) > 0 || previous.Refusal != nil || len(previous.Annotations) > 0 {
+		return false
+	}
+	next.Reasoning, next.ReasoningDetails = previous.Reasoning, previous.ReasoningDetails
+	return true
 }
 
 // splitChatToolResultMedia takes the images out of a tool message's result. It
@@ -433,7 +457,7 @@ func (state *chatMessageEncodingState) appendContent(content llmprotocol.Content
 	case llmprotocol.ContentRefusal:
 		return appendChatTextField(&state.wire.Refusal, content)
 	case llmprotocol.ContentReasoning:
-		return appendChatTextField(&state.wire.Reasoning, content)
+		return state.appendReasoning(content)
 	case llmprotocol.ContentImage:
 		return state.appendImage(content)
 	case llmprotocol.ContentAudio:
@@ -459,6 +483,25 @@ func (state *chatMessageEncodingState) appendContent(content llmprotocol.Content
 		return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_content", "content cannot be encoded as chat", nil)
 	}
 	return nil
+}
+
+// appendReasoning writes reasoning text as reasoning_content and the
+// reasoning_details an OpenRouter upstream returned beside it, which a Chat
+// target (and a Chat client) gets back unchanged. A content that holds only
+// reasoning_details writes no reasoning text.
+func (state *chatMessageEncodingState) appendReasoning(content llmprotocol.Content) error {
+	details, carrierOnly := reasoningDetailsOf(content)
+	if details != nil {
+		joined, err := concatReasoningDetails(state.wire.ReasoningDetails, details)
+		if err != nil {
+			return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_reasoning_details", "reasoning_details cannot be encoded", err)
+		}
+		state.wire.ReasoningDetails = joined
+		if carrierOnly {
+			return nil
+		}
+	}
+	return appendChatTextField(&state.wire.Reasoning, content)
 }
 
 func appendChatTextField(target **string, content llmprotocol.Content) error {

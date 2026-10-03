@@ -1,0 +1,169 @@
+{
+  "cases": [
+    {
+      "name": "pi_reasoning_details_replay",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "You are a coding agent.",
+                  "type": "input_text"
+                }
+              ],
+              "role": "developer",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "weather in Paris?",
+                  "type": "input_text"
+                }
+              ],
+              "role": "user",
+              "type": "message"
+            },
+            {
+              "arguments": "{\"city\":\"Paris\"}",
+              "call_id": "call_1",
+              "name": "weather",
+              "type": "function_call"
+            },
+            {
+              "call_id": "call_1",
+              "output": [
+                {
+                  "text": "sunny",
+                  "type": "input_text"
+                }
+              ],
+              "type": "function_call_output"
+            }
+          ],
+          "max_output_tokens": 32000,
+          "model": "routed-model",
+          "reasoning": {
+            "effort": "high"
+          },
+          "store": false,
+          "stream": true,
+          "tool_choice": "auto",
+          "tools": [
+            {
+              "name": "weather",
+              "parameters": {
+                "type": "object"
+              },
+              "type": "function"
+            }
+          ]
+        },
+        "diagnostics": [
+          {
+            "field": "content.reasoning_details",
+            "action": "dropped"
+          }
+        ]
+      }
+    },
+    {
+      "name": "prompt_cache_key_and_retention",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "hi",
+                  "type": "input_text"
+                }
+              ],
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "prompt_cache_key",
+            "action": "dropped"
+          },
+          {
+            "field": "prompt_cache_retention",
+            "action": "dropped"
+          }
+        ]
+      }
+    },
+    {
+      "name": "openrouter_reasoning_object",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "hi",
+                  "type": "input_text"
+                }
+              ],
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "max_output_tokens": 4096,
+          "model": "routed-model",
+          "reasoning": {
+            "effort": "high"
+          }
+        },
+        "diagnostics": [
+          {
+            "field": "reasoning.exclude",
+            "action": "dropped"
+          }
+        ]
+      }
+    },
+    {
+      "name": "openrouter_reasoning_effort_only",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "hi",
+                  "type": "input_text"
+                }
+              ],
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "model": "routed-model",
+          "reasoning": {
+            "effort": "medium"
+          }
+        }
+      }
+    },
+    {
+      "name": "conflicting_reasoning_effort",
+      "outcome": {
+        "status": "error",
+        "error": {
+          "category": "invalid_request",
+          "code": "conflicting_reasoning_controls"
+        }
+      }
+    }
+  ]
+}

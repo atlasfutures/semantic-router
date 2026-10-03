@@ -311,6 +311,9 @@ func (encoder *responsesStreamEncoder) encodeResponsesReasoningDelta(
 	// The Responses event model has no signature delta; the signature rides
 	// the finished reasoning item (encodeCompletedResponsesContent).
 	encoder.recordReasoningSignature(event)
+	if frames, handled, err := encoder.stashResponsesReasoningDetails(event); handled || err != nil {
+		return frames, diagnostics, err
+	}
 	key := contentKey(event)
 	encoder.encodedKinds[key] = llmprotocol.ContentReasoning
 	reasoningScope := eventReasoningScope(event)
@@ -623,6 +626,11 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesContent(
 			item.EncryptedContent = encrypted
 		}
 	}
+	if outputKey.kind == responsesOutputReasoning && len(item.EncryptedContent) == 0 {
+		if details := encoder.reasoningDetails[outputKey]; details != nil {
+			item.EncryptedContent = mintReasoningDetails(details)
+		}
+	}
 	if signature := encoder.reasoningSignatures[event.ItemIndex]; outputKey.kind == responsesOutputReasoning && signature != "" {
 		item.Signature, item.ReasoningFormat = signature, responsesAnthropicReasoningFormat
 	}
@@ -633,4 +641,47 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesContent(
 	encoder.recordResponsesCompletedOutput(index, wire.Item)
 	done, err := encoder.encodeResponsesStreamFrame(wire)
 	return append(frames, done), nil, err
+}
+
+// stashResponsesReasoningDetails keeps the reasoning_details fragments an
+// OpenRouter Chat stream sends, merged per reasoning output, so the output's
+// done event can give a Responses client the whole array as its
+// encrypted_content. A fragment with no reasoning text beside it opens the
+// reasoning output and nothing else: handled reports that the event needs no
+// further encoding.
+func (encoder *responsesStreamEncoder) stashResponsesReasoningDetails(
+	event llmprotocol.Event,
+) ([][]byte, bool, error) {
+	if event.Content == nil {
+		return nil, false, nil
+	}
+	fragment, _ := reasoningDetailsOf(*event.Content)
+	if fragment == nil {
+		return nil, false, nil
+	}
+	outputKey := responsesOutputKey{item: event.ItemIndex, kind: responsesOutputReasoning}
+	if encoder.reasoningDetails == nil {
+		encoder.reasoningDetails = make(map[responsesOutputKey]json.RawMessage)
+	}
+	merged, err := mergeReasoningDetailsFragment(encoder.reasoningDetails[outputKey], fragment)
+	if err != nil {
+		return nil, true, llmprotocol.NewError(
+			llmprotocol.ErrorUpstreamUnavailable, "invalid_reasoning_details",
+			"upstream stream sent malformed reasoning_details", err,
+		)
+	}
+	encoder.reasoningDetails[outputKey] = merged
+	if event.Delta != "" {
+		return nil, false, nil
+	}
+	// The content position is claimed for reasoning, so completion closes it
+	// as reasoning (as it does an encrypted-only Responses reasoning item),
+	// but no part is opened until text arrives.
+	key := contentKey(event)
+	encoder.encodedKinds[key] = llmprotocol.ContentReasoning
+	if encoder.reasoningScopes[key] == "" {
+		encoder.reasoningScopes[key] = eventReasoningScope(event)
+	}
+	frames, _, err := encoder.ensureResponsesOutputStarted(event, responsesOutputReasoning)
+	return frames, true, err
 }

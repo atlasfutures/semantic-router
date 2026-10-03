@@ -55,6 +55,9 @@ type anthropicStreamEncoder struct {
 	// refused records that refusal content reached the client, so the turn
 	// ends as one: stop_reason "refusal" is how Messages marks refusal text.
 	refused bool
+	// reasoningDetailsDropped records that the turn's reasoning_details drop
+	// was reported, so it is reported once rather than per fragment.
+	reasoningDetailsDropped bool
 }
 
 func (encoder *anthropicStreamEncoder) SetTruncationUsage(usage *llmprotocol.Usage, source string) {
@@ -611,17 +614,32 @@ func (encoder *anthropicStreamEncoder) encodeAnthropicItemStartEvent(
 func (encoder *anthropicStreamEncoder) encodeAnthropicReasoningDelta(
 	event llmprotocol.Event,
 ) ([][]byte, llmprotocol.Diagnostics, error) {
+	var diagnostics llmprotocol.Diagnostics
+	if event.Content != nil && !encoder.reasoningDetailsDropped {
+		// Messages has no member for reasoning_details, as on the buffered
+		// path (encodeAnthropicResponse).
+		if details, _ := reasoningDetailsOf(*event.Content); details != nil {
+			encoder.reasoningDetailsDropped = true
+			appendUnmodeledDrop(&diagnostics, encoder.policy, encoder.context.Source, encoder.context.Target, "content.reasoning_details")
+		}
+	}
+	if event.Delta == "" && (event.Content == nil || event.Content.Signature == "") {
+		// Nothing a thinking block can show: a reasoning_details fragment with
+		// no text (an encrypted blob, an OpenRouter signature). Opening a block
+		// for it would hand the client an empty thinking block to replay.
+		return nil, diagnostics, nil
+	}
 	frames, key, err := encoder.ensureAnthropicBlockStarted(event, llmprotocol.ContentReasoning)
 	if err != nil {
-		return nil, nil, err
+		return nil, diagnostics, err
 	}
 	blockIndex := encoder.blockIndexes[key]
 	frames, err = appendAnthropicReasoningText(frames, blockIndex, event.Delta)
 	if err != nil {
-		return nil, nil, err
+		return nil, diagnostics, err
 	}
 	frames, err = appendAnthropicReasoningSignature(frames, blockIndex, event.Content)
-	return frames, nil, err
+	return frames, diagnostics, err
 }
 
 func appendAnthropicReasoningText(frames [][]byte, blockIndex int, text string) ([][]byte, error) {

@@ -238,9 +238,8 @@ func (OpenAIResponsesCodec) DecodeRequest(body []byte, policy llmprotocol.Policy
 	if err := rejectUnsupportedRequestFields(map[string]json.RawMessage{
 		"background": wire.Background, "context_management": wire.ContextManagement,
 		"max_tool_calls": wire.MaxToolCalls, "moderation": wire.Moderation,
-		"prompt":                 wire.Prompt,
-		"prompt_cache_retention": wire.PromptCacheRetention,
-		"prompt_cache_options":   wire.PromptCacheOptions, "safety_identifier": wire.SafetyIdentifier,
+		"prompt":               wire.Prompt,
+		"prompt_cache_options": wire.PromptCacheOptions, "safety_identifier": wire.SafetyIdentifier,
 		"service_tier": requestedServiceTier(wire.ServiceTier),
 		"top_logprobs": wire.TopLogprobs,
 	}); err != nil {
@@ -326,10 +325,10 @@ func validateResponsesClientMembers(wire responsesRequestWire) error {
 			return invalid("include")
 		}
 	}
-	var text string
-	if hasJSONValue(wire.PromptCacheKey) && json.Unmarshal(wire.PromptCacheKey, &text) != nil {
-		return invalid("prompt_cache_key")
+	if err := validateClientCacheMembers("Responses", wire.PromptCacheKey, wire.PromptCacheRetention); err != nil {
+		return err
 	}
+	var text string
 	if wire.Reasoning != nil && hasJSONValue(wire.Reasoning.Summary) && json.Unmarshal(wire.Reasoning.Summary, &text) != nil {
 		return invalid("reasoning.summary")
 	}
@@ -359,6 +358,7 @@ func carryResponsesClientMembers(carrier *llmprotocol.UnmodeledFields, wire resp
 	}
 	carrier = carry(carrier, "include", wire.Include)
 	carrier = carry(carrier, "prompt_cache_key", wire.PromptCacheKey)
+	carrier = carry(carrier, "prompt_cache_retention", wire.PromptCacheRetention)
 	if wire.Reasoning != nil && hasJSONValue(wire.Reasoning.Summary) {
 		if carrier == nil {
 			carrier = &llmprotocol.UnmodeledFields{Format: llmprotocol.OpenAIResponsesV1}
@@ -638,4 +638,43 @@ func decodeResponsesConversation(raw json.RawMessage) (string, error) {
 		return "", llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_conversation", "conversation must be an ID or object with an ID", nil)
 	}
 	return object.ID, nil
+}
+
+// carryClientMember adds one top-level client member to the request carrier
+// of a format, creating the carrier when the request had none.
+func carryClientMember(
+	carrier *llmprotocol.UnmodeledFields,
+	format llmprotocol.WireFormat,
+	name string,
+	value json.RawMessage,
+) *llmprotocol.UnmodeledFields {
+	if !hasJSONValue(value) {
+		return carrier
+	}
+	if carrier == nil {
+		carrier = &llmprotocol.UnmodeledFields{Format: format}
+	}
+	if carrier.Fields == nil {
+		carrier.Fields = map[string]json.RawMessage{}
+	}
+	carrier.Fields[name] = append(json.RawMessage(nil), value...)
+	return carrier
+}
+
+// validateClientCacheMembers checks the shapes OpenAI defines for the two
+// prompt-cache members a client may send: both are strings.
+func validateClientCacheMembers(surface string, key, retention json.RawMessage) error {
+	members := []struct {
+		field string
+		value json.RawMessage
+	}{{"prompt_cache_key", key}, {"prompt_cache_retention", retention}}
+	for _, member := range members {
+		field, value := member.field, member.value
+		var text string
+		if hasJSONValue(value) && json.Unmarshal(value, &text) != nil {
+			return llmprotocol.NewFieldError(llmprotocol.ErrorInvalidRequest, "invalid_"+field,
+				surface+" "+field+" has the wrong type", "", field)
+		}
+	}
+	return nil
 }

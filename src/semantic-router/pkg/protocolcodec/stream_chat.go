@@ -104,6 +104,7 @@ type chatChunkDeltaWire struct {
 	Content            *string                 `json:"content,omitempty"`
 	Reasoning          *string                 `json:"reasoning_content,omitempty"`
 	AlternateReasoning *string                 `json:"reasoning,omitempty"`
+	ReasoningDetails   json.RawMessage         `json:"reasoning_details,omitempty"`
 	Refusal            *string                 `json:"refusal,omitempty"`
 	Audio              *chatAudioOutputWire    `json:"audio,omitempty"`
 	LegacyFunctionCall *chatLegacyCallWire     `json:"function_call,omitempty"`
@@ -360,6 +361,7 @@ func (decoder *chatStreamDecoder) decodeChoiceTextEvents(choice chatChunkChoiceW
 func chatChunkDeltaIsEmpty(delta chatChunkDeltaWire) bool {
 	return emptyChatDeltaText(delta.Content) && emptyChatDeltaText(delta.Reasoning) &&
 		emptyChatDeltaText(delta.AlternateReasoning) && emptyChatDeltaText(delta.Refusal) &&
+		!chatDeltaHasReasoningDetails(delta) &&
 		delta.Audio == nil && delta.LegacyFunctionCall == nil &&
 		len(delta.ToolCalls) == 0 && len(delta.Annotations) == 0
 }
@@ -411,7 +413,15 @@ func reportChangedFinishReason(first, trailing llmprotocol.StopReason) {
 func chatChoiceNeedsItem(choice chatChunkChoiceWire) bool {
 	return !emptyChatDeltaText(choice.Delta.Content) || len(choice.Delta.Annotations) > 0 ||
 		!emptyChatDeltaText(choice.Delta.Reasoning) || !emptyChatDeltaText(choice.Delta.AlternateReasoning) ||
-		choice.Delta.Refusal != nil
+		chatDeltaHasReasoningDetails(choice.Delta) || choice.Delta.Refusal != nil
+}
+
+// chatDeltaHasReasoningDetails reports whether a delta carries a non-empty
+// reasoning_details fragment. A malformed one is not model output and is
+// treated as absent.
+func chatDeltaHasReasoningDetails(delta chatChunkDeltaWire) bool {
+	details, valid := decodeReasoningDetailsArray(delta.ReasoningDetails)
+	return valid && details != nil
 }
 
 type chatEventFactory func() ([]llmprotocol.Event, error)
@@ -438,21 +448,34 @@ func (decoder *chatStreamDecoder) decodeContentDelta(choice chatChunkChoiceWire)
 	return []llmprotocol.Event{event}, err
 }
 
+// decodeReasoningDelta reads a chunk's reasoning text and its
+// reasoning_details fragment into one reasoning delta. A fragment with no text
+// beside it -- a signature, an encrypted blob -- is a delta with no text,
+// as an Anthropic signature_delta is.
 func (decoder *chatStreamDecoder) decodeReasoningDelta(choice chatChunkChoiceWire) ([]llmprotocol.Event, error) {
 	reasoning := choice.Delta.Reasoning
 	if emptyChatDeltaText(reasoning) {
 		reasoning = choice.Delta.AlternateReasoning
 	}
-	if emptyChatDeltaText(reasoning) {
+	var details json.RawMessage
+	if chatDeltaHasReasoningDetails(choice.Delta) {
+		details, _ = decodeReasoningDetailsArray(choice.Delta.ReasoningDetails)
+	}
+	if emptyChatDeltaText(reasoning) && details == nil {
 		return nil, nil
 	}
+	text := ""
+	if !emptyChatDeltaText(reasoning) {
+		text = *reasoning
+	}
 	content := llmprotocol.Content{
-		Kind: llmprotocol.ContentReasoning, Text: *reasoning, Reasoning: llmprotocol.ReasoningScopeText,
+		Kind: llmprotocol.ContentReasoning, Text: text, Reasoning: llmprotocol.ReasoningScopeText,
+		Extensions: reasoningDetailsFields(details),
 	}
 	event, err := decoder.next(llmprotocol.Event{
 		Type: llmprotocol.EventReasoningDelta, ItemIndex: choice.Index,
 		ContentIndex: decoder.chatContentIndex(choice.Index, llmprotocol.ContentReasoning),
-		Delta:        *reasoning, Content: &content,
+		Delta:        text, Content: &content,
 	})
 	return []llmprotocol.Event{event}, err
 }
@@ -676,6 +699,14 @@ func (encoder *chatStreamEncoder) applyChatReasoningDelta(
 	diagnostics, err := encoder.reasoningDiagnostics(event)
 	if err != nil {
 		return diagnostics, false, err
+	}
+	if event.Content != nil {
+		if details, _ := reasoningDetailsOf(*event.Content); details != nil {
+			choice.Delta.ReasoningDetails = details
+			if event.Delta == "" {
+				return diagnostics, true, nil
+			}
+		}
 	}
 	choice.Delta.Reasoning = &event.Delta
 	return diagnostics, true, nil

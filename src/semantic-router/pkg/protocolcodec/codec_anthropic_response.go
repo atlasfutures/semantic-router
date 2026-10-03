@@ -209,8 +209,15 @@ func (AnthropicMessagesCodec) EncodeResponse(response llmprotocol.Response, enve
 			return nil, diagnostics, err
 		}
 	}
+	output := withoutResponsesOnlyOutput(response.Output)
+	if outputHoldsReasoningDetails(output) {
+		// Messages has no member for reasoning_details: the reasoning text
+		// is kept, the details are not, and a carrier with no text is
+		// removed whole.
+		appendUnmodeledDrop(&diagnostics, policy, envelope.Format, llmprotocol.AnthropicMessagesV1, "content.reasoning_details")
+	}
 	contents := make([]llmprotocol.Content, 0)
-	for _, item := range withoutResponsesOnlyOutput(response.Output) {
+	for _, item := range withoutReasoningDetailsCarriers(output) {
 		contents = append(contents, item.Content...)
 	}
 	if refusal {

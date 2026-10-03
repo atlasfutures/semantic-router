@@ -1,0 +1,134 @@
+{
+  "status": "ok",
+  "body": {
+    "frames": [
+      {
+        "data": {
+          "choices": [
+            {
+              "delta": {
+                "role": "assistant"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "id": "gen-3",
+          "model": "public-model",
+          "object": "chat.completion.chunk"
+        },
+        "event": ""
+      },
+      {
+        "data": {
+          "choices": [
+            {
+              "delta": {
+                "reasoning_content": "Check the weather",
+                "reasoning_details": [
+                  {
+                    "format": "anthropic-claude-v1",
+                    "index": 0,
+                    "text": "Check the weather",
+                    "type": "reasoning.text"
+                  }
+                ]
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "id": "gen-3",
+          "model": "public-model",
+          "object": "chat.completion.chunk"
+        },
+        "event": ""
+      },
+      {
+        "data": {
+          "choices": [
+            {
+              "delta": {
+                "reasoning_content": " tool first.",
+                "reasoning_details": [
+                  {
+                    "format": "anthropic-claude-v1",
+                    "index": 0,
+                    "text": " tool first.",
+                    "type": "reasoning.text"
+                  }
+                ]
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "id": "gen-3",
+          "model": "public-model",
+          "object": "chat.completion.chunk"
+        },
+        "event": ""
+      },
+      {
+        "data": {
+          "choices": [
+            {
+              "delta": {
+                "reasoning_details": [
+                  {
+                    "format": "anthropic-claude-v1",
+                    "index": 0,
+                    "signature": "sig-anthropic-1",
+                    "type": "reasoning.text"
+                  }
+                ]
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "id": "gen-3",
+          "model": "public-model",
+          "object": "chat.completion.chunk"
+        },
+        "event": ""
+      },
+      {
+        "data": {
+          "choices": [
+            {
+              "delta": {
+                "content": "It is sunny."
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "id": "gen-3",
+          "model": "public-model",
+          "object": "chat.completion.chunk"
+        },
+        "event": ""
+      },
+      {
+        "data": {
+          "choices": [
+            {
+              "delta": {},
+              "finish_reason": "stop",
+              "index": 0
+            }
+          ],
+          "id": "gen-3",
+          "model": "public-model",
+          "object": "chat.completion.chunk"
+        },
+        "event": ""
+      },
+      {
+        "data": "[DONE]",
+        "event": ""
+      }
+    ]
+  }
+}

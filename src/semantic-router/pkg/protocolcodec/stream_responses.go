@@ -92,6 +92,9 @@ type responsesStreamEncoder struct {
 	contentCitations       map[streamContentKey][]llmprotocol.Citation
 	completedOutput        map[int]json.RawMessage
 	imageProgressCompleted map[responsesOutputKey]bool
+	// reasoningDetails holds, per reasoning output, the reasoning_details an
+	// OpenRouter Chat stream sent; see stashResponsesReasoningDetails.
+	reasoningDetails map[responsesOutputKey]json.RawMessage
 	// reasoningSignatures holds each neutral item's Anthropic thinking
 	// signature until the item's reasoning output is done.
 	reasoningSignatures map[int]string

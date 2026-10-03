@@ -252,6 +252,7 @@ func (AnthropicMessagesCodec) EncodeRequest(request llmprotocol.Request, envelop
 		return nil, diagnostics, encodeErr
 	}
 	appendCarriedToolDrops(&diagnostics, request, llmprotocol.AnthropicMessagesV1, policy)
+	appendReasoningDetailsDrops(&diagnostics, request.Messages, llmprotocol.AnthropicMessagesV1, policy)
 	body, encodeErr = mergeUnmodeledFields(body, request, llmprotocol.AnthropicMessagesV1, &diagnostics, policy)
 	if encodeErr != nil {
 		return body, diagnostics, encodeErr
@@ -628,6 +629,12 @@ func encodeAnthropicContent(contents []llmprotocol.Content) (json.RawMessage, er
 			if carried, kept := carriedBlockBytes(content, llmprotocol.AnthropicMessagesV1); kept {
 				blocks = append(blocks, carried)
 			}
+			continue
+		}
+		if _, carrierOnly := reasoningDetailsOf(content); carrierOnly {
+			// An OpenRouter reasoning_details array with no thinking text:
+			// Anthropic has no block that holds it (cross-family replay is
+			// router-infra#95), and an empty thinking block is not one to send.
 			continue
 		}
 		block, err := encodeAnthropicContentBlock(content)

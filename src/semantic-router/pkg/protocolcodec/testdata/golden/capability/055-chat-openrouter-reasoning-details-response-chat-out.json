@@ -1,0 +1,86 @@
+{
+  "cases": [
+    {
+      "name": "signed_reasoning_text",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "It is sunny.",
+                "reasoning_content": "Check the weather tool first.",
+                "reasoning_details": [
+                  {
+                    "format": "anthropic-claude-v1",
+                    "index": 0,
+                    "signature": "sig-anthropic-1",
+                    "text": "Check the weather tool first.",
+                    "type": "reasoning.text"
+                  }
+                ],
+                "role": "assistant"
+              }
+            }
+          ],
+          "created": 100,
+          "id": "gen-1",
+          "model": "routed-model",
+          "object": "chat.completion",
+          "usage": {
+            "completion_tokens": 7,
+            "prompt_tokens": 5,
+            "total_tokens": 12
+          }
+        }
+      }
+    },
+    {
+      "name": "encrypted_only_tool_call",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "choices": [
+            {
+              "finish_reason": "tool_calls",
+              "index": 0,
+              "message": {
+                "reasoning_details": [
+                  {
+                    "data": "gemini-thought-signature",
+                    "format": "google-gemini-v1",
+                    "id": "call_1",
+                    "index": 0,
+                    "type": "reasoning.encrypted"
+                  }
+                ],
+                "role": "assistant",
+                "tool_calls": [
+                  {
+                    "function": {
+                      "arguments": "{\"city\":\"Paris\"}",
+                      "name": "weather"
+                    },
+                    "id": "call_1",
+                    "type": "function"
+                  }
+                ]
+              }
+            }
+          ],
+          "created": 100,
+          "id": "gen-2",
+          "model": "routed-model",
+          "object": "chat.completion",
+          "usage": {
+            "completion_tokens": 7,
+            "prompt_tokens": 5,
+            "total_tokens": 12
+          }
+        }
+      }
+    }
+  ]
+}

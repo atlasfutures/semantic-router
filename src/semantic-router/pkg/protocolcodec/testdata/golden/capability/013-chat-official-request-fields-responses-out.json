@@ -255,11 +255,28 @@
     {
       "name": "prompt_cache_key",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_prompt_cache_key"
-        }
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "input_text"
+                }
+              ],
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "prompt_cache_key",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {
@@ -274,16 +291,6 @@
     },
     {
       "name": "prompt_cache_retention",
-      "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_prompt_cache_retention"
-        }
-      }
-    },
-    {
-      "name": "reasoning",
       "outcome": {
         "status": "ok",
         "body": {
@@ -300,6 +307,22 @@
             }
           ],
           "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "prompt_cache_retention",
+            "action": "dropped"
+          }
+        ]
+      }
+    },
+    {
+      "name": "reasoning",
+      "outcome": {
+        "status": "error",
+        "error": {
+          "category": "unsupported_feature",
+          "code": "unsupported_capability"
         }
       }
     },

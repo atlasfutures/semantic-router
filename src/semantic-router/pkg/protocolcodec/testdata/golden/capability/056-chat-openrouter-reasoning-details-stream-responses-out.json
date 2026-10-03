@@ -1,0 +1,262 @@
+{
+  "status": "ok",
+  "body": {
+    "frames": [
+      {
+        "data": {
+          "response": {
+            "created_at": 0,
+            "error": null,
+            "id": "gen-3",
+            "incomplete_details": null,
+            "instructions": null,
+            "metadata": {},
+            "model": "public-model",
+            "object": "response",
+            "output": [],
+            "parallel_tool_calls": true,
+            "status": "in_progress",
+            "temperature": null,
+            "tool_choice": "auto",
+            "tools": [],
+            "top_p": null
+          },
+          "sequence_number": 0,
+          "type": "response.created"
+        },
+        "event": "response.created"
+      },
+      {
+        "data": {
+          "response": {
+            "created_at": 0,
+            "error": null,
+            "id": "gen-3",
+            "incomplete_details": null,
+            "instructions": null,
+            "metadata": {},
+            "model": "public-model",
+            "object": "response",
+            "output": [],
+            "parallel_tool_calls": true,
+            "status": "in_progress",
+            "temperature": null,
+            "tool_choice": "auto",
+            "tools": [],
+            "top_p": null
+          },
+          "sequence_number": 1,
+          "type": "response.in_progress"
+        },
+        "event": "response.in_progress"
+      },
+      {
+        "data": {
+          "item": {
+            "id": "item_24dfdd4ec359eba62dc04b4a",
+            "status": "in_progress",
+            "summary": [],
+            "type": "reasoning"
+          },
+          "output_index": 0,
+          "sequence_number": 2,
+          "type": "response.output_item.added"
+        },
+        "event": "response.output_item.added"
+      },
+      {
+        "data": {
+          "content_index": 0,
+          "delta": "Check the weather",
+          "item_id": "item_24dfdd4ec359eba62dc04b4a",
+          "output_index": 0,
+          "sequence_number": 3,
+          "type": "response.reasoning_text.delta"
+        },
+        "event": "response.reasoning_text.delta"
+      },
+      {
+        "data": {
+          "content_index": 0,
+          "delta": " tool first.",
+          "item_id": "item_24dfdd4ec359eba62dc04b4a",
+          "output_index": 0,
+          "sequence_number": 4,
+          "type": "response.reasoning_text.delta"
+        },
+        "event": "response.reasoning_text.delta"
+      },
+      {
+        "data": {
+          "item": {
+            "content": [],
+            "id": "item_bd36b1a687e4a284a7319d74",
+            "role": "assistant",
+            "status": "in_progress",
+            "type": "message"
+          },
+          "output_index": 1,
+          "sequence_number": 5,
+          "type": "response.output_item.added"
+        },
+        "event": "response.output_item.added"
+      },
+      {
+        "data": {
+          "content_index": 0,
+          "item_id": "item_bd36b1a687e4a284a7319d74",
+          "output_index": 1,
+          "part": {
+            "annotations": [],
+            "text": "",
+            "type": "output_text"
+          },
+          "sequence_number": 6,
+          "type": "response.content_part.added"
+        },
+        "event": "response.content_part.added"
+      },
+      {
+        "data": {
+          "content_index": 0,
+          "delta": "It is sunny.",
+          "item_id": "item_bd36b1a687e4a284a7319d74",
+          "output_index": 1,
+          "sequence_number": 7,
+          "type": "response.output_text.delta"
+        },
+        "event": "response.output_text.delta"
+      },
+      {
+        "data": {
+          "content_index": 0,
+          "item_id": "item_24dfdd4ec359eba62dc04b4a",
+          "output_index": 0,
+          "sequence_number": 8,
+          "text": "Check the weather tool first.",
+          "type": "response.reasoning_text.done"
+        },
+        "event": "response.reasoning_text.done"
+      },
+      {
+        "data": {
+          "item": {
+            "content": [
+              {
+                "text": "Check the weather tool first.",
+                "type": "reasoning_text"
+              }
+            ],
+            "encrypted_content": "vsr.reasoning_details.v1.W3siZm9ybWF0IjoiYW50aHJvcGljLWNsYXVkZS12MSIsImluZGV4IjowLCJzaWduYXR1cmUiOiJzaWctYW50aHJvcGljLTEiLCJ0ZXh0IjoiQ2hlY2sgdGhlIHdlYXRoZXIgdG9vbCBmaXJzdC4iLCJ0eXBlIjoicmVhc29uaW5nLnRleHQifV0",
+            "id": "item_24dfdd4ec359eba62dc04b4a",
+            "status": "completed",
+            "summary": [],
+            "type": "reasoning"
+          },
+          "output_index": 0,
+          "sequence_number": 9,
+          "type": "response.output_item.done"
+        },
+        "event": "response.output_item.done"
+      },
+      {
+        "data": {
+          "content_index": 0,
+          "item_id": "item_bd36b1a687e4a284a7319d74",
+          "output_index": 1,
+          "sequence_number": 10,
+          "text": "It is sunny.",
+          "type": "response.output_text.done"
+        },
+        "event": "response.output_text.done"
+      },
+      {
+        "data": {
+          "content_index": 0,
+          "item_id": "item_bd36b1a687e4a284a7319d74",
+          "output_index": 1,
+          "part": {
+            "annotations": [],
+            "text": "It is sunny.",
+            "type": "output_text"
+          },
+          "sequence_number": 11,
+          "type": "response.content_part.done"
+        },
+        "event": "response.content_part.done"
+      },
+      {
+        "data": {
+          "item": {
+            "content": [
+              {
+                "annotations": [],
+                "text": "It is sunny.",
+                "type": "output_text"
+              }
+            ],
+            "id": "item_bd36b1a687e4a284a7319d74",
+            "role": "assistant",
+            "status": "completed",
+            "type": "message"
+          },
+          "output_index": 1,
+          "sequence_number": 12,
+          "type": "response.output_item.done"
+        },
+        "event": "response.output_item.done"
+      },
+      {
+        "data": {
+          "response": {
+            "created_at": 0,
+            "error": null,
+            "id": "gen-3",
+            "incomplete_details": null,
+            "instructions": null,
+            "metadata": {},
+            "model": "public-model",
+            "object": "response",
+            "output": [
+              {
+                "content": [
+                  {
+                    "text": "Check the weather tool first.",
+                    "type": "reasoning_text"
+                  }
+                ],
+                "encrypted_content": "vsr.reasoning_details.v1.W3siZm9ybWF0IjoiYW50aHJvcGljLWNsYXVkZS12MSIsImluZGV4IjowLCJzaWduYXR1cmUiOiJzaWctYW50aHJvcGljLTEiLCJ0ZXh0IjoiQ2hlY2sgdGhlIHdlYXRoZXIgdG9vbCBmaXJzdC4iLCJ0eXBlIjoicmVhc29uaW5nLnRleHQifV0",
+                "id": "item_24dfdd4ec359eba62dc04b4a",
+                "status": "completed",
+                "summary": [],
+                "type": "reasoning"
+              },
+              {
+                "content": [
+                  {
+                    "annotations": [],
+                    "text": "It is sunny.",
+                    "type": "output_text"
+                  }
+                ],
+                "id": "item_bd36b1a687e4a284a7319d74",
+                "role": "assistant",
+                "status": "completed",
+                "type": "message"
+              }
+            ],
+            "parallel_tool_calls": true,
+            "status": "completed",
+            "temperature": null,
+            "tool_choice": "auto",
+            "tools": [],
+            "top_p": null
+          },
+          "sequence_number": 13,
+          "type": "response.completed"
+        },
+        "event": "response.completed"
+      }
+    ]
+  }
+}
