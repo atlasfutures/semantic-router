@@ -51,9 +51,6 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 			return r.bodyPhaseErrorResponse(ctx, 502, "The selected model returned an incompatible response")
 		}
 	}
-	if responseRefused(semanticResponse) {
-		recordTurnFailure(ctx, turnFailureRefusal, contentBeforeRefusal(semanticResponse))
-	}
 	// The usage line is written once the turn's outcome is known: after the
 	// commit gate below, which classes a policy turn that can no longer
 	// commit, or before a response check returns early.
@@ -117,6 +114,11 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 			return response
 		}
 		deferSelectionCompletion(ctx, func() { r.updateResponseCache(ctx, clientBody) })
+	}
+	// A refusal is classed only once no response check blocked it, so one
+	// turn is one failure.
+	if responseRefused(semanticResponse) && ctx.ResponseFailureClass == "" {
+		recordTurnFailure(ctx, turnFailureRefusal, contentBeforeRefusal(semanticResponse))
 	}
 	reportUsage()
 

@@ -117,13 +117,15 @@ func (r *OpenAIRouter) reportNonStreamingUsage(
 		latency.UpdateTPOT(ctx.RequestModel, timePerToken)
 	}
 
+	// A call the backend failed counts against it in the load-balancing
+	// window; a refusal or the cell's own failure does not.
 	metrics.RecordModelWindowedRequest(
 		ctx.RequestModel,
 		completionLatency.Seconds(),
 		int64(usage.promptTokens),
 		int64(usage.completionTokens),
-		false,
-		false,
+		turnFailureIsBackendError(ctx.ResponseFailureClass),
+		ctx.ResponseFailureClass == turnFailureTimeout,
 	)
 	replayUsage := r.recordResponseCost(ctx, completionLatency, usage)
 	r.updateRouterReplayUsageCost(ctx, replayUsage)

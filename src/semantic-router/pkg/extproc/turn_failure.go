@@ -159,3 +159,16 @@ func selectionTurnFailureClass(internal string) string {
 		return publicSelectionFailureClass(internal)
 	}
 }
+
+// turnFailureIsBackendError reports a class that says the backend failed the
+// call, which is what the load-balancing window counts as an error. A
+// refusal, a blocked reply and the cell's own failures are not.
+func turnFailureIsBackendError(class string) bool {
+	switch class {
+	case turnFailureRateLimited, turnFailureUpstream5xx, turnFailureTimeout,
+		turnFailureNoEndpoint, turnFailureUpstreamError, turnFailureStreamCut:
+		return true
+	default:
+		return false
+	}
+}

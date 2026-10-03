@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/headers"
 )
 
 // handleResponseHeaders processes the response headers.
@@ -56,6 +58,14 @@ func (r *OpenAIRouter) emptySuccessResponse(
 		return nil
 	}
 	recordTurnFailureDetail(ctx, turnFailureUpstreamError, "empty_response", false)
+	// The usual header-phase bookkeeping still runs: the span ends, and the
+	// replay and learning records see the status.
+	finishUpstreamResponseSpan(ctx, outcome)
+	r.updateRouterReplayStatus(ctx, outcome.statusCode, ctx.IsStreamingResponse)
+	r.observeRouterLearningProviderStatus(ctx, outcome.statusCode)
 	r.reportFailedCallUsage(ctx)
-	return r.createErrorResponse(http.StatusBadGateway, "The selected model returned an empty response")
+	response := r.createErrorResponse(http.StatusBadGateway, "The selected model returned an empty response")
+	// It names the arm that failed, as every upstream error does.
+	appendImmediateHeader(response, headers.VSRSelectedModel, ctx.VSRSelectedModel)
+	return response
 }
