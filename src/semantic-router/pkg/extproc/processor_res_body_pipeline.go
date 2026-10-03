@@ -54,18 +54,19 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	if responseRefused(semanticResponse) {
 		recordTurnFailure(ctx, turnFailureRefusal, contentBeforeRefusal(semanticResponse))
 	}
-	// A policy-service turn that can no longer commit is the cell's
-	// failure. It is checked before the usage line is written, so that line
-	// carries the class; the reply fails below, after the response checks.
-	var commitGateErr error
-	if selectionCommitsOnCompletion(ctx) && !refused {
-		if commitGateErr = selectionCompletionCommittable(ctx); commitGateErr != nil {
-			recordTurnFailure(ctx, selectionFailureUnavailable, false)
+	// The usage line is written once the turn's outcome is known: after the
+	// commit gate below, which classes a policy turn that can no longer
+	// commit, or before a response check returns early.
+	usageReported := false
+	reportUsage := func() {
+		if usageReported {
+			return
 		}
+		usageReported = true
+		usage = r.takeNeutralResponseUsage(ctx)
+		r.reportNonStreamingUsage(ctx, completionLatency, usage)
+		r.calibrateTokenEstimator(ctx, usage.promptTokens)
 	}
-	usage = r.takeNeutralResponseUsage(ctx)
-	r.reportNonStreamingUsage(ctx, completionLatency, usage)
-	r.calibrateTokenEstimator(ctx, usage.promptTokens)
 
 	// A turn that commits at completion caches its reply only once the turn
 	// is recorded: a reply cached before a failed commit would serve the
@@ -85,9 +86,11 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	// evidence in Router Replay as a delivered one.
 	r.recordRouterReplayResponseJailbreak(ctx)
 	if jailbreakResponse != nil {
+		reportUsage()
 		return jailbreakResponse
 	}
 	if hallucinationResponse := r.performSemanticHallucinationDetection(ctx, semanticResponse); hallucinationResponse != nil {
+		reportUsage()
 		return hallucinationResponse
 	}
 
@@ -98,8 +101,13 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	// A refused turn (declined above) is delivered but never recorded, and
 	// never cached.
 	if cacheAfterCommit && !refused {
-		if commitGateErr != nil {
-			recordSelectionLifecycleFailure(ctx, "response_complete", commitGateErr)
+		if err := selectionCompletionCommittable(ctx); err != nil {
+			recordSelectionLifecycleFailure(ctx, "response_complete", err)
+			// The cell failed the turn, not the arm: the reply arrived but its
+			// turn can no longer be recorded. Checked after every response
+			// check, so a lease lost while they ran is still caught.
+			recordTurnFailure(ctx, selectionFailureUnavailable, false)
+			reportUsage()
 			response := r.bodyPhaseErrorResponse(ctx, http.StatusServiceUnavailable, selectionUnavailableMessage(ctx))
 			// The class header survives the cell's response scrub, so a
 			// gateway can tell this cell failure from an arm's.
@@ -108,6 +116,7 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 		}
 		deferSelectionCompletion(ctx, func() { r.updateResponseCache(ctx, clientBody) })
 	}
+	reportUsage()
 
 	r.scheduleSemanticResponseMemoryStore(ctx, semanticResponse)
 	r.markUnverifiedFactualResponse(ctx)
