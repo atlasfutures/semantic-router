@@ -279,10 +279,13 @@ func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) erro
 	return nil
 }
 
-// splitChatToolResultMedia takes the media out of a tool message's result. It
-// returns the message with the text alone, saying where the media went when
-// the result held nothing else, and the media as user-message parts led by a
-// line naming the call they came from.
+// splitChatToolResultMedia takes the images out of a tool message's result. It
+// returns the message with the rest alone, saying where the images went when
+// the result held no text, and the images as user-message parts led by a line
+// naming the call they came from. Only images move: an arm's
+// tool_result_images claim says its model takes image input, which says
+// nothing about a document or audio, so those stay where they were and fail
+// the encode as before.
 func splitChatToolResultMedia(message llmprotocol.Message) (llmprotocol.Message, []chatContentWire, error) {
 	if len(message.Content) != 1 || message.Content[0].Kind != llmprotocol.ContentToolResult || message.Content[0].ToolResult == nil {
 		return message, nil, nil
@@ -296,25 +299,25 @@ func splitChatToolResultMedia(message llmprotocol.Message) (llmprotocol.Message,
 		case llmprotocol.ContentText:
 			kept = append(kept, part)
 			hasText = true
-		case llmprotocol.ContentUnmodeled:
-			kept = append(kept, part)
-		default:
-			if err := mediaState.appendContent(part); err != nil {
+		case llmprotocol.ContentImage:
+			if err := mediaState.appendImage(part); err != nil {
 				return message, nil, err
 			}
+		default:
+			kept = append(kept, part)
 		}
 	}
 	if len(mediaState.parts) == 0 {
 		return message, nil, nil
 	}
 	if !hasText {
-		kept = append(kept, llmprotocol.Content{Kind: llmprotocol.ContentText, Text: "The tool returned media; it follows in the next user message."})
+		kept = append(kept, llmprotocol.Content{Kind: llmprotocol.ContentText, Text: "The tool returned images; they follow in the next user message."})
 	}
 	result.Content = kept
 	content := message.Content[0]
 	content.ToolResult = &result
 	message.Content = []llmprotocol.Content{content}
-	label := chatContentWire{Type: "text", Text: "Media returned by tool call " + result.CallID + ":"}
+	label := chatContentWire{Type: "text", Text: "Images returned by tool call " + result.CallID + ":"}
 	return message, append([]chatContentWire{label}, mediaState.parts...), nil
 }
 

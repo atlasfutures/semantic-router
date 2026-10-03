@@ -72,7 +72,7 @@ func TestChatEncodeMovesToolResultMediaAfterTheToolMessages(t *testing.T) {
 		tools[message.ToolCallID] = string(message.Content)
 	}
 	if !strings.Contains(tools["call_a"], "a.png, 1x1") || strings.Contains(tools["call_a"], "image_url") ||
-		!strings.Contains(tools["call_c"], "follows in the next user message") || !strings.Contains(tools["call_b"], "plain text") {
+		!strings.Contains(tools["call_c"], "follow in the next user message") || !strings.Contains(tools["call_b"], "plain text") {
 		t.Fatalf("tool messages = %v", tools)
 	}
 	media := string(wire.Messages[5].Content)
@@ -200,4 +200,27 @@ func TestChatEncodeKeepsToolMessagesTogetherAcrossADroppedBlock(t *testing.T) {
 	if got := strings.Join(roles, ","); got != "user:,assistant:,tool:call_a,tool:call_b,user:" {
 		t.Fatalf("messages = %s (decoded %d messages)", got, len(decoded.Messages))
 	}
+}
+
+// Only images move: an arm's tool_result_images claim says its model takes
+// images, not documents, so a document in a tool result still fails the
+// Chat encode as it always did.
+func TestChatEncodeMovesOnlyImagesOutOfToolResults(t *testing.T) {
+	request := []byte(`{
+		"model":"m","max_tokens":16,
+		"messages":[
+			{"role":"user","content":"read it"},
+			{"role":"assistant","content":[{"type":"tool_use","id":"call_a","name":"read","input":{}}]},
+			{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_a","content":[
+				{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"JVBERi0="}}
+			]}]}
+		]
+	}`)
+	engine := NewBuiltinEngine()
+	decoded, _, _, err := engine.DecodeRequest(llmprotocol.AnthropicMessagesV1, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = engine.EncodeRequest(llmprotocol.OpenAIChatV1, decoded, llmprotocol.Envelope{})
+	assertProtocolError(t, err, llmprotocol.ErrorUnsupportedFeature, "tool_result_media")
 }
