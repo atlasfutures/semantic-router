@@ -160,3 +160,75 @@ func TestRaylineARCRelaxedRefusalClearIsBounded(t *testing.T) {
 		t.Fatalf("relaxed refusal clear took %v, want about %v", elapsed, relaxedBoundaryStageTimeout)
 	}
 }
+
+// A refusal part with empty text, ended by an ordinary stop, is still a
+// refusal: the reduced stream keeps the refusal, and the turn commits
+// nothing. Control: the same stream carrying text commits.
+func TestRaylineARCEmptyStreamedRefusalCommitsNothing(t *testing.T) {
+	for _, kind := range []llmprotocol.ContentKind{llmprotocol.ContentRefusal, llmprotocol.ContentText} {
+		store, episode := newLedgerTestStore(t)
+		runLedgerTestTurn(t, store, episode, func(router *OpenAIRouter, ctx *RequestContext) {
+			sendHeaders(t, router, ctx, streamingResponseHeaders("200"))
+			delta := ""
+			if kind == llmprotocol.ContentText {
+				delta = "hi"
+			}
+			state := &semanticResponseStreamState{items: map[int]*semanticStreamItem{}}
+			state.observe([]llmprotocol.Event{
+				{Type: llmprotocol.EventOutputItemStarted, ItemIndex: 0, Role: llmprotocol.RoleAssistant, Content: &llmprotocol.Content{Kind: kind}},
+				{Type: llmprotocol.EventOutputTextDelta, ItemIndex: 0, Delta: delta, Content: &llmprotocol.Content{Kind: kind}},
+				{Type: llmprotocol.EventOutputItemCompleted, ItemIndex: 0},
+				{Type: llmprotocol.EventResponseCompleted, StopReason: llmprotocol.StopEndTurn},
+			})
+			if _, err := state.response(); err != nil {
+				t.Fatalf("%s: the stream does not reconstruct: %v", kind, err)
+			}
+			ctx.SemanticStreamState = state
+			router.finalizeSemanticStreamingResponse(ctx, nil)
+			runPendingSelectionCompletion(ctx)
+		})
+		state := readLedgerTestState(t, store, episode)
+		if committed := state.TurnIndex == 1; committed == (kind == llmprotocol.ContentRefusal) {
+			t.Fatalf("%s: turn=%d", kind, state.TurnIndex)
+		}
+	}
+}
+
+// A coalesced resend that was refused clears the boundary decision even
+// though the request that decided failed and kept it. Control: a resend
+// that was not refused leaves it. And while the deciding request still holds
+// the lease, the resend gives up within the relaxed bound.
+func TestRaylineARCRefusedCoalescedResendClearsTheBoundaryArm(t *testing.T) {
+	for _, refusal := range []bool{true, false} {
+		fixture, store, episode := boundaryFixture(t)
+		leader, decided := boundaryAttempt(t, fixture, store, episode,
+			policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"}))
+		if err := leader.RaylineARCTransaction.abort(context.Background(), "upstream_status"); err != nil {
+			t.Fatal(err)
+		}
+		staged := readLedgerTestState(t, store, episode)
+		follower := &RequestContext{
+			RaylineARCTransaction: newBorrowedRaylineARCEpisodeTransaction(store, staged, episode),
+			VSRRaylineARC:         decided.RaylineARC,
+		}
+		if refusal {
+			declineRefusedTurn(follower)
+		}
+		if cleared := readLedgerTestState(t, store, episode).PolicyBoundary == nil; cleared != refusal {
+			t.Fatalf("refusal=%v: boundary cleared=%v", refusal, cleared)
+		}
+	}
+	fixture, store, episode := boundaryFixture(t)
+	leader, decided := boundaryAttempt(t, fixture, store, episode,
+		policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"}))
+	follower := &RequestContext{
+		RaylineARCTransaction: newBorrowedRaylineARCEpisodeTransaction(store, leader.RaylineARCTransaction.state, episode),
+		VSRRaylineARC:         decided.RaylineARC,
+	}
+	started := time.Now()
+	declineRefusedTurn(follower)
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("a refused resend waited %v on the leader's lease", elapsed)
+	}
+	_ = leader.RaylineARCTransaction.abort(context.Background(), "test")
+}
