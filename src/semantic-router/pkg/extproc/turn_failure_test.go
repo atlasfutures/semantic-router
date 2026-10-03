@@ -4,6 +4,7 @@ package extproc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -142,6 +143,58 @@ func TestSelectionFailureTurnClasses(t *testing.T) {
 		}
 		if header := immediateHeaderValue(response, selectionFailureHeader); header != want[1] {
 			t.Errorf("%s: header %q, want %s", internal, header, want[1])
+		}
+	}
+}
+
+// The cell's commit gate (a reply whose turn can no longer be recorded)
+// says the cell failed, in the header that survives the cell's scrub.
+// Control: the same reply whose turn commits carries no failure class.
+func TestCommitGateNamesTheCellFailure(t *testing.T) {
+	for _, commitFails := range []bool{true, false} {
+		_, router, decision := statusCacheRouter()
+		store, episode := newLedgerTestStore(t)
+		lease, state, err := store.Prepare(context.Background(), episode, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := withSelectedDecision(&RequestContext{
+			RequestID: "req-gate", RequestModel: "test", RequestQuery: "hello",
+			SemanticRequest: testNeutralRequest("test", "hello"),
+			SourceFormat:    llmprotocol.OpenAIChatV1, TargetFormat: llmprotocol.OpenAIChatV1,
+			TraceContext: context.Background(), UpstreamStatusCode: 200,
+			RaylineARCTransaction: newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil),
+		}, decision)
+		ctx.RaylineARCTransaction.commitOnCompletion = true
+		ctx.RaylineARCTransaction.markSelection(0, 10)
+		if commitFails {
+			ctx.RaylineARCTransaction.leaseLost.Store(true)
+		}
+		bindRaylineARCSelectionTransaction(ctx)
+		response := router.handleNonStreamingResponseBody([]byte(arcCacheTestCompletion), ctx, time.Second)
+		header := immediateHeaderValue(response, selectionFailureHeader)
+		if (header == selectionFailureUnavailable) != commitFails || (commitFails && ctx.ResponseFailureClass != selectionFailureUnavailable) {
+			t.Fatalf("commit fails=%v: header %q, class %q", commitFails, header, ctx.ResponseFailureClass)
+		}
+		finalizeSelectionProcessTerminal(ctx)
+	}
+}
+
+// A downgraded refusal's body names the turn's failure class beside its
+// error, since its 200 status and its headers cannot. A body that is not a
+// JSON object, and a turn with no class, travel unchanged.
+func TestDowngradedRefusalBodyNamesTheFailureClass(t *testing.T) {
+	marked := withFailureClass([]byte(`{"type":"error","error":{"type":"api_error","message":"busy"}}`), selectionFailureUnavailable)
+	var body map[string]any
+	if err := json.Unmarshal(marked, &body); err != nil || body["failure_class"] != selectionFailureUnavailable || body["error"] == nil {
+		t.Fatalf("marked body = %s", marked)
+	}
+	for _, unchanged := range []struct{ body, class string }{
+		{"event: error\ndata: {}\n\n", selectionFailureUnavailable},
+		{`{"error":{"message":"x"}}`, ""},
+	} {
+		if got := string(withFailureClass([]byte(unchanged.body), unchanged.class)); got != unchanged.body {
+			t.Fatalf("%q with class %q became %q", unchanged.body, unchanged.class, got)
 		}
 	}
 }
