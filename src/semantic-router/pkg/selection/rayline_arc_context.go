@@ -12,6 +12,9 @@ import (
 // algorithm.
 type RaylineARCSelectionContext struct {
 	EpisodeIDHash string
+	// RequestID is the request's correlation id, which joins a decision's
+	// logs to the turn's llm_usage line.
+	RequestID string
 	// Coalesced is the decision an identical in-flight request on this
 	// episode already made. When set, the selector returns it instead of
 	// deciding again: the request is a resend of a turn being decided, not a
@@ -95,6 +98,9 @@ type RaylineARCTrace struct {
 	EncoderLatencyUnknown bool
 	// PolicyNextState is the ledger and epoch to commit with this turn.
 	PolicyNextState *raylinearc.PolicyEpisodeState
+	// PolicyTurnState is the context this turn was decided in, before its
+	// reply: the state a refusal excludes the refusing model in (ADR 0120).
+	PolicyTurnState *raylinearc.PolicyEpisodeState
 	// PolicySideCall marks a call outside the main conversation: it commits
 	// nothing to the episode, neither a turn nor a ledger entry.
 	PolicySideCall bool

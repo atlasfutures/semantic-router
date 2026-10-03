@@ -95,6 +95,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		result.PreparationFailure = "missing_request"
 		return result
 	}
+	result.RequestID = reqCtx.RequestID
 	reqCtx.InjectedFault = requestedFault(algorithm.RaylineARC, reqCtx)
 	rawEpisodeID := strings.TrimSpace(
 		reqCtx.Headers[algorithm.RaylineARC.Episode.IDHeader],
@@ -385,6 +386,9 @@ func (r *OpenAIRouter) prepareOrJoinRaylineARCTurn(
 			}
 			reqCtx.RaylineARCInflight = entry
 			reqCtx.RaylineARCTransaction.inflight = entry
+			if !reqCtx.RaylineARCTransaction.takesHandovers() {
+				entry.refuseHandovers()
+			}
 			reqCtx.RaylineARCTransaction.onFinalize = chainFinalize(
 				reqCtx.RaylineARCTransaction.onFinalize,
 				func() { r.raylineARCInflight.finish(entry) },

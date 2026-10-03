@@ -107,8 +107,15 @@ type raylineARCEpisodeTransaction struct {
 	// processWithContext is what keeps the episode store open.
 	onFinalize func()
 	// inflight is the coalescing entry this turn leads or joined, through
-	// which a refused resend hands its boundary decision to the lease owner.
+	// which a refused resend hands its refusal to the lease owner.
 	inflight *raylineARCInflightEntry
+	// handedOver is a refusal the commit took from inflight and then could
+	// not commit; the abort that follows stages it.
+	handedOver *refusedTurn
+	// leaseReleased is set once the strict lease is given back unwritten: a
+	// refusal classed after that (a provider error's body, read after its
+	// headers aborted the turn) stages through a short lease of its own.
+	leaseReleased atomic.Bool
 }
 
 func newRaylineARCEpisodeTransaction(
@@ -236,6 +243,13 @@ func (transaction *raylineARCEpisodeTransaction) markSelectionWithAffinity(
 	transaction.selectionReady = true
 }
 
+// takesHandovers reports whether this turn, leading a coalesced group, takes a
+// refused resend's hand-over as it finishes: only a strict main turn holds the
+// lease and stages on commit or abort.
+func (transaction *raylineARCEpisodeTransaction) takesHandovers() bool {
+	return transaction != nil && !transaction.relaxed && !transaction.sideCall
+}
+
 // markPolicyState stages the policy-service ledger and epoch this turn
 // commits, or marks the request a side call that commits nothing. It is a
 // no-op outside the policy-service mode.
@@ -247,6 +261,11 @@ func (transaction *raylineARCEpisodeTransaction) markPolicyState(
 		return
 	}
 	transaction.sideCall = transaction.sideCall || sideCall
+	if transaction.sideCall && transaction.inflight != nil {
+		// A side call stages nothing as it finishes, so it takes no
+		// hand-over.
+		transaction.inflight.refuseHandovers()
+	}
 	if next != nil {
 		transaction.policyNext = next.Clone()
 	}
@@ -436,6 +455,15 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			transaction.abortStore(ctx)
 			return
 		}
+		// A coalesced resend refused while this request held the lease
+		// handed its refusal here; it is committed with this turn, as an
+		// abort would stage it.
+		refused := transaction.takeHandedOverRefusal()
+		if refused != nil {
+			if folded, changed := refused.apply(nextState); changed {
+				nextState = folded
+			}
+		}
 		transaction.closeRetainedEncoderSession(
 			ctx,
 			requestContext,
@@ -448,6 +476,8 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			nextState,
 		)
 		if transaction.finalizeErr != nil {
+			// The abort stages the refusal instead.
+			transaction.handedOver = refused
 			transaction.abortStore(ctx)
 			return
 		}
@@ -563,11 +593,12 @@ func (transaction *raylineARCEpisodeTransaction) abort(
 			return
 		}
 		transaction.stopRenewal()
-		transaction.clearHandedOverRefusal(ctx)
+		transaction.applyHandedOverRefusal(ctx)
 		transaction.finalizeErr = transaction.store.Abort(
 			ctx,
 			transaction.lease,
 		)
+		transaction.leaseReleased.Store(true)
 		if errors.Is(transaction.finalizeErr, raylinearc.ErrEpisodeLeaseLost) {
 			transaction.finalizeErr = nil
 		}
@@ -596,8 +627,9 @@ func (transaction *raylineARCEpisodeTransaction) abortStore(
 	defer cancel()
 	// A commit that failed leaves the turn unrecorded, as an abort does, so
 	// a refusal a coalesced resend handed over is cleared here too.
-	transaction.clearHandedOverRefusal(abortContext)
+	transaction.applyHandedOverRefusal(abortContext)
 	_ = transaction.store.Abort(abortContext, transaction.lease)
+	transaction.leaseReleased.Store(true)
 	metrics.RecordRaylineARCEpisodeTransaction("abort", "commit_failure")
 }
 

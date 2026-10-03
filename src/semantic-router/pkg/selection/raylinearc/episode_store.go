@@ -38,7 +38,11 @@ const (
 	// v2 bytes and an older router can still read it -- and an older router
 	// refuses a v3 record by its schema rather than by a field it does not
 	// know.
-	episodeStateSchema   = "rayline.arc.episode-state.v3"
+	episodeStateSchema = "rayline.arc.episode-state.v3"
+	// episodeStateSchemaV4 adds the policy state's exclusions (ADR 0120). It
+	// is written only for an episode that carries one, so every other episode
+	// keeps its v3 bytes and an older router refuses a v4 record by its schema.
+	episodeStateSchemaV4 = "rayline.arc.episode-state.v4"
 	maxFutureClockSkew   = 5 * time.Minute
 	episodeOwnerBytes    = 24
 	maxEpisodeStateBytes = 64 * 1024
@@ -462,6 +466,9 @@ func marshalEpisodeState(
 		wire.SchemaVersion = episodeStateSchema
 		wire.ReasoningProvenance = append([]ReasoningProvenance(nil), state.ReasoningProvenance...)
 	}
+	if state.Policy != nil && len(state.Policy.Exclusions) > 0 {
+		wire.SchemaVersion = episodeStateSchemaV4
+	}
 	owner := state.EncoderOwner
 	visited := append([]string{}, state.EncoderVisitedOwners...)
 	wire.EncoderOwner = &owner
@@ -523,7 +530,12 @@ func decodeEpisodeStateAffinity(
 ) (string, []string, error) {
 	if (wire.Thinking != nil || len(wire.Upstream) > 0 || wire.Policy != nil || len(wire.Controls) > 0 ||
 		len(wire.ReasoningIssuers) > 0 || wire.PolicyBoundary != nil || len(wire.ReasoningProvenance) > 0) !=
-		(wire.SchemaVersion == episodeStateSchema) {
+		(wire.SchemaVersion == episodeStateSchema || wire.SchemaVersion == episodeStateSchemaV4) {
+		return "", nil, errors.New("ARC episode state contract mismatch")
+	}
+	// v4 is exactly the policy-bearing record that carries exclusions.
+	hasExclusions := wire.Policy != nil && len(wire.Policy.Exclusions) > 0
+	if hasExclusions != (wire.SchemaVersion == episodeStateSchemaV4) {
 		return "", nil, errors.New("ARC episode state contract mismatch")
 	}
 	switch wire.SchemaVersion {
@@ -532,7 +544,7 @@ func decodeEpisodeStateAffinity(
 			return "", nil, errors.New("ARC episode state contract mismatch")
 		}
 		return "", nil, nil
-	case episodeStateSchemaV2, episodeStateSchema:
+	case episodeStateSchemaV2, episodeStateSchema, episodeStateSchemaV4:
 		if wire.EncoderOwner == nil || wire.EncoderVisitedOwners == nil ||
 			*wire.EncoderVisitedOwners == nil {
 			return "", nil, errors.New("ARC episode state contract mismatch")

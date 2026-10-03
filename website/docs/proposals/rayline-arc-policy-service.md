@@ -282,6 +282,32 @@ its own turns as side calls, which are not counted, or as compactions. With
 the setting off, the headers are ignored. Either way, none of them is
 forwarded to a provider.
 
+## Fallback
+
+`fallback.enabled` (default false) lets a cell serve around a model that
+refused a turn (ADR 0120, Phase 1a). Leave it off for evaluation cells: they
+serve exactly what the policy chose, and a refusal ends the turn as it did
+in collection.
+
+With it on:
+
+- A refused turn excludes its model, every action of it, for the rest of
+  the context. The next turn is offered only the other models, and a turn
+  the schedule would have held on the excluded model decides again, as at a
+  boundary.
+- The exclusion lasts until the context ends: a compaction or a transcript
+  that stops extending the recorded prefix lifts it. Side calls keep it but
+  are not narrowed by it.
+- When every model is excluded, the turn fails as having no available
+  action. The package's fallback action is one of its own actions, so it is
+  excluded with them.
+- Each decision taken with an exclusion in force is logged as
+  `rayline_arc_fallback_decision`, with the request id, the exclusions, the
+  offered actions, the package's scores and the choice.
+- An episode that holds an exclusion is stored as episode-state v4. A
+  router that predates v4 refuses such a record, so roll every replica of a
+  cell before enabling the fallback on it.
+
 ## Open questions
 
 - A context over encoder capacity is refused, never truncated. Should VSR

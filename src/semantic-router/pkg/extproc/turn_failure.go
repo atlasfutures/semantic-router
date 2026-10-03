@@ -49,6 +49,12 @@ func recordTurnFailureDetail(ctx *RequestContext, class, detail string, contentS
 	if ctx == nil || class == "" {
 		return
 	}
+	if class == turnFailureRefusal && ctx.SelectionSettlement.OutcomeClass != selectionOutcomeRefusal {
+		// A refusal the provider reported as an error, at the status or in
+		// the stream, is declined like a refusal it answered with: the turn
+		// commits nothing and the fallback excludes its model.
+		declineRefusedTurn(ctx)
+	}
 	ctx.ResponseFailureClass = class
 	ctx.ResponseFailureDetail = detail
 	ctx.ContentSentBeforeFailure = &contentSent
