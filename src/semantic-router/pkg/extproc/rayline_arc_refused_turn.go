@@ -58,6 +58,7 @@ func declineRefusedTurn(ctx *RequestContext) {
 		refusal.exclude = refusedModel(ctx)
 		refusal.context = ctx.VSRRaylineARC.PolicyTurnState
 		refusal.decidedFrom = ctx.RaylineARCTransaction.storedPolicy()
+		refusal.committed = ctx.VSRRaylineARC.PolicyNextState
 	}
 	clearContext, cancel := context.WithTimeout(context.Background(), episodeFinalizeTimeout)
 	defer cancel()
@@ -89,6 +90,9 @@ type refusedTurn struct {
 	// retry continues, not in the one it left.
 	context     *raylinearc.PolicyEpisodeState
 	decidedFrom *raylinearc.PolicyEpisodeState
+	// committed is the state this turn would commit had it been answered: a
+	// coalesced copy of it that was answered commits exactly this prefix.
+	committed *raylinearc.PolicyEpisodeState
 }
 
 // storedPolicy is the policy state the transaction read.
@@ -138,9 +142,13 @@ func (refusal refusedTurn) apply(state *raylinearc.EpisodeState) (*raylinearc.Ep
 //   - the store still holds what the turn read: the turn's own context,
 //     keeping what the store excluded since, so a late refusal never lifts a
 //     newer exclusion;
-//   - the store moved on within the turn's context: what it holds now;
-//   - the store holds another context (a compaction or a prefix break since):
-//     nothing, as that context starts with the full offer.
+//   - the store holds this very turn, committed by a coalesced copy that was
+//     answered (the same epoch and the same conversation, by digest): what it
+//     holds now;
+//   - anything else: nothing. The store may hold another context (a
+//     compaction or a prefix break since), or a sibling one a concurrent
+//     relaxed request opened with the same epoch number, and a context starts
+//     with the full offer.
 func (refusal refusedTurn) exclusionBase(stored *raylinearc.PolicyEpisodeState) (*raylinearc.PolicyEpisodeState, bool) {
 	if refusal.context == nil {
 		return stored, true
@@ -154,7 +162,8 @@ func (refusal refusedTurn) exclusionBase(stored *raylinearc.PolicyEpisodeState) 
 		}
 		return base, true
 	}
-	if stored != nil && stored.Epoch == refusal.context.Epoch {
+	if committed := refusal.committed; stored != nil && committed != nil && stored.Epoch == committed.Epoch &&
+		stored.PrefixLen == committed.PrefixLen && stored.PrefixDigest == committed.PrefixDigest {
 		return stored, true
 	}
 	return nil, false
