@@ -91,7 +91,14 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	if cacheAfterCommit && !refused {
 		if err := selectionCompletionCommittable(ctx); err != nil {
 			recordSelectionLifecycleFailure(ctx, "response_complete", err)
-			return r.bodyPhaseErrorResponse(ctx, http.StatusServiceUnavailable, selectionUnavailableMessage(ctx))
+			// The cell failed the turn, not the arm: the reply arrived but its
+			// turn can no longer be recorded.
+			recordTurnFailure(ctx, selectionFailureUnavailable, false)
+			response := r.bodyPhaseErrorResponse(ctx, http.StatusServiceUnavailable, selectionUnavailableMessage(ctx))
+			// The class header survives the cell's response scrub, so a
+			// gateway can tell this cell failure from an arm's.
+			appendImmediateHeader(response, selectionFailureHeader, selectionFailureUnavailable)
+			return response
 		}
 		deferSelectionCompletion(ctx, func() { r.updateResponseCache(ctx, clientBody) })
 	}

@@ -134,7 +134,32 @@ func (r *OpenAIRouter) endResponseWithImmediateBody(
 		ctx.StreamingComplete = true
 	}
 	return buildResponseBodyContinueResponse(
-		responseStreamBodyMutation(ctx, r.clientEncodedRefusal(ctx, immediate), true), nil)
+		responseStreamBodyMutation(ctx, withFailureClass(r.clientEncodedRefusal(ctx, immediate), ctx.ResponseFailureClass), true), nil)
+}
+
+// withFailureClass adds the turn's failure class to a downgraded refusal's
+// JSON body. Its status is already spent as 200 and its headers say
+// "upstream", so the body is the only place a gateway can learn whether the
+// cell or the arm failed the turn: a cell class (unavailable, session_busy,
+// ...) or an arm class. A body that is not a JSON object travels unchanged.
+func withFailureClass(body []byte, class string) []byte {
+	if class == "" {
+		return body
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(body, &object) != nil || object == nil {
+		return body
+	}
+	encodedClass, err := json.Marshal(class)
+	if err != nil {
+		return body
+	}
+	object["failure_class"] = encodedClass
+	marked, err := json.Marshal(object)
+	if err != nil {
+		return body
+	}
+	return marked
 }
 
 // clientEncodedRefusal re-encodes a body-phase refusal for the client.

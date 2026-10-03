@@ -282,6 +282,14 @@ func buildResponseHeaderMutation(
 		builder.addProtocolDiagnostics(ctx, ctx.ProtocolDiagnostics)
 	}
 
+	if !isSuccessful && !ctx.VSRCacheHit {
+		// An upstream error still names the arm that failed. With
+		// x-vsr-failure-class, which only a cell failure sets, it is how a
+		// gateway tells an arm's failure from the cell's: both headers
+		// survive the cell's response scrub, while x-vsr-response-path does
+		// not.
+		builder.addString(headers.VSRSelectedModel, ctx.VSRSelectedModel)
+	}
 	if !isSuccessful || ctx.VSRCacheHit {
 		return builder.mutation()
 	}
