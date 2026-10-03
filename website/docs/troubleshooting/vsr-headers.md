@@ -25,6 +25,16 @@ Decision and matched-signal headers additionally require all of the following:
 
 Cache-hit responses can emit cache headers, but they do not re-run routing and therefore do not attach fresh matched-signal headers.
 
+One exception: an upstream error (a non-`2xx` from the selected backend) also carries `x-vsr-selected-model`, naming the arm that failed. With `x-vsr-failure-class` it tells a gateway who failed a request:
+
+| `x-vsr-failure-class` | `x-vsr-selected-model` | Who failed |
+| --- | --- | --- |
+| present | either | the router's model selection or turn recording (a cell failure) |
+| absent | present | the selected backend (an arm failure) |
+| absent | absent | the router was not reached |
+
+A refusal from a full-duplex response, whose status is already sent as `200`, carries the same failure class as a top-level `failure_class` member of its error body.
+
 ## Request headers
 
 | Header | Direction | Description |
@@ -44,7 +54,7 @@ Cache-hit responses can emit cache headers, but they do not re-run routing and t
 | `x-vsr-upstream-protocol` | Protocol shape sent to the selected upstream backend. Emitted only on cross-protocol handling, or when `x-vsr-debug` is set. |
 | `x-vsr-protocol-warnings` | Comma-separated protocol translation warnings encoded as `severity;reason;field`. Emitted only when warnings exist. |
 | `x-vsr-replay-id` | Opaque router replay record identifier for correlating a response with replay/Insights data. |
-| `x-vsr-failure-class` | Why an authoritative model selection (Rayline ARC) refused the request, and how to react: `session_busy` (429; another request holds this session, so wait for it and do not resend), `capacity` (429; back off for `retry-after`), `not_ready` (503; a decision dependency is starting, so retry once it is warm), `missing_session` (400; the request named no session, so resending cannot succeed) or `unavailable` (503; anything else). Emitted only on those refusals. |
+| `x-vsr-failure-class` | Why an authoritative model selection (Rayline ARC) refused the request, and how to react: `session_busy` (429; another request holds this session, so wait for it and do not resend), `capacity` (429; back off for `retry-after`), `not_ready` (503; a decision dependency is starting, so retry once it is warm), `missing_session` (400; the request named no session, so resending cannot succeed) or `unavailable` (503; anything else). Emitted on those refusals, and as `unavailable` when a selected turn can no longer be recorded after the upstream answered (503). Never set for a backend's own failure. |
 
 ## Response warnings
 
