@@ -661,3 +661,35 @@ func TestPolicyWorkerRouteSkipsBalancedWorkers(t *testing.T) {
 		}
 	}
 }
+
+// The tool-loop family hold yields to a model exclusion. Mid-loop on the
+// "off" arm, whose family has no other arm, the context excluded "off": the
+// hold would leave nothing to offer, so it is lifted and the turn decides
+// among the other family rather than failing.
+func TestRaylineARCFallbackLiftsTheToolLoopHoldOffAnExcludedFamily(t *testing.T) {
+	fixture, _, _, offAction := fallbackFixture(t, true)
+	fixture.fake.chooseWith(func(request raylinearc.PolicyDecisionRequest) string {
+		return request.Selection.AvailableActionIDs[0]
+	})
+	state := heldEpisodeOn(t, 1)
+	state.Policy = state.Policy.WithExclusion("vendor/off", "refusal")
+	next := policyTestRequest(t,
+		map[string]any{"role": "user", "content": "fix the bug"},
+		map[string]any{"role": "assistant", "content": "done"},
+		map[string]any{"role": "user", "content": "now the tests"})
+	result, err := fixture.selector.Select(context.Background(), &selection.SelectionContext{
+		DecisionName:    fixture.decision.Name,
+		CandidateModels: fixture.decision.ModelRefs,
+		RaylineARC: &selection.RaylineARCSelectionContext{
+			EpisodeIDHash: strings.Repeat("e", 64), RequestID: "req-policy-test", State: state, RawRequest: next,
+			RequestFormat: policyFormatAnthropic, ToolLoopForeignArms: []bool{true, false},
+		},
+	})
+	if err != nil {
+		t.Fatalf("select: %v, want the hold lifted", err)
+	}
+	offered := offeredActions(fixture, 0)
+	if slices.Contains(offered, offAction) || len(offered) != 2 || result.RaylineARC.SelectedArm != 0 {
+		t.Fatalf("offered %v, arm %d; want the think worker's two levels", offered, result.RaylineARC.SelectedArm)
+	}
+}

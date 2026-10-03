@@ -170,6 +170,14 @@ func withToolLoopFamily(
 	if eligible == 0 {
 		outcome = "lifted_no_eligible_arm"
 	}
+	logToolLoopHold(arcContext, outcome, foreign)
+	if eligible == 0 {
+		return excluded
+	}
+	return combined
+}
+
+func logToolLoopHold(arcContext *selection.RaylineARCSelectionContext, outcome string, foreign int) {
 	logging.ComponentEvent("extproc", "rayline_arc_tool_loop_family_hold", map[string]interface{}{
 		"episode_id_hash": arcContext.EpisodeIDHash,
 		"previous_arm":    arcContext.ToolLoopArm,
@@ -177,8 +185,4 @@ func withToolLoopFamily(
 		"outcome":         outcome,
 		"excluded_arms":   foreign,
 	})
-	if eligible == 0 {
-		return excluded
-	}
-	return combined
 }

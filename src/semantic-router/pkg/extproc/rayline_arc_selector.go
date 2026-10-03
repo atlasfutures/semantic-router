@@ -252,12 +252,13 @@ func (selector *raylineARCSelector) Select(
 	if err != nil {
 		return nil, err
 	}
-	excluded, err := excludedArms(arcContext, len(workerIDs))
+	hard, err := hardExcludedArms(arcContext, len(workerIDs))
 	if err != nil {
 		return nil, err
 	}
+	excluded := withToolLoopFamily(arcContext, len(workerIDs), hard)
 	if armed.policy != nil {
-		return selector.selectViaPolicyService(ctx, armed, selCtx, arcContext, workerIDs, state, excluded)
+		return selector.selectViaPolicyService(ctx, armed, selCtx, arcContext, workerIDs, state, excluded, hard)
 	}
 	encoded, latency, err := selector.encode(ctx, armed, arcContext, state)
 	if err != nil {
@@ -306,6 +307,19 @@ func excludedArms(
 	arcContext *selection.RaylineARCSelectionContext,
 	armCount int,
 ) ([]bool, error) {
+	hard, err := hardExcludedArms(arcContext, armCount)
+	if err != nil {
+		return nil, err
+	}
+	return withToolLoopFamily(arcContext, armCount, hard), nil
+}
+
+// hardExcludedArms is excludedArms without the tool-loop family hold: the
+// constraints that refuse a turn rather than yield.
+func hardExcludedArms(
+	arcContext *selection.RaylineARCSelectionContext,
+	armCount int,
+) ([]bool, error) {
 	excluded, err := visionExcludedArms(arcContext, armCount)
 	if err != nil {
 		return nil, err
@@ -314,11 +328,7 @@ func excludedArms(
 	if err != nil {
 		return nil, err
 	}
-	excluded, err = withDisabledArms(arcContext, armCount, excluded)
-	if err != nil {
-		return nil, err
-	}
-	return withToolLoopFamily(arcContext, armCount, excluded), nil
+	return withDisabledArms(arcContext, armCount, excluded)
 }
 
 // withIncapableArms folds the capability gate into the mask. It runs after the
