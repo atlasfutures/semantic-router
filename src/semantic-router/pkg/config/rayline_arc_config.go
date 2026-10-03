@@ -104,6 +104,9 @@ type RaylineARCAlgorithmConfig struct {
 	// it. When a turn answers a tool call the episode's previous arm made, the
 	// arms of every other family are excluded before scoring, so ARC picks
 	// within that family. A switch is allowed again at the next user turn.
+	// An arm's family is its model card's publisher, or else the vendor
+	// segment of its provider model id; a provider that namespaces models by
+	// its own name (local/..., accounts/...) needs the publisher on the card.
 	//
 	// A family's reasoning does not carry to another family: a signature only
 	// its issuer can verify is dropped, and DeepSeek and MiMo answer 400 when

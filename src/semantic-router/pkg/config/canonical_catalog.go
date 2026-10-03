@@ -98,6 +98,7 @@ func modelParamsFromEffectiveModel(model modelcatalog.EffectiveModel, qualityInd
 		Tags:              append([]string(nil), card.Tags...),
 		Evaluations:       cloneUserEvaluations(model.Card.Evaluations),
 		ReasoningFamily:   card.ReasoningFamily,
+		Publisher:         card.Publisher,
 		Modality:          modality,
 		IndexResults:      cloneCatalogIndexResults(indexResults),
 		QualityIndex:      qualityIndex,

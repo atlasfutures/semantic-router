@@ -305,3 +305,37 @@ func toolTurn(t *testing.T, router *OpenAIRouter, fake *fakePolicyService, actio
 	completeTestResponse(t, ctx)
 	finalizeSelectionProcessTerminal(ctx)
 }
+
+// A provider that serves models under its own namespace (local/..., an
+// account path) says nothing about who made them, so the card's publisher
+// names the family when it has one.
+func TestArmFamilyPrefersTheCardPublisher(t *testing.T) {
+	router := &OpenAIRouter{Config: &config.RouterConfig{BackendModels: config.BackendModels{ModelConfig: map[string]config.ModelParams{
+		"local/qwen3.6-27b":                      {Publisher: "Alibaba / Qwen"},
+		"local/qwen3.6-35b-a3b@thinking-on":      {Publisher: "Alibaba / Qwen"},
+		"local/gemma-4-31b-it":                   {Publisher: "Google"},
+		"accounts/acme/models/deepseek-v4-flash": {Publisher: "DeepSeek"},
+	}}}}
+	refs := []config.ModelRef{
+		{Model: "local/qwen3.6-27b"},
+		{Model: "local/gemma-4-31b-it"},
+		{Model: "local/qwen3.6-35b-a3b@thinking-on"},
+		{Model: "accounts/acme/models/deepseek-v4-flash"},
+	}
+	midLoop := toolLoopRequestContext(userText("fix it"), toolCallMessage("c1"), toolResultMessage(llmprotocol.RoleUser, "c1"))
+	previous := 0
+	state, err := raylinearc.NewEpisodeState(len(refs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.PreviousArm = &previous
+	on := &config.RaylineARCAlgorithmConfig{HoldFamilyInToolLoop: true}
+	foreign, arm, family := router.toolLoopForeignArms(on, midLoop, state, refs)
+	if !reflect.DeepEqual(foreign, []bool{false, true, false, true}) || arm != 0 || family != "alibaba / qwen" {
+		t.Fatalf("mid-loop = %v arm %d family %q, want gemma and deepseek excluded from the qwen loop", foreign, arm, family)
+	}
+	// An arm without a card publisher keeps the provider model's vendor.
+	if got := router.armFamily("deepseek/deepseek-v4-pro@thinking-off"); got != "deepseek" {
+		t.Fatalf("armFamily(no card) = %q, want deepseek", got)
+	}
+}

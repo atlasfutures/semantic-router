@@ -50,7 +50,8 @@ routing:
           # hold_family_in_tool_loop keeps a tool loop on the model family
           # that opened it. A turn whose last message answers a tool call the
           # episode's previous arm made is scored only among that arm's family
-          # (the vendor of its provider model); the next user turn may switch.
+          # (its card's publisher, else the vendor segment of its provider
+          # model); the next user turn may switch.
           # Reasoning does not carry across families, and DeepSeek and MiMo
           # answer 400 when a tool history lacks their reasoning_content. When
           # no arm of the family is eligible the hold is lifted and logged.

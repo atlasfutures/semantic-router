@@ -114,14 +114,21 @@ func toolResultCallIDs(message llmprotocol.Message) (map[string]struct{}, bool) 
 	return ids, deferred
 }
 
-// armFamily is the model family an arm serves: the vendor segment of the
-// provider model it dispatches to (deepseek/deepseek-v4-flash is deepseek),
-// so the thinking-on and thinking-off arms of one model, and two sizes of
-// one vendor's model, are one family. A name with no vendor segment is its
-// own family, without any @variant suffix.
+// armFamily is the model family an arm serves: who made the model, so the
+// thinking-on and thinking-off arms of one model, and two sizes of one
+// vendor's model, are one family. The model card's publisher says so when
+// the card has one. Otherwise it is the vendor segment of the provider model
+// the arm dispatches to (deepseek/deepseek-v4-flash is deepseek), which holds
+// only where the provider namespaces models by vendor: a provider that serves
+// them under its own namespace (local/..., accounts/...) needs the publisher
+// on the card. A name with no vendor segment is its own family, without any
+// @variant suffix.
 func (r *OpenAIRouter) armFamily(model string) string {
 	name := strings.TrimSpace(model)
 	if r != nil && r.Config != nil {
+		if params, known := r.Config.ModelConfig[name]; known && strings.TrimSpace(params.Publisher) != "" {
+			return strings.ToLower(strings.TrimSpace(params.Publisher))
+		}
 		if _, backend, found, err := r.Config.ResolvePrimaryBackendForModel(name); err == nil && found {
 			name = r.Config.ResolveExternalModelID(name, backend)
 		}
