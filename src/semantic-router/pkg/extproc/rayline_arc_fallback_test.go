@@ -693,3 +693,35 @@ func TestRaylineARCFallbackLiftsTheToolLoopHoldOffAnExcludedFamily(t *testing.T)
 		t.Fatalf("offered %v, arm %d; want the think worker's two levels", offered, result.RaylineARC.SelectedArm)
 	}
 }
+
+// The hold yields to a route exclusion before the exclusion is relaxed.
+// Mid-loop on the "off" arm, whose family has no other arm, the cell
+// excluded "off"'s route while the other family's route is healthy: the turn
+// leaves the family rather than going back to the route that just failed.
+func TestRaylineARCFallbackLiftsTheToolLoopHoldOffAnExcludedRoute(t *testing.T) {
+	resetCellExclusions(t)
+	fixture, _, _, offAction := fallbackFixture(t, true)
+	fixture.fake.chooseWith(func(request raylinearc.PolicyDecisionRequest) string {
+		return request.Selection.AvailableActionIDs[0]
+	})
+	raylineARCWorkerExclusions.exclude(fallbackTestRoute(fixture, 1), turnFailureRateLimited, time.Now().Add(time.Minute))
+	next := policyTestRequest(t,
+		map[string]any{"role": "user", "content": "fix the bug"},
+		map[string]any{"role": "assistant", "content": "done"},
+		map[string]any{"role": "user", "content": "now the tests"})
+	result, err := fixture.selector.Select(context.Background(), &selection.SelectionContext{
+		DecisionName:    fixture.decision.Name,
+		CandidateModels: fixture.decision.ModelRefs,
+		RaylineARC: &selection.RaylineARCSelectionContext{
+			EpisodeIDHash: strings.Repeat("e", 64), RequestID: "req-policy-test", State: heldEpisodeOn(t, 1), RawRequest: next,
+			RequestFormat: policyFormatAnthropic, ToolLoopForeignArms: []bool{true, false},
+		},
+	})
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	offered := offeredActions(fixture, 0)
+	if slices.Contains(offered, offAction) || len(offered) != 2 || result.RaylineARC.SelectedArm != 0 {
+		t.Fatalf("offered %v, arm %d; want the think worker's two levels", offered, result.RaylineARC.SelectedArm)
+	}
+}
