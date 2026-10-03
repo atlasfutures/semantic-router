@@ -592,6 +592,11 @@ func TestRefusalWithoutUsageReachesMessagesAsARefusal(t *testing.T) {
 	if !approximated {
 		t.Fatalf("the zero-valued usage was not noted: %+v", translated.Diagnostics)
 	}
+	// A proxy billing from the client wire must be able to tell the zeros
+	// are a placeholder.
+	if string(body["usage_source"]) != `"unknown"` {
+		t.Fatalf("usage_source = %s, want unknown", body["usage_source"])
+	}
 	// The router's own decoder, like Anthropic's SDK, must accept what it sent.
 	if _, err := engine.TranslateResponse(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1, translated.Body, nil); err != nil {
 		t.Fatalf("the refusal is not a valid Messages response: %v", err)
@@ -606,4 +611,16 @@ func TestRefusalWithoutUsageReachesMessagesAsARefusal(t *testing.T) {
 		t.Fatalf("streamed refusal = %s", frames)
 	}
 	assertTargetStreamDecodes(t, engine, llmprotocol.AnthropicMessagesV1, encoded.Bytes())
+	for _, line := range strings.Split(frames, "\n") {
+		if strings.Contains(line, `"type":"message_delta"`) && !strings.Contains(line, `"usage_source":"unknown"`) {
+			t.Fatalf("the refused turn's delta does not mark its usage unknown: %s", line)
+		}
+	}
+
+	// A turn with provider usage carries no usage_source.
+	answered := []byte(`{"id":"gen-3","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`)
+	if translated, err := engine.TranslateResponse(llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1, answered, nil); err != nil ||
+		bytes.Contains(translated.Body, []byte("usage_source")) {
+		t.Fatalf("an answered turn = %s, %v", translated.Body, err)
+	}
 }

@@ -84,6 +84,13 @@ type anthropicEventWire struct {
 // against a provider fixture, and these two members are the Router's, written
 // and never read. The count sits beside the error object rather than inside
 // it, so an SDK parsing the failure sees exactly the shape it always saw.
+// anthropicUnknownUsageDeltaWire is a terminal message_delta whose usage the
+// provider never stated, marked with the Router's usage_source.
+type anthropicUnknownUsageDeltaWire struct {
+	anthropicEventWire
+	UsageSource string `json:"usage_source"`
+}
+
 type anthropicTruncationFrameWire struct {
 	Type        string                          `json:"type"`
 	Error       *anthropicErrorWire             `json:"error,omitempty"`
@@ -664,7 +671,14 @@ func (encoder *anthropicStreamEncoder) encodeAnthropicCompletion(
 		deltaWire.StopSequence = &event.MatchedStopSequence
 	}
 	delta := anthropicEventWire{Type: "message_delta", Delta: deltaWire, Usage: encodeAnthropicMessageDeltaUsage(*event.Usage)}
-	first, err := encodeSSE(delta.Type, delta)
+	var first []byte
+	var err error
+	if refusal && usageUnavailable(*event.Usage) {
+		// The delta's usage is the schema's placeholder; usage_source says so.
+		first, err = encodeSSE(delta.Type, anthropicUnknownUsageDeltaWire{anthropicEventWire: delta, UsageSource: UsageSourceUnknown})
+	} else {
+		first, err = encodeSSE(delta.Type, delta)
+	}
 	if err != nil {
 		return nil, nil, err
 	}

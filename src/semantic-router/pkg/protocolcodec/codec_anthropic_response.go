@@ -60,10 +60,16 @@ type anthropicTransportErrorWire struct {
 }
 
 func (AnthropicMessagesCodec) DecodeResponse(body []byte, policy llmprotocol.Policy) (llmprotocol.Response, llmprotocol.Envelope, llmprotocol.Diagnostics, error) {
-	var wire anthropicResponseWire
-	if err := decodeProviderWire(body, &wire, policy); err != nil {
+	// The Router's own usage_source is the one member read beyond the
+	// published contract, so a Messages body this Router wrote decodes.
+	var marked anthropicUnknownUsageResponseWire
+	if err := decodeProviderWire(body, &marked, policy); err != nil {
 		return llmprotocol.Response{}, llmprotocol.Envelope{}, nil, err
 	}
+	if marked.UsageSource != "" && marked.UsageSource != UsageSourceUnknown {
+		return llmprotocol.Response{}, llmprotocol.Envelope{}, nil, invalidProviderResponse("usage_source_invalid", "usage_source must be "+UsageSourceUnknown)
+	}
+	wire := marked.anthropicResponseWire
 	if err := validateAnthropicResponseResource(wire); err != nil {
 		return llmprotocol.Response{}, llmprotocol.Envelope{}, nil, err
 	}
@@ -73,6 +79,10 @@ func (AnthropicMessagesCodec) DecodeResponse(body []byte, policy llmprotocol.Pol
 		return llmprotocol.Response{}, llmprotocol.Envelope{}, nil, err
 	}
 	appendAnthropicResponseUsage(&response, wire.Usage, policy, &diagnostics)
+	if marked.UsageSource == UsageSourceUnknown {
+		// The usage object is a placeholder; the turn's usage is unknown.
+		response.Usage = llmprotocol.Usage{State: llmprotocol.UsageUnavailable}
+	}
 	return response, responseEnvelope(llmprotocol.AnthropicMessagesV1, body, response.Generation, response.SourceStopReason, policy), diagnostics, nil
 }
 
@@ -223,8 +233,28 @@ func (AnthropicMessagesCodec) EncodeResponse(response llmprotocol.Response, enve
 	if response.StopReason == llmprotocol.StopSequence {
 		wire.StopSequence = &response.MatchedStopSequence
 	}
+	if refusal && usageUnavailable(response.Usage) {
+		body, err := marshalWire(anthropicUnknownUsageResponseWire{anthropicResponseWire: wire, UsageSource: UsageSourceUnknown})
+		return body, diagnostics, err
+	}
 	body, err := marshalWire(wire)
 	return body, diagnostics, err
+}
+
+// UsageSourceUnknown marks a client response whose usage object is the
+// schema's zero-valued placeholder: the provider stated no usage for the
+// turn. A proxy that bills from the client wire records the turn's usage as
+// unknown, not as zero tokens. It extends the usage_source member a cut
+// stream already carries ("stream_estimate"); a turn with provider usage
+// carries no usage_source at all.
+const UsageSourceUnknown = "unknown"
+
+// anthropicUnknownUsageResponseWire is a Messages response plus the Router's
+// usage_source, kept off anthropicResponseWire for the reason the truncation
+// frame is: that struct is the published contract.
+type anthropicUnknownUsageResponseWire struct {
+	anthropicResponseWire
+	UsageSource string `json:"usage_source"`
 }
 
 // responseRefuses reports refusal content in a response's output: a turn
