@@ -2,6 +2,7 @@ package protocolcodec
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -562,5 +563,39 @@ func assertAuthoritativeTerminalUsage(t *testing.T, usage *llmprotocol.Usage) {
 		usage.InputTotal.Value == nil || usage.InputTotal.Provenance != llmprotocol.UsageAuthoritative ||
 		usage.OutputTotal.Value == nil || usage.OutputTotal.Provenance != llmprotocol.UsageAuthoritative {
 		t.Fatalf("terminal usage = %+v", usage)
+	}
+}
+
+// #150: Anthropic's safeguards refuse before generating, so OpenRouter Chat
+// returns the refusal with no usage. A Messages client gets a refusal with
+// usage null, not a failed translation and not an invented zero count.
+func TestRefusalWithoutUsageReachesMessagesAsARefusal(t *testing.T) {
+	engine := NewBuiltinEngine()
+	refusal := []byte(`{"id":"gen-1","model":"anthropic/claude-opus-5","choices":[{"index":0,"message":{"role":"assistant","content":null,"refusal":"This request triggered restrictions."},"finish_reason":"content_filter","native_finish_reason":"refusal"}]}`)
+	translated, err := engine.TranslateResponse(llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1, refusal, nil)
+	if err != nil {
+		t.Fatalf("a refusal without usage failed translation: %v", err)
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(translated.Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	if string(body["stop_reason"]) != `"refusal"` || string(body["usage"]) != "null" ||
+		!bytes.Contains(body["content"], []byte("This request triggered restrictions.")) {
+		t.Fatalf("refusal = %s", translated.Body)
+	}
+
+	stream := "data: {\"id\":\"gen-2\",\"object\":\"chat.completion.chunk\",\"model\":\"anthropic/claude-opus-5\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"refusal\":\"Refused.\"},\"finish_reason\":null}]}\n\n" +
+		"data: {\"id\":\"gen-2\",\"object\":\"chat.completion.chunk\",\"model\":\"anthropic/claude-opus-5\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"content_filter\"}]}\n\n" +
+		"data: [DONE]\n\n"
+	_, encoded := pushChunkedFixture(t, mustNewMatrixStream(t, engine, llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1), []byte(stream), 11)
+	frames := encoded.String()
+	if !strings.Contains(frames, `"stop_reason":"refusal"`) || !strings.Contains(frames, "Refused.") {
+		t.Fatalf("streamed refusal = %s", frames)
+	}
+	for _, line := range strings.Split(frames, "\n") {
+		if strings.Contains(line, `"type":"message_delta"`) && strings.Contains(line, `"usage"`) {
+			t.Fatalf("a refused turn's delta stated usage: %s", line)
+		}
 	}
 }
