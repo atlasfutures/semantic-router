@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel"
+
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
@@ -413,7 +415,9 @@ func TestEmptySuccessIsRefusedAtTheHeaders(t *testing.T) {
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			logs := captureLogs(t)
-			ctx := &RequestContext{RequestID: "req-empty", RequestModel: "test", StartTime: time.Now(), Headers: map[string]string{}}
+			ctx := &RequestContext{RequestID: "req-empty", RequestModel: "test", VSRSelectedModel: "arm-x", StartTime: time.Now(), Headers: map[string]string{}}
+			_, span := otel.Tracer("test").Start(context.Background(), "upstream")
+			ctx.UpstreamSpan = span
 			if test.inference {
 				ctx.SemanticRequest = testNeutralRequest("test", "hello")
 			}
@@ -429,6 +433,13 @@ func TestEmptySuccessIsRefusedAtTheHeaders(t *testing.T) {
 			if test.refused {
 				if usage := findLogEvent(t, logs, "llm_usage"); usage["failure_class"] != turnFailureUpstreamError || usage["failure_detail"] != "empty_response" {
 					t.Fatalf("usage line = %#v", usage)
+				}
+				// It names the arm that failed, and its upstream span ends.
+				if model := immediateHeaderValue(response, "x-vsr-selected-model"); model != "arm-x" {
+					t.Fatalf("x-vsr-selected-model = %q", model)
+				}
+				if ctx.UpstreamSpan != nil {
+					t.Fatal("the upstream span was left open")
 				}
 			}
 		})
@@ -465,5 +476,38 @@ func TestDispatchGateLeaseLossIsATurnFailure(t *testing.T) {
 			t.Fatalf("lease lost=%v: blocked=%v counted=%v", leaseLost, blocked, counted)
 		}
 		finalizeSelectionProcessTerminal(ctx)
+	}
+}
+
+// A refused reply that a response check then blocks is one failed turn,
+// classed by its final outcome.
+func TestBlockedRefusalIsOneFailure(t *testing.T) {
+	logs := captureLogs(t)
+	router, ctx := newResponseStageRouter(t, newJailbreakFailingServer(t), config.OnErrorBlock, "block")
+	ctx.RequestID, ctx.RequestModel, ctx.UpstreamStatusCode = "req-blocked-refusal", "test", 200
+	ctx.SourceFormat, ctx.TargetFormat = llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1
+	router.handleNonStreamingResponseBody([]byte(arcRefusedCompletion), ctx, time.Second)
+	var classes []any
+	for _, entry := range logs.All() {
+		if fields := entry.ContextMap(); fields["event"] == "turn_failed" {
+			classes = append(classes, fields["failure_class"])
+		}
+	}
+	if len(classes) != 1 || classes[0] != turnFailureResponseBlocked {
+		t.Fatalf("turn_failed classes = %v, want one response_blocked", classes)
+	}
+}
+
+// Only a backend's own failure counts against it in the load-balancing
+// window. Controls: a refusal, a blocked reply and the cell's failures do not.
+func TestBackendErrorClassesForTheWindow(t *testing.T) {
+	for class, want := range map[string]bool{
+		turnFailureRateLimited: true, turnFailureUpstream5xx: true, turnFailureTimeout: true,
+		turnFailureNoEndpoint: true, turnFailureUpstreamError: true, turnFailureStreamCut: true,
+		turnFailureRefusal: false, turnFailureResponseBlocked: false, selectionFailureUnavailable: false, "": false,
+	} {
+		if got := turnFailureIsBackendError(class); got != want {
+			t.Errorf("%q: backend error = %v, want %v", class, got, want)
+		}
 	}
 }
