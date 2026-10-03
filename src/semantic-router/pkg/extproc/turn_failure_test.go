@@ -110,6 +110,7 @@ func TestStreamFailureClasses(t *testing.T) {
 		{"router deadline cut", &semanticResponseStreamState{items: item}, (&OpenAIRouter{}).truncatedStreamError(), turnFailureTimeout, true},
 		{"malformed provider stream", &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
 			llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "invalid_provider_response", "bad frame", nil), turnFailureUpstreamError, false},
+		{"terminal with an unfinished item", unfinishedItemStream(), nil, turnFailureUpstreamError, true},
 		{"client cancelled", &semanticResponseStreamState{items: item}, errors.New("canceled"), "", false},
 		{"completed", &semanticResponseStreamState{terminal: true, stop: llmprotocol.StopEndTurn, items: map[int]*semanticStreamItem{}}, nil, "", false},
 	}
@@ -510,4 +511,22 @@ func TestBackendErrorClassesForTheWindow(t *testing.T) {
 			t.Errorf("%q: backend error = %v, want %v", class, got, want)
 		}
 	}
+}
+
+// Non-text output beside a refusal reached the client. Control: empty text
+// beside a refusal is nothing.
+func TestContentBesideARefusal(t *testing.T) {
+	refusal := llmprotocol.Content{Kind: llmprotocol.ContentRefusal, Text: "no"}
+	withImage := &llmprotocol.Response{Output: []llmprotocol.OutputItem{{Content: []llmprotocol.Content{refusal, {Kind: llmprotocol.ContentImage}}}}}
+	withEmptyText := &llmprotocol.Response{Output: []llmprotocol.OutputItem{{Content: []llmprotocol.Content{refusal, {Kind: llmprotocol.ContentText}}}}}
+	if !contentBeforeRefusal(withImage) || contentBeforeRefusal(withEmptyText) {
+		t.Fatalf("image beside refusal=%v, empty text beside refusal=%v", contentBeforeRefusal(withImage), contentBeforeRefusal(withEmptyText))
+	}
+}
+
+// unfinishedItemStream ended properly, but its one item never completed.
+func unfinishedItemStream() *semanticResponseStreamState {
+	state := &semanticResponseStreamState{terminal: true, stop: llmprotocol.StopEndTurn, items: map[int]*semanticStreamItem{}}
+	state.item(0).text = "hi"
+	return state
 }
