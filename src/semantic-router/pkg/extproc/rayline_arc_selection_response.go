@@ -133,6 +133,7 @@ func (r *OpenAIRouter) authoritativeSelectionFailureResponse(
 		return nil
 	}
 	recordSelectionLifecycleFailure(ctx, "selection", err)
+	recordTurnFailure(ctx, selectionTurnFailureClass(failure.class), false)
 	var response *ext_proc.ProcessingResponse
 	switch {
 	case selectionFailureIsCallerError(failure.class):

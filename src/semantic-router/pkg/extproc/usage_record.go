@@ -27,6 +27,8 @@ const (
 	usagePricingNotConfigured        = "not_configured"
 	usagePricingBreakdownUnavailable = "usage_breakdown_unavailable"
 	usagePricingCacheHit             = "cache_hit"
+	// usagePricingNoUsage is a call the provider failed without stating usage.
+	usagePricingNoUsage = "no_usage"
 )
 
 // llmUsageRecord is one upstream call as the Router accounted for it: the
@@ -65,6 +67,9 @@ type llmUsageRecord struct {
 	FromCache    bool    `json:"from_cache"`
 	CacheHit     bool    `json:"cache_hit"`
 	FailureClass *string `json:"failure_class"`
+	// ContentSentBeforeFailure is set with a turn failure class: whether the
+	// client had already received model output when the turn failed.
+	ContentSentBeforeFailure *bool `json:"content_sent_before_failure"`
 
 	StopReason       *string `json:"stop_reason"`
 	NativeStopReason *string `json:"native_stop_reason"`
@@ -138,6 +143,7 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	record.Streaming = ctx.IsStreamingResponse
 	record.Truncated = ctx.StreamingAborted
 	record.FailureClass = nonEmpty(ctx.ResponseFailureClass)
+	record.ContentSentBeforeFailure = ctx.ContentSentBeforeFailure
 	if len(ctx.DispatchedProviderOrder) > 0 {
 		record.ProviderOrder = append([]string(nil), ctx.DispatchedProviderOrder...)
 	}

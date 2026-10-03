@@ -502,6 +502,7 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 	inflight.End(ctx.RequestModel, ctx.InflightToken)
 	ctx.InflightToken = 0
 
+	r.classStreamFailure(ctx, semanticResponse, responseErr, streamErr)
 	usage := truncatedStreamUsage(ctx, r.takeNeutralResponseUsage(ctx))
 	r.reportSemanticStreamingUsage(ctx, completionLatency, usage)
 	if !usage.estimated {
@@ -537,6 +538,28 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 	r.scheduleSemanticResponseMemoryStore(ctx, semanticResponse)
 	r.persistResponseObject(ctx)
 	r.attachRouterReplayResponse(ctx, encoded, true)
+}
+
+// classStreamFailure classes a streamed turn that did not deliver a served
+// reply: a refusal, an error the provider raised mid-stream, or a 2xx stream
+// that ended without its terminal event. A stream the client or the proxy
+// cancelled (a receive error) is not the provider's failure and is not classed.
+func (r *OpenAIRouter) classStreamFailure(
+	ctx *RequestContext,
+	semanticResponse *llmprotocol.Response,
+	responseErr error,
+	streamErr error,
+) {
+	state := ctx.SemanticStreamState
+	switch {
+	case responseErr == nil && responseRefused(semanticResponse):
+		recordTurnFailure(ctx, turnFailureRefusal, contentBeforeRefusal(semanticResponse))
+	case streamErr != nil || state == nil:
+	case state.failed != nil:
+		recordTurnFailure(ctx, streamFailureClass(state.failed), len(state.items) > 0)
+	case !state.terminal:
+		recordTurnFailure(ctx, turnFailureStreamCut, len(state.items) > 0)
+	}
 }
 
 // truncatedStreamUsage settles what a turn the platform cut actually cost.

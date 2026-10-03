@@ -1,6 +1,8 @@
 package extproc
 
 import (
+	"time"
+
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
@@ -43,6 +45,7 @@ func (r *OpenAIRouter) handleUpstreamTransportError(
 		translated.Body = encoded
 	}
 	ctx.ProtocolDiagnostics = append(ctx.ProtocolDiagnostics, translated.Diagnostics...)
+	r.recordUpstreamErrorTurn(ctx, translated.TransportError.Error)
 	response := buildResponseBodyContinueResponse(nil, nil)
 	setResponseBodyMutation(response, translated.Body)
 	setResponseContentType(response, "application/json")
@@ -74,4 +77,23 @@ func upstreamTransportFallback(status int, cause error) *llmprotocol.ProtocolErr
 		category, code = llmprotocol.ErrorUpstreamTimeout, "upstream_timeout"
 	}
 	return llmprotocol.NewError(category, code, "model service returned an invalid error response", cause)
+}
+
+// recordUpstreamErrorTurn classes a provider error and writes its llm_usage
+// line. A failed call used to leave no usage line at all, so the usage stream
+// could not be joined one-to-one with the gateway's rows, which record errors.
+// The provider stated no usage, so the line's counts are null and its
+// usage_source unknown.
+func (r *OpenAIRouter) recordUpstreamErrorTurn(ctx *RequestContext, protocolError *llmprotocol.ProtocolError) {
+	if ctx == nil {
+		return
+	}
+	recordTurnFailure(ctx, upstreamFailureClass(ctx.UpstreamStatusCode, protocolError), false)
+	record := r.newLLMUsageRecord(ctx, responseUsageMetrics{})
+	record.Pricing = usagePricingNoUsage
+	if !ctx.StartTime.IsZero() {
+		latency := time.Since(ctx.StartTime).Milliseconds()
+		record.CompletionLatencyMS = &latency
+	}
+	emitLLMUsageRecord(record)
 }

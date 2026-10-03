@@ -51,6 +51,9 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 			return r.bodyPhaseErrorResponse(ctx, 502, "The selected model returned an incompatible response")
 		}
 	}
+	if responseRefused(semanticResponse) {
+		recordTurnFailure(ctx, turnFailureRefusal, contentBeforeRefusal(semanticResponse))
+	}
 	usage = r.takeNeutralResponseUsage(ctx)
 	r.reportNonStreamingUsage(ctx, completionLatency, usage)
 	r.calibrateTokenEstimator(ctx, usage.promptTokens)
