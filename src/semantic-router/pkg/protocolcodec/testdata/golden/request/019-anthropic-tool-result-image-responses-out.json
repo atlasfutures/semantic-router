@@ -1,0 +1,75 @@
+{
+  "input": [
+    {
+      "content": [
+        {
+          "text": "What is in red.png and blue.png? Use view_image.",
+          "type": "input_text"
+        }
+      ],
+      "role": "user",
+      "type": "message"
+    },
+    {
+      "arguments": "{\"image\": \"red.png\"}",
+      "call_id": "toolu_view_red",
+      "name": "view_image",
+      "type": "function_call"
+    },
+    {
+      "arguments": "{\"image\": \"blue.png\"}",
+      "call_id": "toolu_view_blue",
+      "name": "view_image",
+      "type": "function_call"
+    },
+    {
+      "call_id": "toolu_view_red",
+      "output": [
+        {
+          "text": "Loaded 1 image into private model context for inspection; not displayed, attached, or sent to the user.",
+          "type": "input_text"
+        },
+        {
+          "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+          "type": "input_image"
+        }
+      ],
+      "type": "function_call_output"
+    },
+    {
+      "call_id": "toolu_view_blue",
+      "output": [
+        {
+          "text": "Loaded 1 image into private model context for inspection; not displayed, attached, or sent to the user.",
+          "type": "input_text"
+        },
+        {
+          "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYPgPAAEDAQAIicLsAAAAAElFTkSuQmCC",
+          "type": "input_image"
+        }
+      ],
+      "type": "function_call_output"
+    }
+  ],
+  "max_output_tokens": 32000,
+  "model": "routed-model",
+  "tool_choice": "auto",
+  "tools": [
+    {
+      "description": "Load an image into model context for inspection.",
+      "name": "view_image",
+      "parameters": {
+        "properties": {
+          "image": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "image"
+        ],
+        "type": "object"
+      },
+      "type": "function"
+    }
+  ]
+}
