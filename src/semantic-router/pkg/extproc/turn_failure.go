@@ -124,8 +124,8 @@ func saysContextOverflow(said string) bool {
 	return false
 }
 
-// contentBeforeRefusal reports model output beside a refusal: text, a tool
-// call or reasoning the client received with it.
+// contentBeforeRefusal reports model output beside a refusal: non-empty
+// text, or any other kind of output the client received with it.
 func contentBeforeRefusal(response *llmprotocol.Response) bool {
 	if response == nil {
 		return false
@@ -134,12 +134,15 @@ func contentBeforeRefusal(response *llmprotocol.Response) bool {
 		for _, content := range item.Content {
 			switch content.Kind {
 			case llmprotocol.ContentRefusal:
-			case llmprotocol.ContentToolCall:
-				return true
-			default:
+			case llmprotocol.ContentText:
 				if content.Text != "" {
 					return true
 				}
+			default:
+				// Any other output (a tool call, reasoning, an image, a file,
+				// a carried block) reached the client whether or not it has
+				// text.
+				return true
 			}
 		}
 	}

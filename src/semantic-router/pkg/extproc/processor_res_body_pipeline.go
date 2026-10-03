@@ -43,14 +43,6 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	if refused {
 		declineRefusedTurn(ctx)
 	}
-	clientBody := responseBody
-	rewriteClientBody := requiresClientResponseRewrite(ctx)
-	if rewriteClientBody {
-		clientBody, err = r.encodeClientResponse(*semanticResponse, ctx)
-		if err != nil {
-			return r.bodyPhaseErrorResponse(ctx, 502, "The selected model returned an incompatible response")
-		}
-	}
 	// The usage line is written once the turn's outcome is known: after the
 	// commit gate below, which classes a policy turn that can no longer
 	// commit, or before a response check returns early.
@@ -63,6 +55,18 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 		usage = r.takeNeutralResponseUsage(ctx)
 		r.reportNonStreamingUsage(ctx, completionLatency, usage)
 		r.calibrateTokenEstimator(ctx, usage.promptTokens)
+	}
+	clientBody := responseBody
+	rewriteClientBody := requiresClientResponseRewrite(ctx)
+	if rewriteClientBody {
+		clientBody, err = r.encodeClientResponse(*semanticResponse, ctx)
+		if err != nil {
+			// The arm's reply cannot be put in the client's format: an
+			// unusable reply, classed and settled before it is refused.
+			recordTurnFailureDetail(ctx, turnFailureUpstreamError, responseFailureClass(err), false)
+			reportUsage()
+			return r.bodyPhaseErrorResponse(ctx, 502, "The selected model returned an incompatible response")
+		}
 	}
 
 	// A turn that commits at completion caches its reply only once the turn
