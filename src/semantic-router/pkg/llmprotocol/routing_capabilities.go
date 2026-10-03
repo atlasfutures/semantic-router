@@ -25,7 +25,9 @@ const (
 	RoutingCapabilityServerTools = "server_tools"
 	// RoutingCapabilityToolResultImages covers an image inside a tool result.
 	// Reading a PNG produces one, and so does any MCP tool that returns an
-	// image.
+	// image. Every dispatch format now carries it (Chat moves the media into
+	// a user message after the tool messages), so what an arm's card claims
+	// is whether its model takes image input at all.
 	RoutingCapabilityToolResultImages = "tool_result_images"
 	// RoutingCapabilityCitationsGeneration is reserved for the response side:
 	// an arm that can produce the citation spans a request asked for. Nothing
