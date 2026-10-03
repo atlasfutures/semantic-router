@@ -22,6 +22,9 @@ type anthropicStreamDecoder struct {
 	pendingCitations map[int][]json.RawMessage
 	// data is the JSON of the event being decoded.
 	data []byte
+	// usageUnknown records a terminal message_delta whose usage this Router
+	// marked as the schema's placeholder (usage_source "unknown").
+	usageUnknown bool
 }
 type anthropicStreamEncoder struct {
 	streamState
@@ -272,11 +275,21 @@ func decodeAnthropicMessageStart(wire anthropicEventWire) llmprotocol.Event {
 		return event
 	}
 	event.ResponseID, event.Model = wire.Message.ID, wire.Message.Model
-	if wire.Message.Usage != nil {
+	// A real message_start states at least one input token. An all-zero
+	// usage is the placeholder a Router writes before it knows the turn's
+	// usage (a Chat source states usage only at its end), so it is not
+	// evidence: read as counts, it would make a later usage_source
+	// "unknown" look like evidence decreasing.
+	if wire.Message.Usage != nil && !anthropicUsagePlaceholder(*wire.Message.Usage) {
 		usage := decodeAnthropicStreamUsage(*wire.Message.Usage, true)
 		event.Usage = &usage
 	}
 	return event
+}
+
+func anthropicUsagePlaceholder(wire anthropicUsageWire) bool {
+	return wire.InputTokens == 0 && wire.OutputTokens == 0 &&
+		wire.CacheCreationInputTokens == 0 && wire.CacheReadInputTokens == 0
 }
 
 func (decoder *anthropicStreamDecoder) decodeAnthropicMessageDelta(
@@ -286,6 +299,21 @@ func (decoder *anthropicStreamDecoder) decodeAnthropicMessageDelta(
 		return nil, nil, err
 	}
 	diagnostics := decoder.anthropicMessageDeltaDiagnostics(wire.Delta)
+	var marked struct {
+		UsageSource string `json:"usage_source"`
+	}
+	if err := json.Unmarshal(decoder.data, &marked); err == nil && marked.UsageSource != "" {
+		if marked.UsageSource != UsageSourceUnknown {
+			return nil, diagnostics, invalidProviderResponse("usage_source_invalid", "usage_source must be "+UsageSourceUnknown)
+		}
+		// The delta's usage is a placeholder: the turn's usage is unknown,
+		// and the zeros message_start stated were the same placeholder, so
+		// the accumulated usage is replaced rather than merged (a merge would
+		// read the change as evidence decreasing).
+		decoder.usageUnknown = true
+		decoder.usage = llmprotocol.Usage{State: llmprotocol.UsageUnavailable}
+		return nil, diagnostics, nil
+	}
 	if wire.Usage == nil {
 		return nil, diagnostics, nil
 	}

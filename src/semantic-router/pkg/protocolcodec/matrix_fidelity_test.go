@@ -611,6 +611,14 @@ func TestRefusalWithoutUsageReachesMessagesAsARefusal(t *testing.T) {
 		t.Fatalf("streamed refusal = %s", frames)
 	}
 	assertTargetStreamDecodes(t, engine, llmprotocol.AnthropicMessagesV1, encoded.Bytes())
+	// A proxy decoding this stream reads the turn's usage as unknown, not
+	// as the placeholder zeros.
+	events, _ := pushChunkedFixture(t, mustNewMatrixStream(t, engine, llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1), encoded.Bytes(), 7)
+	for _, event := range events {
+		if event.Type == llmprotocol.EventResponseCompleted && (event.Usage == nil || event.Usage.State != llmprotocol.UsageUnavailable) {
+			t.Fatalf("the decoded refusal reports usage %+v, want unknown", event.Usage)
+		}
+	}
 	for _, line := range strings.Split(frames, "\n") {
 		if strings.Contains(line, `"type":"message_delta"`) && !strings.Contains(line, `"usage_source":"unknown"`) {
 			t.Fatalf("the refused turn's delta does not mark its usage unknown: %s", line)
