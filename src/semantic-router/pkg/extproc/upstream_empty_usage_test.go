@@ -69,23 +69,30 @@ func TestUnusableResponseStillWritesTheUsageLine(t *testing.T) {
 	if got, _ := fields["prompt_tokens"].(int64); got != 31402 {
 		t.Fatalf("prompt_tokens = %v, want the prompt the upstream charged for", fields["prompt_tokens"])
 	}
-	if got, _ := fields["failure_class"].(string); got != "empty_output_item" {
-		t.Fatalf("failure_class = %v, want the code the refusal was raised with", fields["failure_class"])
+	// The class is bounded (an unusable reply is the arm's upstream_error);
+	// the code the refusal was raised with is its detail.
+	if got, _ := fields["failure_class"].(string); got != turnFailureUpstreamError {
+		t.Fatalf("failure_class = %v, want upstream_error", fields["failure_class"])
+	}
+	if got, _ := fields["failure_detail"].(string); got != "empty_output_item" {
+		t.Fatalf("failure_detail = %v, want the code the refusal was raised with", fields["failure_detail"])
 	}
 }
 
-// A body that never became a response has nothing to attribute. Writing a
-// usage line for it would assert counts no upstream ever stated.
-func TestUndecodableResponseWritesNoUsageLine(t *testing.T) {
+// A body that never became a response has nothing to attribute, so its
+// usage line states no counts and no charge: it is unbilled, unknown, and
+// classed, so the call still has one line beside the gateway's row.
+func TestUndecodableResponseWritesAnUnbilledUsageLine(t *testing.T) {
 	logs := captureLogs(t)
 	router := &OpenAIRouter{}
 	ctx := emptyCompletionContext()
 
 	router.handleNonStreamingResponseBody([]byte(`{"choices":`), ctx, time.Second)
 
-	for _, entry := range logs.All() {
-		if name, _ := entry.ContextMap()["event"].(string); name == "llm_usage" {
-			t.Fatal("a body that never decoded must not be billed")
-		}
+	fields := findLogEvent(t, logs, "llm_usage")
+	if fields["prompt_tokens"] != nil || fields["completion_tokens"] != nil || fields["cost"] != nil ||
+		fields["usage_source"] != usageSourceUnknown || fields["pricing"] != usagePricingNoUsage ||
+		fields["failure_class"] != turnFailureUpstreamError {
+		t.Fatalf("a body that never decoded must not be billed: %#v", fields)
 	}
 }

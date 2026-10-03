@@ -234,6 +234,9 @@ func (r *OpenAIRouter) executeContextRecoveryFollowup(
 	// call's counts with both calls' charge.
 	charge := decoded.Response.Usage.ProviderCost
 	requestCtx.ContextRecoveryProviderCost = &charge
+	// The record now covers a second call whose attempts the provider hop's
+	// header did not count, so how many attempts it took is unknown.
+	requestCtx.UpstreamAttempts = 0
 	return encoded.Body, nil
 }
 

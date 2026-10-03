@@ -5,6 +5,8 @@ import re
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
+
 from cli.algorithms import AlgorithmConfig, ModelRef
 from cli.rayline_arc_config import (
     _CHECKPOINT_LABEL,
@@ -14,6 +16,7 @@ from cli.rayline_arc_config import (
     RaylineARCEncoderMembershipConfig,
     RaylineARCEncoderReplicaConfig,
     RaylineARCEpisodeConfig,
+    RaylineARCPolicyFallbackConfig,
     RaylineARCRoutesAPIConfig,
 )
 from cli.validator_rayline_arc import (
@@ -23,7 +26,6 @@ from cli.validator_rayline_arc import (
     _validate_rayline_arc_decision,
     _validate_rayline_arc_replay,
 )
-from pydantic import ValidationError
 
 
 def test_valid_rayline_arc_decision():
@@ -464,3 +466,77 @@ def test_relaxed_is_not_served_with_retained_encoder_sessions():
         ValidationError, match="resumable_causal_mean encoder capability"
     ):
         RaylineARCAlgorithmConfig.model_validate(arc)
+
+
+@pytest.mark.parametrize("models", [16, 17])
+@pytest.mark.parametrize("enabled", [True, False])
+def test_rayline_arc_cli_bounds_fallback_models(models, enabled):
+    """Mirrors the Go loader: a fallback-enabled package serves at most 16
+    distinct models, as many as an episode can exclude."""
+    decision = _policy_service_decision()
+    policy = decision.algorithm.rayline_arc.policy_service
+    policy.bindings = [
+        policy.bindings[0].model_copy(
+            update={"action_id": f"{index:064x}", "worker": f"public-arm-{index}"}
+        )
+        for index in range(models)
+    ]
+    policy.fallback = RaylineARCPolicyFallbackConfig(enabled=enabled)
+    refused = any(
+        "distinct models" in error.message
+        for error in _validate_rayline_arc_decision(decision)
+    )
+    assert refused == (enabled and models > 16)
+
+
+@pytest.mark.parametrize("size", [128, 129])
+@pytest.mark.parametrize("enabled", [True, False])
+def test_rayline_arc_cli_bounds_fallback_model_names(size, enabled):
+    """Mirrors the Go loader: a fallback model name fits an exclusion."""
+    decision = _policy_service_decision()
+    policy = decision.algorithm.rayline_arc.policy_service
+    policy.bindings = [
+        policy.bindings[0].model_copy(update={"model": "m" * size}),
+        policy.bindings[1],
+    ]
+    policy.fallback = RaylineARCPolicyFallbackConfig(enabled=enabled)
+    refused = any(
+        "bytes" in error.message for error in _validate_rayline_arc_decision(decision)
+    )
+    assert refused == (enabled and size > 128)
+
+
+@pytest.mark.parametrize("second", ["vendor/a", "vendor/b"])
+@pytest.mark.parametrize("enabled", [True, False])
+def test_rayline_arc_cli_fallback_needs_one_model_per_worker(second, enabled):
+    """Mirrors the Go loader: with the fallback on, a worker serves one model."""
+    decision = _policy_service_decision()
+    policy = decision.algorithm.rayline_arc.policy_service
+    policy.bindings = [
+        policy.bindings[0].model_copy(update={"model": "vendor/a"}),
+        policy.bindings[0].model_copy(update={"action_id": "c" * 64, "model": second}),
+        policy.bindings[1],
+    ]
+    policy.fallback = RaylineARCPolicyFallbackConfig(enabled=enabled)
+    refused = any(
+        "one model per worker" in error.message
+        for error in _validate_rayline_arc_decision(decision)
+    )
+    assert refused == (enabled and second != "vendor/a")
+
+
+def test_rayline_arc_policy_fallback_matches_the_go_contract():
+    """fallback mirrors RaylineARCPolicyFallbackConfig: off by default, 0
+    seconds meaning the router's default, at most an hour, nothing else."""
+    assert RaylineARCPolicyFallbackConfig().enabled is False
+    parsed = RaylineARCPolicyFallbackConfig.model_validate(
+        {"enabled": True, "cell_exclusion_seconds": 3600}
+    )
+    assert parsed.enabled and parsed.cell_exclusion_seconds == 3600
+    for invalid in (
+        {"cell_exclusion_seconds": -1},
+        {"cell_exclusion_seconds": 3601},
+        {"enabled": True, "fallback_action_id": "x"},
+    ):
+        with pytest.raises(ValidationError):
+            RaylineARCPolicyFallbackConfig.model_validate(invalid)

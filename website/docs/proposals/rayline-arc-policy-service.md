@@ -282,6 +282,44 @@ its own turns as side calls, which are not counted, or as compactions. With
 the setting off, the headers are ignored. Either way, none of them is
 forwarded to a provider.
 
+## Fallback
+
+`fallback.enabled` (default false) lets a cell serve around a model that
+refused a turn (ADR 0120, Phase 1a). Leave it off for evaluation cells: they
+serve exactly what the policy chose, and a refusal ends the turn as it did
+in collection.
+
+With it on:
+
+- A refused turn excludes its model, every action of it, for the rest of
+  the context. The next turn is offered only the other models, and a turn
+  the schedule would have held on the excluded model decides again, as at a
+  boundary.
+- The exclusion lasts until the context ends: a compaction or a transcript
+  that stops extending the recorded prefix lifts it. Side calls keep it but
+  are not narrowed by it.
+- When every model is excluded, the turn fails as having no available
+  action. The package's fallback action is one of its own actions, so it is
+  excluded with them.
+- A turn that fails with a 429, a 5xx or a timeout takes its provider route
+  (the worker, its backend endpoint, the provider model there and its
+  provider pin) out of the offer for every episode the replica serves, for
+  `fallback.cell_exclusion_seconds` (default 30, at most 3600; Phase 1b). A
+  turn held on that route decides again. "No endpoints found" does not exclude a route: it is as often about
+  what one request asks (a price cap, an image input) as about the route.
+  A worker served by several endpoints is not route-excluded: Envoy balances
+  its calls across them, so a failure cannot be pinned on one. A config
+  reload starts with no route excluded.
+  Route exclusions are advice: when they alone would leave nothing, the turn
+  is offered as though no route had failed. Each replica keeps its own;
+  `rayline_arc_cell_exclusion` logs each.
+- Each decision taken with an exclusion in force is logged as
+  `rayline_arc_fallback_decision`, with the request id, the exclusions and
+  excluded routes, the offered actions, the package's scores and the choice.
+- An episode that holds an exclusion is stored as episode-state v4. A
+  router that predates v4 refuses such a record, so roll every replica of a
+  cell before enabling the fallback on it.
+
 ## Open questions
 
 - A context over encoder capacity is refused, never truncated. Should VSR

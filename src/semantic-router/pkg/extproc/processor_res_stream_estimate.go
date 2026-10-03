@@ -74,8 +74,19 @@ func responseUsageSource(usage responseUsageMetrics) string {
 	if usage.estimated {
 		return "stream_estimate"
 	}
+	// No count at all is no settlement: a refusal Anthropic's safeguards
+	// issue before generating, or a provider error, states no usage, and its
+	// null counts are unknown, not an authoritative zero.
+	if !usage.promptTokensReported && !usage.completionTokensReported && !usage.totalTokensReported &&
+		!usage.cachedPromptTokensReported && !usage.cacheWriteTokensReported {
+		return usageSourceUnknown
+	}
 	return "authoritative"
 }
+
+// usageSourceUnknown is the llm_usage usage_source of a call whose provider
+// stated no token counts.
+const usageSourceUnknown = "unknown"
 
 // attachTruncatedStreamUsage tells the client what the turn it is losing cost.
 //

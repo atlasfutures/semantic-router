@@ -133,6 +133,7 @@ func (r *OpenAIRouter) authoritativeSelectionFailureResponse(
 		return nil
 	}
 	recordSelectionLifecycleFailure(ctx, "selection", err)
+	recordTurnFailure(ctx, selectionTurnFailureClass(failure.class), false)
 	var response *ext_proc.ProcessingResponse
 	switch {
 	case selectionFailureIsCallerError(failure.class):
@@ -167,6 +168,7 @@ func (r *OpenAIRouter) selectionDispatchGateResponse(
 		return nil
 	}
 	recordSelectionLifecycleFailure(ctx, "dispatch", err)
+	recordTurnFailure(ctx, selectionFailureUnavailable, false)
 	response := r.createErrorResponse(
 		http.StatusServiceUnavailable,
 		selectionUnavailableMessage(ctx),

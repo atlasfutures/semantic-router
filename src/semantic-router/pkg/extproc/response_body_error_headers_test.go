@@ -43,7 +43,9 @@ func unexpectedVSRHeaders(values map[string]string) []string {
 		if !strings.HasPrefix(key, "x-vsr-") {
 			continue
 		}
-		if key == headers.VSRSelectedModel || key == headers.VSRClientProtocol {
+		// x-vsr-failure-class is published too: the cell's scrub lets it
+		// through so a gateway can tell a cell failure from an arm's.
+		if key == headers.VSRSelectedModel || key == headers.VSRClientProtocol || key == headers.VSRFailureClass {
 			continue
 		}
 		extra = append(extra, key)
