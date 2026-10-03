@@ -23,20 +23,28 @@ func TestServiceTierAutoIsServedAndExplicitTiersAreRefused(t *testing.T) {
 		{llmprotocol.AnthropicMessagesV1, `{"model":"m","max_tokens":16,"messages":[{"role":"user","content":"hi"}],"service_tier":"auto"}`, `{"model":"m","max_tokens":16,"messages":[{"role":"user","content":"hi"}],"service_tier":"standard_only"}`},
 	}
 	for _, tc := range cases {
-		request, _, _, err := engine.DecodeRequest(tc.format, []byte(tc.auto))
+		// The production ingress decode, and the envelope it returns, which a
+		// same-format dispatch replays verbatim.
+		request, envelope, _, err := engine.DecodeRequestForMutation(tc.format, []byte(tc.auto))
 		if err != nil {
 			t.Fatalf("%s: service_tier auto refused: %v", tc.format, err)
 		}
 		for _, target := range []llmprotocol.WireFormat{llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1} {
-			encoded, err := engine.EncodeRequest(target, request, llmprotocol.Envelope{})
+			encoded, err := engine.EncodeRequest(target, request, envelope)
 			if err != nil {
 				t.Fatalf("%s -> %s: %v", tc.format, target, err)
 			}
-			if bytes.Contains(encoded.Body, []byte("service_tier")) {
-				t.Fatalf("%s -> %s: dispatched the tier: %s", tc.format, target, encoded.Body)
+			carried := bytes.Contains(encoded.Body, []byte("service_tier"))
+			// Translated, the tier is gone; replayed in its own format it is
+			// the client's "auto" verbatim, never anything else.
+			if target != tc.format && carried {
+				t.Fatalf("%s -> %s: translated the tier: %s", tc.format, target, encoded.Body)
+			}
+			if carried && !bytes.Contains(encoded.Body, []byte(`"service_tier":"auto"`)) {
+				t.Fatalf("%s -> %s: dispatched a tier other than auto: %s", tc.format, target, encoded.Body)
 			}
 		}
-		_, _, _, err = engine.DecodeRequest(tc.format, []byte(tc.explicit))
+		_, _, _, err = engine.DecodeRequestForMutation(tc.format, []byte(tc.explicit))
 		assertProtocolError(t, err, llmprotocol.ErrorUnsupportedFeature, "unsupported_service_tier")
 	}
 }
