@@ -120,24 +120,30 @@ func TestRaylineARCFallbackRedecidesOffAnExcludedHeldModel(t *testing.T) {
 }
 
 // A refusal on the turn that compacted excludes the model in the compacted
-// context the retry continues, not in the one the compaction left. Control:
-// when the store moved on since the turn read it, the exclusion is recorded
-// in what the store now holds.
+// context the retry continues, not in the one the compaction left. When the
+// store has moved on since the turn read it, the exclusion follows it within
+// the same context and is dropped in another one, which starts with the full
+// offer.
 func TestRaylineARCRefusalExcludesInTheTurnsContext(t *testing.T) {
 	task := []json.RawMessage{json.RawMessage(`{"role":"user","content":"fix the bug"}`)}
-	stored := (&raylinearc.PolicyEpisodeState{}).Next(task, strings.Repeat("a", 64), "arm-a")
+	longer := append(append([]json.RawMessage(nil), task...), json.RawMessage(`{"role":"assistant","content":"done"}`))
+	read := (&raylinearc.PolicyEpisodeState{}).Next(task, strings.Repeat("a", 64), "arm-a")
 	compacted := &raylinearc.PolicyEpisodeState{Epoch: 1, EpochStartTurn: 3, CompactionCount: 1}
-	state, _ := raylinearc.NewEpisodeState(2)
-	state.Policy = stored
-	for _, moved := range []bool{false, true} {
-		decidedFrom := stored
-		if moved {
-			longer := append(append([]json.RawMessage(nil), task...), json.RawMessage(`{"role":"assistant","content":"done"}`))
-			decidedFrom = stored.Next(longer, strings.Repeat("b", 64), "arm-b")
-		}
-		next, changed := refusedTurn{arm: -1, exclude: "vendor/off", context: compacted, decidedFrom: decidedFrom}.apply(state)
-		if !changed || !next.Policy.Excludes("vendor/off") || (next.Policy.CompactionCount == 1) == moved {
-			t.Fatalf("moved=%v: stored policy %+v", moved, next.Policy)
+	inCompacted := compacted.Next(task, strings.Repeat("b", 64), "arm-b")
+	for name, tc := range map[string]struct {
+		stored   *raylinearc.PolicyEpisodeState
+		excludes bool
+		epoch    int
+	}{
+		"store unchanged":            {read, true, 1},
+		"store moved, same context":  {inCompacted, true, 1},
+		"store moved, other context": {read.Next(longer, strings.Repeat("c", 64), "arm-c"), false, 0},
+	} {
+		state, _ := raylinearc.NewEpisodeState(2)
+		state.Policy = tc.stored
+		next, changed := refusedTurn{arm: -1, exclude: "vendor/off", context: compacted, decidedFrom: read}.apply(state)
+		if changed != tc.excludes || next.Policy.Excludes("vendor/off") != tc.excludes || next.Policy.Epoch != tc.epoch {
+			t.Fatalf("%s: changed=%v stored policy %+v", name, changed, next.Policy)
 		}
 	}
 }

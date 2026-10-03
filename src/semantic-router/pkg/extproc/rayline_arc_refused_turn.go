@@ -122,22 +122,42 @@ func (refusal refusedTurn) apply(state *raylinearc.EpisodeState) (*raylinearc.Ep
 		changed = true
 	}
 	if refusal.exclude != "" && !next.Policy.Excludes(refusal.exclude) {
-		base := next.Policy
-		if refusal.context != nil && samePolicyContext(next.Policy, refusal.decidedFrom) {
-			// The turn's context, keeping what the store excluded since the
-			// turn read it: a late refusal never lifts a newer one.
-			base = refusal.context
-			if next.Policy != nil {
-				for _, exclusion := range next.Policy.Exclusions {
-					base = base.WithExclusion(exclusion.Model, exclusion.Class)
-				}
-			}
+		base, ok := refusal.exclusionBase(next.Policy)
+		if !ok {
+			return next, changed
 		}
 		if policy := base.WithExclusion(refusal.exclude, turnFailureRefusal); policy.Excludes(refusal.exclude) {
 			next.Policy, changed = policy, true
 		}
 	}
 	return next, changed
+}
+
+// exclusionBase is the policy state a refusal's exclusion is added to, given
+// what the store holds now, and false when the refusal no longer belongs:
+//   - the store still holds what the turn read: the turn's own context,
+//     keeping what the store excluded since, so a late refusal never lifts a
+//     newer exclusion;
+//   - the store moved on within the turn's context: what it holds now;
+//   - the store holds another context (a compaction or a prefix break since):
+//     nothing, as that context starts with the full offer.
+func (refusal refusedTurn) exclusionBase(stored *raylinearc.PolicyEpisodeState) (*raylinearc.PolicyEpisodeState, bool) {
+	if refusal.context == nil {
+		return stored, true
+	}
+	if samePolicyContext(stored, refusal.decidedFrom) {
+		base := refusal.context
+		if stored != nil {
+			for _, exclusion := range stored.Exclusions {
+				base = base.WithExclusion(exclusion.Model, exclusion.Class)
+			}
+		}
+		return base, true
+	}
+	if stored != nil && stored.Epoch == refusal.context.Epoch {
+		return stored, true
+	}
+	return nil, false
 }
 
 // stageRefusal stores the refusal's changes, leaving the rest of the
