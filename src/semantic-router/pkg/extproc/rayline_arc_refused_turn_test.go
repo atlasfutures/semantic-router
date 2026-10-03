@@ -209,7 +209,7 @@ func TestRaylineARCRefusedCoalescedResendClearsTheBoundaryArm(t *testing.T) {
 		}
 		staged := readLedgerTestState(t, store, episode)
 		follower := &RequestContext{
-			RaylineARCTransaction: newBorrowedRaylineARCEpisodeTransaction(store, staged, episode),
+			RaylineARCTransaction: newBorrowedRaylineARCEpisodeTransaction(store, staged, episode, nil),
 			VSRRaylineARC:         decided.RaylineARC,
 		}
 		if refusal {
@@ -219,19 +219,33 @@ func TestRaylineARCRefusedCoalescedResendClearsTheBoundaryArm(t *testing.T) {
 			t.Fatalf("refusal=%v: boundary cleared=%v", refusal, cleared)
 		}
 	}
-	fixture, store, episode := boundaryFixture(t)
-	leader, decided := boundaryAttempt(t, fixture, store, episode,
-		policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"}))
-	follower := &RequestContext{
-		RaylineARCTransaction: newBorrowedRaylineARCEpisodeTransaction(store, leader.RaylineARCTransaction.state, episode),
-		VSRRaylineARC:         decided.RaylineARC,
+	// While the leader holds the lease, the resend does not wait on it: it
+	// hands its refusal to the leader, whose abort clears the decision.
+	// Control: with no refusal handed over, the leader's abort keeps it.
+	for _, refusal := range []bool{true, false} {
+		fixture, store, episode := boundaryFixture(t)
+		leader, decided := boundaryAttempt(t, fixture, store, episode,
+			policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"}))
+		entry := &raylineARCInflightEntry{done: make(chan struct{}), finished: make(chan struct{})}
+		leader.RaylineARCTransaction.inflight = entry
+		follower := &RequestContext{
+			RaylineARCTransaction: newBorrowedRaylineARCEpisodeTransaction(store, leader.RaylineARCTransaction.state, episode, entry),
+			VSRRaylineARC:         decided.RaylineARC,
+		}
+		started := time.Now()
+		if refusal {
+			declineRefusedTurn(follower)
+		}
+		if elapsed := time.Since(started); elapsed > time.Second {
+			t.Fatalf("a refused resend waited %v on the leader's lease", elapsed)
+		}
+		if err := leader.RaylineARCTransaction.abort(context.Background(), "upstream_status"); err != nil {
+			t.Fatal(err)
+		}
+		if cleared := readLedgerTestState(t, store, episode).PolicyBoundary == nil; cleared != refusal {
+			t.Fatalf("leader held the lease, refusal=%v: boundary cleared=%v", refusal, cleared)
+		}
 	}
-	started := time.Now()
-	declineRefusedTurn(follower)
-	if elapsed := time.Since(started); elapsed > time.Second {
-		t.Fatalf("a refused resend waited %v on the leader's lease", elapsed)
-	}
-	_ = leader.RaylineARCTransaction.abort(context.Background(), "test")
 }
 
 // A late refused resend clears only the decision it was dispatched under: a
@@ -260,7 +274,7 @@ func TestRaylineARCRefusedResendKeepsANewerBoundaryOnTheSameArm(t *testing.T) {
 		t.Fatal(err)
 	}
 	declineRefusedTurn(&RequestContext{
-		RaylineARCTransaction: newBorrowedRaylineARCEpisodeTransaction(store, borrowed, episode),
+		RaylineARCTransaction: newBorrowedRaylineARCEpisodeTransaction(store, borrowed, episode, nil),
 		VSRRaylineARC:         decided.RaylineARC,
 	})
 	if after := readLedgerTestState(t, store, episode).PolicyBoundary; after == nil || after.PrefixDigest != strings.Repeat("f", 64) {
