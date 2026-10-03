@@ -473,10 +473,12 @@ func assembleChatMessage(
 	reasoningDetails json.RawMessage,
 	policy llmprotocol.Policy,
 ) (llmprotocol.Message, error) {
-	message := llmprotocol.Message{ID: wire.ID, Role: role, Content: contents}
-	if wire.Refusal != nil {
-		message.Content = append(message.Content, llmprotocol.Content{Kind: llmprotocol.ContentRefusal, Text: *wire.Refusal})
-	}
+	// A Chat message keeps its reasoning, text, refusal and tool calls in
+	// separate fields, so their order is the decoder's to choose. Reasoning
+	// comes first: the model produced it before the answer, Messages clients
+	// expect a thinking block ahead of text and tool_use (and replay the blocks
+	// in order), and a Responses reasoning item precedes the output it led to.
+	message := llmprotocol.Message{ID: wire.ID, Role: role}
 	reasoning := wire.Reasoning
 	if reasoning == nil {
 		reasoning = wire.AlternateReasoning
@@ -487,6 +489,10 @@ func assembleChatMessage(
 		})
 	}
 	message.Content = attachReasoningDetails(message.Content, reasoningDetails)
+	message.Content = append(message.Content, contents...)
+	if wire.Refusal != nil {
+		message.Content = append(message.Content, llmprotocol.Content{Kind: llmprotocol.ContentRefusal, Text: *wire.Refusal})
+	}
 	toolCalls, err := decodeChatToolCalls(wire.ToolCalls, index, policy)
 	if err != nil {
 		return llmprotocol.Message{}, err

@@ -81,6 +81,58 @@
           }
         }
       }
+    },
+    {
+      "name": "mimo_reasoning_text_and_tool_call",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "choices": [
+            {
+              "finish_reason": "tool_calls",
+              "index": 0,
+              "message": {
+                "content": "Let me check the weather.",
+                "reasoning_content": "The user wants the weather, so call the tool.",
+                "reasoning_details": [
+                  {
+                    "format": "unknown",
+                    "index": 0,
+                    "text": "The user wants the weather, so call the tool.",
+                    "type": "reasoning.text"
+                  }
+                ],
+                "role": "assistant",
+                "tool_calls": [
+                  {
+                    "function": {
+                      "arguments": "{\"city\":\"Paris\"}",
+                      "name": "weather"
+                    },
+                    "id": "call_1",
+                    "type": "function"
+                  }
+                ]
+              }
+            }
+          ],
+          "created": 100,
+          "id": "gen-4",
+          "model": "routed-model",
+          "object": "chat.completion",
+          "usage": {
+            "completion_tokens": 22,
+            "completion_tokens_details": {
+              "reasoning_tokens": 13
+            },
+            "prompt_tokens": 258,
+            "prompt_tokens_details": {
+              "cached_tokens": 192
+            },
+            "total_tokens": 280
+          }
+        }
+      }
     }
   ]
 }

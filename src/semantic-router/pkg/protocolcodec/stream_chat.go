@@ -426,11 +426,17 @@ func chatDeltaHasReasoningDetails(delta chatChunkDeltaWire) bool {
 
 type chatEventFactory func() ([]llmprotocol.Event, error)
 
+// chatChoiceEventFactories orders the deltas one chunk carries. Reasoning
+// goes first, so a chunk that ends the reasoning and starts the answer opens
+// the reasoning block ahead of the text, as the buffered decoder orders them.
+// Across chunks the order is the order of arrival: bytes already sent cannot
+// be moved, so reasoning that resumes after text has started becomes a further
+// reasoning block after that text, as Messages interleaved thinking does.
 func (decoder *chatStreamDecoder) chatChoiceEventFactories(choice chatChunkChoiceWire) []chatEventFactory {
 	return []chatEventFactory{
+		func() ([]llmprotocol.Event, error) { return decoder.decodeReasoningDelta(choice) },
 		func() ([]llmprotocol.Event, error) { return decoder.decodeContentDelta(choice) },
 		func() ([]llmprotocol.Event, error) { return decoder.decodeAnnotations(choice) },
-		func() ([]llmprotocol.Event, error) { return decoder.decodeReasoningDelta(choice) },
 		func() ([]llmprotocol.Event, error) { return decoder.decodeRefusalDelta(choice) },
 	}
 }

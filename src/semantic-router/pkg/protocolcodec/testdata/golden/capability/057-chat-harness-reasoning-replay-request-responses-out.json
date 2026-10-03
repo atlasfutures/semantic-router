@@ -164,6 +164,67 @@
           "code": "conflicting_reasoning_controls"
         }
       }
+    },
+    {
+      "name": "assistant_text_with_reasoning_replay",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "input_text"
+                }
+              ],
+              "role": "user",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "Say hello briefly.",
+                  "type": "reasoning_text"
+                }
+              ],
+              "summary": [],
+              "type": "reasoning"
+            },
+            {
+              "content": [
+                {
+                  "text": "Hello there.",
+                  "type": "input_text"
+                }
+              ],
+              "role": "assistant",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "and again",
+                  "type": "input_text"
+                }
+              ],
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "max_output_tokens": 4096,
+          "model": "routed-model",
+          "reasoning": {
+            "effort": "high"
+          }
+        },
+        "diagnostics": [
+          {
+            "field": "content.reasoning_details",
+            "action": "dropped"
+          }
+        ]
+      }
     }
   ]
 }
