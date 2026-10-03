@@ -376,7 +376,7 @@ type ModelParams struct {
 	Pricing            ModelPricing        `yaml:"pricing,omitempty"`
 	Reliability        ProviderReliability `yaml:"reliability,omitempty"`
 	ReasoningFamily    string              `yaml:"reasoning_family,omitempty"`
-	// Publisher is the model card's publisher (routing.models[].publisher or
+	// Publisher is the model card's publisher (routing.modelCards[].publisher or
 	// the catalog's): who made the model, whatever namespace a provider
 	// serves it under.
 	Publisher string `yaml:"-" json:"-"`

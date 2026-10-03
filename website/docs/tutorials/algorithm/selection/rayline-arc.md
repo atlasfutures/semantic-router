@@ -356,7 +356,7 @@ answer 400 when a tool history lacks their own reasoning content.
 An arm's family is who made its model:
 
 1. the model card's `publisher`, from the catalog or from
-   `routing.models[].publisher`;
+   `routing.modelCards[].publisher`;
 2. otherwise, the first path segment of the provider model id the arm
    dispatches to (`deepseek/deepseek-v4-flash` is `deepseek`), without any
    `@variant` suffix.
