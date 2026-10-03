@@ -5,6 +5,7 @@ package extproc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -279,5 +280,81 @@ func TestRaylineARCRefusedResendKeepsANewerBoundaryOnTheSameArm(t *testing.T) {
 	})
 	if after := readLedgerTestState(t, store, episode).PolicyBoundary; after == nil || after.PrefixDigest != strings.Repeat("f", 64) {
 		t.Fatalf("the newer request's decision was cleared: %+v", after)
+	}
+}
+
+// deadlineStore stages only while its context is live, as a networked store
+// does; the in-memory store ignores the context.
+type deadlineStore struct {
+	*raylinearc.MemoryEpisodeStore
+}
+
+func (store deadlineStore) Stage(ctx context.Context, lease raylinearc.Lease, state *raylinearc.EpisodeState) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return store.MemoryEpisodeStore.Stage(ctx, lease, state)
+}
+
+// failingCommitStore fails every commit, as a store outage at commit does.
+type failingCommitStore struct {
+	*raylinearc.MemoryEpisodeStore
+}
+
+func (failingCommitStore) Commit(context.Context, raylinearc.Lease, uint64, *raylinearc.EpisodeState) error {
+	return errors.New("episode store unavailable")
+}
+
+// A resend whose first wait ran out, and whose leader finished meanwhile,
+// takes the lease on its retry and stages the clear under that retry's live
+// context. Control: with no leader finished, it hands the decision over and
+// leaves the store alone.
+func TestRaylineARCRefusedResendRetryStagesUnderItsLiveContext(t *testing.T) {
+	for _, leaderFinished := range []bool{true, false} {
+		fixture, store, episode := boundaryFixture(t)
+		leader, decided := boundaryAttempt(t, fixture, store, episode,
+			policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"}))
+		entry := &raylineARCInflightEntry{done: make(chan struct{}), finished: make(chan struct{})}
+		if leaderFinished {
+			close(entry.finished)
+		}
+		follower := &RequestContext{
+			RaylineARCTransaction: newBorrowedRaylineARCEpisodeTransaction(deadlineStore{store}, leader.RaylineARCTransaction.state, episode, entry),
+			VSRRaylineARC:         decided.RaylineARC,
+		}
+		// The holder releases after the first wait has run out, within the retry.
+		go func() {
+			time.Sleep(relaxedBoundaryStageTimeout + relaxedBoundaryStageTimeout/5)
+			_ = leader.RaylineARCTransaction.abort(context.Background(), "upstream_status")
+		}()
+		declineRefusedTurn(follower)
+		time.Sleep(relaxedBoundaryStageTimeout)
+		if cleared := readLedgerTestState(t, store, episode).PolicyBoundary == nil; cleared != leaderFinished {
+			t.Fatalf("leader finished=%v: boundary cleared=%v", leaderFinished, cleared)
+		}
+	}
+}
+
+// A leader whose commit fails leaves the turn unrecorded, as an abort does,
+// and still clears a refusal a resend handed over. Control: with nothing
+// handed over, the failed commit keeps the decision.
+func TestRaylineARCLeaderCommitFailureClearsAHandedOverRefusal(t *testing.T) {
+	for _, refusal := range []bool{true, false} {
+		fixture, store, episode := boundaryFixture(t)
+		leader, decided := boundaryAttempt(t, fixture, store, episode,
+			policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"}))
+		entry := &raylineARCInflightEntry{done: make(chan struct{}), finished: make(chan struct{})}
+		leader.RaylineARCTransaction.inflight = entry
+		leader.RaylineARCTransaction.store = failingCommitStore{store}
+		if refusal {
+			entry.noteRefusedBoundary(*decided.RaylineARC.PolicyBoundary)
+		}
+		leader.RaylineARCTransaction.markPolicyState(decided.RaylineARC.PolicyNextState, false)
+		if err := leader.RaylineARCTransaction.commit(context.Background(), leader); err == nil {
+			t.Fatal("the commit did not fail")
+		}
+		if cleared := readLedgerTestState(t, store, episode).PolicyBoundary == nil; cleared != refusal {
+			t.Fatalf("refusal=%v: boundary cleared=%v after the failed commit", refusal, cleared)
+		}
 	}
 }
