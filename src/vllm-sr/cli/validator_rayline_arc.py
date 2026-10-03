@@ -306,7 +306,25 @@ def _validate_policy_service(name, policy) -> list[ValidationError]:
                 field=f"{prefix}.connect_timeout_seconds",
             )
         )
+    if policy.fallback is not None and policy.fallback.enabled:
+        models = {
+            binding.model or policy.trained_models.get(binding.worker) or binding.worker
+            for binding in policy.bindings
+        }
+        if len(models) > _MAX_FALLBACK_MODELS:
+            errors.append(
+                ValidationError(
+                    f"fallback serves at most {_MAX_FALLBACK_MODELS} distinct models, "
+                    f"the bindings serve {len(models)}",
+                    field=f"{prefix}.fallback",
+                )
+            )
     return errors
+
+
+# Mirrors RaylineARCMaxFallbackModels in the Go loader: an episode excludes at
+# most this many models.
+_MAX_FALLBACK_MODELS = 16
 
 
 def _validate_encoder_capabilities(prefix, encoder) -> list[ValidationError]:
