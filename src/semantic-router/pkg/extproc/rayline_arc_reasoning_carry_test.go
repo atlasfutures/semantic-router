@@ -72,4 +72,44 @@ func TestReasoningFromAnotherModelIsCarriedToTheNextWorker(t *testing.T) {
 			t.Fatalf("the assistant's visible text was lost: %s", body["messages"])
 		}
 	})
+
+	// A Responses client resends Claude's thinking as OpenRouter writes it
+	// (atlasfutures/semantic-router#164): a reasoning item with the signature
+	// and the anthropic-claude-v1 format tag, and redacted thinking as its
+	// encrypted_content under the same tag.
+	responsesHistory := `{"model":"auto","store":false,"input":[` +
+		`{"role":"user","content":"fix the failing test"},` +
+		`{"type":"reasoning","id":"item_1","summary":[],"content":[{"type":"reasoning_text","text":"claude reasoning"}],` +
+		`"signature":"claude-signature","format":"anthropic-claude-v1"},` +
+		`{"type":"reasoning","id":"item_2","summary":[],"encrypted_content":"claude-redacted","format":"anthropic-claude-v1"},` +
+		`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Looking at it."}]},` +
+		`{"role":"user","content":"go on"}]}`
+	t.Run("a Responses client's signed thinking to a Messages worker", func(t *testing.T) {
+		claude := actions["claude"].ActionID
+		fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return claude })
+		body := dispatchPolicyClientRequest(t, router, "episode-carry-responses-messages", "/v1/responses", responsesHistory)
+		assertJSONField(t, body, "model", `"anthropic/claude-opus-5"`)
+		wire := string(body["messages"])
+		for _, block := range []string{
+			`"signature":"claude-signature"`, `"thinking":"claude reasoning"`,
+			`"type":"redacted_thinking"`, `"data":"claude-redacted"`, "Looking at it.",
+		} {
+			if !strings.Contains(wire, block) {
+				t.Fatalf("a Messages worker was not sent %s: %s", block, wire)
+			}
+		}
+	})
+	t.Run("a Responses client's signed thinking to a Chat worker", func(t *testing.T) {
+		think := actions["think"].ActionID
+		fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return think })
+		body := dispatchPolicyClientRequest(t, router, "episode-carry-responses-chat", "/v1/responses", responsesHistory)
+		assertJSONField(t, body, "model", `"vendor/think"`)
+		wire := string(body["messages"])
+		if strings.Contains(wire, "claude-signature") || strings.Contains(wire, "claude-redacted") {
+			t.Fatalf("a Chat worker was sent Claude's signature or redacted thinking: %s", wire)
+		}
+		if !strings.Contains(wire, "Looking at it.") {
+			t.Fatalf("the assistant's visible text was lost: %s", wire)
+		}
+	})
 }

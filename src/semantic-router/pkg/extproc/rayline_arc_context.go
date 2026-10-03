@@ -234,8 +234,9 @@ func requestRoutingCapabilities(reqCtx *RequestContext) []string {
 //
 // The exclusion is a refusal rather than a degrade, for the same reason the
 // vision one is: an arm without the capability does not answer this turn
-// worse, it answers a different turn. A declared web search reaches it as no
-// web search, and the answer is built on less than the caller sent.
+// worse, it answers a different turn. A tool result that held a screenshot
+// reaches it as an empty tool result, and the answer is built on less than the
+// caller sent.
 func (r *OpenAIRouter) incapableArms(modelRefs []config.ModelRef, required []string) []bool {
 	if r == nil || r.Config == nil || len(required) == 0 || len(modelRefs) == 0 {
 		return nil

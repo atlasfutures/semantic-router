@@ -22,6 +22,17 @@ func decodeResponsesInput(raw json.RawMessage, request *llmprotocol.Request, pol
 		return err
 	}
 	for index, itemBody := range itemBodies {
+		if body, anthropic, tagged := splitResponsesAnthropicReasoning(itemBody); tagged {
+			// Claude's thinking resent as OpenRouter writes it. An item that
+			// also holds a member nothing names is carried whole instead, as
+			// any other such item is.
+			if _, carriedWhole := carriedResponsesInputItem(body); !carriedWhole {
+				if err := decodeResponsesAnthropicReasoningItem(body, anthropic, request, policy); err != nil {
+					return err
+				}
+				continue
+			}
+		}
 		if carried, isCarried := carriedResponsesInputItem(itemBody); isCarried {
 			request.Messages = append(request.Messages, carried)
 			continue
@@ -313,7 +324,7 @@ func decodeResponsesInputItemKind(
 		}
 		return decodeResponsesFunctionResult(item, request, policy)
 	case "reasoning":
-		return decodeResponsesReasoningItem(item, request, policy)
+		return decodeResponsesReasoningItem(item, responsesAnthropicReasoning{}, request, policy)
 	case "image_generation_call":
 		request.Messages = append(request.Messages, llmprotocol.Message{
 			ID: item.ID, Role: llmprotocol.RoleAssistant,
@@ -385,7 +396,34 @@ func decodeResponsesFunctionResult(item responsesItemWire, request *llmprotocol.
 	return nil
 }
 
-func decodeResponsesReasoningItem(item responsesItemWire, request *llmprotocol.Request, policy llmprotocol.Policy) error {
+// decodeResponsesAnthropicReasoningItem decodes a reasoning item tagged with
+// the Anthropic format once its extension members are split off.
+func decodeResponsesAnthropicReasoningItem(
+	body json.RawMessage,
+	anthropic responsesAnthropicReasoning,
+	request *llmprotocol.Request,
+	policy llmprotocol.Policy,
+) error {
+	item, err := decodeResponsesItemWire(body, policy, false)
+	if err != nil {
+		return err
+	}
+	if err := validateResponsesInputItemMetadata(item); err != nil {
+		return err
+	}
+	// The id names an item of whichever surface wrote it, not of any
+	// Responses worker this turn reaches, which under store:false would look
+	// it up and fail. Claude's thinking is identified by its signature.
+	item.ID = ""
+	return decodeResponsesReasoningItem(item, anthropic, request, policy)
+}
+
+func decodeResponsesReasoningItem(
+	item responsesItemWire,
+	anthropic responsesAnthropicReasoning,
+	request *llmprotocol.Request,
+	policy llmprotocol.Policy,
+) error {
 	content, err := decodeResponsesReasoning(item.Summary, policy, false)
 	if err != nil {
 		return err
@@ -394,7 +432,7 @@ func decodeResponsesReasoningItem(item responsesItemWire, request *llmprotocol.R
 	if err != nil {
 		return err
 	}
-	content = append(content, reasoning...)
+	content = anthropic.applyTo(append(content, reasoning...))
 	id := item.ID
 	if details, minted := mintedReasoningDetails(item.EncryptedContent); minted {
 		// A reasoning item the Router minted from an OpenRouter Chat turn's

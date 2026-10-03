@@ -337,6 +337,17 @@ func (state *responsesMessageEncodingState) appendContent(content llmprotocol.Co
 		if err := state.flushOrdinary(); err != nil {
 			return err
 		}
+		if content.Signature != "" {
+			// A signature proves exactly one thinking block, so a signed
+			// block is an item of its own: it starts a fresh item and ends
+			// it, or a neighbouring block would be resent under its
+			// signature.
+			if err := state.flushReasoning(); err != nil {
+				return err
+			}
+			state.reasoning = append(state.reasoning, content)
+			return state.flushReasoning()
+		}
 		state.reasoning = append(state.reasoning, content)
 	case llmprotocol.ContentGeneratedImage:
 		if err := state.flushPending(); err != nil {
@@ -367,6 +378,19 @@ func (state *responsesMessageEncodingState) appendContent(content llmprotocol.Co
 // exception: a document whose source is text becomes a text part, because the
 // block holds the text the turn is about.
 func (state *responsesMessageEncodingState) appendCarriedBlock(content llmprotocol.Content) error {
+	// Redacted thinking goes to a Responses client as OpenRouter writes it,
+	// so the client can resend it to Claude. A request is never sent it: a
+	// Responses provider cannot read Anthropic's opaque reasoning.
+	if state.textDirection == "output" {
+		if _, redacted := OpaqueReasoningData(content); redacted {
+			if err := state.flushPending(); err != nil {
+				return err
+			}
+			item, _ := responsesRedactedThinkingItem(content, state.itemID("reasoning"))
+			state.items = append(state.items, item)
+			return nil
+		}
+	}
 	text, transformed := carriedDocumentText(content)
 	if !transformed {
 		return nil
@@ -481,6 +505,9 @@ func (state *responsesMessageEncodingState) flushReasoning() error {
 			if carrierOnly {
 				continue
 			}
+		}
+		if content.Signature != "" {
+			item.Signature, item.ReasoningFormat = content.Signature, responsesAnthropicReasoningFormat
 		}
 		if content.Reasoning == llmprotocol.ReasoningScopeSummary {
 			summaries = append(summaries, map[string]string{"type": "summary_text", "text": content.Text})

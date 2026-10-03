@@ -76,6 +76,10 @@
           {
             "field": "instructions.role",
             "action": "approximated"
+          },
+          {
+            "field": "content.reasoning_details",
+            "action": "dropped"
           }
         ]
       }

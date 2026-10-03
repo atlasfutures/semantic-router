@@ -17,6 +17,9 @@ func (OpenAIResponsesCodec) Capabilities() llmprotocol.CapabilitySet {
 		llmprotocol.CapabilityText, llmprotocol.CapabilityImageInput, llmprotocol.CapabilityFileInput,
 		llmprotocol.CapabilityImageGeneration,
 		llmprotocol.CapabilityTools, llmprotocol.CapabilityParallelTools, llmprotocol.CapabilityReasoning,
+		// A signed reasoning item rides OpenRouter's signature member; see
+		// responses_anthropic_reasoning.go.
+		llmprotocol.CapabilityReasoningSignature,
 		llmprotocol.CapabilityStructuredJSON, llmprotocol.CapabilityStrictJSONSchema, llmprotocol.CapabilityStrictToolSchema,
 		llmprotocol.CapabilityStreaming, llmprotocol.CapabilityCacheAccounting,
 		llmprotocol.CapabilityReasoningAccounting, llmprotocol.CapabilityAuthoritativeUsage,
@@ -134,6 +137,12 @@ type responsesItemWire struct {
 	// Action is what a web_search_call did: its query or the page it opened,
 	// with the sources it read. The router carries it unread.
 	Action json.RawMessage `json:"action,omitempty"`
+	// Signature and ReasoningFormat are OpenRouter's members on a reasoning
+	// item that holds Anthropic thinking (responses_anthropic_reasoning.go).
+	// Only MarshalJSON writes them and nothing decodes them through this
+	// struct, so an item holding them still has members it does not name.
+	Signature       string `json:"-"`
+	ReasoningFormat string `json:"-"`
 }
 
 func (wire responsesItemWire) MarshalJSON() ([]byte, error) {
@@ -160,6 +169,12 @@ func (wire responsesItemWire) MarshalJSON() ([]byte, error) {
 	case "reasoning":
 		if len(wire.Summary) == 0 {
 			object["summary"] = json.RawMessage(`[]`)
+		}
+		if wire.Signature != "" {
+			object["signature"], _ = json.Marshal(wire.Signature)
+		}
+		if wire.ReasoningFormat != "" {
+			object["format"], _ = json.Marshal(wire.ReasoningFormat)
 		}
 	case "image_generation_call":
 		if wire.Result == nil {
@@ -225,7 +240,7 @@ func (OpenAIResponsesCodec) DecodeRequest(body []byte, policy llmprotocol.Policy
 		"max_tool_calls": wire.MaxToolCalls, "moderation": wire.Moderation,
 		"prompt":               wire.Prompt,
 		"prompt_cache_options": wire.PromptCacheOptions, "safety_identifier": wire.SafetyIdentifier,
-		"service_tier": wire.ServiceTier,
+		"service_tier": requestedServiceTier(wire.ServiceTier),
 		"top_logprobs": wire.TopLogprobs,
 	}); err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
