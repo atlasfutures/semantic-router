@@ -376,7 +376,8 @@ class RaylineARCAlgorithmConfig(BaseModel):
     # Keeps a tool loop on the model family that opened it: a turn answering
     # the previous arm's tool call is scored only among that family's arms,
     # and the hold is lifted (and logged) when none of them is eligible.
-    # Reasoning does not carry across families. Off by default.
+    # A switch mid-loop drops or strips reasoning the next family cannot
+    # verify (see the reasoning dispositions). Off by default.
     hold_family_in_tool_loop: bool = False
     fault_injection: RaylineARCFaultInjectionConfig | None = None
     routes_api: RaylineARCRoutesAPIConfig | None = None

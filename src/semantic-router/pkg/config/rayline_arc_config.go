@@ -108,10 +108,11 @@ type RaylineARCAlgorithmConfig struct {
 	// segment of its provider model id; a provider that namespaces models by
 	// its own name (local/..., accounts/...) needs the publisher on the card.
 	//
-	// A family's reasoning does not carry to another family: a signature only
-	// its issuer can verify is dropped, and DeepSeek and MiMo answer 400 when
-	// a tool history lacks their own reasoning_content. Switching inside the
-	// loop therefore costs the reasoning the loop was built on, or the turn.
+	// A switch inside the loop changes the reasoning the loop was built on: a
+	// Messages target drops unsigned reasoning, and a Chat or Responses target
+	// strips Claude's signature (keeping its text) and drops its
+	// redacted_thinking. DeepSeek and MiMo answer 400 when a tool history
+	// lacks their own reasoning_content, so the switch can also cost the turn.
 	//
 	// It is a hard constraint with a fallback rather than a score penalty: a
 	// penalty cannot promise the reasoning survives, and the policy-service

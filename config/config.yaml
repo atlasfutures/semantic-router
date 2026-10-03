@@ -1662,10 +1662,12 @@ routing:
           # episode's previous arm made is scored only among that arm's family
           # (its card's publisher, else the vendor segment of its provider
           # model); the next user turn may switch.
-          # Reasoning does not carry across families, and DeepSeek and MiMo
-          # answer 400 when a tool history lacks their reasoning_content. When
-          # no arm of the family is eligible the hold is lifted and logged.
-          # Off by default; the dev ARC cells turn it on.
+          # A switch mid-loop changes the loop's reasoning: a Messages target
+          # drops unsigned reasoning, and a Chat or Responses target strips
+          # Claude's signature (keeping its text) and drops redacted_thinking.
+          # DeepSeek and MiMo answer 400 when a tool history lacks their own
+          # reasoning_content. When no arm of the family is eligible the hold
+          # is lifted and logged. Off by default.
           hold_family_in_tool_loop: false
           # fault_injection lets a request ask this cell to fail in a named
           # way, so a failure path with no natural trigger can still be
