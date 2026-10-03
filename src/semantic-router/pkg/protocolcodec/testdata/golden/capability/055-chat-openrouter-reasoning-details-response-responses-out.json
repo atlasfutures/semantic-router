@@ -17,6 +17,18 @@
             {
               "content": [
                 {
+                  "text": "Check the weather tool first.",
+                  "type": "reasoning_text"
+                }
+              ],
+              "encrypted_content": "vsr.reasoning_details.v1.W3sidHlwZSI6InJlYXNvbmluZy50ZXh0IiwidGV4dCI6IkNoZWNrIHRoZSB3ZWF0aGVyIHRvb2wgZmlyc3QuIiwic2lnbmF0dXJlIjoic2lnLWFudGhyb3BpYy0xIiwiZm9ybWF0IjoiYW50aHJvcGljLWNsYXVkZS12MSIsImluZGV4IjowfV0",
+              "id": "item_96749ccd584887000976bcde",
+              "summary": [],
+              "type": "reasoning"
+            },
+            {
+              "content": [
+                {
                   "annotations": [],
                   "text": "It is sunny.",
                   "type": "output_text"
@@ -26,18 +38,6 @@
               "role": "assistant",
               "status": "completed",
               "type": "message"
-            },
-            {
-              "content": [
-                {
-                  "text": "Check the weather tool first.",
-                  "type": "reasoning_text"
-                }
-              ],
-              "encrypted_content": "vsr.reasoning_details.v1.W3sidHlwZSI6InJlYXNvbmluZy50ZXh0IiwidGV4dCI6IkNoZWNrIHRoZSB3ZWF0aGVyIHRvb2wgZmlyc3QuIiwic2lnbmF0dXJlIjoic2lnLWFudGhyb3BpYy0xIiwiZm9ybWF0IjoiYW50aHJvcGljLWNsYXVkZS12MSIsImluZGV4IjowfV0",
-              "id": "item_72a415aadf6d5f34339e77a2",
-              "summary": [],
-              "type": "reasoning"
             }
           ],
           "output_text": "It is sunny.",
@@ -107,6 +107,75 @@
               "reasoning_tokens": 0
             },
             "total_tokens": 12
+          }
+        }
+      }
+    },
+    {
+      "name": "mimo_reasoning_text_and_tool_call",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "created_at": 100,
+          "error": null,
+          "id": "gen-4",
+          "incomplete_details": null,
+          "instructions": null,
+          "metadata": {},
+          "model": "routed-model",
+          "object": "response",
+          "output": [
+            {
+              "content": [
+                {
+                  "text": "The user wants the weather, so call the tool.",
+                  "type": "reasoning_text"
+                }
+              ],
+              "encrypted_content": "vsr.reasoning_details.v1.W3sidHlwZSI6InJlYXNvbmluZy50ZXh0IiwidGV4dCI6IlRoZSB1c2VyIHdhbnRzIHRoZSB3ZWF0aGVyLCBzbyBjYWxsIHRoZSB0b29sLiIsImZvcm1hdCI6InVua25vd24iLCJpbmRleCI6MH1d",
+              "id": "item_11734aefc3c1cc623909ed49",
+              "summary": [],
+              "type": "reasoning"
+            },
+            {
+              "content": [
+                {
+                  "annotations": [],
+                  "text": "Let me check the weather.",
+                  "type": "output_text"
+                }
+              ],
+              "id": "item_e52957e00c278c87a7a4abe3",
+              "role": "assistant",
+              "status": "completed",
+              "type": "message"
+            },
+            {
+              "arguments": "{\"city\":\"Paris\"}",
+              "call_id": "call_1",
+              "id": "item_a8acd2bef9243cbdea1fd4d3",
+              "name": "weather",
+              "type": "function_call"
+            }
+          ],
+          "output_text": "Let me check the weather.",
+          "parallel_tool_calls": true,
+          "status": "completed",
+          "temperature": null,
+          "tool_choice": "auto",
+          "tools": [],
+          "top_p": null,
+          "usage": {
+            "input_tokens": 258,
+            "input_tokens_details": {
+              "cache_write_tokens": 0,
+              "cached_tokens": 192
+            },
+            "output_tokens": 22,
+            "output_tokens_details": {
+              "reasoning_tokens": 13
+            },
+            "total_tokens": 280
           }
         }
       }

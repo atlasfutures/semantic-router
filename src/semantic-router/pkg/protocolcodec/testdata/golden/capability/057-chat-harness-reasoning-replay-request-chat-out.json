@@ -136,6 +136,43 @@
           "code": "conflicting_reasoning_controls"
         }
       }
+    },
+    {
+      "name": "assistant_text_with_reasoning_replay",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 4096,
+          "messages": [
+            {
+              "content": "hello",
+              "role": "user"
+            },
+            {
+              "content": "Hello there.",
+              "reasoning_content": "Say hello briefly.",
+              "reasoning_details": [
+                {
+                  "format": "anthropic-claude-v1",
+                  "index": 0,
+                  "signature": "sig-anthropic-2",
+                  "text": "Say hello briefly.",
+                  "type": "reasoning.text"
+                }
+              ],
+              "role": "assistant"
+            },
+            {
+              "content": "and again",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model",
+          "reasoning": {
+            "max_tokens": 4096
+          }
+        }
+      }
     }
   ]
 }

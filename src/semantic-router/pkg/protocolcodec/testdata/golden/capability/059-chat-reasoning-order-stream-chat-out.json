@@ -1,0 +1,264 @@
+{
+  "cases": [
+    {
+      "name": "reasoning_ends_in_the_chunk_that_starts_the_text",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "frames": [
+            {
+              "data": {
+                "choices": [
+                  {
+                    "delta": {
+                      "role": "assistant"
+                    },
+                    "finish_reason": null,
+                    "index": 0
+                  }
+                ],
+                "id": "gen-5",
+                "model": "public-model",
+                "object": "chat.completion.chunk"
+              },
+              "event": ""
+            },
+            {
+              "data": {
+                "choices": [
+                  {
+                    "delta": {
+                      "reasoning_content": "Say hello",
+                      "reasoning_details": [
+                        {
+                          "format": "unknown",
+                          "index": 0,
+                          "text": "Say hello",
+                          "type": "reasoning.text"
+                        }
+                      ]
+                    },
+                    "finish_reason": null,
+                    "index": 0
+                  }
+                ],
+                "id": "gen-5",
+                "model": "public-model",
+                "object": "chat.completion.chunk"
+              },
+              "event": ""
+            },
+            {
+              "data": {
+                "choices": [
+                  {
+                    "delta": {
+                      "reasoning_content": " briefly.",
+                      "reasoning_details": [
+                        {
+                          "format": "unknown",
+                          "index": 0,
+                          "text": " briefly.",
+                          "type": "reasoning.text"
+                        }
+                      ]
+                    },
+                    "finish_reason": null,
+                    "index": 0
+                  }
+                ],
+                "id": "gen-5",
+                "model": "public-model",
+                "object": "chat.completion.chunk"
+              },
+              "event": ""
+            },
+            {
+              "data": {
+                "choices": [
+                  {
+                    "delta": {
+                      "content": "Hello"
+                    },
+                    "finish_reason": null,
+                    "index": 0
+                  }
+                ],
+                "id": "gen-5",
+                "model": "public-model",
+                "object": "chat.completion.chunk"
+              },
+              "event": ""
+            },
+            {
+              "data": {
+                "choices": [
+                  {
+                    "delta": {
+                      "content": " there."
+                    },
+                    "finish_reason": null,
+                    "index": 0
+                  }
+                ],
+                "id": "gen-5",
+                "model": "public-model",
+                "object": "chat.completion.chunk"
+              },
+              "event": ""
+            },
+            {
+              "data": {
+                "choices": [
+                  {
+                    "delta": {},
+                    "finish_reason": "stop",
+                    "index": 0
+                  }
+                ],
+                "id": "gen-5",
+                "model": "public-model",
+                "object": "chat.completion.chunk"
+              },
+              "event": ""
+            },
+            {
+              "data": "[DONE]",
+              "event": ""
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "reasoning_resumes_after_text",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "frames": [
+            {
+              "data": {
+                "choices": [
+                  {
+                    "delta": {
+                      "role": "assistant"
+                    },
+                    "finish_reason": null,
+                    "index": 0
+                  }
+                ],
+                "id": "gen-5",
+                "model": "public-model",
+                "object": "chat.completion.chunk"
+              },
+              "event": ""
+            },
+            {
+              "data": {
+                "choices": [
+                  {
+                    "delta": {
+                      "reasoning_content": "Say hello.",
+                      "reasoning_details": [
+                        {
+                          "format": "unknown",
+                          "index": 0,
+                          "text": "Say hello.",
+                          "type": "reasoning.text"
+                        }
+                      ]
+                    },
+                    "finish_reason": null,
+                    "index": 0
+                  }
+                ],
+                "id": "gen-5",
+                "model": "public-model",
+                "object": "chat.completion.chunk"
+              },
+              "event": ""
+            },
+            {
+              "data": {
+                "choices": [
+                  {
+                    "delta": {
+                      "content": "Hello"
+                    },
+                    "finish_reason": null,
+                    "index": 0
+                  }
+                ],
+                "id": "gen-5",
+                "model": "public-model",
+                "object": "chat.completion.chunk"
+              },
+              "event": ""
+            },
+            {
+              "data": {
+                "choices": [
+                  {
+                    "delta": {
+                      "reasoning_content": " Then stop.",
+                      "reasoning_details": [
+                        {
+                          "format": "unknown",
+                          "index": 0,
+                          "text": " Then stop.",
+                          "type": "reasoning.text"
+                        }
+                      ]
+                    },
+                    "finish_reason": null,
+                    "index": 0
+                  }
+                ],
+                "id": "gen-5",
+                "model": "public-model",
+                "object": "chat.completion.chunk"
+              },
+              "event": ""
+            },
+            {
+              "data": {
+                "choices": [
+                  {
+                    "delta": {
+                      "content": " there."
+                    },
+                    "finish_reason": null,
+                    "index": 0
+                  }
+                ],
+                "id": "gen-5",
+                "model": "public-model",
+                "object": "chat.completion.chunk"
+              },
+              "event": ""
+            },
+            {
+              "data": {
+                "choices": [
+                  {
+                    "delta": {},
+                    "finish_reason": "stop",
+                    "index": 0
+                  }
+                ],
+                "id": "gen-5",
+                "model": "public-model",
+                "object": "chat.completion.chunk"
+              },
+              "event": ""
+            },
+            {
+              "data": "[DONE]",
+              "event": ""
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

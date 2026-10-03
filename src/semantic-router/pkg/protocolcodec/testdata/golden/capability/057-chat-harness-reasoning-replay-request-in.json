@@ -131,6 +131,38 @@
           "effort": "high"
         }
       }
+    },
+    {
+      "name": "assistant_text_with_reasoning_replay",
+      "body": {
+        "model": "client-model",
+        "max_completion_tokens": 4096,
+        "reasoning_effort": "high",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          },
+          {
+            "role": "assistant",
+            "content": "Hello there.",
+            "reasoning": "Say hello briefly.",
+            "reasoning_details": [
+              {
+                "type": "reasoning.text",
+                "text": "Say hello briefly.",
+                "signature": "sig-anthropic-2",
+                "format": "anthropic-claude-v1",
+                "index": 0
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": "and again"
+          }
+        ]
+      }
     }
   ]
 }

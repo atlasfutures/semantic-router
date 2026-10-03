@@ -13,7 +13,7 @@
       {
         "encrypted_content": "encrypted-reasoning",
         "format": "anthropic-claude-v1",
-        "id": "item_29226fde07c4da12438871bb",
+        "id": "item_83c442c87262e0ac311e7fc6",
         "summary": [],
         "type": "reasoning"
       },
@@ -25,7 +25,7 @@
             "type": "output_text"
           }
         ],
-        "id": "item_83c442c87262e0ac311e7fc6",
+        "id": "item_29226fde07c4da12438871bb",
         "role": "assistant",
         "status": "completed",
         "type": "message"
