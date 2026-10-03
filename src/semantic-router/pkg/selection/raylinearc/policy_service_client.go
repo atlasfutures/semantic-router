@@ -60,6 +60,10 @@ type PolicyServiceClient struct {
 type PolicyServiceError struct {
 	Class  string
 	Status int
+	// Detail is the refusal's detail for the classes a caller acts on
+	// (context_exceeds_encoder_capacity: token_count and max_tokens); nil
+	// otherwise, so no free-form service text travels further.
+	Detail map[string]any
 }
 
 func (err *PolicyServiceError) Error() string {
@@ -88,6 +92,22 @@ func PolicyServiceErrorClass(code string) string {
 		return code
 	}
 	return "service_error"
+}
+
+// PolicyCapacityRefusalClass is the service's refusal of a context its
+// encoder cannot hold (pathfinder arc_serving_contract.md, "Encoder capacity").
+const PolicyCapacityRefusalClass = "context_exceeds_encoder_capacity"
+
+// capacityRefusalDetail keeps the two counts the contract allows a capacity
+// refusal to carry, as integers; anything else in the detail is dropped.
+func capacityRefusalDetail(detail map[string]any) map[string]any {
+	kept := map[string]any{}
+	for _, key := range []string{"token_count", "max_tokens"} {
+		if value, ok := detail[key].(float64); ok && value >= 0 && value == float64(int(value)) {
+			kept[key] = int(value)
+		}
+	}
+	return kept
 }
 
 // PolicyRelaxedUnsupportedClass is the class of a relaxed decide the service
@@ -216,7 +236,11 @@ func (client *PolicyServiceClient) do(
 	if response.StatusCode != http.StatusOK {
 		var failure PolicyErrorResponse
 		if json.Unmarshal(body, &failure) == nil && failure.Error != "" {
-			return nil, &PolicyServiceError{Class: policyFailureClass(failure), Status: response.StatusCode}
+			refusal := &PolicyServiceError{Class: policyFailureClass(failure), Status: response.StatusCode}
+			if refusal.Class == PolicyCapacityRefusalClass {
+				refusal.Detail = capacityRefusalDetail(failure.Detail)
+			}
+			return nil, refusal
 		}
 		return nil, &PolicyServiceError{Class: "status", Status: response.StatusCode}
 	}

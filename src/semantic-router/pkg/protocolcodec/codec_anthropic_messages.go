@@ -174,7 +174,7 @@ func validateAnthropicRequestWire(wire anthropicRequestWire) error {
 	if err := rejectUnsupportedRequestFields(map[string]json.RawMessage{
 		"inference_geo": wire.InferenceGeo, "container": wire.Container,
 		"cache_control": wire.CacheControl,
-		"service_tier":  wire.ServiceTier,
+		"service_tier":  requestedServiceTier(wire.ServiceTier),
 	}); err != nil {
 		return err
 	}
