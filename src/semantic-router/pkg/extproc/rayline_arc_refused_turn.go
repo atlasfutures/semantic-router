@@ -113,14 +113,11 @@ func (transaction *raylineARCEpisodeTransaction) clearBorrowedRefusedBoundary(pa
 	lease, current, err := transaction.store.Prepare(ctx, transaction.episodeIDHash, len(transaction.state.Warmth))
 	if err != nil {
 		// The deciding request still holds the lease: hand the decision to
-		// it, so its abort clears it. If it finished meanwhile, try once more.
-		if transaction.inflight == nil {
-			return
-		}
-		transaction.inflight.noteRefusedBoundary(*transaction.state.PolicyBoundary)
-		select {
-		case <-transaction.inflight.finished:
-		default:
+		// it, so its abort clears it. If it has already taken its last look,
+		// the hand-over is refused and the clear is retried here, once the
+		// lease is released.
+		if transaction.inflight == nil ||
+			transaction.inflight.noteRefusedBoundary(*transaction.state.PolicyBoundary) {
 			return
 		}
 		retryContext, retryCancel := context.WithTimeout(parent, relaxedBoundaryStageTimeout)
@@ -129,7 +126,6 @@ func (transaction *raylineARCEpisodeTransaction) clearBorrowedRefusedBoundary(pa
 			return
 		}
 		stageContext = retryContext
-		transaction.inflight.takeRefusedBoundary()
 	}
 	defer func() {
 		// Released under its own short bound: a stalled store must not hold
