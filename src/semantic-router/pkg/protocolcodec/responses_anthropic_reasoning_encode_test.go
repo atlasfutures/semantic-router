@@ -294,3 +294,44 @@ func TestCachedSignedThinkingReplaysOneItemPerBlock(t *testing.T) {
 		t.Fatalf("the signatures were not kept apart:\n%s", stream)
 	}
 }
+
+// An unsigned reasoning block right before a signed one stays out of the
+// signed block's item, buffered and replayed as a stream: the signature
+// covers only the block it was issued for.
+func TestSignedThinkingStartsAFreshResponsesItem(t *testing.T) {
+	engine := NewBuiltinEngine()
+	response, _, _, err := engine.DecodeResponse(llmprotocol.AnthropicMessagesV1, []byte(`{
+		"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-5",
+		"content":[
+			{"type":"thinking","thinking":"unsigned","signature":"dropme"},
+			{"type":"thinking","thinking":"signed","signature":"sigB"},
+			{"type":"text","text":"done"}
+		],
+		"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":3}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first block carried no signature, as a cached or synthetic answer may.
+	response.Output[0].Content[0].Signature = ""
+	buffered, err := engine.EncodeResponse(llmprotocol.OpenAIResponsesV1, response, llmprotocol.Envelope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	streamed, _, err := engine.EncodeResponseStream(llmprotocol.OpenAIResponsesV1, response, llmprotocol.StreamContext{
+		Context: context.Background(), PublicModel: "public-model",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, wire := range map[string][]byte{"buffered": buffered.Body, "streamed": streamed} {
+		// The signed block's item holds its own text only.
+		index := strings.Index(string(wire), `"signature":"sigB"`)
+		if index < 0 {
+			t.Fatalf("%s: no signed item:\n%s", name, wire)
+		}
+		start := strings.LastIndex(string(wire[:index]), `"type":"reasoning"`)
+		if start < 0 || strings.Contains(string(wire[start:index]), "unsigned") {
+			t.Fatalf("%s: the unsigned block is inside the signed item:\n%s", name, wire)
+		}
+	}
+}

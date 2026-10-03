@@ -335,13 +335,18 @@ func (state *responsesMessageEncodingState) appendContent(content llmprotocol.Co
 		if err := state.flushOrdinary(); err != nil {
 			return err
 		}
-		state.reasoning = append(state.reasoning, content)
 		if content.Signature != "" {
 			// A signature proves exactly one thinking block, so a signed
-			// block ends its reasoning item: a later block in the same item
-			// would be resent under the wrong signature.
+			// block is an item of its own: it starts a fresh item and ends
+			// it, or a neighbouring block would be resent under its
+			// signature.
+			if err := state.flushReasoning(); err != nil {
+				return err
+			}
+			state.reasoning = append(state.reasoning, content)
 			return state.flushReasoning()
 		}
+		state.reasoning = append(state.reasoning, content)
 	case llmprotocol.ContentGeneratedImage:
 		if err := state.flushPending(); err != nil {
 			return err

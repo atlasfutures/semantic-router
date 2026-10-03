@@ -134,7 +134,7 @@ func groupResponseStreamContent(contents []llmprotocol.Content) []responseStream
 	for _, content := range contents {
 		family := responseStreamContentFamily(content.Kind)
 		if family == llmprotocol.ContentToolCall || len(groups) == 0 || groups[len(groups)-1].family != family ||
-			endsSignedReasoning(groups[len(groups)-1]) {
+			endsSignedReasoning(groups[len(groups)-1]) || signedReasoning(content) {
 			groups = append(groups, responseStreamContentGroup{family: family})
 		}
 		groups[len(groups)-1].contents = append(groups[len(groups)-1].contents, content)
@@ -147,11 +147,13 @@ func groupResponseStreamContent(contents []llmprotocol.Content) []responseStream
 // the buffered Responses encoder does: grouped together, two blocks would
 // stream under one concatenated signature that no provider would accept.
 func endsSignedReasoning(group responseStreamContentGroup) bool {
-	if len(group.contents) == 0 {
-		return false
-	}
-	last := group.contents[len(group.contents)-1]
-	return last.Kind == llmprotocol.ContentReasoning && last.Signature != ""
+	return len(group.contents) > 0 && signedReasoning(group.contents[len(group.contents)-1])
+}
+
+// signedReasoning reports a signed reasoning block, which starts its own
+// group as well as ending it.
+func signedReasoning(content llmprotocol.Content) bool {
+	return content.Kind == llmprotocol.ContentReasoning && content.Signature != ""
 }
 
 func responseStreamContentFamily(kind llmprotocol.ContentKind) llmprotocol.ContentKind {
