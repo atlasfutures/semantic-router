@@ -3,6 +3,7 @@ package protocolcodec
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
@@ -31,6 +32,9 @@ type anthropicStreamDecoder struct {
 	// is dropped), otherwise the provider's evidence, applied before the
 	// next usage or terminal event so nothing it stated is lost.
 	pendingStartUsage *llmprotocol.Usage
+	// deltaUsage is the usage JSON of the last message_delta before
+	// message_stop: a late message_delta that restates it adds nothing.
+	deltaUsage json.RawMessage
 }
 type anthropicStreamEncoder struct {
 	streamState
@@ -323,6 +327,12 @@ func (decoder *anthropicStreamDecoder) decodeAnthropicMessageDelta(
 	}
 	if wire.Usage == nil {
 		return nil, diagnostics, nil
+	}
+	var raw struct {
+		Usage json.RawMessage `json:"usage"`
+	}
+	if json.Unmarshal(decoder.data, &raw) == nil {
+		decoder.deltaUsage = raw.Usage
 	}
 	usage := decodeAnthropicMessageDeltaUsage(*wire.Usage)
 	events, eventDiagnostics, err := decoder.emitAnthropicEvent(llmprotocol.Event{Type: llmprotocol.EventUsageUpdated, Usage: &usage})
@@ -869,8 +879,18 @@ func (decoder *anthropicStreamDecoder) afterTerminal(parsed sseFrame) ([]llmprot
 		return nil, nil, invalidProviderResponse("stream_event_after_terminal", "Anthropic stream emitted an undecodable frame after message_stop")
 	}
 	switch eventType {
-	case "ping", "message_stop", "message_delta":
+	case "ping", "message_stop":
 		return nil, afterTerminalDiagnostic(eventType), nil
+	case "message_delta":
+		// Usage and stop reason were published with the completion at
+		// message_stop, and the client has it: a late delta is dropped only
+		// when it restates them. New counts or a charge are accounting the
+		// stream can no longer carry, so they fail it rather than vanish.
+		if decoder.lateDeltaRestates(parsed.Data) {
+			return nil, afterTerminalDiagnostic(eventType), nil
+		}
+		return nil, nil, invalidProviderResponse("stream_event_after_terminal",
+			"Anthropic stream emitted a message_delta with new usage or stop after message_stop")
 	}
 	return nil, nil, invalidProviderResponse("stream_event_after_terminal",
 		"Anthropic stream emitted "+boundedEventName(eventType)+" after message_stop")
@@ -902,4 +922,26 @@ func boundedEventName(name string) string {
 		return "an unnamed event"
 	}
 	return string(out)
+}
+
+// lateDeltaRestates reports whether a message_delta after message_stop says
+// nothing new: no stop reason other than the one recorded, and no usage, or
+// the same usage the terminal message_delta stated.
+func (decoder *anthropicStreamDecoder) lateDeltaRestates(data []byte) bool {
+	var late struct {
+		Delta *anthropicDeltaWire `json:"delta"`
+		Usage json.RawMessage     `json:"usage"`
+	}
+	if json.Unmarshal(data, &late) != nil {
+		return false
+	}
+	if late.Delta != nil && late.Delta.StopReason != nil && decodeAnthropicStop(*late.Delta.StopReason) != decoder.stop {
+		return false
+	}
+	if !hasJSONValue(late.Usage) {
+		return true
+	}
+	var stated, restated any
+	return json.Unmarshal(decoder.deltaUsage, &stated) == nil && json.Unmarshal(late.Usage, &restated) == nil &&
+		reflect.DeepEqual(stated, restated)
 }
