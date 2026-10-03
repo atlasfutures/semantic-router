@@ -148,6 +148,18 @@ func (r *OpenAIRouter) responseBodyGuardResponse(
 		})
 	}
 	metrics.RecordRequestError(ctx.RequestModel, string(protocolError.Category))
+	// The held reply was never sent, so the turn failed before any content;
+	// its usage was never read, so it settles as unknown. The class rides
+	// the body too, since the 200 headers are already spent.
+	class := turnFailureUpstreamError
+	if protocolError.Code == "response_body_timeout" {
+		class = turnFailureTimeout
+	}
+	recordTurnFailureDetail(ctx, class, protocolError.Code, false)
+	r.reportFailedCallUsage(ctx)
+	if encoded != nil {
+		encoded = withFailureClass(encoded, class)
+	}
 	return buildResponseBodyContinueResponse(responseStreamBodyMutation(ctx, encoded, true), nil)
 }
 
