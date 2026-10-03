@@ -73,6 +73,7 @@ func recordTurnFailureDetail(ctx *RequestContext, class, detail string, contentS
 	}
 	logging.ComponentEvent("extproc", "turn_failed", fields)
 	metrics.RecordTurnFailure(class)
+	noteCellExclusion(ctx, class)
 }
 
 // upstreamFailureClass classes a provider's error by its status and what it

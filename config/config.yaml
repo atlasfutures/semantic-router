@@ -1954,10 +1954,14 @@ recipes:
                 # fallback serves around a failed arm (ADR 0120). With
                 # enabled, a model that refused a turn is excluded for the
                 # rest of its context (until a compaction or a prefix break),
-                # and the next turn decides among the others. Off for
-                # evaluation cells, which serve exactly what the policy chose.
+                # and the next turn decides among the others. A route that
+                # failed with a 429, a 5xx or a timeout leaves the offer
+                # for cell_exclusion_seconds (0: the default, 30).
+                # Off for evaluation cells, which serve exactly what the
+                # policy chose.
                 fallback:
                   enabled: false
+                  cell_exclusion_seconds: 0
                 # Each binding maps a package action to a worker. model, effort
                 # and reasoning_max_tokens declare what the action dispatches,
                 # as the package's catalog states it: model is the trained
