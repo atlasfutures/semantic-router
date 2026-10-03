@@ -303,6 +303,18 @@ class RaylineARCPolicyBindingConfig(BaseModel):
     reasoning_max_tokens: int | None = Field(default=None, gt=0)
 
 
+class RaylineARCPolicyFallbackConfig(BaseModel):
+    """ADR 0120's fallback: a refusing model is excluded for the rest of its
+    context and the next turn decides among the others; a route that failed
+    for capacity or availability is left out for cell_exclusion_seconds."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    # 0 means the router's default (30 s).
+    cell_exclusion_seconds: int = Field(default=0, ge=0, le=3600)
+
+
 class RaylineARCPolicyServiceConfig(BaseModel):
     """The policy-service mode: an external service returns the decision."""
 
@@ -334,6 +346,9 @@ class RaylineARCPolicyServiceConfig(BaseModel):
     trust_turn_signal_headers: bool = False
     # Per bound worker, the trained model it serves (v5 only).
     trained_models: dict[str, str] = Field(default_factory=dict)
+    # Mirrors RaylineARCPolicyServiceConfig.Fallback (ADR 0120): off for
+    # evaluation cells.
+    fallback: RaylineARCPolicyFallbackConfig | None = None
 
 
 class RaylineARCAlgorithmConfig(BaseModel):

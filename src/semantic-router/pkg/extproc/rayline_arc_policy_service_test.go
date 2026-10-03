@@ -102,6 +102,7 @@ func (fixture *policySelectorFixture) selectOn(
 		CandidateModels: fixture.decision.ModelRefs,
 		RaylineARC: &selection.RaylineARCSelectionContext{
 			EpisodeIDHash: strings.Repeat("e", 64),
+			RequestID:     "req-policy-test",
 			State:         state,
 			RawRequest:    body,
 			RequestFormat: policyFormatAnthropic,
