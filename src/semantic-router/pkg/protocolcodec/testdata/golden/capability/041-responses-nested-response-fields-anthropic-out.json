@@ -23,10 +23,23 @@
     {
       "name": "refusal",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "lossy_translation"
+        "status": "ok",
+        "body": {
+          "container": null,
+          "content": [
+            {
+              "text": "cannot comply",
+              "type": "text"
+            }
+          ],
+          "id": "resp_refusal",
+          "model": "routed-model",
+          "role": "assistant",
+          "stop_details": null,
+          "stop_reason": "refusal",
+          "stop_sequence": null,
+          "type": "message",
+          "usage": null
         },
         "diagnostics": [
           {

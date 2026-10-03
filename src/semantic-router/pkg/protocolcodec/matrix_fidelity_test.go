@@ -102,8 +102,9 @@ func TestCrossFormatFidelityAndCapabilityFailuresAreExplicit(t *testing.T) {
 		t.Fatalf("strict tool schema changed: %+v, %v", decodedTool.Tools, err)
 	}
 	refusal := []byte(`{"id":"response_1","model":"source-model","choices":[{"index":0,"message":{"role":"assistant","refusal":"no"},"finish_reason":"content_filter"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`)
-	if _, err := engine.TranslateResponse(llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1, refusal, nil); err == nil {
-		t.Fatal("refusal semantics were silently converted to text")
+	if translated, err := engine.TranslateResponse(llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1, refusal, nil); err != nil ||
+		!bytes.Contains(translated.Body, []byte(`"stop_reason":"refusal"`)) {
+		t.Fatalf("refusal semantics were not stated as a Messages refusal: %v", err)
 	}
 }
 

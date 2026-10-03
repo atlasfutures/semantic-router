@@ -39,6 +39,9 @@ type anthropicStreamEncoder struct {
 	// failure is the provider's to describe.
 	truncationUsage  *llmprotocol.Usage
 	truncationSource string
+	// refused records that refusal content reached the client, so the turn
+	// ends as one: stop_reason "refusal" is how Messages marks refusal text.
+	refused bool
 }
 
 func (encoder *anthropicStreamEncoder) SetTruncationUsage(usage *llmprotocol.Usage, source string) {
@@ -651,12 +654,20 @@ func (encoder *anthropicStreamEncoder) encodeAnthropicCompletion(
 	if event.Usage == nil {
 		return nil, nil, llmprotocol.NewError(llmprotocol.ErrorInternal, "usage_event_invalid", "terminal usage is invalid", nil)
 	}
+	refusal := event.StopReason == llmprotocol.StopContentFilter || encoder.refused
 	stop := encodeAnthropicStop(event.StopReason)
+	if refusal {
+		stop = encodeAnthropicStop(llmprotocol.StopContentFilter)
+	}
 	deltaWire := &anthropicDeltaWire{Type: "message_delta", StopReason: &stop}
 	if event.StopReason == llmprotocol.StopSequence {
 		deltaWire.StopSequence = &event.MatchedStopSequence
 	}
 	delta := anthropicEventWire{Type: "message_delta", Delta: deltaWire, Usage: encodeAnthropicMessageDeltaUsage(*event.Usage)}
+	if refusal && usageUnavailable(*event.Usage) {
+		// A refused turn's usage is unknown, so the delta states none.
+		delta.Usage = nil
+	}
 	first, err := encodeSSE(delta.Type, delta)
 	if err != nil {
 		return nil, nil, err
@@ -699,13 +710,10 @@ func (encoder *anthropicStreamEncoder) encodeAnthropicTextDelta(
 			return nil, diagnostics, err
 		}
 	}
+	// Refusal text streams as text, and the terminal message_delta states
+	// stop_reason "refusal", which is how Messages marks it (#150).
 	if event.Content != nil && event.Content.Kind == llmprotocol.ContentRefusal {
-		if err := appendLossy(
-			&diagnostics, encoder.policy, encoder.context.Source, encoder.context.Target,
-			"content.refusal", "Messages represents refusal as ordinary text",
-		); err != nil {
-			return nil, diagnostics, err
-		}
+		encoder.refused = true
 	}
 	frames, key, err := encoder.ensureAnthropicBlockStarted(event, llmprotocol.ContentText)
 	if err != nil {

@@ -170,7 +170,14 @@ func (AnthropicMessagesCodec) EncodeResponse(response llmprotocol.Response, enve
 		return append([]byte(nil), envelope.Response...), nil, nil
 	}
 	var diagnostics llmprotocol.Diagnostics
-	if usageUnavailable(response.Usage) {
+	// A refusal is a turn Messages represents exactly: stop_reason "refusal"
+	// and the provider's refusal text. A refused turn often carries no usage
+	// (Anthropic's safeguards refuse before generating); the client gets the
+	// refusal with usage null, not a zero-valued count that never happened,
+	// and not a failed translation. The latter used to reach a Messages
+	// client as a 200 with an error body (#150).
+	refusal := response.StopReason == llmprotocol.StopContentFilter || responseRefuses(response)
+	if usageUnavailable(response.Usage) && !refusal {
 		if err := appendLossy(
 			&diagnostics, policy, envelope.Format, llmprotocol.AnthropicMessagesV1,
 			"usage", "Messages requires usage; emitted an explicit zero-valued usage object",
@@ -187,6 +194,9 @@ func (AnthropicMessagesCodec) EncodeResponse(response llmprotocol.Response, enve
 	for _, item := range withoutResponsesOnlyOutput(response.Output) {
 		contents = append(contents, item.Content...)
 	}
+	if refusal {
+		contents = refusalAsText(contents)
+	}
 	contentDiagnostics, err := anthropicContentDiagnostics(contents, envelope.Format, policy)
 	diagnostics = appendDiagnostics(diagnostics, contentDiagnostics, policy.Limits.Diagnostics)
 	if err != nil {
@@ -197,12 +207,45 @@ func (AnthropicMessagesCodec) EncodeResponse(response llmprotocol.Response, enve
 		return nil, diagnostics, err
 	}
 	stop := encodeAnthropicStop(response.StopReason)
+	if refusal {
+		stop = encodeAnthropicStop(llmprotocol.StopContentFilter)
+	}
 	wire := anthropicResponseWire{ID: response.ID, Type: "message", Role: "assistant", Model: response.Model, Content: content, StopReason: &stop, Usage: encodeAnthropicUsage(response.Usage)}
+	if refusal && usageUnavailable(response.Usage) {
+		wire.Usage = nil
+	}
 	if response.StopReason == llmprotocol.StopSequence {
 		wire.StopSequence = &response.MatchedStopSequence
 	}
 	body, err := marshalWire(wire)
 	return body, diagnostics, err
+}
+
+// responseRefuses reports refusal content in a response's output: a turn
+// whose model refused, whatever stop its source format gave it.
+func responseRefuses(response llmprotocol.Response) bool {
+	for _, item := range response.Output {
+		for _, content := range item.Content {
+			if content.Kind == llmprotocol.ContentRefusal {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// refusalAsText states a refusal's content as the text Messages carries it
+// in. Under stop_reason "refusal" nothing is lost: the stop reason says what
+// the text is.
+func refusalAsText(contents []llmprotocol.Content) []llmprotocol.Content {
+	stated := make([]llmprotocol.Content, len(contents))
+	for index, content := range contents {
+		if content.Kind == llmprotocol.ContentRefusal {
+			content.Kind = llmprotocol.ContentText
+		}
+		stated[index] = content
+	}
+	return stated
 }
 
 func encodeAnthropicUsage(usage llmprotocol.Usage) *anthropicUsageWire {
