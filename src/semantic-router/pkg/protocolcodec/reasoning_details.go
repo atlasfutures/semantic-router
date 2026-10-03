@@ -264,6 +264,17 @@ func isMintedReasoningItem(body json.RawMessage) bool {
 	return minted
 }
 
+// outputHoldsReasoningDetails reports whether any reasoning in output
+// carries reasoning_details.
+func outputHoldsReasoningDetails(output []llmprotocol.OutputItem) bool {
+	for _, item := range output {
+		if holdsReasoningDetails(llmprotocol.Message{Content: item.Content}) {
+			return true
+		}
+	}
+	return false
+}
+
 // withoutReasoningDetailsCarriers removes reasoning contents that hold only
 // reasoning_details, for a client format with nowhere to put them
 // (Anthropic Messages). Reasoning that also has text keeps its text.
@@ -281,4 +292,22 @@ func withoutReasoningDetailsCarriers(output []llmprotocol.OutputItem) []llmproto
 		trimmed = append(trimmed, item)
 	}
 	return trimmed
+}
+
+// appendReasoningDetailsDrops counts each reasoning block whose
+// reasoning_details a Messages target is not sent. The encoder keeps the
+// reasoning text and drops a block that held only the details.
+func appendReasoningDetailsDrops(
+	diagnostics *llmprotocol.Diagnostics,
+	messages []llmprotocol.Message,
+	target llmprotocol.WireFormat,
+	policy llmprotocol.Policy,
+) {
+	for _, message := range messages {
+		for _, content := range message.Content {
+			if details, _ := reasoningDetailsOf(content); details != nil {
+				appendUnmodeledDrop(diagnostics, policy, content.Extensions.Format, target, "content.reasoning_details")
+			}
+		}
+	}
 }

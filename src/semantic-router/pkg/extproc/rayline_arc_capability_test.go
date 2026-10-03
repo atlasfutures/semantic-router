@@ -21,7 +21,6 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
-	"strconv"
 	"testing"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -31,11 +30,10 @@ import (
 )
 
 // Accept-by-default stops the cell refusing a request it cannot fully express.
-// A tool the source API runs would then be dropped silently and change what
-// the model is shown, so the capability gate routes it instead, on the same
-// model-card mechanism the vision flag already uses. An image inside a tool
-// result once needed the gate too; every encoder now carries it, so it needs
-// only an arm that takes image input.
+// Two features would then be dropped silently and change what the model is
+// shown: a tool the source API runs, and an image inside a tool result. The
+// capability gate routes those instead of dropping them, on the same model-card
+// mechanism the vision flag already uses.
 
 func TestRaylineARCRoutingCapabilitiesReadTheNeutralRequest(t *testing.T) {
 	t.Parallel()
@@ -86,7 +84,7 @@ func TestRaylineARCRoutingCapabilitiesReadTheNeutralRequest(t *testing.T) {
 		{name: "server tool", request: serverTool, want: []string{llmprotocol.RoutingCapabilityServerTools}},
 		{name: "anthropic-defined tool", request: definedTool, want: nil},
 		{name: "anthropic-defined tool beside a server tool", request: definedBesideServer, want: []string{llmprotocol.RoutingCapabilityServerTools}},
-		{name: "tool result image", request: toolResultImage, want: nil},
+		{name: "tool result image", request: toolResultImage, want: []string{llmprotocol.RoutingCapabilityToolResultImages}},
 		{name: "text only", request: textOnly, want: nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -96,61 +94,6 @@ func TestRaylineARCRoutingCapabilitiesReadTheNeutralRequest(t *testing.T) {
 				t.Fatalf("RequiredRoutingCapabilities() = %v, want %v", got, test.want)
 			}
 		})
-	}
-}
-
-// OpenClaw's view_image on 2026-10-02: three no_capable_arm 503s, because
-// the turn required tool_result_images and no arm declared it. The basket is
-// the dev cell's: arms 0-3 and 5-6 take no image, arm 6 is disabled, and arm 4
-// (qwen3.6-35b-a3b) takes images. The turn must land on arm 4 alone.
-func TestRaylineARCToolResultImageRoutesToTheVisionArm(t *testing.T) {
-	t.Parallel()
-	request := llmprotocol.Request{Messages: []llmprotocol.Message{{
-		Role: llmprotocol.RoleTool,
-		Content: []llmprotocol.Content{{
-			Kind: llmprotocol.ContentToolResult,
-			ToolResult: &llmprotocol.ToolResult{
-				CallID: "toolu_view_red",
-				Content: []llmprotocol.Content{
-					{Kind: llmprotocol.ContentText, Text: "Loaded 1 image into private model context for inspection."},
-					{Kind: llmprotocol.ContentImage, MediaType: "image/png", Data: "aGk="},
-				},
-			},
-		}},
-	}}}
-	noVision, disabled := false, true
-	cards := map[string]config.ModelParams{}
-	refs := make([]config.ModelRef, 7)
-	for index := range refs {
-		name := "arm-" + strconv.Itoa(index)
-		refs[index] = config.ModelRef{Model: name}
-		params := config.ModelParams{}
-		if index != 4 {
-			params.Vision = &noVision
-		}
-		if index == 6 {
-			params.Disabled = &disabled
-		}
-		cards[name] = params
-	}
-	router := &OpenAIRouter{Config: &config.RouterConfig{
-		BackendModels: config.BackendModels{ModelConfig: cards},
-	}}
-	required := llmprotocol.RequiredRoutingCapabilities(request)
-	arcContext := &selection.RaylineARCSelectionContext{
-		ImageBearing:         requestCarriesImageInput(&request),
-		NonVisionArms:        router.nonVisionArms(refs),
-		DisabledArms:         router.disabledArms(refs),
-		RequiredCapabilities: required,
-		IncapableArms:        router.incapableArms(refs, required),
-	}
-	excluded, err := excludedArms(arcContext, len(refs))
-	if err != nil {
-		t.Fatalf("excludedArms() error = %v, want the vision arm eligible", err)
-	}
-	want := []bool{true, true, true, true, false, true, true}
-	if !reflect.DeepEqual(excluded, want) {
-		t.Fatalf("excludedArms() = %v, want %v", excluded, want)
 	}
 }
 

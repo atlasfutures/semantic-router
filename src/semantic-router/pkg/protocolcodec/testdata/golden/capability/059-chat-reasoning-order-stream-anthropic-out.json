@@ -152,7 +152,13 @@
               "event": "message_stop"
             }
           ]
-        }
+        },
+        "diagnostics": [
+          {
+            "field": "content.reasoning_details",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {
@@ -343,7 +349,13 @@
               "event": "message_stop"
             }
           ]
-        }
+        },
+        "diagnostics": [
+          {
+            "field": "content.reasoning_details",
+            "action": "dropped"
+          }
+        ]
       }
     }
   ]

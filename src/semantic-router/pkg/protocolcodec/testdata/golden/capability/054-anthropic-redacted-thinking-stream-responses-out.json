@@ -53,11 +53,10 @@
       {
         "data": {
           "item": {
-            "content": [],
-            "id": "item_3ca44da59dcb18deef04fc9c",
-            "role": "assistant",
+            "id": "item_2ed757d5b010b923372c1501",
             "status": "in_progress",
-            "type": "message"
+            "summary": [],
+            "type": "reasoning"
           },
           "output_index": 0,
           "sequence_number": 2,
@@ -67,15 +66,46 @@
       },
       {
         "data": {
+          "item": {
+            "encrypted_content": "encrypted-reasoning",
+            "format": "anthropic-claude-v1",
+            "id": "item_2ed757d5b010b923372c1501",
+            "status": "completed",
+            "summary": [],
+            "type": "reasoning"
+          },
+          "output_index": 0,
+          "sequence_number": 3,
+          "type": "response.output_item.done"
+        },
+        "event": "response.output_item.done"
+      },
+      {
+        "data": {
+          "item": {
+            "content": [],
+            "id": "item_3ca44da59dcb18deef04fc9c",
+            "role": "assistant",
+            "status": "in_progress",
+            "type": "message"
+          },
+          "output_index": 1,
+          "sequence_number": 4,
+          "type": "response.output_item.added"
+        },
+        "event": "response.output_item.added"
+      },
+      {
+        "data": {
           "content_index": 0,
           "item_id": "item_3ca44da59dcb18deef04fc9c",
-          "output_index": 0,
+          "output_index": 1,
           "part": {
             "annotations": [],
             "text": "",
             "type": "output_text"
           },
-          "sequence_number": 3,
+          "sequence_number": 5,
           "type": "response.content_part.added"
         },
         "event": "response.content_part.added"
@@ -85,8 +115,8 @@
           "content_index": 0,
           "delta": "final answer",
           "item_id": "item_3ca44da59dcb18deef04fc9c",
-          "output_index": 0,
-          "sequence_number": 4,
+          "output_index": 1,
+          "sequence_number": 6,
           "type": "response.output_text.delta"
         },
         "event": "response.output_text.delta"
@@ -95,8 +125,8 @@
         "data": {
           "content_index": 0,
           "item_id": "item_3ca44da59dcb18deef04fc9c",
-          "output_index": 0,
-          "sequence_number": 5,
+          "output_index": 1,
+          "sequence_number": 7,
           "text": "final answer",
           "type": "response.output_text.done"
         },
@@ -106,13 +136,13 @@
         "data": {
           "content_index": 0,
           "item_id": "item_3ca44da59dcb18deef04fc9c",
-          "output_index": 0,
+          "output_index": 1,
           "part": {
             "annotations": [],
             "text": "final answer",
             "type": "output_text"
           },
-          "sequence_number": 6,
+          "sequence_number": 8,
           "type": "response.content_part.done"
         },
         "event": "response.content_part.done"
@@ -132,8 +162,8 @@
             "status": "completed",
             "type": "message"
           },
-          "output_index": 0,
-          "sequence_number": 7,
+          "output_index": 1,
+          "sequence_number": 9,
           "type": "response.output_item.done"
         },
         "event": "response.output_item.done"
@@ -150,6 +180,14 @@
             "model": "public-model",
             "object": "response",
             "output": [
+              {
+                "encrypted_content": "encrypted-reasoning",
+                "format": "anthropic-claude-v1",
+                "id": "item_2ed757d5b010b923372c1501",
+                "status": "completed",
+                "summary": [],
+                "type": "reasoning"
+              },
               {
                 "content": [
                   {
@@ -183,7 +221,7 @@
               "total_tokens": 6
             }
           },
-          "sequence_number": 8,
+          "sequence_number": 10,
           "type": "response.completed"
         },
         "event": "response.completed"

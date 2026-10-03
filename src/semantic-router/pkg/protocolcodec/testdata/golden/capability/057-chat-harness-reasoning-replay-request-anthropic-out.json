@@ -76,6 +76,10 @@
           {
             "field": "instructions.role",
             "action": "approximated"
+          },
+          {
+            "field": "content.reasoning_details",
+            "action": "dropped"
           }
         ]
       }
@@ -228,7 +232,13 @@
           "output_config": {
             "effort": "high"
           }
-        }
+        },
+        "diagnostics": [
+          {
+            "field": "content.reasoning_details",
+            "action": "dropped"
+          }
+        ]
       }
     }
   ]

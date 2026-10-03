@@ -237,7 +237,7 @@ func validateChatRequestWire(wire chatRequestWire) error {
 		"prompt_cache_options": wire.PromptCacheOptions, "safety_identifier": wire.SafetyIdentifier,
 		"audio": wire.Audio, "function_call": wire.FunctionCall, "functions": wire.Functions,
 		"logit_bias": wire.LogitBias, "logprobs": wire.Logprobs, "modalities": wire.Modalities,
-		"moderation": wire.Moderation, "prediction": wire.Prediction, "service_tier": wire.ServiceTier,
+		"moderation": wire.Moderation, "prediction": wire.Prediction, "service_tier": requestedServiceTier(wire.ServiceTier),
 		"top_logprobs": wire.TopLogprobs, "verbosity": wire.Verbosity,
 		"web_search_options": wire.WebSearchOptions,
 	}); err != nil {

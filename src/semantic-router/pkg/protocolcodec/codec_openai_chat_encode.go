@@ -236,19 +236,40 @@ func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) erro
 		}
 		wire.Messages = append(wire.Messages, encoded)
 	}
-	var hoisted toolResultMediaRun
+	// A Chat tool message carries text only, so the media a tool returned
+	// (a screenshot, an MCP image) is moved into a user message that follows
+	// the run of tool messages: Chat requires every tool message to follow its
+	// assistant turn directly, with nothing between them.
+	var toolMedia []chatContentWire
+	flushToolMedia := func() {
+		if len(toolMedia) > 0 {
+			content, _ := json.Marshal(toolMedia)
+			wire.Messages = append(wire.Messages, chatMessageWire{Role: "user", Content: content})
+			toolMedia = nil
+		}
+	}
 	for _, message := range request.Messages {
+		// A message dropped whole emits nothing, so it does not end the run
+		// of tool messages either.
+		if message.Configuration == nil && messageDropsWhole(message.Content, llmprotocol.OpenAIChatV1) {
+			continue
+		}
 		if message.Role != llmprotocol.RoleTool {
-			hoisted.flush(wire)
+			flushToolMedia()
 		}
 		if message.Configuration != nil {
 			wire.Messages = append(wire.Messages, encodeChatConfigurationMessage(message))
 			continue
 		}
-		if messageDropsWhole(message.Content, llmprotocol.OpenAIChatV1) {
-			continue
+		if message.Role == llmprotocol.RoleTool {
+			textOnly, media, err := splitChatToolResultMedia(message)
+			if err != nil {
+				return err
+			}
+			message = textOnly
+			toolMedia = append(toolMedia, media...)
 		}
-		encoded, media, err := encodeChatMessageHoistingMedia(message)
+		encoded, err := encodeChatMessage(message)
 		if err != nil {
 			return err
 		}
@@ -257,9 +278,8 @@ func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) erro
 			continue
 		}
 		wire.Messages = append(wire.Messages, encoded)
-		hoisted.add(media)
 	}
-	hoisted.flush(wire)
+	flushToolMedia()
 	return nil
 }
 
@@ -281,6 +301,48 @@ func foldChatReasoningDetailsMessage(messages []chatMessageWire, next *chatMessa
 	}
 	next.Reasoning, next.ReasoningDetails = previous.Reasoning, previous.ReasoningDetails
 	return true
+}
+
+// splitChatToolResultMedia takes the images out of a tool message's result. It
+// returns the message with the rest alone, saying where the images went when
+// the result held no text, and the images as user-message parts led by a line
+// naming the call they came from. Only images move: an arm's
+// tool_result_images claim says its model takes image input, which says
+// nothing about a document or audio, so those stay where they were and fail
+// the encode as before.
+func splitChatToolResultMedia(message llmprotocol.Message) (llmprotocol.Message, []chatContentWire, error) {
+	if len(message.Content) != 1 || message.Content[0].Kind != llmprotocol.ContentToolResult || message.Content[0].ToolResult == nil {
+		return message, nil, nil
+	}
+	result := *message.Content[0].ToolResult
+	kept := make([]llmprotocol.Content, 0, len(result.Content))
+	mediaState := chatMessageEncodingState{wire: &chatMessageWire{}}
+	hasText := false
+	for _, part := range result.Content {
+		switch part.Kind {
+		case llmprotocol.ContentText:
+			kept = append(kept, part)
+			hasText = true
+		case llmprotocol.ContentImage:
+			if err := mediaState.appendImage(part); err != nil {
+				return message, nil, err
+			}
+		default:
+			kept = append(kept, part)
+		}
+	}
+	if len(mediaState.parts) == 0 {
+		return message, nil, nil
+	}
+	if !hasText {
+		kept = append(kept, llmprotocol.Content{Kind: llmprotocol.ContentText, Text: "The tool returned images; they follow in the next user message."})
+	}
+	result.Content = kept
+	content := message.Content[0]
+	content.ToolResult = &result
+	message.Content = []llmprotocol.Content{content}
+	label := chatContentWire{Type: "text", Text: "Images returned by tool call " + result.CallID + ":"}
+	return message, append([]chatContentWire{label}, mediaState.parts...), nil
 }
 
 // encodeChatConfigurationMessage writes the content-less system message that
@@ -359,50 +421,33 @@ func encodeChatRequestOptions(wire *chatRequestWire, request llmprotocol.Request
 	return nil
 }
 
-// encodeChatMessage encodes a message that must fit in one Chat message. A
-// tool result that carries media does not: its media is moved to a user
-// message after it, which only the request encoder can place, so here it
-// keeps the text-only refusal.
 func encodeChatMessage(message llmprotocol.Message) (chatMessageWire, error) {
-	wire, media, err := encodeChatMessageHoistingMedia(message)
-	if err == nil && len(media) > 0 {
-		err = llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "tool_result_media", "chat tool results support text only", nil)
-	}
-	return wire, err
-}
-
-// encodeChatMessageHoistingMedia encodes one message and returns, apart from
-// it, the media a tool result held. See toolResultMediaRun for where it goes.
-func encodeChatMessageHoistingMedia(message llmprotocol.Message) (chatMessageWire, []chatContentWire, error) {
 	role, err := wireRole(message.Role)
 	if err != nil {
-		return chatMessageWire{}, nil, err
+		return chatMessageWire{}, err
 	}
 	wire := chatMessageWire{ID: message.ID, Role: role}
 	state := chatMessageEncodingState{wire: &wire, parts: make([]chatContentWire, 0, len(message.Content))}
 	for _, content := range message.Content {
 		if err := state.appendContent(content); err != nil {
-			return chatMessageWire{}, nil, err
+			return chatMessageWire{}, err
 		}
 	}
 	if state.citationTextBlocks > 1 {
-		return chatMessageWire{}, nil, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "citation_text_ambiguous", "Chat Completions citations require one text block", nil)
+		return chatMessageWire{}, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "citation_text_ambiguous", "Chat Completions citations require one text block", nil)
 	}
 	if len(state.parts) == 1 && state.parts[0].Type == "text" && state.parts[0].CacheControl == nil {
 		wire.Content, _ = json.Marshal(state.parts[0].Text)
 	} else if len(state.parts) > 0 {
 		wire.Content, _ = json.Marshal(state.parts)
 	}
-	return wire, state.hoisted, nil
+	return wire, nil
 }
 
 type chatMessageEncodingState struct {
 	wire               *chatMessageWire
 	parts              []chatContentWire
 	citationTextBlocks int
-	// hoisted holds the media parts a tool result carried, already labelled,
-	// in the order the result held them.
-	hoisted []chatContentWire
 }
 
 func (state *chatMessageEncodingState) appendContent(content llmprotocol.Content) error {
@@ -530,41 +575,20 @@ func (state *chatMessageEncodingState) appendToolResult(result *llmprotocol.Tool
 		return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_tool_result", "tool result content is invalid", nil)
 	}
 	state.wire.ToolCallID = result.CallID
-	var media []chatContentWire
-	hasText := false
 	for _, resultContent := range result.Content {
-		switch resultContent.Kind {
-		case llmprotocol.ContentUnmodeled:
+		if resultContent.Kind == llmprotocol.ContentUnmodeled {
 			// The block belongs to the contract it came from. Dropping it keeps
 			// the tool result routable; refusing it would lose the whole turn.
 			continue
-		case llmprotocol.ContentText:
-			hasText = true
-			state.parts = append(state.parts, chatContentWire{
-				Type: "text", Text: resultContent.Text,
-				CacheControl: encodeAnthropicCacheControl(resultContent.Cache),
-			})
-		case llmprotocol.ContentImage, llmprotocol.ContentAudio, llmprotocol.ContentFile:
-			// A Chat tool message holds text only, so the media is encoded as
-			// user content and moved after the tool messages. See
-			// toolResultMediaRun.
-			user := chatMessageEncodingState{wire: &chatMessageWire{}}
-			if err := user.appendContent(resultContent); err != nil {
-				return err
-			}
-			media = append(media, user.parts...)
-		default:
-			return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "tool_result_media", "chat tool results support text and media only", nil)
 		}
+		if resultContent.Kind != llmprotocol.ContentText {
+			return llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "tool_result_media", "chat tool results support text only", nil)
+		}
+		state.parts = append(state.parts, chatContentWire{
+			Type: "text", Text: resultContent.Text,
+			CacheControl: encodeAnthropicCacheControl(resultContent.Cache),
+		})
 	}
-	if len(media) == 0 {
-		return nil
-	}
-	if !hasText {
-		state.parts = append(state.parts, chatContentWire{Type: "text", Text: toolResultMediaPointer})
-	}
-	state.hoisted = append(state.hoisted, chatContentWire{Type: "text", Text: toolResultMediaLabel(result.CallID)})
-	state.hoisted = append(state.hoisted, media...)
 	return nil
 }
 

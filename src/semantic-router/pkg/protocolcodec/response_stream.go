@@ -133,12 +133,28 @@ func groupResponseStreamContent(contents []llmprotocol.Content) []responseStream
 	groups := make([]responseStreamContentGroup, 0, len(contents))
 	for _, content := range contents {
 		family := responseStreamContentFamily(content.Kind)
-		if family == llmprotocol.ContentToolCall || len(groups) == 0 || groups[len(groups)-1].family != family {
+		if family == llmprotocol.ContentToolCall || family == llmprotocol.ContentUnmodeled ||
+			len(groups) == 0 || groups[len(groups)-1].family != family ||
+			endsSignedReasoning(groups[len(groups)-1]) || signedReasoning(content) {
 			groups = append(groups, responseStreamContentGroup{family: family})
 		}
 		groups[len(groups)-1].contents = append(groups[len(groups)-1].contents, content)
 	}
 	return groups
+}
+
+// endsSignedReasoning reports whether a group ends on a signed reasoning
+// block. One signature proves one block, so a signed block ends its item, as
+// the buffered Responses encoder does: grouped together, two blocks would
+// stream under one concatenated signature that no provider would accept.
+func endsSignedReasoning(group responseStreamContentGroup) bool {
+	return len(group.contents) > 0 && signedReasoning(group.contents[len(group.contents)-1])
+}
+
+// signedReasoning reports a signed reasoning block, which starts its own
+// group as well as ending it.
+func signedReasoning(content llmprotocol.Content) bool {
+	return content.Kind == llmprotocol.ContentReasoning && content.Signature != ""
 }
 
 func responseStreamContentFamily(kind llmprotocol.ContentKind) llmprotocol.ContentKind {
@@ -180,9 +196,12 @@ func neutralContentGroupEvents(
 		return neutralToolCallEvents(started, completed, group.contents[0])
 	}
 	if len(group.contents) == 1 {
-		// A carried web_search_call replays as the item's start and
-		// completion, as it streamed from the provider.
-		if _, webSearch := carriedWebSearchCall(group.contents[0]); webSearch {
+		// A carried web_search_call, or a carried Anthropic redacted_thinking
+		// block, replays as the item's start and completion, as it streamed
+		// from the provider: neither has anything to stream in between.
+		_, webSearch := carriedWebSearchCall(group.contents[0])
+		_, redacted := OpaqueReasoningData(group.contents[0])
+		if webSearch || redacted {
 			content := group.contents[0]
 			started.Content, completed.Content = &content, &content
 			return []llmprotocol.Event{started, completed}, nil
