@@ -523,3 +523,20 @@ def test_rayline_arc_cli_fallback_needs_one_model_per_worker(second, enabled):
         for error in _validate_rayline_arc_decision(decision)
     )
     assert refused == (enabled and second != "vendor/a")
+
+
+def test_rayline_arc_policy_fallback_matches_the_go_contract():
+    """fallback mirrors RaylineARCPolicyFallbackConfig: off by default, 0
+    seconds meaning the router's default, at most an hour, nothing else."""
+    assert RaylineARCPolicyFallbackConfig().enabled is False
+    parsed = RaylineARCPolicyFallbackConfig.model_validate(
+        {"enabled": True, "cell_exclusion_seconds": 3600}
+    )
+    assert parsed.enabled and parsed.cell_exclusion_seconds == 3600
+    for invalid in (
+        {"cell_exclusion_seconds": -1},
+        {"cell_exclusion_seconds": 3601},
+        {"enabled": True, "fallback_action_id": "x"},
+    ):
+        with pytest.raises(ValidationError):
+            RaylineARCPolicyFallbackConfig.model_validate(invalid)

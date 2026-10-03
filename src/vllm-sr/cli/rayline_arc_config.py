@@ -305,11 +305,14 @@ class RaylineARCPolicyBindingConfig(BaseModel):
 
 class RaylineARCPolicyFallbackConfig(BaseModel):
     """ADR 0120's fallback: a refusing model is excluded for the rest of its
-    context and the next turn decides among the others."""
+    context and the next turn decides among the others; a route that failed
+    for capacity or availability is left out for cell_exclusion_seconds."""
 
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
+    # 0 means the router's default (30 s).
+    cell_exclusion_seconds: int = Field(default=0, ge=0, le=3600)
 
 
 class RaylineARCPolicyServiceConfig(BaseModel):

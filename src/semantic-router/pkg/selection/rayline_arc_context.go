@@ -89,6 +89,9 @@ type RaylineARCTrace struct {
 	// when an action is remapped to another provider.
 	PolicyActionModel   string
 	WorkerProviderModel string
+	// WorkerRoute names the worker's route (worker, backend endpoint and
+	// provider model) for the fallback's route exclusions.
+	WorkerRoute string
 	// PolicyLatency is the decide call's round trip as the router timed it;
 	// EncoderLatency stays the encode alone.
 	PolicyLatency time.Duration

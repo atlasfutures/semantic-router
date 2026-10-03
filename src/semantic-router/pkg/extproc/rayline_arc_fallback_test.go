@@ -5,6 +5,7 @@ package extproc
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -376,5 +378,286 @@ func TestRaylineARCRefusalOutwaitsANewerLeaseHolder(t *testing.T) {
 	declineRefusedTurn(attempt)
 	if !readLedgerTestState(t, store, episode).Policy.Excludes("vendor/off") {
 		t.Fatal("the refusal was dropped while a newer turn held the lease")
+	}
+}
+
+// resetCellExclusions gives a test an empty process table and restores it.
+func resetCellExclusions(t *testing.T) {
+	t.Helper()
+	saved := raylineARCWorkerExclusions
+	raylineARCWorkerExclusions = &raylineARCCellExclusions{worker: map[string]cellExclusion{}}
+	t.Cleanup(func() { raylineARCWorkerExclusions = saved })
+}
+
+// A turn that failed for capacity or availability excludes its route, when
+// its decision serves with the fallback on. Controls: the fallback off, and
+// a failure that is about the conversation rather than the route.
+func TestRaylineARCRouteFailureExcludesTheRoute(t *testing.T) {
+	for _, tc := range []struct {
+		class    string
+		enabled  bool
+		excludes bool
+	}{
+		{turnFailureRateLimited, true, true},
+		{turnFailureUpstream5xx, true, true},
+		{turnFailureTimeout, true, true},
+		{turnFailureNoEndpoint, true, false},
+		{turnFailureRateLimited, false, false},
+		{turnFailureRefusal, true, false},
+		{turnFailureContextOverflow, true, false},
+	} {
+		resetCellExclusions(t)
+		fixture, _, _, _ := fallbackFixture(t, tc.enabled)
+		fixture.decision.Algorithm.RaylineARC.PolicyService.Fallback.CellExclusionSeconds = 60
+		ctx := &RequestContext{
+			RequestID: "req-route", VSRSelectedDecision: fixture.decision,
+			VSRRaylineARC: &selection.RaylineARCTrace{SelectedArm: 1, WorkerProviderModel: "off", WorkerRoute: fallbackTestRoute(fixture, 1)},
+		}
+		recordTurnFailure(ctx, tc.class, false)
+		_, excluded := raylineARCWorkerExclusions.active(fallbackTestRoute(fixture, 1), time.Now())
+		_, expired := raylineARCWorkerExclusions.active(fallbackTestRoute(fixture, 1), time.Now().Add(61*time.Second))
+		if excluded != tc.excludes || expired {
+			t.Fatalf("%s enabled=%v: excluded=%v, after the TTL=%v", tc.class, tc.enabled, excluded, expired)
+		}
+	}
+}
+
+// A route the cell excluded leaves the offer, and a turn held on it decides
+// again; once the exclusion expires it is offered again. Control: the
+// fallback off holds the route regardless.
+func TestRaylineARCRouteExclusionNarrowsTheOfferUntilItExpires(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		resetCellExclusions(t)
+		fixture, _, _, offAction := fallbackFixture(t, enabled)
+		fixture.fake.chooseWith(func(request raylinearc.PolicyDecisionRequest) string {
+			return request.Selection.AvailableActionIDs[0]
+		})
+		now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+		fixture.selector.now = func() time.Time { return now }
+		raylineARCWorkerExclusions.exclude(fallbackTestRoute(fixture, 1), turnFailureRateLimited, now.Add(30*time.Second))
+		logs := captureLogs(t)
+		state := heldEpisode(t)
+		off := 1
+		state.PreviousArm = &off
+		next := policyTestRequest(t,
+			map[string]any{"role": "user", "content": "fix the bug"},
+			map[string]any{"role": "assistant", "content": "done"},
+			map[string]any{"role": "user", "content": "now the tests"})
+		result, err := fixture.selectOn(t, state, next)
+		if err != nil {
+			t.Fatal(err)
+		}
+		offered := offeredActions(fixture, 0)
+		if !enabled {
+			if len(offered) != 1 || offered[0] != offAction {
+				t.Fatalf("fallback off: offered %v", offered)
+			}
+			continue
+		}
+		if slices.Contains(offered, offAction) || result.RaylineARC.SelectedArm != 0 || result.RaylineARC.PolicyBoundary == nil {
+			t.Fatalf("offered %v, arm %d, boundary %+v", offered, result.RaylineARC.SelectedArm, result.RaylineARC.PolicyBoundary)
+		}
+		raw, _ := json.Marshal(findLogEvent(t, logs, "rayline_arc_fallback_decision"))
+		if !strings.Contains(string(raw), `"excluded_routes":[{"class":"rate_limited","worker":"off"}]`) ||
+			!strings.Contains(string(raw), `"reason":"fallback_redecide"`) {
+			t.Fatalf("the re-decision log lacks the route: %s", raw)
+		}
+		now = now.Add(31 * time.Second)
+		if _, err := fixture.selectOn(t, heldEpisodeOn(t, 1), next); err != nil {
+			t.Fatal(err)
+		}
+		if offered := offeredActions(fixture, 1); len(offered) != 1 || offered[0] != offAction {
+			t.Fatalf("after expiry: offered %v", offered)
+		}
+	}
+}
+
+// Route exclusions are advice: when every route is excluded, the turn is
+// offered as though none were, rather than failing until they expire. A
+// model the episode excluded stays excluded either way.
+func TestRaylineARCRouteExclusionsNeverEmptyTheOffer(t *testing.T) {
+	resetCellExclusions(t)
+	fixture, _, _, offAction := fallbackFixture(t, true)
+	fixture.fake.chooseWith(func(request raylinearc.PolicyDecisionRequest) string {
+		return request.Selection.AvailableActionIDs[0]
+	})
+	until := time.Now().Add(time.Minute)
+	raylineARCWorkerExclusions.exclude(fallbackTestRoute(fixture, 1), turnFailureUpstream5xx, until)
+	raylineARCWorkerExclusions.exclude(fallbackTestRoute(fixture, 0), turnFailureTimeout, until)
+	logs := captureLogs(t)
+	task := policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"})
+	fresh, _ := raylinearc.NewEpisodeState(2)
+	if _, err := fixture.selectOn(t, fresh, task); err != nil {
+		t.Fatal(err)
+	}
+	if offered := offeredActions(fixture, 0); len(offered) != 3 {
+		t.Fatalf("every route excluded: offered %v", offered)
+	}
+	// The routes set aside are still the reason this decision was logged.
+	raw, _ := json.Marshal(findLogEvent(t, logs, "rayline_arc_fallback_decision"))
+	if !strings.Contains(string(raw), `{"class":"upstream_5xx","worker":"off"}`) || !strings.Contains(string(raw), `{"class":"timeout","worker":"think"}`) {
+		t.Fatalf("the bypassed routes are not logged: %s", raw)
+	}
+	excluded, _ := raylinearc.NewEpisodeState(2)
+	excluded.Policy = (*raylinearc.PolicyEpisodeState)(nil).WithExclusion("vendor/think", turnFailureRefusal)
+	if _, err := fixture.selectOn(t, excluded, task); err != nil {
+		t.Fatal(err)
+	}
+	if offered := offeredActions(fixture, 1); len(offered) != 1 || offered[0] != offAction {
+		t.Fatalf("with think refused: offered %v", offered)
+	}
+}
+
+// heldEpisodeOn is heldEpisode held on arm.
+func heldEpisodeOn(t *testing.T, arm int) *raylinearc.EpisodeState {
+	t.Helper()
+	state := heldEpisode(t)
+	state.PreviousArm = &arm
+	return state
+}
+
+// A route's exclusion is the route's: the same worker moved to another
+// endpoint (a config reload) is offered at once.
+func TestRaylineARCRouteExclusionFollowsTheProviderModel(t *testing.T) {
+	resetCellExclusions(t)
+	fixture, _, _, offAction := fallbackFixture(t, true)
+	fixture.fake.chooseWith(func(request raylinearc.PolicyDecisionRequest) string {
+		return request.Selection.AvailableActionIDs[0]
+	})
+	// The same worker and provider model, on the endpoint it had before.
+	before := strings.Replace(fallbackTestRoute(fixture, 1), "off\x00", "off\x00old-endpoint", 1)
+	raylineARCWorkerExclusions.exclude(before, turnFailureRateLimited, time.Now().Add(time.Minute))
+	fresh, _ := raylinearc.NewEpisodeState(2)
+	if _, err := fixture.selectOn(t, fresh, policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"})); err != nil {
+		t.Fatal(err)
+	}
+	if offered := offeredActions(fixture, 0); !slices.Contains(offered, offAction) {
+		t.Fatalf("a rebound worker stayed excluded: offered %v", offered)
+	}
+}
+
+// End to end through the response path: a provider's 429 on the turn's
+// route, classed where every failed turn is, takes that route out of the
+// next turn's offer. Control: a provider error that is not about the route
+// (a 400) leaves the offer whole.
+func TestRaylineARCProviderRateLimitChangesTheNextOffer(t *testing.T) {
+	for _, status := range []int{429, 400} {
+		resetCellExclusions(t)
+		fixture, _, _, offAction := fallbackFixture(t, true)
+		task := policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"})
+		fresh, _ := raylinearc.NewEpisodeState(2)
+		decided, err := fixture.selectOn(t, fresh, task)
+		if err != nil || decided.RaylineARC.PolicyActionID != offAction {
+			t.Fatalf("status %d: first turn chose %v, %v", status, decided, err)
+		}
+		ctx := &RequestContext{
+			RequestID: "req-provider-error", RequestModel: "off", UpstreamStatusCode: status,
+			SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.OpenAIChatV1,
+			StartTime: time.Now(), TraceContext: context.Background(),
+			VSRRaylineARC: decided.RaylineARC, VSRSelectedDecision: fixture.decision,
+		}
+		(&OpenAIRouter{}).handleUpstreamTransportError([]byte(fmt.Sprintf(`{"error":{"message":"Provider returned error","code":%d}}`, status)), ctx)
+		again, _ := raylinearc.NewEpisodeState(2)
+		if _, err := fixture.selectOn(t, again, task); err != nil {
+			t.Fatal(err)
+		}
+		if offersOff := slices.Contains(offeredActions(fixture, 1), offAction); offersOff == (status == 429) {
+			t.Fatalf("status %d: the next offer %v", status, offeredActions(fixture, 1))
+		}
+	}
+}
+
+// fallbackTestRoute is the route the fixture's armed scorer names for arm.
+func fallbackTestRoute(fixture *policySelectorFixture, arm int) string {
+	return fixture.selector.armedComponents().scorer.(*policyServiceScorer).routes[arm]
+}
+
+// A reload builds new scorers, which start with no route excluded, even when
+// nothing the route's name sees has changed (a credential, a base path).
+// Control: the scorer that recorded the exclusion still honours it.
+func TestRaylineARCRouteExclusionsEndWithTheirScorer(t *testing.T) {
+	resetCellExclusions(t)
+	fixture, _, _, offAction := fallbackFixture(t, true)
+	fixture.fake.chooseWith(func(request raylinearc.PolicyDecisionRequest) string {
+		return request.Selection.AvailableActionIDs[0]
+	})
+	raylineARCWorkerExclusions.exclude(fallbackTestRoute(fixture, 1), turnFailureRateLimited, time.Now().Add(time.Minute))
+	task := policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"})
+	for call, reloaded := range []bool{false, true} {
+		if reloaded {
+			fixture.selector.arm(&raylineARCArmedComponents{
+				scorer:    newPolicyServiceScorer(&config.RouterConfig{}, fixture.decision),
+				admission: raylinearc.NewAdmissionGate(0),
+				policy:    raylinearc.NewPolicyServiceClient(raylinearc.PolicyServiceConfig{BaseURL: fixture.fake.URL(), TotalTimeout: 5 * time.Second}),
+			})
+		}
+		fresh, _ := raylinearc.NewEpisodeState(2)
+		if _, err := fixture.selectOn(t, fresh, task); err != nil {
+			t.Fatal(err)
+		}
+		if offered := slices.Contains(offeredActions(fixture, call), offAction); offered != reloaded {
+			t.Fatalf("reloaded=%v: offered %v", reloaded, offeredActions(fixture, call))
+		}
+	}
+}
+
+// A worker's route changes with its endpoint and with its provider pin.
+func TestPolicyWorkerRouteNamesTheEndpoint(t *testing.T) {
+	ref := config.ModelRef{Model: "kimi"}
+	route := func(endpoint string, order []string) string {
+		params := config.ModelParams{PreferredEndpoints: []string{endpoint}}
+		if order != nil {
+			params.ProviderPreferences = &config.OpenRouterProviderPreferences{Order: order}
+		}
+		return policyWorkerRoute(&config.RouterConfig{BackendModels: config.BackendModels{
+			ModelConfig: map[string]config.ModelParams{"kimi": params},
+			VLLMEndpoints: []config.VLLMEndpoint{
+				{Name: "modal-a", Address: "10.0.0.1", Port: 8000, Weight: 1},
+				{Name: "modal-b", Address: "10.0.0.2", Port: 8000, Weight: 1},
+			},
+		}}, ref)
+	}
+	base := route("modal-a", nil)
+	if base == route("modal-b", nil) {
+		t.Fatal("one route for two endpoints")
+	}
+	if base == route("modal-a", []string{"moonshotai"}) || route("modal-a", []string{"moonshotai"}) == route("modal-a", []string{"groq"}) {
+		t.Fatal("one route for two provider pins")
+	}
+	if base != route("modal-a", nil) {
+		t.Fatal("the same route named twice differently")
+	}
+}
+
+// A route no scorer looks up again (a reload removed it) leaves the table
+// once it has expired, at the next insertion.
+func TestRaylineARCCellExclusionsSweepExpiredRoutes(t *testing.T) {
+	resetCellExclusions(t)
+	raylineARCWorkerExclusions.exclude("removed-route", turnFailureRateLimited, time.Now().Add(-time.Second))
+	raylineARCWorkerExclusions.exclude("live-route", turnFailureRateLimited, time.Now().Add(time.Minute))
+	if _, kept := raylineARCWorkerExclusions.worker["removed-route"]; kept || len(raylineARCWorkerExclusions.worker) != 1 {
+		t.Fatalf("table after the insertion: %v", raylineARCWorkerExclusions.worker)
+	}
+}
+
+// A worker Envoy balances across several endpoints is never route-excluded:
+// its failure cannot be pinned on one endpoint. Control: the same worker on
+// one endpoint has a route.
+func TestPolicyWorkerRouteSkipsBalancedWorkers(t *testing.T) {
+	endpoints := []config.VLLMEndpoint{
+		{Name: "modal-a", Address: "10.0.0.1", Port: 8000, Weight: 1},
+		{Name: "modal-b", Address: "10.0.0.2", Port: 8000, Weight: 1},
+	}
+	for preferred, routed := range map[string]bool{"one": true, "both": false} {
+		params := config.ModelParams{PreferredEndpoints: []string{"modal-a"}}
+		if preferred == "both" {
+			params.PreferredEndpoints = []string{"modal-a", "modal-b"}
+		}
+		cfg := &config.RouterConfig{BackendModels: config.BackendModels{
+			ModelConfig: map[string]config.ModelParams{"kimi": params}, VLLMEndpoints: endpoints,
+		}}
+		if route := policyWorkerRoute(cfg, config.ModelRef{Model: "kimi"}); (route != "") != routed {
+			t.Fatalf("%s endpoint(s): route %q", preferred, route)
+		}
 	}
 }

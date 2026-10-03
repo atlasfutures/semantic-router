@@ -23,6 +23,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf16"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
@@ -106,6 +107,24 @@ type RaylineARCPolicyServiceConfig struct {
 // RaylineARCPolicyFallbackConfig switches ADR 0120's fallback on for a cell.
 type RaylineARCPolicyFallbackConfig struct {
 	Enabled bool `yaml:"enabled"`
+	// CellExclusionSeconds is how long a provider route stays out of the
+	// offer after a 429, a 5xx or a timeout (Phase 1b). Zero means the
+	// default.
+	CellExclusionSeconds int `yaml:"cell_exclusion_seconds,omitempty"`
+}
+
+// DefaultRaylineARCCellExclusionSeconds is the cell exclusion when none is
+// configured: long enough to ride out a rate-limit window, short enough
+// that a recovered route is offered again within the minute.
+const DefaultRaylineARCCellExclusionSeconds = 30
+
+// CellExclusionTTL is how long a failed route stays out of the offer.
+func (cfg *RaylineARCPolicyServiceConfig) CellExclusionTTL() time.Duration {
+	seconds := DefaultRaylineARCCellExclusionSeconds
+	if cfg != nil && cfg.Fallback != nil && cfg.Fallback.CellExclusionSeconds > 0 {
+		seconds = cfg.Fallback.CellExclusionSeconds
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // RaylineARCMaxFallbackModels is how many distinct models a fallback-enabled
@@ -367,6 +386,9 @@ func validateRaylineARCPolicyBindings(decision Decision) error {
 		if err := cfg.fallbackWorkerModels(); err != nil {
 			return err
 		}
+	}
+	if cfg.Fallback != nil && (cfg.Fallback.CellExclusionSeconds < 0 || cfg.Fallback.CellExclusionSeconds > 3600) {
+		return fmt.Errorf("policy_service fallback cell_exclusion_seconds must be between 0 and 3600")
 	}
 	refs := make(map[string]bool, len(decision.ModelRefs))
 	for _, modelRef := range decision.ModelRefs {
