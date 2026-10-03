@@ -594,6 +594,9 @@ func (transaction *raylineARCEpisodeTransaction) abortStore(
 		episodeFinalizeTimeout,
 	)
 	defer cancel()
+	// A commit that failed leaves the turn unrecorded, as an abort does, so
+	// a refusal a coalesced resend handed over is cleared here too.
+	transaction.clearHandedOverRefusal(abortContext)
 	_ = transaction.store.Abort(abortContext, transaction.lease)
 	metrics.RecordRaylineARCEpisodeTransaction("abort", "commit_failure")
 }

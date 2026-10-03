@@ -107,6 +107,9 @@ func (transaction *raylineARCEpisodeTransaction) clearBorrowedRefusedBoundary(pa
 	}
 	ctx, cancel := context.WithTimeout(parent, relaxedBoundaryStageTimeout)
 	defer cancel()
+	// stageContext is the context the lease was taken under; the clear is
+	// staged under the same one.
+	stageContext := ctx
 	lease, current, err := transaction.store.Prepare(ctx, transaction.episodeIDHash, len(transaction.state.Warmth))
 	if err != nil {
 		// The deciding request still holds the lease: hand the decision to
@@ -125,6 +128,7 @@ func (transaction *raylineARCEpisodeTransaction) clearBorrowedRefusedBoundary(pa
 		if lease, current, err = transaction.store.Prepare(retryContext, transaction.episodeIDHash, len(transaction.state.Warmth)); err != nil {
 			return
 		}
+		stageContext = retryContext
 		transaction.inflight.takeRefusedBoundary()
 	}
 	defer func() {
@@ -142,7 +146,7 @@ func (transaction *raylineARCEpisodeTransaction) clearBorrowedRefusedBoundary(pa
 	}
 	cleared := cloneARCState(current)
 	cleared.PolicyBoundary = nil
-	if stager.Stage(ctx, lease, cleared) == nil {
+	if stager.Stage(stageContext, lease, cleared) == nil {
 		metrics.RecordRaylineARCEpisodeTransaction("boundary_cleared", selectionOutcomeRefusal)
 	}
 }
