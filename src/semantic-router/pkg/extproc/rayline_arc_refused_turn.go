@@ -68,7 +68,11 @@ func (transaction *raylineARCEpisodeTransaction) clearRefusedBoundary(ctx contex
 	cleared.PolicyBoundary = nil
 	var err error
 	if transaction.relaxed {
-		err = transaction.snapshots.CommitIfUnchanged(ctx, transaction.episodeIDHash, transaction.read, cleared)
+		// A relaxed turn never waits on episode state: the same short bound
+		// as staging the boundary.
+		relaxedContext, cancel := context.WithTimeout(ctx, relaxedBoundaryStageTimeout)
+		defer cancel()
+		err = transaction.snapshots.CommitIfUnchanged(relaxedContext, transaction.episodeIDHash, transaction.read, cleared)
 	} else if stager, ok := transaction.store.(raylinearc.EpisodeStateStager); ok {
 		err = stager.Stage(ctx, transaction.lease, cleared)
 	} else {

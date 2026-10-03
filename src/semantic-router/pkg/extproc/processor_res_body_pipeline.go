@@ -36,6 +36,13 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 		})
 		return r.upstreamDecodeFailureResponse(ctx, err)
 	}
+	// A refused policy turn is declined before any response plugin can
+	// return early, so a blocked refusal still clears the boundary decision
+	// that chose the refusing arm.
+	refused := selectionCommitsOnCompletion(ctx) && responseRefused(semanticResponse)
+	if refused {
+		declineRefusedTurn(ctx)
+	}
 	clientBody := responseBody
 	rewriteClientBody := requiresClientResponseRewrite(ctx)
 	if rewriteClientBody {
@@ -76,10 +83,9 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	// policy-service turn commits once this reply has been sent, and caches
 	// it only then; a turn that can no longer commit fails now, while the
 	// client can still be told.
-	if cacheAfterCommit && responseRefused(semanticResponse) {
-		// A refused turn is delivered but never recorded, and never cached.
-		declineRefusedTurn(ctx)
-	} else if cacheAfterCommit {
+	// A refused turn (declined above) is delivered but never recorded, and
+	// never cached.
+	if cacheAfterCommit && !refused {
 		if err := selectionCompletionCommittable(ctx); err != nil {
 			recordSelectionLifecycleFailure(ctx, "response_complete", err)
 			return r.bodyPhaseErrorResponse(ctx, http.StatusServiceUnavailable, selectionUnavailableMessage(ctx))
