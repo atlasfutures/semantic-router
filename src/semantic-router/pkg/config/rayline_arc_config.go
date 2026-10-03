@@ -100,6 +100,22 @@ type RaylineARCAlgorithmConfig struct {
 	// help, and the trained selector has never been consulted with them. An
 	// eval against the current router has to come first.
 	IncludeToolNames bool `yaml:"include_tool_names,omitempty"`
+	// HoldFamilyInToolLoop keeps a tool loop on the model family that opened
+	// it. When a turn answers a tool call the episode's previous arm made, the
+	// arms of every other family are excluded before scoring, so ARC picks
+	// within that family. A switch is allowed again at the next user turn.
+	//
+	// A family's reasoning does not carry to another family: a signature only
+	// its issuer can verify is dropped, and DeepSeek and MiMo answer 400 when
+	// a tool history lacks their own reasoning_content. Switching inside the
+	// loop therefore costs the reasoning the loop was built on, or the turn.
+	//
+	// It is a hard constraint with a fallback rather than a score penalty: a
+	// penalty cannot promise the reasoning survives, and the policy-service
+	// mode has no score to penalise. When the hold would leave no eligible arm
+	// (every arm of the family is disabled, incapable or non-vision), the
+	// hold is lifted and the lift is logged. Off by default.
+	HoldFamilyInToolLoop bool `yaml:"hold_family_in_tool_loop,omitempty"`
 	// FaultInjection lets a request ask this cell to fail in a named way, so a
 	// failure path can be exercised where nothing natural triggers it any more.
 	// Off by default, and while it is off the header it reads means nothing, so

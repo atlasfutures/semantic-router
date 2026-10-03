@@ -61,15 +61,19 @@ func (r *OpenAIRouter) prepareProviderDispatch(
 	if err != nil {
 		return nil, err
 	}
-	// Reasoning another model left in history is made carriable by this
-	// target before the capability gate, which would otherwise refuse it.
+	// Reasoning this target cannot verify is dropped by the disposition
+	// table before the capability gate, which would otherwise refuse it.
+	// Every drop is logged by kind.
 	if carry := protocolcodec.CarryReasoningTo(request, dispatch.targetFormat); carry.Changed() {
 		changed = true
-		logging.ComponentEvent("extproc", "reasoning_carried", map[string]interface{}{
-			"request_id":          ctx.RequestID,
-			"wire_format":         dispatch.targetFormat,
-			"unsigned_dropped":    carry.UnsignedDropped,
-			"signatures_stripped": carry.SignaturesStripped,
+		logging.ComponentEvent("extproc", "reasoning_dropped", map[string]interface{}{
+			"request_id":       ctx.RequestID,
+			"model":            logicalModel,
+			"wire_format":      dispatch.targetFormat,
+			"dropped":          carry.Dropped(),
+			"signed_dropped":   carry.SignedDropped,
+			"redacted_dropped": carry.RedactedDropped,
+			"unsigned_dropped": carry.UnsignedDropped,
 		})
 	}
 	if r.dropRaylineARCOpaqueReasoningIssuedElsewhere(request, dispatch, ctx) {
