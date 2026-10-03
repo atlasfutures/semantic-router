@@ -35,6 +35,8 @@ One exception: an upstream error (a non-`2xx` from the selected backend) also ca
 
 A refusal from a full-duplex response, whose status is already sent as `200`, carries the same failure class as a top-level `failure_class` member of its error body.
 
+An inference reply whose `2xx` ends at its headers, with no body, is refused as `502`: an empty reply is not a served one.
+
 ## Request headers
 
 | Header | Direction | Description |

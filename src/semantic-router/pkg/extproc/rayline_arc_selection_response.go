@@ -168,6 +168,7 @@ func (r *OpenAIRouter) selectionDispatchGateResponse(
 		return nil
 	}
 	recordSelectionLifecycleFailure(ctx, "dispatch", err)
+	recordTurnFailure(ctx, selectionFailureUnavailable, false)
 	response := r.createErrorResponse(
 		http.StatusServiceUnavailable,
 		selectionUnavailableMessage(ctx),

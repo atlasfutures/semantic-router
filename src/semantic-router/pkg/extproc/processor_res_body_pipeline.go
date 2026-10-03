@@ -86,10 +86,12 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	// evidence in Router Replay as a delivered one.
 	r.recordRouterReplayResponseJailbreak(ctx)
 	if jailbreakResponse != nil {
+		recordTurnFailureDetail(ctx, turnFailureResponseBlocked, "response_jailbreak", false)
 		reportUsage()
 		return jailbreakResponse
 	}
 	if hallucinationResponse := r.performSemanticHallucinationDetection(ctx, semanticResponse); hallucinationResponse != nil {
+		recordTurnFailureDetail(ctx, turnFailureResponseBlocked, "response_hallucination", false)
 		reportUsage()
 		return hallucinationResponse
 	}

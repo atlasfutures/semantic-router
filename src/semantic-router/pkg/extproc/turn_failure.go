@@ -25,6 +25,9 @@ const (
 	turnFailureContextOverflow = "context_overflow"
 	turnFailureUpstreamError   = "upstream_error"
 	turnFailureStreamCut       = "stream_cut"
+	// The cell's own response check (jailbreak or hallucination) refused to
+	// deliver a reply the arm produced; failure_detail names the check.
+	turnFailureResponseBlocked = "response_blocked"
 	// The cell failed before any call: the header's classes, and two
 	// refinements of "unavailable".
 	turnFailurePackageNotLoaded  = "package_not_loaded"

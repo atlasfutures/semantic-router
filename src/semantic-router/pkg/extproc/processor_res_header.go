@@ -1,6 +1,8 @@
 package extproc
 
 import (
+	"net/http"
+
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 )
 
@@ -19,6 +21,9 @@ func (r *OpenAIRouter) handleResponseHeaders(v *ext_proc.ProcessingRequest_Respo
 		// path can avoid caching non-2xx error bodies (cache poisoning).
 		ctx.UpstreamStatusCode = outcome.statusCode
 	}
+	if empty := r.emptySuccessResponse(v, ctx, outcome); empty != nil {
+		return empty, nil
+	}
 	if unavailable := r.commitSelectionOnResponseHeaders(v, ctx, outcome); unavailable != nil {
 		return unavailable, nil
 	}
@@ -35,4 +40,22 @@ func (r *OpenAIRouter) handleResponseHeaders(v *ext_proc.ProcessingRequest_Respo
 	headerMutation := buildResponseHeaderMutation(ctx, outcome.isSuccessful)
 	headerMutation = mergeHeaderMutations(headerMutation, buildResponseStreamingMutation(ctx, outcome))
 	return buildResponseHeadersContinueResponse(headerMutation, ctx != nil && ctx.IsStreamingResponse), nil
+}
+
+// emptySuccessResponse refuses a 2xx that ends at its headers on an inference
+// request: no body callback will validate it, settle its usage or let a turn
+// commit, and an empty reply is not a served one. It is the arm's
+// upstream_error, refused while the headers can still be replaced and before
+// any turn commits on it.
+func (r *OpenAIRouter) emptySuccessResponse(
+	v *ext_proc.ProcessingRequest_ResponseHeaders,
+	ctx *RequestContext,
+	outcome responseHeaderOutcome,
+) *ext_proc.ProcessingResponse {
+	if ctx == nil || ctx.SemanticRequest == nil || !outcome.isSuccessful || v == nil || !v.ResponseHeaders.GetEndOfStream() {
+		return nil
+	}
+	recordTurnFailureDetail(ctx, turnFailureUpstreamError, "empty_response", false)
+	r.reportFailedCallUsage(ctx)
+	return r.createErrorResponse(http.StatusBadGateway, "The selected model returned an empty response")
 }
