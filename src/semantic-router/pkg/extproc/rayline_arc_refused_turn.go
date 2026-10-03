@@ -111,8 +111,17 @@ func (transaction *raylineARCEpisodeTransaction) clearBorrowedRefusedBoundary(pa
 	if err != nil {
 		return
 	}
-	defer func() { _ = transaction.store.Abort(context.Background(), lease) }()
-	if current == nil || current.PolicyBoundary == nil || current.PolicyBoundary.Arm != arm {
+	defer func() {
+		// Released under its own short bound: a stalled store must not hold
+		// the refusal back.
+		releaseContext, release := context.WithTimeout(context.Background(), relaxedBoundaryStageTimeout)
+		defer release()
+		_ = transaction.store.Abort(releaseContext, lease)
+	}()
+	// Only the decision this resend was dispatched under is cleared: a newer
+	// request may have staged its own since, even on the same arm.
+	if current == nil || current.PolicyBoundary == nil || current.PolicyBoundary.Arm != arm ||
+		*current.PolicyBoundary != *transaction.state.PolicyBoundary {
 		return
 	}
 	cleared := cloneARCState(current)
