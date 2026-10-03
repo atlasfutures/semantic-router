@@ -69,8 +69,13 @@ func TestUnusableResponseStillWritesTheUsageLine(t *testing.T) {
 	if got, _ := fields["prompt_tokens"].(int64); got != 31402 {
 		t.Fatalf("prompt_tokens = %v, want the prompt the upstream charged for", fields["prompt_tokens"])
 	}
-	if got, _ := fields["failure_class"].(string); got != "empty_output_item" {
-		t.Fatalf("failure_class = %v, want the code the refusal was raised with", fields["failure_class"])
+	// The class is bounded (an unusable reply is the arm's upstream_error);
+	// the code the refusal was raised with is its detail.
+	if got, _ := fields["failure_class"].(string); got != turnFailureUpstreamError {
+		t.Fatalf("failure_class = %v, want upstream_error", fields["failure_class"])
+	}
+	if got, _ := fields["failure_detail"].(string); got != "empty_output_item" {
+		t.Fatalf("failure_detail = %v, want the code the refusal was raised with", fields["failure_detail"])
 	}
 }
 

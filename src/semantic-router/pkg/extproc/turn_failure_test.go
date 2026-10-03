@@ -285,11 +285,111 @@ func TestUnusableResponseIsAClassedFailure(t *testing.T) {
 				failed++
 			}
 		}
-		if decoded && (failed != 1 || findLogEvent(t, logs, "llm_usage")["failure_class"] != "empty_completion") {
-			t.Fatalf("decoded: turn_failed=%d usage=%#v", failed, findLogEvent(t, logs, "llm_usage"))
+		if decoded {
+			usage := findLogEvent(t, logs, "llm_usage")
+			if failed != 1 || usage["failure_class"] != turnFailureUpstreamError || usage["failure_detail"] != "empty_completion" {
+				t.Fatalf("decoded: turn_failed=%d usage=%#v", failed, usage)
+			}
 		}
 		if !decoded && failed != 0 {
 			t.Fatalf("an undecoded reply was classed: turn_failed=%d", failed)
+		}
+	}
+}
+
+// A provider error with no body ends at its headers, so it is classed and its
+// usage settled there. Control: the same status with a body still to come is
+// left to the body phase.
+func TestBodylessProviderErrorIsSettledAtTheHeaders(t *testing.T) {
+	for _, endsAtHeaders := range []bool{true, false} {
+		logs := captureLogs(t)
+		ctx := &RequestContext{RequestID: "req-bodyless", RequestModel: "kimi-k3", StartTime: time.Now(), Headers: map[string]string{}}
+		headers := arcResponseHeaders("429")
+		headers.ResponseHeaders.EndOfStream = endsAtHeaders
+		if _, err := (&OpenAIRouter{}).handleResponseHeaders(headers, ctx); err != nil {
+			t.Fatal(err)
+		}
+		settled := false
+		for _, entry := range logs.All() {
+			fields := entry.ContextMap()
+			if fields["event"] == "llm_usage" && fields["failure_class"] == turnFailureRateLimited {
+				settled = true
+			}
+		}
+		if settled != endsAtHeaders {
+			t.Fatalf("ends at headers=%v: settled=%v", endsAtHeaders, settled)
+		}
+	}
+}
+
+// A streamed policy turn whose lease was lost while it streamed is the
+// cell's failure, and its usage line says so. Control: a turn that commits
+// carries no class.
+func TestStreamedLeaseLossIsClassedOnItsUsageLine(t *testing.T) {
+	for _, commitFails := range []bool{true, false} {
+		logs := captureLogs(t)
+		_, router, decision := statusCacheRouter()
+		store, episode := newLedgerTestStore(t)
+		lease, state, err := store.Prepare(context.Background(), episode, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := withSelectedDecision(&RequestContext{
+			RequestID: "req-stream-lease", RequestModel: "test", RequestQuery: "hello",
+			SemanticRequest: testNeutralRequest("test", "hello"),
+			SourceFormat:    llmprotocol.OpenAIChatV1, TargetFormat: llmprotocol.OpenAIChatV1,
+			TraceContext: context.Background(), UpstreamStatusCode: 200,
+			RaylineARCTransaction: newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil),
+		}, decision)
+		ctx.RaylineARCTransaction.commitOnCompletion = true
+		ctx.RaylineARCTransaction.markSelection(0, 10)
+		if commitFails {
+			ctx.RaylineARCTransaction.leaseLost.Store(true)
+		}
+		bindRaylineARCSelectionTransaction(ctx)
+		stream := &semanticResponseStreamState{
+			responseID: "chatcmpl-lease", model: "test", stop: llmprotocol.StopEndTurn,
+			items: map[int]*semanticStreamItem{}, terminal: true,
+			usage: llmprotocol.Usage{State: llmprotocol.UsageUnavailable},
+		}
+		item := stream.item(0)
+		item.text, item.completed = "hi", true
+		ctx.SemanticStreamState = stream
+		router.finalizeSemanticStreamingResponse(ctx, nil)
+		runPendingSelectionCompletion(ctx)
+		finalizeSelectionProcessTerminal(ctx)
+		class := findLogEvent(t, logs, "llm_usage")["failure_class"]
+		if (class == selectionFailureUnavailable) != commitFails || (!commitFails && class != nil) {
+			t.Fatalf("commit fails=%v: usage line failure_class %v", commitFails, class)
+		}
+	}
+}
+
+// A reply a body guard cut (its deadline or its size) was never sent: it is
+// classed, its usage settled as unknown, and its body names the class since
+// its 200 headers are spent.
+func TestBodyGuardCutIsClassedAndSettled(t *testing.T) {
+	cases := map[string]string{"response_body_timeout": turnFailureTimeout, "response_body_too_large": turnFailureUpstreamError}
+	for code, want := range cases {
+		logs := captureLogs(t)
+		ctx := &RequestContext{
+			RequestID: "req-guard", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200,
+			SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.OpenAIChatV1,
+		}
+		response := (&OpenAIRouter{}).responseBodyGuardResponse(ctx,
+			llmprotocol.NewError(llmprotocol.ErrorUpstreamTimeout, code, "cut", nil))
+		usage := findLogEvent(t, logs, "llm_usage")
+		if usage["failure_class"] != want || usage["failure_detail"] != code || usage["usage_source"] != usageSourceUnknown {
+			t.Fatalf("%s: usage line = %#v", code, usage)
+		}
+		mutation := response.GetResponseBody().GetResponse().GetBodyMutation()
+		body := mutation.GetBody()
+		if streamed := mutation.GetStreamedResponse(); streamed != nil {
+			body = streamed.GetBody()
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(body, &decoded); err != nil || decoded["failure_class"] != want {
+			t.Fatalf("%s: guard body = %s", code, body)
 		}
 	}
 }
