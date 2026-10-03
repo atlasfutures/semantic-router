@@ -265,3 +265,32 @@ func TestClaudeTurnRoundTripsThroughAResponsesClient(t *testing.T) {
 		t.Fatalf("the replayed turn lost Claude's reasoning (thinking=%v redacted=%v):\n%s", thinking, redacted, body)
 	}
 }
+
+// A buffered Claude answer with two consecutive signed thinking blocks, as
+// the response cache holds it, replays as a Responses stream with one
+// reasoning item per block, each under its own signature: grouped, the two
+// signatures would concatenate into one no provider accepts.
+func TestCachedSignedThinkingReplaysOneItemPerBlock(t *testing.T) {
+	engine := NewBuiltinEngine()
+	response, _, _, err := engine.DecodeResponse(llmprotocol.AnthropicMessagesV1, []byte(`{
+		"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-5",
+		"content":[
+			{"type":"thinking","thinking":"first","signature":"sigA"},
+			{"type":"thinking","thinking":"second","signature":"sigB"},
+			{"type":"text","text":"done"}
+		],
+		"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":3}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, _, err := engine.EncodeResponseStream(llmprotocol.OpenAIResponsesV1, response, llmprotocol.StreamContext{
+		Context: context.Background(), PublicModel: "public-model",
+	})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	stream := string(wire)
+	if strings.Contains(stream, "sigAsigB") || strings.Count(stream, `"signature":"sigA"`) == 0 || strings.Count(stream, `"signature":"sigB"`) == 0 {
+		t.Fatalf("the signatures were not kept apart:\n%s", stream)
+	}
+}
