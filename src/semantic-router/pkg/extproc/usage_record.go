@@ -79,6 +79,16 @@ type llmUsageRecord struct {
 	// FailureDetail is the specific cause behind failure_class, such as the
 	// protocol code of a reply the Router could not use.
 	FailureDetail *string `json:"failure_detail"`
+	// UpstreamAttempts is how many times the cell's provider hop sent the
+	// call, null when it did not say. Above 1, Envoy retried it on the same
+	// route before any response reached the Router, so the counts and cost
+	// here are the final attempt's alone; what the earlier attempts cost, if
+	// anything, is unknown, and so is the call's total.
+	UpstreamAttempts *int `json:"upstream_attempts"`
+	// CostComplete says whether this row covers every attempt of the call:
+	// true for a single attempt, false when Envoy retried it (the earlier
+	// attempts' charge is unknown), null when the attempt count is.
+	CostComplete *bool `json:"cost_complete"`
 
 	StopReason       *string `json:"stop_reason"`
 	NativeStopReason *string `json:"native_stop_reason"`
@@ -154,6 +164,12 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	record.FailureClass = nonEmpty(ctx.ResponseFailureClass)
 	record.ContentSentBeforeFailure = ctx.ContentSentBeforeFailure
 	record.FailureDetail = nonEmpty(ctx.ResponseFailureDetail)
+	if ctx.UpstreamAttempts > 0 {
+		attempts := ctx.UpstreamAttempts
+		complete := attempts == 1
+		record.UpstreamAttempts = &attempts
+		record.CostComplete = &complete
+	}
 	if len(ctx.DispatchedProviderOrder) > 0 {
 		record.ProviderOrder = append([]string(nil), ctx.DispatchedProviderOrder...)
 	}

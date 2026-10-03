@@ -6,9 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	"go.opentelemetry.io/otel"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -533,4 +535,32 @@ func unfinishedItemStream() *semanticResponseStreamState {
 	state := &semanticResponseStreamState{terminal: true, stop: llmprotocol.StopEndTurn, items: map[int]*semanticStreamItem{}}
 	state.item(0).text = "hi"
 	return state
+}
+
+// The provider hop's attempt count rides the usage line: a call Envoy retried
+// says so and marks its cost incomplete, the earlier attempts' charge being
+// unknown. Controls: a single attempt is complete; a hop that sends no count
+// (or a malformed one) leaves both null.
+func TestUsageLineCarriesTheUpstreamAttempts(t *testing.T) {
+	for _, attempts := range []string{"2", "1", "", "bogus"} {
+		logs := captureLogs(t)
+		ctx := &RequestContext{RequestID: "req-attempts", RequestModel: "kimi-k3", StartTime: time.Now(), Headers: map[string]string{}}
+		headers := arcResponseHeaders("429")
+		if attempts != "" {
+			headers.ResponseHeaders.Headers.Headers = append(headers.ResponseHeaders.Headers.Headers,
+				&core.HeaderValue{Key: "x-vsr-upstream-attempts", RawValue: []byte(attempts)})
+		}
+		headers.ResponseHeaders.EndOfStream = true
+		if _, err := (&OpenAIRouter{}).handleResponseHeaders(headers, ctx); err != nil {
+			t.Fatal(err)
+		}
+		usage := findLogEvent(t, logs, "llm_usage")
+		want := map[string][2]interface{}{
+			"2": {int64(2), false}, "1": {int64(1), true}, "": {nil, nil}, "bogus": {nil, nil},
+		}[attempts]
+		if fmt.Sprint(usage["upstream_attempts"]) != fmt.Sprint(want[0]) || fmt.Sprint(usage["cost_complete"]) != fmt.Sprint(want[1]) {
+			t.Fatalf("header %q: upstream_attempts = %#v, cost_complete = %#v, want %v",
+				attempts, usage["upstream_attempts"], usage["cost_complete"], want)
+		}
+	}
 }
