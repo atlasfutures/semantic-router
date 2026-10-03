@@ -233,7 +233,9 @@ func (r *OpenAIRouter) reportUnusableResponseUsage(
 	if r == nil || ctx == nil || ctx.UpstreamDecodedRemnant == nil {
 		return
 	}
-	recordTurnFailure(ctx, responseFailureClass(err), false)
+	// The bounded class is upstream_error; the protocol code that refused the
+	// reply is kept as its detail.
+	recordTurnFailureDetail(ctx, turnFailureUpstreamError, responseFailureClass(err), false)
 	r.reportNonStreamingUsage(ctx, completionLatency, r.takeNeutralResponseUsage(ctx))
 }
 

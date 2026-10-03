@@ -26,6 +26,11 @@ func (r *OpenAIRouter) handleResponseHeaders(v *ext_proc.ProcessingRequest_Respo
 	maybeRecordResponseHeaderTTFT(ctx)
 	r.updateRouterReplayStatus(ctx, outcome.statusCode, ctx != nil && ctx.IsStreamingResponse)
 	r.observeRouterLearningProviderStatus(ctx, outcome.statusCode)
+	if ctx != nil && !outcome.isSuccessful && v != nil && v.ResponseHeaders.GetEndOfStream() {
+		// A provider error with no body ends here: no body callback will
+		// class it or settle its usage, so both happen now, from the status.
+		r.recordUpstreamErrorTurn(ctx, nil)
+	}
 
 	headerMutation := buildResponseHeaderMutation(ctx, outcome.isSuccessful)
 	headerMutation = mergeHeaderMutations(headerMutation, buildResponseStreamingMutation(ctx, outcome))

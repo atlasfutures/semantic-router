@@ -36,15 +36,24 @@ const (
 // already received model output when the failure arrived, which decides
 // whether a later fallback could have re-served the turn unseen.
 func recordTurnFailure(ctx *RequestContext, class string, contentSent bool) {
+	recordTurnFailureDetail(ctx, class, "", contentSent)
+}
+
+// recordTurnFailureDetail is recordTurnFailure with the specific cause behind
+// the bounded class, such as the protocol code of a reply the Router could not
+// use. The class stays in the bounded vocabulary; the detail is diagnostic.
+func recordTurnFailureDetail(ctx *RequestContext, class, detail string, contentSent bool) {
 	if ctx == nil || class == "" {
 		return
 	}
 	ctx.ResponseFailureClass = class
+	ctx.ResponseFailureDetail = detail
 	ctx.ContentSentBeforeFailure = &contentSent
 	fields := map[string]interface{}{
 		"request_id":                  ctx.RequestID,
 		"failure_class":               class,
 		"content_sent_before_failure": contentSent,
+		"failure_detail":              detail,
 		"model":                       ctx.RequestModel,
 		"upstream_status":             ctx.UpstreamStatusCode,
 		"streaming":                   ctx.IsStreamingResponse,

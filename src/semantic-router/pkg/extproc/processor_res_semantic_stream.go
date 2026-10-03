@@ -504,6 +504,14 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 	ctx.InflightToken = 0
 
 	r.classStreamFailure(ctx, semanticResponse, responseErr, streamErr)
+	if commitDeferred && ctx.ResponseFailureClass == "" {
+		// A policy turn whose lease was lost while it streamed cannot be
+		// recorded: the cell failed it. The frames are gone, so it is classed
+		// before its usage line, and the commit then fails as before.
+		if err := selectionCompletionCommittable(ctx); err != nil {
+			recordTurnFailure(ctx, selectionFailureUnavailable, ctx.SemanticStreamState != nil && len(ctx.SemanticStreamState.items) > 0)
+		}
+	}
 	usage := truncatedStreamUsage(ctx, r.takeNeutralResponseUsage(ctx))
 	r.reportSemanticStreamingUsage(ctx, completionLatency, usage)
 	if !usage.estimated {

@@ -338,6 +338,9 @@ type RequestContext struct {
 	// ContentSentBeforeFailure says whether the client had received model
 	// output when a classed turn failure arrived; nil when the turn did not fail.
 	ContentSentBeforeFailure *bool
+	// ResponseFailureDetail is the specific cause behind a bounded failure
+	// class, such as a protocol code; empty when the class says it all.
+	ResponseFailureDetail    string
 	ProtocolEnvelope         llmprotocol.Envelope
 	ResponseEnvelope         llmprotocol.Envelope
 	ProtocolDiagnostics      llmprotocol.Diagnostics

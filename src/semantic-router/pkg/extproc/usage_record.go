@@ -70,6 +70,9 @@ type llmUsageRecord struct {
 	// ContentSentBeforeFailure is set with a turn failure class: whether the
 	// client had already received model output when the turn failed.
 	ContentSentBeforeFailure *bool `json:"content_sent_before_failure"`
+	// FailureDetail is the specific cause behind failure_class, such as the
+	// protocol code of a reply the Router could not use.
+	FailureDetail *string `json:"failure_detail"`
 
 	StopReason       *string `json:"stop_reason"`
 	NativeStopReason *string `json:"native_stop_reason"`
@@ -144,6 +147,7 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	record.Truncated = ctx.StreamingAborted
 	record.FailureClass = nonEmpty(ctx.ResponseFailureClass)
 	record.ContentSentBeforeFailure = ctx.ContentSentBeforeFailure
+	record.FailureDetail = nonEmpty(ctx.ResponseFailureDetail)
 	if len(ctx.DispatchedProviderOrder) > 0 {
 		record.ProviderOrder = append([]string(nil), ctx.DispatchedProviderOrder...)
 	}
