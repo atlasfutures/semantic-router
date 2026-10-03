@@ -262,7 +262,8 @@ func TestBlockedReplyStillWritesItsUsageLine(t *testing.T) {
 	if response.GetImmediateResponse() == nil {
 		t.Fatal("the plugin did not block")
 	}
-	if usage := findLogEvent(t, logs, "llm_usage"); usage["prompt_tokens"] == nil {
+	if usage := findLogEvent(t, logs, "llm_usage"); usage["prompt_tokens"] == nil ||
+		usage["failure_class"] != turnFailureResponseBlocked || usage["failure_detail"] != "response_jailbreak" {
 		t.Fatalf("the blocked reply's usage line = %#v", usage)
 	}
 }
@@ -391,5 +392,78 @@ func TestBodyGuardCutIsClassedAndSettled(t *testing.T) {
 		if err := json.Unmarshal(body, &decoded); err != nil || decoded["failure_class"] != want {
 			t.Fatalf("%s: guard body = %s", code, body)
 		}
+	}
+}
+
+// A 2xx that ends at its headers on an inference request is not a served
+// reply: it is refused while the headers can be replaced, classed and
+// settled. Controls: a bodyless 2xx outside inference passes, and so does an
+// inference 2xx whose body is still to come.
+func TestEmptySuccessIsRefusedAtTheHeaders(t *testing.T) {
+	cases := []struct {
+		name      string
+		inference bool
+		endsHere  bool
+		refused   bool
+	}{
+		{"empty inference reply", true, true, true},
+		{"bodyless non-inference reply", false, true, false},
+		{"inference reply with a body to come", true, false, false},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			logs := captureLogs(t)
+			ctx := &RequestContext{RequestID: "req-empty", RequestModel: "test", StartTime: time.Now(), Headers: map[string]string{}}
+			if test.inference {
+				ctx.SemanticRequest = testNeutralRequest("test", "hello")
+			}
+			headers := arcResponseHeaders("200")
+			headers.ResponseHeaders.EndOfStream = test.endsHere
+			response, err := (&OpenAIRouter{}).handleResponseHeaders(headers, ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if refused := response.GetImmediateResponse() != nil; refused != test.refused {
+				t.Fatalf("refused=%v", refused)
+			}
+			if test.refused {
+				if usage := findLogEvent(t, logs, "llm_usage"); usage["failure_class"] != turnFailureUpstreamError || usage["failure_detail"] != "empty_response" {
+					t.Fatalf("usage line = %#v", usage)
+				}
+			}
+		})
+	}
+}
+
+// A lease lost at the dispatch gate is a counted cell failure, like the
+// header- and body-phase gates. Control: a held lease dispatches.
+func TestDispatchGateLeaseLossIsATurnFailure(t *testing.T) {
+	for _, leaseLost := range []bool{true, false} {
+		logs := captureLogs(t)
+		store, episode := newLedgerTestStore(t)
+		lease, state, err := store.Prepare(context.Background(), episode, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := &RequestContext{
+			RequestID: "req-dispatch", TraceContext: context.Background(), Headers: map[string]string{},
+			RaylineARCTransaction: newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil),
+		}
+		ctx.RaylineARCTransaction.markSelection(0, 10)
+		if leaseLost {
+			ctx.RaylineARCTransaction.leaseLost.Store(true)
+		}
+		bindRaylineARCSelectionTransaction(ctx)
+		blocked := (&OpenAIRouter{}).selectionDispatchGateResponse(ctx) != nil
+		counted := false
+		for _, entry := range logs.All() {
+			if fields := entry.ContextMap(); fields["event"] == "turn_failed" && fields["failure_class"] == selectionFailureUnavailable {
+				counted = true
+			}
+		}
+		if blocked != leaseLost || counted != leaseLost {
+			t.Fatalf("lease lost=%v: blocked=%v counted=%v", leaseLost, blocked, counted)
+		}
+		finalizeSelectionProcessTerminal(ctx)
 	}
 }
