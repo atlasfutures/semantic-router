@@ -34,6 +34,9 @@ func (r *OpenAIRouter) commitSelectionOnResponseHeaders(
 	// The cell failed the turn, as at the body-phase gate: say so in the
 	// class header, which survives the cell's response scrub.
 	recordTurnFailure(ctx, selectionFailureUnavailable, false)
+	// The upstream answered and may bill; its usage line is written here,
+	// since neither response finalizer will run for this turn.
+	r.reportFailedCallUsage(ctx)
 	response := r.createErrorResponse(
 		http.StatusServiceUnavailable,
 		selectionUnavailableMessage(ctx),

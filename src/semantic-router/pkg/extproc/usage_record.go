@@ -213,6 +213,11 @@ func (r *OpenAIRouter) pricingSnapshot() string {
 // priceUsageRecord prices the call from the rate card, when it can be priced,
 // and records the cost metric.
 func (r *OpenAIRouter) priceUsageRecord(record *llmUsageRecord, model string, usage responseUsageMetrics) {
+	// A call the provider stated no usage for has nothing to price.
+	if responseUsageSource(usage) == usageSourceUnknown {
+		record.Pricing = usagePricingNoUsage
+		return
+	}
 	if r == nil || r.Config == nil {
 		return
 	}

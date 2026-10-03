@@ -233,7 +233,7 @@ func (r *OpenAIRouter) reportUnusableResponseUsage(
 	if r == nil || ctx == nil || ctx.UpstreamDecodedRemnant == nil {
 		return
 	}
-	ctx.ResponseFailureClass = responseFailureClass(err)
+	recordTurnFailure(ctx, responseFailureClass(err), false)
 	r.reportNonStreamingUsage(ctx, completionLatency, r.takeNeutralResponseUsage(ctx))
 }
 

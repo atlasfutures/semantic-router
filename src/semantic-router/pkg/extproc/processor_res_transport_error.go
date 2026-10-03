@@ -79,21 +79,25 @@ func upstreamTransportFallback(status int, cause error) *llmprotocol.ProtocolErr
 	return llmprotocol.NewError(category, code, "model service returned an invalid error response", cause)
 }
 
-// recordUpstreamErrorTurn classes a provider error and writes its llm_usage
-// line. A failed call used to leave no usage line at all, so the usage stream
-// could not be joined one-to-one with the gateway's rows, which record errors.
-// The provider stated no usage, so the line's counts are null and its
-// usage_source unknown.
+// recordUpstreamErrorTurn classes a provider error and settles its usage
+// through the response-usage owner, as any other call is. A failed call used
+// to leave no usage line at all, so the usage stream could not be joined
+// one-to-one with the gateway's rows, which record errors. The provider
+// stated no usage, so the line's counts are null, its usage_source unknown
+// and its pricing no_usage.
 func (r *OpenAIRouter) recordUpstreamErrorTurn(ctx *RequestContext, protocolError *llmprotocol.ProtocolError) {
 	if ctx == nil {
 		return
 	}
 	recordTurnFailure(ctx, upstreamFailureClass(ctx.UpstreamStatusCode, protocolError), false)
-	record := r.newLLMUsageRecord(ctx, responseUsageMetrics{})
-	record.Pricing = usagePricingNoUsage
+	r.reportFailedCallUsage(ctx)
+}
+
+// reportFailedCallUsage settles a call that failed without stated usage.
+func (r *OpenAIRouter) reportFailedCallUsage(ctx *RequestContext) {
+	latency := time.Duration(0)
 	if !ctx.StartTime.IsZero() {
-		latency := time.Since(ctx.StartTime).Milliseconds()
-		record.CompletionLatencyMS = &latency
+		latency = time.Since(ctx.StartTime)
 	}
-	emitLLMUsageRecord(record)
+	r.reportNonStreamingUsage(ctx, latency, responseUsageMetrics{})
 }
