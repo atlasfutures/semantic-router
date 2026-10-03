@@ -124,7 +124,14 @@ func (refusal refusedTurn) apply(state *raylinearc.EpisodeState) (*raylinearc.Ep
 	if refusal.exclude != "" && !next.Policy.Excludes(refusal.exclude) {
 		base := next.Policy
 		if refusal.context != nil && samePolicyContext(next.Policy, refusal.decidedFrom) {
+			// The turn's context, keeping what the store excluded since the
+			// turn read it: a late refusal never lifts a newer one.
 			base = refusal.context
+			if next.Policy != nil {
+				for _, exclusion := range next.Policy.Exclusions {
+					base = base.WithExclusion(exclusion.Model, exclusion.Class)
+				}
+			}
 		}
 		if policy := base.WithExclusion(refusal.exclude, turnFailureRefusal); policy.Excludes(refusal.exclude) {
 			next.Policy, changed = policy, true
@@ -227,11 +234,22 @@ func (transaction *raylineARCEpisodeTransaction) stageBorrowedRefusal(parent con
 	}
 }
 
+// takeHandedOverRefusal returns the refusal a coalesced resend handed to
+// this request, once: one a failed commit already took, or else the entry's,
+// sealing it.
+func (transaction *raylineARCEpisodeTransaction) takeHandedOverRefusal() *refusedTurn {
+	if refused := transaction.handedOver; refused != nil {
+		transaction.handedOver = nil
+		return refused
+	}
+	return transaction.inflight.takeRefusal()
+}
+
 // applyHandedOverRefusal applies a refusal a coalesced resend handed to this
 // request while it held the lease. It runs as this request aborts, under its
 // own lease.
 func (transaction *raylineARCEpisodeTransaction) applyHandedOverRefusal(ctx context.Context) {
-	refused := transaction.inflight.takeRefusal()
+	refused := transaction.takeHandedOverRefusal()
 	if refused == nil || transaction.state == nil {
 		return
 	}

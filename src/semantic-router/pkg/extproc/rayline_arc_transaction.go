@@ -107,8 +107,11 @@ type raylineARCEpisodeTransaction struct {
 	// processWithContext is what keeps the episode store open.
 	onFinalize func()
 	// inflight is the coalescing entry this turn leads or joined, through
-	// which a refused resend hands its boundary decision to the lease owner.
+	// which a refused resend hands its refusal to the lease owner.
 	inflight *raylineARCInflightEntry
+	// handedOver is a refusal the commit took from inflight and then could
+	// not commit; the abort that follows stages it.
+	handedOver *refusedTurn
 }
 
 func newRaylineARCEpisodeTransaction(
@@ -436,6 +439,15 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			transaction.abortStore(ctx)
 			return
 		}
+		// A coalesced resend refused while this request held the lease
+		// handed its refusal here; it is committed with this turn, as an
+		// abort would stage it.
+		refused := transaction.takeHandedOverRefusal()
+		if refused != nil {
+			if folded, changed := refused.apply(nextState); changed {
+				nextState = folded
+			}
+		}
 		transaction.closeRetainedEncoderSession(
 			ctx,
 			requestContext,
@@ -448,6 +460,8 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			nextState,
 		)
 		if transaction.finalizeErr != nil {
+			// The abort stages the refusal instead.
+			transaction.handedOver = refused
 			transaction.abortStore(ctx)
 			return
 		}

@@ -106,7 +106,7 @@ func TestRaylineARCFallbackRedecidesOffAnExcludedHeldModel(t *testing.T) {
 			}
 			event := findLogEvent(t, logs, "rayline_arc_fallback_decision")
 			raw, _ := json.Marshal(event)
-			for _, want := range []string{`"reason":"fallback_redecide"`, `"model":"vendor/off"`, `"class":"refusal"`, `"turn_index":2`, `"scores":[`, `"selected_action_id":"` + offered[0] + `"`} {
+			for _, want := range []string{`"reason":"fallback_redecide"`, `"model":"vendor/off"`, `"class":"refusal"`, `"turn_index":2`, `"scores":[`, `"request_id":"req-policy-test"`, `"selected_action_id":"` + offered[0] + `"`} {
 				if !strings.Contains(string(raw), want) {
 					t.Fatalf("the re-decision log lacks %s: %s", want, raw)
 				}
@@ -138,6 +138,48 @@ func TestRaylineARCRefusalExcludesInTheTurnsContext(t *testing.T) {
 		next, changed := refusedTurn{arm: -1, exclude: "vendor/off", context: compacted, decidedFrom: decidedFrom}.apply(state)
 		if !changed || !next.Policy.Excludes("vendor/off") || (next.Policy.CompactionCount == 1) == moved {
 			t.Fatalf("moved=%v: stored policy %+v", moved, next.Policy)
+		}
+	}
+}
+
+// A late refusal keeps what the store excluded since its turn read it: it
+// lands in the turn's context without lifting a newer exclusion.
+func TestRaylineARCLateRefusalKeepsNewerExclusions(t *testing.T) {
+	task := []json.RawMessage{json.RawMessage(`{"role":"user","content":"fix the bug"}`)}
+	read := (&raylinearc.PolicyEpisodeState{}).Next(task, strings.Repeat("a", 64), "arm-a")
+	state, _ := raylinearc.NewEpisodeState(2)
+	state.Policy = read.WithExclusion("vendor/think", turnFailureRefusal)
+	next, changed := refusedTurn{arm: -1, exclude: "vendor/off", context: read.Clone(), decidedFrom: read}.apply(state)
+	if !changed || !next.Policy.Excludes("vendor/off") || !next.Policy.Excludes("vendor/think") {
+		t.Fatalf("exclusions after the late refusal: %+v", next.Policy.Exclusions)
+	}
+}
+
+// A coalesced resend refused while the leader holds the lease hands its
+// refusal over; when the leader's own turn succeeds, the exclusion is
+// committed with it. Control: with no refusal handed over, the commit
+// excludes nothing.
+func TestRaylineARCHandedOverRefusalCommitsWithTheLeader(t *testing.T) {
+	for _, refusal := range []bool{true, false} {
+		fixture, store, episode, _ := fallbackFixture(t, true)
+		leader, decided := boundaryAttempt(t, fixture, store, episode,
+			policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"}))
+		entry := &raylineARCInflightEntry{done: make(chan struct{}), finished: make(chan struct{})}
+		leader.RaylineARCTransaction.inflight = entry
+		if refusal {
+			declineRefusedTurn(&RequestContext{
+				RaylineARCTransaction: newBorrowedRaylineARCEpisodeTransaction(store, leader.RaylineARCTransaction.state, episode, entry),
+				VSRRaylineARC:         decided.RaylineARC,
+				VSRSelectedDecision:   fixture.decision,
+			})
+		}
+		leader.RaylineARCTransaction.markPolicyState(decided.RaylineARC.PolicyNextState, false)
+		if err := leader.RaylineARCTransaction.commit(context.Background(), leader); err != nil {
+			t.Fatal(err)
+		}
+		committed := readLedgerTestStateNoWait(store, episode)
+		if committed == nil || committed.TurnIndex != 1 || committed.Policy.Excludes("vendor/off") != refusal {
+			t.Fatalf("refusal=%v: committed %+v", refusal, committed)
 		}
 	}
 }
