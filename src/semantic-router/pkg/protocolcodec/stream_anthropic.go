@@ -3,6 +3,7 @@ package protocolcodec
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
@@ -31,6 +32,9 @@ type anthropicStreamDecoder struct {
 	// is dropped), otherwise the provider's evidence, applied before the
 	// next usage or terminal event so nothing it stated is lost.
 	pendingStartUsage *llmprotocol.Usage
+	// terminalDelta is the JSON of the last message_delta before
+	// message_stop: a late message_delta that restates it adds nothing.
+	terminalDelta json.RawMessage
 }
 type anthropicStreamEncoder struct {
 	streamState
@@ -173,7 +177,7 @@ func (decoder *anthropicStreamDecoder) pushFrame(frame []byte) ([]llmprotocol.Ev
 		return nil, nil, err
 	}
 	if decoder.terminal {
-		return nil, nil, invalidProviderResponse("stream_event_after_terminal", "Anthropic stream emitted data after message_stop")
+		return decoder.afterTerminal(parsed)
 	}
 	eventType, err := decodeProviderEventType(parsed.Data, parsed.Event, decoder.policy)
 	if err != nil {
@@ -304,6 +308,7 @@ func anthropicUsageUncommitted(wire anthropicUsageWire) bool {
 func (decoder *anthropicStreamDecoder) decodeAnthropicMessageDelta(
 	wire anthropicEventWire,
 ) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	decoder.terminalDelta = append(json.RawMessage(nil), decoder.data...)
 	if err := decoder.observeAnthropicStop(wire.Delta); err != nil {
 		return nil, nil, err
 	}
@@ -851,4 +856,99 @@ func (encoder *anthropicStreamEncoder) terminateAnthropicStream(
 		return nil, err
 	}
 	return append(frames, failureFrame), nil
+}
+
+// afterTerminal handles a frame that arrives after message_stop. The message
+// is complete by then, so a frame that can add nothing to it -- an
+// OpenAI-style [DONE] sentinel, a ping, a repeated message_stop, a late
+// message_delta (usage or a restated stop) -- is dropped with a diagnostic
+// rather than cutting a stream whose answer the client already has. Anything
+// else (a new content block, an error) still fails the stream, and the
+// failure names the event type, so the frame a provider sent is on record.
+func (decoder *anthropicStreamDecoder) afterTerminal(parsed sseFrame) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	if bytes.Equal(bytes.TrimSpace(parsed.Data), []byte("[DONE]")) {
+		return nil, afterTerminalDiagnostic("[DONE]"), nil
+	}
+	eventType, err := decodeProviderEventType(parsed.Data, parsed.Event, decoder.policy)
+	if err != nil {
+		return nil, nil, invalidProviderResponse("stream_event_after_terminal", "Anthropic stream emitted an undecodable frame after message_stop")
+	}
+	switch eventType {
+	case "ping", "message_stop":
+		// Only the bare event: a ping or stop carrying anything else (usage,
+		// a delta) brings evidence the stream can no longer carry.
+		if bareEvent(parsed.Data) {
+			return nil, afterTerminalDiagnostic(eventType), nil
+		}
+	case "message_delta":
+		// Usage and stop reason were published with the completion at
+		// message_stop, and the client has it: a late delta is dropped only
+		// when it restates them. New counts or a charge are accounting the
+		// stream can no longer carry, so they fail it rather than vanish.
+		if decoder.lateDeltaRestates(parsed.Data) {
+			return nil, afterTerminalDiagnostic(eventType), nil
+		}
+		return nil, nil, invalidProviderResponse("stream_event_after_terminal",
+			"Anthropic stream emitted a message_delta with new usage or stop after message_stop")
+	}
+	if eventType == "ping" || eventType == "message_stop" {
+		return nil, nil, invalidProviderResponse("stream_event_after_terminal",
+			"Anthropic stream emitted a "+eventType+" carrying data after message_stop")
+	}
+	return nil, nil, invalidProviderResponse("stream_event_after_terminal",
+		"Anthropic stream emitted "+boundedEventName(eventType)+" after message_stop")
+}
+
+func afterTerminalDiagnostic(frame string) llmprotocol.Diagnostics {
+	return llmprotocol.Diagnostics{{
+		Source: llmprotocol.AnthropicMessagesV1, Field: "stream.after_message_stop", Action: llmprotocol.DiagnosticDropped,
+		Reason: "the provider sent " + frame + " after message_stop; the message was already complete",
+	}}
+}
+
+// boundedEventName keeps a provider-chosen event name fit for an error
+// message: at most 48 characters of [a-z0-9_.], anything else replaced.
+func boundedEventName(name string) string {
+	if len(name) > 48 {
+		name = name[:48]
+	}
+	out := make([]byte, 0, len(name))
+	for index := 0; index < len(name); index++ {
+		character := name[index]
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '_' || character == '.' {
+			out = append(out, character)
+		} else {
+			out = append(out, '?')
+		}
+	}
+	if len(out) == 0 {
+		return "an unnamed event"
+	}
+	return string(out)
+}
+
+// lateDeltaRestates reports whether a message_delta after message_stop is
+// the terminal message_delta again, as parsed JSON: its stop reason, matched
+// stop sequence, usage and usage_source all as already published. Any
+// difference is evidence the stream can no longer carry.
+func (decoder *anthropicStreamDecoder) lateDeltaRestates(data []byte) bool {
+	late, lateOK := exactJSON(data)
+	terminal, terminalOK := exactJSON(decoder.terminalDelta)
+	return len(decoder.terminalDelta) > 0 && lateOK && terminalOK && reflect.DeepEqual(late, terminal)
+}
+
+// exactJSON parses data keeping every number as written (json.Number), so two
+// counts that differ beyond float64 precision still compare unequal.
+func exactJSON(data []byte) (any, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var value any
+	return value, decoder.Decode(&value) == nil
+}
+
+// bareEvent reports whether an event's JSON holds nothing but its type.
+func bareEvent(data []byte) bool {
+	value, ok := exactJSON(data)
+	object, isObject := value.(map[string]any)
+	return ok && isObject && len(object) == 1 && object["type"] != nil
 }
