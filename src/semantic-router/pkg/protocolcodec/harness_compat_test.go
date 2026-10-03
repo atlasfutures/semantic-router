@@ -2,6 +2,7 @@ package protocolcodec
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -324,5 +325,69 @@ func TestChatReasoningObjectIsOneControl(t *testing.T) {
 	}
 	if bytes.Contains(wire["reasoning"], []byte("effort")) && bytes.Contains(wire["reasoning"], []byte("max_tokens")) {
 		t.Fatalf("effort travelled beside a bound: %s", encoded.Body)
+	}
+}
+
+// countReasoningDetailsDrops counts the diagnostics that record
+// reasoning_details dropped for an Anthropic client.
+func countReasoningDetailsDrops(diagnostics llmprotocol.Diagnostics) int {
+	count := 0
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Field == "content.reasoning_details" && diagnostic.Action == llmprotocol.DiagnosticDropped &&
+			diagnostic.Target == llmprotocol.AnthropicMessagesV1 {
+			count++
+		}
+	}
+	return count
+}
+
+// Messages has nowhere to put reasoning_details, so an Anthropic client is
+// given the reasoning text and not the details. That loss is recorded once
+// per turn, buffered or streamed, including when the details were all the
+// reasoning held (an encrypted blob beside a tool call).
+func TestAnthropicClientRecordsDroppedReasoningDetails(t *testing.T) {
+	encryptedOnly := []byte(`{"id":"gen-2","object":"chat.completion","created":100,"model":"provider-model","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"reasoning_details":[{"type":"reasoning.encrypted","id":"call_1","data":"gemini-thought-signature","format":"google-gemini-v1","index":0}],"tool_calls":[{"id":"call_1","type":"function","function":{"name":"weather","arguments":"{\"city\":\"Paris\"}"}}]}}],"usage":{"prompt_tokens":5,"completion_tokens":7,"total_tokens":12}}`)
+	for label, body := range map[string][]byte{
+		"recorded":       loadProviderFixture(t, openRouterResponseReasoning),
+		"encrypted only": encryptedOnly,
+	} {
+		result, err := NewBuiltinEngine().TranslateResponse(
+			llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1, body, renameResponseModel,
+		)
+		if err != nil {
+			t.Fatalf("%s: %v", label, err)
+		}
+		if got := countReasoningDetailsDrops(result.Diagnostics); got != 1 {
+			t.Fatalf("%s buffered: %d reasoning_details drops in %+v, want 1", label, got, result.Diagnostics)
+		}
+	}
+
+	encryptedStream := []byte(strings.Join([]string{
+		`data: {"id":"gen-4","object":"chat.completion.chunk","created":100,"model":"provider-model","choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning_details":[{"type":"reasoning.encrypted","id":"r1","data":"opaque-1","format":"google-gemini-v1","index":0}]},"finish_reason":null}]}`,
+		`data: {"id":"gen-4","object":"chat.completion.chunk","created":100,"model":"provider-model","choices":[{"index":0,"delta":{"content":"","reasoning_details":[{"type":"reasoning.encrypted","id":"r2","data":"opaque-2","format":"google-gemini-v1","index":1}]},"finish_reason":null}]}`,
+		`data: {"id":"gen-4","object":"chat.completion.chunk","created":100,"model":"provider-model","choices":[{"index":0,"delta":{"content":"Done."},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":7,"total_tokens":12}}`,
+		`data: [DONE]`,
+	}, "\n\n") + "\n\n")
+	for label, body := range map[string][]byte{
+		"recorded":       loadProviderFixture(t, openRouterStreamReasoning),
+		"encrypted only": encryptedStream,
+	} {
+		stream, err := NewBuiltinEngine().NewStream(llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1, llmprotocol.StreamContext{
+			Context: context.Background(), PublicModel: "public-model", ProviderModel: "provider-model",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, pushed, err := stream.Push(body)
+		if err != nil {
+			t.Fatalf("%s push: %v", label, err)
+		}
+		_, _, finalized, err := stream.Finalize(nil)
+		if err != nil {
+			t.Fatalf("%s finalize: %v", label, err)
+		}
+		if got := countReasoningDetailsDrops(append(pushed, finalized...)); got != 1 {
+			t.Fatalf("%s streamed: %d reasoning_details drops, want 1", label, got)
+		}
 	}
 }

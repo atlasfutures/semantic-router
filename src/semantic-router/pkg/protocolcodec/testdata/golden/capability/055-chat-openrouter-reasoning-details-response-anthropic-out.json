@@ -42,7 +42,13 @@
             },
             "service_tier": "standard"
           }
-        }
+        },
+        "diagnostics": [
+          {
+            "field": "content.reasoning_details",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {
@@ -87,7 +93,13 @@
             },
             "service_tier": "standard"
           }
-        }
+        },
+        "diagnostics": [
+          {
+            "field": "content.reasoning_details",
+            "action": "dropped"
+          }
+        ]
       }
     }
   ]

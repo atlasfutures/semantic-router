@@ -264,6 +264,17 @@ func isMintedReasoningItem(body json.RawMessage) bool {
 	return minted
 }
 
+// outputHoldsReasoningDetails reports whether any reasoning in output
+// carries reasoning_details.
+func outputHoldsReasoningDetails(output []llmprotocol.OutputItem) bool {
+	for _, item := range output {
+		if holdsReasoningDetails(llmprotocol.Message{Content: item.Content}) {
+			return true
+		}
+	}
+	return false
+}
+
 // withoutReasoningDetailsCarriers removes reasoning contents that hold only
 // reasoning_details, for a client format with nowhere to put them
 // (Anthropic Messages). Reasoning that also has text keeps its text.
