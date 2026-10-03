@@ -5,6 +5,7 @@ package extproc
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -231,4 +232,38 @@ func TestRaylineARCRefusedCoalescedResendClearsTheBoundaryArm(t *testing.T) {
 		t.Fatalf("a refused resend waited %v on the leader's lease", elapsed)
 	}
 	_ = leader.RaylineARCTransaction.abort(context.Background(), "test")
+}
+
+// A late refused resend clears only the decision it was dispatched under: a
+// newer request's decision on the same arm survives it.
+func TestRaylineARCRefusedResendKeepsANewerBoundaryOnTheSameArm(t *testing.T) {
+	fixture, store, episode := boundaryFixture(t)
+	body := policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"})
+	leader, decided := boundaryAttempt(t, fixture, store, episode, body)
+	if err := leader.RaylineARCTransaction.abort(context.Background(), "upstream_status"); err != nil {
+		t.Fatal(err)
+	}
+	borrowed := readLedgerTestState(t, store, episode)
+	// Another request stages its own decision, on the same arm.
+	lease, current, err := store.Prepare(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer := cloneARCState(current)
+	boundary := *current.PolicyBoundary
+	boundary.PrefixDigest = strings.Repeat("f", 64)
+	newer.PolicyBoundary = &boundary
+	if err := store.Stage(context.Background(), lease, newer); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Abort(context.Background(), lease); err != nil {
+		t.Fatal(err)
+	}
+	declineRefusedTurn(&RequestContext{
+		RaylineARCTransaction: newBorrowedRaylineARCEpisodeTransaction(store, borrowed, episode),
+		VSRRaylineARC:         decided.RaylineARC,
+	})
+	if after := readLedgerTestState(t, store, episode).PolicyBoundary; after == nil || after.PrefixDigest != strings.Repeat("f", 64) {
+		t.Fatalf("the newer request's decision was cleared: %+v", after)
+	}
 }
