@@ -405,11 +405,14 @@ func TestGateSeesAMemberOnAStreamChunk(t *testing.T) {
 // the reverse. The two are different structs, so a member known on one is an
 // open question on the other.
 func TestStreamAndResponseLegsAreSeparate(t *testing.T) {
-	inventory, present := loadClientSchemaInventories(t)[llmprotocol.OpenAIChatV1]
-	if !present {
-		t.Fatal("the Chat format has no dated inventory")
-	}
+	// The dated Chat inventory no longer holds a stream-only row (reasoning_details
+	// became a named member in router-infra#90), so the rule is pinned on a
+	// one-row inventory of the same shape.
 	streamed := "choices[].delta.reasoning_details"
+	inventory := clientSchemaInventory{
+		Format: llmprotocol.OpenAIChatV1, Version: "2026-09-05",
+		Fields: []clientSchemaField{{Path: streamed, Leg: "stream"}},
+	}
 	if got := unclassifiedFields(inventory, "stream", []string{streamed}); len(got) != 0 {
 		t.Fatalf("the stream leg does not classify %q: %v", streamed, got)
 	}

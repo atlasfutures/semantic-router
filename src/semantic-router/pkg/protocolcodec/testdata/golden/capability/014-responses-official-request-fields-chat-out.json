@@ -234,11 +234,22 @@
     {
       "name": "prompt_cache_retention",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_prompt_cache_retention"
-        }
+        "status": "ok",
+        "body": {
+          "messages": [
+            {
+              "content": "hello",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "prompt_cache_retention",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {

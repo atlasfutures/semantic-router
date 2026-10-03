@@ -1,0 +1,113 @@
+{
+  "cases": [
+    {
+      "name": "minted_reasoning_item_hermes_shape",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "messages": [
+            {
+              "content": "weather in Paris?",
+              "role": "user"
+            },
+            {
+              "reasoning_content": "Check the weather tool first.",
+              "reasoning_details": [
+                {
+                  "format": "anthropic-claude-v1",
+                  "index": 0,
+                  "signature": "sig-anthropic-1",
+                  "text": "Check the weather tool first.",
+                  "type": "reasoning.text"
+                }
+              ],
+              "role": "assistant",
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "{\"city\":\"Paris\"}",
+                    "name": "weather"
+                  },
+                  "id": "call_1",
+                  "type": "function"
+                }
+              ]
+            },
+            {
+              "content": "sunny",
+              "role": "tool",
+              "tool_call_id": "call_1"
+            }
+          ],
+          "model": "routed-model",
+          "reasoning_effort": "high",
+          "store": false
+        },
+        "diagnostics": [
+          {
+            "field": "include",
+            "action": "dropped"
+          },
+          {
+            "field": "prompt_cache_key",
+            "action": "dropped"
+          },
+          {
+            "field": "reasoning.summary",
+            "action": "dropped"
+          }
+        ]
+      }
+    },
+    {
+      "name": "minted_reasoning_item_with_id_and_status",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "messages": [
+            {
+              "content": "weather in Paris?",
+              "role": "user"
+            },
+            {
+              "id": "fc_1",
+              "reasoning_details": [
+                {
+                  "data": "gemini-thought-signature",
+                  "format": "google-gemini-v1",
+                  "id": "call_1",
+                  "index": 0,
+                  "type": "reasoning.encrypted"
+                }
+              ],
+              "role": "assistant",
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "{\"city\":\"Paris\"}",
+                    "name": "weather"
+                  },
+                  "id": "call_1",
+                  "type": "function"
+                }
+              ]
+            },
+            {
+              "content": "sunny",
+              "role": "tool",
+              "tool_call_id": "call_1"
+            }
+          ],
+          "model": "routed-model",
+          "store": false
+        },
+        "diagnostics": [
+          {
+            "field": "include",
+            "action": "dropped"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -239,6 +239,10 @@ func carriedAnthropicCitations(raw json.RawMessage) json.RawMessage {
 // empty is that a disposition emptied it.
 func messageDropsWhole(contents []llmprotocol.Content, target llmprotocol.WireFormat) bool {
 	for _, content := range contents {
+		if _, carrierOnly := reasoningDetailsOf(content); carrierOnly && target != llmprotocol.OpenAIChatV1 {
+			// reasoning_details alone: only a Chat target is sent them.
+			continue
+		}
 		if content.Kind != llmprotocol.ContentUnmodeled {
 			return false
 		}

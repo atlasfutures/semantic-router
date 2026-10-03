@@ -1,0 +1,115 @@
+{
+  "cases": [
+    {
+      "name": "signed_reasoning_text",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "created_at": 100,
+          "error": null,
+          "id": "gen-1",
+          "incomplete_details": null,
+          "instructions": null,
+          "metadata": {},
+          "model": "routed-model",
+          "object": "response",
+          "output": [
+            {
+              "content": [
+                {
+                  "annotations": [],
+                  "text": "It is sunny.",
+                  "type": "output_text"
+                }
+              ],
+              "id": "item_448e607a5e264e98a8e5e900",
+              "role": "assistant",
+              "status": "completed",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "Check the weather tool first.",
+                  "type": "reasoning_text"
+                }
+              ],
+              "encrypted_content": "vsr.reasoning_details.v1.W3sidHlwZSI6InJlYXNvbmluZy50ZXh0IiwidGV4dCI6IkNoZWNrIHRoZSB3ZWF0aGVyIHRvb2wgZmlyc3QuIiwic2lnbmF0dXJlIjoic2lnLWFudGhyb3BpYy0xIiwiZm9ybWF0IjoiYW50aHJvcGljLWNsYXVkZS12MSIsImluZGV4IjowfV0",
+              "id": "item_72a415aadf6d5f34339e77a2",
+              "summary": [],
+              "type": "reasoning"
+            }
+          ],
+          "output_text": "It is sunny.",
+          "parallel_tool_calls": true,
+          "status": "completed",
+          "temperature": null,
+          "tool_choice": "auto",
+          "tools": [],
+          "top_p": null,
+          "usage": {
+            "input_tokens": 5,
+            "input_tokens_details": {
+              "cache_write_tokens": 0,
+              "cached_tokens": 0
+            },
+            "output_tokens": 7,
+            "output_tokens_details": {
+              "reasoning_tokens": 0
+            },
+            "total_tokens": 12
+          }
+        }
+      }
+    },
+    {
+      "name": "encrypted_only_tool_call",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "created_at": 100,
+          "error": null,
+          "id": "gen-2",
+          "incomplete_details": null,
+          "instructions": null,
+          "metadata": {},
+          "model": "routed-model",
+          "object": "response",
+          "output": [
+            {
+              "encrypted_content": "vsr.reasoning_details.v1.W3sidHlwZSI6InJlYXNvbmluZy5lbmNyeXB0ZWQiLCJpZCI6ImNhbGxfMSIsImRhdGEiOiJnZW1pbmktdGhvdWdodC1zaWduYXR1cmUiLCJmb3JtYXQiOiJnb29nbGUtZ2VtaW5pLXYxIiwiaW5kZXgiOjB9XQ",
+              "id": "item_f59e2bff5fcca7d95efff58e",
+              "summary": [],
+              "type": "reasoning"
+            },
+            {
+              "arguments": "{\"city\":\"Paris\"}",
+              "call_id": "call_1",
+              "id": "item_3961acfcb32a3b952b3cf093",
+              "name": "weather",
+              "type": "function_call"
+            }
+          ],
+          "parallel_tool_calls": true,
+          "status": "completed",
+          "temperature": null,
+          "tool_choice": "auto",
+          "tools": [],
+          "top_p": null,
+          "usage": {
+            "input_tokens": 5,
+            "input_tokens_details": {
+              "cache_write_tokens": 0,
+              "cached_tokens": 0
+            },
+            "output_tokens": 7,
+            "output_tokens_details": {
+              "reasoning_tokens": 0
+            },
+            "total_tokens": 12
+          }
+        }
+      }
+    }
+  ]
+}

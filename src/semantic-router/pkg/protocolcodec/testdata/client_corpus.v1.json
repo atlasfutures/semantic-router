@@ -512,6 +512,758 @@
       "surface": "openai.chat.v1",
       "leg": "stream",
       "source": "provider/openrouter/chat-stream-warm-prefix.sse"
+    },
+    {
+      "id": "opencode_1_18_30_chat_reasoning_replay",
+      "client": "opencode",
+      "client_version": "1.18.30",
+      "captured": "2026-10-03",
+      "surface": "openai.chat.v1",
+      "leg": "request",
+      "note": "Derived from the tested release's request builder (router-infra#84 inventory, 2026-10-03), not a wire capture: every harness Chat Completions run on 2026-10-02 met the gateway's HTML 404 before a body was logged. @ai-sdk/openai-compatible 2.0.41: reasoning text replays as reasoning_content; reasoning_effort only with a variant.",
+      "body": {
+        "model": "rayline-router",
+        "max_tokens": 32000,
+        "reasoning_effort": "high",
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are opencode."
+          },
+          {
+            "role": "user",
+            "content": "Create fib.py and run it."
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": "Write the file, then run it.",
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                  "name": "bash",
+                  "arguments": "{\"command\":\"python3 fib.py\"}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": "0 1 1 2 3 5 8 13 21 34"
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "bash",
+              "description": "Run a shell command",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "command"
+                ]
+              }
+            }
+          }
+        ],
+        "tool_choice": "auto"
+      }
+    },
+    {
+      "id": "pi_1_0_0_chat_reasoning_details_replay",
+      "client": "pi",
+      "client_version": "1.0.0",
+      "captured": "2026-10-03",
+      "surface": "openai.chat.v1",
+      "leg": "request",
+      "note": "Derived from the tested release's request builder (router-infra#84 inventory, 2026-10-03), not a wire capture: every harness Chat Completions run on 2026-10-02 met the gateway's HTML 404 before a body was logged. pi-ai openai-completions.js: reasoning_details replays merged; prompt_cache_key and prompt_cache_retention only with long cache retention.",
+      "body": {
+        "model": "rayline-router",
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "store": false,
+        "max_completion_tokens": 32000,
+        "reasoning_effort": "high",
+        "prompt_cache_key": "0199a1b2-pi-session",
+        "prompt_cache_retention": "24h",
+        "messages": [
+          {
+            "role": "developer",
+            "content": "You are pi."
+          },
+          {
+            "role": "user",
+            "content": "Create fib.py and run it."
+          },
+          {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                  "name": "bash",
+                  "arguments": "{\"command\":\"python3 fib.py\"}"
+                }
+              }
+            ],
+            "reasoning_details": [
+              {
+                "type": "reasoning.text",
+                "text": "Write the file, then run it.",
+                "signature": "sig",
+                "format": "anthropic-claude-v1",
+                "index": 0
+              },
+              {
+                "type": "reasoning.encrypted",
+                "id": "call_1",
+                "data": "opaque",
+                "format": "google-gemini-v1",
+                "index": 1
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": "0 1 1 2 3 5 8 13 21 34"
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "bash",
+              "description": "Run a shell command",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "command"
+                ]
+              }
+            }
+          }
+        ],
+        "tool_choice": "auto"
+      }
+    },
+    {
+      "id": "omp_18_0_5_chat_encrypted_details_replay",
+      "client": "omp",
+      "client_version": "18.0.5",
+      "captured": "2026-10-03",
+      "surface": "openai.chat.v1",
+      "leg": "request",
+      "note": "Derived from the tested release's request builder (router-infra#84 inventory, 2026-10-03), not a wire capture: every harness Chat Completions run on 2026-10-02 met the gateway's HTML 404 before a body was logged. openai-completions.ts: only reasoning.encrypted details are replayed, and no reasoning text.",
+      "body": {
+        "model": "rayline-router",
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "store": false,
+        "max_completion_tokens": 32000,
+        "reasoning_effort": "high",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are omp."
+          },
+          {
+            "role": "user",
+            "content": "Create fib.py and run it."
+          },
+          {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                  "name": "bash",
+                  "arguments": "{\"command\":\"python3 fib.py\"}"
+                }
+              }
+            ],
+            "reasoning_details": [
+              {
+                "type": "reasoning.encrypted",
+                "id": "call_1",
+                "data": "opaque",
+                "format": "google-gemini-v1",
+                "index": 0
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": "0 1 1 2 3 5 8 13 21 34"
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "bash",
+              "description": "Run a shell command",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "command"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "hermes_2026_8_27_chat",
+      "client": "hermes-agent",
+      "client_version": "2026.8.27",
+      "captured": "2026-10-03",
+      "surface": "openai.chat.v1",
+      "leg": "request",
+      "note": "Derived from the tested release's request builder (router-infra#84 inventory, 2026-10-03), not a wire capture: every harness Chat Completions run on 2026-10-02 met the gateway's HTML 404 before a body was logged. transports/chat_completions.py: reasoning_content is stripped on replay for a custom provider; prompt_cache_key only with supports_prompt_cache_key.",
+      "body": {
+        "model": "rayline-router",
+        "max_tokens": 65536,
+        "reasoning_effort": "high",
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are Hermes."
+          },
+          {
+            "role": "user",
+            "content": "Create fib.py and run it."
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                  "name": "bash",
+                  "arguments": "{\"command\":\"python3 fib.py\"}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": "0 1 1 2 3 5 8 13 21 34"
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "bash",
+              "description": "Run a shell command",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "command"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "openclaw_2026_9_6_chat_cache_key",
+      "client": "openclaw",
+      "client_version": "2026.9.6",
+      "captured": "2026-10-03",
+      "surface": "openai.chat.v1",
+      "leg": "request",
+      "note": "Derived from the tested release's request builder (router-infra#84 inventory, 2026-10-03), not a wire capture: every harness Chat Completions run on 2026-10-02 met the gateway's HTML 404 before a body was logged. openai-completions-params.ts with compat.supportsPromptCacheKey; replay keeps only reasoning_content.",
+      "body": {
+        "model": "rayline-router",
+        "stream": true,
+        "max_completion_tokens": 32000,
+        "prompt_cache_key": "openclaw-session",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are OpenClaw."
+          },
+          {
+            "role": "user",
+            "content": "Create fib.py and run it."
+          },
+          {
+            "role": "assistant",
+            "content": null,
+            "reasoning_content": "Write the file, then run it.",
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                  "name": "bash",
+                  "arguments": "{\"command\":\"python3 fib.py\"}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": "0 1 1 2 3 5 8 13 21 34"
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "bash",
+              "description": "Run a shell command",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "command"
+                ]
+              }
+            }
+          }
+        ],
+        "tool_choice": "auto"
+      }
+    },
+    {
+      "id": "opencode_1_18_30_responses_reasoning_replay",
+      "client": "opencode",
+      "client_version": "1.18.30",
+      "captured": "2026-10-03",
+      "surface": "openai.responses.v1",
+      "leg": "request",
+      "note": "Request builder of the tested release, cross-checked with the 2026-10-02 smoke key lists where one exists (omp reqlog, Hermes tap). @ai-sdk/openai 3.0.88 with store:false, which adds include.",
+      "body": {
+        "model": "rayline-router",
+        "input": [
+          {
+            "role": "developer",
+            "content": "You are opencode."
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Create fib.py and run it."
+              }
+            ]
+          },
+          {
+            "type": "reasoning",
+            "id": "rs_1",
+            "encrypted_content": "gAAAAopaque",
+            "summary": [
+              {
+                "type": "summary_text",
+                "text": "Write the file, then run it."
+              }
+            ]
+          },
+          {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "bash",
+            "arguments": "{\"command\":\"python3 fib.py\"}"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": "0 1 1 2 3 5 8 13 21 34"
+          }
+        ],
+        "max_output_tokens": 32000,
+        "store": false,
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "ses_opencode",
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto"
+        },
+        "tools": [
+          {
+            "type": "function",
+            "name": "bash",
+            "description": "Run a shell command",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "command"
+              ]
+            },
+            "strict": false
+          }
+        ],
+        "tool_choice": "auto",
+        "stream": true
+      }
+    },
+    {
+      "id": "pi_1_0_0_responses_long_retention",
+      "client": "pi",
+      "client_version": "1.0.0",
+      "captured": "2026-10-03",
+      "surface": "openai.responses.v1",
+      "leg": "request",
+      "note": "Request builder of the tested release, cross-checked with the 2026-10-02 smoke key lists where one exists (omp reqlog, Hermes tap). openai-responses.js: prompt_cache_retention only with long cache retention.",
+      "body": {
+        "model": "rayline-router",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Create fib.py and run it."
+              }
+            ]
+          },
+          {
+            "type": "reasoning",
+            "id": "rs_1",
+            "encrypted_content": "gAAAAopaque",
+            "summary": [
+              {
+                "type": "summary_text",
+                "text": "Write the file, then run it."
+              }
+            ]
+          },
+          {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "bash",
+            "arguments": "{\"command\":\"python3 fib.py\"}"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": "0 1 1 2 3 5 8 13 21 34"
+          }
+        ],
+        "stream": true,
+        "prompt_cache_key": "0199a1b2-pi-session",
+        "prompt_cache_retention": "24h",
+        "store": false,
+        "max_output_tokens": 32000,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "name": "bash",
+            "description": "Run a shell command",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "command"
+              ]
+            },
+            "strict": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "omp_18_0_5_responses_reasoning_text_replay",
+      "client": "omp",
+      "client_version": "18.0.5",
+      "captured": "2026-10-03",
+      "surface": "openai.responses.v1",
+      "leg": "request",
+      "note": "Request builder of the tested release, cross-checked with the 2026-10-02 smoke key lists where one exists (omp reqlog, Hermes tap). Key list matches smoke omp t4b-resp.",
+      "body": {
+        "model": "rayline-router",
+        "instructions": "You are omp.",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Create fib.py and run it."
+              }
+            ]
+          },
+          {
+            "type": "reasoning",
+            "id": "rs_1",
+            "summary": [],
+            "content": [
+              {
+                "type": "reasoning_text",
+                "text": "Write the file, then run it."
+              }
+            ],
+            "encrypted_content": "gAAAAopaque"
+          },
+          {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "bash",
+            "arguments": "{\"command\":\"python3 fib.py\"}"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": "0 1 1 2 3 5 8 13 21 34"
+          }
+        ],
+        "stream": true,
+        "prompt_cache_key": "01a0-omp-session",
+        "store": false,
+        "max_output_tokens": 32000,
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "reasoning": {
+          "effort": "xhigh",
+          "summary": "auto"
+        },
+        "tools": [
+          {
+            "type": "function",
+            "name": "bash",
+            "description": "Run a shell command",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "command"
+              ]
+            },
+            "strict": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "hermes_2026_8_27_responses_idless_reasoning",
+      "client": "hermes-agent",
+      "client_version": "2026.8.27",
+      "captured": "2026-10-03",
+      "surface": "openai.responses.v1",
+      "leg": "request",
+      "note": "Request builder of the tested release, cross-checked with the 2026-10-02 smoke key lists where one exists (omp reqlog, Hermes tap). codex_responses_adapter.py strips the reasoning item id on replay; matches smoke hermes resp-T4b.",
+      "body": {
+        "model": "rayline-router",
+        "instructions": "You are Hermes.",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Create fib.py and run it."
+              }
+            ]
+          },
+          {
+            "type": "reasoning",
+            "encrypted_content": "gAAAAopaque",
+            "summary": [
+              {
+                "type": "summary_text",
+                "text": "Write the file, then run it."
+              }
+            ]
+          },
+          {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "bash",
+            "arguments": "{\"command\":\"python3 fib.py\"}"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": "0 1 1 2 3 5 8 13 21 34"
+          }
+        ],
+        "store": false,
+        "tools": [
+          {
+            "type": "function",
+            "name": "bash",
+            "description": "Run a shell command",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "command"
+              ]
+            },
+            "strict": false
+          }
+        ],
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "prompt_cache_key": "pck_hermes",
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "stream": true
+      }
+    },
+    {
+      "id": "openclaw_2026_9_6_responses",
+      "client": "openclaw",
+      "client_version": "2026.9.6",
+      "captured": "2026-10-03",
+      "surface": "openai.responses.v1",
+      "leg": "request",
+      "note": "Request builder of the tested release, cross-checked with the 2026-10-02 smoke key lists where one exists (omp reqlog, Hermes tap). openai-responses-params-internal.ts: no prompt_cache_key by default, item ids and status stripped.",
+      "body": {
+        "model": "rayline-router",
+        "input": [
+          {
+            "role": "developer",
+            "content": "You are OpenClaw."
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Create fib.py and run it."
+              }
+            ]
+          },
+          {
+            "type": "reasoning",
+            "encrypted_content": "gAAAAopaque",
+            "summary": [
+              {
+                "type": "summary_text",
+                "text": "Write the file, then run it."
+              }
+            ]
+          },
+          {
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "Done.",
+                "annotations": []
+              }
+            ]
+          }
+        ],
+        "stream": true,
+        "max_output_tokens": 32000,
+        "store": false,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "name": "bash",
+            "description": "Run a shell command",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "command"
+              ]
+            },
+            "strict": false
+          }
+        ]
+      }
     }
   ]
 }

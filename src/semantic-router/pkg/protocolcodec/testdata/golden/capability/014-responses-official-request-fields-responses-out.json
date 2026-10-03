@@ -197,10 +197,11 @@
     {
       "name": "prompt_cache_retention",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_prompt_cache_retention"
+        "status": "ok",
+        "body": {
+          "input": "hello",
+          "model": "routed-model",
+          "prompt_cache_retention": "24h"
         }
       }
     },
