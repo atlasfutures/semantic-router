@@ -227,6 +227,9 @@ func decodeResponsesOutput(
 	}
 	output := make([]llmprotocol.OutputItem, 0, len(itemBodies))
 	for index, itemBody := range itemBodies {
+		// OpenRouter's members on Claude's reasoning; see
+		// responses_anthropic_reasoning.go.
+		itemBody, anthropic, _ := splitResponsesAnthropicReasoning(itemBody)
 		item, err := decodeResponsesItemWire(itemBody, policy, true)
 		if err != nil {
 			return nil, err
@@ -238,6 +241,7 @@ func decodeResponsesOutput(
 		if err != nil {
 			return nil, err
 		}
+		decoded.Content = anthropic.applyTo(decoded.Content)
 		output = append(output, decoded)
 	}
 	return output, nil

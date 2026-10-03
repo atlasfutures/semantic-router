@@ -3,11 +3,178 @@
     {
       "name": "thinking_signature_and_usage",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "lossy_translation"
-        }
+        "status": "ok",
+        "body": {
+          "frames": [
+            {
+              "data": {
+                "response": {
+                  "created_at": 0,
+                  "error": null,
+                  "id": "msg_1",
+                  "incomplete_details": null,
+                  "instructions": null,
+                  "metadata": {},
+                  "model": "public-model",
+                  "object": "response",
+                  "output": [],
+                  "parallel_tool_calls": true,
+                  "status": "in_progress",
+                  "temperature": null,
+                  "tool_choice": "auto",
+                  "tools": [],
+                  "top_p": null
+                },
+                "sequence_number": 0,
+                "type": "response.created"
+              },
+              "event": "response.created"
+            },
+            {
+              "data": {
+                "response": {
+                  "created_at": 0,
+                  "error": null,
+                  "id": "msg_1",
+                  "incomplete_details": null,
+                  "instructions": null,
+                  "metadata": {},
+                  "model": "public-model",
+                  "object": "response",
+                  "output": [],
+                  "parallel_tool_calls": true,
+                  "status": "in_progress",
+                  "temperature": null,
+                  "tool_choice": "auto",
+                  "tools": [],
+                  "top_p": null
+                },
+                "sequence_number": 1,
+                "type": "response.in_progress"
+              },
+              "event": "response.in_progress"
+            },
+            {
+              "data": {
+                "item": {
+                  "id": "item_2ed757d5b010b923372c1501",
+                  "status": "in_progress",
+                  "summary": [],
+                  "type": "reasoning"
+                },
+                "output_index": 0,
+                "sequence_number": 2,
+                "type": "response.output_item.added"
+              },
+              "event": "response.output_item.added"
+            },
+            {
+              "data": {
+                "content_index": 0,
+                "delta": "inspect",
+                "item_id": "item_2ed757d5b010b923372c1501",
+                "output_index": 0,
+                "sequence_number": 3,
+                "type": "response.reasoning_text.delta"
+              },
+              "event": "response.reasoning_text.delta"
+            },
+            {
+              "data": {
+                "content_index": 0,
+                "item_id": "item_2ed757d5b010b923372c1501",
+                "output_index": 0,
+                "sequence_number": 4,
+                "text": "inspect",
+                "type": "response.reasoning_text.done"
+              },
+              "event": "response.reasoning_text.done"
+            },
+            {
+              "data": {
+                "item": {
+                  "content": [
+                    {
+                      "text": "inspect",
+                      "type": "reasoning_text"
+                    }
+                  ],
+                  "format": "anthropic-claude-v1",
+                  "id": "item_2ed757d5b010b923372c1501",
+                  "signature": "signed-reasoning",
+                  "status": "completed",
+                  "summary": [],
+                  "type": "reasoning"
+                },
+                "output_index": 0,
+                "sequence_number": 5,
+                "type": "response.output_item.done"
+              },
+              "event": "response.output_item.done"
+            },
+            {
+              "data": {
+                "response": {
+                  "created_at": 0,
+                  "error": null,
+                  "id": "msg_1",
+                  "incomplete_details": null,
+                  "instructions": null,
+                  "metadata": {},
+                  "model": "public-model",
+                  "object": "response",
+                  "output": [
+                    {
+                      "content": [
+                        {
+                          "text": "inspect",
+                          "type": "reasoning_text"
+                        }
+                      ],
+                      "format": "anthropic-claude-v1",
+                      "id": "item_2ed757d5b010b923372c1501",
+                      "signature": "signed-reasoning",
+                      "status": "completed",
+                      "summary": [],
+                      "type": "reasoning"
+                    }
+                  ],
+                  "parallel_tool_calls": true,
+                  "status": "completed",
+                  "temperature": null,
+                  "tool_choice": "auto",
+                  "tools": [],
+                  "top_p": null,
+                  "usage": {
+                    "input_tokens": 5,
+                    "input_tokens_details": {
+                      "cache_write_tokens": 1,
+                      "cached_tokens": 2
+                    },
+                    "output_tokens": 3,
+                    "output_tokens_details": {
+                      "reasoning_tokens": 2
+                    },
+                    "total_tokens": 8
+                  }
+                },
+                "sequence_number": 6,
+                "type": "response.completed"
+              },
+              "event": "response.completed"
+            }
+          ]
+        },
+        "diagnostics": [
+          {
+            "field": "stream.delta.container",
+            "action": "dropped"
+          },
+          {
+            "field": "stream.delta.stop_details",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {

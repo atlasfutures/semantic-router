@@ -116,6 +116,7 @@ func (encoder *responsesStreamEncoder) encodeResponsesItemStart(event llmprotoco
 		}
 	}
 	if event.Content != nil && event.Content.Kind == llmprotocol.ContentReasoning {
+		encoder.recordReasoningSignature(event)
 		key := contentKey(event)
 		encoder.encodedKinds[key] = llmprotocol.ContentReasoning
 		// An item-start event may identify a reasoning item without identifying
@@ -307,11 +308,9 @@ func (encoder *responsesStreamEncoder) encodeResponsesReasoningDelta(
 	event llmprotocol.Event,
 ) ([][]byte, llmprotocol.Diagnostics, error) {
 	var diagnostics llmprotocol.Diagnostics
-	if event.Content != nil && event.Content.Signature != "" {
-		if err := appendLossy(&diagnostics, encoder.policy, encoder.context.Source, encoder.context.Target, "reasoning.signature", "Responses cannot represent a signed reasoning delta"); err != nil {
-			return nil, diagnostics, err
-		}
-	}
+	// The Responses event model has no signature delta; the signature rides
+	// the finished reasoning item (encodeCompletedResponsesContent).
+	encoder.recordReasoningSignature(event)
 	if frames, handled, err := encoder.stashResponsesReasoningDetails(event); handled || err != nil {
 		return frames, diagnostics, err
 	}
@@ -493,9 +492,8 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesItem(
 	event llmprotocol.Event,
 ) ([][]byte, llmprotocol.Diagnostics, error) {
 	if carried := carriedAnthropicServerBlock(event.Content); carried != nil {
-		// Opaque reasoning has no Responses item a client could resend.
 		if carried.Type == "redacted_thinking" {
-			return nil, nil, nil
+			return encoder.encodeResponsesRedactedThinking(event)
 		}
 		return encoder.encodeResponsesAnthropicWebSearch(event, carried)
 	}
@@ -632,6 +630,9 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesContent(
 		if details := encoder.reasoningDetails[outputKey]; details != nil {
 			item.EncryptedContent = mintReasoningDetails(details)
 		}
+	}
+	if signature := encoder.reasoningSignatures[event.ItemIndex]; outputKey.kind == responsesOutputReasoning && signature != "" {
+		item.Signature, item.ReasoningFormat = signature, responsesAnthropicReasoningFormat
 	}
 	wire := responsesEventWire{
 		Type: "response.output_item.done", Sequence: encoder.nextWireSequence(),
