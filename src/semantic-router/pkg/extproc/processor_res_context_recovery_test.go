@@ -105,6 +105,9 @@ func TestHandleContextRecoveryFollowupCallsLooper(t *testing.T) {
 		Headers:                        map[string]string{"x-authz-user-id": "user-1"},
 		SourceFormat:                   llmprotocol.OpenAIChatV1,
 		SemanticRequest:                testNeutralRequest("model", "question"),
+		// The first call's hop reported one attempt; the follow-up's are
+		// not counted.
+		UpstreamAttempts: 1,
 	}
 	scope := router.contextCompressionScope(ctx)
 	router.CompressionRecovery.(*recoveryStoreStub).entries = map[string]contextcompression.RecoveryEntry{
@@ -151,6 +154,10 @@ func TestHandleContextRecoveryFollowupCallsLooper(t *testing.T) {
 	}
 	if charged := router.takeNeutralResponseUsage(ctx).providerCost.Charged; charged == nil || *charged != 0.75 {
 		t.Fatalf("reported charge = %v, want 0.75 for both calls", charged)
+	}
+	// The record covers the follow-up too, whose attempts nobody counted.
+	if record := router.newLLMUsageRecord(ctx, responseUsageMetrics{}); record.UpstreamAttempts != nil || record.CostComplete != nil {
+		t.Fatalf("attempts after recovery = %v, cost_complete = %v; want both unknown", record.UpstreamAttempts, record.CostComplete)
 	}
 	messages := received["messages"].([]interface{})
 	tool := messages[len(messages)-1].(map[string]interface{})

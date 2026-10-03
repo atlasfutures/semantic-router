@@ -95,6 +95,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		result.PreparationFailure = "missing_request"
 		return result
 	}
+	result.RequestID = reqCtx.RequestID
 	reqCtx.InjectedFault = requestedFault(algorithm.RaylineARC, reqCtx)
 	rawEpisodeID := strings.TrimSpace(
 		reqCtx.Headers[algorithm.RaylineARC.Episode.IDHeader],
@@ -383,6 +384,10 @@ func (r *OpenAIRouter) prepareOrJoinRaylineARCTurn(
 				return nil, nil, failure
 			}
 			reqCtx.RaylineARCInflight = entry
+			reqCtx.RaylineARCTransaction.inflight = entry
+			if !reqCtx.RaylineARCTransaction.takesHandovers() {
+				entry.refuseHandovers()
+			}
 			reqCtx.RaylineARCTransaction.onFinalize = chainFinalize(
 				reqCtx.RaylineARCTransaction.onFinalize,
 				func() { r.raylineARCInflight.finish(entry) },
@@ -402,7 +407,7 @@ func (r *OpenAIRouter) prepareOrJoinRaylineARCTurn(
 			}
 			continue
 		}
-		reqCtx.RaylineARCTransaction = newBorrowedRaylineARCEpisodeTransaction(state, episodeIDHash)
+		reqCtx.RaylineARCTransaction = newBorrowedRaylineARCEpisodeTransaction(store, state, episodeIDHash, entry)
 		bindRaylineARCSelectionTransaction(reqCtx)
 		logging.ComponentEvent("extproc", "rayline_arc_selection_coalesced", map[string]interface{}{})
 		return state, decided, ""
