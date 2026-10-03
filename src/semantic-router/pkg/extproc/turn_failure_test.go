@@ -271,9 +271,9 @@ func TestBlockedReplyStillWritesItsUsageLine(t *testing.T) {
 	}
 }
 
-// A reply the Router could not use (decoded, then refused) is a classed
-// failure like the others: its code reaches the usage line, the turn_failed
-// line and the counter. Control: with nothing decoded, no line is invented.
+// A reply the Router could not use is a classed failure like the others: its
+// code reaches the usage line, the turn_failed line and the counter. One that
+// never decoded is classed too, on a line that states no counts.
 func TestUnusableResponseIsAClassedFailure(t *testing.T) {
 	for _, decoded := range []bool{true, false} {
 		logs := captureLogs(t)
@@ -295,8 +295,12 @@ func TestUnusableResponseIsAClassedFailure(t *testing.T) {
 				t.Fatalf("decoded: turn_failed=%d usage=%#v", failed, usage)
 			}
 		}
-		if !decoded && failed != 0 {
-			t.Fatalf("an undecoded reply was classed: turn_failed=%d", failed)
+		// An undecoded reply is classed too, and its line states no counts.
+		if !decoded {
+			usage := findLogEvent(t, logs, "llm_usage")
+			if failed != 1 || usage["failure_class"] != turnFailureUpstreamError || usage["prompt_tokens"] != nil {
+				t.Fatalf("undecoded: turn_failed=%d usage=%#v", failed, usage)
+			}
 		}
 	}
 }
