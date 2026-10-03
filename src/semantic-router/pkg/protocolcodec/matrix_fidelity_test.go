@@ -2,6 +2,7 @@ package protocolcodec
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -674,4 +675,32 @@ func TestZeroCountMessageStartWithAChargeKeepsItsUsage(t *testing.T) {
 		return
 	}
 	t.Fatal("the stream did not complete")
+}
+
+// A zero-count message_start the Router did not mark is the provider's
+// evidence. It is held only until the stream says otherwise, so a stream that
+// fails before its terminal delta still reports it.
+func TestUnmarkedZeroCountMessageStartSurvivesAFailure(t *testing.T) {
+	stream := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m2\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0}}}\n\n" +
+		"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"busy\"}}\n\n"
+	decoder, err := NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1, llmprotocol.StreamContext{
+		Context: context.Background(), PublicModel: "public-model",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, events, _, err := decoder.Push([]byte(stream))
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	for _, event := range events {
+		if event.Type == llmprotocol.EventResponseFailed {
+			if event.Usage == nil || event.Usage.State != llmprotocol.UsageAvailable ||
+				event.Usage.InputTotal.Value == nil || *event.Usage.InputTotal.Value != 0 {
+				t.Fatalf("the provider's zero-count usage was lost: %+v", event.Usage)
+			}
+			return
+		}
+	}
+	t.Fatalf("the stream did not fail: %+v", events)
 }

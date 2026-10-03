@@ -25,6 +25,12 @@ type anthropicStreamDecoder struct {
 	// usageUnknown records a terminal message_delta whose usage this Router
 	// marked as the schema's placeholder (usage_source "unknown").
 	usageUnknown bool
+	// pendingStartUsage is a message_start usage of zero counts and no
+	// charge, held until the stream says what it was: a Router's placeholder
+	// when a later message_delta is marked usage_source "unknown" (then it
+	// is dropped), otherwise the provider's evidence, applied before the
+	// next usage or terminal event so nothing it stated is lost.
+	pendingStartUsage *llmprotocol.Usage
 }
 type anthropicStreamEncoder struct {
 	streamState
@@ -226,7 +232,11 @@ func (decoder *anthropicStreamDecoder) decodeEvent(
 	}
 	switch wire.Type {
 	case "message_start":
-		return decoder.emitAnthropicEvent(decodeAnthropicMessageStart(wire))
+		event := decodeAnthropicMessageStart(wire)
+		if wire.Message != nil && wire.Message.Usage != nil && anthropicUsageUncommitted(*wire.Message.Usage) {
+			decoder.pendingStartUsage, event.Usage = event.Usage, nil
+		}
+		return decoder.emitAnthropicEvent(event)
 	case "content_block_start":
 		return decoder.emitDecodedAnthropicEvent(decodeAnthropicContentStart(wire))
 	case "content_block_delta":
@@ -275,20 +285,17 @@ func decodeAnthropicMessageStart(wire anthropicEventWire) llmprotocol.Event {
 		return event
 	}
 	event.ResponseID, event.Model = wire.Message.ID, wire.Message.Model
-	// A real message_start states at least one input token. An all-zero
-	// usage with no charge beside it states nothing: it is the placeholder a
-	// Router writes before it knows the turn's usage (a Chat source states
-	// usage only at its end), and read as counts it would make a later
-	// usage_source "unknown" look like evidence decreasing. A charge
-	// (cost, is_byok, cost_details) is evidence, so its usage is kept.
-	if wire.Message.Usage != nil && !anthropicUsagePlaceholder(*wire.Message.Usage) {
+	if wire.Message.Usage != nil {
 		usage := decodeAnthropicStreamUsage(*wire.Message.Usage, true)
 		event.Usage = &usage
 	}
 	return event
 }
 
-func anthropicUsagePlaceholder(wire anthropicUsageWire) bool {
+// anthropicUsageUncommitted reports a message_start usage that may be a
+// Router's placeholder: zero counts and no charge. A charge (cost, is_byok,
+// cost_details) is evidence in its own right.
+func anthropicUsageUncommitted(wire anthropicUsageWire) bool {
 	return wire.InputTokens == 0 && wire.OutputTokens == 0 &&
 		wire.CacheCreationInputTokens == 0 && wire.CacheReadInputTokens == 0 &&
 		len(wire.Cost) == 0 && len(wire.IsBYOK) == 0 && len(wire.CostDetails) == 0
@@ -308,12 +315,10 @@ func (decoder *anthropicStreamDecoder) decodeAnthropicMessageDelta(
 		if marked.UsageSource != UsageSourceUnknown {
 			return nil, diagnostics, invalidProviderResponse("usage_source_invalid", "usage_source must be "+UsageSourceUnknown)
 		}
-		// The delta's usage is a placeholder: the turn's usage is unknown,
-		// and the zeros message_start stated were the same placeholder, so
-		// the accumulated usage is replaced rather than merged (a merge would
-		// read the change as evidence decreasing).
+		// The delta's usage is a placeholder, and so was a held zero-count
+		// message_start usage: the turn's usage is unknown.
 		decoder.usageUnknown = true
-		decoder.usage = llmprotocol.Usage{State: llmprotocol.UsageUnavailable}
+		decoder.pendingStartUsage = nil
 		return nil, diagnostics, nil
 	}
 	if wire.Usage == nil {
@@ -387,11 +392,32 @@ func (decoder *anthropicStreamDecoder) decodeUnknownAnthropicEvent(
 func (decoder *anthropicStreamDecoder) emitAnthropicEvent(
 	event llmprotocol.Event,
 ) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	var events []llmprotocol.Event
+	if decoder.pendingStartUsage != nil && (event.Type == llmprotocol.EventUsageUpdated ||
+		event.Type == llmprotocol.EventResponseCompleted || event.Type == llmprotocol.EventResponseFailed) {
+		flushed, err := decoder.flushPendingStartUsage()
+		if err != nil {
+			return nil, nil, err
+		}
+		events = append(events, flushed...)
+	}
 	normalized, err := decoder.next(event)
 	if err != nil {
 		return nil, nil, err
 	}
-	return []llmprotocol.Event{normalized}, nil, nil
+	return append(events, normalized), nil, nil
+}
+
+// flushPendingStartUsage applies a held message_start usage as the provider's
+// evidence.
+func (decoder *anthropicStreamDecoder) flushPendingStartUsage() ([]llmprotocol.Event, error) {
+	pending := decoder.pendingStartUsage
+	decoder.pendingStartUsage = nil
+	normalized, err := decoder.next(llmprotocol.Event{Type: llmprotocol.EventUsageUpdated, Usage: pending})
+	if err != nil {
+		return nil, err
+	}
+	return []llmprotocol.Event{normalized}, nil
 }
 
 func decodeAnthropicContentStart(wire anthropicEventWire) (llmprotocol.Event, error) {
@@ -484,6 +510,13 @@ func (decoder *anthropicStreamDecoder) Finalize(reason error) ([]llmprotocol.Eve
 	events, diagnostics, frameErr := finalizeDecoderFrames(decoder.framer.Finalize, decoder.pushFrame, decoder.policy.Limits.Diagnostics)
 	if frameErr != nil {
 		return events, diagnostics, frameErr
+	}
+	if decoder.pendingStartUsage != nil {
+		flushed, err := decoder.flushPendingStartUsage()
+		if err != nil {
+			return events, diagnostics, err
+		}
+		events = append(events, flushed...)
 	}
 	terminalEvents, err := decoder.finalize(reason)
 	events = append(events, terminalEvents...)
