@@ -256,11 +256,32 @@
     {
       "name": "prompt_cache_key",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_prompt_cache_key"
-        }
+        "status": "ok",
+        "body": {
+          "max_tokens": 4096,
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "max_tokens",
+            "action": "generated"
+          },
+          {
+            "field": "prompt_cache_key",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {
@@ -276,11 +297,32 @@
     {
       "name": "prompt_cache_retention",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_prompt_cache_retention"
-        }
+        "status": "ok",
+        "body": {
+          "max_tokens": 4096,
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "hello",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "max_tokens",
+            "action": "generated"
+          },
+          {
+            "field": "prompt_cache_retention",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {
@@ -300,7 +342,11 @@
               "role": "user"
             }
           ],
-          "model": "routed-model"
+          "model": "routed-model",
+          "thinking": {
+            "budget_tokens": 1024,
+            "type": "enabled"
+          }
         },
         "diagnostics": [
           {

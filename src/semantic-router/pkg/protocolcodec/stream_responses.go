@@ -92,8 +92,11 @@ type responsesStreamEncoder struct {
 	contentCitations       map[streamContentKey][]llmprotocol.Citation
 	completedOutput        map[int]json.RawMessage
 	imageProgressCompleted map[responsesOutputKey]bool
-	responseStarted        bool
-	wireSequence           uint64
+	// reasoningDetails holds, per reasoning output, the reasoning_details an
+	// OpenRouter Chat stream sent; see stashResponsesReasoningDetails.
+	reasoningDetails map[responsesOutputKey]json.RawMessage
+	responseStarted  bool
+	wireSequence     uint64
 }
 
 func (OpenAIResponsesCodec) NewDecoder(context llmprotocol.StreamContext, policy llmprotocol.Policy) llmprotocol.StreamDecoder {

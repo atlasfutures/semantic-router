@@ -223,8 +223,10 @@ func TestOfficialUnsupportedRequestFieldsFailWithTypedErrors(t *testing.T) {
 			format: llmprotocol.OpenAIChatV1,
 			base:   map[string]any{"model": "m", "messages": []any{map[string]any{"role": "user", "content": "hello"}}},
 			fields: fields(
+				// prompt_cache_key and prompt_cache_retention are carried: see
+				// harness_compat_test.go.
 				"audio", "function_call", "functions", "logit_bias", "logprobs", "modalities", "moderation",
-				"prediction", "prompt_cache_key", "prompt_cache_options", "prompt_cache_retention",
+				"prediction", "prompt_cache_options",
 				"safety_identifier", "service_tier", "top_logprobs", "verbosity", "web_search_options",
 			),
 		},
@@ -232,9 +234,10 @@ func TestOfficialUnsupportedRequestFieldsFailWithTypedErrors(t *testing.T) {
 			format: llmprotocol.OpenAIResponsesV1,
 			base:   map[string]any{"model": "m", "input": "hello"},
 			fields: fields(
-				// include and prompt_cache_key are carried: see codex_responses_test.go.
+				// include, prompt_cache_key and prompt_cache_retention are carried:
+				// see codex_responses_test.go and harness_compat_test.go.
 				"background", "context_management", "max_tool_calls", "moderation", "prompt",
-				"prompt_cache_options", "prompt_cache_retention", "safety_identifier",
+				"prompt_cache_options", "safety_identifier",
 				"service_tier", "top_logprobs",
 			),
 		},

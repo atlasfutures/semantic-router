@@ -606,6 +606,12 @@ func (encoder *anthropicStreamEncoder) encodeAnthropicItemStartEvent(
 func (encoder *anthropicStreamEncoder) encodeAnthropicReasoningDelta(
 	event llmprotocol.Event,
 ) ([][]byte, llmprotocol.Diagnostics, error) {
+	if event.Delta == "" && (event.Content == nil || event.Content.Signature == "") {
+		// Nothing a thinking block can show: a reasoning_details fragment with
+		// no text (an encrypted blob, an OpenRouter signature). Opening a block
+		// for it would hand the client an empty thinking block to replay.
+		return nil, nil, nil
+	}
 	frames, key, err := encoder.ensureAnthropicBlockStarted(event, llmprotocol.ContentReasoning)
 	if err != nil {
 		return nil, nil, err

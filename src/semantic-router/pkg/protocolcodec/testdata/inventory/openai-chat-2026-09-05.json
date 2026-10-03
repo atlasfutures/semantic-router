@@ -1,19 +1,8 @@
 {
   "format": "openai.chat.v1",
   "version": "2026-09-05",
-  "note": "Chat Completions publishes no version header at all, so the date is the whole identity. OpenRouter adds vendor extensions on top of the OpenAI contract, and the rows below are those, read from the real arm captures in testdata/provider/openrouter. The request leg has no rows because no Chat-format client capture exists on disk; the cell's Chat traffic is what it encodes, not what a client sent. The stream leg repeats most of the response leg because a streamed response is decoded through chatChunkWire and a non-streamed one through chatResponseWire: production prunes each against its own struct, so a row on one says nothing about the other. Every row drops on every target: an unmodelled provider member is pruned before decode, so it reaches no client, not even a Chat client.",
+  "note": "Chat Completions publishes no version header at all, so the date is the whole identity. OpenRouter adds vendor extensions on top of the OpenAI contract, and the rows below are those, read from the real arm captures in testdata/provider/openrouter. The request leg rows come from the harness shapes added 2026-10-03 (router-infra#90), which are derived from each harness's request builder rather than captured on the wire. reasoning_details is no longer a row on the response or stream leg: since #90 the wire structs name it, and it is carried as an opaque member of the reasoning content (reasoning_details.go). The stream leg repeats most of the response leg because a streamed response is decoded through chatChunkWire and a non-streamed one through chatResponseWire: production prunes each against its own struct, so a row on one says nothing about the other. Every row drops on every target: an unmodelled provider member is pruned before decode, so it reaches no client, not even a Chat client.",
   "fields": [
-    {
-      "path": "choices[].message.reasoning_details",
-      "leg": "response",
-      "first_seen": "2026-09-03",
-      "targets": {
-        "anthropic.messages.v1": "drop",
-        "openai.chat.v1": "drop",
-        "openai.responses.v1": "drop"
-      },
-      "note": "OpenRouter's structured reasoning trace. Present on the reasoning arms only."
-    },
     {
       "path": "choices[].native_finish_reason",
       "leg": "response",
@@ -81,17 +70,6 @@
       "note": "Zero on every arm captured so far. Same reconciliation risk as image_tokens."
     },
     {
-      "path": "choices[].delta.reasoning_details",
-      "leg": "stream",
-      "first_seen": "2026-09-03",
-      "targets": {
-        "anthropic.messages.v1": "drop",
-        "openai.chat.v1": "drop",
-        "openai.responses.v1": "drop"
-      },
-      "note": "The streamed spelling of the reasoning trace: a chunk carries it on delta where a complete response carries it on message. Adding the stream leg is what surfaced it; the response-leg row did not cover it."
-    },
-    {
       "path": "choices[].native_finish_reason",
       "leg": "stream",
       "first_seen": "2026-09-03",
@@ -156,6 +134,39 @@
         "openai.responses.v1": "drop"
       },
       "note": "Zero on every arm captured so far. Same reconciliation risk as image_tokens."
+    },
+    {
+      "path": "content.reasoning_details",
+      "leg": "request",
+      "first_seen": "2026-10-03",
+      "targets": {
+        "anthropic.messages.v1": "drop",
+        "openai.chat.v1": "carry",
+        "openai.responses.v1": "drop"
+      },
+      "note": "OpenRouter's structured reasoning, resent on an assistant turn by pi (merged array) and omp (encrypted items only). Carried on the reasoning content; a Chat target gets it back, a Responses client sees it minted as encrypted_content, every other target drops it (cross-family replay: router-infra#95)."
+    },
+    {
+      "path": "prompt_cache_key",
+      "leg": "request",
+      "first_seen": "2026-10-03",
+      "targets": {
+        "anthropic.messages.v1": "drop",
+        "openai.chat.v1": "carry",
+        "openai.responses.v1": "drop"
+      },
+      "note": "Cache shard key. pi sends it with long retention, OpenClaw with compat.supportsPromptCacheKey, Hermes with supports_prompt_cache_key. Carried to a Chat target only."
+    },
+    {
+      "path": "prompt_cache_retention",
+      "leg": "request",
+      "first_seen": "2026-10-03",
+      "targets": {
+        "anthropic.messages.v1": "drop",
+        "openai.chat.v1": "carry",
+        "openai.responses.v1": "drop"
+      },
+      "note": "Cache lifetime (\"24h\"); pi sends it with long retention. Carried to a Chat target only."
     }
   ]
 }

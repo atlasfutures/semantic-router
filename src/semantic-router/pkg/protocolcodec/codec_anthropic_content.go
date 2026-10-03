@@ -630,6 +630,12 @@ func encodeAnthropicContent(contents []llmprotocol.Content) (json.RawMessage, er
 			}
 			continue
 		}
+		if _, carrierOnly := reasoningDetailsOf(content); carrierOnly {
+			// An OpenRouter reasoning_details array with no thinking text:
+			// Anthropic has no block that holds it (cross-family replay is
+			// router-infra#95), and an empty thinking block is not one to send.
+			continue
+		}
 		block, err := encodeAnthropicContentBlock(content)
 		if err != nil {
 			return nil, err

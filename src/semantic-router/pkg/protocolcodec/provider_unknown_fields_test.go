@@ -226,8 +226,8 @@ func TestOpenRouterUnknownFieldsAreNamed(t *testing.T) {
 	_, dropped := pruneUnknownProviderFields(
 		loadProviderFixture(t, openRouterResponseReasoning), reflect.TypeOf(&chatResponseWire{}),
 	)
+	// reasoning_details is named now (it is carried, see reasoning_details.go).
 	want := []string{
-		"choices[].message.reasoning_details",
 		"choices[].native_finish_reason",
 		"usage.completion_tokens_details.image_tokens",
 		"usage.prompt_tokens_details.video_tokens",
@@ -250,7 +250,7 @@ func TestOpenRouterStreamUnknownFieldsAreNamed(t *testing.T) {
 		}
 	}
 	for _, field := range []string{
-		"choices[].delta.reasoning_details", "choices[].native_finish_reason",
+		"choices[].native_finish_reason",
 		"usage.completion_tokens_details.image_tokens", "usage.prompt_tokens_details.video_tokens",
 	} {
 		if !seen[field] {

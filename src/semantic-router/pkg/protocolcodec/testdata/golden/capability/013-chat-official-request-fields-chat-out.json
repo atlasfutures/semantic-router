@@ -231,10 +231,16 @@
     {
       "name": "prompt_cache_key",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_prompt_cache_key"
+        "status": "ok",
+        "body": {
+          "messages": [
+            {
+              "content": "hello",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model",
+          "prompt_cache_key": "cache-key"
         }
       }
     },
@@ -251,10 +257,16 @@
     {
       "name": "prompt_cache_retention",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_prompt_cache_retention"
+        "status": "ok",
+        "body": {
+          "messages": [
+            {
+              "content": "hello",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model",
+          "prompt_cache_retention": "24h"
         }
       }
     },
@@ -269,7 +281,11 @@
               "role": "user"
             }
           ],
-          "model": "routed-model"
+          "model": "routed-model",
+          "reasoning": {
+            "max_tokens": 1024
+          },
+          "reasoning_budget_tokens": 1024
         }
       }
     },

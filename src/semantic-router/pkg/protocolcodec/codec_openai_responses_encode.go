@@ -47,15 +47,17 @@ func (OpenAIResponsesCodec) EncodeRequest(request llmprotocol.Request, envelope 
 }
 
 // holdsWhatEveryTargetDrops reports whether the request carries something no
-// target is sent -- a carried tool, or a resent encrypted reasoning item this
-// dispatch does not forward -- so the client bytes, which still hold it, are
-// never replayed.
+// target is sent -- a carried tool, a resent encrypted reasoning item this
+// dispatch does not forward, or reasoning_details -- so the client bytes,
+// which still hold it, are never replayed.
 func holdsWhatEveryTargetDrops(request llmprotocol.Request) bool {
 	if len(request.CarriedTools) > 0 {
 		return true
 	}
 	for _, message := range request.Messages {
-		if dropsEncryptedReasoning(request, message) {
+		// A resent minted reasoning item is never sent to a Responses target
+		// either; its client bytes still hold the minted blob.
+		if dropsEncryptedReasoning(request, message) || holdsReasoningDetails(message) {
 			return true
 		}
 	}
@@ -457,9 +459,25 @@ func (state *responsesMessageEncodingState) flushReasoning() error {
 	}
 	summaries := make([]map[string]string, 0, len(state.reasoning))
 	texts := make([]map[string]string, 0, len(state.reasoning))
+	var details json.RawMessage
 	for _, content := range state.reasoning {
 		if encrypted, carrierOnly := encryptedReasoningOf(content); encrypted != nil {
 			item.EncryptedContent = encrypted
+			if carrierOnly {
+				continue
+			}
+		}
+		// reasoning_details reach a Responses client, minted as
+		// encrypted_content. A Responses target is never sent them: they are
+		// not its blob (see reasoning_details.go).
+		if carried, carrierOnly := reasoningDetailsOf(content); carried != nil {
+			if state.textDirection == "output" {
+				joined, err := concatReasoningDetails(details, carried)
+				if err != nil {
+					return err
+				}
+				details = joined
+			}
 			if carrierOnly {
 				continue
 			}
@@ -469,6 +487,15 @@ func (state *responsesMessageEncodingState) flushReasoning() error {
 		} else {
 			texts = append(texts, map[string]string{"type": "reasoning_text", "text": content.Text})
 		}
+	}
+	if len(item.EncryptedContent) == 0 && details != nil {
+		item.EncryptedContent = mintReasoningDetails(details)
+	}
+	state.reasoning = nil
+	if len(summaries) == 0 && len(texts) == 0 && len(item.EncryptedContent) == 0 {
+		// Only reasoning_details bound for a Responses target: nothing it can
+		// read, so no item.
+		return nil
 	}
 	var err error
 	item.Summary, err = json.Marshal(summaries)

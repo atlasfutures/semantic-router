@@ -1,0 +1,141 @@
+{
+  "cases": [
+    {
+      "name": "pi_reasoning_details_replay",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 32000,
+          "messages": [
+            {
+              "content": "You are a coding agent.",
+              "role": "developer"
+            },
+            {
+              "content": "weather in Paris?",
+              "role": "user"
+            },
+            {
+              "reasoning_details": [
+                {
+                  "format": "anthropic-claude-v1",
+                  "index": 0,
+                  "signature": "sig-anthropic-1",
+                  "text": "Check the weather tool first.",
+                  "type": "reasoning.text"
+                },
+                {
+                  "data": "gemini-thought-signature",
+                  "format": "google-gemini-v1",
+                  "id": "call_1",
+                  "index": 1,
+                  "type": "reasoning.encrypted"
+                }
+              ],
+              "role": "assistant",
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "{\"city\":\"Paris\"}",
+                    "name": "weather"
+                  },
+                  "id": "call_1",
+                  "type": "function"
+                }
+              ]
+            },
+            {
+              "content": "sunny",
+              "role": "tool",
+              "tool_call_id": "call_1"
+            }
+          ],
+          "model": "routed-model",
+          "reasoning": {
+            "max_tokens": 32000
+          },
+          "store": false,
+          "stream": true,
+          "stream_options": {
+            "include_usage": true
+          },
+          "tool_choice": "auto",
+          "tools": [
+            {
+              "function": {
+                "name": "weather",
+                "parameters": {
+                  "type": "object"
+                }
+              },
+              "type": "function"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "prompt_cache_key_and_retention",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "messages": [
+            {
+              "content": "hi",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model",
+          "prompt_cache_key": "session-123",
+          "prompt_cache_retention": "24h"
+        }
+      }
+    },
+    {
+      "name": "openrouter_reasoning_object",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 4096,
+          "messages": [
+            {
+              "content": "hi",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model",
+          "reasoning": {
+            "exclude": false,
+            "max_tokens": 4096
+          }
+        }
+      }
+    },
+    {
+      "name": "openrouter_reasoning_effort_only",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "messages": [
+            {
+              "content": "hi",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model",
+          "reasoning_effort": "medium"
+        }
+      }
+    },
+    {
+      "name": "conflicting_reasoning_effort",
+      "outcome": {
+        "status": "error",
+        "error": {
+          "category": "invalid_request",
+          "code": "conflicting_reasoning_controls"
+        }
+      }
+    }
+  ]
+}

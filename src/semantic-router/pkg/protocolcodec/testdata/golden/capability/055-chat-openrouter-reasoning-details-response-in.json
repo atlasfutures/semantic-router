@@ -1,0 +1,82 @@
+{
+  "operation": "response",
+  "cases": [
+    {
+      "name": "signed_reasoning_text",
+      "body": {
+        "id": "gen-1",
+        "object": "chat.completion",
+        "created": 100,
+        "model": "provider-model",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "It is sunny.",
+              "reasoning": "Check the weather tool first.",
+              "reasoning_details": [
+                {
+                  "type": "reasoning.text",
+                  "text": "Check the weather tool first.",
+                  "signature": "sig-anthropic-1",
+                  "format": "anthropic-claude-v1",
+                  "index": 0
+                }
+              ]
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 5,
+          "completion_tokens": 7,
+          "total_tokens": 12
+        }
+      }
+    },
+    {
+      "name": "encrypted_only_tool_call",
+      "body": {
+        "id": "gen-2",
+        "object": "chat.completion",
+        "created": 100,
+        "model": "provider-model",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "tool_calls",
+            "message": {
+              "role": "assistant",
+              "content": null,
+              "reasoning_details": [
+                {
+                  "type": "reasoning.encrypted",
+                  "id": "call_1",
+                  "data": "gemini-thought-signature",
+                  "format": "google-gemini-v1",
+                  "index": 0
+                }
+              ],
+              "tool_calls": [
+                {
+                  "id": "call_1",
+                  "type": "function",
+                  "function": {
+                    "name": "weather",
+                    "arguments": "{\"city\":\"Paris\"}"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 5,
+          "completion_tokens": 7,
+          "total_tokens": 12
+        }
+      }
+    }
+  ]
+}

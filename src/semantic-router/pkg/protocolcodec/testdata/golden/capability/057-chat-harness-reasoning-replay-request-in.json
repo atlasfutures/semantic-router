@@ -1,0 +1,136 @@
+{
+  "operation": "request",
+  "cases": [
+    {
+      "name": "pi_reasoning_details_replay",
+      "body": {
+        "model": "client-model",
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "store": false,
+        "max_completion_tokens": 32000,
+        "reasoning_effort": "high",
+        "messages": [
+          {
+            "role": "developer",
+            "content": "You are a coding agent."
+          },
+          {
+            "role": "user",
+            "content": "weather in Paris?"
+          },
+          {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                  "name": "weather",
+                  "arguments": "{\"city\":\"Paris\"}"
+                }
+              }
+            ],
+            "reasoning_details": [
+              {
+                "type": "reasoning.text",
+                "text": "Check the weather tool first.",
+                "signature": "sig-anthropic-1",
+                "format": "anthropic-claude-v1",
+                "index": 0
+              },
+              {
+                "type": "reasoning.encrypted",
+                "id": "call_1",
+                "data": "gemini-thought-signature",
+                "format": "google-gemini-v1",
+                "index": 1
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": "sunny"
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "weather",
+              "parameters": {
+                "type": "object"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "prompt_cache_key_and_retention",
+      "body": {
+        "model": "client-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi"
+          }
+        ],
+        "prompt_cache_key": "session-123",
+        "prompt_cache_retention": "24h"
+      }
+    },
+    {
+      "name": "openrouter_reasoning_object",
+      "body": {
+        "model": "client-model",
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi"
+          }
+        ],
+        "reasoning": {
+          "effort": "high",
+          "exclude": false
+        }
+      }
+    },
+    {
+      "name": "openrouter_reasoning_effort_only",
+      "body": {
+        "model": "client-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi"
+          }
+        ],
+        "reasoning": {
+          "effort": "medium"
+        }
+      }
+    },
+    {
+      "name": "conflicting_reasoning_effort",
+      "body": {
+        "model": "client-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi"
+          }
+        ],
+        "reasoning_effort": "low",
+        "reasoning": {
+          "effort": "high"
+        }
+      }
+    }
+  ]
+}

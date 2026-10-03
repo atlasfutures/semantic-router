@@ -58,7 +58,8 @@ func carriedResponsesInputItem(body json.RawMessage) (llmprotocol.Message, bool)
 	if itemType == "item_reference" {
 		return llmprotocol.Message{}, false
 	}
-	if itemType == "reasoning" && hasResponsesEncryptedReasoning(body) && !hasResponsesRefusedMember(body) &&
+	if itemType == "reasoning" && hasResponsesEncryptedReasoning(body) && !isMintedReasoningItem(body) &&
+		!hasResponsesRefusedMember(body) &&
 		validateResponsesItemVariant(body, itemType, false) == nil {
 		return carriedItemMessage(llmprotocol.OpenAIResponsesV1, itemType, body), true
 	}
@@ -269,9 +270,15 @@ func decodeResponsesInputItem(
 }
 
 func validateResponsesInputItemMetadata(item responsesItemWire) error {
+	encrypted := item.EncryptedContent
+	if _, minted := mintedReasoningDetails(encrypted); minted && item.Type == "reasoning" {
+		// The Router minted it from reasoning_details; it decodes back into
+		// them (decodeResponsesReasoningItem).
+		encrypted = nil
+	}
 	if err := rejectUnsupportedRequestFields(map[string]json.RawMessage{
 		"input.caller":            item.Caller,
-		"input.encrypted_content": item.EncryptedContent,
+		"input.encrypted_content": encrypted,
 		"input.phase":             item.Phase,
 	}); err != nil {
 		return err
@@ -388,13 +395,22 @@ func decodeResponsesReasoningItem(item responsesItemWire, request *llmprotocol.R
 		return err
 	}
 	content = append(content, reasoning...)
+	id := item.ID
+	if details, minted := mintedReasoningDetails(item.EncryptedContent); minted {
+		// A reasoning item the Router minted from an OpenRouter Chat turn's
+		// reasoning_details. Its id names no item any Responses provider
+		// stored, so it is not sent on; the details go back to a Chat target
+		// only, as they would for a Chat client.
+		content = attachReasoningDetails(content, details)
+		id = ""
+	}
 	if len(content) == 0 {
 		// A reasoning item with an empty summary says nothing. Refusing the
 		// request for it would lose a conversation over an item with no
 		// content, so the message it would have made is dropped instead.
 		return nil
 	}
-	request.Messages = append(request.Messages, llmprotocol.Message{ID: item.ID, Role: llmprotocol.RoleAssistant, Content: content})
+	request.Messages = append(request.Messages, llmprotocol.Message{ID: id, Role: llmprotocol.RoleAssistant, Content: content})
 	return nil
 }
 

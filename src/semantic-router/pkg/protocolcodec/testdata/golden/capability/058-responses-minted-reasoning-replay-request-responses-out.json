@@ -1,0 +1,113 @@
+{
+  "cases": [
+    {
+      "name": "minted_reasoning_item_hermes_shape",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "include": [
+            "reasoning.encrypted_content"
+          ],
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "weather in Paris?",
+                  "type": "input_text"
+                }
+              ],
+              "role": "user",
+              "type": "message"
+            },
+            {
+              "summary": [
+                {
+                  "text": "Check the weather tool first.",
+                  "type": "summary_text"
+                }
+              ],
+              "type": "reasoning"
+            },
+            {
+              "arguments": "{\"city\":\"Paris\"}",
+              "call_id": "call_1",
+              "name": "weather",
+              "type": "function_call"
+            },
+            {
+              "call_id": "call_1",
+              "output": [
+                {
+                  "text": "sunny",
+                  "type": "input_text"
+                }
+              ],
+              "type": "function_call_output"
+            }
+          ],
+          "model": "routed-model",
+          "prompt_cache_key": "pck_abc",
+          "reasoning": {
+            "effort": "high",
+            "summary": "auto"
+          },
+          "store": false
+        },
+        "diagnostics": [
+          {
+            "field": "content.reasoning_details",
+            "action": "dropped"
+          }
+        ]
+      }
+    },
+    {
+      "name": "minted_reasoning_item_with_id_and_status",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "include": [
+            "reasoning.encrypted_content"
+          ],
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "weather in Paris?",
+                  "type": "input_text"
+                }
+              ],
+              "role": "user",
+              "type": "message"
+            },
+            {
+              "arguments": "{\"city\":\"Paris\"}",
+              "call_id": "call_1",
+              "id": "fc_1",
+              "name": "weather",
+              "type": "function_call"
+            },
+            {
+              "call_id": "call_1",
+              "output": [
+                {
+                  "text": "sunny",
+                  "type": "input_text"
+                }
+              ],
+              "type": "function_call_output"
+            }
+          ],
+          "model": "routed-model",
+          "store": false
+        },
+        "diagnostics": [
+          {
+            "field": "content.reasoning_details",
+            "action": "dropped"
+          }
+        ]
+      }
+    }
+  ]
+}

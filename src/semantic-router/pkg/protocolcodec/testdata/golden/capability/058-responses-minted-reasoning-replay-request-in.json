@@ -1,0 +1,92 @@
+{
+  "operation": "request",
+  "cases": [
+    {
+      "name": "minted_reasoning_item_hermes_shape",
+      "body": {
+        "model": "client-model",
+        "store": false,
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "pck_abc",
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto"
+        },
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "weather in Paris?"
+              }
+            ]
+          },
+          {
+            "type": "reasoning",
+            "encrypted_content": "vsr.reasoning_details.v1.W3sidHlwZSI6InJlYXNvbmluZy50ZXh0IiwidGV4dCI6IkNoZWNrIHRoZSB3ZWF0aGVyIHRvb2wgZmlyc3QuIiwic2lnbmF0dXJlIjoic2lnLWFudGhyb3BpYy0xIiwiZm9ybWF0IjoiYW50aHJvcGljLWNsYXVkZS12MSIsImluZGV4IjowfV0",
+            "summary": [
+              {
+                "type": "summary_text",
+                "text": "Check the weather tool first."
+              }
+            ]
+          },
+          {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "weather",
+            "arguments": "{\"city\":\"Paris\"}"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": "sunny"
+          }
+        ]
+      }
+    },
+    {
+      "name": "minted_reasoning_item_with_id_and_status",
+      "body": {
+        "model": "client-model",
+        "store": false,
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "weather in Paris?"
+              }
+            ]
+          },
+          {
+            "type": "reasoning",
+            "id": "rs_1",
+            "status": "completed",
+            "encrypted_content": "vsr.reasoning_details.v1.W3sidHlwZSI6InJlYXNvbmluZy5lbmNyeXB0ZWQiLCJpZCI6ImNhbGxfMSIsImRhdGEiOiJnZW1pbmktdGhvdWdodC1zaWduYXR1cmUiLCJmb3JtYXQiOiJnb29nbGUtZ2VtaW5pLXYxIiwiaW5kZXgiOjB9XQ",
+            "summary": []
+          },
+          {
+            "type": "function_call",
+            "id": "fc_1",
+            "call_id": "call_1",
+            "name": "weather",
+            "arguments": "{\"city\":\"Paris\"}"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": "sunny"
+          }
+        ]
+      }
+    }
+  ]
+}

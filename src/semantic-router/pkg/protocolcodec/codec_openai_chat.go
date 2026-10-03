@@ -78,8 +78,15 @@ type chatRequestWire struct {
 // much a model may spend on reasoning. max_completion_tokens does not bound it
 // -- the reasoning models do not count reasoning against that field, which is
 // how a max_tokens 512 request reached 37,213 completion tokens.
+//
+// A client may send the same object. Its effort and max_tokens are read into
+// the neutral reasoning controls, as the top-level reasoning_effort and
+// reasoning_budget_tokens are, so every target sees them and a Chat target
+// gets one control, never effort beside a bound (OpenRouter refuses the
+// pair). Its other members (exclude, enabled) are carried to a Chat target.
 type chatReasoningWire struct {
 	MaxTokens *int64 `json:"max_tokens,omitempty"`
+	Effort    string `json:"effort,omitempty"`
 }
 
 type chatStreamOptionsWire struct {
@@ -88,12 +95,16 @@ type chatStreamOptionsWire struct {
 }
 
 type chatMessageWire struct {
-	ID                 string               `json:"id,omitempty"`
-	Role               string               `json:"role"`
-	Content            json.RawMessage      `json:"content,omitempty"`
-	Refusal            *string              `json:"refusal,omitempty"`
-	Reasoning          *string              `json:"reasoning_content,omitempty"`
-	AlternateReasoning *string              `json:"reasoning,omitempty"`
+	ID                 string          `json:"id,omitempty"`
+	Role               string          `json:"role"`
+	Content            json.RawMessage `json:"content,omitempty"`
+	Refusal            *string         `json:"refusal,omitempty"`
+	Reasoning          *string         `json:"reasoning_content,omitempty"`
+	AlternateReasoning *string         `json:"reasoning,omitempty"`
+	// ReasoningDetails is OpenRouter's structured reasoning: signatures and
+	// encrypted blobs the plain reasoning text cannot hold. It is carried
+	// opaquely; see reasoning_details.go.
+	ReasoningDetails   json.RawMessage      `json:"reasoning_details,omitempty"`
 	Audio              *chatAudioOutputWire `json:"audio,omitempty"`
 	LegacyFunctionCall *chatLegacyCallWire  `json:"function_call,omitempty"`
 	ToolCalls          []chatToolCallWire   `json:"tool_calls,omitempty"`
@@ -208,7 +219,7 @@ func (OpenAIChatCodec) DecodeRequest(body []byte, policy llmprotocol.Policy) (ll
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}
 	request := decodeChatBaseRequest(wire)
-	request.Unmodeled = unmodeled
+	request.Unmodeled = carryChatClientMembers(unmodeled, wire)
 	if err := decodeChatMessages(wire.Messages, &request, policy); err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}
@@ -223,7 +234,6 @@ func (OpenAIChatCodec) DecodeRequest(body []byte, policy llmprotocol.Policy) (ll
 
 func validateChatRequestWire(wire chatRequestWire) error {
 	if err := rejectUnsupportedRequestFields(map[string]json.RawMessage{
-		"prompt_cache_key": wire.PromptCacheKey, "prompt_cache_retention": wire.PromptCacheRetention,
 		"prompt_cache_options": wire.PromptCacheOptions, "safety_identifier": wire.SafetyIdentifier,
 		"audio": wire.Audio, "function_call": wire.FunctionCall, "functions": wire.Functions,
 		"logit_bias": wire.LogitBias, "logprobs": wire.Logprobs, "modalities": wire.Modalities,
@@ -231,6 +241,12 @@ func validateChatRequestWire(wire chatRequestWire) error {
 		"top_logprobs": wire.TopLogprobs, "verbosity": wire.Verbosity,
 		"web_search_options": wire.WebSearchOptions,
 	}); err != nil {
+		return err
+	}
+	if err := validateClientCacheMembers("Chat Completions", wire.PromptCacheKey, wire.PromptCacheRetention); err != nil {
+		return err
+	}
+	if err := validateChatReasoningObject(wire); err != nil {
 		return err
 	}
 	if len(wire.Messages) == 0 {
@@ -284,7 +300,44 @@ func decodeChatBaseRequest(wire chatRequestWire) llmprotocol.Request {
 	} else {
 		request.Sampling.MaxOutputTokens = wire.MaxTokens
 	}
+	if wire.Reasoning != nil {
+		if request.ReasoningEffort == "" {
+			request.ReasoningEffort = wire.Reasoning.Effort
+		}
+		if request.ReasoningBudgetTokens == nil {
+			request.ReasoningBudgetTokens = wire.Reasoning.MaxTokens
+		}
+	}
 	return request
+}
+
+// validateChatReasoningObject refuses a request whose reasoning object and
+// top-level fields state two different values for one control: there is no
+// telling which the client meant.
+func validateChatReasoningObject(wire chatRequestWire) error {
+	if wire.Reasoning == nil {
+		return nil
+	}
+	conflict := wire.Reasoning.Effort != "" && wire.ReasoningEffort != "" && wire.Reasoning.Effort != wire.ReasoningEffort ||
+		wire.Reasoning.MaxTokens != nil && wire.ReasoningBudget != nil && *wire.Reasoning.MaxTokens != *wire.ReasoningBudget
+	if conflict {
+		return llmprotocol.NewError(
+			llmprotocol.ErrorInvalidRequest, "conflicting_reasoning_controls",
+			"reasoning and the top-level reasoning fields cannot specify different values", nil,
+		)
+	}
+	return nil
+}
+
+// carryChatClientMembers puts prompt_cache_key and prompt_cache_retention on
+// the carrier, as the Responses codec does (carryResponsesClientMembers): a
+// Chat target gets them back byte for byte and any other target drops and
+// counts them. Each names a cache shard or how long it lives, not what the
+// model is asked, so neither is a reason to refuse the turn. pi, OpenClaw and
+// Hermes send them on Chat Completions when configured to.
+func carryChatClientMembers(carrier *llmprotocol.UnmodeledFields, wire chatRequestWire) *llmprotocol.UnmodeledFields {
+	carrier = carryClientMember(carrier, llmprotocol.OpenAIChatV1, "prompt_cache_key", wire.PromptCacheKey)
+	return carryClientMember(carrier, llmprotocol.OpenAIChatV1, "prompt_cache_retention", wire.PromptCacheRetention)
 }
 
 func decodeChatMessages(messages []chatMessageWire, request *llmprotocol.Request, policy llmprotocol.Policy) error {
@@ -376,7 +429,19 @@ func decodeChatRequestMessage(wire chatMessageWire, index int, policy llmprotoco
 	if err != nil {
 		return llmprotocol.Message{}, err
 	}
-	return assembleChatMessage(wire, index, role, contents, policy)
+	details, valid := decodeReasoningDetailsArray(wire.ReasoningDetails)
+	if !valid {
+		return llmprotocol.Message{}, llmprotocol.NewFieldError(
+			llmprotocol.ErrorInvalidRequest, "invalid_reasoning_details",
+			"messages.reasoning_details must be an array of objects", "", "messages.reasoning_details",
+		)
+	}
+	if role != llmprotocol.RoleAssistant {
+		// Only an assistant turn has reasoning to resend. Anywhere else the
+		// member says nothing to the model, so it is read and dropped.
+		details = nil
+	}
+	return assembleChatMessage(wire, index, role, contents, details, policy)
 }
 
 func decodeChatResponseMessage(wire chatMessageWire, index int, policy llmprotocol.Policy) (llmprotocol.Message, error) {
@@ -394,7 +459,10 @@ func decodeChatResponseMessage(wire chatMessageWire, index int, policy llmprotoc
 	if err != nil {
 		return llmprotocol.Message{}, err
 	}
-	return assembleChatMessage(wire, index, role, contents, policy)
+	// A shape OpenRouter does not document is dropped rather than refused:
+	// the completion was already generated and paid for.
+	details, _ := decodeReasoningDetailsArray(wire.ReasoningDetails)
+	return assembleChatMessage(wire, index, role, contents, details, policy)
 }
 
 func assembleChatMessage(
@@ -402,6 +470,7 @@ func assembleChatMessage(
 	index int,
 	role llmprotocol.Role,
 	contents []llmprotocol.Content,
+	reasoningDetails json.RawMessage,
 	policy llmprotocol.Policy,
 ) (llmprotocol.Message, error) {
 	message := llmprotocol.Message{ID: wire.ID, Role: role, Content: contents}
@@ -417,6 +486,7 @@ func assembleChatMessage(
 			Kind: llmprotocol.ContentReasoning, Text: *reasoning, Reasoning: llmprotocol.ReasoningScopeText,
 		})
 	}
+	message.Content = attachReasoningDetails(message.Content, reasoningDetails)
 	toolCalls, err := decodeChatToolCalls(wire.ToolCalls, index, policy)
 	if err != nil {
 		return llmprotocol.Message{}, err

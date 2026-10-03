@@ -210,7 +210,7 @@ func (AnthropicMessagesCodec) EncodeResponse(response llmprotocol.Response, enve
 		}
 	}
 	contents := make([]llmprotocol.Content, 0)
-	for _, item := range withoutResponsesOnlyOutput(response.Output) {
+	for _, item := range withoutReasoningDetailsCarriers(withoutResponsesOnlyOutput(response.Output)) {
 		contents = append(contents, item.Content...)
 	}
 	if refusal {
