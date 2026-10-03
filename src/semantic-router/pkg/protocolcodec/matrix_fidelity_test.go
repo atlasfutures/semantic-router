@@ -652,3 +652,26 @@ func TestRefusalOverridingAStopSequenceDropsTheSequence(t *testing.T) {
 		t.Fatalf("not a valid Messages response: %v", err)
 	}
 }
+
+// An all-zero message_start that carries a charge is evidence, not the
+// placeholder: its usage, and the charge, survive the stream.
+func TestZeroCountMessageStartWithAChargeKeepsItsUsage(t *testing.T) {
+	stream := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"cost\":0.25}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":1}}\n\n" +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+	events, _ := pushChunkedFixture(t, mustNewMatrixStream(t, NewBuiltinEngine(), llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1), []byte(stream), 9)
+	for _, event := range events {
+		if event.Type != llmprotocol.EventResponseCompleted {
+			continue
+		}
+		if event.Usage == nil || event.Usage.State != llmprotocol.UsageAvailable ||
+			event.Usage.ProviderCost.Charged == nil || *event.Usage.ProviderCost.Charged != 0.25 {
+			t.Fatalf("a charged zero-count start lost its evidence: %+v", event.Usage)
+		}
+		return
+	}
+	t.Fatal("the stream did not complete")
+}

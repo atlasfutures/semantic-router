@@ -276,10 +276,11 @@ func decodeAnthropicMessageStart(wire anthropicEventWire) llmprotocol.Event {
 	}
 	event.ResponseID, event.Model = wire.Message.ID, wire.Message.Model
 	// A real message_start states at least one input token. An all-zero
-	// usage is the placeholder a Router writes before it knows the turn's
-	// usage (a Chat source states usage only at its end), so it is not
-	// evidence: read as counts, it would make a later usage_source
-	// "unknown" look like evidence decreasing.
+	// usage with no charge beside it states nothing: it is the placeholder a
+	// Router writes before it knows the turn's usage (a Chat source states
+	// usage only at its end), and read as counts it would make a later
+	// usage_source "unknown" look like evidence decreasing. A charge
+	// (cost, is_byok, cost_details) is evidence, so its usage is kept.
 	if wire.Message.Usage != nil && !anthropicUsagePlaceholder(*wire.Message.Usage) {
 		usage := decodeAnthropicStreamUsage(*wire.Message.Usage, true)
 		event.Usage = &usage
@@ -289,7 +290,8 @@ func decodeAnthropicMessageStart(wire anthropicEventWire) llmprotocol.Event {
 
 func anthropicUsagePlaceholder(wire anthropicUsageWire) bool {
 	return wire.InputTokens == 0 && wire.OutputTokens == 0 &&
-		wire.CacheCreationInputTokens == 0 && wire.CacheReadInputTokens == 0
+		wire.CacheCreationInputTokens == 0 && wire.CacheReadInputTokens == 0 &&
+		len(wire.Cost) == 0 && len(wire.IsBYOK) == 0 && len(wire.CostDetails) == 0
 }
 
 func (decoder *anthropicStreamDecoder) decodeAnthropicMessageDelta(
