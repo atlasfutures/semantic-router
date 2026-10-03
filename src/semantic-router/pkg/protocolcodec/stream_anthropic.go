@@ -664,10 +664,6 @@ func (encoder *anthropicStreamEncoder) encodeAnthropicCompletion(
 		deltaWire.StopSequence = &event.MatchedStopSequence
 	}
 	delta := anthropicEventWire{Type: "message_delta", Delta: deltaWire, Usage: encodeAnthropicMessageDeltaUsage(*event.Usage)}
-	if refusal && usageUnavailable(*event.Usage) {
-		// A refused turn's usage is unknown, so the delta states none.
-		delta.Usage = nil
-	}
 	first, err := encodeSSE(delta.Type, delta)
 	if err != nil {
 		return nil, nil, err

@@ -567,8 +567,9 @@ func assertAuthoritativeTerminalUsage(t *testing.T, usage *llmprotocol.Usage) {
 }
 
 // #150: Anthropic's safeguards refuse before generating, so OpenRouter Chat
-// returns the refusal with no usage. A Messages client gets a refusal with
-// usage null, not a failed translation and not an invented zero count.
+// returns the refusal with no usage. A Messages client gets a schema-valid
+// refusal (Messages requires usage, so a zero-valued object, noted as
+// approximated), not a failed translation.
 func TestRefusalWithoutUsageReachesMessagesAsARefusal(t *testing.T) {
 	engine := NewBuiltinEngine()
 	refusal := []byte(`{"id":"gen-1","model":"anthropic/claude-opus-5","choices":[{"index":0,"message":{"role":"assistant","content":null,"refusal":"This request triggered restrictions."},"finish_reason":"content_filter","native_finish_reason":"refusal"}]}`)
@@ -580,9 +581,20 @@ func TestRefusalWithoutUsageReachesMessagesAsARefusal(t *testing.T) {
 	if err := json.Unmarshal(translated.Body, &body); err != nil {
 		t.Fatal(err)
 	}
-	if string(body["stop_reason"]) != `"refusal"` || string(body["usage"]) != "null" ||
+	if string(body["stop_reason"]) != `"refusal"` || !bytes.Contains(body["usage"], []byte(`"output_tokens":0`)) ||
 		!bytes.Contains(body["content"], []byte("This request triggered restrictions.")) {
 		t.Fatalf("refusal = %s", translated.Body)
+	}
+	approximated := false
+	for _, diagnostic := range translated.Diagnostics {
+		approximated = approximated || diagnostic.Field == "usage" && diagnostic.Action == llmprotocol.DiagnosticApproximated
+	}
+	if !approximated {
+		t.Fatalf("the zero-valued usage was not noted: %+v", translated.Diagnostics)
+	}
+	// The router's own decoder, like Anthropic's SDK, must accept what it sent.
+	if _, err := engine.TranslateResponse(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1, translated.Body, nil); err != nil {
+		t.Fatalf("the refusal is not a valid Messages response: %v", err)
 	}
 
 	stream := "data: {\"id\":\"gen-2\",\"object\":\"chat.completion.chunk\",\"model\":\"anthropic/claude-opus-5\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"refusal\":\"Refused.\"},\"finish_reason\":null}]}\n\n" +
@@ -593,9 +605,5 @@ func TestRefusalWithoutUsageReachesMessagesAsARefusal(t *testing.T) {
 	if !strings.Contains(frames, `"stop_reason":"refusal"`) || !strings.Contains(frames, "Refused.") {
 		t.Fatalf("streamed refusal = %s", frames)
 	}
-	for _, line := range strings.Split(frames, "\n") {
-		if strings.Contains(line, `"type":"message_delta"`) && strings.Contains(line, `"usage"`) {
-			t.Fatalf("a refused turn's delta stated usage: %s", line)
-		}
-	}
+	assertTargetStreamDecodes(t, engine, llmprotocol.AnthropicMessagesV1, encoded.Bytes())
 }

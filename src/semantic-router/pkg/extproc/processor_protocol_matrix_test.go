@@ -675,7 +675,7 @@ func extProcStreamFixture(format llmprotocol.WireFormat) []byte {
 
 // #150: OpenRouter returns an Anthropic safeguard refusal on Chat with no
 // usage. Through the router's buffered response seam a Messages client gets a
-// refusal: stop_reason "refusal", the refusal text, usage null. It used to fail
+// refusal: stop_reason "refusal" with the refusal text. It used to fail
 // translation and reach the client as a 200 with an error body.
 func TestOpenRouterRefusalReachesAMessagesClientAsARefusal(t *testing.T) {
 	router := &OpenAIRouter{}
@@ -695,7 +695,7 @@ func TestOpenRouterRefusalReachesAMessagesClientAsARefusal(t *testing.T) {
 	if err := json.Unmarshal(body, &message); err != nil {
 		t.Fatal(err)
 	}
-	if string(message["stop_reason"]) != `"refusal"` || string(message["usage"]) != "null" ||
+	if string(message["stop_reason"]) != `"refusal"` ||
 		!bytes.Contains(message["content"], []byte("violative cyber content")) {
 		t.Fatalf("Messages client received %s", body)
 	}

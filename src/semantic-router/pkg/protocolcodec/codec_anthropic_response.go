@@ -172,11 +172,20 @@ func (AnthropicMessagesCodec) EncodeResponse(response llmprotocol.Response, enve
 	var diagnostics llmprotocol.Diagnostics
 	// A refusal is a turn Messages represents exactly: stop_reason "refusal"
 	// and the provider's refusal text. A refused turn often carries no usage
-	// (Anthropic's safeguards refuse before generating); the client gets the
-	// refusal with usage null, not a zero-valued count that never happened,
-	// and not a failed translation. The latter used to reach a Messages
-	// client as a 200 with an error body (#150).
+	// (Anthropic's safeguards refuse before generating). Messages requires a
+	// usage object, so the client gets the schema's zero-valued one, noted as
+	// approximated; the refusal is not failed as lossy, which used to reach a
+	// Messages client as a 200 with an error body (#150). The router's own
+	// accounting reads the provider's usage, not this body, and keeps it
+	// unknown.
 	refusal := response.StopReason == llmprotocol.StopContentFilter || responseRefuses(response)
+	if usageUnavailable(response.Usage) && refusal {
+		diagnostics = appendDiagnostics(diagnostics, llmprotocol.Diagnostics{{
+			Source: envelope.Format, Target: llmprotocol.AnthropicMessagesV1, Field: "usage",
+			Action: llmprotocol.DiagnosticApproximated,
+			Reason: "a refused turn without provider usage carries Messages' required usage object, zero-valued",
+		}}, policy.Limits.Diagnostics)
+	}
 	if usageUnavailable(response.Usage) && !refusal {
 		if err := appendLossy(
 			&diagnostics, policy, envelope.Format, llmprotocol.AnthropicMessagesV1,
@@ -211,9 +220,6 @@ func (AnthropicMessagesCodec) EncodeResponse(response llmprotocol.Response, enve
 		stop = encodeAnthropicStop(llmprotocol.StopContentFilter)
 	}
 	wire := anthropicResponseWire{ID: response.ID, Type: "message", Role: "assistant", Model: response.Model, Content: content, StopReason: &stop, Usage: encodeAnthropicUsage(response.Usage)}
-	if refusal && usageUnavailable(response.Usage) {
-		wire.Usage = nil
-	}
 	if response.StopReason == llmprotocol.StopSequence {
 		wire.StopSequence = &response.MatchedStopSequence
 	}
