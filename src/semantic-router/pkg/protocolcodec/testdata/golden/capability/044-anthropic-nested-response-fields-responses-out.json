@@ -22,7 +22,7 @@
                 }
               ],
               "format": "anthropic-claude-v1",
-              "id": "item_50fa17334b475f883a9970b7",
+              "id": "item_0f0f671df3c7589398acc08e",
               "signature": "signed-reasoning",
               "summary": [],
               "type": "reasoning"
@@ -35,7 +35,7 @@
                   "type": "output_text"
                 }
               ],
-              "id": "item_0f0f671df3c7589398acc08e",
+              "id": "item_50fa17334b475f883a9970b7",
               "role": "assistant",
               "status": "completed",
               "type": "message"
