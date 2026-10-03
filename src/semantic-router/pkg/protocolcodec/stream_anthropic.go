@@ -22,6 +22,15 @@ type anthropicStreamDecoder struct {
 	pendingCitations map[int][]json.RawMessage
 	// data is the JSON of the event being decoded.
 	data []byte
+	// usageUnknown records a terminal message_delta whose usage this Router
+	// marked as the schema's placeholder (usage_source "unknown").
+	usageUnknown bool
+	// pendingStartUsage is a message_start usage of zero counts and no
+	// charge, held until the stream says what it was: a Router's placeholder
+	// when a later message_delta is marked usage_source "unknown" (then it
+	// is dropped), otherwise the provider's evidence, applied before the
+	// next usage or terminal event so nothing it stated is lost.
+	pendingStartUsage *llmprotocol.Usage
 }
 type anthropicStreamEncoder struct {
 	streamState
@@ -39,6 +48,9 @@ type anthropicStreamEncoder struct {
 	// failure is the provider's to describe.
 	truncationUsage  *llmprotocol.Usage
 	truncationSource string
+	// refused records that refusal content reached the client, so the turn
+	// ends as one: stop_reason "refusal" is how Messages marks refusal text.
+	refused bool
 }
 
 func (encoder *anthropicStreamEncoder) SetTruncationUsage(usage *llmprotocol.Usage, source string) {
@@ -81,6 +93,13 @@ type anthropicEventWire struct {
 // against a provider fixture, and these two members are the Router's, written
 // and never read. The count sits beside the error object rather than inside
 // it, so an SDK parsing the failure sees exactly the shape it always saw.
+// anthropicUnknownUsageDeltaWire is a terminal message_delta whose usage the
+// provider never stated, marked with the Router's usage_source.
+type anthropicUnknownUsageDeltaWire struct {
+	anthropicEventWire
+	UsageSource string `json:"usage_source"`
+}
+
 type anthropicTruncationFrameWire struct {
 	Type        string                          `json:"type"`
 	Error       *anthropicErrorWire             `json:"error,omitempty"`
@@ -213,7 +232,11 @@ func (decoder *anthropicStreamDecoder) decodeEvent(
 	}
 	switch wire.Type {
 	case "message_start":
-		return decoder.emitAnthropicEvent(decodeAnthropicMessageStart(wire))
+		event := decodeAnthropicMessageStart(wire)
+		if wire.Message != nil && wire.Message.Usage != nil && anthropicUsageUncommitted(*wire.Message.Usage) {
+			decoder.pendingStartUsage, event.Usage = event.Usage, nil
+		}
+		return decoder.emitAnthropicEvent(event)
 	case "content_block_start":
 		return decoder.emitDecodedAnthropicEvent(decodeAnthropicContentStart(wire))
 	case "content_block_delta":
@@ -269,6 +292,15 @@ func decodeAnthropicMessageStart(wire anthropicEventWire) llmprotocol.Event {
 	return event
 }
 
+// anthropicUsageUncommitted reports a message_start usage that may be a
+// Router's placeholder: zero counts and no charge. A charge (cost, is_byok,
+// cost_details) is evidence in its own right.
+func anthropicUsageUncommitted(wire anthropicUsageWire) bool {
+	return wire.InputTokens == 0 && wire.OutputTokens == 0 &&
+		wire.CacheCreationInputTokens == 0 && wire.CacheReadInputTokens == 0 &&
+		len(wire.Cost) == 0 && len(wire.IsBYOK) == 0 && len(wire.CostDetails) == 0
+}
+
 func (decoder *anthropicStreamDecoder) decodeAnthropicMessageDelta(
 	wire anthropicEventWire,
 ) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
@@ -276,6 +308,19 @@ func (decoder *anthropicStreamDecoder) decodeAnthropicMessageDelta(
 		return nil, nil, err
 	}
 	diagnostics := decoder.anthropicMessageDeltaDiagnostics(wire.Delta)
+	var marked struct {
+		UsageSource string `json:"usage_source"`
+	}
+	if err := json.Unmarshal(decoder.data, &marked); err == nil && marked.UsageSource != "" {
+		if marked.UsageSource != UsageSourceUnknown {
+			return nil, diagnostics, invalidProviderResponse("usage_source_invalid", "usage_source must be "+UsageSourceUnknown)
+		}
+		// The delta's usage is a placeholder, and so was a held zero-count
+		// message_start usage: the turn's usage is unknown.
+		decoder.usageUnknown = true
+		decoder.pendingStartUsage = nil
+		return nil, diagnostics, nil
+	}
 	if wire.Usage == nil {
 		return nil, diagnostics, nil
 	}
@@ -347,11 +392,32 @@ func (decoder *anthropicStreamDecoder) decodeUnknownAnthropicEvent(
 func (decoder *anthropicStreamDecoder) emitAnthropicEvent(
 	event llmprotocol.Event,
 ) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	var events []llmprotocol.Event
+	if decoder.pendingStartUsage != nil && (event.Type == llmprotocol.EventUsageUpdated ||
+		event.Type == llmprotocol.EventResponseCompleted || event.Type == llmprotocol.EventResponseFailed) {
+		flushed, err := decoder.flushPendingStartUsage()
+		if err != nil {
+			return nil, nil, err
+		}
+		events = append(events, flushed...)
+	}
 	normalized, err := decoder.next(event)
 	if err != nil {
 		return nil, nil, err
 	}
-	return []llmprotocol.Event{normalized}, nil, nil
+	return append(events, normalized), nil, nil
+}
+
+// flushPendingStartUsage applies a held message_start usage as the provider's
+// evidence.
+func (decoder *anthropicStreamDecoder) flushPendingStartUsage() ([]llmprotocol.Event, error) {
+	pending := decoder.pendingStartUsage
+	decoder.pendingStartUsage = nil
+	normalized, err := decoder.next(llmprotocol.Event{Type: llmprotocol.EventUsageUpdated, Usage: pending})
+	if err != nil {
+		return nil, err
+	}
+	return []llmprotocol.Event{normalized}, nil
 }
 
 func decodeAnthropicContentStart(wire anthropicEventWire) (llmprotocol.Event, error) {
@@ -444,6 +510,13 @@ func (decoder *anthropicStreamDecoder) Finalize(reason error) ([]llmprotocol.Eve
 	events, diagnostics, frameErr := finalizeDecoderFrames(decoder.framer.Finalize, decoder.pushFrame, decoder.policy.Limits.Diagnostics)
 	if frameErr != nil {
 		return events, diagnostics, frameErr
+	}
+	if decoder.pendingStartUsage != nil {
+		flushed, err := decoder.flushPendingStartUsage()
+		if err != nil {
+			return events, diagnostics, err
+		}
+		events = append(events, flushed...)
 	}
 	terminalEvents, err := decoder.finalize(reason)
 	events = append(events, terminalEvents...)
@@ -651,13 +724,24 @@ func (encoder *anthropicStreamEncoder) encodeAnthropicCompletion(
 	if event.Usage == nil {
 		return nil, nil, llmprotocol.NewError(llmprotocol.ErrorInternal, "usage_event_invalid", "terminal usage is invalid", nil)
 	}
+	refusal := event.StopReason == llmprotocol.StopContentFilter || encoder.refused
 	stop := encodeAnthropicStop(event.StopReason)
+	if refusal {
+		stop = encodeAnthropicStop(llmprotocol.StopContentFilter)
+	}
 	deltaWire := &anthropicDeltaWire{Type: "message_delta", StopReason: &stop}
-	if event.StopReason == llmprotocol.StopSequence {
+	if event.StopReason == llmprotocol.StopSequence && !refusal {
 		deltaWire.StopSequence = &event.MatchedStopSequence
 	}
 	delta := anthropicEventWire{Type: "message_delta", Delta: deltaWire, Usage: encodeAnthropicMessageDeltaUsage(*event.Usage)}
-	first, err := encodeSSE(delta.Type, delta)
+	var first []byte
+	var err error
+	if refusal && usageUnavailable(*event.Usage) {
+		// The delta's usage is the schema's placeholder; usage_source says so.
+		first, err = encodeSSE(delta.Type, anthropicUnknownUsageDeltaWire{anthropicEventWire: delta, UsageSource: UsageSourceUnknown})
+	} else {
+		first, err = encodeSSE(delta.Type, delta)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -699,13 +783,10 @@ func (encoder *anthropicStreamEncoder) encodeAnthropicTextDelta(
 			return nil, diagnostics, err
 		}
 	}
+	// Refusal text streams as text, and the terminal message_delta states
+	// stop_reason "refusal", which is how Messages marks it (#150).
 	if event.Content != nil && event.Content.Kind == llmprotocol.ContentRefusal {
-		if err := appendLossy(
-			&diagnostics, encoder.policy, encoder.context.Source, encoder.context.Target,
-			"content.refusal", "Messages represents refusal as ordinary text",
-		); err != nil {
-			return nil, diagnostics, err
-		}
+		encoder.refused = true
 	}
 	frames, key, err := encoder.ensureAnthropicBlockStarted(event, llmprotocol.ContentText)
 	if err != nil {

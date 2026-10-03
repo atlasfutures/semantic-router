@@ -126,6 +126,36 @@ Protocol translation is limited to fields the router supports. When a request
 crosses protocols, inspect `x-vsr-client-protocol`,
 `x-vsr-upstream-protocol`, and any `x-vsr-protocol-warnings` response header.
 
+#### Refusals and `usage_source`
+
+A provider refusal reaches a Messages client as `stop_reason: "refusal"`, with
+the refusal text as a text block, buffered or streamed. This holds even when
+the upstream protocol reported it another way, such as a Chat
+`content_filter`, or a Responses refusal part that completed normally.
+`stop_sequence` is then `null`.
+
+Messages requires a `usage` object on every response and on the terminal
+`message_delta` event. When the provider stated no usage for the turn, as
+Anthropic's safeguards do when they refuse before generating, the router sends
+the schema's zero-valued object and marks it beside `usage`:
+
+```json
+{"stop_reason": "refusal", "usage": {"input_tokens": 0, "output_tokens": 0, "...": 0}, "usage_source": "unknown"}
+```
+
+`usage_source` is a router extension, not part of Anthropic's schema.
+
+| `usage_source` | Where it appears | Meaning |
+|---|---|---|
+| absent | any response | `usage` holds the provider's counts |
+| `"unknown"` | buffered message; terminal `message_delta` | `usage` is a placeholder; the turn's usage is unknown |
+| `"stream_estimate"` | `error` event of a stream the router cut | `usage` is the router's estimate for the cut turn |
+
+A proxy that bills from the client response should record a turn marked
+`"unknown"` as unknown usage, not as zero tokens. The router's own usage
+records (`llm_usage`) read the provider's response, so they record that turn's
+usage as unknown.
+
 ## Router Replay
 
 Router Replay records routing decisions and selected request lifecycle data.

@@ -395,8 +395,9 @@ func assertRefusalFidelity(t *testing.T, engine *Engine, target llmprotocol.Wire
 	t.Helper()
 	translated, err := engine.TranslateResponse(llmprotocol.OpenAIChatV1, target, body, nil)
 	if target == llmprotocol.AnthropicMessagesV1 {
-		if err == nil {
-			t.Fatal("refusal was silently weakened to ordinary Messages text")
+		// Messages marks a refusal by its stop reason; the text rides as text.
+		if err != nil || !bytes.Contains(translated.Body, []byte(`"stop_reason":"refusal"`)) {
+			t.Fatalf("refusal to Messages = %s, %v", translated.Body, err)
 		}
 		return
 	}

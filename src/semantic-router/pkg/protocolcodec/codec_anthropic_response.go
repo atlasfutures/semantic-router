@@ -60,10 +60,16 @@ type anthropicTransportErrorWire struct {
 }
 
 func (AnthropicMessagesCodec) DecodeResponse(body []byte, policy llmprotocol.Policy) (llmprotocol.Response, llmprotocol.Envelope, llmprotocol.Diagnostics, error) {
-	var wire anthropicResponseWire
-	if err := decodeProviderWire(body, &wire, policy); err != nil {
+	// The Router's own usage_source is the one member read beyond the
+	// published contract, so a Messages body this Router wrote decodes.
+	var marked anthropicUnknownUsageResponseWire
+	if err := decodeProviderWire(body, &marked, policy); err != nil {
 		return llmprotocol.Response{}, llmprotocol.Envelope{}, nil, err
 	}
+	if marked.UsageSource != "" && marked.UsageSource != UsageSourceUnknown {
+		return llmprotocol.Response{}, llmprotocol.Envelope{}, nil, invalidProviderResponse("usage_source_invalid", "usage_source must be "+UsageSourceUnknown)
+	}
+	wire := marked.anthropicResponseWire
 	if err := validateAnthropicResponseResource(wire); err != nil {
 		return llmprotocol.Response{}, llmprotocol.Envelope{}, nil, err
 	}
@@ -73,6 +79,10 @@ func (AnthropicMessagesCodec) DecodeResponse(body []byte, policy llmprotocol.Pol
 		return llmprotocol.Response{}, llmprotocol.Envelope{}, nil, err
 	}
 	appendAnthropicResponseUsage(&response, wire.Usage, policy, &diagnostics)
+	if marked.UsageSource == UsageSourceUnknown {
+		// The usage object is a placeholder; the turn's usage is unknown.
+		response.Usage = llmprotocol.Usage{State: llmprotocol.UsageUnavailable}
+	}
 	return response, responseEnvelope(llmprotocol.AnthropicMessagesV1, body, response.Generation, response.SourceStopReason, policy), diagnostics, nil
 }
 
@@ -170,7 +180,23 @@ func (AnthropicMessagesCodec) EncodeResponse(response llmprotocol.Response, enve
 		return append([]byte(nil), envelope.Response...), nil, nil
 	}
 	var diagnostics llmprotocol.Diagnostics
-	if usageUnavailable(response.Usage) {
+	// A refusal is a turn Messages represents exactly: stop_reason "refusal"
+	// and the provider's refusal text. A refused turn often carries no usage
+	// (Anthropic's safeguards refuse before generating). Messages requires a
+	// usage object, so the client gets the schema's zero-valued one, noted as
+	// approximated; the refusal is not failed as lossy, which used to reach a
+	// Messages client as a 200 with an error body (#150). The router's own
+	// accounting reads the provider's usage, not this body, and keeps it
+	// unknown.
+	refusal := response.StopReason == llmprotocol.StopContentFilter || responseRefuses(response)
+	if usageUnavailable(response.Usage) && refusal {
+		diagnostics = appendDiagnostics(diagnostics, llmprotocol.Diagnostics{{
+			Source: envelope.Format, Target: llmprotocol.AnthropicMessagesV1, Field: "usage",
+			Action: llmprotocol.DiagnosticApproximated,
+			Reason: "a refused turn without provider usage carries Messages' required usage object, zero-valued",
+		}}, policy.Limits.Diagnostics)
+	}
+	if usageUnavailable(response.Usage) && !refusal {
 		if err := appendLossy(
 			&diagnostics, policy, envelope.Format, llmprotocol.AnthropicMessagesV1,
 			"usage", "Messages requires usage; emitted an explicit zero-valued usage object",
@@ -187,6 +213,9 @@ func (AnthropicMessagesCodec) EncodeResponse(response llmprotocol.Response, enve
 	for _, item := range withoutResponsesOnlyOutput(response.Output) {
 		contents = append(contents, item.Content...)
 	}
+	if refusal {
+		contents = refusalAsText(contents)
+	}
 	contentDiagnostics, err := anthropicContentDiagnostics(contents, envelope.Format, policy)
 	diagnostics = appendDiagnostics(diagnostics, contentDiagnostics, policy.Limits.Diagnostics)
 	if err != nil {
@@ -197,12 +226,62 @@ func (AnthropicMessagesCodec) EncodeResponse(response llmprotocol.Response, enve
 		return nil, diagnostics, err
 	}
 	stop := encodeAnthropicStop(response.StopReason)
+	if refusal {
+		stop = encodeAnthropicStop(llmprotocol.StopContentFilter)
+	}
 	wire := anthropicResponseWire{ID: response.ID, Type: "message", Role: "assistant", Model: response.Model, Content: content, StopReason: &stop, Usage: encodeAnthropicUsage(response.Usage)}
-	if response.StopReason == llmprotocol.StopSequence {
+	if response.StopReason == llmprotocol.StopSequence && !refusal {
 		wire.StopSequence = &response.MatchedStopSequence
+	}
+	if refusal && usageUnavailable(response.Usage) {
+		body, err := marshalWire(anthropicUnknownUsageResponseWire{anthropicResponseWire: wire, UsageSource: UsageSourceUnknown})
+		return body, diagnostics, err
 	}
 	body, err := marshalWire(wire)
 	return body, diagnostics, err
+}
+
+// UsageSourceUnknown marks a client response whose usage object is the
+// schema's zero-valued placeholder: the provider stated no usage for the
+// turn. A proxy that bills from the client wire records the turn's usage as
+// unknown, not as zero tokens. It extends the usage_source member a cut
+// stream already carries ("stream_estimate"); a turn with provider usage
+// carries no usage_source at all.
+const UsageSourceUnknown = "unknown"
+
+// anthropicUnknownUsageResponseWire is a Messages response plus the Router's
+// usage_source, kept off anthropicResponseWire for the reason the truncation
+// frame is: that struct is the published contract.
+type anthropicUnknownUsageResponseWire struct {
+	anthropicResponseWire
+	UsageSource string `json:"usage_source"`
+}
+
+// responseRefuses reports refusal content in a response's output: a turn
+// whose model refused, whatever stop its source format gave it.
+func responseRefuses(response llmprotocol.Response) bool {
+	for _, item := range response.Output {
+		for _, content := range item.Content {
+			if content.Kind == llmprotocol.ContentRefusal {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// refusalAsText states a refusal's content as the text Messages carries it
+// in. Under stop_reason "refusal" nothing is lost: the stop reason says what
+// the text is.
+func refusalAsText(contents []llmprotocol.Content) []llmprotocol.Content {
+	stated := make([]llmprotocol.Content, len(contents))
+	for index, content := range contents {
+		if content.Kind == llmprotocol.ContentRefusal {
+			content.Kind = llmprotocol.ContentText
+		}
+		stated[index] = content
+	}
+	return stated
 }
 
 func encodeAnthropicUsage(usage llmprotocol.Usage) *anthropicUsageWire {

@@ -672,3 +672,31 @@ func extProcStreamFixture(format llmprotocol.WireFormat) []byte {
 		panic(fmt.Sprintf("unsupported stream fixture format %q", format))
 	}
 }
+
+// #150: OpenRouter returns an Anthropic safeguard refusal on Chat with no
+// usage. Through the router's buffered response seam a Messages client gets a
+// refusal: stop_reason "refusal" with the refusal text. It used to fail
+// translation and reach the client as a 200 with an error body.
+func TestOpenRouterRefusalReachesAMessagesClientAsARefusal(t *testing.T) {
+	router := &OpenAIRouter{}
+	ctx := &RequestContext{SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.OpenAIChatV1}
+	upstream := []byte(`{"id":"gen-1","provider":"Anthropic","model":"anthropic/claude-opus-5","object":"chat.completion","created":1,` +
+		`"choices":[{"index":0,"logprobs":null,"finish_reason":"content_filter","native_finish_reason":"refusal",` +
+		`"message":{"role":"assistant","content":null,"refusal":"This request triggered restrictions on violative cyber content."}}]}`)
+	semantic, err := router.decodeClientResponse(upstream, ctx)
+	if err != nil {
+		t.Fatalf("decodeClientResponse(): %v", err)
+	}
+	body, err := router.encodeClientResponse(*semantic, ctx)
+	if err != nil {
+		t.Fatalf("a refusal without usage did not reach the Messages client: %v", err)
+	}
+	var message map[string]json.RawMessage
+	if err := json.Unmarshal(body, &message); err != nil {
+		t.Fatal(err)
+	}
+	if string(message["stop_reason"]) != `"refusal"` ||
+		!bytes.Contains(message["content"], []byte("violative cyber content")) {
+		t.Fatalf("Messages client received %s", body)
+	}
+}

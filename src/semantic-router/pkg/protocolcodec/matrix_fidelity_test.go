@@ -2,6 +2,8 @@ package protocolcodec
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -102,8 +104,9 @@ func TestCrossFormatFidelityAndCapabilityFailuresAreExplicit(t *testing.T) {
 		t.Fatalf("strict tool schema changed: %+v, %v", decodedTool.Tools, err)
 	}
 	refusal := []byte(`{"id":"response_1","model":"source-model","choices":[{"index":0,"message":{"role":"assistant","refusal":"no"},"finish_reason":"content_filter"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`)
-	if _, err := engine.TranslateResponse(llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1, refusal, nil); err == nil {
-		t.Fatal("refusal semantics were silently converted to text")
+	if translated, err := engine.TranslateResponse(llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1, refusal, nil); err != nil ||
+		!bytes.Contains(translated.Body, []byte(`"stop_reason":"refusal"`)) {
+		t.Fatalf("refusal semantics were not stated as a Messages refusal: %v", err)
 	}
 }
 
@@ -562,4 +565,142 @@ func assertAuthoritativeTerminalUsage(t *testing.T, usage *llmprotocol.Usage) {
 		usage.OutputTotal.Value == nil || usage.OutputTotal.Provenance != llmprotocol.UsageAuthoritative {
 		t.Fatalf("terminal usage = %+v", usage)
 	}
+}
+
+// #150: Anthropic's safeguards refuse before generating, so OpenRouter Chat
+// returns the refusal with no usage. A Messages client gets a schema-valid
+// refusal (Messages requires usage, so a zero-valued object, noted as
+// approximated), not a failed translation.
+func TestRefusalWithoutUsageReachesMessagesAsARefusal(t *testing.T) {
+	engine := NewBuiltinEngine()
+	refusal := []byte(`{"id":"gen-1","model":"anthropic/claude-opus-5","choices":[{"index":0,"message":{"role":"assistant","content":null,"refusal":"This request triggered restrictions."},"finish_reason":"content_filter","native_finish_reason":"refusal"}]}`)
+	translated, err := engine.TranslateResponse(llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1, refusal, nil)
+	if err != nil {
+		t.Fatalf("a refusal without usage failed translation: %v", err)
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(translated.Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	if string(body["stop_reason"]) != `"refusal"` || !bytes.Contains(body["usage"], []byte(`"output_tokens":0`)) ||
+		!bytes.Contains(body["content"], []byte("This request triggered restrictions.")) {
+		t.Fatalf("refusal = %s", translated.Body)
+	}
+	approximated := false
+	for _, diagnostic := range translated.Diagnostics {
+		approximated = approximated || diagnostic.Field == "usage" && diagnostic.Action == llmprotocol.DiagnosticApproximated
+	}
+	if !approximated {
+		t.Fatalf("the zero-valued usage was not noted: %+v", translated.Diagnostics)
+	}
+	// A proxy billing from the client wire must be able to tell the zeros
+	// are a placeholder.
+	if string(body["usage_source"]) != `"unknown"` {
+		t.Fatalf("usage_source = %s, want unknown", body["usage_source"])
+	}
+	// The router's own decoder, like Anthropic's SDK, must accept what it sent.
+	if _, err := engine.TranslateResponse(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1, translated.Body, nil); err != nil {
+		t.Fatalf("the refusal is not a valid Messages response: %v", err)
+	}
+
+	stream := "data: {\"id\":\"gen-2\",\"object\":\"chat.completion.chunk\",\"model\":\"anthropic/claude-opus-5\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"refusal\":\"Refused.\"},\"finish_reason\":null}]}\n\n" +
+		"data: {\"id\":\"gen-2\",\"object\":\"chat.completion.chunk\",\"model\":\"anthropic/claude-opus-5\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"content_filter\"}]}\n\n" +
+		"data: [DONE]\n\n"
+	_, encoded := pushChunkedFixture(t, mustNewMatrixStream(t, engine, llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1), []byte(stream), 11)
+	frames := encoded.String()
+	if !strings.Contains(frames, `"stop_reason":"refusal"`) || !strings.Contains(frames, "Refused.") {
+		t.Fatalf("streamed refusal = %s", frames)
+	}
+	assertTargetStreamDecodes(t, engine, llmprotocol.AnthropicMessagesV1, encoded.Bytes())
+	// A proxy decoding this stream reads the turn's usage as unknown, not
+	// as the placeholder zeros.
+	events, _ := pushChunkedFixture(t, mustNewMatrixStream(t, engine, llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1), encoded.Bytes(), 7)
+	for _, event := range events {
+		if event.Type == llmprotocol.EventResponseCompleted && (event.Usage == nil || event.Usage.State != llmprotocol.UsageUnavailable) {
+			t.Fatalf("the decoded refusal reports usage %+v, want unknown", event.Usage)
+		}
+	}
+	for _, line := range strings.Split(frames, "\n") {
+		if strings.Contains(line, `"type":"message_delta"`) && !strings.Contains(line, `"usage_source":"unknown"`) {
+			t.Fatalf("the refused turn's delta does not mark its usage unknown: %s", line)
+		}
+	}
+
+	// A turn with provider usage carries no usage_source.
+	answered := []byte(`{"id":"gen-3","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`)
+	if translated, err := engine.TranslateResponse(llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1, answered, nil); err != nil ||
+		bytes.Contains(translated.Body, []byte("usage_source")) {
+		t.Fatalf("an answered turn = %s, %v", translated.Body, err)
+	}
+}
+
+// A refusal that overrides a stop-sequence stop carries no stop_sequence:
+// Messages allows one only beside stop_reason "stop_sequence".
+func TestRefusalOverridingAStopSequenceDropsTheSequence(t *testing.T) {
+	text := "matched"
+	response := llmprotocol.Response{
+		ID: "r1", Model: "m", StopReason: llmprotocol.StopSequence, MatchedStopSequence: text,
+		Output: []llmprotocol.OutputItem{{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentRefusal, Text: "no"}}}},
+	}
+	body, _, err := AnthropicMessagesCodec{}.EncodeResponse(response, llmprotocol.Envelope{Format: llmprotocol.OpenAIChatV1}, llmprotocol.DefaultPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(body, []byte(`"stop_reason":"refusal"`)) || !bytes.Contains(body, []byte(`"stop_sequence":null`)) {
+		t.Fatalf("refusal over a stop sequence = %s", body)
+	}
+	if _, err := NewBuiltinEngine().TranslateResponse(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1, body, nil); err != nil {
+		t.Fatalf("not a valid Messages response: %v", err)
+	}
+}
+
+// An all-zero message_start that carries a charge is evidence, not the
+// placeholder: its usage, and the charge, survive the stream.
+func TestZeroCountMessageStartWithAChargeKeepsItsUsage(t *testing.T) {
+	stream := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"cost\":0.25}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":1}}\n\n" +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+	events, _ := pushChunkedFixture(t, mustNewMatrixStream(t, NewBuiltinEngine(), llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1), []byte(stream), 9)
+	for _, event := range events {
+		if event.Type != llmprotocol.EventResponseCompleted {
+			continue
+		}
+		if event.Usage == nil || event.Usage.State != llmprotocol.UsageAvailable ||
+			event.Usage.ProviderCost.Charged == nil || *event.Usage.ProviderCost.Charged != 0.25 {
+			t.Fatalf("a charged zero-count start lost its evidence: %+v", event.Usage)
+		}
+		return
+	}
+	t.Fatal("the stream did not complete")
+}
+
+// A zero-count message_start the Router did not mark is the provider's
+// evidence. It is held only until the stream says otherwise, so a stream that
+// fails before its terminal delta still reports it.
+func TestUnmarkedZeroCountMessageStartSurvivesAFailure(t *testing.T) {
+	stream := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m2\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0}}}\n\n" +
+		"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"busy\"}}\n\n"
+	decoder, err := NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1, llmprotocol.StreamContext{
+		Context: context.Background(), PublicModel: "public-model",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, events, _, err := decoder.Push([]byte(stream))
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	for _, event := range events {
+		if event.Type == llmprotocol.EventResponseFailed {
+			if event.Usage == nil || event.Usage.State != llmprotocol.UsageAvailable ||
+				event.Usage.InputTotal.Value == nil || *event.Usage.InputTotal.Value != 0 {
+				t.Fatalf("the provider's zero-count usage was lost: %+v", event.Usage)
+			}
+			return
+		}
+	}
+	t.Fatalf("the stream did not fail: %+v", events)
 }
