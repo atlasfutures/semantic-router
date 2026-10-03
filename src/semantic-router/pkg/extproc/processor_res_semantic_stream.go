@@ -476,6 +476,12 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 	// commits once the response's final frame has been sent, and only then
 	// caches its reply.
 	commitDeferred := !ctx.StreamingAborted && selectionCommitsOnCompletion(ctx)
+	refused := commitDeferred && responseRefused(semanticResponse)
+	if refused {
+		// A refused turn is delivered but never recorded, and never cached.
+		declineRefusedTurn(ctx)
+		commitDeferred = false
+	}
 	if commitDeferred {
 		deferSelectionCompletion(ctx, nil)
 	}
@@ -518,7 +524,7 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 	// leave it unrecorded for good.
 	if commitDeferred {
 		deferSelectionCompletion(ctx, func() { r.updateResponseCache(ctx, encoded) })
-	} else {
+	} else if !refused {
 		r.updateResponseCache(ctx, encoded)
 	}
 	r.scheduleSemanticResponseMemoryStore(ctx, semanticResponse)

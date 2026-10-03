@@ -76,7 +76,10 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	// policy-service turn commits once this reply has been sent, and caches
 	// it only then; a turn that can no longer commit fails now, while the
 	// client can still be told.
-	if cacheAfterCommit {
+	if cacheAfterCommit && responseRefused(semanticResponse) {
+		// A refused turn is delivered but never recorded, and never cached.
+		declineRefusedTurn(ctx)
+	} else if cacheAfterCommit {
 		if err := selectionCompletionCommittable(ctx); err != nil {
 			recordSelectionLifecycleFailure(ctx, "response_complete", err)
 			return r.bodyPhaseErrorResponse(ctx, http.StatusServiceUnavailable, selectionUnavailableMessage(ctx))
