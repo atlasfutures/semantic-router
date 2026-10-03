@@ -63,23 +63,25 @@ func TestCarryReasoningToMessagesDropsUnsignedThinking(t *testing.T) {
 	}
 }
 
-// A Chat or Responses target cannot verify an Anthropic signature, and the
-// reasoning is another model's: signed thinking is dropped and counted, never
-// stripped and sent on, and the capability gate no longer refuses the turn.
+// A Chat or Responses target cannot verify an Anthropic signature: it is
+// stripped and counted, the thinking text is carried as reasoning (never as
+// visible text), and the capability gate no longer refuses the turn.
 // Unsigned reasoning stays reasoning: a Chat target needs it back.
-func TestCarryReasoningToChatAndResponsesDropsSignedThinking(t *testing.T) {
+func TestCarryReasoningToChatAndResponsesStripsTheSignature(t *testing.T) {
 	for _, target := range []llmprotocol.WireFormat{llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1} {
 		request := reasoningHistory()
 		carry := CarryReasoningTo(&request, target)
-		if carry != (ReasoningCarry{SignedDropped: 1}) {
-			t.Fatalf("%s: carry = %+v, want 1 signed dropped", target, carry)
+		if carry != (ReasoningCarry{SignaturesStripped: 1}) || carry.Dropped() != 0 || !carry.Changed() {
+			t.Fatalf("%s: carry = %+v, want 1 signature stripped and nothing dropped", target, carry)
 		}
-		if signed, unsigned := reasoningOf(request); signed != 0 || unsigned != 2 {
-			t.Fatalf("%s: %d signed, %d unsigned; want 0, 2", target, signed, unsigned)
+		if signed, unsigned := reasoningOf(request); signed != 0 || unsigned != 3 {
+			t.Fatalf("%s: %d signed, %d unsigned; want 0, 3", target, signed, unsigned)
 		}
 		first := request.Messages[1]
-		if len(first.Content) != 1 || first.Content[0].Kind != llmprotocol.ContentText || first.Content[0].Text != "a1" {
-			t.Fatalf("%s: the message that held signed thinking kept %+v, want only its text", target, first.Content)
+		if len(first.Content) != 2 ||
+			first.Content[0].Kind != llmprotocol.ContentReasoning || first.Content[0].Text != "claude thought" || first.Content[0].Signature != "" ||
+			first.Content[1].Kind != llmprotocol.ContentText || first.Content[1].Text != "a1" {
+			t.Fatalf("%s: the signed message became %+v, want its thinking unsigned and its text", target, first.Content)
 		}
 		if len(request.Messages) != len(reasoningHistory().Messages) {
 			t.Fatalf("%s: a message was removed", target)

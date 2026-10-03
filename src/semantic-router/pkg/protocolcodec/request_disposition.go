@@ -236,22 +236,20 @@ var anthropicRequestDispositions = []requestFieldRow{
 	},
 	{
 		// Claude's thinking with its signature. The signature is a MAC under
-		// Anthropic's key, so no other host can check it, and the text is
-		// Claude's private working, not something another model should take
-		// as its own. Anthropic and OpenAI drop a foreign model's reasoning
-		// themselves. It used to be refused (unsupported_capability:
-		// reasoning_signature), then sent on with the signature stripped; now
-		// it is dropped and counted. Never sent as visible text: pi did that
-		// on 2026-10-02, and the next model imitated it.
+		// Anthropic's key, so no other host can check it: it is stripped and
+		// counted, and the text is carried as reasoning, as it was before the
+		// table existed. A signature never crosses to another model's host,
+		// and the text is never sent as visible text: pi did that on
+		// 2026-10-02, and the next model imitated it.
 		Path: fieldReasoningSigned,
 		Targets: map[llmprotocol.WireFormat]targetDisposition{
 			llmprotocol.OpenAIChatV1: {
-				Action: dispositionDrop,
-				Reason: "a Chat host cannot verify an Anthropic thinking signature, and the reasoning is another model's",
+				Action: dispositionTransform,
+				Reason: "a Chat host cannot verify an Anthropic thinking signature; the text is carried as reasoning",
 			},
 			llmprotocol.OpenAIResponsesV1: {
-				Action: dispositionDrop,
-				Reason: "a Responses host cannot verify an Anthropic thinking signature, and the reasoning is another model's",
+				Action: dispositionTransform,
+				Reason: "a Responses host cannot verify an Anthropic thinking signature; the text is carried as reasoning",
 			},
 		},
 	},

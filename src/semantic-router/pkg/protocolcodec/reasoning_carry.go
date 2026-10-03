@@ -6,12 +6,12 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
-// ReasoningCarry counts, by kind, the reasoning CarryReasoningTo dropped from
-// a request's history. Each kind is a row of the request disposition table.
+// ReasoningCarry counts, by kind, what CarryReasoningTo changed in a
+// request's history. Each kind is a row of the request disposition table.
 type ReasoningCarry struct {
-	// SignedDropped is Anthropic thinking with its signature, dropped for a
-	// Chat or Responses target (content.thinking.signed).
-	SignedDropped int
+	// SignaturesStripped is Anthropic thinking whose signature was removed
+	// for a Chat or Responses target, its text kept (content.thinking.signed).
+	SignaturesStripped int
 	// RedactedDropped is Anthropic redacted_thinking, dropped for a Chat or
 	// Responses target (content.redacted_thinking).
 	RedactedDropped int
@@ -25,18 +25,16 @@ type ReasoningCarry struct {
 
 // Changed reports whether the request was changed.
 func (carry ReasoningCarry) Changed() bool {
-	return carry.Dropped() > 0
+	return carry.Dropped() > 0 || carry.SignaturesStripped > 0
 }
 
 // Dropped is the number of reasoning blocks dropped, of every kind.
 func (carry ReasoningCarry) Dropped() int {
-	return carry.SignedDropped + carry.RedactedDropped + carry.UnsignedDropped
+	return carry.RedactedDropped + carry.UnsignedDropped
 }
 
 func (carry *ReasoningCarry) count(path string) {
 	switch path {
-	case fieldReasoningSigned:
-		carry.SignedDropped++
 	case fieldRedactedThinking:
 		carry.RedactedDropped++
 	case fieldReasoningUnsigned:
@@ -45,14 +43,15 @@ func (carry *ReasoningCarry) count(path string) {
 }
 
 // CarryReasoningTo applies the reasoning rows of the request disposition
-// table to a request's history, in place, and counts what it dropped. It runs
+// table to a request's history, in place, and counts what it changed. It runs
 // at dispatch, before the capability gate: reasoning a target cannot carry
 // was once refused there (Chat and Responses: "does not support:
 // reasoning_signature") or sent untranslatable (Messages: thinking without a
 // signature, which the provider rejects), so a conversation that switched
 // models failed its next turn. Neither is the client's error.
 //
-// What a row drops is removed. What it carries is left exactly as it is:
+// What a row drops is removed. What it transforms keeps its text and loses its
+// signature. What it carries is left exactly as it is:
 // unsigned reasoning stays reasoning for a Chat target, which encodes it as
 // reasoning_content. Nothing here ever turns reasoning into visible text. A
 // message left with no content is removed. Visible text, tool calls and tool
@@ -72,10 +71,17 @@ func CarryReasoningTo(request *llmprotocol.Request, target llmprotocol.WireForma
 		}
 		contents := make([]llmprotocol.Content, 0, len(message.Content))
 		for _, content := range message.Content {
-			if path := reasoningProvenance(content); path != "" &&
-				dispositionFor(path, target).Action == dispositionDrop {
-				carry.count(path)
-				continue
+			if path := reasoningProvenance(content); path != "" {
+				switch dispositionFor(path, target).Action {
+				case dispositionDrop:
+					carry.count(path)
+					continue
+				case dispositionTransform:
+					// A reasoning row's transform strips the signature the
+					// target cannot verify and keeps the text.
+					content.Signature = ""
+					carry.SignaturesStripped++
+				}
 			}
 			contents = append(contents, content)
 		}

@@ -61,20 +61,30 @@ func (r *OpenAIRouter) prepareProviderDispatch(
 	if err != nil {
 		return nil, err
 	}
-	// Reasoning this target cannot verify is dropped by the disposition
-	// table before the capability gate, which would otherwise refuse it.
-	// Every drop is logged by kind.
+	// The disposition table makes reasoning carriable by this target before
+	// the capability gate, which would otherwise refuse it: a block the target
+	// cannot verify is dropped, a signature it cannot verify is stripped. Each
+	// is logged by kind.
 	if carry := protocolcodec.CarryReasoningTo(request, dispatch.targetFormat); carry.Changed() {
 		changed = true
-		logging.ComponentEvent("extproc", "reasoning_dropped", map[string]interface{}{
-			"request_id":       ctx.RequestID,
-			"model":            logicalModel,
-			"wire_format":      dispatch.targetFormat,
-			"dropped":          carry.Dropped(),
-			"signed_dropped":   carry.SignedDropped,
-			"redacted_dropped": carry.RedactedDropped,
-			"unsigned_dropped": carry.UnsignedDropped,
-		})
+		if carry.Dropped() > 0 {
+			logging.ComponentEvent("extproc", "reasoning_dropped", map[string]interface{}{
+				"request_id":       ctx.RequestID,
+				"model":            logicalModel,
+				"wire_format":      dispatch.targetFormat,
+				"dropped":          carry.Dropped(),
+				"redacted_dropped": carry.RedactedDropped,
+				"unsigned_dropped": carry.UnsignedDropped,
+			})
+		}
+		if carry.SignaturesStripped > 0 {
+			logging.ComponentEvent("extproc", "reasoning_signature_stripped", map[string]interface{}{
+				"request_id":          ctx.RequestID,
+				"model":               logicalModel,
+				"wire_format":         dispatch.targetFormat,
+				"signatures_stripped": carry.SignaturesStripped,
+			})
+		}
 	}
 	if r.dropRaylineARCOpaqueReasoningIssuedElsewhere(request, dispatch, ctx) {
 		changed = true

@@ -11,7 +11,7 @@ import (
 )
 
 // This file holds a tool loop on the model family that opened it
-// (hold_family_in_tool_loop, router-infra#95 option d).
+// (hold_family_in_tool_loop).
 //
 // A turn is mid-loop when its last message returns the result of a tool call
 // the assistant made, and the arm that made the call is the episode's

@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -31,12 +32,28 @@ func TestReasoningFromAnotherModelIsCarriedToTheNextWorker(t *testing.T) {
 	t.Run("Claude's signed thinking to a Chat worker", func(t *testing.T) {
 		think := actions["think"].ActionID
 		fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return think })
+		logs := captureLogs(t)
 		body := dispatchPolicyClientRequest(t, router, "episode-carry-chat", "/v1/messages",
 			history(`{"type":"thinking","thinking":"claude reasoning","signature":"claude-signature"}`))
 		assertJSONField(t, body, "model", `"vendor/think"`)
 		wire := string(body["messages"])
-		if strings.Contains(wire, "claude-signature") || strings.Contains(wire, "claude reasoning") {
-			t.Fatalf("a Chat worker was sent Claude's signed thinking: %s", wire)
+		if strings.Contains(wire, "claude-signature") {
+			t.Fatalf("a Chat worker was sent Claude's signature: %s", wire)
+		}
+		var messages []map[string]json.RawMessage
+		if err := json.Unmarshal(body["messages"], &messages); err != nil || len(messages) < 2 {
+			t.Fatalf("messages = %s", body["messages"])
+		}
+		if string(messages[1]["reasoning_content"]) != `"claude reasoning"` || strings.Contains(string(messages[1]["content"]), "claude reasoning") {
+			t.Fatalf("Claude's thinking did not reach the Chat worker as reasoning alone: %s", wire)
+		}
+		if stripped := findLogEvent(t, logs, "reasoning_signature_stripped"); fmt.Sprint(stripped["signatures_stripped"]) != "1" {
+			t.Fatalf("reasoning_signature_stripped = %v, want 1", stripped)
+		}
+		for _, entry := range logs.All() {
+			if entry.ContextMap()["event"] == "reasoning_dropped" {
+				t.Fatalf("a strip was logged as a drop: %v", entry.ContextMap())
+			}
 		}
 		if !strings.Contains(wire, "Looking at it.") {
 			t.Fatalf("the assistant's visible text was lost: %s", wire)
