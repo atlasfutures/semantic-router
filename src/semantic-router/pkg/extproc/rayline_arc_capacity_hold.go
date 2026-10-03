@@ -55,12 +55,15 @@ func (selector *raylineARCSelector) policyCapacityHold(
 	workerIDs []string,
 	latency time.Duration,
 ) *selection.SelectionResult {
-	if state.PreviousArm == nil || state.Policy == nil {
+	// The ledger is the current context's, as PolicyTurn left it: a request
+	// that starts a compaction or prefix-break epoch has an empty one, so
+	// nothing from the previous context is held.
+	if state.PreviousArm == nil || turn == nil {
 		return nil
 	}
 	var held *raylinearc.PolicyLedgerEntry
-	for index := len(state.Policy.Ledger) - 1; index >= 0; index-- {
-		entry := state.Policy.Ledger[index]
+	for index := len(turn.Ledger) - 1; index >= 0; index-- {
+		entry := turn.Ledger[index]
 		if binding, ok := scorer.bindings[entry.ActionID]; ok && binding.arm == *state.PreviousArm {
 			held = &entry
 			break
@@ -93,6 +96,9 @@ func (selector *raylineARCSelector) policyCapacityHold(
 	maxTokens, _ := refusal.Detail["max_tokens"].(int)
 	encoded := &raylinearc.EncoderResult{SerializedTokens: tokens, FullHistoryTokens: tokens}
 	result := selector.selectionResult(armed, selCtx, arcContext, state, encoded, decision, 0)
+	// The policy scored nothing: the trace and selection log carry no scores,
+	// rather than all-zero ones a consumer would read as a real result.
+	result.RaylineARC.RawScores, result.RaylineARC.AdjustedScores = nil, nil
 	result.RaylineARC.PolicyLatency = latency
 	result.RaylineARC.EncoderLatencyUnknown = true
 	result.Reasoning = "policy-service ARC decision (encoder_capacity_hold)"

@@ -66,6 +66,10 @@ func TestCapacityRefusalHoldsTheEpisodesServedAction(t *testing.T) {
 	if next := result.RaylineARC.PolicyNextState; next == nil || next.Ledger[len(next.Ledger)-1].ActionID != bindings[1].ActionID {
 		t.Fatalf("the held turn did not commit to the ledger: %+v", next)
 	}
+	if result.RaylineARC.RawScores != nil || result.RaylineARC.AdjustedScores != nil {
+		t.Fatalf("a capacity hold reported scores %v / %v; the policy scored nothing",
+			result.RaylineARC.RawScores, result.RaylineARC.AdjustedScores)
+	}
 }
 
 // With nothing served yet the refusal still fails the turn closed: the
