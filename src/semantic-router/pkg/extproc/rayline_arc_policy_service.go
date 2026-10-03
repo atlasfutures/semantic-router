@@ -605,7 +605,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		result.RaylineARC.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(binding.arm, state.TurnIndex, turn, messages)
 	}
 	if fallback {
-		logRaylineARCFallbackDecision(arcContext.EpisodeIDHash, state.TurnIndex, turn, forced, available, response)
+		logRaylineARCFallbackDecision(arcContext.EpisodeIDHash, arcContext.RequestID, state.TurnIndex, turn, forced, available, response)
 	}
 	return result, nil
 }
@@ -642,6 +642,7 @@ func (scorer *policyServiceScorer) armModel(arm int) string {
 // (ADR 0120). The request id joins it to the turn's llm_usage line.
 func logRaylineARCFallbackDecision(
 	episodeIDHash string,
+	requestID string,
 	turnIndex uint64,
 	turn *raylinearc.PolicyEpisodeState,
 	forced bool,
@@ -665,6 +666,7 @@ func logRaylineARCFallbackDecision(
 	}
 	logging.ComponentEvent("extproc", "rayline_arc_fallback_decision", map[string]interface{}{
 		"episode_id_hash":    episodeIDHash,
+		"request_id":         requestID,
 		"turn_index":         turnIndex,
 		"reason":             reason,
 		"excluded":           excluded,

@@ -12,6 +12,9 @@ import (
 // algorithm.
 type RaylineARCSelectionContext struct {
 	EpisodeIDHash string
+	// RequestID is the request's correlation id, which joins a decision's
+	// logs to the turn's llm_usage line.
+	RequestID string
 	// Coalesced is the decision an identical in-flight request on this
 	// episode already made. When set, the selector returns it instead of
 	// deciding again: the request is a resend of a turn being decided, not a

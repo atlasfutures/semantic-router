@@ -95,6 +95,7 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		result.PreparationFailure = "missing_request"
 		return result
 	}
+	result.RequestID = reqCtx.RequestID
 	reqCtx.InjectedFault = requestedFault(algorithm.RaylineARC, reqCtx)
 	rawEpisodeID := strings.TrimSpace(
 		reqCtx.Headers[algorithm.RaylineARC.Episode.IDHeader],
