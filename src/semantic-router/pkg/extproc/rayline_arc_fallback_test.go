@@ -277,3 +277,25 @@ func TestRaylineARCProviderErrorRefusalExcludesTheModel(t *testing.T) {
 		}
 	}
 }
+
+// A refused turn that opened a new context excludes only its own model there:
+// what the old context excluded stays behind. Control: a refused turn that
+// stayed in the context keeps the earlier exclusion beside its own.
+func TestRaylineARCRefusalInANewContextLeavesOldExclusions(t *testing.T) {
+	task := []json.RawMessage{json.RawMessage(`{"role":"user","content":"fix the bug"}`)}
+	read := (&raylinearc.PolicyEpisodeState{}).Next(task, strings.Repeat("a", 64), "arm-a").WithExclusion("vendor/think", turnFailureRefusal)
+	for name, tc := range map[string]struct {
+		context    *raylinearc.PolicyEpisodeState
+		keepsThink bool
+	}{
+		"opened a new context": {&raylinearc.PolicyEpisodeState{Epoch: 1, EpochStartTurn: 3, CompactionCount: 1}, false},
+		"stayed in it":         {read.Clone(), true},
+	} {
+		state, _ := raylinearc.NewEpisodeState(2)
+		state.Policy = read
+		next, _ := refusedTurn{arm: -1, exclude: "vendor/off", context: tc.context, decidedFrom: read}.apply(state)
+		if !next.Policy.Excludes("vendor/off") || next.Policy.Excludes("vendor/think") != tc.keepsThink {
+			t.Fatalf("%s: exclusions %+v", name, next.Policy.Exclusions)
+		}
+	}
+}

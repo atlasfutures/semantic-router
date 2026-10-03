@@ -148,14 +148,19 @@ func (refusal refusedTurn) apply(state *raylinearc.EpisodeState) (*raylinearc.Ep
 //   - anything else: nothing. The store may hold another context (a
 //     compaction or a prefix break since), or a sibling one a concurrent
 //     relaxed request opened with the same epoch number, and a context starts
-//     with the full offer.
+//     with the full offer. It may also hold later turns of this context, after
+//     an answered copy of the refused turn committed and the client went on;
+//     the model answered that very request, so its duplicate's refusal is
+//     dropped rather than matched to a context it cannot be proven part of.
 func (refusal refusedTurn) exclusionBase(stored *raylinearc.PolicyEpisodeState) (*raylinearc.PolicyEpisodeState, bool) {
 	if refusal.context == nil {
 		return stored, true
 	}
 	if samePolicyContext(stored, refusal.decidedFrom) {
 		base := refusal.context
-		if stored != nil {
+		// Only a turn that stayed in the stored context keeps what it
+		// excluded; a turn that opened a new one starts it with the full offer.
+		if stored != nil && stored.Epoch == refusal.context.Epoch {
 			for _, exclusion := range stored.Exclusions {
 				base = base.WithExclusion(exclusion.Model, exclusion.Class)
 			}
