@@ -4,9 +4,11 @@ package extproc
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -110,5 +112,51 @@ func TestRaylineARCRefusalClearsTheRetainedBoundaryArm(t *testing.T) {
 		if redecided := len(offered) > 1 && retried.RaylineARC.PolicyBoundary != nil; redecided != refusal {
 			t.Fatalf("refusal=%v: retry offered %v, boundary %+v", refusal, offered, retried.RaylineARC.PolicyBoundary)
 		}
+	}
+}
+
+// A refusal the response jailbreak plugin blocks is still declined: the
+// plugin's early return must not leave the boundary decision that chose the
+// refusing arm in place. Control: the same blocked reply without a refusal
+// keeps the decision, as any failed attempt does.
+func TestRaylineARCBlockedRefusalStillClearsTheBoundaryArm(t *testing.T) {
+	for _, body := range []string{arcRefusedCompletion, arcCacheTestCompletion} {
+		refused := body == arcRefusedCompletion
+		fixture, store, episode := boundaryFixture(t)
+		attempt, decided := boundaryAttempt(t, fixture, store, episode,
+			policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"}))
+		router, ctx := newResponseStageRouter(t, newJailbreakFailingServer(t), config.OnErrorBlock, "block")
+		ctx.RequestModel, ctx.UpstreamStatusCode = "test", 200
+		ctx.SourceFormat, ctx.TargetFormat = llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1
+		ctx.RaylineARCTransaction, ctx.VSRRaylineARC = attempt.RaylineARCTransaction, decided.RaylineARC
+		ctx.RaylineARCTransaction.commitOnCompletion = true
+		bindRaylineARCSelectionTransaction(ctx)
+		response := router.handleNonStreamingResponseBody([]byte(body), ctx, time.Second)
+		if response.GetImmediateResponse() == nil {
+			t.Fatalf("refused=%v: the plugin did not block", refused)
+		}
+		finalizeSelectionProcessTerminal(ctx)
+		after := readLedgerTestState(t, store, episode)
+		if cleared := after.PolicyBoundary == nil; cleared != refused {
+			t.Fatalf("refused=%v: boundary after the blocked reply = %+v", refused, after.PolicyBoundary)
+		}
+	}
+}
+
+// Clearing a relaxed boundary is bounded like staging one: a relaxed turn
+// never waits on episode state.
+func TestRaylineARCRelaxedRefusalClearIsBounded(t *testing.T) {
+	_, store, episode := boundaryFixture(t)
+	state, read, err := store.Snapshot(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := []json.RawMessage{json.RawMessage(`{"role":"user","content":"fix the bug"}`)}
+	state.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(1, 0, &raylinearc.PolicyEpisodeState{}, messages)
+	transaction := newRelaxedRaylineARCEpisodeTransaction(blockingSnapshotStore{store}, state, read, episode, false)
+	started := time.Now()
+	transaction.clearRefusedBoundary(context.Background(), 1)
+	if elapsed := time.Since(started); elapsed < relaxedBoundaryStageTimeout/2 || elapsed > time.Second {
+		t.Fatalf("relaxed refusal clear took %v, want about %v", elapsed, relaxedBoundaryStageTimeout)
 	}
 }
