@@ -69,6 +69,10 @@
             "action": "generated"
           },
           {
+            "field": "content.reasoning_details",
+            "action": "dropped"
+          },
+          {
             "field": "include",
             "action": "dropped"
           },
@@ -138,6 +142,10 @@
           {
             "field": "max_tokens",
             "action": "generated"
+          },
+          {
+            "field": "content.reasoning_details",
+            "action": "dropped"
           },
           {
             "field": "include",

@@ -293,3 +293,21 @@ func withoutReasoningDetailsCarriers(output []llmprotocol.OutputItem) []llmproto
 	}
 	return trimmed
 }
+
+// appendReasoningDetailsDrops counts each reasoning block whose
+// reasoning_details a Messages target is not sent. The encoder keeps the
+// reasoning text and drops a block that held only the details.
+func appendReasoningDetailsDrops(
+	diagnostics *llmprotocol.Diagnostics,
+	messages []llmprotocol.Message,
+	target llmprotocol.WireFormat,
+	policy llmprotocol.Policy,
+) {
+	for _, message := range messages {
+		for _, content := range message.Content {
+			if details, _ := reasoningDetailsOf(content); details != nil {
+				appendUnmodeledDrop(diagnostics, policy, content.Extensions.Format, target, "content.reasoning_details")
+			}
+		}
+	}
+}
