@@ -152,6 +152,7 @@ func TestSelectionFailureTurnClasses(t *testing.T) {
 // Control: the same reply whose turn commits carries no failure class.
 func TestCommitGateNamesTheCellFailure(t *testing.T) {
 	for _, commitFails := range []bool{true, false} {
+		logs := captureLogs(t)
 		_, router, decision := statusCacheRouter()
 		store, episode := newLedgerTestStore(t)
 		lease, state, err := store.Prepare(context.Background(), episode, 2)
@@ -176,6 +177,11 @@ func TestCommitGateNamesTheCellFailure(t *testing.T) {
 		if (header == selectionFailureUnavailable) != commitFails || (commitFails && ctx.ResponseFailureClass != selectionFailureUnavailable) {
 			t.Fatalf("commit fails=%v: header %q, class %q", commitFails, header, ctx.ResponseFailureClass)
 		}
+		// The usage line, written before the gate fails the reply, carries
+		// the class too.
+		if class := findLogEvent(t, logs, "llm_usage")["failure_class"]; (class == selectionFailureUnavailable) != commitFails {
+			t.Fatalf("commit fails=%v: usage line failure_class %v", commitFails, class)
+		}
 		finalizeSelectionProcessTerminal(ctx)
 	}
 }
@@ -196,5 +202,41 @@ func TestDowngradedRefusalBodyNamesTheFailureClass(t *testing.T) {
 		if got := string(withFailureClass([]byte(unchanged.body), unchanged.class)); got != unchanged.body {
 			t.Fatalf("%q with class %q became %q", unchanged.body, unchanged.class, got)
 		}
+	}
+}
+
+// A lost lease found at the response headers is the same cell failure as at
+// the body: the 503 carries the class header and the turn is classed.
+// Control: a held lease lets the reply through unmarked.
+func TestResponseHeaderGateNamesTheCellFailure(t *testing.T) {
+	for _, leaseLost := range []bool{true, false} {
+		logs := captureLogs(t)
+		store, episode := newLedgerTestStore(t)
+		lease, state, err := store.Prepare(context.Background(), episode, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := &RequestContext{
+			RequestID: "req-header-gate", TraceContext: context.Background(), Headers: map[string]string{},
+			RaylineARCTransaction: newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil),
+		}
+		ctx.RaylineARCTransaction.commitOnCompletion = true
+		ctx.RaylineARCTransaction.markSelection(0, 10)
+		if leaseLost {
+			ctx.RaylineARCTransaction.leaseLost.Store(true)
+		}
+		bindRaylineARCSelectionTransaction(ctx)
+		response, err := (&OpenAIRouter{}).handleResponseHeaders(arcResponseHeaders("200"), ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		failed := response.GetImmediateResponse() != nil
+		if failed != leaseLost || (leaseLost && immediateHeaderValue(response, selectionFailureHeader) != selectionFailureUnavailable) {
+			t.Fatalf("lease lost=%v: failed=%v header %q", leaseLost, failed, immediateHeaderValue(response, selectionFailureHeader))
+		}
+		if leaseLost && findLogEvent(t, logs, "turn_failed")["failure_class"] != selectionFailureUnavailable {
+			t.Fatal("the header-gate failure was not classed")
+		}
+		finalizeSelectionProcessTerminal(ctx)
 	}
 }
