@@ -58,6 +58,8 @@ func (r *OpenAIRouter) emptySuccessResponse(
 		return nil
 	}
 	recordTurnFailureDetail(ctx, turnFailureUpstreamError, "empty_response", false)
+	// The provider attempts are counted as for any reply, and as a failure.
+	captureRaylineARCProviderAttempts(v.ResponseHeaders.GetHeaders(), ctx, http.StatusBadGateway)
 	// The usual header-phase bookkeeping still runs: the span ends, and the
 	// replay and learning records see the status.
 	finishUpstreamResponseSpan(ctx, outcome)

@@ -15,7 +15,13 @@ import (
 
 // llmUsageRecordSchema versions the shape below. A consumer reading the
 // durable stream can refuse a record it does not understand.
-const llmUsageRecordSchema = "vsr.llm_usage.v1"
+//
+// v2 added content_sent_before_failure and failure_detail, and bounded
+// failure_class to the turn failure vocabulary (a v1 failure_class could
+// carry a protocol code, which v2 moves to failure_detail). A v2 record is
+// also written for a provider error, which v1 left without a line. Readers
+// accept both.
+const llmUsageRecordSchema = "vsr.llm_usage.v2"
 
 // openRouterChargeCurrency is the unit of OpenRouter's usage.cost: credits,
 // each worth one US dollar.
