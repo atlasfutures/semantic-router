@@ -221,7 +221,7 @@ func TestResponseHeaderGateNamesTheCellFailure(t *testing.T) {
 			t.Fatal(err)
 		}
 		ctx := &RequestContext{
-			RequestID: "req-header-gate", TraceContext: context.Background(), Headers: map[string]string{},
+			RequestID: "req-header-gate", RequestModel: "test", TraceContext: context.Background(), Headers: map[string]string{},
 			RaylineARCTransaction: newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil),
 		}
 		ctx.RaylineARCTransaction.commitOnCompletion = true
@@ -241,6 +241,12 @@ func TestResponseHeaderGateNamesTheCellFailure(t *testing.T) {
 		if leaseLost && findLogEvent(t, logs, "turn_failed")["failure_class"] != selectionFailureUnavailable {
 			t.Fatal("the header-gate failure was not classed")
 		}
+		// The upstream answered and may bill: its usage line is written here.
+		if leaseLost {
+			if usage := findLogEvent(t, logs, "llm_usage"); usage["failure_class"] != selectionFailureUnavailable || usage["pricing"] != usagePricingNoUsage {
+				t.Fatalf("header-gate usage line = %#v", usage)
+			}
+		}
 		finalizeSelectionProcessTerminal(ctx)
 	}
 }
@@ -258,5 +264,32 @@ func TestBlockedReplyStillWritesItsUsageLine(t *testing.T) {
 	}
 	if usage := findLogEvent(t, logs, "llm_usage"); usage["prompt_tokens"] == nil {
 		t.Fatalf("the blocked reply's usage line = %#v", usage)
+	}
+}
+
+// A reply the Router could not use (decoded, then refused) is a classed
+// failure like the others: its code reaches the usage line, the turn_failed
+// line and the counter. Control: with nothing decoded, no line is invented.
+func TestUnusableResponseIsAClassedFailure(t *testing.T) {
+	for _, decoded := range []bool{true, false} {
+		logs := captureLogs(t)
+		ctx := &RequestContext{RequestID: "req-unusable", RequestModel: "test"}
+		if decoded {
+			ctx.UpstreamDecodedRemnant = &llmprotocol.Response{Model: "test", StopReason: llmprotocol.StopEndTurn}
+		}
+		usageRecordRouter().reportUnusableResponseUsage(ctx, time.Second,
+			llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "empty_completion", "no output", nil))
+		var failed int
+		for _, entry := range logs.All() {
+			if entry.ContextMap()["event"] == "turn_failed" {
+				failed++
+			}
+		}
+		if decoded && (failed != 1 || findLogEvent(t, logs, "llm_usage")["failure_class"] != "empty_completion") {
+			t.Fatalf("decoded: turn_failed=%d usage=%#v", failed, findLogEvent(t, logs, "llm_usage"))
+		}
+		if !decoded && failed != 0 {
+			t.Fatalf("an undecoded reply was classed: turn_failed=%d", failed)
+		}
 	}
 }
