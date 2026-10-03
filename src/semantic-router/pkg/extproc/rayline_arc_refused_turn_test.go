@@ -324,10 +324,13 @@ func TestRaylineARCRefusedResendRetryStagesUnderItsLiveContext(t *testing.T) {
 			RaylineARCTransaction: newBorrowedRaylineARCEpisodeTransaction(deadlineStore{store}, leader.RaylineARCTransaction.state, episode, entry),
 			VSRRaylineARC:         decided.RaylineARC,
 		}
-		// The holder releases after the first wait has run out, within the retry.
+		// The holder finishes well after both short waits would have run
+		// out (an encoder close, a slow commit), and leaves the registry as
+		// its finalizer does.
 		go func() {
-			time.Sleep(relaxedBoundaryStageTimeout + relaxedBoundaryStageTimeout/5)
+			time.Sleep(4 * relaxedBoundaryStageTimeout)
 			_ = leader.RaylineARCTransaction.abort(context.Background(), "upstream_status")
+			entry.finishOnce.Do(func() { close(entry.finished) })
 		}()
 		declineRefusedTurn(follower)
 		time.Sleep(relaxedBoundaryStageTimeout)

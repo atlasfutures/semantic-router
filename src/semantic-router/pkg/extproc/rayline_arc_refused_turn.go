@@ -214,6 +214,12 @@ func (transaction *raylineARCEpisodeTransaction) stageBorrowedRefusal(parent con
 		if transaction.inflight == nil || transaction.inflight.noteRefusal(refusal) {
 			return
 		}
+		// The leader has taken its last look and is finishing, which can
+		// outlast a short wait (an encoder close, a slow commit): wait for it
+		// to release the lease, within the refusal's own bound.
+		if transaction.inflight.awaitFinished(parent) != nil {
+			return
+		}
 		retryContext, retryCancel := context.WithTimeout(parent, relaxedBoundaryStageTimeout)
 		defer retryCancel()
 		if lease, current, err = transaction.store.Prepare(retryContext, transaction.episodeIDHash, len(transaction.state.Warmth)); err != nil {
