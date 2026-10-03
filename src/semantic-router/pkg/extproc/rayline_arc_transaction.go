@@ -106,6 +106,9 @@ type raylineARCEpisodeTransaction struct {
 	// onFinalize is an optional terminal-path hook; the stream-level hold in
 	// processWithContext is what keeps the episode store open.
 	onFinalize func()
+	// inflight is the coalescing entry this turn leads or joined, through
+	// which a refused resend hands its boundary decision to the lease owner.
+	inflight *raylineARCInflightEntry
 }
 
 func newRaylineARCEpisodeTransaction(
@@ -152,10 +155,17 @@ func newRelaxedRaylineARCEpisodeTransaction(
 // resend dispatches under. It reads like the first copy's prepared one, so the
 // resend renders the same controls and ledger, and finalizes to nothing.
 func newBorrowedRaylineARCEpisodeTransaction(
+	store raylinearc.EpisodeStore,
 	state *raylinearc.EpisodeState,
 	episodeIDHash string,
+	inflight *raylineARCInflightEntry,
 ) *raylineARCEpisodeTransaction {
 	return &raylineARCEpisodeTransaction{
+		inflight: inflight,
+		// The store is held only so a refused resend can clear the boundary
+		// decision that chose the refusing arm; a borrowed turn writes nothing
+		// else.
+		store:         store,
 		state:         state,
 		episodeIDHash: episodeIDHash,
 		borrowed:      true,
@@ -553,6 +563,7 @@ func (transaction *raylineARCEpisodeTransaction) abort(
 			return
 		}
 		transaction.stopRenewal()
+		transaction.clearHandedOverRefusal(ctx)
 		transaction.finalizeErr = transaction.store.Abort(
 			ctx,
 			transaction.lease,
@@ -583,6 +594,9 @@ func (transaction *raylineARCEpisodeTransaction) abortStore(
 		episodeFinalizeTimeout,
 	)
 	defer cancel()
+	// A commit that failed leaves the turn unrecorded, as an abort does, so
+	// a refusal a coalesced resend handed over is cleared here too.
+	transaction.clearHandedOverRefusal(abortContext)
 	_ = transaction.store.Abort(abortContext, transaction.lease)
 	metrics.RecordRaylineARCEpisodeTransaction("abort", "commit_failure")
 }
