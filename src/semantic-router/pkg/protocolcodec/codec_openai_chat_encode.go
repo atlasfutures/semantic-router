@@ -236,13 +236,38 @@ func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) erro
 		}
 		wire.Messages = append(wire.Messages, encoded)
 	}
+	// A Chat tool message carries text only, so the media a tool returned
+	// (a screenshot, an MCP image) is moved into a user message that follows
+	// the run of tool messages: Chat requires every tool message to follow its
+	// assistant turn directly, with nothing between them.
+	var toolMedia []chatContentWire
+	flushToolMedia := func() {
+		if len(toolMedia) > 0 {
+			content, _ := json.Marshal(toolMedia)
+			wire.Messages = append(wire.Messages, chatMessageWire{Role: "user", Content: content})
+			toolMedia = nil
+		}
+	}
 	for _, message := range request.Messages {
+		// A message dropped whole emits nothing, so it does not end the run
+		// of tool messages either.
+		if message.Configuration == nil && messageDropsWhole(message.Content, llmprotocol.OpenAIChatV1) {
+			continue
+		}
+		if message.Role != llmprotocol.RoleTool {
+			flushToolMedia()
+		}
 		if message.Configuration != nil {
 			wire.Messages = append(wire.Messages, encodeChatConfigurationMessage(message))
 			continue
 		}
-		if messageDropsWhole(message.Content, llmprotocol.OpenAIChatV1) {
-			continue
+		if message.Role == llmprotocol.RoleTool {
+			textOnly, media, err := splitChatToolResultMedia(message)
+			if err != nil {
+				return err
+			}
+			message = textOnly
+			toolMedia = append(toolMedia, media...)
 		}
 		encoded, err := encodeChatMessage(message)
 		if err != nil {
@@ -254,6 +279,7 @@ func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) erro
 		}
 		wire.Messages = append(wire.Messages, encoded)
 	}
+	flushToolMedia()
 	return nil
 }
 
@@ -275,6 +301,48 @@ func foldChatReasoningDetailsMessage(messages []chatMessageWire, next *chatMessa
 	}
 	next.Reasoning, next.ReasoningDetails = previous.Reasoning, previous.ReasoningDetails
 	return true
+}
+
+// splitChatToolResultMedia takes the images out of a tool message's result. It
+// returns the message with the rest alone, saying where the images went when
+// the result held no text, and the images as user-message parts led by a line
+// naming the call they came from. Only images move: an arm's
+// tool_result_images claim says its model takes image input, which says
+// nothing about a document or audio, so those stay where they were and fail
+// the encode as before.
+func splitChatToolResultMedia(message llmprotocol.Message) (llmprotocol.Message, []chatContentWire, error) {
+	if len(message.Content) != 1 || message.Content[0].Kind != llmprotocol.ContentToolResult || message.Content[0].ToolResult == nil {
+		return message, nil, nil
+	}
+	result := *message.Content[0].ToolResult
+	kept := make([]llmprotocol.Content, 0, len(result.Content))
+	mediaState := chatMessageEncodingState{wire: &chatMessageWire{}}
+	hasText := false
+	for _, part := range result.Content {
+		switch part.Kind {
+		case llmprotocol.ContentText:
+			kept = append(kept, part)
+			hasText = true
+		case llmprotocol.ContentImage:
+			if err := mediaState.appendImage(part); err != nil {
+				return message, nil, err
+			}
+		default:
+			kept = append(kept, part)
+		}
+	}
+	if len(mediaState.parts) == 0 {
+		return message, nil, nil
+	}
+	if !hasText {
+		kept = append(kept, llmprotocol.Content{Kind: llmprotocol.ContentText, Text: "The tool returned images; they follow in the next user message."})
+	}
+	result.Content = kept
+	content := message.Content[0]
+	content.ToolResult = &result
+	message.Content = []llmprotocol.Content{content}
+	label := chatContentWire{Type: "text", Text: "Images returned by tool call " + result.CallID + ":"}
+	return message, append([]chatContentWire{label}, mediaState.parts...), nil
 }
 
 // encodeChatConfigurationMessage writes the content-less system message that
