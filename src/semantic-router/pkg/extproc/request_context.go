@@ -129,6 +129,10 @@ type RequestContext struct {
 	// this request (e.g. response headers not processed). The cache-write path
 	// reads it to avoid caching non-2xx error bodies (cache poisoning).
 	UpstreamStatusCode int
+	// UpstreamAttempts is how many times the provider hop sent this call
+	// (x-vsr-upstream-attempts): above 1, Envoy retried it and the earlier
+	// attempts never reached the Router. 0 when the hop did not say.
+	UpstreamAttempts int
 	// UpstreamAttemptCount distinguishes one logical Rayline request from the
 	// wire attempts Envoy made beneath it. RetryCount is attempts minus one;
 	// RetryExhausted is true only when the final 429/503 consumed the artifact
