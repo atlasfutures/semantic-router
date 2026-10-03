@@ -487,3 +487,20 @@ def test_rayline_arc_cli_bounds_fallback_models(models, enabled):
         for error in _validate_rayline_arc_decision(decision)
     )
     assert refused == (enabled and models > 16)
+
+
+@pytest.mark.parametrize("size", [128, 129])
+@pytest.mark.parametrize("enabled", [True, False])
+def test_rayline_arc_cli_bounds_fallback_model_names(size, enabled):
+    """Mirrors the Go loader: a fallback model name fits an exclusion."""
+    decision = _policy_service_decision()
+    policy = decision.algorithm.rayline_arc.policy_service
+    policy.bindings = [
+        policy.bindings[0].model_copy(update={"model": "m" * size}),
+        policy.bindings[1],
+    ]
+    policy.fallback = RaylineARCPolicyFallbackConfig(enabled=enabled)
+    refused = any(
+        "bytes" in error.message for error in _validate_rayline_arc_decision(decision)
+    )
+    assert refused == (enabled and size > 128)

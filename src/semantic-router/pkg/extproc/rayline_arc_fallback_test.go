@@ -193,7 +193,10 @@ func TestRaylineARCHandedOverRefusalCommitsWithTheLeader(t *testing.T) {
 // The loader's model bound is the episode's exclusion bound: every model a
 // fallback-enabled package serves can be excluded.
 func TestRaylineARCFallbackModelBoundMatchesTheEpisode(t *testing.T) {
-	if config.RaylineARCMaxFallbackModels != raylinearc.MaxPolicyExclusions {
-		t.Fatalf("loader bound %d, episode bound %d", config.RaylineARCMaxFallbackModels, raylinearc.MaxPolicyExclusions)
+	if config.RaylineARCMaxFallbackModels != raylinearc.MaxPolicyExclusions ||
+		config.RaylineARCMaxFallbackModelBytes != raylinearc.MaxPolicyExclusionModelBytes {
+		t.Fatalf("loader bounds %d models of %d bytes, episode bounds %d of %d",
+			config.RaylineARCMaxFallbackModels, config.RaylineARCMaxFallbackModelBytes,
+			raylinearc.MaxPolicyExclusions, raylinearc.MaxPolicyExclusionModelBytes)
 	}
 }

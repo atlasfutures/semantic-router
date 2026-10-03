@@ -114,6 +114,12 @@ type RaylineARCPolicyFallbackConfig struct {
 // refuse past the bound and keep offering a model that refused.
 const RaylineARCMaxFallbackModels = 16
 
+// RaylineARCMaxFallbackModelBytes bounds a fallback-enabled package's model
+// names: an exclusion stores the name, and the episode refuses a longer one
+// (raylinearc.MaxPolicyExclusionModelBytes), which would leave the refusing
+// model offered.
+const RaylineARCMaxFallbackModelBytes = 128
+
 // policyModels are the distinct trained models the bindings serve: a
 // binding's declared model, else its worker's declared trained model, else
 // the worker itself.
@@ -328,9 +334,17 @@ func writePythonASCIIJSONString(builder *strings.Builder, value string) {
 // every modelRef serves at least one action, so no arm is unreachable.
 func validateRaylineARCPolicyBindings(decision Decision) error {
 	cfg := decision.Algorithm.RaylineARC.PolicyService
-	if cfg.FallbackEnabled() && len(cfg.policyModels()) > RaylineARCMaxFallbackModels {
-		return fmt.Errorf("policy_service fallback serves at most %d distinct models, the bindings serve %d",
-			RaylineARCMaxFallbackModels, len(cfg.policyModels()))
+	if cfg.FallbackEnabled() {
+		models := cfg.policyModels()
+		if len(models) > RaylineARCMaxFallbackModels {
+			return fmt.Errorf("policy_service fallback serves at most %d distinct models, the bindings serve %d",
+				RaylineARCMaxFallbackModels, len(models))
+		}
+		for model := range models {
+			if len(model) > RaylineARCMaxFallbackModelBytes {
+				return fmt.Errorf("policy_service fallback model %q exceeds %d bytes", model, RaylineARCMaxFallbackModelBytes)
+			}
+		}
 	}
 	refs := make(map[string]bool, len(decision.ModelRefs))
 	for _, modelRef := range decision.ModelRefs {

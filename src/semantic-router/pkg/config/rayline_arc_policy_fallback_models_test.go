@@ -29,3 +29,21 @@ func TestRaylineARCPolicyFallbackBoundsTheModels(t *testing.T) {
 		}
 	}
 }
+
+// A fallback-enabled package's model names fit an exclusion. Control: the
+// same name with the fallback off passes this check.
+func TestRaylineARCPolicyFallbackBoundsModelNames(t *testing.T) {
+	for _, size := range []int{RaylineARCMaxFallbackModelBytes, RaylineARCMaxFallbackModelBytes + 1} {
+		for _, enabled := range []bool{true, false} {
+			_, decision := policyDispatchFixture()
+			policy := decision.Algorithm.RaylineARC.PolicyService
+			policy.Bindings = []RaylineARCPolicyBinding{{ActionID: "a", Worker: "arm-off", Model: strings.Repeat("m", size)}}
+			policy.Fallback = &RaylineARCPolicyFallbackConfig{Enabled: enabled}
+			err := validateRaylineARCPolicyBindings(decision)
+			refused := err != nil && strings.Contains(err.Error(), "bytes")
+			if refused != (enabled && size > RaylineARCMaxFallbackModelBytes) {
+				t.Fatalf("size=%d enabled=%v: %v", size, enabled, err)
+			}
+		}
+	}
+}

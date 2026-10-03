@@ -190,6 +190,9 @@ func (boundary *PolicyBoundaryDecision) Validate(workerCount int) error {
 // maxPolicyArmIDBytes bounds a trained arm id; pathfinder's are 64 hex.
 const maxPolicyArmIDBytes = 128
 
+// MaxPolicyExclusionModelBytes bounds an excluded model's name.
+const MaxPolicyExclusionModelBytes = 128
+
 // Validate refuses policy state that could not have been written by Next: a
 // persisted record is read back from a shared store, and a negative prefix
 // or message index would otherwise panic when slicing the request.
@@ -219,7 +222,7 @@ func (state *PolicyEpisodeState) Validate() error {
 		return errors.New("ARC policy episode exclusions exceed their bound")
 	}
 	for _, exclusion := range state.Exclusions {
-		if exclusion.Model == "" || len(exclusion.Model) > maxPolicyArmIDBytes || exclusion.Class == "" || len(exclusion.Class) > 64 {
+		if exclusion.Model == "" || len(exclusion.Model) > MaxPolicyExclusionModelBytes || exclusion.Class == "" || len(exclusion.Class) > 64 {
 			return errors.New("ARC policy episode exclusion is malformed")
 		}
 	}

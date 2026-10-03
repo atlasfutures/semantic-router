@@ -319,12 +319,23 @@ def _validate_policy_service(name, policy) -> list[ValidationError]:
                     field=f"{prefix}.fallback",
                 )
             )
+        for model in sorted(models):
+            if _byte_length(model) > _MAX_FALLBACK_MODEL_BYTES:
+                errors.append(
+                    ValidationError(
+                        f"fallback model {model!r} exceeds "
+                        f"{_MAX_FALLBACK_MODEL_BYTES} bytes",
+                        field=f"{prefix}.fallback",
+                    )
+                )
     return errors
 
 
 # Mirrors RaylineARCMaxFallbackModels in the Go loader: an episode excludes at
 # most this many models.
 _MAX_FALLBACK_MODELS = 16
+# Mirrors RaylineARCMaxFallbackModelBytes: an exclusion stores the name.
+_MAX_FALLBACK_MODEL_BYTES = 128
 
 
 def _validate_encoder_capabilities(prefix, encoder) -> list[ValidationError]:
