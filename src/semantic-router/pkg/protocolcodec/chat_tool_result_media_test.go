@@ -153,3 +153,51 @@ func TestChatEncodeCarriesMediaFromTheLastToolResult(t *testing.T) {
 		t.Fatalf("messages: %s", encoded.Body)
 	}
 }
+
+// A carried block Chat cannot express, between two tool results, is dropped
+// whole and emits nothing: it must not end the run of tool messages, or the
+// second tool message would no longer follow the assistant's tool calls.
+func TestChatEncodeKeepsToolMessagesTogetherAcrossADroppedBlock(t *testing.T) {
+	request := []byte(`{
+		"model":"m","max_tokens":16,
+		"messages":[
+			{"role":"user","content":"go"},
+			{"role":"assistant","content":[
+				{"type":"tool_use","id":"call_a","name":"shot","input":{}},
+				{"type":"tool_use","id":"call_b","name":"read","input":{}}
+			]},
+			{"role":"user","content":[
+				{"type":"tool_result","tool_use_id":"call_a","content":[
+					{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}
+				]},
+				{"type":"future_block_2027","payload":{"x":1}},
+				{"type":"tool_result","tool_use_id":"call_b","content":"text"}
+			]}
+		]
+	}`)
+	engine := NewBuiltinEngine()
+	decoded, _, _, err := engine.DecodeRequest(llmprotocol.AnthropicMessagesV1, request)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	encoded, err := engine.EncodeRequest(llmprotocol.OpenAIChatV1, decoded, llmprotocol.Envelope{})
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	var wire struct {
+		Messages []struct {
+			Role       string `json:"role"`
+			ToolCallID string `json:"tool_call_id"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(encoded.Body, &wire); err != nil {
+		t.Fatal(err)
+	}
+	var roles []string
+	for _, message := range wire.Messages {
+		roles = append(roles, message.Role+":"+message.ToolCallID)
+	}
+	if got := strings.Join(roles, ","); got != "user:,assistant:,tool:call_a,tool:call_b,user:" {
+		t.Fatalf("messages = %s (decoded %d messages)", got, len(decoded.Messages))
+	}
+}

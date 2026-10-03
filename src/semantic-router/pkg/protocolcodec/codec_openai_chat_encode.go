@@ -249,14 +249,16 @@ func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) erro
 		}
 	}
 	for _, message := range request.Messages {
+		// A message dropped whole emits nothing, so it does not end the run
+		// of tool messages either.
+		if message.Configuration == nil && messageDropsWhole(message.Content, llmprotocol.OpenAIChatV1) {
+			continue
+		}
 		if message.Role != llmprotocol.RoleTool {
 			flushToolMedia()
 		}
 		if message.Configuration != nil {
 			wire.Messages = append(wire.Messages, encodeChatConfigurationMessage(message))
-			continue
-		}
-		if messageDropsWhole(message.Content, llmprotocol.OpenAIChatV1) {
 			continue
 		}
 		if message.Role == llmprotocol.RoleTool {
