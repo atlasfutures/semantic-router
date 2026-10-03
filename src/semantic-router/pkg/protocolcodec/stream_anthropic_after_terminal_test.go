@@ -3,6 +3,7 @@ package protocolcodec
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -65,12 +66,14 @@ func TestAnthropicStreamToleratesFramesThatCannotAddToACompleteMessage(t *testin
 		t.Fatalf("usage after a restating late delta: %+v, %v", response.Usage, err)
 	}
 	for name, trailer := range map[string]string{
-		"content block":   "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
-		"new counts":      "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":12}}\n\n",
-		"a charge":        "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":null},\"usage\":{\"output_tokens\":9,\"cost\":0.0042}}\n\n",
-		"another stop":    "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n",
-		"a stop sequence": "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":\"END\"},\"usage\":{\"output_tokens\":9}}\n\n",
-		"usage_source":    "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":9},\"usage_source\":\"unknown\"}\n\n",
+		"content block":       "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+		"new counts":          "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":12}}\n\n",
+		"a charge":            "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":null},\"usage\":{\"output_tokens\":9,\"cost\":0.0042}}\n\n",
+		"another stop":        "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n",
+		"a stop sequence":     "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":\"END\"},\"usage\":{\"output_tokens\":9}}\n\n",
+		"a ping with usage":   "event: ping\ndata: {\"type\":\"ping\",\"usage\":{\"output_tokens\":3}}\n\n",
+		"a stop with a delta": "event: message_stop\ndata: {\"type\":\"message_stop\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n",
+		"usage_source":        "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":9},\"usage_source\":\"unknown\"}\n\n",
 	} {
 		stream, err := NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIResponsesV1,
 			llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
@@ -97,5 +100,16 @@ func TestAnthropicStreamToleratesARepeatedUnknownUsageDelta(t *testing.T) {
 	if _, _, err := NewBuiltinEngine().DecodeResponseStream(llmprotocol.AnthropicMessagesV1, []byte(stream+unknown),
 		llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"}); err != nil {
 		t.Fatalf("a repeated unknown-usage delta failed the stream: %v", err)
+	}
+}
+
+// Counts that differ only beyond float64 precision are still different.
+func TestAnthropicLateDeltaComparesCountsExactly(t *testing.T) {
+	decoder := &anthropicStreamDecoder{terminalDelta: json.RawMessage(`{"type":"message_delta","usage":{"output_tokens":9007199254740992}}`)}
+	if decoder.lateDeltaRestates([]byte(`{"type":"message_delta","usage":{"output_tokens":9007199254740993}}`)) {
+		t.Fatal("two counts beyond float64 precision compared equal")
+	}
+	if !decoder.lateDeltaRestates([]byte(`{"type":"message_delta","usage":{"output_tokens":9007199254740992}}`)) {
+		t.Fatal("the same count compared unequal")
 	}
 }

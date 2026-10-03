@@ -875,7 +875,11 @@ func (decoder *anthropicStreamDecoder) afterTerminal(parsed sseFrame) ([]llmprot
 	}
 	switch eventType {
 	case "ping", "message_stop":
-		return nil, afterTerminalDiagnostic(eventType), nil
+		// Only the bare event: a ping or stop carrying anything else (usage,
+		// a delta) brings evidence the stream can no longer carry.
+		if bareEvent(parsed.Data) {
+			return nil, afterTerminalDiagnostic(eventType), nil
+		}
 	case "message_delta":
 		// Usage and stop reason were published with the completion at
 		// message_stop, and the client has it: a late delta is dropped only
@@ -886,6 +890,10 @@ func (decoder *anthropicStreamDecoder) afterTerminal(parsed sseFrame) ([]llmprot
 		}
 		return nil, nil, invalidProviderResponse("stream_event_after_terminal",
 			"Anthropic stream emitted a message_delta with new usage or stop after message_stop")
+	}
+	if eventType == "ping" || eventType == "message_stop" {
+		return nil, nil, invalidProviderResponse("stream_event_after_terminal",
+			"Anthropic stream emitted a "+eventType+" carrying data after message_stop")
 	}
 	return nil, nil, invalidProviderResponse("stream_event_after_terminal",
 		"Anthropic stream emitted "+boundedEventName(eventType)+" after message_stop")
@@ -924,8 +932,23 @@ func boundedEventName(name string) string {
 // stop sequence, usage and usage_source all as already published. Any
 // difference is evidence the stream can no longer carry.
 func (decoder *anthropicStreamDecoder) lateDeltaRestates(data []byte) bool {
-	var late, terminal any
-	return len(decoder.terminalDelta) > 0 &&
-		json.Unmarshal(data, &late) == nil && json.Unmarshal(decoder.terminalDelta, &terminal) == nil &&
-		reflect.DeepEqual(late, terminal)
+	late, lateOK := exactJSON(data)
+	terminal, terminalOK := exactJSON(decoder.terminalDelta)
+	return len(decoder.terminalDelta) > 0 && lateOK && terminalOK && reflect.DeepEqual(late, terminal)
+}
+
+// exactJSON parses data keeping every number as written (json.Number), so two
+// counts that differ beyond float64 precision still compare unequal.
+func exactJSON(data []byte) (any, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var value any
+	return value, decoder.Decode(&value) == nil
+}
+
+// bareEvent reports whether an event's JSON holds nothing but its type.
+func bareEvent(data []byte) bool {
+	value, ok := exactJSON(data)
+	object, isObject := value.(map[string]any)
+	return ok && isObject && len(object) == 1 && object["type"] != nil
 }
