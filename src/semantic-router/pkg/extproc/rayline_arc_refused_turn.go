@@ -3,6 +3,7 @@ package extproc
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
@@ -109,8 +110,10 @@ func samePolicyContext(a, b *raylinearc.PolicyEpisodeState) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
+	// The ledger tells a committed turn from the state it read even when the
+	// turn's request did not grow the prefix (it is bounded, so compared whole).
 	return a.Epoch == b.Epoch && a.CompactionCount == b.CompactionCount &&
-		a.PrefixLen == b.PrefixLen && a.PrefixDigest == b.PrefixDigest
+		a.PrefixLen == b.PrefixLen && a.PrefixDigest == b.PrefixDigest && slices.Equal(a.Ledger, b.Ledger)
 }
 
 // apply is state with the refusal's changes, and whether it changed.
@@ -256,7 +259,9 @@ func (transaction *raylineARCEpisodeTransaction) stageBorrowedRefusal(parent con
 		if transaction.inflight.awaitFinished(parent) != nil {
 			return
 		}
-		retryContext, retryCancel := context.WithTimeout(parent, relaxedBoundaryStageTimeout)
+		// The lease may now be held by a newer turn rather than the leader:
+		// wait for it within the refusal's whole bound, not a short one.
+		retryContext, retryCancel := context.WithCancel(parent)
 		defer retryCancel()
 		if lease, current, err = transaction.store.Prepare(retryContext, transaction.episodeIDHash, len(transaction.state.Warmth)); err != nil {
 			return

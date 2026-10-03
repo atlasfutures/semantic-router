@@ -335,3 +335,46 @@ func TestRaylineARCFinishedEntryRefusesHandovers(t *testing.T) {
 		t.Fatal("a finished entry took a hand-over")
 	}
 }
+
+// A turn whose request did not grow the recorded prefix still commits a
+// ledger entry; folding a duplicate's refusal into that commit keeps it.
+func TestRaylineARCRefusalKeepsTheCommittedTurnsLedger(t *testing.T) {
+	task := []json.RawMessage{json.RawMessage(`{"role":"user","content":"fix the bug"}`)}
+	read := (&raylinearc.PolicyEpisodeState{}).Next(task, strings.Repeat("a", 64), "arm-a")
+	committed := read.Next(task, strings.Repeat("b", 64), "arm-b")
+	state, _ := raylinearc.NewEpisodeState(2)
+	state.Policy = committed
+	next, changed := refusedTurn{arm: -1, exclude: "vendor/off", context: read.Clone(), decidedFrom: read, committed: committed}.apply(state)
+	if !changed || !next.Policy.Excludes("vendor/off") || len(next.Policy.Ledger) != len(committed.Ledger) {
+		t.Fatalf("ledger %d entries after the fold, want %d", len(next.Policy.Ledger), len(committed.Ledger))
+	}
+}
+
+// A refusal staged after its leader finished waits out a newer lease holder
+// within its whole bound, not a short one.
+func TestRaylineARCRefusalOutwaitsANewerLeaseHolder(t *testing.T) {
+	fixture, store, episode, _ := fallbackFixture(t, true)
+	attempt, decided := boundaryAttempt(t, fixture, store, episode,
+		policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"}))
+	attempt.VSRRaylineARC, attempt.VSRSelectedDecision = decided.RaylineARC, fixture.decision
+	entry := &raylineARCInflightEntry{done: make(chan struct{}), finished: make(chan struct{})}
+	attempt.RaylineARCTransaction.inflight = entry
+	if err := attempt.RaylineARCTransaction.abort(context.Background(), "upstream_status"); err != nil {
+		t.Fatal(err)
+	}
+	entry.refuseHandovers()
+	entry.finishOnce.Do(func() { close(entry.finished) })
+	// A newer turn holds the lease for well over the short wait.
+	lease, _, err := store.Prepare(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(6 * relaxedBoundaryStageTimeout)
+		_ = store.Abort(context.Background(), lease)
+	}()
+	declineRefusedTurn(attempt)
+	if !readLedgerTestState(t, store, episode).Policy.Excludes("vendor/off") {
+		t.Fatal("the refusal was dropped while a newer turn held the lease")
+	}
+}
