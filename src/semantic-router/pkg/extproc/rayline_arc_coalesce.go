@@ -64,6 +64,32 @@ type raylineARCInflightEntry struct {
 
 	once       sync.Once
 	finishOnce sync.Once
+
+	// refused is a boundary decision a coalesced resend was refused under
+	// while the deciding request still held the lease. That request clears
+	// it if it aborts; a commit replaces it anyway.
+	refusedMu sync.Mutex
+	refused   *raylinearc.PolicyBoundaryDecision
+}
+
+// noteRefusedBoundary hands a refused resend's boundary decision to the
+// request that holds the lease.
+func (entry *raylineARCInflightEntry) noteRefusedBoundary(boundary raylinearc.PolicyBoundaryDecision) {
+	entry.refusedMu.Lock()
+	defer entry.refusedMu.Unlock()
+	entry.refused = &boundary
+}
+
+// takeRefusedBoundary returns and forgets a handed-over refused decision.
+func (entry *raylineARCInflightEntry) takeRefusedBoundary() *raylinearc.PolicyBoundaryDecision {
+	if entry == nil {
+		return nil
+	}
+	entry.refusedMu.Lock()
+	defer entry.refusedMu.Unlock()
+	refused := entry.refused
+	entry.refused = nil
+	return refused
 }
 
 func raylineARCInflightKey(store raylinearc.EpisodeStore, episodeIDHash string, body []byte, inputs string) string {

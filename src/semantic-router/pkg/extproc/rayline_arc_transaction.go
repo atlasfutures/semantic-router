@@ -106,6 +106,9 @@ type raylineARCEpisodeTransaction struct {
 	// onFinalize is an optional terminal-path hook; the stream-level hold in
 	// processWithContext is what keeps the episode store open.
 	onFinalize func()
+	// inflight is the coalescing entry this turn leads or joined, through
+	// which a refused resend hands its boundary decision to the lease owner.
+	inflight *raylineARCInflightEntry
 }
 
 func newRaylineARCEpisodeTransaction(
@@ -155,8 +158,10 @@ func newBorrowedRaylineARCEpisodeTransaction(
 	store raylinearc.EpisodeStore,
 	state *raylinearc.EpisodeState,
 	episodeIDHash string,
+	inflight *raylineARCInflightEntry,
 ) *raylineARCEpisodeTransaction {
 	return &raylineARCEpisodeTransaction{
+		inflight: inflight,
 		// The store is held only so a refused resend can clear the boundary
 		// decision that chose the refusing arm; a borrowed turn writes nothing
 		// else.
@@ -558,6 +563,7 @@ func (transaction *raylineARCEpisodeTransaction) abort(
 			return
 		}
 		transaction.stopRenewal()
+		transaction.clearHandedOverRefusal(ctx)
 		transaction.finalizeErr = transaction.store.Abort(
 			ctx,
 			transaction.lease,

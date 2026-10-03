@@ -384,6 +384,7 @@ func (r *OpenAIRouter) prepareOrJoinRaylineARCTurn(
 				return nil, nil, failure
 			}
 			reqCtx.RaylineARCInflight = entry
+			reqCtx.RaylineARCTransaction.inflight = entry
 			reqCtx.RaylineARCTransaction.onFinalize = chainFinalize(
 				reqCtx.RaylineARCTransaction.onFinalize,
 				func() { r.raylineARCInflight.finish(entry) },
@@ -403,7 +404,7 @@ func (r *OpenAIRouter) prepareOrJoinRaylineARCTurn(
 			}
 			continue
 		}
-		reqCtx.RaylineARCTransaction = newBorrowedRaylineARCEpisodeTransaction(store, state, episodeIDHash)
+		reqCtx.RaylineARCTransaction = newBorrowedRaylineARCEpisodeTransaction(store, state, episodeIDHash, entry)
 		bindRaylineARCSelectionTransaction(reqCtx)
 		logging.ComponentEvent("extproc", "rayline_arc_selection_coalesced", map[string]interface{}{})
 		return state, decided, ""

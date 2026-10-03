@@ -109,7 +109,23 @@ func (transaction *raylineARCEpisodeTransaction) clearBorrowedRefusedBoundary(pa
 	defer cancel()
 	lease, current, err := transaction.store.Prepare(ctx, transaction.episodeIDHash, len(transaction.state.Warmth))
 	if err != nil {
-		return
+		// The deciding request still holds the lease: hand the decision to
+		// it, so its abort clears it. If it finished meanwhile, try once more.
+		if transaction.inflight == nil {
+			return
+		}
+		transaction.inflight.noteRefusedBoundary(*transaction.state.PolicyBoundary)
+		select {
+		case <-transaction.inflight.finished:
+		default:
+			return
+		}
+		retryContext, retryCancel := context.WithTimeout(parent, relaxedBoundaryStageTimeout)
+		defer retryCancel()
+		if lease, current, err = transaction.store.Prepare(retryContext, transaction.episodeIDHash, len(transaction.state.Warmth)); err != nil {
+			return
+		}
+		transaction.inflight.takeRefusedBoundary()
 	}
 	defer func() {
 		// Released under its own short bound: a stalled store must not hold
@@ -127,6 +143,28 @@ func (transaction *raylineARCEpisodeTransaction) clearBorrowedRefusedBoundary(pa
 	cleared := cloneARCState(current)
 	cleared.PolicyBoundary = nil
 	if stager.Stage(ctx, lease, cleared) == nil {
+		metrics.RecordRaylineARCEpisodeTransaction("boundary_cleared", selectionOutcomeRefusal)
+	}
+}
+
+// clearHandedOverRefusal clears a boundary decision a coalesced resend was
+// refused under while this request held the lease. It runs as this request
+// aborts, under its own lease, and only if the stored decision is still the
+// one the resend was dispatched under.
+func (transaction *raylineARCEpisodeTransaction) clearHandedOverRefusal(ctx context.Context) {
+	refused := transaction.inflight.takeRefusedBoundary()
+	if refused == nil || transaction.state == nil || transaction.state.PolicyBoundary == nil ||
+		*transaction.state.PolicyBoundary != *refused {
+		return
+	}
+	stager, ok := transaction.store.(raylinearc.EpisodeStateStager)
+	if !ok {
+		return
+	}
+	cleared := cloneARCState(transaction.state)
+	cleared.PolicyBoundary = nil
+	if stager.Stage(ctx, transaction.lease, cleared) == nil {
+		transaction.state = cleared
 		metrics.RecordRaylineARCEpisodeTransaction("boundary_cleared", selectionOutcomeRefusal)
 	}
 }
