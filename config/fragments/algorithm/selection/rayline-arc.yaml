@@ -47,6 +47,15 @@ routing:
           # names move 7.6% for 42 tokens. Off, because safe to send is not
           # the same as shown to help.
           include_tool_names: false
+          # hold_family_in_tool_loop keeps a tool loop on the model family
+          # that opened it. A turn whose last message answers a tool call the
+          # episode's previous arm made is scored only among that arm's family
+          # (the vendor of its provider model); the next user turn may switch.
+          # Reasoning does not carry across families, and DeepSeek and MiMo
+          # answer 400 when a tool history lacks their reasoning_content. When
+          # no arm of the family is eligible the hold is lifted and logged.
+          # Off by default; the dev ARC cells turn it on.
+          hold_family_in_tool_loop: false
           # routes_api serves POST /v1/routes from this cell: the selector's
           # choice for a request, returned without executing it. Off, and not
           # implied by configuring this algorithm -- a lookup drives the

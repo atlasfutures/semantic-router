@@ -358,6 +358,11 @@ class RaylineARCAlgorithmConfig(BaseModel):
     # off; names move 7.6% for 42 tokens. Off, because safe to send is not the
     # same as shown to help.
     include_tool_names: bool = False
+    # Keeps a tool loop on the model family that opened it: a turn answering
+    # the previous arm's tool call is scored only among that family's arms,
+    # and the hold is lifted (and logged) when none of them is eligible.
+    # Reasoning does not carry across families. Off by default.
+    hold_family_in_tool_loop: bool = False
     fault_injection: RaylineARCFaultInjectionConfig | None = None
     routes_api: RaylineARCRoutesAPIConfig | None = None
     thinking_lever: RaylineARCThinkingLeverConfig | None = None

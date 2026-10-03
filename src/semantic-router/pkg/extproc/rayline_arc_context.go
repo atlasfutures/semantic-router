@@ -206,6 +206,9 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	result.DisabledArms = r.disabledArms(modelRefs)
 	result.RequiredCapabilities = requestRoutingCapabilities(reqCtx)
 	result.IncapableArms = r.incapableArms(modelRefs, result.RequiredCapabilities)
+	result.ToolLoopForeignArms, result.ToolLoopArm, result.ToolLoopFamily = r.toolLoopForeignArms(
+		algorithm.RaylineARC, reqCtx, result.State, modelRefs,
+	)
 	return result
 }
 

@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -33,8 +34,29 @@ func TestReasoningFromAnotherModelIsCarriedToTheNextWorker(t *testing.T) {
 		body := dispatchPolicyClientRequest(t, router, "episode-carry-chat", "/v1/messages",
 			history(`{"type":"thinking","thinking":"claude reasoning","signature":"claude-signature"}`))
 		assertJSONField(t, body, "model", `"vendor/think"`)
-		if wire := string(body["messages"]); strings.Contains(wire, "claude-signature") {
-			t.Fatalf("a Chat worker was sent the Anthropic signature: %s", wire)
+		wire := string(body["messages"])
+		if strings.Contains(wire, "claude-signature") || strings.Contains(wire, "claude reasoning") {
+			t.Fatalf("a Chat worker was sent Claude's signed thinking: %s", wire)
+		}
+		if !strings.Contains(wire, "Looking at it.") {
+			t.Fatalf("the assistant's visible text was lost: %s", wire)
+		}
+	})
+	t.Run("an open-weight model's unsigned thinking to a Chat worker", func(t *testing.T) {
+		think := actions["think"].ActionID
+		fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return think })
+		body := dispatchPolicyClientRequest(t, router, "episode-carry-chat-unsigned", "/v1/messages",
+			history(`{"type":"thinking","thinking":"mimo reasoning","signature":""}`))
+		var messages []map[string]json.RawMessage
+		if err := json.Unmarshal(body["messages"], &messages); err != nil || len(messages) < 2 {
+			t.Fatalf("messages = %s", body["messages"])
+		}
+		assistant := messages[1]
+		if string(assistant["reasoning_content"]) != `"mimo reasoning"` {
+			t.Fatalf("unsigned thinking did not reach the Chat worker as reasoning_content: %s", body["messages"])
+		}
+		if strings.Contains(string(assistant["content"]), "mimo reasoning") {
+			t.Fatalf("reasoning was sent as visible text: %s", body["messages"])
 		}
 	})
 	t.Run("kimi's unsigned thinking to a Messages worker", func(t *testing.T) {
