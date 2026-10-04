@@ -1,6 +1,8 @@
 package extproc
 
 import (
+	"errors"
+
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 )
@@ -19,26 +21,43 @@ const (
 	outputBoundSourceFallback = "fallback"
 )
 
+// errThinkingControlOverCap is a v5 control whose thinking budget the
+// decision's max_tokens_limit cannot hold at Anthropic's minimum.
+var errThinkingControlOverCap = errors.New(
+	"the decision's max_tokens_limit cannot hold the v5 control's thinking budget at its 1024-token minimum",
+)
+
 // applyDispatchOutputBound sets the output limit of a request whose caller
 // stated none, as planDispatchOutputBound decides it, and logs the plan as the
 // dispatch_output_bound event. A limit the caller stated is never touched.
 //
 // It runs after every other output-allowance rule (request_params cap and
 // floor, a policy action's budget), so it only fills what they left unset.
+//
+// On a v5 turn the planned control owns thinking, so its budget is the one
+// planned. A lowered budget is written to the planned control, which the
+// placer renders after encoding. A control the cap cannot hold fails the
+// turn: turning its thinking off would change the control's base, which the
+// placer fixes per episode and which would serve an action the policy did
+// not choose, and sending it whole would exceed the operator's cap.
 func (r *OpenAIRouter) applyDispatchOutputBound(
 	request *llmprotocol.Request,
 	dispatch *providerDispatch,
 	ctx *RequestContext,
-) bool {
+) (bool, error) {
 	if request == nil || dispatch == nil || ctx == nil || request.Sampling.MaxOutputTokens != nil {
-		return false
+		return false, nil
+	}
+	control := plannedMessagesControl(ctx, dispatch.targetFormat)
+	budget := messagesThinkingBudget(request, dispatch.targetFormat)
+	if control != nil {
+		budget = control.control.BudgetTokens
 	}
 	plan := r.planDispatchOutputBound(
-		dispatch.logicalModel, dispatch.targetFormat, decisionMaxTokensLimit(ctx),
-		messagesThinkingBudget(request, dispatch.targetFormat),
+		dispatch.logicalModel, dispatch.targetFormat, decisionMaxTokensLimit(ctx), budget,
 	)
 	if plan.source == "" {
-		return false
+		return false, nil
 	}
 	event := map[string]interface{}{
 		"request_id":  ctx.RequestID,
@@ -52,25 +71,46 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 	if plan.thinking != "" {
 		event["thinking"] = plan.thinking
 	}
+	if control != nil {
+		event["thinking_source"] = "v5_control"
+	}
 	switch plan.thinking {
 	case outputBoundThinkingBudgetLowered:
-		budget := plan.thinkingBudget
-		event["thinking_budget_tokens"] = budget
-		request.ReasoningBudgetTokens = &budget
+		lowered := plan.thinkingBudget
+		event["thinking_budget_tokens"] = lowered
+		if control != nil {
+			control.control.BudgetTokens = &lowered
+		} else {
+			request.ReasoningBudgetTokens = &lowered
+		}
 	case outputBoundThinkingDisabled:
+		if control != nil {
+			event["max_output_tokens"] = nil
+			logging.ComponentWarnEvent("extproc", "dispatch_output_bound", event)
+			return false, errThinkingControlOverCap
+		}
 		request.ReasoningMode, request.ReasoningBudgetTokens = llmprotocol.ReasoningModeDisabled, nil
 	}
 	if plan.maxTokens == 0 {
 		event["max_output_tokens"] = nil
 		logging.ComponentEvent("extproc", "dispatch_output_bound", event)
-		return false
+		return false, nil
 	}
 	bound := plan.maxTokens
 	request.Sampling.MaxOutputTokens = &bound
 	request.RouterSetMaxOutputTokens = true
 	event["max_output_tokens"] = bound
 	logging.ComponentEvent("extproc", "dispatch_output_bound", event)
-	return true
+	return true, nil
+}
+
+// plannedMessagesControl is this dispatch's v5 control when it renders
+// Messages thinking, or nil.
+func plannedMessagesControl(ctx *RequestContext, format llmprotocol.WireFormat) *plannedThinkingControl {
+	if format != llmprotocol.AnthropicMessagesV1 {
+		return nil
+	}
+	return ctx.RaylineARCThinkingControl
 }
 
 // How a planned bound met the target's minimum, as logged.

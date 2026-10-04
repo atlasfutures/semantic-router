@@ -198,9 +198,15 @@ func (r *OpenAIRouter) prepareProviderRequest(
 	// A request that states no output limit gets the worker's card value,
 	// or on Messages the fallback, after request_params has capped or
 	// dropped what the caller sent.
-	paramsChanged = r.applyDispatchOutputBound(request, dispatch, ctx) || paramsChanged
+	bounded, err := r.applyDispatchOutputBound(request, dispatch, ctx)
+	if err != nil {
+		return false, err
+	}
+	paramsChanged = bounded || paramsChanged
 	// After request_params and the output bound: Messages needs room above
-	// a v5 control's thinking budget.
+	// a v5 control's thinking budget. A request with no limit of its own
+	// already has that room (the output bound plans the control's budget),
+	// so this raises only a limit the caller stated.
 	if planned := ctx.RaylineARCThinkingControl; planned != nil && dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 {
 		paramsChanged = raiseMessagesAllowance(request, planned.control.BudgetTokens) || paramsChanged
 	}
