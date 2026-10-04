@@ -590,7 +590,8 @@ func (decoder *anthropicStreamDecoder) Finalize(reason error) ([]llmprotocol.Eve
 	}
 	if decoder.pendingToolStop != nil && !decoder.terminal {
 		// No max_tokens message_delta followed: the call completes as it
-		// stands, and a stream with no terminal still fails below.
+		// stands, and the stream, which has no terminal, fails below as
+		// incomplete.
 		flushed, _, err := decoder.flushPendingToolStop(false)
 		events = append(events, flushed...)
 		if err != nil {

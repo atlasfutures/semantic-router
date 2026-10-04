@@ -315,21 +315,20 @@ func (state *streamState) validateCompletedLifecycle(event llmprotocol.Event) er
 }
 
 // heldCutFailure decides a held cut tool item (see cutItems) when the turn
-// ends: with a completion under stop, with a failure, or at the end of the
-// stream.
+// ends: with a completion under stop, or with a failure.
 //
 //   - A failure ends the turn before anything is said about the item. The
 //     provider's in-band error (an Anthropic error event, a Chat error
-//     chunk, a Responses response.failed or error), or the Router's own end
+//     chunk, a Responses response.failed or error), the Router's own end
 //     (its deadline cut, a transport or receive end, Finalize with a
-//     reason), is what the client is told, in its format, as it would be
-//     with no cut item held. The item is never reported as a tool-argument
-//     error: the unfinished arguments are the symptom, the failure is the
-//     cause, and the first failure wins.
+//     reason), or a stream that ends with no terminal at all
+//     (stream_incomplete), is what the client is told, in its format, as
+//     it would be with no cut item held. The item is never reported as a
+//     tool-argument error: the unfinished arguments are the symptom, the
+//     failure is the cause, and the first failure wins.
 //   - A completion under max_tokens is the length stop it is.
-//   - A completion under any other stop, or a stream that ends cleanly with
-//     no terminal, never said it stopped at max_tokens, so the item's
-//     arguments are simply malformed.
+//   - A completion under any other stop is the provider saying the reply
+//     finished, so the item's arguments are simply malformed.
 func (state *streamState) heldCutFailure(stop llmprotocol.StopReason, failed bool) error {
 	if len(state.cutItems) == 0 || failed || stop == llmprotocol.StopMaxTokens {
 		return nil
@@ -505,9 +504,10 @@ func (state *streamState) finalize(reason error) ([]llmprotocol.Event, error) {
 	if state.terminal {
 		return nil, nil
 	}
-	if err := state.heldCutFailure(llmprotocol.StopUnknown, reason != nil); err != nil {
-		return nil, err
-	}
+	// A stream that ends without its terminal is incomplete whether or not
+	// a cut tool item is held: the failed event below lets the item yield
+	// (heldCutFailure), so the client is told stream_incomplete, or the
+	// reason the stream was ended for.
 	if reason == nil {
 		reason = errors.New("upstream stream ended without a terminal event")
 	}

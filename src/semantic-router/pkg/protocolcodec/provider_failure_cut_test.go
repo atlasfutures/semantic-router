@@ -275,17 +275,22 @@ func TestAResponsesFailureAfterAnIncompleteCallReachesTheClient(t *testing.T) {
 	}
 }
 
-// When the Router ends the stream itself while a cut call is held (its own
-// deadline cut, a deadline, a transport end), the client is told that, as
-// it would be with no cut call held.
+// When the stream ends without its terminal while a cut call is held (the
+// upstream simply stops, or the Router ends it: its own deadline cut, a
+// deadline, a transport end), the client is told that, exactly as it is
+// when the stream is cut with the call still open and no cut call held.
 func TestARouterEndDuringACutToolCallReachesTheClient(t *testing.T) {
 	truncated := llmprotocol.NewError(llmprotocol.ErrorUpstreamTimeout, "stream_truncated",
 		"the router ended this stream at its own deadline, below the platform's", nil)
-	held := anthropicFailureCutStart + anthropicFailureCutPartial + anthropicFailureBlockStop
+	open := anthropicFailureCutStart + anthropicFailureCutPartial
+	held := open + anthropicFailureBlockStop
 	for name, test := range map[string]struct {
 		reason error
 		code   map[llmprotocol.WireFormat]string
 	}{
+		"no terminal": {reason: nil, code: map[llmprotocol.WireFormat]string{
+			llmprotocol.AnthropicMessagesV1: "api_error", llmprotocol.OpenAIChatV1: "stream_incomplete", llmprotocol.OpenAIResponsesV1: "stream_incomplete",
+		}},
 		"router deadline cut": {reason: truncated, code: map[llmprotocol.WireFormat]string{
 			llmprotocol.AnthropicMessagesV1: "timeout_error", llmprotocol.OpenAIChatV1: "stream_truncated", llmprotocol.OpenAIResponsesV1: "stream_truncated",
 		}},
@@ -314,17 +319,21 @@ func TestARouterEndDuringACutToolCallReachesTheClient(t *testing.T) {
 				if failed == nil || failed.Code != wantErr.Code {
 					t.Fatalf("failed event error = %+v, want code %q", failed, wantErr.Code)
 				}
+				uncut := runFailureCut(t, llmprotocol.AnthropicMessagesV1, target, open, test.reason)
+				if withoutSequence(run.lastFrame) != withoutSequence(uncut.lastFrame) {
+					t.Fatalf("the failure differs from the one a stream cut with the call open gets:\nheld: %s\nopen: %s", run.lastFrame, uncut.lastFrame)
+				}
 			})
 		}
 	}
 }
 
-// Controls: without a failure, a held cut call is decided as before. Under
-// end_turn, or a stream that ends cleanly with no terminal, its arguments
-// are malformed.
+// Control: a terminal that says the reply finished, end_turn, over a held
+// cut call is the provider claiming completion with broken arguments, which
+// still fails as malformed.
 func TestACutToolCallWithoutAFailureStillFails(t *testing.T) {
 	held := anthropicFailureCutStart + anthropicFailureCutPartial + anthropicFailureBlockStop
-	for name, body := range map[string]string{"end_turn": held + anthropicEndTurn, "clean end": held} {
+	for name, body := range map[string]string{"end_turn": held + anthropicEndTurn} {
 		for _, target := range builtinFormats {
 			t.Run(name+"/"+string(target), func(t *testing.T) {
 				run := runFailureCut(t, llmprotocol.AnthropicMessagesV1, target, body, nil)
