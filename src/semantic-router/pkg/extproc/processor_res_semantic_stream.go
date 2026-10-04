@@ -564,6 +564,11 @@ func (r *OpenAIRouter) classStreamFailure(
 ) {
 	state := ctx.SemanticStreamState
 	sent := state != nil && len(state.items) > 0
+	if ctx.StreamEndedAtSend {
+		// The chunk whose Send failed delivered nothing: only what earlier,
+		// sent chunks carried reached the client, whatever the class.
+		sent = ctx.DeliveredStreamItems > 0
+	}
 	var inBand *llmprotocol.ProtocolError
 	switch {
 	case responseErr == nil && responseRefused(semanticResponse):
@@ -585,16 +590,12 @@ func (r *OpenAIRouter) classStreamFailure(
 		// Only a stream the provider had not finished: a provider failure
 		// already observed, or a terminal whose output cannot be rebuilt,
 		// keeps its own class; a complete stream records no failure.
-		delivered := sent
-		if ctx.StreamEndedAtSend {
-			delivered = ctx.DeliveredStreamItems > 0
-		}
-		recordTurnFailureDetail(ctx, turnFailureClientEnded, clientEndedDetail(streamErr), delivered)
+		recordTurnFailureDetail(ctx, turnFailureClientEnded, clientEndedDetail(streamErr), sent)
 	case streamErr != nil && !ctx.StreamEndedByReceiveError || state == nil:
 	case state.failed != nil:
-		recordTurnFailureDetail(ctx, streamFailureClass(state.failed), providerStreamFailureDetail(state.failed), len(state.items) > 0)
+		recordTurnFailureDetail(ctx, streamFailureClass(state.failed), providerStreamFailureDetail(state.failed), sent)
 	case !state.terminal:
-		recordTurnFailure(ctx, turnFailureStreamCut, len(state.items) > 0)
+		recordTurnFailure(ctx, turnFailureStreamCut, sent)
 	}
 }
 
