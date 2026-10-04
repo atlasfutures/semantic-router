@@ -190,6 +190,34 @@ func TestABufferedMessagesToolCutReadsAsIncomplete(t *testing.T) {
 		!bytes.Contains(encoded.Body, []byte(`"reason":"max_output_tokens"`)) {
 		t.Fatalf("Responses body = %s", encoded.Body)
 	}
+	// A Responses function_call that ends incomplete reads back as one.
+	decoded, _, _, err := engine.DecodeResponse(llmprotocol.OpenAIResponsesV1, encoded.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if call := decoded.Output[len(decoded.Output)-1].Content[0].ToolCall; call == nil || !call.Incomplete {
+		t.Fatalf("Responses round trip lost the incomplete mark: %+v", decoded.Output)
+	}
+}
+
+// Only a truncated object is held to the terminal. A whole value that is not
+// an object is no prefix of a call and fails at the item's completion.
+func TestAWholeNonObjectArgumentFailsAtCompletion(t *testing.T) {
+	for _, arguments := range []string{`[]`, `true`, `"x"`, `{"a":1,"a":2}`} {
+		state := newTestStreamState()
+		startTestStream(t, state)
+		if _, err := state.next(llmprotocol.Event{
+			Type: llmprotocol.EventOutputItemStarted, ItemIndex: 0, ItemID: "tool_item",
+			Role: llmprotocol.RoleAssistant, ToolCall: &llmprotocol.ToolCall{ID: "call_1", Name: "bash"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		_, err := state.next(llmprotocol.Event{
+			Type: llmprotocol.EventOutputItemCompleted, ItemIndex: 0,
+			ToolCall: &llmprotocol.ToolCall{ID: "call_1", Name: "bash", Arguments: arguments},
+		})
+		requireProtocolErrorCode(t, err, "invalid_stream_tool_arguments")
+	}
 }
 
 func requireBufferedCutShapes(t *testing.T, engine *Engine, response llmprotocol.Response) {
