@@ -789,58 +789,62 @@ func TestAToolCallCutByAStopIsClassedByTheStop(t *testing.T) {
 			body: "invalid_stream_tool_arguments",
 		},
 	} {
-		t.Run(name, func(t *testing.T) {
-			logs := captureLogs(t)
-			stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIResponsesV1,
-				llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			ctx := &RequestContext{
-				RequestID: "req-cut-stop", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
-				SourceFormat: llmprotocol.OpenAIResponsesV1, TargetFormat: llmprotocol.AnthropicMessagesV1,
-				ProtocolResponseStream: stream,
-				SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
-			}
-			router := &OpenAIRouter{}
-			var body strings.Builder
-			// The terminal arrives with the end of the stream. (Ended by a
-			// later empty chunk instead, a codec rejection is classed by the
-			// stored-failure fix that lands separately.)
-			for index, chunk := range []string{held, test.terminal} {
-				response := router.handleSemanticStreamingResponseBody([]byte(chunk), index == 1, ctx)
-				if mutation := response.GetResponseBody().GetResponse().GetBodyMutation(); mutation != nil {
-					body.Write(mutation.GetBody())
+		// The terminal arrives with the end of the stream, or in its own
+		// chunk followed by an empty end-of-stream chunk, as Envoy sends it.
+		for shape, chunks := range map[string][]string{
+			"end with the terminal":      {held, test.terminal},
+			"empty end in a later chunk": {held, test.terminal, ""},
+		} {
+			t.Run(name+"/"+shape, func(t *testing.T) {
+				logs := captureLogs(t)
+				stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIResponsesV1,
+					llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+				if err != nil {
+					t.Fatal(err)
 				}
-			}
-			if !strings.Contains(body.String(), test.body) {
-				t.Fatalf("client body lacks %s:\n%s", test.body, body.String())
-			}
-			if test.class != turnFailureUpstreamError && strings.Contains(body.String(), "invalid_stream_tool_arguments") {
-				t.Fatalf("the client was told the arguments were malformed:\n%s", body.String())
-			}
-			usage := findLogEvent(t, logs, "llm_usage")
-			if class, _ := usage["failure_class"].(string); class != test.class {
-				t.Fatalf("llm_usage failure_class = %q, want %q", class, test.class)
-			}
-			if test.detail != "" && usage["failure_detail"] != test.detail {
-				t.Fatalf("llm_usage failure_detail = %v, want %s", usage["failure_detail"], test.detail)
-			}
-			failed := map[string]interface{}(nil)
-			for _, entry := range logs.All() {
-				if fields := entry.ContextMap(); fields["event"] == "turn_failed" {
-					failed = fields
+				ctx := &RequestContext{
+					RequestID: "req-cut-stop", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+					SourceFormat: llmprotocol.OpenAIResponsesV1, TargetFormat: llmprotocol.AnthropicMessagesV1,
+					ProtocolResponseStream: stream,
+					SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
 				}
-			}
-			switch {
-			case test.class == "" && failed != nil:
-				t.Fatalf("a served length stop was recorded as failed: %v", failed)
-			case test.class != "" && (failed == nil || failed["failure_class"] != test.class):
-				t.Fatalf("turn_failed = %v, want class %s", failed, test.class)
-			case test.class == turnFailureRefusal && (failed["stop_details_category"] != "cyber" || usage["stop_details_category"] != "cyber"):
-				t.Fatalf("refusal telemetry lost its category: turn_failed %v, llm_usage %v", failed, usage)
-			}
-		})
+				router := &OpenAIRouter{}
+				var body strings.Builder
+				for index, chunk := range chunks {
+					response := router.handleSemanticStreamingResponseBody([]byte(chunk), index == len(chunks)-1, ctx)
+					if mutation := response.GetResponseBody().GetResponse().GetBodyMutation(); mutation != nil {
+						body.Write(mutation.GetBody())
+					}
+				}
+				if !strings.Contains(body.String(), test.body) {
+					t.Fatalf("client body lacks %s:\n%s", test.body, body.String())
+				}
+				if test.class != turnFailureUpstreamError && strings.Contains(body.String(), "invalid_stream_tool_arguments") {
+					t.Fatalf("the client was told the arguments were malformed:\n%s", body.String())
+				}
+				usage := findLogEvent(t, logs, "llm_usage")
+				if class, _ := usage["failure_class"].(string); class != test.class {
+					t.Fatalf("llm_usage failure_class = %q, want %q", class, test.class)
+				}
+				if test.detail != "" && usage["failure_detail"] != test.detail {
+					t.Fatalf("llm_usage failure_detail = %v, want %s", usage["failure_detail"], test.detail)
+				}
+				failed := map[string]interface{}(nil)
+				for _, entry := range logs.All() {
+					if fields := entry.ContextMap(); fields["event"] == "turn_failed" {
+						failed = fields
+					}
+				}
+				switch {
+				case test.class == "" && failed != nil:
+					t.Fatalf("a served length stop was recorded as failed: %v", failed)
+				case test.class != "" && (failed == nil || failed["failure_class"] != test.class):
+					t.Fatalf("turn_failed = %v, want class %s", failed, test.class)
+				case test.class == turnFailureRefusal && (failed["stop_details_category"] != "cyber" || usage["stop_details_category"] != "cyber"):
+					t.Fatalf("refusal telemetry lost its category: turn_failed %v, llm_usage %v", failed, usage)
+				}
+			})
+		}
 	}
 }
 
