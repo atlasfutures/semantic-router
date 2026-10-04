@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"io"
@@ -778,4 +779,30 @@ func TestTheClientEndingDoesNotReplaceAnEarlierFailure(t *testing.T) {
 			t.Fatalf("class = %q, want the header's upstream_error kept", ctx.ResponseFailureClass)
 		}
 	})
+}
+
+// The exchange can also end while the Router is sending a chunk: a canceled
+// Send finalizes the stream as a receive error does.
+func TestAStreamEndedAtASendIsClassedClientEnded(t *testing.T) {
+	logs := captureLogs(t)
+	stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+		llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := &RequestContext{
+		RequestID: "req-send-canceled", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+		SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.AnthropicMessagesV1,
+		ProtocolResponseStream: stream,
+		SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+	}
+	chunk := []byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\n")
+	mock := &MockStream{Ctx: context.Background(), SendError: status.Error(codes.Canceled, "context canceled"),
+		Requests: []*ext_proc.ProcessingRequest{{Request: &ext_proc.ProcessingRequest_ResponseBody{
+			ResponseBody: &ext_proc.HttpBody{Body: chunk, EndOfStream: false}}}}}
+	_ = (&OpenAIRouter{Config: &config.RouterConfig{}}).processWithContext(mock, ctx)
+	usage := findLogEvent(t, logs, "llm_usage")
+	if usage["failure_class"] != turnFailureClientEnded || usage["failure_detail"] != "grpc:canceled" {
+		t.Fatalf("llm_usage class %v detail %v, want client_ended grpc:canceled", usage["failure_class"], usage["failure_detail"])
+	}
 }
