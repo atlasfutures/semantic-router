@@ -1,0 +1,442 @@
+{
+  "frames": [
+    {
+      "event": "response.created",
+      "data": {
+        "response": {
+          "created_at": 0,
+          "error": null,
+          "id": "gen-fixture-max-tokens-tool",
+          "incomplete_details": null,
+          "instructions": null,
+          "metadata": {},
+          "model": "public-model",
+          "object": "response",
+          "output": [],
+          "parallel_tool_calls": true,
+          "status": "in_progress",
+          "temperature": null,
+          "tool_choice": "auto",
+          "tools": [],
+          "top_p": null
+        },
+        "sequence_number": 0,
+        "type": "response.created"
+      }
+    },
+    {
+      "event": "response.in_progress",
+      "data": {
+        "response": {
+          "created_at": 0,
+          "error": null,
+          "id": "gen-fixture-max-tokens-tool",
+          "incomplete_details": null,
+          "instructions": null,
+          "metadata": {},
+          "model": "public-model",
+          "object": "response",
+          "output": [],
+          "parallel_tool_calls": true,
+          "status": "in_progress",
+          "temperature": null,
+          "tool_choice": "auto",
+          "tools": [],
+          "top_p": null
+        },
+        "sequence_number": 1,
+        "type": "response.in_progress"
+      }
+    },
+    {
+      "event": "response.output_item.added",
+      "data": {
+        "item": {
+          "arguments": "",
+          "call_id": "call_fixture",
+          "id": "item_967f2aa58e50e2a990653411",
+          "name": "bash",
+          "status": "in_progress",
+          "type": "function_call"
+        },
+        "output_index": 0,
+        "sequence_number": 2,
+        "type": "response.output_item.added"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": "",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 3,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": "",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 4,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": "{\"",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 5,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": "command",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 6,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": "\":\"",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 7,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": "cat",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 8,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": " \u003e",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 9,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": " /",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 10,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": "tmp",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 11,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": "/pro",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 12,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": "be",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 13,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": "3",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 14,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": ".js",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 15,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": " \u003c\u003c",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 16,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": "'",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 17,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": "EOF",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 18,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": "'\\",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 19,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": "n",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 20,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": "$(",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 21,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": "for",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 22,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": " i",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 23,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": " in",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 24,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": " $(",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 25,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": "seq",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 26,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": " ",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 27,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": "1",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 28,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": " ",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 29,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": "300",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 30,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": ");",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 31,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.delta",
+      "data": {
+        "delta": " do",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "output_index": 0,
+        "sequence_number": 32,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "event": "response.function_call_arguments.done",
+      "data": {
+        "arguments": "{\"command\":\"cat \u003e /tmp/probe3.js \u003c\u003c'EOF'\\n$(for i in $(seq 1 300); do",
+        "item_id": "item_967f2aa58e50e2a990653411",
+        "name": "bash",
+        "output_index": 0,
+        "sequence_number": 33,
+        "type": "response.function_call_arguments.done"
+      }
+    },
+    {
+      "event": "response.output_item.done",
+      "data": {
+        "item": {
+          "arguments": "{\"command\":\"cat \u003e /tmp/probe3.js \u003c\u003c'EOF'\\n$(for i in $(seq 1 300); do",
+          "call_id": "call_fixture",
+          "id": "item_967f2aa58e50e2a990653411",
+          "name": "bash",
+          "status": "incomplete",
+          "type": "function_call"
+        },
+        "output_index": 0,
+        "sequence_number": 34,
+        "type": "response.output_item.done"
+      }
+    },
+    {
+      "event": "response.incomplete",
+      "data": {
+        "response": {
+          "created_at": 0,
+          "error": null,
+          "id": "gen-fixture-max-tokens-tool",
+          "incomplete_details": {
+            "reason": "max_output_tokens"
+          },
+          "instructions": null,
+          "metadata": {},
+          "model": "public-model",
+          "object": "response",
+          "output": [
+            {
+              "arguments": "{\"command\":\"cat \u003e /tmp/probe3.js \u003c\u003c'EOF'\\n$(for i in $(seq 1 300); do",
+              "call_id": "call_fixture",
+              "id": "item_967f2aa58e50e2a990653411",
+              "name": "bash",
+              "status": "incomplete",
+              "type": "function_call"
+            }
+          ],
+          "parallel_tool_calls": true,
+          "status": "incomplete",
+          "temperature": null,
+          "tool_choice": "auto",
+          "tools": [],
+          "top_p": null,
+          "usage": {
+            "input_tokens": 92,
+            "input_tokens_details": {
+              "cache_write_tokens": 0,
+              "cached_tokens": 0
+            },
+            "output_tokens": 40,
+            "output_tokens_details": {
+              "reasoning_tokens": 0
+            },
+            "total_tokens": 132
+          }
+        },
+        "sequence_number": 35,
+        "type": "response.incomplete"
+      }
+    }
+  ]
+}

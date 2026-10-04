@@ -249,8 +249,9 @@ func TestOpenRouterStreamUnknownFieldsAreNamed(t *testing.T) {
 			seen[field] = true
 		}
 	}
+	// native_finish_reason is named on the stream: it is how OpenRouter says
+	// a tool call was cut off at the output limit (decodeChatChoiceStop).
 	for _, field := range []string{
-		"choices[].native_finish_reason",
 		"usage.completion_tokens_details.image_tokens", "usage.prompt_tokens_details.video_tokens",
 	} {
 		if !seen[field] {

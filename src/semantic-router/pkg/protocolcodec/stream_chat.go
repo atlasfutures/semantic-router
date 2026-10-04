@@ -90,13 +90,16 @@ func (wire chatChunkWire) hasTokenizedToolArguments() bool {
 }
 
 type chatChunkChoiceWire struct {
-	Index         int                 `json:"index"`
-	Delta         chatChunkDeltaWire  `json:"delta"`
-	FinishReason  *string             `json:"finish_reason"`
-	Logprobs      *chatLogprobsWire   `json:"logprobs,omitempty"`
-	StopReason    *chatStopReasonWire `json:"stop_reason,omitempty"`
-	TokenIDs      []int64             `json:"token_ids,omitempty"`
-	RoutedExperts *chatNullOnlyWire   `json:"routed_experts,omitempty"`
+	Index        int                `json:"index"`
+	Delta        chatChunkDeltaWire `json:"delta"`
+	FinishReason *string            `json:"finish_reason"`
+	// NativeFinishReason is OpenRouter's: the serving provider's own reason,
+	// beside the OpenAI-vocabulary finish_reason it maps it to.
+	NativeFinishReason *string             `json:"native_finish_reason,omitempty"`
+	Logprobs           *chatLogprobsWire   `json:"logprobs,omitempty"`
+	StopReason         *chatStopReasonWire `json:"stop_reason,omitempty"`
+	TokenIDs           []int64             `json:"token_ids,omitempty"`
+	RoutedExperts      *chatNullOnlyWire   `json:"routed_experts,omitempty"`
 }
 
 type chatChunkDeltaWire struct {
@@ -175,7 +178,13 @@ func (decoder *chatStreamDecoder) decodeProviderFrame(frame []byte) ([]llmprotoc
 	}
 	if bytes.Equal(bytes.TrimSpace(parsed.Data), []byte("[DONE]")) {
 		event, err := decoder.next(llmprotocol.Event{Type: llmprotocol.EventResponseCompleted, StopReason: decoder.stop, Usage: &decoder.usage})
-		return []llmprotocol.Event{event}, nil, err
+		if err != nil {
+			// A refused terminal is no event: handing back its zero value
+			// beside the error would reach the encoder as an unknown event
+			// and hide the error that refused it.
+			return nil, nil, err
+		}
+		return []llmprotocol.Event{event}, nil, nil
 	}
 	var chunk chatChunkWire
 	if err := decodeProviderWire(parsed.Data, &chunk, decoder.policy); err != nil {
@@ -190,7 +199,10 @@ func (decoder *chatStreamDecoder) decodeProviderFrame(frame []byte) ([]llmprotoc
 	decoder.observeUpstreamAttribution(chunk)
 	if chunk.Error != nil {
 		event, err := decoder.next(chatStreamFailureEvent(chunk.Error))
-		return []llmprotocol.Event{event}, nil, err
+		if err != nil {
+			return nil, nil, err
+		}
+		return []llmprotocol.Event{event}, nil, nil
 	}
 	events, diagnostics, err := decoder.decodeChunkEvents(chunk)
 	diagnostics = decoder.appendProviderChunkDiagnostics(chunk, diagnostics)
@@ -324,7 +336,7 @@ func (decoder *chatStreamDecoder) decodeChoice(choice chatChunkChoiceWire) ([]ll
 		return nil, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "stream_multiple_choices", "streaming multiple choices is unsupported", nil)
 	}
 	if decoder.completedItems[choice.Index] && chatChunkDeltaIsEmpty(choice.Delta) {
-		decoder.observeRepeatedFinishReason(choice.FinishReason)
+		decoder.observeRepeatedFinishReason(choice.FinishReason, choice.NativeFinishReason)
 		return nil, nil
 	}
 	events, err := decoder.decodeChoiceTextEvents(choice)
@@ -336,7 +348,7 @@ func (decoder *chatStreamDecoder) decodeChoice(choice chatChunkChoiceWire) ([]ll
 		return nil, err
 	}
 	events = append(events, toolEvents...)
-	completed, err := decoder.completeChoice(choice.FinishReason)
+	completed, err := decoder.completeChoice(choice.FinishReason, choice.NativeFinishReason)
 	return append(events, completed...), err
 }
 
@@ -385,11 +397,11 @@ func emptyChatDeltaText(text *string) bool {
 // holds the content, so failing here would poison a stream that was served,
 // which is the failure this whole change removes. The first reason wins and
 // the disagreement is logged.
-func (decoder *chatStreamDecoder) observeRepeatedFinishReason(reason *string) {
+func (decoder *chatStreamDecoder) observeRepeatedFinishReason(reason, native *string) {
 	if reason == nil {
 		return
 	}
-	trailing := decodeChatStop(*reason)
+	trailing := decodeChatChoiceStop(*reason, native)
 	if trailing == decoder.stop {
 		return
 	}
@@ -563,11 +575,11 @@ func (decoder *chatStreamDecoder) decodeToolCalls(calls []chatChunkToolCallWire)
 	return events, nil
 }
 
-func (decoder *chatStreamDecoder) completeChoice(reason *string) ([]llmprotocol.Event, error) {
+func (decoder *chatStreamDecoder) completeChoice(reason, native *string) ([]llmprotocol.Event, error) {
 	if reason == nil {
 		return nil, nil
 	}
-	decoder.stop = decodeChatStop(*reason)
+	decoder.stop = decodeChatChoiceStop(*reason, native)
 	if len(decoder.items) == 0 {
 		if decoder.stop == llmprotocol.StopToolCall {
 			return nil, invalidProviderResponse("stream_tool_output_missing", "Chat stream ended with tool_calls but emitted no tool call")
@@ -606,6 +618,22 @@ func (decoder *chatStreamDecoder) completeChoice(reason *string) ([]llmprotocol.
 		events = append(events, event)
 	}
 	return events, nil
+}
+
+// decodeChatChoiceStop maps a choice's finish reason, letting a native length
+// reason win. OpenRouter labels a tool call cut off at the output limit
+// finish_reason "tool_calls" and states the provider's own reason,
+// "max_output_tokens", only in native_finish_reason (recorded live from an
+// OpenAI model). Read as tool_calls, the cut call's truncated arguments look
+// malformed; read as the length stop it is, the turn ends as one.
+func decodeChatChoiceStop(reason string, native *string) llmprotocol.StopReason {
+	if native != nil {
+		switch *native {
+		case "max_output_tokens", "max_tokens", "length":
+			return llmprotocol.StopMaxTokens
+		}
+	}
+	return decodeChatStop(reason)
 }
 
 func (decoder *chatStreamDecoder) Finalize(reason error) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
