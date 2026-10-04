@@ -518,6 +518,18 @@ const (
 	UsageUnavailable UsageState = "unknown"
 )
 
+// StopDetails is the structured reason a provider gives for a stop: Anthropic's
+// stop_details, whose type is "refusal" and whose category names the
+// classifier that refused (for example "cyber"). With ProviderStopReason (the
+// stop string the serving provider sent, such as OpenRouter's
+// native_finish_reason, where it differs from the upstream's own reason) it is
+// Router telemetry for a refused turn's diagnostics. No codec publishes either
+// to a client.
+type StopDetails struct {
+	Type     string
+	Category string
+}
+
 type Response struct {
 	Generation uint64
 	ID         string
@@ -538,6 +550,10 @@ type Response struct {
 	// handling and empty completions differ by provider rather than by model.
 	// No codec publishes it to a client.
 	UpstreamProvider string
+	// ProviderStopReason and StopDetails say why the provider stopped, where
+	// it says so beyond the neutral reason. See StopDetails.
+	ProviderStopReason string
+	StopDetails        *StopDetails
 	// Evidence is bounded, protocol-neutral model evidence for Router
 	// algorithms. It is never usage evidence and codecs do not publish it unless
 	// the target protocol explicitly represents the same semantic field.

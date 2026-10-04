@@ -55,6 +55,10 @@ type Event struct {
 	// was mapped onto the neutral reason. A buffered response keeps the same
 	// field; a stream had nowhere to carry it.
 	SourceStopReason string
+	// ProviderStopReason and StopDetails are the response's, carried on the
+	// events from the chunk that states them. See StopDetails.
+	ProviderStopReason string
+	StopDetails        *StopDetails
 	// UpstreamProvider names the upstream that served the turn. It is Router
 	// telemetry and no encoder publishes it.
 	UpstreamProvider    string

@@ -12,6 +12,9 @@ type anthropicStreamDecoder struct {
 	streamState
 	framer       sseFramer
 	stopSequence string
+	// stopDetails is the terminal message_delta's stop_details, carried on
+	// the completed event as telemetry (llmprotocol.StopDetails).
+	stopDetails *llmprotocol.StopDetails
 	// serverBlocks holds each open server web search block until it stops:
 	// its start frame, and the input a server_tool_use streams as JSON deltas.
 	serverBlocks map[int]*anthropicServerBlock
@@ -345,7 +348,7 @@ func (decoder *anthropicStreamDecoder) decodeAnthropicMessageStop() ([]llmprotoc
 	}
 	return decoder.emitAnthropicEvent(llmprotocol.Event{
 		Type: llmprotocol.EventResponseCompleted, StopReason: decoder.stop,
-		MatchedStopSequence: decoder.stopSequence, Usage: &decoder.usage,
+		MatchedStopSequence: decoder.stopSequence, Usage: &decoder.usage, StopDetails: decoder.stopDetails,
 	})
 }
 
@@ -403,6 +406,9 @@ func (decoder *anthropicStreamDecoder) decodeAnthropicMessageDelta(
 func (decoder *anthropicStreamDecoder) observeAnthropicStop(delta *anthropicDeltaWire) error {
 	if delta == nil || delta.StopReason == nil {
 		return nil
+	}
+	if details := decodeStopDetails(delta.StopDetails); details != nil {
+		decoder.stopDetails = details
 	}
 	stop := decodeAnthropicStop(*delta.StopReason)
 	if decoder.stop != "" && decoder.stop != stop {

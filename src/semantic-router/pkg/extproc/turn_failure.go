@@ -81,6 +81,11 @@ func recordTurnFailureDetail(ctx *RequestContext, class, detail string, contentS
 		fields["episode_id_hash"] = trace.EpisodeIDHash
 		fields["policy_action_id"] = trace.PolicyActionID
 	}
+	if stop := responseStopTelemetry(ctx); stop.known() {
+		fields["provider_stop_reason"] = stop.providerStop
+		fields["stop_details_type"] = stop.detailsType
+		fields["stop_details_category"] = stop.detailsCategory
+	}
 	logging.ComponentEvent("extproc", "turn_failed", fields)
 	metrics.RecordTurnFailure(class)
 	noteCellExclusion(ctx, class)
@@ -269,4 +274,31 @@ func clientEndedDetail(err error) string {
 		code = status.FromContextError(err).Code()
 	}
 	return "grpc:" + strings.ToLower(code.String())
+}
+
+// stopTelemetry is why the provider stopped, beyond the neutral reason: its
+// own stop string and Anthropic's stop_details (llmprotocol.StopDetails). It
+// tells a classifier's refusal (category "cyber", say) from another.
+type stopTelemetry struct {
+	providerStop, detailsType, detailsCategory string
+}
+
+func (stop stopTelemetry) known() bool {
+	return stop.providerStop != "" || stop.detailsType != "" || stop.detailsCategory != ""
+}
+
+// responseStopTelemetry reads the stop telemetry off the turn's response, or
+// off the stream state of a stream that left none.
+func responseStopTelemetry(ctx *RequestContext) stopTelemetry {
+	var stop stopTelemetry
+	var details *llmprotocol.StopDetails
+	if response := attributedResponse(ctx); response != nil {
+		stop.providerStop, details = response.ProviderStopReason, response.StopDetails
+	} else if state := ctx.SemanticStreamState; state != nil {
+		stop.providerStop, details = state.providerStop, state.stopDetails
+	}
+	if details != nil {
+		stop.detailsType, stop.detailsCategory = details.Type, details.Category
+	}
+	return stop
 }

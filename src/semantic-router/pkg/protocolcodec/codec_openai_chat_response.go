@@ -105,6 +105,10 @@ func decodeChatChoices(wire chatResponseWire, response *llmprotocol.Response, po
 				response.SourceStopReason = *choice.FinishReason
 				response.StopReason = decodeChatChoiceStop(*choice.FinishReason, choice.NativeFinishReason)
 			}
+			if choice.NativeFinishReason != nil {
+				response.ProviderStopReason = boundStopTelemetry(*choice.NativeFinishReason)
+			}
+			response.StopDetails = decodeStopDetails(choice.StopDetails)
 			continue
 		}
 		response.Alternatives = append(response.Alternatives, []llmprotocol.OutputItem{item})

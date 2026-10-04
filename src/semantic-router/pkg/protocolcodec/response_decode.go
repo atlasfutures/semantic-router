@@ -218,6 +218,12 @@ func (accumulator *responseAccumulator) applyEventMetadata(event llmprotocol.Eve
 	if event.Usage != nil {
 		accumulator.result.Usage = *event.Usage
 	}
+	if event.ProviderStopReason != "" {
+		accumulator.result.ProviderStopReason = event.ProviderStopReason
+	}
+	if event.StopDetails != nil {
+		accumulator.result.StopDetails = event.StopDetails
+	}
 }
 
 func (accumulator *responseAccumulator) startItem(event llmprotocol.Event) error {
