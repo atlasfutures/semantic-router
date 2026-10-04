@@ -182,3 +182,63 @@ func turnFailureIsBackendError(class string) bool {
 		return false
 	}
 }
+
+// maxStreamFailureDetail bounds the failure detail a stream error leaves on
+// the usage line and the turn_failed line.
+const maxStreamFailureDetail = 160
+
+// codecStreamFailureDetail is the code of an error the Router's own codec
+// raised when it rejected a provider stream: a router-owned identifier, so a
+// cut is diagnosable from the logs instead of reading as a bare class. The
+// message is not kept, since it may name what the provider sent.
+func codecStreamFailureDetail(protocolError *llmprotocol.ProtocolError) string {
+	if protocolError == nil {
+		return ""
+	}
+	return boundedPrintable(protocolError.Code, maxStreamFailureDetail)
+}
+
+// routerStreamFailureCodes are the failure events the Router's codec itself
+// synthesizes into a stream that ended without its terminal event.
+var routerStreamFailureCodes = map[string]bool{
+	"stream_incomplete": true, "stream_canceled": true, "stream_timeout": true,
+}
+
+// knownProviderStreamErrorCodes are the provider stream error codes the
+// Router records as they are: the documented error types of the providers it
+// dispatches to. Anything else a provider sends is its own text.
+var knownProviderStreamErrorCodes = map[string]bool{
+	"overloaded_error": true, "api_error": true, "rate_limit_error": true, "timeout_error": true,
+	"invalid_request_error": true, "authentication_error": true, "permission_error": true,
+	"not_found_error": true, "request_too_large": true, "billing_error": true,
+	"server_error": true, "rate_limit_exceeded": true, "context_length_exceeded": true,
+	"insufficient_quota": true, "timeout": true, "internal_error": true,
+}
+
+// providerStreamFailureDetail describes an error a provider raised in its
+// stream without logging anything the provider wrote: its message and its
+// code are its own text, which may echo request content or a credential
+// (pkg/observability/logging/content.go). A documented error code is kept;
+// anything else is reported by the Router's own category.
+func providerStreamFailureDetail(protocolError *llmprotocol.ProtocolError) string {
+	if protocolError == nil {
+		return ""
+	}
+	if routerStreamFailureCodes[protocolError.Code] {
+		return protocolError.Code
+	}
+	if knownProviderStreamErrorCodes[protocolError.Code] {
+		return "provider:" + protocolError.Code
+	}
+	return "provider:" + string(protocolError.Category)
+}
+
+func boundedPrintable(text string, limit int) string {
+	out := make([]byte, 0, len(text))
+	for index := 0; index < len(text) && len(out) < limit; index++ {
+		if character := text[index]; character >= 0x20 && character < 0x7f {
+			out = append(out, character)
+		}
+	}
+	return string(out)
+}
