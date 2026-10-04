@@ -9,6 +9,9 @@ import (
 )
 
 type streamState struct {
+	// stateDiagnostics are diagnostics the shared stream state raised while
+	// a decoder pushed events through it; the engine collects them.
+	stateDiagnostics      llmprotocol.Diagnostics
 	context               llmprotocol.StreamContext
 	policy                llmprotocol.Policy
 	providerID            string
@@ -485,4 +488,59 @@ func (state *streamState) recordToolDelta(event llmprotocol.Event) (llmprotocol.
 	}
 	state.toolArguments[event.ItemIndex] = append(current, event.ToolCall.Arguments...)
 	return event, nil
+}
+
+// defaultStateDiagnostics bounds the diagnostics a stream state holds between
+// collections when its policy sets no limit.
+const defaultStateDiagnostics = 64
+
+// noteStateDiagnostic holds one more diagnostic than the policy's limit, so
+// the collector sees the overflow and marks the list truncated instead of
+// passing on a list that looks complete.
+func (state *streamState) noteStateDiagnostic(diagnostic llmprotocol.Diagnostic) {
+	limit := state.policy.Limits.Diagnostics
+	if limit <= 0 {
+		limit = defaultStateDiagnostics
+	}
+	if len(state.stateDiagnostics) <= limit {
+		state.stateDiagnostics = append(state.stateDiagnostics, diagnostic)
+	}
+}
+
+// takeStateDiagnostics returns and clears the diagnostics the stream state
+// raised.
+func (state *streamState) takeStateDiagnostics() llmprotocol.Diagnostics {
+	taken := state.stateDiagnostics
+	state.stateDiagnostics = nil
+	return taken
+}
+
+// stateDiagnosticDecoder is every built-in stream decoder as its codec hands
+// it out: it reports, beside the diagnostics a Push or Finalize returns, the
+// ones the decoder's shared stream state raised, so a caller of the exported
+// decoder sees them as the stream engine does.
+type stateDiagnosticDecoder struct {
+	decoder interface {
+		llmprotocol.StreamDecoder
+		takeStateDiagnostics() llmprotocol.Diagnostics
+	}
+	limit int
+}
+
+func newStateDiagnosticDecoder(decoder interface {
+	llmprotocol.StreamDecoder
+	takeStateDiagnostics() llmprotocol.Diagnostics
+}, policy llmprotocol.Policy,
+) llmprotocol.StreamDecoder {
+	return &stateDiagnosticDecoder{decoder: decoder, limit: policy.Limits.Diagnostics}
+}
+
+func (wrapped *stateDiagnosticDecoder) Push(chunk []byte) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	events, diagnostics, err := wrapped.decoder.Push(chunk)
+	return events, appendDiagnostics(diagnostics, wrapped.decoder.takeStateDiagnostics(), wrapped.limit), err
+}
+
+func (wrapped *stateDiagnosticDecoder) Finalize(reason error) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	events, diagnostics, err := wrapped.decoder.Finalize(reason)
+	return events, appendDiagnostics(diagnostics, wrapped.decoder.takeStateDiagnostics(), wrapped.limit), err
 }

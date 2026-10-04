@@ -103,7 +103,7 @@ type responsesStreamEncoder struct {
 }
 
 func (OpenAIResponsesCodec) NewDecoder(context llmprotocol.StreamContext, policy llmprotocol.Policy) llmprotocol.StreamDecoder {
-	return &responsesStreamDecoder{
+	return newStateDiagnosticDecoder(&responsesStreamDecoder{
 		streamState:           streamState{context: context, policy: policy},
 		framer:                newSSEFramer(policy.Limits.SSEFrameBytes),
 		nextAnnotationIndexes: make(map[streamContentKey]int),
@@ -115,7 +115,7 @@ func (OpenAIResponsesCodec) NewDecoder(context llmprotocol.StreamContext, policy
 		toolArgumentsDone:     make(map[int]bool),
 		completedOutput:       make(map[int]json.RawMessage),
 		seenLifecycleEvents:   make(map[string]bool),
-	}
+	}, policy)
 }
 
 func (OpenAIResponsesCodec) NewEncoder(context llmprotocol.StreamContext, policy llmprotocol.Policy) llmprotocol.StreamEncoder {

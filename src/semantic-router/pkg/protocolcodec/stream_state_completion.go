@@ -222,9 +222,15 @@ func (state *streamState) applyUsageEvidence(event llmprotocol.Event) (llmprotoc
 	if event.Usage == nil {
 		return event, nil
 	}
-	merged, err := mergeMonotonicUsage(state.usage, *event.Usage)
+	merged, restated, err := mergeMonotonicUsage(state.usage, *event.Usage)
 	if err != nil {
 		return llmprotocol.Event{}, err
+	}
+	for _, field := range restated {
+		state.noteStateDiagnostic(llmprotocol.Diagnostic{
+			Source: state.context.Source, Field: "usage." + field, Action: llmprotocol.DiagnosticDropped,
+			Reason: "the provider restated a usage counter lower mid-stream; its latest statement is kept",
+		})
 	}
 	state.usage = merged
 	usage := state.usage
@@ -331,32 +337,62 @@ func validateFailedEvent(event llmprotocol.Event) (llmprotocol.Event, error) {
 	return event, nil
 }
 
-func mergeMonotonicUsage(current, update llmprotocol.Usage) (llmprotocol.Usage, error) {
+// usageCountNames names usageCounts' entries for diagnostics.
+var usageCountNames = []string{
+	"input_uncached", "input_cache_read", "input_cache_write",
+	"output_reasoning", "output_other", "input_total", "output_total", "total",
+}
+
+// usageSplitCounts is how many leading usageCounts entries are splits of a
+// total (uncached, cache read, cache write, reasoning, other) rather than
+// totals.
+const usageSplitCounts = 5
+
+// mergeMonotonicUsage merges a usage statement into a stream's usage. Totals
+// never go backwards: a provider whose input, output or overall total
+// decreases is contradicting itself, and the stream fails. A split of a
+// total may be restated lower (a provider re-dividing input between cached
+// and uncached, or output between reasoning and other): the latest statement
+// is kept, and the field is returned so the caller records it, rather than
+// failing a stream whose answer the client already has.
+func mergeMonotonicUsage(current, update llmprotocol.Usage) (llmprotocol.Usage, []string, error) {
 	if err := llmprotocol.ValidateUsage(update); err != nil {
-		return llmprotocol.Usage{}, err
+		return llmprotocol.Usage{}, nil, err
 	}
 	if current.State == llmprotocol.UsageAvailable && update.State == llmprotocol.UsageUnavailable {
-		return llmprotocol.Usage{}, llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "usage_evidence_decreased", "upstream streaming usage evidence became unavailable", nil)
+		return llmprotocol.Usage{}, nil, llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "usage_evidence_decreased", "upstream streaming usage evidence became unavailable", nil)
 	}
 	currentCounts := usageCounts(current)
 	updateCounts := usageCounts(update)
 	merged := make([]llmprotocol.TokenCount, len(currentCounts))
+	var restated []string
 	for index := range merged {
-		value, err := mergeTokenCount(currentCounts[index], updateCounts[index])
+		existing, incoming := currentCounts[index], updateCounts[index]
+		if index < usageSplitCounts && existing.Value != nil && incoming.Value != nil && *existing.Value > *incoming.Value &&
+			usageEvidenceRank(incoming.Provenance) >= usageEvidenceRank(existing.Provenance) {
+			merged[index] = incoming
+			restated = append(restated, usageCountNames[index])
+			continue
+		}
+		value, err := mergeTokenCount(existing, incoming)
 		if err != nil {
-			return llmprotocol.Usage{}, err
+			if protocolError, ok := err.(*llmprotocol.ProtocolError); ok && protocolError.Code == "usage_decreased" {
+				return llmprotocol.Usage{}, nil, llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "usage_decreased",
+					"upstream streaming usage counter decreased: "+usageCountNames[index], nil)
+			}
+			return llmprotocol.Usage{}, nil, err
 		}
 		merged[index] = value
 	}
 	result := usageFromCounts(mergedUsageState(current.State, update.State), merged)
 	result.ProviderCost = mergeProviderCost(current.ProviderCost, update.ProviderCost)
 	if err := deriveUsageTotal(&result); err != nil {
-		return llmprotocol.Usage{}, err
+		return llmprotocol.Usage{}, nil, err
 	}
 	if err := llmprotocol.ValidateUsage(result); err != nil {
-		return llmprotocol.Usage{}, err
+		return llmprotocol.Usage{}, nil, err
 	}
-	return result, nil
+	return result, restated, nil
 }
 
 func mergeTokenCount(existing, incoming llmprotocol.TokenCount) (llmprotocol.TokenCount, error) {
