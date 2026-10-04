@@ -168,8 +168,9 @@ a cache shard with `prompt_cache_key`. Anthropic caches only at explicit
 breakpoints, so when such a request is dispatched over Messages to a Claude
 worker (a model whose card publisher is `anthropic`, or whose provider model
 id starts with `anthropic/`), the Router supplies the directive
-`{"type": "ephemeral"}`, which uses the default 5-minute TTL. The breakpoint is
-then placed as described above. The following rules apply:
+`{"type": "ephemeral"}`. It uses the default 5-minute TTL unless the client
+asks for longer retention, as described below. The breakpoint is then placed
+as described above. The following rules apply:
 
 - A client's own top-level `cache_control` is used as written. The Router
   doesn't supply its own.
@@ -186,8 +187,15 @@ then placed as described above. The following rules apply:
   Completions or Responses get no breakpoint from this rule.
 - Neither Chat Completions nor Responses defines a way to opt out of automatic
   caching, and the Router has no setting to turn this off.
-- The supplied directive is recorded as a `generated` translation diagnostic
-  with reason `automatic_cache_prompt_cache_key` or `automatic_cache_default`.
+- A client's `prompt_cache_retention` sets the TTL. `24h` asks for longer
+  retention than Anthropic offers, so the Router uses Anthropic's longest TTL,
+  `1h`, and records an `approximated` diagnostic. `in_memory` keeps the
+  5-minute default. Any other value also keeps the default, and the Router
+  records a `dropped` diagnostic.
+- The supplied directive is recorded as a `generated` translation diagnostic.
+  Its reason names the client's cache intent:
+  `automatic_cache_prompt_cache_key`, `automatic_cache_prompt_cache_retention`
+  when the client sent a retention but no key, or `automatic_cache_default`.
   The diagnostic appears in the protocol warnings header and the
   translation-warning counter.
 - The directive is applied only to the dispatched request, never to the

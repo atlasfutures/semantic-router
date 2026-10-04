@@ -1,18 +1,32 @@
 package extproc
 
 import (
+	"encoding/json"
+
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 // Where an automatic-cache directive the Router supplies for a Claude worker
-// comes from: the client named a cache shard with prompt_cache_key, or it
-// stated nothing and relies on the automatic prefix caching an OpenAI model
-// gives it by default.
+// comes from: the client named a cache shard with prompt_cache_key, asked
+// for a retention with prompt_cache_retention, or stated nothing and relies
+// on the automatic prefix caching an OpenAI model gives it by default.
 const (
-	autoCacheSourcePromptCacheKey = "prompt_cache_key"
-	autoCacheSourceDefault        = "default"
+	autoCacheSourcePromptCacheKey       = "prompt_cache_key"
+	autoCacheSourcePromptCacheRetention = "prompt_cache_retention"
+	autoCacheSourceDefault              = "default"
+)
+
+// OpenAI's prompt_cache_retention values: in_memory keeps a prefix for
+// minutes, which Anthropic's 5m default matches; 24h asks for extended
+// retention, longer than any ttl Anthropic offers.
+const (
+	promptCacheRetentionInMemory = "in_memory"
+	promptCacheRetentionExtended = "24h"
+	// anthropicLongestCacheTTL is the longest ttl Anthropic accepts on a
+	// breakpoint.
+	anthropicLongestCacheTTL = "1h"
 )
 
 // dispatchAutoCache marks a dispatch that may be given the automatic-cache
@@ -54,8 +68,9 @@ func (r *OpenAIRouter) claudeAutoCacheDispatch(dispatch *providerDispatch, ctx *
 }
 
 // applyDispatchAutoCache gives a covered dispatch the automatic-cache
-// directive {"type":"ephemeral"} (the 5m default) when the client stated
-// none. It runs in encodeDispatchRequest on the dispatched copy, after every
+// directive {"type":"ephemeral"} when the client stated none: with no ttl
+// (the 5m default), or with Anthropic's longest, 1h, when the client asked
+// for extended retention (autoCacheTTL). It runs in encodeDispatchRequest on the dispatched copy, after every
 // late mutation -- tool selection, the thinking lever, reasoning rewrites,
 // the output bound -- so the decision and the codec's placement read the same
 // final request, and the client's own request, which the response cache and
@@ -90,14 +105,21 @@ func applyDispatchAutoCache(request *llmprotocol.Request, ctx *RequestContext) {
 		})
 		return
 	}
-	origin := autoCacheSourceDefault
-	// The codecs carry prompt_cache_key only when it holds a value.
+	// The codecs carry prompt_cache_key and prompt_cache_retention, both
+	// strings, only when they hold a value.
+	var key, retention json.RawMessage
 	if carrier := request.Unmodeled; carrier != nil {
-		if _, named := carrier.Fields["prompt_cache_key"]; named {
-			origin = autoCacheSourcePromptCacheKey
-		}
+		key, retention = carrier.Fields["prompt_cache_key"], carrier.Fields["prompt_cache_retention"]
 	}
-	request.AutoCache = &llmprotocol.CacheDirective{Type: "ephemeral"}
+	origin := autoCacheSourceDefault
+	switch {
+	case key != nil:
+		origin = autoCacheSourcePromptCacheKey
+	case retention != nil:
+		origin = autoCacheSourcePromptCacheRetention
+	}
+	ttl := autoCacheTTL(retention, ctx)
+	request.AutoCache = &llmprotocol.CacheDirective{Type: "ephemeral", TTL: ttl}
 	ctx.ProtocolDiagnostics = append(ctx.ProtocolDiagnostics, llmprotocol.Diagnostic{
 		Source: ctx.SourceFormat,
 		Target: llmprotocol.AnthropicMessagesV1,
@@ -105,4 +127,36 @@ func applyDispatchAutoCache(request *llmprotocol.Request, ctx *RequestContext) {
 		Action: llmprotocol.DiagnosticGenerated,
 		Reason: "automatic_cache_" + origin,
 	})
+}
+
+// autoCacheTTL maps the client's prompt_cache_retention to a breakpoint ttl.
+// 24h asks for more than Anthropic keeps, so it becomes the longest ttl
+// Anthropic has, 1h, and the shortening is recorded as an approximation.
+// in_memory, or no retention, keeps the 5m default (no ttl). A value OpenAI
+// does not define keeps the default too, and is recorded as dropped. The
+// generated directive is the only breakpoint in the request -- a client with
+// breakpoints of its own is never given one -- so Anthropic's rule that a
+// longer ttl must precede a shorter one cannot be broken by it.
+func autoCacheTTL(retention json.RawMessage, ctx *RequestContext) string {
+	if retention == nil {
+		return ""
+	}
+	var value string
+	_ = json.Unmarshal(retention, &value) // ingress admits only a string
+	diagnostic := func(action llmprotocol.DiagnosticAction, reason string) {
+		ctx.ProtocolDiagnostics = append(ctx.ProtocolDiagnostics, llmprotocol.Diagnostic{
+			Source: ctx.SourceFormat, Target: llmprotocol.AnthropicMessagesV1,
+			Field: "prompt_cache_retention", Action: action, Reason: reason,
+		})
+	}
+	switch value {
+	case promptCacheRetentionExtended:
+		diagnostic(llmprotocol.DiagnosticApproximated, "prompt_cache_retention_24h_as_1h_ttl")
+		return anthropicLongestCacheTTL
+	case promptCacheRetentionInMemory:
+		return ""
+	default:
+		diagnostic(llmprotocol.DiagnosticDropped, "prompt_cache_retention_unknown_value")
+		return ""
+	}
 }

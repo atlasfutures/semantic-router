@@ -411,3 +411,77 @@ func TestClaudeAutoCacheOnTheExternalGatewayPath(t *testing.T) {
 		t.Fatalf("no automatic_cache_default diagnostic in %+v", ctx.ProtocolDiagnostics)
 	}
 }
+
+func hasRetentionDiagnostic(ctx *RequestContext, action llmprotocol.DiagnosticAction, reason string) bool {
+	for _, diagnostic := range ctx.ProtocolDiagnostics {
+		if diagnostic.Field == "prompt_cache_retention" && diagnostic.Action == action && diagnostic.Reason == reason {
+			return true
+		}
+	}
+	return false
+}
+
+// prompt_cache_retention states how long the client wants its prefix kept.
+// 24h is longer than Anthropic keeps one, so the breakpoint gets Anthropic's
+// longest ttl, 1h, and the shortening is recorded as an approximation.
+// in_memory matches the 5m default, so no ttl is sent. A value OpenAI does
+// not define keeps the default and is recorded as dropped. The generated
+// diagnostic names prompt_cache_key when the client sent one, else
+// prompt_cache_retention.
+func TestClaudeAutoCacheHonoursPromptCacheRetention(t *testing.T) {
+	responses := func(members string) string {
+		return `{"model":"m","instructions":"You are a coding agent.",` + members + autoCacheConversation + `}`
+	}
+	const chat24h = `{"model":"m","prompt_cache_retention":"24h","messages":[` +
+		`{"role":"system","content":"You are a coding agent."},{"role":"user","content":"Open main.go."}]}`
+	const ttl1h, ttlDefault = `{"type":"ephemeral","ttl":"1h"}`, `{"type":"ephemeral"}`
+	for name, test := range map[string]struct {
+		source      llmprotocol.WireFormat
+		body        string
+		place       string
+		breakpoint  string
+		generated   string
+		approximate bool
+		unknown     bool
+	}{
+		"Responses 24h": {
+			llmprotocol.OpenAIResponsesV1, responses(`"prompt_cache_retention":"24h",`),
+			"messages[2][0]", ttl1h, "automatic_cache_prompt_cache_retention", true, false,
+		},
+		"Chat 24h": {
+			llmprotocol.OpenAIChatV1, chat24h,
+			"messages[0][0]", ttl1h, "automatic_cache_prompt_cache_retention", true, false,
+		},
+		"Responses in_memory": {
+			llmprotocol.OpenAIResponsesV1, responses(`"prompt_cache_retention":"in_memory",`),
+			"messages[2][0]", ttlDefault, "automatic_cache_prompt_cache_retention", false, false,
+		},
+		"Responses 24h with prompt_cache_key": {
+			llmprotocol.OpenAIResponsesV1, responses(`"prompt_cache_key":"session-1","prompt_cache_retention":"24h",`),
+			"messages[2][0]", ttl1h, "automatic_cache_prompt_cache_key", true, false,
+		},
+		"Responses unknown retention": {
+			llmprotocol.OpenAIResponsesV1, responses(`"prompt_cache_retention":"7d",`),
+			"messages[2][0]", ttlDefault, "automatic_cache_prompt_cache_retention", false, true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body, ctx := dispatchClaudeAutoCache(t, claudeAutoCacheCase{
+				source: test.source, target: llmprotocol.AnthropicMessagesV1, claude: true, body: test.body,
+			})
+			got := messagesBreakpoints(t, body)
+			if len(got) != 1 || got[test.place] != test.breakpoint {
+				t.Fatalf("breakpoints %v in %s, want %s on %s", got, body, test.breakpoint, test.place)
+			}
+			if !hasAutoCacheDiagnostic(ctx, test.generated) {
+				t.Fatalf("no %s diagnostic in %+v", test.generated, ctx.ProtocolDiagnostics)
+			}
+			if hasRetentionDiagnostic(ctx, llmprotocol.DiagnosticApproximated, "prompt_cache_retention_24h_as_1h_ttl") != test.approximate {
+				t.Fatalf("approximated retention diagnostic present = %v, want %v: %+v", !test.approximate, test.approximate, ctx.ProtocolDiagnostics)
+			}
+			if hasRetentionDiagnostic(ctx, llmprotocol.DiagnosticDropped, "prompt_cache_retention_unknown_value") != test.unknown {
+				t.Fatalf("unknown retention diagnostic present = %v, want %v: %+v", !test.unknown, test.unknown, ctx.ProtocolDiagnostics)
+			}
+		})
+	}
+}
