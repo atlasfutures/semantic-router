@@ -271,6 +271,9 @@ func (decoder *responsesStreamDecoder) applyCompletedResponseItemKind(
 ) error {
 	switch item.Type {
 	case "function_call":
+		if err := decoder.validateResponsesCallCompletion(event.ItemIndex, item); err != nil {
+			return err
+		}
 		event.ToolCall = &llmprotocol.ToolCall{
 			ID: item.CallID, Name: item.Name, Arguments: item.Arguments, Namespace: item.Namespace,
 			Incomplete: item.Status == "incomplete",
@@ -344,4 +347,24 @@ func (decoder *responsesStreamDecoder) Finalize(reason error) ([]llmprotocol.Eve
 	terminalEvents, err := decoder.finalize(reason)
 	events = append(events, terminalEvents...)
 	return events, diagnostics, err
+}
+
+// validateResponsesCallCompletion holds a Responses function_call to the
+// status its provider gave it. Responses says a call was cut off by ending
+// the item "incomplete"; an item it calls "completed", or names no status
+// for, claims whole arguments, so arguments that are not a JSON object are
+// malformed, whatever the terminal says, as a buffered response of that
+// shape is.
+func (decoder *responsesStreamDecoder) validateResponsesCallCompletion(itemIndex int, item responsesItemWire) error {
+	if item.Status == "incomplete" {
+		return nil
+	}
+	arguments := []byte(item.Arguments)
+	if len(arguments) == 0 {
+		arguments = decoder.toolArguments[itemIndex]
+	}
+	if !isJSONObject(arguments, decoder.policy.Limits.JSONDepth) {
+		return invalidStreamToolArguments()
+	}
+	return nil
 }
