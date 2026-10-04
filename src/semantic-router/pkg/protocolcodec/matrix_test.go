@@ -102,8 +102,8 @@ func TestOpenAIRequestsWithoutOutputLimitRemainValidForAnthropic(t *testing.T) {
 			if err := json.Unmarshal(translated.Body, &wire); err != nil {
 				t.Fatal(err)
 			}
-			if wire.MaxTokens == nil || *wire.MaxTokens != defaultAnthropicMaxOutputTokens {
-				t.Fatalf("max_tokens = %v, want generated default %d", wire.MaxTokens, defaultAnthropicMaxOutputTokens)
+			if wire.MaxTokens == nil || *wire.MaxTokens != 32000 {
+				t.Fatalf("max_tokens = %v, want generated default 32000", wire.MaxTokens)
 			}
 			if len(translated.Diagnostics) != 1 || translated.Diagnostics[0].Action != llmprotocol.DiagnosticGenerated {
 				t.Fatalf("diagnostics = %+v, want one generated max_tokens diagnostic", translated.Diagnostics)
