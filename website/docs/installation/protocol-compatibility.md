@@ -162,6 +162,50 @@ format handles it as follows:
 - **Chat Completions backend:** the directive is dropped and counted as a
   translation diagnostic.
 
+A Chat Completions or Responses client usually sends no `cache_control`. It
+relies on the automatic prefix caching that OpenAI models apply, and may name
+a cache shard with `prompt_cache_key`. Anthropic caches only at explicit
+breakpoints, so when such a request is dispatched over Messages to a Claude
+worker (a model whose card publisher is `anthropic`, or whose provider model
+id starts with `anthropic/`), the Router supplies the directive
+`{"type": "ephemeral"}`. It uses the default 5-minute TTL unless the client
+asks for longer retention, as described below. The breakpoint is then placed
+as described above. The following rules apply:
+
+- A client's own top-level `cache_control` is used as written. The Router
+  doesn't supply its own.
+- A client's own per-block breakpoints, on a tool, a system block, a message
+  block, or a block inside a tool result, also count as its cache directive.
+  The Router adds no breakpoint and dispatches the client's breakpoints as
+  written, because an extra breakpoint would change the client's cache-write
+  cost. The skip is logged as `auto_cache_skipped` with reason
+  `client_breakpoints`. Breakpoints are counted on the request as it is
+  dispatched, after the decision's tools plugin has run. A breakpoint on a
+  tool that the plugin removes is not sent, so it doesn't prevent the
+  automatic breakpoint.
+- A Messages client, a non-Claude worker, and a Claude worker reached over Chat
+  Completions or Responses get no breakpoint from this rule.
+- Neither Chat Completions nor Responses defines a way to opt out of automatic
+  caching, and the Router has no setting to turn this off.
+- A client's `prompt_cache_retention` sets the TTL. `24h` asks for longer
+  retention than Anthropic offers, so the Router uses Anthropic's longest TTL,
+  `1h`, and records an `approximated` diagnostic. Because Anthropic gates the
+  `1h` TTL on a beta, the Router adds `extended-cache-ttl-2025-04-11` to the
+  dispatched `anthropic-beta` header. The value is merged into the header the
+  provider profile or the client set; no existing value is replaced or
+  repeated. `in_memory` keeps the
+  5-minute default. Any other value also keeps the default, and the Router
+  records a `dropped` diagnostic.
+- The supplied directive is recorded as a `generated` translation diagnostic.
+  Its reason names the client's cache intent:
+  `automatic_cache_prompt_cache_key`, `automatic_cache_prompt_cache_retention`
+  when the client sent a retention but no key, or `automatic_cache_default`.
+  The diagnostic appears in the protocol warnings header and the
+  translation-warning counter.
+- The directive is applied only to the dispatched request, never to the
+  client's stored request. It is the same for every turn, so a growing
+  conversation keeps a cache-stable prefix.
+
 A Responses client can still use `previous_response_id` with a Chat
 Completions or Messages backend. The Router retrieves and materializes the
 retained history, removes Router-owned object controls, and then encodes the

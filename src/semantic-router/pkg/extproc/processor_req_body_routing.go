@@ -343,6 +343,9 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	if r.Config != nil {
 		ctx.DispatchHostedTools = r.Config.ModelConfig[dispatch.logicalModel].HostedTools
 	}
+	// Marked here, where every dispatch path -- routed and external gateway
+	// -- meets, so no path builds a dispatch the rule does not see.
+	ctx.DispatchAutoCache = r.claudeAutoCacheDispatch(dispatch, ctx)
 	body, err := r.encodeDispatchRequest(ctx)
 	if err != nil {
 		metrics.RecordRequestError(dispatch.logicalModel, "serialization_error")
@@ -362,6 +365,7 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 		common.HeaderMutation = &ext_proc.HeaderMutation{}
 	}
 	appendContentLengthHeader(&common.HeaderMutation.SetHeaders, len(body))
+	declareAutoCacheBeta(&common.HeaderMutation.SetHeaders, ctx)
 	common.BodyMutation = &ext_proc.BodyMutation{
 		Mutation: &ext_proc.BodyMutation_Body{Body: body},
 	}
