@@ -73,6 +73,17 @@
       },
       {
         "data": {
+          "delta": {
+            "signature": "sig-anthropic-1",
+            "type": "signature_delta"
+          },
+          "index": 0,
+          "type": "content_block_delta"
+        },
+        "event": "content_block_delta"
+      },
+      {
+        "data": {
           "index": 0,
           "type": "content_block_stop"
         },

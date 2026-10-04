@@ -398,3 +398,47 @@ func TestAnEmptiedReasoningOnlyTurnIsRemovedForClaude(t *testing.T) {
 		})
 	}
 }
+
+// Claude's own signed thinking reaches a Claude worker over Chat as the
+// reasoning_details OpenRouter asks for back, with its signature and the
+// anthropic-claude-v1 tag, rather than as reasoning_content stripped of the
+// signature that lets Anthropic verify it.
+func TestClaudeSignedThinkingReachesClaudeOverChatSigned(t *testing.T) {
+	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
+	actions := relaxedPolicyActions()
+	fake := newRelaxedPolicyFake(t)
+	claude := actions["claude-off"].ActionID
+	fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return claude })
+	router, err := NewOpenAIRouter(writeClaudeOverChatPolicyConfig(t, fake.URL()))
+	if err != nil {
+		t.Fatalf("build router: %v", err)
+	}
+	awaitPolicySelectorArmed(t, router)
+	logs := captureLogs(t)
+	body := dispatchPolicyClientRequest(t, router, "episode-claude-signed", "/v1/messages",
+		`{"model":"auto","max_tokens":4096,"messages":[`+
+			`{"role":"user","content":"run the tests"},`+
+			`{"role":"assistant","content":[{"type":"thinking","thinking":"claude reasoning","signature":"claude-signature"},`+
+			`{"type":"tool_use","id":"toolu_1","name":"bash","input":{"command":"go test"}}]},`+
+			`{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"}]}]}`)
+	assertJSONField(t, body, "model", `"anthropic/claude-opus-5"`)
+	var messages []map[string]json.RawMessage
+	if err := json.Unmarshal(body["messages"], &messages); err != nil {
+		t.Fatalf("messages = %s", body["messages"])
+	}
+	var details []map[string]any
+	for _, message := range messages {
+		if string(message["role"]) == `"assistant"` {
+			_ = json.Unmarshal(message["reasoning_details"], &details)
+		}
+	}
+	if len(details) != 1 || details[0]["signature"] != "claude-signature" || details[0]["format"] != "anthropic-claude-v1" ||
+		details[0]["text"] != "claude reasoning" || details[0]["type"] != "reasoning.text" {
+		t.Fatalf("Claude's thinking did not reach it as signed reasoning_details: %s", body["messages"])
+	}
+	for _, entry := range logs.All() {
+		if event := entry.ContextMap()["event"]; event == "reasoning_signature_stripped" || event == "reasoning_dropped" {
+			t.Fatalf("Claude's own thinking was stripped or dropped: %v", entry.ContextMap())
+		}
+	}
+}

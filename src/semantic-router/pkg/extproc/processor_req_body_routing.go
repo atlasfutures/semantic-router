@@ -67,6 +67,9 @@ func (r *OpenAIRouter) prepareProviderDispatch(
 	// is logged by kind. Before it, a Claude worker loses the reasoning that
 	// is not provably Claude's, while signatures still say whose it is.
 	foreignDropped := r.dropReasoningForeignToClaude(request, dispatch, ctx.SourceFormat)
+	if r.signClaudeThinkingForChat(request, dispatch) > 0 {
+		changed = true
+	}
 	carry := protocolcodec.CarryReasoningTo(request, dispatch.targetFormat)
 	carry.ForeignDropped = foreignDropped
 	if carry.Changed() {

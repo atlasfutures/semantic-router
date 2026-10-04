@@ -8,6 +8,7 @@
           "container": null,
           "content": [
             {
+              "signature": "sig-anthropic-1",
               "thinking": "Check the weather tool first.",
               "type": "thinking"
             },

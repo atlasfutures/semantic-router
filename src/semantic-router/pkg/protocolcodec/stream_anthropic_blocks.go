@@ -171,6 +171,10 @@ func (encoder *anthropicStreamEncoder) stopAnthropicBlock(key anthropicBlockKey)
 	if !encoder.blockStarted[key] || encoder.blockStopped[key] {
 		return nil, nil
 	}
+	frames, err := encoder.claudeSignatureFrames(key)
+	if err != nil {
+		return nil, err
+	}
 	wire := anthropicEventWire{Type: "content_block_stop", Index: anthropicIndex(encoder.blockIndexes[key])}
 	frame, err := encodeSSE(wire.Type, wire)
 	if err != nil {
@@ -180,5 +184,5 @@ func (encoder *anthropicStreamEncoder) stopAnthropicBlock(key anthropicBlockKey)
 	if encoder.hasActiveBlock && encoder.activeBlock == key {
 		encoder.hasActiveBlock = false
 	}
-	return [][]byte{frame}, nil
+	return append(frames, frame), nil
 }
