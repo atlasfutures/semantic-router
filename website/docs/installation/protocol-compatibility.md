@@ -173,9 +173,12 @@ then placed as described above. The following rules apply:
 
 - A client's own top-level `cache_control` is used as written. The Router
   doesn't supply its own.
-- A client's per-block breakpoints are kept. The Router adds a breakpoint on
-  the last cacheable block only when that block has none and the four-breakpoint
-  limit leaves room. Otherwise the drop is counted.
+- A client's own per-block breakpoints, on a tool, a system block, a message
+  block, or a block inside a tool result, also count as its cache directive.
+  The Router adds no breakpoint and dispatches the client's breakpoints as
+  written, because an extra breakpoint would change the client's cache-write
+  cost. The skip is logged as `auto_cache_skipped` with reason
+  `client_breakpoints`.
 - A Messages client, a non-Claude worker, and a Claude worker reached over Chat
   Completions or Responses get no breakpoint from this rule.
 - Neither Chat Completions nor Responses defines a way to opt out of automatic

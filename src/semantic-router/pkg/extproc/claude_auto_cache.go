@@ -2,6 +2,8 @@ package extproc
 
 import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 // Where an automatic-cache directive the Router supplies for a Claude worker
@@ -37,10 +39,12 @@ type dispatchAutoCache struct {
 // It applies only where the family and the wire are both known, which is
 // here: a non-Claude worker and a Chat or Responses target get nothing (a
 // Claude worker reached over Chat is a separate gap). A Messages client is
-// left as it is: it caches explicitly, or chooses not to. A client's own
-// top-level directive wins, and a client's per-block breakpoints are kept by
-// the placement, which adds one only when the last cacheable block holds
-// none and the four-breakpoint limit leaves room. No client format defines an
+// left as it is: it caches explicitly, or chooses not to. Any directive the
+// client stated wins: a top-level one, or a breakpoint of its own on a tool,
+// a system block, a message block or a block inside a tool result. A client
+// that placed breakpoints has said exactly what to cache, and one more from
+// the Router would change what it pays to write the cache, so none is added
+// and the skip is logged. No client format defines an
 // opt-out of automatic caching, so there is none to honour. Nor does the
 // Router configuration have a prompt-cache setting to hang a switch on; the
 // rule is unconditional, as the caching the client gets from an OpenAI model
@@ -52,12 +56,21 @@ type dispatchAutoCache struct {
 func (r *OpenAIRouter) claudeAutoCache(
 	request *llmprotocol.Request,
 	dispatch *providerDispatch,
-	source llmprotocol.WireFormat,
+	ctx *RequestContext,
 ) *dispatchAutoCache {
-	if request == nil || dispatch == nil || request.AutoCache != nil ||
+	if request == nil || dispatch == nil || ctx == nil || request.AutoCache != nil ||
 		dispatch.targetFormat != llmprotocol.AnthropicMessagesV1 ||
-		(source != llmprotocol.OpenAIChatV1 && source != llmprotocol.OpenAIResponsesV1) ||
+		(ctx.SourceFormat != llmprotocol.OpenAIChatV1 && ctx.SourceFormat != llmprotocol.OpenAIResponsesV1) ||
 		r.armFamily(dispatch.logicalModel) != anthropicFamily {
+		return nil
+	}
+	if breakpoints := protocolcodec.CountCacheBreakpoints(*request); breakpoints > 0 {
+		logging.ComponentEvent("extproc", "auto_cache_skipped", map[string]interface{}{
+			"request_id":  ctx.RequestID,
+			"model":       dispatch.logicalModel,
+			"reason":      "client_breakpoints",
+			"breakpoints": breakpoints,
+		})
 		return nil
 	}
 	origin := autoCacheSourceDefault
@@ -77,7 +90,7 @@ func (r *OpenAIRouter) claudeAutoCache(
 // dispatch on the dispatched copy, and records a diagnostic naming its
 // source, which the translation-warning counter, the protocol warnings header
 // and the debug log all read. The codec's placement then adds its own
-// diagnostic for where the breakpoint went, or why none was added. A
+// diagnostic for where the breakpoint went, or why none could be. A
 // Messages client is never given the directive, so the replay of its own
 // bytes is untouched.
 func applyDispatchAutoCache(request *llmprotocol.Request, ctx *RequestContext) {

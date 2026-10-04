@@ -158,37 +158,75 @@ func TestClaudeAutoCacheKeepsAnExplicitTopLevelDirective(t *testing.T) {
 	}
 }
 
-// A Chat client's per-block breakpoints are kept. The automatic one is added
-// by placeAutoCacheBreakpoint's rules only: on the last block when that block
-// holds none, never a second one on a block that already holds the client's.
-func TestClaudeAutoCacheKeepsPerBlockBreakpoints(t *testing.T) {
-	const systemOnly = `{"model":"m","messages":[` +
-		`{"role":"system","content":[{"type":"text","text":"You are a coding agent.","cache_control":{"type":"ephemeral","ttl":"1h"}}]},` +
-		`{"role":"user","content":"Open main.go."}]}`
-	body, _ := dispatchClaudeAutoCache(t, claudeAutoCacheCase{
-		source: llmprotocol.OpenAIChatV1, target: llmprotocol.AnthropicMessagesV1, claude: true, body: systemOnly,
-	})
-	got := messagesBreakpoints(t, body)
-	if len(got) != 2 || got["system[0]"] != `{"type":"ephemeral","ttl":"1h"}` ||
-		got["messages[0][0]"] != `{"type":"ephemeral"}` {
-		t.Fatalf("breakpoints %v in %s, want the client's on system and one on the last block", got, body)
-	}
-
-	const lastHeld = `{"model":"m","messages":[` +
-		`{"role":"system","content":"You are a coding agent."},` +
-		`{"role":"user","content":[{"type":"text","text":"Open main.go.","cache_control":{"type":"ephemeral","ttl":"1h"}}]}]}`
-	body, _ = dispatchClaudeAutoCache(t, claudeAutoCacheCase{
-		source: llmprotocol.OpenAIChatV1, target: llmprotocol.AnthropicMessagesV1, claude: true, body: lastHeld,
-	})
-	got = messagesBreakpoints(t, body)
-	if len(got) != 1 || got["messages[0][0]"] != `{"type":"ephemeral","ttl":"1h"}` {
-		t.Fatalf("breakpoints %v in %s, want only the client's on the last block", got, body)
+// A client that placed its own breakpoints has stated its cache intent, so
+// the Router adds none: not beside a breakpoint on a system block, a message
+// block, a tool, or a block inside a tool result. The client's breakpoints
+// are dispatched as written.
+func TestClaudeAutoCacheAddsNothingBesideClientBreakpoints(t *testing.T) {
+	const ephemeral1h = `{"type":"ephemeral","ttl":"1h"}`
+	for name, test := range map[string]struct {
+		body string
+		want map[string]string
+	}{
+		"system block": {
+			body: `{"model":"m","messages":[` +
+				`{"role":"system","content":[{"type":"text","text":"You are a coding agent.","cache_control":` + ephemeral1h + `}]},` +
+				`{"role":"user","content":"Open main.go."}]}`,
+			want: map[string]string{"system[0]": ephemeral1h},
+		},
+		"earlier message block": {
+			body: `{"model":"m","messages":[` +
+				`{"role":"user","content":[{"type":"text","text":"List the files.","cache_control":` + ephemeral1h + `}]},` +
+				`{"role":"assistant","content":"There are two files."},` +
+				`{"role":"user","content":"Open main.go."}]}`,
+			want: map[string]string{"messages[0][0]": ephemeral1h},
+		},
+		"tool": {
+			body: `{"model":"m","messages":[{"role":"user","content":"Open main.go."}],` +
+				`"tools":[{"type":"function","function":{"name":"read_file","parameters":{"type":"object"}},"cache_control":` + ephemeral1h + `}]}`,
+			want: map[string]string{"tools[0]": ephemeral1h},
+		},
+		"inside a tool result": {
+			body: `{"model":"m","messages":[` +
+				`{"role":"user","content":"Open main.go."},` +
+				`{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{}"}}]},` +
+				`{"role":"tool","tool_call_id":"call_1","content":[{"type":"text","text":"package main","cache_control":` + ephemeral1h + `}]},` +
+				`{"role":"user","content":"Explain it."}]}`,
+			want: map[string]string{},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body, ctx := dispatchClaudeAutoCache(t, claudeAutoCacheCase{
+				source: llmprotocol.OpenAIChatV1, target: llmprotocol.AnthropicMessagesV1, claude: true, body: test.body,
+			})
+			if ctx.DispatchAutoCache != nil || hasAutoCacheDiagnostic(ctx, "automatic_cache_default") {
+				t.Fatalf("the Router supplied a directive beside the client's breakpoints: %+v", ctx.ProtocolDiagnostics)
+			}
+			got := messagesBreakpoints(t, body)
+			if name == "inside a tool result" {
+				// The breakpoint sits inside the tool_result block, below the
+				// depth messagesBreakpoints reads; it must be the only one.
+				if len(got) != 0 || bytes.Count(body, []byte("cache_control")) != 1 {
+					t.Fatalf("dispatched %s, want only the client's breakpoint in the tool result", body)
+				}
+				return
+			}
+			if len(got) != len(test.want) {
+				t.Fatalf("breakpoints %v in %s, want %v", got, body, test.want)
+			}
+			for place, value := range test.want {
+				if got[place] != value {
+					t.Fatalf("breakpoints %v in %s, want %v", got, body, test.want)
+				}
+			}
+		})
 	}
 }
 
-// A client whose own breakpoints use all four Messages allows gets none
-// added, and the drop is counted.
-func TestClaudeAutoCacheAddsNoneBeyondTheLimit(t *testing.T) {
+// A client whose own breakpoints use all four Messages allows is a client
+// that placed breakpoints: the Router plans no directive, so none is added
+// and the codec has nothing to drop.
+func TestClaudeAutoCacheAddsNoneToAFullClient(t *testing.T) {
 	const fourBreakpoints = `{"model":"m","messages":[` +
 		`{"role":"system","content":[{"type":"text","text":"One.","cache_control":{"type":"ephemeral"}},` +
 		`{"type":"text","text":"Two.","cache_control":{"type":"ephemeral"}}]},` +
@@ -202,14 +240,13 @@ func TestClaudeAutoCacheAddsNoneBeyondTheLimit(t *testing.T) {
 	if len(got) != 4 || got["messages[2][0]"] != "" {
 		t.Fatalf("breakpoints %v in %s, want the client's four and none on the last block", got, body)
 	}
-	dropped := false
-	for _, diagnostic := range ctx.ProtocolDiagnostics {
-		if diagnostic.Field == "cache_control" && diagnostic.Action == llmprotocol.DiagnosticDropped {
-			dropped = true
-		}
+	if ctx.DispatchAutoCache != nil {
+		t.Fatalf("the Router planned a directive: %+v", ctx.DispatchAutoCache)
 	}
-	if !dropped {
-		t.Fatalf("the dropped breakpoint was not counted: %+v", ctx.ProtocolDiagnostics)
+	for _, diagnostic := range ctx.ProtocolDiagnostics {
+		if diagnostic.Field == "cache_control" {
+			t.Fatalf("a cache_control diagnostic for a client that placed its own: %+v", diagnostic)
+		}
 	}
 }
 

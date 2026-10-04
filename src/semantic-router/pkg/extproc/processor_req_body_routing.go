@@ -105,7 +105,7 @@ func (r *OpenAIRouter) prepareProviderDispatch(
 	}
 	ctx.TargetFormat = dispatch.targetFormat
 	ctx.SemanticRequest = request
-	ctx.DispatchAutoCache = r.claudeAutoCache(request, dispatch, ctx.SourceFormat)
+	ctx.DispatchAutoCache = r.claudeAutoCache(request, dispatch, ctx)
 	logging.ComponentDebugEvent("extproc", "provider_dispatch_prepared", map[string]interface{}{
 		"request_id":  ctx.RequestID,
 		"model":       logicalModel,

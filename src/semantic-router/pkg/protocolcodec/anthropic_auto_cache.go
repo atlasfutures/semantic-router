@@ -137,6 +137,12 @@ func anthropicCacheableBlock(content llmprotocol.Content) bool {
 	}
 }
 
+// CountCacheBreakpoints is countCacheBreakpoints for a caller that decides,
+// before encoding, whether the client stated its own cache intent.
+func CountCacheBreakpoints(request llmprotocol.Request) int {
+	return countCacheBreakpoints(request)
+}
+
 // countCacheBreakpoints counts the breakpoints the request already states:
 // on tools, on system blocks, and on message blocks, including the blocks
 // inside a tool result.
