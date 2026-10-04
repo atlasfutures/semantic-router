@@ -140,7 +140,7 @@ func (accumulator *responseAccumulator) applyEvent(event llmprotocol.Event) erro
 		return accumulator.applyItemEvent(event)
 	}
 	switch event.Type {
-	case llmprotocol.EventResponseStarted, llmprotocol.EventUsageUpdated:
+	case llmprotocol.EventResponseStarted, llmprotocol.EventUsageUpdated, llmprotocol.EventKeepalive:
 		return nil
 	case llmprotocol.EventResponseCompleted:
 		return accumulator.completeResponse(event)

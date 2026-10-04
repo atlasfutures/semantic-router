@@ -146,6 +146,9 @@ func (decoder *chatStreamDecoder) Push(chunk []byte) ([]llmprotocol.Event, llmpr
 func (decoder *chatStreamDecoder) pushFrame(frame []byte) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
 	events, diagnostics, err := decoder.decodeProviderFrame(frame)
 	for index := range events {
+		if events[index].Type == llmprotocol.EventKeepalive {
+			continue
+		}
 		if decoder.upstreamProvider != "" {
 			events[index].UpstreamProvider = decoder.upstreamProvider
 		}
@@ -158,8 +161,14 @@ func (decoder *chatStreamDecoder) pushFrame(frame []byte) ([]llmprotocol.Event, 
 
 func (decoder *chatStreamDecoder) decodeProviderFrame(frame []byte) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
 	parsed, err := decoder.parseProviderSSEFrame(frame)
-	if err != nil || !parsed.HasData {
+	if err != nil {
 		return nil, nil, err
+	}
+	if parsed.commentOnly() {
+		return decoder.keepalive()
+	}
+	if !parsed.HasData {
+		return nil, nil, nil
 	}
 	if decoder.terminal {
 		return nil, nil, invalidProviderResponse("stream_event_after_terminal", "Chat stream emitted data after its terminal sentinel")
@@ -644,7 +653,8 @@ func (encoder *chatStreamEncoder) Push(event llmprotocol.Event) ([][]byte, llmpr
 
 func directChatStreamEvent(eventType llmprotocol.EventType) bool {
 	return eventType == llmprotocol.EventResponseCompleted ||
-		eventType == llmprotocol.EventResponseFailed || eventType == llmprotocol.EventProviderOpaque
+		eventType == llmprotocol.EventResponseFailed || eventType == llmprotocol.EventProviderOpaque ||
+		eventType == llmprotocol.EventKeepalive
 }
 
 func (encoder *chatStreamEncoder) applyChunkEvent(
@@ -766,6 +776,8 @@ func (encoder *chatStreamEncoder) encodeDirectEvent(event llmprotocol.Event) ([]
 			return nil, nil, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "opaque_event", "opaque provider event cannot cross formats", nil)
 		}
 		return [][]byte{append([]byte(nil), event.Opaque...)}, nil, nil
+	case llmprotocol.EventKeepalive:
+		return [][]byte{sseKeepaliveComment()}, nil, nil
 	default:
 		return nil, nil, nil
 	}

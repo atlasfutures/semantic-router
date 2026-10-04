@@ -210,6 +210,10 @@ schema, streaming, tools, or error translation.
 - The response keeps the client protocol's JSON or SSE shape. Provider
   transport errors and incomplete streams are translated separately from
   successful model responses.
+- A backend stream keepalive (an Anthropic `ping`, or an SSE frame of comment
+  lines only) reaches the client as one keepalive in the client's format:
+  `event: ping` for a Messages client once the message has started, and an SSE
+  comment otherwise. Nothing follows the terminal event.
 - `x-vsr-client-protocol`, `x-vsr-upstream-protocol`, and
   `x-vsr-protocol-warnings` expose translation details when applicable. See
   [VSR routing headers](../troubleshooting/vsr-headers).

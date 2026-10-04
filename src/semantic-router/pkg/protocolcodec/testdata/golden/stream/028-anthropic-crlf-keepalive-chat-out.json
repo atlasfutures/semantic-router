@@ -2,6 +2,11 @@
   "frames": [
     {
       "event": "",
+      "data": null,
+      "comment": "keepalive"
+    },
+    {
+      "event": "",
       "data": {
         "choices": [
           {

@@ -12,6 +12,17 @@ type sseFrame struct {
 	Event   string
 	Data    []byte
 	HasData bool
+	// HasComment and HasField record a comment line (": ...") and any field
+	// line. A frame of comment lines only is a keepalive.
+	HasComment bool
+	HasField   bool
+}
+
+// commentOnly reports a frame that holds SSE comment lines and nothing else,
+// the form a provider keeps a quiet stream alive with (OpenRouter's
+// ": OPENROUTER PROCESSING").
+func (frame sseFrame) commentOnly() bool {
+	return frame.HasComment && !frame.HasField
 }
 
 // streamWireIndexes maps protocol-neutral item identities to the compact,
@@ -205,9 +216,14 @@ func normalizeSSEFrame(frame []byte, first bool) ([]byte, error) {
 }
 
 func parseSSELine(result *sseFrame, line []byte) {
-	if len(line) == 0 || line[0] == ':' {
+	if len(line) == 0 {
 		return
 	}
+	if line[0] == ':' {
+		result.HasComment = true
+		return
+	}
+	result.HasField = true
 	name, value, found := bytes.Cut(line, []byte{':'})
 	if !found {
 		name, value = line, nil
@@ -223,6 +239,12 @@ func parseSSELine(result *sseFrame, line []byte) {
 		}
 		result.Data = append(result.Data, value...)
 	}
+}
+
+// sseKeepaliveComment is a keepalive as an SSE comment, which every SSE
+// parser skips. Chat and Responses have no keepalive event of their own.
+func sseKeepaliveComment() []byte {
+	return []byte(": keepalive\n\n")
 }
 
 func encodeSSE(event string, data any) ([]byte, error) {

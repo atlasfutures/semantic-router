@@ -365,7 +365,9 @@ func TestEmptySSEDataIsNotSilentlyTreatedAsKeepaliveAcrossProtocolMatrix(t *test
 					t.Fatal(err)
 				}
 				frames, events, _, err := stream.Push([]byte(": keepalive\n\n"))
-				if err != nil || len(frames) != 0 || len(events) != 0 {
+				// Before the response starts, every target hears a comment.
+				if err != nil || len(frames) != 1 || string(frames[0]) != ": keepalive\n\n" ||
+					len(events) != 1 || events[0].Type != llmprotocol.EventKeepalive {
 					t.Fatalf("comment keepalive changed: frames=%q events=%+v err=%v", frames, events, err)
 				}
 				eventLine := ""
