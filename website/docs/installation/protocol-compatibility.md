@@ -214,6 +214,15 @@ schema, streaming, tools, or error translation.
   lines only) reaches the client as one keepalive in the client's format:
   `event: ping` for a Messages client once the message has started, and an SSE
   comment otherwise. Nothing follows the terminal event.
+- A reply cut off at its output limit while the model was writing a tool call
+  ends as a length stop in the client's format, with the call marked
+  incomplete: Messages keeps the `tool_use` block under `stop_reason:
+  "max_tokens"` (with `input: {}` in a non-streaming response), Chat ends with
+  `finish_reason: "length"` and the partial arguments, and Responses ends
+  the `function_call` item with `status: "incomplete"` inside an incomplete
+  response whose reason is `max_output_tokens`. Truncated tool arguments under
+  any other stop fail as `invalid_stream_tool_arguments`. Such a turn is not
+  stored in the response cache.
 - `x-vsr-client-protocol`, `x-vsr-upstream-protocol`, and
   `x-vsr-protocol-warnings` expose translation details when applicable. See
   [VSR routing headers](../troubleshooting/vsr-headers).
