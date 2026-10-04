@@ -260,8 +260,16 @@ func (r *OpenAIRouter) ensureSemanticResponseStream(ctx *RequestContext) error {
 		return err
 	}
 	ctx.ProtocolResponseStream = stream
-	if source == llmprotocol.OpenAIChatV1 && target == llmprotocol.OpenAIChatV1 && !streamUsageRequestedByClient(ctx) {
-		ctx.PublicChatUsageFilter = protocolcodec.NewChatUsageStreamFilter(llmprotocol.DefaultPolicy().Limits.SSEFrameBytes)
+	if source == llmprotocol.OpenAIChatV1 && target == llmprotocol.OpenAIChatV1 {
+		// A same-format Chat stream reaches the client through this filter,
+		// never as raw upstream bytes: it drops usage the client did not ask
+		// for, and restates an upstream's native length finish as "length".
+		limit := llmprotocol.DefaultPolicy().Limits.SSEFrameBytes
+		if streamUsageRequestedByClient(ctx) {
+			ctx.PublicChatUsageFilter = protocolcodec.NewChatPassthroughStreamFilter(limit)
+		} else {
+			ctx.PublicChatUsageFilter = protocolcodec.NewChatUsageStreamFilter(limit)
+		}
 	}
 	ctx.SemanticStreamState = &semanticResponseStreamState{
 		requestID: ctx.RequestID,

@@ -208,7 +208,8 @@ func (OpenAIChatCodec) EncodeResponse(response llmprotocol.Response, envelope ll
 		}
 		return OpenAIChatCodec{}.EncodeTransportError(llmprotocol.TransportError{Error: response.Error}), diagnostics, nil
 	}
-	if envelope.CanReplay(llmprotocol.OpenAIChatV1, response.Generation, policy, true) {
+	if !chatSourceStopMisstated(envelope.SourceStop, response.StopReason) &&
+		envelope.CanReplay(llmprotocol.OpenAIChatV1, response.Generation, policy, true) {
 		return append([]byte(nil), envelope.Response...), nil, nil
 	}
 	var diagnostics llmprotocol.Diagnostics
@@ -300,6 +301,24 @@ func encodeChatUsage(usage llmprotocol.Usage) *chatUsageWire {
 		wire.CompletionTokensDetails = &chatCompletionTokensDetailsWire{ReasoningTokens: tokenValue(usage.OutputReasoning)}
 	}
 	return wire
+}
+
+// chatSourceStopMisstated reports a Chat body whose finish_reason says
+// another stop than the one decoded from it: OpenRouter labels a reply cut at
+// the output limit "tool_calls" and says "max_output_tokens" only in
+// native_finish_reason. Such a body is never handed back as it is, or a Chat
+// client reads the cut call as one to run.
+func chatSourceStopMisstated(sourceStop string, stop llmprotocol.StopReason) bool {
+	return sourceStop != "" && decodeChatStop(sourceStop) != stop
+}
+
+// UpstreamBodyMisstatesStop reports an upstream response body whose own stop
+// field says something other than its decoded stop, so a same-format client
+// has to be sent the re-encoded body rather than the upstream's. Only a Chat
+// body can: its finish_reason is the one field OpenRouter overrides with a
+// native reason (chatSourceStopMisstated).
+func UpstreamBodyMisstatesStop(format llmprotocol.WireFormat, response llmprotocol.Response) bool {
+	return format == llmprotocol.OpenAIChatV1 && chatSourceStopMisstated(response.SourceStopReason, response.StopReason)
 }
 
 func decodeChatStop(reason string) llmprotocol.StopReason {

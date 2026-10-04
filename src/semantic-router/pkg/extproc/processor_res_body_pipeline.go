@@ -13,6 +13,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 func (r *OpenAIRouter) handleNonStreamingResponseBody(
@@ -57,7 +58,11 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 		r.calibrateTokenEstimator(ctx, usage.promptTokens)
 	}
 	clientBody := responseBody
-	rewriteClientBody := requiresClientResponseRewrite(ctx)
+	// A same-format body whose own stop field misstates its decoded stop (a
+	// Chat cut at the output limit labelled tool_calls) is re-encoded too, so
+	// the client is told the length stop rather than handed a call to run.
+	rewriteClientBody := requiresClientResponseRewrite(ctx) ||
+		protocolcodec.UpstreamBodyMisstatesStop(ctx.TargetFormat, *semanticResponse)
 	if rewriteClientBody {
 		clientBody, err = r.encodeClientResponse(*semanticResponse, ctx)
 		if err != nil {

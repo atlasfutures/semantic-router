@@ -627,13 +627,21 @@ func (decoder *chatStreamDecoder) completeChoice(reason, native *string) ([]llmp
 // OpenAI model). Read as tool_calls, the cut call's truncated arguments look
 // malformed; read as the length stop it is, the turn ends as one.
 func decodeChatChoiceStop(reason string, native *string) llmprotocol.StopReason {
-	if native != nil {
-		switch *native {
-		case "max_output_tokens", "max_tokens", "length":
-			return llmprotocol.StopMaxTokens
-		}
+	if native != nil && chatNativeLengthReason(*native) {
+		return llmprotocol.StopMaxTokens
 	}
 	return decodeChatStop(reason)
+}
+
+// chatNativeLengthReason reports a provider's own reason for stopping at the
+// output limit, as OpenRouter's native_finish_reason states it.
+func chatNativeLengthReason(native string) bool {
+	switch native {
+	case "max_output_tokens", "max_tokens", "length":
+		return true
+	default:
+		return false
+	}
 }
 
 func (decoder *chatStreamDecoder) Finalize(reason error) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
