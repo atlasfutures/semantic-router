@@ -24,7 +24,8 @@ type dispatchAutoCache struct {
 }
 
 // claudeAutoCacheDispatch marks the dispatches the automatic-cache rule
-// covers. It runs where the worker's family and the wire are both known.
+// covers. It runs in finalizeProviderDispatchResponse, which every dispatch
+// path reaches with the worker's family and the wire known.
 //
 // An OpenAI-shaped client (Chat or Responses) sends no cache_control: it
 // relies on the prefix caching an OpenAI model applies on its own, and may

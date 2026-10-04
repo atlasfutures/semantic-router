@@ -37,14 +37,15 @@ func dispatchClaudeAutoCache(t *testing.T, test claudeAutoCacheCase) ([]byte, *R
 	if immediate != nil || request == nil {
 		t.Fatalf("ingress refused %s: %+v", test.body, ctx.ImmediateProtocolError)
 	}
-	if _, err := router.prepareProviderDispatch(request, logicalModel, "", false, ctx); err != nil {
+	dispatch, err := router.prepareProviderDispatch(request, logicalModel, "", false, ctx)
+	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	body, err := router.encodeDispatchRequest(ctx)
+	response, err := router.finalizeProviderDispatchResponse(dispatch, router.buildProviderDispatchResponse(dispatch, ctx), ctx)
 	if err != nil {
-		t.Fatalf("encode: %v", err)
+		t.Fatalf("finalize: %v", err)
 	}
-	return body, ctx
+	return response.GetRequestBody().GetResponse().GetBodyMutation().GetBody(), ctx
 }
 
 // messagesBreakpoints lists where a dispatched Messages body holds a
@@ -370,5 +371,43 @@ func TestClaudeAutoCacheCountsBreakpointsAfterToolSelection(t *testing.T) {
 				t.Fatalf("generated diagnostic = %v, want %v: %+v", !test.generated, test.generated, ctx.ProtocolDiagnostics)
 			}
 		})
+	}
+}
+
+// A metadata-only Claude model -- a card with its publisher and no backend --
+// is dispatched by the external gateway path, which builds its own dispatch.
+// It meets the routed path at finalizeProviderDispatchResponse, where the
+// rule is marked, so a Responses request converted to Messages for it gets
+// the generated breakpoint too.
+func TestClaudeAutoCacheOnTheExternalGatewayPath(t *testing.T) {
+	const model = "claude-gateway"
+	router := &OpenAIRouter{Config: &config.RouterConfig{
+		BackendModels: config.BackendModels{ModelConfig: map[string]config.ModelParams{
+			model: {APIFormat: config.APIFormatAnthropic, Publisher: "anthropic"},
+		}},
+	}}
+	if !router.usesExternalGatewayDispatch(model) {
+		t.Fatal("the metadata-only model is not dispatched by the external gateway path")
+	}
+	ctx := &RequestContext{
+		Headers: map[string]string{}, SourceFormat: llmprotocol.OpenAIResponsesV1,
+		RequestID: "claude-auto-cache-gateway", TraceContext: context.Background(),
+	}
+	request, immediate := router.prepareProtocolRequest([]byte(responsesNoDirective), ctx)
+	if immediate != nil || request == nil {
+		t.Fatalf("ingress refused the request: %+v", ctx.ImmediateProtocolError)
+	}
+	response, err := router.handleExternalGatewayModelRouting(request, model, ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := response.GetRequestBody().GetResponse().GetBodyMutation().GetBody()
+	got := messagesBreakpoints(t, body)
+	if ctx.TargetFormat != llmprotocol.AnthropicMessagesV1 || len(got) != 1 ||
+		got["messages[2][0]"] != `{"type":"ephemeral"}` {
+		t.Fatalf("breakpoints %v in %s, want one 5m breakpoint on the last block", got, body)
+	}
+	if !hasAutoCacheDiagnostic(ctx, "automatic_cache_default") {
+		t.Fatalf("no automatic_cache_default diagnostic in %+v", ctx.ProtocolDiagnostics)
 	}
 }

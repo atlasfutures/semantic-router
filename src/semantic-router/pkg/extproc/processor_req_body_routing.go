@@ -105,7 +105,6 @@ func (r *OpenAIRouter) prepareProviderDispatch(
 	}
 	ctx.TargetFormat = dispatch.targetFormat
 	ctx.SemanticRequest = request
-	ctx.DispatchAutoCache = r.claudeAutoCacheDispatch(dispatch, ctx)
 	logging.ComponentDebugEvent("extproc", "provider_dispatch_prepared", map[string]interface{}{
 		"request_id":  ctx.RequestID,
 		"model":       logicalModel,
@@ -344,6 +343,9 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	if r.Config != nil {
 		ctx.DispatchHostedTools = r.Config.ModelConfig[dispatch.logicalModel].HostedTools
 	}
+	// Marked here, where every dispatch path -- routed and external gateway
+	// -- meets, so no path builds a dispatch the rule does not see.
+	ctx.DispatchAutoCache = r.claudeAutoCacheDispatch(dispatch, ctx)
 	body, err := r.encodeDispatchRequest(ctx)
 	if err != nil {
 		metrics.RecordRequestError(dispatch.logicalModel, "serialization_error")
