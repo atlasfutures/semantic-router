@@ -7,6 +7,7 @@
   "cases": [
     {"name": "auto_store", "patch": {"auto_store": true}},
     {"name": "background", "patch": {"background": true}},
+    {"name": "cache_control", "patch": {"cache_control": {"type": "ephemeral"}}},
     {"name": "context_management", "patch": {"context_management": [{"type": "compaction", "compact_threshold": 1000}]}},
     {"name": "conversation", "patch": {"conversation": "conv-1"}},
     {"name": "include", "patch": {"include": ["reasoning.encrypted_content"]}},

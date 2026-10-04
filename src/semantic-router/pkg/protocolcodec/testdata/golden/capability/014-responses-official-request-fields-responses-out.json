@@ -22,6 +22,19 @@
       }
     },
     {
+      "name": "cache_control",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "cache_control": {
+            "type": "ephemeral"
+          },
+          "input": "hello",
+          "model": "routed-model"
+        }
+      }
+    },
+    {
       "name": "context_management",
       "outcome": {
         "status": "error",

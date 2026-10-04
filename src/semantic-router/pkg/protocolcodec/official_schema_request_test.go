@@ -247,7 +247,7 @@ func TestOfficialUnsupportedRequestFieldsFailWithTypedErrors(t *testing.T) {
 				"model": "m", "max_tokens": 16,
 				"messages": []any{map[string]any{"role": "user", "content": "hello"}},
 			},
-			fields: fields("cache_control", "container", "inference_geo", "service_tier"),
+			fields: fields("container", "inference_geo", "service_tier"),
 		},
 	}
 

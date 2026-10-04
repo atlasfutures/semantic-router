@@ -21,6 +21,21 @@
       }
     },
     {
+      "name": "cache_control",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "messages": [
+            {
+              "content": "hello",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        }
+      }
+    },
+    {
       "name": "context_management",
       "outcome": {
         "status": "error",

@@ -145,6 +145,7 @@ func encodeResponsesRequestWire(request llmprotocol.Request) (responsesRequestWi
 		Truncation: request.Truncation, User: request.EndUserID,
 		ParallelToolCalls: request.ParallelToolCalls, Temperature: request.Sampling.Temperature,
 		TopP: request.Sampling.TopP, MaxOutputTokens: request.Sampling.MaxOutputTokens,
+		CacheControl: encodeAnthropicCacheControl(request.AutoCache),
 	}
 	if request.Stream && request.StreamOptions.IncludeObfuscation != nil {
 		wire.StreamOptions = &responsesStreamOptionsWire{IncludeObfuscation: request.StreamOptions.IncludeObfuscation}

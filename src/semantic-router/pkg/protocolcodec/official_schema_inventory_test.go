@@ -44,7 +44,7 @@ func TestOfficialRequestFieldInventoriesAreClosed(t *testing.T) {
 				"stream_options", "temperature", "text", "tool_choice", "tools", "top_logprobs", "top_p",
 				"truncation", "user",
 			),
-			extensions: fields("auto_store"),
+			extensions: fields("auto_store", "cache_control"),
 		},
 		{
 			name: "Anthropic Messages",
@@ -107,16 +107,16 @@ func TestOfficialRequestFieldDispositionsAreClosed(t *testing.T) {
 				"service_tier", "top_logprobs",
 			),
 			transport:  fields("stream_options"),
-			extensions: fields("auto_store"),
+			extensions: fields("auto_store", "cache_control"),
 		},
 		{
 			name: "Anthropic Messages",
 			wire: anthropicRequestWire{},
 			semantic: fields(
-				"max_tokens", "messages", "metadata", "model", "output_config", "stop_sequences", "stream",
-				"system", "temperature", "thinking", "tool_choice", "tools", "top_k", "top_p",
+				"cache_control", "max_tokens", "messages", "metadata", "model", "output_config", "stop_sequences",
+				"stream", "system", "temperature", "thinking", "tool_choice", "tools", "top_k", "top_p",
 			),
-			unsupported: fields("cache_control", "container", "inference_geo", "service_tier"),
+			unsupported: fields("container", "inference_geo", "service_tier"),
 		},
 	}
 	for _, test := range tests {
