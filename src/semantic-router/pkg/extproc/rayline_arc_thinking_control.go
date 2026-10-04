@@ -155,7 +155,9 @@ func raiseMessagesAllowance(request *llmprotocol.Request, budget *int64) bool {
 	if budget == nil {
 		return false
 	}
-	allowance := raylineARCDefaultMessagesMaxTokens
+	// The dispatch output bound has already set a limit on a Messages
+	// request; the fallback only keeps a direct caller valid.
+	allowance := dispatchFallbackMaxOutputTokens
 	if request.Sampling.MaxOutputTokens != nil {
 		allowance = *request.Sampling.MaxOutputTokens
 	}

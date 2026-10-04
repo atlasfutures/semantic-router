@@ -216,10 +216,15 @@ func ReasoningBoundForRequest(request llmprotocol.Request) *int64 {
 // not always what the request dispatches: the request_params floor raises
 // max_completion_tokens so an answer has room beside the thinking, and records
 // the caller's own number here. A bound derived from the raised number would
-// bound nothing.
+// bound nothing. A limit the Router set for a caller that stated none (a model
+// card's max_output_tokens) is no allowance of the caller's either.
 func ClientOutputAllowance(request llmprotocol.Request) *int64 {
 	if request.ClientMaxOutputTokens != nil {
 		return request.ClientMaxOutputTokens
+	}
+	if request.RouterSetMaxOutputTokens {
+		// The Router's own limit for a caller that stated none.
+		return nil
 	}
 	return request.Sampling.MaxOutputTokens
 }

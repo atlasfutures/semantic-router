@@ -382,10 +382,16 @@ type Request struct {
 	// allowance so an answer has room beside the thinking must not also let
 	// the turn think longer. No wire format carries it.
 	ClientMaxOutputTokens *int64
-	OutputFormat          OutputFormat
-	ReasoningMode         ReasoningMode
-	ReasoningEffort       string
-	ReasoningBudgetTokens *int64
+	// RouterSetMaxOutputTokens marks a Sampling.MaxOutputTokens the Router
+	// set because the caller stated none: a model card's max_output_tokens,
+	// or the fallback for a target that requires a limit. It is not the
+	// caller's allowance, so no reasoning bound derives from it. No wire
+	// format carries it.
+	RouterSetMaxOutputTokens bool
+	OutputFormat             OutputFormat
+	ReasoningMode            ReasoningMode
+	ReasoningEffort          string
+	ReasoningBudgetTokens    *int64
 	// ReasoningDisplay controls whether a provider returns summarized reasoning
 	// content or only its signed continuation token. It is distinct from whether
 	// reasoning itself is enabled.
