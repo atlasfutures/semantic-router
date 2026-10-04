@@ -1,8 +1,13 @@
 package extproc
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"strings"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
@@ -28,6 +33,11 @@ const (
 	// The cell's own response check (jailbreak or hallucination) refused to
 	// deliver a reply the arm produced; failure_detail names the check.
 	turnFailureResponseBlocked = "response_blocked"
+	// The client or the proxy ended the exchange before the stream did. It
+	// is neither the arm's failure nor the cell's: it excludes nothing,
+	// counts against no backend and commits no policy turn, but it is
+	// classed, so a stall a client gave up on is not read as a clean turn.
+	turnFailureClientEnded = "client_ended"
 	// The cell failed before any call: the header's classes, and two
 	// refinements of "unavailable".
 	turnFailurePackageNotLoaded  = "package_not_loaded"
@@ -241,4 +251,22 @@ func boundedPrintable(text string, limit int) string {
 		}
 	}
 	return string(out)
+}
+
+// clientEndedDetail names how the exchange ended, as the gRPC status of the
+// ext_proc stream's receive error: router-owned identifiers only.
+func clientEndedDetail(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, io.EOF) {
+		return "grpc:eof"
+	}
+	code := status.Code(err)
+	if code == codes.Unknown {
+		// A raw context error carries no gRPC status; map it to the one it
+		// stands for.
+		code = status.FromContextError(err).Code()
+	}
+	return "grpc:" + strings.ToLower(code.String())
 }

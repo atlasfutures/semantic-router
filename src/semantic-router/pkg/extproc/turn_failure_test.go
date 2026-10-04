@@ -7,6 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -450,6 +454,20 @@ func TestEmptySuccessIsRefusedAtTheHeaders(t *testing.T) {
 				if ctx.UpstreamSpan != nil {
 					t.Fatal("the upstream span was left open")
 				}
+				// The exchange then ends: a streaming turn settled at its
+				// headers is not finalized again, so it keeps its class and
+				// one usage line.
+				ctx.IsStreamingResponse = true
+				_ = (&OpenAIRouter{}).handleProcessReceiveError(ctx, status.Error(codes.Canceled, "context canceled"))
+				usageLines := 0
+				for _, entry := range logs.All() {
+					if entry.ContextMap()["event"] == "llm_usage" {
+						usageLines++
+					}
+				}
+				if ctx.ResponseFailureClass != turnFailureUpstreamError || usageLines != 1 {
+					t.Fatalf("after the exchange ended: class %q, %d usage lines", ctx.ResponseFailureClass, usageLines)
+				}
 			}
 		})
 	}
@@ -626,5 +644,291 @@ func TestAnIncompleteStreamNamesItsFailure(t *testing.T) {
 	(&OpenAIRouter{}).finalizeSemanticStreamingResponse(ctx, buffers.streamErr)
 	if got := findLogEvent(t, logs, "llm_usage")["failure_detail"]; got != "stream_incomplete" {
 		t.Fatalf("failure_detail = %q, want stream_incomplete", got)
+	}
+}
+
+// A stream the client or the proxy ended first is classed client_ended, with
+// the usage the provider stated and whether content had reached the client.
+// It is neither an arm nor a cell failure: it counts against no backend and
+// excludes no route.
+func TestAStreamTheClientEndedIsClassedClientEnded(t *testing.T) {
+	start := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":23,\"output_tokens\":8}}}\n\n"
+	content := "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"half\"}}\n\n"
+	for name, test := range map[string]struct {
+		frames string
+		ended  error
+		sent   bool
+		detail string
+	}{
+		"after content":        {frames: start + content, ended: status.Error(codes.Canceled, "context canceled"), sent: true, detail: "grpc:canceled"},
+		"before content":       {frames: start, ended: io.EOF, sent: false, detail: "grpc:eof"},
+		"raw context cancel":   {frames: start, ended: context.Canceled, sent: false, detail: "grpc:canceled"},
+		"raw context deadline": {frames: start, ended: fmt.Errorf("recv: %w", context.DeadlineExceeded), sent: false, detail: "grpc:deadlineexceeded"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			logs := captureLogs(t)
+			stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+				llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := &RequestContext{
+				RequestID: "req-ended", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+				SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.AnthropicMessagesV1,
+				ProtocolResponseStream: stream,
+				SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+			}
+			buffers := &semanticStreamBuffers{}
+			buffers.push([]byte(test.frames), ctx)
+			_ = (&OpenAIRouter{}).handleProcessReceiveError(ctx, test.ended)
+			usage := findLogEvent(t, logs, "llm_usage")
+			if usage["failure_class"] != turnFailureClientEnded || usage["failure_detail"] != test.detail ||
+				usage["content_sent_before_failure"] != test.sent || usage["truncated"] != true {
+				t.Fatalf("llm_usage = class %v detail %v sent %v truncated %v, want client_ended %s %v true",
+					usage["failure_class"], usage["failure_detail"], usage["content_sent_before_failure"], usage["truncated"], test.detail, test.sent)
+			}
+			if fmt.Sprint(usage["prompt_tokens"]) != "23" {
+				t.Fatalf("prompt_tokens = %v, want the provider's 23", usage["prompt_tokens"])
+			}
+			if failed := findLogEvent(t, logs, "turn_failed"); failed["failure_class"] != turnFailureClientEnded {
+				t.Fatalf("turn_failed class = %v", failed["failure_class"])
+			}
+		})
+	}
+	if turnFailureIsBackendError(turnFailureClientEnded) || cellExclusionClasses[turnFailureClientEnded] {
+		t.Fatal("client_ended counts against the backend or excludes its route")
+	}
+}
+
+// A provider error the stream already carried keeps its class when the
+// exchange then ends: the disconnect does not hide the provider's failure.
+func TestAProviderFailureSeenBeforeTheClientEndedKeepsItsClass(t *testing.T) {
+	logs := captureLogs(t)
+	stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+		llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := &RequestContext{
+		RequestID: "req-failed-then-ended", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+		SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.AnthropicMessagesV1,
+		ProtocolResponseStream: stream,
+		SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+	}
+	buffers := &semanticStreamBuffers{}
+	buffers.push([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\n"+
+		"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n"), ctx)
+	if ctx.SemanticStreamState.failed == nil {
+		t.Fatal("the provider's in-band error was not observed")
+	}
+	_ = (&OpenAIRouter{}).handleProcessReceiveError(ctx, status.Error(codes.Canceled, "context canceled"))
+	usage := findLogEvent(t, logs, "llm_usage")
+	if usage["failure_class"] == turnFailureClientEnded || usage["failure_detail"] != "provider:overloaded_error" {
+		t.Fatalf("llm_usage class %v detail %v, want the provider's failure kept", usage["failure_class"], usage["failure_detail"])
+	}
+}
+
+// A terminal reply the Router cannot rebuild stays upstream_error when the
+// exchange then ends: the disconnect does not hide the unusable reply. (A
+// provider's successful terminal is released to the client only at the end
+// of the stream, so a stream whose exchange ended first never completed for
+// the client and is client_ended.)
+func TestAnUnusableTerminalSeenBeforeTheClientEndedKeepsItsClass(t *testing.T) {
+	_ = captureLogs(t)
+	ctx := &RequestContext{RequestID: "req-unusable-then-ended", StreamEndedByReceiveError: true,
+		SemanticStreamState: &semanticResponseStreamState{terminal: true, items: map[int]*semanticStreamItem{0: {}}}}
+	(&OpenAIRouter{}).classStreamFailure(ctx, nil, errors.New("item never completed"), status.Error(codes.Canceled, "context canceled"))
+	if ctx.ResponseFailureClass != turnFailureUpstreamError || ctx.ResponseFailureDetail != "stream_reconstruction_failed" {
+		t.Fatalf("class %q detail %q, want upstream_error stream_reconstruction_failed", ctx.ResponseFailureClass, ctx.ResponseFailureDetail)
+	}
+}
+
+// A failure the turn already carries is not overwritten when the exchange
+// then ends: a codec error an earlier chunk raised, or a class recorded at
+// the response headers.
+func TestTheClientEndingDoesNotReplaceAnEarlierFailure(t *testing.T) {
+	t.Run("codec error in an earlier chunk", func(t *testing.T) {
+		logs := captureLogs(t)
+		stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+			llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := &RequestContext{
+			RequestID: "req-codec-then-ended", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+			SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.AnthropicMessagesV1,
+			ProtocolResponseStream: stream,
+			SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+		}
+		first := &semanticStreamBuffers{}
+		first.push([]byte("event: message_start\ndata: {not json}\n\n"), ctx)
+		if first.streamErr == nil {
+			t.Fatal("the malformed chunk raised no codec error")
+		}
+		_ = (&OpenAIRouter{}).handleProcessReceiveError(ctx, status.Error(codes.Canceled, "context canceled"))
+		if got := findLogEvent(t, logs, "llm_usage")["failure_class"]; got != turnFailureUpstreamError {
+			t.Fatalf("failure_class = %v, want the codec error's upstream_error", got)
+		}
+	})
+	t.Run("class recorded at the headers", func(t *testing.T) {
+		_ = captureLogs(t)
+		ctx := &RequestContext{RequestID: "req-headers-then-ended", StreamEndedByReceiveError: true, ResponseFailureClass: turnFailureUpstreamError}
+		(&OpenAIRouter{}).classStreamFailure(ctx, nil, nil, status.Error(codes.Canceled, "context canceled"))
+		if ctx.ResponseFailureClass != turnFailureUpstreamError {
+			t.Fatalf("class = %q, want the header's upstream_error kept", ctx.ResponseFailureClass)
+		}
+	})
+}
+
+// The exchange can also end while the Router is sending a chunk: a canceled
+// Send finalizes the stream as a receive error does.
+func TestAStreamEndedAtASendIsClassedClientEnded(t *testing.T) {
+	logs := captureLogs(t)
+	stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+		llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := &RequestContext{
+		RequestID: "req-send-canceled", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+		SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.AnthropicMessagesV1,
+		ProtocolResponseStream: stream,
+		SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+	}
+	chunk := []byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\n")
+	mock := &MockStream{Ctx: context.Background(), SendError: status.Error(codes.Canceled, "context canceled"),
+		Requests: []*ext_proc.ProcessingRequest{{Request: &ext_proc.ProcessingRequest_ResponseBody{
+			ResponseBody: &ext_proc.HttpBody{Body: chunk, EndOfStream: false}}}}}
+	_ = (&OpenAIRouter{Config: &config.RouterConfig{}}).processWithContext(mock, ctx)
+	usage := findLogEvent(t, logs, "llm_usage")
+	if usage["failure_class"] != turnFailureClientEnded || usage["failure_detail"] != "grpc:canceled" {
+		t.Fatalf("llm_usage class %v detail %v, want client_ended grpc:canceled", usage["failure_class"], usage["failure_detail"])
+	}
+}
+
+// Content observed in a chunk whose Send failed never reached the client:
+// only what earlier, sent chunks carried counts as sent.
+func TestContentInAChunkThatFailedToSendIsNotSent(t *testing.T) {
+	start := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\n"
+	content := "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"first words\"}}\n\n"
+	logs := captureLogs(t)
+	stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+		llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := &RequestContext{
+		RequestID: "req-content-unsent", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+		SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.AnthropicMessagesV1,
+		ProtocolResponseStream: stream,
+		SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+	}
+	mock := &MockStream{Ctx: context.Background(), SendError: status.Error(codes.Canceled, "context canceled"),
+		Requests: []*ext_proc.ProcessingRequest{{Request: &ext_proc.ProcessingRequest_ResponseBody{
+			ResponseBody: &ext_proc.HttpBody{Body: []byte(start + content), EndOfStream: false}}}}}
+	_ = (&OpenAIRouter{Config: &config.RouterConfig{}}).processWithContext(mock, ctx)
+	usage := findLogEvent(t, logs, "llm_usage")
+	if usage["failure_class"] != turnFailureClientEnded || usage["content_sent_before_failure"] != false {
+		t.Fatalf("llm_usage class %v content sent %v, want client_ended with nothing sent", usage["failure_class"], usage["content_sent_before_failure"])
+	}
+}
+
+// Whatever the class, content in a chunk whose Send failed was not sent: a
+// provider error in the same chunk as the first content is recorded with
+// nothing delivered.
+func TestAProviderErrorInAChunkThatFailedToSendSentNothing(t *testing.T) {
+	frames := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"first words\"}}\n\n" +
+		"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n"
+	logs := captureLogs(t)
+	stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+		llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := &RequestContext{
+		RequestID: "req-provider-unsent", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+		SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.AnthropicMessagesV1,
+		ProtocolResponseStream: stream,
+		SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+	}
+	mock := &MockStream{Ctx: context.Background(), SendError: status.Error(codes.Canceled, "context canceled"),
+		Requests: []*ext_proc.ProcessingRequest{{Request: &ext_proc.ProcessingRequest_ResponseBody{
+			ResponseBody: &ext_proc.HttpBody{Body: []byte(frames), EndOfStream: false}}}}}
+	_ = (&OpenAIRouter{Config: &config.RouterConfig{}}).processWithContext(mock, ctx)
+	usage := findLogEvent(t, logs, "llm_usage")
+	if usage["failure_class"] == turnFailureClientEnded || usage["content_sent_before_failure"] != false {
+		t.Fatalf("llm_usage class %v content sent %v, want the provider's class with nothing sent", usage["failure_class"], usage["content_sent_before_failure"])
+	}
+}
+
+// Every path that settles a failed call at the headers (an upstream error,
+// a transport error, an empty reply, a refused selection commit) writes its
+// usage through reportFailedCallUsage. The exchange ending afterwards, at a
+// receive or at a send, writes no second line.
+func TestASettledFailedCallIsNotFinalizedAgain(t *testing.T) {
+	for name, end := range map[string]func(*OpenAIRouter, *RequestContext){
+		"receive": func(r *OpenAIRouter, ctx *RequestContext) {
+			_ = r.handleProcessReceiveError(ctx, status.Error(codes.Canceled, "gone"))
+		},
+		"send": func(r *OpenAIRouter, ctx *RequestContext) {
+			r.finalizeEndedStream(ctx, status.Error(codes.Unavailable, "gone"))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			logs := captureLogs(t)
+			router := &OpenAIRouter{}
+			ctx := &RequestContext{RequestID: "req-settled", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+				SemanticStreamState: &semanticResponseStreamState{items: map[int]*semanticStreamItem{}}}
+			recordTurnFailure(ctx, selectionFailureUnavailable, false)
+			router.reportFailedCallUsage(ctx)
+			end(router, ctx)
+			usageLines := 0
+			for _, entry := range logs.All() {
+				if entry.ContextMap()["event"] == "llm_usage" {
+					usageLines++
+				}
+			}
+			if usageLines != 1 || ctx.ResponseFailureClass != selectionFailureUnavailable {
+				t.Fatalf("%d usage lines, class %q; want one line and the settled class", usageLines, ctx.ResponseFailureClass)
+			}
+		})
+	}
+}
+
+// The exchange can end before any response body arrived: the semantic stream
+// state does not exist yet. The turn is still classed client_ended, with
+// nothing sent, and nothing panics.
+func TestAStreamEndedBeforeItsFirstBodyIsClassedClientEnded(t *testing.T) {
+	logs := captureLogs(t)
+	ctx := &RequestContext{RequestID: "req-ended-at-headers", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+		SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.AnthropicMessagesV1}
+	(&OpenAIRouter{}).finalizeEndedStream(ctx, status.Error(codes.Canceled, "context canceled"))
+	usage := findLogEvent(t, logs, "llm_usage")
+	if usage["failure_class"] != turnFailureClientEnded || usage["content_sent_before_failure"] != false {
+		t.Fatalf("llm_usage class %v content sent %v, want client_ended with nothing sent", usage["failure_class"], usage["content_sent_before_failure"])
+	}
+}
+
+func TestAStreamEndedSendingItsHeadersIsClassedClientEnded(t *testing.T) {
+	logs := captureLogs(t)
+	ctx := &RequestContext{RequestID: "req-headers-send", RequestModel: "test", VSRSelectedModel: "arm-x", StartTime: time.Now(), Headers: map[string]string{},
+		SemanticRequest: testNeutralRequest("test", "hello"), IsStreamingResponse: true,
+		SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.AnthropicMessagesV1}
+	headers := arcResponseHeaders("200")
+	headers.ResponseHeaders.Headers.Headers = append(headers.ResponseHeaders.Headers.Headers,
+		&core.HeaderValue{Key: "content-type", RawValue: []byte("text/event-stream")})
+	mock := &MockStream{Ctx: context.Background(), SendError: status.Error(codes.Canceled, "context canceled"),
+		Requests: []*ext_proc.ProcessingRequest{{Request: headers}}}
+	err := (&OpenAIRouter{Config: &config.RouterConfig{}}).processWithContext(mock, ctx)
+	if status.Code(err) == codes.Internal {
+		t.Fatalf("processing panicked: %v", err)
+	}
+	usage := findLogEvent(t, logs, "llm_usage")
+	if usage["failure_class"] != turnFailureClientEnded || usage["content_sent_before_failure"] != false {
+		t.Fatalf("llm_usage class %v content sent %v, want client_ended with nothing sent", usage["failure_class"], usage["content_sent_before_failure"])
 	}
 }

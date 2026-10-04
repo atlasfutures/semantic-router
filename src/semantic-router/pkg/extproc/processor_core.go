@@ -134,23 +134,26 @@ func (r *OpenAIRouter) processWithContext(
 		}
 
 		if err := r.handleProcessRequest(stream, message.request, ctx); err != nil {
+			if sendCanceled(err) {
+				// The client or the proxy went away while a chunk was being
+				// sent: the stream ended as it does on a receive error, and
+				// the chunk that failed to send delivered nothing.
+				ctx.StreamEndedAtSend = true
+				r.finalizeEndedStream(ctx, err)
+			}
 			state, reason := replayLifecycleForProcessError(err)
 			r.finalizeRouterReplay(ctx, state, reason)
 			return err
 		}
+		if state := ctx.SemanticStreamState; state != nil {
+			ctx.DeliveredStreamItems = len(state.items)
+		}
+
 	}
 }
 
 func (r *OpenAIRouter) handleProcessReceiveError(ctx *RequestContext, err error) error {
-	if ctx.IsStreamingResponse && !ctx.StreamingComplete {
-		ctx.StreamingAborted = true
-		logging.Debugf("Streaming response aborted before completion, will not cache")
-		// This is the only place a stream the platform cut is ever seen
-		// ending. Returning without finalizing leaves the turn with no usage
-		// record: the upstream charged for every token it generated and the
-		// Router counted none of them.
-		r.finalizeSemanticStreamingResponse(ctx, err)
-	}
+	r.finalizeEndedStream(ctx, err)
 	if ctx.InflightToken != 0 {
 		inflight.End(ctx.RequestModel, ctx.InflightToken)
 		ctx.InflightToken = 0
@@ -379,4 +382,33 @@ func processUnknownRequest(
 	}
 
 	return sendResponse(stream, response, "unknown")
+}
+
+// finalizeEndedStream settles a streamed turn whose ext_proc exchange ended
+// before the stream did, at a receive or at a send. This is the only place a
+// stream the platform cut is ever seen ending. Returning without finalizing
+// leaves the turn with no usage record: the upstream charged for every token
+// it generated and the Router counted none of them.
+func (r *OpenAIRouter) finalizeEndedStream(ctx *RequestContext, err error) {
+	if !ctx.IsStreamingResponse || ctx.StreamingComplete || ctx.FailedCallSettled {
+		return
+	}
+	ctx.StreamingAborted = true
+	ctx.StreamEndedByReceiveError = true
+	logging.Debugf("Streaming response aborted before completion, will not cache")
+	// A codec error an earlier chunk raised is the stream's own failure; the
+	// exchange ending after it does not replace it.
+	streamErr := err
+	if ctx.SemanticStreamErr != nil {
+		streamErr = ctx.SemanticStreamErr
+	}
+	r.finalizeSemanticStreamingResponse(ctx, streamErr)
+}
+
+// sendCanceled reports a send that failed because the exchange was ended by
+// the client or the proxy, not by the Router.
+func sendCanceled(err error) bool {
+	code := status.Code(err)
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF) ||
+		code == codes.Canceled || code == codes.DeadlineExceeded || code == codes.Unavailable
 }

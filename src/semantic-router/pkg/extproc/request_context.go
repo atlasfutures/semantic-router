@@ -89,8 +89,21 @@ type RequestContext struct {
 	ResponseBodyHeldSince time.Time
 	SkipProcessing        bool // true only when the configured opt-out header is valid
 
-	StreamingComplete      bool // True after neutral stream finalization runs once.
-	StreamingAborted       bool // True if the neutral stream ended abnormally.
+	StreamingComplete bool // True after neutral stream finalization runs once.
+	StreamingAborted  bool // True if the neutral stream ended abnormally.
+	// StreamEndedByReceiveError is true when the ext_proc exchange ended
+	// (the client or the proxy went away) before the stream did.
+	StreamEndedByReceiveError bool
+	// SemanticStreamErr is the first error the response stream's codec
+	// raised, kept across chunks.
+	SemanticStreamErr error
+	// StreamEndedAtSend is true when the exchange ended while a response
+	// chunk was being sent; DeliveredStreamItems is how many stream items
+	// the chunks sent before it carried.
+	StreamEndedAtSend    bool
+	DeliveredStreamItems int
+	// FailedCallSettled is true once a failed call's usage line is written.
+	FailedCallSettled      bool
 	ProtocolResponseStream *protocolcodec.StreamEngine
 	// InjectedFault names the failure this request asked the router to produce.
 	// It is empty unless the cell opted in, and it is decided once, when the

@@ -157,6 +157,9 @@ func (buffers *semanticStreamBuffers) recordError(ctx *RequestContext, err error
 	}
 	buffers.streamErr = err
 	ctx.StreamingAborted = true
+	if ctx.SemanticStreamErr == nil {
+		ctx.SemanticStreamErr = err
+	}
 }
 
 func appendProtocolFrames(body []byte, frames [][]byte) []byte {
@@ -552,7 +555,7 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 // classStreamFailure classes a streamed turn that did not deliver a served
 // reply: a refusal, an error the provider raised mid-stream, or a 2xx stream
 // that ended without its terminal event, or an in-band stream error. A stream
-// the client or the proxy cancelled (a receive error) is not classed.
+// the client or the proxy ended first (a receive error) is client_ended.
 func (r *OpenAIRouter) classStreamFailure(
 	ctx *RequestContext,
 	semanticResponse *llmprotocol.Response,
@@ -561,6 +564,11 @@ func (r *OpenAIRouter) classStreamFailure(
 ) {
 	state := ctx.SemanticStreamState
 	sent := state != nil && len(state.items) > 0
+	if ctx.StreamEndedAtSend {
+		// The chunk whose Send failed delivered nothing: only what earlier,
+		// sent chunks carried reached the client, whatever the class.
+		sent = ctx.DeliveredStreamItems > 0
+	}
 	var inBand *llmprotocol.ProtocolError
 	switch {
 	case responseErr == nil && responseRefused(semanticResponse):
@@ -568,21 +576,26 @@ func (r *OpenAIRouter) classStreamFailure(
 	case streamErr != nil && errors.As(streamErr, &inBand):
 		// An in-band stream error: the Router's own deadline cut, or a
 		// provider stream the codec rejected. A receive error (the client or
-		// the proxy cancelled the exchange) is not classed.
+		// the proxy ended the exchange) is classed client_ended below.
 		class := turnFailureUpstreamError
 		if inBand.Code == "stream_truncated" {
 			class = turnFailureTimeout
 		}
 		recordTurnFailureDetail(ctx, class, codecStreamFailureDetail(inBand), sent)
-	case responseErr != nil && streamErr == nil && state != nil && state.terminal && state.failed == nil:
+	case responseErr != nil && (streamErr == nil || ctx.StreamEndedByReceiveError) && state != nil && state.terminal && state.failed == nil:
 		// The stream ended properly but its output cannot be reconstructed
 		// (an item never completed): the arm's reply is unusable.
 		recordTurnFailureDetail(ctx, turnFailureUpstreamError, "stream_reconstruction_failed", sent)
-	case streamErr != nil || state == nil:
+	case ctx.StreamEndedByReceiveError && ctx.ResponseFailureClass == "" && (state == nil || !state.terminal && state.failed == nil):
+		// Only a stream the provider had not finished: a provider failure
+		// already observed, or a terminal whose output cannot be rebuilt,
+		// keeps its own class; a complete stream records no failure.
+		recordTurnFailureDetail(ctx, turnFailureClientEnded, clientEndedDetail(streamErr), sent)
+	case streamErr != nil && !ctx.StreamEndedByReceiveError || state == nil:
 	case state.failed != nil:
-		recordTurnFailureDetail(ctx, streamFailureClass(state.failed), providerStreamFailureDetail(state.failed), len(state.items) > 0)
+		recordTurnFailureDetail(ctx, streamFailureClass(state.failed), providerStreamFailureDetail(state.failed), sent)
 	case !state.terminal:
-		recordTurnFailure(ctx, turnFailureStreamCut, len(state.items) > 0)
+		recordTurnFailure(ctx, turnFailureStreamCut, sent)
 	}
 }
 
