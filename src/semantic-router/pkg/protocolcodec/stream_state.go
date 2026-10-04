@@ -46,8 +46,9 @@ type streamState struct {
 	// max_tokens while it was writing the arguments, and it is also how a
 	// malformed call looks. Which one it was is only known at the terminal:
 	// a max_tokens stop finishes the turn as the length stop it is, and any
-	// other end fails it with invalid_stream_tool_arguments. Nothing may be
-	// generated after a cut, so any later output fails it at once.
+	// other end fails it with invalid_stream_tool_arguments. A cut item is
+	// the last output item to complete, so any later output, or any other
+	// item completing after it, fails it at once (itemEventAfterCut).
 	cutItems map[int]bool
 }
 
@@ -246,7 +247,7 @@ func (state *streamState) prepareStartEvent(event llmprotocol.Event) (llmprotoco
 }
 
 func (state *streamState) applyItemEvent(event llmprotocol.Event) (llmprotocol.Event, error) {
-	if len(state.cutItems) > 0 && outputAfterCut(event.Type) {
+	if len(state.cutItems) > 0 && itemEventAfterCut(event.Type) {
 		return llmprotocol.Event{}, invalidStreamToolArguments()
 	}
 	switch event.Type {
@@ -262,14 +263,19 @@ func (state *streamState) applyItemEvent(event llmprotocol.Event) (llmprotocol.E
 	return event, nil
 }
 
-// outputAfterCut reports an event that generates output. A model cut off at
-// max_tokens generates nothing more, so such an event after a cut tool item
-// proves the item was malformed rather than cut.
-func outputAfterCut(eventType llmprotocol.EventType) bool {
+// itemEventAfterCut reports an item event that may not follow a cut tool
+// item. A model cut off at max_tokens generates nothing more, and the call
+// it was writing is the last thing it wrote, so it is the last item to
+// complete. Output after a cut item, or another item completing after it
+// (a Chat stream completes its parallel calls in index order at the finish
+// chunk, so a truncated call 0 completes before a whole call 1), proves the
+// item malformed rather than cut. With this, a turn reaching its terminal
+// holds at most one cut item, and it completed last.
+func itemEventAfterCut(eventType llmprotocol.EventType) bool {
 	switch eventType {
 	case llmprotocol.EventOutputItemStarted, llmprotocol.EventOutputTextDelta,
 		llmprotocol.EventReasoningDelta, llmprotocol.EventToolCallDelta,
-		llmprotocol.EventImageGenerationProgress:
+		llmprotocol.EventImageGenerationProgress, llmprotocol.EventOutputItemCompleted:
 		return true
 	default:
 		return false
