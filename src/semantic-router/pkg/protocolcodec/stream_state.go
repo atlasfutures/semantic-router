@@ -44,11 +44,14 @@ type streamState struct {
 	// cutItems are tool items that completed with arguments that are not a
 	// JSON object. That is how a call looks when the model's output hit
 	// max_tokens while it was writing the arguments, and it is also how a
-	// malformed call looks. Which one it was is only known at the terminal:
-	// a max_tokens stop finishes the turn as the length stop it is, and any
-	// other end fails it with invalid_stream_tool_arguments. A cut item is
-	// the last output item to complete, so any later output, or any other
-	// item completing after it, fails it at once (itemEventAfterCut).
+	// malformed call looks. Which one it was is only known at the terminal
+	// (heldCutFailure): a max_tokens stop finishes the turn as the length
+	// stop it is, a failure (the provider's, the Router's, or a stream that
+	// ends with no terminal) ends it as that failure, and a completion under
+	// any other stop fails it with invalid_stream_tool_arguments.
+	// A cut item is the last output item to complete, so any later output,
+	// or any other item completing after it, fails it at once
+	// (itemEventAfterCut).
 	cutItems map[int]bool
 }
 

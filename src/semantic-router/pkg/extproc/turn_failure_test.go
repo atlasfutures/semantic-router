@@ -647,6 +647,207 @@ func TestAnIncompleteStreamNamesItsFailure(t *testing.T) {
 	}
 }
 
+// A provider that fails while a tool call's arguments are still streaming
+// leaves them a truncated object. Through the Router's own buffers, every
+// client format is told the provider's failure, never
+// invalid_stream_tool_arguments, and the usage and turn_failed lines keep
+// the provider's class and code.
+func TestAProviderFailureDuringACutToolCallKeepsItsClass(t *testing.T) {
+	start := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":12,\"output_tokens\":1}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"bash\",\"input\":{}}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\\\": \"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"ls -la /tm\"}}\n\n"
+	stop := "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+	overloaded := "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n"
+	for name, frames := range map[string]string{
+		"block open":    start + overloaded,
+		"block stopped": start + stop + overloaded,
+	} {
+		for _, client := range []llmprotocol.WireFormat{
+			llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1,
+		} {
+			t.Run(name+"/"+string(client), func(t *testing.T) {
+				logs := captureLogs(t)
+				stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, client,
+					llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx := &RequestContext{
+					RequestID: "req-cut-failure", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+					SourceFormat: client, TargetFormat: llmprotocol.AnthropicMessagesV1,
+					ProtocolResponseStream: stream,
+					SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+				}
+				buffers := &semanticStreamBuffers{}
+				buffers.push([]byte(frames), ctx)
+				buffers.finalize(ctx)
+				(&OpenAIRouter{}).finalizeSemanticStreamingResponse(ctx, buffers.streamErr)
+				body := string(buffers.translated)
+				if buffers.streamErr != nil || strings.Contains(body, "invalid_stream_tool_arguments") {
+					t.Fatalf("stream error %v; the client was told the symptom:\n%s", buffers.streamErr, body)
+				}
+				if !strings.Contains(body, "overloaded_error") {
+					t.Fatalf("the client was not told the provider's failure:\n%s", body)
+				}
+				for _, event := range []string{"llm_usage", "turn_failed"} {
+					fields := findLogEvent(t, logs, event)
+					if fields["failure_class"] != turnFailureUpstream5xx || fields["failure_detail"] != "provider:overloaded_error" {
+						t.Fatalf("%s = class %v detail %v, want %s provider:overloaded_error",
+							event, fields["failure_class"], fields["failure_detail"], turnFailureUpstream5xx)
+					}
+				}
+			})
+		}
+	}
+}
+
+// An upstream that stops while a tool call's arguments are streaming, with
+// no message_delta or message_stop, is an ordinary cut stream: the client
+// is told stream_incomplete and the turn is classed as any stream cut with
+// the call still open is, never as a tool-argument error or a provider
+// outage. The end arrives with the last frames and, as Envoy also sends it,
+// as an empty end-of-stream chunk after them.
+func TestAToolCallCutByAStreamWithNoTerminalIsAnIncompleteStream(t *testing.T) {
+	open := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":12,\"output_tokens\":1}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"edit\",\"input\":{}}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"/app/x.R\\\",\\\"edits\\\":[{\\\"oldText\\\":\\\"f <- function(x) {\"}}\n\n"
+	held := open + "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+	run := func(t *testing.T, client llmprotocol.WireFormat, chunks []string) (string, map[string]interface{}) {
+		t.Helper()
+		logs := captureLogs(t)
+		stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, client,
+			llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := &RequestContext{
+			RequestID: "req-cut-no-terminal", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+			SourceFormat: client, TargetFormat: llmprotocol.AnthropicMessagesV1,
+			ProtocolResponseStream: stream,
+			SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+		}
+		router := &OpenAIRouter{}
+		var body strings.Builder
+		for index, chunk := range chunks {
+			response := router.handleSemanticStreamingResponseBody([]byte(chunk), index == len(chunks)-1, ctx)
+			if mutation := response.GetResponseBody().GetResponse().GetBodyMutation(); mutation != nil {
+				body.Write(mutation.GetBody())
+			} else {
+				body.WriteString(chunk)
+			}
+		}
+		return body.String(), findLogEvent(t, logs, "llm_usage")
+	}
+	for name, split := range map[string]func(string) []string{
+		"end with the frames":        func(frames string) []string { return []string{frames} },
+		"empty end in a later chunk": func(frames string) []string { return []string{frames, ""} },
+	} {
+		for _, client := range []llmprotocol.WireFormat{llmprotocol.OpenAIResponsesV1, llmprotocol.AnthropicMessagesV1} {
+			t.Run(name+"/"+string(client), func(t *testing.T) {
+				body, usage := run(t, client, split(held))
+				if strings.Contains(body, "invalid_stream_tool_arguments") || !strings.Contains(body, "upstream stream ended before completion") {
+					t.Fatalf("the client was not told the stream was incomplete:\n%s", body)
+				}
+				if client == llmprotocol.OpenAIResponsesV1 && !strings.Contains(body, `"code":"stream_incomplete"`) {
+					t.Fatalf("the Responses client was not given stream_incomplete:\n%s", body)
+				}
+				_, uncut := run(t, client, split(open))
+				if usage["failure_detail"] != "stream_incomplete" || usage["failure_class"] != uncut["failure_class"] ||
+					usage["content_sent_before_failure"] != true {
+					t.Fatalf("llm_usage = class %v detail %v sent %v, want %v stream_incomplete true (a cut with the call open)",
+						usage["failure_class"], usage["failure_detail"], usage["content_sent_before_failure"], uncut["failure_class"])
+				}
+			})
+		}
+	}
+}
+
+// A tool call the provider stopped mid-arguments is classed by why it
+// stopped. A refusal is a refusal (declined, with its stop_details), a stop
+// at the context window is a served length stop, and only a stop that says
+// the reply finished leaves the arguments malformed.
+func TestAToolCallCutByAStopIsClassedByTheStop(t *testing.T) {
+	held := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":12,\"output_tokens\":1}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"edit\",\"input\":{}}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"/app/x.R\\\",\\\"edits\\\":[{\\\"oldText\\\":\\\"f <- function(x) {\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+	stop := func(reason, details string) string {
+		return "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"" + reason + "\",\"stop_sequence\":null" + details + "},\"usage\":{\"output_tokens\":9}}\n\n" +
+			"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+	}
+	for name, test := range map[string]struct {
+		terminal, class, detail, body string
+	}{
+		"refusal": {
+			terminal: stop("refusal", `,"stop_details":{"type":"refusal","category":"cyber","explanation":"Flagged."}`),
+			class:    turnFailureRefusal, body: `"reason":"content_filter"`,
+		},
+		"context window": {terminal: stop("model_context_window_exceeded", ""), body: `"reason":"max_output_tokens"`},
+		"end_turn": {
+			terminal: stop("end_turn", ""), class: turnFailureUpstreamError, detail: "invalid_stream_tool_arguments",
+			body: "invalid_stream_tool_arguments",
+		},
+	} {
+		// The terminal arrives with the end of the stream, or in its own
+		// chunk followed by an empty end-of-stream chunk, as Envoy sends it.
+		for shape, chunks := range map[string][]string{
+			"end with the terminal":      {held, test.terminal},
+			"empty end in a later chunk": {held, test.terminal, ""},
+		} {
+			t.Run(name+"/"+shape, func(t *testing.T) {
+				logs := captureLogs(t)
+				stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIResponsesV1,
+					llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx := &RequestContext{
+					RequestID: "req-cut-stop", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+					SourceFormat: llmprotocol.OpenAIResponsesV1, TargetFormat: llmprotocol.AnthropicMessagesV1,
+					ProtocolResponseStream: stream,
+					SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+				}
+				router := &OpenAIRouter{}
+				var body strings.Builder
+				for index, chunk := range chunks {
+					response := router.handleSemanticStreamingResponseBody([]byte(chunk), index == len(chunks)-1, ctx)
+					if mutation := response.GetResponseBody().GetResponse().GetBodyMutation(); mutation != nil {
+						body.Write(mutation.GetBody())
+					}
+				}
+				if !strings.Contains(body.String(), test.body) {
+					t.Fatalf("client body lacks %s:\n%s", test.body, body.String())
+				}
+				if test.class != turnFailureUpstreamError && strings.Contains(body.String(), "invalid_stream_tool_arguments") {
+					t.Fatalf("the client was told the arguments were malformed:\n%s", body.String())
+				}
+				usage := findLogEvent(t, logs, "llm_usage")
+				if class, _ := usage["failure_class"].(string); class != test.class {
+					t.Fatalf("llm_usage failure_class = %q, want %q", class, test.class)
+				}
+				if test.detail != "" && usage["failure_detail"] != test.detail {
+					t.Fatalf("llm_usage failure_detail = %v, want %s", usage["failure_detail"], test.detail)
+				}
+				failed := map[string]interface{}(nil)
+				for _, entry := range logs.All() {
+					if fields := entry.ContextMap(); fields["event"] == "turn_failed" {
+						failed = fields
+					}
+				}
+				switch {
+				case test.class == "" && failed != nil:
+					t.Fatalf("a served length stop was recorded as failed: %v", failed)
+				case test.class != "" && (failed == nil || failed["failure_class"] != test.class):
+					t.Fatalf("turn_failed = %v, want class %s", failed, test.class)
+				case test.class == turnFailureRefusal && (failed["stop_details_category"] != "cyber" || usage["stop_details_category"] != "cyber"):
+					t.Fatalf("refusal telemetry lost its category: turn_failed %v, llm_usage %v", failed, usage)
+				}
+			})
+		}
+	}
+}
+
 // A provider stream the Router's codec rejects mid-stream is the Router's
 // rejection, not a provider outage, however the stream then ends. The codec
 // replays its stored failure as the stream's failed event when a later

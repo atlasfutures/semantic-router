@@ -19,11 +19,57 @@ func TestOfficialAnthropicTerminalReasonInventoryIsClosed(t *testing.T) {
 		{reason: "tool_use", neutral: llmprotocol.StopToolCall},
 		{reason: "pause_turn", neutral: llmprotocol.StopPaused, openAIClosed: true},
 		{reason: "refusal", neutral: llmprotocol.StopContentFilter},
-		{reason: "model_context_window_exceeded", neutral: llmprotocol.StopContextWindow, openAIClosed: true},
+		{reason: "model_context_window_exceeded", neutral: llmprotocol.StopContextWindow},
 	}
 	for _, test := range tests {
 		t.Run(test.reason, func(t *testing.T) { assertAnthropicTerminalReason(t, engine, test) })
 	}
+}
+
+// A stop at the context window is a length stop. OpenAI names one length
+// limit, so an OpenAI client is told the turn was cut at it (Chat "length",
+// Responses incomplete at max_output_tokens), with a diagnostic that keeps
+// which limit it was, rather than having the turn refused as unrepresentable.
+func TestAContextWindowStopReachesOpenAIClientsAsALengthStop(t *testing.T) {
+	body := []byte(`{"id":"msg_1","type":"message","role":"assistant","model":"m","content":[{"type":"text","text":"cut"}],"stop_reason":"model_context_window_exceeded","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}`)
+	engine := NewBuiltinEngine()
+	requireApproximatedStop := func(t *testing.T, diagnostics llmprotocol.Diagnostics) {
+		t.Helper()
+		for _, diagnostic := range diagnostics {
+			if diagnostic.Field == "response.stop_reason" && diagnostic.Action == llmprotocol.DiagnosticApproximated {
+				return
+			}
+		}
+		t.Fatalf("no approximated stop_reason diagnostic: %+v", diagnostics)
+	}
+	t.Run("chat", func(t *testing.T) {
+		result, err := engine.TranslateResponse(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, body, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wire chatResponseWire
+		if err := json.Unmarshal(result.Body, &wire); err != nil {
+			t.Fatal(err)
+		}
+		if reason := wire.Choices[0].FinishReason; reason == nil || *reason != "length" {
+			t.Fatalf("Chat body = %s", result.Body)
+		}
+		requireApproximatedStop(t, result.Diagnostics)
+	})
+	t.Run("responses", func(t *testing.T) {
+		result, err := engine.TranslateResponse(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIResponsesV1, body, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wire responsesResponseWire
+		if err := json.Unmarshal(result.Body, &wire); err != nil {
+			t.Fatal(err)
+		}
+		if wire.Status != "incomplete" || wire.IncompleteDetails == nil || wire.IncompleteDetails.Reason != "max_output_tokens" {
+			t.Fatalf("Responses body = %s", result.Body)
+		}
+		requireApproximatedStop(t, result.Diagnostics)
+	})
 }
 
 func TestOfficialAnthropicWhitespaceStopSequenceIsPreserved(t *testing.T) {

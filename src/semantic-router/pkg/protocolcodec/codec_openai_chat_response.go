@@ -243,7 +243,10 @@ func appendChatStopReasonDiagnostic(
 	policy llmprotocol.Policy,
 ) error {
 	switch stopReason {
-	case llmprotocol.StopPaused, llmprotocol.StopContextWindow, llmprotocol.StopCanceled, llmprotocol.StopUnknown:
+	case llmprotocol.StopContextWindow:
+		appendContextWindowStop(diagnostics, policy, source, llmprotocol.OpenAIChatV1)
+		return nil
+	case llmprotocol.StopPaused, llmprotocol.StopCanceled, llmprotocol.StopUnknown:
 		return appendLossy(
 			diagnostics, policy, source, llmprotocol.OpenAIChatV1,
 			"response.stop_reason", "Chat Completions cannot represent the source terminal reason",
@@ -342,7 +345,7 @@ func decodeChatStop(reason string) llmprotocol.StopReason {
 
 func encodeChatStop(reason llmprotocol.StopReason) string {
 	switch reason {
-	case llmprotocol.StopMaxTokens:
+	case llmprotocol.StopMaxTokens, llmprotocol.StopContextWindow:
 		return "length"
 	case llmprotocol.StopToolCall:
 		return "tool_calls"

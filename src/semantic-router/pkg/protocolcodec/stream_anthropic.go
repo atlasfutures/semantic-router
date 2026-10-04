@@ -261,7 +261,7 @@ func (decoder *anthropicStreamDecoder) decodeEvent(
 		return decoder.decodeAnthropicEvent(wire, frame)
 	}
 	cut := wire.Type == "message_delta" && wire.Delta != nil && wire.Delta.StopReason != nil &&
-		decodeAnthropicStop(*wire.Delta.StopReason) == llmprotocol.StopMaxTokens
+		llmprotocol.CutToolCallStop(decodeAnthropicStop(*wire.Delta.StopReason))
 	flushed, diagnostics, err := decoder.flushPendingToolStop(cut)
 	if err != nil {
 		return flushed, diagnostics, err
@@ -275,10 +275,13 @@ func (decoder *anthropicStreamDecoder) decodeEvent(
 // incomplete tool use, and a buffered reply of that shape is decoded so
 // (markAnthropicCutToolCall). A stream says the same only once message_delta
 // arrives after the block stops, so the completion waits for it: when the
-// next event is that max_tokens message_delta, the call completes marked
-// incomplete. That includes a block cut before any input_json_delta, whose
-// arguments are the start's {} placeholder and would otherwise read whole.
-// Any other next event completes the call as it stands.
+// next event is a message_delta whose stop cut the reply short
+// (CutToolCallStop: max_tokens, model_context_window_exceeded, or a refusal,
+// which stops the model mid-call), the call completes marked incomplete,
+// whatever its arguments: the model never finished it. That includes a block
+// cut before any input_json_delta, whose arguments are the start's {}
+// placeholder and would otherwise read whole. Any other next event completes
+// the call as it stands.
 func (decoder *anthropicStreamDecoder) flushPendingToolStop(cut bool) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
 	index := *decoder.pendingToolStop
 	decoder.pendingToolStop = nil
@@ -590,7 +593,8 @@ func (decoder *anthropicStreamDecoder) Finalize(reason error) ([]llmprotocol.Eve
 	}
 	if decoder.pendingToolStop != nil && !decoder.terminal {
 		// No max_tokens message_delta followed: the call completes as it
-		// stands, and a stream with no terminal still fails below.
+		// stands, and the stream, which has no terminal, fails below as
+		// incomplete.
 		flushed, _, err := decoder.flushPendingToolStop(false)
 		events = append(events, flushed...)
 		if err != nil {

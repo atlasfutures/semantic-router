@@ -587,6 +587,22 @@ func appendLossy(diagnostics *llmprotocol.Diagnostics, policy llmprotocol.Policy
 	return nil
 }
 
+// appendContextWindowStop records that a stop at the context window reached
+// an OpenAI client as its length stop (Chat "length", Responses
+// max_output_tokens). OpenAI names one length limit; a model the context
+// window stopped was stopped by a length limit all the same, and may have
+// been cut off mid-call, so the turn is told it was cut rather than refused
+// as unrepresentable. The diagnostic keeps which limit it was.
+func appendContextWindowStop(diagnostics *llmprotocol.Diagnostics, policy llmprotocol.Policy, source, target llmprotocol.WireFormat) {
+	if len(*diagnostics) < policy.Limits.Diagnostics {
+		*diagnostics = append(*diagnostics, llmprotocol.Diagnostic{
+			Source: source, Target: target, Field: "response.stop_reason",
+			Action: llmprotocol.DiagnosticApproximated,
+			Reason: "the context window stop is sent as the target's output-limit stop",
+		})
+	}
+}
+
 func rejectUnsupportedRequestField(field string, value json.RawMessage) error {
 	return rejectUnsupportedRequestFieldAt("", field, value)
 }

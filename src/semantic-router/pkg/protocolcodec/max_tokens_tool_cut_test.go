@@ -321,19 +321,17 @@ func lastOutput(resource map[string]any) any {
 	return output[len(output)-1]
 }
 
-// The same truncated arguments under any stop but max_tokens, or with no
-// terminal at all, are malformed and fail as before.
+// The same truncated arguments under any stop but max_tokens, or with
+// output after them, are malformed and fail as before.
 func TestTruncatedToolArgumentsWithoutAMaxTokensStopStillFail(t *testing.T) {
 	chunks := loadMaxTokensToolCutChunks(t, maxTokensToolCutFixture)
 	all := strings.Join(chunks, "")
 	beforeTerminal := all[:strings.Index(all, "event: message_delta")]
 	afterCut := beforeTerminal + "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
 	for name, body := range map[string]string{
-		"end_turn":      strings.Replace(all, `"stop_reason":"max_tokens"`, `"stop_reason":"end_turn"`, 1),
-		"tool_use":      strings.Replace(all, `"stop_reason":"max_tokens"`, `"stop_reason":"tool_use"`, 1),
-		"no terminal":   beforeTerminal,
-		"output after":  afterCut,
-		"stream cut at": beforeTerminal[:len(beforeTerminal)-1],
+		"end_turn":     strings.Replace(all, `"stop_reason":"max_tokens"`, `"stop_reason":"end_turn"`, 1),
+		"tool_use":     strings.Replace(all, `"stop_reason":"max_tokens"`, `"stop_reason":"tool_use"`, 1),
+		"output after": afterCut,
 	} {
 		for _, target := range []llmprotocol.WireFormat{
 			llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1,
@@ -341,6 +339,28 @@ func TestTruncatedToolArgumentsWithoutAMaxTokensStopStillFail(t *testing.T) {
 			t.Run(name+"/"+string(target), func(t *testing.T) {
 				_, err := translateCut(t, target, []string{body})
 				requireProtocolErrorCode(t, err, "invalid_stream_tool_arguments")
+			})
+		}
+	}
+}
+
+// The recorded cut with no terminal after it (the stream simply ends, or
+// ends mid-line) never said the reply finished, nor that it stopped at
+// max_tokens: it is an incomplete stream, and the client is told so.
+func TestATruncatedToolCallWithNoTerminalIsAnIncompleteStream(t *testing.T) {
+	all := strings.Join(loadMaxTokensToolCutChunks(t, maxTokensToolCutFixture), "")
+	beforeTerminal := all[:strings.Index(all, "event: message_delta")]
+	for name, body := range map[string]string{
+		"no terminal":   beforeTerminal,
+		"stream cut at": beforeTerminal[:len(beforeTerminal)-1],
+	} {
+		for target, code := range map[llmprotocol.WireFormat]string{
+			llmprotocol.AnthropicMessagesV1: "api_error", llmprotocol.OpenAIChatV1: "stream_incomplete", llmprotocol.OpenAIResponsesV1: "stream_incomplete",
+		} {
+			t.Run(name+"/"+string(target), func(t *testing.T) {
+				run := runFailureCut(t, llmprotocol.AnthropicMessagesV1, target, body, nil)
+				requireFailureNotCut(t, target, run)
+				requireFailureFrame(t, target, run, code)
 			})
 		}
 	}

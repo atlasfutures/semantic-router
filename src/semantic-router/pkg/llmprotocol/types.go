@@ -458,6 +458,23 @@ const (
 	StopUnknown       StopReason = "unknown"
 )
 
+// LengthStop reports a stop at a length limit: the request's output limit
+// (max_tokens), or the model's context window filling up (Anthropic's
+// model_context_window_exceeded). The limit stopped the model wherever it
+// was, so a tool call it was writing may be cut off.
+func LengthStop(stop StopReason) bool {
+	return stop == StopMaxTokens || stop == StopContextWindow
+}
+
+// CutToolCallStop reports a stop a response may end on with a tool call cut
+// off mid-arguments: a length stop, or a refusal, where the provider stopped
+// the model in the middle of what it was writing (Anthropic's streaming
+// classifiers stop a turn this way, mid-call). Any other stop says the reply
+// finished, so a call with unfinished arguments under it is malformed.
+func CutToolCallStop(stop StopReason) bool {
+	return LengthStop(stop) || stop == StopContentFilter
+}
+
 type UsageProvenance string
 
 const (

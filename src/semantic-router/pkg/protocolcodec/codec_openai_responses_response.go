@@ -542,7 +542,7 @@ func applyResponsesStopReason(
 	diagnostics *llmprotocol.Diagnostics,
 ) error {
 	switch stopReason {
-	case llmprotocol.StopMaxTokens, llmprotocol.StopContentFilter:
+	case llmprotocol.StopMaxTokens, llmprotocol.StopContextWindow, llmprotocol.StopContentFilter:
 		wire.Status = "incomplete"
 		reason := "max_output_tokens"
 		if stopReason == llmprotocol.StopContentFilter {
@@ -551,8 +551,11 @@ func applyResponsesStopReason(
 		wire.IncompleteDetails = &struct {
 			Reason string `json:"reason"`
 		}{Reason: reason}
+		if stopReason == llmprotocol.StopContextWindow {
+			appendContextWindowStop(diagnostics, policy, source, llmprotocol.OpenAIResponsesV1)
+		}
 		return nil
-	case llmprotocol.StopPaused, llmprotocol.StopContextWindow, llmprotocol.StopCanceled, llmprotocol.StopUnknown:
+	case llmprotocol.StopPaused, llmprotocol.StopCanceled, llmprotocol.StopUnknown:
 		return appendLossy(diagnostics, policy, source, llmprotocol.OpenAIResponsesV1, "response.stop_reason", "Responses cannot represent the source terminal reason")
 	default:
 		return nil
