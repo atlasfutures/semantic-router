@@ -261,6 +261,42 @@ routing:
   serve.
 - An unknown entry is refused when the configuration loads.
 
+### Output limit on a Model Card
+
+`max_output_tokens` is the output limit the Router sends to a model when a
+request states none (no `max_tokens`, `max_completion_tokens` or
+`max_output_tokens`):
+
+```yaml
+routing:
+  modelCards:
+    - name: slow-reasoner
+      max_output_tokens: 16000
+```
+
+- **A limit the client states is always sent as stated.** The card value
+  applies only to a request that has no limit of its own.
+- **No card value.** A request bound for Anthropic Messages, which requires
+  `max_tokens`, is sent `32000`. A request bound for Chat Completions or
+  Responses is sent with no limit, because those formats do not require one.
+- **Thinking budgets stay valid.** Messages counts thinking inside
+  `max_tokens` and refuses a `thinking.budget_tokens` that is not below it. When
+  a budget is at or above the Router's limit, the Router adds the limit on top
+  of the budget.
+- **Caps still apply.** A decision's `request_params` `max_tokens_limit` caps
+  the Router's limit too.
+- **Only the operator's value is sent.** A catalog model's built-in maximum
+  output is not used as the limit.
+- The value must be a positive integer. Zero or a negative value is refused
+  when the configuration loads.
+- The Router logs which source set the limit (`card` or `fallback`) in the
+  `dispatch_output_bound` event.
+
+Set the card value for slow models. At about 35 tokens per second, the
+`32000` default takes about 900 s to stream, which is longer than the Router's
+default stream deadline (`global.router.response_stream.deadline_sec`, 590 s).
+The Router would end such a turn before the model finishes.
+
 ### Catalog-backed models
 
 Built-in support is additive to the same `version: v0.3` hierarchy. Set the
