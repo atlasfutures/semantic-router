@@ -241,6 +241,58 @@ func TestDispatchOutputBoundRespectsTheTargetMinimum(t *testing.T) {
 	}
 }
 
+// Under a decision's max_tokens_limit the thinking expansion never dispatches
+// above the cap: max_tokens becomes the cap and the budget is lowered to fit,
+// or thinking is turned off when the cap cannot hold the minimum budget and
+// an output token. A cap with room keeps the budget and the bound on top.
+// Every case encodes.
+func TestDispatchOutputBoundKeepsThinkingWithinTheDecisionLimit(t *testing.T) {
+	for name, test := range map[string]struct {
+		card       int
+		limit      int
+		budget     int64
+		wantLimit  string
+		wantBudget int64 // 0: thinking disabled
+	}{
+		"cap 2000, budget 40000":          {0, 2000, 40000, "max_tokens=2000", 1024},
+		"cap below the minimum budget":    {0, 1000, 40000, "max_tokens=1000", 0},
+		"cap at the minimum budget":       {0, 1024, 40000, "max_tokens=1024", 0},
+		"cap one above the minimum":       {0, 1025, 40000, "max_tokens=1025", 1024},
+		"card leaves room beside the cap": {1500, 3000, 2000, "max_tokens=3000", 1500},
+		"cap comfortably above":           {16000, 100000, 40000, "max_tokens=56000", 40000},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+				target: llmprotocol.AnthropicMessagesV1, card: test.card, body: unboundedResponsesBody,
+				decision: maxTokensLimitDecision(t, test.limit),
+				mutate: func(request *llmprotocol.Request) {
+					request.ReasoningMode = llmprotocol.ReasoningModeEnabled
+					request.ReasoningBudgetTokens = &test.budget
+				},
+			})
+			if got := wireOutputLimit(wire); got != test.wantLimit {
+				t.Fatalf("dispatched %q, want %q", got, test.wantLimit)
+			}
+			var thinking struct {
+				Type         string `json:"type"`
+				BudgetTokens int64  `json:"budget_tokens"`
+			}
+			if err := json.Unmarshal(wire["thinking"], &thinking); err != nil {
+				t.Fatalf("thinking = %s: %v", wire["thinking"], err)
+			}
+			if test.wantBudget == 0 {
+				if thinking.Type != "disabled" || request.ReasoningBudgetTokens != nil {
+					t.Fatalf("thinking = %s, want it disabled", wire["thinking"])
+				}
+				return
+			}
+			if thinking.Type != "enabled" || thinking.BudgetTokens != test.wantBudget {
+				t.Fatalf("thinking = %s, want budget %d", wire["thinking"], test.wantBudget)
+			}
+		})
+	}
+}
+
 // A decision that selects a LoRA adapter dispatches under the adapter's name.
 // The adapter has no card of its own and takes its base model's limit.
 func TestDispatchOutputBoundTakesALoRAAdaptersBaseCard(t *testing.T) {

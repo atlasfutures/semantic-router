@@ -20,18 +20,11 @@ const (
 )
 
 // applyDispatchOutputBound sets the output limit of a request whose caller
-// stated none: the worker's card max_output_tokens when the operator declared
-// one, otherwise, only for a target that requires a limit, the fallback.
-// Chat and Responses targets with no card value stay unbounded, as the caller
-// asked. A limit the caller stated is never touched.
+// stated none, as planDispatchOutputBound decides it, and logs the plan as the
+// dispatch_output_bound event. A limit the caller stated is never touched.
 //
 // It runs after every other output-allowance rule (request_params cap and
 // floor, a policy action's budget), so it only fills what they left unset.
-// The bound stays within the decision's max_tokens_limit and at or above the
-// target's minimum (minimumOutputLimit). On Messages, which counts thinking
-// inside max_tokens and refuses a budget that leaves no room below it, an
-// enabled thinking budget at or above the bound gets the bound on top of it,
-// the way a caller's allowance is kept on top.
 func (r *OpenAIRouter) applyDispatchOutputBound(
 	request *llmprotocol.Request,
 	dispatch *providerDispatch,
@@ -40,45 +33,133 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 	if request == nil || dispatch == nil || ctx == nil || request.Sampling.MaxOutputTokens != nil {
 		return false
 	}
-	bound, source := r.dispatchOutputBound(dispatch)
-	if source == "" {
+	plan := r.planDispatchOutputBound(
+		dispatch.logicalModel, dispatch.targetFormat, decisionMaxTokensLimit(ctx),
+		messagesThinkingBudget(request, dispatch.targetFormat),
+	)
+	if plan.source == "" {
 		return false
-	}
-	decisionLimit := decisionMaxTokensLimit(ctx)
-	if decisionLimit > 0 && bound > decisionLimit {
-		bound = decisionLimit
 	}
 	event := map[string]interface{}{
 		"request_id":  ctx.RequestID,
 		"model":       dispatch.logicalModel,
 		"wire_format": dispatch.targetFormat,
-		"source":      source,
+		"source":      plan.source,
 	}
-	// Never synthesize a limit the target refuses. A bound below the
-	// target's minimum is raised to it, which keeps a small card value or
-	// cap as close as the target allows; turning it into no limit would
-	// discard the operator's intent entirely. Only when the minimum itself
-	// is above the decision's max_tokens_limit is the request left
-	// unbounded, as its caller sent it: the router does not send a limit
-	// above the operator's cap.
-	if minimum := minimumOutputLimit(dispatch.targetFormat); bound < minimum {
-		if decisionLimit > 0 && minimum > decisionLimit {
-			event["below_target_minimum"] = "left_unbounded"
-			event["max_output_tokens"] = nil
-			logging.ComponentEvent("extproc", "dispatch_output_bound", event)
-			return false
-		}
-		event["below_target_minimum"] = "raised_to_minimum"
-		bound = minimum
+	if plan.belowMinimum != "" {
+		event["below_target_minimum"] = plan.belowMinimum
 	}
-	if budget := messagesThinkingBudget(request, dispatch.targetFormat); budget != nil && *budget >= bound {
-		bound += *budget
+	if plan.thinking != "" {
+		event["thinking"] = plan.thinking
 	}
+	switch plan.thinking {
+	case outputBoundThinkingBudgetLowered:
+		budget := plan.thinkingBudget
+		event["thinking_budget_tokens"] = budget
+		request.ReasoningBudgetTokens = &budget
+	case outputBoundThinkingDisabled:
+		request.ReasoningMode, request.ReasoningBudgetTokens = llmprotocol.ReasoningModeDisabled, nil
+	}
+	if plan.maxTokens == 0 {
+		event["max_output_tokens"] = nil
+		logging.ComponentEvent("extproc", "dispatch_output_bound", event)
+		return false
+	}
+	bound := plan.maxTokens
 	request.Sampling.MaxOutputTokens = &bound
 	request.RouterSetMaxOutputTokens = true
 	event["max_output_tokens"] = bound
 	logging.ComponentEvent("extproc", "dispatch_output_bound", event)
 	return true
+}
+
+// How a planned bound met the target's minimum, as logged.
+const (
+	outputBoundRaisedToMinimum = "raised_to_minimum"
+	outputBoundLeftUnbounded   = "left_unbounded"
+)
+
+// How a planned bound met a Messages thinking budget, as logged.
+const (
+	outputBoundThinkingOnTop         = "budget_on_top"
+	outputBoundThinkingBudgetLowered = "budget_lowered"
+	outputBoundThinkingDisabled      = "thinking_disabled"
+)
+
+// minimumAnthropicThinkingBudget is the smallest thinking.budget_tokens
+// Anthropic accepts.
+const minimumAnthropicThinkingBudget int64 = 1024
+
+// outputBoundPlan is the output limit a request that states none is sent
+// with. A zero maxTokens sends none; an empty source means no rule applied.
+type outputBoundPlan struct {
+	maxTokens      int64
+	source         string
+	belowMinimum   string
+	thinking       string
+	thinkingBudget int64
+}
+
+// planDispatchOutputBound decides the output limit for a request that states
+// none, to model on format. Dispatch applies it, and context compression
+// reserves it before dispatch, so the two cannot disagree.
+//
+//   - The bound is the model card's operator-declared max_output_tokens, or,
+//     only for a target that requires a limit (Messages), the fallback. Chat
+//     and Responses targets with no card value stay unbounded.
+//   - It stays within the decision's max_tokens_limit.
+//   - It is never a limit the target refuses. A bound below the target's
+//     minimum is raised to it, which keeps a small card value or cap as close
+//     as the target allows; turning it into no limit would discard the
+//     operator's intent. Only when the minimum itself is above the cap is the
+//     request left unbounded, as its caller sent it: the router does not send
+//     a limit above the operator's cap.
+//   - On Messages, which counts thinking inside max_tokens and refuses a
+//     budget that is not below it, an enabled budget at or above the bound
+//     gets the bound on top of it, the way a caller's allowance is kept on
+//     top. Under a cap the total never exceeds it: max_tokens becomes the cap
+//     and the budget is lowered to what the cap leaves beside the bound, never
+//     below Anthropic's 1024 minimum. A cap that cannot hold the minimum
+//     budget and one output token turns thinking off for the dispatch. No
+//     existing rule reconciles a caller's capped limit with a budget, so this
+//     one is the router's own.
+func (r *OpenAIRouter) planDispatchOutputBound(
+	model string,
+	format llmprotocol.WireFormat,
+	decisionLimit int64,
+	thinkingBudget *int64,
+) outputBoundPlan {
+	bound, source := r.dispatchOutputBound(model, format)
+	if source == "" {
+		return outputBoundPlan{}
+	}
+	plan := outputBoundPlan{source: source}
+	if decisionLimit > 0 && bound > decisionLimit {
+		bound = decisionLimit
+	}
+	if minimum := minimumOutputLimit(format); bound < minimum {
+		if decisionLimit > 0 && minimum > decisionLimit {
+			plan.belowMinimum = outputBoundLeftUnbounded
+			return plan
+		}
+		plan.belowMinimum = outputBoundRaisedToMinimum
+		bound = minimum
+	}
+	plan.maxTokens = bound
+	if thinkingBudget == nil || *thinkingBudget < bound {
+		return plan
+	}
+	if total := bound + *thinkingBudget; decisionLimit <= 0 || total <= decisionLimit {
+		plan.maxTokens, plan.thinking = total, outputBoundThinkingOnTop
+		return plan
+	}
+	lowered := max(decisionLimit-bound, minimumAnthropicThinkingBudget)
+	if lowered >= decisionLimit {
+		plan.thinking = outputBoundThinkingDisabled
+		return plan
+	}
+	plan.maxTokens, plan.thinking, plan.thinkingBudget = decisionLimit, outputBoundThinkingBudgetLowered, lowered
+	return plan
 }
 
 // minimumOutputLimit is the smallest output limit a target accepts.
@@ -94,17 +175,17 @@ func minimumOutputLimit(format llmprotocol.WireFormat) int64 {
 	return 1
 }
 
-// dispatchOutputBound is the limit for a request that states none, and its
-// source; an empty source means the request is sent without one.
-func (r *OpenAIRouter) dispatchOutputBound(dispatch *providerDispatch) (int64, string) {
+// dispatchOutputBound is the uncapped limit for a request that states none,
+// and its source; an empty source means the request is sent without one.
+func (r *OpenAIRouter) dispatchOutputBound(model string, format llmprotocol.WireFormat) (int64, string) {
 	if r != nil && r.Config != nil {
 		// A LoRA adapter dispatches under its own name and takes its base
 		// model's card.
-		if limit := r.Config.GetModelMaxOutputTokens(dispatch.logicalModel); limit > 0 {
+		if limit := r.Config.GetModelMaxOutputTokens(model); limit > 0 {
 			return int64(limit), outputBoundSourceCard
 		}
 	}
-	if dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 {
+	if format == llmprotocol.AnthropicMessagesV1 {
 		return dispatchFallbackMaxOutputTokens, outputBoundSourceFallback
 	}
 	return 0, ""
