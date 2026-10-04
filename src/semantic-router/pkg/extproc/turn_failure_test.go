@@ -844,6 +844,59 @@ func TestAToolCallCutByAStopIsClassedByTheStop(t *testing.T) {
 	}
 }
 
+// A provider stream the Router's codec rejects mid-stream is the Router's
+// rejection, not a provider outage, however the stream then ends. The codec
+// replays its stored failure as the stream's failed event when a later
+// chunk ends the stream; that event must not be read as the provider's.
+func TestACodecRejectionInAnEarlierChunkIsNotAProviderFailure(t *testing.T) {
+	rejected := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":12,\"output_tokens\":1}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"bash\",\"input\":{}}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"[1, 2]\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+		// The next event releases the held tool block, whose whole non-object
+		// arguments the codec refuses here.
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+	rest := "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":9}}\n\n" +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+	for name, chunks := range map[string][]string{
+		// Envoy ends a stream with an empty end-of-stream body.
+		"empty end in a later chunk":       {rejected, ""},
+		"end with frames in a later chunk": {rejected, rest},
+		"end in the same chunk":            {rejected + rest},
+	} {
+		for _, client := range []llmprotocol.WireFormat{llmprotocol.OpenAIResponsesV1, llmprotocol.AnthropicMessagesV1} {
+			t.Run(name+"/"+string(client), func(t *testing.T) {
+				logs := captureLogs(t)
+				stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, client,
+					llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx := &RequestContext{
+					RequestID: "req-codec-rejection", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+					SourceFormat: client, TargetFormat: llmprotocol.AnthropicMessagesV1,
+					ProtocolResponseStream: stream,
+					SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+				}
+				router := &OpenAIRouter{}
+				for index, chunk := range chunks {
+					router.handleSemanticStreamingResponseBody([]byte(chunk), index == len(chunks)-1, ctx)
+				}
+				for _, event := range []string{"llm_usage", "turn_failed"} {
+					fields := findLogEvent(t, logs, event)
+					if fields["failure_class"] != turnFailureUpstreamError || fields["failure_detail"] != "invalid_stream_tool_arguments" ||
+						fields["content_sent_before_failure"] != true {
+						t.Fatalf("%s = class %v detail %v sent %v, want %s invalid_stream_tool_arguments true", event,
+							fields["failure_class"], fields["failure_detail"], fields["content_sent_before_failure"], turnFailureUpstreamError)
+					}
+				}
+			})
+		}
+	}
+}
+
 // A stream the client or the proxy ended first is classed client_ended, with
 // the usage the provider stated and whether content had reached the client.
 // It is neither an arm nor a cell failure: it counts against no backend and
