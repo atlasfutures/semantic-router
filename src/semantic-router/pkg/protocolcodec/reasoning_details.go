@@ -28,6 +28,14 @@ import (
 // the array may reach is unchanged: a Chat target gets it back, every other
 // target drops and counts it (cross-family replay is router-infra#95).
 //
+// The one exception is Claude's own signature. A Messages client is given the
+// thinking signature OpenRouter returns for Claude, when the array is exactly
+// one signed anthropic-claude-v1 item for that thinking block
+// (chatClaudeThinkingSignature), so the client replays Claude's thinking
+// signed instead of unsigned. A Claude worker reached over Chat is sent such
+// thinking back as that same item (SignedThinkingAsReasoningDetails). No other
+// family's blob ever becomes a signature.
+//
 // A Responses client has no reasoning_details member. It is given the array
 // as a reasoning item's encrypted_content, minted here (mintReasoningDetails),
 // and its resend is read back into the same carrier, so the array again
@@ -310,4 +318,121 @@ func appendReasoningDetailsDrops(
 			}
 		}
 	}
+}
+
+// chatClaudeThinkingSignature returns the Anthropic signature a reasoning_details
+// array carries for one thinking block whose text is text: Claude served over
+// Chat through OpenRouter. It answers only for an array of exactly one
+// reasoning.text item tagged anthropic-claude-v1, with a signature, whose text
+// is the block's. A signature covers one block's text, so any other shape
+// (another format, several items, text the item does not hold) has none, and
+// the block stays unsigned.
+func chatClaudeThinkingSignature(details json.RawMessage, text string) string {
+	if !hasJSONValue(details) || text == "" {
+		return ""
+	}
+	var items []struct {
+		Type      string `json:"type"`
+		Text      string `json:"text"`
+		Signature string `json:"signature"`
+		Format    string `json:"format"`
+	}
+	if json.Unmarshal(details, &items) != nil || len(items) != 1 {
+		return ""
+	}
+	item := items[0]
+	if item.Type != "reasoning.text" || item.Format != responsesAnthropicReasoningFormat ||
+		item.Signature == "" || item.Text != text {
+		return ""
+	}
+	return item.Signature
+}
+
+// withClaudeThinkingSignatures signs, on a fresh slice, each unsigned
+// reasoning content whose reasoning_details carry Claude's signature for it
+// (chatClaudeThinkingSignature).
+func withClaudeThinkingSignatures(output []llmprotocol.OutputItem) []llmprotocol.OutputItem {
+	signed := make([]llmprotocol.OutputItem, len(output))
+	for index, item := range output {
+		signed[index] = item
+		for contentIndex, content := range item.Content {
+			if content.Kind != llmprotocol.ContentReasoning || content.Signature != "" {
+				continue
+			}
+			details, _ := reasoningDetailsOf(content)
+			signature := chatClaudeThinkingSignature(details, content.Text)
+			if signature == "" {
+				continue
+			}
+			if &signed[index].Content[0] == &item.Content[0] {
+				signed[index].Content = append([]llmprotocol.Content(nil), item.Content...)
+			}
+			signed[index].Content[contentIndex].Signature = signature
+		}
+	}
+	return signed
+}
+
+// SignedThinkingAsReasoningDetails rewrites, on fresh slices, each signed
+// reasoning content in a request's history as the reasoning_details item
+// OpenRouter returns for Claude and asks for back: a reasoning.text item with
+// the text, the signature and the anthropic-claude-v1 tag. It is for a Claude
+// worker reached over Chat, which otherwise gets the text with the signature
+// stripped (CarryReasoningTo) and so thinking Anthropic cannot verify. The
+// caller has already kept only reasoning with Anthropic provenance
+// (DropReasoningNotFromAnthropic). Items are numbered in order within each
+// message. It returns how many contents it rewrote.
+func SignedThinkingAsReasoningDetails(request *llmprotocol.Request) int {
+	if request == nil {
+		return 0
+	}
+	rewritten := 0
+	messages := make([]llmprotocol.Message, len(request.Messages))
+	for index, message := range request.Messages {
+		messages[index] = message
+		// The Chat encoder joins a message's reasoning_details arrays in
+		// order, and OpenRouter keys items by index, so each block's item
+		// takes the next index within its message, after any item the
+		// message already carries.
+		next := reasoningDetailsItemCount(message)
+		for contentIndex, content := range message.Content {
+			if content.Kind != llmprotocol.ContentReasoning || content.Signature == "" || content.Extensions != nil ||
+				content.Reasoning == llmprotocol.ReasoningScopeSummary {
+				continue
+			}
+			details, err := json.Marshal([]map[string]any{{
+				"type": "reasoning.text", "text": content.Text, "signature": content.Signature,
+				"format": responsesAnthropicReasoningFormat, "index": next,
+			}})
+			next++
+			if err != nil {
+				continue
+			}
+			if &messages[index].Content[0] == &message.Content[0] {
+				messages[index].Content = append([]llmprotocol.Content(nil), message.Content...)
+			}
+			content.Signature = ""
+			content.Extensions = reasoningDetailsFields(details)
+			messages[index].Content[contentIndex] = content
+			rewritten++
+		}
+	}
+	if rewritten > 0 {
+		request.Messages = messages
+	}
+	return rewritten
+}
+
+// reasoningDetailsItemCount is how many reasoning_details items a message's
+// contents already carry.
+func reasoningDetailsItemCount(message llmprotocol.Message) int {
+	count := 0
+	for _, content := range message.Content {
+		details, _ := reasoningDetailsOf(content)
+		var items []json.RawMessage
+		if details != nil && json.Unmarshal(details, &items) == nil {
+			count += len(items)
+		}
+	}
+	return count
 }

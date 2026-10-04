@@ -371,6 +371,13 @@ A switch mid-loop changes the reasoning the loop was built on, by target:
   proves who wrote unsigned reasoning, and DeepSeek and MiMo need their own
   `reasoning_content` back, so only a Claude arm drops what it cannot prove.
 
+When Claude is served over Chat, the Messages output gives its thinking the
+signature OpenRouter returned for it (`reasoning_details` tagged
+`anthropic-claude-v1`), buffered or as a `signature_delta`, so a Messages
+client replays Claude's thinking signed. A Claude arm reached over Chat is
+sent that thinking back as the same signed `reasoning_details` item, so
+Claude keeps its own reasoning across turns instead of losing it to the drop.
+
 Which blocks are dropped depends only on each block and the arm's family, so
 consecutive turns on one model send the same prefix and keep their prompt
 cache. Claude is recognised by its family, so a Claude arm whose provider

@@ -58,6 +58,14 @@ type anthropicStreamEncoder struct {
 	// reasoningDetailsDropped records that the turn's reasoning_details drop
 	// was reported, so it is reported once rather than per fragment.
 	reasoningDetailsDropped bool
+	// reasoningDetails and reasoningText accumulate, per thinking block, the
+	// reasoning_details fragments and the thinking text the block streamed,
+	// so the block can be signed with Claude's signature when it stops
+	// (chatClaudeThinkingSignature). blockSigned records a block that was
+	// already sent a signature.
+	reasoningDetails map[anthropicBlockKey]json.RawMessage
+	reasoningText    map[anthropicBlockKey]string
+	blockSigned      map[anthropicBlockKey]bool
 }
 
 func (encoder *anthropicStreamEncoder) SetTruncationUsage(usage *llmprotocol.Usage, source string) {
@@ -649,20 +657,88 @@ func (encoder *anthropicStreamEncoder) encodeAnthropicReasoningDelta(
 	if event.Delta == "" && (event.Content == nil || event.Content.Signature == "") {
 		// Nothing a thinking block can show: a reasoning_details fragment with
 		// no text (an encrypted blob, an OpenRouter signature). Opening a block
-		// for it would hand the client an empty thinking block to replay.
+		// for it would hand the client an empty thinking block to replay. A
+		// fragment for the open thinking block is kept for its signature.
+		key := encoder.liveBlockKey(contentKey(event))
+		if encoder.blockStarted[key] && !encoder.blockStopped[key] {
+			if err := encoder.noteReasoningDetails(key, event.Content); err != nil {
+				return nil, diagnostics, err
+			}
+		}
 		return nil, diagnostics, nil
 	}
 	frames, key, err := encoder.ensureAnthropicBlockStarted(event, llmprotocol.ContentReasoning)
 	if err != nil {
 		return nil, diagnostics, err
 	}
+	if err := encoder.noteReasoningDetails(key, event.Content); err != nil {
+		return nil, diagnostics, err
+	}
+	encoder.noteReasoningText(key, event.Delta)
 	blockIndex := encoder.blockIndexes[key]
 	frames, err = appendAnthropicReasoningText(frames, blockIndex, event.Delta)
 	if err != nil {
 		return nil, diagnostics, err
 	}
+	if event.Content != nil && event.Content.Signature != "" {
+		encoder.markBlockSigned(key)
+	}
 	frames, err = appendAnthropicReasoningSignature(frames, blockIndex, event.Content)
 	return frames, diagnostics, err
+}
+
+// noteReasoningDetails folds a reasoning delta's reasoning_details fragment
+// into what its thinking block has streamed so far.
+func (encoder *anthropicStreamEncoder) noteReasoningDetails(key anthropicBlockKey, content *llmprotocol.Content) error {
+	if content == nil {
+		return nil
+	}
+	fragment, _ := reasoningDetailsOf(*content)
+	if fragment == nil {
+		return nil
+	}
+	if encoder.reasoningDetails == nil {
+		encoder.reasoningDetails = map[anthropicBlockKey]json.RawMessage{}
+	}
+	merged, err := mergeReasoningDetailsFragment(encoder.reasoningDetails[key], fragment)
+	if err != nil {
+		return llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "invalid_reasoning_details",
+			"upstream stream sent malformed reasoning_details", err)
+	}
+	encoder.reasoningDetails[key] = merged
+	return nil
+}
+
+func (encoder *anthropicStreamEncoder) noteReasoningText(key anthropicBlockKey, text string) {
+	if text == "" {
+		return
+	}
+	if encoder.reasoningText == nil {
+		encoder.reasoningText = map[anthropicBlockKey]string{}
+	}
+	encoder.reasoningText[key] += text
+}
+
+func (encoder *anthropicStreamEncoder) markBlockSigned(key anthropicBlockKey) {
+	if encoder.blockSigned == nil {
+		encoder.blockSigned = map[anthropicBlockKey]bool{}
+	}
+	encoder.blockSigned[key] = true
+}
+
+// claudeSignatureFrames is the signature_delta that signs a thinking block
+// about to stop with Claude's signature from its reasoning_details, where
+// Anthropic sends it: after the thinking, before content_block_stop.
+func (encoder *anthropicStreamEncoder) claudeSignatureFrames(key anthropicBlockKey) ([][]byte, error) {
+	if encoder.blocks[key] != llmprotocol.ContentReasoning || encoder.blockSigned[key] {
+		return nil, nil
+	}
+	signature := chatClaudeThinkingSignature(encoder.reasoningDetails[key], encoder.reasoningText[key])
+	if signature == "" {
+		return nil, nil
+	}
+	encoder.markBlockSigned(key)
+	return appendAnthropicReasoningSignature(nil, encoder.blockIndexes[key], &llmprotocol.Content{Signature: signature})
 }
 
 func appendAnthropicReasoningText(frames [][]byte, blockIndex int, text string) ([][]byte, error) {

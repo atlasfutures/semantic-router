@@ -204,3 +204,19 @@ func (r *OpenAIRouter) dropReasoningForeignToClaude(
 	}
 	return protocolcodec.DropReasoningNotFromAnthropic(request, source)
 }
+
+// signClaudeThinkingForChat carries, for a Claude worker reached over Chat,
+// each signed thinking block in the history as the anthropic-claude-v1
+// reasoning_details item OpenRouter asks for back
+// (protocolcodec.SignedThinkingAsReasoningDetails), so Claude reads its own
+// thinking with the signature that verifies it. It runs after the foreign
+// drop, so only reasoning with Anthropic provenance is left to rewrite, and
+// before the disposition table, which would strip the signature. It returns
+// how many blocks it rewrote.
+func (r *OpenAIRouter) signClaudeThinkingForChat(request *llmprotocol.Request, dispatch *providerDispatch) int {
+	if request == nil || dispatch == nil || dispatch.targetFormat != llmprotocol.OpenAIChatV1 ||
+		r.armFamily(dispatch.logicalModel) != anthropicFamily {
+		return 0
+	}
+	return protocolcodec.SignedThinkingAsReasoningDetails(request)
+}
