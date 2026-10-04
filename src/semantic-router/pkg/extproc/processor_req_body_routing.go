@@ -365,6 +365,7 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 		common.HeaderMutation = &ext_proc.HeaderMutation{}
 	}
 	appendContentLengthHeader(&common.HeaderMutation.SetHeaders, len(body))
+	declareAutoCacheBeta(&common.HeaderMutation.SetHeaders, ctx)
 	common.BodyMutation = &ext_proc.BodyMutation{
 		Mutation: &ext_proc.BodyMutation_Body{Body: body},
 	}

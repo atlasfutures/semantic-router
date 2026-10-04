@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"testing"
+
+	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
@@ -19,9 +22,19 @@ type claudeAutoCacheCase struct {
 	target llmprotocol.WireFormat
 	claude bool
 	body   string
+	// headers are the client's request headers; profileHeaders the provider
+	// profile's extra_headers.
+	headers        map[string]string
+	profileHeaders map[string]string
 }
 
 func dispatchClaudeAutoCache(t *testing.T, test claudeAutoCacheCase) ([]byte, *RequestContext) {
+	t.Helper()
+	response, ctx := dispatchClaudeAutoCacheResponse(t, test)
+	return response.GetRequestBody().GetResponse().GetBodyMutation().GetBody(), ctx
+}
+
+func dispatchClaudeAutoCacheResponse(t *testing.T, test claudeAutoCacheCase) (*ext_proc.ProcessingResponse, *RequestContext) {
 	t.Helper()
 	router, logicalModel := routingTestRouterForFormat(test.target)
 	if test.claude {
@@ -29,8 +42,17 @@ func dispatchClaudeAutoCache(t *testing.T, test claudeAutoCacheCase) ([]byte, *R
 		params.Publisher = "anthropic"
 		router.Config.ModelConfig[logicalModel] = params
 	}
+	if test.profileHeaders != nil {
+		profile := router.Config.ProviderProfiles["provider"]
+		profile.ExtraHeaders = test.profileHeaders
+		router.Config.ProviderProfiles["provider"] = profile
+	}
+	headers := map[string]string{}
+	for name, value := range test.headers {
+		headers[name] = value
+	}
 	ctx := &RequestContext{
-		Headers: map[string]string{}, SourceFormat: test.source,
+		Headers: headers, SourceFormat: test.source,
 		RequestID: "claude-auto-cache", TraceContext: context.Background(),
 	}
 	request, immediate := router.prepareProtocolRequest([]byte(test.body), ctx)
@@ -45,7 +67,18 @@ func dispatchClaudeAutoCache(t *testing.T, test claudeAutoCacheCase) ([]byte, *R
 	if err != nil {
 		t.Fatalf("finalize: %v", err)
 	}
-	return response.GetRequestBody().GetResponse().GetBodyMutation().GetBody(), ctx
+	return response, ctx
+}
+
+// dispatchedBetaHeaders lists every anthropic-beta value the dispatch sets.
+func dispatchedBetaHeaders(response *ext_proc.ProcessingResponse) []string {
+	var values []string
+	for _, header := range response.GetRequestBody().GetResponse().GetHeaderMutation().GetSetHeaders() {
+		if strings.EqualFold(header.GetHeader().GetKey(), "anthropic-beta") {
+			values = append(values, string(header.GetHeader().GetRawValue()))
+		}
+	}
+	return values
 }
 
 // messagesBreakpoints lists where a dispatched Messages body holds a
@@ -582,5 +615,85 @@ func TestArmFamilyPrefersTheResolvedBackendModel(t *testing.T) {
 	router.Config.ModelConfig[logicalModel] = params
 	if got := router.armFamily(logicalModel); got != "deepseek" {
 		t.Fatalf("armFamily(%q) = %q, want the backend's deepseek", logicalModel, got)
+	}
+}
+
+// A generated 1h ttl is gated on the extended-cache-ttl beta, so the
+// dispatch declares it in anthropic-beta, merged into whatever would be sent
+// -- the provider profile's header, else the client's -- without replacing a
+// value or repeating one. A dispatch with no generated 1h ttl adds no beta.
+func TestClaudeAutoCacheDeclaresTheExtendedTTLBeta(t *testing.T) {
+	retention := func(value string) string {
+		return `{"model":"m","instructions":"You are a coding agent.",` +
+			`"prompt_cache_retention":"` + value + `",` + autoCacheConversation + `}`
+	}
+	const beta = "extended-cache-ttl-2025-04-11"
+	for name, test := range map[string]struct {
+		body           string
+		headers        map[string]string
+		profileHeaders map[string]string
+		ttl            string
+		want           []string
+	}{
+		"24h, no beta":         {retention("24h"), nil, nil, `{"type":"ephemeral","ttl":"1h"}`, []string{beta}},
+		"24h, client beta foo": {retention("24h"), map[string]string{"anthropic-beta": "foo"}, nil, `{"type":"ephemeral","ttl":"1h"}`, []string{"foo," + beta}},
+		"24h, beta already declared": {
+			retention("24h"), map[string]string{"Anthropic-Beta": beta + ", foo"}, nil,
+			`{"type":"ephemeral","ttl":"1h"}`, []string{beta + ",foo"},
+		},
+		"24h, provider profile beta": {
+			retention("24h"), map[string]string{"anthropic-beta": "foo"}, map[string]string{"anthropic-beta": "bar"},
+			`{"type":"ephemeral","ttl":"1h"}`, []string{"bar," + beta},
+		},
+		"no retention": {responsesNoDirective, nil, nil, `{"type":"ephemeral"}`, nil},
+		"in_memory":    {retention("in_memory"), map[string]string{"anthropic-beta": "foo"}, nil, `{"type":"ephemeral"}`, nil},
+		"no retention, profile beta untouched": {
+			responsesNoDirective, nil, map[string]string{"anthropic-beta": "bar"}, `{"type":"ephemeral"}`, []string{"bar"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			response, _ := dispatchClaudeAutoCacheResponse(t, claudeAutoCacheCase{
+				source: llmprotocol.OpenAIResponsesV1, target: llmprotocol.AnthropicMessagesV1, claude: true,
+				body: test.body, headers: test.headers, profileHeaders: test.profileHeaders,
+			})
+			body := response.GetRequestBody().GetResponse().GetBodyMutation().GetBody()
+			if got := messagesBreakpoints(t, body); len(got) != 1 || got["messages[2][0]"] != test.ttl {
+				t.Fatalf("breakpoints %v in %s, want %s on the last block", got, body, test.ttl)
+			}
+			got := dispatchedBetaHeaders(response)
+			if strings.Join(got, "|") != strings.Join(test.want, "|") {
+				t.Fatalf("dispatched anthropic-beta %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+// The external gateway path sets its own headers; a generated 1h ttl there
+// carries the beta too.
+func TestClaudeAutoCacheDeclaresTheBetaOnTheExternalGatewayPath(t *testing.T) {
+	cfg, err := config.ParseYAMLBytes([]byte(metadataOnlyGatewayConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := &OpenAIRouter{Config: cfg}
+	ctx := &RequestContext{
+		Headers: map[string]string{"anthropic-beta": "foo"}, SourceFormat: llmprotocol.OpenAIResponsesV1,
+		RequestID: "claude-auto-cache-gateway-beta", TraceContext: context.Background(),
+	}
+	body := `{"model":"m","instructions":"You are a coding agent.","prompt_cache_retention":"24h",` + autoCacheConversation + `}`
+	request, immediate := router.prepareProtocolRequest([]byte(body), ctx)
+	if immediate != nil || request == nil {
+		t.Fatalf("ingress refused the request: %+v", ctx.ImmediateProtocolError)
+	}
+	response, err := router.handleExternalGatewayModelRouting(request, "claude-sonnet", ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatched := response.GetRequestBody().GetResponse().GetBodyMutation().GetBody()
+	if got := messagesBreakpoints(t, dispatched); got["messages[2][0]"] != `{"type":"ephemeral","ttl":"1h"}` {
+		t.Fatalf("breakpoints %v in %s, want a 1h breakpoint on the last block", got, dispatched)
+	}
+	if got := dispatchedBetaHeaders(response); len(got) != 1 || got[0] != "foo,extended-cache-ttl-2025-04-11" {
+		t.Fatalf("dispatched anthropic-beta %q, want the client's foo and the extended-ttl beta", got)
 	}
 }

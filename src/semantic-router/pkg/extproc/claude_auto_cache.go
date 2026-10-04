@@ -2,6 +2,9 @@ package extproc
 
 import (
 	"encoding/json"
+	"strings"
+
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
@@ -27,6 +30,9 @@ const (
 	// anthropicLongestCacheTTL is the longest ttl Anthropic accepts on a
 	// breakpoint.
 	anthropicLongestCacheTTL = "1h"
+	// extendedCacheTTLBeta is the anthropic-beta value a 1h cache ttl is
+	// gated on; a request that sends one without it can be refused.
+	extendedCacheTTLBeta = "extended-cache-ttl-2025-04-11"
 )
 
 // dispatchAutoCache marks a dispatch that may be given the automatic-cache
@@ -35,6 +41,10 @@ const (
 // is actually dispatched (applyDispatchAutoCache).
 type dispatchAutoCache struct {
 	logicalModel string
+	// ttl is the ttl of the directive the Router generated, once it has:
+	// finalizeProviderDispatchResponse reads it to declare the beta a 1h
+	// ttl needs.
+	ttl string
 }
 
 // claudeAutoCacheDispatch marks the dispatches the automatic-cache rule
@@ -119,6 +129,7 @@ func applyDispatchAutoCache(request *llmprotocol.Request, ctx *RequestContext) {
 		origin = autoCacheSourcePromptCacheRetention
 	}
 	ttl := autoCacheTTL(retention, ctx)
+	auto.ttl = ttl
 	request.AutoCache = &llmprotocol.CacheDirective{Type: "ephemeral", TTL: ttl}
 	ctx.ProtocolDiagnostics = append(ctx.ProtocolDiagnostics, llmprotocol.Diagnostic{
 		Source: ctx.SourceFormat,
@@ -159,4 +170,57 @@ func autoCacheTTL(retention json.RawMessage, ctx *RequestContext) string {
 		diagnostic(llmprotocol.DiagnosticDropped, "prompt_cache_retention_unknown_value")
 		return ""
 	}
+}
+
+// declareAutoCacheBeta adds extended-cache-ttl-2025-04-11 to the dispatched
+// anthropic-beta header when the Router generated a 1h ttl, since Anthropic
+// gates that ttl on the beta. It runs in finalizeProviderDispatchResponse,
+// which every dispatch path reaches with a header mutation to carry it, so a
+// generated 1h ttl is never sent without the beta. The value merges into
+// what would otherwise be sent -- a header the dispatch already sets, such as
+// a provider profile's, else the client's own -- comma-separated, with no
+// value repeated, and never replaces it. A client's own 1h ttl is left
+// alone: it comes from a Messages client that sends its own headers.
+func declareAutoCacheBeta(setHeaders *[]*core.HeaderValueOption, ctx *RequestContext) {
+	if auto := ctx.DispatchAutoCache; auto == nil || auto.ttl != anthropicLongestCacheTTL {
+		return
+	}
+	// A dispatch header overwrites the client's, so the last one set is
+	// what would be sent.
+	var dispatched *core.HeaderValueOption
+	for _, header := range *setHeaders {
+		if header.GetHeader() != nil && strings.EqualFold(header.Header.Key, anthropicBetaHeader) {
+			dispatched = header
+		}
+	}
+	current, _ := lookupHeaderIgnoringCase(ctx.Headers, anthropicBetaHeader)
+	if dispatched != nil {
+		current = string(dispatched.Header.RawValue)
+		if current == "" {
+			current = dispatched.Header.Value
+		}
+	}
+	merged := mergeAnthropicBetas(current, extendedCacheTTLBeta)
+	if dispatched != nil {
+		dispatched.Header.RawValue, dispatched.Header.Value = []byte(merged), ""
+		return
+	}
+	*setHeaders = append(*setHeaders, overwriteRequestHeader(anthropicBetaHeader, merged))
+}
+
+// mergeAnthropicBetas appends beta to a comma-separated anthropic-beta value
+// unless it is already there, keeping the existing values in their order and
+// dropping empty or repeated ones.
+func mergeAnthropicBetas(current, beta string) string {
+	seen := map[string]struct{}{}
+	values := []string{}
+	for _, value := range append(strings.Split(current, ","), beta) {
+		value = strings.TrimSpace(value)
+		if _, repeated := seen[value]; value == "" || repeated {
+			continue
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+	return strings.Join(values, ",")
 }

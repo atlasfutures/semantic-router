@@ -189,7 +189,11 @@ as described above. The following rules apply:
   caching, and the Router has no setting to turn this off.
 - A client's `prompt_cache_retention` sets the TTL. `24h` asks for longer
   retention than Anthropic offers, so the Router uses Anthropic's longest TTL,
-  `1h`, and records an `approximated` diagnostic. `in_memory` keeps the
+  `1h`, and records an `approximated` diagnostic. Because Anthropic gates the
+  `1h` TTL on a beta, the Router adds `extended-cache-ttl-2025-04-11` to the
+  dispatched `anthropic-beta` header. The value is merged into the header the
+  provider profile or the client set; no existing value is replaced or
+  repeated. `in_memory` keeps the
   5-minute default. Any other value also keeps the default, and the Router
   records a `dropped` diagnostic.
 - The supplied directive is recorded as a `generated` translation diagnostic.
