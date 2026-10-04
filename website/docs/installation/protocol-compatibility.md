@@ -258,15 +258,31 @@ schema, streaming, tools, or error translation.
   lines only) reaches the client as one keepalive in the client's format:
   `event: ping` for a Messages client once the message has started, and an SSE
   comment otherwise. Nothing follows the terminal event.
-- A reply cut off at its output limit while the model was writing a tool call
+- A reply cut off at a length limit while the model was writing a tool call
   ends as a length stop in the client's format, with the call marked
-  incomplete: Messages keeps the `tool_use` block under `stop_reason:
-  "max_tokens"` (with `input: {}` in a non-streaming response), Chat ends with
-  `finish_reason: "length"` and the partial arguments, and Responses ends
+  incomplete. The limit is the output limit (`max_tokens`) or the model's
+  context window (Anthropic's `model_context_window_exceeded`). Messages keeps
+  the `tool_use` block under the provider's stop reason (with `input: {}` in a
+  non-streaming response when the arguments were cut mid-object), Chat ends
+  with `finish_reason: "length"` and the partial arguments, and Responses ends
   the `function_call` item with `status: "incomplete"` inside an incomplete
-  response whose reason is `max_output_tokens`. Truncated tool arguments under
-  any other stop fail as `invalid_stream_tool_arguments`. Such a turn is not
-  stored in the response cache.
+  response whose reason is `max_output_tokens`. Chat and Responses name only
+  the output limit, so a context-window stop reaches them as that length stop
+  whether or not a call was cut, and a translation diagnostic records the
+  approximation.
+- A refusal that stops the model during a tool call is a refusal, not an
+  argument error. The final call is marked incomplete whatever its arguments,
+  and the client gets the refusal as it would without a call: Messages
+  `stop_reason: "refusal"`, Chat `finish_reason: "content_filter"`, and an
+  incomplete Responses response whose reason is `content_filter`.
+- A failure ends the turn as that failure even while a cut call is held. A
+  provider's in-band error, or the Router ending the stream itself (its
+  deadline, or a transport end), reaches the client as that error. A stream
+  that ends without a terminal event is `stream_incomplete`.
+- Truncated tool arguments fail as `invalid_stream_tool_arguments` only under
+  a stop that says the reply finished (`end_turn`, `tool_use`, `stop`, or
+  `pause_turn`), or when more output follows the cut call.
+- A turn whose tool call was cut is not stored in the response cache.
 - `x-vsr-client-protocol`, `x-vsr-upstream-protocol`, and
   `x-vsr-protocol-warnings` expose translation details when applicable. See
   [VSR routing headers](../troubleshooting/vsr-headers).
