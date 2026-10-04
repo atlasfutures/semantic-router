@@ -304,8 +304,47 @@ def _openai_message_content(content: Any) -> str:
     )
 
 
+def with_automatic_breakpoint(body: dict[str, Any]) -> dict[str, Any]:
+    """Resolve a request-level ``cache_control`` into the block marker it means.
+
+    Anthropic's automatic caching places the request's breakpoint on the last
+    block of the conversation. The shim models that by marking the last block
+    of the last message, so the prefix hash and cache usage follow the same
+    rules as an explicit marker. A request without the member is returned
+    unchanged.
+    """
+    directive = body.get("cache_control")
+    messages = body.get("messages")
+    if (
+        not isinstance(directive, dict)
+        or not isinstance(messages, list)
+        or not messages
+    ):
+        return body
+    last = messages[-1]
+    if not isinstance(last, dict):
+        return body
+    content = last.get("content")
+    if isinstance(content, str):
+        content = [{"type": "text", "text": content}]
+    if (
+        not isinstance(content, list)
+        or not content
+        or not isinstance(content[-1], dict)
+    ):
+        return body
+    if "cache_control" in content[-1]:
+        return body
+    marked = list(content[:-1]) + [{**content[-1], "cache_control": directive}]
+    resolved = dict(body)
+    resolved["messages"] = list(messages[:-1]) + [{**last, "content": marked}]
+    return resolved
+
+
 def has_cache_control(body: dict[str, Any]) -> bool:
     """Return True when any block in the request carries a ``cache_control`` marker."""
+    if isinstance(body.get("cache_control"), dict):
+        return True
     system = body.get("system")
     if isinstance(system, list):
         for block in system:
@@ -335,6 +374,7 @@ def cache_prefix_hash(body: dict[str, Any]) -> str:
     that marker (subsequent turns, the final user query) is treated as
     cache-irrelevant. The hash is opaque; only equality matters.
     """
+    body = with_automatic_breakpoint(body)
     prefix_parts: list[Any] = []
 
     tool_prefix = _tools_prefix(body.get("tools") or [])

@@ -239,7 +239,9 @@ func (AnthropicMessagesCodec) EncodeRequest(request llmprotocol.Request, envelop
 	if err := validateAnthropicEncodableRequest(request); err != nil {
 		return nil, nil, err
 	}
+	request, placement := placeAutoCacheBreakpoint(request, policy)
 	diagnostics, validationErr := anthropicRequestDiagnostics(request, policy)
+	diagnostics = appendDiagnostics(placement, diagnostics, policy.Limits.Diagnostics)
 	if validationErr != nil {
 		return nil, diagnostics, validationErr
 	}
@@ -436,6 +438,13 @@ func encodeAnthropicBaseRequest(request llmprotocol.Request) (anthropicRequestWi
 	}
 	if userID := request.EndUserID; userID != "" {
 		wire.Metadata = &anthropicMetadataWire{UserID: userID}
+	}
+	if request.Trusted.SourceFormat == llmprotocol.AnthropicMessagesV1 {
+		// The client's own automatic-caching member goes back as written, so
+		// a routed turn that changed only the model still replays the
+		// client's bytes. Every other source gets a placed breakpoint; see
+		// placeAutoCacheBreakpoint.
+		wire.CacheControl = encodeAnthropicCacheControl(request.AutoCache)
 	}
 	if request.ReasoningEffort != "" || request.OutputFormat.Kind == llmprotocol.OutputJSONSchema {
 		wire.OutputConfig = &anthropicOutputConfigWire{Effort: request.ReasoningEffort}

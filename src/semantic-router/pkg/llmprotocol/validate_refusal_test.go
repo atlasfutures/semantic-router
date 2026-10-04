@@ -553,6 +553,20 @@ func contentRefusalCases() []refusalCase {
 			location: `message 0 content block 0 of type "text"`,
 		},
 		{
+			name: "request-level cache directive the contract does not name",
+			request: withRequest(func(request *Request) {
+				request.AutoCache = &CacheDirective{Type: "permanent"}
+			}),
+			code: "invalid_cache_directive", field: "cache_control.type",
+		},
+		{
+			name: "request-level cache TTL the contract does not name",
+			request: withRequest(func(request *Request) {
+				request.AutoCache = &CacheDirective{Type: "ephemeral", TTL: "7d"}
+			}),
+			code: "invalid_cache_directive", field: "cache_control.ttl",
+		},
+		{
 			name: "tool result with no call ID",
 			request: withRequest(func(request *Request) {
 				request.Messages[0] = Message{Role: RoleTool, Content: []Content{

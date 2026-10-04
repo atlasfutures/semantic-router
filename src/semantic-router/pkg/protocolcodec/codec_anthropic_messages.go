@@ -46,7 +46,7 @@ type anthropicRequestWire struct {
 	Stream        bool                       `json:"stream,omitempty"`
 	InferenceGeo  json.RawMessage            `json:"inference_geo,omitempty"`
 	Container     json.RawMessage            `json:"container,omitempty"`
-	CacheControl  json.RawMessage            `json:"cache_control,omitempty"`
+	CacheControl  *anthropicCacheControlWire `json:"cache_control,omitempty"`
 	OutputConfig  *anthropicOutputConfigWire `json:"output_config,omitempty"`
 	ServiceTier   json.RawMessage            `json:"service_tier,omitempty"`
 }
@@ -173,8 +173,7 @@ func (AnthropicMessagesCodec) DecodeRequest(body []byte, policy llmprotocol.Poli
 func validateAnthropicRequestWire(wire anthropicRequestWire) error {
 	if err := rejectUnsupportedRequestFields(map[string]json.RawMessage{
 		"inference_geo": wire.InferenceGeo, "container": wire.Container,
-		"cache_control": wire.CacheControl,
-		"service_tier":  requestedServiceTier(wire.ServiceTier),
+		"service_tier": requestedServiceTier(wire.ServiceTier),
 	}); err != nil {
 		return err
 	}
@@ -283,6 +282,9 @@ func decodeAnthropicBaseRequest(wire anthropicRequestWire) llmprotocol.Request {
 	if wire.Metadata != nil && wire.Metadata.UserID != "" {
 		request.EndUserID = wire.Metadata.UserID
 	}
+	// Top-level cache_control is Anthropic's automatic caching: the provider
+	// places the breakpoint itself, on the last cacheable block.
+	request.AutoCache = decodeAnthropicCacheControl(wire.CacheControl)
 	return request
 }
 

@@ -3,11 +3,23 @@
     {
       "name": "cache_control",
       "outcome": {
-        "status": "error",
-        "error": {
-          "category": "unsupported_feature",
-          "code": "unsupported_cache_control"
-        }
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 2048,
+          "messages": [
+            {
+              "content": "hello",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "cache_control",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {

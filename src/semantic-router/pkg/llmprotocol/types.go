@@ -389,9 +389,16 @@ type Request struct {
 	// ReasoningDisplay controls whether a provider returns summarized reasoning
 	// content or only its signed continuation token. It is distinct from whether
 	// reasoning itself is enabled.
-	ReasoningDisplay   string
-	Stream             bool
-	StreamOptions      StreamOptions
+	ReasoningDisplay string
+	Stream           bool
+	StreamOptions    StreamOptions
+	// AutoCache asks the provider to cache the conversation without naming
+	// a block: Anthropic's top-level cache_control (automatic caching), and
+	// OpenRouter's top-level cache_control on Responses. A target that caches
+	// only at explicit breakpoints places one where automatic caching would,
+	// so translating the request does not silently lose the client's cache
+	// intent. Nil asks for nothing.
+	AutoCache          *CacheDirective
 	Metadata           map[string]string
 	EndUserID          string
 	PreviousResponseID string

@@ -62,6 +62,10 @@ type responsesRequestWire struct {
 	ServiceTier          json.RawMessage             `json:"service_tier,omitempty"`
 	StreamOptions        *responsesStreamOptionsWire `json:"stream_options,omitempty"`
 	TopLogprobs          json.RawMessage             `json:"top_logprobs,omitempty"`
+	// CacheControl is OpenRouter's extension asking the provider to cache
+	// the conversation, in the shape of Anthropic's automatic caching. It is
+	// not an OpenAI member.
+	CacheControl *anthropicCacheControlWire `json:"cache_control,omitempty"`
 }
 
 type responsesReasoningWire struct {
@@ -286,8 +290,9 @@ func decodeResponsesBaseRequest(wire responsesRequestWire, conversationID string
 		EndUserID: wire.User, PreviousResponseID: wire.PreviousResponseID, ConversationID: conversationID,
 		Truncation: wire.Truncation,
 		Store:      wire.Store, AutoStore: wire.AutoStore, ParallelToolCalls: wire.ParallelToolCalls,
-		Sampling: llmprotocol.Sampling{Temperature: wire.Temperature, TopP: wire.TopP, MaxOutputTokens: wire.MaxOutputTokens},
-		Trusted:  llmprotocol.TrustedMetadata{SourceFormat: llmprotocol.OpenAIResponsesV1},
+		Sampling:  llmprotocol.Sampling{Temperature: wire.Temperature, TopP: wire.TopP, MaxOutputTokens: wire.MaxOutputTokens},
+		AutoCache: decodeAnthropicCacheControl(wire.CacheControl),
+		Trusted:   llmprotocol.TrustedMetadata{SourceFormat: llmprotocol.OpenAIResponsesV1},
 	}
 	if wire.StreamOptions != nil {
 		request.StreamOptions.IncludeObfuscation = wire.StreamOptions.IncludeObfuscation

@@ -90,6 +90,9 @@ func validateRequestEnvelope(request Request, limits Limits) (int, error) {
 	if err := validateMetadata(request.Metadata, limits); err != nil {
 		return 0, err
 	}
+	if err := validateCacheDirective(request.AutoCache, "", "cache_control"); err != nil {
+		return 0, err
+	}
 	return blocks, nil
 }
 
