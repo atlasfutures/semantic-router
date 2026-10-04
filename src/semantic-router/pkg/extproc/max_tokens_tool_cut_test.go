@@ -38,6 +38,7 @@ func driveMaxTokensToolCut(
 	t *testing.T,
 	target llmprotocol.WireFormat,
 	chunks []string,
+	setup ...func(*RequestContext),
 ) (*RequestContext, *semanticStreamBuffers, *observer.ObservedLogs) {
 	t.Helper()
 	logs := captureLogs(t)
@@ -51,6 +52,9 @@ func driveMaxTokensToolCut(
 		SourceFormat: target, TargetFormat: llmprotocol.AnthropicMessagesV1,
 		ProtocolResponseStream: stream,
 		SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+	}
+	for _, apply := range setup {
+		apply(ctx)
 	}
 	buffers := &semanticStreamBuffers{}
 	for _, chunk := range chunks {

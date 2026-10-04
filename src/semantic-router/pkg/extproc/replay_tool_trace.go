@@ -9,8 +9,18 @@ import (
 )
 
 const (
-	replayToolStepUserInput              = "user_input"
-	replayToolStepAssistantToolCall      = "assistant_tool_call"
+	replayToolStepUserInput         = "user_input"
+	replayToolStepAssistantToolCall = "assistant_tool_call"
+	// replayToolStepAssistantToolCallCut is a tool call the model was cut
+	// off writing at max_tokens (llmprotocol.ToolCall.Incomplete). It is its
+	// own step type rather than an assistant_tool_call with a flag: replay
+	// consumers act on assistant_tool_call by type (the trajectory export
+	// coalesces it into an assistant tool_calls message, the dashboard draws
+	// it as an invocation) and would read a flagged one as a call that ran.
+	// Under its own type they skip it, as they skip every type they do not
+	// know, while the trace still shows what was cut and its partial
+	// arguments.
+	replayToolStepAssistantToolCallCut   = "assistant_tool_call_incomplete"
 	replayToolStepClientToolResult       = "client_tool_result"
 	replayToolStepAssistantFinalResponse = "assistant_final_response"
 	replayToolStepAssistantReasoningDone = "assistant_reasoning_complete"
@@ -150,8 +160,12 @@ func buildReplayStreamingToolTrace(ctx *RequestContext) *routerreplay.ToolTrace 
 }
 
 func replayToolCallStep(source, role, apiType string, call llmprotocol.ToolCall) routerreplay.ToolTraceStep {
+	stepType := replayToolStepAssistantToolCall
+	if call.Incomplete {
+		stepType = replayToolStepAssistantToolCallCut
+	}
 	return routerreplay.ToolTraceStep{
-		Type: replayToolStepAssistantToolCall, Source: source, Role: role,
+		Type: stepType, Source: source, Role: role,
 		ToolName: call.Name, ToolCallID: call.ID,
 		Arguments: call.Arguments, RawArguments: call.Arguments, APIType: apiType,
 	}
@@ -245,6 +259,8 @@ func replayToolTraceStepLabel(stepType string) string {
 		return "User Query"
 	case replayToolStepAssistantToolCall:
 		return "LLM Tool Call"
+	case replayToolStepAssistantToolCallCut:
+		return "LLM Tool Call Cut at max_tokens"
 	case replayToolStepClientToolResult:
 		return "Client Tool Result"
 	case replayToolStepAssistantFinalResponse:
