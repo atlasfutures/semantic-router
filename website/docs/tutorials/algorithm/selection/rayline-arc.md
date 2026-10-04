@@ -351,24 +351,26 @@ algorithm:
 
 A switch mid-loop changes the reasoning the loop was built on, by target:
 
-- to a Messages (Claude) arm: unsigned reasoning from another family is
-  dropped, because Messages accepts thinking only with a signature;
-- to a Chat or Responses arm: Claude's thinking keeps its text but loses its
-  signature, and its `redacted_thinking` is dropped; unsigned reasoning is
-  carried unchanged;
-- to a Claude arm dispatched over Chat or Responses (Claude through
-  OpenRouter): only reasoning Claude provably wrote is carried, which is a
-  signed thinking block or `reasoning_details` tagged `anthropic-claude-v1`.
-  Everything else is dropped and counted as `foreign_dropped` in
-  `reasoning_dropped`: OpenRouter hands an assistant message's reasoning to
-  Claude, and Anthropic refuses another model's reasoning with
-  `content_filter`. Claude is recognised by its family, so a Claude arm whose
-  provider model id has no `anthropic/` segment needs `publisher: anthropic`
-  on its card.
+- to a Claude arm, over any wire format (Messages, or Chat and Responses
+  through OpenRouter): only reasoning Claude provably wrote is carried, which
+  is a signed thinking block or `reasoning_details` tagged
+  `anthropic-claude-v1`. Everything else (unsigned thinking,
+  `reasoning_content`, `reasoning_details` of another format or of none) is
+  dropped and counted as `foreign_dropped` in `reasoning_dropped`: Messages
+  accepts thinking only with a signature, and over Chat, OpenRouter hands an
+  assistant message's reasoning to Claude, which Anthropic refuses with
+  `content_filter`;
+- to any other arm (kimi, glm, DeepSeek, MiMo, ...) over Chat or Responses:
+  Claude's thinking keeps its text as reasoning but loses its signature, its
+  `redacted_thinking` is dropped, and unsigned reasoning and
+  `reasoning_details` are carried unchanged. Without an episode record nothing
+  proves who wrote unsigned reasoning, and DeepSeek and MiMo need their own
+  `reasoning_content` back, so only a Claude arm drops what it cannot prove.
 
-Only a Claude target is filtered this way. Without an episode record nothing
-proves who wrote unsigned reasoning, and DeepSeek and MiMo need their own
-`reasoning_content` back, so other targets carry it.
+Which blocks are dropped depends only on each block and the arm's family, so
+consecutive turns on one model send the same prefix and keep their prompt
+cache. Claude is recognised by its family, so a Claude arm whose provider
+model id has no `anthropic/` segment needs `publisher: anthropic` on its card.
 
 So a loop that leaves Claude loses the thinking Claude can verify, and one
 that enters Claude loses the other model's reasoning. Some providers (DeepSeek,

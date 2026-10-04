@@ -22,8 +22,9 @@ type ReasoningCarry struct {
 	// back.
 	UnsignedDropped int
 	// ForeignDropped is reasoning not provably Claude's, dropped for a Claude
-	// target dispatched over Chat or Responses (DropReasoningNotFromAnthropic).
-	// A Messages target drops it as UnsignedDropped.
+	// worker on any wire format (DropReasoningNotFromAnthropic). It runs
+	// first, so a Claude worker on Messages counts its drops here rather than
+	// as UnsignedDropped.
 	ForeignDropped int
 }
 

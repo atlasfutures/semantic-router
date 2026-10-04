@@ -64,7 +64,7 @@ func (r *OpenAIRouter) prepareProviderDispatch(
 	// The disposition table makes reasoning carriable by this target before
 	// the capability gate, which would otherwise refuse it: a block the target
 	// cannot verify is dropped, a signature it cannot verify is stripped. Each
-	// is logged by kind. Before it, a Claude target loses the reasoning that
+	// is logged by kind. Before it, a Claude worker loses the reasoning that
 	// is not provably Claude's, while signatures still say whose it is.
 	foreignDropped := r.dropReasoningForeignToClaude(request, dispatch)
 	carry := protocolcodec.CarryReasoningTo(request, dispatch.targetFormat)
