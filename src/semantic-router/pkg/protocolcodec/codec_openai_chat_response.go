@@ -103,13 +103,34 @@ func decodeChatChoices(wire chatResponseWire, response *llmprotocol.Response, po
 			response.Evidence.TokenLogprobs = decodeChatTokenLogprobs(choice.Logprobs)
 			if choice.FinishReason != nil {
 				response.SourceStopReason = *choice.FinishReason
-				response.StopReason = decodeChatStop(*choice.FinishReason)
+				response.StopReason = decodeChatChoiceStop(*choice.FinishReason, choice.NativeFinishReason)
 			}
 			continue
 		}
 		response.Alternatives = append(response.Alternatives, []llmprotocol.OutputItem{item})
 	}
+	markChatCutToolCall(response, policy.Limits.JSONDepth)
 	return nil
+}
+
+// markChatCutToolCall marks the tool call a length stop cut off, as the Chat
+// stream decoder does: only the last call of the reply, only under a length
+// stop (finish_reason "length", or OpenRouter's native length reason), and
+// only when its arguments are the start of an object rather than a whole
+// one. Anything else keeps failing as a malformed call.
+func markChatCutToolCall(response *llmprotocol.Response, maximumDepth int) {
+	if response.StopReason != llmprotocol.StopMaxTokens || len(response.Output) == 0 {
+		return
+	}
+	contents := response.Output[0].Content
+	if len(contents) == 0 {
+		return
+	}
+	call := contents[len(contents)-1].ToolCall
+	if call == nil || !llmprotocol.TruncatedJSONObject([]byte(call.Arguments), maximumDepth) {
+		return
+	}
+	call.Incomplete = true
 }
 
 func decodeChatChoiceItem(choice chatChoiceWire, responseID string, policy llmprotocol.Policy) (llmprotocol.OutputItem, error) {

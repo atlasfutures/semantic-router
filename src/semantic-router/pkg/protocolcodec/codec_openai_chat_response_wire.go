@@ -55,6 +55,9 @@ type chatChoiceWire struct {
 	StopReason    *chatStopReasonWire `json:"stop_reason,omitempty"`
 	TokenIDs      []int64             `json:"token_ids,omitempty"`
 	RoutedExperts *chatNullOnlyWire   `json:"routed_experts,omitempty"`
+	// NativeFinishReason is OpenRouter's: the serving provider's own reason
+	// (see decodeChatChoiceStop).
+	NativeFinishReason *string `json:"native_finish_reason,omitempty"`
 }
 
 type chatServiceTierWire string

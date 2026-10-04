@@ -1,0 +1,30 @@
+{
+  "choices": [
+    {
+      "finish_reason": "length",
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"command\":\"cat \u003e /tmp/probe3.js \u003c\u003c'EOF'\\n$(for i in $(seq 1 300); do",
+              "name": "bash"
+            },
+            "id": "call_fixture",
+            "type": "function"
+          }
+        ]
+      }
+    }
+  ],
+  "created": 1791137714,
+  "id": "gen-fixture-max-tokens-tool",
+  "model": "routed-model",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 40,
+    "prompt_tokens": 92,
+    "total_tokens": 132
+  }
+}

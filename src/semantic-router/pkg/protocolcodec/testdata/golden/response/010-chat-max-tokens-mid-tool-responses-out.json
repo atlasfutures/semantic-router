@@ -1,0 +1,40 @@
+{
+  "created_at": 1791137714,
+  "error": null,
+  "id": "gen-fixture-max-tokens-tool",
+  "incomplete_details": {
+    "reason": "max_output_tokens"
+  },
+  "instructions": null,
+  "metadata": {},
+  "model": "routed-model",
+  "object": "response",
+  "output": [
+    {
+      "arguments": "{\"command\":\"cat \u003e /tmp/probe3.js \u003c\u003c'EOF'\\n$(for i in $(seq 1 300); do",
+      "call_id": "call_fixture",
+      "id": "item_27bee997a388f17b3dfe6f08",
+      "name": "bash",
+      "status": "incomplete",
+      "type": "function_call"
+    }
+  ],
+  "parallel_tool_calls": true,
+  "status": "incomplete",
+  "temperature": null,
+  "tool_choice": "auto",
+  "tools": [],
+  "top_p": null,
+  "usage": {
+    "input_tokens": 92,
+    "input_tokens_details": {
+      "cache_write_tokens": 0,
+      "cached_tokens": 0
+    },
+    "output_tokens": 40,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 132
+  }
+}

@@ -22,7 +22,7 @@
     {"wire": "chat_tool_call", "official": ["custom", "function", "id", "type"], "fixtures": ["request/004-chat-tool-lifecycle-in.json", "response/004-chat-tool-call-in.json", "capability/037-chat-nested-request-fields-in.json"]},
     {"wire": "chat_stream_tool_call", "official": ["function", "id", "index", "type"], "fixtures": ["stream/004-chat-tool-call-in.json", "stream/017-chat-parallel-tool-calls-in.json"]},
     {"wire": "chat_response_format", "official": ["json_schema", "type"], "fixtures": ["request/010-chat-structured-output-in.json"]},
-    {"wire": "chat_response_choice", "official": ["finish_reason", "index", "logprobs", "message"], "extensions": ["routed_experts", "stop_reason", "token_ids"], "fixtures": ["response/001-chat-basic-in.json", "capability/020-chat-multiple-candidate-response-in.json", "capability/038-chat-nested-response-fields-in.json"]},
+    {"wire": "chat_response_choice", "official": ["finish_reason", "index", "logprobs", "message"], "extensions": ["native_finish_reason", "routed_experts", "stop_reason", "token_ids"], "fixtures": ["response/001-chat-basic-in.json", "response/010-chat-max-tokens-mid-tool-in.json", "capability/020-chat-multiple-candidate-response-in.json", "capability/038-chat-nested-response-fields-in.json"]},
     {"wire": "chat_logprobs", "official": ["content", "refusal"], "fixtures": ["capability/038-chat-nested-response-fields-in.json"]},
     {"wire": "chat_token_logprob", "official": ["bytes", "logprob", "token", "top_logprobs"], "fixtures": ["capability/038-chat-nested-response-fields-in.json"]},
     {"wire": "chat_top_token_logprob", "official": ["bytes", "logprob", "token"], "fixtures": ["capability/038-chat-nested-response-fields-in.json"]},
