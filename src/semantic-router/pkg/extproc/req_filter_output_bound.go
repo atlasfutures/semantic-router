@@ -63,8 +63,10 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 // source; an empty source means the request is sent without one.
 func (r *OpenAIRouter) dispatchOutputBound(dispatch *providerDispatch) (int64, string) {
 	if r != nil && r.Config != nil {
-		if params, ok := r.Config.ModelConfig[dispatch.logicalModel]; ok && params.MaxOutputTokens > 0 {
-			return int64(params.MaxOutputTokens), outputBoundSourceCard
+		// A LoRA adapter dispatches under its own name and takes its base
+		// model's card.
+		if limit := r.Config.GetModelMaxOutputTokens(dispatch.logicalModel); limit > 0 {
+			return int64(limit), outputBoundSourceCard
 		}
 	}
 	if dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 {

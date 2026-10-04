@@ -118,3 +118,19 @@ routing:
 		}
 	}
 }
+
+// A LoRA adapter without its own entry takes its base model's card limit; an
+// entry of its own wins.
+func TestGetModelMaxOutputTokensFallsBackToTheLoRABase(t *testing.T) {
+	cfg := &RouterConfig{}
+	cfg.ModelConfig = map[string]ModelParams{
+		"base":  {MaxOutputTokens: 12000, LoRAs: []LoRAAdapter{{Name: "adapter"}, {Name: "own"}}},
+		"own":   {MaxOutputTokens: 900},
+		"plain": {},
+	}
+	for model, want := range map[string]int{"base": 12000, "adapter": 12000, "own": 900, "plain": 0, "unknown": 0} {
+		if got := cfg.GetModelMaxOutputTokens(model); got != want {
+			t.Fatalf("%s: max_output_tokens = %d, want %d", model, got, want)
+		}
+	}
+}

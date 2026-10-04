@@ -185,3 +185,35 @@ func TestDispatchOutputBoundStaysWithinTheDecisionLimit(t *testing.T) {
 		t.Fatalf("dispatched %q, want the decision's 2000", got)
 	}
 }
+
+// A decision that selects a LoRA adapter dispatches under the adapter's name.
+// The adapter has no card of its own and takes its base model's limit.
+func TestDispatchOutputBoundTakesALoRAAdaptersBaseCard(t *testing.T) {
+	router, base := routingTestRouterForFormat(llmprotocol.AnthropicMessagesV1)
+	params := router.Config.ModelConfig[base]
+	params.MaxOutputTokens = 12000
+	params.LoRAs = []config.LoRAAdapter{{Name: "sql-adapter"}}
+	router.Config.ModelConfig[base] = params
+	ctx := &RequestContext{
+		Headers: map[string]string{}, SourceFormat: llmprotocol.OpenAIResponsesV1,
+		RequestID: "output-bound-lora", TraceContext: context.Background(),
+	}
+	request, immediate := router.prepareProtocolRequest([]byte(unboundedResponsesBody), ctx)
+	if immediate != nil || request == nil {
+		t.Fatalf("ingress refused: %+v", ctx.ImmediateProtocolError)
+	}
+	if _, err := router.prepareProviderDispatch(request, "sql-adapter", "", false, ctx); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	encoded, err := router.encodeDispatchRequest(ctx)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if got := wireOutputLimit(wire); got != "max_tokens=12000" {
+		t.Fatalf("dispatched %q, want the base card's 12000", got)
+	}
+}
