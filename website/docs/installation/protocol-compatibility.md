@@ -130,7 +130,8 @@ instead of being silently dropped.
 | Audio input | Supported | Not supported | Not supported |
 | Hosted image-generation lifecycle | Not supported | Supported | Not supported |
 | Multiple response candidates | Supported | Not supported | Not supported |
-| Prompt-cache directives | Supported | Not supported | Supported |
+| Per-block prompt-cache directives | Supported | Not supported | Supported |
+| Request-level automatic-cache directive | Dropped and counted | Supported extension | Supported |
 | Reasoning token budget | Supported extension | Not supported | Supported |
 | Seed and frequency or presence penalties | Supported | Not supported | Not supported |
 | `top_k` sampling | Not supported | Not supported | Supported |
@@ -141,6 +142,25 @@ This table describes codec representation, not model capability. For example,
 an OpenAI-compatible server can accept the Chat request shape while rejecting
 images or tools for a particular model. Qualify the actual endpoint and model
 revision before adding them to a routing pool.
+
+The request-level automatic-cache directive is a top-level `cache_control`
+object, such as `{"type": "ephemeral"}` with an optional `ttl` of `5m` or `1h`.
+Anthropic Messages defines it as automatic caching, and OpenRouter accepts the
+same member as an extension on Responses requests. The Router accepts it on
+Messages and Responses ingress and refuses a malformed value. Each backend
+format handles it as follows:
+
+- **Messages backend:** a Messages client's member is sent back as written. A
+  request translated from another format has no top-level member to send, so
+  the Router places one breakpoint where automatic caching would: on the last
+  message block that can carry `cache_control`. If no message block can carry
+  one, the breakpoint goes on the last system block, and if there is none, on
+  the last tool. A block that already has a breakpoint keeps it. If the
+  request already uses all four breakpoints that Messages allows, the Router
+  adds no breakpoint and counts the drop.
+- **Responses backend:** the top-level member is carried.
+- **Chat Completions backend:** the directive is dropped and counted as a
+  translation diagnostic.
 
 A Responses client can still use `previous_response_id` with a Chat
 Completions or Messages backend. The Router retrieves and materializes the
