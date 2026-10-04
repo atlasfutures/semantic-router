@@ -102,7 +102,6 @@ func (engine *StreamEngine) prepareFinalization(reason error) streamFinalization
 		reason = firstFailure
 	}
 	events, diagnostics, decodeErr := engine.decoder.Finalize(reason)
-	diagnostics = withStateDiagnostics(engine.decoder, diagnostics, engine.maxDiagnostics)
 	result := streamFinalization{
 		events: events, diagnostics: diagnostics, terminalReason: reason,
 		decodeErr: decodeErr, firstFailure: firstFailure,

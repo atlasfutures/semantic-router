@@ -508,16 +508,32 @@ func (state *streamState) takeStateDiagnostics() llmprotocol.Diagnostics {
 	return taken
 }
 
-// stateDiagnosticSource is a decoder whose shared stream state raises
-// diagnostics of its own; every built-in decoder embeds one.
-type stateDiagnosticSource interface {
-	takeStateDiagnostics() llmprotocol.Diagnostics
+// stateDiagnosticDecoder is every built-in stream decoder as its codec hands
+// it out: it reports, beside the diagnostics a Push or Finalize returns, the
+// ones the decoder's shared stream state raised, so a caller of the exported
+// decoder sees them as the stream engine does.
+type stateDiagnosticDecoder struct {
+	decoder interface {
+		llmprotocol.StreamDecoder
+		takeStateDiagnostics() llmprotocol.Diagnostics
+	}
+	limit int
 }
 
-// withStateDiagnostics appends what decoder's stream state raised.
-func withStateDiagnostics(decoder any, diagnostics llmprotocol.Diagnostics, limit int) llmprotocol.Diagnostics {
-	if source, ok := decoder.(stateDiagnosticSource); ok {
-		return appendDiagnostics(diagnostics, source.takeStateDiagnostics(), limit)
-	}
-	return diagnostics
+func newStateDiagnosticDecoder(decoder interface {
+	llmprotocol.StreamDecoder
+	takeStateDiagnostics() llmprotocol.Diagnostics
+}, policy llmprotocol.Policy,
+) llmprotocol.StreamDecoder {
+	return &stateDiagnosticDecoder{decoder: decoder, limit: policy.Limits.Diagnostics}
+}
+
+func (wrapped *stateDiagnosticDecoder) Push(chunk []byte) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	events, diagnostics, err := wrapped.decoder.Push(chunk)
+	return events, appendDiagnostics(diagnostics, wrapped.decoder.takeStateDiagnostics(), wrapped.limit), err
+}
+
+func (wrapped *stateDiagnosticDecoder) Finalize(reason error) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	events, diagnostics, err := wrapped.decoder.Finalize(reason)
+	return events, appendDiagnostics(diagnostics, wrapped.decoder.takeStateDiagnostics(), wrapped.limit), err
 }

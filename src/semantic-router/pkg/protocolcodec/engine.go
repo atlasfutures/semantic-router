@@ -606,7 +606,6 @@ func (engine *StreamEngine) Push(frame []byte) ([][]byte, []llmprotocol.Event, l
 		return nil, nil, nil, err
 	}
 	events, diagnostics, decodeErr := engine.decoder.Push(frame)
-	diagnostics = withStateDiagnostics(engine.decoder, diagnostics, engine.maxDiagnostics)
 	if decodeErr != nil {
 		events = suppressSuccessfulTerminal(events)
 		engine.pendingCompletion = nil

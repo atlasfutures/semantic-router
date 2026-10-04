@@ -93,3 +93,23 @@ func TestUsageSplitRestatementNeedsEvidenceAsStrong(t *testing.T) {
 		t.Fatal("a split restated lower on weaker evidence was accepted")
 	}
 }
+
+// A caller of the exported decoder, without the stream engine, sees the same
+// diagnostic.
+func TestUsageSplitRestatementDiagnosticFromTheExportedDecoder(t *testing.T) {
+	decoder := AnthropicMessagesCodec{}.NewDecoder(llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"},
+		NewBuiltinEngine().providerStreamPolicy())
+	_, diagnostics, err := decoder.Push([]byte(anthropicUsageStream(
+		`{"input_tokens":100,"cache_read_input_tokens":0,"output_tokens":1}`,
+		`{"input_tokens":10,"cache_read_input_tokens":90,"output_tokens":9}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The Push that carried the restatement reports it.
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Field == "usage.input_uncached" {
+			return
+		}
+	}
+	t.Fatalf("the exported decoder's Push did not report the restated split: %+v", diagnostics)
+}

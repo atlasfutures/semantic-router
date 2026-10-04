@@ -34,12 +34,12 @@ type chatStreamEncoder struct {
 }
 
 func (OpenAIChatCodec) NewDecoder(context llmprotocol.StreamContext, policy llmprotocol.Policy) llmprotocol.StreamDecoder {
-	return &chatStreamDecoder{
+	return newStateDiagnosticDecoder(&chatStreamDecoder{
 		streamState:        streamState{context: context, policy: policy},
 		framer:             newSSEFramer(policy.Limits.SSEFrameBytes),
 		contentIndexes:     make(map[chatContentKey]int),
 		nextContentIndexes: make(map[int]int),
-	}
+	}, policy)
 }
 
 func (OpenAIChatCodec) NewEncoder(context llmprotocol.StreamContext, policy llmprotocol.Policy) llmprotocol.StreamEncoder {
