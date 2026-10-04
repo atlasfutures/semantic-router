@@ -2,6 +2,7 @@ package protocolcodec
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -112,4 +113,23 @@ func TestUsageSplitRestatementDiagnosticFromTheExportedDecoder(t *testing.T) {
 		}
 	}
 	t.Fatalf("the exported decoder's Push did not report the restated split: %+v", diagnostics)
+}
+
+// More restatements in one Push than the policy's diagnostic limit end in the
+// truncation marker, not a list that looks complete.
+func TestUsageSplitRestatementsBeyondTheLimitAreMarkedTruncated(t *testing.T) {
+	policy := NewBuiltinEngine().providerStreamPolicy()
+	policy.Limits.Diagnostics = 3
+	decoder := AnthropicMessagesCodec{}.NewDecoder(llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"}, policy)
+	stream := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"provider-model\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":100,\"output_tokens\":1}}}\n\n"
+	for uncached := 90; uncached >= 40; uncached -= 10 {
+		stream += fmt.Sprintf("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":null,\"stop_sequence\":null},\"usage\":{\"input_tokens\":%d,\"cache_read_input_tokens\":%d,\"output_tokens\":1}}\n\n", uncached, 100-uncached)
+	}
+	_, diagnostics, err := decoder.Push([]byte(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diagnostics) != 3 || diagnostics[2].Action != llmprotocol.DiagnosticTruncated {
+		t.Fatalf("diagnostics = %+v, want 3 ending in the truncation marker", diagnostics)
+	}
 }

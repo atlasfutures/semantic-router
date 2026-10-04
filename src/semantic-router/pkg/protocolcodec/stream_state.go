@@ -490,12 +490,19 @@ func (state *streamState) recordToolDelta(event llmprotocol.Event) (llmprotocol.
 	return event, nil
 }
 
-// maxStateDiagnostics bounds the diagnostics a stream state holds between
-// collections.
-const maxStateDiagnostics = 8
+// defaultStateDiagnostics bounds the diagnostics a stream state holds between
+// collections when its policy sets no limit.
+const defaultStateDiagnostics = 64
 
+// noteStateDiagnostic holds one more diagnostic than the policy's limit, so
+// the collector sees the overflow and marks the list truncated instead of
+// passing on a list that looks complete.
 func (state *streamState) noteStateDiagnostic(diagnostic llmprotocol.Diagnostic) {
-	if len(state.stateDiagnostics) < maxStateDiagnostics {
+	limit := state.policy.Limits.Diagnostics
+	if limit <= 0 {
+		limit = defaultStateDiagnostics
+	}
+	if len(state.stateDiagnostics) <= limit {
 		state.stateDiagnostics = append(state.stateDiagnostics, diagnostic)
 	}
 }
