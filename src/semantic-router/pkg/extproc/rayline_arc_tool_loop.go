@@ -124,14 +124,22 @@ func toolResultCallIDs(message llmprotocol.Message) (map[string]struct{}, bool) 
 // them under its own namespace (local/..., accounts/...) needs the publisher
 // on the card. A name with no vendor segment is its own family, without any
 // @variant suffix.
+//
+// A metadata-only model, dispatched by an external gateway, has no backend
+// to resolve the provider model through. Its provider_model_id is still its
+// own default model id, so that is the name the vendor is read from: an
+// alias claude-sonnet bound to anthropic/claude-sonnet-4.5 is anthropic.
 func (r *OpenAIRouter) armFamily(model string) string {
 	name := strings.TrimSpace(model)
 	if r != nil && r.Config != nil {
-		if params, known := r.Config.ModelConfig[name]; known && strings.TrimSpace(params.Publisher) != "" {
+		params, known := r.Config.ModelConfig[name]
+		if known && strings.TrimSpace(params.Publisher) != "" {
 			return strings.ToLower(strings.TrimSpace(params.Publisher))
 		}
 		if _, backend, found, err := r.Config.ResolvePrimaryBackendForModel(name); err == nil && found {
 			name = r.Config.ResolveExternalModelID(name, backend)
+		} else if providerModel := strings.TrimSpace(params.ExternalModelIDs["default"]); known && providerModel != "" {
+			name = providerModel
 		}
 	}
 	if vendor, _, ok := strings.Cut(name, "/"); ok && vendor != "" {

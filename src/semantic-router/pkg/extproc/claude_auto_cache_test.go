@@ -485,3 +485,102 @@ func TestClaudeAutoCacheHonoursPromptCacheRetention(t *testing.T) {
 		})
 	}
 }
+
+// metadataOnlyGatewayConfig declares three metadata-only models, as an
+// external-gateway deployment does: no backend, so the provider model id is
+// all the router knows of where each one is served. The aliases carry no
+// vendor prefix.
+const metadataOnlyGatewayConfig = `
+version: v0.3
+listeners: []
+providers:
+  models:
+    - name: claude-sonnet
+      provider_model_id: anthropic/claude-sonnet-4.5
+      api_format: anthropic
+    - name: house-model
+      provider_model_id: anthropic/claude-sonnet-4.5
+      api_format: anthropic
+    - name: minimax-messages
+      provider_model_id: minimax/minimax-m2
+      api_format: anthropic
+routing:
+  modelCards:
+    - name: claude-sonnet
+    - name: house-model
+      publisher: Acme
+    - name: minimax-messages
+global:
+  router:
+    model_selection:
+      enabled: false
+`
+
+// A metadata-only model has no backend to resolve its provider model
+// through, so armFamily reads the vendor from its provider_model_id. An
+// unprefixed alias bound to anthropic/... is Claude, and a Responses
+// request to it through the external gateway path gets the generated
+// breakpoint. A card's publisher still wins over the provider model id,
+// and a non-Claude model gets no breakpoint.
+func TestClaudeAutoCacheFamilyOfAMetadataOnlyModel(t *testing.T) {
+	cfg, err := config.ParseYAMLBytes([]byte(metadataOnlyGatewayConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, test := range map[string]struct {
+		model      string
+		family     string
+		breakpoint bool
+	}{
+		"Claude by provider_model_id":     {"claude-sonnet", "anthropic", true},
+		"publisher wins":                  {"house-model", "acme", false},
+		"non-Claude by provider_model_id": {"minimax-messages", "minimax", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			router := &OpenAIRouter{Config: cfg}
+			if !router.usesExternalGatewayDispatch(test.model) {
+				t.Fatalf("%s is not dispatched by the external gateway path", test.model)
+			}
+			if got := router.armFamily(test.model); got != test.family {
+				t.Fatalf("armFamily(%q) = %q, want %q", test.model, got, test.family)
+			}
+			ctx := &RequestContext{
+				Headers: map[string]string{}, SourceFormat: llmprotocol.OpenAIResponsesV1,
+				RequestID: "claude-auto-cache-metadata", TraceContext: context.Background(),
+			}
+			request, immediate := router.prepareProtocolRequest([]byte(responsesNoDirective), ctx)
+			if immediate != nil || request == nil {
+				t.Fatalf("ingress refused the request: %+v", ctx.ImmediateProtocolError)
+			}
+			response, err := router.handleExternalGatewayModelRouting(request, test.model, ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := response.GetRequestBody().GetResponse().GetBodyMutation().GetBody()
+			if ctx.TargetFormat != llmprotocol.AnthropicMessagesV1 {
+				t.Fatalf("target format = %q, want Messages", ctx.TargetFormat)
+			}
+			got := messagesBreakpoints(t, body)
+			if test.breakpoint {
+				if len(got) != 1 || got["messages[2][0]"] != `{"type":"ephemeral"}` {
+					t.Fatalf("breakpoints %v in %s, want one on the last block", got, body)
+				}
+			} else if containsCacheControl(body) {
+				t.Fatalf("a non-Claude model was dispatched %s", body)
+			}
+		})
+	}
+}
+
+// A model with a backend is read through the id that backend is sent, not
+// its default provider model id: the fallback is for a model with no
+// backend to resolve.
+func TestArmFamilyPrefersTheResolvedBackendModel(t *testing.T) {
+	router, logicalModel := routingTestRouterForFormat(llmprotocol.AnthropicMessagesV1)
+	params := router.Config.ModelConfig[logicalModel]
+	params.ExternalModelIDs = map[string]string{"vllm": "deepseek/deepseek-v4", "default": "anthropic/claude-sonnet-4.5"}
+	router.Config.ModelConfig[logicalModel] = params
+	if got := router.armFamily(logicalModel); got != "deepseek" {
+		t.Fatalf("armFamily(%q) = %q, want the backend's deepseek", logicalModel, got)
+	}
+}
