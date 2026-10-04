@@ -15,6 +15,7 @@ from anthropic_shim.translate import (
     apply_cache_usage,
     cache_prefix_hash,
     has_cache_control,
+    with_automatic_breakpoint,
     join_system_array,
     join_tool_result_content,
     openai_to_anthropic,
@@ -339,3 +340,38 @@ def test_cache_prefix_hash_differs_when_prefix_changes() -> None:
         "messages": [],
     }
     assert cache_prefix_hash(body_a) != cache_prefix_hash(body_b)
+
+
+def test_has_cache_control_detects_request_level_directive() -> None:
+    body = {
+        "cache_control": {"type": "ephemeral"},
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+    assert has_cache_control(body) is True
+
+
+def test_request_level_directive_hashes_as_a_marker_on_the_last_block() -> None:
+    messages = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": [{"type": "text", "text": "hello"}]},
+    ]
+    automatic = {"cache_control": {"type": "ephemeral"}, "messages": messages}
+    explicit = {
+        "messages": [
+            messages[0],
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "hello",
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            },
+        ]
+    }
+    assert cache_prefix_hash(automatic) == cache_prefix_hash(explicit)
+    # The caller's body is not modified.
+    assert "cache_control" not in messages[1]["content"][0]
+    assert with_automatic_breakpoint({"messages": messages}) == {"messages": messages}

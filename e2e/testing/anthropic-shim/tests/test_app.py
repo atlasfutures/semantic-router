@@ -527,6 +527,44 @@ async def test_cache_usage_synthesised_on_first_then_repeat_request(
 
 
 @pytest.mark.asyncio
+async def test_cache_usage_follows_a_request_level_cache_control(
+    client_with_upstream: tuple[httpx.AsyncClient, _UpstreamRecorder],
+) -> None:
+    # Anthropic's automatic caching: a top-level cache_control caches the
+    # conversation up to its last block, so a repeat reads it and a grown
+    # conversation writes a new prefix.
+    client, _ = client_with_upstream
+    payload = {
+        "model": "qwen-test",
+        "cache_control": {"type": "ephemeral"},
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 16,
+    }
+    headers = {"x-vsr-test-session-id": "session-auto"}
+
+    first = await client.post("/v1/messages", json=payload, headers=headers)
+    second = await client.post("/v1/messages", json=payload, headers=headers)
+    grown = await client.post(
+        "/v1/messages",
+        json={
+            **payload,
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"},
+                {"role": "user", "content": "again"},
+            ],
+        },
+        headers=headers,
+    )
+
+    assert first.json()["usage"]["cache_creation_input_tokens"] == 42
+    assert first.json()["usage"]["cache_read_input_tokens"] == 0
+    assert second.json()["usage"]["cache_creation_input_tokens"] == 0
+    assert second.json()["usage"]["cache_read_input_tokens"] == 42
+    assert grown.json()["usage"]["cache_creation_input_tokens"] == 42
+
+
+@pytest.mark.asyncio
 async def test_cache_usage_untouched_when_request_has_no_cache_control(
     client_with_upstream: tuple[httpx.AsyncClient, _UpstreamRecorder],
 ) -> None:
