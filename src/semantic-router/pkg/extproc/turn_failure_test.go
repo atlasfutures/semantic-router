@@ -806,3 +806,31 @@ func TestAStreamEndedAtASendIsClassedClientEnded(t *testing.T) {
 		t.Fatalf("llm_usage class %v detail %v, want client_ended grpc:canceled", usage["failure_class"], usage["failure_detail"])
 	}
 }
+
+// Content observed in a chunk whose Send failed never reached the client:
+// only what earlier, sent chunks carried counts as sent.
+func TestContentInAChunkThatFailedToSendIsNotSent(t *testing.T) {
+	start := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\n"
+	content := "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"first words\"}}\n\n"
+	logs := captureLogs(t)
+	stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+		llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := &RequestContext{
+		RequestID: "req-content-unsent", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+		SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.AnthropicMessagesV1,
+		ProtocolResponseStream: stream,
+		SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+	}
+	mock := &MockStream{Ctx: context.Background(), SendError: status.Error(codes.Canceled, "context canceled"),
+		Requests: []*ext_proc.ProcessingRequest{{Request: &ext_proc.ProcessingRequest_ResponseBody{
+			ResponseBody: &ext_proc.HttpBody{Body: []byte(start + content), EndOfStream: false}}}}}
+	_ = (&OpenAIRouter{Config: &config.RouterConfig{}}).processWithContext(mock, ctx)
+	usage := findLogEvent(t, logs, "llm_usage")
+	if usage["failure_class"] != turnFailureClientEnded || usage["content_sent_before_failure"] != false {
+		t.Fatalf("llm_usage class %v content sent %v, want client_ended with nothing sent", usage["failure_class"], usage["content_sent_before_failure"])
+	}
+}

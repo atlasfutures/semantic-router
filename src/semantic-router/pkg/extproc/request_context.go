@@ -96,7 +96,12 @@ type RequestContext struct {
 	StreamEndedByReceiveError bool
 	// SemanticStreamErr is the first error the response stream's codec
 	// raised, kept across chunks.
-	SemanticStreamErr      error
+	SemanticStreamErr error
+	// StreamEndedAtSend is true when the exchange ended while a response
+	// chunk was being sent; DeliveredStreamItems is how many stream items
+	// the chunks sent before it carried.
+	StreamEndedAtSend      bool
+	DeliveredStreamItems   int
 	ProtocolResponseStream *protocolcodec.StreamEngine
 	// InjectedFault names the failure this request asked the router to produce.
 	// It is empty unless the cell opted in, and it is decided once, when the

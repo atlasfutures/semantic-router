@@ -585,7 +585,11 @@ func (r *OpenAIRouter) classStreamFailure(
 		// Only a stream the provider had not finished: a provider failure
 		// already observed, or a terminal whose output cannot be rebuilt,
 		// keeps its own class; a complete stream records no failure.
-		recordTurnFailureDetail(ctx, turnFailureClientEnded, clientEndedDetail(streamErr), sent)
+		delivered := sent
+		if ctx.StreamEndedAtSend {
+			delivered = ctx.DeliveredStreamItems > 0
+		}
+		recordTurnFailureDetail(ctx, turnFailureClientEnded, clientEndedDetail(streamErr), delivered)
 	case streamErr != nil && !ctx.StreamEndedByReceiveError || state == nil:
 	case state.failed != nil:
 		recordTurnFailureDetail(ctx, streamFailureClass(state.failed), providerStreamFailureDetail(state.failed), len(state.items) > 0)

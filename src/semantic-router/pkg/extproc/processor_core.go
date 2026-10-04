@@ -136,13 +136,19 @@ func (r *OpenAIRouter) processWithContext(
 		if err := r.handleProcessRequest(stream, message.request, ctx); err != nil {
 			if sendCanceled(err) {
 				// The client or the proxy went away while a chunk was being
-				// sent: the stream ended as it does on a receive error.
+				// sent: the stream ended as it does on a receive error, and
+				// the chunk that failed to send delivered nothing.
+				ctx.StreamEndedAtSend = true
 				r.finalizeEndedStream(ctx, err)
 			}
 			state, reason := replayLifecycleForProcessError(err)
 			r.finalizeRouterReplay(ctx, state, reason)
 			return err
 		}
+		if state := ctx.SemanticStreamState; state != nil {
+			ctx.DeliveredStreamItems = len(state.items)
+		}
+
 	}
 }
 
