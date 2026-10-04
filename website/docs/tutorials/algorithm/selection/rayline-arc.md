@@ -355,7 +355,20 @@ A switch mid-loop changes the reasoning the loop was built on, by target:
   dropped, because Messages accepts thinking only with a signature;
 - to a Chat or Responses arm: Claude's thinking keeps its text but loses its
   signature, and its `redacted_thinking` is dropped; unsigned reasoning is
-  carried unchanged.
+  carried unchanged;
+- to a Claude arm dispatched over Chat or Responses (Claude through
+  OpenRouter): only reasoning Claude provably wrote is carried, which is a
+  signed thinking block or `reasoning_details` tagged `anthropic-claude-v1`.
+  Everything else is dropped and counted as `foreign_dropped` in
+  `reasoning_dropped`: OpenRouter hands an assistant message's reasoning to
+  Claude, and Anthropic refuses another model's reasoning with
+  `content_filter`. Claude is recognised by its family, so a Claude arm whose
+  provider model id has no `anthropic/` segment needs `publisher: anthropic`
+  on its card.
+
+Only a Claude target is filtered this way. Without an episode record nothing
+proves who wrote unsigned reasoning, and DeepSeek and MiMo need their own
+`reasoning_content` back, so other targets carry it.
 
 So a loop that leaves Claude loses the thinking Claude can verify, and one
 that enters Claude loses the other model's reasoning. Some providers (DeepSeek,

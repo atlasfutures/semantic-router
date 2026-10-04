@@ -194,3 +194,73 @@ func TestOpaqueReasoningIsFoundAndDropped(t *testing.T) {
 		t.Fatalf("dropped %d, messages %+v", dropped, request.Messages)
 	}
 }
+
+func reasoningDetailsContent(text, details string) llmprotocol.Content {
+	return llmprotocol.Content{
+		Kind: llmprotocol.ContentReasoning, Text: text, Reasoning: llmprotocol.ReasoningScopeText,
+		Extensions: reasoningDetailsFields([]byte(details)),
+	}
+}
+
+// A Claude target keeps only the reasoning Claude provably wrote: a thinking
+// signature, or reasoning_details OpenRouter tagged anthropic-claude-v1.
+// Everything else is dropped and counted, a message left empty goes, and
+// visible text and tool calls are never touched.
+func TestDropReasoningNotFromAnthropic(t *testing.T) {
+	claudeItem := `{"type":"reasoning.text","text":"c","signature":"sig","format":"anthropic-claude-v1","index":0}`
+	geminiItem := `{"type":"reasoning.encrypted","data":"g","format":"google-gemini-v1","index":1}`
+	kimiItem := `{"type":"reasoning.text","text":"k","format":"unknown","index":0}`
+	text := llmprotocol.Content{Kind: llmprotocol.ContentText, Text: "visible"}
+	call := llmprotocol.Content{Kind: llmprotocol.ContentToolCall, ToolCall: &llmprotocol.ToolCall{ID: "call_1", Name: "bash"}}
+	for _, tc := range []struct {
+		name        string
+		content     llmprotocol.Content
+		wantDropped int
+		wantPruned  int
+		wantDetails string
+	}{
+		{"signed thinking", llmprotocol.Content{Kind: llmprotocol.ContentReasoning, Text: "c", Signature: "sig"}, 0, 0, ""},
+		{"unsigned thinking", llmprotocol.Content{Kind: llmprotocol.ContentReasoning, Text: "k"}, 1, 0, ""},
+		{"reasoning_content with unknown details", reasoningDetailsContent("k", "["+kimiItem+"]"), 1, 0, ""},
+		{"details with no format", reasoningDetailsContent("", `[{"type":"reasoning.text","text":"k"}]`), 1, 0, ""},
+		{"gemini details", reasoningDetailsContent("", "["+geminiItem+"]"), 1, 0, ""},
+		{"claude details", reasoningDetailsContent("c", "["+claudeItem+"]"), 0, 0, "[" + claudeItem + "]"},
+		{"mixed details keep Claude's items", reasoningDetailsContent("c", "["+claudeItem+","+geminiItem+"]"), 0, 1, "[" + claudeItem + "]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := llmprotocol.Request{Messages: []llmprotocol.Message{
+				{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: "q"}}},
+				{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{tc.content, text, call}},
+				{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{tc.content}},
+				{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: "q2"}}},
+			}}
+			dropped := DropReasoningNotFromAnthropic(&request)
+			if dropped != 2*(tc.wantDropped+tc.wantPruned) {
+				t.Fatalf("dropped = %d, want %d", dropped, 2*(tc.wantDropped+tc.wantPruned))
+			}
+			wantMessages := 4
+			if tc.wantDropped > 0 {
+				wantMessages = 3
+			}
+			if len(request.Messages) != wantMessages {
+				t.Fatalf("messages = %d, want %d", len(request.Messages), wantMessages)
+			}
+			mixed := request.Messages[1].Content
+			if mixed[len(mixed)-2].Text != text.Text || mixed[len(mixed)-1].ToolCall == nil {
+				t.Fatalf("visible text or the tool call was touched: %+v", mixed)
+			}
+			if tc.wantDropped > 0 {
+				if len(mixed) != 2 {
+					t.Fatalf("the reasoning was kept: %+v", mixed)
+				}
+				return
+			}
+			if tc.wantDetails != "" {
+				details, _ := reasoningDetailsOf(mixed[0])
+				if string(details) != tc.wantDetails || mixed[0].Text != "c" {
+					t.Fatalf("details = %s text = %q, want %s", details, mixed[0].Text, tc.wantDetails)
+				}
+			}
+		})
+	}
+}

@@ -21,6 +21,10 @@ type ReasoningCarry struct {
 	// on OpenRouter sends it empty) or a Chat or Responses reasoning echoed
 	// back.
 	UnsignedDropped int
+	// ForeignDropped is reasoning not provably Claude's, dropped for a Claude
+	// target dispatched over Chat or Responses (DropReasoningNotFromAnthropic).
+	// A Messages target drops it as UnsignedDropped.
+	ForeignDropped int
 }
 
 // Changed reports whether the request was changed.
@@ -30,7 +34,7 @@ func (carry ReasoningCarry) Changed() bool {
 
 // Dropped is the number of reasoning blocks dropped, of every kind.
 func (carry ReasoningCarry) Dropped() int {
-	return carry.RedactedDropped + carry.UnsignedDropped
+	return carry.RedactedDropped + carry.UnsignedDropped + carry.ForeignDropped
 }
 
 func (carry *ReasoningCarry) count(path string) {
@@ -156,4 +160,97 @@ func DropOpaqueReasoning(request *llmprotocol.Request, drop func(data string) bo
 		request.Messages = messages
 	}
 	return dropped
+}
+
+// reasoningDetailsFormatAnthropic is the format OpenRouter tags Claude's
+// reasoning_details items with.
+const reasoningDetailsFormatAnthropic = "anthropic-claude-v1"
+
+// DropReasoningNotFromAnthropic removes, on fresh slices, the reasoning in a
+// request's history that is not provably Claude's, and any message it leaves
+// empty. It returns how many reasoning contents it removed or pruned. It is for a
+// target whose model is Claude, whatever the wire format.
+//
+// Reasoning is provably Claude's only by what Claude alone writes: a thinking
+// signature, or reasoning_details items OpenRouter tagged
+// anthropic-claude-v1. Everything else (unsigned thinking, reasoning_content,
+// reasoning_details of any other format or of none) was written by another
+// model, or by one the request cannot name. Handed to Claude it is not
+// continuity: Claude cannot use thinking it cannot verify, and Anthropic
+// answers another model's reasoning in an assistant turn with a
+// content_filter refusal. A reasoning_details array that mixes formats keeps
+// only Claude's items, and the content goes when none are left.
+func DropReasoningNotFromAnthropic(request *llmprotocol.Request) int {
+	if request == nil {
+		return 0
+	}
+	dropped := 0
+	messages := make([]llmprotocol.Message, 0, len(request.Messages))
+	for _, message := range request.Messages {
+		contents := make([]llmprotocol.Content, 0, len(message.Content))
+		for _, content := range message.Content {
+			if content.Kind != llmprotocol.ContentReasoning || content.Signature != "" {
+				contents = append(contents, content)
+				continue
+			}
+			kept, ok := anthropicReasoningDetails(content)
+			if !ok {
+				dropped++
+				continue
+			}
+			if kept.Extensions != content.Extensions {
+				dropped++
+			}
+			contents = append(contents, kept)
+		}
+		if len(contents) == 0 && len(message.Content) > 0 {
+			continue
+		}
+		message.Content = contents
+		messages = append(messages, message)
+	}
+	if dropped > 0 {
+		request.Messages = messages
+	}
+	return dropped
+}
+
+// anthropicReasoningDetails returns an unsigned reasoning content with only
+// the reasoning_details items tagged as Claude's, and false when it has none.
+func anthropicReasoningDetails(content llmprotocol.Content) (llmprotocol.Content, bool) {
+	details, _ := reasoningDetailsOf(content)
+	if details == nil {
+		return content, false
+	}
+	var items []json.RawMessage
+	if json.Unmarshal(details, &items) != nil {
+		return content, false
+	}
+	kept := make([]json.RawMessage, 0, len(items))
+	for _, item := range items {
+		var tag struct {
+			Format string `json:"format"`
+		}
+		if json.Unmarshal(item, &tag) == nil && tag.Format == reasoningDetailsFormatAnthropic {
+			kept = append(kept, item)
+		}
+	}
+	if len(kept) == 0 {
+		return content, false
+	}
+	if len(kept) == len(items) {
+		return content, true
+	}
+	filtered, err := json.Marshal(kept)
+	if err != nil {
+		return content, false
+	}
+	carrier := *content.Extensions
+	carrier.Fields = make(map[string]json.RawMessage, len(content.Extensions.Fields))
+	for name, value := range content.Extensions.Fields {
+		carrier.Fields[name] = value
+	}
+	carrier.Fields[chatReasoningDetailsMember] = filtered
+	content.Extensions = &carrier
+	return content, true
 }

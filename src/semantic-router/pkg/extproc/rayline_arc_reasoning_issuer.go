@@ -167,3 +167,32 @@ func (r *OpenAIRouter) opaqueReasoningIssuerFor(dispatch *providerDispatch) stri
 	}
 	return strings.Join([]string{dispatch.logicalModel, dispatch.backendName, dispatch.upstreamModel}, "\x00")
 }
+
+// anthropicFamily is the model family armFamily names for Claude: the card
+// publisher, or the vendor segment of an anthropic/... provider model id.
+const anthropicFamily = "anthropic"
+
+// dropReasoningForeignToClaude drops, for a Claude worker dispatched over
+// Chat or Responses, the reasoning in the history that is not provably
+// Claude's (protocolcodec.DropReasoningNotFromAnthropic), and returns how many
+// contents it dropped. Such a turn arrives with nothing that names which
+// model wrote its reasoning when the episode has no record of it, and
+// OpenRouter hands an assistant message's reasoning to the model: Anthropic
+// answers another model's reasoning with a content_filter refusal. A
+// Messages target needs no such step: its disposition row already drops every
+// block without a signature.
+//
+// Only a Claude target is filtered. Another target cannot be: DeepSeek and
+// MiMo need their own reasoning_content back in a tool history, and nothing
+// in a request without an episode record proves that it is theirs, so
+// dropping what cannot be proven would break their replay. Reasoning text is
+// plain text to those models, and Claude's signed thinking reaches them as
+// text with its signature stripped. Claude is the target for which unproven
+// reasoning is never useful and is refused.
+func (r *OpenAIRouter) dropReasoningForeignToClaude(request *llmprotocol.Request, dispatch *providerDispatch) int {
+	if request == nil || dispatch == nil || dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 ||
+		r.armFamily(dispatch.logicalModel) != anthropicFamily {
+		return 0
+	}
+	return protocolcodec.DropReasoningNotFromAnthropic(request)
+}
