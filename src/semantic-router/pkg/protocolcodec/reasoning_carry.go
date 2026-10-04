@@ -2,6 +2,7 @@ package protocolcodec
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
@@ -169,28 +170,49 @@ const reasoningDetailsFormatAnthropic = "anthropic-claude-v1"
 
 // DropReasoningNotFromAnthropic removes, on fresh slices, the reasoning in a
 // request's history that is not provably Claude's, and any message it leaves
-// empty. It returns how many reasoning contents it removed or pruned. It is for a
-// target whose model is Claude, whatever the wire format.
+// empty. It returns how many reasoning contents it removed or pruned. It is
+// for a worker whose model is Claude, whatever the wire format. source is the
+// format the client sent the request in.
 //
-// Reasoning is provably Claude's only by what Claude alone writes: a thinking
-// signature, or reasoning_details items OpenRouter tagged
-// anthropic-claude-v1. Everything else (unsigned thinking, reasoning_content,
-// reasoning_details of any other format or of none) was written by another
-// model, or by one the request cannot name. Handed to Claude it is not
-// continuity: Claude cannot use thinking it cannot verify, and Anthropic
-// answers another model's reasoning in an assistant turn with a
-// content_filter refusal. A reasoning_details array that mixes formats keeps
-// only Claude's items, and the content goes when none are left.
-func DropReasoningNotFromAnthropic(request *llmprotocol.Request) int {
+// Reasoning is provably Claude's only by what Claude alone writes, with its
+// provenance:
+//   - a thinking signature a Messages client sent on a thinking block, or one
+//     a Responses client sent on a reasoning item tagged anthropic-claude-v1
+//     (the only item the Responses decoder gives a signature); a signature on
+//     a request from any other source is not proof;
+//   - reasoning_details items OpenRouter tagged anthropic-claude-v1;
+//   - an encrypted Responses blob, which the issuer record already sends only
+//     back to the target that issued it.
+//
+// Everything else (unsigned thinking, reasoning_content, reasoning_details of
+// any other format or of none, a Responses reasoning item signed under
+// another format or none) was written by another model, or by one the request
+// cannot name. Handed to Claude it is not continuity: Claude cannot use
+// thinking it cannot verify, and Anthropic answers another model's reasoning
+// in an assistant turn with a content_filter refusal. A reasoning_details
+// array that mixes formats keeps only Claude's items, and its text is rebuilt
+// from them, so no other model's text rides along as reasoning_content; the
+// content goes when no Claude item is left.
+//
+// A block's fate depends only on the block and source, so a history gives the
+// same result on every turn. A message is removed only when nothing is left
+// in it, and an assistant turn that called a tool always keeps its call, so a
+// tool result never loses the call it answers.
+func DropReasoningNotFromAnthropic(request *llmprotocol.Request, source llmprotocol.WireFormat) int {
 	if request == nil {
 		return 0
 	}
+	signatureIsProof := source == llmprotocol.AnthropicMessagesV1 || source == llmprotocol.OpenAIResponsesV1
 	dropped := 0
 	messages := make([]llmprotocol.Message, 0, len(request.Messages))
 	for _, message := range request.Messages {
 		contents := make([]llmprotocol.Content, 0, len(message.Content))
 		for _, content := range message.Content {
-			if content.Kind != llmprotocol.ContentReasoning || content.Signature != "" {
+			if foreignResponsesReasoningItem(content) {
+				dropped++
+				continue
+			}
+			if content.Kind != llmprotocol.ContentReasoning || (content.Signature != "" && signatureIsProof) {
 				contents = append(contents, content)
 				continue
 			}
@@ -216,6 +238,20 @@ func DropReasoningNotFromAnthropic(request *llmprotocol.Request) int {
 	return dropped
 }
 
+// foreignResponsesReasoningItem reports whether a content is a Responses
+// reasoning item the decoder carried whole, because it is not tagged
+// anthropic-claude-v1, and that holds no encrypted_content. An encrypted
+// item is left to the issuer record, which forwards a blob only to the target
+// that issued it (applyRaylineARCReasoningIssuer) and has every other
+// encoder drop it: a Claude worker on a direct Responses backend reads its
+// own blobs back.
+func foreignResponsesReasoningItem(content llmprotocol.Content) bool {
+	block := content.Unmodeled
+	return content.Kind == llmprotocol.ContentUnmodeled && block != nil &&
+		block.Format == llmprotocol.OpenAIResponsesV1 && block.Type == "reasoning" &&
+		!hasResponsesEncryptedReasoning(block.Raw)
+}
+
 // anthropicReasoningDetails returns an unsigned reasoning content with only
 // the reasoning_details items tagged as Claude's, and false when it has none.
 func anthropicReasoningDetails(content llmprotocol.Content) (llmprotocol.Content, bool) {
@@ -228,12 +264,17 @@ func anthropicReasoningDetails(content llmprotocol.Content) (llmprotocol.Content
 		return content, false
 	}
 	kept := make([]json.RawMessage, 0, len(items))
+	var text strings.Builder
 	for _, item := range items {
 		var tag struct {
-			Format string `json:"format"`
+			Format  string `json:"format"`
+			Text    string `json:"text"`
+			Summary string `json:"summary"`
 		}
 		if json.Unmarshal(item, &tag) == nil && tag.Format == reasoningDetailsFormatAnthropic {
 			kept = append(kept, item)
+			text.WriteString(tag.Text)
+			text.WriteString(tag.Summary)
 		}
 	}
 	if len(kept) == 0 {
@@ -253,5 +294,7 @@ func anthropicReasoningDetails(content llmprotocol.Content) (llmprotocol.Content
 	}
 	carrier.Fields[chatReasoningDetailsMember] = filtered
 	content.Extensions = &carrier
+	// The text was merged from every item; only Claude's may remain.
+	content.Text = text.String()
 	return content, true
 }

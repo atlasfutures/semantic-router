@@ -198,6 +198,9 @@ func TestClaudeOverChatReasoningGolden(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("messages differ from the golden:\n got %s\nwant %s", body["messages"], golden.WantMessages)
 	}
+	if wire := string(body["messages"]); strings.Contains(wire, "Gemini") || strings.Contains(wire, "gemini") {
+		t.Fatalf("Gemini's reasoning reached a Claude worker: %s", wire)
+	}
 }
 
 // The reverse direction, end to end: Claude's reasoning in a history reaches
@@ -304,5 +307,94 @@ func TestClaudeOverChatReasoningDropIsCacheStable(t *testing.T) {
 	prefix := strings.TrimSuffix(string(first["messages"]), "]")
 	if !strings.HasPrefix(string(following["messages"]), prefix+",") {
 		t.Fatalf("the next turn does not repeat the previous turn's messages:\nprev %s\nnext %s", first["messages"], following["messages"])
+	}
+}
+
+// A Responses client's reasoning signed by another provider is not Claude's:
+// only an anthropic-claude-v1 item carries a Claude signature, so Gemini's
+// signed reasoning, and signed reasoning with no format, never reach a Claude
+// worker over Chat.
+func TestSignedReasoningFromAnotherProviderNeverReachesClaude(t *testing.T) {
+	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
+	actions := relaxedPolicyActions()
+	fake := newRelaxedPolicyFake(t)
+	claude := actions["claude-off"].ActionID
+	fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return claude })
+	router, err := NewOpenAIRouter(writeClaudeOverChatPolicyConfig(t, fake.URL()))
+	if err != nil {
+		t.Fatalf("build router: %v", err)
+	}
+	awaitPolicySelectorArmed(t, router)
+	for name, format := range map[string]string{"gemini": `,"format":"google-gemini-v1"`, "no format": ""} {
+		t.Run(name, func(t *testing.T) {
+			body := dispatchPolicyClientRequest(t, router, "episode-signed-"+strings.ReplaceAll(name, " ", "-"), "/v1/responses",
+				`{"model":"auto","store":false,"input":[`+
+					`{"role":"user","content":"fix the failing test"},`+
+					`{"type":"reasoning","id":"item_1","summary":[],"content":[{"type":"reasoning_text","text":"foreign reasoning"}],`+
+					`"signature":"foreign-signature"`+format+`},`+
+					`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Looking at it."}]},`+
+					`{"role":"user","content":"go on"}]}`)
+			assertJSONField(t, body, "model", `"anthropic/claude-opus-5"`)
+			wire := string(body["messages"])
+			if strings.Contains(wire, "foreign reasoning") || strings.Contains(wire, "foreign-signature") {
+				t.Fatalf("a Claude worker was sent another provider's signed reasoning: %s", wire)
+			}
+			if !strings.Contains(wire, "Looking at it.") {
+				t.Fatalf("the assistant's visible text was lost: %s", wire)
+			}
+		})
+	}
+}
+
+// End to end on Chat: a reasoning-only assistant turn that loses all its
+// reasoning is removed, leaving its two user turns adjacent. An assistant turn
+// that called a tool always keeps its call, so no tool result is orphaned.
+// TestDropReasoningNotFromAnthropicLeavesAnEncodableHistory covers the
+// Responses target.
+func TestAnEmptiedReasoningOnlyTurnIsRemovedForClaude(t *testing.T) {
+	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
+	history := `{"model":"auto","max_completion_tokens":4096,"messages":[` +
+		`{"role":"user","content":"first question"},` +
+		`{"role":"assistant","content":null,"reasoning_content":"kimi reasoning"},` +
+		`{"role":"user","content":"second question"},` +
+		`{"role":"assistant","content":null,"reasoning_content":"kimi reasoning",` +
+		`"tool_calls":[{"id":"call_1","type":"function","function":{"name":"bash","arguments":"{}"}}]},` +
+		`{"role":"tool","tool_call_id":"call_1","content":"ok"},` +
+		`{"role":"user","content":"third question"}],` +
+		`"tools":[{"type":"function","function":{"name":"bash","parameters":{"type":"object","properties":{}}}}]}`
+	for _, apiFormat := range []string{"openai"} {
+		t.Run(apiFormat, func(t *testing.T) {
+			actions := relaxedPolicyActions()
+			fake := newRelaxedPolicyFake(t)
+			claude := actions["claude-off"].ActionID
+			fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return claude })
+			router, err := NewOpenAIRouter(writeClaudeOverChatPolicyConfig(t, fake.URL()))
+			if err != nil {
+				t.Fatalf("build router: %v", err)
+			}
+			awaitPolicySelectorArmed(t, router)
+			body := dispatchPolicyClientRequest(t, router, "episode-emptied-"+apiFormat, "/v1/chat/completions", history)
+			assertJSONField(t, body, "model", `"anthropic/claude-opus-5"`)
+			member := "messages"
+			wire := string(body[member])
+			if strings.Contains(wire, "kimi reasoning") {
+				t.Fatalf("a Claude worker was sent another model's reasoning: %s", wire)
+			}
+			first, second := strings.Index(wire, "first question"), strings.Index(wire, "second question")
+			call, result := strings.Index(wire, "call_1"), strings.LastIndex(wire, "call_1")
+			if first < 0 || second < first || call < second || result == call || !strings.Contains(wire, "third question") {
+				t.Fatalf("the turns or the tool call and its result were not kept in order: %s", wire)
+			}
+			var items []map[string]json.RawMessage
+			if err := json.Unmarshal(body[member], &items); err != nil {
+				t.Fatalf("%s = %s", member, wire)
+			}
+			for _, item := range items {
+				if string(item["role"]) == `"assistant"` && !strings.Contains(string(item["tool_calls"])+string(item["content"]), "call_1") &&
+					len(item["tool_calls"]) == 0 && (len(item["content"]) == 0 || string(item["content"]) == "null") {
+					t.Fatalf("an empty assistant turn was sent: %s", wire)
+				}
+			}
+		})
 	}
 }

@@ -66,7 +66,7 @@ func (r *OpenAIRouter) prepareProviderDispatch(
 	// cannot verify is dropped, a signature it cannot verify is stripped. Each
 	// is logged by kind. Before it, a Claude worker loses the reasoning that
 	// is not provably Claude's, while signatures still say whose it is.
-	foreignDropped := r.dropReasoningForeignToClaude(request, dispatch)
+	foreignDropped := r.dropReasoningForeignToClaude(request, dispatch, ctx.SourceFormat)
 	carry := protocolcodec.CarryReasoningTo(request, dispatch.targetFormat)
 	carry.ForeignDropped = foreignDropped
 	if carry.Changed() {

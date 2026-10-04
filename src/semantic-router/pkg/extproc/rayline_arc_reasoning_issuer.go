@@ -194,9 +194,13 @@ const anthropicFamily = "anthropic"
 // as reasoning text with its signature stripped, because those providers
 // expect reasoning_content on every tool-calling turn of a history, and
 // reasoning_details reach a Chat worker as the client sent them.
-func (r *OpenAIRouter) dropReasoningForeignToClaude(request *llmprotocol.Request, dispatch *providerDispatch) int {
+func (r *OpenAIRouter) dropReasoningForeignToClaude(
+	request *llmprotocol.Request,
+	dispatch *providerDispatch,
+	source llmprotocol.WireFormat,
+) int {
 	if request == nil || dispatch == nil || r.armFamily(dispatch.logicalModel) != anthropicFamily {
 		return 0
 	}
-	return protocolcodec.DropReasoningNotFromAnthropic(request)
+	return protocolcodec.DropReasoningNotFromAnthropic(request, source)
 }

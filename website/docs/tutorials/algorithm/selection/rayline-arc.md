@@ -353,8 +353,12 @@ A switch mid-loop changes the reasoning the loop was built on, by target:
 
 - to a Claude arm, over any wire format (Messages, or Chat and Responses
   through OpenRouter): only reasoning Claude provably wrote is carried, which
-  is a signed thinking block or `reasoning_details` tagged
-  `anthropic-claude-v1`. Everything else (unsigned thinking,
+  is a Messages client's signed thinking block, a Responses reasoning item or
+  `reasoning_details` item tagged `anthropic-claude-v1`, or an encrypted blob
+  the episode records as issued by that worker. A mixed `reasoning_details`
+  array keeps only Claude's items and its text is rebuilt from them. A
+  reasoning-only assistant turn left empty is removed; a turn that called a
+  tool keeps its call. Everything else (unsigned thinking,
   `reasoning_content`, `reasoning_details` of another format or of none) is
   dropped and counted as `foreign_dropped` in `reasoning_dropped`: Messages
   accepts thinking only with a signature, and over Chat, OpenRouter hands an

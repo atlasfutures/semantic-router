@@ -1,5 +1,5 @@
 {
-  "note": "A pi Chat Completions request (pi 1.0.0 openai-completions replay shape) whose history holds one tool-calling turn written by an open-weight model (reasoning_content plus reasoning_details tagged unknown) and one whose reasoning_details mix Claude's and Gemini's items. want_messages is the messages array a Claude worker dispatched over Chat through OpenRouter is sent.",
+  "note": "A pi Chat Completions request (pi 1.0.0 openai-completions replay shape) whose history holds one tool-calling turn written by an open-weight model (reasoning_content plus reasoning_details tagged unknown) and one whose reasoning_content merges Claude's and Gemini's text and whose reasoning_details mix their items. No Gemini text or blob may reach the wire. want_messages is the messages array a Claude worker dispatched over Chat through OpenRouter is sent.",
   "request": {
     "model": "auto",
     "stream": true,
@@ -57,11 +57,17 @@
             "index": 0
           },
           {
+            "type": "reasoning.text",
+            "text": "Gemini would call the bash tool next.",
+            "format": "google-gemini-v1",
+            "index": 1
+          },
+          {
             "type": "reasoning.encrypted",
             "id": "call_2",
             "data": "gemini-opaque",
             "format": "google-gemini-v1",
-            "index": 1
+            "index": 2
           }
         ],
         "tool_calls": [
@@ -73,7 +79,8 @@
               "arguments": "{\"command\":\"python3 fib.py\"}"
             }
           }
-        ]
+        ],
+        "reasoning_content": "Now run it.Gemini would call the bash tool next."
       },
       {
         "role": "tool",
@@ -146,6 +153,7 @@
     },
     {
       "role": "assistant",
+      "reasoning_content": "Now run it.",
       "reasoning_details": [
         {
           "type": "reasoning.text",
