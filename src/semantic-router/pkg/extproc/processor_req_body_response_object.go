@@ -140,9 +140,21 @@ func marshalStoredInputItems(items []responseapi.InputItem) ([]json.RawMessage, 
 	return encoded, nil
 }
 
+// marshalStoredOutputItems replays a stored response's output as history.
+//
+// A function_call the output limit cut off (status "incomplete") is left
+// out. It was never executed and has no output, and its arguments are a
+// prefix, so replayed as an ordinary past call it would fail validation and
+// break every continuation of a length stop. The stored response itself
+// keeps the item, so the object a GET returns stays as the client received
+// it; only the history a later turn builds omits it. Whatever the turn
+// wrote before the cut, its reasoning and text, is replayed as usual.
 func marshalStoredOutputItems(items []responseapi.OutputItem) ([]json.RawMessage, error) {
 	encoded := make([]json.RawMessage, 0, len(items))
 	for _, item := range items {
+		if item.Type == responseapi.ItemTypeFunctionCall && item.Status == "incomplete" {
+			continue
+		}
 		item.Status = ""
 		body, err := json.Marshal(item)
 		if err != nil {
