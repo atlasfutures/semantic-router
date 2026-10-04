@@ -94,7 +94,10 @@ type RequestContext struct {
 	// StreamEndedByReceiveError is true when the ext_proc exchange ended
 	// (the client or the proxy went away) before the stream did.
 	StreamEndedByReceiveError bool
-	ProtocolResponseStream    *protocolcodec.StreamEngine
+	// SemanticStreamErr is the first error the response stream's codec
+	// raised, kept across chunks.
+	SemanticStreamErr      error
+	ProtocolResponseStream *protocolcodec.StreamEngine
 	// InjectedFault names the failure this request asked the router to produce.
 	// It is empty unless the cell opted in, and it is decided once, when the
 	// episode is prepared, so no later phase re-reads the header.

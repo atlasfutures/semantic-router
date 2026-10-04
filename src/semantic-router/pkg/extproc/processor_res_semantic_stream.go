@@ -157,6 +157,9 @@ func (buffers *semanticStreamBuffers) recordError(ctx *RequestContext, err error
 	}
 	buffers.streamErr = err
 	ctx.StreamingAborted = true
+	if ctx.SemanticStreamErr == nil {
+		ctx.SemanticStreamErr = err
+	}
 }
 
 func appendProtocolFrames(body []byte, frames [][]byte) []byte {
@@ -578,7 +581,7 @@ func (r *OpenAIRouter) classStreamFailure(
 		// The stream ended properly but its output cannot be reconstructed
 		// (an item never completed): the arm's reply is unusable.
 		recordTurnFailureDetail(ctx, turnFailureUpstreamError, "stream_reconstruction_failed", sent)
-	case ctx.StreamEndedByReceiveError && (state == nil || !state.terminal && state.failed == nil):
+	case ctx.StreamEndedByReceiveError && ctx.ResponseFailureClass == "" && (state == nil || !state.terminal && state.failed == nil):
 		// Only a stream the provider had not finished: a provider failure
 		// already observed, or a terminal whose output cannot be rebuilt,
 		// keeps its own class; a complete stream records no failure.

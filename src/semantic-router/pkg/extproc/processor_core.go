@@ -150,7 +150,13 @@ func (r *OpenAIRouter) handleProcessReceiveError(ctx *RequestContext, err error)
 		// ending. Returning without finalizing leaves the turn with no usage
 		// record: the upstream charged for every token it generated and the
 		// Router counted none of them.
-		r.finalizeSemanticStreamingResponse(ctx, err)
+		// A codec error an earlier chunk raised is the stream's own failure;
+		// the exchange ending after it does not replace it.
+		streamErr := err
+		if ctx.SemanticStreamErr != nil {
+			streamErr = ctx.SemanticStreamErr
+		}
+		r.finalizeSemanticStreamingResponse(ctx, streamErr)
 	}
 	if ctx.InflightToken != 0 {
 		inflight.End(ctx.RequestModel, ctx.InflightToken)

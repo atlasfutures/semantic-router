@@ -453,6 +453,20 @@ func TestEmptySuccessIsRefusedAtTheHeaders(t *testing.T) {
 				if ctx.UpstreamSpan != nil {
 					t.Fatal("the upstream span was left open")
 				}
+				// The exchange then ends: a streaming turn settled at its
+				// headers is not finalized again, so it keeps its class and
+				// one usage line.
+				ctx.IsStreamingResponse = true
+				_ = (&OpenAIRouter{}).handleProcessReceiveError(ctx, status.Error(codes.Canceled, "context canceled"))
+				usageLines := 0
+				for _, entry := range logs.All() {
+					if entry.ContextMap()["event"] == "llm_usage" {
+						usageLines++
+					}
+				}
+				if ctx.ResponseFailureClass != turnFailureUpstreamError || usageLines != 1 {
+					t.Fatalf("after the exchange ended: class %q, %d usage lines", ctx.ResponseFailureClass, usageLines)
+				}
 			}
 		})
 	}
@@ -727,4 +741,41 @@ func TestAnUnusableTerminalSeenBeforeTheClientEndedKeepsItsClass(t *testing.T) {
 	if ctx.ResponseFailureClass != turnFailureUpstreamError || ctx.ResponseFailureDetail != "stream_reconstruction_failed" {
 		t.Fatalf("class %q detail %q, want upstream_error stream_reconstruction_failed", ctx.ResponseFailureClass, ctx.ResponseFailureDetail)
 	}
+}
+
+// A failure the turn already carries is not overwritten when the exchange
+// then ends: a codec error an earlier chunk raised, or a class recorded at
+// the response headers.
+func TestTheClientEndingDoesNotReplaceAnEarlierFailure(t *testing.T) {
+	t.Run("codec error in an earlier chunk", func(t *testing.T) {
+		logs := captureLogs(t)
+		stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+			llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := &RequestContext{
+			RequestID: "req-codec-then-ended", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+			SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.AnthropicMessagesV1,
+			ProtocolResponseStream: stream,
+			SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+		}
+		first := &semanticStreamBuffers{}
+		first.push([]byte("event: message_start\ndata: {not json}\n\n"), ctx)
+		if first.streamErr == nil {
+			t.Fatal("the malformed chunk raised no codec error")
+		}
+		_ = (&OpenAIRouter{}).handleProcessReceiveError(ctx, status.Error(codes.Canceled, "context canceled"))
+		if got := findLogEvent(t, logs, "llm_usage")["failure_class"]; got != turnFailureUpstreamError {
+			t.Fatalf("failure_class = %v, want the codec error's upstream_error", got)
+		}
+	})
+	t.Run("class recorded at the headers", func(t *testing.T) {
+		_ = captureLogs(t)
+		ctx := &RequestContext{RequestID: "req-headers-then-ended", StreamEndedByReceiveError: true, ResponseFailureClass: turnFailureUpstreamError}
+		(&OpenAIRouter{}).classStreamFailure(ctx, nil, nil, status.Error(codes.Canceled, "context canceled"))
+		if ctx.ResponseFailureClass != turnFailureUpstreamError {
+			t.Fatalf("class = %q, want the header's upstream_error kept", ctx.ResponseFailureClass)
+		}
+	})
 }
