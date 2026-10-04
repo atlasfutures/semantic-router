@@ -582,8 +582,11 @@ func TestStreamFailureDetailNamesTheError(t *testing.T) {
 		want      string
 	}{
 		"codec cut": {streamErr: cut, want: "stream_event_after_terminal: Anthropic stream emitted content_block_start after message_stop"},
-		// A provider's own message is free text and is never logged: only its code.
-		"provider in-band": {failed: provider, want: "overloaded_error"},
+		// A provider's own text is never logged: a documented code is kept,
+		// anything else is reported by the Router's category.
+		"provider in-band": {failed: provider, want: "provider:overloaded_error"},
+		"provider unknown code": {failed: llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "sk-or-v1-secretish", "x", nil),
+			want: "provider:" + string(llmprotocol.ErrorUpstreamUnavailable)},
 	} {
 		logs := captureLogs(t)
 		ctx := &RequestContext{

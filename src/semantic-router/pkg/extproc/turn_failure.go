@@ -203,14 +203,30 @@ func codecStreamFailureDetail(protocolError *llmprotocol.ProtocolError) string {
 	return boundedPrintable(detail, maxStreamFailureDetail)
 }
 
-// providerStreamFailureDetail is only the code of an error a provider raised
-// in its stream. Its message is the provider's free text, which may echo
-// request content, and is never logged (pkg/observability/logging/content.go).
+// knownProviderStreamErrorCodes are the provider stream error codes the
+// Router records as they are: the documented error types of the providers it
+// dispatches to. Anything else a provider sends is its own text.
+var knownProviderStreamErrorCodes = map[string]bool{
+	"overloaded_error": true, "api_error": true, "rate_limit_error": true, "timeout_error": true,
+	"invalid_request_error": true, "authentication_error": true, "permission_error": true,
+	"not_found_error": true, "request_too_large": true, "billing_error": true,
+	"server_error": true, "rate_limit_exceeded": true, "context_length_exceeded": true,
+	"insufficient_quota": true, "timeout": true, "internal_error": true,
+}
+
+// providerStreamFailureDetail describes an error a provider raised in its
+// stream without logging anything the provider wrote: its message and its
+// code are its own text, which may echo request content or a credential
+// (pkg/observability/logging/content.go). A documented error code is kept;
+// anything else is reported by the Router's own category.
 func providerStreamFailureDetail(protocolError *llmprotocol.ProtocolError) string {
 	if protocolError == nil {
 		return ""
 	}
-	return boundedPrintable(protocolError.Code, maxStreamFailureDetail)
+	if knownProviderStreamErrorCodes[protocolError.Code] {
+		return "provider:" + protocolError.Code
+	}
+	return "provider:" + string(protocolError.Category)
 }
 
 func boundedPrintable(text string, limit int) string {
