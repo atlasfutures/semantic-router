@@ -321,7 +321,9 @@ func validateToolCallContent(content Content, location string, limits Limits) er
 		return NewFieldError(ErrorInvalidRequest, "invalid_tool_call",
 			"tool call requires an ID, name, and JSON arguments", location, "content.name")
 	}
-	if err := ValidateJSONObject([]byte(call.Arguments), limits.JSONDepth); err != nil {
+	// An incomplete call's arguments are the prefix the model wrote before it
+	// was cut off; ValidateResponse bounds where such a call may appear.
+	if err := ValidateJSONObject([]byte(call.Arguments), limits.JSONDepth); err != nil && !call.Incomplete {
 		return NewFieldError(ErrorInvalidRequest, "invalid_tool_call",
 			"tool call arguments must be one strict JSON object", location, "content.input")
 	}

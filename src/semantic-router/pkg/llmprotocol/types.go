@@ -165,6 +165,13 @@ type ToolCall struct {
 	// Namespace is the tool group a Responses call names beside its function,
 	// as Codex's multi_agent_v1 sub-agent tools do. See Tool.Namespace.
 	Namespace string
+	// Incomplete marks a call the model was cut off in the middle of: its
+	// output hit the token limit while it was writing the arguments, so
+	// Arguments is the prefix it wrote and need not be a JSON object. Only a
+	// response that stopped at max_tokens can hold one, as its last content;
+	// every encoder says the call is incomplete in its own format, so a client
+	// never takes the prefix for a call to run.
+	Incomplete bool
 }
 
 type ToolResult struct {
