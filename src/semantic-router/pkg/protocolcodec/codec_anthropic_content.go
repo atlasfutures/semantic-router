@@ -239,7 +239,9 @@ func (AnthropicMessagesCodec) EncodeRequest(request llmprotocol.Request, envelop
 	if err := validateAnthropicEncodableRequest(request); err != nil {
 		return nil, nil, err
 	}
+	request, placement := placeAutoCacheBreakpoint(request, policy)
 	diagnostics, validationErr := anthropicRequestDiagnostics(request, policy)
+	diagnostics = appendDiagnostics(placement, diagnostics, policy.Limits.Diagnostics)
 	if validationErr != nil {
 		return nil, diagnostics, validationErr
 	}

@@ -50,6 +50,16 @@
   ],
   "fields": [
     {
+      "path": "cache_control",
+      "leg": "request",
+      "first_seen": "2026-10-04",
+      "targets": {
+        "openai.chat.v1": "drop",
+        "openai.responses.v1": "carry"
+      },
+      "note": "Top-level automatic caching, in Anthropic's published request schema. Refused unsupported_cache_control until it was modelled as a request-level directive. Messages re-emits a Messages client's member; a translated request gets one breakpoint on the last cacheable block. Responses re-emits OpenRouter's top-level extension; Chat drops and counts it."
+    },
+    {
       "path": "content.cache_control",
       "leg": "request",
       "first_seen": "2026-09-04",

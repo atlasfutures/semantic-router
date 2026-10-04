@@ -13,7 +13,13 @@
             }
           ],
           "model": "routed-model"
-        }
+        },
+        "diagnostics": [
+          {
+            "field": "cache_control",
+            "action": "dropped"
+          }
+        ]
       }
     },
     {

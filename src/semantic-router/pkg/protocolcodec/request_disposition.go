@@ -57,6 +57,8 @@ type requestFieldRow struct {
 }
 
 const (
+	// fieldAutoCache is the request-level automatic-cache directive.
+	fieldAutoCache           = "cache_control"
 	fieldContentCitations    = "content.citations"
 	fieldContentCacheControl = "content.cache_control"
 	fieldContentCaller       = "content.caller"
@@ -111,6 +113,26 @@ var billingAttributionGrammar = regexp.MustCompile(`^x-anthropic-billing-header:
 const billingAttributionVersionField = " cc_version="
 
 var anthropicRequestDispositions = []requestFieldRow{
+	{
+		// Automatic caching: cache the conversation without naming a block.
+		// Messages carries it (a Messages client's member as written, any
+		// other source as a placed breakpoint; see placeAutoCacheBreakpoint)
+		// and Responses re-emits OpenRouter's top-level member. Chat has no
+		// request-level member for it, and choosing a block for a Chat
+		// provider would guess at a cache whose rules differ by model, so
+		// the directive is dropped and counted.
+		Path: fieldAutoCache,
+		Targets: map[llmprotocol.WireFormat]targetDisposition{
+			llmprotocol.OpenAIChatV1: {
+				Action: dispositionDrop,
+				Reason: "Chat Completions has no request-level cache directive",
+			},
+			llmprotocol.OpenAIResponsesV1: {
+				Action: dispositionCarry,
+				Reason: "Responses re-emits the top-level cache_control extension",
+			},
+		},
+	},
 	{
 		// Claude Code echoes the citations of a web-search or document answer
 		// back in history on every later turn. Refusing them failed two
@@ -374,6 +396,9 @@ func appendRequestDispositions(
 // drops. The order is sorted so a diagnostics list is stable in a golden.
 func presentRequestFields(request llmprotocol.Request) []string {
 	var paths []string
+	if request.AutoCache != nil {
+		paths = append(paths, fieldAutoCache)
+	}
 	for _, tool := range request.Tools {
 		if _, defined := tool.AnthropicDefined(); defined {
 			paths = append(paths, fieldToolsTypeAnthropicDefined)
