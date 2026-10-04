@@ -87,11 +87,13 @@ const anthropicRefusalStop = "event: message_delta\ndata: {\"type\":\"message_de
 	"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
 
 // A refusal that stops the model mid-call is a refusal, not an argument
-// error: the held cut call yields to it, stays incomplete, and each client
-// gets the refusal as it gets one with no call cut (Anthropic stop_reason
-// refusal, Chat content_filter, Responses incomplete at content_filter).
+// error. The final tool_use was never finished, whatever its arguments: cut
+// mid-object, still the start's {} placeholder (the recorded shape: a forced
+// tool_use, no input_json_delta, then the refusal), or a whole object. It
+// stays incomplete, and each client gets the refusal as it gets one with no
+// call cut (Anthropic stop_reason refusal, Chat content_filter, Responses
+// incomplete at content_filter), never a completed function_call.
 func TestAToolCallCutByARefusalIsARefusal(t *testing.T) {
-	body := anthropicFailureCutStart + anthropicFailureCutPartial + anthropicFailureBlockStop + anthropicRefusalStop
 	requireRefusalStop := func(t *testing.T, run failureCutRun) {
 		t.Helper()
 		for _, event := range run.events {
@@ -104,37 +106,82 @@ func TestAToolCallCutByARefusalIsARefusal(t *testing.T) {
 		}
 		t.Fatalf("the refused turn never completed: %+v", run.events)
 	}
-	t.Run("anthropic", func(t *testing.T) {
-		run := heldCutCompletion(t, llmprotocol.AnthropicMessagesV1, body)
-		requireRefusalStop(t, run)
-		if !bytes.Contains(run.wire, []byte(`"stop_reason":"refusal"`)) || !bytes.Contains(run.wire, []byte("event: message_stop")) {
-			t.Fatalf("Messages client did not get the refusal:\n%s", run.wire)
-		}
-	})
-	t.Run("responses", func(t *testing.T) {
-		run := heldCutCompletion(t, llmprotocol.OpenAIResponsesV1, body)
-		requireRefusalStop(t, run)
-		requireResponsesIncompleteCut(t, run.wire, "content_filter")
-	})
-	t.Run("chat", func(t *testing.T) {
-		run := heldCutCompletion(t, llmprotocol.OpenAIChatV1, body)
-		requireRefusalStop(t, run)
-		if !bytes.Contains(run.wire, []byte(`"finish_reason":"content_filter"`)) || !bytes.Contains(run.wire, []byte("data: [DONE]")) {
-			t.Fatalf("Chat client did not get the refusal:\n%s", run.wire)
-		}
-	})
-	t.Run("buffered", func(t *testing.T) {
-		response, _, err := NewBuiltinEngine().DecodeResponseStream(llmprotocol.AnthropicMessagesV1, []byte(body),
-			llmprotocol.StreamContext{Context: t.Context(), PublicModel: "public-model", ProviderModel: "claude-fixture"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		call := response.Output[len(response.Output)-1].Content[0].ToolCall
-		if response.StopReason != llmprotocol.StopContentFilter || call == nil || !call.Incomplete ||
-			response.StopDetails == nil || response.StopDetails.Category != "cyber" {
-			t.Fatalf("response = stop %q details %+v call %+v", response.StopReason, response.StopDetails, call)
-		}
-	})
+	for name, held := range map[string]string{
+		"truncated arguments":   anthropicFailureCutStart + anthropicFailureCutPartial + anthropicFailureBlockStop,
+		"placeholder arguments": anthropicPlaceholderCut,
+		"whole arguments":       anthropicFailureCutStart + anthropicFailureWhole + anthropicFailureBlockStop,
+	} {
+		body := held + anthropicRefusalStop
+		t.Run(name+"/anthropic", func(t *testing.T) {
+			run := heldCutCompletion(t, llmprotocol.AnthropicMessagesV1, body)
+			requireRefusalStop(t, run)
+			if !bytes.Contains(run.wire, []byte(`"stop_reason":"refusal"`)) || !bytes.Contains(run.wire, []byte("event: message_stop")) {
+				t.Fatalf("Messages client did not get the refusal:\n%s", run.wire)
+			}
+		})
+		t.Run(name+"/responses", func(t *testing.T) {
+			run := heldCutCompletion(t, llmprotocol.OpenAIResponsesV1, body)
+			requireRefusalStop(t, run)
+			requireResponsesIncompleteCut(t, run.wire, "content_filter")
+			if bytes.Contains(run.wire, []byte(`"status":"completed"`)) {
+				t.Fatalf("Responses client was given a completed item:\n%s", run.wire)
+			}
+		})
+		t.Run(name+"/chat", func(t *testing.T) {
+			run := heldCutCompletion(t, llmprotocol.OpenAIChatV1, body)
+			requireRefusalStop(t, run)
+			if !bytes.Contains(run.wire, []byte(`"finish_reason":"content_filter"`)) || !bytes.Contains(run.wire, []byte("data: [DONE]")) {
+				t.Fatalf("Chat client did not get the refusal:\n%s", run.wire)
+			}
+		})
+		t.Run(name+"/buffered", func(t *testing.T) {
+			response, _, err := NewBuiltinEngine().DecodeResponseStream(llmprotocol.AnthropicMessagesV1, []byte(body),
+				llmprotocol.StreamContext{Context: t.Context(), PublicModel: "public-model", ProviderModel: "claude-fixture"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			call := response.Output[len(response.Output)-1].Content[0].ToolCall
+			if response.StopReason != llmprotocol.StopContentFilter || call == nil || !call.Incomplete ||
+				response.StopDetails == nil || response.StopDetails.Category != "cyber" {
+				t.Fatalf("response = stop %q details %+v call %+v", response.StopReason, response.StopDetails, call)
+			}
+		})
+	}
+}
+
+// A buffered Messages refusal whose last block is a tool_use is decoded with
+// the call incomplete, by the same rule, and a Responses client is never
+// given it as completed. A Messages client keeps the input the provider
+// sent.
+func TestABufferedRefusalMarksTheLastToolCallIncomplete(t *testing.T) {
+	for name, input := range map[string]string{"placeholder": `{}`, "whole": `{"command":"ls -la /tmp"}`} {
+		t.Run(name, func(t *testing.T) {
+			body := []byte(`{"id":"msg_1","type":"message","role":"assistant","model":"m","content":[{"type":"tool_use","id":"toolu_1","name":"bash","input":` + input + `}],` +
+				`"stop_reason":"refusal","stop_sequence":null,"stop_details":{"type":"refusal","category":"cyber"},"usage":{"input_tokens":1,"output_tokens":1}}`)
+			engine := NewBuiltinEngine()
+			response, _, _, err := engine.DecodeResponse(llmprotocol.AnthropicMessagesV1, body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if call := response.Output[0].Content[0].ToolCall; call == nil || !call.Incomplete {
+				t.Fatalf("decoded call = %+v", call)
+			}
+			responses, err := engine.EncodeResponse(llmprotocol.OpenAIResponsesV1, response, llmprotocol.Envelope{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Contains(responses.Body, []byte(`"status":"completed"`)) || !bytes.Contains(responses.Body, []byte(`"reason":"content_filter"`)) {
+				t.Fatalf("Responses body = %s", responses.Body)
+			}
+			messages, err := engine.EncodeResponse(llmprotocol.AnthropicMessagesV1, response, llmprotocol.Envelope{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Contains(messages.Body, []byte(`"input":`+input)) || !bytes.Contains(messages.Body, []byte(`"stop_reason":"refusal"`)) {
+				t.Fatalf("Messages body = %s", messages.Body)
+			}
+		})
+	}
 }
 
 // A buffered reply whose last block is a tool_use under the context window

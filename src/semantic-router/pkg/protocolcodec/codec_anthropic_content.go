@@ -724,7 +724,7 @@ func encodeAnthropicToolCallBlock(call *llmprotocol.ToolCall) (anthropicContentW
 		return anthropicContentWire{}, llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_tool_call", "tool call is invalid", nil)
 	}
 	arguments := json.RawMessage(call.Arguments)
-	if call.Incomplete {
+	if call.Incomplete && !isJSONObject(arguments, llmprotocol.DefaultPolicy().Limits.JSONDepth) {
 		// A tool_use block Claude was cut off writing at max_tokens. A
 		// non-streaming Messages response keeps the block, with "input": {}
 		// rather than the partial arguments, beside stop_reason "max_tokens"
@@ -733,7 +733,9 @@ func encodeAnthropicToolCallBlock(call *llmprotocol.ToolCall) (anthropicContentW
 		// max_tokens stop whose last block is a tool_use means an
 		// incomplete call, retried with a higher max_tokens. Dropping the
 		// block would hide that, and the partial arguments are no JSON
-		// object for "input" to hold.
+		// object for "input" to hold. A cut call whose arguments are a
+		// whole object (a refused call, or one the provider already gave
+		// as {}) keeps them: they are what the provider sent.
 		arguments = json.RawMessage(`{}`)
 	}
 	if !json.Valid(arguments) {

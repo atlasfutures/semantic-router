@@ -124,13 +124,15 @@ func decodeAnthropicResponseResource(wire anthropicResponseWire, policy llmproto
 	return response, nil
 }
 
-// markAnthropicCutToolCall marks the tool_use block a length stop cut off.
+// markAnthropicCutToolCall marks the tool_use block a stop cut off.
 // Anthropic documents a max_tokens response whose last block is a tool_use as
 // one holding an incomplete tool use block, and returns its input as {}
 // (recorded live), so the call looks whole unless it is marked. A stop at the
-// context window is the same cut at a different limit.
+// context window is the same cut at a different limit, and a refusal stops
+// the model mid-call (CutToolCallStop): under any of them the last tool_use
+// was never finished, whatever its input.
 func markAnthropicCutToolCall(response llmprotocol.Response) {
-	if !llmprotocol.LengthStop(response.StopReason) || len(response.Output) == 0 {
+	if !llmprotocol.CutToolCallStop(response.StopReason) || len(response.Output) == 0 {
 		return
 	}
 	contents := response.Output[len(response.Output)-1].Content
