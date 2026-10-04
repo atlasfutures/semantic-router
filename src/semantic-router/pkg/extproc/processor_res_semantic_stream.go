@@ -493,6 +493,13 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 		return
 	}
 	ctx.StreamingComplete = true
+	// A codec error an earlier chunk raised is the stream's own failure, even
+	// when the chunk that ends the stream raises nothing: each chunk has its
+	// own buffers, and at the end the codec replays its stored failure as the
+	// stream's failed event, which would otherwise be read as the provider's.
+	if streamErr == nil {
+		streamErr = ctx.SemanticStreamErr
+	}
 	if streamErr != nil || ctx.SemanticStreamState == nil || !ctx.SemanticStreamState.terminal {
 		ctx.StreamingAborted = true
 	}
