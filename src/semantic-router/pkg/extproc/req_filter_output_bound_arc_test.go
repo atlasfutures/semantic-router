@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -61,6 +62,48 @@ func TestDispatchOutputBoundPlansTheV5ControlBudget(t *testing.T) {
 			}
 			if budget != 4000 {
 				t.Fatal("the action's own budget was changed; only the planned copy may be")
+			}
+		})
+	}
+}
+
+// Compression reserves the output bound dispatch will send, including a
+// policy action's reasoning_max_tokens, which dispatch copies into the
+// request only after compression has run.
+func TestCompressionReserveMatchesDispatchWithAPolicyAction(t *testing.T) {
+	budget := int64(12000)
+	for name, effort := range map[string]*string{
+		"budget action": nil,
+		"effort action": policyTestEffort("high"),
+		"off action":    policyTestEffort("none"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			router, model := routingTestRouterForFormat(llmprotocol.AnthropicMessagesV1)
+			params := router.Config.ModelConfig[model]
+			params.MaxOutputTokens = 4000
+			router.Config.ModelConfig[model] = params
+			actionBudget := &budget
+			if effort != nil {
+				actionBudget = nil
+			}
+			action := policyAction("think", "none", model, effort, actionBudget, "")
+			decision := policyDecisionWithActions(action)
+			ctx := policyDispatchContext(decision, action)
+			ctx.SourceFormat, ctx.VSRSelectedModel = llmprotocol.OpenAIResponsesV1, model
+			ctx.RequestID, ctx.TraceContext = "reserve-policy-action", context.Background()
+			request := testNeutralRequest(model, "hi")
+			ctx.SemanticRequest = request
+
+			reserve := router.compressionOutputReserve(model, ctx, request)
+			if _, err := router.prepareProviderDispatch(request, model, decision.Name, true, ctx); err != nil {
+				t.Fatalf("dispatch: %v", err)
+			}
+			sent := request.Sampling.MaxOutputTokens
+			if sent == nil || *sent != reserve {
+				t.Fatalf("compression reserved %d, dispatch sent %v", reserve, sent)
+			}
+			if effort == nil && reserve != 4000+budget {
+				t.Fatalf("reserve = %d, want the card bound on top of the action's budget (%d)", reserve, 4000+budget)
 			}
 		})
 	}

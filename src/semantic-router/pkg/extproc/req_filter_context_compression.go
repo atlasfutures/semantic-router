@@ -149,9 +149,10 @@ func (r *OpenAIRouter) semanticContextCompressionCapabilities(
 // Compression runs before dispatch, but the target format does not depend on
 // anything dispatch decides: dispatchTargetFormat is the same pure function of
 // the selected model and the client's format, and the decision's cap is
-// already known. What dispatch can still change is a thinking budget (a policy
-// action or the routed reasoning mode), so the reserve uses the budget the
-// request carries now.
+// already known. The thinking budget dispatch will plan with is not on the
+// request yet when a policy action or a v5 control sets it, so
+// pendingMessagesThinkingBudget derives it from the selection already on the
+// context.
 func (r *OpenAIRouter) compressionOutputReserve(
 	model string,
 	ctx *RequestContext,
@@ -168,7 +169,7 @@ func (r *OpenAIRouter) compressionOutputReserve(
 		return 0
 	}
 	return r.planDispatchOutputBound(
-		model, format, decisionMaxTokensLimit(ctx), messagesThinkingBudget(request, format),
+		model, format, decisionMaxTokensLimit(ctx), pendingMessagesThinkingBudget(request, format, ctx),
 	).maxTokens
 }
 

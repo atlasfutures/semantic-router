@@ -244,6 +244,41 @@ func decisionMaxTokensLimit(ctx *RequestContext) int64 {
 	return int64(*params.MaxTokensLimit)
 }
 
+// pendingMessagesThinkingBudget is the Messages thinking budget dispatch will
+// plan the output bound with, known before dispatch sets it: a v5 control's
+// budget (applyDispatchOutputBound plans the planned control's), a policy
+// action's as applyRaylineARCPolicyActionReasoning leaves it, or the
+// request's own. The policy action and its v5 control are chosen with the
+// model, before context compression, so they are on the context already.
+func pendingMessagesThinkingBudget(
+	request *llmprotocol.Request,
+	format llmprotocol.WireFormat,
+	ctx *RequestContext,
+) *int64 {
+	if format != llmprotocol.AnthropicMessagesV1 {
+		return nil
+	}
+	if _, action, v5, err := raylineARCPolicyControlAction(ctx); v5 && err == nil {
+		return action.Control.BudgetTokens
+	}
+	action, declared := raylineARCPolicyDispatchAction(ctx)
+	if !declared {
+		return messagesThinkingBudget(request, format)
+	}
+	chosen, _ := raylineARCPolicyAction(ctx)
+	switch {
+	case action.Effort != nil && *action.Effort == raylineARCPolicyActionEffortOff:
+		return nil
+	case action.ReasoningMaxTokens != nil:
+		budget := *action.ReasoningMaxTokens
+		return &budget
+	case action.Effort != nil, chosen.Effort != nil:
+		return nil
+	default:
+		return messagesThinkingBudget(request, format)
+	}
+}
+
 // messagesThinkingBudget is the thinking budget the Messages encoder will
 // validate against max_tokens, or nil when there is none to keep room for.
 func messagesThinkingBudget(request *llmprotocol.Request, format llmprotocol.WireFormat) *int64 {
