@@ -552,7 +552,7 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 // classStreamFailure classes a streamed turn that did not deliver a served
 // reply: a refusal, an error the provider raised mid-stream, or a 2xx stream
 // that ended without its terminal event, or an in-band stream error. A stream
-// the client or the proxy cancelled (a receive error) is not classed.
+// the client or the proxy ended first (a receive error) is client_ended.
 func (r *OpenAIRouter) classStreamFailure(
 	ctx *RequestContext,
 	semanticResponse *llmprotocol.Response,
@@ -568,7 +568,7 @@ func (r *OpenAIRouter) classStreamFailure(
 	case streamErr != nil && errors.As(streamErr, &inBand):
 		// An in-band stream error: the Router's own deadline cut, or a
 		// provider stream the codec rejected. A receive error (the client or
-		// the proxy cancelled the exchange) is not classed.
+		// the proxy ended the exchange) is classed client_ended below.
 		class := turnFailureUpstreamError
 		if inBand.Code == "stream_truncated" {
 			class = turnFailureTimeout
@@ -578,6 +578,8 @@ func (r *OpenAIRouter) classStreamFailure(
 		// The stream ended properly but its output cannot be reconstructed
 		// (an item never completed): the arm's reply is unusable.
 		recordTurnFailureDetail(ctx, turnFailureUpstreamError, "stream_reconstruction_failed", sent)
+	case ctx.StreamEndedByReceiveError:
+		recordTurnFailureDetail(ctx, turnFailureClientEnded, clientEndedDetail(streamErr), sent)
 	case streamErr != nil || state == nil:
 	case state.failed != nil:
 		recordTurnFailureDetail(ctx, streamFailureClass(state.failed), providerStreamFailureDetail(state.failed), len(state.items) > 0)

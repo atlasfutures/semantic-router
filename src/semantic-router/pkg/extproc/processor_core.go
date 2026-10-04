@@ -144,6 +144,7 @@ func (r *OpenAIRouter) processWithContext(
 func (r *OpenAIRouter) handleProcessReceiveError(ctx *RequestContext, err error) error {
 	if ctx.IsStreamingResponse && !ctx.StreamingComplete {
 		ctx.StreamingAborted = true
+		ctx.StreamEndedByReceiveError = true
 		logging.Debugf("Streaming response aborted before completion, will not cache")
 		// This is the only place a stream the platform cut is ever seen
 		// ending. Returning without finalizing leaves the turn with no usage

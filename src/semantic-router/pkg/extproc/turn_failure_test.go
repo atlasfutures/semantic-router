@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -626,5 +629,57 @@ func TestAnIncompleteStreamNamesItsFailure(t *testing.T) {
 	(&OpenAIRouter{}).finalizeSemanticStreamingResponse(ctx, buffers.streamErr)
 	if got := findLogEvent(t, logs, "llm_usage")["failure_detail"]; got != "stream_incomplete" {
 		t.Fatalf("failure_detail = %q, want stream_incomplete", got)
+	}
+}
+
+// A stream the client or the proxy ended first is classed client_ended, with
+// the usage the provider stated and whether content had reached the client.
+// It is neither an arm nor a cell failure: it counts against no backend and
+// excludes no route.
+func TestAStreamTheClientEndedIsClassedClientEnded(t *testing.T) {
+	start := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":23,\"output_tokens\":8}}}\n\n"
+	content := "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"half\"}}\n\n"
+	for name, test := range map[string]struct {
+		frames string
+		ended  error
+		sent   bool
+		detail string
+	}{
+		"after content":  {frames: start + content, ended: status.Error(codes.Canceled, "context canceled"), sent: true, detail: "grpc:canceled"},
+		"before content": {frames: start, ended: io.EOF, sent: false, detail: "grpc:eof"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			logs := captureLogs(t)
+			stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+				llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := &RequestContext{
+				RequestID: "req-ended", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+				SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.AnthropicMessagesV1,
+				ProtocolResponseStream: stream,
+				SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+			}
+			buffers := &semanticStreamBuffers{}
+			buffers.push([]byte(test.frames), ctx)
+			_ = (&OpenAIRouter{}).handleProcessReceiveError(ctx, test.ended)
+			usage := findLogEvent(t, logs, "llm_usage")
+			if usage["failure_class"] != turnFailureClientEnded || usage["failure_detail"] != test.detail ||
+				usage["content_sent_before_failure"] != test.sent || usage["truncated"] != true {
+				t.Fatalf("llm_usage = class %v detail %v sent %v truncated %v, want client_ended %s %v true",
+					usage["failure_class"], usage["failure_detail"], usage["content_sent_before_failure"], usage["truncated"], test.detail, test.sent)
+			}
+			if fmt.Sprint(usage["prompt_tokens"]) != "23" {
+				t.Fatalf("prompt_tokens = %v, want the provider's 23", usage["prompt_tokens"])
+			}
+			if failed := findLogEvent(t, logs, "turn_failed"); failed["failure_class"] != turnFailureClientEnded {
+				t.Fatalf("turn_failed class = %v", failed["failure_class"])
+			}
+		})
+	}
+	if turnFailureIsBackendError(turnFailureClientEnded) || cellExclusionClasses[turnFailureClientEnded] {
+		t.Fatal("client_ended counts against the backend or excludes its route")
 	}
 }
