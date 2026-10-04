@@ -15,17 +15,16 @@ const (
 	autoCacheSourceDefault        = "default"
 )
 
-// dispatchAutoCache is the automatic-cache directive the Router supplies for
-// one dispatch, and why. encodeDispatchRequest sets it on the dispatched copy
-// of the request only, so the client's own request -- which the response
-// cache and retained Responses state read -- keeps what the client sent.
+// dispatchAutoCache marks a dispatch that may be given the automatic-cache
+// directive: a Claude worker over Messages, reached from an OpenAI-shaped
+// client. Whether it is given one is decided at encode, on the request that
+// is actually dispatched (applyDispatchAutoCache).
 type dispatchAutoCache struct {
-	directive llmprotocol.CacheDirective
-	source    string
+	logicalModel string
 }
 
-// claudeAutoCache decides whether a turn going to a Claude worker over
-// Messages gets the automatic-cache directive the client did not state.
+// claudeAutoCacheDispatch marks the dispatches the automatic-cache rule
+// covers. It runs where the worker's family and the wire are both known.
 //
 // An OpenAI-shaped client (Chat or Responses) sends no cache_control: it
 // relies on the prefix caching an OpenAI model applies on its own, and may
@@ -36,42 +35,59 @@ type dispatchAutoCache struct {
 // automatic-caching mode does, so the client's cache intent is not silently
 // lost.
 //
-// It applies only where the family and the wire are both known, which is
-// here: a non-Claude worker and a Chat or Responses target get nothing (a
+// A non-Claude worker and a Chat or Responses target are not covered (a
 // Claude worker reached over Chat is a separate gap). A Messages client is
-// left as it is: it caches explicitly, or chooses not to. Any directive the
-// client stated wins: a top-level one, or a breakpoint of its own on a tool,
-// a system block, a message block or a block inside a tool result. A client
-// that placed breakpoints has said exactly what to cache, and one more from
-// the Router would change what it pays to write the cache, so none is added
-// and the skip is logged. No client format defines an
-// opt-out of automatic caching, so there is none to honour. Nor does the
-// Router configuration have a prompt-cache setting to hang a switch on; the
-// rule is unconditional, as the caching the client gets from an OpenAI model
-// is.
-//
-// The directive is constant and its placement depends only on the request,
-// so the same request dispatches the same bytes and a growing conversation
-// keeps a cache-stable prefix across turns.
-func (r *OpenAIRouter) claudeAutoCache(
-	request *llmprotocol.Request,
-	dispatch *providerDispatch,
-	ctx *RequestContext,
-) *dispatchAutoCache {
-	if request == nil || dispatch == nil || ctx == nil || request.AutoCache != nil ||
+// left as it is: it caches explicitly, or chooses not to. No client format
+// defines an opt-out of automatic caching, so there is none to honour. Nor
+// does the Router configuration have a prompt-cache setting to hang a switch
+// on; the rule is unconditional, as the caching the client gets from an
+// OpenAI model is.
+func (r *OpenAIRouter) claudeAutoCacheDispatch(dispatch *providerDispatch, ctx *RequestContext) *dispatchAutoCache {
+	if dispatch == nil || ctx == nil ||
 		dispatch.targetFormat != llmprotocol.AnthropicMessagesV1 ||
 		(ctx.SourceFormat != llmprotocol.OpenAIChatV1 && ctx.SourceFormat != llmprotocol.OpenAIResponsesV1) ||
 		r.armFamily(dispatch.logicalModel) != anthropicFamily {
 		return nil
 	}
+	return &dispatchAutoCache{logicalModel: dispatch.logicalModel}
+}
+
+// applyDispatchAutoCache gives a covered dispatch the automatic-cache
+// directive {"type":"ephemeral"} (the 5m default) when the client stated
+// none. It runs in encodeDispatchRequest on the dispatched copy, after every
+// late mutation -- tool selection, the thinking lever, reasoning rewrites,
+// the output bound -- so the decision and the codec's placement read the same
+// final request, and the client's own request, which the response cache and
+// retained Responses state read, keeps what the client sent.
+//
+// Any directive the client stated wins: a top-level one, or a breakpoint of
+// its own on a tool, a system block, a message block or a block inside a
+// tool result. A client that placed breakpoints has said exactly what to
+// cache, and one more from the Router would change what it pays to write the
+// cache, so none is added and the skip is logged. Breakpoints are counted on
+// what is dispatched: one on a tool the decision's tools plugin removed is
+// not sent, so it no longer stops the directive.
+//
+// A directive supplied is recorded as a diagnostic naming its source, which
+// the translation-warning counter, the protocol warnings header and the debug
+// log all read; the codec's placement adds its own for where the breakpoint
+// went. The directive is constant and its placement depends only on the
+// request, so the same request dispatches the same bytes and a growing
+// conversation keeps a cache-stable prefix across turns. A Messages client is
+// never covered, so the replay of its own bytes is untouched.
+func applyDispatchAutoCache(request *llmprotocol.Request, ctx *RequestContext) {
+	auto := ctx.DispatchAutoCache
+	if auto == nil || request.AutoCache != nil {
+		return
+	}
 	if breakpoints := protocolcodec.CountCacheBreakpoints(*request); breakpoints > 0 {
 		logging.ComponentEvent("extproc", "auto_cache_skipped", map[string]interface{}{
 			"request_id":  ctx.RequestID,
-			"model":       dispatch.logicalModel,
+			"model":       auto.logicalModel,
 			"reason":      "client_breakpoints",
 			"breakpoints": breakpoints,
 		})
-		return nil
+		return
 	}
 	origin := autoCacheSourceDefault
 	// The codecs carry prompt_cache_key only when it holds a value.
@@ -80,31 +96,12 @@ func (r *OpenAIRouter) claudeAutoCache(
 			origin = autoCacheSourcePromptCacheKey
 		}
 	}
-	return &dispatchAutoCache{
-		directive: llmprotocol.CacheDirective{Type: "ephemeral"},
-		source:    origin,
-	}
-}
-
-// applyDispatchAutoCache sets the directive claudeAutoCache planned for this
-// dispatch on the dispatched copy, and records a diagnostic naming its
-// source, which the translation-warning counter, the protocol warnings header
-// and the debug log all read. The codec's placement then adds its own
-// diagnostic for where the breakpoint went, or why none could be. A
-// Messages client is never given the directive, so the replay of its own
-// bytes is untouched.
-func applyDispatchAutoCache(request *llmprotocol.Request, ctx *RequestContext) {
-	auto := ctx.DispatchAutoCache
-	if auto == nil {
-		return
-	}
-	directive := auto.directive
-	request.AutoCache = &directive
+	request.AutoCache = &llmprotocol.CacheDirective{Type: "ephemeral"}
 	ctx.ProtocolDiagnostics = append(ctx.ProtocolDiagnostics, llmprotocol.Diagnostic{
 		Source: ctx.SourceFormat,
 		Target: llmprotocol.AnthropicMessagesV1,
 		Field:  "cache_control",
 		Action: llmprotocol.DiagnosticGenerated,
-		Reason: "automatic_cache_" + auto.source,
+		Reason: "automatic_cache_" + origin,
 	})
 }

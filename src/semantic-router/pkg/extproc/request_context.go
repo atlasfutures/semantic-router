@@ -205,9 +205,9 @@ type RequestContext struct {
 	// DispatchHostedTools names the provider-run tools the dispatched model's
 	// card admits (hosted_tools); encodeDispatchRequest hands it to the codec.
 	DispatchHostedTools []string
-	// DispatchAutoCache is the automatic-cache directive the Router supplies
-	// for a Claude worker over Messages when the client stated none
-	// (claudeAutoCache); encodeDispatchRequest sets it on the dispatched copy.
+	// DispatchAutoCache marks a dispatch to a Claude worker over Messages from
+	// an OpenAI-shaped client (claudeAutoCacheDispatch); encodeDispatchRequest
+	// decides on the final request whether it gets the automatic directive.
 	DispatchAutoCache               *dispatchAutoCache
 	VSRSelectionMethod              string                                      // Model selection algorithm used (e.g., "elo", "static", "router_dc")
 	VSRSelectionReasoning           string                                      // Bounded human-readable selector rationale for replay

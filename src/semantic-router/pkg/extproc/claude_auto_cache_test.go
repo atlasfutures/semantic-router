@@ -7,7 +7,9 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/utils/entropy"
 )
 
 // claudeAutoCacheCase is one request through the router's ingress, provider
@@ -152,7 +154,7 @@ func TestClaudeAutoCacheKeepsAnExplicitTopLevelDirective(t *testing.T) {
 	if len(got) != 1 || got["messages[2][0]"] != `{"type":"ephemeral","ttl":"1h"}` {
 		t.Fatalf("breakpoints %v in %s, want the client's 1h directive on the last block", got, body)
 	}
-	if ctx.DispatchAutoCache != nil || hasAutoCacheDiagnostic(ctx, "automatic_cache_default") ||
+	if hasAutoCacheDiagnostic(ctx, "automatic_cache_default") ||
 		hasAutoCacheDiagnostic(ctx, "automatic_cache_prompt_cache_key") {
 		t.Fatalf("the Router supplied a directive beside the client's: %+v", ctx.ProtocolDiagnostics)
 	}
@@ -199,7 +201,7 @@ func TestClaudeAutoCacheAddsNothingBesideClientBreakpoints(t *testing.T) {
 			body, ctx := dispatchClaudeAutoCache(t, claudeAutoCacheCase{
 				source: llmprotocol.OpenAIChatV1, target: llmprotocol.AnthropicMessagesV1, claude: true, body: test.body,
 			})
-			if ctx.DispatchAutoCache != nil || hasAutoCacheDiagnostic(ctx, "automatic_cache_default") {
+			if hasAutoCacheDiagnostic(ctx, "automatic_cache_default") {
 				t.Fatalf("the Router supplied a directive beside the client's breakpoints: %+v", ctx.ProtocolDiagnostics)
 			}
 			got := messagesBreakpoints(t, body)
@@ -224,7 +226,7 @@ func TestClaudeAutoCacheAddsNothingBesideClientBreakpoints(t *testing.T) {
 }
 
 // A client whose own breakpoints use all four Messages allows is a client
-// that placed breakpoints: the Router plans no directive, so none is added
+// that placed breakpoints: the Router adds no directive, so none is added
 // and the codec has nothing to drop.
 func TestClaudeAutoCacheAddsNoneToAFullClient(t *testing.T) {
 	const fourBreakpoints = `{"model":"m","messages":[` +
@@ -239,9 +241,6 @@ func TestClaudeAutoCacheAddsNoneToAFullClient(t *testing.T) {
 	got := messagesBreakpoints(t, body)
 	if len(got) != 4 || got["messages[2][0]"] != "" {
 		t.Fatalf("breakpoints %v in %s, want the client's four and none on the last block", got, body)
-	}
-	if ctx.DispatchAutoCache != nil {
-		t.Fatalf("the Router planned a directive: %+v", ctx.DispatchAutoCache)
 	}
 	for _, diagnostic := range ctx.ProtocolDiagnostics {
 		if diagnostic.Field == "cache_control" {
@@ -293,5 +292,83 @@ func TestClaudeAutoCacheIsDeterministic(t *testing.T) {
 	}
 	if !containsCacheControl(first) {
 		t.Fatalf("dispatched %s, want a breakpoint", first)
+	}
+}
+
+// The decision is made on the request that is dispatched, after the
+// decision's tools plugin has run. A breakpoint on a tool the plugin removes
+// is never sent, so it does not stop the automatic one: without it the turn
+// would carry neither the client's breakpoint nor the Router's. A breakpoint
+// on a tool that survives selection is sent, and nothing is added beside it.
+func TestClaudeAutoCacheCountsBreakpointsAfterToolSelection(t *testing.T) {
+	semanticSelection := false
+	payload, err := config.NewStructuredPayload(config.ToolsPluginConfig{
+		Enabled: true, Mode: config.ToolsPluginModeFiltered,
+		AllowTools: []string{"read_file"}, SemanticSelection: &semanticSelection,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision := &config.Decision{
+		Name:    "tool-selection",
+		Plugins: []config.DecisionPlugin{{Type: config.DecisionPluginTools, Configuration: payload}},
+	}
+	const ephemeral1h = `{"type":"ephemeral","ttl":"1h"}`
+	body := func(cachedTool string) string {
+		tool := func(name string) string {
+			cache := ""
+			if name == cachedTool {
+				cache = `,"cache_control":` + ephemeral1h
+			}
+			return `{"type":"function","function":{"name":"` + name + `","parameters":{"type":"object"}}` + cache + `}`
+		}
+		return `{"model":"m","tool_choice":"auto","messages":[{"role":"user","content":"Open main.go."}],` +
+			`"tools":[` + tool("read_file") + `,` + tool("write_file") + `]}`
+	}
+	for name, test := range map[string]struct {
+		cachedTool string
+		want       map[string]string
+		generated  bool
+	}{
+		"breakpoint on a removed tool": {"write_file", map[string]string{"messages[0][0]": `{"type":"ephemeral"}`}, true},
+		"breakpoint on a kept tool":    {"read_file", map[string]string{"tools[0]": ephemeral1h}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			router, logicalModel := routingTestRouterForFormat(llmprotocol.AnthropicMessagesV1)
+			params := router.Config.ModelConfig[logicalModel]
+			params.Publisher = "anthropic"
+			router.Config.ModelConfig[logicalModel] = params
+			ctx := &RequestContext{
+				Headers: map[string]string{}, SourceFormat: llmprotocol.OpenAIChatV1,
+				RequestID: "claude-auto-cache-tools", TraceContext: context.Background(),
+				VSRSelectedDecision: decision,
+			}
+			request, immediate := router.prepareProtocolRequest([]byte(body(test.cachedTool)), ctx)
+			if immediate != nil || request == nil {
+				t.Fatalf("ingress refused the request: %+v", ctx.ImmediateProtocolError)
+			}
+			response, routeErr := router.handleEntrypointModelRouting(
+				request, "entrypoint", decision.Name, entropy.ReasoningDecision{}, logicalModel, ctx,
+			)
+			if routeErr != nil {
+				t.Fatal(routeErr)
+			}
+			dispatched := response.GetRequestBody().GetResponse().GetBodyMutation().GetBody()
+			if !bytes.Contains(dispatched, []byte(`"read_file"`)) || bytes.Contains(dispatched, []byte(`"write_file"`)) {
+				t.Fatalf("the tools plugin did not filter the tools: %s", dispatched)
+			}
+			got := messagesBreakpoints(t, dispatched)
+			if len(got) != len(test.want) {
+				t.Fatalf("breakpoints %v in %s, want %v", got, dispatched, test.want)
+			}
+			for place, value := range test.want {
+				if got[place] != value {
+					t.Fatalf("breakpoints %v in %s, want %v", got, dispatched, test.want)
+				}
+			}
+			if hasAutoCacheDiagnostic(ctx, "automatic_cache_default") != test.generated {
+				t.Fatalf("generated diagnostic = %v, want %v: %+v", !test.generated, test.generated, ctx.ProtocolDiagnostics)
+			}
+		})
 	}
 }

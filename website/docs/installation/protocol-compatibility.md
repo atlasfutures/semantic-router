@@ -178,7 +178,10 @@ then placed as described above. The following rules apply:
   The Router adds no breakpoint and dispatches the client's breakpoints as
   written, because an extra breakpoint would change the client's cache-write
   cost. The skip is logged as `auto_cache_skipped` with reason
-  `client_breakpoints`.
+  `client_breakpoints`. Breakpoints are counted on the request as it is
+  dispatched, after the decision's tools plugin has run. A breakpoint on a
+  tool that the plugin removes is not sent, so it doesn't prevent the
+  automatic breakpoint.
 - A Messages client, a non-Claude worker, and a Claude worker reached over Chat
   Completions or Responses get no breakpoint from this rule.
 - Neither Chat Completions nor Responses defines a way to opt out of automatic
