@@ -566,9 +566,10 @@ func TestUsageLineCarriesTheUpstreamAttempts(t *testing.T) {
 	}
 }
 
-// A stream the codec cut, or a provider's in-band error, leaves its code and
-// message on the usage line, so a cut is diagnosable from the logs rather
-// than reading as a bare class. The detail is bounded and printable.
+// A stream the codec cut leaves the codec's code and message on the usage
+// line, so a cut is diagnosable from the logs rather than reading as a bare
+// class; a provider's in-band error leaves only its code, never the
+// provider's free text.
 func TestStreamFailureDetailNamesTheError(t *testing.T) {
 	router := &OpenAIRouter{}
 	cut := llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "stream_event_after_terminal",
@@ -580,8 +581,9 @@ func TestStreamFailureDetailNamesTheError(t *testing.T) {
 		failed    *llmprotocol.ProtocolError
 		want      string
 	}{
-		"codec cut":        {streamErr: cut, want: "stream_event_after_terminal: Anthropic stream emitted content_block_start after message_stop"},
-		"provider in-band": {failed: provider, want: "overloaded_error: Overloaded" + strings.Repeat("x", maxStreamFailureDetail-len("overloaded_error: Overloaded"))},
+		"codec cut": {streamErr: cut, want: "stream_event_after_terminal: Anthropic stream emitted content_block_start after message_stop"},
+		// A provider's own message is free text and is never logged: only its code.
+		"provider in-band": {failed: provider, want: "overloaded_error"},
 	} {
 		logs := captureLogs(t)
 		ctx := &RequestContext{

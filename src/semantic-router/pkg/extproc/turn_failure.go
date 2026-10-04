@@ -187,11 +187,12 @@ func turnFailureIsBackendError(class string) bool {
 // the usage line and the turn_failed line.
 const maxStreamFailureDetail = 160
 
-// streamFailureDetail is the code and message of the protocol error that
-// ended a stream, so a cut is diagnosable from the logs: without it every
-// such turn reads as a bare upstream_5xx. The message is bounded and kept to
-// printable ASCII, since a provider's own error text arrives here verbatim.
-func streamFailureDetail(protocolError *llmprotocol.ProtocolError) string {
+// codecStreamFailureDetail is the code and message of an error the Router's
+// own codec raised when it rejected a provider stream, so a cut is
+// diagnosable from the logs instead of reading as a bare class. The message
+// is the codec's own text (the only provider-chosen part is a bounded event
+// name), and it is still bounded to printable ASCII.
+func codecStreamFailureDetail(protocolError *llmprotocol.ProtocolError) string {
 	if protocolError == nil {
 		return ""
 	}
@@ -199,9 +200,23 @@ func streamFailureDetail(protocolError *llmprotocol.ProtocolError) string {
 	if protocolError.Message != "" {
 		detail += ": " + protocolError.Message
 	}
-	out := make([]byte, 0, len(detail))
-	for index := 0; index < len(detail) && len(out) < maxStreamFailureDetail; index++ {
-		if character := detail[index]; character >= 0x20 && character < 0x7f {
+	return boundedPrintable(detail, maxStreamFailureDetail)
+}
+
+// providerStreamFailureDetail is only the code of an error a provider raised
+// in its stream. Its message is the provider's free text, which may echo
+// request content, and is never logged (pkg/observability/logging/content.go).
+func providerStreamFailureDetail(protocolError *llmprotocol.ProtocolError) string {
+	if protocolError == nil {
+		return ""
+	}
+	return boundedPrintable(protocolError.Code, maxStreamFailureDetail)
+}
+
+func boundedPrintable(text string, limit int) string {
+	out := make([]byte, 0, len(text))
+	for index := 0; index < len(text) && len(out) < limit; index++ {
+		if character := text[index]; character >= 0x20 && character < 0x7f {
 			out = append(out, character)
 		}
 	}
