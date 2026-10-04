@@ -326,11 +326,12 @@ func (state *streamState) validateCompletedLifecycle(event llmprotocol.Event) er
 //     it would be with no cut item held. The item is never reported as a
 //     tool-argument error: the unfinished arguments are the symptom, the
 //     failure is the cause, and the first failure wins.
-//   - A completion under max_tokens is the length stop it is.
+//   - A completion under a length stop (max_tokens, or the context window
+//     filling up) is the length stop it is.
 //   - A completion under any other stop is the provider saying the reply
 //     finished, so the item's arguments are simply malformed.
 func (state *streamState) heldCutFailure(stop llmprotocol.StopReason, failed bool) error {
-	if len(state.cutItems) == 0 || failed || stop == llmprotocol.StopMaxTokens {
+	if len(state.cutItems) == 0 || failed || llmprotocol.LengthStop(stop) {
 		return nil
 	}
 	return invalidStreamToolArguments()

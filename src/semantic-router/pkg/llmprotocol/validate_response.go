@@ -357,7 +357,8 @@ func StableID(parts ...string) string {
 
 // validateIncompleteToolCalls admits a tool call cut off mid-arguments only
 // where a provider produces one: as the last content of a response that
-// stopped at max_tokens. Anywhere else the call is not cut, it is malformed.
+// stopped at a length limit (LengthStop). Anywhere else the call is not cut,
+// it is malformed.
 func validateIncompleteToolCalls(response Response) error {
 	for _, sequence := range append([][]OutputItem{response.Output}, response.Alternatives...) {
 		for itemIndex, item := range sequence {
@@ -366,9 +367,9 @@ func validateIncompleteToolCalls(response Response) error {
 					continue
 				}
 				last := itemIndex == len(sequence)-1 && contentIndex == len(item.Content)-1
-				if response.StopReason != StopMaxTokens || !last {
+				if !LengthStop(response.StopReason) || !last {
 					return NewError(ErrorUpstreamUnavailable, "invalid_incomplete_tool_call",
-						"an incomplete tool call must end a response that stopped at max_tokens", nil)
+						"an incomplete tool call must end a response that stopped at a length limit", nil)
 				}
 			}
 		}

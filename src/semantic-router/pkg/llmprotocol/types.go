@@ -458,6 +458,14 @@ const (
 	StopUnknown       StopReason = "unknown"
 )
 
+// LengthStop reports a stop at a length limit: the request's output limit
+// (max_tokens), or the model's context window filling up (Anthropic's
+// model_context_window_exceeded). The limit stopped the model wherever it
+// was, so a tool call it was writing may be cut off.
+func LengthStop(stop StopReason) bool {
+	return stop == StopMaxTokens || stop == StopContextWindow
+}
+
 type UsageProvenance string
 
 const (

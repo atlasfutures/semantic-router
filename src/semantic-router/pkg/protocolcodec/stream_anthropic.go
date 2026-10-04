@@ -261,7 +261,7 @@ func (decoder *anthropicStreamDecoder) decodeEvent(
 		return decoder.decodeAnthropicEvent(wire, frame)
 	}
 	cut := wire.Type == "message_delta" && wire.Delta != nil && wire.Delta.StopReason != nil &&
-		decodeAnthropicStop(*wire.Delta.StopReason) == llmprotocol.StopMaxTokens
+		llmprotocol.LengthStop(decodeAnthropicStop(*wire.Delta.StopReason))
 	flushed, diagnostics, err := decoder.flushPendingToolStop(cut)
 	if err != nil {
 		return flushed, diagnostics, err
@@ -275,8 +275,9 @@ func (decoder *anthropicStreamDecoder) decodeEvent(
 // incomplete tool use, and a buffered reply of that shape is decoded so
 // (markAnthropicCutToolCall). A stream says the same only once message_delta
 // arrives after the block stops, so the completion waits for it: when the
-// next event is that max_tokens message_delta, the call completes marked
-// incomplete. That includes a block cut before any input_json_delta, whose
+// next event is a message_delta with a length stop (max_tokens, or
+// model_context_window_exceeded, the same cut at the context window), the
+// call completes marked incomplete. That includes a block cut before any input_json_delta, whose
 // arguments are the start's {} placeholder and would otherwise read whole.
 // Any other next event completes the call as it stands.
 func (decoder *anthropicStreamDecoder) flushPendingToolStop(cut bool) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
