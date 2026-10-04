@@ -186,6 +186,61 @@ func TestDispatchOutputBoundStaysWithinTheDecisionLimit(t *testing.T) {
 	}
 }
 
+func maxTokensLimitDecision(t *testing.T, limit int) *config.Decision {
+	t.Helper()
+	payload, err := config.NewStructuredPayload(map[string]interface{}{"max_tokens_limit": limit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &config.Decision{
+		Name:    "capped",
+		Plugins: []config.DecisionPlugin{{Type: "request_params", Configuration: payload}},
+	}
+}
+
+// The router never synthesizes a limit its target refuses. Responses refuses
+// max_output_tokens below 16, so a smaller bound is raised to 16, unless 16
+// is above the decision's max_tokens_limit: then the request goes unbounded,
+// as its caller sent it. Chat and Messages accept any positive bound.
+func TestDispatchOutputBoundRespectsTheTargetMinimum(t *testing.T) {
+	for name, test := range map[string]struct {
+		target llmprotocol.WireFormat
+		card   int
+		limit  int
+		want   string
+	}{
+		"responses card 1":             {llmprotocol.OpenAIResponsesV1, 1, 0, "max_output_tokens=16"},
+		"responses card 15":            {llmprotocol.OpenAIResponsesV1, 15, 0, "max_output_tokens=16"},
+		"responses card 16":            {llmprotocol.OpenAIResponsesV1, 16, 0, "max_output_tokens=16"},
+		"responses card 17":            {llmprotocol.OpenAIResponsesV1, 17, 0, "max_output_tokens=17"},
+		"responses capped to 16":       {llmprotocol.OpenAIResponsesV1, 64, 16, "max_output_tokens=16"},
+		"responses capped to 15":       {llmprotocol.OpenAIResponsesV1, 64, 15, ""},
+		"responses card 10, cap 12":    {llmprotocol.OpenAIResponsesV1, 10, 12, ""},
+		"responses card 10, cap 20":    {llmprotocol.OpenAIResponsesV1, 10, 20, "max_output_tokens=16"},
+		"chat card 1":                  {llmprotocol.OpenAIChatV1, 1, 0, "max_completion_tokens=1"},
+		"messages card 1":              {llmprotocol.AnthropicMessagesV1, 1, 0, "max_tokens=1"},
+		"messages capped to 1":         {llmprotocol.AnthropicMessagesV1, 64, 1, "max_tokens=1"},
+		"responses no card, capped":    {llmprotocol.OpenAIResponsesV1, 0, 10, ""},
+		"messages fallback capped low": {llmprotocol.AnthropicMessagesV1, 0, 10, "max_tokens=10"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var decision *config.Decision
+			if test.limit > 0 {
+				decision = maxTokensLimitDecision(t, test.limit)
+			}
+			request, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+				target: test.target, card: test.card, body: unboundedResponsesBody, decision: decision,
+			})
+			if got := wireOutputLimit(wire); got != test.want {
+				t.Fatalf("dispatched %q, want %q", got, test.want)
+			}
+			if test.want == "" && request.RouterSetMaxOutputTokens {
+				t.Fatal("an unbounded request is marked as carrying the router's limit")
+			}
+		})
+	}
+}
+
 // A decision that selects a LoRA adapter dispatches under the adapter's name.
 // The adapter has no card of its own and takes its base model's limit.
 func TestDispatchOutputBoundTakesALoRAAdaptersBaseCard(t *testing.T) {

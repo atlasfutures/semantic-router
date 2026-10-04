@@ -27,10 +27,11 @@ const (
 //
 // It runs after every other output-allowance rule (request_params cap and
 // floor, a policy action's budget), so it only fills what they left unset.
-// The bound stays within the decision's max_tokens_limit, and on Messages,
-// which counts thinking inside max_tokens and refuses a budget that leaves no
-// room below it, an enabled thinking budget at or above the bound gets the
-// bound on top of it, the way a caller's allowance is kept on top.
+// The bound stays within the decision's max_tokens_limit and at or above the
+// target's minimum (minimumOutputLimit). On Messages, which counts thinking
+// inside max_tokens and refuses a budget that leaves no room below it, an
+// enabled thinking budget at or above the bound gets the bound on top of it,
+// the way a caller's allowance is kept on top.
 func (r *OpenAIRouter) applyDispatchOutputBound(
 	request *llmprotocol.Request,
 	dispatch *providerDispatch,
@@ -43,20 +44,54 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 	if source == "" {
 		return false
 	}
-	bound = capOutputBoundAtDecisionLimit(bound, ctx)
+	decisionLimit := decisionMaxTokensLimit(ctx)
+	if decisionLimit > 0 && bound > decisionLimit {
+		bound = decisionLimit
+	}
+	event := map[string]interface{}{
+		"request_id":  ctx.RequestID,
+		"model":       dispatch.logicalModel,
+		"wire_format": dispatch.targetFormat,
+		"source":      source,
+	}
+	// Never synthesize a limit the target refuses. A bound below the
+	// target's minimum is raised to it, which keeps a small card value or
+	// cap as close as the target allows; turning it into no limit would
+	// discard the operator's intent entirely. Only when the minimum itself
+	// is above the decision's max_tokens_limit is the request left
+	// unbounded, as its caller sent it: the router does not send a limit
+	// above the operator's cap.
+	if minimum := minimumOutputLimit(dispatch.targetFormat); bound < minimum {
+		if decisionLimit > 0 && minimum > decisionLimit {
+			event["below_target_minimum"] = "left_unbounded"
+			event["max_output_tokens"] = nil
+			logging.ComponentEvent("extproc", "dispatch_output_bound", event)
+			return false
+		}
+		event["below_target_minimum"] = "raised_to_minimum"
+		bound = minimum
+	}
 	if budget := messagesThinkingBudget(request, dispatch.targetFormat); budget != nil && *budget >= bound {
 		bound += *budget
 	}
 	request.Sampling.MaxOutputTokens = &bound
 	request.RouterSetMaxOutputTokens = true
-	logging.ComponentEvent("extproc", "dispatch_output_bound", map[string]interface{}{
-		"request_id":        ctx.RequestID,
-		"model":             dispatch.logicalModel,
-		"wire_format":       dispatch.targetFormat,
-		"max_output_tokens": bound,
-		"source":            source,
-	})
+	event["max_output_tokens"] = bound
+	logging.ComponentEvent("extproc", "dispatch_output_bound", event)
 	return true
+}
+
+// minimumOutputLimit is the smallest output limit a target accepts.
+// Responses refuses max_output_tokens below 16. Messages requires max_tokens
+// of at least 1, and Chat accepts any non-negative max_completion_tokens; a
+// card value is positive and a non-positive max_tokens_limit is ignored, so
+// a bound for either is never below its minimum and never left unbounded by
+// it (Messages would then get the codec's 32000, above the cap).
+func minimumOutputLimit(format llmprotocol.WireFormat) int64 {
+	if format == llmprotocol.OpenAIResponsesV1 {
+		return 16
+	}
+	return 1
 }
 
 // dispatchOutputBound is the limit for a request that states none, and its
@@ -75,18 +110,17 @@ func (r *OpenAIRouter) dispatchOutputBound(dispatch *providerDispatch) (int64, s
 	return 0, ""
 }
 
-func capOutputBoundAtDecisionLimit(bound int64, ctx *RequestContext) int64 {
+// decisionMaxTokensLimit is the selected decision's request_params
+// max_tokens_limit, or zero when it sets none.
+func decisionMaxTokensLimit(ctx *RequestContext) int64 {
 	if ctx.VSRSelectedDecision == nil {
-		return bound
+		return 0
 	}
 	params := ctx.VSRSelectedDecision.GetRequestParamsConfig()
 	if params == nil || params.MaxTokensLimit == nil || *params.MaxTokensLimit <= 0 {
-		return bound
+		return 0
 	}
-	if limit := int64(*params.MaxTokensLimit); bound > limit {
-		return limit
-	}
-	return bound
+	return int64(*params.MaxTokensLimit)
 }
 
 // messagesThinkingBudget is the thinking budget the Messages encoder will
