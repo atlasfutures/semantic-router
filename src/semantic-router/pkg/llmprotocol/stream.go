@@ -26,6 +26,11 @@ const (
 	EventResponseCompleted       EventType = "response.completed"
 	EventResponseFailed          EventType = "response.failed"
 	EventProviderOpaque          EventType = "provider.opaque"
+	// EventKeepalive says the upstream is alive and has nothing to send yet:
+	// an Anthropic ping, or an SSE frame of comment lines only. It carries no
+	// content, usage, stop or identity. A target writes it in its own
+	// keepalive form, so a client's idle watchdog still sees bytes.
+	EventKeepalive EventType = "keepalive"
 )
 
 type Event struct {

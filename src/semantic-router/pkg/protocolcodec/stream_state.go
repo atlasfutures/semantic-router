@@ -134,6 +134,14 @@ func (state *streamState) prepareEvent(event llmprotocol.Event) (llmprotocol.Eve
 	}
 	state.sequence++
 	event.Sequence = state.sequence
+	if event.Type == llmprotocol.EventKeepalive {
+		// A keepalive counts against the event limit, so a flood of them is
+		// bounded like any other frame, and takes a neutral sequence number,
+		// which no wire publishes. It needs no start: a provider may send one
+		// while the request is still queued. It is bare by construction, so it
+		// cannot change identity, lifecycle, item, usage or stop state.
+		return llmprotocol.Event{Type: llmprotocol.EventKeepalive, Sequence: event.Sequence}, nil
+	}
 	if event.ResponseID == "" {
 		event.ResponseID = state.context.ResponseID
 	}
@@ -151,7 +159,8 @@ func validStreamEventType(eventType llmprotocol.EventType) bool {
 		llmprotocol.EventToolCallDelta, llmprotocol.EventImageGenerationProgress,
 		llmprotocol.EventOutputItemCompleted,
 		llmprotocol.EventUsageUpdated, llmprotocol.EventResponseCompleted,
-		llmprotocol.EventResponseFailed, llmprotocol.EventProviderOpaque:
+		llmprotocol.EventResponseFailed, llmprotocol.EventProviderOpaque,
+		llmprotocol.EventKeepalive:
 		return true
 	default:
 		return false
