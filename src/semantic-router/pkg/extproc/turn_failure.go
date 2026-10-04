@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
@@ -261,5 +262,11 @@ func clientEndedDetail(err error) string {
 	if errors.Is(err, io.EOF) {
 		return "grpc:eof"
 	}
-	return "grpc:" + strings.ToLower(status.Code(err).String())
+	code := status.Code(err)
+	if code == codes.Unknown {
+		// A raw context error carries no gRPC status; map it to the one it
+		// stands for.
+		code = status.FromContextError(err).Code()
+	}
+	return "grpc:" + strings.ToLower(code.String())
 }

@@ -578,9 +578,11 @@ func (r *OpenAIRouter) classStreamFailure(
 		// The stream ended properly but its output cannot be reconstructed
 		// (an item never completed): the arm's reply is unusable.
 		recordTurnFailureDetail(ctx, turnFailureUpstreamError, "stream_reconstruction_failed", sent)
-	case ctx.StreamEndedByReceiveError:
+	case ctx.StreamEndedByReceiveError && (state == nil || state.failed == nil):
+		// A provider failure already observed keeps its own class below; a
+		// disconnect after it does not hide it.
 		recordTurnFailureDetail(ctx, turnFailureClientEnded, clientEndedDetail(streamErr), sent)
-	case streamErr != nil || state == nil:
+	case streamErr != nil && !ctx.StreamEndedByReceiveError || state == nil:
 	case state.failed != nil:
 		recordTurnFailureDetail(ctx, streamFailureClass(state.failed), providerStreamFailureDetail(state.failed), len(state.items) > 0)
 	case !state.terminal:

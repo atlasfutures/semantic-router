@@ -646,8 +646,10 @@ func TestAStreamTheClientEndedIsClassedClientEnded(t *testing.T) {
 		sent   bool
 		detail string
 	}{
-		"after content":  {frames: start + content, ended: status.Error(codes.Canceled, "context canceled"), sent: true, detail: "grpc:canceled"},
-		"before content": {frames: start, ended: io.EOF, sent: false, detail: "grpc:eof"},
+		"after content":        {frames: start + content, ended: status.Error(codes.Canceled, "context canceled"), sent: true, detail: "grpc:canceled"},
+		"before content":       {frames: start, ended: io.EOF, sent: false, detail: "grpc:eof"},
+		"raw context cancel":   {frames: start, ended: context.Canceled, sent: false, detail: "grpc:canceled"},
+		"raw context deadline": {frames: start, ended: fmt.Errorf("recv: %w", context.DeadlineExceeded), sent: false, detail: "grpc:deadlineexceeded"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			logs := captureLogs(t)
@@ -681,5 +683,33 @@ func TestAStreamTheClientEndedIsClassedClientEnded(t *testing.T) {
 	}
 	if turnFailureIsBackendError(turnFailureClientEnded) || cellExclusionClasses[turnFailureClientEnded] {
 		t.Fatal("client_ended counts against the backend or excludes its route")
+	}
+}
+
+// A provider error the stream already carried keeps its class when the
+// exchange then ends: the disconnect does not hide the provider's failure.
+func TestAProviderFailureSeenBeforeTheClientEndedKeepsItsClass(t *testing.T) {
+	logs := captureLogs(t)
+	stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+		llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := &RequestContext{
+		RequestID: "req-failed-then-ended", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+		SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.AnthropicMessagesV1,
+		ProtocolResponseStream: stream,
+		SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+	}
+	buffers := &semanticStreamBuffers{}
+	buffers.push([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\n"+
+		"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n"), ctx)
+	if ctx.SemanticStreamState.failed == nil {
+		t.Fatal("the provider's in-band error was not observed")
+	}
+	_ = (&OpenAIRouter{}).handleProcessReceiveError(ctx, status.Error(codes.Canceled, "context canceled"))
+	usage := findLogEvent(t, logs, "llm_usage")
+	if usage["failure_class"] == turnFailureClientEnded || usage["failure_detail"] != "provider:overloaded_error" {
+		t.Fatalf("llm_usage class %v detail %v, want the provider's failure kept", usage["failure_class"], usage["failure_detail"])
 	}
 }
