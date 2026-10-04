@@ -1,6 +1,11 @@
 {
   "frames": [
     {
+      "event": "",
+      "data": null,
+      "comment": "keepalive"
+    },
+    {
       "event": "message_start",
       "data": {
         "message": {

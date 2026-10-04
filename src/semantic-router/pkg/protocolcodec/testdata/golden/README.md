@@ -75,7 +75,9 @@ members, and an invalid Anthropic top-level discriminator can never be
 reinterpreted as a successful model response.
 Successful stream inputs cover a leading UTF-8 BOM, while a BOM before any
 later event is a stable typed rejection,
-both LF and CRLF framing, and legal SSE keepalive comments. Invalid UTF-8 in
+both LF and CRLF framing, and legal SSE keepalive comments; each keepalive
+reaches every target as one keepalive of its own, recorded in the transcript as
+a `comment` frame. Invalid UTF-8 in
 any SSE field is rejected, and an explicit empty `data:` event is not confused
 with a comment-only keepalive. The stream contract also accepts a final valid
 SSE event delimited by transport EOF instead of an extra blank line. A provider

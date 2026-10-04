@@ -78,6 +78,10 @@ func (encoder *responsesStreamEncoder) encodeDirectResponsesNonFailureEvent(
 	case llmprotocol.EventProviderOpaque:
 		frames, err := encoder.encodeResponsesOpaque(event)
 		return frames, nil, true, err
+	case llmprotocol.EventKeepalive:
+		// A comment takes no sequence_number: the next event's stays
+		// contiguous with the last one's.
+		return [][]byte{sseKeepaliveComment()}, nil, true, nil
 	default:
 		return nil, nil, false, nil
 	}

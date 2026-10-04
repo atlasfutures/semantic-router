@@ -653,7 +653,8 @@ func (encoder *chatStreamEncoder) Push(event llmprotocol.Event) ([][]byte, llmpr
 
 func directChatStreamEvent(eventType llmprotocol.EventType) bool {
 	return eventType == llmprotocol.EventResponseCompleted ||
-		eventType == llmprotocol.EventResponseFailed || eventType == llmprotocol.EventProviderOpaque
+		eventType == llmprotocol.EventResponseFailed || eventType == llmprotocol.EventProviderOpaque ||
+		eventType == llmprotocol.EventKeepalive
 }
 
 func (encoder *chatStreamEncoder) applyChunkEvent(
@@ -775,6 +776,8 @@ func (encoder *chatStreamEncoder) encodeDirectEvent(event llmprotocol.Event) ([]
 			return nil, nil, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "opaque_event", "opaque provider event cannot cross formats", nil)
 		}
 		return [][]byte{append([]byte(nil), event.Opaque...)}, nil, nil
+	case llmprotocol.EventKeepalive:
+		return [][]byte{sseKeepaliveComment()}, nil, nil
 	default:
 		return nil, nil, nil
 	}

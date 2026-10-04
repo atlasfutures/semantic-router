@@ -110,6 +110,9 @@ type goldenStreamTranscript struct {
 type goldenStreamFrame struct {
 	Event string `json:"event"`
 	Data  any    `json:"data"`
+	// Comment is the text of a frame of SSE comment lines only, a
+	// keepalive; such a frame carries no event or data.
+	Comment string `json:"comment,omitempty"`
 }
 
 func TestGoldenStreamTranslationMatrix(t *testing.T) {

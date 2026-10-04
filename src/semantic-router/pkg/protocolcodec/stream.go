@@ -241,6 +241,12 @@ func parseSSELine(result *sseFrame, line []byte) {
 	}
 }
 
+// sseKeepaliveComment is a keepalive as an SSE comment, which every SSE
+// parser skips. Chat and Responses have no keepalive event of their own.
+func sseKeepaliveComment() []byte {
+	return []byte(": keepalive\n\n")
+}
+
 func encodeSSE(event string, data any) ([]byte, error) {
 	body, err := json.Marshal(data)
 	if err != nil {

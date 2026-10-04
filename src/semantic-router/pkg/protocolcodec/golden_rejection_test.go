@@ -300,6 +300,11 @@ func appendGoldenTranscriptFrame(t *testing.T, transcript *goldenStreamTranscrip
 	if err != nil {
 		t.Fatal(err)
 	}
+	if parsed.commentOnly() {
+		comment := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(frame)), ":"))
+		transcript.Frames = append(transcript.Frames, goldenStreamFrame{Comment: comment})
+		return
+	}
 	if !parsed.HasData {
 		return
 	}

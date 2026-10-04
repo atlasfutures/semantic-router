@@ -556,6 +556,9 @@ func (encoder *anthropicStreamEncoder) Push(event llmprotocol.Event) ([][]byte, 
 		return nil, nil, pushErr
 	}
 	event = normalized
+	if event.Type == llmprotocol.EventKeepalive {
+		return encoder.encodeAnthropicKeepalive()
+	}
 	if event.Type == llmprotocol.EventResponseCompleted {
 		return encoder.encodeAnthropicCompletion(event)
 	}
@@ -566,6 +569,18 @@ func (encoder *anthropicStreamEncoder) Push(event llmprotocol.Event) ([][]byte, 
 		return encoder.encodeAnthropicContentEvent(event)
 	}
 	return encoder.encodeAnthropicLifecycleEvent(event)
+}
+
+// encodeAnthropicKeepalive writes a ping, as Anthropic itself does, once the
+// message has started. Anthropic sends its pings after message_start, and a
+// client may expect message_start first, so a keepalive before it (a provider
+// still queueing the request) goes out as an SSE comment, which every SSE
+// parser skips.
+func (encoder *anthropicStreamEncoder) encodeAnthropicKeepalive() ([][]byte, llmprotocol.Diagnostics, error) {
+	if !encoder.started {
+		return [][]byte{sseKeepaliveComment()}, nil, nil
+	}
+	return encodeAnthropicWireFrame(anthropicEventWire{Type: "ping"})
 }
 
 func isAnthropicContentEvent(eventType llmprotocol.EventType) bool {
