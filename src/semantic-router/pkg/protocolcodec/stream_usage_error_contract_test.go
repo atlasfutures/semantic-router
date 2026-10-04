@@ -310,9 +310,13 @@ func TestStreamStateRequiresCompleteToolLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := state.next(llmprotocol.Event{Type: llmprotocol.EventOutputItemCompleted, ItemIndex: 0}); err == nil {
-		t.Fatal("incomplete streamed tool arguments were accepted")
+	// Truncated arguments are held as cut at the item's completion; a turn
+	// that then ends other than at max_tokens fails them as malformed.
+	if _, err := state.next(llmprotocol.Event{Type: llmprotocol.EventOutputItemCompleted, ItemIndex: 0}); err != nil {
+		t.Fatal(err)
 	}
+	_, err := state.next(llmprotocol.Event{Type: llmprotocol.EventResponseCompleted, StopReason: llmprotocol.StopEndTurn})
+	requireProtocolErrorCode(t, err, "invalid_stream_tool_arguments")
 }
 
 func TestStreamStateRejectsMalformedAndNonObjectToolArguments(t *testing.T) {
@@ -329,13 +333,17 @@ func TestStreamStateRejectsMalformedAndNonObjectToolArguments(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := state.next(llmprotocol.Event{
+			_, err := state.next(llmprotocol.Event{
 				Type:      llmprotocol.EventOutputItemCompleted,
 				ItemIndex: 0,
 				ToolCall:  &llmprotocol.ToolCall{ID: "call_1", Name: "lookup", Arguments: arguments},
-			}); err == nil {
-				t.Fatalf("streamed tool arguments %q were accepted", arguments)
+			})
+			if err == nil {
+				// Only a truncated object is held to the terminal; an end
+				// other than max_tokens still rejects it.
+				_, err = state.next(llmprotocol.Event{Type: llmprotocol.EventResponseCompleted, StopReason: llmprotocol.StopEndTurn})
 			}
+			requireProtocolErrorCode(t, err, "invalid_stream_tool_arguments")
 		})
 	}
 }

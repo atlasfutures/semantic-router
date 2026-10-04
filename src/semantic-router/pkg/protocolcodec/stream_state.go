@@ -41,6 +41,14 @@ type streamState struct {
 	imageProgressRank     map[int]int
 	imageProgressSeen     map[int]map[llmprotocol.ImageGenerationStatus]bool
 	nextPartialImageIndex map[int]int64
+	// cutItems are tool items that completed with arguments that are not a
+	// JSON object. That is how a call looks when the model's output hit
+	// max_tokens while it was writing the arguments, and it is also how a
+	// malformed call looks. Which one it was is only known at the terminal:
+	// a max_tokens stop finishes the turn as the length stop it is, and any
+	// other end fails it with invalid_stream_tool_arguments. Nothing may be
+	// generated after a cut, so any later output fails it at once.
+	cutItems map[int]bool
 }
 
 func (state *streamState) observeProviderStreamBytes(chunk []byte) error {
@@ -196,6 +204,7 @@ func (state *streamState) ensureCollections() {
 		state.toolCalls = make(map[int]llmprotocol.ToolCall)
 		state.toolCallIndexes = make(map[string]int)
 		state.toolArguments = make(map[int][]byte)
+		state.cutItems = make(map[int]bool)
 		state.imageProgressRank = make(map[int]int)
 		state.imageProgressSeen = make(map[int]map[llmprotocol.ImageGenerationStatus]bool)
 		state.nextPartialImageIndex = make(map[int]int64)
@@ -237,6 +246,9 @@ func (state *streamState) prepareStartEvent(event llmprotocol.Event) (llmprotoco
 }
 
 func (state *streamState) applyItemEvent(event llmprotocol.Event) (llmprotocol.Event, error) {
+	if len(state.cutItems) > 0 && outputAfterCut(event.Type) {
+		return llmprotocol.Event{}, invalidStreamToolArguments()
+	}
 	switch event.Type {
 	case llmprotocol.EventOutputItemStarted:
 		return state.startItem(event)
@@ -248,6 +260,24 @@ func (state *streamState) applyItemEvent(event llmprotocol.Event) (llmprotocol.E
 		return state.completeItem(event)
 	}
 	return event, nil
+}
+
+// outputAfterCut reports an event that generates output. A model cut off at
+// max_tokens generates nothing more, so such an event after a cut tool item
+// proves the item was malformed rather than cut.
+func outputAfterCut(eventType llmprotocol.EventType) bool {
+	switch eventType {
+	case llmprotocol.EventOutputItemStarted, llmprotocol.EventOutputTextDelta,
+		llmprotocol.EventReasoningDelta, llmprotocol.EventToolCallDelta,
+		llmprotocol.EventImageGenerationProgress:
+		return true
+	default:
+		return false
+	}
+}
+
+func invalidStreamToolArguments() *llmprotocol.ProtocolError {
+	return llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "invalid_stream_tool_arguments", "upstream streamed tool arguments are not a JSON object", nil)
 }
 
 func (state *streamState) startItem(event llmprotocol.Event) (llmprotocol.Event, error) {

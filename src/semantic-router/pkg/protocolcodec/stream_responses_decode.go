@@ -271,7 +271,10 @@ func (decoder *responsesStreamDecoder) applyCompletedResponseItemKind(
 ) error {
 	switch item.Type {
 	case "function_call":
-		event.ToolCall = &llmprotocol.ToolCall{ID: item.CallID, Name: item.Name, Arguments: item.Arguments, Namespace: item.Namespace}
+		event.ToolCall = &llmprotocol.ToolCall{
+			ID: item.CallID, Name: item.Name, Arguments: item.Arguments, Namespace: item.Namespace,
+			Incomplete: item.Status == "incomplete",
+		}
 	case "message":
 		if decoder.itemKinds[responsesWireOutputIndex(wire)] == llmprotocol.ContentToolCall {
 			return llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "stream_item_kind_mismatch", "upstream completed a tool item as a message", nil)
