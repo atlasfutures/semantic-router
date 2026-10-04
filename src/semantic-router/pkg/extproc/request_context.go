@@ -117,6 +117,16 @@ type RequestContext struct {
 	// context recovery answered. The recovered body is re-encoded for the
 	// client, which drops it, so the usage report reads it from here.
 	ContextRecoveryProviderCost *llmprotocol.ProviderCost
+	// ResponseBodyReplaced records that the Router replaced the upstream's
+	// buffered body before the response pipeline saw it: a context-recovery
+	// follow-up, its fail-open redaction, or a reply cut inside a recovery
+	// call. The client must then be sent that body, even when client and
+	// backend share a format and nothing else would rewrite it.
+	ResponseBodyReplaced bool
+	// ContextRecoveryCallCut records a reply cut at the output limit inside
+	// the Router's own recovery call. The call is removed before the client
+	// sees the reply, so the response no longer shows the cut; this does.
+	ContextRecoveryCallCut bool
 
 	PublicChatUsageFilter *protocolcodec.ChatUsageStreamFilter
 	SemanticStreamState   *semanticResponseStreamState

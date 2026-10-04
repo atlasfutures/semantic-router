@@ -13,6 +13,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/looper"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 type contextRecoveryCall struct {
@@ -44,6 +45,10 @@ func (r *OpenAIRouter) handleContextRecoveryFollowup(
 	if err != nil {
 		return responseBody, fmt.Errorf("decode context recovery response: %w", err)
 	}
+	if contextRecoveryCallCut(decoded.Response) {
+		requestCtx.ContextRecoveryCallCut = true
+		return withoutCutContextRecoveryCalls(engine, format, decoded.Response)
+	}
 	calls, assistant, err := parseContextRecoveryCalls(decoded.Response)
 	if err != nil || len(calls) == 0 {
 		return responseBody, err
@@ -71,6 +76,70 @@ func (r *OpenAIRouter) handleContextRecoveryFollowup(
 		return responseBody, err
 	}
 	return followup, nil
+}
+
+// contextRecoveryCallCut reports a reply whose output limit cut the model
+// off while it was writing a recovery call: the call is incomplete, its key
+// unreadable, and there is nothing to retrieve.
+func contextRecoveryCallCut(response llmprotocol.Response) bool {
+	for _, item := range response.Output {
+		for _, content := range item.Content {
+			if isContextRecoveryCall(content) && content.ToolCall.Incomplete {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// withoutCutContextRecoveryCalls serves a reply cut inside a recovery call as
+// the length stop it is, without running recovery: a failed recovery would
+// answer 502 (fail-closed) or end the turn (fail-open), and neither is what
+// happened. The recovery calls are removed, as a recovery call that is not
+// executed always is (redactContextRecoveryToolCalls): the tool is the
+// Router's own, the client never declared it, and nothing ran it. Unlike that
+// redaction, the stop stays max_tokens and no explanatory text is added, so
+// the client sees the length stop and retries with a higher limit.
+func withoutCutContextRecoveryCalls(
+	engine *protocolcodec.Engine,
+	format llmprotocol.WireFormat,
+	response llmprotocol.Response,
+) ([]byte, error) {
+	removeContextRecoveryCalls(&response, "")
+	response.Generation++
+	encoded, err := engine.EncodeResponse(format, response, llmprotocol.Envelope{})
+	if err != nil {
+		return nil, fmt.Errorf("encode cut context recovery response: %w", err)
+	}
+	return encoded.Body, nil
+}
+
+func isContextRecoveryCall(content llmprotocol.Content) bool {
+	return content.Kind == llmprotocol.ContentToolCall && content.ToolCall != nil &&
+		content.ToolCall.Name == contextcompression.RetrieveToolName
+}
+
+// removeContextRecoveryCalls drops every recovery call from a response. An
+// item left with no content holds placeholder text instead, since an output
+// item must name some content. It reports whether anything was removed.
+func removeContextRecoveryCalls(response *llmprotocol.Response, placeholder string) bool {
+	changed := false
+	for itemIndex := range response.Output {
+		item := &response.Output[itemIndex]
+		kept := item.Content[:0]
+		for _, content := range item.Content {
+			if isContextRecoveryCall(content) {
+				changed = true
+				continue
+			}
+			kept = append(kept, content)
+		}
+		item.Content = kept
+		if len(item.Content) == 0 {
+			item.Content = []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: placeholder}}
+		}
+	}
+	return changed
 }
 
 func activeContextRecoveryPlugin(
@@ -366,7 +435,6 @@ func mergeContextRecoveryTokenCount(left, right llmprotocol.TokenCount) (llmprot
 	return llmprotocol.TokenCount{Value: &value, Provenance: provenance}, nil
 }
 
-//nolint:cyclop // Redaction walks every neutral output and nested tool result fail-closed.
 func (r *OpenAIRouter) redactContextRecoveryToolCalls(responseBody []byte, ctx *RequestContext) []byte {
 	if ctx == nil {
 		return responseBody
@@ -383,26 +451,7 @@ func (r *OpenAIRouter) redactContextRecoveryToolCalls(responseBody []byte, ctx *
 	if err != nil {
 		return responseBody
 	}
-	changed := false
-	for itemIndex := range decoded.Response.Output {
-		item := &decoded.Response.Output[itemIndex]
-		kept := item.Content[:0]
-		for _, content := range item.Content {
-			if content.Kind == llmprotocol.ContentToolCall && content.ToolCall != nil &&
-				content.ToolCall.Name == contextcompression.RetrieveToolName {
-				changed = true
-				continue
-			}
-			kept = append(kept, content)
-		}
-		item.Content = kept
-		if len(item.Content) == 0 {
-			item.Content = []llmprotocol.Content{{
-				Kind: llmprotocol.ContentText,
-				Text: "Additional compressed context could not be retrieved.",
-			}}
-		}
-	}
+	changed := removeContextRecoveryCalls(&decoded.Response, "Additional compressed context could not be retrieved.")
 	if !changed {
 		return responseBody
 	}

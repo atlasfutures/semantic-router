@@ -32,7 +32,7 @@ func (r *OpenAIRouter) updateResponseCache(ctx *RequestContext, responseBody []b
 	// stop it is, and its client retries with a higher limit. Cached, that
 	// retry would be answered with the same cut call. A max_tokens stop with
 	// no call in flight caches as before.
-	if responseCutMidToolCall(ctx.SemanticResponse) {
+	if turnCutMidToolCall(ctx) {
 		metrics.RecordCacheWriteSkipped("incomplete_tool_call")
 		return
 	}
@@ -124,6 +124,13 @@ func (r *OpenAIRouter) addSemanticCacheEntry(
 		ResponseBody: responseBody,
 		TTL:          cache.TTLPolicyFromLegacySeconds(ttlSeconds),
 	})
+}
+
+// turnCutMidToolCall reports a turn the output limit cut while the model
+// wrote a tool call: one the response still holds, or the Router's own
+// recovery call, which was removed from it.
+func turnCutMidToolCall(ctx *RequestContext) bool {
+	return ctx != nil && (ctx.ContextRecoveryCallCut || responseCutMidToolCall(ctx.SemanticResponse))
 }
 
 // responseCutMidToolCall reports a response whose tool call the output limit
