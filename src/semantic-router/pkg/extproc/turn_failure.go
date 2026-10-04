@@ -187,20 +187,21 @@ func turnFailureIsBackendError(class string) bool {
 // the usage line and the turn_failed line.
 const maxStreamFailureDetail = 160
 
-// codecStreamFailureDetail is the code and message of an error the Router's
-// own codec raised when it rejected a provider stream, so a cut is
-// diagnosable from the logs instead of reading as a bare class. The message
-// is the codec's own text (the only provider-chosen part is a bounded event
-// name), and it is still bounded to printable ASCII.
+// codecStreamFailureDetail is the code of an error the Router's own codec
+// raised when it rejected a provider stream: a router-owned identifier, so a
+// cut is diagnosable from the logs instead of reading as a bare class. The
+// message is not kept, since it may name what the provider sent.
 func codecStreamFailureDetail(protocolError *llmprotocol.ProtocolError) string {
 	if protocolError == nil {
 		return ""
 	}
-	detail := protocolError.Code
-	if protocolError.Message != "" {
-		detail += ": " + protocolError.Message
-	}
-	return boundedPrintable(detail, maxStreamFailureDetail)
+	return boundedPrintable(protocolError.Code, maxStreamFailureDetail)
+}
+
+// routerStreamFailureCodes are the failure events the Router's codec itself
+// synthesizes into a stream that ended without its terminal event.
+var routerStreamFailureCodes = map[string]bool{
+	"stream_incomplete": true, "stream_canceled": true, "stream_timeout": true,
 }
 
 // knownProviderStreamErrorCodes are the provider stream error codes the
@@ -222,6 +223,9 @@ var knownProviderStreamErrorCodes = map[string]bool{
 func providerStreamFailureDetail(protocolError *llmprotocol.ProtocolError) string {
 	if protocolError == nil {
 		return ""
+	}
+	if routerStreamFailureCodes[protocolError.Code] {
+		return protocolError.Code
 	}
 	if knownProviderStreamErrorCodes[protocolError.Code] {
 		return "provider:" + protocolError.Code

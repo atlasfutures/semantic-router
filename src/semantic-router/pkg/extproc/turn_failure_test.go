@@ -16,6 +16,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 // Every failure class, from what the provider answered. The last rows are
@@ -581,7 +582,7 @@ func TestStreamFailureDetailNamesTheError(t *testing.T) {
 		failed    *llmprotocol.ProtocolError
 		want      string
 	}{
-		"codec cut": {streamErr: cut, want: "stream_event_after_terminal: Anthropic stream emitted content_block_start after message_stop"},
+		"codec cut": {streamErr: cut, want: "stream_event_after_terminal"},
 		// A provider's own text is never logged: a documented code is kept,
 		// anything else is reported by the Router's category.
 		"provider in-band": {failed: provider, want: "provider:overloaded_error"},
@@ -598,5 +599,32 @@ func TestStreamFailureDetailNamesTheError(t *testing.T) {
 		if got := findLogEvent(t, logs, "llm_usage")["failure_detail"]; got != tc.want {
 			t.Fatalf("%s: failure_detail = %q, want %q", name, got, tc.want)
 		}
+	}
+}
+
+// End to end through the Router's own stream: a provider stream that stops
+// at EOF without its terminal event is finalized by the real codec, which
+// synthesizes the failure, and the usage line names it.
+func TestAnIncompleteStreamNamesItsFailure(t *testing.T) {
+	logs := captureLogs(t)
+	stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+		llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := &RequestContext{
+		RequestID: "req-eof", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+		SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.AnthropicMessagesV1,
+		ProtocolResponseStream: stream,
+		SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+	}
+	buffers := &semanticStreamBuffers{}
+	buffers.push([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n"+
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"+
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"half an answer\"}}\n\n"), ctx)
+	buffers.finalize(ctx)
+	(&OpenAIRouter{}).finalizeSemanticStreamingResponse(ctx, buffers.streamErr)
+	if got := findLogEvent(t, logs, "llm_usage")["failure_detail"]; got != "stream_incomplete" {
+		t.Fatalf("failure_detail = %q, want stream_incomplete", got)
 	}
 }
