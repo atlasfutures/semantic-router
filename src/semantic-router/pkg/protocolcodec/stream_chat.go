@@ -21,6 +21,10 @@ type chatStreamDecoder struct {
 	// attribute a turn it only ever sees as a stream.
 	upstreamProvider string
 	sourceStop       string
+	// providerStop and stopDetails are the chunk-stated stop telemetry
+	// (native_finish_reason, stop_details); see llmprotocol.StopDetails.
+	providerStop string
+	stopDetails  *llmprotocol.StopDetails
 }
 
 type chatContentKey struct {
@@ -95,11 +99,15 @@ type chatChunkChoiceWire struct {
 	FinishReason *string            `json:"finish_reason"`
 	// NativeFinishReason is OpenRouter's: the serving provider's own reason,
 	// beside the OpenAI-vocabulary finish_reason it maps it to.
-	NativeFinishReason *string             `json:"native_finish_reason,omitempty"`
-	Logprobs           *chatLogprobsWire   `json:"logprobs,omitempty"`
-	StopReason         *chatStopReasonWire `json:"stop_reason,omitempty"`
-	TokenIDs           []int64             `json:"token_ids,omitempty"`
-	RoutedExperts      *chatNullOnlyWire   `json:"routed_experts,omitempty"`
+	NativeFinishReason *string `json:"native_finish_reason,omitempty"`
+	// StopDetails is Anthropic's structured stop reason, where it is passed
+	// through. With NativeFinishReason it is refusal telemetry (see
+	// llmprotocol.StopDetails).
+	StopDetails   json.RawMessage     `json:"stop_details,omitempty"`
+	Logprobs      *chatLogprobsWire   `json:"logprobs,omitempty"`
+	StopReason    *chatStopReasonWire `json:"stop_reason,omitempty"`
+	TokenIDs      []int64             `json:"token_ids,omitempty"`
+	RoutedExperts *chatNullOnlyWire   `json:"routed_experts,omitempty"`
 }
 
 type chatChunkDeltaWire struct {
@@ -157,6 +165,12 @@ func (decoder *chatStreamDecoder) pushFrame(frame []byte) ([]llmprotocol.Event, 
 		}
 		if decoder.sourceStop != "" {
 			events[index].SourceStopReason = decoder.sourceStop
+		}
+		if decoder.providerStop != "" {
+			events[index].ProviderStopReason = decoder.providerStop
+		}
+		if decoder.stopDetails != nil {
+			events[index].StopDetails = decoder.stopDetails
 		}
 	}
 	return events, diagnostics, err
@@ -219,6 +233,12 @@ func (decoder *chatStreamDecoder) observeUpstreamAttribution(chunk chatChunkWire
 	for _, choice := range chunk.Choices {
 		if choice.FinishReason != nil && *choice.FinishReason != "" {
 			decoder.sourceStop = *choice.FinishReason
+		}
+		if choice.NativeFinishReason != nil && *choice.NativeFinishReason != "" {
+			decoder.providerStop = boundStopTelemetry(*choice.NativeFinishReason)
+		}
+		if details := decodeStopDetails(choice.StopDetails); details != nil {
+			decoder.stopDetails = details
 		}
 	}
 }

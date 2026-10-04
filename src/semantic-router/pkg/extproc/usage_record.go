@@ -92,6 +92,12 @@ type llmUsageRecord struct {
 
 	StopReason       *string `json:"stop_reason"`
 	NativeStopReason *string `json:"native_stop_reason"`
+	// ProviderStopReason and the stop_details type and category say why
+	// the provider stopped beyond the neutral reason (llmprotocol.StopDetails),
+	// so a refused turn names the classifier that refused it.
+	ProviderStopReason  *string `json:"provider_stop_reason"`
+	StopDetailsType     *string `json:"stop_details_type"`
+	StopDetailsCategory *string `json:"stop_details_category"`
 	// UpstreamProvider is the provider that served the call, as the upstream
 	// named it; ProviderOrder is the route the dispatched body pinned.
 	UpstreamProvider *string  `json:"upstream_provider"`
@@ -173,6 +179,10 @@ func (r *OpenAIRouter) newLLMUsageRecord(ctx *RequestContext, usage responseUsag
 	if len(ctx.DispatchedProviderOrder) > 0 {
 		record.ProviderOrder = append([]string(nil), ctx.DispatchedProviderOrder...)
 	}
+	stop := responseStopTelemetry(ctx)
+	record.ProviderStopReason = nonEmpty(stop.providerStop)
+	record.StopDetailsType = nonEmpty(stop.detailsType)
+	record.StopDetailsCategory = nonEmpty(stop.detailsCategory)
 	if response := attributedResponse(ctx); response != nil {
 		record.StopReason = nonEmpty(string(response.StopReason))
 		record.NativeStopReason = nonEmpty(response.SourceStopReason)

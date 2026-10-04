@@ -11,7 +11,7 @@
         "choices": [
           {
             "index": 0,
-            "finish_reason": "stop",
+            "finish_reason": "stop", "native_finish_reason": "end_turn", "stop_details": null,
             "stop_reason": 106,
             "token_ids": [
               13

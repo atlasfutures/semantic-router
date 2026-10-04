@@ -58,6 +58,10 @@ type chatChoiceWire struct {
 	// NativeFinishReason is OpenRouter's: the serving provider's own reason
 	// (see decodeChatChoiceStop).
 	NativeFinishReason *string `json:"native_finish_reason,omitempty"`
+	// StopDetails is Anthropic's structured stop reason, where it is passed
+	// through. With NativeFinishReason it is refusal telemetry (see
+	// llmprotocol.StopDetails).
+	StopDetails json.RawMessage `json:"stop_details,omitempty"`
 }
 
 type chatServiceTierWire string

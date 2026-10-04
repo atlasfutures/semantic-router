@@ -31,12 +31,16 @@ type semanticResponseStreamState struct {
 	// sourceStop and provider are what the upstream said about itself: the stop
 	// string it sent and the provider that served the turn.
 	sourceStop string
-	provider   string
-	usage      llmprotocol.Usage
-	items      map[int]*semanticStreamItem
-	order      []int
-	terminal   bool
-	failed     *llmprotocol.ProtocolError
+	// providerStop and stopDetails are the stop telemetry the stream stated
+	// (llmprotocol.StopDetails), kept for a refused turn's diagnostics.
+	providerStop string
+	stopDetails  *llmprotocol.StopDetails
+	provider     string
+	usage        llmprotocol.Usage
+	items        map[int]*semanticStreamItem
+	order        []int
+	terminal     bool
+	failed       *llmprotocol.ProtocolError
 }
 
 type semanticStreamItem struct {
@@ -305,6 +309,12 @@ func (state *semanticResponseStreamState) observe(events []llmprotocol.Event) {
 		if event.SourceStopReason != "" {
 			state.sourceStop = event.SourceStopReason
 		}
+		if event.ProviderStopReason != "" {
+			state.providerStop = event.ProviderStopReason
+		}
+		if event.StopDetails != nil {
+			state.stopDetails = event.StopDetails
+		}
 		if event.UpstreamProvider != "" {
 			state.provider = event.UpstreamProvider
 		}
@@ -473,6 +483,7 @@ func (state *semanticResponseStreamState) response() (*llmprotocol.Response, err
 		Generation: 1, ID: state.responseID, CreatedAt: time.Now().UTC(),
 		Model: state.model, Output: output, StopReason: state.stop,
 		SourceStopReason: state.sourceStop, UpstreamProvider: state.provider,
+		ProviderStopReason: state.providerStop, StopDetails: state.stopDetails,
 		Usage: state.usage,
 	}, nil
 }

@@ -116,6 +116,9 @@ func decodeAnthropicResponseResource(wire anthropicResponseWire, policy llmproto
 		if response.StopReason == llmprotocol.StopSequence && wire.StopSequence != nil {
 			response.MatchedStopSequence = *wire.StopSequence
 		}
+		// Kept as Router telemetry, and still reported as omitted: no
+		// client is sent it.
+		response.StopDetails = decodeStopDetails(wire.StopDetails)
 	}
 	markAnthropicCutToolCall(response)
 	return response, nil
