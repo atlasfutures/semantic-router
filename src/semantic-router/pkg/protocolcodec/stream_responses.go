@@ -229,8 +229,14 @@ func (decoder *responsesStreamDecoder) Push(chunk []byte) ([]llmprotocol.Event, 
 
 func (decoder *responsesStreamDecoder) pushFrame(frame []byte) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
 	parsed, err := decoder.parseProviderSSEFrame(frame)
-	if err != nil || !parsed.HasData {
+	if err != nil {
 		return nil, nil, err
+	}
+	if parsed.commentOnly() {
+		return decoder.keepalive()
+	}
+	if !parsed.HasData {
+		return nil, nil, nil
 	}
 	if bytes.Equal(bytes.TrimSpace(parsed.Data), []byte("[DONE]")) {
 		return nil, nil, invalidProviderResponse(

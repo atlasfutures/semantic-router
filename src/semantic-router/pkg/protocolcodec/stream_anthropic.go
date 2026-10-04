@@ -176,8 +176,14 @@ func (decoder *anthropicStreamDecoder) Push(chunk []byte) ([]llmprotocol.Event, 
 
 func (decoder *anthropicStreamDecoder) pushFrame(frame []byte) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
 	parsed, err := decoder.parseProviderSSEFrame(frame)
-	if err != nil || !parsed.HasData {
+	if err != nil {
 		return nil, nil, err
+	}
+	if parsed.commentOnly() {
+		return decoder.keepalive()
+	}
+	if !parsed.HasData {
+		return nil, nil, nil
 	}
 	if decoder.terminal {
 		return decoder.afterTerminal(parsed)
@@ -260,7 +266,9 @@ func (decoder *anthropicStreamDecoder) decodeEvent(
 	case "error":
 		return decoder.emitAnthropicEvent(decodeAnthropicStreamError(wire))
 	case "ping":
-		return nil, nil, nil
+		// The provider is alive and thinking; the client hears so. A ping
+		// after message_stop never reaches here (afterTerminal).
+		return decoder.keepalive()
 	default:
 		return decoder.decodeUnknownAnthropicEvent(frame)
 	}

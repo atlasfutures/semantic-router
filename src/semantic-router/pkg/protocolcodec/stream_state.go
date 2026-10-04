@@ -67,6 +67,19 @@ func (state *streamState) parseProviderSSEFrame(frame []byte) (sseFrame, error) 
 	return parsed, err
 }
 
+// keepalive turns one upstream keepalive into one neutral keepalive event.
+// After the terminal there is nothing left to keep alive, so none is emitted.
+func (state *streamState) keepalive() ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	if state.terminal {
+		return nil, nil, nil
+	}
+	event, err := state.next(llmprotocol.Event{Type: llmprotocol.EventKeepalive})
+	if err != nil {
+		return nil, nil, err
+	}
+	return []llmprotocol.Event{event}, nil, nil
+}
+
 func (state *streamState) observeProviderIdentity(responseID, model string) error {
 	if responseID != "" {
 		if state.policy.Limits.IdentifierBytes > 0 && len(responseID) > state.policy.Limits.IdentifierBytes {
