@@ -713,3 +713,18 @@ func TestAProviderFailureSeenBeforeTheClientEndedKeepsItsClass(t *testing.T) {
 		t.Fatalf("llm_usage class %v detail %v, want the provider's failure kept", usage["failure_class"], usage["failure_detail"])
 	}
 }
+
+// A terminal reply the Router cannot rebuild stays upstream_error when the
+// exchange then ends: the disconnect does not hide the unusable reply. (A
+// provider's successful terminal is released to the client only at the end
+// of the stream, so a stream whose exchange ended first never completed for
+// the client and is client_ended.)
+func TestAnUnusableTerminalSeenBeforeTheClientEndedKeepsItsClass(t *testing.T) {
+	_ = captureLogs(t)
+	ctx := &RequestContext{RequestID: "req-unusable-then-ended", StreamEndedByReceiveError: true,
+		SemanticStreamState: &semanticResponseStreamState{terminal: true, items: map[int]*semanticStreamItem{0: {}}}}
+	(&OpenAIRouter{}).classStreamFailure(ctx, nil, errors.New("item never completed"), status.Error(codes.Canceled, "context canceled"))
+	if ctx.ResponseFailureClass != turnFailureUpstreamError || ctx.ResponseFailureDetail != "stream_reconstruction_failed" {
+		t.Fatalf("class %q detail %q, want upstream_error stream_reconstruction_failed", ctx.ResponseFailureClass, ctx.ResponseFailureDetail)
+	}
+}
