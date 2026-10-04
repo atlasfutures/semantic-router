@@ -328,10 +328,12 @@ func (state *streamState) validateCompletedLifecycle(event llmprotocol.Event) er
 //     failure is the cause, and the first failure wins.
 //   - A completion under a length stop (max_tokens, or the context window
 //     filling up) is the length stop it is.
+//   - A completion under a refusal is the refusal it is: the provider
+//     stopped the model mid-call, and the cut call stays incomplete.
 //   - A completion under any other stop is the provider saying the reply
 //     finished, so the item's arguments are simply malformed.
 func (state *streamState) heldCutFailure(stop llmprotocol.StopReason, failed bool) error {
-	if len(state.cutItems) == 0 || failed || llmprotocol.LengthStop(stop) {
+	if len(state.cutItems) == 0 || failed || llmprotocol.CutToolCallStop(stop) {
 		return nil
 	}
 	return invalidStreamToolArguments()

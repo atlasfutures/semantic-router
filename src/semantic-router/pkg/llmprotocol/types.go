@@ -466,6 +466,15 @@ func LengthStop(stop StopReason) bool {
 	return stop == StopMaxTokens || stop == StopContextWindow
 }
 
+// CutToolCallStop reports a stop a response may end on with a tool call cut
+// off mid-arguments: a length stop, or a refusal, where the provider stopped
+// the model in the middle of what it was writing (Anthropic's streaming
+// classifiers stop a turn this way, mid-call). Any other stop says the reply
+// finished, so a call with unfinished arguments under it is malformed.
+func CutToolCallStop(stop StopReason) bool {
+	return LengthStop(stop) || stop == StopContentFilter
+}
+
 type UsageProvenance string
 
 const (

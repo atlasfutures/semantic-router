@@ -80,6 +80,63 @@ func TestAToolCallCutAtTheContextWindowIsALengthStop(t *testing.T) {
 	}
 }
 
+// anthropicRefusalStop is the recorded refusal terminal: Anthropic's
+// streaming classifier stops a forced tool call mid-arguments with
+// stop_reason refusal and says why in stop_details.
+const anthropicRefusalStop = "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"refusal\",\"stop_sequence\":null,\"stop_details\":{\"type\":\"refusal\",\"category\":\"cyber\",\"explanation\":\"Flagged.\"}},\"usage\":{\"output_tokens\":9}}\n\n" +
+	"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+
+// A refusal that stops the model mid-call is a refusal, not an argument
+// error: the held cut call yields to it, stays incomplete, and each client
+// gets the refusal as it gets one with no call cut (Anthropic stop_reason
+// refusal, Chat content_filter, Responses incomplete at content_filter).
+func TestAToolCallCutByARefusalIsARefusal(t *testing.T) {
+	body := anthropicFailureCutStart + anthropicFailureCutPartial + anthropicFailureBlockStop + anthropicRefusalStop
+	requireRefusalStop := func(t *testing.T, run failureCutRun) {
+		t.Helper()
+		for _, event := range run.events {
+			if event.Type == llmprotocol.EventResponseCompleted {
+				if event.StopReason != llmprotocol.StopContentFilter {
+					t.Fatalf("stop = %q, want content_filter", event.StopReason)
+				}
+				return
+			}
+		}
+		t.Fatalf("the refused turn never completed: %+v", run.events)
+	}
+	t.Run("anthropic", func(t *testing.T) {
+		run := heldCutCompletion(t, llmprotocol.AnthropicMessagesV1, body)
+		requireRefusalStop(t, run)
+		if !bytes.Contains(run.wire, []byte(`"stop_reason":"refusal"`)) || !bytes.Contains(run.wire, []byte("event: message_stop")) {
+			t.Fatalf("Messages client did not get the refusal:\n%s", run.wire)
+		}
+	})
+	t.Run("responses", func(t *testing.T) {
+		run := heldCutCompletion(t, llmprotocol.OpenAIResponsesV1, body)
+		requireRefusalStop(t, run)
+		requireResponsesIncompleteCut(t, run.wire, "content_filter")
+	})
+	t.Run("chat", func(t *testing.T) {
+		run := heldCutCompletion(t, llmprotocol.OpenAIChatV1, body)
+		requireRefusalStop(t, run)
+		if !bytes.Contains(run.wire, []byte(`"finish_reason":"content_filter"`)) || !bytes.Contains(run.wire, []byte("data: [DONE]")) {
+			t.Fatalf("Chat client did not get the refusal:\n%s", run.wire)
+		}
+	})
+	t.Run("buffered", func(t *testing.T) {
+		response, _, err := NewBuiltinEngine().DecodeResponseStream(llmprotocol.AnthropicMessagesV1, []byte(body),
+			llmprotocol.StreamContext{Context: t.Context(), PublicModel: "public-model", ProviderModel: "claude-fixture"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		call := response.Output[len(response.Output)-1].Content[0].ToolCall
+		if response.StopReason != llmprotocol.StopContentFilter || call == nil || !call.Incomplete ||
+			response.StopDetails == nil || response.StopDetails.Category != "cyber" {
+			t.Fatalf("response = stop %q details %+v call %+v", response.StopReason, response.StopDetails, call)
+		}
+	})
+}
+
 // A buffered reply whose last block is a tool_use under the context window
 // stop is decoded with the call marked cut, as under max_tokens.
 func TestABufferedContextWindowStopMarksTheLastToolCallCut(t *testing.T) {

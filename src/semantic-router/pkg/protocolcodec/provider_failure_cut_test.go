@@ -328,12 +328,19 @@ func TestARouterEndDuringACutToolCallReachesTheClient(t *testing.T) {
 	}
 }
 
-// Control: a terminal that says the reply finished, end_turn, over a held
+// Controls: a terminal that says the reply finished, end_turn, over a held
 // cut call is the provider claiming completion with broken arguments, which
-// still fails as malformed.
+// still fails as malformed. pause_turn is treated the same: Anthropic pauses
+// a turn between server tool iterations, not in the middle of a call. Output
+// after the cut call (another tool_use block) proves it malformed.
 func TestACutToolCallWithoutAFailureStillFails(t *testing.T) {
 	held := anthropicFailureCutStart + anthropicFailureCutPartial + anthropicFailureBlockStop
-	for name, body := range map[string]string{"end_turn": held + anthropicEndTurn} {
+	nextBlock := "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_next\",\"name\":\"bash\",\"input\":{}}}\n\n"
+	for name, body := range map[string]string{
+		"end_turn":        held + anthropicEndTurn,
+		"pause_turn":      held + anthropicStop("pause_turn"),
+		"next tool block": held + nextBlock,
+	} {
 		for _, target := range builtinFormats {
 			t.Run(name+"/"+string(target), func(t *testing.T) {
 				run := runFailureCut(t, llmprotocol.AnthropicMessagesV1, target, body, nil)
