@@ -471,10 +471,15 @@ func (state *responsesMessageEncodingState) appendToolCall(call *llmprotocol.Too
 	if call == nil {
 		return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_tool_call", "tool call is invalid", nil)
 	}
-	state.items = append(state.items, responsesItemWire{
+	item := responsesItemWire{
 		Type: "function_call", ID: state.itemID("function_call"),
 		CallID: call.ID, Name: call.Name, Arguments: call.Arguments, Namespace: call.Namespace,
-	})
+	}
+	if call.Incomplete {
+		// Only a response holds an incomplete call; see responsesToolCallStatus.
+		item.Status = "incomplete"
+	}
+	state.items = append(state.items, item)
 	return nil
 }
 
