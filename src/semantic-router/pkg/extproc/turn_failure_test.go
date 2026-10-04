@@ -898,3 +898,37 @@ func TestASettledFailedCallIsNotFinalizedAgain(t *testing.T) {
 		})
 	}
 }
+
+// The exchange can end before any response body arrived: the semantic stream
+// state does not exist yet. The turn is still classed client_ended, with
+// nothing sent, and nothing panics.
+func TestAStreamEndedBeforeItsFirstBodyIsClassedClientEnded(t *testing.T) {
+	logs := captureLogs(t)
+	ctx := &RequestContext{RequestID: "req-ended-at-headers", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+		SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.AnthropicMessagesV1}
+	(&OpenAIRouter{}).finalizeEndedStream(ctx, status.Error(codes.Canceled, "context canceled"))
+	usage := findLogEvent(t, logs, "llm_usage")
+	if usage["failure_class"] != turnFailureClientEnded || usage["content_sent_before_failure"] != false {
+		t.Fatalf("llm_usage class %v content sent %v, want client_ended with nothing sent", usage["failure_class"], usage["content_sent_before_failure"])
+	}
+}
+
+func TestAStreamEndedSendingItsHeadersIsClassedClientEnded(t *testing.T) {
+	logs := captureLogs(t)
+	ctx := &RequestContext{RequestID: "req-headers-send", RequestModel: "test", VSRSelectedModel: "arm-x", StartTime: time.Now(), Headers: map[string]string{},
+		SemanticRequest: testNeutralRequest("test", "hello"), IsStreamingResponse: true,
+		SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.AnthropicMessagesV1}
+	headers := arcResponseHeaders("200")
+	headers.ResponseHeaders.Headers.Headers = append(headers.ResponseHeaders.Headers.Headers,
+		&core.HeaderValue{Key: "content-type", RawValue: []byte("text/event-stream")})
+	mock := &MockStream{Ctx: context.Background(), SendError: status.Error(codes.Canceled, "context canceled"),
+		Requests: []*ext_proc.ProcessingRequest{{Request: headers}}}
+	err := (&OpenAIRouter{Config: &config.RouterConfig{}}).processWithContext(mock, ctx)
+	if status.Code(err) == codes.Internal {
+		t.Fatalf("processing panicked: %v", err)
+	}
+	usage := findLogEvent(t, logs, "llm_usage")
+	if usage["failure_class"] != turnFailureClientEnded || usage["content_sent_before_failure"] != false {
+		t.Fatalf("llm_usage class %v content sent %v, want client_ended with nothing sent", usage["failure_class"], usage["content_sent_before_failure"])
+	}
+}
