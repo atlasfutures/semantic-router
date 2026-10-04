@@ -16,10 +16,13 @@ const anthropicBreakpointLimit = 4
 // caching at all. A Messages client's own top-level member is re-emitted
 // instead (encodeAnthropicBaseRequest), which keeps its bytes replayable.
 //
-// The block that already holds a breakpoint keeps it. A request whose
+// When no message block can hold a breakpoint -- a conversation of signed
+// reasoning only, say -- it goes on the last system block, else the last
+// tool (see autoCacheBreakpointPlace).
+//
+// The place that already holds a breakpoint keeps it. A request whose
 // client breakpoints already fill Anthropic's limit gets none added, and a
-// conversation with no cacheable block gets none either; both drops are
-// counted.
+// request with no place for one gets none either; both drops are counted.
 func placeAutoCacheBreakpoint(
 	request llmprotocol.Request,
 	policy llmprotocol.Policy,
@@ -32,30 +35,73 @@ func placeAutoCacheBreakpoint(
 		appendPresentationDrop(&diagnostics, policy, request.Trusted.SourceFormat,
 			llmprotocol.AnthropicMessagesV1, "cache_control", reason)
 	}
-	messageIndex, contentIndex, found := lastAnthropicCacheableBlock(request.Messages)
+	held, place, found := autoCacheBreakpointPlace(request)
 	if !found {
-		drop("no block of the conversation can carry a Messages cache breakpoint")
+		drop("no message block, system block or tool can carry a Messages cache breakpoint")
 		return request, diagnostics
 	}
-	if request.Messages[messageIndex].Content[contentIndex].Cache != nil {
+	if held {
 		return request, nil
 	}
 	if countCacheBreakpoints(request) >= anthropicBreakpointLimit {
 		drop("the client's own breakpoints already use every Messages cache breakpoint")
 		return request, diagnostics
 	}
-	messages := append([]llmprotocol.Message(nil), request.Messages...)
-	contents := append([]llmprotocol.Content(nil), messages[messageIndex].Content...)
 	directive := *request.AutoCache
-	contents[contentIndex].Cache = &directive
-	messages[messageIndex].Content = contents
-	request.Messages = messages
+	place(&request, &directive)
 	diagnostics = appendDiagnostics(diagnostics, llmprotocol.Diagnostics{{
 		Source: request.Trusted.SourceFormat, Target: llmprotocol.AnthropicMessagesV1,
 		Field: "cache_control", Action: llmprotocol.DiagnosticApproximated,
 		Reason: "automatic caching becomes a breakpoint on the last cacheable block",
 	}}, policy.Limits.Diagnostics)
 	return request, diagnostics
+}
+
+// autoCacheBreakpointPlace finds where the breakpoint goes: the last
+// cacheable message block, else the last cacheable system block, else the
+// last tool. Anthropic caches the prefix in the order tools, system,
+// messages, so each rung is the longest prefix left when the one before it
+// has no place: a breakpoint on the last system block caches the tools and
+// the system prompt. It reports whether that place already holds a
+// breakpoint, and returns a func that sets one there on copies of the
+// slices it changes, so the caller's request is never mutated.
+func autoCacheBreakpointPlace(
+	request llmprotocol.Request,
+) (bool, func(*llmprotocol.Request, *llmprotocol.CacheDirective), bool) {
+	if messageIndex, contentIndex, found := lastAnthropicCacheableBlock(request.Messages); found {
+		held := request.Messages[messageIndex].Content[contentIndex].Cache != nil
+		return held, func(request *llmprotocol.Request, directive *llmprotocol.CacheDirective) {
+			messages := append([]llmprotocol.Message(nil), request.Messages...)
+			contents := append([]llmprotocol.Content(nil), messages[messageIndex].Content...)
+			contents[contentIndex].Cache = directive
+			messages[messageIndex].Content = contents
+			request.Messages = messages
+		}, true
+	}
+	for instructionIndex := len(request.Instructions) - 1; instructionIndex >= 0; instructionIndex-- {
+		contents := request.Instructions[instructionIndex].Content
+		for contentIndex := len(contents) - 1; contentIndex >= 0; contentIndex-- {
+			if !anthropicCacheableBlock(contents[contentIndex]) {
+				continue
+			}
+			held := contents[contentIndex].Cache != nil
+			return held, func(request *llmprotocol.Request, directive *llmprotocol.CacheDirective) {
+				instructions := append([]llmprotocol.InstructionBlock(nil), request.Instructions...)
+				blocks := append([]llmprotocol.Content(nil), instructions[instructionIndex].Content...)
+				blocks[contentIndex].Cache = directive
+				instructions[instructionIndex].Content = blocks
+				request.Instructions = instructions
+			}, true
+		}
+	}
+	if last := len(request.Tools) - 1; last >= 0 {
+		return request.Tools[last].Cache != nil, func(request *llmprotocol.Request, directive *llmprotocol.CacheDirective) {
+			tools := append([]llmprotocol.Tool(nil), request.Tools...)
+			tools[last].Cache = directive
+			request.Tools = tools
+		}, true
+	}
+	return false, nil, false
 }
 
 // lastAnthropicCacheableBlock finds the last block the Messages encoder will

@@ -268,6 +268,99 @@ func TestAutoCacheBreakpointSkipsBlocksThatCannotCarryOne(t *testing.T) {
 	})
 }
 
+// Anthropic caches the prefix in the order tools, system, messages. A
+// conversation with no message block that can hold a breakpoint -- here an
+// assistant turn of signed thinking only -- falls back to the last system
+// block, which caches tools and system, and then to the last tool.
+func TestAutoCacheBreakpointFallsBackToSystemThenTools(t *testing.T) {
+	thinkingOnly := llmprotocol.Message{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{
+		{Kind: llmprotocol.ContentReasoning, Text: "Plan the review.", Signature: "c2ln"},
+	}}
+	system := func(cache *llmprotocol.CacheDirective) []llmprotocol.InstructionBlock {
+		return []llmprotocol.InstructionBlock{{Role: llmprotocol.RoleSystem, Content: []llmprotocol.Content{
+			{Kind: llmprotocol.ContentText, Text: "You are a reviewer."},
+			{Kind: llmprotocol.ContentText, Text: "Answer in one paragraph.", Cache: cache},
+		}}}
+	}
+	tools := func(cache *llmprotocol.CacheDirective) []llmprotocol.Tool {
+		return []llmprotocol.Tool{
+			{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)},
+			{Name: "shell", InputSchema: json.RawMessage(`{"type":"object"}`), Cache: cache},
+		}
+	}
+	held := &llmprotocol.CacheDirective{Type: "ephemeral", TTL: "5m"}
+
+	t.Run("system block", func(t *testing.T) {
+		request := autoCacheRequest(thinkingOnly)
+		request.Instructions, request.Tools = system(nil), tools(nil)
+		body, diagnostics := encodeAnthropic(t, request)
+		got := anthropicBreakpoints(t, body)
+		if len(got) != 1 || got[0].path != "system.content[1]" || got[0].directive.TTL != "1h" {
+			t.Fatalf("breakpoints = %+v, want one on the last system block", got)
+		}
+		if !hasDiagnostic(diagnostics, "cache_control", llmprotocol.DiagnosticApproximated) {
+			t.Fatalf("the placement was not recorded: %+v", diagnostics)
+		}
+	})
+	t.Run("tool", func(t *testing.T) {
+		request := autoCacheRequest(thinkingOnly)
+		request.Tools = tools(nil)
+		body, _ := encodeAnthropic(t, request)
+		got := anthropicBreakpoints(t, body)
+		if len(got) != 1 || got[0].path != "tools[1]" {
+			t.Fatalf("breakpoints = %+v, want one on the last tool", got)
+		}
+	})
+	t.Run("nowhere", func(t *testing.T) {
+		body, diagnostics := encodeAnthropic(t, autoCacheRequest(thinkingOnly))
+		if got := anthropicBreakpoints(t, body); len(got) != 0 {
+			t.Fatalf("breakpoints = %+v, want none", got)
+		}
+		if !hasDiagnostic(diagnostics, "cache_control", llmprotocol.DiagnosticDropped) {
+			t.Fatalf("the dropped directive was not counted: %+v", diagnostics)
+		}
+	})
+	t.Run("system block already holds one", func(t *testing.T) {
+		request := autoCacheRequest(thinkingOnly)
+		request.Instructions = system(held)
+		body, diagnostics := encodeAnthropic(t, request)
+		got := anthropicBreakpoints(t, body)
+		if len(got) != 1 || got[0].directive.TTL != "5m" {
+			t.Fatalf("breakpoints = %+v, want the client's own one kept", got)
+		}
+		if hasDiagnostic(diagnostics, "cache_control", "") {
+			t.Fatalf("an honoured directive recorded %+v", diagnostics)
+		}
+	})
+	t.Run("tool already holds one", func(t *testing.T) {
+		request := autoCacheRequest(thinkingOnly)
+		request.Tools = tools(held)
+		body, diagnostics := encodeAnthropic(t, request)
+		got := anthropicBreakpoints(t, body)
+		if len(got) != 1 || got[0].directive.TTL != "5m" {
+			t.Fatalf("breakpoints = %+v, want the client's own one kept", got)
+		}
+		if hasDiagnostic(diagnostics, "cache_control", "") {
+			t.Fatalf("an honoured directive recorded %+v", diagnostics)
+		}
+	})
+	t.Run("limit reached before the system block", func(t *testing.T) {
+		request := autoCacheRequest(thinkingOnly)
+		request.Instructions = system(nil)
+		request.Tools = nil
+		for _, name := range []string{"a", "b", "c", "d"} {
+			request.Tools = append(request.Tools, llmprotocol.Tool{Name: name, InputSchema: json.RawMessage(`{"type":"object"}`), Cache: held})
+		}
+		body, diagnostics := encodeAnthropic(t, request)
+		if got := anthropicBreakpoints(t, body); len(got) != 4 {
+			t.Fatalf("breakpoints = %+v, want the client's four and no more", got)
+		}
+		if !hasDiagnostic(diagnostics, "cache_control", llmprotocol.DiagnosticDropped) {
+			t.Fatalf("the dropped directive was not counted: %+v", diagnostics)
+		}
+	})
+}
+
 func autoCacheRequest(messages ...llmprotocol.Message) llmprotocol.Request {
 	return llmprotocol.Request{
 		Generation: 1, Model: "claude-opus", Messages: messages,
