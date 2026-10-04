@@ -763,6 +763,87 @@ func TestAToolCallCutByAStreamWithNoTerminalIsAnIncompleteStream(t *testing.T) {
 	}
 }
 
+// A tool call the provider stopped mid-arguments is classed by why it
+// stopped. A refusal is a refusal (declined, with its stop_details), a stop
+// at the context window is a served length stop, and only a stop that says
+// the reply finished leaves the arguments malformed.
+func TestAToolCallCutByAStopIsClassedByTheStop(t *testing.T) {
+	held := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":12,\"output_tokens\":1}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"edit\",\"input\":{}}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"/app/x.R\\\",\\\"edits\\\":[{\\\"oldText\\\":\\\"f <- function(x) {\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+	stop := func(reason, details string) string {
+		return "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"" + reason + "\",\"stop_sequence\":null" + details + "},\"usage\":{\"output_tokens\":9}}\n\n" +
+			"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+	}
+	for name, test := range map[string]struct {
+		terminal, class, detail, body string
+	}{
+		"refusal": {
+			terminal: stop("refusal", `,"stop_details":{"type":"refusal","category":"cyber","explanation":"Flagged."}`),
+			class:    turnFailureRefusal, body: `"reason":"content_filter"`,
+		},
+		"context window": {terminal: stop("model_context_window_exceeded", ""), body: `"reason":"max_output_tokens"`},
+		"end_turn": {
+			terminal: stop("end_turn", ""), class: turnFailureUpstreamError, detail: "invalid_stream_tool_arguments",
+			body: "invalid_stream_tool_arguments",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			logs := captureLogs(t)
+			stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIResponsesV1,
+				llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := &RequestContext{
+				RequestID: "req-cut-stop", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+				SourceFormat: llmprotocol.OpenAIResponsesV1, TargetFormat: llmprotocol.AnthropicMessagesV1,
+				ProtocolResponseStream: stream,
+				SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+			}
+			router := &OpenAIRouter{}
+			var body strings.Builder
+			// The terminal arrives with the end of the stream. (Ended by a
+			// later empty chunk instead, a codec rejection is classed by the
+			// stored-failure fix that lands separately.)
+			for index, chunk := range []string{held, test.terminal} {
+				response := router.handleSemanticStreamingResponseBody([]byte(chunk), index == 1, ctx)
+				if mutation := response.GetResponseBody().GetResponse().GetBodyMutation(); mutation != nil {
+					body.Write(mutation.GetBody())
+				}
+			}
+			if !strings.Contains(body.String(), test.body) {
+				t.Fatalf("client body lacks %s:\n%s", test.body, body.String())
+			}
+			if test.class != turnFailureUpstreamError && strings.Contains(body.String(), "invalid_stream_tool_arguments") {
+				t.Fatalf("the client was told the arguments were malformed:\n%s", body.String())
+			}
+			usage := findLogEvent(t, logs, "llm_usage")
+			if class, _ := usage["failure_class"].(string); class != test.class {
+				t.Fatalf("llm_usage failure_class = %q, want %q", class, test.class)
+			}
+			if test.detail != "" && usage["failure_detail"] != test.detail {
+				t.Fatalf("llm_usage failure_detail = %v, want %s", usage["failure_detail"], test.detail)
+			}
+			failed := map[string]interface{}(nil)
+			for _, entry := range logs.All() {
+				if fields := entry.ContextMap(); fields["event"] == "turn_failed" {
+					failed = fields
+				}
+			}
+			switch {
+			case test.class == "" && failed != nil:
+				t.Fatalf("a served length stop was recorded as failed: %v", failed)
+			case test.class != "" && (failed == nil || failed["failure_class"] != test.class):
+				t.Fatalf("turn_failed = %v, want class %s", failed, test.class)
+			case test.class == turnFailureRefusal && (failed["stop_details_category"] != "cyber" || usage["stop_details_category"] != "cyber"):
+				t.Fatalf("refusal telemetry lost its category: turn_failed %v, llm_usage %v", failed, usage)
+			}
+		})
+	}
+}
+
 // A stream the client or the proxy ended first is classed client_ended, with
 // the usage the provider stated and whether content had reached the client.
 // It is neither an arm nor a cell failure: it counts against no backend and
