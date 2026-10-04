@@ -390,7 +390,11 @@ type ModelParams struct {
 	Catalog           string                  `yaml:"catalog,omitempty"`
 	ParamSize         string                  `yaml:"param_size,omitempty"`
 	ContextWindowSize int                     `yaml:"context_window_size,omitempty"`
-	APIFormat         string                  `yaml:"api_format,omitempty"`
+	// MaxOutputTokens is the operator-declared output limit from the model
+	// card (routing.modelCards[].max_output_tokens), zero when undeclared. The
+	// router dispatches it when a request states no output limit of its own.
+	MaxOutputTokens int    `yaml:"max_output_tokens,omitempty"`
+	APIFormat       string `yaml:"api_format,omitempty"`
 	// AcceptedFormats is providers.models[].accepted_formats: the formats the
 	// backends accept, in preference order, with APIFormat first.
 	AcceptedFormats  []string                            `yaml:"accepted_formats,omitempty"`

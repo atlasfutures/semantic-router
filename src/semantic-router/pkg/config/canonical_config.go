@@ -76,14 +76,17 @@ type RoutingModel struct {
 	Lifecycle         string                             `yaml:"lifecycle,omitempty"`
 	ParamSize         string                             `yaml:"param_size,omitempty"`
 	ContextWindowSize int                                `yaml:"context_window_size,omitempty"`
-	MaxOutputTokens   int                                `yaml:"max_output_tokens,omitempty"`
-	Description       string                             `yaml:"description,omitempty"`
-	Capabilities      []string                           `yaml:"capabilities,omitempty"`
-	LoRAs             []LoRAAdapter                      `yaml:"loras,omitempty"`
-	Modalities        *modelcatalog.Modalities           `yaml:"modalities,omitempty"`
-	Modality          string                             `yaml:"modality,omitempty"`
-	Tags              []string                           `yaml:"tags,omitempty"`
-	Evaluations       []modelcatalog.UserEvaluation      `yaml:"evaluations,omitempty"`
+	// MaxOutputTokens is the output limit the router dispatches when a request
+	// states none; see ModelParams.MaxOutputTokens. A pointer, so an explicit
+	// zero is refused rather than read as absent.
+	MaxOutputTokens *int                          `yaml:"max_output_tokens,omitempty"`
+	Description     string                        `yaml:"description,omitempty"`
+	Capabilities    []string                      `yaml:"capabilities,omitempty"`
+	LoRAs           []LoRAAdapter                 `yaml:"loras,omitempty"`
+	Modalities      *modelcatalog.Modalities      `yaml:"modalities,omitempty"`
+	Modality        string                        `yaml:"modality,omitempty"`
+	Tags            []string                      `yaml:"tags,omitempty"`
+	Evaluations     []modelcatalog.UserEvaluation `yaml:"evaluations,omitempty"`
 	// Vision is the model card's image-input contract. Absent means capable;
 	// see ModelParams.SupportsVision.
 	Vision *bool `yaml:"vision,omitempty"`
@@ -199,9 +202,25 @@ func canonicalModelCardIndex(routing CanonicalRouting) (map[string]RoutingModel,
 		if _, exists := modelsByName[model.Name]; exists {
 			return nil, fmt.Errorf("routing.modelCards[%s]: duplicate model name", model.Name)
 		}
+		if err := validateModelCardOutputLimit(model); err != nil {
+			return nil, err
+		}
 		modelsByName[model.Name] = model
 	}
 	return modelsByName, nil
+}
+
+// validateModelCardOutputLimit refuses a declared max_output_tokens that is
+// not positive. The card value becomes the dispatched output limit, so a zero
+// or negative value would not be dropped quietly: it would be sent.
+func validateModelCardOutputLimit(card RoutingModel) error {
+	if card.MaxOutputTokens != nil && *card.MaxOutputTokens <= 0 {
+		return fmt.Errorf(
+			"routing.modelCards[%s].max_output_tokens must be positive, got %d",
+			card.Name, *card.MaxOutputTokens,
+		)
+	}
+	return nil
 }
 
 func canonicalProviderModelIndex(

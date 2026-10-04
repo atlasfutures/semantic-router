@@ -35,9 +35,13 @@ func ParseRoutingYAMLBytes(data []byte) (*RouterConfig, error) {
 	cfg.ModelConfig = make(map[string]ModelParams)
 
 	for _, model := range canonicalRoutingModels(doc.Routing) {
+		if err := validateModelCardOutputLimit(model); err != nil {
+			return nil, err
+		}
 		cfg.ModelConfig[model.Name] = ModelParams{
 			ParamSize:         model.ParamSize,
 			ContextWindowSize: model.ContextWindowSize,
+			MaxOutputTokens:   cardMaxOutputTokens(model),
 			Description:       model.Description,
 			Capabilities:      append([]string(nil), model.Capabilities...),
 			LoRAs:             copyLoRAAdapters(model.LoRAs),
