@@ -72,26 +72,31 @@ func TestDispatchOutputBoundPlansTheV5ControlBudget(t *testing.T) {
 // request only after compression has run.
 func TestCompressionReserveMatchesDispatchWithAPolicyAction(t *testing.T) {
 	budget := int64(12000)
-	for name, effort := range map[string]*string{
-		"budget action": nil,
-		"effort action": policyTestEffort("high"),
-		"off action":    policyTestEffort("none"),
+	for name, test := range map[string]struct {
+		effort *string
+		budget *int64
+	}{
+		"budget action":           {nil, &budget},
+		"effort action":           {policyTestEffort("high"), nil},
+		"off action":              {policyTestEffort("none"), nil},
+		"off action with budget":  {policyTestEffort("none"), &budget},
+		"null action keeps yours": {nil, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			router, model := routingTestRouterForFormat(llmprotocol.AnthropicMessagesV1)
 			params := router.Config.ModelConfig[model]
 			params.MaxOutputTokens = 4000
 			router.Config.ModelConfig[model] = params
-			actionBudget := &budget
-			if effort != nil {
-				actionBudget = nil
-			}
-			action := policyAction("think", "none", model, effort, actionBudget, "")
+			effort := test.effort
+			action := policyAction("think", "none", model, effort, test.budget, "")
 			decision := policyDecisionWithActions(action)
 			ctx := policyDispatchContext(decision, action)
 			ctx.SourceFormat, ctx.VSRSelectedModel = llmprotocol.OpenAIResponsesV1, model
 			ctx.RequestID, ctx.TraceContext = "reserve-policy-action", context.Background()
 			request := testNeutralRequest(model, "hi")
+			// The caller's own thinking budget, which an effort or off action
+			// replaces and a null action keeps.
+			request.ReasoningMode, request.ReasoningBudgetTokens = llmprotocol.ReasoningModeEnabled, llmprotocol.Int64(6000)
 			ctx.SemanticRequest = request
 
 			reserve := router.compressionOutputReserve(model, ctx, request)
@@ -102,7 +107,7 @@ func TestCompressionReserveMatchesDispatchWithAPolicyAction(t *testing.T) {
 			if sent == nil || *sent != reserve {
 				t.Fatalf("compression reserved %d, dispatch sent %v", reserve, sent)
 			}
-			if effort == nil && reserve != 4000+budget {
+			if effort == nil && test.budget != nil && reserve != 4000+budget {
 				t.Fatalf("reserve = %d, want the card bound on top of the action's budget (%d)", reserve, 4000+budget)
 			}
 		})
