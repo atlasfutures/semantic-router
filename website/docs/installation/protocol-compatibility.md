@@ -162,6 +162,32 @@ format handles it as follows:
 - **Chat Completions backend:** the directive is dropped and counted as a
   translation diagnostic.
 
+A Chat Completions or Responses client usually sends no `cache_control`. It
+relies on the automatic prefix caching that OpenAI models apply, and may name
+a cache shard with `prompt_cache_key`. Anthropic caches only at explicit
+breakpoints, so when such a request is dispatched over Messages to a Claude
+worker (a model whose card publisher is `anthropic`, or whose provider model
+id starts with `anthropic/`), the Router supplies the directive
+`{"type": "ephemeral"}`, which uses the default 5-minute TTL. The breakpoint is
+then placed as described above. The following rules apply:
+
+- A client's own top-level `cache_control` is used as written. The Router
+  doesn't supply its own.
+- A client's per-block breakpoints are kept. The Router adds a breakpoint on
+  the last cacheable block only when that block has none and the four-breakpoint
+  limit leaves room. Otherwise the drop is counted.
+- A Messages client, a non-Claude worker, and a Claude worker reached over Chat
+  Completions or Responses get no breakpoint from this rule.
+- Neither Chat Completions nor Responses defines a way to opt out of automatic
+  caching, and the Router has no setting to turn this off.
+- The supplied directive is recorded as a `generated` translation diagnostic
+  with reason `automatic_cache_prompt_cache_key` or `automatic_cache_default`.
+  The diagnostic appears in the protocol warnings header and the
+  translation-warning counter.
+- The directive is applied only to the dispatched request, never to the
+  client's stored request. It is the same for every turn, so a growing
+  conversation keeps a cache-stable prefix.
+
 A Responses client can still use `previous_response_id` with a Chat
 Completions or Messages backend. The Router retrieves and materializes the
 retained history, removes Router-owned object controls, and then encodes the
