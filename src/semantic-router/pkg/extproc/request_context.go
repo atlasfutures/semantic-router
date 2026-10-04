@@ -100,8 +100,10 @@ type RequestContext struct {
 	// StreamEndedAtSend is true when the exchange ended while a response
 	// chunk was being sent; DeliveredStreamItems is how many stream items
 	// the chunks sent before it carried.
-	StreamEndedAtSend      bool
-	DeliveredStreamItems   int
+	StreamEndedAtSend    bool
+	DeliveredStreamItems int
+	// FailedCallSettled is true once a failed call's usage line is written.
+	FailedCallSettled      bool
 	ProtocolResponseStream *protocolcodec.StreamEngine
 	// InjectedFault names the failure this request asked the router to produce.
 	// It is empty unless the cell opted in, and it is decided once, when the

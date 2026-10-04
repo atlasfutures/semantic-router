@@ -390,7 +390,7 @@ func processUnknownRequest(
 // leaves the turn with no usage record: the upstream charged for every token
 // it generated and the Router counted none of them.
 func (r *OpenAIRouter) finalizeEndedStream(ctx *RequestContext, err error) {
-	if !ctx.IsStreamingResponse || ctx.StreamingComplete {
+	if !ctx.IsStreamingResponse || ctx.StreamingComplete || ctx.FailedCallSettled {
 		return
 	}
 	ctx.StreamingAborted = true

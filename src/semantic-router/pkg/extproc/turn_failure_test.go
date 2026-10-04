@@ -864,3 +864,37 @@ func TestAProviderErrorInAChunkThatFailedToSendSentNothing(t *testing.T) {
 		t.Fatalf("llm_usage class %v content sent %v, want the provider's class with nothing sent", usage["failure_class"], usage["content_sent_before_failure"])
 	}
 }
+
+// Every path that settles a failed call at the headers (an upstream error,
+// a transport error, an empty reply, a refused selection commit) writes its
+// usage through reportFailedCallUsage. The exchange ending afterwards, at a
+// receive or at a send, writes no second line.
+func TestASettledFailedCallIsNotFinalizedAgain(t *testing.T) {
+	for name, end := range map[string]func(*OpenAIRouter, *RequestContext){
+		"receive": func(r *OpenAIRouter, ctx *RequestContext) {
+			_ = r.handleProcessReceiveError(ctx, status.Error(codes.Canceled, "gone"))
+		},
+		"send": func(r *OpenAIRouter, ctx *RequestContext) {
+			r.finalizeEndedStream(ctx, status.Error(codes.Unavailable, "gone"))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			logs := captureLogs(t)
+			router := &OpenAIRouter{}
+			ctx := &RequestContext{RequestID: "req-settled", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+				SemanticStreamState: &semanticResponseStreamState{items: map[int]*semanticStreamItem{}}}
+			recordTurnFailure(ctx, selectionFailureUnavailable, false)
+			router.reportFailedCallUsage(ctx)
+			end(router, ctx)
+			usageLines := 0
+			for _, entry := range logs.All() {
+				if entry.ContextMap()["event"] == "llm_usage" {
+					usageLines++
+				}
+			}
+			if usageLines != 1 || ctx.ResponseFailureClass != selectionFailureUnavailable {
+				t.Fatalf("%d usage lines, class %q; want one line and the settled class", usageLines, ctx.ResponseFailureClass)
+			}
+		})
+	}
+}

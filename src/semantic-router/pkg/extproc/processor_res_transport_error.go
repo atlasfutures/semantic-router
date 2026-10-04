@@ -100,4 +100,7 @@ func (r *OpenAIRouter) reportFailedCallUsage(ctx *RequestContext) {
 		latency = time.Since(ctx.StartTime)
 	}
 	r.reportNonStreamingUsage(ctx, latency, responseUsageMetrics{})
+	// The failed call is settled: its usage line is written, so the exchange
+	// ending after it finalizes nothing more.
+	ctx.FailedCallSettled = true
 }

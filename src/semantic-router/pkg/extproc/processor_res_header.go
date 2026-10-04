@@ -66,9 +66,6 @@ func (r *OpenAIRouter) emptySuccessResponse(
 	r.updateRouterReplayStatus(ctx, outcome.statusCode, ctx.IsStreamingResponse)
 	r.observeRouterLearningProviderStatus(ctx, outcome.statusCode)
 	r.reportFailedCallUsage(ctx)
-	// The turn is settled here: the exchange ending after this response
-	// finalizes nothing more.
-	ctx.StreamingComplete = true
 	response := r.createErrorResponse(http.StatusBadGateway, "The selected model returned an empty response")
 	// It names the arm that failed, as every upstream error does.
 	appendImmediateHeader(response, headers.VSRSelectedModel, ctx.VSRSelectedModel)
