@@ -35,6 +35,10 @@ type anthropicStreamDecoder struct {
 	// terminalDelta is the JSON of the last message_delta before
 	// message_stop: a late message_delta that restates it adds nothing.
 	terminalDelta json.RawMessage
+	// pendingToolStop is the index of a tool_use block that has stopped but
+	// whose completion is held until the next event says whether it was the
+	// reply's last block under a max_tokens stop (flushPendingToolStop).
+	pendingToolStop *int
 }
 type anthropicStreamEncoder struct {
 	streamState
@@ -236,7 +240,45 @@ func isSupportedAnthropicEvent(eventType string) bool {
 	}
 }
 
+// decodeEvent releases a held tool_use completion before any event but a
+// ping, then decodes the event.
 func (decoder *anthropicStreamDecoder) decodeEvent(
+	wire anthropicEventWire,
+	frame []byte,
+) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	if decoder.pendingToolStop == nil || wire.Type == "ping" {
+		return decoder.decodeAnthropicEvent(wire, frame)
+	}
+	cut := wire.Type == "message_delta" && wire.Delta != nil && wire.Delta.StopReason != nil &&
+		decodeAnthropicStop(*wire.Delta.StopReason) == llmprotocol.StopMaxTokens
+	flushed, diagnostics, err := decoder.flushPendingToolStop(cut)
+	if err != nil {
+		return flushed, diagnostics, err
+	}
+	events, eventDiagnostics, err := decoder.decodeAnthropicEvent(wire, frame)
+	return append(flushed, events...), appendDiagnostics(diagnostics, eventDiagnostics, decoder.policy.Limits.Diagnostics), err
+}
+
+// flushPendingToolStop completes the held tool_use block. Anthropic documents
+// a max_tokens reply whose last block is a tool_use as one holding an
+// incomplete tool use, and a buffered reply of that shape is decoded so
+// (markAnthropicCutToolCall). A stream says the same only once message_delta
+// arrives after the block stops, so the completion waits for it: when the
+// next event is that max_tokens message_delta, the call completes marked
+// incomplete. That includes a block cut before any input_json_delta, whose
+// arguments are the start's {} placeholder and would otherwise read whole.
+// Any other next event completes the call as it stands.
+func (decoder *anthropicStreamDecoder) flushPendingToolStop(cut bool) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	index := *decoder.pendingToolStop
+	decoder.pendingToolStop = nil
+	event := llmprotocol.Event{Type: llmprotocol.EventOutputItemCompleted, ItemIndex: index}
+	if cut {
+		event.ToolCall = &llmprotocol.ToolCall{Incomplete: true}
+	}
+	return decoder.emitAnthropicEvent(event)
+}
+
+func (decoder *anthropicStreamDecoder) decodeAnthropicEvent(
 	wire anthropicEventWire,
 	frame []byte,
 ) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
@@ -258,7 +300,12 @@ func (decoder *anthropicStreamDecoder) decodeEvent(
 		}
 		return decoder.emitDecodedAnthropicEvent(decodeAnthropicContentDelta(wire))
 	case "content_block_stop":
-		return decoder.emitAnthropicEvent(llmprotocol.Event{Type: llmprotocol.EventOutputItemCompleted, ItemIndex: anthropicEventIndex(wire)})
+		index := anthropicEventIndex(wire)
+		if decoder.items[index] && !decoder.completedItems[index] && decoder.itemKinds[index] == llmprotocol.ContentToolCall {
+			decoder.pendingToolStop = &index
+			return nil, nil, nil
+		}
+		return decoder.emitAnthropicEvent(llmprotocol.Event{Type: llmprotocol.EventOutputItemCompleted, ItemIndex: index})
 	case "message_delta":
 		return decoder.decodeAnthropicMessageDelta(wire)
 	case "message_stop":
@@ -526,6 +573,15 @@ func (decoder *anthropicStreamDecoder) Finalize(reason error) ([]llmprotocol.Eve
 	events, diagnostics, frameErr := finalizeDecoderFrames(decoder.framer.Finalize, decoder.pushFrame, decoder.policy.Limits.Diagnostics)
 	if frameErr != nil {
 		return events, diagnostics, frameErr
+	}
+	if decoder.pendingToolStop != nil && !decoder.terminal {
+		// No max_tokens message_delta followed: the call completes as it
+		// stands, and a stream with no terminal still fails below.
+		flushed, _, err := decoder.flushPendingToolStop(false)
+		events = append(events, flushed...)
+		if err != nil {
+			return events, diagnostics, err
+		}
 	}
 	if decoder.pendingStartUsage != nil {
 		flushed, err := decoder.flushPendingStartUsage()

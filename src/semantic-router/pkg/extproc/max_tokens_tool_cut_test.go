@@ -155,3 +155,25 @@ func TestACutToolCallTurnIsNotCached(t *testing.T) {
 		})
 	}
 }
+
+// A tool_use block cut before any argument delta is still a cut call: the
+// settled response marks it, so the turn is not cached.
+func TestAnEmptyFinalToolBlockUnderMaxTokensIsNotCached(t *testing.T) {
+	var chunks []string
+	for _, chunk := range maxTokensToolCutChunks(t, "stream/040-anthropic-max-tokens-mid-tool-in.json") {
+		var kept []string
+		for _, frame := range strings.SplitAfter(chunk, "\n\n") {
+			if !strings.Contains(frame, "input_json_delta") {
+				kept = append(kept, frame)
+			}
+		}
+		chunks = append(chunks, strings.Join(kept, ""))
+	}
+	ctx, _, _ := driveMaxTokensToolCut(t, llmprotocol.OpenAIResponsesV1, chunks)
+	if ctx.SemanticStreamErr != nil {
+		t.Fatalf("stream failed: %v", ctx.SemanticStreamErr)
+	}
+	if !responseCutMidToolCall(ctx.SemanticResponse) {
+		t.Fatalf("the settled response does not mark the empty cut call: %+v", ctx.SemanticResponse)
+	}
+}
