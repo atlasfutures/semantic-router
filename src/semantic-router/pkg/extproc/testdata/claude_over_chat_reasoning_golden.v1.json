@@ -1,0 +1,187 @@
+{
+  "note": "A pi Chat Completions request (pi 1.0.0 openai-completions replay shape) whose history holds one tool-calling turn written by an open-weight model (reasoning_content plus reasoning_details tagged unknown) and one whose reasoning_content merges Claude's and Gemini's text and whose reasoning_details mix their items. No Gemini text or blob may reach the wire. want_messages is the messages array a Claude worker dispatched over Chat through OpenRouter is sent.",
+  "request": {
+    "model": "auto",
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    },
+    "max_completion_tokens": 32000,
+    "reasoning_effort": "high",
+    "messages": [
+      {
+        "role": "developer",
+        "content": "You are pi."
+      },
+      {
+        "role": "user",
+        "content": "Create fib.py and run it."
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "reasoning_content": "Write the file first.",
+        "reasoning_details": [
+          {
+            "type": "reasoning.text",
+            "text": "Write the file first.",
+            "format": "unknown",
+            "index": 0
+          }
+        ],
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "write",
+              "arguments": "{\"path\":\"fib.py\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "content": "Successfully wrote to fib.py"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "reasoning_details": [
+          {
+            "type": "reasoning.text",
+            "text": "Now run it.",
+            "signature": "claude-signature",
+            "format": "anthropic-claude-v1",
+            "index": 0
+          },
+          {
+            "type": "reasoning.text",
+            "text": "Gemini would call the bash tool next.",
+            "format": "google-gemini-v1",
+            "index": 1
+          },
+          {
+            "type": "reasoning.encrypted",
+            "id": "call_2",
+            "data": "gemini-opaque",
+            "format": "google-gemini-v1",
+            "index": 2
+          }
+        ],
+        "tool_calls": [
+          {
+            "id": "call_2",
+            "type": "function",
+            "function": {
+              "name": "bash",
+              "arguments": "{\"command\":\"python3 fib.py\"}"
+            }
+          }
+        ],
+        "reasoning_content": "Now run it.Gemini would call the bash tool next."
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_2",
+        "content": "0 1 1 2 3 5 8 13 21 34"
+      },
+      {
+        "role": "user",
+        "content": "Change it to print 15 numbers."
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "write",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "bash",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "command": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    ],
+    "tool_choice": "auto"
+  },
+  "want_messages": [
+    {
+      "role": "developer",
+      "content": "You are pi."
+    },
+    {
+      "role": "user",
+      "content": "Create fib.py and run it."
+    },
+    {
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "type": "function",
+          "function": {
+            "name": "write",
+            "arguments": "{\"path\":\"fib.py\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "Successfully wrote to fib.py",
+      "tool_call_id": "call_1"
+    },
+    {
+      "role": "assistant",
+      "reasoning_content": "Now run it.",
+      "reasoning_details": [
+        {
+          "type": "reasoning.text",
+          "text": "Now run it.",
+          "signature": "claude-signature",
+          "format": "anthropic-claude-v1",
+          "index": 0
+        }
+      ],
+      "tool_calls": [
+        {
+          "id": "call_2",
+          "type": "function",
+          "function": {
+            "name": "bash",
+            "arguments": "{\"command\":\"python3 fib.py\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "0 1 1 2 3 5 8 13 21 34",
+      "tool_call_id": "call_2"
+    },
+    {
+      "role": "user",
+      "content": "Change it to print 15 numbers."
+    }
+  ]
+}

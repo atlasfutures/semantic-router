@@ -64,8 +64,12 @@ func (r *OpenAIRouter) prepareProviderDispatch(
 	// The disposition table makes reasoning carriable by this target before
 	// the capability gate, which would otherwise refuse it: a block the target
 	// cannot verify is dropped, a signature it cannot verify is stripped. Each
-	// is logged by kind.
-	if carry := protocolcodec.CarryReasoningTo(request, dispatch.targetFormat); carry.Changed() {
+	// is logged by kind. Before it, a Claude worker loses the reasoning that
+	// is not provably Claude's, while signatures still say whose it is.
+	foreignDropped := r.dropReasoningForeignToClaude(request, dispatch, ctx.SourceFormat)
+	carry := protocolcodec.CarryReasoningTo(request, dispatch.targetFormat)
+	carry.ForeignDropped = foreignDropped
+	if carry.Changed() {
 		changed = true
 		if carry.Dropped() > 0 {
 			logging.ComponentEvent("extproc", "reasoning_dropped", map[string]interface{}{
@@ -75,6 +79,7 @@ func (r *OpenAIRouter) prepareProviderDispatch(
 				"dropped":          carry.Dropped(),
 				"redacted_dropped": carry.RedactedDropped,
 				"unsigned_dropped": carry.UnsignedDropped,
+				"foreign_dropped":  carry.ForeignDropped,
 			})
 		}
 		if carry.SignaturesStripped > 0 {

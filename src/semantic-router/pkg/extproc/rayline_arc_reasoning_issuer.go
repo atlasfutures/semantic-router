@@ -167,3 +167,40 @@ func (r *OpenAIRouter) opaqueReasoningIssuerFor(dispatch *providerDispatch) stri
 	}
 	return strings.Join([]string{dispatch.logicalModel, dispatch.backendName, dispatch.upstreamModel}, "\x00")
 }
+
+// anthropicFamily is the model family armFamily names for Claude: the card
+// publisher, or the vendor segment of an anthropic/... provider model id.
+const anthropicFamily = "anthropic"
+
+// dropReasoningForeignToClaude drops, for a Claude worker, the reasoning in
+// the history that is not provably Claude's
+// (protocolcodec.DropReasoningNotFromAnthropic), and returns how many contents
+// it dropped. It is keyed on the worker's model family, not on the wire
+// format, so a Claude worker reached over Messages, Chat or Responses gets the
+// same history. A turn whose episode has no record arrives with nothing that
+// names which model wrote its reasoning, and OpenRouter hands an assistant
+// message's reasoning to the model: Anthropic answers another model's
+// reasoning with a content_filter refusal.
+//
+// Each block's fate depends only on the block and the worker's family, never
+// on the turn or on what follows it, so a run of turns on one model sends the
+// same prefix every turn and its prompt cache keeps matching.
+//
+// Only a Claude worker is filtered this way. Unproven reasoning cannot be
+// dropped for another worker: DeepSeek and MiMo need their own
+// reasoning_content back in a tool history, and nothing in a request without
+// an episode record proves that it is theirs. The reverse direction keeps the
+// disposition table's rule: Claude's signed thinking reaches any other worker
+// as reasoning text with its signature stripped, because those providers
+// expect reasoning_content on every tool-calling turn of a history, and
+// reasoning_details reach a Chat worker as the client sent them.
+func (r *OpenAIRouter) dropReasoningForeignToClaude(
+	request *llmprotocol.Request,
+	dispatch *providerDispatch,
+	source llmprotocol.WireFormat,
+) int {
+	if request == nil || dispatch == nil || r.armFamily(dispatch.logicalModel) != anthropicFamily {
+		return 0
+	}
+	return protocolcodec.DropReasoningNotFromAnthropic(request, source)
+}

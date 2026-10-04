@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
@@ -192,5 +193,173 @@ func TestOpaqueReasoningIsFoundAndDropped(t *testing.T) {
 	if dropped != 2 || len(request.Messages) != 2 || len(request.Messages[0].Content) != 1 ||
 		request.Messages[0].Content[0].Text != "a1" {
 		t.Fatalf("dropped %d, messages %+v", dropped, request.Messages)
+	}
+}
+
+func reasoningDetailsContent(text, details string) llmprotocol.Content {
+	return llmprotocol.Content{
+		Kind: llmprotocol.ContentReasoning, Text: text, Reasoning: llmprotocol.ReasoningScopeText,
+		Extensions: reasoningDetailsFields([]byte(details)),
+	}
+}
+
+// A Claude target keeps only the reasoning Claude provably wrote: a thinking
+// signature, or reasoning_details OpenRouter tagged anthropic-claude-v1.
+// Everything else is dropped and counted, a message left empty goes, and
+// visible text and tool calls are never touched.
+func TestDropReasoningNotFromAnthropic(t *testing.T) {
+	claudeItem := `{"type":"reasoning.text","text":"c","signature":"sig","format":"anthropic-claude-v1","index":0}`
+	geminiItem := `{"type":"reasoning.encrypted","data":"g","format":"google-gemini-v1","index":1}`
+	kimiItem := `{"type":"reasoning.text","text":"k","format":"unknown","index":0}`
+	geminiTextItem := `{"type":"reasoning.text","text":"gemini text","format":"google-gemini-v1","index":1}`
+	text := llmprotocol.Content{Kind: llmprotocol.ContentText, Text: "visible"}
+	call := llmprotocol.Content{Kind: llmprotocol.ContentToolCall, ToolCall: &llmprotocol.ToolCall{ID: "call_1", Name: "bash"}}
+	for _, tc := range []struct {
+		name        string
+		source      llmprotocol.WireFormat
+		content     llmprotocol.Content
+		wantDropped int
+		wantPruned  int
+		wantDetails string
+	}{
+		{"a Messages client's signed thinking", llmprotocol.AnthropicMessagesV1, llmprotocol.Content{Kind: llmprotocol.ContentReasoning, Text: "c", Signature: "sig"}, 0, 0, ""},
+		{"a Responses client's signed thinking", llmprotocol.OpenAIResponsesV1, llmprotocol.Content{Kind: llmprotocol.ContentReasoning, Text: "c", Signature: "sig"}, 0, 0, ""},
+		{"a signature with no Anthropic provenance", llmprotocol.OpenAIChatV1, llmprotocol.Content{Kind: llmprotocol.ContentReasoning, Text: "g", Signature: "gemini-sig"}, 1, 0, ""},
+		{"unsigned thinking", llmprotocol.OpenAIChatV1, llmprotocol.Content{Kind: llmprotocol.ContentReasoning, Text: "k"}, 1, 0, ""},
+		{"reasoning_content with unknown details", llmprotocol.OpenAIChatV1, reasoningDetailsContent("k", "["+kimiItem+"]"), 1, 0, ""},
+		{"details with no format", llmprotocol.OpenAIChatV1, reasoningDetailsContent("", `[{"type":"reasoning.text","text":"k"}]`), 1, 0, ""},
+		{"gemini details", llmprotocol.OpenAIChatV1, reasoningDetailsContent("", "["+geminiItem+"]"), 1, 0, ""},
+		{"claude details", llmprotocol.OpenAIChatV1, reasoningDetailsContent("c", "["+claudeItem+"]"), 0, 0, "[" + claudeItem + "]"},
+		{"mixed details keep Claude's items", llmprotocol.OpenAIChatV1, reasoningDetailsContent("c", "["+claudeItem+","+geminiItem+"]"), 0, 1, "[" + claudeItem + "]"},
+		{"mixed details rebuild the text from Claude's items", llmprotocol.OpenAIChatV1, reasoningDetailsContent("cgemini text", "["+claudeItem+","+geminiTextItem+"]"), 0, 1, "[" + claudeItem + "]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := llmprotocol.Request{Messages: []llmprotocol.Message{
+				{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: "q"}}},
+				{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{tc.content, text, call}},
+				{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{tc.content}},
+				{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: "q2"}}},
+			}}
+			dropped := DropReasoningNotFromAnthropic(&request, tc.source)
+			if dropped != 2*(tc.wantDropped+tc.wantPruned) {
+				t.Fatalf("dropped = %d, want %d", dropped, 2*(tc.wantDropped+tc.wantPruned))
+			}
+			wantMessages := 4
+			if tc.wantDropped > 0 {
+				wantMessages = 3
+			}
+			if len(request.Messages) != wantMessages {
+				t.Fatalf("messages = %d, want %d", len(request.Messages), wantMessages)
+			}
+			mixed := request.Messages[1].Content
+			if mixed[len(mixed)-2].Text != text.Text || mixed[len(mixed)-1].ToolCall == nil {
+				t.Fatalf("visible text or the tool call was touched: %+v", mixed)
+			}
+			if tc.wantDropped > 0 {
+				if len(mixed) != 2 {
+					t.Fatalf("the reasoning was kept: %+v", mixed)
+				}
+				return
+			}
+			if tc.wantDetails != "" {
+				details, _ := reasoningDetailsOf(mixed[0])
+				if string(details) != tc.wantDetails || mixed[0].Text != "c" {
+					t.Fatalf("details = %s text = %q, want %s", details, mixed[0].Text, tc.wantDetails)
+				}
+			}
+		})
+	}
+}
+
+// Signed reasoning reaches a Claude worker only with Anthropic provenance. A
+// Responses client's reasoning signed under another format, or under none,
+// decodes without a signature, so it is dropped like any unproven reasoning.
+func TestDropReasoningNotFromAnthropicNeedsAnthropicProvenanceForASignature(t *testing.T) {
+	engine, err := NewEngine(NewBuiltinRegistry(), llmprotocol.DefaultPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, format := range map[string]string{
+		"gemini": `,"format":"google-gemini-v1"`, "no format": "", "claude": `,"format":"anthropic-claude-v1"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			request, _, _, err := engine.DecodeRequest(llmprotocol.OpenAIResponsesV1, []byte(`{"model":"m","store":false,"input":[`+
+				`{"role":"user","content":"q"},`+
+				`{"type":"reasoning","id":"r1","summary":[],"content":[{"type":"reasoning_text","text":"thought"}],"signature":"sig"`+format+`},`+
+				`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"a"}]},`+
+				`{"role":"user","content":"q2"}]}`))
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			dropped := DropReasoningNotFromAnthropic(&request, llmprotocol.OpenAIResponsesV1)
+			signed, unsigned := reasoningOf(request)
+			if name == "claude" {
+				if dropped != 0 || signed != 1 {
+					t.Fatalf("Claude's signed reasoning: dropped %d, %d signed left; want kept", dropped, signed)
+				}
+				return
+			}
+			if dropped != 1 || signed+unsigned != 0 {
+				t.Fatalf("dropped %d, %d signed and %d unsigned left; want the reasoning dropped", dropped, signed, unsigned)
+			}
+			for _, message := range request.Messages {
+				for _, content := range message.Content {
+					if content.Unmodeled != nil && content.Unmodeled.Type == "reasoning" {
+						t.Fatalf("the signed item was kept whole: %s", content.Unmodeled.Raw)
+					}
+				}
+			}
+		})
+	}
+}
+
+// After the drop the history still encodes for Chat and Responses targets: a
+// reasoning-only assistant turn is removed, leaving two user turns adjacent,
+// and an assistant turn that called a tool keeps its call, so its result is
+// never orphaned.
+func TestDropReasoningNotFromAnthropicLeavesAnEncodableHistory(t *testing.T) {
+	engine, err := NewEngine(NewBuiltinRegistry(), llmprotocol.DefaultPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, envelope, _, err := engine.DecodeRequest(llmprotocol.OpenAIChatV1, []byte(`{"model":"m","messages":[`+
+		`{"role":"user","content":"first"},`+
+		`{"role":"assistant","content":null,"reasoning_content":"kimi reasoning"},`+
+		`{"role":"user","content":"second"},`+
+		`{"role":"assistant","content":null,"reasoning_content":"kimi reasoning",`+
+		`"tool_calls":[{"id":"call_1","type":"function","function":{"name":"bash","arguments":"{}"}}]},`+
+		`{"role":"tool","tool_call_id":"call_1","content":"ok"},`+
+		`{"role":"user","content":"third"}],`+
+		`"tools":[{"type":"function","function":{"name":"bash","parameters":{"type":"object","properties":{}}}}]}`))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if dropped := DropReasoningNotFromAnthropic(&request, llmprotocol.OpenAIChatV1); dropped != 2 {
+		t.Fatalf("dropped = %d, want 2", dropped)
+	}
+	request.Generation++
+	roles := make([]llmprotocol.Role, 0, len(request.Messages))
+	for _, message := range request.Messages {
+		roles = append(roles, message.Role)
+		if message.Role == llmprotocol.RoleAssistant && len(message.Content) == 0 {
+			t.Fatalf("an empty assistant turn was kept: %+v", request.Messages)
+		}
+	}
+	if len(request.Messages) != 5 || roles[0] != llmprotocol.RoleUser || roles[1] != llmprotocol.RoleUser ||
+		roles[2] != llmprotocol.RoleAssistant || request.Messages[2].Content[0].ToolCall == nil {
+		t.Fatalf("roles = %v, want user, user, assistant(tool call), tool result, user", roles)
+	}
+	for _, target := range []llmprotocol.WireFormat{llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1} {
+		result, err := engine.EncodeRequest(target, request, envelope)
+		if err != nil {
+			t.Fatalf("%s: encode: %v", target, err)
+		}
+		if _, _, _, err := engine.DecodeRequest(target, result.Body); err != nil {
+			t.Fatalf("%s: the encoded history does not decode: %v\n%s", target, err, result.Body)
+		}
+		wire := string(result.Body)
+		if strings.Contains(wire, "kimi reasoning") || strings.Count(wire, "call_1") < 2 {
+			t.Fatalf("%s: reasoning kept or the tool call and its result lost: %s", target, wire)
+		}
 	}
 }
