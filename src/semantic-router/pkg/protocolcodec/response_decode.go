@@ -70,6 +70,7 @@ func (engine *Engine) DecodeResponseStream(
 	decoder := pair.stream.NewDecoder(context, engine.providerStreamPolicy())
 	accumulator := newResponseAccumulator()
 	events, diagnostics, err := decoder.Push(body)
+	diagnostics = withStateDiagnostics(decoder, diagnostics, engine.policy.Limits.Diagnostics)
 	if applyErr := accumulator.apply(events); applyErr != nil {
 		return llmprotocol.Response{}, diagnostics, applyErr
 	}
@@ -77,6 +78,7 @@ func (engine *Engine) DecodeResponseStream(
 		return llmprotocol.Response{}, diagnostics, err
 	}
 	finalEvents, finalDiagnostics, err := decoder.Finalize(nil)
+	finalDiagnostics = withStateDiagnostics(decoder, finalDiagnostics, engine.policy.Limits.Diagnostics)
 	diagnostics = appendDiagnostics(diagnostics, finalDiagnostics, engine.policy.Limits.Diagnostics)
 	if applyErr := accumulator.apply(finalEvents); applyErr != nil {
 		return llmprotocol.Response{}, diagnostics, applyErr

@@ -9,6 +9,9 @@ import (
 )
 
 type streamState struct {
+	// stateDiagnostics are diagnostics the shared stream state raised while
+	// a decoder pushed events through it; the engine collects them.
+	stateDiagnostics      llmprotocol.Diagnostics
 	context               llmprotocol.StreamContext
 	policy                llmprotocol.Policy
 	providerID            string
@@ -485,4 +488,36 @@ func (state *streamState) recordToolDelta(event llmprotocol.Event) (llmprotocol.
 	}
 	state.toolArguments[event.ItemIndex] = append(current, event.ToolCall.Arguments...)
 	return event, nil
+}
+
+// maxStateDiagnostics bounds the diagnostics a stream state holds between
+// collections.
+const maxStateDiagnostics = 8
+
+func (state *streamState) noteStateDiagnostic(diagnostic llmprotocol.Diagnostic) {
+	if len(state.stateDiagnostics) < maxStateDiagnostics {
+		state.stateDiagnostics = append(state.stateDiagnostics, diagnostic)
+	}
+}
+
+// takeStateDiagnostics returns and clears the diagnostics the stream state
+// raised.
+func (state *streamState) takeStateDiagnostics() llmprotocol.Diagnostics {
+	taken := state.stateDiagnostics
+	state.stateDiagnostics = nil
+	return taken
+}
+
+// stateDiagnosticSource is a decoder whose shared stream state raises
+// diagnostics of its own; every built-in decoder embeds one.
+type stateDiagnosticSource interface {
+	takeStateDiagnostics() llmprotocol.Diagnostics
+}
+
+// withStateDiagnostics appends what decoder's stream state raised.
+func withStateDiagnostics(decoder any, diagnostics llmprotocol.Diagnostics, limit int) llmprotocol.Diagnostics {
+	if source, ok := decoder.(stateDiagnosticSource); ok {
+		return appendDiagnostics(diagnostics, source.takeStateDiagnostics(), limit)
+	}
+	return diagnostics
 }
