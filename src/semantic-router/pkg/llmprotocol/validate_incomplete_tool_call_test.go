@@ -44,3 +44,21 @@ func TestPartialArgumentsWithoutTheIncompleteMarkStayInvalid(t *testing.T) {
 	response.Output[1].Content[0].ToolCall.Incomplete = false
 	requireLLMProtocolErrorCode(t, ValidateResponse(response, DefaultPolicy().Limits), "invalid_tool_call")
 }
+
+// An incomplete call's arguments are a whole object or the start of one. A
+// complete value that is not an object, or text that never opened an object,
+// is a malformed reply, not a cut, even when the call is marked incomplete.
+func TestAnIncompleteToolCallStillNeedsAnObjectOrItsStart(t *testing.T) {
+	for _, arguments := range []string{`{}`, `{"command": "ls`, ` {"a":`} {
+		response := incompleteToolCallResponse(StopMaxTokens)
+		response.Output[1].Content[0].ToolCall.Arguments = arguments
+		if err := ValidateResponse(response, DefaultPolicy().Limits); err != nil {
+			t.Fatalf("arguments %q were refused: %v", arguments, err)
+		}
+	}
+	for _, arguments := range []string{`[]`, `true`, `"text"`, `run ls`, `[1, 2`, ``} {
+		response := incompleteToolCallResponse(StopMaxTokens)
+		response.Output[1].Content[0].ToolCall.Arguments = arguments
+		requireLLMProtocolErrorCode(t, ValidateResponse(response, DefaultPolicy().Limits), "invalid_tool_call")
+	}
+}

@@ -1,9 +1,7 @@
 package protocolcodec
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"math"
 	"strings"
@@ -205,12 +203,10 @@ func (state *streamState) finalToolArguments(event llmprotocol.Event) ([]byte, b
 	return arguments, isJSONObject(arguments, state.policy.Limits.JSONDepth), nil
 }
 
-// truncatedJSONObject reports arguments that could be the start of a JSON
-// object the model was cut off writing: they open an object and do not yet
-// form a whole JSON value.
+// truncatedJSONObject is llmprotocol.TruncatedJSONObject: the stream and a
+// buffered response judge a cut the same way.
 func truncatedJSONObject(arguments []byte) bool {
-	trimmed := bytes.TrimSpace(arguments)
-	return len(trimmed) > 0 && trimmed[0] == '{' && !json.Valid(trimmed)
+	return llmprotocol.TruncatedJSONObject(arguments)
 }
 
 func (state *streamState) markItemComplete(itemIndex int) {
