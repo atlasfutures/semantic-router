@@ -285,6 +285,12 @@ routing:
   of the budget.
 - **Caps still apply.** A decision's `request_params` `max_tokens_limit` caps
   the Router's limit too.
+- **The target's minimum is respected.** Responses refuses a
+  `max_output_tokens` below 16, so a smaller card value or cap is raised to 16.
+  If 16 is above the decision's `max_tokens_limit`, the request is sent with no
+  limit, as the client sent it.
+- **LoRA adapters use their base model's card.** A decision that selects a
+  `lora_name` gets the base model's `max_output_tokens`.
 - **Only the operator's value is sent.** A catalog model's built-in maximum
   output is not used as the limit.
 - The value must be a positive integer. Zero or a negative value is refused
