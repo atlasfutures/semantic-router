@@ -647,6 +647,61 @@ func TestAnIncompleteStreamNamesItsFailure(t *testing.T) {
 	}
 }
 
+// A provider that fails while a tool call's arguments are still streaming
+// leaves them a truncated object. Through the Router's own buffers, every
+// client format is told the provider's failure, never
+// invalid_stream_tool_arguments, and the usage and turn_failed lines keep
+// the provider's class and code.
+func TestAProviderFailureDuringACutToolCallKeepsItsClass(t *testing.T) {
+	start := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":12,\"output_tokens\":1}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"bash\",\"input\":{}}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\\\": \"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"ls -la /tm\"}}\n\n"
+	stop := "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+	overloaded := "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n"
+	for name, frames := range map[string]string{
+		"block open":    start + overloaded,
+		"block stopped": start + stop + overloaded,
+	} {
+		for _, client := range []llmprotocol.WireFormat{
+			llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1,
+		} {
+			t.Run(name+"/"+string(client), func(t *testing.T) {
+				logs := captureLogs(t)
+				stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, client,
+					llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx := &RequestContext{
+					RequestID: "req-cut-failure", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+					SourceFormat: client, TargetFormat: llmprotocol.AnthropicMessagesV1,
+					ProtocolResponseStream: stream,
+					SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+				}
+				buffers := &semanticStreamBuffers{}
+				buffers.push([]byte(frames), ctx)
+				buffers.finalize(ctx)
+				(&OpenAIRouter{}).finalizeSemanticStreamingResponse(ctx, buffers.streamErr)
+				body := string(buffers.translated)
+				if buffers.streamErr != nil || strings.Contains(body, "invalid_stream_tool_arguments") {
+					t.Fatalf("stream error %v; the client was told the symptom:\n%s", buffers.streamErr, body)
+				}
+				if !strings.Contains(body, "overloaded_error") {
+					t.Fatalf("the client was not told the provider's failure:\n%s", body)
+				}
+				for _, event := range []string{"llm_usage", "turn_failed"} {
+					fields := findLogEvent(t, logs, event)
+					if fields["failure_class"] != turnFailureUpstream5xx || fields["failure_detail"] != "provider:overloaded_error" {
+						t.Fatalf("%s = class %v detail %v, want %s provider:overloaded_error",
+							event, fields["failure_class"], fields["failure_detail"], turnFailureUpstream5xx)
+					}
+				}
+			})
+		}
+	}
+}
+
 // A stream the client or the proxy ended first is classed client_ended, with
 // the usage the provider stated and whether content had reached the client.
 // It is neither an arm nor a cell failure: it counts against no backend and
