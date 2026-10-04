@@ -194,7 +194,7 @@ func TruncatedJSONObject(arguments []byte, maximumDepth int) bool {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(trimmed))
 	decoder.UseNumber()
-	err := walkJSONObjectPrefix(decoder, maximumDepth)
+	err := walkJSONObjectPrefix(decoder, trimmed, maximumDepth)
 	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
@@ -211,11 +211,20 @@ type jsonPrefixFrame struct {
 // decoder enforces the grammar (colons, commas, closers); the walk adds what
 // ValidateJSONObject adds: string keys, no duplicate member, and depth,
 // counted as consumeJSONValue counts it, with the top object's members at 1.
-func walkJSONObjectPrefix(decoder *json.Decoder, maximumDepth int) error {
+//
+// A container may open at the deepest legal depth, since it can still close
+// empty ({"x":{}} is valid at depth 1). What it may not do there is begin a
+// member: a key, or an array element, would put a value one level deeper.
+// So the bound is applied as soon as a member begins, whether as a whole
+// token or as bytes the input ends inside (startedValue).
+func walkJSONObjectPrefix(decoder *json.Decoder, body []byte, maximumDepth int) error {
 	var stack []jsonPrefixFrame
 	for {
 		token, err := decoder.Token()
 		if err != nil {
+			if len(stack) > maximumDepth && startedValue(body[decoder.InputOffset():]) {
+				return fmt.Errorf("JSON nesting exceeds the configured limit")
+			}
 			return err
 		}
 		delimiter, isDelimiter := token.(json.Delim)
@@ -226,12 +235,13 @@ func walkJSONObjectPrefix(decoder *json.Decoder, maximumDepth int) error {
 				return fmt.Errorf("JSON object is complete")
 			}
 			markJSONPrefixValue(&stack[len(stack)-1])
+		case len(stack) > maximumDepth:
+			// A key or an element of a container at the deepest legal depth.
+			return fmt.Errorf("JSON nesting exceeds the configured limit")
 		case len(stack) > 0 && stack[len(stack)-1].object && stack[len(stack)-1].expectKey:
 			if err := takeJSONPrefixKey(&stack[len(stack)-1], token); err != nil {
 				return err
 			}
-		case len(stack) > maximumDepth:
-			return fmt.Errorf("JSON nesting exceeds the configured limit")
 		case isDelimiter:
 			stack = append(stack, jsonPrefixFrame{
 				object: delimiter == '{', expectKey: delimiter == '{', seen: map[string]struct{}{},
@@ -242,6 +252,13 @@ func walkJSONObjectPrefix(decoder *json.Decoder, maximumDepth int) error {
 			markJSONPrefixValue(&stack[len(stack)-1])
 		}
 	}
+}
+
+// startedValue reports bytes past the last whole token: the input ended
+// inside a key or a value. In a container too deep for members, the last
+// whole token is its opener, so no separator can sit between them.
+func startedValue(rest []byte) bool {
+	return len(bytes.TrimSpace(rest)) > 0
 }
 
 func takeJSONPrefixKey(frame *jsonPrefixFrame, token json.Token) error {

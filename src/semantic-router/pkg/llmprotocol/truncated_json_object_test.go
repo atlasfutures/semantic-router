@@ -51,3 +51,35 @@ func TestTruncatedJSONObjectKeepsTheDepthBound(t *testing.T) {
 		t.Fatal("the depth counted here differs from ValidateJSONObject's")
 	}
 }
+
+// The depth bound applies as soon as a member of a too-deep container
+// begins. Each prefix is paired with a completion that shows which way
+// ValidateJSONObject decides at depth 1: a container at the deepest legal
+// depth can still close empty, but no key or element can enter it.
+func TestTruncatedJSONObjectRefusesAMemberBeyondTheDepthLimit(t *testing.T) {
+	for _, test := range []struct {
+		prefix, completion string
+		atDepthOne         bool
+	}{
+		{`{"x":{"y":`, `1}}`, false},
+		{`{"x":{"y"`, `:1}}`, false},
+		{`{"x":{"y`, `":1}}`, false},
+		{`{"x":["a`, `"]}`, false},
+		{`{"x":[1,`, `2]}`, false},
+		{`{"x":{`, `}}`, true},
+		{`{"x":[`, `]}`, true},
+		{`{"x": { `, `}}`, true},
+	} {
+		whole := ValidateJSONObject([]byte(test.prefix+test.completion), 1) == nil
+		if whole != test.atDepthOne {
+			t.Fatalf("%s%s at depth 1: ValidateJSONObject says %v, the case says %v",
+				test.prefix, test.completion, whole, test.atDepthOne)
+		}
+		if got := TruncatedJSONObject([]byte(test.prefix), 1); got != test.atDepthOne {
+			t.Errorf("%q at depth 1: accepted = %v, want %v", test.prefix, got, test.atDepthOne)
+		}
+		if !TruncatedJSONObject([]byte(test.prefix), 2) {
+			t.Errorf("%q at depth 2 was refused", test.prefix)
+		}
+	}
+}
