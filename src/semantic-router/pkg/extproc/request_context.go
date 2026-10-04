@@ -204,7 +204,11 @@ type RequestContext struct {
 	VSRSelectedModel              string  // The model selected by VSR
 	// DispatchHostedTools names the provider-run tools the dispatched model's
 	// card admits (hosted_tools); encodeDispatchRequest hands it to the codec.
-	DispatchHostedTools             []string
+	DispatchHostedTools []string
+	// DispatchAutoCache is the automatic-cache directive the Router supplies
+	// for a Claude worker over Messages when the client stated none
+	// (claudeAutoCache); encodeDispatchRequest sets it on the dispatched copy.
+	DispatchAutoCache               *dispatchAutoCache
 	VSRSelectionMethod              string                                      // Model selection algorithm used (e.g., "elo", "static", "router_dc")
 	VSRSelectionReasoning           string                                      // Bounded human-readable selector rationale for replay
 	VSRFusionQuorum                 *routerreplay.FusionQuorumDiagnostics       // Content-free Fusion panel quorum evidence for replay
