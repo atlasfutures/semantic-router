@@ -220,6 +220,41 @@ func TestAWholeNonObjectArgumentFailsAtCompletion(t *testing.T) {
 	}
 }
 
+// A model cut off at max_tokens generates nothing more: output after a cut
+// call proves the call malformed, even when the turn then stops at max_tokens.
+func TestOutputAfterACutToolCallFailsItUnderMaxTokens(t *testing.T) {
+	all := strings.Join(loadMaxTokensToolCutChunks(t, maxTokensToolCutFixture), "")
+	terminalAt := strings.Index(all, "event: message_delta")
+	body := all[:terminalAt] +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"more\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n" + all[terminalAt:]
+	_, err := translateCut(t, llmprotocol.OpenAIResponsesV1, []string{body})
+	requireProtocolErrorCode(t, err, "invalid_stream_tool_arguments")
+}
+
+// Without OpenRouter's native length reason, the recorded Chat cut reads as
+// a tool_calls stop over truncated arguments and fails as such: the error
+// that refuses the terminal is the one reported.
+func TestAChatToolCutWithoutANativeLengthReasonFails(t *testing.T) {
+	chunks := strings.ReplaceAll(
+		strings.Join(loadMaxTokensToolCutChunks(t, "stream/041-chat-max-tokens-mid-tool-in.json"), ""),
+		`"native_finish_reason":"max_output_tokens"`, `"native_finish_reason":null`,
+	)
+	for _, target := range []llmprotocol.WireFormat{
+		llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1,
+	} {
+		stream, err := NewBuiltinEngine().NewStream(llmprotocol.OpenAIChatV1, target, llmprotocol.StreamContext{
+			Context: context.Background(), PublicModel: "public-model",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, _, pushErr := stream.Push([]byte(chunks))
+		requireProtocolErrorCode(t, pushErr, "invalid_stream_tool_arguments")
+	}
+}
+
 func requireBufferedCutShapes(t *testing.T, engine *Engine, response llmprotocol.Response) {
 	t.Helper()
 	t.Run("anthropic", func(t *testing.T) {
