@@ -256,6 +256,9 @@ func (state *streamState) applyTerminalEvent(event llmprotocol.Event) (llmprotoc
 	if event.Type == llmprotocol.EventResponseCompleted {
 		event, err = state.validateCompletedEvent(event)
 	} else {
+		if err := state.heldCutFailure(llmprotocol.StopError, true); err != nil {
+			return llmprotocol.Event{}, err
+		}
 		if event.Usage == nil && state.usage.State == llmprotocol.UsageAvailable {
 			usage := state.usage
 			event.Usage = &usage
@@ -302,15 +305,36 @@ func (state *streamState) validateCompletedLifecycle(event llmprotocol.Event) er
 	if len(state.toolArguments) != 0 {
 		return llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "stream_tool_arguments_incomplete", "upstream stream completed with unfinished tool arguments", nil)
 	}
-	// A cut tool item is a length stop only when the turn stopped at
-	// max_tokens. Under any other stop its arguments are simply malformed.
-	if len(state.cutItems) > 0 && event.StopReason != llmprotocol.StopMaxTokens {
-		return invalidStreamToolArguments()
+	if err := state.heldCutFailure(event.StopReason, false); err != nil {
+		return err
 	}
 	if event.Error != nil {
 		return llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "stream_terminal_shape", "completed stream cannot contain an error", nil)
 	}
 	return nil
+}
+
+// heldCutFailure decides a held cut tool item (see cutItems) when the turn
+// ends: with a completion under stop, with a failure, or at the end of the
+// stream.
+//
+//   - A failure ends the turn before anything is said about the item. The
+//     provider's in-band error (an Anthropic error event, a Chat error
+//     chunk, a Responses response.failed or error), or the Router's own end
+//     (its deadline cut, a transport or receive end, Finalize with a
+//     reason), is what the client is told, in its format, as it would be
+//     with no cut item held. The item is never reported as a tool-argument
+//     error: the unfinished arguments are the symptom, the failure is the
+//     cause, and the first failure wins.
+//   - A completion under max_tokens is the length stop it is.
+//   - A completion under any other stop, or a stream that ends cleanly with
+//     no terminal, never said it stopped at max_tokens, so the item's
+//     arguments are simply malformed.
+func (state *streamState) heldCutFailure(stop llmprotocol.StopReason, failed bool) error {
+	if len(state.cutItems) == 0 || failed || stop == llmprotocol.StopMaxTokens {
+		return nil
+	}
+	return invalidStreamToolArguments()
 }
 
 func validateCompletedStopReason(event llmprotocol.Event) (llmprotocol.Event, error) {
@@ -481,13 +505,8 @@ func (state *streamState) finalize(reason error) ([]llmprotocol.Event, error) {
 	if state.terminal {
 		return nil, nil
 	}
-	// A stream that ends with a cut tool item and no terminal never said it
-	// stopped at max_tokens, so the item fails as malformed, as it did when
-	// the arguments were checked at the item's completion. A codec failure
-	// already raised keeps its own code.
-	var raised *llmprotocol.ProtocolError
-	if len(state.cutItems) > 0 && !errors.As(reason, &raised) {
-		return nil, invalidStreamToolArguments()
+	if err := state.heldCutFailure(llmprotocol.StopUnknown, reason != nil); err != nil {
+		return nil, err
 	}
 	if reason == nil {
 		reason = errors.New("upstream stream ended without a terminal event")
