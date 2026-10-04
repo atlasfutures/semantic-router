@@ -203,7 +203,12 @@ func TestABufferedMessagesToolCutReadsAsIncomplete(t *testing.T) {
 // Only a truncated object is held to the terminal. A whole value that is not
 // an object is no prefix of a call and fails at the item's completion.
 func TestAWholeNonObjectArgumentFailsAtCompletion(t *testing.T) {
-	for _, arguments := range []string{`[]`, `true`, `"x"`, `{"a":1,"a":2}`} {
+	depth := llmprotocol.DefaultPolicy().Limits.JSONDepth
+	for _, arguments := range []string{
+		`[]`, `true`, `"x"`, `{"a":1,"a":2}`,
+		// No bytes could complete these, or not within the depth limit.
+		`{]`, `{"x":]`, `{"a":` + strings.Repeat(`[`, depth+1),
+	} {
 		state := newTestStreamState()
 		startTestStream(t, state)
 		if _, err := state.next(llmprotocol.Event{

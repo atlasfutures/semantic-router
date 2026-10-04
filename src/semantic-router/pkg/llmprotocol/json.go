@@ -189,7 +189,7 @@ func TruncatedJSONObject(arguments []byte, maximumDepth int) bool {
 	if len(trimmed) == 0 || trimmed[0] != '{' || maximumDepth <= 0 || !utf8.Valid(trimmed) {
 		return false
 	}
-	if validateJSONUnicodeEscapes(trimmed) != nil || ValidateJSONObject(trimmed, maximumDepth) == nil {
+	if !validJSONEscapesPrefix(trimmed) {
 		return false
 	}
 	decoder := json.NewDecoder(bytes.NewReader(trimmed))
@@ -261,4 +261,57 @@ func markJSONPrefixValue(frame *jsonPrefixFrame) {
 	if frame.object {
 		frame.expectKey = true
 	}
+}
+
+// validJSONEscapesPrefix applies validateJSONUnicodeEscapes to a prefix. The
+// one escape a prefix may leave unfinished is a surrogate pair cut between
+// its halves: a high-surrogate escape followed by the start of a low one.
+func validJSONEscapesPrefix(body []byte) bool {
+	if validateJSONUnicodeEscapes(body) == nil {
+		return true
+	}
+	start := cutSurrogatePair(body)
+	return start >= 0 && validateJSONUnicodeEscapes(body[:start]) == nil
+}
+
+// cutSurrogatePair returns where a trailing high-surrogate escape starts
+// when what follows it can still become its low surrogate, or -1.
+func cutSurrogatePair(body []byte) int {
+	for start := len(body) - 6; start >= 0 && start > len(body)-12; start-- {
+		if body[start] != '\\' || body[start+1] != 'u' {
+			continue
+		}
+		high, ok := decodeHexQuad(body, start+2)
+		if ok && high >= 0xd800 && high <= 0xdbff && lowSurrogateEscapePrefix(body[start+6:]) {
+			return start
+		}
+	}
+	return -1
+}
+
+// lowSurrogateEscapePrefix reports a strict prefix of an escape \uDC00
+// through \uDFFF.
+func lowSurrogateEscapePrefix(tail []byte) bool {
+	if len(tail) >= 6 {
+		return false
+	}
+	for index, character := range tail {
+		var ok bool
+		switch index {
+		case 0:
+			ok = character == '\\'
+		case 1:
+			ok = character == 'u'
+		case 2:
+			ok = character == 'd' || character == 'D'
+		case 3:
+			ok = bytes.IndexByte([]byte("cdefCDEF"), character) >= 0
+		default:
+			ok = bytes.IndexByte([]byte("0123456789abcdefABCDEF"), character) >= 0
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
 }

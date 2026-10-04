@@ -10,6 +10,8 @@ func TestTruncatedJSONObjectAcceptsOnlyAStrictPrefixOfAnObject(t *testing.T) {
 	for _, prefix := range []string{
 		`{`, `{"a`, `{"a":`, `{"a":"x`, `{"a":[1,`, `{"a":{"b":`,
 		`{"a":1`, `{"a":tr`, `{"a":"x\u00`, `{"a":{},"b":[{"c":null}`, ` {"a": "b", `,
+		// A surrogate pair cut between its halves.
+		`{"a":"\ud83d`, `{"a":"\ud83d\u`, `{"a":"\ud83d\udc`,
 	} {
 		if !TruncatedJSONObject([]byte(prefix), depth) {
 			t.Errorf("prefix %q was refused", prefix)
@@ -20,6 +22,8 @@ func TestTruncatedJSONObjectAcceptsOnlyAStrictPrefixOfAnObject(t *testing.T) {
 		`{]`, `{"x":]`, `{"a" "b"`, `{,`, `{"a":1,,`, `{"a":tx`, `{1:`,
 		// A member repeated, as the strict validator refuses.
 		`{"a":1,"a":`,
+		// A lone surrogate, which the strict validator refuses.
+		`{"a":"\ud83dx`, `{"a":"\ud83d\u0041`, `{"a":"\udc00`,
 		// Whole values: an object is not truncated; the rest are not objects.
 		`{}`, `{"a":1}`, `{"a":1}}`, `[]`, `true`, `"x"`, `[1, 2`, `run ls`, ``,
 	} {
