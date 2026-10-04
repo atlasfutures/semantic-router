@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"bytes"
 	"encoding/json"
 	"reflect"
 
@@ -719,12 +720,22 @@ func encodeAnthropicMediaBlock(content llmprotocol.Content) anthropicContentWire
 	}}
 }
 
+// wholeJSONObject reports arguments that are one complete JSON object, the
+// form a tool_use "input" holds. It is a structural check with no depth limit
+// of its own: the engine validated the call against its active policy before
+// encoding (ValidateResponse, ValidateRequest), so a second, fixed limit here
+// could only disagree with that one and drop input the policy admitted.
+func wholeJSONObject(arguments []byte) bool {
+	trimmed := bytes.TrimSpace(arguments)
+	return len(trimmed) > 0 && trimmed[0] == '{' && json.Valid(trimmed)
+}
+
 func encodeAnthropicToolCallBlock(call *llmprotocol.ToolCall) (anthropicContentWire, error) {
 	if call == nil {
 		return anthropicContentWire{}, llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_tool_call", "tool call is invalid", nil)
 	}
 	arguments := json.RawMessage(call.Arguments)
-	if call.Incomplete && !isJSONObject(arguments, llmprotocol.DefaultPolicy().Limits.JSONDepth) {
+	if call.Incomplete && !wholeJSONObject(arguments) {
 		// A tool_use block Claude was cut off writing at max_tokens. A
 		// non-streaming Messages response keeps the block, with "input": {}
 		// rather than the partial arguments, beside stop_reason "max_tokens"

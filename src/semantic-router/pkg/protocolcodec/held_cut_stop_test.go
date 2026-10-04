@@ -3,6 +3,7 @@ package protocolcodec
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
@@ -227,5 +228,33 @@ func requireResponsesIncompleteCut(t *testing.T, wire []byte, reason string) {
 	output, _ := terminal["output"].([]any)
 	if len(output) == 0 || output[len(output)-1].(map[string]any)["status"] != "incomplete" {
 		t.Fatalf("terminal output = %v", output)
+	}
+}
+
+// A cut call's whole input is kept at whatever depth the engine's policy
+// admits: an engine that allows deeper JSON than the default validates such
+// a call, and the Messages encoder must not fall back to {} under a
+// narrower limit of its own.
+func TestACutCallKeepsItsInputAtTheEnginesJSONDepth(t *testing.T) {
+	policy := llmprotocol.DefaultPolicy()
+	policy.Limits.JSONDepth = 300
+	engine, err := NewEngine(NewBuiltinRegistry(), policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := `{"a":` + strings.Repeat("[", 200) + strings.Repeat("]", 200) + `}`
+	response := llmprotocol.Response{
+		Generation: 1, ID: "msg_1", Model: "m", StopReason: llmprotocol.StopContentFilter,
+		Output: []llmprotocol.OutputItem{{ID: "item_1", Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{{
+			Kind: llmprotocol.ContentToolCall, ToolCall: &llmprotocol.ToolCall{ID: "toolu_1", Name: "bash", Arguments: input, Incomplete: true},
+		}}}},
+		Usage: llmprotocol.Usage{State: llmprotocol.UsageUnavailable},
+	}
+	encoded, err := engine.EncodeResponse(llmprotocol.AnthropicMessagesV1, response, llmprotocol.Envelope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(encoded.Body, []byte(`"input":`+input)) {
+		t.Fatalf("Messages body lost the cut call's input: %.300s", encoded.Body)
 	}
 }
