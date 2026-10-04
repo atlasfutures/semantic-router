@@ -74,7 +74,7 @@ func (r *OpenAIRouter) applySemanticContextCompression(
 		Scope:        r.contextCompressionScope(ctx),
 		Request:      requestIR,
 		Policy:       policy,
-		Capabilities: semanticContextCompressionCapabilities(r.Config, ctx, request),
+		Capabilities: r.semanticContextCompressionCapabilities(ctx, request),
 		TokenCounter: r.contextCompressionTokenCounter(ctx),
 		Scorer:       r.contextCompressionScorer(callContext, pluginConfig),
 		Recovery:     r.contextCompressionRecoveryStore(pluginConfig),
@@ -119,8 +119,7 @@ func semanticCompressionFailure(plugin *config.ContextCompressionPluginConfig, e
 	return nil
 }
 
-func semanticContextCompressionCapabilities(
-	routerConfig *config.RouterConfig,
+func (r *OpenAIRouter) semanticContextCompressionCapabilities(
 	ctx *RequestContext,
 	request *llmprotocol.Request,
 ) contextcompression.ModelContextCapabilities {
@@ -129,16 +128,48 @@ func semanticContextCompressionCapabilities(
 		model = strings.TrimSpace(ctx.RequestModel)
 	}
 	contextWindow := 0
-	if routerConfig != nil {
-		if params, ok := routerConfig.ModelConfig[model]; ok {
+	if r != nil && r.Config != nil {
+		if params, ok := r.Config.ModelConfig[model]; ok {
 			contextWindow = params.ContextWindowSize
 		}
 	}
 	capabilities := contextcompression.ModelContextCapabilities{ContextWindow: contextWindow}
-	if request != nil && request.Sampling.MaxOutputTokens != nil {
-		capabilities.RequestedOutput = int(*request.Sampling.MaxOutputTokens)
+	if request != nil {
+		capabilities.RequestedOutput = int(r.compressionOutputReserve(model, ctx, request))
 	}
 	return capabilities
+}
+
+// compressionOutputReserve is the output limit the request will be dispatched
+// with, which compression keeps free in the context window. A request with no
+// limit of its own gets the one dispatch will set (planDispatchOutputBound),
+// so a prompt near the window is compressed before the card value or the
+// fallback is added, not refused upstream after.
+//
+// Compression runs before dispatch, but the target format does not depend on
+// anything dispatch decides: dispatchTargetFormat is the same pure function of
+// the selected model and the client's format, and the decision's cap is
+// already known. What dispatch can still change is a thinking budget (a policy
+// action or the routed reasoning mode), so the reserve uses the budget the
+// request carries now.
+func (r *OpenAIRouter) compressionOutputReserve(
+	model string,
+	ctx *RequestContext,
+	request *llmprotocol.Request,
+) int64 {
+	if request.Sampling.MaxOutputTokens != nil {
+		return *request.Sampling.MaxOutputTokens
+	}
+	if r == nil || r.Config == nil || model == "" {
+		return 0
+	}
+	format, err := r.dispatchTargetFormat(model, ctx.SourceFormat)
+	if err != nil {
+		return 0
+	}
+	return r.planDispatchOutputBound(
+		model, format, decisionMaxTokensLimit(ctx), messagesThinkingBudget(request, format),
+	).maxTokens
 }
 
 func injectSemanticContextRecoveryTool(request *llmprotocol.Request, keys []string) error {
