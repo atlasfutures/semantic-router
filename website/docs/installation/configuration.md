@@ -284,7 +284,15 @@ routing:
   a budget is at or above the Router's limit, the Router adds the limit on top
   of the budget.
 - **Caps still apply.** A decision's `request_params` `max_tokens_limit` caps
-  the Router's limit too.
+  the Router's limit too, including any thinking budget added on top of it.
+  If the total would exceed the cap, `max_tokens` is set to the cap and the
+  budget is lowered to fit, but never below Anthropic's minimum of 1024. If
+  the cap is too small to hold that minimum plus one output token, thinking is
+  turned off for the request.
+- **Context compression reserves the limit.** Context compression runs before
+  dispatch. It keeps the Router's limit free in the model's
+  `context_window_size`, so a prompt near the window is compressed instead of
+  being refused by the provider.
 - **The target's minimum is respected.** Responses refuses a
   `max_output_tokens` below 16, so a smaller card value or cap is raised to 16.
   If 16 is above the decision's `max_tokens_limit`, the request is sent with no
