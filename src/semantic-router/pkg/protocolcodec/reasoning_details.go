@@ -380,7 +380,8 @@ func withClaudeThinkingSignatures(output []llmprotocol.OutputItem) []llmprotocol
 // worker reached over Chat, which otherwise gets the text with the signature
 // stripped (CarryReasoningTo) and so thinking Anthropic cannot verify. The
 // caller has already kept only reasoning with Anthropic provenance
-// (DropReasoningNotFromAnthropic). It returns how many contents it rewrote.
+// (DropReasoningNotFromAnthropic). Items are numbered in order within each
+// message. It returns how many contents it rewrote.
 func SignedThinkingAsReasoningDetails(request *llmprotocol.Request) int {
 	if request == nil {
 		return 0
@@ -389,6 +390,11 @@ func SignedThinkingAsReasoningDetails(request *llmprotocol.Request) int {
 	messages := make([]llmprotocol.Message, len(request.Messages))
 	for index, message := range request.Messages {
 		messages[index] = message
+		// The Chat encoder joins a message's reasoning_details arrays in
+		// order, and OpenRouter keys items by index, so each block's item
+		// takes the next index within its message, after any item the
+		// message already carries.
+		next := reasoningDetailsItemCount(message)
 		for contentIndex, content := range message.Content {
 			if content.Kind != llmprotocol.ContentReasoning || content.Signature == "" || content.Extensions != nil ||
 				content.Reasoning == llmprotocol.ReasoningScopeSummary {
@@ -396,8 +402,9 @@ func SignedThinkingAsReasoningDetails(request *llmprotocol.Request) int {
 			}
 			details, err := json.Marshal([]map[string]any{{
 				"type": "reasoning.text", "text": content.Text, "signature": content.Signature,
-				"format": responsesAnthropicReasoningFormat, "index": 0,
+				"format": responsesAnthropicReasoningFormat, "index": next,
 			}})
+			next++
 			if err != nil {
 				continue
 			}
@@ -414,4 +421,18 @@ func SignedThinkingAsReasoningDetails(request *llmprotocol.Request) int {
 		request.Messages = messages
 	}
 	return rewritten
+}
+
+// reasoningDetailsItemCount is how many reasoning_details items a message's
+// contents already carry.
+func reasoningDetailsItemCount(message llmprotocol.Message) int {
+	count := 0
+	for _, content := range message.Content {
+		details, _ := reasoningDetailsOf(content)
+		var items []json.RawMessage
+		if details != nil && json.Unmarshal(details, &items) == nil {
+			count += len(items)
+		}
+	}
+	return count
 }

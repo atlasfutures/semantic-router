@@ -3,6 +3,7 @@ package protocolcodec
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -129,5 +130,59 @@ func TestClaudeThinkingSignatureStreamsAsASignatureDelta(t *testing.T) {
 				t.Fatalf("no signature_delta between the thinking and its block stop: %s", out)
 			}
 		})
+	}
+}
+
+// Interleaved thinking: an assistant turn with several signed thinking blocks
+// reaches a Claude worker over Chat as one reasoning_details item per block,
+// numbered in order within the message. OpenRouter keys items by index, so a
+// repeated index would merge or misattribute signatures.
+func TestSignedThinkingAsReasoningDetailsNumbersItemsPerMessage(t *testing.T) {
+	engine, err := NewEngine(NewBuiltinRegistry(), llmprotocol.DefaultPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, envelope, _, err := engine.DecodeRequest(llmprotocol.AnthropicMessagesV1, []byte(`{"model":"m","max_tokens":64,"messages":[`+
+		`{"role":"user","content":"q"},`+
+		`{"role":"assistant","content":[{"type":"thinking","thinking":"first","signature":"sig-1"},`+
+		`{"type":"tool_use","id":"toolu_1","name":"bash","input":{}},`+
+		`{"type":"thinking","thinking":"second","signature":"sig-2"},`+
+		`{"type":"tool_use","id":"toolu_2","name":"bash","input":{}}]},`+
+		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"a"},{"type":"tool_result","tool_use_id":"toolu_2","content":"b"}]},`+
+		`{"role":"assistant","content":[{"type":"thinking","thinking":"third","signature":"sig-3"},{"type":"text","text":"done"}]},`+
+		`{"role":"user","content":"q2"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rewritten := SignedThinkingAsReasoningDetails(&request); rewritten != 3 {
+		t.Fatalf("rewritten = %d, want 3", rewritten)
+	}
+	request.Generation++
+	result, err := engine.EncodeRequest(llmprotocol.OpenAIChatV1, request, envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Messages []struct {
+			Role             string `json:"role"`
+			ReasoningDetails []struct {
+				Index     int    `json:"index"`
+				Signature string `json:"signature"`
+				Text      string `json:"text"`
+			} `json:"reasoning_details"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(result.Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	var got [][3]string
+	for _, message := range body.Messages {
+		for _, item := range message.ReasoningDetails {
+			got = append(got, [3]string{fmt.Sprint(item.Index), item.Signature, item.Text})
+		}
+	}
+	want := [][3]string{{"0", "sig-1", "first"}, {"1", "sig-2", "second"}, {"0", "sig-3", "third"}}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("reasoning_details items = %v, want %v\n%s", got, want, result.Body)
 	}
 }
