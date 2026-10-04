@@ -702,6 +702,67 @@ func TestAProviderFailureDuringACutToolCallKeepsItsClass(t *testing.T) {
 	}
 }
 
+// An upstream that stops while a tool call's arguments are streaming, with
+// no message_delta or message_stop, is an ordinary cut stream: the client
+// is told stream_incomplete and the turn is classed as any stream cut with
+// the call still open is, never as a tool-argument error or a provider
+// outage. The end arrives with the last frames and, as Envoy also sends it,
+// as an empty end-of-stream chunk after them.
+func TestAToolCallCutByAStreamWithNoTerminalIsAnIncompleteStream(t *testing.T) {
+	open := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":12,\"output_tokens\":1}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"edit\",\"input\":{}}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"/app/x.R\\\",\\\"edits\\\":[{\\\"oldText\\\":\\\"f <- function(x) {\"}}\n\n"
+	held := open + "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+	run := func(t *testing.T, client llmprotocol.WireFormat, chunks []string) (string, map[string]interface{}) {
+		t.Helper()
+		logs := captureLogs(t)
+		stream, err := protocolcodec.NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, client,
+			llmprotocol.StreamContext{Context: context.Background(), PublicModel: "public-model"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := &RequestContext{
+			RequestID: "req-cut-no-terminal", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200, IsStreamingResponse: true,
+			SourceFormat: client, TargetFormat: llmprotocol.AnthropicMessagesV1,
+			ProtocolResponseStream: stream,
+			SemanticStreamState:    &semanticResponseStreamState{items: map[int]*semanticStreamItem{}},
+		}
+		router := &OpenAIRouter{}
+		var body strings.Builder
+		for index, chunk := range chunks {
+			response := router.handleSemanticStreamingResponseBody([]byte(chunk), index == len(chunks)-1, ctx)
+			if mutation := response.GetResponseBody().GetResponse().GetBodyMutation(); mutation != nil {
+				body.Write(mutation.GetBody())
+			} else {
+				body.WriteString(chunk)
+			}
+		}
+		return body.String(), findLogEvent(t, logs, "llm_usage")
+	}
+	for name, split := range map[string]func(string) []string{
+		"end with the frames":        func(frames string) []string { return []string{frames} },
+		"empty end in a later chunk": func(frames string) []string { return []string{frames, ""} },
+	} {
+		for _, client := range []llmprotocol.WireFormat{llmprotocol.OpenAIResponsesV1, llmprotocol.AnthropicMessagesV1} {
+			t.Run(name+"/"+string(client), func(t *testing.T) {
+				body, usage := run(t, client, split(held))
+				if strings.Contains(body, "invalid_stream_tool_arguments") || !strings.Contains(body, "upstream stream ended before completion") {
+					t.Fatalf("the client was not told the stream was incomplete:\n%s", body)
+				}
+				if client == llmprotocol.OpenAIResponsesV1 && !strings.Contains(body, `"code":"stream_incomplete"`) {
+					t.Fatalf("the Responses client was not given stream_incomplete:\n%s", body)
+				}
+				_, uncut := run(t, client, split(open))
+				if usage["failure_detail"] != "stream_incomplete" || usage["failure_class"] != uncut["failure_class"] ||
+					usage["content_sent_before_failure"] != true {
+					t.Fatalf("llm_usage = class %v detail %v sent %v, want %v stream_incomplete true (a cut with the call open)",
+						usage["failure_class"], usage["failure_detail"], usage["content_sent_before_failure"], uncut["failure_class"])
+				}
+			})
+		}
+	}
+}
+
 // A stream the client or the proxy ended first is classed client_ended, with
 // the usage the provider stated and whether content had reached the client.
 // It is neither an arm nor a cell failure: it counts against no backend and
