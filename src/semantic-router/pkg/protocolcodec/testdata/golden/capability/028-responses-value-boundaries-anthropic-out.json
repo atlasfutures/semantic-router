@@ -5,7 +5,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "max_tokens": 4096,
+          "max_tokens": 32000,
           "messages": [
             {
               "content": [
@@ -43,7 +43,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "max_tokens": 4096,
+          "max_tokens": 32000,
           "messages": [
             {
               "content": [
@@ -71,7 +71,7 @@
       "outcome": {
         "status": "ok",
         "body": {
-          "max_tokens": 4096,
+          "max_tokens": 32000,
           "messages": [
             {
               "content": [

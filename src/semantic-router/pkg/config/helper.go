@@ -214,6 +214,22 @@ func (c *RouterConfig) GetModelAPIFormat(modelName string) string {
 	return APIFormatOpenAI
 }
 
+// GetModelMaxOutputTokens returns the operator-declared output limit of the
+// model's card, or zero when it declares none. A LoRA adapter without its own
+// entry inherits its base model's card, as it does for endpoints and format.
+func (c *RouterConfig) GetModelMaxOutputTokens(modelName string) int {
+	if c == nil || c.ModelConfig == nil {
+		return 0
+	}
+	if modelConfig, ok := c.ModelConfig[modelName]; ok && modelConfig.MaxOutputTokens > 0 {
+		return modelConfig.MaxOutputTokens
+	}
+	if _, baseConfig, ok := c.resolveLoRABaseModel(modelName); ok && baseConfig.MaxOutputTokens > 0 {
+		return baseConfig.MaxOutputTokens
+	}
+	return 0
+}
+
 // GetModelAccessKey returns the access key for the given model.
 func (c *RouterConfig) GetModelAccessKey(modelName string) string {
 	return c.GetModelAccessKeyForProvider(modelName, "")

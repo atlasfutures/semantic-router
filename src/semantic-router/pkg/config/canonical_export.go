@@ -200,7 +200,8 @@ func applyOperatorModelCardLimits(
 		model.ContextWindowSize = card.Limits.ContextWindowSize
 	}
 	if provenance["limits.max_output_tokens"] == "operator" {
-		model.MaxOutputTokens = card.Limits.MaxOutputTokens
+		value := card.Limits.MaxOutputTokens
+		model.MaxOutputTokens = &value
 	}
 }
 
@@ -270,6 +271,7 @@ func routingModelsFromRuntimeConfig(cfg *RouterConfig) []RoutingModel {
 			Name:              cardName,
 			ParamSize:         params.ParamSize,
 			ContextWindowSize: params.ContextWindowSize,
+			MaxOutputTokens:   positiveIntPointer(params.MaxOutputTokens),
 			Description:       params.Description,
 			Capabilities:      append([]string(nil), params.Capabilities...),
 			LoRAs:             copyLoRAAdapters(params.LoRAs),
@@ -638,4 +640,12 @@ func normalizedConfigSource(source ConfigSource) ConfigSource {
 		return ConfigSourceFile
 	}
 	return source
+}
+
+// positiveIntPointer exports a runtime limit, where zero means undeclared.
+func positiveIntPointer(value int) *int {
+	if value <= 0 {
+		return nil
+	}
+	return &value
 }

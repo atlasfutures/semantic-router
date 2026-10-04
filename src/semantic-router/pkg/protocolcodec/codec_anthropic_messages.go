@@ -8,7 +8,13 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
-const defaultAnthropicMaxOutputTokens int64 = 4096
+// defaultAnthropicMaxOutputTokens is the max_tokens a Messages request gets
+// when its source stated no output limit, which Messages requires. The router
+// sets the limit itself before encoding (a model card's max_output_tokens, or
+// the same fallback), so this is the last resort for direct codec users. It
+// matches the router's fallback so the two agree, and it is valid for every
+// current Claude model; 4096 cut long tool calls short.
+const defaultAnthropicMaxOutputTokens int64 = 32000
 
 type AnthropicMessagesCodec struct{}
 

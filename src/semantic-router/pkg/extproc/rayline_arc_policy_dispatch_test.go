@@ -349,7 +349,9 @@ func TestPolicyActionsMustBeCarriableByTheirProvider(t *testing.T) {
 }
 
 // Messages counts thinking inside max_tokens and refuses a budget that leaves
-// no room below it, so a budget action keeps the caller's allowance on top.
+// no room below it, so a budget action keeps the caller's allowance on top. A
+// caller that stated none is left to the dispatch output bound, which keeps
+// the same room (TestDispatchOutputBoundKeepsRoomAboveAThinkingBudget).
 func TestPolicyBudgetActionKeepsRoomBelowMaxTokens(t *testing.T) {
 	budget := int64(4096)
 	action := policyAction("think", "none", "think-trained", nil, &budget, "")
@@ -360,13 +362,19 @@ func TestPolicyBudgetActionKeepsRoomBelowMaxTokens(t *testing.T) {
 	}{
 		"an allowance at the budget":    {llmprotocol.Int64(4096), 8192},
 		"an allowance below the budget": {llmprotocol.Int64(1024), 5120},
-		"no stated allowance":           {nil, 8192},
+		"no stated allowance":           {nil, 0},
 		"an allowance above the budget": {llmprotocol.Int64(32000), 32000},
 	} {
 		request := &llmprotocol.Request{}
 		request.Sampling.MaxOutputTokens = test.clientMax
 		if _, err := applyRaylineARCPolicyActionReasoning(request, llmprotocol.AnthropicMessagesV1, ctx); err != nil {
 			t.Fatal(err)
+		}
+		if test.want == 0 {
+			if request.Sampling.MaxOutputTokens != nil {
+				t.Fatalf("%s: max_tokens = %d, want it left to the dispatch output bound", name, *request.Sampling.MaxOutputTokens)
+			}
+			continue
 		}
 		if request.Sampling.MaxOutputTokens == nil || *request.Sampling.MaxOutputTokens != test.want {
 			t.Fatalf("%s: max_tokens = %v, want %d", name, request.Sampling.MaxOutputTokens, test.want)

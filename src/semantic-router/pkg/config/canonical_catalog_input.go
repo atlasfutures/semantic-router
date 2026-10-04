@@ -326,8 +326,8 @@ func applyCatalogCardLimits(card RoutingModel, overlay *modelcatalog.ModelCardOv
 		value := card.ContextWindowSize
 		overlay.ContextWindowSize = &value
 	}
-	if card.MaxOutputTokens > 0 {
-		value := card.MaxOutputTokens
+	if card.MaxOutputTokens != nil {
+		value := *card.MaxOutputTokens
 		overlay.MaxOutputTokens = &value
 	}
 }

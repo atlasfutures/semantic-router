@@ -261,6 +261,58 @@ routing:
   serve.
 - An unknown entry is refused when the configuration loads.
 
+### Output limit on a Model Card
+
+`max_output_tokens` is the output limit the Router sends to a model when a
+request states none (no `max_tokens`, `max_completion_tokens` or
+`max_output_tokens`):
+
+```yaml
+routing:
+  modelCards:
+    - name: slow-reasoner
+      max_output_tokens: 16000
+```
+
+- **A limit the client states is always sent as stated.** The card value
+  applies only to a request that has no limit of its own.
+- **No card value.** A request bound for Anthropic Messages, which requires
+  `max_tokens`, is sent `32000`. A request bound for Chat Completions or
+  Responses is sent with no limit, because those formats do not require one.
+- **Thinking budgets stay valid.** Messages counts thinking inside
+  `max_tokens` and refuses a `thinking.budget_tokens` that is not below it. When
+  a budget is at or above the Router's limit, the Router adds the limit on top
+  of the budget.
+- **Caps still apply.** A decision's `request_params` `max_tokens_limit` caps
+  the Router's limit too, including any thinking budget added on top of it.
+  If the total would exceed the cap, `max_tokens` is set to the cap and the
+  budget is lowered to fit, but never below Anthropic's minimum of 1024. If
+  the cap is too small to hold that minimum plus one output token, thinking is
+  turned off for the request. A Rayline ARC v5 thinking control follows the
+  same rule. Its thinking cannot be turned off without changing the control,
+  so a cap that cannot hold its minimum fails the request.
+- **Context compression reserves the limit.** Context compression runs before
+  dispatch. It keeps the Router's limit free in the model's
+  `context_window_size`, so a prompt near the window is compressed instead of
+  being refused by the provider.
+- **The target's minimum is respected.** Responses refuses a
+  `max_output_tokens` below 16, so a smaller card value or cap is raised to 16.
+  If 16 is above the decision's `max_tokens_limit`, the request is sent with no
+  limit, as the client sent it.
+- **LoRA adapters use their base model's card.** A decision that selects a
+  `lora_name` gets the base model's `max_output_tokens`.
+- **Only the operator's value is sent.** A catalog model's built-in maximum
+  output is not used as the limit.
+- The value must be a positive integer. Zero or a negative value is refused
+  when the configuration loads.
+- The Router logs which source set the limit (`card` or `fallback`) in the
+  `dispatch_output_bound` event.
+
+Set the card value for slow models. At about 35 tokens per second, the
+`32000` default takes about 900 s to stream, which is longer than the Router's
+default stream deadline (`global.router.response_stream.deadline_sec`, 590 s).
+The Router would end such a turn before the model finishes.
+
 ### Catalog-backed models
 
 Built-in support is additive to the same `version: v0.3` hierarchy. Set the
