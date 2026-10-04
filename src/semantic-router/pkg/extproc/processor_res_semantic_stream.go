@@ -573,14 +573,14 @@ func (r *OpenAIRouter) classStreamFailure(
 		if inBand.Code == "stream_truncated" {
 			class = turnFailureTimeout
 		}
-		recordTurnFailure(ctx, class, sent)
+		recordTurnFailureDetail(ctx, class, streamFailureDetail(inBand), sent)
 	case responseErr != nil && streamErr == nil && state != nil && state.terminal && state.failed == nil:
 		// The stream ended properly but its output cannot be reconstructed
 		// (an item never completed): the arm's reply is unusable.
 		recordTurnFailureDetail(ctx, turnFailureUpstreamError, "stream_reconstruction_failed", sent)
 	case streamErr != nil || state == nil:
 	case state.failed != nil:
-		recordTurnFailure(ctx, streamFailureClass(state.failed), len(state.items) > 0)
+		recordTurnFailureDetail(ctx, streamFailureClass(state.failed), streamFailureDetail(state.failed), len(state.items) > 0)
 	case !state.terminal:
 		recordTurnFailure(ctx, turnFailureStreamCut, len(state.items) > 0)
 	}

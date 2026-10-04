@@ -182,3 +182,28 @@ func turnFailureIsBackendError(class string) bool {
 		return false
 	}
 }
+
+// maxStreamFailureDetail bounds the failure detail a stream error leaves on
+// the usage line and the turn_failed line.
+const maxStreamFailureDetail = 160
+
+// streamFailureDetail is the code and message of the protocol error that
+// ended a stream, so a cut is diagnosable from the logs: without it every
+// such turn reads as a bare upstream_5xx. The message is bounded and kept to
+// printable ASCII, since a provider's own error text arrives here verbatim.
+func streamFailureDetail(protocolError *llmprotocol.ProtocolError) string {
+	if protocolError == nil {
+		return ""
+	}
+	detail := protocolError.Code
+	if protocolError.Message != "" {
+		detail += ": " + protocolError.Message
+	}
+	out := make([]byte, 0, len(detail))
+	for index := 0; index < len(detail) && len(out) < maxStreamFailureDetail; index++ {
+		if character := detail[index]; character >= 0x20 && character < 0x7f {
+			out = append(out, character)
+		}
+	}
+	return string(out)
+}

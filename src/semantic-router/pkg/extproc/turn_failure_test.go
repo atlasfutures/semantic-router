@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -561,6 +562,36 @@ func TestUsageLineCarriesTheUpstreamAttempts(t *testing.T) {
 		if fmt.Sprint(usage["upstream_attempts"]) != fmt.Sprint(want[0]) || fmt.Sprint(usage["cost_complete"]) != fmt.Sprint(want[1]) {
 			t.Fatalf("header %q: upstream_attempts = %#v, cost_complete = %#v, want %v",
 				attempts, usage["upstream_attempts"], usage["cost_complete"], want)
+		}
+	}
+}
+
+// A stream the codec cut, or a provider's in-band error, leaves its code and
+// message on the usage line, so a cut is diagnosable from the logs rather
+// than reading as a bare class. The detail is bounded and printable.
+func TestStreamFailureDetailNamesTheError(t *testing.T) {
+	router := &OpenAIRouter{}
+	cut := llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "stream_event_after_terminal",
+		"Anthropic stream emitted content_block_start after message_stop", nil)
+	provider := llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "overloaded_error",
+		"Overloaded\n"+strings.Repeat("x", 400), nil)
+	for name, tc := range map[string]struct {
+		streamErr error
+		failed    *llmprotocol.ProtocolError
+		want      string
+	}{
+		"codec cut":        {streamErr: cut, want: "stream_event_after_terminal: Anthropic stream emitted content_block_start after message_stop"},
+		"provider in-band": {failed: provider, want: "overloaded_error: Overloaded" + strings.Repeat("x", maxStreamFailureDetail-len("overloaded_error: Overloaded"))},
+	} {
+		logs := captureLogs(t)
+		ctx := &RequestContext{
+			RequestID: "req-stream-detail", RequestModel: "test", StartTime: time.Now(), UpstreamStatusCode: 200,
+			SourceFormat: llmprotocol.AnthropicMessagesV1, TargetFormat: llmprotocol.AnthropicMessagesV1, IsStreamingResponse: true,
+			SemanticStreamState: &semanticResponseStreamState{items: map[int]*semanticStreamItem{0: {}}, failed: tc.failed},
+		}
+		router.finalizeSemanticStreamingResponse(ctx, tc.streamErr)
+		if got := findLogEvent(t, logs, "llm_usage")["failure_detail"]; got != tc.want {
+			t.Fatalf("%s: failure_detail = %q, want %q", name, got, tc.want)
 		}
 	}
 }
