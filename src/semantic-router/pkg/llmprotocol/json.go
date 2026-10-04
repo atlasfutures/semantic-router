@@ -3,6 +3,7 @@ package llmprotocol
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"unicode/utf8"
@@ -174,4 +175,90 @@ func decodeHexQuad(body []byte, start int) (uint16, bool) {
 		}
 	}
 	return value, true
+}
+
+// TruncatedJSONObject reports arguments that are a strict prefix of a JSON
+// object: what a model leaves when its output limit cuts it off while it
+// writes a tool call's arguments. The bytes open an object, tokenize without
+// a syntax error until they run out, stay within maximumDepth, and repeat no
+// member name, as ValidateJSONObject requires of a whole object. A whole
+// object is not truncated, and neither is a value that is not an object or
+// text that no appended bytes could make valid, such as {] or {"x":].
+func TruncatedJSONObject(arguments []byte, maximumDepth int) bool {
+	trimmed := bytes.TrimSpace(arguments)
+	if len(trimmed) == 0 || trimmed[0] != '{' || maximumDepth <= 0 || !utf8.Valid(trimmed) {
+		return false
+	}
+	if validateJSONUnicodeEscapes(trimmed) != nil || ValidateJSONObject(trimmed, maximumDepth) == nil {
+		return false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	decoder.UseNumber()
+	err := walkJSONObjectPrefix(decoder, maximumDepth)
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+// jsonPrefixFrame is one container still open while a prefix is walked.
+type jsonPrefixFrame struct {
+	object    bool
+	expectKey bool
+	seen      map[string]struct{}
+}
+
+// walkJSONObjectPrefix walks tokens until the input runs out, which the
+// decoder reports as io.EOF or io.ErrUnexpectedEOF. Any other error, or the
+// top object closing, means the bytes are no strict prefix of an object. The
+// decoder enforces the grammar (colons, commas, closers); the walk adds what
+// ValidateJSONObject adds: string keys, no duplicate member, and depth,
+// counted as consumeJSONValue counts it, with the top object's members at 1.
+func walkJSONObjectPrefix(decoder *json.Decoder, maximumDepth int) error {
+	var stack []jsonPrefixFrame
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		delimiter, isDelimiter := token.(json.Delim)
+		switch {
+		case isDelimiter && (delimiter == '}' || delimiter == ']'):
+			stack = stack[:len(stack)-1]
+			if len(stack) == 0 {
+				return fmt.Errorf("JSON object is complete")
+			}
+			markJSONPrefixValue(&stack[len(stack)-1])
+		case len(stack) > 0 && stack[len(stack)-1].object && stack[len(stack)-1].expectKey:
+			if err := takeJSONPrefixKey(&stack[len(stack)-1], token); err != nil {
+				return err
+			}
+		case len(stack) > maximumDepth:
+			return fmt.Errorf("JSON nesting exceeds the configured limit")
+		case isDelimiter:
+			stack = append(stack, jsonPrefixFrame{
+				object: delimiter == '{', expectKey: delimiter == '{', seen: map[string]struct{}{},
+			})
+		case len(stack) == 0:
+			return fmt.Errorf("JSON value must be an object")
+		default:
+			markJSONPrefixValue(&stack[len(stack)-1])
+		}
+	}
+}
+
+func takeJSONPrefixKey(frame *jsonPrefixFrame, token json.Token) error {
+	key, ok := token.(string)
+	if !ok {
+		return fmt.Errorf("JSON object key is not a string")
+	}
+	if _, duplicate := frame.seen[key]; duplicate {
+		return fmt.Errorf("JSON object contains duplicate field %q", key)
+	}
+	frame.seen[key] = struct{}{}
+	frame.expectKey = false
+	return nil
+}
+
+func markJSONPrefixValue(frame *jsonPrefixFrame) {
+	if frame.object {
+		frame.expectKey = true
+	}
 }

@@ -59,7 +59,7 @@ func (state *streamState) completeToolItem(event llmprotocol.Event) (llmprotocol
 	if err != nil {
 		return llmprotocol.Event{}, err
 	}
-	if !complete && !truncatedJSONObject(arguments) {
+	if !complete && !llmprotocol.TruncatedJSONObject(arguments, state.policy.Limits.JSONDepth) {
 		// A whole JSON value that is not an object, or an object with a
 		// duplicate member, is no prefix of a call: it is malformed now.
 		return llmprotocol.Event{}, invalidStreamToolArguments()
@@ -201,12 +201,6 @@ func (state *streamState) finalToolArguments(event llmprotocol.Event) ([]byte, b
 		arguments = []byte(event.ToolCall.Arguments)
 	}
 	return arguments, isJSONObject(arguments, state.policy.Limits.JSONDepth), nil
-}
-
-// truncatedJSONObject is llmprotocol.TruncatedJSONObject: the stream and a
-// buffered response judge a cut the same way.
-func truncatedJSONObject(arguments []byte) bool {
-	return llmprotocol.TruncatedJSONObject(arguments)
 }
 
 func (state *streamState) markItemComplete(itemIndex int) {

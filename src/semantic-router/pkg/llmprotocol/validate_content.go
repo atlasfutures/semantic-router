@@ -1,7 +1,6 @@
 package llmprotocol
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -327,7 +326,7 @@ func validateToolCallContent(content Content, location string, limits Limits) er
 	// is not an object, or text that never opened one, is not a cut.
 	// ValidateResponse bounds where such a call may appear.
 	if err := ValidateJSONObject([]byte(call.Arguments), limits.JSONDepth); err != nil &&
-		(!call.Incomplete || !TruncatedJSONObject([]byte(call.Arguments))) {
+		(!call.Incomplete || !TruncatedJSONObject([]byte(call.Arguments), limits.JSONDepth)) {
 		return NewFieldError(ErrorInvalidRequest, "invalid_tool_call",
 			"tool call arguments must be one strict JSON object", location, "content.input")
 	}
@@ -494,12 +493,4 @@ func MarkDeferredToolLinks(request *Request) {
 			content.ToolResult.DeferredLink = request.PreviousResponseID != "" && !local
 		}
 	}
-}
-
-// TruncatedJSONObject reports arguments that could be the start of a JSON
-// object the model was cut off writing: they open an object and do not yet
-// form a whole JSON value.
-func TruncatedJSONObject(arguments []byte) bool {
-	trimmed := bytes.TrimSpace(arguments)
-	return len(trimmed) > 0 && trimmed[0] == '{' && !json.Valid(trimmed)
 }
