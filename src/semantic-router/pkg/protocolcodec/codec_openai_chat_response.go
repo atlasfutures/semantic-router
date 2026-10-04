@@ -103,13 +103,34 @@ func decodeChatChoices(wire chatResponseWire, response *llmprotocol.Response, po
 			response.Evidence.TokenLogprobs = decodeChatTokenLogprobs(choice.Logprobs)
 			if choice.FinishReason != nil {
 				response.SourceStopReason = *choice.FinishReason
-				response.StopReason = decodeChatStop(*choice.FinishReason)
+				response.StopReason = decodeChatChoiceStop(*choice.FinishReason, choice.NativeFinishReason)
 			}
 			continue
 		}
 		response.Alternatives = append(response.Alternatives, []llmprotocol.OutputItem{item})
 	}
+	markChatCutToolCall(response, policy.Limits.JSONDepth)
 	return nil
+}
+
+// markChatCutToolCall marks the tool call a length stop cut off, as the Chat
+// stream decoder does: only the last call of the reply, only under a length
+// stop (finish_reason "length", or OpenRouter's native length reason), and
+// only when its arguments are the start of an object rather than a whole
+// one. Anything else keeps failing as a malformed call.
+func markChatCutToolCall(response *llmprotocol.Response, maximumDepth int) {
+	if response.StopReason != llmprotocol.StopMaxTokens || len(response.Output) == 0 {
+		return
+	}
+	contents := response.Output[0].Content
+	if len(contents) == 0 {
+		return
+	}
+	call := contents[len(contents)-1].ToolCall
+	if call == nil || !llmprotocol.TruncatedJSONObject([]byte(call.Arguments), maximumDepth) {
+		return
+	}
+	call.Incomplete = true
 }
 
 func decodeChatChoiceItem(choice chatChoiceWire, responseID string, policy llmprotocol.Policy) (llmprotocol.OutputItem, error) {
@@ -187,7 +208,8 @@ func (OpenAIChatCodec) EncodeResponse(response llmprotocol.Response, envelope ll
 		}
 		return OpenAIChatCodec{}.EncodeTransportError(llmprotocol.TransportError{Error: response.Error}), diagnostics, nil
 	}
-	if envelope.CanReplay(llmprotocol.OpenAIChatV1, response.Generation, policy, true) {
+	if !chatSourceStopMisstated(envelope.SourceStop, response.StopReason) &&
+		envelope.CanReplay(llmprotocol.OpenAIChatV1, response.Generation, policy, true) {
 		return append([]byte(nil), envelope.Response...), nil, nil
 	}
 	var diagnostics llmprotocol.Diagnostics
@@ -279,6 +301,24 @@ func encodeChatUsage(usage llmprotocol.Usage) *chatUsageWire {
 		wire.CompletionTokensDetails = &chatCompletionTokensDetailsWire{ReasoningTokens: tokenValue(usage.OutputReasoning)}
 	}
 	return wire
+}
+
+// chatSourceStopMisstated reports a Chat body whose finish_reason says
+// another stop than the one decoded from it: OpenRouter labels a reply cut at
+// the output limit "tool_calls" and says "max_output_tokens" only in
+// native_finish_reason. Such a body is never handed back as it is, or a Chat
+// client reads the cut call as one to run.
+func chatSourceStopMisstated(sourceStop string, stop llmprotocol.StopReason) bool {
+	return sourceStop != "" && decodeChatStop(sourceStop) != stop
+}
+
+// UpstreamBodyMisstatesStop reports an upstream response body whose own stop
+// field says something other than its decoded stop, so a same-format client
+// has to be sent the re-encoded body rather than the upstream's. Only a Chat
+// body can: its finish_reason is the one field OpenRouter overrides with a
+// native reason (chatSourceStopMisstated).
+func UpstreamBodyMisstatesStop(format llmprotocol.WireFormat, response llmprotocol.Response) bool {
+	return format == llmprotocol.OpenAIChatV1 && chatSourceStopMisstated(response.SourceStopReason, response.StopReason)
 }
 
 func decodeChatStop(reason string) llmprotocol.StopReason {

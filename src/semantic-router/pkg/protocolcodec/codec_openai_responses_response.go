@@ -255,7 +255,8 @@ func decodeResponsesOutputItem(item responsesItemWire, index int, policy llmprot
 		"output.caller":    len(item.Caller) > 0,
 		"output.namespace": item.Namespace != "" && item.Type != "function_call",
 		"output.phase":     len(item.Phase) > 0,
-		"output.status":    item.Status != "" && item.Type != "image_generation_call",
+		"output.status": item.Status != "" && item.Type != "image_generation_call" &&
+			!responsesIncompleteToolCall(item),
 	}, "response item metadata has no protocol-neutral representation")
 	id := item.ID
 	if id == "" && policy.MissingStableIDs == llmprotocol.MissingIDGenerateStable {
@@ -268,6 +269,7 @@ func decodeResponsesOutputItem(item responsesItemWire, index int, policy llmprot
 	case "function_call":
 		output.Content = []llmprotocol.Content{{Kind: llmprotocol.ContentToolCall, ToolCall: &llmprotocol.ToolCall{
 			ID: item.CallID, Name: item.Name, Arguments: item.Arguments, Namespace: item.Namespace,
+			Incomplete: responsesIncompleteToolCall(item),
 		}}}
 	case "reasoning":
 		return decodeResponsesReasoningOutput(output, item, policy)
@@ -282,6 +284,12 @@ func decodeResponsesOutputItem(item responsesItemWire, index int, policy llmprot
 		return llmprotocol.OutputItem{}, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_output_item", "Responses output item is unsupported", nil)
 	}
 	return output, nil
+}
+
+// responsesIncompleteToolCall reports a function_call the output limit cut
+// off: it ends with status "incomplete" and the arguments written so far.
+func responsesIncompleteToolCall(item responsesItemWire) bool {
+	return item.Type == "function_call" && item.Status == "incomplete"
 }
 
 func decodeResponsesGeneratedImage(item responsesItemWire) *llmprotocol.GeneratedImage {

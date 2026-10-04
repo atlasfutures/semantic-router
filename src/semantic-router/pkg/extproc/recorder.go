@@ -461,6 +461,11 @@ func (r *OpenAIRouter) attachRouterReplayResponse(ctx *RequestContext, responseB
 	if isFinal {
 		state := routerreplay.LifecycleCompleted
 		reason := "response_complete"
+		if turnCutMidToolCall(ctx) {
+			// The turn was served, as the length stop it is, but its last
+			// tool call was cut off: the record says so, not just its trace.
+			reason = "response_cut_mid_tool_call"
+		}
 		if ctx.UpstreamStatusCode >= 400 {
 			state = routerreplay.LifecycleFailed
 			reason = "upstream_error_response"

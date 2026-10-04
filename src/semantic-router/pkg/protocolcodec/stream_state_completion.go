@@ -55,10 +55,16 @@ func (state *streamState) validateCompletedItemContent(event llmprotocol.Event) 
 }
 
 func (state *streamState) completeToolItem(event llmprotocol.Event) (llmprotocol.Event, error) {
-	arguments, err := state.finalToolArguments(event)
+	arguments, complete, err := state.finalToolArguments(event)
 	if err != nil {
 		return llmprotocol.Event{}, err
 	}
+	if !complete && !llmprotocol.TruncatedJSONObject(arguments, state.policy.Limits.JSONDepth) {
+		// A whole JSON value that is not an object, or an object with a
+		// duplicate member, is no prefix of a call: it is malformed now.
+		return llmprotocol.Event{}, invalidStreamToolArguments()
+	}
+	incomplete := !complete || event.ToolCall != nil && event.ToolCall.Incomplete
 	call := state.toolCalls[event.ItemIndex]
 	if event.ToolCall != nil {
 		call, err = state.mergeStreamToolIdentity(call, *event.ToolCall)
@@ -73,6 +79,13 @@ func (state *streamState) completeToolItem(event llmprotocol.Event) (llmprotocol
 		return llmprotocol.Event{}, err
 	}
 	call.Arguments = string(arguments)
+	// The item completes either way, so the same-item and lifecycle rules see
+	// it finished; whether the turn may end with it is decided at the
+	// terminal (validateCompletedLifecycle) or at the stream's end (finalize).
+	call.Incomplete = incomplete
+	if incomplete {
+		state.cutItems[event.ItemIndex] = true
+	}
 	event.ToolCall = &call
 	return event, nil
 }
@@ -173,21 +186,21 @@ func (state *streamState) validateStreamToolArgumentAppend(current []byte, incom
 	return nil
 }
 
-func (state *streamState) finalToolArguments(event llmprotocol.Event) ([]byte, error) {
+// finalToolArguments returns a completing tool item's arguments and whether
+// they are a complete JSON object. Arguments that are not are not an error
+// here: the item is held as cut until the terminal says why (see cutItems).
+func (state *streamState) finalToolArguments(event llmprotocol.Event) ([]byte, bool, error) {
 	arguments := state.toolArguments[event.ItemIndex]
 	if event.ToolCall != nil && event.ToolCall.Arguments != "" {
 		if err := state.validateStreamToolArgumentAppend(nil, event.ToolCall.Arguments); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if len(arguments) > 0 && string(arguments) != event.ToolCall.Arguments {
-			return nil, llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "stream_tool_arguments_mismatch", "upstream final tool arguments do not match streamed arguments", nil)
+			return nil, false, llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "stream_tool_arguments_mismatch", "upstream final tool arguments do not match streamed arguments", nil)
 		}
 		arguments = []byte(event.ToolCall.Arguments)
 	}
-	if !isJSONObject(arguments, state.policy.Limits.JSONDepth) {
-		return nil, llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "invalid_stream_tool_arguments", "upstream streamed tool arguments are not a JSON object", nil)
-	}
-	return arguments, nil
+	return arguments, isJSONObject(arguments, state.policy.Limits.JSONDepth), nil
 }
 
 func (state *streamState) markItemComplete(itemIndex int) {
@@ -288,6 +301,11 @@ func (state *streamState) validateCompletedLifecycle(event llmprotocol.Event) er
 	}
 	if len(state.toolArguments) != 0 {
 		return llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "stream_tool_arguments_incomplete", "upstream stream completed with unfinished tool arguments", nil)
+	}
+	// A cut tool item is a length stop only when the turn stopped at
+	// max_tokens. Under any other stop its arguments are simply malformed.
+	if len(state.cutItems) > 0 && event.StopReason != llmprotocol.StopMaxTokens {
+		return invalidStreamToolArguments()
 	}
 	if event.Error != nil {
 		return llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "stream_terminal_shape", "completed stream cannot contain an error", nil)
@@ -462,6 +480,14 @@ func usageEvidenceRank(provenance llmprotocol.UsageProvenance) int {
 func (state *streamState) finalize(reason error) ([]llmprotocol.Event, error) {
 	if state.terminal {
 		return nil, nil
+	}
+	// A stream that ends with a cut tool item and no terminal never said it
+	// stopped at max_tokens, so the item fails as malformed, as it did when
+	// the arguments were checked at the item's completion. A codec failure
+	// already raised keeps its own code.
+	var raised *llmprotocol.ProtocolError
+	if len(state.cutItems) > 0 && !errors.As(reason, &raised) {
+		return nil, invalidStreamToolArguments()
 	}
 	if reason == nil {
 		reason = errors.New("upstream stream ended without a terminal event")

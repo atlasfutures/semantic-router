@@ -3,6 +3,7 @@ package llmprotocol
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"unicode/utf8"
@@ -174,4 +175,160 @@ func decodeHexQuad(body []byte, start int) (uint16, bool) {
 		}
 	}
 	return value, true
+}
+
+// TruncatedJSONObject reports arguments that are a strict prefix of a JSON
+// object: what a model leaves when its output limit cuts it off while it
+// writes a tool call's arguments. The bytes open an object, tokenize without
+// a syntax error until they run out, stay within maximumDepth, and repeat no
+// member name, as ValidateJSONObject requires of a whole object. A whole
+// object is not truncated, and neither is a value that is not an object or
+// text that no appended bytes could make valid, such as {] or {"x":].
+func TruncatedJSONObject(arguments []byte, maximumDepth int) bool {
+	trimmed := bytes.TrimSpace(arguments)
+	if len(trimmed) == 0 || trimmed[0] != '{' || maximumDepth <= 0 || !utf8.Valid(trimmed) {
+		return false
+	}
+	if !validJSONEscapesPrefix(trimmed) {
+		return false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	decoder.UseNumber()
+	err := walkJSONObjectPrefix(decoder, trimmed, maximumDepth)
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+// jsonPrefixFrame is one container still open while a prefix is walked.
+type jsonPrefixFrame struct {
+	object    bool
+	expectKey bool
+	seen      map[string]struct{}
+}
+
+// walkJSONObjectPrefix walks tokens until the input runs out, which the
+// decoder reports as io.EOF or io.ErrUnexpectedEOF. Any other error, or the
+// top object closing, means the bytes are no strict prefix of an object. The
+// decoder enforces the grammar (colons, commas, closers); the walk adds what
+// ValidateJSONObject adds: string keys, no duplicate member, and depth,
+// counted as consumeJSONValue counts it, with the top object's members at 1.
+//
+// A container may open at the deepest legal depth, since it can still close
+// empty ({"x":{}} is valid at depth 1). What it may not do there is begin a
+// member: a key, or an array element, would put a value one level deeper.
+// So the bound is applied as soon as a member begins, whether as a whole
+// token or as bytes the input ends inside (startedValue).
+func walkJSONObjectPrefix(decoder *json.Decoder, body []byte, maximumDepth int) error {
+	var stack []jsonPrefixFrame
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			if len(stack) > maximumDepth && startedValue(body[decoder.InputOffset():]) {
+				return fmt.Errorf("JSON nesting exceeds the configured limit")
+			}
+			return err
+		}
+		delimiter, isDelimiter := token.(json.Delim)
+		switch {
+		case isDelimiter && (delimiter == '}' || delimiter == ']'):
+			stack = stack[:len(stack)-1]
+			if len(stack) == 0 {
+				return fmt.Errorf("JSON object is complete")
+			}
+			markJSONPrefixValue(&stack[len(stack)-1])
+		case len(stack) > maximumDepth:
+			// A key or an element of a container at the deepest legal depth.
+			return fmt.Errorf("JSON nesting exceeds the configured limit")
+		case len(stack) > 0 && stack[len(stack)-1].object && stack[len(stack)-1].expectKey:
+			if err := takeJSONPrefixKey(&stack[len(stack)-1], token); err != nil {
+				return err
+			}
+		case isDelimiter:
+			stack = append(stack, jsonPrefixFrame{
+				object: delimiter == '{', expectKey: delimiter == '{', seen: map[string]struct{}{},
+			})
+		case len(stack) == 0:
+			return fmt.Errorf("JSON value must be an object")
+		default:
+			markJSONPrefixValue(&stack[len(stack)-1])
+		}
+	}
+}
+
+// startedValue reports bytes past the last whole token: the input ended
+// inside a key or a value. In a container too deep for members, the last
+// whole token is its opener, so no separator can sit between them.
+func startedValue(rest []byte) bool {
+	return len(bytes.TrimSpace(rest)) > 0
+}
+
+func takeJSONPrefixKey(frame *jsonPrefixFrame, token json.Token) error {
+	key, ok := token.(string)
+	if !ok {
+		return fmt.Errorf("JSON object key is not a string")
+	}
+	if _, duplicate := frame.seen[key]; duplicate {
+		return fmt.Errorf("JSON object contains duplicate field %q", key)
+	}
+	frame.seen[key] = struct{}{}
+	frame.expectKey = false
+	return nil
+}
+
+func markJSONPrefixValue(frame *jsonPrefixFrame) {
+	if frame.object {
+		frame.expectKey = true
+	}
+}
+
+// validJSONEscapesPrefix applies validateJSONUnicodeEscapes to a prefix. The
+// one escape a prefix may leave unfinished is a surrogate pair cut between
+// its halves: a high-surrogate escape followed by the start of a low one.
+func validJSONEscapesPrefix(body []byte) bool {
+	if validateJSONUnicodeEscapes(body) == nil {
+		return true
+	}
+	start := cutSurrogatePair(body)
+	return start >= 0 && validateJSONUnicodeEscapes(body[:start]) == nil
+}
+
+// cutSurrogatePair returns where a trailing high-surrogate escape starts
+// when what follows it can still become its low surrogate, or -1.
+func cutSurrogatePair(body []byte) int {
+	for start := len(body) - 6; start >= 0 && start > len(body)-12; start-- {
+		if body[start] != '\\' || body[start+1] != 'u' {
+			continue
+		}
+		high, ok := decodeHexQuad(body, start+2)
+		if ok && high >= 0xd800 && high <= 0xdbff && lowSurrogateEscapePrefix(body[start+6:]) {
+			return start
+		}
+	}
+	return -1
+}
+
+// lowSurrogateEscapePrefix reports a strict prefix of an escape \uDC00
+// through \uDFFF.
+func lowSurrogateEscapePrefix(tail []byte) bool {
+	if len(tail) >= 6 {
+		return false
+	}
+	for index, character := range tail {
+		var ok bool
+		switch index {
+		case 0:
+			ok = character == '\\'
+		case 1:
+			ok = character == 'u'
+		case 2:
+			ok = character == 'd' || character == 'D'
+		case 3:
+			ok = bytes.IndexByte([]byte("cdefCDEF"), character) >= 0
+		default:
+			ok = bytes.IndexByte([]byte("0123456789abcdefABCDEF"), character) >= 0
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
 }

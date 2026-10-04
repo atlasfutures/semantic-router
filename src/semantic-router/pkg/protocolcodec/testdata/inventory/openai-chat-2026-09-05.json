@@ -1,19 +1,8 @@
 {
   "format": "openai.chat.v1",
   "version": "2026-09-05",
-  "note": "Chat Completions publishes no version header at all, so the date is the whole identity. OpenRouter adds vendor extensions on top of the OpenAI contract, and the rows below are those, read from the real arm captures in testdata/provider/openrouter. The request leg rows come from the harness shapes added 2026-10-03 (router-infra#90), which are derived from each harness's request builder rather than captured on the wire. reasoning_details is no longer a row on the response or stream leg: since #90 the wire structs name it, and it is carried as an opaque member of the reasoning content (reasoning_details.go). The stream leg repeats most of the response leg because a streamed response is decoded through chatChunkWire and a non-streamed one through chatResponseWire: production prunes each against its own struct, so a row on one says nothing about the other. Every row drops on every target: an unmodelled provider member is pruned before decode, so it reaches no client, not even a Chat client.",
+  "note": "Chat Completions publishes no version header at all, so the date is the whole identity. OpenRouter adds vendor extensions on top of the OpenAI contract, and the rows below are those, read from the real arm captures in testdata/provider/openrouter. The request leg rows come from the harness shapes added 2026-10-03 (router-infra#90), which are derived from each harness's request builder rather than captured on the wire. reasoning_details is no longer a row on the response or stream leg: since #90 the wire structs name it, and it is carried as an opaque member of the reasoning content (reasoning_details.go). native_finish_reason is no longer a row either: both wire structs name it, because a native length reason makes a tool call cut at the output limit a length stop. The stream leg repeats most of the response leg because a streamed response is decoded through chatChunkWire and a non-streamed one through chatResponseWire: production prunes each against its own struct, so a row on one says nothing about the other. Every row drops on every target: an unmodelled provider member is pruned before decode, so it reaches no client, not even a Chat client.",
   "fields": [
-    {
-      "path": "choices[].native_finish_reason",
-      "leg": "response",
-      "first_seen": "2026-09-03",
-      "targets": {
-        "anthropic.messages.v1": "drop",
-        "openai.chat.v1": "drop",
-        "openai.responses.v1": "drop"
-      },
-      "note": "The provider's own stop reason, beside the normalised finish_reason. The llm_usage line carries it as native_stop_reason from the response decoder, not from this member."
-    },
     {
       "path": "usage.completion_tokens_details.image_tokens",
       "leg": "response",
@@ -68,17 +57,6 @@
         "openai.responses.v1": "drop"
       },
       "note": "Zero on every arm captured so far. Same reconciliation risk as image_tokens."
-    },
-    {
-      "path": "choices[].native_finish_reason",
-      "leg": "stream",
-      "first_seen": "2026-09-03",
-      "targets": {
-        "anthropic.messages.v1": "drop",
-        "openai.chat.v1": "drop",
-        "openai.responses.v1": "drop"
-      },
-      "note": "The provider's own stop reason, beside the normalised finish_reason."
     },
     {
       "path": "usage.completion_tokens_details.image_tokens",

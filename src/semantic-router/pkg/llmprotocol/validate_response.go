@@ -30,6 +30,9 @@ func ValidateResponse(response Response, limits Limits) error {
 	if limits.ContentBlocks > 0 && blocks > limits.ContentBlocks {
 		return NewError(ErrorUpstreamUnavailable, "content_limit", "upstream content block limit exceeded", nil)
 	}
+	if err := validateIncompleteToolCalls(response); err != nil {
+		return err
+	}
 	if err := ValidateUsage(response.Usage); err != nil {
 		return err
 	}
@@ -350,4 +353,25 @@ func StableID(parts ...string) string {
 		_, _ = hash.Write([]byte(part))
 	}
 	return "item_" + hex.EncodeToString(hash.Sum(nil)[:12])
+}
+
+// validateIncompleteToolCalls admits a tool call cut off mid-arguments only
+// where a provider produces one: as the last content of a response that
+// stopped at max_tokens. Anywhere else the call is not cut, it is malformed.
+func validateIncompleteToolCalls(response Response) error {
+	for _, sequence := range append([][]OutputItem{response.Output}, response.Alternatives...) {
+		for itemIndex, item := range sequence {
+			for contentIndex, content := range item.Content {
+				if content.ToolCall == nil || !content.ToolCall.Incomplete {
+					continue
+				}
+				last := itemIndex == len(sequence)-1 && contentIndex == len(item.Content)-1
+				if response.StopReason != StopMaxTokens || !last {
+					return NewError(ErrorUpstreamUnavailable, "invalid_incomplete_tool_call",
+						"an incomplete tool call must end a response that stopped at max_tokens", nil)
+				}
+			}
+		}
+	}
+	return nil
 }

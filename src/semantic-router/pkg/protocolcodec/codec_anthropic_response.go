@@ -117,7 +117,22 @@ func decodeAnthropicResponseResource(wire anthropicResponseWire, policy llmproto
 			response.MatchedStopSequence = *wire.StopSequence
 		}
 	}
+	markAnthropicCutToolCall(response)
 	return response, nil
+}
+
+// markAnthropicCutToolCall marks the tool_use block a max_tokens stop cut
+// off. Anthropic documents a max_tokens response whose last block is a
+// tool_use as one holding an incomplete tool use block, and returns its input
+// as {} (recorded live), so the call looks whole unless it is marked.
+func markAnthropicCutToolCall(response llmprotocol.Response) {
+	if response.StopReason != llmprotocol.StopMaxTokens || len(response.Output) == 0 {
+		return
+	}
+	contents := response.Output[len(response.Output)-1].Content
+	if len(contents) > 0 && contents[len(contents)-1].ToolCall != nil {
+		contents[len(contents)-1].ToolCall.Incomplete = true
+	}
 }
 
 func appendAnthropicResponseUsage(

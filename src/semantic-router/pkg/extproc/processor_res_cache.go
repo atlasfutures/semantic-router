@@ -7,6 +7,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/cache"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/tracing"
@@ -25,6 +26,14 @@ func (r *OpenAIRouter) updateResponseCache(ctx *RequestContext, responseBody []b
 	}
 	if ctx.CacheWriteBypass {
 		metrics.RecordCacheWriteSkipped("request_no_store")
+		return
+	}
+	// A turn cut off at max_tokens mid tool call is served as the length
+	// stop it is, and its client retries with a higher limit. Cached, that
+	// retry would be answered with the same cut call. A max_tokens stop with
+	// no call in flight caches as before.
+	if turnCutMidToolCall(ctx) {
+		metrics.RecordCacheWriteSkipped("incomplete_tool_call")
 		return
 	}
 
@@ -115,4 +124,27 @@ func (r *OpenAIRouter) addSemanticCacheEntry(
 		ResponseBody: responseBody,
 		TTL:          cache.TTLPolicyFromLegacySeconds(ttlSeconds),
 	})
+}
+
+// turnCutMidToolCall reports a turn the output limit cut while the model
+// wrote a tool call: one the response still holds, or the Router's own
+// recovery call, which was removed from it.
+func turnCutMidToolCall(ctx *RequestContext) bool {
+	return ctx != nil && (ctx.ContextRecoveryCallCut || responseCutMidToolCall(ctx.SemanticResponse))
+}
+
+// responseCutMidToolCall reports a response whose tool call the output limit
+// cut off: its arguments are a prefix, marked incomplete.
+func responseCutMidToolCall(response *llmprotocol.Response) bool {
+	if response == nil {
+		return false
+	}
+	for _, item := range response.Output {
+		for _, content := range item.Content {
+			if content.ToolCall != nil && content.ToolCall.Incomplete {
+				return true
+			}
+		}
+	}
+	return false
 }

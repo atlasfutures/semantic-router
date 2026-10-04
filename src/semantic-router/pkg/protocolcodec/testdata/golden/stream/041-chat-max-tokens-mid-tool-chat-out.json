@@ -1,0 +1,848 @@
+{
+  "frames": [
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "role": "assistant"
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "{\"",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "command",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "\":\"",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "cat",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": " \u003e",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": " /",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "tmp",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "/pro",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "be",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "3",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": ".js",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": " \u003c\u003c",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "'",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "EOF",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "'\\",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "n",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "$(",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "for",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": " i",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": " in",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": " $(",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "seq",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": " ",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "1",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": " ",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "300",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": ");",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": " do",
+                    "name": "bash"
+                  },
+                  "id": "call_fixture",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": {
+        "choices": [
+          {
+            "delta": {},
+            "finish_reason": "length",
+            "index": 0
+          }
+        ],
+        "id": "gen-fixture-max-tokens-tool",
+        "model": "public-model",
+        "object": "chat.completion.chunk"
+      }
+    },
+    {
+      "event": "",
+      "data": "[DONE]"
+    }
+  ]
+}

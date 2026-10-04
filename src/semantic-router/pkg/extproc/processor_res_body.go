@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"bytes"
 	"time"
 
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -50,6 +51,7 @@ func (r *OpenAIRouter) handleResponseBody(v *ext_proc.ProcessingRequest_Response
 	} else {
 		responseBody = recoveredBody
 	}
+	ctx.ResponseBodyReplaced = !bytes.Equal(responseBody, v.ResponseBody.Body)
 
 	return r.handleNonStreamingResponseBody(responseBody, ctx, completionLatency), nil
 }

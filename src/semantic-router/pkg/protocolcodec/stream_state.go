@@ -41,6 +41,15 @@ type streamState struct {
 	imageProgressRank     map[int]int
 	imageProgressSeen     map[int]map[llmprotocol.ImageGenerationStatus]bool
 	nextPartialImageIndex map[int]int64
+	// cutItems are tool items that completed with arguments that are not a
+	// JSON object. That is how a call looks when the model's output hit
+	// max_tokens while it was writing the arguments, and it is also how a
+	// malformed call looks. Which one it was is only known at the terminal:
+	// a max_tokens stop finishes the turn as the length stop it is, and any
+	// other end fails it with invalid_stream_tool_arguments. A cut item is
+	// the last output item to complete, so any later output, or any other
+	// item completing after it, fails it at once (itemEventAfterCut).
+	cutItems map[int]bool
 }
 
 func (state *streamState) observeProviderStreamBytes(chunk []byte) error {
@@ -196,6 +205,7 @@ func (state *streamState) ensureCollections() {
 		state.toolCalls = make(map[int]llmprotocol.ToolCall)
 		state.toolCallIndexes = make(map[string]int)
 		state.toolArguments = make(map[int][]byte)
+		state.cutItems = make(map[int]bool)
 		state.imageProgressRank = make(map[int]int)
 		state.imageProgressSeen = make(map[int]map[llmprotocol.ImageGenerationStatus]bool)
 		state.nextPartialImageIndex = make(map[int]int64)
@@ -237,6 +247,9 @@ func (state *streamState) prepareStartEvent(event llmprotocol.Event) (llmprotoco
 }
 
 func (state *streamState) applyItemEvent(event llmprotocol.Event) (llmprotocol.Event, error) {
+	if len(state.cutItems) > 0 && itemEventAfterCut(event.Type) {
+		return llmprotocol.Event{}, invalidStreamToolArguments()
+	}
 	switch event.Type {
 	case llmprotocol.EventOutputItemStarted:
 		return state.startItem(event)
@@ -248,6 +261,29 @@ func (state *streamState) applyItemEvent(event llmprotocol.Event) (llmprotocol.E
 		return state.completeItem(event)
 	}
 	return event, nil
+}
+
+// itemEventAfterCut reports an item event that may not follow a cut tool
+// item. A model cut off at max_tokens generates nothing more, and the call
+// it was writing is the last thing it wrote, so it is the last item to
+// complete. Output after a cut item, or another item completing after it
+// (a Chat stream completes its parallel calls in index order at the finish
+// chunk, so a truncated call 0 completes before a whole call 1), proves the
+// item malformed rather than cut. With this, a turn reaching its terminal
+// holds at most one cut item, and it completed last.
+func itemEventAfterCut(eventType llmprotocol.EventType) bool {
+	switch eventType {
+	case llmprotocol.EventOutputItemStarted, llmprotocol.EventOutputTextDelta,
+		llmprotocol.EventReasoningDelta, llmprotocol.EventToolCallDelta,
+		llmprotocol.EventImageGenerationProgress, llmprotocol.EventOutputItemCompleted:
+		return true
+	default:
+		return false
+	}
+}
+
+func invalidStreamToolArguments() *llmprotocol.ProtocolError {
+	return llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "invalid_stream_tool_arguments", "upstream streamed tool arguments are not a JSON object", nil)
 }
 
 func (state *streamState) startItem(event llmprotocol.Event) (llmprotocol.Event, error) {

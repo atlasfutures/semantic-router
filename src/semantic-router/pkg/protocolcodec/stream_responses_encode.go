@@ -597,7 +597,7 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesOutput(
 		Type: "response.output_item.done", Sequence: encoder.nextWireSequence(), OutputIndex: responsesOutputIndex(index),
 	}
 	item := responsesItemWire{
-		Type: "function_call", ID: id, Status: "completed",
+		Type: "function_call", ID: id, Status: responsesToolCallStatus(event.ToolCall),
 		CallID: event.ToolCall.ID, Name: event.ToolCall.Name, Arguments: event.ToolCall.Arguments,
 		Namespace: event.ToolCall.Namespace,
 	}
@@ -605,6 +605,18 @@ func (encoder *responsesStreamEncoder) encodeCompletedResponsesOutput(
 	encoder.recordResponsesCompletedOutput(index, wire.Item)
 	frame, err := encoder.encodeResponsesStreamFrame(wire)
 	return [][]byte{doneFrame, frame}, nil, err
+}
+
+// responsesToolCallStatus is a function_call item's final status. A call the
+// model was cut off writing at max_output_tokens ends "incomplete" with the
+// arguments it wrote, which is how OpenAI ends an item the limit interrupted;
+// the response around it ends response.incomplete with reason
+// max_output_tokens. "completed" would tell the client the call is whole.
+func responsesToolCallStatus(call *llmprotocol.ToolCall) string {
+	if call != nil && call.Incomplete {
+		return "incomplete"
+	}
+	return "completed"
 }
 
 func marshalResponsesEventItem(item responsesItemWire) json.RawMessage {

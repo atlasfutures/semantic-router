@@ -226,9 +226,9 @@ func TestOpenRouterUnknownFieldsAreNamed(t *testing.T) {
 	_, dropped := pruneUnknownProviderFields(
 		loadProviderFixture(t, openRouterResponseReasoning), reflect.TypeOf(&chatResponseWire{}),
 	)
-	// reasoning_details is named now (it is carried, see reasoning_details.go).
+	// reasoning_details is named now (it is carried, see reasoning_details.go),
+	// and so is native_finish_reason (a native length reason is a length stop).
 	want := []string{
-		"choices[].native_finish_reason",
 		"usage.completion_tokens_details.image_tokens",
 		"usage.prompt_tokens_details.video_tokens",
 	}
@@ -249,8 +249,9 @@ func TestOpenRouterStreamUnknownFieldsAreNamed(t *testing.T) {
 			seen[field] = true
 		}
 	}
+	// native_finish_reason is named on the stream: it is how OpenRouter says
+	// a tool call was cut off at the output limit (decodeChatChoiceStop).
 	for _, field := range []string{
-		"choices[].native_finish_reason",
 		"usage.completion_tokens_details.image_tokens", "usage.prompt_tokens_details.video_tokens",
 	} {
 		if !seen[field] {
