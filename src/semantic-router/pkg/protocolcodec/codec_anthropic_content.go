@@ -515,7 +515,7 @@ func encodeAnthropicInstructions(
 }
 
 func appendAnthropicMessages(wire *anthropicRequestWire, messages []llmprotocol.Message) error {
-	for _, message := range regroupAnthropicMessages(messages) {
+	for _, message := range regroupAnthropicMessages(withoutRouterSignedThinking(messages)) {
 		encoded, err := encodeAnthropicMessage(message)
 		if err != nil {
 			return err

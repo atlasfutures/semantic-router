@@ -1,0 +1,57 @@
+{
+  "cases": [
+    {
+      "name": "marker_signed_reasoning_details_item_is_refused",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_tokens": 32000,
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "weather in Paris?",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            },
+            {
+              "content": [
+                {
+                  "thinking": "Kimi reasoning about Paris.",
+                  "type": "thinking"
+                },
+                {
+                  "text": "It is sunny.",
+                  "type": "text"
+                }
+              ],
+              "role": "assistant"
+            },
+            {
+              "content": [
+                {
+                  "text": "and tomorrow?",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "max_tokens",
+            "action": "generated"
+          },
+          {
+            "field": "content.reasoning_details",
+            "action": "dropped"
+          }
+        ]
+      }
+    }
+  ]
+}
