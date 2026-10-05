@@ -231,6 +231,7 @@ func finalizeSelectionAbort(
 	)
 	if err != nil {
 		logSelectionTransactionFailure(
+			ctx.RequestID,
 			ctx.SelectionTransaction.kind,
 			"abort",
 			err,
@@ -287,7 +288,7 @@ func finalizeSelectionResponseHeaders(
 			finalizeContext,
 			"lease_lost",
 		); abortErr != nil {
-			logSelectionTransactionFailure(ctx.SelectionTransaction.kind, "abort", abortErr)
+			logSelectionTransactionFailure(ctx.RequestID, ctx.SelectionTransaction.kind, "abort", abortErr)
 		}
 		return err
 	}
@@ -407,6 +408,7 @@ func finalizeSelectionSettlement(
 		// Settlement is post-commit observation. It must be visible, but cannot
 		// replace a successful provider response or rerun selection.
 		logSelectionTransactionFailure(
+			ctx.RequestID,
 			ctx.SelectionTransaction.kind,
 			"settle",
 			err,
@@ -472,7 +474,10 @@ func selectionOutcomeFromContext(
 	return outcome
 }
 
+// logSelectionTransactionFailure carries the request id, so the line joins
+// the turn's other records (turn_failed, llm_usage) and the gateway's route.
 func logSelectionTransactionFailure(
+	requestID string,
 	kind string,
 	stage string,
 	err error,
@@ -481,6 +486,7 @@ func logSelectionTransactionFailure(
 		"extproc",
 		"selection_transaction_failed",
 		map[string]interface{}{
+			"request_id":    requestID,
 			"algorithm":     kind,
 			"stage":         stage,
 			"failure_class": boundedSelectionTransactionFailure(err),
@@ -516,7 +522,11 @@ func recordSelectionLifecycleFailure(
 			kind = failure.algorithm
 		}
 	}
-	logSelectionTransactionFailure(kind, stage, err)
+	requestID := ""
+	if ctx != nil {
+		requestID = ctx.RequestID
+	}
+	logSelectionTransactionFailure(requestID, kind, stage, err)
 }
 
 // selectionUnavailableMessage is the single client-visible wording for an
