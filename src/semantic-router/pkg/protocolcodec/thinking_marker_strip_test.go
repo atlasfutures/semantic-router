@@ -3,6 +3,7 @@ package protocolcodec
 import (
 	"encoding/base64"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -31,47 +32,8 @@ func TestStripRouterSignaturesLeavesOtherBodiesByteForByte(t *testing.T) {
 func TestStripRouterSignaturesRemovesEverySignaturePlace(t *testing.T) {
 	policy := NewBuiltinEngine().policy
 	marker := "vsr.thinking.v1.moonshotai." + testMarkerDigest
-	minted := func(details string) string {
-		blob := mintReasoningDetails(json.RawMessage(details))
-		return string(blob)
-	}
-	cases := []struct {
-		name   string
-		format llmprotocol.WireFormat
-		body   string
-		keep   []string
-	}{
-		{
-			"messages thinking", llmprotocol.AnthropicMessagesV1,
-			`{"model":"m","max_tokens":8,"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"kimi","signature":"` + marker + `"}]}]}`,
-			[]string{`"thinking":"kimi"`, `"signature":""`},
-		},
-		{
-			"messages escaped", llmprotocol.AnthropicMessagesV1,
-			`{"model":"m","max_tokens":8,"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"kimi","signature":"\u0076sr.x"}]}]}`,
-			[]string{`"signature":""`},
-		},
-		{
-			"chat details", llmprotocol.OpenAIChatV1,
-			`{"model":"m","messages":[{"role":"assistant","content":"ok","reasoning_details":[{"type":"reasoning.text","signature":"` + marker + `","format":"anthropic-claude-v1"},{"type":"reasoning.encrypted","data":"gAAA"}]}]}`,
-			[]string{`"data":"gAAA"`},
-		},
-		{
-			"responses signature", llmprotocol.OpenAIResponsesV1,
-			`{"model":"m","input":[{"type":"reasoning","summary":[],"signature":"` + marker + `","format":"anthropic-claude-v1","x":1}]}`,
-			[]string{`"format":"anthropic-claude-v1"`, `"x":1`},
-		},
-		{
-			"responses minted, emptied", llmprotocol.OpenAIResponsesV1,
-			`{"model":"m","input":[{"type":"reasoning","summary":[],"encrypted_content":` + minted(`[{"signature":"`+marker+`"}]`) + `}]}`,
-			[]string{`"type":"reasoning"`},
-		},
-		{
-			"responses minted, mixed", llmprotocol.OpenAIResponsesV1,
-			`{"model":"m","input":[{"type":"reasoning","summary":[],"encrypted_content":` + minted(`[{"signature":"`+marker+`"},{"data":"gAAA"}]`) + `}]}`,
-			[]string{`"encrypted_content":"vsr.reasoning_details.v1.`},
-		},
-	}
+	cases := stripFixtures()
+	minted := func(details string) string { return string(mintReasoningDetails(json.RawMessage(details))) }
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got, stripped := stripRouterSignatures(tc.format, []byte(tc.body), policy)
@@ -157,4 +119,113 @@ func TestStripRouterSignaturesDoesNotGrowTheBody(t *testing.T) {
 	if removed := len(marker); len(got) > len(body)-removed {
 		t.Fatalf("stripped body is %d bytes, want at most %d", len(got), len(body)-removed)
 	}
+}
+
+type stripFixture struct {
+	name   string
+	format llmprotocol.WireFormat
+	body   string
+	keep   []string
+}
+
+// stripFixtures are bodies holding a Router signature in every place the
+// pre-pass strips one.
+func stripFixtures() []stripFixture {
+	marker := "vsr.thinking.v1.moonshotai." + testMarkerDigest
+	minted := func(details string) string {
+		blob := mintReasoningDetails(json.RawMessage(details))
+		return string(blob)
+	}
+	return []stripFixture{
+		{
+			"messages thinking", llmprotocol.AnthropicMessagesV1,
+			`{"model":"m","max_tokens":8,"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"kimi","signature":"` + marker + `"}]}]}`,
+			[]string{`"thinking":"kimi"`, `"signature":""`},
+		},
+		{
+			"messages escaped", llmprotocol.AnthropicMessagesV1,
+			`{"model":"m","max_tokens":8,"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"kimi","signature":"\u0076sr.x"}]}]}`,
+			[]string{`"signature":""`},
+		},
+		{
+			"chat details", llmprotocol.OpenAIChatV1,
+			`{"model":"m","messages":[{"role":"assistant","content":"ok","reasoning_details":[{"type":"reasoning.text","signature":"` + marker + `","format":"anthropic-claude-v1"},{"type":"reasoning.encrypted","data":"gAAA"}]}]}`,
+			[]string{`"data":"gAAA"`},
+		},
+		{
+			"responses signature", llmprotocol.OpenAIResponsesV1,
+			`{"model":"m","input":[{"type":"reasoning","summary":[],"signature":"` + marker + `","format":"anthropic-claude-v1","x":1}]}`,
+			[]string{`"format":"anthropic-claude-v1"`, `"x":1`},
+		},
+		{
+			"responses minted, emptied", llmprotocol.OpenAIResponsesV1,
+			`{"model":"m","input":[{"type":"reasoning","summary":[],"encrypted_content":` + minted(`[{"signature":"`+marker+`"}]`) + `}]}`,
+			[]string{`"type":"reasoning"`},
+		},
+		{
+			"responses minted, mixed", llmprotocol.OpenAIResponsesV1,
+			`{"model":"m","input":[{"type":"reasoning","summary":[],"encrypted_content":` + minted(`[{"signature":"`+marker+`"},{"data":"gAAA"}]`) + `}]}`,
+			[]string{`"encrypted_content":"vsr.reasoning_details.v1.`},
+		},
+	}
+}
+
+// The pre-pass contract: the output is the input with marker spans removed --
+// no other byte changes, and it is never longer. Checked over every fixture,
+// a key of raw U+2028 and U+2029 (which Go's encoder would escape to six
+// bytes each), and HTML-significant text.
+func TestStripRouterSignaturesOnlyRemovesMarkerSpans(t *testing.T) {
+	policy := NewBuiltinEngine().policy
+	marker := "vsr.thinking.v1.moonshotai." + testMarkerDigest
+	separators := strings.Repeat("\u2028\u2029", 500)
+	fixtures := append(stripFixtures(),
+		stripFixture{name: "separator key", format: llmprotocol.OpenAIResponsesV1, body: `{"model":"m","input":[` +
+			`{"type":"reasoning","summary":[],"content":[{"type":"reasoning_text","text":"kimi"}],` +
+			`"signature":"` + marker + `","format":"anthropic-claude-v1","` + separators + `":1}]}`},
+		stripFixture{name: "html text", format: llmprotocol.AnthropicMessagesV1, body: `{"model":"m","max_tokens":8,"messages":[` +
+			`{"role":"user","content":"<a & b>"},` +
+			`{"role":"assistant","content":[{"type":"thinking","thinking":"<b & c>","signature":"` + marker + `"}]}]}`},
+		stripFixture{name: "spaced and escaped", format: llmprotocol.OpenAIChatV1, body: "{ \"model\" : \"m\" ,\n \"messages\" : [ { \"role\":\"assistant\", \"content\":\"ok\" , " +
+			"\"reasoning_details\" : [ {\"data\":\"gAAA\"} , { \"signature\" : \"\\u0076sr.x\" } ] , \"x\" : 1 } ] }"},
+	)
+	minted := regexp.MustCompile(`vsr\.reasoning_details\.v1\.[A-Za-z0-9_-]*`)
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			out, stripped := stripRouterSignatures(fixture.format, []byte(fixture.body), policy)
+			if !stripped {
+				t.Fatalf("not stripped: %s", fixture.body)
+			}
+			if len(out) > len(fixture.body) {
+				t.Fatalf("output grew from %d to %d bytes", len(fixture.body), len(out))
+			}
+			// A re-minted blob is the one value the pass rewrites; outside
+			// it, the output is the input with spans removed.
+			in, got := minted.ReplaceAllString(fixture.body, ""), minted.ReplaceAllString(string(out), "")
+			if !isSubsequence(got, in) {
+				t.Fatalf("bytes other than marker spans changed:\n in: %.300s\nout: %.300s", fixture.body, out)
+			}
+			if !json.Valid(out) {
+				t.Fatalf("output is not JSON: %s", out)
+			}
+			if strings.Contains(string(out), "vsr.thinking") {
+				t.Fatalf("a marker survived: %.300s", out)
+			}
+		})
+	}
+	// The separator key reaches the decoder as it was written.
+	out, _ := stripRouterSignatures(fixtures[len(fixtures)-3].format, []byte(fixtures[len(fixtures)-3].body), policy)
+	if !strings.Contains(string(out), separators) {
+		t.Fatal("the U+2028/U+2029 key was rewritten")
+	}
+}
+
+// isSubsequence reports whether every byte of short appears in long, in order.
+func isSubsequence(short, long string) bool {
+	at := 0
+	for index := 0; index < len(long) && at < len(short); index++ {
+		if long[index] == short[at] {
+			at++
+		}
+	}
+	return at == len(short)
 }

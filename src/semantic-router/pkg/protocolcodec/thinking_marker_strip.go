@@ -29,9 +29,14 @@ import (
 //     signed items are removed -- and the blob itself when none remains, so
 //     the item is plain reasoning rather than a blob to classify.
 //
-// A body that held one is decoded from the stripped bytes and is never kept
-// for source replay, so the client's original bytes cannot reach a provider
-// either. A body this pass cannot read is left as it is for the decoder to
+// The pass never re-encodes the body. It finds the byte span of each value to
+// remove or replace and splices it out of the client's bytes, so the output
+// is the input with marker spans removed (a Messages signature value becomes
+// "", a minted blob a shorter blob); no other byte changes, and len(out) <=
+// len(in). A body within the size limit therefore stays within it, whatever
+// its keys and strings hold. A body that held one is decoded from the
+// stripped bytes and is never kept for source replay, so the client's
+// original bytes cannot reach a provider either. A body this pass cannot read is left as it is for the decoder to
 // refuse.
 //
 // It replaces the per-site strips that review of #207 found one at a time,
@@ -45,48 +50,205 @@ func stripRouterSignatures(format llmprotocol.WireFormat, body []byte, policy ll
 	if !bytes.Contains(body, []byte(routerSignatureNamespace)) && !bytes.Contains(body, []byte(`\u`)) {
 		return body, false
 	}
+	// The scanner below trusts the document's shape, so it runs only on a
+	// body the codecs' own validation accepts; any other body is left for
+	// the decoder to refuse.
 	if validateClientJSONDocument(body, policy, true) != nil {
 		return body, false
 	}
-	var request map[string]json.RawMessage
-	if json.Unmarshal(body, &request) != nil {
-		return body, false
-	}
-	strip := routerSignatureStrip{families: map[string]int{}, depth: policy.Limits.JSONDepth}
-	var changed bool
+	strip := routerSignatureStrip{body: body, families: map[string]int{}, depth: policy.Limits.JSONDepth}
+	top := strip.value(skipJSONSpace(body, 0))
 	switch format {
 	case llmprotocol.AnthropicMessagesV1:
-		changed = strip.eachObject(request, "messages", func(message map[string]json.RawMessage) bool {
-			return strip.eachObject(message, "content", strip.anthropicThinking)
+		strip.eachObject(strip.member(top, "messages"), func(message jsonSpan) {
+			strip.eachObject(strip.member(message, "content"), strip.anthropicThinking)
 		})
 	case llmprotocol.OpenAIChatV1:
-		changed = strip.eachObject(request, "messages", strip.chatReasoningDetails)
+		strip.eachObject(strip.member(top, "messages"), strip.chatReasoningDetails)
 	case llmprotocol.OpenAIResponsesV1:
-		changed = strip.eachObject(request, "input", strip.responsesReasoningItem)
+		strip.eachObject(strip.member(top, "input"), strip.responsesReasoningItem)
 	}
-	if !changed {
+	if len(strip.edits) == 0 {
 		return body, false
 	}
-	stripped, err := marshalStripped(request)
-	if err != nil {
-		return body, false
+	stripped := strip.splice()
+	if len(stripped) > len(body) {
+		// Every edit removes bytes or replaces a value with a shorter one, so
+		// this cannot happen; if it did, the request is refused rather than
+		// sent with a signature or grown past the limit it met.
+		return nil, true
 	}
 	strip.report(format)
 	return stripped, true
 }
 
-// routerSignatureStrip counts the Router signatures one request lost, by
-// family.
+// routerSignatureStrip collects, over one client body, the byte edits that
+// remove its Router signatures, and counts them by family.
 type routerSignatureStrip struct {
+	body     []byte
+	edits    []jsonEdit
 	families map[string]int
 	depth    int
 }
 
-// signed reports whether value is a JSON string in the Router's namespace,
+// jsonSpan is a JSON value's bytes, body[start:end]. A zero span is absent.
+type jsonSpan struct{ start, end int }
+
+func (span jsonSpan) present() bool { return span.end > span.start }
+
+// jsonEdit replaces body[start:end] with with; an empty with removes it.
+type jsonEdit struct {
+	start, end int
+	with       []byte
+}
+
+// jsonMember is an object member: its key, decoded, and the span from the
+// key's opening quote to the value's end, and the value's own span.
+type jsonMember struct {
+	key   string
+	whole jsonSpan
+	value jsonSpan
+}
+
+func skipJSONSpace(body []byte, at int) int {
+	for at < len(body) && (body[at] == ' ' || body[at] == '\t' || body[at] == '\n' || body[at] == '\r') {
+		at++
+	}
+	return at
+}
+
+// value returns the span of the JSON value starting at start.
+func (strip *routerSignatureStrip) value(start int) jsonSpan {
+	body := strip.body
+	if start >= len(body) {
+		return jsonSpan{}
+	}
+	switch body[start] {
+	case '"':
+		at := start + 1
+		for at < len(body) && body[at] != '"' {
+			if body[at] == '\\' {
+				at++
+			}
+			at++
+		}
+		return jsonSpan{start, at + 1}
+	case '{', '[':
+		closing := byte('}')
+		if body[start] == '[' {
+			closing = ']'
+		}
+		at := skipJSONSpace(body, start+1)
+		for at < len(body) && body[at] != closing {
+			if body[at] == ',' || body[at] == ':' {
+				at = skipJSONSpace(body, at+1)
+				continue
+			}
+			at = skipJSONSpace(body, strip.value(at).end)
+		}
+		return jsonSpan{start, at + 1}
+	default:
+		at := start
+		for at < len(body) && !strings.ContainsRune(",}] \t\n\r", rune(body[at])) {
+			at++
+		}
+		return jsonSpan{start, at}
+	}
+}
+
+// elements returns the spans of an array's elements, or nil for any other
+// value.
+func (strip *routerSignatureStrip) elements(array jsonSpan) []jsonSpan {
+	if !array.present() || strip.body[array.start] != '[' {
+		return nil
+	}
+	var spans []jsonSpan
+	at := skipJSONSpace(strip.body, array.start+1)
+	for at < array.end-1 {
+		element := strip.value(at)
+		spans = append(spans, element)
+		at = skipJSONSpace(strip.body, element.end)
+		if at < array.end-1 && strip.body[at] == ',' {
+			at = skipJSONSpace(strip.body, at+1)
+		}
+	}
+	return spans
+}
+
+// members returns an object's members, or nil for any other value.
+func (strip *routerSignatureStrip) members(object jsonSpan) []jsonMember {
+	if !object.present() || strip.body[object.start] != '{' {
+		return nil
+	}
+	var members []jsonMember
+	at := skipJSONSpace(strip.body, object.start+1)
+	for at < object.end-1 {
+		key := strip.value(at)
+		var name string
+		_ = json.Unmarshal(strip.body[key.start:key.end], &name)
+		value := strip.value(skipJSONSpace(strip.body, skipJSONSpace(strip.body, key.end)+1))
+		members = append(members, jsonMember{key: name, whole: jsonSpan{key.start, value.end}, value: value})
+		at = skipJSONSpace(strip.body, value.end)
+		if at < object.end-1 && strip.body[at] == ',' {
+			at = skipJSONSpace(strip.body, at+1)
+		}
+	}
+	return members
+}
+
+// member returns the value of an object's member named name (case folded,
+// as encoding/json matches it), or an absent span.
+func (strip *routerSignatureStrip) member(object jsonSpan, name string) jsonSpan {
+	for _, member := range strip.members(object) {
+		if strings.EqualFold(member.key, name) {
+			return member.value
+		}
+	}
+	return jsonSpan{}
+}
+
+func (strip *routerSignatureStrip) eachObject(array jsonSpan, visit func(jsonSpan)) {
+	for _, element := range strip.elements(array) {
+		if strip.body[element.start] == '{' {
+			visit(element)
+		}
+	}
+}
+
+// remove removes the listed entries of a container -- array elements, or
+// object members whole -- with the commas that separate them, leaving the
+// rest of the container byte for byte.
+func (strip *routerSignatureStrip) remove(container jsonSpan, entries []jsonSpan, removed []bool) {
+	for index, entry := range entries {
+		if !removed[index] {
+			continue
+		}
+		if index+1 < len(entries) {
+			// Up to the next entry: this one and the comma after it.
+			strip.edits = append(strip.edits, jsonEdit{start: entry.start, end: entries[index+1].start})
+			continue
+		}
+		// The last entry: from the end of the last entry kept before it, so
+		// its preceding comma goes too, or from the opening bracket.
+		from := container.start + 1
+		for previous := index - 1; previous >= 0; previous-- {
+			if !removed[previous] {
+				from = entries[previous].end
+				break
+			}
+		}
+		strip.edits = append(strip.edits, jsonEdit{start: from, end: entry.end})
+	}
+}
+
+// signed reports whether a value is a JSON string in the Router's namespace,
 // and counts it.
-func (strip routerSignatureStrip) signed(value json.RawMessage) bool {
+func (strip *routerSignatureStrip) signed(value jsonSpan) bool {
+	if !value.present() || strip.body[value.start] != '"' {
+		return false
+	}
 	var signature string
-	if json.Unmarshal(value, &signature) != nil {
+	if json.Unmarshal(strip.body[value.start:value.end], &signature) != nil {
 		return false
 	}
 	family, reserved := routerSignature(signature)
@@ -96,122 +258,123 @@ func (strip routerSignatureStrip) signed(value json.RawMessage) bool {
 	return reserved
 }
 
-// eachObject applies edit to each object of the array under key, writing
-// back the array when any edit changed its object. A member that is not an
-// array of objects (Messages string content, for one) is left alone.
-func (strip routerSignatureStrip) eachObject(
-	parent map[string]json.RawMessage,
-	key string,
-	edit func(map[string]json.RawMessage) bool,
-) bool {
-	var elements []json.RawMessage
-	if json.Unmarshal(parent[key], &elements) != nil {
-		return false
-	}
-	changed := false
-	for index, element := range elements {
-		var object map[string]json.RawMessage
-		if json.Unmarshal(element, &object) != nil || object == nil || !edit(object) {
-			continue
-		}
-		encoded, err := marshalStripped(object)
-		if err != nil {
-			continue
-		}
-		elements[index] = encoded
-		changed = true
-	}
-	if !changed {
-		return false
-	}
-	encoded, err := marshalStripped(elements)
-	if err != nil {
-		return false
-	}
-	parent[key] = encoded
-	return true
-}
-
-func (strip routerSignatureStrip) anthropicThinking(block map[string]json.RawMessage) bool {
+func (strip *routerSignatureStrip) anthropicThinking(block jsonSpan) {
 	var blockType string
-	if json.Unmarshal(block["type"], &blockType) != nil || blockType != "thinking" || !strip.signed(block["signature"]) {
-		return false
+	kind := strip.member(block, "type")
+	if !kind.present() || json.Unmarshal(strip.body[kind.start:kind.end], &blockType) != nil || blockType != "thinking" {
+		return
 	}
-	block["signature"] = json.RawMessage(`""`)
-	return true
+	if signature := strip.member(block, "signature"); strip.signed(signature) {
+		strip.edits = append(strip.edits, jsonEdit{start: signature.start, end: signature.end, with: []byte(`""`)})
+	}
 }
 
-func (strip routerSignatureStrip) chatReasoningDetails(message map[string]json.RawMessage) bool {
-	details, ok := message[chatReasoningDetailsMember]
-	if !ok {
-		return false
+func (strip *routerSignatureStrip) chatReasoningDetails(message jsonSpan) {
+	members := strip.members(message)
+	for index, member := range members {
+		if !strings.EqualFold(member.key, chatReasoningDetailsMember) {
+			continue
+		}
+		items := strip.elements(member.value)
+		removed := make([]bool, len(items))
+		count := 0
+		for item, span := range items {
+			if strip.signed(strip.member(span, "signature")) {
+				removed[item], count = true, count+1
+			}
+		}
+		switch {
+		case count == 0:
+		case count == len(items):
+			// No item is left: the member goes, so no empty array is sent.
+			strip.removeMember(message, members, index)
+		default:
+			strip.remove(member.value, items, removed)
+		}
 	}
-	kept, changed := strip.details(details)
-	if !changed {
-		return false
-	}
-	if kept == nil {
-		delete(message, chatReasoningDetailsMember)
-	} else {
-		message[chatReasoningDetailsMember] = kept
-	}
-	return true
 }
 
-func (strip routerSignatureStrip) responsesReasoningItem(item map[string]json.RawMessage) bool {
-	changed := false
-	if signature, ok := item["signature"]; ok && strip.signed(signature) {
-		delete(item, "signature")
-		changed = true
+func (strip *routerSignatureStrip) removeMember(object jsonSpan, members []jsonMember, index int) {
+	wholes := make([]jsonSpan, len(members))
+	removed := make([]bool, len(members))
+	for position, member := range members {
+		wholes[position] = member.whole
 	}
+	removed[index] = true
+	strip.remove(object, wholes, removed)
+}
+
+func (strip *routerSignatureStrip) responsesReasoningItem(item jsonSpan) {
+	members := strip.members(item)
+	wholes := make([]jsonSpan, len(members))
+	removed := make([]bool, len(members))
+	removing := false
+	for index, member := range members {
+		wholes[index] = member.whole
+		switch {
+		case strings.EqualFold(member.key, "signature") && strip.signed(member.value):
+			removed[index], removing = true, true
+		case strings.EqualFold(member.key, "encrypted_content"):
+			blob, drop := strip.mintedBlob(member.value)
+			switch {
+			case drop:
+				removed[index], removing = true, true
+			case blob != nil:
+				strip.edits = append(strip.edits, jsonEdit{start: member.value.start, end: member.value.end, with: blob})
+			}
+		}
+	}
+	if removing {
+		strip.remove(item, wholes, removed)
+	}
+}
+
+// mintedBlob strips the Router-signed items of a Router-minted
+// encrypted_content. It returns the replacement blob, or drop when the blob
+// goes: every item was stripped, its items repeat a member (the body's
+// duplicate-key check cannot see inside the base64, and a decoder would read
+// one of the values only), or the re-minted blob would not be shorter than
+// the original. Neither is returned for any other value.
+func (strip *routerSignatureStrip) mintedBlob(value jsonSpan) (blob []byte, drop bool) {
 	var encrypted string
-	if json.Unmarshal(item["encrypted_content"], &encrypted) != nil ||
+	if !value.present() || json.Unmarshal(strip.body[value.start:value.end], &encrypted) != nil ||
 		!strings.HasPrefix(encrypted, mintedReasoningDetailsPrefix) {
-		return changed
+		return nil, false
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(encrypted, mintedReasoningDetailsPrefix))
 	if err != nil {
-		return changed
+		return nil, false
 	}
 	if validateNoDuplicateKeys(decoded, strip.depth) != nil {
-		// The body's duplicate-key check cannot see inside the base64, and a
-		// decoder would read only one of a repeated signature. A blob this
-		// pass cannot read unambiguously is not kept: the item is plain
-		// reasoning without it.
 		strip.families[thinkingMarkerFamilyLabel("")]++
-		delete(item, "encrypted_content")
-		return true
+		return nil, true
 	}
 	kept, stripped := strip.details(decoded)
 	if !stripped {
-		return changed
+		return nil, false
 	}
 	if kept == nil {
-		delete(item, "encrypted_content")
-	} else if blob := mintReasoningDetails(kept); blob != nil {
-		item["encrypted_content"] = blob
-	} else {
-		delete(item, "encrypted_content")
+		return nil, true
 	}
-	return true
+	blob = mintReasoningDetails(kept)
+	if blob == nil || len(blob) > value.end-value.start {
+		return nil, true
+	}
+	return blob, false
 }
 
 // details removes each reasoning_details item signed with a Router
-// signature. kept is nil when no item remains.
-func (strip routerSignatureStrip) details(details json.RawMessage) (json.RawMessage, bool) {
-	var items []json.RawMessage
-	if json.Unmarshal(details, &items) != nil {
-		return nil, false
-	}
-	kept := make([]json.RawMessage, 0, len(items))
-	for _, item := range items {
-		var signed struct {
-			Signature json.RawMessage `json:"signature"`
-		}
-		if json.Unmarshal(item, &signed) == nil && strip.signed(signed.Signature) {
+// signature from a decoded minted array. The items kept are joined as they
+// were written; kept is nil when none remains.
+func (strip *routerSignatureStrip) details(details []byte) (json.RawMessage, bool) {
+	inner := routerSignatureStrip{body: details, families: strip.families, depth: strip.depth}
+	items := inner.elements(inner.value(skipJSONSpace(details, 0)))
+	kept := make([][]byte, 0, len(items))
+	for _, span := range items {
+		if details[span.start] == '{' && inner.signed(inner.member(span, "signature")) {
 			continue
 		}
-		kept = append(kept, item)
+		kept = append(kept, details[span.start:span.end])
 	}
 	if len(kept) == len(items) {
 		return nil, false
@@ -219,11 +382,28 @@ func (strip routerSignatureStrip) details(details json.RawMessage) (json.RawMess
 	if len(kept) == 0 {
 		return nil, true
 	}
-	encoded, err := marshalStripped(kept)
-	if err != nil {
-		return nil, true
+	return append(append([]byte{'['}, bytes.Join(kept, []byte{','})...), ']'), true
+}
+
+// splice applies the edits to the client's bytes. Removals that overlap --
+// two adjacent entries of one container -- are merged.
+func (strip *routerSignatureStrip) splice() []byte {
+	edits := append([]jsonEdit(nil), strip.edits...)
+	sort.Slice(edits, func(i, j int) bool { return edits[i].start < edits[j].start })
+	out := make([]byte, 0, len(strip.body))
+	at := 0
+	for _, edit := range edits {
+		if edit.end <= at {
+			continue
+		}
+		if edit.start < at {
+			edit.start = at
+		}
+		out = append(out, strip.body[at:edit.start]...)
+		out = append(out, edit.with...)
+		at = edit.end
 	}
-	return encoded, true
+	return append(out, strip.body[at:]...)
 }
 
 // report logs one line per family stripped, with the count and the source
@@ -241,19 +421,4 @@ func (strip routerSignatureStrip) report(source llmprotocol.WireFormat) {
 			"source": string(source),
 		})
 	}
-}
-
-// marshalStripped encodes a value the pass rebuilt. The client's strings are
-// held as raw JSON and written as they came, without the HTML escaping
-// json.Marshal adds, so a stripped body is never longer than the body it came
-// from less what was removed, and a body within the size limit stays within
-// it.
-func marshalStripped(value any) ([]byte, error) {
-	var buffer bytes.Buffer
-	encoder := json.NewEncoder(&buffer)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(value); err != nil {
-		return nil, err
-	}
-	return bytes.TrimSuffix(buffer.Bytes(), []byte("\n")), nil
 }
