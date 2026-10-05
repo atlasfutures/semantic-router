@@ -101,16 +101,9 @@ func withoutRouterSignedDetails(details json.RawMessage, report func(family stri
 			report("")
 			continue
 		}
-		var signed struct {
-			Signature any `json:"signature"`
-		}
-		if json.Unmarshal(item, &signed) == nil {
-			if signature, ok := signed.Signature.(string); ok {
-				if family, reserved := routerSignature(signature); reserved {
-					report(family)
-					continue
-				}
-			}
+		if family, reserved := itemRouterSignature(item); reserved {
+			report(family)
+			continue
 		}
 		kept = append(kept, item)
 	}
@@ -121,4 +114,25 @@ func withoutRouterSignedDetails(details json.RawMessage, report func(family stri
 		return nil, nil
 	}
 	return json.Marshal(kept)
+}
+
+// itemRouterSignature reports whether any member of a reasoning_details item
+// named signature, under the folding encoding/json matches by, holds a Router
+// signature -- every such member, not only the one a decoder would read.
+func itemRouterSignature(item json.RawMessage) (family string, reserved bool) {
+	scan := routerSignatureStrip{body: item, families: map[string]int{}}
+	object := scan.value(skipJSONSpace(item, 0))
+	if !object.present() || item[object.start] != '{' {
+		return "", false
+	}
+	for _, value := range scan.named(object, "signature") {
+		var signature string
+		if json.Unmarshal(item[value.start:value.end], &signature) != nil {
+			continue
+		}
+		if family, reserved := routerSignature(signature); reserved {
+			return family, true
+		}
+	}
+	return "", false
 }

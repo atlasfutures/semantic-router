@@ -94,3 +94,35 @@ func TestStrippedBodyKeepsTheClientsReasoningIntent(t *testing.T) {
 		})
 	}
 }
+
+// encoding/json matches a member name under Unicode folding, so "ſignature"
+// (long s) is a signature too, and the duplicate-key check, which lower-cases
+// names, does not pair it with "signature". Every folded spelling is
+// examined: a Router signature under any of them is stripped, in either
+// order, and the body is not replayed.
+func TestFoldedSignatureAliasesNeverCarryAMarker(t *testing.T) {
+	marker := "vsr.thinking.v1.moonshotai." + testMarkerDigest
+	for name, item := range map[string]string{
+		"alias first":  `{"type":"reasoning.text","text":"kimi","ſignature":"EqQB","signature":"` + marker + `"}`,
+		"marker first": `{"type":"reasoning.text","text":"kimi","signature":"` + marker + `","ſignature":"EqQB"}`,
+		"alias marker": `{"type":"reasoning.text","text":"kimi","signature":"EqQB","ſignature":"` + marker + `"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := `{"model":"m","messages":[{"role":"user","content":"hi"},` +
+				`{"role":"assistant","content":"ok","reasoning_content":"kimi","reasoning_details":[` + item + `]},` +
+				`{"role":"user","content":"go on"}]}`
+			engine := NewBuiltinEngine()
+			request, envelope, _, err := engine.DecodeRequest(llmprotocol.OpenAIChatV1, []byte(body))
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			result, err := engine.EncodeRequest(llmprotocol.OpenAIChatV1, request, envelope)
+			if err != nil {
+				t.Fatalf("encode: %v", err)
+			}
+			if strings.Contains(string(result.Body), "vsr.") {
+				t.Fatalf("a Router signature reached the provider: %s", result.Body)
+			}
+		})
+	}
+}

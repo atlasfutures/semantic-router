@@ -60,13 +60,13 @@ func stripRouterSignatures(format llmprotocol.WireFormat, body []byte, policy ll
 	top := strip.value(skipJSONSpace(body, 0))
 	switch format {
 	case llmprotocol.AnthropicMessagesV1:
-		strip.eachObject(strip.member(top, "messages"), func(message jsonSpan) {
-			strip.eachObject(strip.member(message, "content"), strip.anthropicThinking)
+		strip.eachNamedObject(top, "messages", func(message jsonSpan) {
+			strip.eachNamedObject(message, "content", strip.anthropicThinking)
 		})
 	case llmprotocol.OpenAIChatV1:
-		strip.eachObject(strip.member(top, "messages"), strip.chatReasoningDetails)
+		strip.eachNamedObject(top, "messages", strip.chatReasoningDetails)
 	case llmprotocol.OpenAIResponsesV1:
-		strip.eachObject(strip.member(top, "input"), strip.responsesReasoningItem)
+		strip.eachNamedObject(top, "input", strip.responsesReasoningItem)
 	}
 	if len(strip.edits) == 0 {
 		return body, false
@@ -196,15 +196,39 @@ func (strip *routerSignatureStrip) members(object jsonSpan) []jsonMember {
 	return members
 }
 
-// member returns the value of an object's member named name (case folded,
-// as encoding/json matches it), or an absent span.
-func (strip *routerSignatureStrip) member(object jsonSpan, name string) jsonSpan {
+// named returns the value of every member of an object whose name matches
+// name under Unicode case folding, as encoding/json matches a field. All of
+// them are examined, not the first: the duplicate-key check lower-cases names
+// and so does not pair "signature" with an alias such as "ſignature" (long s),
+// though the decoder reads either.
+func (strip *routerSignatureStrip) named(object jsonSpan, name string) []jsonSpan {
+	var values []jsonSpan
 	for _, member := range strip.members(object) {
 		if strings.EqualFold(member.key, name) {
-			return member.value
+			values = append(values, member.value)
 		}
 	}
-	return jsonSpan{}
+	return values
+}
+
+// anySigned reports whether any of the values is a Router signature,
+// counting each.
+func (strip *routerSignatureStrip) anySigned(values []jsonSpan) bool {
+	signed := false
+	for _, value := range values {
+		if strip.signed(value) {
+			signed = true
+		}
+	}
+	return signed
+}
+
+// eachNamedObject visits the objects of every array an object holds under a
+// name, by the folding rule of named.
+func (strip *routerSignatureStrip) eachNamedObject(object jsonSpan, name string, visit func(jsonSpan)) {
+	for _, array := range strip.named(object, name) {
+		strip.eachObject(array, visit)
+	}
 }
 
 func (strip *routerSignatureStrip) eachObject(array jsonSpan, visit func(jsonSpan)) {
@@ -259,13 +283,20 @@ func (strip *routerSignatureStrip) signed(value jsonSpan) bool {
 }
 
 func (strip *routerSignatureStrip) anthropicThinking(block jsonSpan) {
-	var blockType string
-	kind := strip.member(block, "type")
-	if !kind.present() || json.Unmarshal(strip.body[kind.start:kind.end], &blockType) != nil || blockType != "thinking" {
+	thinking := false
+	for _, kind := range strip.named(block, "type") {
+		var blockType string
+		if json.Unmarshal(strip.body[kind.start:kind.end], &blockType) == nil && blockType == "thinking" {
+			thinking = true
+		}
+	}
+	if !thinking {
 		return
 	}
-	if signature := strip.member(block, "signature"); strip.signed(signature) {
-		strip.edits = append(strip.edits, jsonEdit{start: signature.start, end: signature.end, with: []byte(`""`)})
+	for _, signature := range strip.named(block, "signature") {
+		if strip.signed(signature) {
+			strip.edits = append(strip.edits, jsonEdit{start: signature.start, end: signature.end, with: []byte(`""`)})
+		}
 	}
 }
 
@@ -279,7 +310,7 @@ func (strip *routerSignatureStrip) chatReasoningDetails(message jsonSpan) {
 		removed := make([]bool, len(items))
 		count := 0
 		for item, span := range items {
-			if strip.signed(strip.member(span, "signature")) {
+			if strip.anySigned(strip.named(span, "signature")) {
 				removed[item], count = true, count+1
 			}
 		}
@@ -371,7 +402,7 @@ func (strip *routerSignatureStrip) details(details []byte) (json.RawMessage, boo
 	items := inner.elements(inner.value(skipJSONSpace(details, 0)))
 	kept := make([][]byte, 0, len(items))
 	for _, span := range items {
-		if details[span.start] == '{' && inner.signed(inner.member(span, "signature")) {
+		if details[span.start] == '{' && inner.anySigned(inner.named(span, "signature")) {
 			continue
 		}
 		kept = append(kept, details[span.start:span.end])
