@@ -21,6 +21,7 @@ import (
 const (
 	policyV5Fixture      = "../selection/raylinearc/testdata/policy_service/package_manifest.v5.json"
 	policyV5Canonical    = "../selection/raylinearc/testdata/policy_service/package_manifest.v5.canonical_v1.json"
+	policyV5Yarn         = "../selection/raylinearc/testdata/policy_service/package_manifest.v5.yarn.json"
 	policyV5OpusAction   = "864cc7a8eab47911b61a2b3b5d79dcb8ed81c8ae9f8a90e941aea5bf38fc21d8"
 	policyV5GLMNone      = "20b6cddd7ae7cedc3ba8321cac7d962dca24b3c98dcf0408076adf40549e4a80"
 	policyV5GLMUp        = "cf5bc08ecfab91cdc1e26c1c2b98e7256e4a9e64183210ceb619e9c4745ff055"
@@ -439,5 +440,22 @@ func TestRaylineARCPolicyPackageV5CanonicalFixtureLoads(t *testing.T) {
 	cfg, decision := policyV5Decision(t, raw)
 	if err := validatePolicyDispatch(cfg, decision); err != nil {
 		t.Fatalf("the canonical_v1 fixture refused: %v", err)
+	}
+}
+
+// pathfinder's ARC 0.4 fixture (a depth-12 YaRN encoder: layer block_11, rope
+// yarn-f4, max_tokens 1010000) loads through startup validation under the same
+// bindings, as a configured package_manifest does.
+func TestRaylineARCPolicyPackageV5YarnFixtureLoads(t *testing.T) {
+	raw, err := os.ReadFile(policyV5Yarn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte(`"rope": "yarn-f4"`)) || !bytes.Contains(raw, []byte(`"layer": "block_11"`)) {
+		t.Fatal("the YaRN fixture no longer states rope and layer")
+	}
+	cfg, decision := policyV5Decision(t, raw)
+	if err := validatePolicyDispatch(cfg, decision); err != nil {
+		t.Fatalf("the YaRN fixture refused: %v", err)
 	}
 }
