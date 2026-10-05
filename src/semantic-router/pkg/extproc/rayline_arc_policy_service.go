@@ -507,7 +507,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		// a model's and a route's alike: when they leave its family nothing
 		// to serve, the turn leaves the family, before any failed route is
 		// offered again.
-		logToolLoopHold(arcContext, "lifted_by_exclusion", 0)
+		toolLoopHold{outcome: "lifted_by_exclusion"}.log(arcContext)
 		excluded = hard
 		available, offeredHeld, forced = offer(cellOut)
 	}
