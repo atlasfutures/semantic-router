@@ -68,3 +68,29 @@ func TestSourceReplayStillReplaysRequestsWithoutARouterSignature(t *testing.T) {
 		t.Fatal("a request without a Router signature lost source replay")
 	}
 }
+
+// A stripped body is not replayed, but what the client asked for is still
+// read from its bytes: here, reasoning {summary: auto} with no effort, which
+// a same-format dispatch keeps. Only the replay decision may differ from an
+// unstripped body.
+func TestStrippedBodyKeepsTheClientsReasoningIntent(t *testing.T) {
+	marker := "vsr.thinking.v1.moonshotai." + testMarkerDigest
+	for name, signature := range map[string]string{"stripped": marker, "unstripped": "EqQBreal"} {
+		t.Run(name, func(t *testing.T) {
+			body := `{"model":"m","reasoning":{"summary":"auto"},"input":[` +
+				`{"role":"user","content":[{"type":"input_text","text":"hi"}]},` +
+				`{"type":"reasoning","summary":[],"content":[{"type":"reasoning_text","text":"kimi reasoning"}],"signature":"` + signature + `","format":"anthropic-claude-v1"},` +
+				`{"role":"assistant","content":[{"type":"output_text","text":"ok"}]},` +
+				`{"role":"user","content":[{"type":"input_text","text":"go on"}]}]}`
+			result, err := NewBuiltinEngine().TranslateRequest(llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIResponsesV1, []byte(body),
+				func(request *llmprotocol.Request) error { request.Model = "routed-model"; return nil })
+			if err != nil {
+				t.Fatalf("translate: %v", err)
+			}
+			sent := string(result.Body)
+			if strings.Contains(sent, "vsr.") || !strings.Contains(sent, `"summary":"auto"`) {
+				t.Fatalf("Responses target request = %s", sent)
+			}
+		})
+	}
+}

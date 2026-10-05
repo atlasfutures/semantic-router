@@ -29,7 +29,7 @@ func replayEquivalentResponsesSource(
 	policy llmprotocol.Policy,
 ) []byte {
 	if policy.SourcePreservation != llmprotocol.SourceBoundedSameFormat ||
-		envelope.Format != llmprotocol.OpenAIResponsesV1 || len(envelope.Request) == 0 {
+		envelope.Format != llmprotocol.OpenAIResponsesV1 || len(envelope.Request) == 0 || envelope.ReplayDisabled {
 		return canonical
 	}
 	source, err := sjson.SetBytes(append([]byte(nil), envelope.Request...), "model", request.Model)

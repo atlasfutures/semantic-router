@@ -556,12 +556,13 @@ func consumeJSONArray(decoder *json.Decoder, depth, maximumDepth int) error {
 	return nil
 }
 
-// requestEnvelope keeps the client's bytes for source replay. A body the
-// Router stripped signatures from (stripRouterSignatures) keeps none: the
-// request is encoded, never replayed.
+// requestEnvelope keeps the client's bytes for source replay and for reading
+// what the client asked for. A body the Router stripped signatures from
+// (stripRouterSignatures) is kept as stripped -- the client's bytes less the
+// marker spans, so its intent reads the same -- but is never replayed.
 func requestEnvelope(format llmprotocol.WireFormat, body []byte, generation uint64, policy llmprotocol.Policy, stripped bool) llmprotocol.Envelope {
-	envelope := llmprotocol.Envelope{Format: format, Generation: generation}
-	if !stripped && policy.SourcePreservation == llmprotocol.SourceBoundedSameFormat &&
+	envelope := llmprotocol.Envelope{Format: format, Generation: generation, ReplayDisabled: stripped}
+	if policy.SourcePreservation == llmprotocol.SourceBoundedSameFormat &&
 		policy.Limits.SourceEnvelopeBytes > 0 && len(body) <= policy.Limits.SourceEnvelopeBytes {
 		envelope.Request = append([]byte(nil), body...)
 	}
