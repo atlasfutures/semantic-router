@@ -117,7 +117,7 @@ func (selector *raylineARCSelector) policyCapacityHold(
 		result.RaylineARC.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(binding.arm, state.TurnIndex, turn, messages)
 	}
 	logging.ComponentEvent("extproc", "rayline_arc_encoder_capacity_hold", map[string]interface{}{
-		"episode_id_hash": arcContext.EpisodeIDHash, "rule": "hold", "action_id": held.ActionID,
+		"request_id": arcContext.RequestID, "episode_id_hash": arcContext.EpisodeIDHash, "rule": "hold", "action_id": held.ActionID,
 		"token_count": tokens, "max_tokens": maxTokens, "side_call": sideCall,
 	})
 	return result
