@@ -84,6 +84,10 @@ func providerReasoningSignature(signature string) string {
 // The array is returned byte for byte when no item holds one, and nil when
 // every item did. The Chat decoder strips with it (clientReasoningDetails)
 // and the Chat encoder refuses with it.
+// egressItemDepth bounds the duplicate-key scan of one reasoning_details
+// item; the request's own depth limit was enforced when it was decoded.
+const egressItemDepth = 64
+
 func withoutRouterSignedDetails(details json.RawMessage, report func(family string)) (json.RawMessage, error) {
 	var items []json.RawMessage
 	if err := json.Unmarshal(details, &items); err != nil {
@@ -91,6 +95,12 @@ func withoutRouterSignedDetails(details json.RawMessage, report func(family stri
 	}
 	kept := make([]json.RawMessage, 0, len(items))
 	for _, item := range items {
+		if validateNoDuplicateKeys(item, egressItemDepth) != nil {
+			// A repeated member is read as only one of its values, so the
+			// item is not one to vouch for.
+			report("")
+			continue
+		}
 		var signed struct {
 			Signature any `json:"signature"`
 		}

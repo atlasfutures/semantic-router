@@ -142,6 +142,11 @@ func TestWithoutRouterSignedDetailsKeepsOtherItemsByteForByte(t *testing.T) {
 	if err != nil || string(got) != `[{"type":"reasoning.encrypted","data":"gAAA","index":1}]` {
 		t.Fatalf("mixed array = %s, %v", got, err)
 	}
+	duplicate := json.RawMessage(`[{"signature":"vsr.x","signature":"EqQB"},{"data":"gAAA"}]`)
+	got, err = withoutRouterSignedDetails(duplicate, func(string) {})
+	if err != nil || string(got) != `[{"data":"gAAA"}]` {
+		t.Fatalf("duplicate-key item = %s, %v; want it refused", got, err)
+	}
 	if _, err := withoutRouterSignedDetails(json.RawMessage(`{"not":"an array"}`), func(string) {}); err == nil {
 		t.Fatal("a non-array reasoning_details was accepted")
 	}

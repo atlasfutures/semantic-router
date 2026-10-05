@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -101,5 +102,39 @@ func TestStripRouterSignaturesRemovesEverySignaturePlace(t *testing.T) {
 	details, ok := mintedReasoningDetails(request.Input[0].EncryptedContent)
 	if !ok || strings.Contains(string(details), "vsr.") || !strings.Contains(string(details), "gAAA") {
 		t.Fatalf("re-minted blob holds %s, %v", details, ok)
+	}
+}
+
+// A minted blob is base64, so the body's duplicate-key check cannot see
+// inside it. An item that names its signature twice -- a Router one, then
+// another -- must not survive with the Router one in its bytes.
+func TestStripRouterSignaturesDropsAMintedBlobWithDuplicateKeys(t *testing.T) {
+	policy := NewBuiltinEngine().policy
+	marker := "vsr.thinking.v1.moonshotai." + testMarkerDigest
+	for name, item := range map[string]string{
+		"router then provider": `{"type":"reasoning.text","text":"kimi","signature":"` + marker + `","signature":"EqQB","format":"anthropic-claude-v1"}`,
+		"case-folded":          `{"type":"reasoning.text","text":"kimi","signature":"EqQB","Signature":"` + marker + `"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			blob := "vsr.reasoning_details.v1." + base64.RawURLEncoding.EncodeToString([]byte(`[`+item+`]`))
+			body := `{"model":"m","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]},` +
+				`{"type":"reasoning","summary":[],"content":[{"type":"reasoning_text","text":"kimi"}],"encrypted_content":"` + blob + `"},` +
+				`{"role":"user","content":[{"type":"input_text","text":"go on"}]}]}`
+			got, stripped := stripRouterSignatures(llmprotocol.OpenAIResponsesV1, []byte(body), policy)
+			if !stripped || strings.Contains(string(got), "encrypted_content") {
+				t.Fatalf("the duplicate-key blob was kept (stripped=%v): %s", stripped, got)
+			}
+			engine := NewBuiltinEngine()
+			for _, target := range goldenFormats {
+				result, err := engine.TranslateRequest(llmprotocol.OpenAIResponsesV1, target.format, []byte(body),
+					func(*llmprotocol.Request) error { return nil })
+				if err != nil {
+					t.Fatalf("%s: %v", target.name, err)
+				}
+				if strings.Contains(string(result.Body), "vsr.") || strings.Contains(string(result.Body), "EqQB") {
+					t.Fatalf("%s request kept the forged item: %s", target.name, result.Body)
+				}
+			}
+		})
 	}
 }

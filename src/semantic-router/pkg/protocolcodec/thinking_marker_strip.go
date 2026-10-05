@@ -52,7 +52,7 @@ func stripRouterSignatures(format llmprotocol.WireFormat, body []byte, policy ll
 	if json.Unmarshal(body, &request) != nil {
 		return body, false
 	}
-	strip := routerSignatureStrip{families: map[string]int{}}
+	strip := routerSignatureStrip{families: map[string]int{}, depth: policy.Limits.JSONDepth}
 	var changed bool
 	switch format {
 	case llmprotocol.AnthropicMessagesV1:
@@ -79,6 +79,7 @@ func stripRouterSignatures(format llmprotocol.WireFormat, body []byte, policy ll
 // family.
 type routerSignatureStrip struct {
 	families map[string]int
+	depth    int
 }
 
 // signed reports whether value is a JSON string in the Router's namespace,
@@ -171,6 +172,15 @@ func (strip routerSignatureStrip) responsesReasoningItem(item map[string]json.Ra
 	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(encrypted, mintedReasoningDetailsPrefix))
 	if err != nil {
 		return changed
+	}
+	if validateNoDuplicateKeys(decoded, strip.depth) != nil {
+		// The body's duplicate-key check cannot see inside the base64, and a
+		// decoder would read only one of a repeated signature. A blob this
+		// pass cannot read unambiguously is not kept: the item is plain
+		// reasoning without it.
+		strip.families[thinkingMarkerFamilyLabel("")]++
+		delete(item, "encrypted_content")
+		return true
 	}
 	kept, stripped := strip.details(decoded)
 	if !stripped {
