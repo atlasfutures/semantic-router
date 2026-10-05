@@ -107,6 +107,11 @@ type RaylineARCTrace struct {
 	// report: EncoderLatency is then not a measurement, and is neither
 	// logged nor observed.
 	EncoderLatencyUnknown bool
+	// TokenCountsUnknown marks a decision whose serialized and full-history
+	// token counts no one measured (an encoder capacity hold whose refusal
+	// reported no count): the counts are then not zeros, and are logged as
+	// null.
+	TokenCountsUnknown bool
 	// PolicyNextState is the ledger and epoch to commit with this turn.
 	PolicyNextState *raylinearc.PolicyEpisodeState
 	// PolicyTurnState is the context this turn was decided in, before its

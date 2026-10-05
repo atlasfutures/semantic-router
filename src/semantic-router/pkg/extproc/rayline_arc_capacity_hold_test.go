@@ -93,3 +93,32 @@ func TestCapacityRefusalWithNothingHeldFailsClosed(t *testing.T) {
 	}
 
 }
+
+// A runtime that refuses before counting sends token_count null: the hold and
+// selection lines record the count as unknown, never as zero.
+func TestACapacityHoldWithoutACountLogsItAsUnknown(t *testing.T) {
+	fixture := newPolicySelectorFixture(t, "")
+	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
+	state, _ := raylinearc.NewEpisodeState(2)
+	servedTurn(t, fixture, state, bindings[1].ActionID)
+	fixture.fake.mu.Lock()
+	fixture.fake.failWith = "context_exceeds_encoder_capacity"
+	fixture.fake.failDetail = map[string]any{"token_count": nil, "max_tokens": 262144}
+	fixture.fake.mu.Unlock()
+	logs := captureLogs(t)
+	result, err := fixture.selectOn(t, state, nextTurn(t))
+	if err != nil {
+		t.Fatalf("capacity refusal with a held action failed the turn: %v", err)
+	}
+	if !result.RaylineARC.TokenCountsUnknown {
+		t.Fatal("a hold without a count was not marked unknown")
+	}
+	if hold := findLogEvent(t, logs, "rayline_arc_encoder_capacity_hold"); hold["token_count"] != nil {
+		t.Fatalf("hold token_count = %v, want null", hold["token_count"])
+	}
+	observeRaylineARCSelection(&RequestContext{RequestID: "r"}, result.RaylineARC)
+	selected := findLogEvent(t, logs, "rayline_arc_selection")
+	if selected["serialized_tokens"] != nil || selected["full_history_tokens"] != nil {
+		t.Fatalf("selection counts = %v / %v, want null", selected["serialized_tokens"], selected["full_history_tokens"])
+	}
+}
