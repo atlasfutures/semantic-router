@@ -205,6 +205,10 @@ type RequestContext struct {
 	// DispatchHostedTools names the provider-run tools the dispatched model's
 	// card admits (hosted_tools); encodeDispatchRequest hands it to the codec.
 	DispatchHostedTools []string
+	// DispatchNamesToolResults marks a dispatch whose Chat tool messages carry
+	// the tool's name (an OpenRouter backend); encodeDispatchRequest hands it
+	// to the codec as Request.NamesToolResults.
+	DispatchNamesToolResults bool
 	// DispatchAutoCache marks a dispatch to a Claude worker over Messages from
 	// an OpenAI-shaped client (claudeAutoCacheDispatch); encodeDispatchRequest
 	// decides on the final request whether it gets the automatic directive.

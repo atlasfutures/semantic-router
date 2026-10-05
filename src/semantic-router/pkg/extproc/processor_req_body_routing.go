@@ -343,6 +343,10 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	if r.Config != nil {
 		ctx.DispatchHostedTools = r.Config.ModelConfig[dispatch.logicalModel].HostedTools
 	}
+	// OpenRouter takes a name on a Chat tool message, and Kimi behind it
+	// refuses a tool message it cannot match to its call. OpenAI's own Chat
+	// schema has no such member, so no other backend is sent one.
+	ctx.DispatchNamesToolResults = providerIsOpenRouter(dispatch.profile)
 	// Marked here, where every dispatch path -- routed and external gateway
 	// -- meets, so no path builds a dispatch the rule does not see.
 	ctx.DispatchAutoCache = r.claudeAutoCacheDispatch(dispatch, ctx)
