@@ -80,10 +80,11 @@ func providerReasoningSignature(signature string) string {
 }
 
 // withoutRouterSignedDetails removes each reasoning_details item whose
-// signature is a Router signature, so a Chat request never carries one. The
-// array is returned byte for byte when no item holds one, and nil when every
-// item did.
-func withoutRouterSignedDetails(details json.RawMessage) (json.RawMessage, error) {
+// signature is a Router signature, calling report with each one's family.
+// The array is returned byte for byte when no item holds one, and nil when
+// every item did. The Chat decoder strips with it (clientReasoningDetails)
+// and the Chat encoder refuses with it.
+func withoutRouterSignedDetails(details json.RawMessage, report func(family string)) (json.RawMessage, error) {
 	var items []json.RawMessage
 	if err := json.Unmarshal(details, &items); err != nil {
 		return nil, err
@@ -96,7 +97,7 @@ func withoutRouterSignedDetails(details json.RawMessage) (json.RawMessage, error
 		if json.Unmarshal(item, &signed) == nil {
 			if signature, ok := signed.Signature.(string); ok {
 				if family, reserved := routerSignature(signature); reserved {
-					reportRouterSignatureRefused(llmprotocol.OpenAIChatV1, family)
+					report(family)
 					continue
 				}
 			}

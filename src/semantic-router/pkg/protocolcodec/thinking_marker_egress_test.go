@@ -133,16 +133,16 @@ func TestChatEncoderRefusesARouterSignatureInReasoningDetails(t *testing.T) {
 
 func TestWithoutRouterSignedDetailsKeepsOtherItemsByteForByte(t *testing.T) {
 	clean := json.RawMessage(`[{"type":"reasoning.text","text":"a","signature":"EqQB","index":0}]`)
-	got, err := withoutRouterSignedDetails(clean)
+	got, err := withoutRouterSignedDetails(clean, func(string) {})
 	if err != nil || string(got) != string(clean) {
 		t.Fatalf("clean array = %s, %v; want it unchanged", got, err)
 	}
 	mixed := json.RawMessage(`[{"type":"reasoning.text","signature":"vsr.x","index":0},{"type":"reasoning.encrypted","data":"gAAA","index":1}]`)
-	got, err = withoutRouterSignedDetails(mixed)
+	got, err = withoutRouterSignedDetails(mixed, func(string) {})
 	if err != nil || string(got) != `[{"type":"reasoning.encrypted","data":"gAAA","index":1}]` {
 		t.Fatalf("mixed array = %s, %v", got, err)
 	}
-	if _, err := withoutRouterSignedDetails(json.RawMessage(`{"not":"an array"}`)); err == nil {
+	if _, err := withoutRouterSignedDetails(json.RawMessage(`{"not":"an array"}`), func(string) {}); err == nil {
 		t.Fatal("a non-array reasoning_details was accepted")
 	}
 }

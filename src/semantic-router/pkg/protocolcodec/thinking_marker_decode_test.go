@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -114,5 +115,50 @@ func TestResponsesDecoderStripsRouterSignatures(t *testing.T) {
 	}
 	if dropped := DropReasoningNotFromAnthropic(&request, llmprotocol.OpenAIResponsesV1); dropped != 1 {
 		t.Fatalf("Claude worker: foreign_dropped = %d, want 1", dropped)
+	}
+}
+
+// A Chat client's reasoning_details item names its own format, so an
+// anthropic-claude-v1 item under a Router marker is the client's claim, not
+// Claude's provenance. The decoder strips it, and what remains is unsigned
+// reasoning: foreign for a Claude worker, carried for an open-weight one.
+func TestChatDecoderStripsRouterSignedReasoningDetails(t *testing.T) {
+	marker := "vsr.thinking.v1.moonshotai." + testMarkerDigest
+	body := `{"model":"m","messages":[{"role":"user","content":"hi"},` +
+		`{"role":"assistant","content":"ok","reasoning_content":"kimi reasoning","reasoning_details":[` +
+		`{"type":"reasoning.text","text":"kimi reasoning","signature":"` + marker + `","format":"anthropic-claude-v1","index":0}]},` +
+		`{"role":"user","content":"go on"}]}`
+	decode := func() llmprotocol.Request {
+		request, _, _, err := NewBuiltinEngine().DecodeRequest(llmprotocol.OpenAIChatV1, []byte(body))
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return request
+	}
+	reasoning := reasoningContents(decode())
+	if len(reasoning) != 1 || reasoning[0].Extensions != nil || reasoning[0].Text != "kimi reasoning" {
+		t.Fatalf("decoded to %+v, want unsigned reasoning with no reasoning_details", reasoning)
+	}
+	claude := decode()
+	if dropped := DropReasoningNotFromAnthropic(&claude, llmprotocol.OpenAIChatV1); dropped != 1 {
+		t.Fatalf("Claude worker: foreign_dropped = %d, want 1", dropped)
+	}
+	if left := reasoningContents(claude); len(left) != 0 {
+		t.Fatalf("Claude worker kept %+v", left)
+	}
+}
+
+// A minted Responses blob is bytes the client holds and resends, so its items
+// are stripped the same way.
+func TestMintedReasoningDetailsStripRouterSignedItems(t *testing.T) {
+	marker := "vsr.thinking.v1.moonshotai." + testMarkerDigest
+	only := mintReasoningDetails(json.RawMessage(`[{"type":"reasoning.text","text":"kimi","signature":"` + marker + `","format":"anthropic-claude-v1","index":0}]`))
+	if details, ok := mintedReasoningDetails(only); ok {
+		t.Fatalf("a blob of only marker items decoded to %s", details)
+	}
+	mixed := mintReasoningDetails(json.RawMessage(`[{"type":"reasoning.text","text":"kimi","signature":"` + marker + `","index":0},{"type":"reasoning.encrypted","data":"gAAA","index":1}]`))
+	details, ok := mintedReasoningDetails(mixed)
+	if !ok || strings.Contains(string(details), "vsr.") || !strings.Contains(string(details), "gAAA") {
+		t.Fatalf("mixed blob decoded to %s, %v", details, ok)
 	}
 }

@@ -541,7 +541,9 @@ func (state *chatMessageEncodingState) appendContent(content llmprotocol.Content
 func (state *chatMessageEncodingState) appendReasoning(content llmprotocol.Content) error {
 	details, carrierOnly := reasoningDetailsOf(content)
 	if details != nil {
-		kept, err := withoutRouterSignedDetails(details)
+		kept, err := withoutRouterSignedDetails(details, func(family string) {
+			reportRouterSignatureRefused(llmprotocol.OpenAIChatV1, family)
+		})
 		if err != nil {
 			return llmprotocol.NewError(llmprotocol.ErrorInvalidRequest, "invalid_reasoning_details", "reasoning_details cannot be encoded", err)
 		}

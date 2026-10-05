@@ -441,6 +441,7 @@ func decodeChatRequestMessage(wire chatMessageWire, index int, policy llmprotoco
 		// member says nothing to the model, so it is read and dropped.
 		details = nil
 	}
+	details = clientReasoningDetails(details, llmprotocol.OpenAIChatV1)
 	return assembleChatMessage(wire, index, role, contents, details, policy)
 }
 

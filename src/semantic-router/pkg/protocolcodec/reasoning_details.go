@@ -255,6 +255,11 @@ func mintedReasoningDetails(encrypted json.RawMessage) (json.RawMessage, bool) {
 	if !ok || details == nil {
 		return nil, false
 	}
+	// The blob is the client's to resend, so its items are as untrusted as a
+	// Chat client's.
+	if details = clientReasoningDetails(details, llmprotocol.OpenAIResponsesV1); details == nil {
+		return nil, false
+	}
 	return details, true
 }
 

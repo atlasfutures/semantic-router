@@ -24,6 +24,19 @@ import (
 // reasoning again and the reasoning carry rules decide where it goes, and
 // every request encoder refuses one as a second guard.
 //
+// The contract that keeps this sound: every client-supplied place a signature
+// can arrive is stripped at decode, before anything reads provenance from
+// it. Those places are a Messages thinking block (decodeAnthropicContentBlock),
+// a Responses anthropic-claude-v1 reasoning item (responsesAnthropicReasoning
+// .applyTo), and a reasoning_details item, whether a Chat message's or one
+// held in a minted Responses blob (clientReasoningDetails). What reads
+// provenance -- DropReasoningNotFromAnthropic (a signature, or an item's
+// format), reasoningProvenance (content.thinking.signed) and
+// SignedThinkingAsReasoningDetails -- runs after decode, so it only ever sees
+// stripped data. A new decode path that carries a signature or a
+// reasoning_details array must strip here too; source replay is refused
+// separately (holdsRouterSignatureValue), since it skips decoding altogether.
+//
 // The whole "vsr." namespace is the Router's. No provider signature starts
 // with it -- the dot is outside the base64 alphabet Anthropic's and every
 // other carried blob use, the argument mintedReasoningDetailsPrefix also
@@ -135,4 +148,27 @@ func holdsRouterSignatureValue(body []byte) bool {
 			}
 		}
 	}
+}
+
+// clientReasoningDetails is the reasoning_details a decoded client message
+// keeps: every item but one signed with a Router signature. The format an item
+// names is the client's claim, so an anthropic-claude-v1 item under a marker
+// would otherwise pass for Claude's (DropReasoningNotFromAnthropic). Without
+// it, the message's reasoning text is unsigned reasoning like any other. Each
+// strip is logged as clientThinkingSignature logs one.
+func clientReasoningDetails(details []byte, source llmprotocol.WireFormat) json.RawMessage {
+	if details == nil {
+		return nil
+	}
+	kept, err := withoutRouterSignedDetails(details, func(family string) {
+		logging.ComponentEvent("protocolcodec", "thinking_marker_stripped", map[string]interface{}{
+			"family": thinkingMarkerFamilyLabel(family),
+			"source": string(source),
+		})
+	})
+	if err != nil {
+		// decodeReasoningDetailsArray already proved it an array of objects.
+		return nil
+	}
+	return kept
 }

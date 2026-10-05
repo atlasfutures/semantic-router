@@ -86,3 +86,55 @@ func TestRouterMarkerSignedThinkingNeverReachesAClaudeWorker(t *testing.T) {
 		}
 	})
 }
+
+// End to end, Chat source: a Chat client that resends marker-signed thinking
+// as an anthropic-claude-v1 reasoning_details item has not shown Claude's
+// provenance -- the marker is the Router's, whatever format the item names.
+// A Claude worker over Chat is sent none of that reasoning, and the drop is
+// counted as foreign. An open-weight Chat worker keeps reasoning_content.
+func TestRouterMarkerSignedReasoningDetailsNeverReachAClaudeWorkerOverChat(t *testing.T) {
+	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
+	actions := relaxedPolicyActions()
+	fake := newRelaxedPolicyFake(t)
+	router, err := NewOpenAIRouter(writeClaudeOverChatPolicyConfig(t, fake.URL()))
+	if err != nil {
+		t.Fatalf("build router: %v", err)
+	}
+	awaitPolicySelectorArmed(t, router)
+	history := piChatHistory(`"reasoning_content":"kimi reasoning",` +
+		`"reasoning_details":[{"type":"reasoning.text","text":"kimi reasoning","signature":"` + thinkingMarker +
+		`","format":"anthropic-claude-v1","index":0}]`)
+
+	t.Run("Claude over Chat", func(t *testing.T) {
+		claude := actions["claude-off"].ActionID
+		fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return claude })
+		logs := captureLogs(t)
+		body := dispatchPolicyClientRequest(t, router, "episode-marker-details-claude", "/v1/chat/completions", history)
+		assertJSONField(t, body, "model", `"anthropic/claude-opus-5"`)
+		wire := string(body["messages"])
+		if strings.Contains(wire, "vsr.") || strings.Contains(wire, "kimi reasoning") ||
+			strings.Contains(wire, "reasoning_content") || strings.Contains(wire, "reasoning_details") {
+			t.Fatalf("a Claude worker was sent marker-signed reasoning: %s", wire)
+		}
+		if !strings.Contains(wire, `"tool_call_id":"call_1"`) {
+			t.Fatalf("the tool result was lost: %s", wire)
+		}
+		dropped := findLogEvent(t, logs, "reasoning_dropped")
+		if fmt.Sprint(dropped["foreign_dropped"]) != "1" {
+			t.Fatalf("reasoning_dropped = %v, want 1 foreign drop", dropped)
+		}
+		stripped := findLogEvent(t, logs, "thinking_marker_stripped")
+		if fmt.Sprint(stripped["family"]) != "moonshotai" || fmt.Sprint(stripped["source"]) != "openai.chat.v1" {
+			t.Fatalf("thinking_marker_stripped = %v", stripped)
+		}
+	})
+	t.Run("open-weight worker over Chat", func(t *testing.T) {
+		off := actions["off"].ActionID
+		fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return off })
+		body := dispatchPolicyClientRequest(t, router, "episode-marker-details-off", "/v1/chat/completions", history)
+		wire := string(body["messages"])
+		if strings.Contains(wire, "vsr.") || !strings.Contains(wire, `"reasoning_content":"kimi reasoning"`) {
+			t.Fatalf("an open-weight worker was not sent the reasoning unsigned: %s", wire)
+		}
+	})
+}
