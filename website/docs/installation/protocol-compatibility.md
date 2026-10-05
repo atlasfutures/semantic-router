@@ -211,6 +211,15 @@ Completions or Messages backend. The Router retrieves and materializes the
 retained history, removes Router-owned object controls, and then encodes the
 stateless request in the selected backend format.
 
+On a Chat Completions dispatch to OpenRouter, each `tool` message also carries
+`name`: the tool name of the call it answers, written the same way as that
+call's `function.name`. Some models served through OpenRouter refuse a tool
+result they cannot match to its call, which happens when the earlier calls
+came from another model. OpenAI's Chat schema does not define `name` on a tool
+message, so other Chat backends receive the message unchanged. A result whose
+call is not in the request is sent without a name and recorded as a `dropped`
+`messages.tool.name` diagnostic.
+
 ## Configure a backend format
 
 The client can use any supported client-facing endpoint; `api_format` controls
