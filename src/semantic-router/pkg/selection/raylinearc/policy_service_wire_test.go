@@ -254,6 +254,8 @@ func TestDecodePolicyPackageConversation(t *testing.T) {
 			"harness_injections": {`"strip_claude_code_2_1_v1"`: true, `"keep"`: false, `""`: false, `null`: false},
 			"rope":               {`"yarn-f4"`: true, `"yarn-f8"`: false, `"native"`: false, `""`: false, `null`: false},
 			"layer":              {`"block_11"`: true, `"final"`: true, `"block_"`: false, `"layer_3"`: false, `null`: false, `11`: false},
+			"harness_shell":      {`"include"`: true, `"exclude"`: false, `""`: false, `null`: false},
+			"environment":        {`"scrub_v1"`: true, `"scrub_v2"`: true, `"keep"`: false, `"scrub_v3"`: false, `null`: false},
 		} {
 			for value, accepted := range values {
 				changed := bytes.Replace(body, []byte(anchor), []byte(anchor+` "`+member+`": `+value+`,`), 1)
@@ -263,7 +265,8 @@ func TestDecodePolicyPackageConversation(t *testing.T) {
 			}
 		}
 		both := bytes.Replace(body, []byte(anchor),
-			[]byte(anchor+` "conversation": "canonical_v1", "harness_injections": "strip_claude_code_2_1_v1",`), 1)
+			[]byte(anchor+` "conversation": "canonical_v1", "harness_injections": "strip_claude_code_2_1_v1",`+
+				` "harness_shell": "include", "environment": "scrub_v2", "layer": "block_11", "rope": "yarn-f4",`), 1)
 		if err := decode(both); err != nil {
 			t.Errorf("%s with both members: %v", fixture, err)
 		}

@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
@@ -508,6 +509,13 @@ const (
 	// positions, served to 1,010,000 tokens (pathfinder#3514); absent is the
 	// encoder checkpoint's own RoPE.
 	PolicyRopeYarnF4 = "yarn-f4"
+	// PolicyHarnessShellInclude keeps the harness shell in the encoder input;
+	// absent excludes it.
+	PolicyHarnessShellInclude = "include"
+	// PolicyEnvironmentScrubV1 and PolicyEnvironmentScrubV2 scrub harness
+	// environment text from the encoder input; absent keeps it.
+	PolicyEnvironmentScrubV1 = "scrub_v1"
+	PolicyEnvironmentScrubV2 = "scrub_v2"
 )
 
 // policyLayer is encoding_profile.layer: final (the full encoder) or
@@ -518,17 +526,19 @@ func (common *PolicyPackageCommon) checkConversation() error {
 	profile := common.EncodingProfile
 	for name, member := range map[string]struct {
 		raw     json.RawMessage
-		allowed string
+		allowed []string
 	}{
-		"conversation":       {profile.Conversation, PolicyConversationCanonicalV1},
-		"harness_injections": {profile.HarnessInjections, PolicyHarnessInjectionsStripClaudeCode},
-		"rope":               {profile.Rope, PolicyRopeYarnF4},
+		"conversation":       {profile.Conversation, []string{PolicyConversationCanonicalV1}},
+		"harness_injections": {profile.HarnessInjections, []string{PolicyHarnessInjectionsStripClaudeCode}},
+		"rope":               {profile.Rope, []string{PolicyRopeYarnF4}},
+		"harness_shell":      {profile.HarnessShell, []string{PolicyHarnessShellInclude}},
+		"environment":        {profile.Environment, []string{PolicyEnvironmentScrubV1, PolicyEnvironmentScrubV2}},
 	} {
 		if member.raw == nil {
 			continue
 		}
 		var value string
-		if err := json.Unmarshal(member.raw, &value); err != nil || value != member.allowed {
+		if err := json.Unmarshal(member.raw, &value); err != nil || !slices.Contains(member.allowed, value) {
 			return fmt.Errorf("policy package encoding_profile.%s %s is not one the contract defines", name, member.raw)
 		}
 	}
@@ -580,7 +590,13 @@ type PolicyPackageCommon struct {
 		// Layer is the readout layer: absent or final is the full
 		// encoder, block_<k-1> one truncated to its first k layers (every
 		// depth-12 package states block_11).
-		Layer           json.RawMessage `json:"layer,omitempty"`
+		Layer json.RawMessage `json:"layer,omitempty"`
+		// HarnessShell and Environment name the encoder input projection:
+		// absent excludes the harness shell and keeps environment text;
+		// include and scrub_v1/scrub_v2 are the alternatives the service
+		// applies. Absent at their defaults, as pathfinder omits them.
+		HarnessShell    json.RawMessage `json:"harness_shell,omitempty"`
+		Environment     json.RawMessage `json:"environment,omitempty"`
 		EncoderModel    string          `json:"encoder_model"`
 		EncoderRevision string          `json:"encoder_revision"`
 		DType           string          `json:"dtype"`
