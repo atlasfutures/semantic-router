@@ -1,0 +1,17 @@
+{
+  "operation": "request",
+  "cases": [
+    {
+      "name": "marker_signed_reasoning_item_is_unsigned",
+      "body": {
+        "model": "client-model",
+        "input": [
+          {"role": "user", "content": [{"type": "input_text", "text": "weather in Paris?"}]},
+          {"type": "reasoning", "summary": [], "content": [{"type": "reasoning_text", "text": "Kimi reasoning about Paris."}], "signature": "vsr.thinking.v1.moonshotai.AbCdEfGhIjKlMnOpQrStUvWxYz012-_9", "format": "anthropic-claude-v1"},
+          {"role": "assistant", "content": [{"type": "output_text", "text": "It is sunny."}]},
+          {"role": "user", "content": [{"type": "input_text", "text": "and tomorrow?"}]}
+        ]
+      }
+    }
+  ]
+}

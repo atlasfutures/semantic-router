@@ -1,6 +1,11 @@
 package protocolcodec
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
+)
 
 // A thinking marker is a signature the Router gives thinking that no provider
 // signed, so a Messages client keeps the block as thinking when it resends
@@ -79,4 +84,21 @@ func thinkingMarkerFamilyLabel(family string) string {
 		return "malformed"
 	}
 	return family
+}
+
+// clientThinkingSignature is the signature a decoded thinking block keeps: the
+// client's own value, or none for a value in the Router's namespace, so the
+// block is unsigned reasoning and never counts as a provider's proof. Each
+// strip is logged with the marker's family; nothing is gated on it, and the
+// thinking text is never logged.
+func clientThinkingSignature(signature string, source llmprotocol.WireFormat) string {
+	family, reserved := routerSignature(signature)
+	if !reserved {
+		return signature
+	}
+	logging.ComponentEvent("protocolcodec", "thinking_marker_stripped", map[string]interface{}{
+		"family": thinkingMarkerFamilyLabel(family),
+		"source": string(source),
+	})
+	return ""
 }

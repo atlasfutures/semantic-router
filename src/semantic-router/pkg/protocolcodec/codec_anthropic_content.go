@@ -89,6 +89,11 @@ func decodeAnthropicContentBlock(
 			location+": content.citations is not a list of typed citation objects")
 	}
 	content, err := decodeAnthropicTypedContent(typeName, block, policy)
+	if err == nil && !providerOutput && content.Kind == llmprotocol.ContentReasoning {
+		// A client's thinking signed with a Router marker is unsigned
+		// thinking: the marker is no provider's proof (thinking_marker.go).
+		content.Signature = clientThinkingSignature(content.Signature, llmprotocol.AnthropicMessagesV1)
+	}
 	if err == nil && providerOutput && typeName == "text" {
 		// Provider citations of any kind are carried; see webSearchURLCitations.
 		content.CitationsRaw = carriedAnthropicCitations(block.Citations)

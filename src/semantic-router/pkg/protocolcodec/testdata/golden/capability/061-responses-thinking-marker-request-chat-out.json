@@ -1,0 +1,31 @@
+{
+  "cases": [
+    {
+      "name": "marker_signed_reasoning_item_is_unsigned",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "messages": [
+            {
+              "content": "weather in Paris?",
+              "role": "user"
+            },
+            {
+              "reasoning_content": "Kimi reasoning about Paris.",
+              "role": "assistant"
+            },
+            {
+              "content": "It is sunny.",
+              "role": "assistant"
+            },
+            {
+              "content": "and tomorrow?",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        }
+      }
+    }
+  ]
+}
