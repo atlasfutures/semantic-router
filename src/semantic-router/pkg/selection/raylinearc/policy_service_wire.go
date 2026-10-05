@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
@@ -509,6 +510,10 @@ const (
 	PolicyRopeYarnF4 = "yarn-f4"
 )
 
+// policyLayer is encoding_profile.layer: final (the full encoder) or
+// block_<k-1> for an encoder truncated to its first k layers.
+var policyLayer = regexp.MustCompile(`^(final|block_[0-9]+)$`)
+
 func (common *PolicyPackageCommon) checkConversation() error {
 	profile := common.EncodingProfile
 	for name, member := range map[string]struct {
@@ -525,6 +530,12 @@ func (common *PolicyPackageCommon) checkConversation() error {
 		var value string
 		if err := json.Unmarshal(member.raw, &value); err != nil || value != member.allowed {
 			return fmt.Errorf("policy package encoding_profile.%s %s is not one the contract defines", name, member.raw)
+		}
+	}
+	if profile.Layer != nil {
+		var layer string
+		if err := json.Unmarshal(profile.Layer, &layer); err != nil || !policyLayer.MatchString(layer) {
+			return fmt.Errorf("policy package encoding_profile.layer %s is not one the contract defines", profile.Layer)
 		}
 	}
 	return nil
@@ -565,7 +576,11 @@ type PolicyPackageCommon struct {
 		// checkpoint's own, yarn-f4 the YaRN extension. It changes every
 		// readout, so the profile states it; the service checks its engine
 		// serves it, and VSR only requires a value the contract defines.
-		Rope            json.RawMessage `json:"rope,omitempty"`
+		Rope json.RawMessage `json:"rope,omitempty"`
+		// Layer is the readout layer: absent or final is the full
+		// encoder, block_<k-1> one truncated to its first k layers (every
+		// depth-12 package states block_11).
+		Layer           json.RawMessage `json:"layer,omitempty"`
 		EncoderModel    string          `json:"encoder_model"`
 		EncoderRevision string          `json:"encoder_revision"`
 		DType           string          `json:"dtype"`
