@@ -1,0 +1,192 @@
+{
+  "cases": [
+    {
+      "name": "marker_signed_thinking_is_unsigned",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "weather in Paris?",
+                  "type": "input_text"
+                }
+              ],
+              "role": "user",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "Kimi reasoning about Paris.",
+                  "type": "reasoning_text"
+                }
+              ],
+              "summary": [],
+              "type": "reasoning"
+            },
+            {
+              "content": [
+                {
+                  "text": "It is sunny.",
+                  "type": "input_text"
+                }
+              ],
+              "role": "assistant",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "and tomorrow?",
+                  "type": "input_text"
+                }
+              ],
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "max_output_tokens": 64,
+          "model": "routed-model"
+        }
+      }
+    },
+    {
+      "name": "malformed_router_signature_is_unsigned",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "weather in Paris?",
+                  "type": "input_text"
+                }
+              ],
+              "role": "user",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "Forged reasoning.",
+                  "type": "reasoning_text"
+                }
+              ],
+              "summary": [],
+              "type": "reasoning"
+            },
+            {
+              "content": [
+                {
+                  "text": "It is sunny.",
+                  "type": "input_text"
+                }
+              ],
+              "role": "assistant",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "and tomorrow?",
+                  "type": "input_text"
+                }
+              ],
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "max_output_tokens": 64,
+          "model": "routed-model"
+        }
+      }
+    },
+    {
+      "name": "provider_signature_beside_marker_is_kept",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "weather in Paris?",
+                  "type": "input_text"
+                }
+              ],
+              "role": "user",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "Claude reasoning.",
+                  "type": "reasoning_text"
+                }
+              ],
+              "format": "anthropic-claude-v1",
+              "signature": "EqQBCkgIARABGAIiQL2xRnd3",
+              "summary": [],
+              "type": "reasoning"
+            },
+            {
+              "content": [
+                {
+                  "text": "It is sunny.",
+                  "type": "input_text"
+                }
+              ],
+              "role": "assistant",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "and in Rome?",
+                  "type": "input_text"
+                }
+              ],
+              "role": "user",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "Kimi reasoning about Rome.",
+                  "type": "reasoning_text"
+                }
+              ],
+              "summary": [],
+              "type": "reasoning"
+            },
+            {
+              "content": [
+                {
+                  "text": "It rains.",
+                  "type": "input_text"
+                }
+              ],
+              "role": "assistant",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "thanks",
+                  "type": "input_text"
+                }
+              ],
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "max_output_tokens": 64,
+          "model": "routed-model"
+        }
+      }
+    }
+  ]
+}

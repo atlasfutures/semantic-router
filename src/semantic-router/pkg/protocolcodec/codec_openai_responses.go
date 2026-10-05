@@ -234,6 +234,7 @@ type responsesAnnotationWire struct {
 }
 
 func (OpenAIResponsesCodec) DecodeRequest(body []byte, policy llmprotocol.Policy) (llmprotocol.Request, llmprotocol.Envelope, llmprotocol.Diagnostics, error) {
+	body, stripped := stripRouterSignatures(llmprotocol.OpenAIResponsesV1, body, policy)
 	var wire responsesRequestWire
 	unmodeled, err := decodeWireCapturingUnmodeled(body, &wire, policy, llmprotocol.OpenAIResponsesV1)
 	if err != nil {
@@ -281,7 +282,7 @@ func (OpenAIResponsesCodec) DecodeRequest(body []byte, policy llmprotocol.Policy
 	if err := decodeResponsesRequestOptions(wire, &request, policy); err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}
-	return request, requestEnvelope(llmprotocol.OpenAIResponsesV1, body, request.Generation, policy), nil, nil
+	return request, requestEnvelope(llmprotocol.OpenAIResponsesV1, body, request.Generation, policy, stripped), nil, nil
 }
 
 func decodeResponsesBaseRequest(wire responsesRequestWire, conversationID string) llmprotocol.Request {

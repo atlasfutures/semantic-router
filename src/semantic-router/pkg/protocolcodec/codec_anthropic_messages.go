@@ -159,6 +159,7 @@ type anthropicJSONOutputFormatWire struct {
 }
 
 func (AnthropicMessagesCodec) DecodeRequest(body []byte, policy llmprotocol.Policy) (llmprotocol.Request, llmprotocol.Envelope, llmprotocol.Diagnostics, error) {
+	body, stripped := stripRouterSignatures(llmprotocol.AnthropicMessagesV1, body, policy)
 	var wire anthropicRequestWire
 	unmodeled, err := decodeWireCapturingUnmodeled(body, &wire, policy, llmprotocol.AnthropicMessagesV1)
 	if err != nil {
@@ -173,7 +174,7 @@ func (AnthropicMessagesCodec) DecodeRequest(body []byte, policy llmprotocol.Poli
 	if err := decodeAnthropicRequestFields(wire, &request, &diagnostics, policy); err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, diagnostics, err
 	}
-	return request, requestEnvelope(llmprotocol.AnthropicMessagesV1, body, request.Generation, policy), diagnostics, nil
+	return request, requestEnvelope(llmprotocol.AnthropicMessagesV1, body, request.Generation, policy, stripped), diagnostics, nil
 }
 
 func validateAnthropicRequestWire(wire anthropicRequestWire) error {

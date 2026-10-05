@@ -1,0 +1,61 @@
+{
+  "cases": [
+    {
+      "name": "marker_signed_reasoning_details_item_is_refused",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "input": [
+            {
+              "content": [
+                {
+                  "text": "weather in Paris?",
+                  "type": "input_text"
+                }
+              ],
+              "role": "user",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "Kimi reasoning about Paris.",
+                  "type": "reasoning_text"
+                }
+              ],
+              "summary": [],
+              "type": "reasoning"
+            },
+            {
+              "content": [
+                {
+                  "text": "It is sunny.",
+                  "type": "input_text"
+                }
+              ],
+              "role": "assistant",
+              "type": "message"
+            },
+            {
+              "content": [
+                {
+                  "text": "and tomorrow?",
+                  "type": "input_text"
+                }
+              ],
+              "role": "user",
+              "type": "message"
+            }
+          ],
+          "model": "routed-model"
+        },
+        "diagnostics": [
+          {
+            "field": "content.reasoning_details",
+            "action": "dropped"
+          }
+        ]
+      }
+    }
+  ]
+}
