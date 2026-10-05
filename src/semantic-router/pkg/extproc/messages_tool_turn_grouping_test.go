@@ -160,3 +160,51 @@ func callsOf(message messagesWireMessage) map[string]bool {
 	}
 	return calls
 }
+
+// The shape seen live: a non-Claude worker answered with two parallel calls
+// whose ids are its own (bash:0, bash:1) and whose items carry no id, after
+// its unsigned reasoning and an assistant message; the agent resends them
+// with both outputs. Both calls go out in one assistant message and both
+// results in the user message after it.
+func TestMessagesDispatchToKimiGroupsAParallelPairWithNativeCallIDs(t *testing.T) {
+	body := dispatchToKimiOverMessages(t, `{
+	"model":"m","store":false,
+	"input":[
+		{"type":"message","role":"system","content":[{"type":"input_text","text":"You are a coding agent."}]},
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"run the two checks"}]},
+		{"type":"reasoning","id":"item_r1","summary":[{"type":"summary_text","text":"Run both at once."}]},
+		{"type":"message","role":"assistant","id":"item_m1","content":[{"type":"output_text","text":"Running both."}]},
+		{"type":"function_call","call_id":"bash:0","name":"bash","arguments":"{\"cmd\":\"ls\"}"},
+		{"type":"function_call","call_id":"bash:1","name":"bash","arguments":"{\"cmd\":\"pwd\"}"},
+		{"type":"function_call_output","call_id":"bash:0","output":"a.go"},
+		{"type":"function_call_output","call_id":"bash:1","output":"/app"}
+	],
+	"tools":[{"type":"function","name":"bash","parameters":{"type":"object"}}]
+}`)
+	var wire struct {
+		Messages []messagesWireMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &wire); err != nil {
+		t.Fatalf("upstream body: %v: %s", err, body)
+	}
+	for index, message := range wire.Messages {
+		ids := map[string]bool{}
+		for _, block := range message.Content {
+			if block.Type == "tool_result" {
+				ids[block.ToolUseID] = true
+			}
+		}
+		if len(ids) == 0 {
+			continue
+		}
+		if !ids["bash:0"] || !ids["bash:1"] {
+			t.Fatalf("message %d carries tool results %v, want both bash:0 and bash:1 together: %s", index, ids, body)
+		}
+		calls := callsOf(wire.Messages[index-1])
+		if !calls["bash:0"] || !calls["bash:1"] {
+			t.Fatalf("the assistant message before the results calls %v, want both bash:0 and bash:1: %s", calls, body)
+		}
+		return
+	}
+	t.Fatalf("no tool results were dispatched: %s", body)
+}
