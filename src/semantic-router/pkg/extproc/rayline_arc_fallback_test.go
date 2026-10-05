@@ -677,6 +677,7 @@ func TestRaylineARCFallbackLiftsTheToolLoopHoldOffAnExcludedFamily(t *testing.T)
 		map[string]any{"role": "user", "content": "fix the bug"},
 		map[string]any{"role": "assistant", "content": "done"},
 		map[string]any{"role": "user", "content": "now the tests"})
+	logs := captureLogs(t)
 	result, err := fixture.selector.Select(context.Background(), &selection.SelectionContext{
 		DecisionName:    fixture.decision.Name,
 		CandidateModels: fixture.decision.ModelRefs,
@@ -691,6 +692,10 @@ func TestRaylineARCFallbackLiftsTheToolLoopHoldOffAnExcludedFamily(t *testing.T)
 	offered := offeredActions(fixture, 0)
 	if slices.Contains(offered, offAction) || len(offered) != 2 || result.RaylineARC.SelectedArm != 0 {
 		t.Fatalf("offered %v, arm %d; want the think worker's two levels", offered, result.RaylineARC.SelectedArm)
+	}
+	// One outcome per turn: the lift replaces the preliminary hold.
+	if outcomes := toolLoopHoldOutcomes(logs); !slices.Equal(outcomes, []string{"lifted_by_exclusion"}) {
+		t.Fatalf("hold outcomes = %v, want only lifted_by_exclusion", outcomes)
 	}
 }
 

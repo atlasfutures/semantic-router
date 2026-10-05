@@ -257,10 +257,10 @@ func (selector *raylineARCSelector) Select(
 		return nil, err
 	}
 	excluded, hold := toolLoopFamilyMask(arcContext, len(workerIDs), hard)
-	hold.log(arcContext)
 	if armed.policy != nil {
-		return selector.selectViaPolicyService(ctx, armed, selCtx, arcContext, workerIDs, state, excluded, hard)
+		return selector.selectViaPolicyService(ctx, armed, selCtx, arcContext, workerIDs, state, excluded, hard, hold)
 	}
+	hold.log(arcContext)
 	encoded, latency, err := selector.encode(ctx, armed, arcContext, state)
 	if err != nil {
 		return nil, err

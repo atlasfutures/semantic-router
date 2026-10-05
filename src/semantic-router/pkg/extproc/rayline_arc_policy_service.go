@@ -421,7 +421,11 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	state *raylinearc.EpisodeState,
 	excluded []bool,
 	hard []bool,
+	hold toolLoopHold,
 ) (*selection.SelectionResult, error) {
+	// The offer below can still lift the tool-loop hold, so its outcome is
+	// logged once, when the turn's selection ends.
+	defer func() { hold.log(arcContext) }()
 	scorer, ok := armed.scorer.(*policyServiceScorer)
 	if !ok {
 		return nil, arcSelectionFailure("policy_scorer")
@@ -507,7 +511,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		// a model's and a route's alike: when they leave its family nothing
 		// to serve, the turn leaves the family, before any failed route is
 		// offered again.
-		toolLoopHold{outcome: "lifted_by_exclusion"}.log(arcContext)
+		hold = toolLoopHold{outcome: "lifted_by_exclusion"}
 		excluded = hard
 		available, offeredHeld, forced = offer(cellOut)
 	}

@@ -12,6 +12,7 @@ import (
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
@@ -205,6 +206,7 @@ func TestPolicySelectorOffersOnlyTheToolLoopFamily(t *testing.T) {
 			RequestFormat: policyFormatAnthropic, ToolLoopForeignArms: []bool{false, true},
 		},
 	}
+	logs := captureLogs(t)
 	if _, err := fixture.selector.Select(context.Background(), selectionContext); err != nil {
 		t.Fatalf("select: %v", err)
 	}
@@ -212,6 +214,22 @@ func TestPolicySelectorOffersOnlyTheToolLoopFamily(t *testing.T) {
 	if len(offered) != 2 || offered[0] != bindings[0].ActionID || offered[1] != bindings[1].ActionID {
 		t.Fatalf("mid-loop turn offered %v, want the think worker's two levels", offered)
 	}
+	if outcomes := toolLoopHoldOutcomes(logs); !slices.Equal(outcomes, []string{"held"}) {
+		t.Fatalf("hold outcomes = %v, want one held", outcomes)
+	}
+}
+
+// toolLoopHoldOutcomes is every tool-loop family hold outcome logged, in order.
+func toolLoopHoldOutcomes(logs *observer.ObservedLogs) []string {
+	var outcomes []string
+	for _, entry := range logs.All() {
+		fields := entry.ContextMap()
+		if fields["event"] == "rayline_arc_tool_loop_family_hold" {
+			outcome, _ := fields["outcome"].(string)
+			outcomes = append(outcomes, outcome)
+		}
+	}
+	return outcomes
 }
 
 // End to end on a policy cell with the hold on: a Claude arm opens a tool
