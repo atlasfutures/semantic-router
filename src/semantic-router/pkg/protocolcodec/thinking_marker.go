@@ -1,6 +1,10 @@
 package protocolcodec
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
 	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
@@ -101,4 +105,34 @@ func clientThinkingSignature(signature string, source llmprotocol.WireFormat) st
 		"source": string(source),
 	})
 	return ""
+}
+
+// holdsRouterSignatureValue reports whether a request body holds any JSON
+// string in the Router's namespace. Such a body is never kept for source
+// replay (requestEnvelope): its bytes still carry the value the decoders strip
+// and the encoders refuse, so the request is encoded instead. Any string
+// counts, not only a signature member, so a text that starts with "vsr." also
+// gives up replay; that costs at most a prompt-cache miss. A body that cannot
+// be scanned is treated as holding one.
+func holdsRouterSignatureValue(body []byte) bool {
+	// A decoded string holds "vsr." only if the bytes do, or spell part of it
+	// as a \u escape, the only escape JSON allows for those characters.
+	if !bytes.Contains(body, []byte(routerSignatureNamespace)) && !bytes.Contains(body, []byte(`\u`)) {
+		return false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return false
+		}
+		if err != nil {
+			return true
+		}
+		if value, ok := token.(string); ok {
+			if _, reserved := routerSignature(value); reserved {
+				return true
+			}
+		}
+	}
 }

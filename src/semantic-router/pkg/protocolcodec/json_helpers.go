@@ -559,7 +559,8 @@ func consumeJSONArray(decoder *json.Decoder, depth, maximumDepth int) error {
 func requestEnvelope(format llmprotocol.WireFormat, body []byte, generation uint64, policy llmprotocol.Policy) llmprotocol.Envelope {
 	envelope := llmprotocol.Envelope{Format: format, Generation: generation}
 	if policy.SourcePreservation == llmprotocol.SourceBoundedSameFormat &&
-		policy.Limits.SourceEnvelopeBytes > 0 && len(body) <= policy.Limits.SourceEnvelopeBytes {
+		policy.Limits.SourceEnvelopeBytes > 0 && len(body) <= policy.Limits.SourceEnvelopeBytes &&
+		!holdsRouterSignatureValue(body) {
 		envelope.Request = append([]byte(nil), body...)
 	}
 	return envelope
