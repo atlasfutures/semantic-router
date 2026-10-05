@@ -176,21 +176,6 @@ func TestChatDecoderKeepsClaudeItemsBesideAMarkerItem(t *testing.T) {
 	}
 }
 
-// A minted Responses blob is bytes the client holds and resends, so its items
-// are stripped the same way.
-func TestMintedReasoningDetailsStripRouterSignedItems(t *testing.T) {
-	marker := "vsr.thinking.v1.moonshotai." + testMarkerDigest
-	only := mintReasoningDetails(json.RawMessage(`[{"type":"reasoning.text","text":"kimi","signature":"` + marker + `","format":"anthropic-claude-v1","index":0}]`))
-	if details, ok := mintedReasoningDetails(only); !ok || details != nil {
-		t.Fatalf("a blob of only marker items decoded to %s, %v; want minted with no items", details, ok)
-	}
-	mixed := mintReasoningDetails(json.RawMessage(`[{"type":"reasoning.text","text":"kimi","signature":"` + marker + `","index":0},{"type":"reasoning.encrypted","data":"gAAA","index":1}]`))
-	details, ok := mintedReasoningDetails(mixed)
-	if !ok || strings.Contains(string(details), "vsr.") || !strings.Contains(string(details), "gAAA") {
-		t.Fatalf("mixed blob decoded to %s, %v", details, ok)
-	}
-}
-
 // A Responses target is never sent a minted blob, an emptied one included:
 // the item decodes to its reasoning text and the request is encoded afresh.
 func TestEmptiedMintedBlobNeverReachesAResponsesTarget(t *testing.T) {

@@ -70,8 +70,8 @@ func splitResponsesAnthropicReasoning(body json.RawMessage) (json.RawMessage, re
 // text becomes that one block; an item with none is thinking whose text was
 // omitted, which Anthropic also signs. Summaries are left as they are.
 func (members responsesAnthropicReasoning) applyTo(contents []llmprotocol.Content) []llmprotocol.Content {
-	if signature := clientThinkingSignature(members.signature, llmprotocol.OpenAIResponsesV1); signature != "" {
-		contents = withThinkingSignature(contents, signature)
+	if members.signature != "" {
+		contents = withThinkingSignature(contents, members.signature)
 	}
 	if members.redacted != "" {
 		contents = append(contents, redactedThinkingContent(members.redacted))

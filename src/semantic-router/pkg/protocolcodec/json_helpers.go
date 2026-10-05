@@ -556,11 +556,13 @@ func consumeJSONArray(decoder *json.Decoder, depth, maximumDepth int) error {
 	return nil
 }
 
-func requestEnvelope(format llmprotocol.WireFormat, body []byte, generation uint64, policy llmprotocol.Policy) llmprotocol.Envelope {
+// requestEnvelope keeps the client's bytes for source replay. A body the
+// Router stripped signatures from (stripRouterSignatures) keeps none: the
+// request is encoded, never replayed.
+func requestEnvelope(format llmprotocol.WireFormat, body []byte, generation uint64, policy llmprotocol.Policy, stripped bool) llmprotocol.Envelope {
 	envelope := llmprotocol.Envelope{Format: format, Generation: generation}
-	if policy.SourcePreservation == llmprotocol.SourceBoundedSameFormat &&
-		policy.Limits.SourceEnvelopeBytes > 0 && len(body) <= policy.Limits.SourceEnvelopeBytes &&
-		!holdsRouterSignatureValue(body) {
+	if !stripped && policy.SourcePreservation == llmprotocol.SourceBoundedSameFormat &&
+		policy.Limits.SourceEnvelopeBytes > 0 && len(body) <= policy.Limits.SourceEnvelopeBytes {
 		envelope.Request = append([]byte(nil), body...)
 	}
 	return envelope

@@ -2,9 +2,12 @@ package extproc
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
+
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
@@ -186,6 +189,59 @@ func TestMintedBlobOfOnlyMarkerItemsDecodesAsUnsignedReasoning(t *testing.T) {
 		assertJSONField(t, body, "model", `"anthropic/claude-opus-5"`)
 		wire := string(body["messages"])
 		if strings.Contains(wire, "vsr.") || strings.Contains(wire, "kimi reasoning") || strings.Contains(wire, "reasoning_") {
+			t.Fatalf("a Claude worker was sent marker-signed reasoning: %s", wire)
+		}
+		dropped := findLogEvent(t, logs, "reasoning_dropped")
+		if fmt.Sprint(dropped["foreign_dropped"]) != "1" {
+			t.Fatalf("reasoning_dropped = %v, want 1 foreign drop", dropped)
+		}
+	})
+}
+
+// End to end, Responses source: a format-tagged reasoning item holding a
+// Router marker and a member the contract does not name is carried whole --
+// classified before any per-item strip ran -- so before the strip became one
+// pre-pass the marker went to a Responses provider inside the carried bytes.
+// Every worker now gets it without the marker: a Responses worker the item's
+// reasoning as unsigned reasoning, a Claude worker nothing, counted as
+// foreign. A Chat worker gets what any extended item gets: nothing, since a
+// carried Responses item reaches only a Responses target.
+func TestExtendedMarkerSignedResponsesItemNeverCarriesTheMarker(t *testing.T) {
+	router, fake, actions := responsesPolicyRouter(t, false)
+	history := `{"model":"auto","input":[` +
+		`{"role":"user","content":[{"type":"input_text","text":"weather in Paris?"}]},` +
+		`{"type":"reasoning","summary":[],"content":[{"type":"reasoning_text","text":"kimi reasoning"}],` +
+		`"signature":"` + thinkingMarker + `","format":"anthropic-claude-v1","x_extension":{"a":1}},` +
+		`{"role":"assistant","content":[{"type":"output_text","text":"It is sunny."}]},` +
+		`{"role":"user","content":[{"type":"input_text","text":"and tomorrow?"}]}]}`
+	sent := func(t *testing.T, worker, episode string) (string, *observer.ObservedLogs) {
+		t.Helper()
+		action := actions[worker].ActionID
+		fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return action })
+		logs := captureLogs(t)
+		body := dispatchPolicyClientRequest(t, router, episode, "/v1/responses", history)
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(encoded), "vsr.") {
+			t.Fatalf("the %s worker was sent a Router signature: %s", worker, encoded)
+		}
+		return string(encoded), logs
+	}
+
+	t.Run("Responses worker", func(t *testing.T) {
+		wire, _ := sent(t, "gpt-or", "episode-extended-marker-gpt-or")
+		if !strings.Contains(wire, "kimi reasoning") {
+			t.Fatalf("a Responses worker lost the item's reasoning: %s", wire)
+		}
+	})
+	t.Run("Chat worker", func(t *testing.T) {
+		sent(t, "off", "episode-extended-marker-off")
+	})
+	t.Run("Claude worker", func(t *testing.T) {
+		wire, logs := sent(t, "claude", "episode-extended-marker-claude")
+		if strings.Contains(wire, "kimi reasoning") {
 			t.Fatalf("a Claude worker was sent marker-signed reasoning: %s", wire)
 		}
 		dropped := findLogEvent(t, logs, "reasoning_dropped")
