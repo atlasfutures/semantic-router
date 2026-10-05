@@ -148,6 +148,34 @@ func TestChatDecoderStripsRouterSignedReasoningDetails(t *testing.T) {
 	}
 }
 
+// Claude's own item beside a marker item survives, with only the text it
+// holds; the marker item and its reasoning go.
+func TestChatDecoderKeepsClaudeItemsBesideAMarkerItem(t *testing.T) {
+	marker := "vsr.thinking.v1.moonshotai." + testMarkerDigest
+	body := `{"model":"m","messages":[{"role":"user","content":"hi"},` +
+		`{"role":"assistant","content":"ok","reasoning_content":"kimi reasoningclaude reasoning","reasoning_details":[` +
+		`{"type":"reasoning.text","text":"kimi reasoning","signature":"` + marker + `","format":"anthropic-claude-v1","index":0},` +
+		`{"type":"reasoning.text","text":"claude reasoning","signature":"EqQB","format":"anthropic-claude-v1","index":1}]},` +
+		`{"role":"user","content":"go on"}]}`
+	request, _, _, err := NewBuiltinEngine().DecodeRequest(llmprotocol.OpenAIChatV1, []byte(body))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// The kimi text beside Claude's item is dropped and counted as foreign,
+	// as when the provenance filter removes an item itself.
+	if dropped := DropReasoningNotFromAnthropic(&request, llmprotocol.OpenAIChatV1); dropped != 1 {
+		t.Fatalf("foreign_dropped = %d, want 1", dropped)
+	}
+	reasoning := reasoningContents(request)
+	if len(reasoning) != 1 || reasoning[0].Text != "claude reasoning" {
+		t.Fatalf("Claude worker reasoning = %+v, want only Claude's text", reasoning)
+	}
+	details, _ := reasoningDetailsOf(reasoning[0])
+	if strings.Contains(string(details), "vsr.") || !strings.Contains(string(details), "EqQB") {
+		t.Fatalf("reasoning_details = %s", details)
+	}
+}
+
 // A minted Responses blob is bytes the client holds and resends, so its items
 // are stripped the same way.
 func TestMintedReasoningDetailsStripRouterSignedItems(t *testing.T) {
