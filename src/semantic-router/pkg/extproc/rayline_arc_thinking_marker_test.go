@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"testing"
@@ -135,6 +136,61 @@ func TestRouterMarkerSignedReasoningDetailsNeverReachAClaudeWorkerOverChat(t *te
 		wire := string(body["messages"])
 		if strings.Contains(wire, "vsr.") || !strings.Contains(wire, `"reasoning_content":"kimi reasoning"`) {
 			t.Fatalf("an open-weight worker was not sent the reasoning unsigned: %s", wire)
+		}
+	})
+}
+
+// mintedBlobOf is the encrypted_content the Router mints for a Responses
+// client from a reasoning_details array (vsr.reasoning_details.v1.).
+func mintedBlobOf(details string) string {
+	return "vsr.reasoning_details.v1." + base64.RawURLEncoding.EncodeToString([]byte(details))
+}
+
+// End to end, Responses source: a Router-minted reasoning item whose blob
+// holds only marker-signed items is still the Router's item. Stripping the
+// items empties the blob, and the item's own reasoning text goes on as
+// unsigned reasoning: carried to an open-weight worker, dropped as foreign for
+// a Claude worker. Neither is sent the blob.
+func TestMintedBlobOfOnlyMarkerItemsDecodesAsUnsignedReasoning(t *testing.T) {
+	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
+	actions := relaxedPolicyActions()
+	fake := newRelaxedPolicyFake(t)
+	router, err := NewOpenAIRouter(writeClaudeOverChatPolicyConfig(t, fake.URL()))
+	if err != nil {
+		t.Fatalf("build router: %v", err)
+	}
+	awaitPolicySelectorArmed(t, router)
+	blob := mintedBlobOf(`[{"type":"reasoning.text","text":"kimi reasoning","signature":"` + thinkingMarker +
+		`","format":"anthropic-claude-v1","index":0}]`)
+	history := `{"model":"auto","input":[` +
+		`{"role":"user","content":[{"type":"input_text","text":"weather in Paris?"}]},` +
+		`{"type":"reasoning","summary":[],"content":[{"type":"reasoning_text","text":"kimi reasoning"}],"encrypted_content":"` + blob + `"},` +
+		`{"role":"assistant","content":[{"type":"output_text","text":"It is sunny."}]},` +
+		`{"role":"user","content":[{"type":"input_text","text":"and tomorrow?"}]}]}`
+
+	t.Run("open-weight worker over Chat", func(t *testing.T) {
+		off := actions["off"].ActionID
+		fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return off })
+		body := dispatchPolicyClientRequest(t, router, "episode-minted-marker-off", "/v1/responses", history)
+		assertJSONField(t, body, "model", `"vendor/off"`)
+		wire := string(body["messages"])
+		if strings.Contains(wire, "vsr.") || !strings.Contains(wire, `"reasoning_content":"kimi reasoning"`) {
+			t.Fatalf("an open-weight worker was not sent the reasoning unsigned: %s", wire)
+		}
+	})
+	t.Run("Claude over Chat", func(t *testing.T) {
+		claude := actions["claude-off"].ActionID
+		fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return claude })
+		logs := captureLogs(t)
+		body := dispatchPolicyClientRequest(t, router, "episode-minted-marker-claude", "/v1/responses", history)
+		assertJSONField(t, body, "model", `"anthropic/claude-opus-5"`)
+		wire := string(body["messages"])
+		if strings.Contains(wire, "vsr.") || strings.Contains(wire, "kimi reasoning") || strings.Contains(wire, "reasoning_") {
+			t.Fatalf("a Claude worker was sent marker-signed reasoning: %s", wire)
+		}
+		dropped := findLogEvent(t, logs, "reasoning_dropped")
+		if fmt.Sprint(dropped["foreign_dropped"]) != "1" {
+			t.Fatalf("reasoning_dropped = %v, want 1 foreign drop", dropped)
 		}
 	})
 }

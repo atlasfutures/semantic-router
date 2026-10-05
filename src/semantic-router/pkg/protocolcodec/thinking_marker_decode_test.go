@@ -181,12 +181,38 @@ func TestChatDecoderKeepsClaudeItemsBesideAMarkerItem(t *testing.T) {
 func TestMintedReasoningDetailsStripRouterSignedItems(t *testing.T) {
 	marker := "vsr.thinking.v1.moonshotai." + testMarkerDigest
 	only := mintReasoningDetails(json.RawMessage(`[{"type":"reasoning.text","text":"kimi","signature":"` + marker + `","format":"anthropic-claude-v1","index":0}]`))
-	if details, ok := mintedReasoningDetails(only); ok {
-		t.Fatalf("a blob of only marker items decoded to %s", details)
+	if details, ok := mintedReasoningDetails(only); !ok || details != nil {
+		t.Fatalf("a blob of only marker items decoded to %s, %v; want minted with no items", details, ok)
 	}
 	mixed := mintReasoningDetails(json.RawMessage(`[{"type":"reasoning.text","text":"kimi","signature":"` + marker + `","index":0},{"type":"reasoning.encrypted","data":"gAAA","index":1}]`))
 	details, ok := mintedReasoningDetails(mixed)
 	if !ok || strings.Contains(string(details), "vsr.") || !strings.Contains(string(details), "gAAA") {
 		t.Fatalf("mixed blob decoded to %s, %v", details, ok)
+	}
+}
+
+// A Responses target is never sent a minted blob, an emptied one included:
+// the item decodes to its reasoning text and the request is encoded afresh.
+func TestEmptiedMintedBlobNeverReachesAResponsesTarget(t *testing.T) {
+	marker := "vsr.thinking.v1.moonshotai." + testMarkerDigest
+	blob := mintReasoningDetails(json.RawMessage(`[{"type":"reasoning.text","text":"kimi reasoning","signature":"` + marker + `","format":"anthropic-claude-v1","index":0}]`))
+	body := `{"model":"m","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]},` +
+		`{"type":"reasoning","summary":[],"content":[{"type":"reasoning_text","text":"kimi reasoning"}],"encrypted_content":` + string(blob) + `},` +
+		`{"role":"user","content":[{"type":"input_text","text":"go on"}]}]}`
+	engine := NewBuiltinEngine()
+	request, envelope, _, err := engine.DecodeRequest(llmprotocol.OpenAIResponsesV1, []byte(body))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if reasoning := reasoningContents(request); len(reasoning) != 1 || reasoning[0].Text != "kimi reasoning" || reasoning[0].Extensions != nil {
+		t.Fatalf("decoded to %+v, want unsigned reasoning text", reasoning)
+	}
+	result, err := engine.EncodeRequest(llmprotocol.OpenAIResponsesV1, request, envelope)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if sent := string(result.Body); strings.Contains(sent, "vsr.") || strings.Contains(sent, "encrypted_content") ||
+		!strings.Contains(sent, "kimi reasoning") {
+		t.Fatalf("Responses target request = %s", sent)
 	}
 }

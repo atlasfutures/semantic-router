@@ -240,7 +240,10 @@ func mintReasoningDetails(details json.RawMessage) json.RawMessage {
 
 // mintedReasoningDetails reads an encrypted_content the Router minted back
 // into the reasoning_details array it holds. ok is false for any other
-// value, a provider's blob included.
+// value, a provider's blob included. A minted blob stays minted when the
+// strip of Router-signed items (clientReasoningDetails) leaves no item:
+// details is then nil, and the item's own text decodes as unsigned
+// reasoning rather than the item passing for a provider's encrypted one.
 func mintedReasoningDetails(encrypted json.RawMessage) (json.RawMessage, bool) {
 	var text string
 	if !hasJSONValue(encrypted) || json.Unmarshal(encrypted, &text) != nil ||
@@ -257,10 +260,7 @@ func mintedReasoningDetails(encrypted json.RawMessage) (json.RawMessage, bool) {
 	}
 	// The blob is the client's to resend, so its items are as untrusted as a
 	// Chat client's.
-	if details = clientReasoningDetails(details, llmprotocol.OpenAIResponsesV1); details == nil {
-		return nil, false
-	}
-	return details, true
+	return clientReasoningDetails(details, llmprotocol.OpenAIResponsesV1), true
 }
 
 // isMintedReasoningItem reports whether a Responses input item is a
