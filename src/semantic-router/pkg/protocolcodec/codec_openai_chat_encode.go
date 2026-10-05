@@ -36,6 +36,9 @@ func (OpenAIChatCodec) EncodeRequest(request llmprotocol.Request, envelope llmpr
 	if encodeErr := appendChatMessages(&wire, request); encodeErr != nil {
 		return nil, diagnostics, encodeErr
 	}
+	if request.NamesToolResults {
+		nameChatToolMessages(wire.Messages, &diagnostics, policy, request.Trusted.SourceFormat)
+	}
 	if len(wire.Messages) == 0 {
 		return nil, diagnostics, llmprotocol.NewError(
 			llmprotocol.ErrorUnsupportedFeature,
@@ -286,6 +289,47 @@ func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) erro
 	}
 	flushToolMedia()
 	return nil
+}
+
+// nameChatToolMessages writes, on each tool message, the name of the tool
+// whose call it answers (Request.NamesToolResults). The name is the call's
+// function.name as this encoder already wrote it on the assistant message
+// before it, so a namespaced tool is qualified the same way in both places.
+//
+// It is off by default: OpenAI's Chat schema defines no name on a tool
+// message, so a direct OpenAI dispatch stays exactly as before. The router
+// turns it on for OpenRouter, where Kimi refuses a tool message it cannot
+// match to a call, and matches by name or by the order of the calls, which a
+// history whose calls came from another model does not keep.
+//
+// A result whose call is not in the request (a truncated history) is sent
+// without a name and counted: the turn may still be accepted, and refusing
+// it here would lose it for certain.
+func nameChatToolMessages(
+	messages []chatMessageWire,
+	diagnostics *llmprotocol.Diagnostics,
+	policy llmprotocol.Policy,
+	source llmprotocol.WireFormat,
+) {
+	names := make(map[string]string)
+	for index := range messages {
+		message := &messages[index]
+		for _, call := range message.ToolCalls {
+			names[call.ID] = call.Function.Name
+		}
+		if message.Role != "tool" || message.ToolCallID == "" {
+			continue
+		}
+		name, found := names[message.ToolCallID]
+		if !found || name == "" {
+			appendPresentationDrop(
+				diagnostics, policy, source, llmprotocol.OpenAIChatV1,
+				"messages.tool.name", "no earlier tool call in the request answers to this tool result",
+			)
+			continue
+		}
+		message.Name, _ = json.Marshal(name)
+	}
 }
 
 // foldChatReasoningDetailsMessage moves an assistant message that holds only

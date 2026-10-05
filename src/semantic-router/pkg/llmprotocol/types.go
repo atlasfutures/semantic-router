@@ -441,6 +441,13 @@ type Request struct {
 	// only when that target issued every blob the request resends; no
 	// decoder does.
 	ForwardsEncryptedReasoning bool
+	// NamesToolResults asks a Chat Completions target to write the tool's
+	// name on each tool message, resolved from the call it answers. OpenAI's
+	// Chat schema defines no name on a tool message, so it is off by default;
+	// some models served through OpenRouter (Kimi) need it to match a result
+	// to its call when the calls came from another model. The router sets it
+	// per dispatch; no decoder does.
+	NamesToolResults bool
 }
 
 type StopReason string
