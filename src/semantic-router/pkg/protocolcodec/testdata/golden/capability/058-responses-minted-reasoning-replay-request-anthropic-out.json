@@ -21,12 +21,7 @@
                 {
                   "thinking": "Check the weather tool first.",
                   "type": "thinking"
-                }
-              ],
-              "role": "assistant"
-            },
-            {
-              "content": [
+                },
                 {
                   "id": "call_1",
                   "input": {
