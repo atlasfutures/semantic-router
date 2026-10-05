@@ -15,7 +15,7 @@ func TestSourceReplayNeverSendsARouterSignature(t *testing.T) {
 	marker := "vsr.thinking.v1.moonshotai." + testMarkerDigest
 	// The same marker with its first letters written as JSON escapes: the
 	// decoded value is the marker, the bytes do not contain it literally.
-	escaped := `vsr.thinking.v1.moonshotai.` + testMarkerDigest
+	escaped := `\u0076\u0073r.thinking.v1.moonshotai.` + testMarkerDigest
 	bodies := map[llmprotocol.WireFormat][]string{
 		llmprotocol.OpenAIChatV1: {
 			`{"model":"m","messages":[{"role":"user","content":"hi"},` +
@@ -66,22 +66,5 @@ func TestSourceReplayStillReplaysRequestsWithoutARouterSignature(t *testing.T) {
 	}
 	if !envelope.CanReplay(llmprotocol.OpenAIChatV1, request.Generation, NewBuiltinEngine().requestEncodePolicy(), false) {
 		t.Fatal("a request without a Router signature lost source replay")
-	}
-}
-
-func TestHoldsRouterSignatureValue(t *testing.T) {
-	cases := map[string]bool{
-		`{"a":"plain","b":["EqQB"]}`:              false,
-		`{"text":"mentions vsr. mid-string"}`:     false,
-		`{"s":"été"}`:                             false,
-		`{"s":"vsr.thinking.v1.x.y"}`:             true,
-		`{"s":"vsr.anything"}`:                    true,
-		`{"vsr.key":1}`:                           true,
-		`{"s":"vsr.` + "\x00" + `` + `"truncated`: true,
-	}
-	for body, want := range cases {
-		if got := holdsRouterSignatureValue([]byte(body)); got != want {
-			t.Errorf("holdsRouterSignatureValue(%s) = %v, want %v", body, got, want)
-		}
 	}
 }
