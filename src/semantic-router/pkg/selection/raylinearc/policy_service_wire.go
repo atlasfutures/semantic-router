@@ -503,6 +503,10 @@ type PolicyPackageManifestV5 struct {
 const (
 	PolicyConversationCanonicalV1          = "canonical_v1"
 	PolicyHarnessInjectionsStripClaudeCode = "strip_claude_code_2_1_v1"
+	// PolicyRopeYarnF4 is Qwen's static YaRN, factor 4 over 262,144 trained
+	// positions, served to 1,010,000 tokens (pathfinder#3514); absent is the
+	// encoder checkpoint's own RoPE.
+	PolicyRopeYarnF4 = "yarn-f4"
 )
 
 func (common *PolicyPackageCommon) checkConversation() error {
@@ -513,6 +517,7 @@ func (common *PolicyPackageCommon) checkConversation() error {
 	}{
 		"conversation":       {profile.Conversation, PolicyConversationCanonicalV1},
 		"harness_injections": {profile.HarnessInjections, PolicyHarnessInjectionsStripClaudeCode},
+		"rope":               {profile.Rope, PolicyRopeYarnF4},
 	} {
 		if member.raw == nil {
 			continue
@@ -556,12 +561,17 @@ type PolicyPackageCommon struct {
 		// Raw, so an explicit null is told apart from an omitted member.
 		Conversation      json.RawMessage `json:"conversation,omitempty"`
 		HarnessInjections json.RawMessage `json:"harness_injections,omitempty"`
-		EncoderModel      string          `json:"encoder_model"`
-		EncoderRevision   string          `json:"encoder_revision"`
-		DType             string          `json:"dtype"`
-		MaxTokens         int             `json:"max_tokens"`
-		Readout           string          `json:"readout"`
-		Dimension         int             `json:"dimension"`
+		// Rope names the encoder's RoPE variant: absent is the
+		// checkpoint's own, yarn-f4 the YaRN extension. It changes every
+		// readout, so the profile states it; the service checks its engine
+		// serves it, and VSR only requires a value the contract defines.
+		Rope            json.RawMessage `json:"rope,omitempty"`
+		EncoderModel    string          `json:"encoder_model"`
+		EncoderRevision string          `json:"encoder_revision"`
+		DType           string          `json:"dtype"`
+		MaxTokens       int             `json:"max_tokens"`
+		Readout         string          `json:"readout"`
+		Dimension       int             `json:"dimension"`
 	} `json:"encoding_profile"`
 	InferencePackage PolicyInferencePackage `json:"inference_package"`
 	Decision         struct {

@@ -233,9 +233,9 @@ func TestPolicyResponsesRequestWritesNullInstructions(t *testing.T) {
 }
 
 // Published packages state encoding_profile.conversation (pathfinder's
-// "canonical_v1" projection) and may state harness_injections; both decoders
-// read them, accept the value the contract defines for each, and refuse any
-// other.
+// "canonical_v1" projection) and may state harness_injections and rope; both
+// decoders read them, accept the value the contract defines for each, and
+// refuse any other.
 func TestDecodePolicyPackageConversation(t *testing.T) {
 	const anchor = `"tool_definitions": "include_recorded",`
 	decoders := map[string]func([]byte) error{
@@ -250,6 +250,7 @@ func TestDecodePolicyPackageConversation(t *testing.T) {
 		for member, values := range map[string]map[string]bool{
 			"conversation":       {`"canonical_v1"`: true, `"transcript_v9"`: false, `""`: false, `null`: false, `1`: false},
 			"harness_injections": {`"strip_claude_code_2_1_v1"`: true, `"keep"`: false, `""`: false, `null`: false},
+			"rope":               {`"yarn-f4"`: true, `"yarn-f8"`: false, `"native"`: false, `""`: false, `null`: false},
 		} {
 			for value, accepted := range values {
 				changed := bytes.Replace(body, []byte(anchor), []byte(anchor+` "`+member+`": `+value+`,`), 1)
