@@ -189,6 +189,7 @@ func (r *OpenAIRouter) encodeDispatchRequest(ctx *RequestContext) ([]byte, error
 	// declaration of it; the codec drops and counts it otherwise.
 	dispatchRequest.HostedTools = ctx.DispatchHostedTools
 	applyDispatchAutoCache(&dispatchRequest, ctx)
+	applyDispatchToolResultNames(&dispatchRequest, ctx, format)
 	if format == llmprotocol.OpenAIChatV1 && dispatchRequest.Stream &&
 		!streamUsageAlreadyRequested(dispatchRequest.StreamOptions) {
 		// The Router always asks Chat backends for the final usage chunk so
@@ -207,6 +208,31 @@ func (r *OpenAIRouter) encodeDispatchRequest(ctx *RequestContext) ([]byte, error
 	}
 	ctx.ProtocolDiagnostics = append(ctx.ProtocolDiagnostics, encoded.Diagnostics...)
 	return encoded.Body, nil
+}
+
+// applyDispatchToolResultNames asks a Chat encode to name the tool on each
+// tool message when the dispatch reaches OpenRouter
+// (RequestContext.DispatchNamesToolResults). A Chat client's own bytes carry
+// no such name, so a request that holds a tool result retires the replay
+// claim on them; one without a tool result has nothing to name and is left
+// as it was.
+func applyDispatchToolResultNames(request *llmprotocol.Request, ctx *RequestContext, format llmprotocol.WireFormat) {
+	if format != llmprotocol.OpenAIChatV1 || !ctx.DispatchNamesToolResults || !holdsToolResult(*request) {
+		return
+	}
+	request.NamesToolResults = true
+	request.Generation++
+}
+
+func holdsToolResult(request llmprotocol.Request) bool {
+	for _, message := range request.Messages {
+		for _, content := range message.Content {
+			if content.Kind == llmprotocol.ContentToolResult {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func streamUsageAlreadyRequested(options llmprotocol.StreamOptions) bool {

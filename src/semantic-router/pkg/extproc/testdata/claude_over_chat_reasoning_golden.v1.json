@@ -149,7 +149,8 @@
     {
       "role": "tool",
       "content": "Successfully wrote to fib.py",
-      "tool_call_id": "call_1"
+      "tool_call_id": "call_1",
+      "name": "write"
     },
     {
       "role": "assistant",
@@ -177,7 +178,8 @@
     {
       "role": "tool",
       "content": "0 1 1 2 3 5 8 13 21 34",
-      "tool_call_id": "call_2"
+      "tool_call_id": "call_2",
+      "name": "bash"
     },
     {
       "role": "user",
