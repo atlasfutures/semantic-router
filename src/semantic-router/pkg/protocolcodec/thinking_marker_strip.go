@@ -67,7 +67,7 @@ func stripRouterSignatures(format llmprotocol.WireFormat, body []byte, policy ll
 	if !changed {
 		return body, false
 	}
-	stripped, err := json.Marshal(request)
+	stripped, err := marshalStripped(request)
 	if err != nil {
 		return body, false
 	}
@@ -114,7 +114,7 @@ func (strip routerSignatureStrip) eachObject(
 		if json.Unmarshal(element, &object) != nil || object == nil || !edit(object) {
 			continue
 		}
-		encoded, err := json.Marshal(object)
+		encoded, err := marshalStripped(object)
 		if err != nil {
 			continue
 		}
@@ -124,7 +124,7 @@ func (strip routerSignatureStrip) eachObject(
 	if !changed {
 		return false
 	}
-	encoded, err := json.Marshal(elements)
+	encoded, err := marshalStripped(elements)
 	if err != nil {
 		return false
 	}
@@ -219,7 +219,7 @@ func (strip routerSignatureStrip) details(details json.RawMessage) (json.RawMess
 	if len(kept) == 0 {
 		return nil, true
 	}
-	encoded, err := json.Marshal(kept)
+	encoded, err := marshalStripped(kept)
 	if err != nil {
 		return nil, true
 	}
@@ -241,4 +241,19 @@ func (strip routerSignatureStrip) report(source llmprotocol.WireFormat) {
 			"source": string(source),
 		})
 	}
+}
+
+// marshalStripped encodes a value the pass rebuilt. The client's strings are
+// held as raw JSON and written as they came, without the HTML escaping
+// json.Marshal adds, so a stripped body is never longer than the body it came
+// from less what was removed, and a body within the size limit stays within
+// it.
+func marshalStripped(value any) ([]byte, error) {
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buffer.Bytes(), []byte("\n")), nil
 }

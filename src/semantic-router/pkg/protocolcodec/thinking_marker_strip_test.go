@@ -138,3 +138,23 @@ func TestStripRouterSignaturesDropsAMintedBlobWithDuplicateKeys(t *testing.T) {
 		})
 	}
 }
+
+// Rebuilding a stripped body must not HTML-escape the client's text: a body
+// within the size limit stays within it.
+func TestStripRouterSignaturesDoesNotGrowTheBody(t *testing.T) {
+	policy := NewBuiltinEngine().policy
+	text := strings.Repeat("<a & b>", 1000)
+	marker := "vsr.thinking.v1.moonshotai." + testMarkerDigest
+	body := `{"model":"m","max_tokens":8,"messages":[{"role":"user","content":"` + text + `"},` +
+		`{"role":"assistant","content":[{"type":"thinking","thinking":"` + text + `","signature":"` + marker + `"}]}]}`
+	got, stripped := stripRouterSignatures(llmprotocol.AnthropicMessagesV1, []byte(body), policy)
+	if !stripped {
+		t.Fatal("not stripped")
+	}
+	if strings.Count(string(got), text) != 2 {
+		t.Fatalf("the text was re-escaped: %.200s", got)
+	}
+	if removed := len(marker); len(got) > len(body)-removed {
+		t.Fatalf("stripped body is %d bytes, want at most %d", len(got), len(body)-removed)
+	}
+}
