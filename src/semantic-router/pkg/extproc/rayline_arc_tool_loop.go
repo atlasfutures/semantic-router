@@ -151,17 +151,19 @@ func (r *OpenAIRouter) armFamily(model string) string {
 	return strings.ToLower(name)
 }
 
-// withToolLoopFamily folds the tool-loop hold into the mask. It runs last, so
+// toolLoopFamilyMask folds the tool-loop hold into the mask. It runs last, so
 // every hard constraint has already said what it excludes, and it yields to
 // them: when the family has no eligible arm left, the hold is lifted rather
-// than refusing the turn. Both outcomes are logged.
-func withToolLoopFamily(
+// than refusing the turn. The outcome is returned rather than logged, so a
+// caller that can still lift the hold (the policy offer) logs one outcome
+// per turn.
+func toolLoopFamilyMask(
 	arcContext *selection.RaylineARCSelectionContext,
 	armCount int,
 	excluded []bool,
-) []bool {
+) ([]bool, toolLoopHold) {
 	if len(arcContext.ToolLoopForeignArms) != armCount {
-		return excluded
+		return excluded, toolLoopHold{}
 	}
 	combined := make([]bool, armCount)
 	eligible, foreign := 0, 0
@@ -175,23 +177,28 @@ func withToolLoopFamily(
 			foreign++
 		}
 	}
-	outcome := "held"
 	if eligible == 0 {
-		outcome = "lifted_no_eligible_arm"
+		return excluded, toolLoopHold{outcome: "lifted_no_eligible_arm", foreign: foreign}
 	}
-	logToolLoopHold(arcContext, outcome, foreign)
-	if eligible == 0 {
-		return excluded
-	}
-	return combined
+	return combined, toolLoopHold{outcome: "held", foreign: foreign}
 }
 
-func logToolLoopHold(arcContext *selection.RaylineARCSelectionContext, outcome string, foreign int) {
+// toolLoopHold is a turn's tool-loop family hold outcome, pending its log.
+// The zero value is a turn with no hold, which logs nothing.
+type toolLoopHold struct {
+	outcome string
+	foreign int
+}
+
+func (hold toolLoopHold) log(arcContext *selection.RaylineARCSelectionContext) {
+	if hold.outcome == "" {
+		return
+	}
 	logging.ComponentEvent("extproc", "rayline_arc_tool_loop_family_hold", map[string]interface{}{
 		"episode_id_hash": arcContext.EpisodeIDHash,
 		"previous_arm":    arcContext.ToolLoopArm,
 		"family":          arcContext.ToolLoopFamily,
-		"outcome":         outcome,
-		"excluded_arms":   foreign,
+		"outcome":         hold.outcome,
+		"excluded_arms":   hold.foreign,
 	})
 }
