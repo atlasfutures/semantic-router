@@ -246,5 +246,8 @@ func observeRaylineARCSelection(
 	if !trace.EncoderLatencyUnknown {
 		fields["encoder_latency_millis"] = trace.EncoderLatency.Milliseconds()
 	}
+	if trace.TokenCountsUnknown {
+		fields["serialized_tokens"], fields["full_history_tokens"] = nil, nil
+	}
 	logging.ComponentEvent("extproc", "rayline_arc_selection", fields)
 }
