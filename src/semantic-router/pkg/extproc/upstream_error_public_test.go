@@ -88,21 +88,39 @@ func TestStreamedProviderErrorReachesTheClientInPublicForm(t *testing.T) {
 	}{
 		{"chat from chat (filtered passthrough)", llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1, chatError},
 		{"messages from messages (passthrough)", llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1, anthropicError},
+		{
+			"messages from messages, error typed by event name", llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1,
+			bytes.Replace(anthropicError, []byte(`{"type":"error","error"`), []byte(`{"error"`), 1),
+		},
 		{"messages from chat (re-encoded)", llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, chatError},
 		{"chat from messages (re-encoded)", llmprotocol.OpenAIChatV1, llmprotocol.AnthropicMessagesV1, anthropicError},
 		{"responses from chat (re-encoded)", llmprotocol.OpenAIResponsesV1, llmprotocol.OpenAIChatV1, chatError},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			// The frames arrive before the end of the stream, as Envoy
+			// delivers them: the chunk that carries the error is not the one
+			// that finalizes the stream.
 			ctx := streamErrorContext(test.source, test.target)
-			response := (&OpenAIRouter{}).handleSemanticStreamingResponseBody(test.upstream, true, ctx)
-			mutation := response.GetResponseBody().GetResponse().GetBodyMutation()
-			if mutation == nil {
-				t.Fatal("the provider's stream reached the client unchanged")
+			router := &OpenAIRouter{}
+			var client []byte
+			for _, chunk := range []struct {
+				body []byte
+				end  bool
+			}{{test.upstream, false}, {nil, true}} {
+				response := router.handleSemanticStreamingResponseBody(chunk.body, chunk.end, ctx)
+				mutation := response.GetResponseBody().GetResponse().GetBodyMutation()
+				if mutation == nil {
+					if !chunk.end {
+						t.Fatal("the provider's stream reached the client unchanged")
+					}
+					continue
+				}
+				client = append(client, mutation.GetBody()...)
 			}
-			assertNoProviderAccountText(t, mutation.GetBody())
-			if !bytes.Contains(mutation.GetBody(), []byte("model service unavailable")) {
-				t.Fatalf("client stream = %s", mutation.GetBody())
+			assertNoProviderAccountText(t, client)
+			if !bytes.Contains(client, []byte("model service unavailable")) {
+				t.Fatalf("client stream = %s", client)
 			}
 		})
 	}

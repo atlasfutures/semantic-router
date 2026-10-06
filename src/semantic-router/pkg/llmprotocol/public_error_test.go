@@ -20,6 +20,14 @@ func TestPublicUpstreamErrorHidesProviderAccountErrors(t *testing.T) {
 		{"authentication", ProtocolError{Category: ErrorAuthentication, Code: "authentication_error", Message: "invalid x-api-key"}, 0},
 		{"billing", ProtocolError{Category: ErrorUpstreamUnavailable, Code: "billing_error", Message: "credit balance is too low"}, 400},
 		{"quota", ProtocolError{Category: ErrorRateLimited, Code: "insufficient_quota", Message: "exceeded your current quota"}, 429},
+		{"openrouter key limit 403", ProtocolError{
+			Category: ErrorPermission, Code: "403",
+			Message: "Key limit exceeded (daily limit). Manage it using https://openrouter.ai/settings/keys",
+		}, 403},
+		{"anthropic credit 400", ProtocolError{
+			Category: ErrorInvalidRequest, Code: "invalid_request_error",
+			Message: "Your credit balance is too low to access the Anthropic API.",
+		}, 400},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

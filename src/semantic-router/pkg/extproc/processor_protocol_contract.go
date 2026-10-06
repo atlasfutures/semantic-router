@@ -328,6 +328,12 @@ func (r *OpenAIRouter) decodeCachedClientResponse(
 	if err != nil {
 		return nil, err
 	}
+	// An entry written before provider errors were made public can still
+	// hold one; a hit is re-encoded from this response, so it is made public
+	// here.
+	if decoded.Response.Error != nil {
+		decoded.Response.Error = publicUpstreamError(ctx, decoded.Response.Error, 0, "cache")
+	}
 	ctx.SemanticResponse = &decoded.Response
 	ctx.ResponseEnvelope = decoded.Envelope
 	ctx.ProtocolDiagnostics = append(ctx.ProtocolDiagnostics, decoded.Diagnostics...)

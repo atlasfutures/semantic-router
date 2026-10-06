@@ -114,7 +114,12 @@ func publicAnthropicStreamFrame(frame []byte, limit int) ([]byte, error) {
 		return frame, nil
 	}
 	var wire anthropicTransportErrorWire
-	if json.Unmarshal(parsed.Data, &wire) != nil || wire.Type != "error" {
+	if json.Unmarshal(parsed.Data, &wire) != nil {
+		return frame, nil
+	}
+	// The event is typed as the decoder types it: by its JSON type, else by
+	// its SSE event name (decodeAnthropicWireFrame).
+	if eventType := wire.Type; eventType != "error" && (eventType != "" || parsed.Event != "error") {
 		// Not an error event: a content frame that mentions the word.
 		return frame, nil
 	}

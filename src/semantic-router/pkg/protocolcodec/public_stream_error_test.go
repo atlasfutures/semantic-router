@@ -66,6 +66,13 @@ func TestAnthropicPublicStreamPassesFramesAndRestatesErrorEvent(t *testing.T) {
 		t.Fatalf("error frame = %q, want %q", errorFrame, want)
 	}
 
+	// Typed only by its SSE event name, as the decoder accepts it.
+	untyped := []byte("event: error\ndata: {\"error\":{\"type\":\"overloaded_error\",\"message\":\"busy, see https://example.com/status\"}}\n\n")
+	output = pushInSmallChunks(t, NewAnthropicPublicStreamFilter(1<<20), untyped)
+	if bytes.Contains(output, []byte("example.com")) || !bytes.Contains(output, []byte("busy, see [redacted]")) {
+		t.Fatalf("an error event typed by its name passed through: %s", output)
+	}
+
 	billing := []byte("event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"billing_error\",\"message\":\"" + providerCreditsText + "\"}}\n\n")
 	output = pushInSmallChunks(t, NewAnthropicPublicStreamFilter(1<<20), billing)
 	if bytes.Contains(output, []byte("54095")) || !bytes.Contains(output, []byte("model service unavailable")) {

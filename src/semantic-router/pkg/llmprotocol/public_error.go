@@ -20,7 +20,7 @@ var providerSecretPattern = regexp.MustCompile(`(?i)\bhttps?://\S+|\bsk-[A-Za-z0
 // key, so it can name that key's account, budget and settings page.
 //
 //   - A refusal of the Router's credentials or account (401, 402, an
-//     authentication or billing error) becomes a generic upstream
+//     authentication, billing, quota or key-limit error) becomes a generic upstream
 //     unavailability: none of its text is the client's business.
 //   - Any other error keeps its category, code and message, which a client
 //     acts on (a context-length 400 tells it to compact), with links and
@@ -57,5 +57,15 @@ func providerAccountError(protocolError *ProtocolError, status int) bool {
 	case "401", "402", "insufficient_quota", "payment_required", "billing_error", "insufficient_credits":
 		return true
 	}
+	// Some account refusals come with another status: OpenRouter states its
+	// key limit as a 403, Anthropic a low credit balance as a 400.
+	message := strings.ToLower(protocolError.Message)
+	for _, account := range providerAccountPhrases {
+		if strings.Contains(message, account) {
+			return true
+		}
+	}
 	return false
 }
+
+var providerAccountPhrases = []string{"key limit", "credit balance", "more credits", "current quota", "billing"}
