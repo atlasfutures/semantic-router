@@ -59,8 +59,8 @@ func TestPolicyFixturesMatchTheirPinnedDigests(t *testing.T) {
 		}
 		seen++
 	}
-	if seen != 10 {
-		t.Fatalf("SHA256SUMS pins %d fixtures, want 10", seen)
+	if seen != 11 {
+		t.Fatalf("SHA256SUMS pins %d fixtures, want 11", seen)
 	}
 }
 
@@ -73,13 +73,15 @@ func TestPolicyWireTypesRoundTripTheFixtures(t *testing.T) {
 		// The v5 fixture with both optional encoding_profile members.
 		"package_manifest.v5.canonical_v1.json": &PolicyPackageManifestV5{},
 		// The ARC 0.4 v5 fixture: a depth-12 YaRN encoder (layer and rope).
-		"package_manifest.v5.yarn.json":      &PolicyPackageManifestV5{},
-		"decision_request.v1.json":           &PolicyDecisionRequest{},
-		"decision_request_responses.v1.json": &PolicyDecisionRequest{},
-		"decision_request_relaxed.v1.json":   &PolicyDecisionRequest{},
-		"decision_response.v1.json":          &PolicyDecisionResponse{},
-		"packages_response.v1.json":          &PolicyPackagesResponse{},
-		"error_responses.v1.json":            &[]PolicyErrorResponse{},
+		"package_manifest.v5.yarn.json": &PolicyPackageManifestV5{},
+		// The v6 fixture: the canonical_v2 image profile (ADR 0122).
+		"package_manifest.v6.canonical_v2.json": &PolicyPackageManifestV5{},
+		"decision_request.v1.json":              &PolicyDecisionRequest{},
+		"decision_request_responses.v1.json":    &PolicyDecisionRequest{},
+		"decision_request_relaxed.v1.json":      &PolicyDecisionRequest{},
+		"decision_response.v1.json":             &PolicyDecisionResponse{},
+		"packages_response.v1.json":             &PolicyPackagesResponse{},
+		"error_responses.v1.json":               &[]PolicyErrorResponse{},
 	}
 	for name, target := range cases {
 		body := readPolicyFixture(t, name)

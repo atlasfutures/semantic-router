@@ -36,6 +36,7 @@ import (
 const (
 	PolicyPackageSchema          = "rayline.arc-policy-package.v4"
 	PolicyPackageSchemaV5        = "rayline.arc-policy-package.v5"
+	PolicyPackageSchemaV6        = "rayline.arc-policy-package.v6"
 	PolicyDecisionRequestSchema  = "rayline.arc.policy-decision-request.v1"
 	PolicyDecisionResponseSchema = "rayline.arc.policy-decision-response.v1"
 	PolicyPackagesSchema         = "rayline.arc.policy-packages.v1"
@@ -533,13 +534,38 @@ const (
 // block_<k-1> for an encoder truncated to its first k layers.
 var policyLayer = regexp.MustCompile(`^(final|block_[0-9]+)$`)
 
+// PolicySerializerV1 is the text profile's serializer, the one v4 and v5
+// packages name.
+const PolicySerializerV1 = "arc-role-blocks-v1"
+
+// checkConversation checks a v4 or v5 profile: a text profile, so its
+// serializer is v1 and it holds none of v6's image members, and every
+// optional member names a value the contract defines.
 func (common *PolicyPackageCommon) checkConversation() error {
+	profile := common.EncodingProfile
+	if profile.Serializer != PolicySerializerV1 {
+		return fmt.Errorf("policy package encoding_profile.serializer %q is not a text profile's", profile.Serializer)
+	}
+	for name, raw := range map[string]json.RawMessage{
+		"modalities": profile.Modalities, "image_processor": profile.ImageProcessor,
+		"positions": profile.Positions, "vision": profile.Vision,
+	} {
+		if raw != nil {
+			return fmt.Errorf("policy package encoding_profile.%s belongs to a v6 (image) profile", name)
+		}
+	}
+	return common.checkProfileMembers(PolicyConversationCanonicalV1)
+}
+
+// checkProfileMembers checks the optional members every profile shares;
+// conversation, when present, must be the one value the schema allows.
+func (common *PolicyPackageCommon) checkProfileMembers(conversation string) error {
 	profile := common.EncodingProfile
 	for name, member := range map[string]struct {
 		raw     json.RawMessage
 		allowed []string
 	}{
-		"conversation":       {profile.Conversation, []string{PolicyConversationCanonicalV1}},
+		"conversation":       {profile.Conversation, []string{conversation}},
 		"harness_injections": {profile.HarnessInjections, []string{PolicyHarnessInjectionsStripClaudeCode}},
 		"rope":               {profile.Rope, []string{PolicyRopeYarnF4}},
 		"harness_shell":      {profile.HarnessShell, []string{PolicyHarnessShellInclude}},
@@ -606,8 +632,16 @@ type PolicyPackageCommon struct {
 		// absent excludes the harness shell and keeps environment text;
 		// include and scrub_v1/scrub_v2 are the alternatives the service
 		// applies. Absent at their defaults, as pathfinder omits them.
-		HarnessShell    json.RawMessage `json:"harness_shell,omitempty"`
-		Environment     json.RawMessage `json:"environment,omitempty"`
+		HarnessShell json.RawMessage `json:"harness_shell,omitempty"`
+		Environment  json.RawMessage `json:"environment,omitempty"`
+		// Modalities, ImageProcessor, Positions and Vision are the members
+		// of a v6 image-reading profile (canonical_v2, ADR 0122); a v4 or v5
+		// profile refuses them, and v6 decodes each strictly
+		// (checkImageProfile).
+		Modalities      json.RawMessage `json:"modalities,omitempty"`
+		ImageProcessor  json.RawMessage `json:"image_processor,omitempty"`
+		Positions       json.RawMessage `json:"positions,omitempty"`
+		Vision          json.RawMessage `json:"vision,omitempty"`
 		EncoderModel    string          `json:"encoder_model"`
 		EncoderRevision string          `json:"encoder_revision"`
 		DType           string          `json:"dtype"`
@@ -742,32 +776,42 @@ func DecodePolicyPackageManifestV5(body []byte) (*PolicyPackageManifestV5, error
 	if err := manifest.checkConversation(); err != nil {
 		return nil, err
 	}
+	if err := manifest.checkControlActions(); err != nil {
+		return nil, err
+	}
+	return &manifest, nil
+}
+
+// checkControlActions is v5's catalog check, which v6 shares: actions
+// non-empty with unique ids, each naming a model and a thinking control whose
+// control_id recomputes and whose level is its instruction's.
+func (manifest *PolicyPackageManifestV5) checkControlActions() error {
 	if len(manifest.Actions) == 0 {
-		return nil, fmt.Errorf("policy package has no actions")
+		return fmt.Errorf("policy package has no actions")
 	}
 	seen := make(map[string]bool, len(manifest.Actions))
 	for _, action := range manifest.Actions {
 		if action.ActionID == "" || seen[action.ActionID] {
-			return nil, fmt.Errorf("action %q is empty or repeated", action.ActionID)
+			return fmt.Errorf("action %q is empty or repeated", action.ActionID)
 		}
 		seen[action.ActionID] = true
 		if action.Model == "" {
-			return nil, fmt.Errorf("action %s names no model", action.ActionID)
+			return fmt.Errorf("action %s names no model", action.ActionID)
 		}
 		control, err := thinkingcontrol.ParseControl(action.Control)
 		if err != nil {
-			return nil, fmt.Errorf("action %s: %w", action.ActionID, err)
+			return fmt.Errorf("action %s: %w", action.ActionID, err)
 		}
 		id, err := thinkingcontrol.ControlIDOf(action.Control)
 		if err != nil || id != action.ControlID || control.ID() != action.ControlID {
-			return nil, fmt.Errorf("action %s: control_id %s does not recompute from its control", action.ActionID, action.ControlID)
+			return fmt.Errorf("action %s: control_id %s does not recompute from its control", action.ActionID, action.ControlID)
 		}
 		if (control.Instruction == nil) != (action.Level == nil) ||
 			(control.Instruction != nil && *action.Level != control.Instruction.Level) {
-			return nil, fmt.Errorf("action %s: level is not its control's instruction level", action.ActionID)
+			return fmt.Errorf("action %s: level is not its control's instruction level", action.ActionID)
 		}
 	}
-	return &manifest, nil
+	return nil
 }
 
 // PolicyPackageSchemaOf reads a manifest's schema_version.

@@ -156,6 +156,35 @@ and `worker`, beside `trained_models: {<worker>: <trained name>}`. The v4
 fields, `dispatch_effort`, `thinking_lever` and `worker_thinking` are refused
 with a v5 package, and `trained_models` with a v4 one.
 
+**Package v6.** A v6 package (`rayline.arc-policy-package.v6`, pathfinder's
+"Policy package v6"; ADR 0122, pathfinder#3495) is a v5 package whose encoder
+reads images natively. Only `encoding_profile` differs: it is the
+`canonical_v2` image profile (pathfinder's `ImageEncodingProfile` in
+`src/rayline_router/serving/arc_policy_contract.py`), with serializer
+`arc-role-blocks-v2`, `conversation: canonical_v2`, `modalities` text and
+image, and the `image_processor`, `positions` and `vision` members the
+contract fixes. VSR decodes the profile strictly, only to refuse one it does
+not know; the policy service encodes by it, and `profile_id` stays opaque.
+Every other member keeps its v5 meaning and checks, and a v6 package loads,
+binds (`action_id` and `worker`, with `trained_models`), readies and
+dispatches exactly as v5.
+
+The schemas do not cross. A v4 or v5 manifest holding any v6 member,
+`conversation: canonical_v2` or serializer `arc-role-blocks-v2` is refused;
+so is a v6 manifest with a text profile (no `conversation`, `canonical_v1`,
+serializer `arc-role-blocks-v1`, or any image member missing), any unknown
+key at any level of a v6 profile, a value outside the contract (such as
+`rope: null` or a `vision.dtype` other than `float32`), and any
+`schema_version` but v4, v5 and v6. The v4 binding fields are refused on a v6
+package as on v5. The decide request is unchanged: client bodies reach the
+service with their images, and Responses history from `previous_response_id`
+keeps its `input_image` parts.
+
+Readiness does not refuse a v6 binding to a text-only worker. An image turn
+leaves a worker off the offer only when its model card sets `vision: false`;
+an unmarked card counts as vision-capable, so a basket serving a v6 package
+must mark its text-only workers (#215).
+
 Route construction admits the control on the cell of the request's target
 format and resumes the episode's placer. The provider boundary then renders it
 from the registry, after the codec. The cell's base wire replaces every thinking field (the

@@ -35,6 +35,12 @@ import (
 // control in the registry it serves from (thinkingcontrol.Embedded), and
 // requires each bound control to be admitted for its worker's (model,
 // provider, format). A v5 binding is only {action_id, worker}.
+//
+// A v6 package (rayline.arc-policy-package.v6) takes this same path: only
+// its encoding profile differs, which the policy service applies. Images
+// reach only vision-capable workers by the selector's request-time gating
+// (no_vision_arm), so readiness does not refuse a v6 binding to a text-only
+// worker: such a worker still serves the package's text turns.
 
 // raylineARCPolicyPackageV5 is a loaded v5 manifest.
 type raylineARCPolicyPackageV5 struct {
@@ -58,7 +64,11 @@ type RaylineARCPolicyActionV5 struct {
 
 var raylineARCPolicyPackageV5Lock sync.Mutex
 
-// IsPackageV5 reports whether the policy service serves a v5 package.
+// IsPackageV5 reports whether the policy service serves a v5 package or a
+// later one: a v6 package (ADR 0122, an encoder that reads images) is a v5
+// package with an image encoding profile, and loads, binds, readies and
+// dispatches exactly as v5 does. Which schema it is, is the manifest's
+// (loadPackageV5).
 func (cfg *RaylineARCPolicyServiceConfig) IsPackageV5() bool {
 	return cfg != nil && cfg.PackageManifest != ""
 }
@@ -95,11 +105,12 @@ func (cfg *RaylineARCPolicyServiceConfig) loadPackageV5() (*raylineARCPolicyPack
 	if got := hex.EncodeToString(sum[:]); got != cfg.PackageSHA256 {
 		return nil, fmt.Errorf("package_manifest's sha256 is %s, not package_sha256", got)
 	}
-	if schema, err := raylinearc.PolicyPackageSchemaOf(raw); err != nil || schema != raylinearc.PolicyPackageSchemaV5 {
-		return nil, fmt.Errorf("package_manifest must be a %s package (a v4 package's bindings declare their dispatch)",
-			raylinearc.PolicyPackageSchemaV5)
+	if schema, schemaErr := raylinearc.PolicyPackageSchemaOf(raw); schemaErr != nil ||
+		(schema != raylinearc.PolicyPackageSchemaV5 && schema != raylinearc.PolicyPackageSchemaV6) {
+		return nil, fmt.Errorf("package_manifest must be a %s or %s package (a v4 package's bindings declare their dispatch)",
+			raylinearc.PolicyPackageSchemaV5, raylinearc.PolicyPackageSchemaV6)
 	}
-	manifest, err := raylinearc.DecodePolicyPackageManifestV5(raw)
+	manifest, err := raylinearc.DecodePolicyPackageManifestV5OrLater(raw)
 	if err != nil {
 		return nil, fmt.Errorf("package_manifest: %w", err)
 	}

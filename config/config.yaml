@@ -1942,11 +1942,16 @@ recipes:
                 # declared effort; budgets, the steer and thinking-off still
                 # apply (v4 packages). declared (the default) sends the effort.
                 dispatch_effort: declared
-                # package_manifest is the path of a v5 package's package.json
-                # (sha256 must be package_sha256). A v5 action names a thinking
-                # control, which VSR resolves in its registry and admits per
-                # worker (model, provider, format); its bindings are only
-                # action_id and worker. Empty serves a v4 package, as here.
+                # package_manifest is the path of a v5 or v6 package's
+                # package.json (sha256 must be package_sha256). A v5 action
+                # names a thinking control, which VSR resolves in its registry
+                # and admits per worker (model, provider, format); its bindings
+                # are only action_id and worker. A v6 package (ADR 0122) is a
+                # v5 package whose encoder reads images (the canonical_v2
+                # encoding profile) and is bound and served exactly as v5.
+                # An image turn takes a worker off the offer only when its
+                # model card sets vision: false; an unmarked card counts as
+                # vision-capable (#215). Empty serves a v4 package, as here.
                 package_manifest: ""
                 # allow_experimental_controls admits v5 instructions whose
                 # registry cell is experimental; without it they are refused.
@@ -1961,7 +1966,7 @@ recipes:
                 trust_turn_signal_headers: false
                 # trained_models declares, per bound worker, the trained model
                 # it serves (a v5 action's model, e.g. claude-opus-5); a binding
-                # whose worker declares another is refused. v5 only.
+                # whose worker declares another is refused. v5 and v6 only.
                 trained_models: {}
                 # fallback serves around a failed arm (ADR 0120). With
                 # enabled, a model that refused a turn is excluded for the

@@ -303,3 +303,45 @@ func TestPolicyUnsupportedResponsesItemFailsWithANamedClass(t *testing.T) {
 		t.Fatalf("error = %v, want class policy_service_unsupported_request (not contended)", err)
 	}
 }
+
+// Images reach a v6 policy service from stored history too: an input_image
+// part a previous turn sent is prepended from the store, through
+// previous_response_id, with its image intact and in the same bytes as the
+// turn that first sent it (ADR 0122, the v6 decide request).
+func TestPolicyResponsesInputKeepsStoredImages(t *testing.T) {
+	const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+	router := &OpenAIRouter{}
+	first := []responseapi.InputItem{responsesItem(t, `{"type":"message","role":"user","content":[`+
+		`{"type":"input_text","text":"What is in <this> image?"},{"type":"input_image","image_url":"`+image+`","detail":"high"}]}`)}
+	items1, _, err := router.raylineARCPolicyResponsesInput(&RequestContext{ResponseObjectState: &ResponseObjectState{Input: first}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := storeRoundTrip(t, &responseapi.StoredResponse{
+		ID: "resp_1", Object: "response", Input: cloneResponseInputItems(first),
+		Output: []responseapi.OutputItem{{
+			Type: "message", Role: "assistant",
+			Content: []responseapi.ContentPart{{Type: "output_text", Text: "A pixel."}},
+		}},
+	})
+	items2, _, err := router.raylineARCPolicyResponsesInput(&RequestContext{ResponseObjectState: &ResponseObjectState{
+		ConversationHistory: []*responseapi.StoredResponse{stored},
+		Input:               []responseapi.InputItem{responsesItem(t, `{"type":"message","role":"user","content":"And its colour?"}`)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items2) != 3 || !bytes.Equal(items1[0], items2[0]) {
+		t.Fatalf("stored history changed: %d items\n%s\n%s", len(items2), items1[0], items2[0])
+	}
+	var message struct {
+		Content []struct {
+			Type     string `json:"type"`
+			ImageURL string `json:"image_url"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(items2[0], &message); err != nil || len(message.Content) != 2 ||
+		message.Content[1].Type != "input_image" || message.Content[1].ImageURL != image {
+		t.Fatalf("the stored image did not reach the policy request: %s", items2[0])
+	}
+}
