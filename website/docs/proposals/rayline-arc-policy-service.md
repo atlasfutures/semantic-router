@@ -243,8 +243,11 @@ VSR sends the client's request in the format the service projects:
 - **Responses** (`openai_responses`): `input` is the fully materialized item
   history, and `instructions` is the system prompt. The history is the stored
   history that `previous_response_id` resolves to, followed by this turn's
-  input. The optional `tools` is this turn's top-level `tools`, exactly as
-  received, and is omitted when the client sent none.
+  input. `tools` is this turn's top-level `tools`, exactly as received (`[]`
+  included). When the client sent none, or `null`, it is `[]`: on the
+  Responses API an omitted `tools` means the request has none. Only VSR images
+  that forward tools (#217 onward) send it; a decide without `tools` comes
+  from an older router, and its tool coverage is unknown.
 
 A turn's items must be a byte prefix of the next turn's, because the
 attribution ledger identifies its prefix by those bytes. So every item is

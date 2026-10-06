@@ -80,8 +80,9 @@ type PolicyEvaluation struct {
 // received. For openai_responses it is Input, the fully materialized item
 // history (stored history resolved from previous_response_id, then this
 // turn's input), Instructions, and Tools, this turn's top-level tools as the
-// client sent them (omitted when it sent none); System and Messages are
-// absent.
+// client sent them ([] when it sent none; extproc's policyResponsesTools),
+// omitted only by a caller that holds no client body; System and Messages
+// are absent.
 type PolicyClientRequest struct {
 	System   json.RawMessage `json:"system"`
 	Tools    json.RawMessage `json:"tools"`
@@ -126,8 +127,8 @@ func (request PolicyClientRequest) MarshalJSON() ([]byte, error) {
 		}
 		buffer.WriteString(`],"instructions":`)
 		buffer.Write(instructions)
-		// tools is an optional member of the Responses shape: a request that
-		// sent none is written exactly as before.
+		// tools is an optional member of the Responses shape: a request
+		// without it is written as an older router writes it.
 		if len(request.Tools) > 0 {
 			buffer.WriteString(`,"tools":`)
 			if err := writeRawJSON(&buffer, request.Tools); err != nil {
