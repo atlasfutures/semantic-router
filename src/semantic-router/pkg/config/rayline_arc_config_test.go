@@ -18,6 +18,17 @@ func TestValidateRaylineARCDecisionContract(t *testing.T) {
 	}
 }
 
+// A route action is terminal and would resolve a turn before the artifact
+// saw it, so an ARC decision refuses one at load.
+func TestValidateRaylineARCDecisionContractRefusesARouteAction(t *testing.T) {
+	decision := validRaylineARCDecision()
+	decision.Action = &DecisionAction{Type: DecisionActionRoute, Destination: "safe"}
+	err := validateRaylineARCDecisionContract(&RouterConfig{}, decision)
+	if err == nil || !strings.Contains(err.Error(), "does not take a route action") {
+		t.Fatalf("error = %v, want the route action refused", err)
+	}
+}
+
 func TestRaylineARCConfigCanonicalRoundTripKeepsOnlyCredentialReference(t *testing.T) {
 	original := validRaylineARCDecision().Algorithm
 	encoded, err := yaml.Marshal(original)

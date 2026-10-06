@@ -45,6 +45,9 @@ available.
 
 ARC is deliberately stricter than other selectors:
 
+- `minimum_candidates` and a route `action` are refused: the arm set is fixed
+  and positional, an arm a turn cannot use is masked rather than removed, and
+  a terminal action would resolve a turn before the artifact saw it.
 - `on_error` must be `fail_closed`; selection errors never choose the first
   candidate.
 - `adaptations.mode` must be `bypass`; Router Learning cannot replace the ARC

@@ -148,23 +148,31 @@ func routingCandidatesOfDecisions(cfg *config.RouterConfig, decisions []config.D
 	return candidates
 }
 
-// decisionRefFor is the decision's ref for a model, or a bare ref when the
-// decision declares none for it.
+// decisionRefFor is the ref an algorithm-owned model runs under: the first
+// ref naming that model, adapter or not, which is how the Looper runtime
+// resolves the model's reasoning (getReasoningInfoFromDecision); the model is
+// executed as itself, so the adapter name is not carried. A bare ref when
+// the decision declares none for it.
 func decisionRefFor(decision *config.Decision, model string) config.ModelRef {
 	for _, modelRef := range decision.ModelRefs {
-		if strings.TrimSpace(modelRef.Model) == model && strings.TrimSpace(modelRef.LoRAName) == "" {
-			return modelRef
+		if strings.TrimSpace(modelRef.Model) == model {
+			return config.ModelRef{Model: model, ModelReasoningControl: modelRef.ModelReasoningControl}
 		}
 	}
 	return config.ModelRef{Model: model}
 }
 
 // appendDistinctCandidate lists a ref unless a candidate of the same model,
-// adapter and thinking mode is listed already.
+// adapter and thinking mode is listed already. A candidate stays disabled
+// only while every decision that declares it enforces the flag: one that
+// still dispatches the model makes it reachable, whatever the declaration
+// order.
 func appendDistinctCandidate(cfg *config.RouterConfig, candidates []RoutingCandidate, modelRef config.ModelRef, enforcesDisabled bool) []RoutingCandidate {
 	candidate := routingCandidateOf(cfg, modelRef, enforcesDisabled)
-	for _, listed := range candidates {
+	for index := range candidates {
+		listed := &candidates[index]
 		if listed.Model == candidate.Model && listed.BaseModel == candidate.BaseModel && listed.Thinking == candidate.Thinking {
+			listed.Disabled = listed.Disabled && candidate.Disabled
 			return candidates
 		}
 	}

@@ -722,6 +722,16 @@ func validateRaylineARCDecisionContract(cfg *RouterConfig, decision Decision) er
 	if err := validateRaylineARCWorkerThinkingTransports(cfg, decision.Algorithm.RaylineARC); err != nil {
 		return fmt.Errorf("decision '%s': algorithm.rayline_arc.worker_thinking: %w", decision.Name, err)
 	}
+	// A route action is terminal: it resolves the turn before the selector
+	// runs, so the artifact, its masks and its episode would be bypassed on
+	// every matching turn.
+	if decision.Action != nil && decision.Action.Type == DecisionActionRoute {
+		return fmt.Errorf(
+			"decision '%s': algorithm.type=%s does not take a route action; the artifact selects every turn",
+			decision.Name,
+			RaylineARCAlgorithmType,
+		)
+	}
 	if replay := cfg.EffectiveRouterReplayConfigForDecision(decision.Name); replay != nil && replay.Enabled {
 		return fmt.Errorf(
 			"decision '%s': algorithm.type=%s requires router_replay disabled for this decision; episode requests must not be persisted",

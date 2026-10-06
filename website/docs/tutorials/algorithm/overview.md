@@ -57,7 +57,9 @@ declare it before any Models are bound; once an Entrypoint materializes the
 Recipe, validation requires that many distinct `modelRefs`. The same boundary
 is checked again after request-time context eligibility filtering, so a panel,
 cascade, or selector does not silently run with a smaller pool than its policy
-declares.
+declares. The one exception is `rayline_arc`, which refuses the field: its arm
+set is fixed and positional, an arm a turn cannot use is masked rather than
+removed, and the artifact's policy decides among what is left.
 
 ## Algorithm Inventory
 

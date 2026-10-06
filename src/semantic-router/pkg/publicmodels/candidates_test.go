@@ -607,6 +607,54 @@ func TestAlgorithmOwnedModelsKeepTheirRefsReasoning(t *testing.T) {
 	}
 }
 
+// An algorithm-owned model whose ref names an adapter still runs the model
+// itself under that ref's reasoning, as the Looper resolves it, so it is
+// listed as the model with that mode and no second reasoning-off twin.
+func TestAlgorithmOwnedModelsTakeReasoningFromAnAdapterRef(t *testing.T) {
+	cfg := &config.RouterConfig{
+		RouterOptions: config.RouterOptions{AutoModelNames: []string{"router/auto"}},
+		IntelligentRouting: config.IntelligentRouting{Decisions: []config.Decision{{
+			Name:      "ensemble",
+			Algorithm: &config.AlgorithmConfig{Type: config.DecisionAlgorithmReMoM, ReMoM: &config.ReMoMAlgorithmConfig{SynthesisModel: "base"}},
+			ModelRefs: []config.ModelRef{{Model: "base", LoRAName: "base-sql", ModelReasoningControl: config.ModelReasoningControl{UseReasoning: boolPointer(true)}}},
+		}}},
+		BackendModels: config.BackendModels{ModelConfig: map[string]config.ModelParams{"base": {LoRAs: []config.LoRAAdapter{{Name: "base-sql"}}}}},
+	}
+	listing := marshalListing(t, NewOpenAIModelList(cfg, 123))
+	candidates := modelEntry(t, listing, "router/auto")["routing"].(map[string]interface{})["candidates"].([]interface{})
+	if len(candidates) != 2 {
+		t.Fatalf("candidates = %v, want the adapter and the base once each", candidates)
+	}
+	base := candidates[1].(map[string]interface{})
+	if base["model"] != "base" || base["thinking"].(map[string]interface{})["mode"] != "on" {
+		t.Fatalf("candidates[1] = %v, want the base with reasoning on, as its adapter ref declares", base)
+	}
+	if _, present := base["base_model"]; present {
+		t.Fatalf("candidates[1] = %v, the synthesis model is executed as itself, not as the adapter", base)
+	}
+}
+
+// A model both an ARC decision and a plain decision declare is reachable
+// through the plain one whatever its card says, so it is not reported
+// disabled, in either declaration order.
+func TestDisabledMergesAcrossDecisionsRegardlessOfOrder(t *testing.T) {
+	disabled := true
+	arc := config.Decision{Name: "arc", Algorithm: &config.AlgorithmConfig{Type: config.RaylineARCAlgorithmType, OnError: "fail_closed", RaylineARC: &config.RaylineARCAlgorithmConfig{}}, ModelRefs: []config.ModelRef{{Model: "shared"}}}
+	plain := config.Decision{Name: "plain", ModelRefs: []config.ModelRef{{Model: "shared"}}}
+	for name, decisions := range map[string][]config.Decision{"arc first": {arc, plain}, "plain first": {plain, arc}} {
+		cfg := &config.RouterConfig{
+			RouterOptions:      config.RouterOptions{AutoModelNames: []string{"router/auto"}},
+			IntelligentRouting: config.IntelligentRouting{Decisions: decisions},
+			BackendModels:      config.BackendModels{ModelConfig: map[string]config.ModelParams{"shared": {Disabled: &disabled}}},
+		}
+		listing := marshalListing(t, NewOpenAIModelList(cfg, 123))
+		candidates := modelEntry(t, listing, "router/auto")["routing"].(map[string]interface{})["candidates"].([]interface{})
+		if len(candidates) != 1 || candidates[0].(map[string]interface{})["disabled"] != false {
+			t.Fatalf("%s: candidates = %v, want shared once and not disabled", name, candidates)
+		}
+	}
+}
+
 // The disabled flag is reported as selection enforces it: a rayline_arc
 // decision masks a disabled arm, so its candidate says so; a plain decision
 // still dispatches the model, so its candidate says false.
