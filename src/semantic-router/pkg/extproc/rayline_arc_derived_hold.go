@@ -155,7 +155,8 @@ func (transaction *raylineARCEpisodeTransaction) markServedWorker(worker string)
 // either way, and a missing record only leaves a later refusal to the
 // package fallback.
 func (transaction *raylineARCEpisodeTransaction) recordServedWorker(ctx context.Context) {
-	if transaction == nil || transaction.servedWorker == "" || transaction.episodeIDHash == "" {
+	if transaction == nil || transaction.servedWorker == "" || transaction.episodeIDHash == "" ||
+		transaction.servedStamp.IsZero() {
 		return
 	}
 	var store raylinearc.ServedWorkerStore
@@ -168,7 +169,7 @@ func (transaction *raylineARCEpisodeTransaction) recordServedWorker(ctx context.
 	if store == nil {
 		return
 	}
-	if err := store.RecordServedWorker(ctx, transaction.episodeIDHash, transaction.servedWorker); err != nil {
+	if err := store.RecordServedWorker(ctx, transaction.episodeIDHash, transaction.servedWorker, transaction.servedStamp); err != nil {
 		logging.ComponentWarnEvent("extproc", "rayline_arc_served_worker_record_failed", map[string]interface{}{})
 	}
 }

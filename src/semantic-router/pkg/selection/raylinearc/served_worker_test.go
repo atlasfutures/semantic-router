@@ -19,16 +19,25 @@ func assertServedWorkerStore(t *testing.T, store ServedWorkerStore, advance func
 	if worker, err := store.LastServedWorker(ctx, episode); err != nil || worker != "" {
 		t.Fatalf("empty store read %q, %v", worker, err)
 	}
-	for _, worker := range []string{"glm", "opus"} {
-		if err := store.RecordServedWorker(ctx, episode, worker); err != nil {
-			t.Fatal(err)
-		}
+	earlier, later := time.Unix(1_700_000_000, 0), time.Unix(1_700_000_000, 1000)
+	if err := store.RecordServedWorker(ctx, episode, "glm", earlier); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordServedWorker(ctx, episode, "opus", later); err != nil {
+		t.Fatal(err)
+	}
+	// The earlier turn's write lands last; the later turn's record stands.
+	if err := store.RecordServedWorker(ctx, episode, "glm", earlier); err != nil {
+		t.Fatal(err)
 	}
 	if worker, err := store.LastServedWorker(ctx, episode); err != nil || worker != "opus" {
-		t.Fatalf("read %q, %v; want the last recorded worker", worker, err)
+		t.Fatalf("read %q, %v; want the later turn's worker", worker, err)
 	}
-	if err := store.RecordServedWorker(ctx, "not-a-hash", "opus"); err == nil {
+	if err := store.RecordServedWorker(ctx, "not-a-hash", "opus", later); err == nil {
 		t.Fatal("recorded under an invalid episode hash")
+	}
+	if err := store.RecordServedWorker(ctx, episode, "opus", time.Time{}); err == nil {
+		t.Fatal("recorded without a stamp")
 	}
 	if advance != nil {
 		advance(ServedWorkerTTL + time.Second)
@@ -51,7 +60,7 @@ func TestMemoryServedWorkerStore(t *testing.T) {
 	assertServedWorkerStore(t, store, func(by time.Duration) { now = now.Add(by) })
 	ctx := context.Background()
 	for _, episode := range []string{"a", "b", "c"} {
-		if err := store.RecordServedWorker(ctx, HashEpisodeID(episode), "glm"); err != nil {
+		if err := store.RecordServedWorker(ctx, HashEpisodeID(episode), "glm", now); err != nil {
 			t.Fatal(err)
 		}
 		now = now.Add(time.Second)

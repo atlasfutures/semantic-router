@@ -47,8 +47,12 @@ type raylineARCEpisodeTransaction struct {
 	// servedWorker is the worker a policy-service main turn dispatched to,
 	// recorded past the episode once the turn commits (recordServedWorker).
 	servedWorker string
-	leaseTTL     time.Duration
-	selectedArm  int
+	// servedStamp orders servedWorker records (raylinearc.ServedWorkerStore):
+	// taken just before the episode commit, while the lease still excludes
+	// every later turn of the episode.
+	servedStamp time.Time
+	leaseTTL    time.Duration
+	selectedArm int
 	// policyNext is the policy-service ledger and epoch to commit with this
 	// turn; nil outside that mode.
 	policyNext *raylinearc.PolicyEpisodeState
@@ -475,6 +479,7 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			requestContext,
 			nextState,
 		)
+		transaction.servedStamp = time.Now()
 		transaction.finalizeErr = transaction.store.Commit(
 			ctx,
 			transaction.lease,
@@ -533,6 +538,9 @@ func (transaction *raylineARCEpisodeTransaction) commitRelaxed(
 		metrics.RecordRaylineARCEpisodeTransaction("relaxed_dropped", "state")
 		return
 	}
+	// A relaxed commit succeeds only after every commit its read saw, so a
+	// stamp taken before it orders the records as the commits are ordered.
+	transaction.servedStamp = time.Now()
 	err = transaction.snapshots.CommitIfUnchanged(ctx, transaction.episodeIDHash, transaction.read, nextState)
 	switch {
 	case errors.Is(err, raylinearc.ErrEpisodeConflict):

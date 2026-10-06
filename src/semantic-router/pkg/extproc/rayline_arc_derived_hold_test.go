@@ -120,7 +120,7 @@ func TestDerivedHoldUsesTheLastServedWorker(t *testing.T) {
 
 	// The record outlives the episode: a cooled episode has none of its own
 	// state, only this.
-	if err := store.RecordServedWorker(context.Background(), raylinearc.HashEpisodeID("episode-cooled"), "glm"); err != nil {
+	if err := store.RecordServedWorker(context.Background(), raylinearc.HashEpisodeID("episode-cooled"), "glm", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	fake.refuseCold = refuseColdTwoStage
@@ -155,7 +155,7 @@ func TestDerivedHoldFallsBackToThePackageFallback(t *testing.T) {
 // offer, nothing narrowed -- even with a served-worker record present.
 func TestDerivedHoldLeavesSingleStagePackagesAlone(t *testing.T) {
 	router, fake := v5Router(t, "openai")
-	if err := servedStore(t, router).RecordServedWorker(context.Background(), raylinearc.HashEpisodeID("episode-single"), "glm"); err != nil {
+	if err := servedStore(t, router).RecordServedWorker(context.Background(), raylinearc.HashEpisodeID("episode-single"), "glm", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return v5OpusAction })
@@ -191,7 +191,7 @@ func TestDerivedHoldUsesTheParentSession(t *testing.T) {
 		return strings.Replace(config, "            allow_experimental_controls: true\n",
 			"            allow_experimental_controls: true\n            trust_turn_signal_headers: true\n", 1)
 	})
-	if err := servedStore(t, router).RecordServedWorker(context.Background(), raylinearc.HashEpisodeID("episode-parent"), "glm"); err != nil {
+	if err := servedStore(t, router).RecordServedWorker(context.Background(), raylinearc.HashEpisodeID("episode-parent"), "glm", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	fake.refuseCold = refuseColdTwoStage
@@ -218,7 +218,7 @@ func TestDerivedHoldOnAnExcludedModelFailsWithoutRetrying(t *testing.T) {
 		return strings.Replace(config, "    - name: glm\n      modality: text\n",
 			"    - name: glm\n      modality: text\n      vision: false\n", 1)
 	})
-	if err := servedStore(t, router).RecordServedWorker(context.Background(), raylinearc.HashEpisodeID("episode-image"), "glm"); err != nil {
+	if err := servedStore(t, router).RecordServedWorker(context.Background(), raylinearc.HashEpisodeID("episode-image"), "glm", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	// The service refuses even Opus alone, so the derivation runs.
@@ -242,5 +242,36 @@ func TestDerivedHoldOnAnExcludedModelFailsWithoutRetrying(t *testing.T) {
 	}
 	if failures()-before != 1 {
 		t.Fatal("the turn did not fail as policy_no_available_action")
+	}
+}
+
+// Two turns' served-worker writes landing out of order leave the record on
+// the later turn's worker: each is stamped before its episode commit, while
+// the lease still orders the turns.
+func TestServedWorkerRecordsLandingOutOfOrder(t *testing.T) {
+	store, err := raylinearc.NewMemoryEpisodeStore(raylinearc.MemoryEpisodeStoreConfig{MaxEpisodes: 4, IdleTTL: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	episode := raylinearc.HashEpisodeID(t.Name())
+	turn := func(worker string) *raylineARCEpisodeTransaction {
+		lease, state, err := store.Prepare(context.Background(), episode, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		transaction := newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil)
+		transaction.markSelection(0, 10)
+		transaction.markServedWorker(worker)
+		if err := transaction.commit(context.Background(), &RequestContext{}); err != nil {
+			t.Fatal(err)
+		}
+		return transaction
+	}
+	first := turn("glm")
+	turn("opus")
+	// The first turn's write arrives again, after the second's.
+	first.recordServedWorker(context.Background())
+	if worker, err := store.LastServedWorker(context.Background(), episode); err != nil || worker != "opus" {
+		t.Fatalf("record = %q, %v; want the later turn's opus", worker, err)
 	}
 }
