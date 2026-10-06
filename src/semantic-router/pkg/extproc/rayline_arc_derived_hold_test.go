@@ -7,12 +7,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -53,7 +56,7 @@ func refuseColdTwoStage(request raylinearc.PolicyDecisionRequest) bool {
 
 // heldTurnStatus runs one Messages body through the request phase and
 // returns the provider-bound model, or the refusal's status.
-func heldTurnStatus(t *testing.T, router *OpenAIRouter, episode, client string) (model string, status int) {
+func heldTurnStatus(t *testing.T, router *OpenAIRouter, episode, client string, extra ...*core.HeaderValue) (model string, status int) {
 	t.Helper()
 	ctx := &RequestContext{
 		Headers: map[string]string{}, RequestID: fmt.Sprintf("hold-%s-%d", episode, time.Now().UnixNano()),
@@ -67,6 +70,7 @@ func heldTurnStatus(t *testing.T, router *OpenAIRouter, episode, client string) 
 			{Key: "x-rayline-session", Value: episode},
 		}},
 	}}
+	headers.RequestHeaders.Headers.Headers = append(headers.RequestHeaders.Headers.Headers, extra...)
 	if response, err := router.handleRequestHeaders(headers, ctx); err != nil || response.GetImmediateResponse() != nil {
 		t.Fatalf("request headers: err=%v immediate=%v", err, response.GetImmediateResponse())
 	}
@@ -177,5 +181,66 @@ func TestDerivedHoldRetriesOnce(t *testing.T) {
 	}
 	if calls := fake.received(); len(calls) != 2 {
 		t.Fatalf("decide calls = %d, want the first and one retry", len(calls))
+	}
+}
+
+// A subagent handed its parent's history, with the gateway's turn-signal
+// headers trusted, is held on the model that last served the parent session.
+func TestDerivedHoldUsesTheParentSession(t *testing.T) {
+	router, fake := v5RouterWith(t, "openai", func(config string) string {
+		return strings.Replace(config, "            allow_experimental_controls: true\n",
+			"            allow_experimental_controls: true\n            trust_turn_signal_headers: true\n", 1)
+	})
+	if err := servedStore(t, router).RecordServedWorker(context.Background(), raylinearc.HashEpisodeID("episode-parent"), "glm"); err != nil {
+		t.Fatal(err)
+	}
+	fake.refuseCold = refuseColdTwoStage
+	fake.chooseWith(chooseFirstOffered)
+	model, status := heldTurnStatus(t, router, "episode-subagent", resumedHistory,
+		&core.HeaderValue{Key: "x-rayline-parent-session", Value: "episode-parent"},
+		&core.HeaderValue{Key: "x-rayline-agent-key-source", Value: "agent"})
+	if status != 200 || model != "z-ai/glm-5.3-flash" {
+		t.Fatalf("dispatched %q (status %d), want the parent's GLM", model, status)
+	}
+	calls := fake.received()
+	if len(calls) != 2 || !slices.Equal(calls[1].Selection.AvailableActionIDs, []string{v5GLMNone, v5GLMUp}) {
+		t.Fatalf("decide calls = %d, retry offer %v", len(calls), calls[len(calls)-1].Selection.AvailableActionIDs)
+	}
+}
+
+// The derived model is held whatever the turn excludes, as the contract holds
+// a model: here an image turn, whose vision gate takes the text-only GLM out
+// of the offer, is derived onto GLM. Nothing of it is offered, so the turn
+// fails as an empty offer does -- policy_no_available_action -- without a
+// second, empty, decide.
+func TestDerivedHoldOnAnExcludedModelFailsWithoutRetrying(t *testing.T) {
+	router, fake := v5RouterWith(t, "openai", func(config string) string {
+		return strings.Replace(config, "    - name: glm\n      modality: text\n",
+			"    - name: glm\n      modality: text\n      vision: false\n", 1)
+	})
+	if err := servedStore(t, router).RecordServedWorker(context.Background(), raylinearc.HashEpisodeID("episode-image"), "glm"); err != nil {
+		t.Fatal(err)
+	}
+	// The service refuses even Opus alone, so the derivation runs.
+	fake.refuseCold = func(raylinearc.PolicyDecisionRequest) bool { return true }
+	fake.chooseWith(chooseFirstOffered)
+	image := `{"model":"auto","max_tokens":1024,"messages":[` +
+		`{"role":"user","content":"look at this"},{"role":"assistant","content":"Sure."},` +
+		`{"role":"user","content":[{"type":"text","text":"what is it?"},` +
+		`{"type":"image","source":{"type":"base64","media_type":"image/png","data":"` + userImagePNG + `"}}]}]}`
+	failures := func() float64 {
+		return testutil.ToFloat64(metrics.RaylineARCSelectionFailures.WithLabelValues("policy_no_available_action"))
+	}
+	before := failures()
+	_, status := heldTurnStatus(t, router, "episode-image", image)
+	if status != 503 {
+		t.Fatalf("status %d, want 503", status)
+	}
+	calls := fake.received()
+	if len(calls) != 1 || slices.Contains(calls[0].Selection.AvailableActionIDs, v5GLMNone) {
+		t.Fatalf("decide calls = %d (offer %v), want one, without GLM", len(calls), calls[0].Selection.AvailableActionIDs)
+	}
+	if failures()-before != 1 {
+		t.Fatal("the turn did not fail as policy_no_available_action")
 	}
 }

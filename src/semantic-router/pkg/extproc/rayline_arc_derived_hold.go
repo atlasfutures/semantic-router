@@ -53,10 +53,10 @@ func (r *OpenAIRouter) raylineARCServedWorkers(
 	}
 	ctx, cancel := context.WithTimeout(parent, servedWorkerReadTimeout)
 	defer cancel()
-	keys := []selection.RaylineARCServedWorker{{Source: "episode", Worker: episodeIDHash}}
+	keys := []selection.RaylineARCServedWorker{{Source: derivedHoldSessionRecord, Worker: episodeIDHash}}
 	if session := strings.TrimSpace(signalHeaders[raylineARCParentSessionHeader]); session != "" {
 		keys = append(keys, selection.RaylineARCServedWorker{
-			Source: "parent_session", Worker: raylinearc.HashEpisodeID(session),
+			Source: derivedHoldParentSession, Worker: raylinearc.HashEpisodeID(session),
 		})
 	}
 	var served []selection.RaylineARCServedWorker
@@ -75,49 +75,70 @@ func (r *OpenAIRouter) raylineARCServedWorkers(
 	return served
 }
 
-// derivedHoldOffer narrows an offer to one model's actions for a retry of a
-// stage_one_held_unknown refusal: the first source whose model still has an
-// offered action. ok is false when no source names one.
+// derivedHold is the model a stage_one_held_unknown refusal is answered
+// with, and the offer narrowed to its actions.
+type derivedHold struct {
+	source string
+	model  string
+	// offer is every offered action of model: all its levels, so stage two
+	// still chooses one. Empty when this turn excludes the model.
+	offer []string
+}
+
+// derivedHoldOffer derives the held model from the first source that names
+// one the cell binds: a record naming a worker this cell does not serve says
+// nothing and is passed over. The hold is that model whatever the turn
+// excludes: a held model this turn excludes (vision, capability, an
+// operator's disable, a fallback exclusion) is not swapped for another, so
+// its offer is empty and the turn fails rather than retrying
+// (pathfinder arc_serving_contract.md, exclusions). ok is false when no
+// source names a model.
 func derivedHoldOffer(
 	scorer *policyServiceScorer,
 	arcContext *selection.RaylineARCSelectionContext,
 	available []string,
-) (narrowed []string, source, model string, ok bool) {
-	type candidate struct{ source, model string }
-	var candidates []candidate
+) (hold derivedHold, ok bool) {
 	for _, served := range arcContext.ServedWorkers {
 		for arm, worker := range scorer.workerIDs {
-			if worker == served.Worker {
-				candidates = append(candidates, candidate{served.Source, scorer.armModel(arm)})
+			if worker == served.Worker && scorer.armModel(arm) != "" {
+				hold, ok = derivedHold{source: served.Source, model: scorer.armModel(arm)}, true
+				break
 			}
 		}
-	}
-	if scorer.fallbackActionID != "" {
-		candidates = append(candidates, candidate{"package_fallback", scorer.actionModel(scorer.fallbackActionID)})
-	}
-	for _, held := range candidates {
-		if held.model == "" {
-			continue
-		}
-		narrowed = narrowed[:0]
-		for _, actionID := range available {
-			if scorer.actionModel(actionID) == held.model {
-				narrowed = append(narrowed, actionID)
-			}
-		}
-		if len(narrowed) > 0 {
-			return append([]string(nil), narrowed...), held.source, held.model, true
+		if ok {
+			break
 		}
 	}
-	return nil, "", "", false
+	if !ok && scorer.fallbackActionID != "" {
+		if model := scorer.actionModel(scorer.fallbackActionID); model != "" {
+			hold, ok = derivedHold{source: derivedHoldPackageFallback, model: model}, true
+		}
+	}
+	if !ok {
+		return derivedHold{}, false
+	}
+	for _, actionID := range available {
+		if scorer.actionModel(actionID) == hold.model {
+			hold.offer = append(hold.offer, actionID)
+		}
+	}
+	return hold, true
 }
 
-func logRaylineARCDerivedHold(arcContext *selection.RaylineARCSelectionContext, source, model string, offered int) {
+// The sources a derived hold names, as rayline_arc_derived_hold logs them, so
+// a readout can tell a derived hold from a schedule's.
+const (
+	derivedHoldSessionRecord   = "session_record"
+	derivedHoldParentSession   = "parent_session"
+	derivedHoldPackageFallback = "package_fallback"
+)
+
+func logRaylineARCDerivedHold(arcContext *selection.RaylineARCSelectionContext, hold derivedHold) {
 	logging.ComponentEvent("extproc", "rayline_arc_derived_hold", map[string]interface{}{
 		"episode_id_hash": arcContext.EpisodeIDHash,
-		"source":          source,
-		"model":           model,
-		"offered":         offered,
+		"source":          hold.source,
+		"model":           hold.model,
+		"offered":         len(hold.offer),
 	})
 }
 

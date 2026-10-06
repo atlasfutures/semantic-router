@@ -591,10 +591,15 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// refusal fails the turn as the first would have.
 	var cold *raylinearc.PolicyServiceError
 	if held < 0 && errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass {
-		if narrowed, source, model, derived := derivedHoldOffer(scorer, arcContext, available); derived {
-			logRaylineARCDerivedHold(arcContext, source, model, len(narrowed))
-			available = narrowed
-			request.Selection.AvailableActionIDs = narrowed
+		if derived, found := derivedHoldOffer(scorer, arcContext, available); found {
+			logRaylineARCDerivedHold(arcContext, derived)
+			// The held model this turn excludes leaves nothing to offer: the
+			// turn fails as any empty offer does, never retried empty.
+			if len(derived.offer) == 0 {
+				return nil, arcSelectionFailure("policy_no_available_action")
+			}
+			available = derived.offer
+			request.Selection.AvailableActionIDs = derived.offer
 			response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
 		}
 	}

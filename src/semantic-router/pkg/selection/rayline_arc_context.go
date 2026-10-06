@@ -170,7 +170,7 @@ type RaylineARCTrace struct {
 }
 
 // RaylineARCServedWorker is one remembered serving worker and where the
-// record came from: "episode" or "parent_session".
+// record came from: "session_record" or "parent_session".
 type RaylineARCServedWorker struct {
 	Source string
 	Worker string

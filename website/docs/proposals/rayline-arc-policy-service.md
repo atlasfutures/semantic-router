@@ -333,9 +333,16 @@ The held model is, in order:
    `x-rayline-parent-session` header;
 3. the model of the package's `fallback_action_id`.
 
+The first source that names a model the cell binds decides the hold. Its
+offer is every action of that model, at every level. Exclusions still apply.
+If this turn excludes the held model (vision, capability, an operator's
+disable, a fallback exclusion), nothing is offered, and the turn fails as
+`policy_no_available_action` without a second call.
+
 VSR writes every record, and the gateway owns the episode keys. Nothing in
 the request body is read, so a client cannot choose the held model. Each
-derived hold logs `rayline_arc_derived_hold` with its source and model.
+derived hold logs `rayline_arc_derived_hold` with its source
+(`session_record`, `parent_session` or `package_fallback`) and model.
 
 ## Fallback
 
