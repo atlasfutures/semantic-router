@@ -31,16 +31,24 @@ func (r *OpenAIRouter) classifierForRequest(ctx *RequestContext) *classification
 	if r == nil || ctx == nil || ctx.Routing.SelectedRecipe() == nil {
 		return nil
 	}
-	recipe := ctx.Routing.SelectedRecipe()
+	return r.recipeClassifier(ctx.Routing.SelectedRecipe().Name)
+}
+
+// recipeClassifier is the isolated classifier graph of one routing recipe,
+// or nil where the recipe has none.
+func (r *OpenAIRouter) recipeClassifier(recipe config.RecipeName) *classification.Classifier {
+	if r == nil {
+		return nil
+	}
 	// Programmatic single-profile routers may provide only the default
 	// classifier. Named recipes never fall back across the isolation boundary.
 	if r.RecipeClassifiers == nil {
-		if recipe.Name == config.DefaultRecipeName {
+		if recipe == config.DefaultRecipeName {
 			return r.Classifier
 		}
 		return nil
 	}
-	classifier, ok := r.RecipeClassifiers.ForRecipe(recipe.Name)
+	classifier, ok := r.RecipeClassifiers.ForRecipe(recipe)
 	if !ok {
 		return nil
 	}

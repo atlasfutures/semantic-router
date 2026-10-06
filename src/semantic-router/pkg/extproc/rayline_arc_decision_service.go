@@ -622,13 +622,6 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 		}
 		headers[algorithm.RaylineARC.Episode.IDHeader] = episodeIdentity
 	}
-	// The same token estimate the routed path makes before selection (its
-	// neutral snapshot, raised to a character count of the message text by
-	// ensureContextTokenCount), so a lookup masks the arms a routed turn of
-	// this body would mask. Without it a lookup could name an arm the prompt
-	// does not fit.
-	snapshot := extractSemanticRequestSignals(&decoded)
-	signalInput := service.router.prepareSignalEvaluationInput(signalConversationHistoryFromSnapshot(snapshot))
 	return &RequestContext{
 		Headers:              headers,
 		RaylineARCRawBody:    request.Body,
@@ -637,8 +630,28 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 		SemanticRequest:      &decoded,
 		ProtocolEnvelope:     envelope,
 		TraceContext:         ctx,
-		VSRContextTokenCount: contextTokenEstimate(0, contextTokenText(signalInput), snapshot.ContextTokenFloor),
+		VSRContextTokenCount: service.consultContextTokenCount(&decoded),
 	}, nil
+}
+
+// consultContextTokenCount is the token estimate a routed turn of this body
+// would be selected under, so a lookup masks the arms a routed turn would
+// mask. Without it a lookup could name an arm the prompt does not fit.
+//
+// The routed path counts with the recipe's context signal when the recipe
+// declares one -- a counter that may be calibrated from observed provider
+// usage -- and with the character heuristic otherwise. The consult serves the
+// flat profile, which is the default recipe, so that recipe's classifier is
+// asked first and the heuristic is the fallback, on the same text and floor.
+func (service *raylineARCDecisionService) consultContextTokenCount(request *llmprotocol.Request) int {
+	snapshot := extractSemanticRequestSignals(request)
+	signalInput := service.router.prepareSignalEvaluationInput(signalConversationHistoryFromSnapshot(snapshot))
+	if count, ok := service.router.recipeClassifier(config.DefaultRecipeName).ContextTokenCount(
+		signalInput.allMessagesText, snapshot.ContextTokenFloor,
+	); ok {
+		return count
+	}
+	return contextTokenEstimate(0, contextTokenText(signalInput), snapshot.ContextTokenFloor)
 }
 
 // decisionOnlyRoutingTarget finds the decision that serves a route consult on

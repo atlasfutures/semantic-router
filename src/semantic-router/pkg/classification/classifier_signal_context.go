@@ -253,3 +253,21 @@ func (c *Classifier) evaluateAllSignalsWithContext(
 	results = c.applyProjections(results)
 	return results
 }
+
+// ContextTokenCount counts a request's context the way the context signal
+// counts it for routing: with this classifier's configured counter, which may
+// be calibrated from observed provider usage, never below the request's
+// token floor. It reports false when the recipe declares no context signal,
+// in which case the routed path falls back to the character heuristic and a
+// caller should too, so the two paths compare one number against a card's
+// window.
+func (c *Classifier) ContextTokenCount(contextText string, tokenFloor int) (int, bool) {
+	if c == nil || c.contextClassifier == nil {
+		return 0, false
+	}
+	_, count, err := c.contextClassifier.ClassifyWithTokenFloor(contextText, tokenFloor)
+	if err != nil {
+		return 0, false
+	}
+	return count, true
+}
