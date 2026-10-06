@@ -336,7 +336,7 @@ func createRaylineARCPolicySelector(
 		if err != nil {
 			return err
 		}
-		scorer.recordListedFallback(loaded.FallbackModel)
+		scorer.recordListedFallback(loaded.FallbackActionID, loaded.FallbackModel)
 		if scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed {
 			return probeRelaxedPolicyDecide(ctx, client, scorer)
 		}
@@ -731,28 +731,36 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	return result, nil
 }
 
-// actionModel is the trained model an action serves: its binding's declared
-// model, or its worker when the binding declares none.
-// recordListedFallback keeps the listing's fallback model when the bindings
-// dispatch it, and forgets it when the listing names none. A model no binding
-// dispatches cannot hold a turn, so it is logged and skipped, as a
-// derived_hold_model outside the bindings is refused at startup.
-func (scorer *policyServiceScorer) recordListedFallback(model string) {
+// recordListedFallback keeps the listing's fallback pair when it agrees with
+// the cell: its action, resolved through the bindings, serves its model. It
+// forgets any earlier one otherwise, and when the listing names none, so the
+// hold falls through to derived_hold_model.
+//   - An action the cell binds to another model is an inconsistent pair:
+//     logged (rayline_arc_listed_fallback_mismatch) and not used.
+//   - An action the cell does not bind is the package's own fallback, which
+//     this cell does not serve: logged (rayline_arc_listed_fallback_unbound)
+//     and not used, even when another action of the listed model is bound,
+//     as a derived_hold_model outside the bindings is refused at startup.
+func (scorer *policyServiceScorer) recordListedFallback(actionID, model string) {
+	scorer.listedFallback.Store(nil)
 	if model == "" {
-		scorer.listedFallback.Store(nil)
 		return
 	}
-	for actionID := range scorer.bindings {
-		if scorer.actionModel(actionID) == model {
-			scorer.listedFallback.Store(&model)
-			return
-		}
+	fields := map[string]interface{}{
+		"package_alias":      scorer.alias,
+		"fallback_action_id": actionID,
+		"fallback_model":     model,
 	}
-	scorer.listedFallback.Store(nil)
-	logging.ComponentErrorEvent("extproc", "rayline_arc_listed_fallback_unbound", map[string]interface{}{
-		"package_alias":  scorer.alias,
-		"fallback_model": model,
-	})
+	if _, bound := scorer.bindings[actionID]; !bound {
+		logging.ComponentErrorEvent("extproc", "rayline_arc_listed_fallback_unbound", fields)
+		return
+	}
+	if served := scorer.actionModel(actionID); served != model {
+		fields["bound_model"] = served
+		logging.ComponentErrorEvent("extproc", "rayline_arc_listed_fallback_mismatch", fields)
+		return
+	}
+	scorer.listedFallback.Store(&model)
 }
 
 // holdFallback is the last source of a derived hold: the package manifest's
@@ -768,6 +776,8 @@ func (scorer *policyServiceScorer) holdFallback() (model, source string) {
 	return scorer.fallbackModel, scorer.fallbackSource
 }
 
+// actionModel is the trained model an action serves: its binding's declared
+// model, or its worker when the binding declares none.
 func (scorer *policyServiceScorer) actionModel(actionID string) string {
 	binding, ok := scorer.bindings[actionID]
 	if !ok {

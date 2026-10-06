@@ -350,9 +350,12 @@ The held model is, in order:
 3. the model of the package manifest's `fallback_action_id`;
 4. for a package served without a `package_manifest` (a v4 package from the
    store), the `fallback_model` the policy service's package listing names
-   for it (pathfinder#3677), as the readiness probe last verified it. A listed
-   model the bindings don't dispatch is logged
-   (`rayline_arc_listed_fallback_unbound`) and skipped;
+   for it (pathfinder#3677), as the readiness probe last verified it. The
+   pair must agree with the cell: its `fallback_action_id` must be a bound
+   action, and that action's model must be `fallback_model`. A pair whose
+   action this cell doesn't bind (`rayline_arc_listed_fallback_unbound`), or
+   binds to another model (`rayline_arc_listed_fallback_mismatch`), is logged
+   and skipped;
 5. else the cell's `derived_hold_model`. It must be a model the bindings
    dispatch, and it's refused beside a manifest.
 

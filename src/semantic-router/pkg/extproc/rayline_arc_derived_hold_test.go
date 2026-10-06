@@ -402,18 +402,19 @@ func TestServedModelReadIsBounded(t *testing.T) {
 // cold turn whose offer spans more than one model.
 func v4ColdRouter(t *testing.T, derivedHold string) (*OpenAIRouter, *fakePolicyService, map[string]config.RaylineARCPolicyBinding) {
 	t.Helper()
-	return v4ColdRouterListing(t, derivedHold, "")
+	return v4ColdRouterListing(t, derivedHold, "", "")
 }
 
 // v4ColdRouterListing is v4ColdRouter behind a service whose packages
-// listing names listedModel as the package's fallback (none when empty).
-func v4ColdRouterListing(t *testing.T, derivedHold, listedModel string) (*OpenAIRouter, *fakePolicyService, map[string]config.RaylineARCPolicyBinding) {
+// listing names listedActionID and listedModel as the package's fallback pair
+// (none when listedModel is empty).
+func v4ColdRouterListing(t *testing.T, derivedHold, listedActionID, listedModel string) (*OpenAIRouter, *fakePolicyService, map[string]config.RaylineARCPolicyBinding) {
 	t.Helper()
 	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
 	actions := relaxedPolicyActions()
 	fake := newRelaxedPolicyFake(t)
 	if listedModel != "" {
-		fake.listFallback(strings.Repeat("a", 64), listedModel)
+		fake.listFallback(listedActionID, listedModel)
 	}
 	path := writeConsistentPolicyConfig(t, fake.URL(), "strict")
 	if derivedHold != "" {
@@ -480,7 +481,7 @@ func TestDerivedHoldWithoutAFallbackLeavesTheRefusal(t *testing.T) {
 // pathfinder#3677 on names its fallback in the packages listing: with no
 // derived_hold_model configured, a cold turn with no record is held on it.
 func TestDerivedHoldUsesTheListedFallbackForAManifestlessPackage(t *testing.T) {
-	router, fake, actions := v4ColdRouterListing(t, "", "off-trained")
+	router, fake, actions := v4ColdRouterListing(t, "", relaxedPolicyActions()["off"].ActionID, "off-trained")
 	model, status := heldTurnStatus(t, router, "episode-v4-listed", resumedHistory)
 	if status != 200 || model != "vendor/off" {
 		t.Fatalf("dispatched %q (status %d), want the listed off-trained", model, status)
@@ -494,7 +495,7 @@ func TestDerivedHoldUsesTheListedFallbackForAManifestlessPackage(t *testing.T) {
 // The listing is the service's statement of the package it serves, so it
 // ranks above the cell's configured derived_hold_model.
 func TestDerivedHoldPrefersTheListedFallbackToTheConfiguredModel(t *testing.T) {
-	router, fake, actions := v4ColdRouterListing(t, "off-trained", "claude-opus-5")
+	router, fake, actions := v4ColdRouterListing(t, "off-trained", relaxedPolicyActions()["claude"].ActionID, "claude-opus-5")
 	if _, status := heldTurnStatus(t, router, "episode-v4-listed-first", resumedHistory); status != 200 {
 		t.Fatalf("status %d, want 200", status)
 	}
@@ -511,7 +512,7 @@ func TestDerivedHoldPrefersTheListedFallbackToTheConfiguredModel(t *testing.T) {
 // A listed fallback the bindings do not dispatch cannot hold a turn: it is
 // skipped, and the configured derived_hold_model holds it instead.
 func TestDerivedHoldSkipsAnUnboundListedFallback(t *testing.T) {
-	router, fake, actions := v4ColdRouterListing(t, "off-trained", "anthropic/claude-opus-5")
+	router, fake, actions := v4ColdRouterListing(t, "off-trained", strings.Repeat("a", 64), "anthropic/claude-opus-5")
 	model, status := heldTurnStatus(t, router, "episode-v4-listed-unbound", resumedHistory)
 	if status != 200 || model != "vendor/off" {
 		t.Fatalf("dispatched %q (status %d), want the configured off-trained", model, status)
@@ -519,5 +520,32 @@ func TestDerivedHoldSkipsAnUnboundListedFallback(t *testing.T) {
 	calls := fake.received()
 	if len(calls) != 2 || !slices.Equal(calls[1].Selection.AvailableActionIDs, []string{actions["off"].ActionID}) {
 		t.Fatalf("decide calls = %d, retry offer %v", len(calls), calls[len(calls)-1].Selection.AvailableActionIDs)
+	}
+}
+
+// The listed pair must agree with the cell: the fallback action, resolved
+// through the bindings, must be the listed model. A pair whose action the
+// cell binds to another model is not used, so with no derived_hold_model the
+// refusal stands.
+func TestDerivedHoldRefusesAMismatchedListedPair(t *testing.T) {
+	router, fake, _ := v4ColdRouterListing(t, "", relaxedPolicyActions()["claude"].ActionID, "off-trained")
+	if _, status := heldTurnStatus(t, router, "episode-v4-listed-mismatch", resumedHistory); status != 503 {
+		t.Fatalf("status %d, want 503: a mismatched listed pair held the turn", status)
+	}
+	if calls := fake.received(); len(calls) != 1 {
+		t.Fatalf("decide calls = %d, want one", len(calls))
+	}
+}
+
+// A listed fallback action this cell does not bind is the package's own
+// fallback, which the cell does not serve: the pair is skipped even when its
+// model is bound.
+func TestDerivedHoldSkipsAListedPairWhoseActionIsUnbound(t *testing.T) {
+	router, fake, _ := v4ColdRouterListing(t, "", strings.Repeat("a", 64), "off-trained")
+	if _, status := heldTurnStatus(t, router, "episode-v4-listed-unbound-action", resumedHistory); status != 503 {
+		t.Fatalf("status %d, want 503: an unbound listed action held the turn", status)
+	}
+	if calls := fake.received(); len(calls) != 1 {
+		t.Fatalf("decide calls = %d, want one", len(calls))
 	}
 }

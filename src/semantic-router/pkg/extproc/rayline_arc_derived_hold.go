@@ -28,8 +28,8 @@ import (
 //     x-rayline-parent-session header;
 //   - the package's declared fallback action's model; for a package served
 //     without a manifest, the fallback_model the service's package listing
-//     names (when the bindings dispatch it), else the cell's configured
-//     derived_hold_model.
+//     names (when its fallback_action_id is bound to that model here), else
+//     the cell's configured derived_hold_model.
 //
 // The router writes every record and the gateway owns the episode keys, so
 // a client cannot choose the held model. Nothing in the request body is read.
