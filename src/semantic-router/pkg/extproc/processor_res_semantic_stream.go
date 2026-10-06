@@ -85,19 +85,31 @@ func (r *OpenAIRouter) handleSemanticStreamingResponseBody(
 	buffers := semanticStreamBuffers{}
 	buffers.push(responseBody, ctx)
 	overran := r.responseStreamOverran(ctx)
-	if overran || endOfStream {
+	// Checked after this chunk's content was observed, so a chunk that
+	// carries content is never cut for the silence before it.
+	silent := !overran && !endOfStream && r.streamSilenceExceeded(ctx)
+	cut := overran || silent
+	if cut || endOfStream {
 		if overran {
 			r.logResponseStreamTruncation(ctx)
 			buffers.recordError(ctx, r.truncatedStreamError(), true)
 			r.attachTruncatedStreamUsage(ctx)
 		}
+		if silent {
+			r.logResponseStreamSilence(ctx)
+			buffers.recordError(ctx, silentStreamError(ctx), true)
+			r.attachTruncatedStreamUsage(ctx)
+		}
 		buffers.finalize(ctx)
 		r.finalizeSemanticStreamingResponse(ctx, buffers.streamErr)
+		if cut {
+			releaseCutTurn(ctx)
+		}
 	}
 	// The turn is over either way here: the upstream reached its end, or the
 	// Router ended it. Both have to end the response, or the client waits for
 	// an EOF that only the platform will send.
-	return buffers.processingResponse(ctx, overran || endOfStream)
+	return buffers.processingResponse(ctx, cut || endOfStream)
 }
 
 func (r *OpenAIRouter) initializeSemanticResponseStream(ctx *RequestContext) {
@@ -180,6 +192,7 @@ func observeProtocolStream(
 ) {
 	ctx.ProtocolDiagnostics = append(ctx.ProtocolDiagnostics, diagnostics...)
 	ctx.SemanticStreamState.observe(events)
+	observeStreamContent(ctx, events)
 }
 
 func (buffers *semanticStreamBuffers) processingResponse(
@@ -604,7 +617,7 @@ func (r *OpenAIRouter) classStreamFailure(
 		// provider stream the codec rejected. A receive error (the client or
 		// the proxy ended the exchange) is classed client_ended below.
 		class := turnFailureUpstreamError
-		if inBand.Code == "stream_truncated" {
+		if routerStreamCutCodes[inBand.Code] {
 			class = turnFailureTimeout
 		}
 		recordTurnFailureDetail(ctx, class, codecStreamFailureDetail(inBand), sent)

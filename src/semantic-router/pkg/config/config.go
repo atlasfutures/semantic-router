@@ -243,8 +243,14 @@ type RouterOptions struct {
 	// ResponseStreamDeadlineSec bounds one routed turn's streamed response.
 	// Zero selects the shipped default; a negative value turns the deadline
 	// off, which leaves the platform as the only thing that ends a turn.
-	ResponseStreamDeadlineSec int                  `yaml:"response_stream_deadline_sec,omitempty"`
-	SkipProcessing            SkipProcessingConfig `yaml:"skip_processing,omitempty"`
+	ResponseStreamDeadlineSec int `yaml:"response_stream_deadline_sec,omitempty"`
+	// ResponseStreamFirstContentSec and ResponseStreamIdleSec bound a streamed
+	// turn's silence: the wait for its first content after the upstream's
+	// headers, and the gap between content after that. Keepalives are not
+	// content. Zero turns either off.
+	ResponseStreamFirstContentSec int                  `yaml:"response_stream_first_content_sec,omitempty"`
+	ResponseStreamIdleSec         int                  `yaml:"response_stream_idle_sec,omitempty"`
+	SkipProcessing                SkipProcessingConfig `yaml:"skip_processing,omitempty"`
 }
 
 // SkipProcessingConfig gates the x-vsr-skip-processing request header.

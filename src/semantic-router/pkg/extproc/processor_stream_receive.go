@@ -116,6 +116,33 @@ func closedAsEOF(message receivedMessage, ok bool) receivedMessage {
 	return message
 }
 
+// loopWait is how long the loop may wait for the next message: the nearer of
+// the held body's deadline and the streamed turn's silence limit. Zero waits
+// indefinitely.
+func (r *OpenAIRouter) loopWait(ctx *RequestContext) time.Duration {
+	held := r.heldResponseBodyWait(ctx)
+	silence := time.Duration(0)
+	if ctx != nil && ctx.FullDuplexResponseBody {
+		// Only a full-duplex reply can be sent without a body message to
+		// answer; in the plain streamed mode the next chunk checks instead.
+		silence = r.streamSilenceWait(ctx)
+	}
+	if held <= 0 || silence > 0 && silence < held {
+		return silence
+	}
+	return held
+}
+
+// endSilentStream ends a streamed turn that went silent with no message to
+// answer: the stream's closing frames go out on a body reply of their own,
+// with end_of_stream set, as endStalledResponseBody's do.
+func (r *OpenAIRouter) endSilentStream(
+	stream ext_proc.ExternalProcessor_ProcessServer,
+	ctx *RequestContext,
+) error {
+	return sendResponse(stream, r.handleSemanticStreamingResponseBody(nil, false, ctx), "response body")
+}
+
 // heldResponseBodyWait is how long the loop may wait before the bytes it is
 // holding are past their deadline. Zero means it may wait indefinitely: no
 // deadline is configured, or nothing is being held.

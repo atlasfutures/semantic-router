@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"net/http"
+	"time"
 
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
@@ -22,6 +23,10 @@ func (r *OpenAIRouter) handleResponseHeaders(v *ext_proc.ProcessingRequest_Respo
 		// Persist the upstream status so the later response-body cache-write
 		// path can avoid caching non-2xx error bodies (cache poisoning).
 		ctx.UpstreamStatusCode = outcome.statusCode
+		if ctx.IsStreamingResponse {
+			// The silence clock starts when the arm accepts the turn.
+			ctx.StreamContentSince = time.Now()
+		}
 	}
 	if empty := r.emptySuccessResponse(v, ctx, outcome); empty != nil {
 		return empty, nil

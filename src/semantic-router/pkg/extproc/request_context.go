@@ -91,6 +91,11 @@ type RequestContext struct {
 
 	StreamingComplete bool // True after neutral stream finalization runs once.
 	StreamingAborted  bool // True if the neutral stream ended abnormally.
+	// StreamContentSince is when the streamed turn's silence began: its
+	// response headers, then its latest content event. StreamContentSeen is
+	// whether any content has arrived (processor_res_stream_silence.go).
+	StreamContentSince time.Time
+	StreamContentSeen  bool
 	// StreamEndedByReceiveError is true when the ext_proc exchange ended
 	// (the client or the proxy went away) before the stream did.
 	StreamEndedByReceiveError bool
