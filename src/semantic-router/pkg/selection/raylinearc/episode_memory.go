@@ -52,6 +52,9 @@ type MemoryEpisodeStore struct {
 	idleTTL     time.Duration
 	now         func() time.Time
 	generations uint64
+	// served is the last worker per episode (ServedWorkerStore), kept past
+	// the episode's own idle TTL.
+	served map[string]memoryServedWorker
 	// removals counts entries the store has dropped, by reap or capacity
 	// eviction. A read that found an episode absent records it: if nothing
 	// was removed since, the episode cannot have been created and dropped in
