@@ -79,12 +79,18 @@ type policyServiceScorer struct {
 	// episodeMode is the decide request's episode_mode: empty (strict) or
 	// relaxed.
 	episodeMode string
-	// fallbackModel is the last source of a derived hold
-	// (rayline_arc_derived_hold.go): the model of the package manifest's
-	// fallback action, or, for a package without a manifest, the configured
+	// fallbackModel is the model of the package manifest's fallback action,
+	// or, for a package without a manifest, the configured
 	// derived_hold_model; fallbackSource says which. Empty when neither.
+	// holdFallback ranks it with listedFallback.
 	fallbackModel  string
 	fallbackSource string
+	// listedFallback is the fallback_model the service's package listing
+	// names for this package (pathfinder#3677), as the last readiness probe
+	// verified it and only when the bindings dispatch it; nil when it names
+	// none. Atomic because a readiness re-probe may refresh it while turns
+	// read it.
+	listedFallback atomic.Pointer[string]
 	// sideStrictUntil (unix nanoseconds) is how long a strict cell sends its
 	// side calls strict after the service last showed it cannot serve them
 	// relaxed; zero or past means relaxed.
@@ -326,9 +332,11 @@ func createRaylineARCPolicySelector(
 	}
 	scorer := armed.scorer.(*policyServiceScorer)
 	probe := func(ctx context.Context) error {
-		if err := client.RequirePackage(ctx, policy.PackageAlias, policy.PackageSHA256); err != nil {
+		loaded, err := client.LoadedPackage(ctx, policy.PackageAlias, policy.PackageSHA256)
+		if err != nil {
 			return err
 		}
+		scorer.recordListedFallback(loaded.FallbackModel)
 		if scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed {
 			return probeRelaxedPolicyDecide(ctx, client, scorer)
 		}
@@ -725,6 +733,41 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 
 // actionModel is the trained model an action serves: its binding's declared
 // model, or its worker when the binding declares none.
+// recordListedFallback keeps the listing's fallback model when the bindings
+// dispatch it, and forgets it when the listing names none. A model no binding
+// dispatches cannot hold a turn, so it is logged and skipped, as a
+// derived_hold_model outside the bindings is refused at startup.
+func (scorer *policyServiceScorer) recordListedFallback(model string) {
+	if model == "" {
+		scorer.listedFallback.Store(nil)
+		return
+	}
+	for actionID := range scorer.bindings {
+		if scorer.actionModel(actionID) == model {
+			scorer.listedFallback.Store(&model)
+			return
+		}
+	}
+	scorer.listedFallback.Store(nil)
+	logging.ComponentErrorEvent("extproc", "rayline_arc_listed_fallback_unbound", map[string]interface{}{
+		"package_alias":  scorer.alias,
+		"fallback_model": model,
+	})
+}
+
+// holdFallback is the last source of a derived hold: the package manifest's
+// fallback action's model, else the listing's fallback_model, else the
+// configured derived_hold_model, with the source that named it.
+func (scorer *policyServiceScorer) holdFallback() (model, source string) {
+	if scorer.fallbackSource == derivedHoldPackageFallback {
+		return scorer.fallbackModel, scorer.fallbackSource
+	}
+	if listed := scorer.listedFallback.Load(); listed != nil {
+		return *listed, derivedHoldListedFallback
+	}
+	return scorer.fallbackModel, scorer.fallbackSource
+}
+
 func (scorer *policyServiceScorer) actionModel(actionID string) string {
 	binding, ok := scorer.bindings[actionID]
 	if !ok {

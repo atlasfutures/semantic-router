@@ -402,9 +402,19 @@ func TestServedModelReadIsBounded(t *testing.T) {
 // cold turn whose offer spans more than one model.
 func v4ColdRouter(t *testing.T, derivedHold string) (*OpenAIRouter, *fakePolicyService, map[string]config.RaylineARCPolicyBinding) {
 	t.Helper()
+	return v4ColdRouterListing(t, derivedHold, "")
+}
+
+// v4ColdRouterListing is v4ColdRouter behind a service whose packages
+// listing names listedModel as the package's fallback (none when empty).
+func v4ColdRouterListing(t *testing.T, derivedHold, listedModel string) (*OpenAIRouter, *fakePolicyService, map[string]config.RaylineARCPolicyBinding) {
+	t.Helper()
 	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
 	actions := relaxedPolicyActions()
 	fake := newRelaxedPolicyFake(t)
+	if listedModel != "" {
+		fake.listFallback(strings.Repeat("a", 64), listedModel)
+	}
 	path := writeConsistentPolicyConfig(t, fake.URL(), "strict")
 	if derivedHold != "" {
 		raw, err := os.ReadFile(path)
@@ -440,8 +450,8 @@ func v4ColdRouter(t *testing.T, derivedHold string) (*OpenAIRouter, *fakePolicyS
 	return router, fake, actions
 }
 
-// A v4 package has no manifest, and the service's package listing does not
-// name its fallback, so a cold turn with no record is held on the cell's
+// A v4 package has no manifest, and when the service's package listing names
+// no fallback either, a cold turn with no record is held on the cell's
 // configured derived_hold_model.
 func TestDerivedHoldUsesTheConfiguredModelForAManifestlessPackage(t *testing.T) {
 	router, fake, actions := v4ColdRouter(t, "off-trained")
@@ -463,5 +473,51 @@ func TestDerivedHoldWithoutAFallbackLeavesTheRefusal(t *testing.T) {
 	}
 	if calls := fake.received(); len(calls) != 1 {
 		t.Fatalf("decide calls = %d, want one", len(calls))
+	}
+}
+
+// A v4 package from the store has no manifest, but a service from
+// pathfinder#3677 on names its fallback in the packages listing: with no
+// derived_hold_model configured, a cold turn with no record is held on it.
+func TestDerivedHoldUsesTheListedFallbackForAManifestlessPackage(t *testing.T) {
+	router, fake, actions := v4ColdRouterListing(t, "", "off-trained")
+	model, status := heldTurnStatus(t, router, "episode-v4-listed", resumedHistory)
+	if status != 200 || model != "vendor/off" {
+		t.Fatalf("dispatched %q (status %d), want the listed off-trained", model, status)
+	}
+	calls := fake.received()
+	if len(calls) != 2 || !slices.Equal(calls[1].Selection.AvailableActionIDs, []string{actions["off"].ActionID}) {
+		t.Fatalf("decide calls = %d, retry offer %v", len(calls), calls[len(calls)-1].Selection.AvailableActionIDs)
+	}
+}
+
+// The listing is the service's statement of the package it serves, so it
+// ranks above the cell's configured derived_hold_model.
+func TestDerivedHoldPrefersTheListedFallbackToTheConfiguredModel(t *testing.T) {
+	router, fake, actions := v4ColdRouterListing(t, "off-trained", "claude-opus-5")
+	if _, status := heldTurnStatus(t, router, "episode-v4-listed-first", resumedHistory); status != 200 {
+		t.Fatalf("status %d, want 200", status)
+	}
+	calls := fake.received()
+	want := []string{actions["claude"].ActionID, actions["claude-off"].ActionID}
+	got := slices.Clone(calls[len(calls)-1].Selection.AvailableActionIDs)
+	slices.Sort(got)
+	slices.Sort(want)
+	if len(calls) != 2 || !slices.Equal(got, want) {
+		t.Fatalf("decide calls = %d, retry offer %v, want claude-opus-5's %v", len(calls), got, want)
+	}
+}
+
+// A listed fallback the bindings do not dispatch cannot hold a turn: it is
+// skipped, and the configured derived_hold_model holds it instead.
+func TestDerivedHoldSkipsAnUnboundListedFallback(t *testing.T) {
+	router, fake, actions := v4ColdRouterListing(t, "off-trained", "anthropic/claude-opus-5")
+	model, status := heldTurnStatus(t, router, "episode-v4-listed-unbound", resumedHistory)
+	if status != 200 || model != "vendor/off" {
+		t.Fatalf("dispatched %q (status %d), want the configured off-trained", model, status)
+	}
+	calls := fake.received()
+	if len(calls) != 2 || !slices.Equal(calls[1].Selection.AvailableActionIDs, []string{actions["off"].ActionID}) {
+		t.Fatalf("decide calls = %d, retry offer %v", len(calls), calls[len(calls)-1].Selection.AvailableActionIDs)
 	}
 }

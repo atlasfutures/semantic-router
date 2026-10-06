@@ -169,23 +169,31 @@ func (client *PolicyServiceClient) Packages(ctx context.Context, alias, sha256 s
 
 // RequirePackage fails unless the service has loaded exactly this package.
 func (client *PolicyServiceClient) RequirePackage(ctx context.Context, alias, sha256 string) error {
+	_, err := client.LoadedPackage(ctx, alias, sha256)
+	return err
+}
+
+// LoadedPackage is the listing's entry for exactly this package, once the
+// service has loaded it; it fails as RequirePackage does.
+func (client *PolicyServiceClient) LoadedPackage(ctx context.Context, alias, sha256 string) (*PolicyLoadedPackage, error) {
 	packages, err := client.Packages(ctx, alias, sha256)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	for _, loaded := range packages.Packages {
+	for index := range packages.Packages {
+		loaded := &packages.Packages[index]
 		if loaded.Alias != alias {
 			continue
 		}
 		if loaded.PackageSHA256 != sha256 {
-			return &PolicyServiceError{Class: "package_hash_mismatch"}
+			return nil, &PolicyServiceError{Class: "package_hash_mismatch"}
 		}
 		if loaded.State != "loaded" {
-			return &PolicyServiceError{Class: "package_not_loaded"}
+			return nil, &PolicyServiceError{Class: "package_not_loaded"}
 		}
-		return nil
+		return loaded, nil
 	}
-	return &PolicyServiceError{Class: "package_not_loaded"}
+	return nil, &PolicyServiceError{Class: "package_not_loaded"}
 }
 
 // Decide asks the service for one decision.
