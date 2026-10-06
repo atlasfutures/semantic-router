@@ -51,14 +51,25 @@ func (r *OpenAIRouter) raylineARCServedWorkers(
 	if parent == nil {
 		parent = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(parent, servedWorkerReadTimeout)
-	defer cancel()
 	keys := []selection.RaylineARCServedWorker{{Source: derivedHoldSessionRecord, Worker: episodeIDHash}}
 	if session := strings.TrimSpace(signalHeaders[raylineARCParentSessionHeader]); session != "" {
 		keys = append(keys, selection.RaylineARCServedWorker{
 			Source: derivedHoldParentSession, Worker: raylinearc.HashEpisodeID(session),
 		})
 	}
+	return readServedWorkers(parent, store, keys)
+}
+
+// readServedWorkers reads each key's record, within servedWorkerReadTimeout
+// in all: a slow or stalled store costs the turn at most that, and leaves the
+// derivation to the package fallback.
+func readServedWorkers(
+	parent context.Context,
+	store raylinearc.ServedWorkerStore,
+	keys []selection.RaylineARCServedWorker,
+) []selection.RaylineARCServedWorker {
+	ctx, cancel := context.WithTimeout(parent, servedWorkerReadTimeout)
+	defer cancel()
 	var served []selection.RaylineARCServedWorker
 	for _, key := range keys {
 		worker, err := store.LastServedWorker(ctx, key.Worker)
@@ -143,33 +154,9 @@ func logRaylineARCDerivedHold(arcContext *selection.RaylineARCSelectionContext, 
 }
 
 // markServedWorker stages the worker a policy-service main turn dispatches
-// to, recorded once the turn commits.
+// to; the turn's episode commit records it.
 func (transaction *raylineARCEpisodeTransaction) markServedWorker(worker string) {
 	if transaction != nil {
 		transaction.servedWorker = worker
-	}
-}
-
-// recordServedWorker remembers the committed turn's worker past the episode
-// (raylinearc.ServedWorkerStore). It is best effort: the turn is served
-// either way, and a missing record only leaves a later refusal to the
-// package fallback.
-func (transaction *raylineARCEpisodeTransaction) recordServedWorker(ctx context.Context) {
-	if transaction == nil || transaction.servedWorker == "" || transaction.episodeIDHash == "" ||
-		transaction.servedStamp.IsZero() {
-		return
-	}
-	var store raylinearc.ServedWorkerStore
-	if transaction.store != nil {
-		store, _ = transaction.store.(raylinearc.ServedWorkerStore)
-	}
-	if store == nil && transaction.snapshots != nil {
-		store, _ = transaction.snapshots.(raylinearc.ServedWorkerStore)
-	}
-	if store == nil {
-		return
-	}
-	if err := store.RecordServedWorker(ctx, transaction.episodeIDHash, transaction.servedWorker, transaction.servedStamp); err != nil {
-		logging.ComponentWarnEvent("extproc", "rayline_arc_served_worker_record_failed", map[string]interface{}{})
 	}
 }

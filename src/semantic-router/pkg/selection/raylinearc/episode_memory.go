@@ -152,6 +152,7 @@ func (store *MemoryEpisodeStore) Commit(
 	entry.state = cloneEpisodeState(state)
 	entry.lastAccess = store.now()
 	store.finishLease(entry)
+	store.recordServedLocked(lease.episodeIDHash, state.ServedWorker, store.now())
 	return nil
 }
 
@@ -438,5 +439,6 @@ func (store *MemoryEpisodeStore) CommitIfUnchanged(
 	entry.version++
 	entry.state = cloneEpisodeState(state)
 	entry.lastAccess = now
+	store.recordServedLocked(episodeIDHash, state.ServedWorker, now)
 	return nil
 }

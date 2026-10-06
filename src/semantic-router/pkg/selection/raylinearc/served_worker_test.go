@@ -12,44 +12,88 @@ import (
 	"time"
 )
 
-func assertServedWorkerStore(t *testing.T, store ServedWorkerStore, advance func(time.Duration)) {
+// servedCommitStore is an episode store that records served workers in its
+// commits.
+type servedCommitStore interface {
+	EpisodeStore
+	EpisodeSnapshotStore
+	ServedWorkerStore
+}
+
+// served is the prepared state, set to record worker.
+func served(state *EpisodeState, worker string) *EpisodeState {
+	state.ServedWorker = worker
+	return state
+}
+
+// The record is written by the episode commit and nothing else: a strict
+// commit records its turn's worker, a later one replaces it, and a commit the
+// store refuses -- a lost lease, a relaxed read the episode moved past --
+// records nothing. Out-of-order arrival is decided by the episode's revision,
+// never by a clock.
+func assertCommitRecordsServedWorker(t *testing.T, store servedCommitStore, episode string) {
 	t.Helper()
 	ctx := context.Background()
-	episode := HashEpisodeID("served-episode")
 	if worker, err := store.LastServedWorker(ctx, episode); err != nil || worker != "" {
 		t.Fatalf("empty store read %q, %v", worker, err)
 	}
-	earlier, later := time.Unix(1_700_000_000, 0), time.Unix(1_700_000_000, 1000)
-	if err := store.RecordServedWorker(ctx, episode, "glm", earlier); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.RecordServedWorker(ctx, episode, "opus", later); err != nil {
-		t.Fatal(err)
-	}
-	// The earlier turn's write lands last; the later turn's record stands.
-	if err := store.RecordServedWorker(ctx, episode, "glm", earlier); err != nil {
-		t.Fatal(err)
-	}
-	if worker, err := store.LastServedWorker(ctx, episode); err != nil || worker != "opus" {
-		t.Fatalf("read %q, %v; want the later turn's worker", worker, err)
-	}
-	if err := store.RecordServedWorker(ctx, "not-a-hash", "opus", later); err == nil {
-		t.Fatal("recorded under an invalid episode hash")
-	}
-	if err := store.RecordServedWorker(ctx, episode, "opus", time.Time{}); err == nil {
-		t.Fatal("recorded without a stamp")
-	}
-	if advance != nil {
-		advance(ServedWorkerTTL + time.Second)
-		if worker, _ := store.LastServedWorker(ctx, episode); worker != "" {
-			t.Fatalf("an expired record read %q", worker)
+	commit := func(worker string) (Lease, *EpisodeState) {
+		lease, state, err := store.Prepare(ctx, episode, 2)
+		if err != nil {
+			t.Fatal(err)
 		}
+		if err := store.Commit(ctx, lease, lease.Version(), served(state, worker)); err != nil {
+			t.Fatal(err)
+		}
+		return lease, state
+	}
+	first, firstState := commit("glm")
+	if worker, _ := store.LastServedWorker(ctx, episode); worker != "glm" {
+		t.Fatalf("record %q after the first commit", worker)
+	}
+	commit("opus")
+	// The first turn's commit replayed after the second: its revision is
+	// stale, the store refuses it, and the record stays the second turn's.
+	if err := store.Commit(ctx, first, first.Version(), served(firstState, "glm")); err == nil {
+		t.Fatal("a stale commit landed")
+	}
+	if worker, _ := store.LastServedWorker(ctx, episode); worker != "opus" {
+		t.Fatalf("record %q after a stale replay, want opus", worker)
+	}
+	// Relaxed: two turns read the same revision; the one that commits
+	// second conflicts and records nothing.
+	stateA, readA, err := store.Snapshot(ctx, episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateB, readB, err := store.Snapshot(ctx, episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.CommitIfUnchanged(ctx, episode, readB, served(stateB, "kimi")); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.CommitIfUnchanged(ctx, episode, readA, served(stateA, "glm")); !errors.Is(err, ErrEpisodeConflict) {
+		t.Fatalf("the earlier read committed: %v", err)
+	}
+	if worker, _ := store.LastServedWorker(ctx, episode); worker != "kimi" {
+		t.Fatalf("record %q after a conflicting relaxed commit, want kimi", worker)
+	}
+	// A commit without a served worker (a side call, artifact mode) leaves
+	// the record as it is.
+	lease, state, err := store.Prepare(ctx, episode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit(ctx, lease, lease.Version(), served(state, "")); err != nil {
+		t.Fatal(err)
+	}
+	if worker, _ := store.LastServedWorker(ctx, episode); worker != "kimi" {
+		t.Fatalf("record %q after a commit naming no worker", worker)
 	}
 }
 
-// The memory store keeps the record past the episode's own idle TTL, for
-// ServedWorkerTTL, and at most its episode capacity of records.
-func TestMemoryServedWorkerStore(t *testing.T) {
+func TestMemoryCommitRecordsServedWorker(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	store, err := NewMemoryEpisodeStore(MemoryEpisodeStoreConfig{
 		MaxEpisodes: 2, IdleTTL: time.Minute, Now: func() time.Time { return now },
@@ -57,10 +101,20 @@ func TestMemoryServedWorkerStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertServedWorkerStore(t, store, func(by time.Duration) { now = now.Add(by) })
-	ctx := context.Background()
-	for _, episode := range []string{"a", "b", "c"} {
-		if err := store.RecordServedWorker(ctx, HashEpisodeID(episode), "glm", now); err != nil {
+	episode := HashEpisodeID("served-episode")
+	assertCommitRecordsServedWorker(t, store, episode)
+	// The record outlives the episode, for ServedWorkerTTL.
+	now = now.Add(time.Hour)
+	if worker, _ := store.LastServedWorker(context.Background(), episode); worker != "kimi" {
+		t.Fatalf("record %q after the episode's idle TTL", worker)
+	}
+	now = now.Add(ServedWorkerTTL)
+	if worker, _ := store.LastServedWorker(context.Background(), episode); worker != "" {
+		t.Fatalf("an expired record read %q", worker)
+	}
+	// At most the episode capacity of records, dropping the oldest.
+	for _, name := range []string{"a", "b", "c"} {
+		if err := store.SeedServedWorker(HashEpisodeID(name), "glm"); err != nil {
 			t.Fatal(err)
 		}
 		now = now.Add(time.Second)
@@ -68,19 +122,21 @@ func TestMemoryServedWorkerStore(t *testing.T) {
 	if len(store.served) != 2 {
 		t.Fatalf("kept %d records, want the capacity of 2", len(store.served))
 	}
-	if worker, _ := store.LastServedWorker(ctx, HashEpisodeID("a")); worker != "" {
+	if worker, _ := store.LastServedWorker(context.Background(), HashEpisodeID("a")); worker != "" {
 		t.Fatal("the oldest record was not the one dropped")
 	}
 }
 
-func TestRedisServedWorkerStore(t *testing.T) {
+func TestRedisCommitRecordsServedWorker(t *testing.T) {
 	address := os.Getenv("RAYLINE_ARC_TEST_REDIS_ADDR")
 	if address == "" {
 		t.Skip("RAYLINE_ARC_TEST_REDIS_ADDR is not set")
 	}
-	store := newTestRedisEpisodeStore(t, address, "vsr:served-test:"+strings.ReplaceAll(t.Name(), "/", "_")+":", time.Second)
-	assertServedWorkerStore(t, store, nil)
-	ttl, err := store.client.TTL(context.Background(), store.servedKey(HashEpisodeID("served-episode"))).Result()
+	store := newTestRedisEpisodeStore(t, address, "vsr:served-test:"+strings.ReplaceAll(t.Name(), "/", "_")+":"+
+		time.Now().Format("150405.000000")+":", time.Second)
+	episode := HashEpisodeID("served-episode")
+	assertCommitRecordsServedWorker(t, store, episode)
+	ttl, err := store.client.TTL(context.Background(), store.servedKey(episode)).Result()
 	if err != nil || ttl <= time.Hour {
 		t.Fatalf("record TTL %v, %v; want ServedWorkerTTL", ttl, err)
 	}

@@ -54,6 +54,7 @@ end
 redis.call("SET", KEYS[3], ARGV[3], "PX", ARGV[4])
 redis.call("PEXPIRE", KEYS[2], ARGV[4])
 redis.call("DEL", KEYS[1])
+if ARGV[5] ~= "" then redis.call("SET", KEYS[4], ARGV[5], "PX", ARGV[6]) end
 return 1
 `)
 	// Stage writes the state under the held lease and leaves the lease and
@@ -91,6 +92,7 @@ if redis.sha1hex(redis.call("GET", KEYS[3]) or "") ~= ARGV[5] then
 end
 redis.call("SET", KEYS[2], ARGV[2], "PX", ARGV[4])
 redis.call("SET", KEYS[3], ARGV[3], "PX", ARGV[4])
+if ARGV[6] ~= "" then redis.call("SET", KEYS[4], ARGV[6], "PX", ARGV[7]) end
 return 1
 `)
 	redisAbortScript = redis.NewScript(`
@@ -227,15 +229,18 @@ func (store *RedisEpisodeStore) Commit(
 	if err != nil {
 		return err
 	}
-	keys := store.keys(lease.episodeIDHash)
+	// The served-worker record is written by the same script, so it is
+	// ordered with the commit and exists only if the commit landed.
 	result, err := redisCommitScript.Run(
 		ctx,
 		store.client,
-		keys,
+		store.commitKeys(lease.episodeIDHash),
 		lease.ownerToken,
 		expectedVersion,
 		payload,
 		store.idleTTL.Milliseconds(),
+		state.ServedWorker,
+		ServedWorkerTTL.Milliseconds(),
 	).Int()
 	if err != nil {
 		return boundedRedisEpisodeError("commit", err)
@@ -511,12 +516,14 @@ func (store *RedisEpisodeStore) CommitIfUnchanged(
 	result, err := redisCommitIfUnchangedScript.Run(
 		ctx,
 		store.client,
-		store.keys(episodeIDHash),
+		store.commitKeys(episodeIDHash),
 		read.version,
 		next,
 		payload,
 		store.idleTTL.Milliseconds(),
 		read.tag,
+		state.ServedWorker,
+		ServedWorkerTTL.Milliseconds(),
 	).Int()
 	if err != nil {
 		return boundedRedisEpisodeError("relaxed_commit", err)

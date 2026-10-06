@@ -39,6 +39,10 @@ type WorkerWarmth struct {
 }
 
 type EpisodeState struct {
+	// ServedWorker, when set on the state a turn commits, is recorded by the
+	// commit itself as the episode's served worker (ServedWorkerStore). It is
+	// not part of the persisted state.
+	ServedWorker         string
 	PreviousArm          *int
 	TurnIndex            uint64
 	Warmth               []*WorkerWarmth

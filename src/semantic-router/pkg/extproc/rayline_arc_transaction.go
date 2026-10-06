@@ -44,15 +44,11 @@ type raylineARCEpisodeTransaction struct {
 	lease         raylinearc.Lease
 	state         *raylinearc.EpisodeState
 	episodeIDHash string
-	// servedWorker is the worker a policy-service main turn dispatched to,
-	// recorded past the episode once the turn commits (recordServedWorker).
+	// servedWorker is the worker a policy-service main turn dispatched to.
+	// The turn's episode commit records it (EpisodeState.ServedWorker).
 	servedWorker string
-	// servedStamp orders servedWorker records (raylinearc.ServedWorkerStore):
-	// taken just before the episode commit, while the lease still excludes
-	// every later turn of the episode.
-	servedStamp time.Time
-	leaseTTL    time.Duration
-	selectedArm int
+	leaseTTL     time.Duration
+	selectedArm  int
 	// policyNext is the policy-service ledger and epoch to commit with this
 	// turn; nil outside that mode.
 	policyNext *raylinearc.PolicyEpisodeState
@@ -479,7 +475,6 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 			requestContext,
 			nextState,
 		)
-		transaction.servedStamp = time.Now()
 		transaction.finalizeErr = transaction.store.Commit(
 			ctx,
 			transaction.lease,
@@ -495,7 +490,6 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 		transaction.state = nextState
 		metrics.RecordRaylineARCEpisodeTransaction("commit", "")
 		recordCommittedARCEpisodeTelemetry(requestContext, transaction)
-		transaction.recordServedWorker(ctx)
 	})
 	return transaction.finalizeErr
 }
@@ -538,9 +532,6 @@ func (transaction *raylineARCEpisodeTransaction) commitRelaxed(
 		metrics.RecordRaylineARCEpisodeTransaction("relaxed_dropped", "state")
 		return
 	}
-	// A relaxed commit succeeds only after every commit its read saw, so a
-	// stamp taken before it orders the records as the commits are ordered.
-	transaction.servedStamp = time.Now()
 	err = transaction.snapshots.CommitIfUnchanged(ctx, transaction.episodeIDHash, transaction.read, nextState)
 	switch {
 	case errors.Is(err, raylinearc.ErrEpisodeConflict):
@@ -553,7 +544,6 @@ func (transaction *raylineARCEpisodeTransaction) commitRelaxed(
 		transaction.state = nextState
 		metrics.RecordRaylineARCEpisodeTransaction("commit", "relaxed")
 		recordCommittedARCEpisodeTelemetry(requestContext, transaction)
-		transaction.recordServedWorker(ctx)
 	}
 }
 
@@ -586,6 +576,9 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 	if transaction.reasoningIssuersStaged {
 		nextState.ReasoningIssuers = append([]string(nil), transaction.reasoningIssuers...)
 	}
+	// The commit itself records the served worker, ordered with it
+	// (raylinearc.ServedWorkerStore).
+	nextState.ServedWorker = transaction.servedWorker
 	if err := nextState.Commit(
 		transaction.selectedArm,
 		transaction.serializedTokens,

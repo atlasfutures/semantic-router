@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -120,9 +122,7 @@ func TestDerivedHoldUsesTheLastServedWorker(t *testing.T) {
 
 	// The record outlives the episode: a cooled episode has none of its own
 	// state, only this.
-	if err := store.RecordServedWorker(context.Background(), raylinearc.HashEpisodeID("episode-cooled"), "glm", time.Now()); err != nil {
-		t.Fatal(err)
-	}
+	seedServed(t, router, "episode-cooled", "glm")
 	fake.refuseCold = refuseColdTwoStage
 	fake.chooseWith(chooseFirstOffered)
 	before := len(fake.received())
@@ -155,9 +155,7 @@ func TestDerivedHoldFallsBackToThePackageFallback(t *testing.T) {
 // offer, nothing narrowed -- even with a served-worker record present.
 func TestDerivedHoldLeavesSingleStagePackagesAlone(t *testing.T) {
 	router, fake := v5Router(t, "openai")
-	if err := servedStore(t, router).RecordServedWorker(context.Background(), raylinearc.HashEpisodeID("episode-single"), "glm", time.Now()); err != nil {
-		t.Fatal(err)
-	}
+	seedServed(t, router, "episode-single", "glm")
 	fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return v5OpusAction })
 	model, status := heldTurnStatus(t, router, "episode-single", resumedHistory)
 	if status != 200 || model != "anthropic/claude-opus-5" {
@@ -191,9 +189,7 @@ func TestDerivedHoldUsesTheParentSession(t *testing.T) {
 		return strings.Replace(config, "            allow_experimental_controls: true\n",
 			"            allow_experimental_controls: true\n            trust_turn_signal_headers: true\n", 1)
 	})
-	if err := servedStore(t, router).RecordServedWorker(context.Background(), raylinearc.HashEpisodeID("episode-parent"), "glm", time.Now()); err != nil {
-		t.Fatal(err)
-	}
+	seedServed(t, router, "episode-parent", "glm")
 	fake.refuseCold = refuseColdTwoStage
 	fake.chooseWith(chooseFirstOffered)
 	model, status := heldTurnStatus(t, router, "episode-subagent", resumedHistory,
@@ -218,9 +214,7 @@ func TestDerivedHoldOnAnExcludedModelFailsWithoutRetrying(t *testing.T) {
 		return strings.Replace(config, "    - name: glm\n      modality: text\n",
 			"    - name: glm\n      modality: text\n      vision: false\n", 1)
 	})
-	if err := servedStore(t, router).RecordServedWorker(context.Background(), raylinearc.HashEpisodeID("episode-image"), "glm", time.Now()); err != nil {
-		t.Fatal(err)
-	}
+	seedServed(t, router, "episode-image", "glm")
 	// The service refuses even Opus alone, so the derivation runs.
 	fake.refuseCold = func(raylinearc.PolicyDecisionRequest) bool { return true }
 	fake.chooseWith(chooseFirstOffered)
@@ -245,33 +239,86 @@ func TestDerivedHoldOnAnExcludedModelFailsWithoutRetrying(t *testing.T) {
 	}
 }
 
-// Two turns' served-worker writes landing out of order leave the record on
-// the later turn's worker: each is stamped before its episode commit, while
-// the lease still orders the turns.
-func TestServedWorkerRecordsLandingOutOfOrder(t *testing.T) {
-	store, err := raylinearc.NewMemoryEpisodeStore(raylinearc.MemoryEpisodeStoreConfig{MaxEpisodes: 4, IdleTTL: time.Minute})
+// seedServed records a served worker for an episode with no episode state,
+// as a cooled episode leaves it.
+func seedServed(t *testing.T, router *OpenAIRouter, episode, worker string) {
+	t.Helper()
+	store := router.raylineARCEpisodeStoreFor(&RequestContext{})
+	if unready, ok := store.(unreadyRaylineARCEpisodeStore); ok {
+		store = unready.EpisodeStore
+	}
+	memory, ok := store.(*raylinearc.MemoryEpisodeStore)
+	if !ok {
+		t.Fatalf("episode store %T is not the memory store", store)
+	}
+	if err := memory.SeedServedWorker(raylinearc.HashEpisodeID(episode), worker); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// countingEpisodeStore counts the calls a commit makes on its store.
+type countingEpisodeStore struct {
+	*raylinearc.MemoryEpisodeStore
+	calls atomic.Int32
+}
+
+func (store *countingEpisodeStore) Commit(ctx context.Context, lease raylinearc.Lease, version uint64, state *raylinearc.EpisodeState) error {
+	store.calls.Add(1)
+	return store.MemoryEpisodeStore.Commit(ctx, lease, version, state)
+}
+
+func (store *countingEpisodeStore) LastServedWorker(ctx context.Context, episodeIDHash string) (string, error) {
+	store.calls.Add(1)
+	return store.MemoryEpisodeStore.LastServedWorker(ctx, episodeIDHash)
+}
+
+// A turn's commit records its served worker in the commit itself: one store
+// call, after which the record is there. Nothing else is written on the
+// response path, so a record cannot hold a commit up.
+func TestCommitRecordsTheServedWorkerInOneStoreCall(t *testing.T) {
+	memory, err := raylinearc.NewMemoryEpisodeStore(raylinearc.MemoryEpisodeStoreConfig{MaxEpisodes: 4, IdleTTL: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
+	store := &countingEpisodeStore{MemoryEpisodeStore: memory}
 	episode := raylinearc.HashEpisodeID(t.Name())
-	turn := func(worker string) *raylineARCEpisodeTransaction {
-		lease, state, err := store.Prepare(context.Background(), episode, 2)
-		if err != nil {
-			t.Fatal(err)
-		}
-		transaction := newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil)
-		transaction.markSelection(0, 10)
-		transaction.markServedWorker(worker)
-		if err := transaction.commit(context.Background(), &RequestContext{}); err != nil {
-			t.Fatal(err)
-		}
-		return transaction
+	lease, state, err := store.Prepare(context.Background(), episode, 2)
+	if err != nil {
+		t.Fatal(err)
 	}
-	first := turn("glm")
-	turn("opus")
-	// The first turn's write arrives again, after the second's.
-	first.recordServedWorker(context.Background())
-	if worker, err := store.LastServedWorker(context.Background(), episode); err != nil || worker != "opus" {
-		t.Fatalf("record = %q, %v; want the later turn's opus", worker, err)
+	transaction := newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil)
+	transaction.markSelection(0, 10)
+	transaction.markServedWorker("glm")
+	if err := transaction.commit(context.Background(), &RequestContext{}); err != nil {
+		t.Fatal(err)
+	}
+	if calls := store.calls.Load(); calls != 1 {
+		t.Fatalf("the commit made %d store calls, want one", calls)
+	}
+	if worker, _ := memory.LastServedWorker(context.Background(), episode); worker != "glm" {
+		t.Fatalf("record %q after the commit", worker)
+	}
+}
+
+// stalledServedStore never answers a served-worker read until its context
+// ends.
+type stalledServedStore struct{}
+
+func (stalledServedStore) LastServedWorker(ctx context.Context, _ string) (string, error) {
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+// A stalled store costs a turn's served-worker read at most
+// servedWorkerReadTimeout, after which the derivation falls to the package.
+func TestServedWorkerReadIsBounded(t *testing.T) {
+	keys := []selection.RaylineARCServedWorker{
+		{Source: derivedHoldSessionRecord, Worker: raylinearc.HashEpisodeID("a")},
+		{Source: derivedHoldParentSession, Worker: raylinearc.HashEpisodeID("b")},
+	}
+	started := time.Now()
+	served := readServedWorkers(context.Background(), stalledServedStore{}, keys)
+	if elapsed := time.Since(started); elapsed > servedWorkerReadTimeout+250*time.Millisecond || len(served) != 0 {
+		t.Fatalf("read took %v and returned %v", elapsed, served)
 	}
 }
