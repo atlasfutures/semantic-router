@@ -28,7 +28,7 @@ func readPolicyV6Fixture(t *testing.T) []byte {
 // worker}), its actions resolve as v5's do, and dispatch reads it as a v5
 // package.
 func TestRaylineARCPolicyPackageV6Loads(t *testing.T) {
-	cfg, decision := policyV5Decision(t, readPolicyV6Fixture(t))
+	cfg, decision := policyV6Decision(t)
 	if err := validatePolicyDispatch(cfg, decision); err != nil {
 		t.Fatalf("the v6 fixture refused: %v", err)
 	}
@@ -114,6 +114,8 @@ func TestRaylineARCPolicyPackageV6HarnessShellAtStartup(t *testing.T) {
 	} {
 		manifest := bytes.Replace(fixture, []byte(anchor), []byte(anchor+" "+member), 1)
 		cfg, decision := policyV5Decision(t, manifest)
+		setPolicyVision(cfg, "arm-opus", true)
+		setPolicyVision(cfg, "arm-glm", false)
 		err := validatePolicyDispatch(cfg, decision)
 		if accepted && err != nil {
 			t.Errorf("%q: refused: %v", member, err)
@@ -175,5 +177,64 @@ func TestRaylineARCDerivedHoldModelIsRefusedWithAManifest(t *testing.T) {
 	decision.Algorithm.RaylineARC.PolicyService.DerivedHoldModel = "claude-opus-5"
 	if err := validatePolicyDispatch(cfg, decision); err == nil || !strings.Contains(err.Error(), "names its own fallback") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// policyV6Decision is the v6 fixture's decision with every bound arm's card
+// stating vision, as a v6 package requires: Opus reads images, GLM does not.
+func policyV6Decision(t *testing.T) (*RouterConfig, Decision) {
+	t.Helper()
+	cfg, decision := policyV5Decision(t, readPolicyV6Fixture(t))
+	setPolicyVision(cfg, "arm-opus", true)
+	setPolicyVision(cfg, "arm-glm", false)
+	return cfg, decision
+}
+
+func setPolicyVision(cfg *RouterConfig, arm string, vision bool) {
+	params := cfg.ModelConfig[arm]
+	params.Vision = &vision
+	cfg.ModelConfig[arm] = params
+}
+
+// A v6 package's encoder reads images, and an image turn leaves the offer
+// only on arms whose card says vision: false; an unmarked card counts as
+// vision-capable (#215). So every bound arm of a v6 package must state
+// vision, true or false, and startup names the arms that do not.
+func TestRaylineARCPolicyPackageV6RequiresExplicitVision(t *testing.T) {
+	cfg, decision := policyV5Decision(t, readPolicyV6Fixture(t))
+	err := validatePolicyDispatch(cfg, decision)
+	if err == nil || !strings.Contains(err.Error(), "arm-glm") || !strings.Contains(err.Error(), "arm-opus") ||
+		!strings.Contains(err.Error(), "vision") {
+		t.Fatalf("both arms unmarked: err = %v, want both named", err)
+	}
+	setPolicyVision(cfg, "arm-opus", true)
+	err = validatePolicyDispatch(cfg, decision)
+	if err == nil || !strings.Contains(err.Error(), "arm-glm") || strings.Contains(err.Error(), "arm-opus") {
+		t.Fatalf("one arm unmarked: err = %v, want only arm-glm named", err)
+	}
+	for _, glm := range []bool{false, true} {
+		setPolicyVision(cfg, "arm-glm", glm)
+		if err := validatePolicyDispatch(cfg, decision); err != nil {
+			t.Fatalf("every arm marked (glm vision %v): %v", glm, err)
+		}
+	}
+}
+
+// v5 keeps the default: an unmarked card is vision-capable, and loads.
+func TestRaylineARCPolicyPackageV5LoadsWithUnmarkedVision(t *testing.T) {
+	for _, path := range []string{policyV5Fixture, policyV5Canonical} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, decision := policyV5Decision(t, raw)
+		for arm, params := range cfg.ModelConfig {
+			if params.Vision != nil {
+				t.Fatalf("%s: arm %s is marked", path, arm)
+			}
+		}
+		if err := validatePolicyDispatch(cfg, decision); err != nil {
+			t.Errorf("%s refused: %v", path, err)
+		}
 	}
 }
