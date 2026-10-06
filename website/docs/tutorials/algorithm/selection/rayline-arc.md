@@ -643,9 +643,11 @@ card's positive `tools` claim, which an unmarked card does not make.
 `context_window` and `max_output_tokens` are the card's `context_window_size`
 and `max_output_tokens`, null where the card declares none. `pricing` is the
 card's rate card in the route lookup's spelling, and `disabled` is the card's
-out-of-service flag: a disabled arm is listed, so the arms keep their
-artifact ordinals, and marked, so the gateway leaves it out of what it
-derives.
+out-of-service flag as selection enforces it: a disabled arm is listed, so
+the arms keep their artifact ordinals, and marked, so the gateway leaves it
+out of what it derives. Only a `rayline_arc` decision enforces the flag; a
+candidate of any other decision reports `false`, since its model still
+serves.
 
 The list is not ARC's. Every virtual id on every router carries its
 candidates. Nothing else about the decision is published: the gateway

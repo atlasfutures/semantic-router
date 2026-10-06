@@ -583,6 +583,75 @@ func TestCandidateProviderDefaultsToVLLM(t *testing.T) {
 	}
 }
 
+// An algorithm-owned model that is also a ref runs under that ref's reasoning
+// control, so it is one candidate with that mode, not a second reasoning-off
+// twin.
+func TestAlgorithmOwnedModelsKeepTheirRefsReasoning(t *testing.T) {
+	cfg := &config.RouterConfig{
+		RouterOptions: config.RouterOptions{AutoModelNames: []string{"router/auto"}},
+		IntelligentRouting: config.IntelligentRouting{Decisions: []config.Decision{{
+			Name:      "ensemble",
+			Algorithm: &config.AlgorithmConfig{Type: config.DecisionAlgorithmReMoM, ReMoM: &config.ReMoMAlgorithmConfig{SynthesisModel: "strong"}},
+			ModelRefs: []config.ModelRef{{Model: "cheap"}, {Model: "strong", ModelReasoningControl: config.ModelReasoningControl{UseReasoning: boolPointer(true)}}},
+		}}},
+		BackendModels: config.BackendModels{ModelConfig: map[string]config.ModelParams{"cheap": {}, "strong": {}}},
+	}
+	listing := marshalListing(t, NewOpenAIModelList(cfg, 123))
+	candidates := modelEntry(t, listing, "router/auto")["routing"].(map[string]interface{})["candidates"].([]interface{})
+	if len(candidates) != 2 {
+		t.Fatalf("candidates = %v, want cheap and strong once each", candidates)
+	}
+	strong := candidates[1].(map[string]interface{})
+	if strong["model"] != "strong" || strong["thinking"].(map[string]interface{})["mode"] != "on" {
+		t.Fatalf("candidates[1] = %v, want strong with reasoning on, as its ref declares", strong)
+	}
+}
+
+// The disabled flag is reported as selection enforces it: a rayline_arc
+// decision masks a disabled arm, so its candidate says so; a plain decision
+// still dispatches the model, so its candidate says false.
+func TestDisabledIsReportedOnlyWhereItIsEnforced(t *testing.T) {
+	disabled := true
+	cfg := &config.RouterConfig{
+		RouterOptions: config.RouterOptions{AutoModelNames: []string{"router/auto"}},
+		IntelligentRouting: config.IntelligentRouting{Decisions: []config.Decision{
+			{Name: "plain", ModelRefs: []config.ModelRef{{Model: "retired"}}},
+			{Name: "arc", Algorithm: &config.AlgorithmConfig{Type: config.RaylineARCAlgorithmType, OnError: "fail_closed", RaylineARC: &config.RaylineARCAlgorithmConfig{}}, ModelRefs: []config.ModelRef{{Model: "retired-arm"}}},
+		}},
+		BackendModels: config.BackendModels{ModelConfig: map[string]config.ModelParams{"retired": {Disabled: &disabled}, "retired-arm": {Disabled: &disabled}}},
+	}
+	listing := marshalListing(t, NewOpenAIModelList(cfg, 123))
+	candidates := modelEntry(t, listing, "router/auto")["routing"].(map[string]interface{})["candidates"].([]interface{})
+	if candidates[0].(map[string]interface{})["disabled"] != false || candidates[1].(map[string]interface{})["disabled"] != true {
+		t.Fatalf("candidates = %v, want disabled false under the plain decision and true under the ARC decision", candidates)
+	}
+}
+
+// A route action falls back to a ref's model, not an adapter the ref names,
+// so its refs are described as the model.
+func TestRouteActionRefsAreDescribedAsTheModelTheyDispatch(t *testing.T) {
+	cfg := &config.RouterConfig{
+		RouterOptions: config.RouterOptions{AutoModelNames: []string{"router/auto"}},
+		IntelligentRouting: config.IntelligentRouting{Decisions: []config.Decision{{
+			Name:      "guard",
+			Action:    &config.DecisionAction{Type: config.DecisionActionRoute, Destination: "safe"},
+			ModelRefs: []config.ModelRef{{Model: "base", LoRAName: "base-sql"}},
+		}}},
+		BackendModels: config.BackendModels{ModelConfig: map[string]config.ModelParams{
+			"safe": {}, "base": {LoRAs: []config.LoRAAdapter{{Name: "base-sql"}}},
+		}},
+	}
+	listing := marshalListing(t, NewOpenAIModelList(cfg, 123))
+	candidates := modelEntry(t, listing, "router/auto")["routing"].(map[string]interface{})["candidates"].([]interface{})
+	fallback := candidates[1].(map[string]interface{})
+	if fallback["model"] != "base" {
+		t.Fatalf("candidates[1] = %v, want the base model the fallback dispatches, not the adapter", fallback)
+	}
+	if _, present := fallback["base_model"]; present {
+		t.Fatalf("candidates[1] = %v, base_model is published for a ref described as its model", fallback)
+	}
+}
+
 // The claim and the card share one spelling, so a card that claims tool
 // calling under the catalog's name is read as such and nothing else is.
 func TestCandidateReadsToolsUnderTheCatalogSpelling(t *testing.T) {
@@ -593,8 +662,8 @@ func TestCandidateReadsToolsUnderTheCatalogSpelling(t *testing.T) {
 		"claims":   {Capabilities: []string{"chat", "tools"}},
 		"misspelt": {Capabilities: []string{"chat", "tool_calling"}},
 	}}}
-	claims := routingCandidateOf(cfg, config.ModelRef{Model: "claims"})
-	misspelt := routingCandidateOf(cfg, config.ModelRef{Model: "misspelt"})
+	claims := routingCandidateOf(cfg, config.ModelRef{Model: "claims"}, false)
+	misspelt := routingCandidateOf(cfg, config.ModelRef{Model: "misspelt"}, false)
 	if !claims.Tools || misspelt.Tools {
 		t.Fatalf("tools = %v/%v, want true for the catalog spelling and false for any other", claims.Tools, misspelt.Tools)
 	}

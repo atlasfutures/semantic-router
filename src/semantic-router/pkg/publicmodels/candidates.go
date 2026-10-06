@@ -47,7 +47,12 @@ type RoutingCandidate struct {
 	// states none of its own.
 	MaxOutputTokens *int              `json:"max_output_tokens"`
 	Pricing         *CandidatePricing `json:"pricing"`
-	Disabled        bool              `json:"disabled"`
+	// Disabled is the card's out-of-service flag as selection enforces it:
+	// a rayline_arc decision masks a disabled arm, so its candidate says so;
+	// no other decision type reads the flag, its model still serves, and
+	// the candidate says false rather than advertise a verdict nothing
+	// honours.
+	Disabled bool `json:"disabled"`
 }
 
 // CandidateThinking spells the decision's use_reasoning for the candidate
@@ -109,34 +114,55 @@ func routingCandidatesOfDecisions(cfg *config.RouterConfig, decisions []config.D
 	var candidates []RoutingCandidate
 	for index := range decisions {
 		decision := &decisions[index]
+		// Only a rayline_arc decision enforces a card's disabled flag; see
+		// RoutingCandidate.Disabled.
+		enforcesDisabled := decision.Algorithm != nil && decision.Algorithm.Type == config.RaylineARCAlgorithmType
 		// A route action resolves straight to its destination, ahead of
 		// the refs, which it falls back to only when the destination cannot
-		// hold the request. The destination is what the alias selects, so
-		// it is listed first and the refs after it.
-		if decision.Action != nil && decision.Action.Type == config.DecisionActionRoute {
+		// hold the request -- and then dispatches the ref's model, not an
+		// adapter the ref names, so the refs are described as the model.
+		routeAction := decision.Action != nil && decision.Action.Type == config.DecisionActionRoute
+		if routeAction {
 			if destination := strings.TrimSpace(decision.Action.Destination); destination != "" {
-				candidates = appendDistinctCandidate(cfg, candidates, config.ModelRef{Model: destination})
+				candidates = appendDistinctCandidate(cfg, candidates, config.ModelRef{Model: destination}, enforcesDisabled)
 			}
 		}
 		for _, modelRef := range decision.ModelRefs {
-			candidates = appendDistinctCandidate(cfg, candidates, modelRef)
+			if routeAction {
+				modelRef.LoRAName = ""
+			}
+			candidates = appendDistinctCandidate(cfg, candidates, modelRef, enforcesDisabled)
 		}
 		// The models an algorithm executes beside its refs: a Fusion judge,
 		// a ReMoM synthesis model, a workflow's planner. They answer the
 		// request, so a document derived from this list has to hold them.
+		// One that is also a ref runs under that ref's reasoning control,
+		// so the ref is reused rather than a second, reasoning-off variant
+		// invented.
 		for _, model := range decision.Algorithm.ExplicitModels() {
 			if model = strings.TrimSpace(model); model != "" {
-				candidates = appendDistinctCandidate(cfg, candidates, config.ModelRef{Model: model})
+				candidates = appendDistinctCandidate(cfg, candidates, decisionRefFor(decision, model), enforcesDisabled)
 			}
 		}
 	}
 	return candidates
 }
 
+// decisionRefFor is the decision's ref for a model, or a bare ref when the
+// decision declares none for it.
+func decisionRefFor(decision *config.Decision, model string) config.ModelRef {
+	for _, modelRef := range decision.ModelRefs {
+		if strings.TrimSpace(modelRef.Model) == model && strings.TrimSpace(modelRef.LoRAName) == "" {
+			return modelRef
+		}
+	}
+	return config.ModelRef{Model: model}
+}
+
 // appendDistinctCandidate lists a ref unless a candidate of the same model,
 // adapter and thinking mode is listed already.
-func appendDistinctCandidate(cfg *config.RouterConfig, candidates []RoutingCandidate, modelRef config.ModelRef) []RoutingCandidate {
-	candidate := routingCandidateOf(cfg, modelRef)
+func appendDistinctCandidate(cfg *config.RouterConfig, candidates []RoutingCandidate, modelRef config.ModelRef, enforcesDisabled bool) []RoutingCandidate {
+	candidate := routingCandidateOf(cfg, modelRef, enforcesDisabled)
 	for _, listed := range candidates {
 		if listed.Model == candidate.Model && listed.BaseModel == candidate.BaseModel && listed.Thinking == candidate.Thinking {
 			return candidates
@@ -145,7 +171,7 @@ func appendDistinctCandidate(cfg *config.RouterConfig, candidates []RoutingCandi
 	return append(candidates, candidate)
 }
 
-func routingCandidateOf(cfg *config.RouterConfig, modelRef config.ModelRef) RoutingCandidate {
+func routingCandidateOf(cfg *config.RouterConfig, modelRef config.ModelRef, enforcesDisabled bool) RoutingCandidate {
 	model := strings.TrimSpace(modelRef.Model)
 	candidate := RoutingCandidate{
 		Model:    model,
@@ -171,7 +197,7 @@ func routingCandidateOf(cfg *config.RouterConfig, modelRef config.ModelRef) Rout
 		candidate.Vision = params.SupportsVision()
 		candidate.Tools = params.SupportsCapability(llmprotocol.RoutingCapabilityTools)
 		candidate.ContextWindow = positiveIntPointer(params.ContextWindowSize)
-		candidate.Disabled = params.IsDisabled()
+		candidate.Disabled = enforcesDisabled && params.IsDisabled()
 	}
 	candidate.MaxOutputTokens = positiveIntPointer(cfg.GetModelMaxOutputTokens(candidate.Model))
 	// The primary backend names the provider and the id the candidate
