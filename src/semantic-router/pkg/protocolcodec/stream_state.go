@@ -53,6 +53,19 @@ type streamState struct {
 	// or any other item completing after it, fails it at once
 	// (itemEventAfterCut).
 	cutItems map[int]bool
+	// cutFacts describe the held cut item's arguments, taken when it was
+	// cut, for the refusal that fails it later (after_cut, terminal).
+	cutFacts *llmprotocol.ToolArgumentsFacts
+	// toolArgumentChunks is how each active tool item's arguments arrived,
+	// for the facts of a refusal (refusedToolArguments).
+	toolArgumentChunks map[int]toolArgumentChunks
+}
+
+// toolArgumentChunks counts a tool item's argument deltas and notes whether
+// any of them ended inside a UTF-8 sequence.
+type toolArgumentChunks struct {
+	count     int
+	splitRune bool
 }
 
 func (state *streamState) observeProviderStreamBytes(chunk []byte) error {
@@ -209,6 +222,7 @@ func (state *streamState) ensureCollections() {
 		state.toolCallIndexes = make(map[string]int)
 		state.toolArguments = make(map[int][]byte)
 		state.cutItems = make(map[int]bool)
+		state.toolArgumentChunks = make(map[int]toolArgumentChunks)
 		state.imageProgressRank = make(map[int]int)
 		state.imageProgressSeen = make(map[int]map[llmprotocol.ImageGenerationStatus]bool)
 		state.nextPartialImageIndex = make(map[int]int64)
@@ -251,7 +265,7 @@ func (state *streamState) prepareStartEvent(event llmprotocol.Event) (llmprotoco
 
 func (state *streamState) applyItemEvent(event llmprotocol.Event) (llmprotocol.Event, error) {
 	if len(state.cutItems) > 0 && itemEventAfterCut(event.Type) {
-		return llmprotocol.Event{}, invalidStreamToolArguments()
+		return llmprotocol.Event{}, state.heldCutRefusal("after_cut")
 	}
 	switch event.Type {
 	case llmprotocol.EventOutputItemStarted:
@@ -548,7 +562,23 @@ func (state *streamState) recordToolDelta(event llmprotocol.Event) (llmprotocol.
 		return llmprotocol.Event{}, err
 	}
 	state.toolArguments[event.ItemIndex] = append(current, event.ToolCall.Arguments...)
+	if event.ToolCall.Arguments != "" {
+		chunks := state.toolArgumentChunks[event.ItemIndex]
+		chunks.count++
+		chunks.splitRune = chunks.splitRune || endsInsideRune(event.ToolCall.Arguments)
+		state.toolArgumentChunks[event.ItemIndex] = chunks
+	}
 	return event, nil
+}
+
+// endsInsideRune reports text whose last bytes begin a UTF-8 sequence they
+// do not finish.
+func endsInsideRune(text string) bool {
+	start := len(text) - 1
+	for start > 0 && len(text)-start < utf8.UTFMax && !utf8.RuneStart(text[start]) {
+		start--
+	}
+	return start >= 0 && utf8.RuneStart(text[start]) && !utf8.FullRuneInString(text[start:])
 }
 
 // defaultStateDiagnostics bounds the diagnostics a stream state holds between

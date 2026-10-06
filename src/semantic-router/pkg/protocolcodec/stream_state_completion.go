@@ -62,9 +62,13 @@ func (state *streamState) completeToolItem(event llmprotocol.Event) (llmprotocol
 	if !complete && !llmprotocol.TruncatedJSONObject(arguments, state.policy.Limits.JSONDepth) {
 		// A whole JSON value that is not an object, or an object with a
 		// duplicate member, is no prefix of a call: it is malformed now.
-		return llmprotocol.Event{}, invalidStreamToolArguments()
+		return llmprotocol.Event{}, state.refusedToolArguments(event.ItemIndex, arguments, "item_completed")
 	}
 	incomplete := !complete || event.ToolCall != nil && event.ToolCall.Incomplete
+	if incomplete {
+		facts := state.toolArgumentsFacts(event.ItemIndex, arguments)
+		state.cutFacts = &facts
+	}
 	call := state.toolCalls[event.ItemIndex]
 	if event.ToolCall != nil {
 		call, err = state.mergeStreamToolIdentity(call, *event.ToolCall)
@@ -214,6 +218,7 @@ func (state *streamState) markItemComplete(itemIndex int) {
 		delete(state.itemCitations, key)
 	}
 	delete(state.toolArguments, itemIndex)
+	delete(state.toolArgumentChunks, itemIndex)
 }
 
 func (state *streamState) applyEventEvidence(event llmprotocol.Event) (llmprotocol.Event, error) {
@@ -336,7 +341,39 @@ func (state *streamState) heldCutFailure(stop llmprotocol.StopReason, failed boo
 	if len(state.cutItems) == 0 || failed || llmprotocol.CutToolCallStop(stop) {
 		return nil
 	}
-	return invalidStreamToolArguments()
+	return state.heldCutRefusal("terminal")
+}
+
+// refusedToolArguments is invalid_stream_tool_arguments for a tool item
+// whose arguments were refused at stage, carrying their content-free facts
+// as its cause (llmprotocol.ToolArgumentsFacts) so the refusal's log line
+// can say why without saying what.
+func (state *streamState) refusedToolArguments(itemIndex int, arguments []byte, stage string) *llmprotocol.ProtocolError {
+	facts := state.toolArgumentsFacts(itemIndex, arguments)
+	facts.Stage = stage
+	refusal := invalidStreamToolArguments()
+	refusal.Cause = &facts
+	return refusal
+}
+
+// heldCutRefusal is invalid_stream_tool_arguments for the held cut item,
+// with the facts taken when it was cut.
+func (state *streamState) heldCutRefusal(stage string) *llmprotocol.ProtocolError {
+	refusal := invalidStreamToolArguments()
+	if state.cutFacts != nil {
+		facts := *state.cutFacts
+		facts.Stage = stage
+		refusal.Cause = &facts
+	}
+	return refusal
+}
+
+func (state *streamState) toolArgumentsFacts(itemIndex int, arguments []byte) llmprotocol.ToolArgumentsFacts {
+	facts := llmprotocol.DescribeToolArguments(arguments)
+	facts.ToolName = state.toolCalls[itemIndex].Name
+	chunks := state.toolArgumentChunks[itemIndex]
+	facts.Chunks, facts.ChunkSplitRune = chunks.count, chunks.splitRune
+	return facts
 }
 
 func validateCompletedStopReason(event llmprotocol.Event) (llmprotocol.Event, error) {

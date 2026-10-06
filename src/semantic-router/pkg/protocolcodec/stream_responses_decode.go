@@ -364,7 +364,7 @@ func (decoder *responsesStreamDecoder) validateResponsesCallCompletion(itemIndex
 		arguments = decoder.toolArguments[itemIndex]
 	}
 	if !isJSONObject(arguments, decoder.policy.Limits.JSONDepth) {
-		return invalidStreamToolArguments()
+		return decoder.refusedToolArguments(itemIndex, arguments, "item_completed")
 	}
 	return nil
 }
