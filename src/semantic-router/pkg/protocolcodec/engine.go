@@ -136,10 +136,12 @@ func (engine *Engine) EncodeResponse(format llmprotocol.WireFormat, response llm
 	if err := llmprotocol.ValidateResponse(response, engine.policy.Limits); err != nil {
 		return ResponseResult{Response: response, Envelope: envelope}, err
 	}
-	if err := llmprotocol.RequireCapabilities(format, pair.buffered.Capabilities(), llmprotocol.RequiredResponseCapabilities(response)); err != nil {
+	encodable, dropped := responseForTarget(response, format, pair.buffered.Capabilities(), engine.policy.Limits.Diagnostics)
+	if err := llmprotocol.RequireCapabilities(format, pair.buffered.Capabilities(), llmprotocol.RequiredResponseCapabilities(encodable)); err != nil {
 		return ResponseResult{Response: response, Envelope: envelope}, err
 	}
-	body, diagnostics, encodeResponseErr := pair.buffered.EncodeResponse(response, envelope, engine.policy)
+	body, diagnostics, encodeResponseErr := pair.buffered.EncodeResponse(encodable, envelope, engine.policy)
+	diagnostics = appendDiagnostics(dropped, diagnostics, engine.policy.Limits.Diagnostics)
 	return ResponseResult{Response: response, Envelope: envelope, Body: body, Diagnostics: diagnostics}, encodeResponseErr
 }
 
@@ -205,10 +207,12 @@ func (engine *Engine) TranslateResponse(source, target llmprotocol.WireFormat, b
 	if err := llmprotocol.ValidateResponse(response, engine.policy.Limits); err != nil {
 		return ResponseResult{Response: response, Envelope: envelope, Diagnostics: diagnostics}, err
 	}
-	if err := llmprotocol.RequireCapabilities(target, targetPair.buffered.Capabilities(), llmprotocol.RequiredResponseCapabilities(response)); err != nil {
+	encodable, dropped := responseForTarget(response, target, targetPair.buffered.Capabilities(), engine.policy.Limits.Diagnostics)
+	diagnostics = appendDiagnostics(diagnostics, dropped, engine.policy.Limits.Diagnostics)
+	if err := llmprotocol.RequireCapabilities(target, targetPair.buffered.Capabilities(), llmprotocol.RequiredResponseCapabilities(encodable)); err != nil {
 		return ResponseResult{Response: response, Envelope: envelope, Diagnostics: diagnostics}, err
 	}
-	encoded, encodeDiagnostics, translateResponseErr := targetPair.buffered.EncodeResponse(response, envelope, engine.policy)
+	encoded, encodeDiagnostics, translateResponseErr := targetPair.buffered.EncodeResponse(encodable, envelope, engine.policy)
 	diagnostics = appendDiagnostics(diagnostics, encodeDiagnostics, engine.policy.Limits.Diagnostics)
 	return ResponseResult{Response: response, Envelope: envelope, Body: encoded, Diagnostics: diagnostics}, translateResponseErr
 }

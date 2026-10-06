@@ -779,6 +779,10 @@ func (encoder *chatStreamEncoder) applyChatReasoningDelta(
 				return diagnostics, true, nil
 			}
 		}
+		if event.Delta == "" && event.Content.Signature != "" {
+			// A signature_delta alone: nothing of it is Chat's to send.
+			return diagnostics, false, nil
+		}
 	}
 	choice.Delta.Reasoning = &event.Delta
 	return diagnostics, true, nil
@@ -788,12 +792,13 @@ func (encoder *chatStreamEncoder) reasoningDiagnostics(event llmprotocol.Event) 
 	if event.Content == nil || event.Content.Signature == "" {
 		return nil, nil
 	}
-	var diagnostics llmprotocol.Diagnostics
-	err := appendLossy(
-		&diagnostics, encoder.policy, encoder.context.Source, encoder.context.Target,
-		"reasoning.signature", "Chat Completions cannot represent a signed reasoning delta",
-	)
-	return diagnostics, err
+	// The thinking text streams on as reasoning; the signature, which Chat
+	// has no member for, is dropped and reported, as a buffered answer's is
+	// (responseForTarget).
+	return appendDiagnostics(nil, llmprotocol.Diagnostics{{
+		Source: encoder.context.Source, Target: encoder.context.Target, Field: "reasoning.signature",
+		Action: llmprotocol.DiagnosticDropped, Reason: responseReasoningSignatureDropped,
+	}}, encoder.policy.Limits.Diagnostics), nil
 }
 
 func (encoder *chatStreamEncoder) applyToolCallDelta(event llmprotocol.Event, choice *chatChunkChoiceWire) error {
