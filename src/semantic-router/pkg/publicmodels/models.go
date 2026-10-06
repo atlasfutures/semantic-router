@@ -30,6 +30,10 @@ type RoutingMetadata struct {
 	Selectable   bool              `json:"selectable"`
 	DefaultRoute bool              `json:"default_route,omitempty"`
 	Recipe       config.RecipeName `json:"recipe,omitempty"`
+	// Candidates are the models a virtual id may resolve to, with their
+	// card facts, decision by decision. Absent on a passthrough id and on a
+	// virtual id with no decision behind it.
+	Candidates []RoutingCandidate `json:"candidates,omitempty"`
 }
 
 // OpenAIModel represents a single model in the OpenAI /v1/models response.
@@ -78,11 +82,15 @@ func (b *modelListBuilder) appendAutoAliases(cfg *config.RouterConfig) {
 	if cfg != nil {
 		autoModelNames = cfg.EffectiveAutoModelNames()
 	}
+	routing := selectableVirtualRoute(config.DefaultRecipeName, true)
+	if cfg != nil {
+		routing.Candidates = routingCandidatesOf(cfg, cfg.DefaultRecipe())
+	}
 	b.appendAll(
 		autoModelNames,
 		routerOwner,
 		autoModelDescription,
-		selectableVirtualRoute(config.DefaultRecipeName, true),
+		routing,
 	)
 }
 
@@ -92,7 +100,11 @@ func (b *modelListBuilder) appendEntrypointAliases(cfg *config.RouterConfig) {
 	}
 	for _, entrypoint := range cfg.Entrypoints {
 		description := cfg.EntrypointRecipeDescription(entrypoint.Recipe)
-		b.appendAll(entrypoint.ModelNames, routerOwner, description, selectableVirtualRoute(entrypoint.Recipe, false))
+		routing := selectableVirtualRoute(entrypoint.Recipe, false)
+		if recipe, ok := cfg.RecipeByName(entrypoint.Recipe); ok {
+			routing.Candidates = routingCandidatesOf(cfg, recipe)
+		}
+		b.appendAll(entrypoint.ModelNames, routerOwner, description, routing)
 	}
 }
 
@@ -100,16 +112,21 @@ func (b *modelListBuilder) appendOrchestratedModels(cfg *config.RouterConfig) {
 	if cfg == nil || !cfg.Looper.IsEnabled() {
 		return
 	}
-	for _, models := range [][]string{
-		cfg.ExposedReMoMModelNames(),
-		cfg.ExposedFusionModelNames(),
-		cfg.ExposedFlowModelNames(),
+	for _, surface := range []struct {
+		models    []string
+		algorithm string
+	}{
+		{cfg.ExposedReMoMModelNames(), config.DecisionAlgorithmReMoM},
+		{cfg.ExposedFusionModelNames(), config.DecisionAlgorithmFusion},
+		{cfg.ExposedFlowModelNames(), config.DecisionAlgorithmWorkflows},
 	} {
+		routing := selectableVirtualRoute("", false)
+		routing.Candidates = routingCandidatesForAlgorithm(cfg, surface.algorithm)
 		b.appendAll(
-			models,
+			surface.models,
 			routerOwner,
 			orchestratedModelDescription,
-			selectableVirtualRoute("", false),
+			routing,
 		)
 	}
 }

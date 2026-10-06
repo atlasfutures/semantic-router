@@ -1,6 +1,7 @@
 package publicmodels
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -84,7 +85,7 @@ func assertPublicModel(
 	if model.OwnedBy != wantOwner {
 		t.Fatalf("%s owned_by = %q, want %q", model.ID, model.OwnedBy, wantOwner)
 	}
-	if model.Routing != wantRouting {
+	if !reflect.DeepEqual(model.Routing, wantRouting) {
 		t.Fatalf("%s routing metadata = %+v, want %+v", model.ID, model.Routing, wantRouting)
 	}
 	if model.Description != wantDescription {
