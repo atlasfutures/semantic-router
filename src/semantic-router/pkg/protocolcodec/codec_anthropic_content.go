@@ -303,7 +303,7 @@ func buildAnthropicRequestWire(
 	if instructionErr := encodeAnthropicInstructions(&wire, request, policy, &diagnostics); instructionErr != nil {
 		return anthropicRequestWire{}, diagnostics, instructionErr
 	}
-	if messagesErr := appendAnthropicMessages(&wire, request.Messages); messagesErr != nil {
+	if messagesErr := appendAnthropicMessages(&wire, request.Messages, request.Trusted.SourceFormat); messagesErr != nil {
 		return anthropicRequestWire{}, diagnostics, messagesErr
 	}
 	if toolsErr := appendAnthropicTools(&wire, request); toolsErr != nil {
@@ -509,8 +509,12 @@ func encodeAnthropicInstructions(
 	return err
 }
 
-func appendAnthropicMessages(wire *anthropicRequestWire, messages []llmprotocol.Message) error {
-	for _, message := range regroupAnthropicMessages(withoutRouterSignedThinking(messages)) {
+func appendAnthropicMessages(
+	wire *anthropicRequestWire,
+	messages []llmprotocol.Message,
+	source llmprotocol.WireFormat,
+) error {
+	for _, message := range regroupAnthropicMessages(withoutRouterSignedThinking(messages), source) {
 		encoded, err := encodeAnthropicMessage(message)
 		if err != nil {
 			return err
@@ -590,17 +594,29 @@ func encodeAnthropicToolChoice(wire *anthropicRequestWire, request llmprotocol.R
 // Responses reasoning item, leaves nothing to send, and Anthropic refuses a
 // message with empty content, so it is skipped; Chat and Responses skip it
 // the same way.
-func regroupAnthropicMessages(messages []llmprotocol.Message) []llmprotocol.Message {
+//
+// A Chat or Responses history has no Messages grouping to keep: Responses
+// sends each reasoning item, function call and call output as an item of its
+// own, and Chat each tool result as a message of its own. Their consecutive
+// messages of one Messages role are joined into one turn, so a turn's
+// parallel tool_use blocks share one assistant message and their tool_result
+// blocks the user message after it, as Claude writes them. Anthropic joins
+// consecutive turns of one role itself, but OpenRouter's Messages adapters for
+// other model families convert message by message, and pair each tool result
+// with the calls of the assistant message right before it.
+func regroupAnthropicMessages(messages []llmprotocol.Message, source llmprotocol.WireFormat) []llmprotocol.Message {
+	joinsTurns := source != llmprotocol.AnthropicMessagesV1
 	grouped := make([]llmprotocol.Message, 0, len(messages))
 	for _, message := range messages {
 		if messageDropsWhole(message.Content, llmprotocol.AnthropicMessagesV1) {
 			continue
 		}
 		last := len(grouped) - 1
-		if last >= 0 && message.WireGroup != 0 && grouped[last].WireGroup == message.WireGroup &&
-			anthropicUserSide(grouped[last].Role) && anthropicUserSide(message.Role) {
+		if last >= 0 && joinsAnthropicTurn(grouped[last], message, joinsTurns) {
 			joined := grouped[last]
-			joined.Role = llmprotocol.RoleUser
+			if anthropicUserSide(joined.Role) {
+				joined.Role = llmprotocol.RoleUser
+			}
 			joined.Content = append(append([]llmprotocol.Content(nil), joined.Content...), message.Content...)
 			grouped[last] = joined
 			continue
@@ -608,6 +624,16 @@ func regroupAnthropicMessages(messages []llmprotocol.Message) []llmprotocol.Mess
 		grouped = append(grouped, message)
 	}
 	return grouped
+}
+
+// joinsAnthropicTurn reports whether message continues the Messages turn of
+// previous: both are of one wire group of tool results, or, when joinsTurns,
+// both are of one Messages role.
+func joinsAnthropicTurn(previous, message llmprotocol.Message, joinsTurns bool) bool {
+	if anthropicUserSide(previous.Role) && anthropicUserSide(message.Role) {
+		return joinsTurns || message.WireGroup != 0 && previous.WireGroup == message.WireGroup
+	}
+	return joinsTurns && previous.Role == llmprotocol.RoleAssistant && message.Role == llmprotocol.RoleAssistant
 }
 
 func anthropicUserSide(role llmprotocol.Role) bool {

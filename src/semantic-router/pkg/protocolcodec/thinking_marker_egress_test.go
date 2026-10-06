@@ -62,11 +62,14 @@ func TestRequestEncodersNeverSendARouterSignature(t *testing.T) {
 				switch target.format {
 				case llmprotocol.AnthropicMessagesV1:
 					// Anthropic refuses thinking it did not sign: the block
-					// goes whole, and so does a message left empty.
+					// goes whole, and so does a message left empty. The
+					// request's two trailing user messages are one Messages
+					// turn (a non-Messages history's consecutive turns of one
+					// role are joined).
 					if strings.Contains(body, "kimi reasoning") {
 						t.Fatalf("unsigned thinking reached the Messages request: %s", body)
 					}
-					assertAnthropicMessageCount(t, result.Body, 4)
+					assertAnthropicMessageCount(t, result.Body, 3)
 				default:
 					// Responses carries the text as unsigned reasoning.
 					if !strings.Contains(body, "kimi reasoning") {

@@ -21,12 +21,7 @@
                 {
                   "thinking": "Kimi reasoning about Paris.",
                   "type": "thinking"
-                }
-              ],
-              "role": "assistant"
-            },
-            {
-              "content": [
+                },
                 {
                   "text": "It is sunny.",
                   "type": "text"
