@@ -12,7 +12,10 @@ import (
 func TestContextTokenCountUsesTheRecipesCounter(t *testing.T) {
 	t.Parallel()
 	rules := []config.ContextRule{{Name: "long", MinTokens: "1000"}}
-	classifier := &Classifier{contextClassifier: NewContextClassifier(&mockTokenCounter{count: 300000}, rules)}
+	referencing := &config.RouterConfig{IntelligentRouting: config.IntelligentRouting{Decisions: []config.Decision{{
+		Name: "long-turns", Rules: config.RuleNode{Type: config.SignalTypeContext, Name: "long"},
+	}}}}
+	classifier := &Classifier{Config: referencing, contextClassifier: NewContextClassifier(&mockTokenCounter{count: 300000}, rules)}
 	if count, ok := classifier.ContextTokenCount("ignored by the mock", 100); !ok || count != 300000 {
 		t.Fatalf("ContextTokenCount() = %d, %t, want the counter's 300000", count, ok)
 	}
@@ -23,7 +26,16 @@ func TestContextTokenCountUsesTheRecipesCounter(t *testing.T) {
 	if _, ok := none.ContextTokenCount("x", 1); ok {
 		t.Fatal("a nil classifier reported a count")
 	}
-	if _, ok := (&Classifier{}).ContextTokenCount("x", 1); ok {
+	if _, ok := (&Classifier{Config: referencing}).ContextTokenCount("x", 1); ok {
 		t.Fatal("a classifier with no context signal reported a count")
+	}
+	// A context signal no decision rule references is skipped on a routed
+	// request and the heuristic counts it; the same answer here.
+	unreferenced := &config.RouterConfig{IntelligentRouting: config.IntelligentRouting{Decisions: []config.Decision{{
+		Name: "keywords", Rules: config.RuleNode{Type: config.SignalTypeKeyword, Name: "math"},
+	}}}}
+	idle := &Classifier{Config: unreferenced, contextClassifier: NewContextClassifier(&mockTokenCounter{count: 300000}, rules)}
+	if _, ok := idle.ContextTokenCount("x", 1); ok {
+		t.Fatal("a context signal no rule references reported a count")
 	}
 }

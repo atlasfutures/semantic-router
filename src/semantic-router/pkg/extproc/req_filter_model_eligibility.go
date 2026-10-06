@@ -60,6 +60,17 @@ func (r *OpenAIRouter) decisionCandidateModelRefs(
 	return r.contextEligibleDecisionModelRefs(decision.ModelRefs, decisionName, contextTokens, ctx)
 }
 
+// contextFittingModelRefs is the subset of a candidate list the request fits,
+// for the operator's minimum_candidates contract. On a plain decision that is
+// the list itself, already filtered; on a rayline_arc decision the list is
+// whole and the selector masks the rest, so the minimum is checked here
+// against what the mask will leave, or a decision that requires two arms
+// would run on one.
+func (r *OpenAIRouter) contextFittingModelRefs(refs []config.ModelRef, contextTokens int) []config.ModelRef {
+	fitting, _ := r.contextEligibleModelRefs(refs, contextTokens)
+	return fitting
+}
+
 func (r *OpenAIRouter) contextEligibleDecisionModelRefs(
 	refs []config.ModelRef,
 	decisionName string,
@@ -207,22 +218,5 @@ func (r *OpenAIRouter) contextIneligibleAlgorithmModelCount(
 }
 
 func explicitAlgorithmModels(algorithm *config.AlgorithmConfig) []string {
-	if algorithm == nil {
-		return nil
-	}
-	var models []string
-	if fusion := algorithm.Fusion; fusion != nil {
-		models = append(models, fusion.Model)
-		models = append(models, fusion.AnalysisModels...)
-	}
-	if remom := algorithm.ReMoM; remom != nil {
-		models = append(models, remom.SynthesisModel)
-	}
-	if workflows := algorithm.Workflows; workflows != nil {
-		models = append(models, workflows.Planner.Model, workflows.Final.Model)
-		for _, role := range workflows.Roles {
-			models = append(models, role.Models...)
-		}
-	}
-	return models
+	return algorithm.ExplicitModels()
 }

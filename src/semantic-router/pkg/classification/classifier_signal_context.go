@@ -265,6 +265,12 @@ func (c *Classifier) ContextTokenCount(contextText string, tokenFloor int) (int,
 	if c == nil || c.contextClassifier == nil {
 		return 0, false
 	}
+	// A context signal no decision rule references is not evaluated on a
+	// routed request (runSignalDispatchers skips unused signal types), and
+	// that request is then counted by the character heuristic; so is this.
+	if !isSignalTypeUsed(c.getUsedSignals(), config.SignalTypeContext) {
+		return 0, false
+	}
 	_, count, err := c.contextClassifier.ClassifyWithTokenFloor(contextText, tokenFloor)
 	if err != nil {
 		return 0, false
