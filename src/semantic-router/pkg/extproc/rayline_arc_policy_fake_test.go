@@ -32,8 +32,10 @@ type fakePolicyService struct {
 	// service does.
 	encodeUnreported bool
 	// cold lists no loaded package, as a service still loading its package.
-	cold     atomic.Bool
-	choose   func(raylinearc.PolicyDecisionRequest) string
+	cold   atomic.Bool
+	choose func(raylinearc.PolicyDecisionRequest) string
+	// bodies are the decide request bodies as received, in order.
+	bodies   [][]byte
 	failWith string
 	// failDetail is the detail failWith answers with ({} when nil).
 	failDetail map[string]any
@@ -99,6 +101,14 @@ func (fake *fakePolicyService) received() []raylinearc.PolicyDecisionRequest {
 	return append([]raylinearc.PolicyDecisionRequest(nil), fake.requests...)
 }
 
+// receivedBodies are the decide request bodies byte for byte, so a test can
+// tell an omitted member from a null one.
+func (fake *fakePolicyService) receivedBodies() [][]byte {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	return append([][]byte(nil), fake.bodies...)
+}
+
 func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.Request) {
 	switch request.URL.Path {
 	case "/v1/rayline/arc/policy/packages":
@@ -123,6 +133,7 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 		}
 		fake.mu.Lock()
 		fake.requests = append(fake.requests, decide)
+		fake.bodies = append(fake.bodies, body)
 		choose, failWith, failDetail, relaxedUnsupported := fake.choose, fake.failWith, fake.failDetail, fake.relaxedUnsupported
 		if fake.failFirstLeft > 0 {
 			fake.failFirstLeft--

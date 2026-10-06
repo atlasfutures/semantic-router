@@ -234,6 +234,30 @@ func TestPolicyResponsesRequestWritesNullInstructions(t *testing.T) {
 	}
 }
 
+// A Responses request's optional tools are written after the instructions,
+// byte for byte as held, and read back; a request without them is written
+// exactly as before (above).
+func TestPolicyResponsesRequestWritesItsTools(t *testing.T) {
+	tools := "[ {\"type\" : \"function\", \"name\":\"shell\", \"description\":\"run <cmd> & see\"} ]"
+	// MarshalJSON directly, as EncodePolicyDecisionRequest writes it:
+	// json.Marshal would compact and escape the method's output.
+	encoded, err := PolicyClientRequest{
+		Input: []json.RawMessage{json.RawMessage(`{"type":"message","role":"user","content":"hi"}`)},
+		Tools: json.RawMessage(tools),
+	}.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"input":[{"type":"message","role":"user","content":"hi"}],"instructions":null,"tools":` + tools + `}`
+	if string(encoded) != want {
+		t.Fatalf("encoded %s\nwant    %s", encoded, want)
+	}
+	var decoded PolicyClientRequest
+	if err := json.Unmarshal(encoded, &decoded); err != nil || string(decoded.Tools) != tools || len(decoded.Input) != 1 {
+		t.Fatalf("decoded %+v, %v", decoded, err)
+	}
+}
+
 // Published packages state encoding_profile.conversation (pathfinder's
 // "canonical_v1" projection) and may state harness_injections and rope; both
 // decoders read them, accept the value the contract defines for each, and

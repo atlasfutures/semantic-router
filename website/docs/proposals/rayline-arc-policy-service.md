@@ -209,7 +209,8 @@ VSR sends the client's request in the format the service projects:
 - **Responses** (`openai_responses`): `input` is the fully materialized item
   history, and `instructions` is the system prompt. The history is the stored
   history that `previous_response_id` resolves to, followed by this turn's
-  input.
+  input. The optional `tools` is this turn's top-level `tools`, exactly as
+  received, and is omitted when the client sent none.
 
 A turn's items must be a byte prefix of the next turn's, because the
 attribution ledger identifies its prefix by those bytes. So every item is
