@@ -859,8 +859,12 @@ func policyClientRequestOf(
 		if err != nil {
 			return raylinearc.PolicyClientRequest{}, nil, nil, err
 		}
+		tools, err := policyResponsesTools(arcContext.RawRequest)
+		if err != nil {
+			return raylinearc.PolicyClientRequest{}, nil, nil, err
+		}
 		return raylinearc.PolicyClientRequest{
-			Input: arcContext.PolicyInput, Instructions: arcContext.PolicyInstructions,
+			Input: arcContext.PolicyInput, Instructions: arcContext.PolicyInstructions, Tools: tools,
 		}, arcContext.PolicyInput, roles, nil
 	}
 	var body policyClientRequest
@@ -872,6 +876,27 @@ func policyClientRequestOf(
 		return raylinearc.PolicyClientRequest{}, nil, nil, err
 	}
 	return raylinearc.PolicyClientRequest{System: body.System, Tools: body.Tools, Messages: body.Messages}, messages, roles, nil
+}
+
+// policyResponsesTools is the top-level tools of a Responses body exactly as
+// the client sent them, or nil when it sent none. The body is this turn's
+// own: a previous_response_id turn resolves its earlier items from the
+// store, but its tools are the ones this request carries. The service needs
+// them to know the harness shell's tool-definition coverage.
+func policyResponsesTools(raw []byte) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var body struct {
+		Tools json.RawMessage `json:"tools"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, err
+	}
+	if len(body.Tools) == 0 || string(body.Tools) == "null" {
+		return nil, nil
+	}
+	return body.Tools, nil
 }
 
 // policyMessages splits the raw messages array without re-encoding any
