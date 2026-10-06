@@ -180,6 +180,11 @@ package as on v5. The decide request is unchanged: client bodies reach the
 service with their images, and Responses history from `previous_response_id`
 keeps its `input_image` parts.
 
+`encoding_profile.harness_shell` (v4, v5 and v6) is absent, which excludes
+the harness shell, or `include` or `include_v2` (tool rule v2,
+pathfinder#3653). VSR treats the value as opaque and the policy service
+applies the projection; any other value is refused.
+
 Readiness does not refuse a v6 binding to a text-only worker. An image turn
 leaves a worker off the offer only when its model card sets `vision: false`;
 an unmarked card counts as vision-capable, so a basket serving a v6 package
