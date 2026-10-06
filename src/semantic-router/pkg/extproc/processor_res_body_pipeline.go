@@ -61,7 +61,10 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	// A same-format body whose own stop field misstates its decoded stop (a
 	// Chat cut at the output limit labelled tool_calls) is re-encoded too, so
 	// the client is told the length stop rather than handed a call to run.
+	// A body stating a provider error is re-encoded so the client is told the
+	// error's public form, never the provider's own words.
 	rewriteClientBody := requiresClientResponseRewrite(ctx) || ctx.ResponseBodyReplaced ||
+		semanticResponse.Error != nil ||
 		protocolcodec.UpstreamBodyMisstatesStop(ctx.TargetFormat, *semanticResponse)
 	if rewriteClientBody {
 		clientBody, err = r.encodeClientResponse(*semanticResponse, ctx)

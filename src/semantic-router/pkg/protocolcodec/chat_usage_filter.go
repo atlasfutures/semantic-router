@@ -13,7 +13,8 @@ import (
 // choice whose native_finish_reason is a length reason ends with
 // finish_reason "length", whatever label the upstream gave it (OpenRouter
 // says "tool_calls" for a call cut at the limit, which a client would run).
-// It preserves every other JSON field, including provider extensions, and is
+// A provider error frame is restated in its public form. It preserves every
+// other JSON field, including provider extensions, and is
 // independent from neutral semantic decoding used for accounting.
 type ChatUsageStreamFilter struct {
 	framer          sseFramer
@@ -128,6 +129,13 @@ func filterChatUsageFrame(frame []byte, limit int, first, keepUsage bool) ([]byt
 	if err != nil {
 		return nil, false, true, false, err
 	}
+	// A provider error raised mid-stream reaches the client only in its
+	// public form.
+	publicError, err := publicChatStreamError(object)
+	if err != nil {
+		return nil, false, true, false, err
+	}
+	restated = restated || publicError
 	usage, hasUsage := object["usage"]
 	if !hasUsage || keepUsage {
 		if !restated {
