@@ -140,3 +140,13 @@ func TestRaylineARCPolicyPackageV5FixturesStillLoadBesideV6(t *testing.T) {
 		}
 	}
 }
+
+// A package manifest names its own fallback, so derived_hold_model beside
+// one is refused.
+func TestRaylineARCDerivedHoldModelIsRefusedWithAManifest(t *testing.T) {
+	cfg, decision := policyV5Decision(t, readPolicyV6Fixture(t))
+	decision.Algorithm.RaylineARC.PolicyService.DerivedHoldModel = "claude-opus-5"
+	if err := validatePolicyDispatch(cfg, decision); err == nil || !strings.Contains(err.Error(), "names its own fallback") {
+		t.Fatalf("err = %v", err)
+	}
+}

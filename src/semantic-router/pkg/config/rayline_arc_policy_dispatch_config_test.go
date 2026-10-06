@@ -316,3 +316,30 @@ func TestRaylineARCPolicyDispatchEffortModes(t *testing.T) {
 		}
 	}
 }
+
+// derived_hold_model names the cold-turn hold of a package without a
+// manifest: a model the bindings dispatch, never beside a manifest.
+func TestRaylineARCDerivedHoldModel(t *testing.T) {
+	base := func(hold string, bindings ...RaylineARCPolicyBinding) *RaylineARCPolicyServiceConfig {
+		return &RaylineARCPolicyServiceConfig{
+			BaseURL: "https://policy.example", TotalTimeoutSeconds: 5, PackageAlias: "a",
+			PackageSHA256: strings.Repeat("a", 64), DerivedHoldModel: hold, Bindings: bindings,
+		}
+	}
+	declared := policyTestBinding("arm-think", "none", policyTestThinkModel, nil, policyTestInt(4096), "")
+	undeclared := RaylineARCPolicyBinding{ActionID: strings.Repeat("b", 64), Worker: "w"}
+	for name, test := range map[string]struct {
+		cfg  *RaylineARCPolicyServiceConfig
+		want string
+	}{
+		"unset":                       {base("", declared), ""},
+		"a binding's declared model":  {base(policyTestThinkModel, declared), ""},
+		"the worker of an undeclared": {base("w", undeclared), ""},
+		"a model no binding serves":   {base("gpt-9", declared), "not a model the bindings dispatch"},
+	} {
+		err := validateRaylineARCDerivedHoldModel(test.cfg)
+		if test.want == "" && err != nil || test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)) {
+			t.Errorf("%s: err = %v, want %q", name, err, test.want)
+		}
+	}
+}

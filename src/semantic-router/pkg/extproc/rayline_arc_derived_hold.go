@@ -26,7 +26,9 @@ import (
 //     the episode's idle TTL (raylinearc.ServedWorkerStore);
 //   - the worker that last served its parent session, named by the trusted
 //     x-rayline-parent-session header;
-//   - the package's declared fallback action's model.
+//   - the package's declared fallback action's model, or, for a package
+//     served without a manifest (whose listing does not say), the cell's
+//     configured derived_hold_model.
 //
 // The router writes every record and the gateway owns the episode keys, so
 // a client cannot choose the held model. Nothing in the request body is read.
@@ -120,10 +122,8 @@ func derivedHoldOffer(
 			break
 		}
 	}
-	if !ok && scorer.fallbackActionID != "" {
-		if model := scorer.actionModel(scorer.fallbackActionID); model != "" {
-			hold, ok = derivedHold{source: derivedHoldPackageFallback, model: model}, true
-		}
+	if !ok && scorer.fallbackModel != "" {
+		hold, ok = derivedHold{source: scorer.fallbackSource, model: scorer.fallbackModel}, true
 	}
 	if !ok {
 		return derivedHold{}, false
@@ -142,6 +142,9 @@ const (
 	derivedHoldSessionRecord   = "session_record"
 	derivedHoldParentSession   = "parent_session"
 	derivedHoldPackageFallback = "package_fallback"
+	// derivedHoldConfigured is the configured derived_hold_model, for a
+	// package without a manifest.
+	derivedHoldConfigured = "configured_fallback"
 )
 
 func logRaylineARCDerivedHold(arcContext *selection.RaylineARCSelectionContext, hold derivedHold) {

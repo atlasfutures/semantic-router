@@ -79,10 +79,12 @@ type policyServiceScorer struct {
 	// episodeMode is the decide request's episode_mode: empty (strict) or
 	// relaxed.
 	episodeMode string
-	// fallbackActionID is the package's declared fallback action, the last
-	// source of a derived hold (rayline_arc_derived_hold.go); "" without a
-	// package manifest.
-	fallbackActionID string
+	// fallbackModel is the last source of a derived hold
+	// (rayline_arc_derived_hold.go): the model of the package manifest's
+	// fallback action, or, for a package without a manifest, the configured
+	// derived_hold_model; fallbackSource says which. Empty when neither.
+	fallbackModel  string
+	fallbackSource string
 	// sideStrictUntil (unix nanoseconds) is how long a strict cell sends its
 	// side calls strict after the service last showed it cannot serve them
 	// relaxed; zero or past means relaxed.
@@ -152,13 +154,12 @@ func newPolicyServiceScorer(
 	policy := decision.Algorithm.RaylineARC.PolicyService
 	generation := strconv.FormatUint(raylineARCScorerGeneration.Add(1), 10)
 	scorer := &policyServiceScorer{
-		fallback:         policy.FallbackEnabled(),
-		schedule:         policy.ModelSchedule,
-		busyWait:         time.Duration(decision.Algorithm.RaylineARC.Episode.AcquireTimeoutSeconds) * time.Second,
-		alias:            policy.PackageAlias,
-		sha256:           policy.PackageSHA256,
-		bindings:         make(map[string]policyBinding, len(policy.Bindings)),
-		fallbackActionID: policy.PackageFallbackActionID(),
+		fallback: policy.FallbackEnabled(),
+		schedule: policy.ModelSchedule,
+		busyWait: time.Duration(decision.Algorithm.RaylineARC.Episode.AcquireTimeoutSeconds) * time.Second,
+		alias:    policy.PackageAlias,
+		sha256:   policy.PackageSHA256,
+		bindings: make(map[string]policyBinding, len(policy.Bindings)),
 	}
 	if decision.Algorithm.RaylineARC.Episode.RelaxedConsistency() {
 		scorer.episodeMode = raylinearc.PolicyEpisodeModeRelaxed
@@ -186,6 +187,11 @@ func newPolicyServiceScorer(
 		}
 		scorer.bindings[binding.ActionID] = policyBinding{arm: index[binding.Worker], level: level, model: model}
 		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
+	}
+	if fallback := policy.PackageFallbackActionID(); fallback != "" {
+		scorer.fallbackModel, scorer.fallbackSource = scorer.actionModel(fallback), derivedHoldPackageFallback
+	} else if policy.DerivedHoldModel != "" {
+		scorer.fallbackModel, scorer.fallbackSource = policy.DerivedHoldModel, derivedHoldConfigured
 	}
 	return scorer
 }

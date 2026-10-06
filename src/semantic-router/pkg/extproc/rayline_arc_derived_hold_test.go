@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -16,6 +17,7 @@ import (
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -320,5 +322,75 @@ func TestServedWorkerReadIsBounded(t *testing.T) {
 	served := readServedWorkers(context.Background(), stalledServedStore{}, keys)
 	if elapsed := time.Since(started); elapsed > servedWorkerReadTimeout+250*time.Millisecond || len(served) != 0 {
 		t.Fatalf("read took %v and returned %v", elapsed, served)
+	}
+}
+
+// v4ColdRouter is the relaxed policy cell serving a v4 package (bindings
+// declare their dispatch, no package_manifest), with derivedHold as its
+// derived_hold_model when set, behind a two-stage service that refuses a
+// cold turn whose offer spans more than one model.
+func v4ColdRouter(t *testing.T, derivedHold string) (*OpenAIRouter, *fakePolicyService, map[string]config.RaylineARCPolicyBinding) {
+	t.Helper()
+	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
+	actions := relaxedPolicyActions()
+	fake := newRelaxedPolicyFake(t)
+	path := writeConsistentPolicyConfig(t, fake.URL(), "strict")
+	if derivedHold != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		const anchor = "            bindings:\n"
+		if !strings.Contains(string(raw), anchor) {
+			t.Fatal("the policy config no longer carries its bindings anchor")
+		}
+		edited := strings.Replace(string(raw), anchor, "            derived_hold_model: "+derivedHold+"\n"+anchor, 1)
+		if err := os.WriteFile(path, []byte(edited), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	router, err := NewOpenAIRouter(path)
+	if err != nil {
+		t.Fatalf("build router: %v", err)
+	}
+	awaitPolicySelectorArmed(t, router)
+	models := map[string]string{}
+	for _, action := range actions {
+		models[action.ActionID] = action.Model
+	}
+	fake.refuseCold = func(request raylinearc.PolicyDecisionRequest) bool {
+		offered := map[string]bool{}
+		for _, action := range request.Selection.AvailableActionIDs {
+			offered[models[action]] = true
+		}
+		return len(offered) > 1 && len(request.Attribution) == 0
+	}
+	fake.chooseWith(chooseFirstOffered)
+	return router, fake, actions
+}
+
+// A v4 package has no manifest, and the service's package listing does not
+// name its fallback, so a cold turn with no record is held on the cell's
+// configured derived_hold_model.
+func TestDerivedHoldUsesTheConfiguredModelForAManifestlessPackage(t *testing.T) {
+	router, fake, actions := v4ColdRouter(t, "off-trained")
+	model, status := heldTurnStatus(t, router, "episode-v4-cold", resumedHistory)
+	if status != 200 || model != "vendor/off" {
+		t.Fatalf("dispatched %q (status %d), want the configured off-trained", model, status)
+	}
+	calls := fake.received()
+	if len(calls) != 2 || !slices.Equal(calls[1].Selection.AvailableActionIDs, []string{actions["off"].ActionID}) {
+		t.Fatalf("decide calls = %d, retry offer %v", len(calls), calls[len(calls)-1].Selection.AvailableActionIDs)
+	}
+}
+
+// Without it, a manifest-less package has no fallback: the refusal stands.
+func TestDerivedHoldWithoutAFallbackLeavesTheRefusal(t *testing.T) {
+	router, fake, _ := v4ColdRouter(t, "")
+	if _, status := heldTurnStatus(t, router, "episode-v4-none", resumedHistory); status != 503 {
+		t.Fatalf("status %d, want 503", status)
+	}
+	if calls := fake.received(); len(calls) != 1 {
+		t.Fatalf("decide calls = %d, want one", len(calls))
 	}
 }
