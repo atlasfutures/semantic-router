@@ -623,25 +623,28 @@ document from them -- the smallest context window, the cheapest and dearest
 rate, whether every selectable candidate takes a tool -- and addresses it by
 the alias.
 
-Every value is read off the loaded config and nothing else. On an ARC cell,
-whose one decision is the arm set, the list is in artifact order, which is
-the arm ordinal, and `model` names the arm the way a route's `worker` does.
+Every value is read off the loaded config and nothing else. The list is
+everything the alias may resolve to, each distinct model and thinking mode
+once: a decision's model refs in declared order, a route action's
+destination ahead of its decision's refs, the models an algorithm executes
+beside its refs after them, and the router's `default_model` last, since an
+unmatched request resolves to it. On an ARC cell, whose one decision is the
+arm set, that is the arms in artifact order, so the array position is the arm
+ordinal, followed by the default model only when it is not itself an arm;
+the deployed cells name arm 0 as the default, so the list is exactly the arm
+set. `model` names the arm the way a route's `worker` does, and
 `provider_model` is the id it dispatches as. A model ref that names a LoRA
 adapter is listed as the adapter, with the card it is served under as
-`base_model`. On the stock router an alias may resolve through several
-decisions, chosen per request by their rules; the list holds each distinct
-model and thinking mode once, in the order the decisions first declare them,
-a route action's destination ahead of its decision's refs and the router's
-`default_model` last, since an unmatched request resolves to it. Which
-decision picks which is a per-turn fact the route lookup reports.
+`base_model`. Which decision picks which candidate is a per-turn fact the
+route lookup reports.
 `thinking.mode` is the decision's `use_reasoning` for that arm. `vision` is the
 card's verdict, which is capable when the card is silent; `tools` is the
 card's positive `tools` claim, which an unmarked card does not make.
 `context_window` and `max_output_tokens` are the card's `context_window_size`
 and `max_output_tokens`, null where the card declares none. `pricing` is the
 card's rate card in the route lookup's spelling, and `disabled` is the card's
-out-of-service flag: a disabled arm is listed, so the set and the artifact
-stay the same length, and marked, so the gateway leaves it out of what it
+out-of-service flag: a disabled arm is listed, so the arms keep their
+artifact ordinals, and marked, so the gateway leaves it out of what it
 derives.
 
 The list is not ARC's. Every virtual id on every router carries its
