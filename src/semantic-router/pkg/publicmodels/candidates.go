@@ -9,8 +9,7 @@ import (
 
 // RoutingCandidate is one model a virtual id may resolve to, with its
 // card's facts: a decision's model refs, a route action's destination, and
-// the router's default_model, which an auto or entrypoint request resolves
-// to when no decision matches.
+// the models an algorithm executes beside its refs.
 //
 // A virtual id is the only thing a caller may send, and what stands behind
 // it is otherwise invisible: a gateway that fronts the router as one model
@@ -68,22 +67,17 @@ type CandidatePricing struct {
 }
 
 // routingCandidatesOf lists a recipe's candidates, decision by decision in
-// declared order, then the model an auto or entrypoint request resolves to
-// when no decision matches or the matched one has no usable ref, which is
-// the router's default_model. That fallback is reached whenever the router
-// routes at all -- a recipe with no decisions of its own still resolves an
-// unmatched request to it when another recipe declares some -- so it is
-// listed whenever any recipe has a decision. Nil on a router with none, so
-// an alias with nothing behind it carries no empty array.
+// declared order, or nil when the recipe declares none, so an alias with
+// nothing behind it carries no empty array. The router's default_model,
+// which an unmatched request falls back to, is deliberately not listed: on
+// an ARC cell the one decision matches every turn and the fallback is never
+// reached, and a gateway deriving a document from this list would otherwise
+// fold in a model no turn is routed to.
 func routingCandidatesOf(cfg *config.RouterConfig, recipe *config.RoutingRecipe) []RoutingCandidate {
-	if cfg == nil || recipe == nil || !cfg.HasRoutingDecisions() {
+	if cfg == nil || recipe == nil {
 		return nil
 	}
-	candidates := routingCandidatesOfDecisions(cfg, recipe.Profile.Decisions)
-	if fallback := strings.TrimSpace(cfg.DefaultModel); fallback != "" {
-		candidates = appendDistinctCandidate(cfg, candidates, config.ModelRef{Model: fallback})
-	}
-	return candidates
+	return routingCandidatesOfDecisions(cfg, recipe.Profile.Decisions)
 }
 
 // routingCandidatesForAlgorithm lists the candidates of every default-profile

@@ -624,15 +624,14 @@ rate, whether every selectable candidate takes a tool -- and addresses it by
 the alias.
 
 Every value is read off the loaded config and nothing else. The list is
-everything the alias may resolve to, each distinct model and thinking mode
-once: a decision's model refs in declared order, a route action's
-destination ahead of its decision's refs, the models an algorithm executes
-beside its refs after them, and the router's `default_model` last, since an
-unmatched request resolves to it. On an ARC cell, whose one decision is the
-arm set, that is the arms in artifact order, so the array position is the arm
-ordinal, followed by the default model only when it is not itself an arm;
-the deployed cells name arm 0 as the default, so the list is exactly the arm
-set. `model` names the arm the way a route's `worker` does, and
+what the alias's decisions may resolve to, each distinct model and thinking
+mode once: a decision's model refs in declared order, a route action's
+destination ahead of its decision's refs, and the models an algorithm
+executes beside its refs after them. The router's `default_model`, the
+fallback for a request no decision matches, is not listed: on an ARC cell the
+one decision matches every turn, so the fallback is never reached. On an ARC
+cell the list is therefore the arms in artifact order, and the array position
+is the arm ordinal. `model` names the arm the way a route's `worker` does, and
 `provider_model` is the id it dispatches as. A model ref that names a LoRA
 adapter is listed as the adapter, with the card it is served under as
 `base_model`. Which decision picks which candidate is a per-turn fact the

@@ -487,11 +487,11 @@ func TestFusionAndFlowAliasesListTheirOwnAlgorithmsCandidates(t *testing.T) {
 	}
 }
 
-// What an alias resolves to is not only the decisions' refs: a route action
-// goes straight to its destination, and an auto or entrypoint request that
-// matches no decision goes to default_model. Both are listed, the destination
-// ahead of its decision's refs and the default last, each once.
-func TestCandidatesIncludeRouteActionDestinationsAndTheDefaultModel(t *testing.T) {
+// A route action resolves straight to its destination, so the destination
+// is listed ahead of its decision's refs. The router's default_model, the
+// fallback for an unmatched request, is not listed: on an ARC cell the one
+// decision matches every turn, so the fallback is never reached.
+func TestCandidatesIncludeRouteActionDestinationsButNotTheDefaultModel(t *testing.T) {
 	cfg := &config.RouterConfig{
 		RouterOptions: config.RouterOptions{AutoModelNames: []string{"router/auto"}},
 		IntelligentRouting: config.IntelligentRouting{Decisions: []config.Decision{
@@ -499,8 +499,8 @@ func TestCandidatesIncludeRouteActionDestinationsAndTheDefaultModel(t *testing.T
 			{Name: "plain", ModelRefs: []config.ModelRef{{Model: "strong"}}},
 		}},
 		BackendModels: config.BackendModels{
-			DefaultModel: "cheap",
-			ModelConfig:  map[string]config.ModelParams{"safe": {}, "cheap": {}, "strong": {}},
+			DefaultModel: "fallback",
+			ModelConfig:  map[string]config.ModelParams{"safe": {}, "cheap": {}, "strong": {}, "fallback": {}},
 		},
 	}
 	listing := marshalListing(t, NewOpenAIModelList(cfg, 123))
@@ -509,36 +509,30 @@ func TestCandidatesIncludeRouteActionDestinationsAndTheDefaultModel(t *testing.T
 		got = append(got, raw.(map[string]interface{})["model"].(string))
 	}
 	if want := []string{"safe", "cheap", "strong"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("candidates = %v, want %v: the destination first, the default once", got, want)
+		t.Fatalf("candidates = %v, want %v: the destination first and no default model", got, want)
 	}
 }
 
-// The default model is where routing falls back, so it is listed wherever
-// the router routes at all: on a router with no decision anywhere nothing is
-// listed, and on one whose default recipe is empty while a named recipe
-// routes, the auto alias still resolves unmatched requests to the default and
-// lists it.
-func TestDefaultModelIsListedWhereverTheRouterRoutes(t *testing.T) {
-	none := &config.RouterConfig{
-		RouterOptions: config.RouterOptions{AutoModelNames: []string{"router/auto"}},
-		BackendModels: config.BackendModels{DefaultModel: "cheap", ModelConfig: map[string]config.ModelParams{"cheap": {}}},
-	}
-	listing := marshalListing(t, NewOpenAIModelList(none, 123))
-	if _, present := modelEntry(t, listing, "router/auto")["routing"].(map[string]interface{})["candidates"]; present {
-		t.Fatal("candidates are published on a router with no decision anywhere")
-	}
-	elsewhere := &config.RouterConfig{
-		RouterOptions: config.RouterOptions{AutoModelNames: []string{"router/auto"}},
-		Recipes: []config.RoutingRecipe{
-			{Name: "default"},
-			{Name: "named", Profile: config.RoutingProfile{Decisions: []config.Decision{{Name: "d", ModelRefs: []config.ModelRef{{Model: "strong"}}}}}},
+// An alias with no decisions behind it lists nothing, default model or not.
+func TestDefaultModelIsNeverListed(t *testing.T) {
+	for name, cfg := range map[string]*config.RouterConfig{
+		"no decision anywhere": {
+			RouterOptions: config.RouterOptions{AutoModelNames: []string{"router/auto"}},
+			BackendModels: config.BackendModels{DefaultModel: "cheap", ModelConfig: map[string]config.ModelParams{"cheap": {}}},
 		},
-		BackendModels: config.BackendModels{DefaultModel: "cheap", ModelConfig: map[string]config.ModelParams{"cheap": {}, "strong": {}}},
-	}
-	listing = marshalListing(t, NewOpenAIModelList(elsewhere, 123))
-	candidates := modelEntry(t, listing, "router/auto")["routing"].(map[string]interface{})["candidates"].([]interface{})
-	if len(candidates) != 1 || candidates[0].(map[string]interface{})["model"] != "cheap" {
-		t.Fatalf("router/auto candidates = %v, want the default model alone", candidates)
+		"decisions in another recipe": {
+			RouterOptions: config.RouterOptions{AutoModelNames: []string{"router/auto"}},
+			Recipes: []config.RoutingRecipe{
+				{Name: "default"},
+				{Name: "named", Profile: config.RoutingProfile{Decisions: []config.Decision{{Name: "d", ModelRefs: []config.ModelRef{{Model: "strong"}}}}}},
+			},
+			BackendModels: config.BackendModels{DefaultModel: "cheap", ModelConfig: map[string]config.ModelParams{"cheap": {}, "strong": {}}},
+		},
+	} {
+		listing := marshalListing(t, NewOpenAIModelList(cfg, 123))
+		if _, present := modelEntry(t, listing, "router/auto")["routing"].(map[string]interface{})["candidates"]; present {
+			t.Fatalf("%s: candidates are published for an alias with no decision behind it", name)
+		}
 	}
 }
 
