@@ -22,9 +22,9 @@ import (
 // this way, so their decisions are untouched.
 //
 // The model is derived from, in order:
-//   - the worker that last served this episode, which the store keeps past
-//     the episode's idle TTL (raylinearc.ServedWorkerStore);
-//   - the worker that last served its parent session, named by the trusted
+//   - the model that last served this episode, which the store keeps past
+//     the episode's idle TTL (raylinearc.ServedModelStore);
+//   - the model that last served its parent session, named by the trusted
 //     x-rayline-parent-session header;
 //   - the package's declared fallback action's model, or, for a package
 //     served without a manifest (whose listing does not say), the cell's
@@ -33,19 +33,19 @@ import (
 // The router writes every record and the gateway owns the episode keys, so
 // a client cannot choose the held model. Nothing in the request body is read.
 
-// servedWorkerReadTimeout bounds the store reads a turn without episode
+// servedModelReadTimeout bounds the store reads a turn without episode
 // memory makes; a slow store leaves the derivation to the package fallback.
-const servedWorkerReadTimeout = 500 * time.Millisecond
+const servedModelReadTimeout = 500 * time.Millisecond
 
-// raylineARCServedWorkers reads the remembered serving workers of an episode
+// raylineARCServedModels reads the remembered serving models of an episode
 // with no previous arm: its own record, then its parent session's when the
 // gateway's turn-signal headers are trusted.
-func (r *OpenAIRouter) raylineARCServedWorkers(
+func (r *OpenAIRouter) raylineARCServedModels(
 	reqCtx *RequestContext,
 	episodeIDHash string,
 	signalHeaders map[string]string,
-) []selection.RaylineARCServedWorker {
-	store, ok := r.raylineARCEpisodeStoreFor(reqCtx).(raylinearc.ServedWorkerStore)
+) []selection.RaylineARCServedModel {
+	store, ok := r.raylineARCEpisodeStoreFor(reqCtx).(raylinearc.ServedModelStore)
 	if !ok {
 		return nil
 	}
@@ -53,36 +53,41 @@ func (r *OpenAIRouter) raylineARCServedWorkers(
 	if parent == nil {
 		parent = context.Background()
 	}
-	keys := []selection.RaylineARCServedWorker{{Source: derivedHoldSessionRecord, Worker: episodeIDHash}}
+	keys := []servedModelKey{{source: derivedHoldSessionRecord, episodeIDHash: episodeIDHash}}
 	if session := strings.TrimSpace(signalHeaders[raylineARCParentSessionHeader]); session != "" {
-		keys = append(keys, selection.RaylineARCServedWorker{
-			Source: derivedHoldParentSession, Worker: raylinearc.HashEpisodeID(session),
-		})
+		keys = append(keys, servedModelKey{source: derivedHoldParentSession, episodeIDHash: raylinearc.HashEpisodeID(session)})
 	}
-	return readServedWorkers(parent, store, keys)
+	return readServedModels(parent, store, keys)
 }
 
-// readServedWorkers reads each key's record, within servedWorkerReadTimeout
+// readServedModels reads each key's record, within servedModelReadTimeout
 // in all: a slow or stalled store costs the turn at most that, and leaves the
 // derivation to the package fallback.
-func readServedWorkers(
+// servedModelKey is one episode whose record a turn reads, and the source it
+// stands for.
+type servedModelKey struct {
+	source        string
+	episodeIDHash string
+}
+
+func readServedModels(
 	parent context.Context,
-	store raylinearc.ServedWorkerStore,
-	keys []selection.RaylineARCServedWorker,
-) []selection.RaylineARCServedWorker {
-	ctx, cancel := context.WithTimeout(parent, servedWorkerReadTimeout)
+	store raylinearc.ServedModelStore,
+	keys []servedModelKey,
+) []selection.RaylineARCServedModel {
+	ctx, cancel := context.WithTimeout(parent, servedModelReadTimeout)
 	defer cancel()
-	var served []selection.RaylineARCServedWorker
+	var served []selection.RaylineARCServedModel
 	for _, key := range keys {
-		worker, err := store.LastServedWorker(ctx, key.Worker)
+		model, err := store.LastServedModel(ctx, key.episodeIDHash)
 		if err != nil {
-			logging.ComponentWarnEvent("extproc", "rayline_arc_served_worker_read_failed", map[string]interface{}{
-				"source": key.Source,
+			logging.ComponentWarnEvent("extproc", "rayline_arc_served_model_read_failed", map[string]interface{}{
+				"source": key.source,
 			})
 			continue
 		}
-		if worker != "" {
-			served = append(served, selection.RaylineARCServedWorker{Source: key.Source, Worker: worker})
+		if model != "" {
+			served = append(served, selection.RaylineARCServedModel{Source: key.source, Model: model})
 		}
 	}
 	return served
@@ -99,7 +104,7 @@ type derivedHold struct {
 }
 
 // derivedHoldOffer derives the held model from the first source that names
-// one the cell binds: a record naming a worker this cell does not serve says
+// one the cell binds: a record naming a model this cell does not serve says
 // nothing and is passed over. The hold is that model whatever the turn
 // excludes: a held model this turn excludes (vision, capability, an
 // operator's disable, a fallback exclusion) is not swapped for another, so
@@ -111,14 +116,9 @@ func derivedHoldOffer(
 	arcContext *selection.RaylineARCSelectionContext,
 	available []string,
 ) (hold derivedHold, ok bool) {
-	for _, served := range arcContext.ServedWorkers {
-		for arm, worker := range scorer.workerIDs {
-			if worker == served.Worker && scorer.armModel(arm) != "" {
-				hold, ok = derivedHold{source: served.Source, model: scorer.armModel(arm)}, true
-				break
-			}
-		}
-		if ok {
+	for _, served := range arcContext.ServedModels {
+		if model := scorer.servedModelOf(served.Model); model != "" {
+			hold, ok = derivedHold{source: served.Source, model: model}, true
 			break
 		}
 	}
@@ -156,10 +156,29 @@ func logRaylineARCDerivedHold(arcContext *selection.RaylineARCSelectionContext, 
 	})
 }
 
-// markServedWorker stages the worker a policy-service main turn dispatches
-// to; the turn's episode commit records it.
-func (transaction *raylineARCEpisodeTransaction) markServedWorker(worker string) {
+// markServedModel stages the model a policy-service main turn dispatches --
+// the selected action's model, not its worker, which may serve several;
+// the turn's episode commit records it.
+func (transaction *raylineARCEpisodeTransaction) markServedModel(model string) {
 	if transaction != nil {
-		transaction.servedWorker = worker
+		transaction.servedModel = model
 	}
+}
+
+// servedModelOf is the model a record names, as the cell binds it: the
+// model itself when an action dispatches it, or -- a record written before
+// records named models -- a worker's model, mapped as armModel maps it. ""
+// when the cell binds neither, so the record says nothing here.
+func (scorer *policyServiceScorer) servedModelOf(recorded string) string {
+	for _, actionID := range scorer.actionOrder {
+		if scorer.actionModel(actionID) == recorded {
+			return recorded
+		}
+	}
+	for arm, worker := range scorer.workerIDs {
+		if worker == recorded {
+			return scorer.armModel(arm)
+		}
+	}
+	return ""
 }

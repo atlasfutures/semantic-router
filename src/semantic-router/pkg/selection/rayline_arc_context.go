@@ -38,12 +38,12 @@ type RaylineARCSelectionContext struct {
 	// provider request does: an arm that rejects image input answers 404 and
 	// not a degraded completion.
 	ImageBearing bool
-	// ServedWorkers are the workers that last served this conversation as
+	// ServedModels are the models that last served this conversation as
 	// the episode store remembers them past the episode (its own record,
 	// then its parent session's), read only when the episode holds no
 	// previous arm. They name a held model for a two-stage policy package's
 	// stage_one_held_unknown refusal; nil otherwise.
-	ServedWorkers []RaylineARCServedWorker
+	ServedModels []RaylineARCServedModel
 	// NonVisionArms marks, by arm ordinal, the candidates whose model card
 	// declares no image input. It is indexed like CandidateModels and is nil
 	// when every arm is vision-capable, which is the unmarked default.
@@ -169,9 +169,9 @@ type RaylineARCTrace struct {
 	TurnIndex uint64
 }
 
-// RaylineARCServedWorker is one remembered serving worker and where the
+// RaylineARCServedModel is one remembered serving model and where the
 // record came from: "session_record" or "parent_session".
-type RaylineARCServedWorker struct {
+type RaylineARCServedModel struct {
 	Source string
-	Worker string
+	Model  string
 }

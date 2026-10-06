@@ -239,8 +239,8 @@ func (store *RedisEpisodeStore) Commit(
 		expectedVersion,
 		payload,
 		store.idleTTL.Milliseconds(),
-		state.ServedWorker,
-		ServedWorkerTTL.Milliseconds(),
+		state.ServedModel,
+		ServedModelTTL.Milliseconds(),
 	).Int()
 	if err != nil {
 		return boundedRedisEpisodeError("commit", err)
@@ -522,8 +522,8 @@ func (store *RedisEpisodeStore) CommitIfUnchanged(
 		payload,
 		store.idleTTL.Milliseconds(),
 		read.tag,
-		state.ServedWorker,
-		ServedWorkerTTL.Milliseconds(),
+		state.ServedModel,
+		ServedModelTTL.Milliseconds(),
 	).Int()
 	if err != nil {
 		return boundedRedisEpisodeError("relaxed_commit", err)

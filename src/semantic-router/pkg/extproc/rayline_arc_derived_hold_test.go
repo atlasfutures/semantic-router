@@ -19,7 +19,6 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
-	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -62,7 +61,15 @@ func refuseColdTwoStage(request raylinearc.PolicyDecisionRequest) bool {
 // returns the provider-bound model, or the refusal's status.
 func heldTurnStatus(t *testing.T, router *OpenAIRouter, episode, client string, extra ...*core.HeaderValue) (model string, status int) {
 	t.Helper()
-	ctx := &RequestContext{
+	model, status, _ = heldTurn(t, router, episode, client, extra...)
+	return model, status
+}
+
+// heldTurn is heldTurnStatus with the request's context, for a caller that
+// goes on to commit the turn.
+func heldTurn(t *testing.T, router *OpenAIRouter, episode, client string, extra ...*core.HeaderValue) (model string, status int, ctx *RequestContext) {
+	t.Helper()
+	ctx = &RequestContext{
 		Headers: map[string]string{}, RequestID: fmt.Sprintf("hold-%s-%d", episode, time.Now().UnixNano()),
 		StartTime: time.Now(), TraceContext: context.Background(),
 	}
@@ -85,7 +92,7 @@ func heldTurnStatus(t *testing.T, router *OpenAIRouter, episode, client string, 
 		t.Fatalf("request body: %v", err)
 	}
 	if immediate := response.GetImmediateResponse(); immediate != nil {
-		return "", int(immediate.GetStatus().GetCode())
+		return "", int(immediate.GetStatus().GetCode()), ctx
 	}
 	var body struct {
 		Model string `json:"model"`
@@ -93,12 +100,12 @@ func heldTurnStatus(t *testing.T, router *OpenAIRouter, episode, client string, 
 	if err := json.Unmarshal(response.GetRequestBody().GetResponse().GetBodyMutation().GetBody(), &body); err != nil {
 		t.Fatal(err)
 	}
-	return body.Model, 200
+	return body.Model, 200, ctx
 }
 
-func servedStore(t *testing.T, router *OpenAIRouter) raylinearc.ServedWorkerStore {
+func servedStore(t *testing.T, router *OpenAIRouter) raylinearc.ServedModelStore {
 	t.Helper()
-	store, ok := router.raylineARCEpisodeStoreFor(&RequestContext{}).(raylinearc.ServedWorkerStore)
+	store, ok := router.raylineARCEpisodeStoreFor(&RequestContext{}).(raylinearc.ServedModelStore)
 	if !ok {
 		t.Fatal("the episode store keeps no served-worker records")
 	}
@@ -110,31 +117,95 @@ func chooseFirstOffered(request raylinearc.PolicyDecisionRequest) string {
 	return request.Selection.AvailableActionIDs[0]
 }
 
-// A committed turn records its worker past the episode, and a resumed
-// conversation whose episode is gone is held on that worker's model when a
+// A committed turn records its action's model past the episode, and a
+// resumed conversation whose episode is gone is held on that model when a
 // two-stage package refuses it cold.
-func TestDerivedHoldUsesTheLastServedWorker(t *testing.T) {
+func TestDerivedHoldUsesTheLastServedModel(t *testing.T) {
 	router, fake := v5Router(t, "openai")
 	v5Turn(t, router, fake, v5GLMUp, "episode-served", `{"model":"auto","max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}`)
 	store := servedStore(t, router)
-	worker, err := store.LastServedWorker(context.Background(), raylinearc.HashEpisodeID("episode-served"))
-	if err != nil || worker != "glm" {
-		t.Fatalf("recorded worker = %q, %v; want glm", worker, err)
+	recorded, err := store.LastServedModel(context.Background(), raylinearc.HashEpisodeID("episode-served"))
+	if err != nil || recorded != "glm-5.3-flash" {
+		t.Fatalf("recorded %q, %v; want the action's model glm-5.3-flash", recorded, err)
 	}
 
 	// The record outlives the episode: a cooled episode has none of its own
 	// state, only this.
-	seedServed(t, router, "episode-cooled", "glm")
-	fake.refuseCold = refuseColdTwoStage
+	for name, record := range map[string]string{
+		"model record":                   recorded,
+		"worker record from before this": "glm",
+	} {
+		t.Run(name, func(t *testing.T) {
+			episode := "episode-cooled-" + strings.ReplaceAll(name, " ", "-")
+			seedServed(t, router, episode, record)
+			fake.refuseCold = refuseColdTwoStage
+			fake.chooseWith(chooseFirstOffered)
+			before := len(fake.received())
+			model, status := heldTurnStatus(t, router, episode, resumedHistory)
+			if status != 200 || model != "z-ai/glm-5.3-flash" {
+				t.Fatalf("dispatched %q (status %d), want the held GLM", model, status)
+			}
+			calls := fake.received()[before:]
+			if len(calls) != 2 || !slices.Equal(calls[1].Selection.AvailableActionIDs, []string{v5GLMNone, v5GLMUp}) {
+				t.Fatalf("decide calls = %d, retry offer %v", len(calls), calls[len(calls)-1].Selection.AvailableActionIDs)
+			}
+		})
+	}
+}
+
+// A manifest-less package may bind two trained models to one worker. The
+// record names the model that served, not the worker, so a cold resume holds
+// that model -- not the worker's first bound one.
+func TestDerivedHoldHoldsTheServedModelOfAWorkerWithTwo(t *testing.T) {
+	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
+	actions := relaxedPolicyActions()
+	actions["off-b"] = policyAction("off", "none", "off-b-trained", policyTestEffort("none"), nil, "")
+	catalog := make([]string, 0, len(actions))
+	models := map[string]string{}
+	for _, action := range actions {
+		catalog = append(catalog, action.ActionID)
+		models[action.ActionID] = action.Model
+	}
+	fake := newFakePolicyService(t, policyTestAlias, policyTestPackage, catalog)
+	router, err := NewOpenAIRouter(writePolicyDispatchConfig(t, fake.URL(), actions))
+	if err != nil {
+		t.Fatalf("build router: %v", err)
+	}
+	awaitPolicySelectorArmed(t, router)
+	second := actions["off-b"].ActionID
+
+	// The served turn chooses the worker's second model.
+	fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return second })
+	model, status, ctx := heldTurn(t, router, "episode-two-models", `{"model":"auto","max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}`)
+	if status != 200 || model != "vendor/off" {
+		t.Fatalf("served %q (status %d)", model, status)
+	}
+	if _, commitErr := router.handleResponseHeaders(arcResponseHeaders("200"), ctx); commitErr != nil {
+		t.Fatalf("commit: %v", commitErr)
+	}
+	completeTestResponse(t, ctx)
+	finalizeSelectionProcessTerminal(ctx)
+	recorded, err := servedStore(t, router).LastServedModel(context.Background(), raylinearc.HashEpisodeID("episode-two-models"))
+	if err != nil || recorded != "off-b-trained" {
+		t.Fatalf("recorded %q, %v; want the served off-b-trained", recorded, err)
+	}
+
+	seedServed(t, router, "episode-two-models-cold", recorded)
+	fake.refuseCold = func(request raylinearc.PolicyDecisionRequest) bool {
+		offered := map[string]bool{}
+		for _, action := range request.Selection.AvailableActionIDs {
+			offered[models[action]] = true
+		}
+		return len(offered) > 1 && len(request.Attribution) == 0
+	}
 	fake.chooseWith(chooseFirstOffered)
 	before := len(fake.received())
-	model, status := heldTurnStatus(t, router, "episode-cooled", resumedHistory)
-	if status != 200 || model != "z-ai/glm-5.3-flash" {
-		t.Fatalf("dispatched %q (status %d), want the held GLM", model, status)
+	if _, status := heldTurnStatus(t, router, "episode-two-models-cold", resumedHistory); status != 200 {
+		t.Fatalf("status %d", status)
 	}
 	calls := fake.received()[before:]
-	if len(calls) != 2 || !slices.Equal(calls[1].Selection.AvailableActionIDs, []string{v5GLMNone, v5GLMUp}) {
-		t.Fatalf("decide calls = %d, retry offer %v", len(calls), calls[len(calls)-1].Selection.AvailableActionIDs)
+	if len(calls) != 2 || !slices.Equal(calls[1].Selection.AvailableActionIDs, []string{second}) {
+		t.Fatalf("decide calls = %d, retry offer %v; want only the served model's action", len(calls), calls[len(calls)-1].Selection.AvailableActionIDs)
 	}
 }
 
@@ -253,7 +324,7 @@ func seedServed(t *testing.T, router *OpenAIRouter, episode, worker string) {
 	if !ok {
 		t.Fatalf("episode store %T is not the memory store", store)
 	}
-	if err := memory.SeedServedWorker(raylinearc.HashEpisodeID(episode), worker); err != nil {
+	if err := memory.SeedServedModel(raylinearc.HashEpisodeID(episode), worker); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -269,15 +340,15 @@ func (store *countingEpisodeStore) Commit(ctx context.Context, lease raylinearc.
 	return store.MemoryEpisodeStore.Commit(ctx, lease, version, state)
 }
 
-func (store *countingEpisodeStore) LastServedWorker(ctx context.Context, episodeIDHash string) (string, error) {
+func (store *countingEpisodeStore) LastServedModel(ctx context.Context, episodeIDHash string) (string, error) {
 	store.calls.Add(1)
-	return store.MemoryEpisodeStore.LastServedWorker(ctx, episodeIDHash)
+	return store.MemoryEpisodeStore.LastServedModel(ctx, episodeIDHash)
 }
 
 // A turn's commit records its served worker in the commit itself: one store
 // call, after which the record is there. Nothing else is written on the
 // response path, so a record cannot hold a commit up.
-func TestCommitRecordsTheServedWorkerInOneStoreCall(t *testing.T) {
+func TestCommitRecordsTheServedModelInOneStoreCall(t *testing.T) {
 	memory, err := raylinearc.NewMemoryEpisodeStore(raylinearc.MemoryEpisodeStoreConfig{MaxEpisodes: 4, IdleTTL: time.Minute})
 	if err != nil {
 		t.Fatal(err)
@@ -290,14 +361,14 @@ func TestCommitRecordsTheServedWorkerInOneStoreCall(t *testing.T) {
 	}
 	transaction := newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil)
 	transaction.markSelection(0, 10)
-	transaction.markServedWorker("glm")
+	transaction.markServedModel("glm")
 	if err := transaction.commit(context.Background(), &RequestContext{}); err != nil {
 		t.Fatal(err)
 	}
 	if calls := store.calls.Load(); calls != 1 {
 		t.Fatalf("the commit made %d store calls, want one", calls)
 	}
-	if worker, _ := memory.LastServedWorker(context.Background(), episode); worker != "glm" {
+	if worker, _ := memory.LastServedModel(context.Background(), episode); worker != "glm" {
 		t.Fatalf("record %q after the commit", worker)
 	}
 }
@@ -306,21 +377,21 @@ func TestCommitRecordsTheServedWorkerInOneStoreCall(t *testing.T) {
 // ends.
 type stalledServedStore struct{}
 
-func (stalledServedStore) LastServedWorker(ctx context.Context, _ string) (string, error) {
+func (stalledServedStore) LastServedModel(ctx context.Context, _ string) (string, error) {
 	<-ctx.Done()
 	return "", ctx.Err()
 }
 
 // A stalled store costs a turn's served-worker read at most
-// servedWorkerReadTimeout, after which the derivation falls to the package.
-func TestServedWorkerReadIsBounded(t *testing.T) {
-	keys := []selection.RaylineARCServedWorker{
-		{Source: derivedHoldSessionRecord, Worker: raylinearc.HashEpisodeID("a")},
-		{Source: derivedHoldParentSession, Worker: raylinearc.HashEpisodeID("b")},
+// servedModelReadTimeout, after which the derivation falls to the package.
+func TestServedModelReadIsBounded(t *testing.T) {
+	keys := []servedModelKey{
+		{source: derivedHoldSessionRecord, episodeIDHash: raylinearc.HashEpisodeID("a")},
+		{source: derivedHoldParentSession, episodeIDHash: raylinearc.HashEpisodeID("b")},
 	}
 	started := time.Now()
-	served := readServedWorkers(context.Background(), stalledServedStore{}, keys)
-	if elapsed := time.Since(started); elapsed > servedWorkerReadTimeout+250*time.Millisecond || len(served) != 0 {
+	served := readServedModels(context.Background(), stalledServedStore{}, keys)
+	if elapsed := time.Since(started); elapsed > servedModelReadTimeout+250*time.Millisecond || len(served) != 0 {
 		t.Fatalf("read took %v and returned %v", elapsed, served)
 	}
 }
