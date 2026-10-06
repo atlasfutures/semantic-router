@@ -59,6 +59,9 @@ func (state *streamState) completeToolItem(event llmprotocol.Event) (llmprotocol
 	if err != nil {
 		return llmprotocol.Event{}, err
 	}
+	if !complete {
+		arguments, complete = state.normalizeToolArguments(arguments)
+	}
 	if !complete && !llmprotocol.TruncatedJSONObject(arguments, state.policy.Limits.JSONDepth) {
 		// A whole JSON value that is not an object, or an object with a
 		// duplicate member, is no prefix of a call: it is malformed now.
@@ -199,7 +202,8 @@ func (state *streamState) finalToolArguments(event llmprotocol.Event) ([]byte, b
 		if err := state.validateStreamToolArgumentAppend(nil, event.ToolCall.Arguments); err != nil {
 			return nil, false, err
 		}
-		if len(arguments) > 0 && string(arguments) != event.ToolCall.Arguments {
+		if len(arguments) > 0 && string(arguments) != event.ToolCall.Arguments &&
+			!state.settlesTo(arguments, event.ToolCall.Arguments) {
 			return nil, false, llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "stream_tool_arguments_mismatch", "upstream final tool arguments do not match streamed arguments", nil)
 		}
 		arguments = []byte(event.ToolCall.Arguments)
@@ -342,6 +346,35 @@ func (state *streamState) heldCutFailure(stop llmprotocol.StopReason, failed boo
 		return nil
 	}
 	return state.heldCutRefusal("terminal")
+}
+
+// normalizeToolArguments settles whole arguments that are an object to
+// Anthropic but not to the strict validator, a repeated member or an
+// unpaired surrogate escape, as Anthropic settles them
+// (llmprotocol.NormalizeToolArguments), and reports whether they are now a
+// whole object. The deltas already sent carried the model's bytes; the
+// completed call, which a Responses client reads its arguments from and the
+// Router records the turn by, carries the settled ones, so a replay of the
+// call is strict. The diagnostic says so without saying what changed.
+func (state *streamState) normalizeToolArguments(arguments []byte) ([]byte, bool) {
+	normalized, err := llmprotocol.NormalizeToolArguments(arguments, state.policy.Limits.JSONDepth)
+	if err != nil {
+		return arguments, false
+	}
+	state.noteStateDiagnostic(llmprotocol.Diagnostic{
+		Source: state.context.Source, Field: "tool_call.arguments", Action: llmprotocol.DiagnosticApproximated,
+		Reason: "the model repeated a member or wrote an unpaired surrogate escape; the last member wins and the escape becomes U+FFFD, as Anthropic decodes them",
+	})
+	return normalized, true
+}
+
+// settlesTo reports a completion whose arguments are the streamed ones as
+// normalizeToolArguments settled them upstream of this state: an encoder's
+// state sees the model's bytes in the deltas and the settled object at the
+// completion.
+func (state *streamState) settlesTo(streamed []byte, final string) bool {
+	normalized, err := llmprotocol.NormalizeToolArguments(streamed, state.policy.Limits.JSONDepth)
+	return err == nil && string(normalized) == final
 }
 
 // refusedToolArguments is invalid_stream_tool_arguments for a tool item
