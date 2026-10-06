@@ -333,10 +333,11 @@ unchanged.
 
 The held model is, in order:
 
-1. the worker that last served this episode, which the episode store keeps
+1. the model that last served this episode (the selected action's model, not
+   its worker, which may serve several), which the episode store keeps
    for seven days, written by each committed policy turn's own episode
    commit, so records follow the commits' order;
-2. the worker that last served its parent session, named by the trusted
+2. the model that last served its parent session, named by the trusted
    `x-rayline-parent-session` header;
 3. the model of the package's `fallback_action_id`. A package served without
    a `package_manifest` (a v4 package from the store) has none that VSR can
@@ -353,7 +354,8 @@ disable, a fallback exclusion), nothing is offered, and the turn fails as
 VSR writes every record, and the gateway owns the episode keys. Nothing in
 the request body is read, so a client cannot choose the held model. Each
 derived hold logs `rayline_arc_derived_hold` with its source
-(`session_record`, `parent_session` or `package_fallback`) and model.
+(`session_record`, `parent_session`, `package_fallback`, or
+`configured_fallback` for a cell's `derived_hold_model`) and model.
 
 ## Fallback
 
