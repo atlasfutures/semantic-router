@@ -464,6 +464,40 @@ type PolicyLoadedPackage struct {
 	State         string `json:"state"`
 	// Verification is the package's verification; absent means unknown.
 	Verification PolicyVerification `json:"verification,omitempty"`
+	// FallbackActionID and FallbackModel are the package manifest's
+	// decision.fallback_action_id and that action's model, stated as a pair
+	// or not at all (pathfinder#3677). A package served without a manifest
+	// names its fallback only here.
+	FallbackActionID string `json:"fallback_action_id,omitempty"`
+	FallbackModel    string `json:"fallback_model,omitempty"`
+}
+
+// policySHA256Hex is a lowercase sha256 hex digest.
+var policySHA256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// checkFallback refuses half a fallback pair, an explicit null, an action id
+// that is not a sha256 hex digest, and an empty model.
+func (loaded *PolicyLoadedPackage) checkFallback(raw map[string]json.RawMessage) error {
+	for _, name := range []string{"fallback_action_id", "fallback_model"} {
+		if value, present := raw[name]; present && string(value) == "null" {
+			return fmt.Errorf("policy packages %s is null", name)
+		}
+	}
+	_, hasAction := raw["fallback_action_id"]
+	_, hasModel := raw["fallback_model"]
+	if hasAction != hasModel {
+		return fmt.Errorf("policy packages fallback_action_id and fallback_model must be stated together")
+	}
+	if !hasAction {
+		return nil
+	}
+	if !policySHA256Hex.MatchString(loaded.FallbackActionID) {
+		return fmt.Errorf("policy packages fallback_action_id %q is not a sha256 hex digest", loaded.FallbackActionID)
+	}
+	if loaded.FallbackModel == "" {
+		return fmt.Errorf("policy packages fallback_model is empty")
+	}
+	return nil
 }
 
 type PolicyPackagesResponse struct {
@@ -740,6 +774,19 @@ func DecodePolicyPackagesResponse(body []byte) (*PolicyPackagesResponse, error) 
 	}
 	if response.SchemaVersion != PolicyPackagesSchema {
 		return nil, fmt.Errorf("policy packages schema %q", response.SchemaVersion)
+	}
+	// The members' presence, not their decoded values, tells a half pair or a
+	// null from an absent pair.
+	var raw struct {
+		Packages []map[string]json.RawMessage `json:"packages"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil || len(raw.Packages) != len(response.Packages) {
+		return nil, fmt.Errorf("policy packages listing is malformed")
+	}
+	for index := range response.Packages {
+		if err := response.Packages[index].checkFallback(raw.Packages[index]); err != nil {
+			return nil, err
+		}
 	}
 	return &response, nil
 }
