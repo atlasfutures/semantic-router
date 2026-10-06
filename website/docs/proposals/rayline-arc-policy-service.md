@@ -185,10 +185,14 @@ the harness shell, or `include` or `include_v2` (tool rule v2,
 pathfinder#3653). VSR treats the value as opaque and the policy service
 applies the projection; any other value is refused.
 
-Readiness does not refuse a v6 binding to a text-only worker. An image turn
-leaves a worker off the offer only when its model card sets `vision: false`;
-an unmarked card counts as vision-capable, so a basket serving a v6 package
-must mark its text-only workers (#215).
+A v6 package requires every bound arm's model card to state `vision`
+explicitly, `true` or `false`, and startup refuses one that doesn't, naming
+the unmarked arms (#215). An image turn takes a worker off the offer only when
+its card sets `vision: false`, and an unmarked card counts as vision-capable,
+so under a v6 package that default would send images to a text-only arm. A
+text-only worker may still be bound when its card says `vision: false`: it
+serves the package's text turns. v4 and v5 packages keep the default, so an
+unmarked card there still counts as vision-capable.
 
 Route construction admits the control on the cell of the request's target
 format and resumes the episode's placer. The provider boundary then renders it

@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
@@ -280,7 +281,38 @@ func validateRaylineARCPolicyPackageV5Dispatch(cfg *RouterConfig, decision Decis
 			return fmt.Errorf("package action %s is not bound to a worker", action.ActionID)
 		}
 	}
+	if pkg.manifest.SchemaVersion == raylinearc.PolicyPackageSchemaV6 {
+		return validateRaylineARCPolicyPackageV6Vision(cfg, policy)
+	}
 	return nil
+}
+
+// validateRaylineARCPolicyPackageV6Vision requires every arm a v6 package's
+// bindings dispatch to state vision on its model card, true or false. A v6
+// encoder reads images, and an image turn leaves the offer only on an arm
+// whose card says vision: false, since an unmarked card counts as
+// vision-capable (ModelParams.SupportsVision, #215). Under a v6 package that
+// default would send images to a text-only arm, so it is refused: the error
+// names every unmarked arm. v4 and v5 packages keep the default.
+func validateRaylineARCPolicyPackageV6Vision(cfg *RouterConfig, policy *RaylineARCPolicyServiceConfig) error {
+	var unmarked []string
+	seen := map[string]bool{}
+	for _, binding := range policy.Bindings {
+		worker := strings.TrimSpace(binding.Worker)
+		if seen[worker] {
+			continue
+		}
+		seen[worker] = true
+		if params, ok := cfg.ModelConfig[worker]; !ok || params.Vision == nil {
+			unmarked = append(unmarked, worker)
+		}
+	}
+	if len(unmarked) == 0 {
+		return nil
+	}
+	sort.Strings(unmarked)
+	return fmt.Errorf("a v6 package needs every bound arm's model card to state vision (true or false); unmarked: %s",
+		strings.Join(unmarked, ", "))
 }
 
 // raylineARCRegistryBaseOff is the registry's thinking-off base.
