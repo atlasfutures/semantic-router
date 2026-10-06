@@ -722,6 +722,18 @@ func validateRaylineARCDecisionContract(cfg *RouterConfig, decision Decision) er
 	if err := validateRaylineARCWorkerThinkingTransports(cfg, decision.Algorithm.RaylineARC); err != nil {
 		return fmt.Errorf("decision '%s': algorithm.rayline_arc.worker_thinking: %w", decision.Name, err)
 	}
+	// An arm is a plain model: readiness matches each ref's model to a worker
+	// id and dispatch sends that name, so an adapter name on a ref would be
+	// a model the artifact never scored.
+	for _, modelRef := range decision.ModelRefs {
+		if strings.TrimSpace(modelRef.LoRAName) != "" {
+			return fmt.Errorf(
+				"decision '%s': algorithm.type=%s does not take modelRefs[].lora_name; an arm is the worker id verbatim",
+				decision.Name,
+				RaylineARCAlgorithmType,
+			)
+		}
+	}
 	// A route action is terminal: it resolves the turn before the selector
 	// runs, so the artifact, its masks and its episode would be bypassed on
 	// every matching turn.

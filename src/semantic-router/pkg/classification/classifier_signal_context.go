@@ -277,3 +277,19 @@ func (c *Classifier) ContextTokenCount(contextText string, tokenFloor int) (int,
 	}
 	return count, true
 }
+
+// ContextSignalUsed reports whether a routed request evaluates the context
+// signal at all: it is configured, and a decision rule references it. Eval
+// forces every configured signal to run, so a count it produced for an
+// unreferenced signal is one routing never sees.
+func (c *Classifier) ContextSignalUsed() bool {
+	return c != nil && c.contextClassifier != nil && isSignalTypeUsed(c.getUsedSignals(), config.SignalTypeContext)
+}
+
+// NewClassifierWithContextSignalForTest is a classifier that carries only a
+// context signal counted by the given rules' default counter, for tests in
+// other packages that need routing's "is the context signal used" answer
+// without a model-backed classifier.
+func NewClassifierWithContextSignalForTest(cfg *config.RouterConfig, rules []config.ContextRule) *Classifier {
+	return &Classifier{Config: cfg, contextClassifier: NewContextClassifier(&CharacterBasedTokenCounter{}, rules)}
+}

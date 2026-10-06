@@ -18,6 +18,16 @@ func TestValidateRaylineARCDecisionContract(t *testing.T) {
 	}
 }
 
+// An arm is the worker id verbatim, so a ref naming an adapter is refused.
+func TestValidateRaylineARCDecisionContractRefusesAnAdapterRef(t *testing.T) {
+	decision := validRaylineARCDecision()
+	decision.ModelRefs[0].LoRAName = "adapter"
+	err := validateRaylineARCDecisionContract(&RouterConfig{}, decision)
+	if err == nil || !strings.Contains(err.Error(), "does not take modelRefs[].lora_name") {
+		t.Fatalf("error = %v, want the adapter ref refused", err)
+	}
+}
+
 // A route action is terminal and would resolve a turn before the artifact
 // saw it, so an ARC decision refuses one at load.
 func TestValidateRaylineARCDecisionContractRefusesARouteAction(t *testing.T) {

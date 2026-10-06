@@ -45,9 +45,10 @@ available.
 
 ARC is deliberately stricter than other selectors:
 
-- `minimum_candidates` and a route `action` are refused: the arm set is fixed
-  and positional, an arm a turn cannot use is masked rather than removed, and
-  a terminal action would resolve a turn before the artifact saw it.
+- `minimum_candidates`, a route `action` and a `lora_name` on a model ref
+  are refused: the arm set is fixed and positional, an arm is the worker id
+  verbatim, an arm a turn cannot use is masked rather than removed, and a
+  terminal action would resolve a turn before the artifact saw it.
 - `on_error` must be `fail_closed`; selection errors never choose the first
   candidate.
 - `adaptations.mode` must be `bypass`; Router Learning cannot replace the ARC
@@ -610,7 +611,7 @@ candidates the alias may resolve to:
         "vision": false,
         "tools": true,
         "context_window": 1048576,
-        "max_output_tokens": 943718,
+        "max_output_tokens": 128000,
         "pricing": { "currency": "USD", "input_per_mtok": 0.56, "output_per_mtok": 1.76, "cache_read_per_mtok": 0.104, "cache_write_per_mtok": 0.56 },
         "disabled": false
       }
@@ -626,36 +627,29 @@ document from them -- the smallest context window, the cheapest and dearest
 rate, whether every selectable candidate takes a tool -- and addresses it by
 the alias.
 
-Every value is read off the loaded config and nothing else. The list is
-what the alias's decisions may resolve to, each distinct model and thinking
-mode once: a decision's model refs in declared order, a route action's
-destination ahead of its decision's refs, and the models an algorithm
-executes beside its refs after them. The router's `default_model`, the
-fallback for a request no decision matches, is not listed: on an ARC cell the
-one decision matches every turn, so the fallback is never reached. On an ARC
-cell, whose arm-set decision is the recipe's only decision and declares no
-route action, the list is therefore the arms in artifact order, and the array
-position is the arm ordinal. `model` names the arm the way a route's `worker` does, and
-`provider_model` is the id it dispatches as. A model ref that names a LoRA
-adapter is listed as the adapter, with the card it is served under as
-`base_model`. Which decision picks which candidate is a per-turn fact the
-route lookup reports.
+Every value is read off the loaded config and nothing else. The list is the
+arms of the alias's `rayline_arc` decision in artifact order, so the array
+position is the arm ordinal, and `model` names the arm the way a route's
+`worker` does. Only a `rayline_arc` decision is described: its arm set is
+fixed, every arm is a plain model ref, and the decision takes no route
+action, no minimum and no algorithm-owned models, so the list is exactly
+what the artifact chooses among. An alias whose decisions are of any other
+kind carries no `candidates` key; those algorithms resolve a request through
+paths the refs alone do not describe, and are a follow-up.
+`provider_model` is the id it dispatches as.
 `thinking.mode` is the decision's `use_reasoning` for that arm. `vision` is the
 card's verdict, which is capable when the card is silent; `tools` is the
 card's positive `tools` claim, which an unmarked card does not make.
 `context_window` and `max_output_tokens` are the card's `context_window_size`
 and `max_output_tokens`, null where the card declares none. `pricing` is the
 card's rate card in the route lookup's spelling, and `disabled` is the card's
-out-of-service flag as selection enforces it: a disabled arm is listed, so
-the arms keep their artifact ordinals, and marked, so the gateway leaves it
-out of what it derives. Only a `rayline_arc` decision enforces the flag; a
-candidate of any other decision reports `false`, since its model still
-serves.
+out-of-service flag: a disabled arm is listed, so the arms keep their
+artifact ordinals, and marked, so the gateway leaves it out of what it
+derives.
 
-The list is not ARC's. Every virtual id on every router carries its
-candidates. Nothing else about the decision is published: the gateway
-derives its document from the candidates, and when the arm set changes the
-candidates change with it, so there is no artifact pin to key on.
+Nothing else about the decision is published: the gateway derives its
+document from the candidates, and when the arm set changes the candidates
+change with it, so there is no artifact pin to key on.
 
 Two things about the numbers. `max_output_tokens` is also the limit the
 router dispatches when a request states none of its own, so declaring it on a

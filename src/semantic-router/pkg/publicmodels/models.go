@@ -30,9 +30,9 @@ type RoutingMetadata struct {
 	Selectable   bool              `json:"selectable"`
 	DefaultRoute bool              `json:"default_route,omitempty"`
 	Recipe       config.RecipeName `json:"recipe,omitempty"`
-	// Candidates are the models a virtual id may resolve to, with their
-	// card facts, decision by decision. Absent on a passthrough id and on a
-	// virtual id with no decision behind it.
+	// Candidates are the arms of a Rayline ARC decision the virtual id
+	// resolves through, with their card facts, in artifact order. Absent on
+	// a passthrough id and on a virtual id with no such decision behind it.
 	Candidates []RoutingCandidate `json:"candidates,omitempty"`
 }
 
@@ -112,21 +112,16 @@ func (b *modelListBuilder) appendOrchestratedModels(cfg *config.RouterConfig) {
 	if cfg == nil || !cfg.Looper.IsEnabled() {
 		return
 	}
-	for _, surface := range []struct {
-		models    []string
-		algorithm string
-	}{
-		{cfg.ExposedReMoMModelNames(), config.DecisionAlgorithmReMoM},
-		{cfg.ExposedFusionModelNames(), config.DecisionAlgorithmFusion},
-		{cfg.ExposedFlowModelNames(), config.DecisionAlgorithmWorkflows},
+	for _, models := range [][]string{
+		cfg.ExposedReMoMModelNames(),
+		cfg.ExposedFusionModelNames(),
+		cfg.ExposedFlowModelNames(),
 	} {
-		routing := selectableVirtualRoute("", false)
-		routing.Candidates = routingCandidatesForAlgorithm(cfg, surface.algorithm)
 		b.appendAll(
-			surface.models,
+			models,
 			routerOwner,
 			orchestratedModelDescription,
-			routing,
+			selectableVirtualRoute("", false),
 		)
 	}
 }

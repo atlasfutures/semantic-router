@@ -71,20 +71,23 @@ func (s *ClassificationService) ClassifyIntentForEval(req IntentRequest) (*EvalR
 		resp.DecisionError = decisionErr.Error()
 		return resp, decisionErr
 	}
-	s.populateEvalModelSelection(resp, input, decisionResult, signals)
+	s.populateEvalModelSelection(resp, input, decisionResult, signals, classifier)
 	return resp, nil
 }
 
 // populateEvalModelSelection selects under the token count the routed path
-// would use: the context signal's count when it ran, which may be calibrated
-// from observed provider usage, never below the request's floor. Passing the
-// floor alone let Eval report every ARC arm as fitting a turn the routed
-// path masks every arm of.
+// would use: the context signal's count when routing evaluates that signal,
+// which may be calibrated from observed provider usage, never below the
+// request's floor. Eval forces every signal to run, so a count from a
+// context signal no decision rule references is set aside, as routing sets
+// it aside. Passing the floor alone let Eval report every ARC arm as fitting
+// a turn the routed path masks every arm of.
 func (s *ClassificationService) populateEvalModelSelection(
 	response *EvalResponse,
 	input intentSignalInput,
 	decisionResult *decision.DecisionResult,
 	signals *classification.SignalResults,
+	classifier *classification.Classifier,
 ) {
 	if response == nil || decisionResult == nil || decisionResult.Decision == nil {
 		return
@@ -100,7 +103,7 @@ func (s *ClassificationService) populateEvalModelSelection(
 		Decision:          decisionResult.Decision,
 		Query:             input.currentUserText,
 		Category:          evalDecisionCategory(decisionResult.MatchedRules),
-		ContextTokenCount: evalContextTokenCount(input, signals),
+		ContextTokenCount: evalContextTokenCount(input, signals, classifier),
 	})
 	response.SelectedModel = selection.SelectedModel
 	response.SelectionStatus = selection.Status
@@ -177,9 +180,9 @@ func (s *ClassificationService) evalRoutingScope(modelName string) (*classificat
 	return classifier, recipe.Profile.Decisions, recipe.Name, nil
 }
 
-func evalContextTokenCount(input intentSignalInput, signals *classification.SignalResults) int {
+func evalContextTokenCount(input intentSignalInput, signals *classification.SignalResults, classifier *classification.Classifier) int {
 	count := input.requestFacts.ContextTokenFloor
-	if signals != nil && signals.TokenCount > count {
+	if signals != nil && classifier.ContextSignalUsed() && signals.TokenCount > count {
 		count = signals.TokenCount
 	}
 	return count
