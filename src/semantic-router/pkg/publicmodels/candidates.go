@@ -43,8 +43,11 @@ type RoutingCandidate struct {
 	// enforces: a plain decision drops a candidate whose window the request
 	// exceeds, and a rayline_arc decision masks the arm where it stands.
 	ContextWindow *int `json:"context_window"`
-	// MaxOutputTokens is also the limit the router dispatches when a request
-	// states none of its own.
+	// MaxOutputTokens is the limit the router dispatches when a request
+	// states none of its own: the card's max_output_tokens, capped by the
+	// declaring decision's request_params.max_tokens_limit, and across
+	// decisions that declare the same candidate the smallest, since the
+	// alias cannot choose the decision.
 	MaxOutputTokens *int              `json:"max_output_tokens"`
 	Pricing         *CandidatePricing `json:"pricing"`
 	// Disabled is the card's out-of-service flag as selection enforces it:
@@ -117,49 +120,78 @@ func routingCandidatesOfDecisions(cfg *config.RouterConfig, decisions []config.D
 		// Only a rayline_arc decision enforces a card's disabled flag; see
 		// RoutingCandidate.Disabled.
 		enforcesDisabled := decision.Algorithm != nil && decision.Algorithm.Type == config.RaylineARCAlgorithmType
+		// The decision's request_params.max_tokens_limit caps the output
+		// limit the router dispatches; see RoutingCandidate.MaxOutputTokens.
+		outputCap := decisionOutputCap(decision)
 		// A route action resolves straight to its destination, ahead of
 		// the refs, which it falls back to only when the destination cannot
 		// hold the request -- and then dispatches the ref's model, not an
 		// adapter the ref names, so the refs are described as the model.
+		// The algorithm never runs behind a route action, so the models it
+		// alone would execute are not listed.
 		routeAction := decision.Action != nil && decision.Action.Type == config.DecisionActionRoute
 		if routeAction {
 			if destination := strings.TrimSpace(decision.Action.Destination); destination != "" {
-				candidates = appendDistinctCandidate(cfg, candidates, config.ModelRef{Model: destination}, enforcesDisabled)
+				candidates = appendDistinctCandidate(cfg, candidates, config.ModelRef{Model: destination}, enforcesDisabled, outputCap)
 			}
 		}
-		for _, modelRef := range decision.ModelRefs {
-			if routeAction {
-				modelRef.LoRAName = ""
+		// A Fusion decision that names its analysis models runs those, not
+		// its refs (resolveFusionExecutionConfig), so the refs are listed
+		// only when Fusion falls back to them.
+		fusionOverridesRefs := decision.Algorithm != nil && decision.Algorithm.Fusion != nil && len(decision.Algorithm.Fusion.AnalysisModels) > 0
+		if !fusionOverridesRefs {
+			for _, modelRef := range decision.ModelRefs {
+				if routeAction {
+					modelRef.LoRAName = ""
+				}
+				candidates = appendDistinctCandidate(cfg, candidates, modelRef, enforcesDisabled, outputCap)
 			}
-			candidates = appendDistinctCandidate(cfg, candidates, modelRef, enforcesDisabled)
+		}
+		if routeAction {
+			continue
 		}
 		// The models an algorithm executes beside its refs: a Fusion judge,
 		// a ReMoM synthesis model, a workflow's planner. They answer the
 		// request, so a document derived from this list has to hold them.
-		// One that is also a ref runs under that ref's reasoning control,
-		// so the ref is reused rather than a second, reasoning-off variant
-		// invented.
+		// Each runs under the reasoning the Looper resolves for it: its
+		// ref's when a ref names it, else its card's reasoning family.
 		for _, model := range decision.Algorithm.ExplicitModels() {
 			if model = strings.TrimSpace(model); model != "" {
-				candidates = appendDistinctCandidate(cfg, candidates, decisionRefFor(decision, model), enforcesDisabled)
+				candidates = appendDistinctCandidate(cfg, candidates, decisionRefFor(cfg, decision, model), enforcesDisabled, outputCap)
 			}
 		}
 	}
 	return candidates
 }
 
-// decisionRefFor is the ref an algorithm-owned model runs under: the first
-// ref naming that model, adapter or not, which is how the Looper runtime
-// resolves the model's reasoning (getReasoningInfoFromDecision); the model is
-// executed as itself, so the adapter name is not carried. A bare ref when
-// the decision declares none for it.
-func decisionRefFor(decision *config.Decision, model string) config.ModelRef {
+// decisionOutputCap is the decision's request_params.max_tokens_limit, or
+// zero when it sets none.
+func decisionOutputCap(decision *config.Decision) int {
+	params := decision.GetRequestParamsConfig()
+	if params == nil || params.MaxTokensLimit == nil || *params.MaxTokensLimit <= 0 {
+		return 0
+	}
+	return *params.MaxTokensLimit
+}
+
+// decisionRefFor is the ref an algorithm-owned model runs under, resolved
+// the way the Looper runtime resolves the model's reasoning
+// (getReasoningInfoFromDecision): the first ref naming that model, adapter or
+// not, and failing one, the model's card, which turns reasoning on when it
+// declares a reasoning family. The model is executed as itself, so an
+// adapter name is not carried.
+func decisionRefFor(cfg *config.RouterConfig, decision *config.Decision, model string) config.ModelRef {
 	for _, modelRef := range decision.ModelRefs {
 		if strings.TrimSpace(modelRef.Model) == model {
 			return config.ModelRef{Model: model, ModelReasoningControl: modelRef.ModelReasoningControl}
 		}
 	}
-	return config.ModelRef{Model: model}
+	modelRef := config.ModelRef{Model: model}
+	if params, known := cfg.ModelConfig[model]; known && params.ReasoningFamily != "" {
+		on := true
+		modelRef.UseReasoning = &on
+	}
+	return modelRef
 }
 
 // appendDistinctCandidate lists a ref unless a candidate of the same model,
@@ -167,19 +199,25 @@ func decisionRefFor(decision *config.Decision, model string) config.ModelRef {
 // only while every decision that declares it enforces the flag: one that
 // still dispatches the model makes it reachable, whatever the declaration
 // order.
-func appendDistinctCandidate(cfg *config.RouterConfig, candidates []RoutingCandidate, modelRef config.ModelRef, enforcesDisabled bool) []RoutingCandidate {
-	candidate := routingCandidateOf(cfg, modelRef, enforcesDisabled)
+func appendDistinctCandidate(cfg *config.RouterConfig, candidates []RoutingCandidate, modelRef config.ModelRef, enforcesDisabled bool, outputCap int) []RoutingCandidate {
+	candidate := routingCandidateOf(cfg, modelRef, enforcesDisabled, outputCap)
 	for index := range candidates {
 		listed := &candidates[index]
 		if listed.Model == candidate.Model && listed.BaseModel == candidate.BaseModel && listed.Thinking == candidate.Thinking {
 			listed.Disabled = listed.Disabled && candidate.Disabled
+			// The smallest output limit any declaring decision dispatches
+			// is the one every turn is guaranteed; the alias cannot choose
+			// the decision.
+			if candidate.MaxOutputTokens != nil && (listed.MaxOutputTokens == nil || *candidate.MaxOutputTokens < *listed.MaxOutputTokens) {
+				listed.MaxOutputTokens = candidate.MaxOutputTokens
+			}
 			return candidates
 		}
 	}
 	return append(candidates, candidate)
 }
 
-func routingCandidateOf(cfg *config.RouterConfig, modelRef config.ModelRef, enforcesDisabled bool) RoutingCandidate {
+func routingCandidateOf(cfg *config.RouterConfig, modelRef config.ModelRef, enforcesDisabled bool, outputCap int) RoutingCandidate {
 	model := strings.TrimSpace(modelRef.Model)
 	candidate := RoutingCandidate{
 		Model:    model,
@@ -208,6 +246,13 @@ func routingCandidateOf(cfg *config.RouterConfig, modelRef config.ModelRef, enfo
 		candidate.Disabled = enforcesDisabled && params.IsDisabled()
 	}
 	candidate.MaxOutputTokens = positiveIntPointer(cfg.GetModelMaxOutputTokens(candidate.Model))
+	// The decision's max_tokens_limit caps what the router dispatches for a
+	// caller that states no limit (planDispatchOutputBound); a card that
+	// declares no limit stays unbounded on Chat, cap or not, so it stays
+	// null here.
+	if candidate.MaxOutputTokens != nil && outputCap > 0 && outputCap < *candidate.MaxOutputTokens {
+		candidate.MaxOutputTokens = positiveIntPointer(outputCap)
+	}
 	// The primary backend names the provider and the id the candidate
 	// dispatches as: the highest-weight endpoint, which is the one dispatch
 	// takes, not the first listed. A renamed model is reported only when

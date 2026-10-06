@@ -538,27 +538,113 @@ func TestDefaultModelIsNeverListed(t *testing.T) {
 
 // An algorithm that executes models beside its refs -- a Fusion judge, a
 // ReMoM synthesis model, a workflow planner -- answers the request with them,
-// so they are listed after the refs, each once.
+// so they are listed after the refs, each once. A Fusion decision that names
+// its analysis models runs those instead of its refs, so the refs it never
+// calls are not listed; one that names none falls back to the refs.
 func TestCandidatesIncludeAlgorithmOwnedModels(t *testing.T) {
+	for name, test := range map[string]struct {
+		analysis []string
+		want     []string
+	}{
+		"analysis models override the refs": {[]string{"a", "judge"}, []string{"a", "judge"}},
+		"no analysis models, refs run":      {nil, []string{"a", "b", "judge"}},
+	} {
+		cfg := &config.RouterConfig{
+			RouterOptions: config.RouterOptions{AutoModelNames: []string{"router/auto"}},
+			Looper:        config.LooperConfig{Endpoint: "looper:50051", Fusion: config.FusionRuntimeConfig{ModelNames: []string{"router/fusion"}}},
+			IntelligentRouting: config.IntelligentRouting{Decisions: []config.Decision{{
+				Name:      "fused",
+				Algorithm: &config.AlgorithmConfig{Type: config.DecisionAlgorithmFusion, Fusion: &config.FusionAlgorithmConfig{Model: "judge", AnalysisModels: test.analysis}},
+				ModelRefs: []config.ModelRef{{Model: "a"}, {Model: "b"}},
+			}}},
+			BackendModels: config.BackendModels{ModelConfig: map[string]config.ModelParams{"a": {}, "b": {}, "judge": {}}},
+		}
+		listing := marshalListing(t, NewOpenAIModelList(cfg, 123))
+		for _, id := range []string{"router/auto", "router/fusion"} {
+			var got []string
+			for _, raw := range modelEntry(t, listing, id)["routing"].(map[string]interface{})["candidates"].([]interface{}) {
+				got = append(got, raw.(map[string]interface{})["model"].(string))
+			}
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("%s, %s candidates = %v, want %v", name, id, got, test.want)
+			}
+		}
+	}
+}
+
+// A route action resolves the turn before the algorithm runs, so the models
+// the algorithm alone would execute are not listed behind one.
+func TestRouteActionDecisionsListNoAlgorithmOwnedModels(t *testing.T) {
 	cfg := &config.RouterConfig{
 		RouterOptions: config.RouterOptions{AutoModelNames: []string{"router/auto"}},
-		Looper:        config.LooperConfig{Endpoint: "looper:50051", Fusion: config.FusionRuntimeConfig{ModelNames: []string{"router/fusion"}}},
 		IntelligentRouting: config.IntelligentRouting{Decisions: []config.Decision{{
-			Name:      "fused",
-			Algorithm: &config.AlgorithmConfig{Type: config.DecisionAlgorithmFusion, Fusion: &config.FusionAlgorithmConfig{Model: "judge", AnalysisModels: []string{"a", "judge"}}},
-			ModelRefs: []config.ModelRef{{Model: "a"}, {Model: "b"}},
+			Name:      "guarded-fusion",
+			Action:    &config.DecisionAction{Type: config.DecisionActionRoute, Destination: "safe"},
+			Algorithm: &config.AlgorithmConfig{Type: config.DecisionAlgorithmFusion, Fusion: &config.FusionAlgorithmConfig{Model: "judge"}},
+			ModelRefs: []config.ModelRef{{Model: "a"}},
 		}}},
-		BackendModels: config.BackendModels{ModelConfig: map[string]config.ModelParams{"a": {}, "b": {}, "judge": {}}},
+		BackendModels: config.BackendModels{ModelConfig: map[string]config.ModelParams{"safe": {}, "a": {}, "judge": {}}},
 	}
 	listing := marshalListing(t, NewOpenAIModelList(cfg, 123))
-	for _, id := range []string{"router/auto", "router/fusion"} {
-		var got []string
-		for _, raw := range modelEntry(t, listing, id)["routing"].(map[string]interface{})["candidates"].([]interface{}) {
-			got = append(got, raw.(map[string]interface{})["model"].(string))
+	var got []string
+	for _, raw := range modelEntry(t, listing, "router/auto")["routing"].(map[string]interface{})["candidates"].([]interface{}) {
+		got = append(got, raw.(map[string]interface{})["model"].(string))
+	}
+	if want := []string{"safe", "a"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("candidates = %v, want %v: no judge behind a route action", got, want)
+	}
+}
+
+// An algorithm-owned model no ref names runs with reasoning when its card
+// declares a reasoning family, as the Looper resolves it.
+func TestUnreferencedAlgorithmModelsTakeReasoningFromTheCard(t *testing.T) {
+	cfg := &config.RouterConfig{
+		RouterOptions: config.RouterOptions{AutoModelNames: []string{"router/auto"}},
+		IntelligentRouting: config.IntelligentRouting{Decisions: []config.Decision{{
+			Name:      "fused",
+			Algorithm: &config.AlgorithmConfig{Type: config.DecisionAlgorithmFusion, Fusion: &config.FusionAlgorithmConfig{Model: "judge"}},
+			ModelRefs: []config.ModelRef{{Model: "a"}},
+		}}},
+		BackendModels: config.BackendModels{ModelConfig: map[string]config.ModelParams{"a": {}, "judge": {ReasoningFamily: "deepseek"}}},
+	}
+	listing := marshalListing(t, NewOpenAIModelList(cfg, 123))
+	candidates := modelEntry(t, listing, "router/auto")["routing"].(map[string]interface{})["candidates"].([]interface{})
+	judge := candidates[1].(map[string]interface{})
+	if judge["model"] != "judge" || judge["thinking"].(map[string]interface{})["mode"] != "on" {
+		t.Fatalf("candidates[1] = %v, want the judge with reasoning on from its card", judge)
+	}
+}
+
+// The output limit is what the router dispatches: the card's limit capped by
+// the decision's max_tokens_limit, and across decisions the smallest, since
+// the alias cannot choose the decision. A card with no limit stays null.
+func TestMaxOutputTokensHonoursTheDecisionCap(t *testing.T) {
+	capped := func(name string, limit int, refs ...string) config.Decision {
+		var modelRefs []config.ModelRef
+		for _, ref := range refs {
+			modelRefs = append(modelRefs, config.ModelRef{Model: ref})
 		}
-		if want := []string{"a", "b", "judge"}; !reflect.DeepEqual(got, want) {
-			t.Fatalf("%s candidates = %v, want %v: the judge listed once after the refs", id, got, want)
-		}
+		return config.Decision{Name: name, ModelRefs: modelRefs, Plugins: []config.DecisionPlugin{{
+			Type: "request_params", Configuration: config.MustStructuredPayload(map[string]interface{}{"max_tokens_limit": limit}),
+		}}}
+	}
+	cfg := &config.RouterConfig{
+		RouterOptions: config.RouterOptions{AutoModelNames: []string{"router/auto"}},
+		IntelligentRouting: config.IntelligentRouting{Decisions: []config.Decision{
+			{Name: "free", ModelRefs: []config.ModelRef{{Model: "m"}, {Model: "unbounded"}}},
+			capped("tight", 4000, "m", "unbounded"),
+			capped("loose", 64000, "m"),
+		}},
+		BackendModels: config.BackendModels{ModelConfig: map[string]config.ModelParams{"m": {MaxOutputTokens: 32000}, "unbounded": {}}},
+	}
+	listing := marshalListing(t, NewOpenAIModelList(cfg, 123))
+	candidates := modelEntry(t, listing, "router/auto")["routing"].(map[string]interface{})["candidates"].([]interface{})
+	m := candidates[0].(map[string]interface{})
+	if m["max_output_tokens"] != float64(4000) {
+		t.Fatalf("m.max_output_tokens = %v, want the tightest decision cap 4000", m["max_output_tokens"])
+	}
+	if unbounded := candidates[1].(map[string]interface{}); unbounded["max_output_tokens"] != nil {
+		t.Fatalf("unbounded.max_output_tokens = %v, want null: a cap does not bound a card that declares no limit", unbounded["max_output_tokens"])
 	}
 }
 
@@ -710,8 +796,8 @@ func TestCandidateReadsToolsUnderTheCatalogSpelling(t *testing.T) {
 		"claims":   {Capabilities: []string{"chat", "tools"}},
 		"misspelt": {Capabilities: []string{"chat", "tool_calling"}},
 	}}}
-	claims := routingCandidateOf(cfg, config.ModelRef{Model: "claims"}, false)
-	misspelt := routingCandidateOf(cfg, config.ModelRef{Model: "misspelt"}, false)
+	claims := routingCandidateOf(cfg, config.ModelRef{Model: "claims"}, false, 0)
+	misspelt := routingCandidateOf(cfg, config.ModelRef{Model: "misspelt"}, false, 0)
 	if !claims.Tools || misspelt.Tools {
 		t.Fatalf("tools = %v/%v, want true for the catalog spelling and false for any other", claims.Tools, misspelt.Tools)
 	}

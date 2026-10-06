@@ -242,8 +242,9 @@ func (a *AlgorithmConfig) ExplicitModels() []string {
 	}
 	var models []string
 	if fusion := a.Fusion; fusion != nil {
-		models = append(models, fusion.Model)
+		// In execution order: the analysis models answer, then the judge.
 		models = append(models, fusion.AnalysisModels...)
+		models = append(models, fusion.Model)
 	}
 	if remom := a.ReMoM; remom != nil {
 		models = append(models, remom.SynthesisModel)
