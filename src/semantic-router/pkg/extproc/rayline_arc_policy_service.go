@@ -879,8 +879,11 @@ func policyClientRequestOf(
 }
 
 // policyResponsesTools is the top-level tools of a Responses body exactly as
-// the client sent them, or nil when it sent none. The body is this turn's
-// own: a previous_response_id turn resolves its earlier items from the
+// the client sent them, or [] when it sent none (or null): on the Responses
+// API an omitted tools means the request has none, and only a router that
+// forwards tools can say so -- an omitted member is what an older router
+// sends, so the service reads it as coverage unknown. The body is this
+// turn's own: a previous_response_id turn resolves its earlier items from the
 // store, but its tools are the ones this request carries. The service needs
 // them to know the harness shell's tool-definition coverage.
 func policyResponsesTools(raw []byte) (json.RawMessage, error) {
@@ -894,7 +897,7 @@ func policyResponsesTools(raw []byte) (json.RawMessage, error) {
 		return nil, err
 	}
 	if len(body.Tools) == 0 || string(body.Tools) == "null" {
-		return nil, nil
+		return json.RawMessage(`[]`), nil
 	}
 	return body.Tools, nil
 }

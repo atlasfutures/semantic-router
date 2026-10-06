@@ -79,44 +79,34 @@ func TestPolicyResponsesDecideForwardsTheClientsTools(t *testing.T) {
 	}
 }
 
-// A Responses request without tools is decided exactly as before: the
-// optional member is omitted, not sent as null or [].
-func TestPolicyResponsesDecideOmitsAbsentTools(t *testing.T) {
-	router, fake := newResponsesToolsRouter(t)
-	for index, client := range []string{
-		`{"model":"auto","instructions":"You are Codex.","input":[{"type":"message","role":"user","content":"hi"}]}`,
-		`{"model":"auto","tools":null,"input":[{"type":"message","role":"user","content":"hi"}]}`,
-	} {
-		dispatchPolicyClientRequest(t, router, "responses-no-tools-"+string(rune('a'+index)), "/v1/responses", client)
-		bodies := fake.receivedBodies()
-		body := bodies[len(bodies)-1]
-		if tools, present := decideRequestMember(t, body, "tools"); present {
-			t.Fatalf("client %d: decide request carries tools %s: %s", index, tools, body)
-		}
-		if !bytes.Contains(body, []byte(`"request":{"input":[`)) {
-			t.Fatalf("client %d: decide body is not the Responses shape: %s", index, body)
-		}
-	}
-}
-
-// An empty tools array is the client saying "no tools", which differs from
-// sending none: [] is forwarded as [], and only an absent (or null) tools is
-// omitted.
-func TestPolicyResponsesDecideForwardsAnEmptyToolsArray(t *testing.T) {
+// On the Responses API an omitted tools means the request has none, and only a
+// router that forwards tools (#217 onward) can tell the client omitted it
+// from an older router having dropped it. So a client that sent no tools, or
+// null, is decided with "tools": [] -- an omitted member would read as
+// coverage unknown and be refused. A client's own array, [] included, is
+// forwarded byte for byte.
+func TestPolicyResponsesDecideStatesTheClientsTools(t *testing.T) {
 	router, fake := newResponsesToolsRouter(t)
 	for _, test := range []struct {
-		name, tools string
-		present     bool
+		name, tools, want string
 	}{
-		{name: "empty", tools: `,"tools":[]`, present: true},
-		{name: "absent", tools: ``, present: false},
+		{name: "omitted", tools: ``, want: `[]`},
+		{name: "null", tools: `,"tools":null`, want: `[]`},
+		{name: "empty", tools: `,"tools":[]`, want: `[]`},
+		{name: "empty spaced", tools: `,"tools":[ ]`, want: `[ ]`},
+		{name: "array", tools: `,"tools":[{"type":"web_search"}]`, want: `[{"type":"web_search"}]`},
 	} {
-		client := `{"model":"auto"` + test.tools + `,"input":[{"type":"message","role":"user","content":"hi"}]}`
-		dispatchPolicyClientRequest(t, router, "responses-tools-"+test.name, "/v1/responses", client)
+		client := `{"model":"auto","instructions":"You are Codex."` + test.tools +
+			`,"input":[{"type":"message","role":"user","content":"hi"}]}`
+		dispatchPolicyClientRequest(t, router, "responses-tools-"+strings.ReplaceAll(test.name, " ", "-"), "/v1/responses", client)
 		bodies := fake.receivedBodies()
-		tools, present := decideRequestMember(t, bodies[len(bodies)-1], "tools")
-		if present != test.present || (present && string(tools) != `[]`) {
-			t.Fatalf("%s: decide request.tools = %q (present %v), want present %v", test.name, tools, present, test.present)
+		body := bodies[len(bodies)-1]
+		tools, present := decideRequestMember(t, body, "tools")
+		if !present || string(tools) != test.want {
+			t.Errorf("%s: decide request.tools = %q (present %v), want %s: %s", test.name, tools, present, test.want, body)
+		}
+		if !bytes.Contains(body, []byte(`"request":{"input":[`)) {
+			t.Fatalf("%s: decide body is not the Responses shape: %s", test.name, body)
 		}
 	}
 }
