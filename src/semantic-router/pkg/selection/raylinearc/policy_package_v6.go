@@ -75,6 +75,9 @@ func DecodePolicyPackageManifestV6(body []byte) (*PolicyPackageManifestV5, error
 	if err := manifest.checkImageProfile(); err != nil {
 		return nil, err
 	}
+	if err := manifest.checkStageOne(); err != nil {
+		return nil, err
+	}
 	if err := manifest.checkControlActions(); err != nil {
 		return nil, err
 	}

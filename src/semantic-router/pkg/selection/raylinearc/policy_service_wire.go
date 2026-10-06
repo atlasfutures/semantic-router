@@ -720,6 +720,26 @@ type PolicyPackageCommon struct {
 		DatasetID  string `json:"dataset_id"`
 		Fold       *int   `json:"fold"`
 	} `json:"provenance"`
+	// StageOne is a two-stage package's stage-one part (pathfinder
+	// StageOnePart: the selector, its boundaries, offered models and proxy
+	// arms). The policy service owns it and applies it; VSR only carries it,
+	// so it stays raw and opaque. Absent is a single-stage package; when
+	// present it must be a JSON object (checkStageOne).
+	StageOne json.RawMessage `json:"stage_one,omitempty"`
+}
+
+// checkStageOne refuses a stated stage_one that is not a JSON object: an
+// explicit null or any other JSON value is malformed, never "single-stage"
+// (that is omission).
+func (common *PolicyPackageCommon) checkStageOne() error {
+	if common.StageOne == nil {
+		return nil
+	}
+	var part map[string]json.RawMessage
+	if string(common.StageOne) == "null" || json.Unmarshal(common.StageOne, &part) != nil {
+		return fmt.Errorf("policy package stage_one %s is not an object", common.StageOne)
+	}
+	return nil
 }
 
 // DecodePolicyDecisionResponse refuses unknown fields, trailing bytes, a
@@ -806,6 +826,9 @@ func DecodePolicyPackageManifest(body []byte) (*PolicyPackageManifest, error) {
 	if err := manifest.checkConversation(); err != nil {
 		return nil, err
 	}
+	if err := manifest.checkStageOne(); err != nil {
+		return nil, err
+	}
 	return &manifest, nil
 }
 
@@ -826,6 +849,9 @@ func DecodePolicyPackageManifestV5(body []byte) (*PolicyPackageManifestV5, error
 		return nil, fmt.Errorf("policy package lets live prices affect decisions")
 	}
 	if err := manifest.checkConversation(); err != nil {
+		return nil, err
+	}
+	if err := manifest.checkStageOne(); err != nil {
 		return nil, err
 	}
 	if err := manifest.checkControlActions(); err != nil {
