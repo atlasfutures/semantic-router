@@ -1948,10 +1948,13 @@ recipes:
                 # and admits per worker (model, provider, format); its bindings
                 # are only action_id and worker. A v6 package (ADR 0122) is a
                 # v5 package whose encoder reads images (the canonical_v2
-                # encoding profile) and is bound and served exactly as v5.
-                # An image turn takes a worker off the offer only when its
-                # model card sets vision: false; an unmarked card counts as
-                # vision-capable (#215). Empty serves a v4 package, as here.
+                # encoding profile) and is bound and served exactly as v5,
+                # except that every bound arm's model card must state vision
+                # (true or false): an image turn takes a worker off the offer
+                # only when its card sets vision: false, and an unmarked card
+                # counts as vision-capable (#215). Startup refuses an unmarked
+                # arm under v6; v4 and v5 keep the default. Empty serves a v4
+                # package, as here.
                 package_manifest: ""
                 # allow_experimental_controls admits v5 instructions whose
                 # registry cell is experimental; without it they are refused.
