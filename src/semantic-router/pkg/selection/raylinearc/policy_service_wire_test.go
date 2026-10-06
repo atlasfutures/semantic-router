@@ -59,8 +59,8 @@ func TestPolicyFixturesMatchTheirPinnedDigests(t *testing.T) {
 		}
 		seen++
 	}
-	if seen != 11 {
-		t.Fatalf("SHA256SUMS pins %d fixtures, want 11", seen)
+	if seen != 12 {
+		t.Fatalf("SHA256SUMS pins %d fixtures, want 12", seen)
 	}
 }
 
@@ -81,7 +81,9 @@ func TestPolicyWireTypesRoundTripTheFixtures(t *testing.T) {
 		"decision_request_relaxed.v1.json":      &PolicyDecisionRequest{},
 		"decision_response.v1.json":             &PolicyDecisionResponse{},
 		"packages_response.v1.json":             &PolicyPackagesResponse{},
-		"error_responses.v1.json":               &[]PolicyErrorResponse{},
+		// pathfinder#3677 with ARC_LISTING_FALLBACK on: the fallback pair.
+		"packages_response.v1.fallback.json": &PolicyPackagesResponse{},
+		"error_responses.v1.json":            &[]PolicyErrorResponse{},
 	}
 	for name, target := range cases {
 		body := readPolicyFixture(t, name)

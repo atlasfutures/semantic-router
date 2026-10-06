@@ -5,10 +5,11 @@ import (
 	"testing"
 )
 
-// pathfinder#3677's listing names a package's fallback beside it: the fixture
-// holds one entry with the pair and one without, and both decode.
+// pathfinder#3677's listing, with ARC_LISTING_FALLBACK on, names a package's
+// fallback beside it: the fallback fixture holds one entry with the pair and
+// one without, and both decode.
 func TestDecodePolicyPackagesResponseReadsTheFallbackPair(t *testing.T) {
-	response, err := DecodePolicyPackagesResponse(readPolicyFixture(t, "packages_response.v1.json"))
+	response, err := DecodePolicyPackagesResponse(readPolicyFixture(t, "packages_response.v1.fallback.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,6 +23,23 @@ func TestDecodePolicyPackagesResponseReadsTheFallbackPair(t *testing.T) {
 	}
 	if without.FallbackActionID != "" || without.FallbackModel != "" {
 		t.Fatalf("an entry without the pair decoded %q %q", without.FallbackActionID, without.FallbackModel)
+	}
+}
+
+// With ARC_LISTING_FALLBACK off, the listing states no pair, and every entry
+// decodes without a fallback.
+func TestDecodePolicyPackagesResponseWithoutTheFallbackPair(t *testing.T) {
+	response, err := DecodePolicyPackagesResponse(readPolicyFixture(t, "packages_response.v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Packages) == 0 {
+		t.Fatal("the flag-off fixture lists no packages")
+	}
+	for _, loaded := range response.Packages {
+		if loaded.FallbackActionID != "" || loaded.FallbackModel != "" {
+			t.Fatalf("%s decoded a fallback %q %q", loaded.Alias, loaded.FallbackActionID, loaded.FallbackModel)
+		}
 	}
 }
 
@@ -42,7 +60,7 @@ func TestDecodePolicyPackagesResponseRefusesABrokenFallbackPair(t *testing.T) {
 		"unknown neighbour": func(e map[string]any) { e["fallback_effort"] = "high" },
 	} {
 		t.Run(name, func(t *testing.T) {
-			body := fixtureWith(t, "packages_response.v1.json", func(body map[string]any) {
+			body := fixtureWith(t, "packages_response.v1.fallback.json", func(body map[string]any) {
 				edit(body["packages"].([]any)[0].(map[string]any))
 			})
 			if _, err := DecodePolicyPackagesResponse(body); err == nil {
