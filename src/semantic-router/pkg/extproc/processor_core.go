@@ -123,7 +123,12 @@ func (r *OpenAIRouter) processWithContext(
 	for {
 		message, stalled := receiver.next(r.loopWait(ctx))
 		if stalled {
-			if r.streamSilenceExceeded(ctx) {
+			if waiting, ok := receiver.poll(); ok {
+				message, stalled = waiting, false
+			}
+		}
+		if stalled {
+			if streamSilenceTimerArmed(ctx) && r.streamSilenceExceeded(ctx) {
 				// Nothing arrived, not even a keepalive, and the streamed
 				// turn's silence is past its limit.
 				if err := r.endSilentStream(stream, ctx); err != nil {

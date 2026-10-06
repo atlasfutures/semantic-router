@@ -70,6 +70,14 @@ func streamSilenceWatched(ctx *RequestContext) bool {
 	return ctx != nil && ctx.IsStreamingResponse && !ctx.StreamingComplete && !ctx.StreamContentSince.IsZero()
 }
 
+// streamSilenceTimerArmed reports that the loop's own timer may end the turn.
+// That sends a body reply with no body message to answer, which only a
+// full-duplex exchange accepts, and only once Envoy is streaming the body: a
+// reply before the first body message would arrive while the body is idle.
+func streamSilenceTimerArmed(ctx *RequestContext) bool {
+	return ctx != nil && ctx.FullDuplexResponseBody && ctx.ProtocolResponseStream != nil
+}
+
 // observeStreamContent restarts the silence clock on a content event.
 func observeStreamContent(ctx *RequestContext, events []llmprotocol.Event) {
 	if ctx == nil {
@@ -86,7 +94,10 @@ func observeStreamContent(ctx *RequestContext, events []llmprotocol.Event) {
 
 func streamContentEvent(eventType llmprotocol.EventType) bool {
 	switch eventType {
-	case llmprotocol.EventOutputItemStarted, llmprotocol.EventOutputTextDelta,
+	// An item's start is not content: a Responses reasoning model announces
+	// its reasoning item at once and then thinks in silence, and a Messages
+	// content_block_start carries no payload. The first delta is the content.
+	case llmprotocol.EventOutputTextDelta,
 		llmprotocol.EventReasoningDelta, llmprotocol.EventToolCallDelta,
 		llmprotocol.EventImageGenerationProgress, llmprotocol.EventOutputItemCompleted,
 		llmprotocol.EventResponseCompleted, llmprotocol.EventResponseFailed:

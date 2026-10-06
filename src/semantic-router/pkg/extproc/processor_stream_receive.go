@@ -102,6 +102,18 @@ func (receiver *streamReceiver) next(timeout time.Duration) (receivedMessage, bo
 	}
 }
 
+// poll returns a message that is already waiting, without waiting for one. A
+// timer and a message can fall due together, and select picks either; the
+// message is the one that must not be lost.
+func (receiver *streamReceiver) poll() (receivedMessage, bool) {
+	select {
+	case message, ok := <-receiver.messages:
+		return repanicOnLoopGoroutine(closedAsEOF(message, ok)), true
+	default:
+		return receivedMessage{}, false
+	}
+}
+
 func (receiver *streamReceiver) receive() receivedMessage {
 	message, ok := <-receiver.messages
 	return repanicOnLoopGoroutine(closedAsEOF(message, ok))
@@ -122,9 +134,8 @@ func closedAsEOF(message receivedMessage, ok bool) receivedMessage {
 func (r *OpenAIRouter) loopWait(ctx *RequestContext) time.Duration {
 	held := r.heldResponseBodyWait(ctx)
 	silence := time.Duration(0)
-	if ctx != nil && ctx.FullDuplexResponseBody {
-		// Only a full-duplex reply can be sent without a body message to
-		// answer; in the plain streamed mode the next chunk checks instead.
+	if streamSilenceTimerArmed(ctx) {
+		// Otherwise the next chunk checks instead.
 		silence = r.streamSilenceWait(ctx)
 	}
 	if held <= 0 || silence > 0 && silence < held {

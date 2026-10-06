@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 )
 
 // semantic-router #210: an arm that accepts a streamed turn and then sends
@@ -103,6 +104,10 @@ func TestTheLoopTimerEndsASilentTurnWithNoChunkToAnswer(t *testing.T) {
 	router := silenceRouter(60, 0)
 	ctx, transaction := silentStreamContext(t, 30*time.Second)
 	ctx.FullDuplexResponseBody = true
+	assert.Zero(t, router.loopWait(ctx), "the timer must not be armed before Envoy streams the body")
+	// The first body message: a keepalive, inside the limit.
+	require.NoError(t, router.handleProcessRequest(NewMockStream(nil), fullDuplexResponseBodyRequest(openRouterKeepaliveChunk, false), ctx))
+	require.False(t, ctx.StreamingComplete)
 	wait := router.loopWait(ctx)
 	assert.InDelta(t, (30 * time.Second).Seconds(), wait.Seconds(), 2, "the loop must wake when the limit falls due")
 
@@ -125,4 +130,30 @@ func TestTheLoopTimerIsFullDuplexOnly(t *testing.T) {
 	router := silenceRouter(60, 0)
 	ctx, _ := silentStreamContext(t, 30*time.Second)
 	assert.Zero(t, router.loopWait(ctx))
+}
+
+// An item's start is not content: a Responses reasoning model announces its
+// reasoning item and then thinks in silence, so the first-content limit must
+// still apply.
+func TestAnItemStartIsNotContent(t *testing.T) {
+	ctx := &RequestContext{}
+	observeStreamContent(ctx, []llmprotocol.Event{
+		{Type: llmprotocol.EventResponseStarted},
+		{Type: llmprotocol.EventOutputItemStarted},
+		{Type: llmprotocol.EventKeepalive},
+		{Type: llmprotocol.EventUsageUpdated},
+	})
+	assert.False(t, ctx.StreamContentSeen)
+	observeStreamContent(ctx, []llmprotocol.Event{{Type: llmprotocol.EventReasoningDelta}})
+	assert.True(t, ctx.StreamContentSeen)
+}
+
+// A message that falls due with the timer is taken, not lost to the cut.
+func TestPollTakesAWaitingMessage(t *testing.T) {
+	receiver := &streamReceiver{messages: make(chan receivedMessage, 1)}
+	_, ok := receiver.poll()
+	assert.False(t, ok)
+	receiver.messages <- receivedMessage{}
+	_, ok = receiver.poll()
+	assert.True(t, ok)
 }
