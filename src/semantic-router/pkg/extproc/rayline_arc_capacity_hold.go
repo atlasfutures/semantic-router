@@ -92,7 +92,7 @@ func (selector *raylineARCSelector) policyCapacityHold(
 	if !validARCDecision(decision, workerIDs) {
 		return nil
 	}
-	tokens, _ := refusal.Detail["token_count"].(int)
+	tokens, tokensKnown := refusal.Detail["token_count"].(int)
 	maxTokens, _ := refusal.Detail["max_tokens"].(int)
 	encoded := &raylinearc.EncoderResult{SerializedTokens: tokens, FullHistoryTokens: tokens}
 	result := selector.selectionResult(armed, selCtx, arcContext, state, encoded, decision, 0)
@@ -101,6 +101,9 @@ func (selector *raylineARCSelector) policyCapacityHold(
 	result.RaylineARC.RawScores, result.RaylineARC.AdjustedScores = nil, nil
 	result.RaylineARC.PolicyLatency = latency
 	result.RaylineARC.EncoderLatencyUnknown = true
+	// A runtime that refuses before counting reports no token count; the
+	// counts are unknown, not zero.
+	result.RaylineARC.TokenCountsUnknown = !tokensKnown
 	result.Reasoning = "policy-service ARC decision (encoder_capacity_hold)"
 	result.RaylineARC.PolicyActionID = held.ActionID
 	result.RaylineARC.PolicyArmID = held.ArmID
@@ -117,8 +120,17 @@ func (selector *raylineARCSelector) policyCapacityHold(
 		result.RaylineARC.PolicyBoundary = raylinearc.NewPolicyBoundaryDecision(binding.arm, state.TurnIndex, turn, messages)
 	}
 	logging.ComponentEvent("extproc", "rayline_arc_encoder_capacity_hold", map[string]interface{}{
-		"episode_id_hash": arcContext.EpisodeIDHash, "rule": "hold", "action_id": held.ActionID,
-		"token_count": tokens, "max_tokens": maxTokens, "side_call": sideCall,
+		"request_id": arcContext.RequestID, "episode_id_hash": arcContext.EpisodeIDHash, "rule": "hold", "action_id": held.ActionID,
+		"token_count": knownCount(tokens, tokensKnown), "max_tokens": maxTokens, "side_call": sideCall,
 	})
 	return result
+}
+
+// knownCount is a count for a log line: the value when it was measured, and
+// null when it was not, never a zero that reads as one.
+func knownCount(value int, known bool) any {
+	if !known {
+		return nil
+	}
+	return value
 }

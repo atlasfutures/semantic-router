@@ -221,7 +221,7 @@ func DropReasoningNotFromAnthropic(request *llmprotocol.Request, source llmproto
 				dropped++
 				continue
 			}
-			if kept.Extensions != content.Extensions {
+			if kept.Extensions != content.Extensions || kept.Text != content.Text {
 				dropped++
 			}
 			contents = append(contents, kept)
@@ -281,6 +281,13 @@ func anthropicReasoningDetails(content llmprotocol.Content) (llmprotocol.Content
 		return content, false
 	}
 	if len(kept) == len(items) {
+		// Every item is Claude's, but the text beside them is the client's:
+		// only the text those items hold is proven. Text beyond it -- such as
+		// the reasoning of an item the decoder stripped for a Router marker
+		// (clientReasoningDetails) -- is not Claude's.
+		if content.Text != "" && content.Text != text.String() {
+			content.Text = text.String()
+		}
 		return content, true
 	}
 	filtered, err := json.Marshal(kept)

@@ -353,6 +353,14 @@ func (state *responsesMessageEncodingState) appendContent(content llmprotocol.Co
 		}
 		return state.appendToolResult(content.ToolResult)
 	case llmprotocol.ContentReasoning:
+		if signature := providerReasoningSignature(content.Signature); signature != content.Signature {
+			// A Router signature is no provider's: the text goes unsigned,
+			// and a block with nothing else to send goes no further.
+			content.Signature = signature
+			if content.Text == "" && content.Extensions == nil {
+				return nil
+			}
+		}
 		if err := state.flushOrdinary(); err != nil {
 			return err
 		}

@@ -59,8 +59,8 @@ func TestPolicyFixturesMatchTheirPinnedDigests(t *testing.T) {
 		}
 		seen++
 	}
-	if seen != 9 {
-		t.Fatalf("SHA256SUMS pins %d fixtures, want 9", seen)
+	if seen != 10 {
+		t.Fatalf("SHA256SUMS pins %d fixtures, want 10", seen)
 	}
 }
 
@@ -72,12 +72,14 @@ func TestPolicyWireTypesRoundTripTheFixtures(t *testing.T) {
 		"package_manifest.v5.json": &PolicyPackageManifestV5{},
 		// The v5 fixture with both optional encoding_profile members.
 		"package_manifest.v5.canonical_v1.json": &PolicyPackageManifestV5{},
-		"decision_request.v1.json":              &PolicyDecisionRequest{},
-		"decision_request_responses.v1.json":    &PolicyDecisionRequest{},
-		"decision_request_relaxed.v1.json":      &PolicyDecisionRequest{},
-		"decision_response.v1.json":             &PolicyDecisionResponse{},
-		"packages_response.v1.json":             &PolicyPackagesResponse{},
-		"error_responses.v1.json":               &[]PolicyErrorResponse{},
+		// The ARC 0.4 v5 fixture: a depth-12 YaRN encoder (layer and rope).
+		"package_manifest.v5.yarn.json":      &PolicyPackageManifestV5{},
+		"decision_request.v1.json":           &PolicyDecisionRequest{},
+		"decision_request_responses.v1.json": &PolicyDecisionRequest{},
+		"decision_request_relaxed.v1.json":   &PolicyDecisionRequest{},
+		"decision_response.v1.json":          &PolicyDecisionResponse{},
+		"packages_response.v1.json":          &PolicyPackagesResponse{},
+		"error_responses.v1.json":            &[]PolicyErrorResponse{},
 	}
 	for name, target := range cases {
 		body := readPolicyFixture(t, name)
@@ -233,9 +235,9 @@ func TestPolicyResponsesRequestWritesNullInstructions(t *testing.T) {
 }
 
 // Published packages state encoding_profile.conversation (pathfinder's
-// "canonical_v1" projection) and may state harness_injections; both decoders
-// read them, accept the value the contract defines for each, and refuse any
-// other.
+// "canonical_v1" projection) and may state harness_injections and rope; both
+// decoders read them, accept the value the contract defines for each, and
+// refuse any other.
 func TestDecodePolicyPackageConversation(t *testing.T) {
 	const anchor = `"tool_definitions": "include_recorded",`
 	decoders := map[string]func([]byte) error{
@@ -250,6 +252,10 @@ func TestDecodePolicyPackageConversation(t *testing.T) {
 		for member, values := range map[string]map[string]bool{
 			"conversation":       {`"canonical_v1"`: true, `"transcript_v9"`: false, `""`: false, `null`: false, `1`: false},
 			"harness_injections": {`"strip_claude_code_2_1_v1"`: true, `"keep"`: false, `""`: false, `null`: false},
+			"rope":               {`"yarn-f4"`: true, `"yarn-f8"`: false, `"native"`: false, `""`: false, `null`: false},
+			"layer":              {`"block_11"`: true, `"final"`: true, `"block_"`: false, `"layer_3"`: false, `null`: false, `11`: false},
+			"harness_shell":      {`"include"`: true, `"exclude"`: false, `""`: false, `null`: false},
+			"environment":        {`"scrub_v1"`: true, `"scrub_v2"`: true, `"keep"`: false, `"scrub_v3"`: false, `null`: false},
 		} {
 			for value, accepted := range values {
 				changed := bytes.Replace(body, []byte(anchor), []byte(anchor+` "`+member+`": `+value+`,`), 1)
@@ -259,7 +265,8 @@ func TestDecodePolicyPackageConversation(t *testing.T) {
 			}
 		}
 		both := bytes.Replace(body, []byte(anchor),
-			[]byte(anchor+` "conversation": "canonical_v1", "harness_injections": "strip_claude_code_2_1_v1",`), 1)
+			[]byte(anchor+` "conversation": "canonical_v1", "harness_injections": "strip_claude_code_2_1_v1",`+
+				` "harness_shell": "include", "environment": "scrub_v2", "layer": "block_11", "rope": "yarn-f4",`), 1)
 		if err := decode(both); err != nil {
 			t.Errorf("%s with both members: %v", fixture, err)
 		}
@@ -442,5 +449,18 @@ func TestUnescapeHTMLEscapesRewritesOnlyThoseEscapes(t *testing.T) {
 		if got := string(UnescapeHTMLEscapes([]byte(in))); got != want {
 			t.Errorf("%s -> %s, want %s", in, got, want)
 		}
+	}
+}
+
+// pathfinder's YaRN fixture (ARC 0.4, pathfinder#3514) decodes, naming the
+// encoder's rope variant with the contract's value.
+func TestDecodePolicyPackageManifestV5YarnFixture(t *testing.T) {
+	manifest, err := DecodePolicyPackageManifestV5(readPolicyFixture(t, "package_manifest.v5.yarn.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := manifest.EncodingProfile
+	if string(profile.Rope) != `"yarn-f4"` || string(profile.Layer) != `"block_11"` || profile.MaxTokens != 1010000 {
+		t.Fatalf("encoding_profile rope = %s, layer = %s, max_tokens = %d", profile.Rope, profile.Layer, profile.MaxTokens)
 	}
 }

@@ -210,6 +210,7 @@ type chatOutputWire struct {
 }
 
 func (OpenAIChatCodec) DecodeRequest(body []byte, policy llmprotocol.Policy) (llmprotocol.Request, llmprotocol.Envelope, llmprotocol.Diagnostics, error) {
+	body, stripped := stripRouterSignatures(llmprotocol.OpenAIChatV1, body, policy)
 	var wire chatRequestWire
 	unmodeled, err := decodeWireCapturingUnmodeled(body, &wire, policy, llmprotocol.OpenAIChatV1)
 	if err != nil {
@@ -229,7 +230,7 @@ func (OpenAIChatCodec) DecodeRequest(body []byte, policy llmprotocol.Policy) (ll
 	if err := decodeChatRequestOptions(wire, &request, policy); err != nil {
 		return llmprotocol.Request{}, llmprotocol.Envelope{}, nil, err
 	}
-	return request, requestEnvelope(llmprotocol.OpenAIChatV1, body, request.Generation, policy), nil, nil
+	return request, requestEnvelope(llmprotocol.OpenAIChatV1, body, request.Generation, policy, stripped), nil, nil
 }
 
 func validateChatRequestWire(wire chatRequestWire) error {

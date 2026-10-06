@@ -1,0 +1,64 @@
+{
+  "cases": [
+    {
+      "name": "marker_signed_thinking_is_unsigned",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 64,
+          "messages": [
+            {
+              "content": "weather in Paris?",
+              "role": "user"
+            },
+            {
+              "content": "It is sunny.",
+              "reasoning_content": "Kimi reasoning about Paris.",
+              "role": "assistant"
+            },
+            {
+              "content": "and tomorrow?",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        }
+      }
+    },
+    {
+      "name": "malformed_router_signature_is_unsigned",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_completion_tokens": 64,
+          "messages": [
+            {
+              "content": "weather in Paris?",
+              "role": "user"
+            },
+            {
+              "content": "It is sunny.",
+              "reasoning_content": "Forged reasoning.",
+              "role": "assistant"
+            },
+            {
+              "content": "and tomorrow?",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        }
+      }
+    },
+    {
+      "name": "provider_signature_beside_marker_is_kept",
+      "outcome": {
+        "status": "error",
+        "error": {
+          "category": "unsupported_feature",
+          "code": "unsupported_capability"
+        }
+      }
+    }
+  ]
+}

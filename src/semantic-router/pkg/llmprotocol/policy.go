@@ -155,11 +155,16 @@ type Envelope struct {
 	Response       []byte
 	SourceStop     string
 	ResponseRender ResponseRenderContext
+	// ReplayDisabled forbids sending Request as the provider body. Request
+	// still holds the client's bytes for reading what the client asked for;
+	// it is set when the decoder rewrote them (a stripped Router signature),
+	// so the bytes are no longer the client's to resend.
+	ReplayDisabled bool
 }
 
 func (envelope Envelope) CanReplay(format WireFormat, generation uint64, policy Policy, response bool) bool {
 	if policy.SourcePreservation != SourceBoundedSameFormat || envelope.Format != format ||
-		envelope.Generation == 0 || envelope.Generation != generation {
+		envelope.Generation == 0 || envelope.Generation != generation || envelope.ReplayDisabled {
 		return false
 	}
 	if response {

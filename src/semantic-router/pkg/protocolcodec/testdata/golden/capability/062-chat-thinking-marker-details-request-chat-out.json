@@ -1,0 +1,36 @@
+{
+  "cases": [
+    {
+      "name": "marker_signed_reasoning_details_item_is_refused",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "messages": [
+            {
+              "content": "weather in Paris?",
+              "role": "user"
+            },
+            {
+              "content": "It is sunny.",
+              "reasoning_content": "Kimi reasoning about Paris.",
+              "reasoning_details": [
+                {
+                  "data": "gAAAAopaque",
+                  "format": "openai-responses-v1",
+                  "index": 1,
+                  "type": "reasoning.encrypted"
+                }
+              ],
+              "role": "assistant"
+            },
+            {
+              "content": "and tomorrow?",
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        }
+      }
+    }
+  ]
+}

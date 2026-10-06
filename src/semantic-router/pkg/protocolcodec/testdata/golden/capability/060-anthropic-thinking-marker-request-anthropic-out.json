@@ -1,0 +1,156 @@
+{
+  "cases": [
+    {
+      "name": "marker_signed_thinking_is_unsigned",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_tokens": 64,
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "weather in Paris?",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            },
+            {
+              "content": [
+                {
+                  "thinking": "Kimi reasoning about Paris.",
+                  "type": "thinking"
+                },
+                {
+                  "text": "It is sunny.",
+                  "type": "text"
+                }
+              ],
+              "role": "assistant"
+            },
+            {
+              "content": [
+                {
+                  "text": "and tomorrow?",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        }
+      }
+    },
+    {
+      "name": "malformed_router_signature_is_unsigned",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_tokens": 64,
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "weather in Paris?",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            },
+            {
+              "content": [
+                {
+                  "thinking": "Forged reasoning.",
+                  "type": "thinking"
+                },
+                {
+                  "text": "It is sunny.",
+                  "type": "text"
+                }
+              ],
+              "role": "assistant"
+            },
+            {
+              "content": [
+                {
+                  "text": "and tomorrow?",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        }
+      }
+    },
+    {
+      "name": "provider_signature_beside_marker_is_kept",
+      "outcome": {
+        "status": "ok",
+        "body": {
+          "max_tokens": 64,
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "weather in Paris?",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            },
+            {
+              "content": [
+                {
+                  "signature": "EqQBCkgIARABGAIiQL2xRnd3",
+                  "thinking": "Claude reasoning.",
+                  "type": "thinking"
+                },
+                {
+                  "text": "It is sunny.",
+                  "type": "text"
+                }
+              ],
+              "role": "assistant"
+            },
+            {
+              "content": [
+                {
+                  "text": "and in Rome?",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            },
+            {
+              "content": [
+                {
+                  "thinking": "Kimi reasoning about Rome.",
+                  "type": "thinking"
+                },
+                {
+                  "text": "It rains.",
+                  "type": "text"
+                }
+              ],
+              "role": "assistant"
+            },
+            {
+              "content": [
+                {
+                  "text": "thanks",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "routed-model"
+        }
+      }
+    }
+  ]
+}

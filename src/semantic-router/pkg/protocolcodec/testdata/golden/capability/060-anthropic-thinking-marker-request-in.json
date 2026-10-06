@@ -1,0 +1,55 @@
+{
+  "operation": "request",
+  "cases": [
+    {
+      "name": "marker_signed_thinking_is_unsigned",
+      "body": {
+        "model": "client-model",
+        "max_tokens": 64,
+        "messages": [
+          {"role": "user", "content": "weather in Paris?"},
+          {"role": "assistant", "content": [
+            {"type": "thinking", "thinking": "Kimi reasoning about Paris.", "signature": "vsr.thinking.v1.moonshotai.AbCdEfGhIjKlMnOpQrStUvWxYz012-_9"},
+            {"type": "text", "text": "It is sunny."}
+          ]},
+          {"role": "user", "content": "and tomorrow?"}
+        ]
+      }
+    },
+    {
+      "name": "malformed_router_signature_is_unsigned",
+      "body": {
+        "model": "client-model",
+        "max_tokens": 64,
+        "messages": [
+          {"role": "user", "content": "weather in Paris?"},
+          {"role": "assistant", "content": [
+            {"type": "thinking", "thinking": "Forged reasoning.", "signature": "vsr.thinking.v1.MoonShot.short"},
+            {"type": "text", "text": "It is sunny."}
+          ]},
+          {"role": "user", "content": "and tomorrow?"}
+        ]
+      }
+    },
+    {
+      "name": "provider_signature_beside_marker_is_kept",
+      "body": {
+        "model": "client-model",
+        "max_tokens": 64,
+        "messages": [
+          {"role": "user", "content": "weather in Paris?"},
+          {"role": "assistant", "content": [
+            {"type": "thinking", "thinking": "Claude reasoning.", "signature": "EqQBCkgIARABGAIiQL2xRnd3"},
+            {"type": "text", "text": "It is sunny."}
+          ]},
+          {"role": "user", "content": "and in Rome?"},
+          {"role": "assistant", "content": [
+            {"type": "thinking", "thinking": "Kimi reasoning about Rome.", "signature": "vsr.thinking.v1.moonshotai.AbCdEfGhIjKlMnOpQrStUvWxYz012-_9"},
+            {"type": "text", "text": "It rains."}
+          ]},
+          {"role": "user", "content": "thanks"}
+        ]
+      }
+    }
+  ]
+}
