@@ -8,7 +8,9 @@ import (
 )
 
 // RoutingCandidate is one model a virtual id may resolve to, with its
-// card's facts.
+// card's facts: a decision's model refs, a route action's destination, and
+// the router's default_model, which an auto or entrypoint request resolves
+// to when no decision matches.
 //
 // A virtual id is the only thing a caller may send, and what stands behind
 // it is otherwise invisible: a gateway that fronts the router as one model
@@ -66,13 +68,19 @@ type CandidatePricing struct {
 }
 
 // routingCandidatesOf lists a recipe's candidates, decision by decision in
-// declared order, or nil when the recipe declares none, so an alias with
-// nothing behind it carries no empty array.
+// declared order, then the model an auto or entrypoint request resolves to
+// when no decision matches or the matched one has no usable ref, which is
+// the router's default_model. Nil when the recipe declares no decision and
+// no default, so an alias with nothing behind it carries no empty array.
 func routingCandidatesOf(cfg *config.RouterConfig, recipe *config.RoutingRecipe) []RoutingCandidate {
 	if cfg == nil || recipe == nil {
 		return nil
 	}
-	return routingCandidatesOfDecisions(cfg, recipe.Profile.Decisions)
+	candidates := routingCandidatesOfDecisions(cfg, recipe.Profile.Decisions)
+	if fallback := strings.TrimSpace(cfg.DefaultModel); fallback != "" && len(recipe.Profile.Decisions) > 0 {
+		candidates = appendDistinctCandidate(cfg, candidates, config.ModelRef{Model: fallback})
+	}
+	return candidates
 }
 
 // routingCandidatesForAlgorithm lists the candidates of every default-profile
@@ -101,18 +109,34 @@ func routingCandidatesForAlgorithm(cfg *config.RouterConfig, algorithm string) [
 // detail the route lookup reports per turn, not a fact about the model.
 func routingCandidatesOfDecisions(cfg *config.RouterConfig, decisions []config.Decision) []RoutingCandidate {
 	var candidates []RoutingCandidate
-	seen := make(map[string]struct{})
 	for index := range decisions {
-		for _, modelRef := range decisions[index].ModelRefs {
-			key := strings.TrimSpace(modelRef.Model) + "\x00" + strings.TrimSpace(modelRef.LoRAName) + "\x00" + thinkingModeOf(modelRef)
-			if _, listed := seen[key]; listed {
-				continue
+		decision := &decisions[index]
+		// A route action resolves straight to its destination, ahead of
+		// the refs, which it falls back to only when the destination cannot
+		// hold the request. The destination is what the alias selects, so
+		// it is listed first and the refs after it.
+		if decision.Action != nil && decision.Action.Type == config.DecisionActionRoute {
+			if destination := strings.TrimSpace(decision.Action.Destination); destination != "" {
+				candidates = appendDistinctCandidate(cfg, candidates, config.ModelRef{Model: destination})
 			}
-			seen[key] = struct{}{}
-			candidates = append(candidates, routingCandidateOf(cfg, modelRef))
+		}
+		for _, modelRef := range decision.ModelRefs {
+			candidates = appendDistinctCandidate(cfg, candidates, modelRef)
 		}
 	}
 	return candidates
+}
+
+// appendDistinctCandidate lists a ref unless a candidate of the same model,
+// adapter and thinking mode is listed already.
+func appendDistinctCandidate(cfg *config.RouterConfig, candidates []RoutingCandidate, modelRef config.ModelRef) []RoutingCandidate {
+	candidate := routingCandidateOf(cfg, modelRef)
+	for _, listed := range candidates {
+		if listed.Model == candidate.Model && listed.BaseModel == candidate.BaseModel && listed.Thinking == candidate.Thinking {
+			return candidates
+		}
+	}
+	return append(candidates, candidate)
 }
 
 func routingCandidateOf(cfg *config.RouterConfig, modelRef config.ModelRef) RoutingCandidate {
@@ -153,6 +177,12 @@ func routingCandidateOf(cfg *config.RouterConfig, modelRef config.ModelRef) Rout
 	if _, endpointName, ok, err := cfg.ResolvePrimaryBackendForModel(candidate.Model); ok && err == nil {
 		if endpoint, found := cfg.GetEndpointByName(endpointName); found {
 			candidate.Provider = endpoint.Type
+			// An endpoint that declares no type is a vLLM endpoint: that is
+			// the type dispatch resolves its model id under
+			// (ResolveExternalModelID), so the listing says the same.
+			if candidate.Provider == "" {
+				candidate.Provider = "vllm"
+			}
 		}
 		if providerModel := cfg.ResolveExternalModelID(candidate.Model, endpointName); providerModel != candidate.Model {
 			candidate.ProviderModel = providerModel

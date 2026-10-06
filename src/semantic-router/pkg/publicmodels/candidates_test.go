@@ -487,6 +487,66 @@ func TestFusionAndFlowAliasesListTheirOwnAlgorithmsCandidates(t *testing.T) {
 	}
 }
 
+// What an alias resolves to is not only the decisions' refs: a route action
+// goes straight to its destination, and an auto or entrypoint request that
+// matches no decision goes to default_model. Both are listed, the destination
+// ahead of its decision's refs and the default last, each once.
+func TestCandidatesIncludeRouteActionDestinationsAndTheDefaultModel(t *testing.T) {
+	cfg := &config.RouterConfig{
+		RouterOptions: config.RouterOptions{AutoModelNames: []string{"router/auto"}},
+		IntelligentRouting: config.IntelligentRouting{Decisions: []config.Decision{
+			{Name: "guard", Action: &config.DecisionAction{Type: config.DecisionActionRoute, Destination: "safe"}, ModelRefs: []config.ModelRef{{Model: "cheap"}}},
+			{Name: "plain", ModelRefs: []config.ModelRef{{Model: "strong"}}},
+		}},
+		BackendModels: config.BackendModels{
+			DefaultModel: "cheap",
+			ModelConfig:  map[string]config.ModelParams{"safe": {}, "cheap": {}, "strong": {}},
+		},
+	}
+	listing := marshalListing(t, NewOpenAIModelList(cfg, 123))
+	var got []string
+	for _, raw := range modelEntry(t, listing, "router/auto")["routing"].(map[string]interface{})["candidates"].([]interface{}) {
+		got = append(got, raw.(map[string]interface{})["model"].(string))
+	}
+	if want := []string{"safe", "cheap", "strong"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("candidates = %v, want %v: the destination first, the default once", got, want)
+	}
+}
+
+// The default model is a fallback from a decision, so an alias with no
+// decisions lists nothing rather than the default alone.
+func TestDefaultModelIsNotListedWithoutADecision(t *testing.T) {
+	cfg := &config.RouterConfig{
+		RouterOptions: config.RouterOptions{AutoModelNames: []string{"router/auto"}},
+		BackendModels: config.BackendModels{DefaultModel: "cheap", ModelConfig: map[string]config.ModelParams{"cheap": {}}},
+	}
+	listing := marshalListing(t, NewOpenAIModelList(cfg, 123))
+	if _, present := modelEntry(t, listing, "router/auto")["routing"].(map[string]interface{})["candidates"]; present {
+		t.Fatal("candidates are published for an alias with no decision behind it")
+	}
+}
+
+// An endpoint that declares no type is dispatched as vLLM, and the listing
+// names that provider rather than omitting it.
+func TestCandidateProviderDefaultsToVLLM(t *testing.T) {
+	cfg := &config.RouterConfig{
+		RouterOptions:      config.RouterOptions{AutoModelNames: []string{"router/auto"}},
+		IntelligentRouting: config.IntelligentRouting{Decisions: []config.Decision{{Name: "d", ModelRefs: []config.ModelRef{{Model: "m"}}}}},
+		BackendModels: config.BackendModels{
+			VLLMEndpoints: []config.VLLMEndpoint{{Name: "local", Address: "127.0.0.1", Port: 8000, Weight: 1}},
+			ModelConfig: map[string]config.ModelParams{"m": {
+				PreferredEndpoints: []string{"local"},
+				ExternalModelIDs:   map[string]string{"vllm": "org/m-served"},
+			}},
+		},
+	}
+	listing := marshalListing(t, NewOpenAIModelList(cfg, 123))
+	candidate := modelEntry(t, listing, "router/auto")["routing"].(map[string]interface{})["candidates"].([]interface{})[0].(map[string]interface{})
+	if candidate["provider"] != "vllm" || candidate["provider_model"] != "org/m-served" {
+		t.Fatalf("candidate = %v, want provider vllm and the vllm-resolved id", candidate)
+	}
+}
+
 // The claim and the card share one spelling, so a card that claims tool
 // calling under the catalog's name is read as such and nothing else is.
 func TestCandidateReadsToolsUnderTheCatalogSpelling(t *testing.T) {

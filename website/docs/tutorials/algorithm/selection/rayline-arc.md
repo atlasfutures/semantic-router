@@ -631,7 +631,9 @@ adapter is listed as the adapter, with the card it is served under as
 `base_model`. On the stock router an alias may resolve through several
 decisions, chosen per request by their rules; the list holds each distinct
 model and thinking mode once, in the order the decisions first declare them,
-and which decision picks which is a per-turn fact the route lookup reports.
+a route action's destination ahead of its decision's refs and the router's
+`default_model` last, since an unmatched request resolves to it. Which
+decision picks which is a per-turn fact the route lookup reports.
 `thinking.mode` is the decision's `use_reasoning` for that arm. `vision` is the
 card's verdict, which is capable when the card is silent; `tools` is the
 card's positive `tools` claim, which an unmarked card does not make.
