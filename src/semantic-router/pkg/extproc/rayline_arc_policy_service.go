@@ -79,12 +79,18 @@ type policyServiceScorer struct {
 	// episodeMode is the decide request's episode_mode: empty (strict) or
 	// relaxed.
 	episodeMode string
-	// fallbackModel is the last source of a derived hold
-	// (rayline_arc_derived_hold.go): the model of the package manifest's
-	// fallback action, or, for a package without a manifest, the configured
+	// fallbackModel is the model of the package manifest's fallback action,
+	// or, for a package without a manifest, the configured
 	// derived_hold_model; fallbackSource says which. Empty when neither.
+	// holdFallback ranks it with listedFallback.
 	fallbackModel  string
 	fallbackSource string
+	// listedFallback is the fallback_model the service's package listing
+	// names for this package (pathfinder#3677), as the last readiness probe
+	// verified it and only when the bindings dispatch it; nil when it names
+	// none. Atomic because a readiness re-probe may refresh it while turns
+	// read it.
+	listedFallback atomic.Pointer[string]
 	// sideStrictUntil (unix nanoseconds) is how long a strict cell sends its
 	// side calls strict after the service last showed it cannot serve them
 	// relaxed; zero or past means relaxed.
@@ -326,9 +332,11 @@ func createRaylineARCPolicySelector(
 	}
 	scorer := armed.scorer.(*policyServiceScorer)
 	probe := func(ctx context.Context) error {
-		if err := client.RequirePackage(ctx, policy.PackageAlias, policy.PackageSHA256); err != nil {
+		loaded, err := client.LoadedPackage(ctx, policy.PackageAlias, policy.PackageSHA256)
+		if err != nil {
 			return err
 		}
+		scorer.recordListedFallback(loaded.FallbackActionID, loaded.FallbackModel)
 		if scorer.episodeMode == raylinearc.PolicyEpisodeModeRelaxed {
 			return probeRelaxedPolicyDecide(ctx, client, scorer)
 		}
@@ -721,6 +729,51 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		logRaylineARCFallbackDecision(arcContext.EpisodeIDHash, arcContext.RequestID, state.TurnIndex, turn, scorer.cellOutWorkers(loggedRoutes), forced, available, response)
 	}
 	return result, nil
+}
+
+// recordListedFallback keeps the listing's fallback pair when it agrees with
+// the cell: its action, resolved through the bindings, serves its model. It
+// forgets any earlier one otherwise, and when the listing names none, so the
+// hold falls through to derived_hold_model.
+//   - An action the cell binds to another model is an inconsistent pair:
+//     logged (rayline_arc_listed_fallback_mismatch) and not used.
+//   - An action the cell does not bind is the package's own fallback, which
+//     this cell does not serve: logged (rayline_arc_listed_fallback_unbound)
+//     and not used, even when another action of the listed model is bound,
+//     as a derived_hold_model outside the bindings is refused at startup.
+func (scorer *policyServiceScorer) recordListedFallback(actionID, model string) {
+	scorer.listedFallback.Store(nil)
+	if model == "" {
+		return
+	}
+	fields := map[string]interface{}{
+		"package_alias":      scorer.alias,
+		"fallback_action_id": actionID,
+		"fallback_model":     model,
+	}
+	if _, bound := scorer.bindings[actionID]; !bound {
+		logging.ComponentErrorEvent("extproc", "rayline_arc_listed_fallback_unbound", fields)
+		return
+	}
+	if served := scorer.actionModel(actionID); served != model {
+		fields["bound_model"] = served
+		logging.ComponentErrorEvent("extproc", "rayline_arc_listed_fallback_mismatch", fields)
+		return
+	}
+	scorer.listedFallback.Store(&model)
+}
+
+// holdFallback is the last source of a derived hold: the package manifest's
+// fallback action's model, else the listing's fallback_model, else the
+// configured derived_hold_model, with the source that named it.
+func (scorer *policyServiceScorer) holdFallback() (model, source string) {
+	if scorer.fallbackSource == derivedHoldPackageFallback {
+		return scorer.fallbackModel, scorer.fallbackSource
+	}
+	if listed := scorer.listedFallback.Load(); listed != nil {
+		return *listed, derivedHoldListedFallback
+	}
+	return scorer.fallbackModel, scorer.fallbackSource
 }
 
 // actionModel is the trained model an action serves: its binding's declared

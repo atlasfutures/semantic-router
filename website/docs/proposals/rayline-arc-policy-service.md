@@ -347,11 +347,17 @@ The held model is, in order:
    commit, so records follow the commits' order;
 2. the model that last served its parent session, named by the trusted
    `x-rayline-parent-session` header;
-3. the model of the package's `fallback_action_id`. A package served without
-   a `package_manifest` (a v4 package from the store) has none that VSR can
-   read, since the policy service's package listing doesn't name it. For such
-   a package, the cell's `derived_hold_model` is used instead. It must be a
-   model the bindings dispatch, and it's refused beside a manifest.
+3. the model of the package manifest's `fallback_action_id`;
+4. for a package served without a `package_manifest` (a v4 package from the
+   store), the `fallback_model` the policy service's package listing names
+   for it (pathfinder#3677), as the readiness probe last verified it. The
+   pair must agree with the cell: its `fallback_action_id` must be a bound
+   action, and that action's model must be `fallback_model`. A pair whose
+   action this cell doesn't bind (`rayline_arc_listed_fallback_unbound`), or
+   binds to another model (`rayline_arc_listed_fallback_mismatch`), is logged
+   and skipped;
+5. else the cell's `derived_hold_model`. It must be a model the bindings
+   dispatch, and it's refused beside a manifest.
 
 The first source that names a model the cell binds decides the hold. Its
 offer is every action of that model, at every level. Exclusions still apply.
@@ -362,8 +368,14 @@ disable, a fallback exclusion), nothing is offered, and the turn fails as
 VSR writes every record, and the gateway owns the episode keys. Nothing in
 the request body is read, so a client cannot choose the held model. Each
 derived hold logs `rayline_arc_derived_hold` with its source
-(`session_record`, `parent_session`, `package_fallback`, or
-`configured_fallback` for a cell's `derived_hold_model`) and model.
+(`session_record`, `parent_session`, `package_fallback`, `listed_fallback`
+for the listing's `fallback_model`, or `configured_fallback` for a cell's
+`derived_hold_model`) and model.
+
+The packages listing (`rayline.arc.policy-packages.v1`) may state
+`fallback_action_id` (a sha256 hex action id) and `fallback_model` on a
+package, always together and never `null`. A listing that states only one,
+or either as `null`, is refused as a decode error.
 
 ## Fallback
 

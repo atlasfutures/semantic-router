@@ -104,9 +104,10 @@ type RaylineARCPolicyServiceConfig struct {
 	// (stage_one_held_unknown) is held on when no session record names one:
 	// the last source of a derived hold. A package_manifest names its own
 	// (decision.fallback_action_id), so this serves only a package without
-	// one -- the policy service's package listing does not say. It must be a
-	// model the bindings dispatch: a binding's declared model, or the worker
-	// of bindings that declare none.
+	// one, and only when the policy service's package listing names no bound
+	// fallback_model (pathfinder#3677). It must be a model the bindings
+	// dispatch: a binding's declared model, or the worker of bindings that
+	// declare none.
 	DerivedHoldModel string `yaml:"derived_hold_model,omitempty"`
 
 	packageV5 *raylineARCPolicyPackageV5

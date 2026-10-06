@@ -1974,9 +1974,10 @@ recipes:
                 # derived_hold_model is the model a two-stage package's
                 # refused cold turn (stage_one_held_unknown) is held on when no
                 # session record names one, for a package without a
-                # package_manifest: the policy service's package listing does
-                # not name its fallback. A manifest names its own, and this is
-                # refused beside one. It must be a model the bindings dispatch.
+                # package_manifest whose packages listing names no
+                # fallback_model (the listing's, when bound, comes first). A
+                # manifest names its own, and this is refused beside one. It
+                # must be a model the bindings dispatch.
                 derived_hold_model: ""
                 # fallback serves around a failed arm (ADR 0120). With
                 # enabled, a model that refused a turn is excluded for the

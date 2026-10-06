@@ -13,7 +13,9 @@
       "policy_id": "f0203b98f859dced93cb2e0bb6b7d4acdf2fd00aef2d1a5d42215cc138874912",
       "profile_id": "e7ff0fd3afa2bc64be268e7187172773ddce31e914858bfce3ae85bfd59dc14c",
       "decision_mode": "factored",
-      "state": "loaded"
+      "state": "loaded",
+      "fallback_action_id": "569bf3701d341b1945954bf38e0686b23e404ab2a857983402706a40b2a0fad9",
+      "fallback_model": "anthropic/claude-opus-5"
     },
     {
       "alias": "rayline/arc-example-fold1",

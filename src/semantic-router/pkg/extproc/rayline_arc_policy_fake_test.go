@@ -34,6 +34,9 @@ type fakePolicyService struct {
 	// cold lists no loaded package, as a service still loading its package.
 	cold   atomic.Bool
 	choose func(raylinearc.PolicyDecisionRequest) string
+	// listedFallbackActionID and listedFallbackModel are the fallback pair
+	// the packages listing names (pathfinder#3677); empty lists none.
+	listedFallbackActionID, listedFallbackModel string
 	// bodies are the decide request bodies as received, in order.
 	bodies   [][]byte
 	failWith string
@@ -214,6 +217,13 @@ func (fake *fakePolicyService) awaitBarrier() {
 	fake.mu.Unlock()
 }
 
+// listFallback makes the packages listing name this fallback pair.
+func (fake *fakePolicyService) listFallback(actionID, model string) {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	fake.listedFallbackActionID, fake.listedFallbackModel = actionID, model
+}
+
 func (fake *fakePolicyService) packages() raylinearc.PolicyPackagesResponse {
 	var listing raylinearc.PolicyPackagesResponse
 	fake.readFixture("packages_response.v1.json", &listing)
@@ -225,6 +235,9 @@ func (fake *fakePolicyService) packages() raylinearc.PolicyPackagesResponse {
 	listing.Packages[0].Alias, listing.Packages[0].PackageSHA256 = fake.alias, fake.sha256
 	fake.mu.Lock()
 	listing.Packages[0].Verification = fake.verification
+	// The fixture's entry names a fallback; the fake lists one only when a
+	// test sets it.
+	listing.Packages[0].FallbackActionID, listing.Packages[0].FallbackModel = fake.listedFallbackActionID, fake.listedFallbackModel
 	fake.mu.Unlock()
 	return listing
 }
