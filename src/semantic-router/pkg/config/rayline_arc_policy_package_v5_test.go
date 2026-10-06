@@ -361,6 +361,9 @@ func TestRaylineARCPolicyPackageV5EncodingProfileMembersAtStartup(t *testing.T) 
 		`"conversation": "canonical_v1",`: true,
 		`"conversation": "recorded",`:     false,
 		`"harness_injections": null,`:     false,
+		`"harness_shell": "include",`:     true,
+		`"harness_shell": "include_v2",`:  true,
+		`"harness_shell": "include_v3",`:  false,
 	} {
 		manifest := bytes.Replace(fixture, []byte(anchor), []byte(anchor+" "+members), 1)
 		cfg, decision := policyV5Decision(t, manifest)

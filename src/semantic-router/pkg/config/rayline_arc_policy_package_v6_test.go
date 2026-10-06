@@ -97,6 +97,33 @@ func TestRaylineARCPolicyPackageV6Refusals(t *testing.T) {
 	}
 }
 
+// A v6 package's harness_shell loads through startup validation when absent
+// (exclude), include or include_v2 (pathfinder#3653), and any other value is
+// refused at startup.
+func TestRaylineARCPolicyPackageV6HarnessShellAtStartup(t *testing.T) {
+	const anchor = `"tool_definitions": "include_recorded",`
+	fixture := readPolicyV6Fixture(t)
+	if !bytes.Contains(fixture, []byte(anchor)) {
+		t.Fatalf("the v6 fixture no longer holds %q", anchor)
+	}
+	for member, accepted := range map[string]bool{
+		``:                               true,
+		`"harness_shell": "include",`:    true,
+		`"harness_shell": "include_v2",`: true,
+		`"harness_shell": "include_v3",`: false,
+	} {
+		manifest := bytes.Replace(fixture, []byte(anchor), []byte(anchor+" "+member), 1)
+		cfg, decision := policyV5Decision(t, manifest)
+		err := validatePolicyDispatch(cfg, decision)
+		if accepted && err != nil {
+			t.Errorf("%q: refused: %v", member, err)
+		}
+		if !accepted && (err == nil || !strings.Contains(err.Error(), "encoding_profile.harness_shell")) {
+			t.Errorf("%q: err = %v, want a harness_shell refusal", member, err)
+		}
+	}
+}
+
 // A package_manifest is v5 or v6; any other schema, and a v6 manifest with a
 // text profile, is refused at startup.
 func TestRaylineARCPolicyPackageManifestSchemas(t *testing.T) {
