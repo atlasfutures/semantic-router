@@ -99,6 +99,28 @@ func TestPolicyResponsesDecideOmitsAbsentTools(t *testing.T) {
 	}
 }
 
+// An empty tools array is the client saying "no tools", which differs from
+// sending none: [] is forwarded as [], and only an absent (or null) tools is
+// omitted.
+func TestPolicyResponsesDecideForwardsAnEmptyToolsArray(t *testing.T) {
+	router, fake := newResponsesToolsRouter(t)
+	for _, test := range []struct {
+		name, tools string
+		present     bool
+	}{
+		{name: "empty", tools: `,"tools":[]`, present: true},
+		{name: "absent", tools: ``, present: false},
+	} {
+		client := `{"model":"auto"` + test.tools + `,"input":[{"type":"message","role":"user","content":"hi"}]}`
+		dispatchPolicyClientRequest(t, router, "responses-tools-"+test.name, "/v1/responses", client)
+		bodies := fake.receivedBodies()
+		tools, present := decideRequestMember(t, bodies[len(bodies)-1], "tools")
+		if present != test.present || (present && string(tools) != `[]`) {
+			t.Fatalf("%s: decide request.tools = %q (present %v), want present %v", test.name, tools, present, test.present)
+		}
+	}
+}
+
 // A previous_response_id turn resolves its earlier items from the store, but
 // the tools it forwards are the ones this request carries.
 func TestPolicyResponsesDecideForwardsThisTurnsToolsOnAStoredHistory(t *testing.T) {
