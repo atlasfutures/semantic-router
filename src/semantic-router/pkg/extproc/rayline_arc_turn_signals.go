@@ -44,7 +44,10 @@ const (
 	raylineARCAgentKeySourceHeader = "x-rayline-agent-key-source"
 	// raylineARCParentSessionHeader and raylineARCParentAgentHeader name the
 	// conversation a subagent was spawned from: its episode id and the
-	// parent's agent id. Recorded as metadata only.
+	// parent's agent id. Both are logged. The parent session also routes in
+	// one place: it is the second source of a derived hold, read only after
+	// a two-stage package's stage_one_held_unknown refusal
+	// (rayline_arc_derived_hold.go), and only when the headers are trusted.
 	raylineARCParentSessionHeader = "x-rayline-parent-session"
 	raylineARCParentAgentHeader   = "x-rayline-parent-agent"
 )

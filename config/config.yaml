@@ -1960,9 +1960,12 @@ recipes:
                 # headers: x-rayline-call-kind, x-rayline-compaction,
                 # x-rayline-agent-key-source, x-rayline-parent-session and
                 # x-rayline-parent-agent. Set it only when a gateway sets or
-                # strips every one of them. Off, harness literals in the body
-                # classify side calls and compactions. None is forwarded
-                # upstream.
+                # strips every one of them: a trusted x-rayline-parent-session
+                # also chooses the model a two-stage package's refused cold
+                # turn is held on, so it must name only the user's own
+                # parent session. Off, harness literals in the body classify
+                # side calls and compactions, and no hold reads a parent.
+                # None is forwarded upstream.
                 trust_turn_signal_headers: false
                 # trained_models declares, per bound worker, the trained model
                 # it serves (a v5 action's model, e.g. claude-opus-5); a binding

@@ -303,14 +303,20 @@ A subagent the gateway keyed on its harness agent id (`agent`) is its own
 conversation: a main turn of its own episode, with its own ledger, schedule
 and decisions. Keyed any other way, or with no key source, it stays a side
 call of the episode it arrived on, and its key source is logged as
-`unknown`. The parent link is logged (hashed) on `rayline_arc_policy_turn`
-as metadata; nothing routes on it.
+`unknown`. The parent link is logged (hashed) on `rayline_arc_policy_turn`.
+It routes in one place only. When a two-stage package refuses a turn with
+`stage_one_held_unknown`, `x-rayline-parent-session` names the session whose
+last served model is the second source of the derived hold (see below).
 
 Set the option only when a gateway in front of the router sets these
 headers, or strips them from client requests. Otherwise a client could mark
-its own turns as side calls, which are not counted, or as compactions. With
-the setting off, the headers are ignored. Either way, none of them is
-forwarded to a provider.
+its own turns as side calls, which are not counted, or as compactions. It
+could also name another session in `x-rayline-parent-session`, and have a
+refused cold turn held on whichever model that session last used. The
+gateway therefore has to set that header only to the session the subagent
+was really spawned from, and only within the same user's sessions. With the
+setting off, the headers are ignored, and no derived hold reads a parent.
+Either way, none of them is forwarded to a provider.
 
 ## Derived hold for two-stage packages
 
