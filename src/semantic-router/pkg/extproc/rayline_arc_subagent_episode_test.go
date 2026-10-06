@@ -54,8 +54,9 @@ func TestSubagentCallKindFollowsTheGatewayKeySource(t *testing.T) {
 	}
 }
 
-// The parent link is recorded hashed, as metadata; an unknown key source is
-// reported as unknown.
+// The parent link is recorded hashed; an unknown key source is reported as
+// unknown. (The link also routes, only as a derived-hold source:
+// TestDerivedHoldUsesTheParentSession.)
 func TestSubagentSignalRecordsTheParentLink(t *testing.T) {
 	request := raylinearc.PolicyClientRequest{System: json.RawMessage(subagentBillingSystem)}
 	signals := raylineARCPolicyTurnSignals(map[string]string{

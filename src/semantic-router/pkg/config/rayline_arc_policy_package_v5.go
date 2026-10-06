@@ -83,6 +83,16 @@ func (cfg *RaylineARCPolicyServiceConfig) PackageV5Action(actionID string) (Rayl
 	return action, ok
 }
 
+// PackageFallbackActionID is the package's declared fallback action
+// (decision.fallback_action_id), or "" for a package without a manifest.
+func (cfg *RaylineARCPolicyServiceConfig) PackageFallbackActionID() string {
+	pkg, err := cfg.loadPackageV5()
+	if err != nil {
+		return ""
+	}
+	return pkg.manifest.Decision.FallbackActionID
+}
+
 // PackageV5RegistryDiffers reports whether the manifest's
 // thinking_controls_sha256 names another registry artifact than VSR's.
 func (cfg *RaylineARCPolicyServiceConfig) PackageV5RegistryDiffers() bool {

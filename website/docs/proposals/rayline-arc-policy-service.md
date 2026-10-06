@@ -311,14 +311,59 @@ A subagent the gateway keyed on its harness agent id (`agent`) is its own
 conversation: a main turn of its own episode, with its own ledger, schedule
 and decisions. Keyed any other way, or with no key source, it stays a side
 call of the episode it arrived on, and its key source is logged as
-`unknown`. The parent link is logged (hashed) on `rayline_arc_policy_turn`
-as metadata; nothing routes on it.
+`unknown`. The parent link is logged (hashed) on `rayline_arc_policy_turn`.
+It routes in one place only. When a two-stage package refuses a turn with
+`stage_one_held_unknown`, `x-rayline-parent-session` names the session whose
+last served model is the second source of the derived hold (see below).
 
 Set the option only when a gateway in front of the router sets these
 headers, or strips them from client requests. Otherwise a client could mark
-its own turns as side calls, which are not counted, or as compactions. With
-the setting off, the headers are ignored. Either way, none of them is
-forwarded to a provider.
+its own turns as side calls, which are not counted, or as compactions. It
+could also name another session in `x-rayline-parent-session`, and have a
+refused cold turn held on whichever model that session last used. The
+gateway therefore has to set that header only to the session the subagent
+was really spawned from, and only within the same user's sessions. With the
+setting off, the headers are ignored, and no derived hold reads a parent.
+Either way, none of them is forwarded to a provider.
+
+## Derived hold for two-stage packages
+
+A two-stage package will not decide a mid-conversation turn cold. Such a turn
+has an assistant message the episode never attributed and no episode memory
+of its model, as when a conversation resumes after its episode cooled or was
+evicted, or a subagent is handed its parent's history. The package refuses it
+with 422 `selection_refused`, reason `stage_one_held_unknown`. VSR answers
+only that refusal: it asks once more, with the offer narrowed to one model's
+actions. That is the contract's caller hold, since every offered arm then
+belongs to one model. A second refusal fails the turn with 503, as before.
+Single-stage packages never refuse this way, so their decisions are
+unchanged.
+
+The held model is, in order:
+
+1. the model that last served this episode (the selected action's model, not
+   its worker, which may serve several), which the episode store keeps
+   for seven days, written by each committed policy turn's own episode
+   commit, so records follow the commits' order;
+2. the model that last served its parent session, named by the trusted
+   `x-rayline-parent-session` header;
+3. the model of the package's `fallback_action_id`. A package served without
+   a `package_manifest` (a v4 package from the store) has none that VSR can
+   read, since the policy service's package listing doesn't name it. For such
+   a package, the cell's `derived_hold_model` is used instead. It must be a
+   model the bindings dispatch, and it's refused beside a manifest.
+
+The first source that names a model the cell binds decides the hold. Its
+offer is every action of that model, at every level. Exclusions still apply.
+If this turn excludes the held model (vision, capability, an operator's
+disable, a fallback exclusion), nothing is offered, and the turn fails as
+`policy_no_available_action` without a second call.
+
+VSR writes every record, and the gateway owns the episode keys. Nothing in
+the request body is read, so a client cannot choose the held model. Each
+derived hold logs `rayline_arc_derived_hold` with its source
+(`session_record`, `parent_session`, `package_fallback`, or
+`configured_fallback` for a cell's `derived_hold_model`) and model.
 
 ## Fallback
 

@@ -44,8 +44,11 @@ type raylineARCEpisodeTransaction struct {
 	lease         raylinearc.Lease
 	state         *raylinearc.EpisodeState
 	episodeIDHash string
-	leaseTTL      time.Duration
-	selectedArm   int
+	// servedModel is the worker a policy-service main turn dispatched to.
+	// The turn's episode commit records it (EpisodeState.ServedModel).
+	servedModel string
+	leaseTTL    time.Duration
+	selectedArm int
 	// policyNext is the policy-service ledger and epoch to commit with this
 	// turn; nil outside that mode.
 	policyNext *raylinearc.PolicyEpisodeState
@@ -274,9 +277,18 @@ func (transaction *raylineARCEpisodeTransaction) markPolicyState(
 // stageRaylineARCPolicySelection stages what a policy-service decision
 // commits with the turn and, at a schedule boundary, stores the decision
 // before the request is dispatched.
-func stageRaylineARCPolicySelection(ctx *RequestContext, trace *selection.RaylineARCTrace) {
+func stageRaylineARCPolicySelection(ctx *RequestContext, trace *selection.RaylineARCTrace, worker string) {
 	transaction := ctx.RaylineARCTransaction
 	transaction.markPolicyState(trace.PolicyNextState, trace.PolicySideCall)
+	if trace.PolicyActionID != "" && !trace.PolicySideCall {
+		// The action's model, or, for a binding that declares none, its
+		// worker -- the model identity the scorer holds by (actionModel).
+		served := trace.PolicyActionModel
+		if served == "" {
+			served = worker
+		}
+		transaction.markServedModel(served)
+	}
 	if trace.PolicyBoundary == nil {
 		return
 	}
@@ -570,6 +582,9 @@ func (transaction *raylineARCEpisodeTransaction) nextState() (*raylinearc.Episod
 	if transaction.reasoningIssuersStaged {
 		nextState.ReasoningIssuers = append([]string(nil), transaction.reasoningIssuers...)
 	}
+	// The commit itself records the served model, ordered with it
+	// (raylinearc.ServedModelStore).
+	nextState.ServedModel = transaction.servedModel
 	if err := nextState.Commit(
 		transaction.selectedArm,
 		transaction.serializedTokens,

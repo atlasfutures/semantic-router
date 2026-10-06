@@ -42,7 +42,11 @@ type fakePolicyService struct {
 	// failFirst answers the next failFirstLeft decide calls with this code.
 	failFirst     string
 	failFirstLeft int
-	requests      []raylinearc.PolicyDecisionRequest
+	// refuseCold, when set, answers 422 selection_refused /
+	// stage_one_held_unknown for every decide it holds true of, as a
+	// two-stage package does for a turn it would decide cold.
+	refuseCold func(raylinearc.PolicyDecisionRequest) bool
+	requests   []raylinearc.PolicyDecisionRequest
 	// relaxedUnsupported, when set, answers every relaxed decide with 422
 	// unsupported_request and this detail.reason, as a service whose
 	// package cannot serve relaxed calls.
@@ -135,6 +139,7 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 		fake.requests = append(fake.requests, decide)
 		fake.bodies = append(fake.bodies, body)
 		choose, failWith, failDetail, relaxedUnsupported := fake.choose, fake.failWith, fake.failDetail, fake.relaxedUnsupported
+		refuseCold := fake.refuseCold
 		if fake.failFirstLeft > 0 {
 			fake.failFirstLeft--
 			failWith = fake.failFirst
@@ -143,6 +148,12 @@ func (fake *fakePolicyService) serve(writer http.ResponseWriter, request *http.R
 		if relaxedUnsupported != "" && decide.EpisodeMode == raylinearc.PolicyEpisodeModeRelaxed {
 			fake.writeJSON(writer, http.StatusUnprocessableEntity, map[string]any{
 				"error": "unsupported_request", "detail": map[string]any{"reason": relaxedUnsupported},
+			})
+			return
+		}
+		if refuseCold != nil && refuseCold(decide) {
+			fake.writeJSON(writer, http.StatusUnprocessableEntity, map[string]any{
+				"error": "selection_refused", "detail": map[string]any{"reason": "stage_one_held_unknown"},
 			})
 			return
 		}

@@ -116,7 +116,18 @@ func capacityRefusalDetail(detail map[string]any) map[string]any {
 // relaxed_* detail.reason).
 const PolicyRelaxedUnsupportedClass = "relaxed_unsupported"
 
+// PolicyStageOneHeldUnknownClass is a two-stage package's refusal to decide
+// a mid-conversation turn without knowing the model serving it
+// (selection_refused with detail.reason stage_one_held_unknown). A caller
+// that names that model by narrowing the offer to it is served.
+const PolicyStageOneHeldUnknownClass = "stage_one_held_unknown"
+
 func policyFailureClass(failure PolicyErrorResponse) string {
+	if failure.Error == "selection_refused" {
+		if reason, _ := failure.Detail["reason"].(string); reason == PolicyStageOneHeldUnknownClass {
+			return PolicyStageOneHeldUnknownClass
+		}
+	}
 	if failure.Error == "unsupported_request" {
 		if reason, _ := failure.Detail["reason"].(string); strings.HasPrefix(reason, "relaxed_") {
 			return PolicyRelaxedUnsupportedClass

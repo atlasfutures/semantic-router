@@ -100,6 +100,14 @@ type RaylineARCPolicyServiceConfig struct {
 	// serves exactly what the policy chose and a refusal stays a failure, as
 	// in collection.
 	Fallback *RaylineARCPolicyFallbackConfig `yaml:"fallback,omitempty"`
+	// DerivedHoldModel is the model a two-stage package's cold-turn refusal
+	// (stage_one_held_unknown) is held on when no session record names one:
+	// the last source of a derived hold. A package_manifest names its own
+	// (decision.fallback_action_id), so this serves only a package without
+	// one -- the policy service's package listing does not say. It must be a
+	// model the bindings dispatch: a binding's declared model, or the worker
+	// of bindings that declare none.
+	DerivedHoldModel string `yaml:"derived_hold_model,omitempty"`
 
 	packageV5 *raylineARCPolicyPackageV5
 }
@@ -269,6 +277,9 @@ func validateRaylineARCPolicyServiceConfig(cfg *RaylineARCPolicyServiceConfig) e
 	}
 	if !cfg.IsPackageV5() && len(cfg.TrainedModels) > 0 {
 		return fmt.Errorf("trained_models serves v5 packages; a v4 binding declares its model")
+	}
+	if err := validateRaylineARCDerivedHoldModel(cfg); err != nil {
+		return err
 	}
 	if cfg.IsPackageV5() {
 		if err := validateRaylineARCPolicyPackageV5Bindings(cfg); err != nil {
@@ -553,4 +564,26 @@ func validateRaylineARCPolicyMessagesMode(cfg *RouterConfig, binding RaylineARCP
 		}
 	}
 	return fmt.Errorf("worker %q dispatches Messages, where this action needs %s thinking, and its reasoning family declares %v", binding.Worker, mode, family.Modes)
+}
+
+// validateRaylineARCDerivedHoldModel refuses a derived_hold_model beside a
+// package manifest, which names its own fallback, and one no binding
+// dispatches.
+func validateRaylineARCDerivedHoldModel(cfg *RaylineARCPolicyServiceConfig) error {
+	if cfg.DerivedHoldModel == "" {
+		return nil
+	}
+	if cfg.IsPackageV5() {
+		return fmt.Errorf("derived_hold_model serves packages without a package_manifest; a manifest names its own fallback")
+	}
+	for _, binding := range cfg.Bindings {
+		model := binding.Model
+		if model == "" {
+			model = binding.Worker
+		}
+		if model == cfg.DerivedHoldModel {
+			return nil
+		}
+	}
+	return fmt.Errorf("derived_hold_model %q is not a model the bindings dispatch", cfg.DerivedHoldModel)
 }

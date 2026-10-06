@@ -79,6 +79,12 @@ type policyServiceScorer struct {
 	// episodeMode is the decide request's episode_mode: empty (strict) or
 	// relaxed.
 	episodeMode string
+	// fallbackModel is the last source of a derived hold
+	// (rayline_arc_derived_hold.go): the model of the package manifest's
+	// fallback action, or, for a package without a manifest, the configured
+	// derived_hold_model; fallbackSource says which. Empty when neither.
+	fallbackModel  string
+	fallbackSource string
 	// sideStrictUntil (unix nanoseconds) is how long a strict cell sends its
 	// side calls strict after the service last showed it cannot serve them
 	// relaxed; zero or past means relaxed.
@@ -181,6 +187,11 @@ func newPolicyServiceScorer(
 		}
 		scorer.bindings[binding.ActionID] = policyBinding{arm: index[binding.Worker], level: level, model: model}
 		scorer.actionOrder = append(scorer.actionOrder, binding.ActionID)
+	}
+	if fallback := policy.PackageFallbackActionID(); fallback != "" {
+		scorer.fallbackModel, scorer.fallbackSource = scorer.actionModel(fallback), derivedHoldPackageFallback
+	} else if policy.DerivedHoldModel != "" {
+		scorer.fallbackModel, scorer.fallbackSource = policy.DerivedHoldModel, derivedHoldConfigured
 	}
 	return scorer
 }
@@ -579,6 +590,24 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		scorer.sideCallsRelaxedUnsupported(selector.now(), "refused")
 		request.EpisodeMode = scorer.episodeMode
 		response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+	}
+	// A two-stage package refuses a mid-conversation turn it would decide
+	// cold. With no model held, the turn is asked once more with the offer
+	// narrowed to a derived model (rayline_arc_derived_hold.go); a second
+	// refusal fails the turn as the first would have.
+	var cold *raylinearc.PolicyServiceError
+	if held < 0 && errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass {
+		if derived, found := derivedHoldOffer(scorer, arcContext, available); found {
+			logRaylineARCDerivedHold(arcContext, derived)
+			// The held model this turn excludes leaves nothing to offer: the
+			// turn fails as any empty offer does, never retried empty.
+			if len(derived.offer) == 0 {
+				return nil, arcSelectionFailure("policy_no_available_action")
+			}
+			available = derived.offer
+			request.Selection.AvailableActionIDs = derived.offer
+			response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+		}
 	}
 	var shed *policyAdmissionError
 	if errors.As(err, &shed) {
