@@ -312,6 +312,31 @@ its own turns as side calls, which are not counted, or as compactions. With
 the setting off, the headers are ignored. Either way, none of them is
 forwarded to a provider.
 
+## Derived hold for two-stage packages
+
+A two-stage package will not decide a mid-conversation turn cold. Such a turn
+has an assistant message the episode never attributed and no episode memory
+of its model, as when a conversation resumes after its episode cooled or was
+evicted, or a subagent is handed its parent's history. The package refuses it
+with 422 `selection_refused`, reason `stage_one_held_unknown`. VSR answers
+only that refusal: it asks once more, with the offer narrowed to one model's
+actions. That is the contract's caller hold, since every offered arm then
+belongs to one model. A second refusal fails the turn with 503, as before.
+Single-stage packages never refuse this way, so their decisions are
+unchanged.
+
+The held model is, in order:
+
+1. the worker that last served this episode, which the episode store keeps
+   for seven days after each committed policy turn;
+2. the worker that last served its parent session, named by the trusted
+   `x-rayline-parent-session` header;
+3. the model of the package's `fallback_action_id`.
+
+VSR writes every record, and the gateway owns the episode keys. Nothing in
+the request body is read, so a client cannot choose the held model. Each
+derived hold logs `rayline_arc_derived_hold` with its source and model.
+
 ## Fallback
 
 `fallback.enabled` (default false) lets a cell serve around a model that
