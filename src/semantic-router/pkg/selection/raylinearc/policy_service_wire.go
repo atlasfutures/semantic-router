@@ -522,8 +522,12 @@ const (
 	// encoder checkpoint's own RoPE.
 	PolicyRopeYarnF4 = "yarn-f4"
 	// PolicyHarnessShellInclude keeps the harness shell in the encoder input;
-	// absent excludes it.
-	PolicyHarnessShellInclude = "include"
+	// absent excludes it. PolicyHarnessShellIncludeV2 keeps it under tool
+	// rule v2 (pathfinder#3653: nameless built-ins become allowlisted type
+	// markers, namespaces stay nested). Both are opaque to VSR; the policy
+	// service applies the projection.
+	PolicyHarnessShellInclude   = "include"
+	PolicyHarnessShellIncludeV2 = "include_v2"
 	// PolicyEnvironmentScrubV1 and PolicyEnvironmentScrubV2 scrub harness
 	// environment text from the encoder input; absent keeps it.
 	PolicyEnvironmentScrubV1 = "scrub_v1"
@@ -568,7 +572,7 @@ func (common *PolicyPackageCommon) checkProfileMembers(conversation string) erro
 		"conversation":       {profile.Conversation, []string{conversation}},
 		"harness_injections": {profile.HarnessInjections, []string{PolicyHarnessInjectionsStripClaudeCode}},
 		"rope":               {profile.Rope, []string{PolicyRopeYarnF4}},
-		"harness_shell":      {profile.HarnessShell, []string{PolicyHarnessShellInclude}},
+		"harness_shell":      {profile.HarnessShell, []string{PolicyHarnessShellInclude, PolicyHarnessShellIncludeV2}},
 		"environment":        {profile.Environment, []string{PolicyEnvironmentScrubV1, PolicyEnvironmentScrubV2}},
 	} {
 		if member.raw == nil {
@@ -630,7 +634,7 @@ type PolicyPackageCommon struct {
 		Layer json.RawMessage `json:"layer,omitempty"`
 		// HarnessShell and Environment name the encoder input projection:
 		// absent excludes the harness shell and keeps environment text;
-		// include and scrub_v1/scrub_v2 are the alternatives the service
+		// include/include_v2 and scrub_v1/scrub_v2 are the alternatives the service
 		// applies. Absent at their defaults, as pathfinder omits them.
 		HarnessShell json.RawMessage `json:"harness_shell,omitempty"`
 		Environment  json.RawMessage `json:"environment,omitempty"`

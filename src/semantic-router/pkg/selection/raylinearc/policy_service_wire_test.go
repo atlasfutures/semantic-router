@@ -280,7 +280,7 @@ func TestDecodePolicyPackageConversation(t *testing.T) {
 			"harness_injections": {`"strip_claude_code_2_1_v1"`: true, `"keep"`: false, `""`: false, `null`: false},
 			"rope":               {`"yarn-f4"`: true, `"yarn-f8"`: false, `"native"`: false, `""`: false, `null`: false},
 			"layer":              {`"block_11"`: true, `"final"`: true, `"block_"`: false, `"layer_3"`: false, `null`: false, `11`: false},
-			"harness_shell":      {`"include"`: true, `"exclude"`: false, `""`: false, `null`: false},
+			"harness_shell":      {`"include"`: true, `"include_v2"`: true, `"include_v3"`: false, `"exclude"`: false, `""`: false, `null`: false},
 			"environment":        {`"scrub_v1"`: true, `"scrub_v2"`: true, `"keep"`: false, `"scrub_v3"`: false, `null`: false},
 		} {
 			for value, accepted := range values {

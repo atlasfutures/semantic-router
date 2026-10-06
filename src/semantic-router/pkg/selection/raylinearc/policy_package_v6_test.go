@@ -91,6 +91,7 @@ func TestDecodePolicyPackageManifestV6Refusals(t *testing.T) {
 		"harness_injections keep":     func(p map[string]any) { p["harness_injections"] = "keep" },
 		"harness_injections null":     func(p map[string]any) { p["harness_injections"] = nil },
 		"harness_shell exclude":       func(p map[string]any) { p["harness_shell"] = "exclude" },
+		"harness_shell include_v3":    func(p map[string]any) { p["harness_shell"] = "include_v3" },
 		"environment keep":            func(p map[string]any) { p["environment"] = "keep" },
 		"layer other":                 func(p map[string]any) { p["layer"] = "layer_3" },
 		"projection other":            func(p map[string]any) { p["projection"] = "pathfinder.input-projection.v2" },
@@ -136,6 +137,7 @@ func sub(profile map[string]any, member string) map[string]any {
 func TestDecodePolicyPackageManifestV6OptionalMembers(t *testing.T) {
 	for name, edit := range map[string]func(profile map[string]any){
 		"harness_shell include":     func(p map[string]any) { p["harness_shell"] = "include" },
+		"harness_shell include_v2":  func(p map[string]any) { p["harness_shell"] = "include_v2" },
 		"environment scrub_v1":      func(p map[string]any) { p["environment"] = "scrub_v1" },
 		"environment scrub_v2":      func(p map[string]any) { p["environment"] = "scrub_v2" },
 		"layer block_11":            func(p map[string]any) { p["layer"] = "block_11" },
