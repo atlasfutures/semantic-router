@@ -158,6 +158,13 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		}
 		result.State = state
 		result.Coalesced = coalesced
+		// Only an episode with no memory of its model reads the records a
+		// two-stage package's refusal is answered from
+		// (rayline_arc_derived_hold.go).
+		if algorithm.RaylineARC.PolicyService != nil && result.PolicyCallKind != raylinearc.PolicyCallSide &&
+			(state == nil || state.PreviousArm == nil) {
+			result.ServedWorkers = r.raylineARCServedWorkers(reqCtx, result.EpisodeIDHash, signalHeaders)
+		}
 		// A policy-service turn records its ledger entry, so it commits only
 		// once the client has the whole reply. Artifact-mode turns commit at
 		// the response headers, as they always have.

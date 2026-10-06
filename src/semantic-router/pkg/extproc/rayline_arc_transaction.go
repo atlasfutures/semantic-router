@@ -44,8 +44,11 @@ type raylineARCEpisodeTransaction struct {
 	lease         raylinearc.Lease
 	state         *raylinearc.EpisodeState
 	episodeIDHash string
-	leaseTTL      time.Duration
-	selectedArm   int
+	// servedWorker is the worker a policy-service main turn dispatched to,
+	// recorded past the episode once the turn commits (recordServedWorker).
+	servedWorker string
+	leaseTTL     time.Duration
+	selectedArm  int
 	// policyNext is the policy-service ledger and epoch to commit with this
 	// turn; nil outside that mode.
 	policyNext *raylinearc.PolicyEpisodeState
@@ -274,9 +277,12 @@ func (transaction *raylineARCEpisodeTransaction) markPolicyState(
 // stageRaylineARCPolicySelection stages what a policy-service decision
 // commits with the turn and, at a schedule boundary, stores the decision
 // before the request is dispatched.
-func stageRaylineARCPolicySelection(ctx *RequestContext, trace *selection.RaylineARCTrace) {
+func stageRaylineARCPolicySelection(ctx *RequestContext, trace *selection.RaylineARCTrace, worker string) {
 	transaction := ctx.RaylineARCTransaction
 	transaction.markPolicyState(trace.PolicyNextState, trace.PolicySideCall)
+	if trace.PolicyActionID != "" && !trace.PolicySideCall {
+		transaction.markServedWorker(worker)
+	}
 	if trace.PolicyBoundary == nil {
 		return
 	}
@@ -484,6 +490,7 @@ func (transaction *raylineARCEpisodeTransaction) commit(
 		transaction.state = nextState
 		metrics.RecordRaylineARCEpisodeTransaction("commit", "")
 		recordCommittedARCEpisodeTelemetry(requestContext, transaction)
+		transaction.recordServedWorker(ctx)
 	})
 	return transaction.finalizeErr
 }
@@ -538,6 +545,7 @@ func (transaction *raylineARCEpisodeTransaction) commitRelaxed(
 		transaction.state = nextState
 		metrics.RecordRaylineARCEpisodeTransaction("commit", "relaxed")
 		recordCommittedARCEpisodeTelemetry(requestContext, transaction)
+		transaction.recordServedWorker(ctx)
 	}
 }
 

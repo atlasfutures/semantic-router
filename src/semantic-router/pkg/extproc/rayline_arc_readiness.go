@@ -516,6 +516,22 @@ func (store unreadyRaylineARCEpisodeStore) CommitIfUnchanged(
 	return store.EpisodeStore.(raylinearc.EpisodeSnapshotStore).CommitIfUnchanged(ctx, episodeIDHash, read, state)
 }
 
+// RecordServedWorker and LastServedWorker forward to the wrapped store when
+// it keeps served-worker records; otherwise there is nothing to keep.
+func (store unreadyRaylineARCEpisodeStore) RecordServedWorker(ctx context.Context, episodeIDHash, worker string) error {
+	if served, ok := store.EpisodeStore.(raylinearc.ServedWorkerStore); ok {
+		return served.RecordServedWorker(ctx, episodeIDHash, worker)
+	}
+	return nil
+}
+
+func (store unreadyRaylineARCEpisodeStore) LastServedWorker(ctx context.Context, episodeIDHash string) (string, error) {
+	if served, ok := store.EpisodeStore.(raylinearc.ServedWorkerStore); ok {
+		return served.LastServedWorker(ctx, episodeIDHash)
+	}
+	return "", nil
+}
+
 // Ready forwards to the wrapped store's own probe.
 func (store unreadyRaylineARCEpisodeStore) Ready(ctx context.Context) error {
 	return store.EpisodeStore.(raylinearc.EpisodeStoreReadiness).Ready(ctx)

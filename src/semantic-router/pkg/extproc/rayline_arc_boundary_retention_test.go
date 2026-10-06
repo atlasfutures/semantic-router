@@ -80,7 +80,7 @@ func boundaryAttempt(
 		RaylineARCTransaction: newRaylineARCEpisodeTransaction(store, lease, state, episode, time.Minute, nil),
 	}
 	ctx.RaylineARCTransaction.markSelection(result.RaylineARC.SelectedArm, 10)
-	stageRaylineARCPolicySelection(ctx, result.RaylineARC)
+	stageRaylineARCPolicySelection(ctx, result.RaylineARC, "")
 	return ctx, result
 }
 
@@ -178,7 +178,7 @@ func TestRaylineARCRelaxedBoundaryDecisionIsStoredAndCommitted(t *testing.T) {
 			RaylineARCTransaction: newRelaxedRaylineARCEpisodeTransaction(store, state, read, episode, false),
 		}
 		ctx.RaylineARCTransaction.markSelection(result.RaylineARC.SelectedArm, 10)
-		stageRaylineARCPolicySelection(ctx, result.RaylineARC)
+		stageRaylineARCPolicySelection(ctx, result.RaylineARC, "")
 		return ctx, result
 	}
 	// The first attempt fails after staging: nothing else is written.

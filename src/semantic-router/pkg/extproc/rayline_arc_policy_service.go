@@ -79,6 +79,10 @@ type policyServiceScorer struct {
 	// episodeMode is the decide request's episode_mode: empty (strict) or
 	// relaxed.
 	episodeMode string
+	// fallbackActionID is the package's declared fallback action, the last
+	// source of a derived hold (rayline_arc_derived_hold.go); "" without a
+	// package manifest.
+	fallbackActionID string
 	// sideStrictUntil (unix nanoseconds) is how long a strict cell sends its
 	// side calls strict after the service last showed it cannot serve them
 	// relaxed; zero or past means relaxed.
@@ -148,12 +152,13 @@ func newPolicyServiceScorer(
 	policy := decision.Algorithm.RaylineARC.PolicyService
 	generation := strconv.FormatUint(raylineARCScorerGeneration.Add(1), 10)
 	scorer := &policyServiceScorer{
-		fallback: policy.FallbackEnabled(),
-		schedule: policy.ModelSchedule,
-		busyWait: time.Duration(decision.Algorithm.RaylineARC.Episode.AcquireTimeoutSeconds) * time.Second,
-		alias:    policy.PackageAlias,
-		sha256:   policy.PackageSHA256,
-		bindings: make(map[string]policyBinding, len(policy.Bindings)),
+		fallback:         policy.FallbackEnabled(),
+		schedule:         policy.ModelSchedule,
+		busyWait:         time.Duration(decision.Algorithm.RaylineARC.Episode.AcquireTimeoutSeconds) * time.Second,
+		alias:            policy.PackageAlias,
+		sha256:           policy.PackageSHA256,
+		bindings:         make(map[string]policyBinding, len(policy.Bindings)),
+		fallbackActionID: policy.PackageFallbackActionID(),
 	}
 	if decision.Algorithm.RaylineARC.Episode.RelaxedConsistency() {
 		scorer.episodeMode = raylinearc.PolicyEpisodeModeRelaxed
@@ -579,6 +584,19 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		scorer.sideCallsRelaxedUnsupported(selector.now(), "refused")
 		request.EpisodeMode = scorer.episodeMode
 		response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+	}
+	// A two-stage package refuses a mid-conversation turn it would decide
+	// cold. With no model held, the turn is asked once more with the offer
+	// narrowed to a derived model (rayline_arc_derived_hold.go); a second
+	// refusal fails the turn as the first would have.
+	var cold *raylinearc.PolicyServiceError
+	if held < 0 && errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass {
+		if narrowed, source, model, derived := derivedHoldOffer(scorer, arcContext, available); derived {
+			logRaylineARCDerivedHold(arcContext, source, model, len(narrowed))
+			available = narrowed
+			request.Selection.AvailableActionIDs = narrowed
+			response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
+		}
 	}
 	var shed *policyAdmissionError
 	if errors.As(err, &shed) {
