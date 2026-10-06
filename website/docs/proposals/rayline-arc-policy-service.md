@@ -338,7 +338,11 @@ The held model is, in order:
    commit, so records follow the commits' order;
 2. the worker that last served its parent session, named by the trusted
    `x-rayline-parent-session` header;
-3. the model of the package's `fallback_action_id`.
+3. the model of the package's `fallback_action_id`. A package served without
+   a `package_manifest` (a v4 package from the store) has none that VSR can
+   read, since the policy service's package listing doesn't name it. For such
+   a package, the cell's `derived_hold_model` is used instead. It must be a
+   model the bindings dispatch, and it's refused beside a manifest.
 
 The first source that names a model the cell binds decides the hold. Its
 offer is every action of that model, at every level. Exclusions still apply.
