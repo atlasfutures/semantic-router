@@ -454,11 +454,27 @@ func TestAnthropicThinkingSignatureSurvivesResponseMutationOrFailsExplicitly(t *
 	}
 	assertEncodedAnthropicThinkingSignature(t, content, encoded.Body)
 
-	_, err = engine.TranslateResponse(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, body, nil)
-	var protocolError *llmprotocol.ProtocolError
-	if !errors.As(err, &protocolError) || protocolError.Category != llmprotocol.ErrorUnsupportedFeature {
-		t.Fatalf("cross-protocol thinking signature returned %T %v, want typed unsupported_feature", err, err)
+	// Chat has no member for the signature: the thinking text reaches the
+	// client and the signature's drop is reported, not silent (#212).
+	translated, err := engine.TranslateResponse(llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1, body, nil)
+	if err != nil {
+		t.Fatalf("cross-protocol thinking signature: %v", err)
 	}
+	if bytes.Contains(translated.Body, []byte("signed-block")) || !bytes.Contains(translated.Body, []byte("private reasoning")) {
+		t.Fatalf("Chat answer = %s, want the thinking text without its signature", translated.Body)
+	}
+	if !hasDroppedSignatureDiagnostic(translated.Diagnostics) {
+		t.Fatalf("diagnostics = %+v, want the dropped reasoning.signature reported", translated.Diagnostics)
+	}
+}
+
+func hasDroppedSignatureDiagnostic(diagnostics llmprotocol.Diagnostics) bool {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Field == "reasoning.signature" && diagnostic.Action == llmprotocol.DiagnosticDropped {
+			return true
+		}
+	}
+	return false
 }
 
 func assertDecodedAnthropicThinkingSignature(t *testing.T, response llmprotocol.Response) {

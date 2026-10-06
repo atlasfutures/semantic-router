@@ -205,8 +205,14 @@ func TestAnthropicSignatureDeltaIsPreservedOrExplicitlyRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := cross.Push(payload); err == nil {
-		t.Fatal("signed reasoning was silently dropped across formats")
+	// Chat has no member for the signature: it is dropped and the drop is
+	// reported, not silent (#212).
+	crossFrames, _, diagnostics, err := cross.Push(payload)
+	if err != nil {
+		t.Fatalf("cross-format signed reasoning: %v", err)
+	}
+	if bytes.Contains(bytes.Join(crossFrames, nil), []byte("signed")) || !hasDroppedSignatureDiagnostic(diagnostics) {
+		t.Fatalf("Chat stream = %s diagnostics=%+v, want the signature dropped and reported", bytes.Join(crossFrames, nil), diagnostics)
 	}
 }
 

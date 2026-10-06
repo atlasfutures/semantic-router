@@ -30,6 +30,7 @@ func (engine *Engine) EncodeResponseStream(
 	if encodeResponseStreamErr != nil {
 		return nil, nil, encodeResponseStreamErr
 	}
+	response, dropped := responseForTarget(response, format, pair.buffered.Capabilities(), engine.policy.Limits.Diagnostics)
 	if err := llmprotocol.RequireCapabilities(
 		format,
 		pair.buffered.Capabilities(),
@@ -48,7 +49,7 @@ func (engine *Engine) EncodeResponseStream(
 		return nil, nil, encodeResponseStreamErr
 	}
 	var body bytes.Buffer
-	var diagnostics llmprotocol.Diagnostics
+	diagnostics := dropped
 	for _, event := range events {
 		frames, eventDiagnostics, pushErr := encoder.Push(event)
 		diagnostics = appendDiagnostics(diagnostics, eventDiagnostics, engine.policy.Limits.Diagnostics)
