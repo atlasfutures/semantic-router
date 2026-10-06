@@ -334,7 +334,8 @@ unchanged.
 The held model is, in order:
 
 1. the worker that last served this episode, which the episode store keeps
-   for seven days after each committed policy turn;
+   for seven days, written by each committed policy turn's own episode
+   commit, so records follow the commits' order;
 2. the worker that last served its parent session, named by the trusted
    `x-rayline-parent-session` header;
 3. the model of the package's `fallback_action_id`.
