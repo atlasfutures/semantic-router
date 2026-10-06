@@ -44,6 +44,12 @@ const arcFailureMissingEpisodeID = "missing_episode_id"
 // while a replayable status sends it to the fallback provider intact.
 const arcFailureNoCapableArm = "no_capable_arm"
 
+// arcFailureNoContextArm is the bounded class for a turn longer than every
+// arm's declared context window. Like no_vision_arm it answers 503: the
+// gateway replays that to its fallback provider, and a 400 would end the
+// turn.
+const arcFailureNoContextArm = "no_context_arm"
+
 // arcFailureSelectorUnavailable is a request refused by a selector that
 // construction left unarmed for good; unlike not_ready, it will not recover.
 const arcFailureSelectorUnavailable = "selector_unavailable"
@@ -204,6 +210,8 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	}
 	result.ImageBearing = imageBearing
 	result.NonVisionArms = r.nonVisionArms(modelRefs)
+	result.ContextTokens = reqCtx.VSRContextTokenCount
+	result.OverContextArms = r.overContextArms(modelRefs, result.ContextTokens)
 	result.DisabledArms = r.disabledArms(modelRefs)
 	result.RequiredCapabilities = requestRoutingCapabilities(reqCtx)
 	result.IncapableArms = r.incapableArms(modelRefs, result.RequiredCapabilities)
@@ -266,6 +274,34 @@ func (r *OpenAIRouter) nonVisionArms(modelRefs []config.ModelRef) []bool {
 	for index, ref := range modelRefs {
 		params, known := r.Config.ModelConfig[strings.TrimSpace(ref.Model)]
 		if known && !params.SupportsVision() {
+			arms[index] = true
+			marked = true
+		}
+	}
+	if !marked {
+		return nil
+	}
+	return arms
+}
+
+// overContextArms reads each candidate's declared context window against the
+// request's token estimate, with the same reader the generic context filter
+// uses (modelNameExceedsContextWindow), so the two never disagree about which
+// card and which number. It returns nil when no arm is over its window,
+// which is every turn on a basket that declares no windows and every short
+// turn on one that does, and leaves selection exactly as it was.
+//
+// The exclusion is a refusal, like vision: an arm whose window the prompt
+// exceeds does not answer worse, it answers 400 from the provider, so routing
+// there produces no completion at all.
+func (r *OpenAIRouter) overContextArms(modelRefs []config.ModelRef, contextTokens int) []bool {
+	if r == nil || r.Config == nil || contextTokens <= 0 || len(modelRefs) == 0 {
+		return nil
+	}
+	marked := false
+	arms := make([]bool, len(modelRefs))
+	for index, ref := range modelRefs {
+		if r.modelNameExceedsContextWindow(ref.Model, contextTokens) {
 			arms[index] = true
 			marked = true
 		}

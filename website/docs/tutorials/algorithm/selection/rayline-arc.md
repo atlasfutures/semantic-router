@@ -649,12 +649,16 @@ candidates change with it, so there is no artifact pin to key on.
 
 Two things about the numbers. `max_output_tokens` is also the limit the
 router dispatches when a request states none of its own, so declaring it on a
-card changes what such a request is sent. And `context_window` is reported as
-the card declares it. Until the ARC selector enforces it as a mask, declaring
-a window on an ARC card is not safe: the router's generic context filter
-removes an over-window arm from the decision's list, and the positional ARC
-selector then fails the turn with `candidate_count` rather than steering away
-from the arm.
+card changes what such a request is sent. And `context_window` is enforced at
+selection as a mask, not a filter: a turn longer than an arm's window excludes
+that arm where it stands, the way an image turn excludes a text-only arm, and
+a turn longer than every arm's window fails closed with `no_context_arm`, a
+503 the gateway replays. The router's generic context filter, which removes a
+plain decision's candidate from the list, is not applied to a `rayline_arc`
+decision, because a shortened positional list does not steer a turn, it fails
+it with `candidate_count`. Declare windows on ARC cards only on a build that
+carries the mask; an earlier build applies the filter and fails every turn
+above the smallest declared window.
 
 ## Deployment
 

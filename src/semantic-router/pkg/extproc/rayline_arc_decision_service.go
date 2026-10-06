@@ -622,14 +622,22 @@ func (service *raylineARCDecisionService) decisionOnlyRequestContext(
 		}
 		headers[algorithm.RaylineARC.Episode.IDHeader] = episodeIdentity
 	}
+	// The same token estimate the routed path makes before selection (its
+	// neutral snapshot, raised to a character count of the message text by
+	// ensureContextTokenCount), so a lookup masks the arms a routed turn of
+	// this body would mask. Without it a lookup could name an arm the prompt
+	// does not fit.
+	snapshot := extractSemanticRequestSignals(&decoded)
+	signalInput := service.router.prepareSignalEvaluationInput(signalConversationHistoryFromSnapshot(snapshot))
 	return &RequestContext{
-		Headers:           headers,
-		RaylineARCRawBody: request.Body,
-		RequestID:         request.DecisionID,
-		SourceFormat:      wireFormat,
-		SemanticRequest:   &decoded,
-		ProtocolEnvelope:  envelope,
-		TraceContext:      ctx,
+		Headers:              headers,
+		RaylineARCRawBody:    request.Body,
+		RequestID:            request.DecisionID,
+		SourceFormat:         wireFormat,
+		SemanticRequest:      &decoded,
+		ProtocolEnvelope:     envelope,
+		TraceContext:         ctx,
+		VSRContextTokenCount: contextTokenEstimate(0, contextTokenText(signalInput), snapshot.ContextTokenFloor),
 	}, nil
 }
 

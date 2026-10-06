@@ -318,7 +318,47 @@ func hardExcludedArms(
 	if err != nil {
 		return nil, err
 	}
+	excluded, err = withOverContextArms(arcContext, armCount, excluded)
+	if err != nil {
+		return nil, err
+	}
 	return withDisabledArms(arcContext, armCount, excluded)
+}
+
+// withOverContextArms folds the context-window constraint into the mask. It
+// is a fact about this turn, like vision and capability, so it runs with them
+// and before the operator's standing verdict: a basket no arm of which can
+// hold the prompt says exactly that.
+//
+// This is the ARC form of the generic context filter. That filter removes a
+// candidate from the list before any selector runs, which on a positional
+// arm list is a candidate_count failure rather than a steer; so an ARC
+// decision keeps every ref (decisionCandidateModelRefs) and the arm is
+// masked here where it stands.
+func withOverContextArms(
+	arcContext *selection.RaylineARCSelectionContext,
+	armCount int,
+	excluded []bool,
+) ([]bool, error) {
+	if len(arcContext.OverContextArms) == 0 {
+		return excluded, nil
+	}
+	if len(arcContext.OverContextArms) != armCount {
+		return nil, arcSelectionFailure("context_arm_mapping")
+	}
+	combined := make([]bool, armCount)
+	eligible := 0
+	for index := range combined {
+		combined[index] = arcContext.OverContextArms[index] ||
+			(len(excluded) == armCount && excluded[index])
+		if !combined[index] {
+			eligible++
+		}
+	}
+	if eligible == 0 {
+		return nil, arcSelectionFailure(arcFailureNoContextArm)
+	}
+	return combined, nil
 }
 
 // withIncapableArms folds the capability gate into the mask. It runs after the

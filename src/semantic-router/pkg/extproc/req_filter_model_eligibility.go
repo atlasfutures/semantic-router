@@ -32,6 +32,34 @@ func (r *OpenAIRouter) contextEligibleModelRefs(
 	return eligible, excluded
 }
 
+// decisionCandidateModelRefs is the candidate list the selector receives:
+// the decision's model refs less those whose card window the request
+// exceeds.
+//
+// A rayline_arc decision receives every ref. Its arm list is a positional
+// contract, matched index by index against the artifact at readiness and
+// again on every turn, so removing an arm does not steer the turn away from
+// that arm: the selector refuses the shortened list with candidate_count and
+// the turn fails. The arms that cannot take a turn are masked where they
+// stand instead -- vision, capability and disabled are, and the context
+// window is too (overContextArms, withOverContextArms), with the same card
+// reader this filter uses.
+func (r *OpenAIRouter) decisionCandidateModelRefs(
+	decision *config.Decision,
+	decisionName string,
+	contextTokens int,
+	ctx *RequestContext,
+) ([]config.ModelRef, error) {
+	if decision != nil && raylineARCSelection(decision.Algorithm) {
+		eligible := cloneModelRefs(decision.ModelRefs)
+		if ctx != nil {
+			ctx.VSREligibleModelRefs = cloneModelRefs(eligible)
+		}
+		return eligible, nil
+	}
+	return r.contextEligibleDecisionModelRefs(decision.ModelRefs, decisionName, contextTokens, ctx)
+}
+
 func (r *OpenAIRouter) contextEligibleDecisionModelRefs(
 	refs []config.ModelRef,
 	decisionName string,

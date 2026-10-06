@@ -97,22 +97,32 @@ func ensureContextTokenCount(ctx *RequestContext, signalInput signalEvaluationIn
 	if ctx.VSRContextEquivalentBytes <= 0 {
 		ctx.VSRContextEquivalentBytes = signalInput.requestFacts.ContextEquivalentBytes
 	}
-	count := ctx.VSRContextTokenCount
-	if count <= 0 {
-		counter := classification.CharacterBasedTokenCounter{}
-		var err error
-		count, err = counter.CountTokens(text)
-		if err != nil {
-			return
-		}
-	}
-	if floor > count {
-		count = floor
-	}
+	count := contextTokenEstimate(ctx.VSRContextTokenCount, text, floor)
 	if count <= 0 {
 		return
 	}
 	ctx.VSRContextTokenCount = count
+}
+
+// contextTokenEstimate is the request's conservative token count: the count
+// already made when there is one, else a character-based count of the
+// message text, never below the neutral snapshot's floor. Zero when nothing
+// could be counted. One function so the routed path and the route lookup
+// compare the same number against a card's window.
+func contextTokenEstimate(current int, text string, floor int) int {
+	count := current
+	if count <= 0 {
+		counter := classification.CharacterBasedTokenCounter{}
+		counted, err := counter.CountTokens(text)
+		if err != nil {
+			return 0
+		}
+		count = counted
+	}
+	if floor > count {
+		count = floor
+	}
+	return count
 }
 
 func contextTokenText(signalInput signalEvaluationInput) string {
@@ -314,8 +324,8 @@ func (r *OpenAIRouter) selectDecisionRuntimeModel(
 		return r.selectDecisionDefaultRuntimeModel(result.Decision, decisionName, ctx)
 	}
 
-	eligibleModelRefs, err := r.contextEligibleDecisionModelRefs(
-		result.Decision.ModelRefs,
+	eligibleModelRefs, err := r.decisionCandidateModelRefs(
+		result.Decision,
 		decisionName,
 		ctx.VSRContextTokenCount,
 		ctx,
