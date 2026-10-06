@@ -70,14 +70,17 @@ type CandidatePricing struct {
 // routingCandidatesOf lists a recipe's candidates, decision by decision in
 // declared order, then the model an auto or entrypoint request resolves to
 // when no decision matches or the matched one has no usable ref, which is
-// the router's default_model. Nil when the recipe declares no decision and
-// no default, so an alias with nothing behind it carries no empty array.
+// the router's default_model. That fallback is reached whenever the router
+// routes at all -- a recipe with no decisions of its own still resolves an
+// unmatched request to it when another recipe declares some -- so it is
+// listed whenever any recipe has a decision. Nil on a router with none, so
+// an alias with nothing behind it carries no empty array.
 func routingCandidatesOf(cfg *config.RouterConfig, recipe *config.RoutingRecipe) []RoutingCandidate {
-	if cfg == nil || recipe == nil {
+	if cfg == nil || recipe == nil || !cfg.HasRoutingDecisions() {
 		return nil
 	}
 	candidates := routingCandidatesOfDecisions(cfg, recipe.Profile.Decisions)
-	if fallback := strings.TrimSpace(cfg.DefaultModel); fallback != "" && len(recipe.Profile.Decisions) > 0 {
+	if fallback := strings.TrimSpace(cfg.DefaultModel); fallback != "" {
 		candidates = appendDistinctCandidate(cfg, candidates, config.ModelRef{Model: fallback})
 	}
 	return candidates
@@ -122,6 +125,14 @@ func routingCandidatesOfDecisions(cfg *config.RouterConfig, decisions []config.D
 		}
 		for _, modelRef := range decision.ModelRefs {
 			candidates = appendDistinctCandidate(cfg, candidates, modelRef)
+		}
+		// The models an algorithm executes beside its refs: a Fusion judge,
+		// a ReMoM synthesis model, a workflow's planner. They answer the
+		// request, so a document derived from this list has to hold them.
+		for _, model := range decision.Algorithm.ExplicitModels() {
+			if model = strings.TrimSpace(model); model != "" {
+				candidates = appendDistinctCandidate(cfg, candidates, config.ModelRef{Model: model})
+			}
 		}
 	}
 	return candidates
