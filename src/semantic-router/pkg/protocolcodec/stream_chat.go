@@ -50,12 +50,14 @@ func (OpenAIChatCodec) NewEncoder(context llmprotocol.StreamContext, policy llmp
 	return &chatStreamEncoder{streamState: streamState{context: context, policy: policy}, toolIndexes: make(map[string]int)}
 }
 
+// chatChunkWire always writes choices: the include_usage chunk carries
+// "choices": [] beside usage (encodeChatStreamFrame), as OpenAI's does.
 type chatChunkWire struct {
 	ID                string                    `json:"id"`
 	Object            string                    `json:"object,omitempty"`
 	Created           int64                     `json:"created,omitempty"`
 	Model             string                    `json:"model,omitempty"`
-	Choices           []chatChunkChoiceWire     `json:"choices,omitempty"`
+	Choices           []chatChunkChoiceWire     `json:"choices"`
 	Usage             *chatUsageWire            `json:"usage,omitempty"`
 	Provider          *string                   `json:"provider,omitempty"`
 	Moderation        json.RawMessage           `json:"moderation,omitempty"`
@@ -880,6 +882,12 @@ func encodeChatStreamFrame(context llmprotocol.StreamContext, chunk chatChunkWir
 		return nil, err
 	}
 	chunk.Obfuscation = obfuscation
+	if chunk.Choices == nil {
+		// OpenAI's usage chunk is "choices": [] beside usage, never without
+		// the key, and strict stream schemas (opencode) refuse the chunk
+		// when it is missing.
+		chunk.Choices = []chatChunkChoiceWire{}
+	}
 	return encodeSSE("", chunk)
 }
 
