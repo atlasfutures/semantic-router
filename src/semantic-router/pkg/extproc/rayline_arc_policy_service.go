@@ -474,7 +474,10 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// boundary, and that decision is held from here as a boundary decision is.
 	// Neither can an arm the hard mask excludes -- one the prompt has outgrown
 	// or that cannot take this turn's image -- or every turn until the next
-	// boundary would fail with nothing to offer.
+	// boundary would fail with nothing to offer. A side call released this
+	// way is marked forced and decides at a boundary like a main turn; the
+	// decision it records is kept out of the episode by the transaction,
+	// which never retains a boundary for a side call (retainPolicyBoundary).
 	var cellOut map[int]string
 	if scorer.fallback && !sideCall && turn != nil {
 		cellOut = scorer.cellExclusions(selector.now())

@@ -47,7 +47,7 @@ func (r *OpenAIRouter) SelectModelForEval(
 	}
 	if err := validateMinimumEligibleDecisionModels(
 		decision,
-		r.contextFittingModelRefs(eligibleModelRefs, input.ContextTokenCount),
+		eligibleModelRefs,
 		input.ContextTokenCount,
 	); err != nil {
 		return evalSelectionUnavailable(err.Error())

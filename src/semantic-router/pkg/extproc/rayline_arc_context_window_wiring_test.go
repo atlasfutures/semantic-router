@@ -138,7 +138,6 @@ func (fixture *policySelectorFixture) selectOnWith(
 // rather than failing every turn until the next boundary.
 func TestPolicySelectorReleasesAHeldArmTheTurnDoesNotFit(t *testing.T) {
 	fixture := newPolicySelectorFixture(t, config.RaylineARCModelScheduleTaskTurnCompaction)
-	bindings := fixture.decision.Algorithm.RaylineARC.PolicyService.Bindings
 	fixture.fake.chooseWith(func(request raylinearc.PolicyDecisionRequest) string {
 		return request.Selection.AvailableActionIDs[0]
 	})
@@ -163,5 +162,4 @@ func TestPolicySelectorReleasesAHeldArmTheTurnDoesNotFit(t *testing.T) {
 	if len(offered) == 0 || result.RaylineARC.SelectedArm == held {
 		t.Fatalf("offered %v, selected arm %d, want the turn moved off arm %d", offered, result.RaylineARC.SelectedArm, held)
 	}
-	_ = bindings
 }

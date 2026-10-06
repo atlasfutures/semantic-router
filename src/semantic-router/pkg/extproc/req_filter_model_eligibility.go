@@ -50,6 +50,8 @@ func (r *OpenAIRouter) decisionCandidateModelRefs(
 	contextTokens int,
 	ctx *RequestContext,
 ) ([]config.ModelRef, error) {
+	// A rayline_arc decision carries no minimum_candidates (config validation
+	// refuses it), so the whole list is also what the minimum check sees.
 	if decision != nil && raylineARCSelection(decision.Algorithm) {
 		eligible := cloneModelRefs(decision.ModelRefs)
 		if ctx != nil {
@@ -58,17 +60,6 @@ func (r *OpenAIRouter) decisionCandidateModelRefs(
 		return eligible, nil
 	}
 	return r.contextEligibleDecisionModelRefs(decision.ModelRefs, decisionName, contextTokens, ctx)
-}
-
-// contextFittingModelRefs is the subset of a candidate list the request fits,
-// for the operator's minimum_candidates contract. On a plain decision that is
-// the list itself, already filtered; on a rayline_arc decision the list is
-// whole and the selector masks the rest, so the minimum is checked here
-// against what the mask will leave, or a decision that requires two arms
-// would run on one.
-func (r *OpenAIRouter) contextFittingModelRefs(refs []config.ModelRef, contextTokens int) []config.ModelRef {
-	fitting, _ := r.contextEligibleModelRefs(refs, contextTokens)
-	return fitting
 }
 
 func (r *OpenAIRouter) contextEligibleDecisionModelRefs(

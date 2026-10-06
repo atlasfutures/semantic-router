@@ -82,33 +82,3 @@ func TestEvalKeepsTheARCArmListWholeToo(t *testing.T) {
 		t.Fatalf("plain eval status = %q, want %s when every candidate is over its window", result.Status, services.EvalSelectionUnavailable)
 	}
 }
-
-// minimum_candidates is the operator's contract on the arms a turn can use,
-// so for an ARC decision it is checked against what the mask will leave, not
-// the whole list the selector receives: a decision that requires two arms
-// does not quietly run on one.
-func TestMinimumCandidatesCountsTheArmsATurnFits(t *testing.T) {
-	t.Parallel()
-	router := &OpenAIRouter{Config: &config.RouterConfig{BackendModels: config.BackendModels{ModelConfig: map[string]config.ModelParams{
-		"glm": {ContextWindowSize: 1048576}, "qwen": {ContextWindowSize: 262144},
-	}}}}
-	refs := []config.ModelRef{{Model: "glm"}, {Model: "qwen"}}
-	arc := &config.Decision{
-		Name:      "rayline-arc",
-		ModelRefs: refs,
-		Algorithm: &config.AlgorithmConfig{Type: config.RaylineARCAlgorithmType, OnError: "fail_closed", MinimumCandidates: 2, RaylineARC: &config.RaylineARCAlgorithmConfig{}},
-	}
-	if fitting := router.contextFittingModelRefs(refs, 300000); len(fitting) != 1 || fitting[0].Model != "glm" {
-		t.Fatalf("contextFittingModelRefs(300000) = %v, want glm alone", fitting)
-	}
-	if err := validateMinimumEligibleDecisionModels(arc, router.contextFittingModelRefs(refs, 300000), 300000); err == nil {
-		t.Fatal("a decision requiring two arms passed with one arm fitting the turn")
-	}
-	if err := validateMinimumEligibleDecisionModels(arc, router.contextFittingModelRefs(refs, 1000), 1000); err != nil {
-		t.Fatalf("a short turn failed the minimum: %v", err)
-	}
-	result := router.SelectModelForEval(services.EvalModelSelectionInput{Decision: arc, ContextTokenCount: 300000})
-	if result.Status != services.EvalSelectionUnavailable {
-		t.Fatalf("eval status = %q, want %s when the minimum cannot be met among the arms that fit", result.Status, services.EvalSelectionUnavailable)
-	}
-}

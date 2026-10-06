@@ -630,8 +630,9 @@ destination ahead of its decision's refs, and the models an algorithm
 executes beside its refs after them. The router's `default_model`, the
 fallback for a request no decision matches, is not listed: on an ARC cell the
 one decision matches every turn, so the fallback is never reached. On an ARC
-cell the list is therefore the arms in artifact order, and the array position
-is the arm ordinal. `model` names the arm the way a route's `worker` does, and
+cell, whose arm-set decision is the recipe's only decision and declares no
+route action, the list is therefore the arms in artifact order, and the array
+position is the arm ordinal. `model` names the arm the way a route's `worker` does, and
 `provider_model` is the id it dispatches as. A model ref that names a LoRA
 adapter is listed as the adapter, with the card it is served under as
 `base_model`. Which decision picks which candidate is a per-turn fact the

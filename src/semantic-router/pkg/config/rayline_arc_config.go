@@ -738,6 +738,14 @@ func validateRaylineARCSpecializedAlgorithmConfig(decisionName string, algorithm
 	if algorithm.OnError != "fail_closed" {
 		return fmt.Errorf("decision '%s': algorithm.type=%s requires algorithm.on_error=fail_closed", decisionName, RaylineARCAlgorithmType)
 	}
+	// The arm set is fixed and positional: an arm a turn cannot use is masked
+	// at selection, never removed, and the artifact's policy decides among
+	// what is left. A minimum on the list's length has no meaning there, and
+	// the generic check that enforces it fails a turn with a 422 the gateway
+	// does not replay, where every ARC refusal is a replayable 503.
+	if algorithm.MinimumCandidates > 0 {
+		return fmt.Errorf("decision '%s': algorithm.type=%s does not take algorithm.minimum_candidates; arms a turn cannot use are masked, not removed", decisionName, RaylineARCAlgorithmType)
+	}
 	if err := validateRaylineARCAlgorithmConfig(algorithm.RaylineARC); err != nil {
 		return fmt.Errorf("decision '%s', algorithm.rayline_arc: %w", decisionName, err)
 	}

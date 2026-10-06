@@ -18,7 +18,8 @@ import (
 // holds on its model cards, so the listing states them here, under the alias
 // they belong to, rather than listing the candidates as ids of their own.
 //
-// RoutingCandidate is one model ref of a decision and its card's facts.
+// RoutingCandidate is one model the alias's decisions may resolve to and its
+// card's facts.
 //
 // The limits are pointers: a card that declares neither reports null, not
 // zero, because zero reads as a measured limit of nothing. Vision is the

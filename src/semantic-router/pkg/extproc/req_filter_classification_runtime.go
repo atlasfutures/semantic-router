@@ -335,7 +335,7 @@ func (r *OpenAIRouter) selectDecisionRuntimeModel(
 	}
 	if minimumErr := validateMinimumEligibleDecisionModels(
 		result.Decision,
-		r.contextFittingModelRefs(eligibleModelRefs, ctx.VSRContextTokenCount),
+		eligibleModelRefs,
 		ctx.VSRContextTokenCount,
 	); minimumErr != nil {
 		return "", entropy.ReasoningDecision{}, minimumErr

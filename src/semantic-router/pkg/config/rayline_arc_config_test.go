@@ -70,6 +70,13 @@ func raylineARCInvalidContracts() []raylineARCInvalidContract {
 			wantErr: "requires algorithm.on_error=fail_closed",
 		},
 		{
+			name: "minimum candidates on a positional arm set",
+			mutate: func(decision *Decision) {
+				decision.Algorithm.MinimumCandidates = 2
+			},
+			wantErr: "does not take algorithm.minimum_candidates",
+		},
+		{
 			name: "mutable artifact revision",
 			mutate: func(decision *Decision) {
 				decision.Algorithm.RaylineARC.ArtifactRevision = "latest"
