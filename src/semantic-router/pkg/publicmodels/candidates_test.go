@@ -348,6 +348,32 @@ func TestMaxOutputTokensHonoursTheDecisionCap(t *testing.T) {
 	}
 }
 
+// Two ARC decisions in one recipe share the arm set and may differ in their
+// output cap; the arm is listed once with the smaller cap, in either order.
+func TestDuplicateARCArmsKeepTheSmallerCap(t *testing.T) {
+	capped := func(name string, limit int) config.Decision {
+		decision := arcDecision(name, config.ModelRef{Model: "m"})
+		decision.Plugins = []config.DecisionPlugin{{
+			Type: "request_params", Configuration: config.MustStructuredPayload(map[string]interface{}{"max_tokens_limit": limit}),
+		}}
+		return decision
+	}
+	for name, decisions := range map[string][]config.Decision{
+		"tight first": {capped("tight", 4000), capped("loose", 64000)},
+		"loose first": {capped("loose", 64000), capped("tight", 4000)},
+	} {
+		cfg := &config.RouterConfig{
+			RouterOptions:      config.RouterOptions{AutoModelNames: []string{"router/auto"}},
+			IntelligentRouting: config.IntelligentRouting{Decisions: decisions},
+			BackendModels:      config.BackendModels{ModelConfig: map[string]config.ModelParams{"m": {MaxOutputTokens: 32000}}},
+		}
+		candidates := candidatesOf(t, marshalListing(t, NewOpenAIModelList(cfg, 123)), "router/auto")
+		if len(candidates) != 1 || candidates[0].(map[string]interface{})["max_output_tokens"] != float64(4000) {
+			t.Fatalf("%s: candidates = %v, want m once with the smaller cap 4000", name, candidates)
+		}
+	}
+}
+
 // The claim and the card share one spelling, so a card that claims tool
 // calling under the catalog's name is read as such and nothing else is.
 func TestCandidateReadsToolsUnderTheCatalogSpelling(t *testing.T) {

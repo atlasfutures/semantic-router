@@ -46,7 +46,9 @@ type RoutingCandidate struct {
 	ContextWindow *int `json:"context_window"`
 	// MaxOutputTokens is the limit the router dispatches when a request
 	// states none of its own: the card's max_output_tokens, capped by the
-	// decision's request_params.max_tokens_limit.
+	// decision's request_params.max_tokens_limit, and across ARC decisions
+	// that declare the arm the smallest cap, since the alias cannot choose
+	// the decision.
 	MaxOutputTokens *int              `json:"max_output_tokens"`
 	Pricing         *CandidatePricing `json:"pricing"`
 	// Disabled is the card's out-of-service flag, which the ARC selector
@@ -87,26 +89,30 @@ func routingCandidatesOf(cfg *config.RouterConfig, recipe *config.RoutingRecipe)
 		}
 		outputCap := decisionOutputCap(decision)
 		for _, modelRef := range decision.ModelRefs {
-			candidate := routingCandidateOf(cfg, modelRef, outputCap)
-			if listed(candidates, candidate) {
-				continue
-			}
-			candidates = append(candidates, candidate)
+			candidates = appendArm(candidates, routingCandidateOf(cfg, modelRef, outputCap))
 		}
 	}
 	return candidates
 }
 
-// listed reports whether an arm of the same model and thinking mode is in
-// the list already: two ARC decisions in one recipe declare the same arm set
-// (readiness holds them to one artifact), so the second adds nothing.
-func listed(candidates []RoutingCandidate, candidate RoutingCandidate) bool {
-	for _, existing := range candidates {
-		if existing.Model == candidate.Model && existing.Thinking == candidate.Thinking {
-			return true
+// appendArm lists an arm unless one of the same model and thinking mode is
+// listed already: two ARC decisions in one recipe declare the same arm set
+// (readiness holds them to one artifact), and differ at most in the output
+// cap their request_params set. The smaller cap is kept, whichever decision
+// declares it, since the alias cannot choose the decision and only the
+// smaller is guaranteed.
+func appendArm(candidates []RoutingCandidate, candidate RoutingCandidate) []RoutingCandidate {
+	for index := range candidates {
+		existing := &candidates[index]
+		if existing.Model != candidate.Model || existing.Thinking != candidate.Thinking {
+			continue
 		}
+		if candidate.MaxOutputTokens != nil && (existing.MaxOutputTokens == nil || *candidate.MaxOutputTokens < *existing.MaxOutputTokens) {
+			existing.MaxOutputTokens = candidate.MaxOutputTokens
+		}
+		return candidates
 	}
-	return false
+	return append(candidates, candidate)
 }
 
 // decisionOutputCap is the decision's request_params.max_tokens_limit, or
