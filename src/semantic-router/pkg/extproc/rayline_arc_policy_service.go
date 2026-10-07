@@ -557,6 +557,10 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// package's fallback action is one of these same actions, so it is never
 	// left when its peers are not.
 	if len(available) == 0 {
+		logRaylineARCEmptyOffer(arcContext, scorer, emptyOffer{
+			stage: "offer", held: held, retained: retained, sideCall: sideCall, fallback: fallback,
+			excluded: excluded, hard: hard, cellOut: loggedRoutes, turn: turn,
+		})
 		return nil, arcSelectionFailure("policy_no_available_action")
 	}
 	request := raylinearc.PolicyDecisionRequest{
@@ -617,6 +621,10 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			// The held model this turn excludes leaves nothing to offer: the
 			// turn fails as any empty offer does, never retried empty.
 			if len(derived.offer) == 0 {
+				logRaylineARCEmptyOffer(arcContext, scorer, emptyOffer{
+					stage: "derived_hold", held: held, retained: retained, sideCall: sideCall, fallback: fallback,
+					excluded: excluded, hard: hard, cellOut: loggedRoutes, turn: turn,
+				})
 				return nil, arcSelectionFailure("policy_no_available_action")
 			}
 			available = derived.offer
