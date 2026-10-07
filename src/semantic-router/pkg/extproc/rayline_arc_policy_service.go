@@ -624,6 +624,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 				logRaylineARCEmptyOffer(arcContext, scorer, emptyOffer{
 					stage: "derived_hold", held: held, retained: retained, sideCall: sideCall, fallback: fallback,
 					excluded: excluded, hard: hard, cellOut: loggedRoutes, turn: turn,
+					derivedModel: derived.model, derivedSource: derived.source,
 				})
 				return nil, arcSelectionFailure("policy_no_available_action")
 			}

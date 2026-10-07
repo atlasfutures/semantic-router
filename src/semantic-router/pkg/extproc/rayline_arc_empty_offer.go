@@ -25,6 +25,11 @@ type emptyOffer struct {
 	hard     []bool
 	cellOut  map[int]string
 	turn     *raylinearc.PolicyEpisodeState
+	// derivedModel and derivedSource name the hold a two-stage package's
+	// cold-turn retry derived; it is the model whose exclusion emptied a
+	// derived_hold offer, and no arm is held there.
+	derivedModel  string
+	derivedSource string
 }
 
 // logRaylineARCEmptyOffer records an empty offer's inputs, every one of them
@@ -61,6 +66,8 @@ func logRaylineARCEmptyOffer(
 		"request_format":     arcContext.RequestFormat,
 		"held_arm":           offer.held,
 		"held_model":         heldModel,
+		"derived_model":      offer.derivedModel,
+		"derived_source":     offer.derivedSource,
 		"boundary_retained":  offer.retained,
 		"side_call":          offer.sideCall,
 		"fallback":           offer.fallback,
