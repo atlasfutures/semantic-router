@@ -53,7 +53,17 @@ type Instruction struct {
 	Level       string
 	Text        string
 	NeutralText string
+	// Unit is the instruction's rules.unit when the registry names one
+	// (pathfinder's configuration_update_v1: a Responses item setting the
+	// native effort). This router renders text instructions only, so a
+	// control with a unit is read, kept under its own id, and never admitted
+	// (Registry.Admit) or rendered.
+	Unit string
 }
+
+// UnitRule is the one optional rules member; its value names a rendering
+// unit other than the text instruction.
+const UnitRule = "unit"
 
 // Error is a control, artifact, admission or placement that cannot be used
 // without guessing.
@@ -74,6 +84,9 @@ func (c Control) json() *value {
 		rules := objectValue()
 		for _, key := range []string{"placement", "emit", "replay"} {
 			rules.set(key, stringValue(Rules[key]))
+		}
+		if c.Instruction.Unit != "" {
+			rules.set(UnitRule, stringValue(c.Instruction.Unit))
 		}
 		instruction = objectValue(
 			member{"level", stringValue(c.Instruction.Level)},
@@ -161,7 +174,11 @@ func requireControl(v *value, where string) (Control, error) {
 			}
 		}
 		rules := instruction.get("rules")
-		if rules.kind != kindObject || len(rules.members) != len(Rules) {
+		if rules.kind != kindObject {
+			return Control{}, bad
+		}
+		unit := rules.get(UnitRule)
+		if want := len(Rules); len(rules.members) != want && !(unit != nil && len(rules.members) == want+1) {
 			return Control{}, bad
 		}
 		for key, want := range Rules {
@@ -169,10 +186,16 @@ func requireControl(v *value, where string) (Control, error) {
 				return Control{}, bad
 			}
 		}
+		if unit != nil && (!unit.isString() || unit.str == "") {
+			return Control{}, bad
+		}
 		control.Instruction = &Instruction{
 			Level:       instruction.get("level").str,
 			Text:        instruction.get("text").str,
 			NeutralText: instruction.get("neutral_text").str,
+		}
+		if unit != nil {
+			control.Instruction.Unit = unit.str
 		}
 	default:
 		return Control{}, bad

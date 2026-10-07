@@ -280,3 +280,35 @@ func TestRegistryRefusesAnInstructionOnARefusedCell(t *testing.T) {
 		t.Fatalf("an instruction on a refused cell loaded: %v", err)
 	}
 }
+
+// pathfinder's configuration_update_v1 controls (a Responses item setting the
+// native effort) load under pathfinder's own ids, so the registry and the
+// packages naming them stay byte-identical; this router renders text
+// instructions only, so Admit refuses such a control even on a cell that
+// admits it, and a text control on the same cell is unaffected.
+func TestAUnitControlLoadsUnderItsIDAndIsNeverAdmitted(t *testing.T) {
+	reg, err := Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const unitID = "a59c0f7f20facab21557d6e2ca70a4268f0914007a4ec7d52eff361fa852077a"
+	control, ok := reg.Control(unitID)
+	if !ok || control.Instruction == nil || control.Instruction.Unit != "configuration_update_v1" || control.ID() != unitID {
+		t.Fatalf("unit control = %+v, %v", control, ok)
+	}
+	cell, err := reg.Cell("openai/gpt-6-astra", "openrouter", "responses")
+	if err != nil || !cell.Admits(unitID) {
+		t.Fatalf("the astra responses cell should list the unit control: %v", err)
+	}
+	if _, err := reg.Admit("openai/gpt-6-astra", "openrouter", "responses", control, true); err == nil ||
+		!strings.Contains(err.Error(), "does not render") {
+		t.Fatalf("Admit(unit control) = %v, want a refusal", err)
+	}
+	native, ok := reg.Control("628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0")
+	if !ok {
+		t.Fatal("the native default control is missing")
+	}
+	if _, err := reg.Admit("openai/gpt-6-astra", "openrouter", "messages", native, true); err != nil {
+		t.Fatalf("a text-path control is unaffected: %v", err)
+	}
+}

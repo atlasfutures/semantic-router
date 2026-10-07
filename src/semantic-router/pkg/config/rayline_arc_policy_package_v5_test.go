@@ -106,8 +106,10 @@ func TestRaylineARCPolicyPackageV5Loads(t *testing.T) {
 		action.Control.Instruction.Level != "up" {
 		t.Fatalf("PackageV5Action = %+v, %v", action, ok)
 	}
-	if policy.PackageV5RegistryDiffers() {
-		t.Fatal("the fixture names the registry VSR serves")
+	// The fixture (pathfinder 9e6e236) names registry 3083a4b6; VSR embeds a
+	// later one, and the sha is informational: the controls still resolve.
+	if !policy.PackageV5RegistryDiffers() {
+		t.Fatal("the fixture names an older registry than the one VSR embeds")
 	}
 	provider, err := RaylineARCRegistryProvider(cfg, "arm-opus")
 	if err != nil || provider != "openrouter" {

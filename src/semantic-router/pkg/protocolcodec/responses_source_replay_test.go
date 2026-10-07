@@ -1,6 +1,7 @@
 package protocolcodec
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,10 +64,21 @@ func TestResponsesRouteThatOnlyChangesTheModelSendsTheClientBytes(t *testing.T) 
 	}
 }
 
-// Pathfinder's Responses noop_fidelity golden (9e6e2363): with no lever on
-// the request, each call reaches the provider as the client bytes.
+// Pathfinder's Responses noop_fidelity golden: with no lever on the request,
+// each call reaches the provider as the client bytes with the case's wire
+// model.
 func TestResponsesNoopFidelityGoldenIsByteEqual(t *testing.T) {
 	dir := "../selection/raylinearc/thinkingcontrol/testdata/golden/responses/noop_fidelity"
+	raw, err := os.ReadFile(filepath.Join(dir, "case.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var golden struct {
+		WireModel string `json:"wire_model"`
+	}
+	if err := json.Unmarshal(raw, &golden); err != nil || golden.WireModel == "" {
+		t.Fatalf("case.json wire_model: %v", err)
+	}
 	for _, call := range []string{"00", "01"} {
 		client, err := os.ReadFile(filepath.Join(dir, "client-"+call+".json"))
 		if err != nil {
@@ -76,7 +88,7 @@ func TestResponsesNoopFidelityGoldenIsByteEqual(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := routeResponsesBody(t, string(client), "gpt-6-sol", nil); got != string(want) {
+		if got := routeResponsesBody(t, string(client), golden.WireModel, nil); got != string(want) {
 			t.Fatalf("call %s =\n%s\nwant\n%s", call, got, want)
 		}
 	}

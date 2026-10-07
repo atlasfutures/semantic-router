@@ -210,11 +210,14 @@ The instruction is placed by `turn_tail_v2`, written by `on_change_v1` and
 replayed by `ledger_v1`. The placer's state lives in the episode, one per worker
 and control shape. The renderer is pathfinder's reference renderer ported to Go
 and held to its golden corpora byte for byte. Messages, Chat and Responses
-workers are served wherever the worker's cells admit the control. In registry
-3083a4b6 every Responses cell admits only the native-default control (no
-instruction, empty base wire), so a Responses worker can bind a package's
-native-only action and is refused an instruction-bearing one; Responses steers
-become servable once pathfinder admits those cells. A Codex turn's encrypted
+workers are served wherever the worker's cells admit the control. The embedded
+registry is pathfinder's compiled artifact, mirrored byte for byte (032d6ed9
+as of this writing, `thinkingcontrol.EmbeddedSHA256`). Some of its Responses
+cells also admit pathfinder's `configuration_update_v1` controls, whose
+instruction names `rules.unit`: a Responses item that sets the native effort
+rather than text. This router renders text instructions only, so such a
+control loads under its own id and is never admitted: `Registry.Admit` refuses
+it, and so does a package binding it, at startup. A Codex turn's encrypted
 reasoning still follows the episode's issuer record (#109).
 
 Under `emit: on_change_v1` (ADR 0109) an item is written only when the level

@@ -112,6 +112,9 @@ func renderEpisode(
 	bodies := make([][]byte, 0, len(controls))
 	receipts := make([]Receipt, 0, len(controls))
 	for index := range controls {
+		if c := controls[index]; c != nil && c.Instruction != nil && c.Instruction.Unit != "" {
+			return nil, nil, refuse("call %d: a %s unit is not rendered by this router", index, c.Instruction.Unit)
+		}
 		body, receipt, err := placer.render(clientBodies[index], controls[index], baseWire, wireModel)
 		if err != nil {
 			return nil, nil, err
