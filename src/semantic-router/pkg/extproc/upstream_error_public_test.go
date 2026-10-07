@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 )
 
 // semantic-router #222: a provider's error names the Router's provider
@@ -153,4 +154,20 @@ func TestBufferedProviderErrorBodyReachesTheClientInPublicForm(t *testing.T) {
 		t.Fatalf("the provider's error body reached the client unchanged: %v", response)
 	}
 	assertNoProviderAccountText(t, mutation.GetBody())
+}
+
+// A credential the provider echoes is not logged, not even as a hash: the
+// withheld message is described after redaction.
+func TestRedactedUpstreamErrorLogNeverHashesACredential(t *testing.T) {
+	logs := captureLogs(t)
+	message := "Incorrect API key provided: sk-or-v1-0123456789abcdef"
+	_ = publicUpstreamError(&RequestContext{RequestID: "request_key"},
+		&llmprotocol.ProtocolError{Category: llmprotocol.ErrorAuthentication, Code: "invalid_api_key", Message: message}, 401, "transport")
+	fields := findLogEvent(t, logs, "upstream_error_redacted")
+	if fields["upstream_message"] == logging.ContentDescriptor(message) {
+		t.Fatal("the log carries a hash of the credential")
+	}
+	if fields["upstream_message"] != logging.ContentDescriptor(llmprotocol.RedactProviderText(message)) {
+		t.Fatalf("upstream_message = %v", fields["upstream_message"])
+	}
 }

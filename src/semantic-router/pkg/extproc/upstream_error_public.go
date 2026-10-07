@@ -9,7 +9,9 @@ import (
 // #222). The provider's own text can name the Router's provider account, so it
 // is replaced or redacted (llmprotocol.PublicUpstreamError). The log line keeps
 // what was withheld correlatable without writing provider text, which the
-// content-logging policy forbids (logging/content.go).
+// content-logging policy forbids (logging/content.go). The descriptor is taken
+// after redaction: a credential the provider echoed must not be logged even as
+// a hash.
 func publicUpstreamError(
 	ctx *RequestContext,
 	protocolError *llmprotocol.ProtocolError,
@@ -30,7 +32,7 @@ func publicUpstreamError(
 		"upstream_status":   status,
 		"upstream_category": string(protocolError.Category),
 		"upstream_detail":   providerStreamFailureDetail(protocolError),
-		"upstream_message":  logging.ContentDescriptor(protocolError.Message),
+		"upstream_message":  logging.ContentDescriptor(llmprotocol.RedactProviderText(protocolError.Message)),
 		"public_code":       public.Code,
 	})
 	return public
