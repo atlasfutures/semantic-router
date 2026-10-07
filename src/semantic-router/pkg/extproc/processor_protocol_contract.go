@@ -335,6 +335,10 @@ func (r *OpenAIRouter) decodeCachedClientResponse(
 	if decoded.Response.Error != nil {
 		decoded.Response.Error = publicUpstreamError(ctx, decoded.Response.Error, 0, "cache")
 	}
+	// A hit is re-encoded from this response under today's minting policy:
+	// an entry cached before minting was turned on holds unsigned thinking,
+	// which must reach the client signed like a live turn's (#191).
+	decoded.Response.ThinkingMarkerFamily = r.thinkingMarkerFamily(ctx)
 	ctx.SemanticResponse = &decoded.Response
 	ctx.ResponseEnvelope = decoded.Envelope
 	ctx.ProtocolDiagnostics = append(ctx.ProtocolDiagnostics, decoded.Diagnostics...)

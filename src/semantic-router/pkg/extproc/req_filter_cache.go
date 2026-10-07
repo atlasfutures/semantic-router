@@ -420,6 +420,8 @@ func encodeCachedSemanticStream(
 		Context: ctx.TraceContext, Options: clientStreamOptions(ctx),
 		PublicModel: response.Model, ResponseID: response.ID,
 		PreviousResponseID: responseObjectPreviousID(ctx),
+		// The hit's minting policy, as decodeCachedClientResponse set it.
+		ThinkingMarkerFamily: response.ThinkingMarkerFamily,
 	})
 	return body, append(diagnostics, emitted...), err
 }
