@@ -128,8 +128,8 @@ type RequestContext struct {
 	// sees the reply, so the response no longer shows the cut; this does.
 	ContextRecoveryCallCut bool
 
-	PublicChatUsageFilter *protocolcodec.ChatUsageStreamFilter
-	SemanticStreamState   *semanticResponseStreamState
+	PublicStreamFilter  protocolcodec.PublicStreamFilter
+	SemanticStreamState *semanticResponseStreamState
 
 	// DispatchedReasoningEffort and DispatchedReasoningBound are the reasoning
 	// controls the rendered upstream body carries, read back off that body

@@ -41,6 +41,9 @@ type semanticResponseStreamState struct {
 	order        []int
 	terminal     bool
 	failed       *llmprotocol.ProtocolError
+	// upstreamFailed is the provider's error as it said it, before the
+	// client's copy was made public; the failure is classed by it.
+	upstreamFailed *llmprotocol.ProtocolError
 }
 
 type semanticStreamItem struct {
@@ -128,8 +131,8 @@ func (buffers *semanticStreamBuffers) push(responseBody []byte, ctx *RequestCont
 	if ctx.FullDuplexResponseBody {
 		buffers.upstream = append(buffers.upstream, responseBody...)
 	}
-	if ctx.PublicChatUsageFilter != nil {
-		filtered, err := ctx.PublicChatUsageFilter.Push(responseBody)
+	if ctx.PublicStreamFilter != nil {
+		filtered, err := ctx.PublicStreamFilter.Push(responseBody)
 		buffers.public = append(buffers.public, filtered...)
 		buffers.recordError(ctx, err, true)
 	}
@@ -148,8 +151,8 @@ func (buffers *semanticStreamBuffers) finalize(ctx *RequestContext) {
 		observeProtocolStream(ctx, events, diagnostics)
 		buffers.recordError(ctx, err, true)
 	}
-	if ctx.PublicChatUsageFilter != nil {
-		filtered, err := ctx.PublicChatUsageFilter.Finalize()
+	if ctx.PublicStreamFilter != nil {
+		filtered, err := ctx.PublicStreamFilter.Finalize()
 		buffers.public = append(buffers.public, filtered...)
 		buffers.recordError(ctx, err, false)
 	}
@@ -191,7 +194,7 @@ func (buffers *semanticStreamBuffers) processingResponse(
 		return buildResponseBodyContinueResponse(
 			responseStreamBodyMutation(ctx, buffers.translated, endOfStream), nil)
 	}
-	if ctx.PublicChatUsageFilter != nil {
+	if ctx.PublicStreamFilter != nil {
 		return buildResponseBodyContinueResponse(
 			responseStreamBodyMutation(ctx, buffers.public, endOfStream), nil)
 	}
@@ -250,14 +253,20 @@ func (r *OpenAIRouter) ensureSemanticResponseStream(ctx *RequestContext) error {
 	if responseID != "" {
 		streamContext.ResponseID = responseID
 	}
-	if responseID != "" || namespaces != nil {
-		mutation = func(event *llmprotocol.Event) error {
-			if responseID != "" {
-				event.ResponseID = responseID
-			}
-			llmprotocol.RestoreToolNamespace(event.ToolCall, namespaces)
-			return nil
+	mutation = func(event *llmprotocol.Event) error {
+		if responseID != "" {
+			event.ResponseID = responseID
 		}
+		llmprotocol.RestoreToolNamespace(event.ToolCall, namespaces)
+		// The stream state observes the provider's error (it classes the
+		// failure); the re-encoded frame carries only its public form.
+		if event.Type == llmprotocol.EventResponseFailed && event.Error != nil {
+			if ctx.SemanticStreamState != nil {
+				ctx.SemanticStreamState.upstreamFailed = event.Error
+			}
+			event.Error = publicUpstreamError(ctx, event.Error, 0, "stream")
+		}
+		return nil
 	}
 	stream, err := engine.NewStreamWithMutation(source, target, streamContext, mutation)
 	if err != nil {
@@ -270,10 +279,16 @@ func (r *OpenAIRouter) ensureSemanticResponseStream(ctx *RequestContext) error {
 		// for, and restates an upstream's native length finish as "length".
 		limit := llmprotocol.DefaultPolicy().Limits.SSEFrameBytes
 		if streamUsageRequestedByClient(ctx) {
-			ctx.PublicChatUsageFilter = protocolcodec.NewChatPassthroughStreamFilter(limit)
+			ctx.PublicStreamFilter = protocolcodec.NewChatPassthroughStreamFilter(limit)
 		} else {
-			ctx.PublicChatUsageFilter = protocolcodec.NewChatUsageStreamFilter(limit)
+			ctx.PublicStreamFilter = protocolcodec.NewChatUsageStreamFilter(limit)
 		}
+	}
+	if source == llmprotocol.AnthropicMessagesV1 && target == llmprotocol.AnthropicMessagesV1 {
+		// A same-format Anthropic stream travels as the upstream wrote it,
+		// except a provider error event, which the client sees only in its
+		// public form.
+		ctx.PublicStreamFilter = protocolcodec.NewAnthropicPublicStreamFilter(llmprotocol.DefaultPolicy().Limits.SSEFrameBytes)
 	}
 	ctx.SemanticStreamState = &semanticResponseStreamState{
 		requestID: ctx.RequestID,
@@ -619,7 +634,11 @@ func (r *OpenAIRouter) classStreamFailure(
 		recordTurnFailureDetail(ctx, turnFailureClientEnded, clientEndedDetail(streamErr), sent)
 	case streamErr != nil && !ctx.StreamEndedByReceiveError || state == nil:
 	case state.failed != nil:
-		recordTurnFailureDetail(ctx, streamFailureClass(state.failed), providerStreamFailureDetail(state.failed), sent)
+		failed := state.failed
+		if state.upstreamFailed != nil {
+			failed = state.upstreamFailed
+		}
+		recordTurnFailureDetail(ctx, streamFailureClass(failed), providerStreamFailureDetail(failed), sent)
 	case !state.terminal:
 		recordTurnFailure(ctx, turnFailureStreamCut, sent)
 	}

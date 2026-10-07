@@ -276,6 +276,12 @@ func (r *OpenAIRouter) decodeClientResponse(
 		return nil, err
 	}
 	ctx.UpstreamDecodedRemnant = nil
+	// A provider can state its error in a 200 body; the client is sent only
+	// its public form (the body pipeline re-encodes such a response). This is
+	// not a decode mutation, which would make the same-format decode strict.
+	if decoded.Response.Error != nil {
+		decoded.Response.Error = publicUpstreamError(ctx, decoded.Response.Error, 0, "response")
+	}
 	ctx.SemanticResponse = &decoded.Response
 	ctx.ResponseEnvelope = decoded.Envelope
 	ctx.ProtocolDiagnostics = append(ctx.ProtocolDiagnostics, decoded.Diagnostics...)
@@ -321,6 +327,12 @@ func (r *OpenAIRouter) decodeCachedClientResponse(
 	decoded, err := engine.TranslateResponse(format, format, body, nil)
 	if err != nil {
 		return nil, err
+	}
+	// An entry written before provider errors were made public can still
+	// hold one; a hit is re-encoded from this response, so it is made public
+	// here.
+	if decoded.Response.Error != nil {
+		decoded.Response.Error = publicUpstreamError(ctx, decoded.Response.Error, 0, "cache")
 	}
 	ctx.SemanticResponse = &decoded.Response
 	ctx.ResponseEnvelope = decoded.Envelope
