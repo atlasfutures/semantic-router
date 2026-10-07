@@ -60,7 +60,10 @@ func (state *streamState) completeToolItem(event llmprotocol.Event) (llmprotocol
 		return llmprotocol.Event{}, err
 	}
 	if !complete {
-		arguments, complete = state.normalizeToolArguments(arguments)
+		arguments, complete, err = state.normalizeToolArguments(arguments)
+		if err != nil {
+			return llmprotocol.Event{}, err
+		}
 	}
 	if !complete && !llmprotocol.TruncatedJSONObject(arguments, state.policy.Limits.JSONDepth) {
 		// A whole JSON value that is not an object, or an object with a
@@ -356,16 +359,27 @@ func (state *streamState) heldCutFailure(stop llmprotocol.StopReason, failed boo
 // completed call, which a Responses client reads its arguments from and the
 // Router records the turn by, carries the settled ones, so a replay of the
 // call is strict. The diagnostic says so without saying what changed.
-func (state *streamState) normalizeToolArguments(arguments []byte) ([]byte, bool) {
+func (state *streamState) normalizeToolArguments(arguments []byte) ([]byte, bool, error) {
 	normalized, err := llmprotocol.NormalizeToolArguments(arguments, state.policy.Limits.JSONDepth)
 	if err != nil {
-		return arguments, false
+		return arguments, false, nil
+	}
+	// The streamed bytes were bounded as they arrived, but the re-encoding
+	// can be longer (encoding/json writes U+2028 as a six-byte escape), so
+	// the settled object is bounded again.
+	if limit := state.policy.Limits.ToolArgumentsBytes; limit > 0 && len(normalized) > limit {
+		return arguments, false, llmprotocol.NewError(
+			llmprotocol.ErrorUpstreamUnavailable,
+			"tool_arguments_limit",
+			"settled tool arguments exceed the configured limit",
+			nil,
+		)
 	}
 	state.noteStateDiagnostic(llmprotocol.Diagnostic{
 		Source: state.context.Source, Field: "tool_call.arguments", Action: llmprotocol.DiagnosticApproximated,
 		Reason: "the model repeated a member or wrote an unpaired surrogate escape; the last member wins and the escape becomes U+FFFD, as Anthropic decodes them",
 	})
-	return normalized, true
+	return normalized, true, nil
 }
 
 // settlesTo reports a completion whose arguments are the streamed ones as
