@@ -47,6 +47,12 @@ func (p *Placer) Render(clientBody []byte, control *Control, cell *Cell, wireMod
 func (p *Placer) render(
 	clientBody []byte, control *Control, baseWire map[string]*value, wireModel string,
 ) ([]byte, Receipt, error) {
+	// Every render path (Render, RenderAdmitted, the golden corpora) comes through here, so a control naming a
+	// rendering unit this router does not implement is refused once, for all of them.
+	if control != nil && control.Instruction != nil && control.Instruction.Unit != "" {
+		return nil, Receipt{}, refuse("call %d: a %s unit is not rendered by this router", p.state.Calls,
+			control.Instruction.Unit)
+	}
 	if err := p.check(control); err != nil {
 		return nil, Receipt{}, err
 	}
@@ -112,9 +118,6 @@ func renderEpisode(
 	bodies := make([][]byte, 0, len(controls))
 	receipts := make([]Receipt, 0, len(controls))
 	for index := range controls {
-		if c := controls[index]; c != nil && c.Instruction != nil && c.Instruction.Unit != "" {
-			return nil, nil, refuse("call %d: a %s unit is not rendered by this router", index, c.Instruction.Unit)
-		}
 		body, receipt, err := placer.render(clientBodies[index], controls[index], baseWire, wireModel)
 		if err != nil {
 			return nil, nil, err

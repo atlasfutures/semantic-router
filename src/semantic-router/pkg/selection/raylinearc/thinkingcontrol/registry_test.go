@@ -304,6 +304,14 @@ func TestAUnitControlLoadsUnderItsIDAndIsNeverAdmitted(t *testing.T) {
 		!strings.Contains(err.Error(), "does not render") {
 		t.Fatalf("Admit(unit control) = %v, want a refusal", err)
 	}
+	placer, err := NewPlacer("responses")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := placer.Render([]byte(`{"model":"m","input":"hi"}`), &control, cell, "openai/gpt-6-astra"); err == nil ||
+		!strings.Contains(err.Error(), "not rendered") {
+		t.Fatalf("Placer.Render(unit control) = %v, want a refusal", err)
+	}
 	native, ok := reg.Control("628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0")
 	if !ok {
 		t.Fatal("the native default control is missing")
