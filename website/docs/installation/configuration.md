@@ -313,6 +313,42 @@ Set the card value for slow models. At about 35 tokens per second, the
 default stream deadline (`global.router.response_stream.deadline_sec`, 590 s).
 The Router would end such a turn before the model finishes.
 
+### Streamed-response limits
+
+`global.router.response_stream` bounds how long a streamed turn may run, and
+how long it may stay silent:
+
+```yaml
+global:
+  router:
+    response_stream:
+      deadline_sec: 590
+      first_content_sec: 90
+      idle_sec: 120
+```
+
+- `deadline_sec` is the longest one turn may stream, measured from the start
+  of the request. The default is 590 s, below the platform's own timeouts, so
+  the Router closes the message itself. A negative value turns it off.
+- `first_content_sec` is the longest the turn may wait for its first content
+  after the upstream's response headers. `idle_sec` is the longest gap between
+  content after that. Both default to `0`, which turns them off.
+- **Content** means text, reasoning or tool-call deltas, image progress, a
+  completed item, or the end of the response. A provider's keepalive comments,
+  the response-started event, and an item's bare start are not content. An
+  upstream that sends only keepalives stays silent.
+- When either limit passes, the Router ends the stream with closing frames
+  and an error (`stream_first_content_timeout` or `stream_idle_timeout`). The
+  turn is classed as a `timeout`. When no content reached the client, the
+  cell's fallback excludes that model from its next decisions, and the episode
+  lease is released at once, so the client's retry is decided afresh.
+- Set both limits above the slowest legitimate first content of every model,
+  including one that reasons without streaming its reasoning.
+- The limits are checked whenever a chunk arrives. When nothing arrives at
+  all, only a cell whose ext_proc filter uses
+  `response_body_mode: FULL_DUPLEX_STREAMED` ends the turn on time, and only
+  after the first body message. In other modes the next chunk ends it.
+
 ### Catalog-backed models
 
 Built-in support is additive to the same `version: v0.3` hierarchy. Set the

@@ -61,6 +61,17 @@ type CanonicalResponseStream struct {
 	// means unbounded.
 	MaxBodyBytes   int64 `yaml:"max_body_bytes,omitempty"`
 	BodyTimeoutSec int   `yaml:"body_timeout_sec,omitempty"`
+	// FirstContentSec is how long a streamed turn may wait for its first
+	// content after the upstream's response headers, and IdleSec how long it
+	// may go between content after that. A provider's keepalive comments are
+	// not content: an arm that stalls behind them holds the turn, and its
+	// episode, until the stream deadline above. When either fires and no
+	// content has reached the client, the turn is a timeout, so its arm is
+	// excluded and the client's retry is decided afresh. Zero turns either
+	// off. Set them above the slowest legitimate first content of any arm,
+	// including one that reasons without streaming its reasoning.
+	FirstContentSec int `yaml:"first_content_sec,omitempty"`
+	IdleSec         int `yaml:"idle_sec,omitempty"`
 }
 
 // CanonicalServiceGlobal groups shared runtime services exposed by the router.
@@ -352,6 +363,8 @@ func applyCanonicalRouterGlobal(cfg *RouterConfig, router CanonicalRouterGlobal)
 	cfg.ResponseStreamDeadlineSec = router.ResponseStream.DeadlineSec
 	cfg.MaxResponseBodyBytes = router.ResponseStream.MaxBodyBytes
 	cfg.ResponseBodyTimeoutSec = router.ResponseStream.BodyTimeoutSec
+	cfg.ResponseStreamFirstContentSec = router.ResponseStream.FirstContentSec
+	cfg.ResponseStreamIdleSec = router.ResponseStream.IdleSec
 	cfg.SkipProcessing = router.SkipProcessing
 	cfg.ModelSelection = router.ModelSelection
 	cfg.RouterLearning = router.Learning

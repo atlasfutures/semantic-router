@@ -2055,6 +2055,12 @@ global:
       # slower than those limits. Zero on either means unbounded.
       max_body_bytes: 0
       body_timeout_sec: 0
+      # End a streamed turn whose upstream sends no content (keepalives do not
+      # count) for this long after its headers, or between content after that.
+      # With nothing yet sent, the turn is a timeout: the arm is excluded and
+      # the client's retry is decided afresh. Zero turns either off.
+      first_content_sec: 0
+      idle_sec: 0
     skip_processing:
       enabled: false
     model_selection:

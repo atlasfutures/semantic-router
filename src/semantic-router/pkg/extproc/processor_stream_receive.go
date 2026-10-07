@@ -102,6 +102,18 @@ func (receiver *streamReceiver) next(timeout time.Duration) (receivedMessage, bo
 	}
 }
 
+// poll returns a message that is already waiting, without waiting for one. A
+// timer and a message can fall due together, and select picks either; the
+// message is the one that must not be lost.
+func (receiver *streamReceiver) poll() (receivedMessage, bool) {
+	select {
+	case message, ok := <-receiver.messages:
+		return repanicOnLoopGoroutine(closedAsEOF(message, ok)), true
+	default:
+		return receivedMessage{}, false
+	}
+}
+
 func (receiver *streamReceiver) receive() receivedMessage {
 	message, ok := <-receiver.messages
 	return repanicOnLoopGoroutine(closedAsEOF(message, ok))
@@ -114,6 +126,32 @@ func closedAsEOF(message receivedMessage, ok bool) receivedMessage {
 		return receivedMessage{err: io.EOF}
 	}
 	return message
+}
+
+// loopWait is how long the loop may wait for the next message: the nearer of
+// the held body's deadline and the streamed turn's silence limit. Zero waits
+// indefinitely.
+func (r *OpenAIRouter) loopWait(ctx *RequestContext) time.Duration {
+	held := r.heldResponseBodyWait(ctx)
+	silence := time.Duration(0)
+	if streamSilenceTimerArmed(ctx) {
+		// Otherwise the next chunk checks instead.
+		silence = r.streamSilenceWait(ctx)
+	}
+	if held <= 0 || silence > 0 && silence < held {
+		return silence
+	}
+	return held
+}
+
+// endSilentStream ends a streamed turn that went silent with no message to
+// answer: the stream's closing frames go out on a body reply of their own,
+// with end_of_stream set, as endStalledResponseBody's do.
+func (r *OpenAIRouter) endSilentStream(
+	stream ext_proc.ExternalProcessor_ProcessServer,
+	ctx *RequestContext,
+) error {
+	return sendResponse(stream, r.handleSemanticStreamingResponseBody(nil, false, ctx), "response body")
 }
 
 // heldResponseBodyWait is how long the loop may wait before the bytes it is
