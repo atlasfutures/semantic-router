@@ -27,6 +27,21 @@ var errThinkingControlOverCap = errors.New(
 	"the decision's max_tokens_limit cannot hold the v5 control's thinking budget at its 1024-token minimum",
 )
 
+// errThinkingControlOverContext is the same refusal when the room the request
+// leaves in the model's context window, not the decision's cap, is what
+// cannot hold the budget: the fix is a shorter prompt, not a policy change.
+var errThinkingControlOverContext = errors.New(
+	"the room the request leaves in the model's context window cannot hold the v5 control's thinking budget at its 1024-token minimum",
+)
+
+// thinkingControlOverCapError names the constraint that refused the control.
+func thinkingControlOverCapError(plan outputBoundPlan) error {
+	if plan.limitedBy == outputBoundLimitedByContext {
+		return errThinkingControlOverContext
+	}
+	return errThinkingControlOverCap
+}
+
 // applyDispatchOutputBound sets the output limit of a request whose caller
 // stated none, as planDispatchOutputBound decides it, and logs the plan as the
 // dispatch_output_bound event. A limit the caller stated is never touched.
@@ -55,7 +70,7 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 	}
 	plan := r.planDispatchOutputBound(
 		dispatch.logicalModel, dispatch.targetFormat, decisionMaxTokensLimit(ctx), budget,
-		int64(r.Config.GetModelContextWindowSize(dispatch.logicalModel)), int64(ctx.VSRContextTokenCount),
+		int64(r.Config.GetModelContextWindowSize(dispatch.logicalModel)), dispatchContextTokens(request, ctx),
 	)
 	if plan.source == "" {
 		return false, nil
@@ -72,6 +87,9 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 	if plan.context != "" {
 		event["context"] = plan.context
 		event["context_room"] = plan.contextRoom
+	}
+	if plan.limitedBy != "" {
+		event["limited_by"] = plan.limitedBy
 	}
 	if plan.thinking != "" {
 		event["thinking"] = plan.thinking
@@ -92,7 +110,7 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 		if control != nil {
 			event["max_output_tokens"] = nil
 			logging.ComponentWarnEvent("extproc", "dispatch_output_bound", event)
-			return false, errThinkingControlOverCap
+			return false, thinkingControlOverCapError(plan)
 		}
 		request.ReasoningMode, request.ReasoningBudgetTokens = llmprotocol.ReasoningModeDisabled, nil
 	}
@@ -132,6 +150,28 @@ const (
 	outputBoundNoContextRoom    = "no_context_room"
 )
 
+// Which constraint supplied the cap a plan was held to, as logged and as the
+// v5 control refusal names it.
+const (
+	outputBoundLimitedByDecision = "decision"
+	outputBoundLimitedByContext  = "context"
+)
+
+// dispatchContextTokens is the size of the prompt as it will be dispatched:
+// the request's routing estimate, which may be calibrated, never below a
+// fresh count of the request as it stands now. The estimate was made before
+// a stored Responses history or a memory retrieval was prepended, so a room
+// computed from it alone could leave a limit the provider refuses.
+func dispatchContextTokens(request *llmprotocol.Request, ctx *RequestContext) int64 {
+	count := int64(ctx.VSRContextTokenCount)
+	if request != nil {
+		if floor := int64(extractSemanticRequestSignals(request).ContextTokenFloor); floor > count {
+			count = floor
+		}
+	}
+	return count
+}
+
 // How a planned bound met a Messages thinking budget, as logged.
 const (
 	outputBoundThinkingOnTop         = "budget_on_top"
@@ -151,6 +191,7 @@ type outputBoundPlan struct {
 	belowMinimum   string
 	context        string
 	contextRoom    int64
+	limitedBy      string
 	thinking       string
 	thinkingBudget int64
 }
@@ -167,9 +208,11 @@ type outputBoundPlan struct {
 //     less the request's own token estimate. A provider refuses a request
 //     whose input and output limit together exceed its window, so a card's
 //     output limit sent whole on a long prompt would fail the turn the mask
-//     admitted. A prompt that leaves no room is sent unbounded, as its caller
-//     sent it; the provider's answer to it is the same either way. A card
-//     that declares no window, or a request with no estimate, is not clamped.
+//     admitted. A prompt that leaves no room is sent as if the card declared
+//     no window: every limit meets the same refusal when the prompt alone
+//     overflows, and an estimate that overshot must not truncate an answer
+//     the provider would have given. A card that declares no window, or a
+//     request with no estimate, is not clamped.
 //   - It is never a limit the target refuses. A bound below the target's
 //     minimum is raised to it, which keeps a small card value or cap as close
 //     as the target allows; turning it into no limit would discard the
@@ -201,21 +244,28 @@ func (r *OpenAIRouter) planDispatchOutputBound(
 	// The cap is the tighter of the operator's limit and the room the
 	// request leaves in the window; every rule below reads the cap.
 	limit := decisionLimit
+	if limit > 0 {
+		plan.limitedBy = outputBoundLimitedByDecision
+	}
 	if contextWindow > 0 && contextTokens > 0 {
 		plan.contextRoom = contextWindow - contextTokens
-		if plan.contextRoom <= 0 {
+		switch {
+		case plan.contextRoom <= 0:
 			plan.context = outputBoundNoContextRoom
-			return plan
+		case limit <= 0 || plan.contextRoom < limit:
+			limit, plan.limitedBy = plan.contextRoom, outputBoundLimitedByContext
 		}
-		if bound > plan.contextRoom {
+	}
+	// held marks the plan as having been held to the cap; the context
+	// status is set only when the context supplied that cap.
+	held := func() {
+		if plan.limitedBy == outputBoundLimitedByContext {
 			plan.context = outputBoundClampedToContext
-		}
-		if limit <= 0 || plan.contextRoom < limit {
-			limit = plan.contextRoom
 		}
 	}
 	if limit > 0 && bound > limit {
 		bound = limit
+		held()
 	}
 	if minimum := minimumOutputLimit(format); bound < minimum {
 		if limit > 0 && minimum > limit {
@@ -233,6 +283,7 @@ func (r *OpenAIRouter) planDispatchOutputBound(
 		plan.maxTokens, plan.thinking = total, outputBoundThinkingOnTop
 		return plan
 	}
+	held()
 	lowered := max(limit-bound, minimumAnthropicThinkingBudget)
 	if lowered >= limit {
 		plan.thinking = outputBoundThinkingDisabled

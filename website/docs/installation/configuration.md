@@ -295,9 +295,13 @@ routing:
   input and output limit together exceed its context window. When the card
   declares `context_window_size`, the Router's limit is capped at the window
   less the request's own token estimate, the way the decision cap applies,
-  thinking budget included. A request that leaves no room is sent with no
-  limit, as the client sent it. The `dispatch_output_bound` event records
-  `context: clamped_to_context` or `no_context_room` and the room.
+  thinking budget included. The room is measured against the prompt as it
+  will be dispatched, after any stored history or retrieval is added. A
+  request that leaves no room is sent as if the card declared no window:
+  every limit meets the same refusal when the prompt alone overflows, and an
+  estimate that overshot must not truncate an answer. The
+  `dispatch_output_bound` event records `context: clamped_to_context` or
+  `no_context_room`, the room, and `limited_by: decision` or `context`.
 - **Context compression reserves the limit.** Context compression runs before
   dispatch. It keeps the Router's limit free in the model's
   `context_window_size`, so a prompt near the window is compressed instead of

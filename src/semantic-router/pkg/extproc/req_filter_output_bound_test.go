@@ -3,6 +3,9 @@ package extproc
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -343,15 +346,16 @@ func TestDispatchOutputBoundStaysWithinTheContextRoom(t *testing.T) {
 		decision      *config.Decision
 		want          string
 	}{
-		"room below the card clamps":             {llmprotocol.OpenAIChatV1, 384000, 1000000, 700000, nil, "max_completion_tokens=300000"},
-		"room above the card sends the card":     {llmprotocol.OpenAIChatV1, 384000, 1000000, 100000, nil, "max_completion_tokens=384000"},
-		"no window declared, no clamp":           {llmprotocol.OpenAIChatV1, 384000, 0, 700000, nil, "max_completion_tokens=384000"},
-		"no estimate, no clamp":                  {llmprotocol.OpenAIChatV1, 384000, 1000000, 0, nil, "max_completion_tokens=384000"},
-		"the tighter of room and decision cap":   {llmprotocol.OpenAIChatV1, 384000, 1000000, 700000, maxTokensLimitDecision(t, 2000), "max_completion_tokens=2000"},
-		"room tighter than the decision cap":     {llmprotocol.OpenAIChatV1, 384000, 1000000, 999000, maxTokensLimitDecision(t, 2000), "max_completion_tokens=1000"},
-		"no room left is sent unbounded":         {llmprotocol.OpenAIChatV1, 384000, 262144, 262144, nil, ""},
-		"messages fallback clamps to the room":   {llmprotocol.AnthropicMessagesV1, 0, 40000, 30000, nil, "max_tokens=10000"},
-		"responses room below 16 goes unbounded": {llmprotocol.OpenAIResponsesV1, 384000, 1000000, 999990, nil, ""},
+		"room below the card clamps":                                    {llmprotocol.OpenAIChatV1, 384000, 1000000, 700000, nil, "max_completion_tokens=300000"},
+		"room above the card sends the card":                            {llmprotocol.OpenAIChatV1, 384000, 1000000, 100000, nil, "max_completion_tokens=384000"},
+		"no window declared, no clamp":                                  {llmprotocol.OpenAIChatV1, 384000, 0, 700000, nil, "max_completion_tokens=384000"},
+		"no estimate, no clamp":                                         {llmprotocol.OpenAIChatV1, 384000, 1000000, 0, nil, "max_completion_tokens=384000"},
+		"the tighter of room and decision cap":                          {llmprotocol.OpenAIChatV1, 384000, 1000000, 700000, maxTokensLimitDecision(t, 2000), "max_completion_tokens=2000"},
+		"room tighter than the decision cap":                            {llmprotocol.OpenAIChatV1, 384000, 1000000, 999000, maxTokensLimitDecision(t, 2000), "max_completion_tokens=1000"},
+		"no room left sends the card, as if no window":                  {llmprotocol.OpenAIChatV1, 384000, 262144, 262144, nil, "max_completion_tokens=384000"},
+		"messages with no room sends the fallback, not a smaller limit": {llmprotocol.AnthropicMessagesV1, 0, 40000, 40000, nil, "max_tokens=32000"},
+		"messages fallback clamps to the room":                          {llmprotocol.AnthropicMessagesV1, 0, 40000, 30000, nil, "max_tokens=10000"},
+		"responses room below 16 goes unbounded":                        {llmprotocol.OpenAIResponsesV1, 384000, 1000000, 999990, nil, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			body := unboundedResponsesBody
@@ -383,5 +387,62 @@ func TestDispatchOutputBoundKeepsThinkingWithinTheContextRoom(t *testing.T) {
 	}
 	if request.ReasoningBudgetTokens == nil || *request.ReasoningBudgetTokens != 2000 {
 		t.Fatalf("budget = %v, want lowered to the 2000 the room leaves beside the bound", request.ReasoningBudgetTokens)
+	}
+}
+
+// The room is measured against the prompt as it will be dispatched. The
+// routing estimate was made before a stored history or a retrieval was
+// prepended, so a request that grew after it is recounted, and the larger
+// number wins.
+func TestDispatchOutputBoundRecountsTheDispatchedPrompt(t *testing.T) {
+	_, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+		target: llmprotocol.OpenAIChatV1, card: 384000, body: unboundedResponsesBody,
+		window: 1000000, contextTokens: 100,
+		mutate: func(request *llmprotocol.Request) {
+			history := llmprotocol.Message{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{{
+				Kind: llmprotocol.ContentText, Text: strings.Repeat("restored history ", 200000),
+			}}}
+			request.Messages = append([]llmprotocol.Message{history}, request.Messages...)
+		},
+	})
+	got := wireOutputLimit(wire)
+	var limit int64
+	if _, err := fmt.Sscanf(got, "max_completion_tokens=%d", &limit); err != nil || limit >= 384000 {
+		t.Fatalf("dispatched %q, want a limit clamped below the card by the recounted prompt", got)
+	}
+}
+
+// Whichever constraint holds the plan is named: in the log, and in the
+// refusal of a v5 control the cap cannot hold, which otherwise sends an
+// operator to change a decision limit that was not the problem.
+func TestDispatchOutputBoundNamesTheConstraintThatHeldIt(t *testing.T) {
+	t.Parallel()
+	router := &OpenAIRouter{Config: &config.RouterConfig{BackendModels: config.BackendModels{
+		ModelConfig: map[string]config.ModelParams{"m": {MaxOutputTokens: 4000}},
+	}}}
+	budget := int64(8000)
+	// The card fits the room; the thinking budget on top does not. The clamp
+	// came from the context, and the plan says so.
+	plan := router.planDispatchOutputBound("m", llmprotocol.AnthropicMessagesV1, 0, &budget, 100000, 94000)
+	if plan.context != outputBoundClampedToContext || plan.limitedBy != outputBoundLimitedByContext || plan.maxTokens != 6000 {
+		t.Fatalf("plan = %+v, want clamped_to_context by the context at 6000", plan)
+	}
+	// A decision cap tighter than the room is the decision's doing.
+	plan = router.planDispatchOutputBound("m", llmprotocol.AnthropicMessagesV1, 5000, &budget, 100000, 94000)
+	if plan.context != "" || plan.limitedBy != outputBoundLimitedByDecision || plan.maxTokens != 5000 {
+		t.Fatalf("plan = %+v, want the decision's 5000 with no context status", plan)
+	}
+	// Room that cannot hold the minimum budget beside the bound disables
+	// thinking, and the control refusal names the context, not the decision.
+	plan = router.planDispatchOutputBound("m", llmprotocol.AnthropicMessagesV1, 0, &budget, 100000, 99000)
+	if plan.thinking != outputBoundThinkingDisabled || plan.limitedBy != outputBoundLimitedByContext {
+		t.Fatalf("plan = %+v, want thinking disabled by the context", plan)
+	}
+	if err := thinkingControlOverCapError(plan); !errors.Is(err, errThinkingControlOverContext) {
+		t.Fatalf("refusal = %v, want the context-window refusal", err)
+	}
+	plan = router.planDispatchOutputBound("m", llmprotocol.AnthropicMessagesV1, 4500, &budget, 0, 0)
+	if err := thinkingControlOverCapError(plan); !errors.Is(err, errThinkingControlOverCap) {
+		t.Fatalf("refusal = %v, want the decision-cap refusal", err)
 	}
 }
