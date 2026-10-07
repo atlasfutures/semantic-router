@@ -283,6 +283,7 @@ func TestDerivedHoldUsesTheParentSession(t *testing.T) {
 // fails as an empty offer does -- policy_no_available_action -- without a
 // second, empty, decide.
 func TestDerivedHoldOnAnExcludedModelFailsWithoutRetrying(t *testing.T) {
+	logs := captureLogs(t)
 	router, fake := v5RouterWith(t, "openai", func(config string) string {
 		return strings.Replace(config, "    - name: glm\n      modality: text\n",
 			"    - name: glm\n      modality: text\n      vision: false\n", 1)
@@ -309,6 +310,15 @@ func TestDerivedHoldOnAnExcludedModelFailsWithoutRetrying(t *testing.T) {
 	}
 	if failures()-before != 1 {
 		t.Fatal("the turn did not fail as policy_no_available_action")
+	}
+	fields := findLogEvent(t, logs, "rayline_arc_empty_offer")
+	if fields["empty_at"] != "derived_hold" {
+		t.Fatalf("empty offer empty_at = %v, want derived_hold", fields["empty_at"])
+	}
+	// No arm is held on this path, so the event names the derived model whose
+	// exclusion emptied the offer.
+	if model, _ := fields["derived_model"].(string); model == "" || fields["derived_source"] == "" {
+		t.Fatalf("empty offer names no derived hold: model=%v source=%v", fields["derived_model"], fields["derived_source"])
 	}
 }
 
