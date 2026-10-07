@@ -717,6 +717,10 @@ func sameRaylineARCSelectionConfig(left, right *config.RaylineARCAlgorithmConfig
 	// An omitted consistency is strict; the two spellings are one setting.
 	leftSelection.Episode.Consistency = leftSelection.Episode.EffectiveConsistency()
 	rightSelection.Episode.Consistency = rightSelection.Episode.EffectiveConsistency()
+	// An omitted readiness wait is the default one, and every negative value
+	// is the same "refuse at once".
+	leftSelection.ReadinessWaitSeconds = int(left.ReadinessWait() / time.Second)
+	rightSelection.ReadinessWaitSeconds = int(right.ReadinessWait() / time.Second)
 	return reflect.DeepEqual(leftSelection, rightSelection)
 }
 

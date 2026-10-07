@@ -391,6 +391,10 @@ class RaylineARCAlgorithmConfig(BaseModel):
         default_factory=dict
     )
     upstream_audit: RaylineARCUpstreamAuditConfig | None = None
+    # How long a request that arrives while the selector is warming up waits
+    # for readiness before it is refused not_ready. 0 selects the router's
+    # default (30 s); a negative value refuses at once; at most 300 s.
+    readiness_wait_seconds: int = Field(default=0, le=300)
 
     @model_validator(mode="after")
     def _artifact_pins_unless_policy_service(self):

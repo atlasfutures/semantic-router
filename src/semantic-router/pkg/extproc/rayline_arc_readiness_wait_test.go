@@ -130,3 +130,25 @@ func TestARequestWaitsForAColdPolicyServiceAndIsServed(t *testing.T) {
 		t.Fatalf("the request was refused with %d while the service warmed; want it served", status)
 	}
 }
+
+// An omitted readiness wait and the default spelled out are one setting, so
+// two decisions that differ only in how they spell it share a selector; a
+// different wait still conflicts.
+func TestOmittedReadinessWaitIsTheSameSelectionConfigAsTheDefault(t *testing.T) {
+	omitted := *raylineARCAlgorithmConfigForTest().RaylineARC
+	spelled := omitted
+	spelled.ReadinessWaitSeconds = config.DefaultRaylineARCReadinessWaitSeconds
+	if !sameRaylineARCSelectionConfig(&omitted, &spelled) {
+		t.Fatal("an omitted and a spelled-out default readiness wait read as conflicting selector configs")
+	}
+	off, alsoOff := omitted, omitted
+	off.ReadinessWaitSeconds, alsoOff.ReadinessWaitSeconds = -1, -5
+	if !sameRaylineARCSelectionConfig(&off, &alsoOff) {
+		t.Fatal("two negative readiness waits read as different settings")
+	}
+	longer := omitted
+	longer.ReadinessWaitSeconds = 90
+	if sameRaylineARCSelectionConfig(&omitted, &longer) {
+		t.Fatal("different readiness waits read as one selector config")
+	}
+}

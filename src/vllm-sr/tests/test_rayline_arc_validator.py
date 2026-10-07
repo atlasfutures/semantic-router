@@ -540,3 +540,18 @@ def test_rayline_arc_policy_fallback_matches_the_go_contract():
     ):
         with pytest.raises(ValidationError):
             RaylineARCPolicyFallbackConfig.model_validate(invalid)
+
+
+def test_rayline_arc_accepts_readiness_wait_within_its_bound():
+    fields = RaylineARCAlgorithmConfig.model_fields
+    assert "readiness_wait_seconds" in fields
+    assert fields["readiness_wait_seconds"].default == 0
+    base = _valid_decision().algorithm.rayline_arc.model_dump(exclude_none=True)
+    for seconds in (-1, 0, 30, 300):
+        RaylineARCAlgorithmConfig.model_validate(
+            {**base, "readiness_wait_seconds": seconds}
+        )
+    with pytest.raises(ValidationError):
+        RaylineARCAlgorithmConfig.model_validate(
+            {**base, "readiness_wait_seconds": 301}
+        )
