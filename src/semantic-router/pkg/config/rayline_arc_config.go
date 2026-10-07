@@ -147,17 +147,23 @@ type RaylineARCAlgorithmConfig struct {
 	// A cold instance probes its encoder or policy service in the
 	// background, and a scaled-to-zero Modal app can take minutes to answer:
 	// without a wait every request in that window fails at once. Zero
-	// selects the shipped default, 60 s; a negative value refuses at once,
-	// as before. It cannot exceed 300 s.
+	// selects the shipped default, 30 s; a negative value refuses at once,
+	// as before. It cannot exceed 300 s, and must stay below the deployment's
+	// ext_proc message_timeout, or Envoy ends the exchange first.
 	ReadinessWaitSeconds int `yaml:"readiness_wait_seconds,omitempty"`
 }
 
-// DefaultRaylineARCReadinessWaitSeconds is the shipped readiness wait.
-const DefaultRaylineARCReadinessWaitSeconds = 60
+// DefaultRaylineARCReadinessWaitSeconds is the shipped readiness wait. It is
+// half the smallest ext_proc message_timeout this repository ships (60 s in
+// the Gateway API manifests under deploy/kubernetes), so a waiting request is
+// still the Router's to answer there. A deployment with a longer
+// message_timeout sets a longer wait.
+const DefaultRaylineARCReadinessWaitSeconds = 30
 
-// maxRaylineARCReadinessWaitSeconds bounds the wait well below the cell's
-// ext_proc message timeout (610 s), so a waiting request is still the
-// Router's to answer.
+// maxRaylineARCReadinessWaitSeconds bounds the wait. 300 s is the longest
+// ext_proc message_timeout the repository's own Envoy configs ship
+// (deploy/local, kserve, istio, the operator); a deployment must still keep
+// its wait below its own message_timeout.
 const maxRaylineARCReadinessWaitSeconds = 300
 
 // ReadinessWait is the configured readiness wait as a duration; zero means

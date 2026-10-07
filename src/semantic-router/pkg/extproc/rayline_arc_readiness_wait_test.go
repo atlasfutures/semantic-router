@@ -79,7 +79,7 @@ func TestReadinessWaitDefaultsAndBounds(t *testing.T) {
 	cases := []struct {
 		seconds int
 		want    time.Duration
-	}{{0, 60 * time.Second}, {-1, 0}, {90, 90 * time.Second}}
+	}{{0, 30 * time.Second}, {-1, 0}, {90, 90 * time.Second}, {300, 300 * time.Second}}
 	for _, c := range cases {
 		cfg := &config.RaylineARCAlgorithmConfig{ReadinessWaitSeconds: c.seconds}
 		if got := cfg.ReadinessWait(); got != c.want {
