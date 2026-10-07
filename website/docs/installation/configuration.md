@@ -349,6 +349,32 @@ global:
   `response_body_mode: FULL_DUPLEX_STREAMED` ends the turn on time, and only
   after the first body message. In other modes the next chunk ends it.
 
+### Thinking markers
+
+Some Messages clients, pi and OpenClaw among them, turn a thinking block that
+has no signature into visible text when they resend history. Thinking from a
+non-Anthropic model is unsigned, so a later Claude turn is sent another
+model's reasoning as the assistant's own words, and Claude can refuse.
+
+```yaml
+global:
+  router:
+    thinking_markers:
+      mint: false
+```
+
+- With `mint: true`, the Router signs such thinking on Messages output with
+  a marker, `vsr.thinking.v1.<family>.<digest>`. The signature is
+  deterministic for a given block, so replays stay byte-identical. Claude's
+  own signatures are never replaced.
+- When a client resends a marked block, the Router strips the marker. The
+  thinking is then dropped for a Claude worker and carried as unsigned
+  reasoning to a Chat worker. A marker is never sent to a provider.
+- It is off by default. Turn it on only once every cell that can receive the
+  client's next turn recognises markers, and once the serving routing policy
+  was trained on thinking replayed this way: it changes what those clients
+  send from text to thinking.
+
 ### Catalog-backed models
 
 Built-in support is additive to the same `version: v0.3` hierarchy. Set the

@@ -19,17 +19,34 @@ type CanonicalGlobal struct {
 
 // CanonicalRouterGlobal captures router-engine control knobs.
 type CanonicalRouterGlobal struct {
-	ConfigSource              ConfigSource            `yaml:"config_source,omitempty"`
-	Strategy                  RoutingStrategy         `yaml:"strategy,omitempty"`
-	AutoModelName             string                  `yaml:"auto_model_name,omitempty"`
-	AutoModelNames            *[]string               `yaml:"auto_model_names,omitempty"`
-	IncludeConfigModelsInList bool                    `yaml:"include_config_models_in_list"`
-	ClearRouteCache           bool                    `yaml:"clear_route_cache"`
-	StreamedBody              CanonicalStreamedBody   `yaml:"streamed_body"`
-	ResponseStream            CanonicalResponseStream `yaml:"response_stream,omitempty"`
-	SkipProcessing            SkipProcessingConfig    `yaml:"skip_processing"`
-	ModelSelection            ModelSelectionConfig    `yaml:"model_selection"`
-	Learning                  RouterLearningConfig    `yaml:"learning,omitempty"`
+	ConfigSource              ConfigSource             `yaml:"config_source,omitempty"`
+	Strategy                  RoutingStrategy          `yaml:"strategy,omitempty"`
+	AutoModelName             string                   `yaml:"auto_model_name,omitempty"`
+	AutoModelNames            *[]string                `yaml:"auto_model_names,omitempty"`
+	IncludeConfigModelsInList bool                     `yaml:"include_config_models_in_list"`
+	ClearRouteCache           bool                     `yaml:"clear_route_cache"`
+	StreamedBody              CanonicalStreamedBody    `yaml:"streamed_body"`
+	ResponseStream            CanonicalResponseStream  `yaml:"response_stream,omitempty"`
+	SkipProcessing            SkipProcessingConfig     `yaml:"skip_processing"`
+	ModelSelection            ModelSelectionConfig     `yaml:"model_selection"`
+	Learning                  RouterLearningConfig     `yaml:"learning,omitempty"`
+	ThinkingMarkers           CanonicalThinkingMarkers `yaml:"thinking_markers,omitempty"`
+}
+
+// CanonicalThinkingMarkers controls the Router's thinking markers
+// (semantic-router #191).
+type CanonicalThinkingMarkers struct {
+	// Mint signs, on Messages output, thinking that a non-Anthropic upstream
+	// wrote and no provider signed, with a Router marker
+	// (vsr.thinking.v1.<family>.<digest>). Clients that turn unsigned
+	// thinking into visible text when they resend history, pi and OpenClaw
+	// among them, then resend it as thinking, and the Router drops it for a
+	// Claude worker and carries it to a Chat worker. Off by default. Turn it
+	// on only once every cell that can receive the client's next turn
+	// recognises markers (Phase 1, #207), and once the serving policy package
+	// was trained on thinking replayed this way: the change moves what those
+	// clients send from text to thinking.
+	Mint bool `yaml:"mint,omitempty"`
 }
 
 // CanonicalStreamedBody groups streaming request body controls.
@@ -365,6 +382,7 @@ func applyCanonicalRouterGlobal(cfg *RouterConfig, router CanonicalRouterGlobal)
 	cfg.ResponseBodyTimeoutSec = router.ResponseStream.BodyTimeoutSec
 	cfg.ResponseStreamFirstContentSec = router.ResponseStream.FirstContentSec
 	cfg.ResponseStreamIdleSec = router.ResponseStream.IdleSec
+	cfg.ThinkingMarkerMint = router.ThinkingMarkers.Mint
 	cfg.SkipProcessing = router.SkipProcessing
 	cfg.ModelSelection = router.ModelSelection
 	cfg.RouterLearning = router.Learning

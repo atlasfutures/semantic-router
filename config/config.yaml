@@ -2068,6 +2068,12 @@ global:
       # the client's retry is decided afresh. Zero turns either off.
       first_content_sec: 0
       idle_sec: 0
+    # Sign thinking a non-Anthropic model wrote with a Router marker on
+    # Messages output, so clients that turn unsigned thinking into text (pi,
+    # OpenClaw) resend it as thinking. Off by default; enable only once every
+    # cell recognises markers and the policy package was trained on them.
+    thinking_markers:
+      mint: false
     skip_processing:
       enabled: false
     model_selection:

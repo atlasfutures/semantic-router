@@ -282,6 +282,7 @@ func (r *OpenAIRouter) decodeClientResponse(
 	if decoded.Response.Error != nil {
 		decoded.Response.Error = publicUpstreamError(ctx, decoded.Response.Error, 0, "response")
 	}
+	decoded.Response.ThinkingMarkerFamily = r.thinkingMarkerFamily(ctx)
 	ctx.SemanticResponse = &decoded.Response
 	ctx.ResponseEnvelope = decoded.Envelope
 	ctx.ProtocolDiagnostics = append(ctx.ProtocolDiagnostics, decoded.Diagnostics...)

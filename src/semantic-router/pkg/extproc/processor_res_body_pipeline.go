@@ -65,6 +65,8 @@ func (r *OpenAIRouter) handleNonStreamingResponseBody(
 	// error's public form, never the provider's own words.
 	rewriteClientBody := requiresClientResponseRewrite(ctx) || ctx.ResponseBodyReplaced ||
 		semanticResponse.Error != nil ||
+		// Unsigned thinking a Router marker will sign is re-encoded too.
+		protocolcodec.ResponseMintsThinkingMarkers(*semanticResponse) ||
 		protocolcodec.UpstreamBodyMisstatesStop(ctx.TargetFormat, *semanticResponse)
 	if rewriteClientBody {
 		clientBody, err = r.encodeClientResponse(*semanticResponse, ctx)

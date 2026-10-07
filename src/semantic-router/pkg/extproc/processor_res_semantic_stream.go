@@ -259,6 +259,7 @@ func (r *OpenAIRouter) ensureSemanticResponseStream(ctx *RequestContext) error {
 		Context: ctx.TraceContext, Source: source, Target: target,
 		Options:     clientStreamOptions(ctx),
 		PublicModel: ctx.RequestModel, PreviousResponseID: responseObjectPreviousID(ctx),
+		ThinkingMarkerFamily: r.thinkingMarkerFamily(ctx),
 	}
 	var mutation protocolcodec.StreamEventMutation
 	responseID := responseObjectPublicID(ctx)
@@ -301,7 +302,8 @@ func (r *OpenAIRouter) ensureSemanticResponseStream(ctx *RequestContext) error {
 		// A same-format Anthropic stream travels as the upstream wrote it,
 		// except a provider error event, which the client sees only in its
 		// public form.
-		ctx.PublicStreamFilter = protocolcodec.NewAnthropicPublicStreamFilter(llmprotocol.DefaultPolicy().Limits.SSEFrameBytes, "")
+		ctx.PublicStreamFilter = protocolcodec.NewAnthropicPublicStreamFilter(
+			llmprotocol.DefaultPolicy().Limits.SSEFrameBytes, streamContext.ThinkingMarkerFamily)
 	}
 	ctx.SemanticStreamState = &semanticResponseStreamState{
 		requestID: ctx.RequestID,
@@ -533,6 +535,8 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 	}
 	semanticResponse, responseErr := ctx.SemanticStreamState.response()
 	if responseErr == nil {
+		// The buffered copy (cache, replay) is signed as the stream was.
+		semanticResponse.ThinkingMarkerFamily = r.thinkingMarkerFamily(ctx)
 		ctx.SemanticResponse = semanticResponse
 	} else {
 		ctx.StreamingAborted = true
