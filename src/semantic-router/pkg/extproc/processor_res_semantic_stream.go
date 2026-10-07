@@ -535,8 +535,10 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 	}
 	semanticResponse, responseErr := ctx.SemanticStreamState.response()
 	if responseErr == nil {
-		// The buffered copy (cache, replay) is signed as the stream was.
-		semanticResponse.ThinkingMarkerFamily = r.thinkingMarkerFamily(ctx)
+		// The buffered copy (cache, replay) is not minted: the reconstruction
+		// keeps neither the reasoning_details that carried Claude's signature
+		// nor the stream's block boundaries, so a marker minted here could sign
+		// Claude's own thinking or differ from the one the client received.
 		ctx.SemanticResponse = semanticResponse
 	} else {
 		ctx.StreamingAborted = true

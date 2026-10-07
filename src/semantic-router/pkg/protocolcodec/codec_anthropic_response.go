@@ -197,7 +197,10 @@ func (AnthropicMessagesCodec) EncodeResponse(response llmprotocol.Response, enve
 		}
 		return encodeAnthropicError(response.Error, response.ProviderRequestID), diagnostics, nil
 	}
-	if envelope.CanReplay(llmprotocol.AnthropicMessagesV1, response.Generation, policy, true) {
+	// A body whose thinking a Router marker will sign is not the upstream's
+	// any more, so it is encoded rather than replayed.
+	if !ResponseMintsThinkingMarkers(response) &&
+		envelope.CanReplay(llmprotocol.AnthropicMessagesV1, response.Generation, policy, true) {
 		return append([]byte(nil), envelope.Response...), nil, nil
 	}
 	var diagnostics llmprotocol.Diagnostics

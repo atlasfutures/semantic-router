@@ -40,7 +40,10 @@ type passthroughEventWire struct {
 // before returns the frames to send ahead of this one: the marker's
 // signature_delta when the frame stops an unsigned thinking block.
 func (mint *thinkingMarkerPassthrough) before(parsed sseFrame) ([]byte, error) {
-	if mint == nil || mint.family == "" || !parsed.HasData || !bytes.Contains(parsed.Data, []byte(`content_block`)) {
+	// A content_block event is typed by its JSON type or, as the decoder
+	// accepts, by its SSE event name alone.
+	if mint == nil || mint.family == "" || !parsed.HasData ||
+		!bytes.Contains(parsed.Data, []byte(`content_block`)) && !strings.HasPrefix(parsed.Event, "content_block") {
 		return nil, nil
 	}
 	var wire passthroughEventWire

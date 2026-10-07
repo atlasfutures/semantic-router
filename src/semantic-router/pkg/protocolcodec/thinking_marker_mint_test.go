@@ -233,3 +233,48 @@ func TestResponseMintsThinkingMarkersDecidesTheReencode(t *testing.T) {
 		t.Fatal("minting off forces a re-encode")
 	}
 }
+
+// A same-format Messages body that would be replayed byte for byte is
+// encoded instead when a marker must sign its thinking.
+func TestSameFormatMessagesBodyIsNotReplayedWhenAMarkerMustSign(t *testing.T) {
+	engine, err := NewEngine(NewBuiltinRegistry(), llmprotocol.DefaultPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := `{"id":"msg_1","type":"message","role":"assistant","model":"moonshotai/kimi-k3","content":[` +
+		`{"type":"thinking","thinking":"kimi reasoning","signature":""},{"type":"text","text":"ok"}],` +
+		`"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}`
+	decoded, err := engine.TranslateResponse(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1, []byte(upstream), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := decoded.Response
+	response.ThinkingMarkerFamily = "moonshotai"
+	body, _, err := AnthropicMessagesCodec{}.EncodeResponse(response, decoded.Envelope, llmprotocol.DefaultPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := mintedThinkingSignature(t, body); got != ThinkingMarker("moonshotai", "kimi reasoning") {
+		t.Fatalf("the upstream body was replayed unsigned: %s", body)
+	}
+	response.ThinkingMarkerFamily = ""
+	if body, _, _ := (AnthropicMessagesCodec{}).EncodeResponse(response, decoded.Envelope, llmprotocol.DefaultPolicy()); string(body) != string(decoded.Envelope.Response) {
+		t.Fatalf("with minting off the body is no longer replayed: %s", body)
+	}
+}
+
+// Events typed only by their SSE event name, as the decoder accepts them,
+// are read the same: a stop mints, and a provider signature is honoured.
+func TestMessagesPassthroughReadsEventsTypedByName(t *testing.T) {
+	start := "event: content_block_start\ndata: {\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}}\n\n" +
+		"event: content_block_delta\ndata: {\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"Check the tool.\"}}\n\n"
+	stop := "event: content_block_stop\ndata: {\"index\":0}\n\n"
+	out := string(pushInSmallChunks(t, NewAnthropicPublicStreamFilter(1<<20, "moonshotai"), []byte(start+stop)))
+	if !strings.Contains(out, ThinkingMarker("moonshotai", "Check the tool.")) || !strings.HasSuffix(out, stop) {
+		t.Fatalf("an event-typed stop did not mint the full text's marker:\n%s", out)
+	}
+	signed := start + "event: content_block_delta\ndata: {\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"provider-sig\"}}\n\n" + stop
+	if out := string(pushInSmallChunks(t, NewAnthropicPublicStreamFilter(1<<20, "moonshotai"), []byte(signed))); out != signed {
+		t.Fatalf("an event-typed provider signature was not honoured:\n%s", out)
+	}
+}
