@@ -50,15 +50,20 @@ func publicChatStreamError(object map[string]json.RawMessage) (bool, error) {
 
 // AnthropicPublicStreamFilter passes a same-format Anthropic stream through
 // frame by frame, as the upstream wrote it, except an error event, which is
-// restated in its public form.
+// restated in its public form. With a thinking-marker family it also signs
+// each thinking block the upstream left unsigned with a Router marker
+// (thinkingMarkerPassthrough).
 type AnthropicPublicStreamFilter struct {
 	framer    sseFramer
 	failure   error
 	finalized bool
+	mint      thinkingMarkerPassthrough
 }
 
-func NewAnthropicPublicStreamFilter(limit int) *AnthropicPublicStreamFilter {
-	return &AnthropicPublicStreamFilter{framer: newSSEFramer(limit)}
+// NewAnthropicPublicStreamFilter returns the filter. markerFamily is the
+// family to mint thinking markers for, or empty to mint none.
+func NewAnthropicPublicStreamFilter(limit int, markerFamily string) *AnthropicPublicStreamFilter {
+	return &AnthropicPublicStreamFilter{framer: newSSEFramer(limit), mint: thinkingMarkerPassthrough{family: markerFamily}}
 }
 
 func (filter *AnthropicPublicStreamFilter) Push(chunk []byte) ([]byte, error) {
@@ -99,6 +104,19 @@ func (filter *AnthropicPublicStreamFilter) filterFrames(frames [][]byte) ([]byte
 		if err != nil {
 			filter.failure = err
 			return nil, err
+		}
+		if filter.mint.family != "" {
+			parsed, parseErr := parseSSEFrame(frame, filter.framer.limit)
+			if parseErr != nil {
+				filter.failure = parseErr
+				return nil, parseErr
+			}
+			signature, mintErr := filter.mint.before(parsed)
+			if mintErr != nil {
+				filter.failure = mintErr
+				return nil, mintErr
+			}
+			output.Write(signature)
 		}
 		output.Write(public)
 	}

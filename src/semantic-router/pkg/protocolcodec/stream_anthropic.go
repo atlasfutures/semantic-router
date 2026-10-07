@@ -800,6 +800,11 @@ func (encoder *anthropicStreamEncoder) claudeSignatureFrames(key anthropicBlockK
 		return nil, nil
 	}
 	signature := chatClaudeThinkingSignature(encoder.reasoningDetails[key], encoder.reasoningText[key])
+	if signature == "" && encoder.context.ThinkingMarkerFamily != "" && encoder.reasoningText[key] != "" {
+		// Thinking no provider signed: the Router's marker, as the
+		// buffered encoder mints it (withThinkingMarkers).
+		signature = ThinkingMarker(encoder.context.ThinkingMarkerFamily, encoder.reasoningText[key])
+	}
 	if signature == "" {
 		return nil, nil
 	}

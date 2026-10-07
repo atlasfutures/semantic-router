@@ -56,7 +56,7 @@ func TestAnthropicPublicStreamPassesFramesAndRestatesErrorEvent(t *testing.T) {
 		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"an \\\"error\\\" here\"}}\n\n"
 	input := []byte(content +
 		"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"prompt is too long; see https://example.com/limits\"},\"request_id\":\"req_1\"}\n\n")
-	output := pushInSmallChunks(t, NewAnthropicPublicStreamFilter(1<<20), input)
+	output := pushInSmallChunks(t, NewAnthropicPublicStreamFilter(1<<20, ""), input)
 	if !bytes.HasPrefix(output, []byte(content)) {
 		t.Fatalf("non-error frames were changed: %s", output)
 	}
@@ -68,13 +68,13 @@ func TestAnthropicPublicStreamPassesFramesAndRestatesErrorEvent(t *testing.T) {
 
 	// Typed only by its SSE event name, as the decoder accepts it.
 	untyped := []byte("event: error\ndata: {\"error\":{\"type\":\"overloaded_error\",\"message\":\"busy, see https://example.com/status\"}}\n\n")
-	output = pushInSmallChunks(t, NewAnthropicPublicStreamFilter(1<<20), untyped)
+	output = pushInSmallChunks(t, NewAnthropicPublicStreamFilter(1<<20, ""), untyped)
 	if bytes.Contains(output, []byte("example.com")) || !bytes.Contains(output, []byte("busy, see [redacted]")) {
 		t.Fatalf("an error event typed by its name passed through: %s", output)
 	}
 
 	billing := []byte("event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"billing_error\",\"message\":\"" + providerCreditsText + "\"}}\n\n")
-	output = pushInSmallChunks(t, NewAnthropicPublicStreamFilter(1<<20), billing)
+	output = pushInSmallChunks(t, NewAnthropicPublicStreamFilter(1<<20, ""), billing)
 	if bytes.Contains(output, []byte("54095")) || !bytes.Contains(output, []byte("model service unavailable")) {
 		t.Fatalf("account error leaked: %s", output)
 	}

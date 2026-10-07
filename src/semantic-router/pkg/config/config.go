@@ -251,6 +251,9 @@ type RouterOptions struct {
 	ResponseStreamFirstContentSec int                  `yaml:"response_stream_first_content_sec,omitempty"`
 	ResponseStreamIdleSec         int                  `yaml:"response_stream_idle_sec,omitempty"`
 	SkipProcessing                SkipProcessingConfig `yaml:"skip_processing,omitempty"`
+	// ThinkingMarkerMint signs thinking a non-Anthropic upstream wrote with a
+	// Router thinking marker on Messages output (semantic-router #191).
+	ThinkingMarkerMint bool `yaml:"thinking_marker_mint,omitempty"`
 }
 
 // SkipProcessingConfig gates the x-vsr-skip-processing request header.

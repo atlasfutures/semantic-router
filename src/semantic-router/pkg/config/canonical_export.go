@@ -317,6 +317,9 @@ func CanonicalGlobalFromRouterConfig(cfg *RouterConfig) *CanonicalGlobal {
 			SkipProcessing: cfg.SkipProcessing,
 			ModelSelection: cfg.ModelSelection,
 			Learning:       cfg.RouterLearning,
+			ThinkingMarkers: CanonicalThinkingMarkers{
+				Mint: cfg.ThinkingMarkerMint,
+			},
 		},
 		Services: CanonicalServiceGlobal{
 			API:           cfg.API,

@@ -78,6 +78,10 @@ type StreamContext struct {
 	ProviderModel      string
 	ResponseID         string
 	PreviousResponseID string
+	// ThinkingMarkerFamily, when set, has the Messages stream encoder sign a
+	// thinking block that would otherwise stop unsigned with a Router
+	// thinking marker of this family (semantic-router #191).
+	ThinkingMarkerFamily string
 }
 
 type StreamDecoder interface {
