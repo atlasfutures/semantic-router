@@ -574,6 +574,11 @@ type Response struct {
 	// handling and empty completions differ by provider rather than by model.
 	// No codec publishes it to a client.
 	UpstreamProvider string
+	// ThinkingMarkerFamily, when set, tells the Messages encoder to sign
+	// reasoning that would otherwise reach the client unsigned with a Router
+	// thinking marker of this family (semantic-router #191). It is a Router
+	// instruction; no codec publishes it.
+	ThinkingMarkerFamily string
 	// ProviderStopReason and StopDetails say why the provider stopped, where
 	// it says so beyond the neutral reason. See StopDetails.
 	ProviderStopReason string

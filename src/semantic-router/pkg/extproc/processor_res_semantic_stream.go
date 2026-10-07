@@ -301,7 +301,7 @@ func (r *OpenAIRouter) ensureSemanticResponseStream(ctx *RequestContext) error {
 		// A same-format Anthropic stream travels as the upstream wrote it,
 		// except a provider error event, which the client sees only in its
 		// public form.
-		ctx.PublicStreamFilter = protocolcodec.NewAnthropicPublicStreamFilter(llmprotocol.DefaultPolicy().Limits.SSEFrameBytes)
+		ctx.PublicStreamFilter = protocolcodec.NewAnthropicPublicStreamFilter(llmprotocol.DefaultPolicy().Limits.SSEFrameBytes, "")
 	}
 	ctx.SemanticStreamState = &semanticResponseStreamState{
 		requestID: ctx.RequestID,

@@ -233,6 +233,9 @@ func (AnthropicMessagesCodec) EncodeResponse(response llmprotocol.Response, enve
 	// Claude served over Chat: its signature rides in reasoning_details,
 	// which Messages cannot carry, so it becomes the thinking signature.
 	output := withClaudeThinkingSignatures(withoutResponsesOnlyOutput(response.Output))
+	// Thinking no provider signed is signed with a Router marker when the
+	// Router asks, so the client resends it as thinking rather than text.
+	output = withThinkingMarkers(output, response.ThinkingMarkerFamily)
 	if outputHoldsReasoningDetails(output) {
 		// Messages has no member for reasoning_details: the reasoning text
 		// is kept, the details are not, and a carrier with no text is
