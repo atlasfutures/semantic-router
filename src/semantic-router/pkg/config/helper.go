@@ -214,6 +214,22 @@ func (c *RouterConfig) GetModelAPIFormat(modelName string) string {
 	return APIFormatOpenAI
 }
 
+// GetModelContextWindowSize returns the model card's context_window_size, or
+// zero when it declares none. A LoRA adapter without its own entry inherits
+// its base model's card, as it does for the output limit.
+func (c *RouterConfig) GetModelContextWindowSize(modelName string) int {
+	if c == nil || c.ModelConfig == nil {
+		return 0
+	}
+	if modelConfig, ok := c.ModelConfig[modelName]; ok && modelConfig.ContextWindowSize > 0 {
+		return modelConfig.ContextWindowSize
+	}
+	if _, baseConfig, ok := c.resolveLoRABaseModel(modelName); ok && baseConfig.ContextWindowSize > 0 {
+		return baseConfig.ContextWindowSize
+	}
+	return 0
+}
+
 // GetModelMaxOutputTokens returns the operator-declared output limit of the
 // model's card, or zero when it declares none. A LoRA adapter without its own
 // entry inherits its base model's card, as it does for endpoints and format.

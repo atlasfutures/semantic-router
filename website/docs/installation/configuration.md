@@ -291,6 +291,13 @@ routing:
   turned off for the request. A Rayline ARC v5 thinking control follows the
   same rule. Its thinking cannot be turned off without changing the control,
   so a cap that cannot hold its minimum fails the request.
+- **The limit fits the context window.** A provider refuses a request whose
+  input and output limit together exceed its context window. When the card
+  declares `context_window_size`, the Router's limit is capped at the window
+  less the request's own token estimate, the way the decision cap applies,
+  thinking budget included. A request that leaves no room is sent with no
+  limit, as the client sent it. The `dispatch_output_bound` event records
+  `context: clamped_to_context` or `no_context_room` and the room.
 - **Context compression reserves the limit.** Context compression runs before
   dispatch. It keeps the Router's limit free in the model's
   `context_window_size`, so a prompt near the window is compressed instead of

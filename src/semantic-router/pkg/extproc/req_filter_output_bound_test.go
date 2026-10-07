@@ -17,6 +17,10 @@ type dispatchOutputBoundCase struct {
 	body     string
 	decision *config.Decision
 	mutate   func(*llmprotocol.Request)
+	// window is the card's context_window_size and contextTokens the
+	// request's token estimate, both zero unless a test sets them.
+	window        int
+	contextTokens int
 }
 
 func dispatchWithOutputBound(t *testing.T, test dispatchOutputBoundCase) (*llmprotocol.Request, map[string]json.RawMessage) {
@@ -24,10 +28,12 @@ func dispatchWithOutputBound(t *testing.T, test dispatchOutputBoundCase) (*llmpr
 	router, logicalModel := routingTestRouterForFormat(test.target)
 	params := router.Config.ModelConfig[logicalModel]
 	params.MaxOutputTokens = test.card
+	params.ContextWindowSize = test.window
 	router.Config.ModelConfig[logicalModel] = params
 	ctx := &RequestContext{
 		Headers: map[string]string{}, SourceFormat: llmprotocol.OpenAIResponsesV1,
 		RequestID: "output-bound", TraceContext: context.Background(), VSRSelectedDecision: test.decision,
+		VSRContextTokenCount: test.contextTokens,
 	}
 	request, immediate := router.prepareProtocolRequest([]byte(test.body), ctx)
 	if immediate != nil || request == nil {
@@ -322,5 +328,60 @@ func TestDispatchOutputBoundTakesALoRAAdaptersBaseCard(t *testing.T) {
 	}
 	if got := wireOutputLimit(wire); got != "max_tokens=12000" {
 		t.Fatalf("dispatched %q, want the base card's 12000", got)
+	}
+}
+
+// The card's output limit is sent whole only when the prompt leaves that much
+// room in the card's context window. A provider refuses input plus output
+// limit above its window, so a long prompt the ARC mask admitted would
+// otherwise fail at the provider on the limit the router itself added.
+func TestDispatchOutputBoundStaysWithinTheContextRoom(t *testing.T) {
+	for name, test := range map[string]struct {
+		target        llmprotocol.WireFormat
+		card, window  int
+		contextTokens int
+		decision      *config.Decision
+		want          string
+	}{
+		"room below the card clamps":             {llmprotocol.OpenAIChatV1, 384000, 1000000, 700000, nil, "max_completion_tokens=300000"},
+		"room above the card sends the card":     {llmprotocol.OpenAIChatV1, 384000, 1000000, 100000, nil, "max_completion_tokens=384000"},
+		"no window declared, no clamp":           {llmprotocol.OpenAIChatV1, 384000, 0, 700000, nil, "max_completion_tokens=384000"},
+		"no estimate, no clamp":                  {llmprotocol.OpenAIChatV1, 384000, 1000000, 0, nil, "max_completion_tokens=384000"},
+		"the tighter of room and decision cap":   {llmprotocol.OpenAIChatV1, 384000, 1000000, 700000, maxTokensLimitDecision(t, 2000), "max_completion_tokens=2000"},
+		"room tighter than the decision cap":     {llmprotocol.OpenAIChatV1, 384000, 1000000, 999000, maxTokensLimitDecision(t, 2000), "max_completion_tokens=1000"},
+		"no room left is sent unbounded":         {llmprotocol.OpenAIChatV1, 384000, 262144, 262144, nil, ""},
+		"messages fallback clamps to the room":   {llmprotocol.AnthropicMessagesV1, 0, 40000, 30000, nil, "max_tokens=10000"},
+		"responses room below 16 goes unbounded": {llmprotocol.OpenAIResponsesV1, 384000, 1000000, 999990, nil, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := unboundedResponsesBody
+			_, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+				target: test.target, card: test.card, body: body, decision: test.decision,
+				window: test.window, contextTokens: test.contextTokens,
+			})
+			if got := wireOutputLimit(wire); got != test.want {
+				t.Fatalf("dispatched %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+// A Messages thinking budget keeps the bound on top of it within the room,
+// the way it stays within a decision cap: the budget is lowered to what the
+// room leaves beside the bound, never below Anthropic's minimum.
+func TestDispatchOutputBoundKeepsThinkingWithinTheContextRoom(t *testing.T) {
+	budget := int64(8000)
+	request, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+		target: llmprotocol.AnthropicMessagesV1, card: 4000, body: unboundedResponsesBody,
+		window: 100000, contextTokens: 94000,
+		mutate: func(request *llmprotocol.Request) {
+			request.ReasoningMode, request.ReasoningBudgetTokens = llmprotocol.ReasoningModeEnabled, &budget
+		},
+	})
+	if got := wireOutputLimit(wire); got != "max_tokens=6000" {
+		t.Fatalf("dispatched %q, want max_tokens at the room 6000", got)
+	}
+	if request.ReasoningBudgetTokens == nil || *request.ReasoningBudgetTokens != 2000 {
+		t.Fatalf("budget = %v, want lowered to the 2000 the room leaves beside the bound", request.ReasoningBudgetTokens)
 	}
 }

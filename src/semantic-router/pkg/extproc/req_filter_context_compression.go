@@ -170,6 +170,7 @@ func (r *OpenAIRouter) compressionOutputReserve(
 	}
 	return r.planDispatchOutputBound(
 		model, format, decisionMaxTokensLimit(ctx), pendingMessagesThinkingBudget(request, format, ctx),
+		int64(r.Config.GetModelContextWindowSize(model)), int64(ctx.VSRContextTokenCount),
 	).maxTokens
 }
 

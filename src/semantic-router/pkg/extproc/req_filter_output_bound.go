@@ -55,6 +55,7 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 	}
 	plan := r.planDispatchOutputBound(
 		dispatch.logicalModel, dispatch.targetFormat, decisionMaxTokensLimit(ctx), budget,
+		int64(r.Config.GetModelContextWindowSize(dispatch.logicalModel)), int64(ctx.VSRContextTokenCount),
 	)
 	if plan.source == "" {
 		return false, nil
@@ -67,6 +68,10 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 	}
 	if plan.belowMinimum != "" {
 		event["below_target_minimum"] = plan.belowMinimum
+	}
+	if plan.context != "" {
+		event["context"] = plan.context
+		event["context_room"] = plan.contextRoom
 	}
 	if plan.thinking != "" {
 		event["thinking"] = plan.thinking
@@ -119,6 +124,14 @@ const (
 	outputBoundLeftUnbounded   = "left_unbounded"
 )
 
+// How a planned bound met the model's context window, as logged. A card
+// that declares no window, or a request with no token estimate, leaves the
+// field unset.
+const (
+	outputBoundClampedToContext = "clamped_to_context"
+	outputBoundNoContextRoom    = "no_context_room"
+)
+
 // How a planned bound met a Messages thinking budget, as logged.
 const (
 	outputBoundThinkingOnTop         = "budget_on_top"
@@ -136,6 +149,8 @@ type outputBoundPlan struct {
 	maxTokens      int64
 	source         string
 	belowMinimum   string
+	context        string
+	contextRoom    int64
 	thinking       string
 	thinkingBudget int64
 }
@@ -147,7 +162,14 @@ type outputBoundPlan struct {
 //   - The bound is the model card's operator-declared max_output_tokens, or,
 //     only for a target that requires a limit (Messages), the fallback. Chat
 //     and Responses targets with no card value stay unbounded.
-//   - It stays within the decision's max_tokens_limit.
+//   - It stays within the decision's max_tokens_limit, and within the room
+//     the request leaves in the model card's context_window_size: the window
+//     less the request's own token estimate. A provider refuses a request
+//     whose input and output limit together exceed its window, so a card's
+//     output limit sent whole on a long prompt would fail the turn the mask
+//     admitted. A prompt that leaves no room is sent unbounded, as its caller
+//     sent it; the provider's answer to it is the same either way. A card
+//     that declares no window, or a request with no estimate, is not clamped.
 //   - It is never a limit the target refuses. A bound below the target's
 //     minimum is raised to it, which keeps a small card value or cap as close
 //     as the target allows; turning it into no limit would discard the
@@ -168,17 +190,35 @@ func (r *OpenAIRouter) planDispatchOutputBound(
 	format llmprotocol.WireFormat,
 	decisionLimit int64,
 	thinkingBudget *int64,
+	contextWindow int64,
+	contextTokens int64,
 ) outputBoundPlan {
 	bound, source := r.dispatchOutputBound(model, format)
 	if source == "" {
 		return outputBoundPlan{}
 	}
 	plan := outputBoundPlan{source: source}
-	if decisionLimit > 0 && bound > decisionLimit {
-		bound = decisionLimit
+	// The cap is the tighter of the operator's limit and the room the
+	// request leaves in the window; every rule below reads the cap.
+	limit := decisionLimit
+	if contextWindow > 0 && contextTokens > 0 {
+		plan.contextRoom = contextWindow - contextTokens
+		if plan.contextRoom <= 0 {
+			plan.context = outputBoundNoContextRoom
+			return plan
+		}
+		if bound > plan.contextRoom {
+			plan.context = outputBoundClampedToContext
+		}
+		if limit <= 0 || plan.contextRoom < limit {
+			limit = plan.contextRoom
+		}
+	}
+	if limit > 0 && bound > limit {
+		bound = limit
 	}
 	if minimum := minimumOutputLimit(format); bound < minimum {
-		if decisionLimit > 0 && minimum > decisionLimit {
+		if limit > 0 && minimum > limit {
 			plan.belowMinimum = outputBoundLeftUnbounded
 			return plan
 		}
@@ -189,16 +229,16 @@ func (r *OpenAIRouter) planDispatchOutputBound(
 	if thinkingBudget == nil || *thinkingBudget < bound {
 		return plan
 	}
-	if total := bound + *thinkingBudget; decisionLimit <= 0 || total <= decisionLimit {
+	if total := bound + *thinkingBudget; limit <= 0 || total <= limit {
 		plan.maxTokens, plan.thinking = total, outputBoundThinkingOnTop
 		return plan
 	}
-	lowered := max(decisionLimit-bound, minimumAnthropicThinkingBudget)
-	if lowered >= decisionLimit {
+	lowered := max(limit-bound, minimumAnthropicThinkingBudget)
+	if lowered >= limit {
 		plan.thinking = outputBoundThinkingDisabled
 		return plan
 	}
-	plan.maxTokens, plan.thinking, plan.thinkingBudget = decisionLimit, outputBoundThinkingBudgetLowered, lowered
+	plan.maxTokens, plan.thinking, plan.thinkingBudget = limit, outputBoundThinkingBudgetLowered, lowered
 	return plan
 }
 
