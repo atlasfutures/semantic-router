@@ -387,7 +387,15 @@ func (state *streamState) normalizeToolArguments(arguments []byte) ([]byte, bool
 // state sees the model's bytes in the deltas and the settled object at the
 // completion.
 func (state *streamState) settlesTo(streamed []byte, final string) bool {
-	normalized, err := llmprotocol.NormalizeToolArguments(streamed, state.policy.Limits.JSONDepth)
+	return settledArguments(streamed, final, state.policy.Limits.JSONDepth)
+}
+
+// settledArguments reports final as streamed settled by
+// llmprotocol.NormalizeToolArguments. A Responses stream this Router wrote
+// streams the model's bytes in its deltas and the settled object in
+// function_call_arguments.done, so a Router reading one accepts that pair.
+func settledArguments(streamed []byte, final string, maximumDepth int) bool {
+	normalized, err := llmprotocol.NormalizeToolArguments(streamed, maximumDepth)
 	return err == nil && string(normalized) == final
 }
 

@@ -66,7 +66,7 @@ func (decoder *responsesStreamDecoder) validateResponsesToolDone(wire responsesE
 		decoder.toolArgumentsDone[index] = true
 		return nil
 	}
-	if string(arguments) != wire.Arguments {
+	if string(arguments) != wire.Arguments && !settledArguments(arguments, wire.Arguments, decoder.policy.Limits.JSONDepth) {
 		return invalidProviderResponse("stream_tool_arguments_mismatch", "Responses function-call done arguments do not match streamed arguments")
 	}
 	decoder.toolArgumentsDone[index] = true
