@@ -255,6 +255,7 @@ routing:
         type: rayline_arc
         on_error: fail_closed
         rayline_arc:
+          readiness_wait_seconds: -1
           artifact_dir: {{ARTIFACT_DIR}}
           artifact_revision: {{ARTIFACT_REVISION}}
           encoder:

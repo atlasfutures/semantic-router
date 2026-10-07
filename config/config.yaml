@@ -1766,6 +1766,11 @@ routing:
           # never content. Off: turning it on writes the v3 episode record.
           upstream_audit:
             enabled: false
+          # readiness_wait_seconds: a request that arrives while the selector
+          # is still warming up (a cold instance probing its encoder or policy
+          # service) waits this long for readiness before it is refused
+          # not_ready. 0 selects 60 s; a negative value refuses at once.
+          readiness_wait_seconds: 60
           # A base travels only on OpenRouter's Chat reasoning object, so it
           # names a worker dispatched that way, for example:
           #   z-ai/glm-5.3-flash@thinking-on: {level: high, wire: effort, effort: high}

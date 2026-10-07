@@ -155,6 +155,7 @@ func probeRaylineARCReadiness(
 		nil,
 		arcConfig.ArtifactRevision,
 	)
+	selector.readinessWait = arcConfig.ReadinessWait()
 	armed := &raylineARCArmedComponents{
 		scorer:    &runtimeARCScorer{runtime: runtime, policy: runtime.Policy()},
 		encoder:   encoder,
