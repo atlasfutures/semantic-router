@@ -1,12 +1,12 @@
 {
  "description": "no lever on the request: the client bytes except the model id",
  "format": "responses",
- "provider": "openai",
- "model": "openai/gpt-6-sol",
- "wire_model": "gpt-6-sol",
+ "provider": "openrouter",
+ "model": "openai/gpt-5.6-terra",
+ "wire_model": "openai/gpt-5.6-terra",
  "admission": "no_lever",
  "allow_experimental": true,
- "registry_pin": "3083a4b6bd857c951177f973b41900798ba22f4968e224b4a29ad3e9c297cff2",
+ "registry_pin": "032d6ed9f6aff88eab64bbbadb3477cd6f081c49c34cb6a6a98576d16fedd12a",
  "calls": [
   {
    "client_body": "client-00.json",

@@ -1,0 +1,1 @@
+{"model":"openai/gpt-5.6-terra","instructions":"You are Codex.","input":[{"type":"message","role":"user","content":"Start."},{"type":"function_call","call_id":"c1","name":"shell","arguments":"{\"command\": [\"ls\"]}"},{"type":"function_call_output","call_id":"c1","output":"a"}],"stream":true,"reasoning":{"effort":"high"}}

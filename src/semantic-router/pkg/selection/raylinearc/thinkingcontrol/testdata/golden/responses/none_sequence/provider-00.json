@@ -1,0 +1,1 @@
+{"model":"openai/gpt-5.6-terra","instructions":"You are Codex.","input":[{"type":"message","role":"user","content":"Start."}],"stream":true,"reasoning":{"effort":"high"}}

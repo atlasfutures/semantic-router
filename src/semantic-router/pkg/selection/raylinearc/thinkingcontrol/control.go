@@ -39,6 +39,13 @@ const InstructionNone = "none"
 // registry refuses any other.
 var Rules = map[string]string{"placement": "turn_tail_v2", "emit": "on_change_v1", "replay": "ledger_v1"}
 
+// UnitConfigurationUpdate is the one instruction unit besides text that a
+// rule set may name (pathfinder ADR 0114): a Responses configuration_update
+// input item that sets the reasoning effort. VSR reads controls that use it,
+// so that the registry and their ids load, and refuses to admit them: per
+// the ADR it does not implement the unit until it serves a Responses cell.
+const UnitConfigurationUpdate = "configuration_update_v1"
+
 // Control is what an action names: a per-session base, an optional token
 // budget, and an optional steering instruction. It carries no provider,
 // format or wire bytes.
@@ -53,6 +60,9 @@ type Instruction struct {
 	Level       string
 	Text        string
 	NeutralText string
+	// Unit is the instruction's unit when it is not text: empty, or
+	// UnitConfigurationUpdate.
+	Unit string
 }
 
 // Error is a control, artifact, admission or placement that cannot be used
@@ -74,6 +84,9 @@ func (c Control) json() *value {
 		rules := objectValue()
 		for _, key := range []string{"placement", "emit", "replay"} {
 			rules.set(key, stringValue(Rules[key]))
+		}
+		if c.Instruction.Unit != "" {
+			rules.set("unit", stringValue(c.Instruction.Unit))
 		}
 		instruction = objectValue(
 			member{"level", stringValue(c.Instruction.Level)},
@@ -161,7 +174,21 @@ func requireControl(v *value, where string) (Control, error) {
 			}
 		}
 		rules := instruction.get("rules")
-		if rules.kind != kindObject || len(rules.members) != len(Rules) {
+		if rules.kind != kindObject {
+			return Control{}, bad
+		}
+		unit := ""
+		if rules.has("unit") {
+			if got := rules.get("unit"); !got.isString() || got.str != UnitConfigurationUpdate {
+				return Control{}, bad
+			}
+			unit = UnitConfigurationUpdate
+		}
+		wantMembers := len(Rules)
+		if unit != "" {
+			wantMembers++
+		}
+		if len(rules.members) != wantMembers {
 			return Control{}, bad
 		}
 		for key, want := range Rules {
@@ -173,6 +200,7 @@ func requireControl(v *value, where string) (Control, error) {
 			Level:       instruction.get("level").str,
 			Text:        instruction.get("text").str,
 			NeutralText: instruction.get("neutral_text").str,
+			Unit:        unit,
 		}
 	default:
 		return Control{}, bad

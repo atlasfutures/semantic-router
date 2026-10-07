@@ -49,7 +49,7 @@ var embeddedArtifact []byte
 
 // EmbeddedSHA256 is the sha256 of the embedded artifact, as pathfinder's
 // golden corpora record it in registry_pin.
-const EmbeddedSHA256 = "3083a4b6bd857c951177f973b41900798ba22f4968e224b4a29ad3e9c297cff2"
+const EmbeddedSHA256 = "032d6ed9f6aff88eab64bbbadb3477cd6f081c49c34cb6a6a98576d16fedd12a"
 
 var (
 	embeddedOnce sync.Once
@@ -246,6 +246,11 @@ func (r *Registry) Admit(model, provider, format string, control Control, allowE
 	id := control.ID()
 	if !cell.controls[id] {
 		return nil, refuse("control %s is not admitted for %s on %sx%s", prefix12(id), model, provider, format)
+	}
+	if control.Instruction != nil && control.Instruction.Unit != "" {
+		// ADR 0114: VSR does not implement the configuration_update unit
+		// until it serves a Responses cell.
+		return nil, refuse("control %s writes a %s unit, which VSR does not implement", prefix12(id), control.Instruction.Unit)
 	}
 	if control.Instruction != nil && cell.Instruction == AdmissionExperimental && !allowExperimental {
 		return nil, refuse("%s on %sx%s: the instruction is experimental only", model, provider, format)

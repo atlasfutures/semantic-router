@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -17,14 +18,17 @@ import (
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	ext_proc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
-// Pathfinder's Responses golden corpus at 09c42c1e respects admission: every
-// case is either no_lever, whose provider bytes are the client's apart from
-// the model, or refused with the registry's message. Through the router the
-// first must come out byte for byte and the second must be refused where VSR
-// refuses it, at load, with the recorded message. The placement corpus is
-// the renderer's oracle only and is not read here.
+// Pathfinder's Responses golden corpus respects admission: every case is
+// no_lever, whose provider bytes are the client's apart from the model;
+// refused with the registry's message; or admitted with a lever. Through the
+// router the first and the last must come out byte for byte, call by call,
+// and the second must be refused where VSR refuses it, at load, with the
+// recorded message. The placement corpus is the renderer's oracle only and
+// is not read here.
 const responsesGoldenDir = "../selection/raylinearc/thinkingcontrol/testdata/golden/responses"
 
 // responsesNativeDefaultControl is the registry's native-default control: no
@@ -76,7 +80,7 @@ func TestResponsesGoldenCorpusThroughTheRouter(t *testing.T) {
 			case c.Refusal != nil:
 				assertResponsesRefusalAtLoad(t, c)
 			default:
-				t.Fatalf("case %s is admitted with a lever; add its router-path oracle", name)
+				assertResponsesLeverThroughTheRouter(t, dir, c)
 			}
 		})
 	}
@@ -105,11 +109,13 @@ func assertResponsesNoLeverThroughTheRouter(t *testing.T, dir string, c response
 		if err != nil {
 			t.Fatal(err)
 		}
-		recorded := `"model":"` + c.WireModel + `"`
-		if strings.Count(string(client), recorded) != 1 {
-			t.Fatalf("call %d no longer names %s", index, recorded)
+		// The client names its own model, which need not be the wire model
+		// (noop_fidelity sends gpt-6-sol); the route replaces it.
+		named := clientModelMember.FindAllString(string(client), -1)
+		if len(named) != 1 {
+			t.Fatalf("call %d names %d models, want 1", index, len(named))
 		}
-		routed := strings.Replace(string(client), recorded, `"model":"codex-arm"`, 1)
+		routed := strings.Replace(string(client), named[0], `"model":"codex-arm"`, 1)
 		if got := dispatchResponsesClientBody(t, router, fmt.Sprintf("golden-noop-%d", index), routed); got != string(want) {
 			t.Fatalf("call %d provider body =\n%s\nwant\n%s", index, got, want)
 		}
@@ -120,6 +126,116 @@ func assertResponsesNoLeverThroughTheRouter(t *testing.T, dir string, c response
 // a worker on the case's (model, provider, responses) cell and requires the
 // router to refuse the configuration with the recorded message.
 func assertResponsesRefusalAtLoad(t *testing.T, c responsesGoldenCase) {
+	t.Helper()
+	path, _, _ := responsesGoldenPolicyConfig(t, c, "http://127.0.0.1:1")
+	if _, err := NewOpenAIRouter(path); err == nil || !strings.Contains(err.Error(), c.Refusal.Error) {
+		t.Fatalf("load error = %v, want the recorded refusal %q", err, c.Refusal.Error)
+	}
+}
+
+// assertResponsesLeverThroughTheRouter serves the case's controls from a
+// policy-service package on the case's (model, provider, responses) cell, has
+// the policy choose each call's control, and requires each call's provider
+// bytes. The calls are one episode, each committed as a 200, so the ledger
+// carries from one to the next as the corpus records it.
+func assertResponsesLeverThroughTheRouter(t *testing.T, dir string, c responsesGoldenCase) {
+	t.Helper()
+	path, packageSHA, actionFor := responsesGoldenPolicyConfig(t, c, "{{POLICY_URL}}")
+	var catalog []string
+	for _, action := range actionFor {
+		catalog = append(catalog, action)
+	}
+	sort.Strings(catalog)
+	fake := newFakePolicyService(t, responsesGoldenAlias, packageSHA, catalog)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, []byte(strings.ReplaceAll(string(raw), "{{POLICY_URL}}", fake.URL())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	router, err := NewOpenAIRouter(path)
+	if err != nil {
+		t.Fatalf("build router: %v", err)
+	}
+	awaitPolicySelectorArmed(t, router)
+	episode := "golden-" + filepath.Base(dir)
+	for index, call := range c.Calls {
+		if call.ControlID == nil {
+			t.Fatalf("call %d names no control", index)
+		}
+		client, err := os.ReadFile(filepath.Join(dir, call.ClientBody))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := os.ReadFile(filepath.Join(dir, call.ExpectedBody))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The client names its own model (codex sends gpt-6-sol); the policy
+		// route chooses the worker, so the client asks for auto.
+		named := clientModelMember.FindAllString(string(client), -1)
+		if len(named) != 1 {
+			t.Fatalf("call %d names %d models, want 1", index, len(named))
+		}
+		routed := strings.Replace(string(client), named[0], `"model":"auto"`, 1)
+		action := actionFor[*call.ControlID]
+		fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return action })
+		got := dispatchResponsesLeverTurn(t, router, fmt.Sprintf("%s-%d", episode, index), episode, routed)
+		if got != string(want) {
+			t.Fatalf("call %d provider body =\n%s\nwant\n%s", index, got, want)
+		}
+	}
+}
+
+const responsesGoldenAlias = "rayline/responses-golden"
+
+var clientModelMember = regexp.MustCompile(`"model":"[^"]*"`)
+
+// responsesSpareControl is a native-only control the case's cell admits, for
+// the spare worker every package needs: the registry's native default where
+// the cell admits it, else the cell's own native-only control (a cell whose
+// only base is high admits no default).
+func responsesSpareControl(t *testing.T, c responsesGoldenCase, controls map[string]any) string {
+	t.Helper()
+	raw, err := os.ReadFile("../selection/raylinearc/thinkingcontrol/thinking_controls.compiled.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var registry struct {
+		Cells []struct {
+			Model    string   `json:"model"`
+			Provider string   `json:"provider"`
+			Format   string   `json:"format"`
+			Controls []string `json:"controls"`
+		} `json:"cells"`
+	}
+	if err := json.Unmarshal(raw, &registry); err != nil {
+		t.Fatal(err)
+	}
+	for _, cell := range registry.Cells {
+		if cell.Model != c.Model || cell.Provider != c.Provider || cell.Format != "responses" {
+			continue
+		}
+		for _, id := range cell.Controls {
+			if id == responsesNativeDefaultControl {
+				return id
+			}
+		}
+		for _, id := range cell.Controls {
+			if control, ok := controls[id].(map[string]any); ok && control["instruction"] == nil {
+				return id
+			}
+		}
+	}
+	return responsesNativeDefaultControl
+}
+
+// responsesGoldenPolicyConfig writes a policy-service package that binds
+// every control the case's calls name to a worker on the case's (model,
+// provider, responses) cell, and a config serving it from policyURL. It
+// returns the config path, the package's sha256 and each control's action.
+func responsesGoldenPolicyConfig(t *testing.T, c responsesGoldenCase, policyURL string) (string, string, map[string]string) {
 	t.Helper()
 	controls := registryControls(t)
 	var manifest map[string]any
@@ -132,12 +248,11 @@ func assertResponsesRefusalAtLoad(t *testing.T, c responsesGoldenCase) {
 	}
 	var actions []any
 	var bindings strings.Builder
-	seen := map[string]bool{}
+	actionFor := map[string]string{}
 	for _, call := range c.Calls {
-		if call.ControlID == nil || seen[*call.ControlID] {
+		if call.ControlID == nil || actionFor[*call.ControlID] != "" {
 			continue
 		}
-		seen[*call.ControlID] = true
 		control, ok := controls[*call.ControlID]
 		if !ok {
 			t.Fatalf("control %s is not in the registry", *call.ControlID)
@@ -147,6 +262,7 @@ func assertResponsesRefusalAtLoad(t *testing.T, c responsesGoldenCase) {
 			level = instruction["level"]
 		}
 		actionID := fmt.Sprintf("%064x", len(actions)+1)
+		actionFor[*call.ControlID] = actionID
 		actions = append(actions, map[string]any{
 			"action_id": actionID, "model": "trained-arm", "control": control,
 			"control_id": *call.ControlID, "level": level, "trained_arm_ids": []any{},
@@ -154,15 +270,16 @@ func assertResponsesRefusalAtLoad(t *testing.T, c responsesGoldenCase) {
 		fmt.Fprintf(&bindings, "              - action_id: %q\n                worker: arm\n", actionID)
 	}
 	if len(actions) == 0 {
-		t.Fatal("the refused case binds no control")
+		t.Fatal("the case binds no control")
 	}
 	// ARC needs a second worker, and every worker must serve an action: the
-	// spare serves the native-default control, which every Responses cell
-	// admits, bound last so the case's own refusal is the one reported.
+	// spare serves a native-only control its cell admits, bound last so the
+	// case's own refusal is the one reported.
 	spareID := fmt.Sprintf("%064x", len(actions)+1)
+	spare := responsesSpareControl(t, c, controls)
 	actions = append(actions, map[string]any{
-		"action_id": spareID, "model": "trained-spare", "control": controls[responsesNativeDefaultControl],
-		"control_id": responsesNativeDefaultControl, "level": nil, "trained_arm_ids": []any{},
+		"action_id": spareID, "model": "trained-spare", "control": controls[spare],
+		"control_id": spare, "level": nil, "trained_arm_ids": []any{},
 	})
 	fmt.Fprintf(&bindings, "              - action_id: %q\n                worker: spare\n", spareID)
 	manifest["actions"] = actions
@@ -184,17 +301,54 @@ func assertResponsesRefusalAtLoad(t *testing.T, c responsesGoldenCase) {
 	if baseURL == "" {
 		t.Fatalf("no backend for provider %q", c.Provider)
 	}
+	packageSHA := hex.EncodeToString(sum[:])
 	config := strings.NewReplacer(
-		"{{MODEL}}", c.Model, "{{PROVIDER}}", c.Provider, "{{BASE_URL}}", baseURL,
-		"{{PACKAGE}}", hex.EncodeToString(sum[:]), "{{MANIFEST}}", manifestPath, "{{BINDINGS}}", bindings.String(),
-	).Replace(responsesRefusalConfigTemplate)
+		"{{MODEL}}", c.Model, "{{PROVIDER}}", c.Provider, "{{BASE_URL}}", baseURL, "{{POLICY_URL}}", policyURL,
+		"{{PACKAGE}}", packageSHA, "{{MANIFEST}}", manifestPath, "{{BINDINGS}}", bindings.String(),
+	).Replace(responsesPolicyConfigTemplate)
 	path := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewOpenAIRouter(path); err == nil || !strings.Contains(err.Error(), c.Refusal.Error) {
-		t.Fatalf("load error = %v, want the recorded refusal %q", err, c.Refusal.Error)
+	return path, packageSHA, actionFor
+}
+
+// dispatchResponsesLeverTurn sends one Responses client body of an episode
+// through the request phases, commits it as a 200, and returns the
+// provider-bound bytes.
+func dispatchResponsesLeverTurn(t *testing.T, router *OpenAIRouter, requestID, episode, body string) string {
+	t.Helper()
+	ctx := &RequestContext{Headers: map[string]string{}, RequestID: requestID, StartTime: time.Now(), TraceContext: context.Background()}
+	headers := &ext_proc.ProcessingRequest_RequestHeaders{RequestHeaders: &ext_proc.HttpHeaders{
+		Headers: &core.HeaderMap{Headers: []*core.HeaderValue{
+			{Key: ":method", Value: "POST"},
+			{Key: ":path", Value: "/v1/responses"},
+			{Key: "content-type", Value: "application/json"},
+			{Key: "x-rayline-session", Value: episode},
+		}},
+	}}
+	if response, err := router.handleRequestHeaders(headers, ctx); err != nil || response.GetImmediateResponse() != nil {
+		t.Fatalf("request headers: err=%v immediate=%v", err, response.GetImmediateResponse())
 	}
+	response, err := router.handleRequestBody(&ext_proc.ProcessingRequest_RequestBody{
+		RequestBody: &ext_proc.HttpBody{Body: []byte(body), EndOfStream: true},
+	}, ctx)
+	if err != nil {
+		t.Fatalf("request body: %v", err)
+	}
+	if immediate := response.GetImmediateResponse(); immediate != nil {
+		t.Fatalf("request refused: %d %s", immediate.GetStatus().GetCode(), immediate.GetBody())
+	}
+	mutation := response.GetRequestBody().GetResponse().GetBodyMutation()
+	if mutation == nil {
+		t.Fatal("no provider body was written")
+	}
+	if _, err := router.handleResponseHeaders(arcResponseHeaders("200"), ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	completeTestResponse(t, ctx)
+	finalizeSelectionProcessTerminal(ctx)
+	return string(mutation.GetBody())
 }
 
 // registryControls is the compiled registry's control objects by id, as the
@@ -280,7 +434,7 @@ global:
         mmbert_model_path: ""
 `
 
-const responsesRefusalConfigTemplate = `version: v0.3
+const responsesPolicyConfigTemplate = `version: v0.3
 
 providers:
   defaults:
@@ -344,7 +498,7 @@ routing:
         on_error: fail_closed
         rayline_arc:
           policy_service:
-            base_url: http://127.0.0.1:1
+            base_url: {{POLICY_URL}}
             total_timeout_seconds: 5
             package_alias: rayline/responses-golden
             package_sha256: {{PACKAGE}}
