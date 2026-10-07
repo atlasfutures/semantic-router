@@ -280,3 +280,39 @@ func TestRegistryRefusesAnInstructionOnARefusedCell(t *testing.T) {
 		t.Fatalf("an instruction on a refused cell loaded: %v", err)
 	}
 }
+
+// pathfinder ADR 0114: a configuration_update_v1 control is read, so the
+// registry loads and its id is the registry's, and is refused at admission,
+// because VSR does not implement the unit until it serves a Responses cell.
+func TestAConfigurationUpdateControlLoadsAndIsNotAdmitted(t *testing.T) {
+	reg, err := Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unitControl *Control
+	var unitID string
+	for id, control := range reg.controls {
+		if control.Instruction != nil && control.Instruction.Unit == UnitConfigurationUpdate {
+			c := control
+			unitControl, unitID = &c, id
+			break
+		}
+	}
+	if unitControl == nil {
+		t.Fatal("the embedded registry has no configuration_update control")
+	}
+	if got := unitControl.ID(); got != unitID {
+		t.Fatalf("the unit is not part of the control's identity: id %s, registry key %s", got, unitID)
+	}
+	for key, cell := range reg.cells {
+		if !cell.controls[unitID] {
+			continue
+		}
+		_, err := reg.Admit(key.model, key.provider, key.format, *unitControl, true)
+		if err == nil || !strings.Contains(err.Error(), "does not implement") {
+			t.Fatalf("a configuration_update control was admitted on %v: %v", key, err)
+		}
+		return
+	}
+	t.Fatal("no cell lists the configuration_update control")
+}

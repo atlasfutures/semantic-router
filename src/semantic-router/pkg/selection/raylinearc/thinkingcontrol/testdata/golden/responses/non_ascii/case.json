@@ -1,19 +1,28 @@
 {
  "description": "non-ASCII client text; the instruction stays exact UTF-8",
  "format": "responses",
- "provider": "openai",
- "model": "openai/gpt-6-sol",
- "wire_model": "gpt-6-sol",
+ "provider": "openrouter",
+ "model": "openai/gpt-5.6-terra",
+ "wire_model": "openai/gpt-5.6-terra",
  "admission": "enforced",
  "allow_experimental": true,
- "registry_pin": "3083a4b6bd857c951177f973b41900798ba22f4968e224b4a29ad3e9c297cff2",
+ "registry_pin": "032d6ed9f6aff88eab64bbbadb3477cd6f081c49c34cb6a6a98576d16fedd12a",
  "calls": [
   {
    "client_body": "client-00.json",
-   "control_id": "77f4674fea6c3b4f3f53ab0337b61fc725ef66e045f317767efdbf94b6979d48"
+   "control_id": "fb5c5369da0f33329ac598d3709e070527d0f4b1b1406d109659eb870882c367",
+   "expected_body": "provider-00.json",
+   "receipt": {
+    "call": 0,
+    "control_id": "fb5c5369da0f33329ac598d3709e070527d0f4b1b1406d109659eb870882c367",
+    "level_in_force": "down",
+    "instruction_state": "steered",
+    "written": "instruction",
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
   }
  ],
- "refusal": {
-  "error": "control 77f4674fea6c is not admitted for openai/gpt-6-sol on openaixresponses"
- }
+ "refusal": null
 }
