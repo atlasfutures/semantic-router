@@ -350,6 +350,9 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	// Marked here, where every dispatch path -- routed and external gateway
 	// -- meets, so no path builds a dispatch the rule does not see.
 	ctx.DispatchAutoCache = r.claudeAutoCacheDispatch(dispatch, ctx)
+	// Tool selection may have grown the prompt since the output limit was
+	// planned; the last look at the request before it is encoded.
+	r.reclampDispatchOutputBound(ctx.SemanticRequest, dispatch, ctx)
 	body, err := r.encodeDispatchRequest(ctx)
 	if err != nil {
 		metrics.RecordRequestError(dispatch.logicalModel, "serialization_error")

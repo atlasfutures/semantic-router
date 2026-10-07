@@ -127,12 +127,9 @@ func (r *OpenAIRouter) semanticContextCompressionCapabilities(
 	if model == "" {
 		model = strings.TrimSpace(ctx.RequestModel)
 	}
-	contextWindow := 0
-	if r != nil && r.Config != nil {
-		if params, ok := r.Config.ModelConfig[model]; ok {
-			contextWindow = params.ContextWindowSize
-		}
-	}
+	// Through the card accessor, so an adapter inherits its base model's
+	// window here as it does at dispatch.
+	contextWindow := r.Config.GetModelContextWindowSize(model)
 	capabilities := contextcompression.ModelContextCapabilities{ContextWindow: contextWindow}
 	if request != nil {
 		capabilities.RequestedOutput = int(r.compressionOutputReserve(model, ctx, request))
@@ -168,9 +165,11 @@ func (r *OpenAIRouter) compressionOutputReserve(
 	if err != nil {
 		return 0
 	}
+	// Unclamped on purpose: compression exists to free the room the whole
+	// bound needs, so it reserves the card's limit, not what the prompt
+	// happens to leave before compression. Dispatch clamps what remains.
 	return r.planDispatchOutputBound(
-		model, format, decisionMaxTokensLimit(ctx), pendingMessagesThinkingBudget(request, format, ctx),
-		int64(r.Config.GetModelContextWindowSize(model)), dispatchContextTokens(request, ctx),
+		model, format, decisionMaxTokensLimit(ctx), pendingMessagesThinkingBudget(request, format, ctx), 0, 0,
 	).maxTokens
 }
 

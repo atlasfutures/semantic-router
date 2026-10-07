@@ -161,15 +161,57 @@ const (
 // the request's routing estimate, which may be calibrated, never below a
 // fresh count of the request as it stands now. The estimate was made before
 // a stored Responses history or a memory retrieval was prepended, so a room
-// computed from it alone could leave a limit the provider refuses.
+// computed from it alone could leave a limit the provider refuses. Once
+// context compression has run the estimate describes a prompt that no
+// longer exists, so the fresh count stands alone.
 func dispatchContextTokens(request *llmprotocol.Request, ctx *RequestContext) int64 {
-	count := int64(ctx.VSRContextTokenCount)
+	var fresh int64
 	if request != nil {
-		if floor := int64(extractSemanticRequestSignals(request).ContextTokenFloor); floor > count {
-			count = floor
-		}
+		fresh = int64(extractSemanticRequestSignals(request).ContextTokenFloor)
 	}
-	return count
+	if ctx.ContextCompressionApplied {
+		return fresh
+	}
+	return max(int64(ctx.VSRContextTokenCount), fresh)
+}
+
+// reclampDispatchOutputBound lowers a limit the router set when the prompt
+// grew after it was planned. Semantic tool selection runs after dispatch is
+// prepared and can replace the tools with larger retrieved definitions, so
+// the room is measured once more on the request about to be encoded. The
+// limit only ever goes down here, never below the target's minimum or, on
+// Messages, below the thinking budget the limit must exceed; a prompt that
+// leaves no room is left as planned, for the reason planDispatchOutputBound
+// gives.
+func (r *OpenAIRouter) reclampDispatchOutputBound(request *llmprotocol.Request, dispatch *providerDispatch, ctx *RequestContext) {
+	if r == nil || r.Config == nil || request == nil || dispatch == nil || ctx == nil ||
+		!request.RouterSetMaxOutputTokens || request.Sampling.MaxOutputTokens == nil {
+		return
+	}
+	window := int64(r.Config.GetModelContextWindowSize(dispatch.logicalModel))
+	if window <= 0 {
+		return
+	}
+	room := window - dispatchContextTokens(request, ctx)
+	if room <= 0 || *request.Sampling.MaxOutputTokens <= room {
+		return
+	}
+	floor := minimumOutputLimit(dispatch.targetFormat)
+	if dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 && request.ReasoningBudgetTokens != nil {
+		floor = max(floor, *request.ReasoningBudgetTokens+1)
+	}
+	lowered := max(room, floor)
+	logging.ComponentEvent("extproc", "dispatch_output_bound", map[string]interface{}{
+		"request_id":        ctx.RequestID,
+		"model":             dispatch.logicalModel,
+		"wire_format":       dispatch.targetFormat,
+		"source":            "reclamp",
+		"context":           outputBoundClampedToContext,
+		"context_room":      room,
+		"max_output_tokens": lowered,
+		"was":               *request.Sampling.MaxOutputTokens,
+	})
+	request.Sampling.MaxOutputTokens = &lowered
 }
 
 // How a planned bound met a Messages thinking budget, as logged.
@@ -243,9 +285,9 @@ func (r *OpenAIRouter) planDispatchOutputBound(
 	plan := outputBoundPlan{source: source}
 	// The cap is the tighter of the operator's limit and the room the
 	// request leaves in the window; every rule below reads the cap.
-	limit := decisionLimit
+	limit, limitFrom := decisionLimit, ""
 	if limit > 0 {
-		plan.limitedBy = outputBoundLimitedByDecision
+		limitFrom = outputBoundLimitedByDecision
 	}
 	if contextWindow > 0 && contextTokens > 0 {
 		plan.contextRoom = contextWindow - contextTokens
@@ -253,13 +295,15 @@ func (r *OpenAIRouter) planDispatchOutputBound(
 		case plan.contextRoom <= 0:
 			plan.context = outputBoundNoContextRoom
 		case limit <= 0 || plan.contextRoom < limit:
-			limit, plan.limitedBy = plan.contextRoom, outputBoundLimitedByContext
+			limit, limitFrom = plan.contextRoom, outputBoundLimitedByContext
 		}
 	}
-	// held marks the plan as having been held to the cap; the context
-	// status is set only when the context supplied that cap.
+	// held marks the plan as having been held to the cap, naming the
+	// constraint that supplied it; the context status is set only when the
+	// context did. A cap the plan stayed under names nothing.
 	held := func() {
-		if plan.limitedBy == outputBoundLimitedByContext {
+		plan.limitedBy = limitFrom
+		if limitFrom == outputBoundLimitedByContext {
 			plan.context = outputBoundClampedToContext
 		}
 	}

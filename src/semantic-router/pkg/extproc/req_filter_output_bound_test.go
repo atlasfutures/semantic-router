@@ -446,3 +446,81 @@ func TestDispatchOutputBoundNamesTheConstraintThatHeldIt(t *testing.T) {
 		t.Fatalf("refusal = %v, want the decision-cap refusal", err)
 	}
 }
+
+// Once compression has run, the routing estimate describes a prompt that no
+// longer exists; the fresh count of the compressed request stands alone, so
+// the room, and the limit, grow back.
+func TestDispatchContextTokensFollowsCompression(t *testing.T) {
+	t.Parallel()
+	request := testNeutralRequest("auto", "a short prompt after compression")
+	stale := &RequestContext{VSRContextTokenCount: 90000}
+	if got := dispatchContextTokens(request, stale); got != 90000 {
+		t.Fatalf("uncompressed count = %d, want the larger routing estimate 90000", got)
+	}
+	stale.ContextCompressionApplied = true
+	if got := dispatchContextTokens(request, stale); got >= 90000 || got <= 0 {
+		t.Fatalf("compressed count = %d, want the fresh count of the compressed request", got)
+	}
+}
+
+// Compression reserves the whole bound, unclamped: it exists to free that
+// room, so a prompt that currently leaves less must be compressed to fit the
+// card's limit, not told the limit is smaller.
+func TestCompressionReservesTheUnclampedBound(t *testing.T) {
+	t.Parallel()
+	router := &OpenAIRouter{Config: &config.RouterConfig{BackendModels: config.BackendModels{
+		ModelConfig: map[string]config.ModelParams{"m": {MaxOutputTokens: 30000, ContextWindowSize: 100000, APIFormat: config.APIFormatOpenAI}},
+	}}}
+	ctx := &RequestContext{SourceFormat: llmprotocol.OpenAIChatV1, VSRContextTokenCount: 90000}
+	if got := router.compressionOutputReserve("m", ctx, testNeutralRequest("auto", "long")); got != 30000 {
+		t.Fatalf("reserve = %d, want the card's 30000 rather than the 10000 the prompt leaves", got)
+	}
+}
+
+// A plan that stayed under every cap names no constraint; only a cap that
+// held it does.
+func TestDispatchOutputBoundNamesNoConstraintItStayedUnder(t *testing.T) {
+	t.Parallel()
+	router := &OpenAIRouter{Config: &config.RouterConfig{BackendModels: config.BackendModels{
+		ModelConfig: map[string]config.ModelParams{"m": {MaxOutputTokens: 4000}},
+	}}}
+	plan := router.planDispatchOutputBound("m", llmprotocol.OpenAIChatV1, 5000, nil, 100000, 94000)
+	if plan.limitedBy != "" || plan.context != "" || plan.maxTokens != 4000 {
+		t.Fatalf("plan = %+v, want the card unheld and unnamed", plan)
+	}
+}
+
+// Semantic tool selection runs after the limit is planned and can replace
+// the tools with larger retrieved definitions. The limit is measured once
+// more before encoding and only lowered, never raised, never below the
+// target's minimum or a Messages thinking budget.
+func TestDispatchOutputBoundIsReclampedAfterToolSelection(t *testing.T) {
+	t.Parallel()
+	router := &OpenAIRouter{Config: &config.RouterConfig{BackendModels: config.BackendModels{
+		ModelConfig: map[string]config.ModelParams{"m": {ContextWindowSize: 1000000}},
+	}}}
+	limit := int64(384000)
+	request := testNeutralRequest("auto", "hi")
+	request.Sampling.MaxOutputTokens, request.RouterSetMaxOutputTokens = &limit, true
+	request.Tools = []llmprotocol.Tool{{Name: "retrieved", Description: strings.Repeat("schema ", 500000)}}
+	ctx := &RequestContext{VSRContextTokenCount: 100}
+	dispatch := &providerDispatch{logicalModel: "m", targetFormat: llmprotocol.OpenAIChatV1}
+	router.reclampDispatchOutputBound(request, dispatch, ctx)
+	if *request.Sampling.MaxOutputTokens >= 384000 {
+		t.Fatalf("limit = %d, want lowered by the retrieved tools", *request.Sampling.MaxOutputTokens)
+	}
+	// A caller's own limit is never touched.
+	caller := int64(384000)
+	request.Sampling.MaxOutputTokens, request.RouterSetMaxOutputTokens = &caller, false
+	router.reclampDispatchOutputBound(request, dispatch, ctx)
+	if *request.Sampling.MaxOutputTokens != 384000 {
+		t.Fatalf("a caller's limit was lowered to %d", *request.Sampling.MaxOutputTokens)
+	}
+	// On Messages the limit stays above the thinking budget it must exceed.
+	budget := int64(300000)
+	request.Sampling.MaxOutputTokens, request.RouterSetMaxOutputTokens, request.ReasoningBudgetTokens = &limit, true, &budget
+	router.reclampDispatchOutputBound(request, &providerDispatch{logicalModel: "m", targetFormat: llmprotocol.AnthropicMessagesV1}, ctx)
+	if *request.Sampling.MaxOutputTokens <= budget {
+		t.Fatalf("limit = %d, want above the %d budget", *request.Sampling.MaxOutputTokens, budget)
+	}
+}

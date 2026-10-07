@@ -296,7 +296,8 @@ routing:
   declares `context_window_size`, the Router's limit is capped at the window
   less the request's own token estimate, the way the decision cap applies,
   thinking budget included. The room is measured against the prompt as it
-  will be dispatched, after any stored history or retrieval is added. A
+  will be dispatched, after any stored history, retrieval, compression or
+  tool selection has changed it. A
   request that leaves no room is sent as if the card declared no window:
   every limit meets the same refusal when the prompt alone overflows, and an
   estimate that overshot must not truncate an answer. The
@@ -305,7 +306,8 @@ routing:
 - **Context compression reserves the limit.** Context compression runs before
   dispatch. It keeps the Router's limit free in the model's
   `context_window_size`, so a prompt near the window is compressed instead of
-  being refused by the provider.
+  being refused by the provider. It reserves the card's limit in full, not
+  the smaller room the prompt leaves before compression.
 - **The target's minimum is respected.** Responses refuses a
   `max_output_tokens` below 16, so a smaller card value or cap is raised to 16.
   If 16 is above the decision's `max_tokens_limit`, the request is sent with no
