@@ -205,7 +205,7 @@ func TestABufferedMessagesToolCutReadsAsIncomplete(t *testing.T) {
 func TestAWholeNonObjectArgumentFailsAtCompletion(t *testing.T) {
 	depth := llmprotocol.DefaultPolicy().Limits.JSONDepth
 	for _, arguments := range []string{
-		`[]`, `true`, `"x"`, `{"a":1,"a":2}`,
+		`[]`, `true`, `"x"`,
 		// No bytes could complete these, or not within the depth limit.
 		`{]`, `{"x":]`, `{"a":` + strings.Repeat(`[`, depth+1),
 	} {

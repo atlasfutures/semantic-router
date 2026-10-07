@@ -320,7 +320,9 @@ func TestStreamStateRequiresCompleteToolLifecycle(t *testing.T) {
 }
 
 func TestStreamStateRejectsMalformedAndNonObjectToolArguments(t *testing.T) {
-	for _, arguments := range []string{`{`, `[]`, `true`, `null`, `{"query":1,"query":2}`} {
+	// A repeated member is settled, not refused
+	// (TestStreamedToolArgumentsAnthropicAcceptsComplete).
+	for _, arguments := range []string{`{`, `[]`, `true`, `null`, "{\"query\":\"a\nb\",\"query\":2}"} {
 		t.Run(arguments, func(t *testing.T) {
 			state := newTestStreamState()
 			startTestStream(t, state)

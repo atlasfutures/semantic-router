@@ -213,6 +213,40 @@ func codecStreamFailureDetail(protocolError *llmprotocol.ProtocolError) string {
 	return boundedPrintable(protocolError.Code, maxStreamFailureDetail)
 }
 
+// maxLoggedToolName bounds the tool name a tool_arguments_refused line
+// carries.
+const maxLoggedToolName = 64
+
+// logToolArgumentsRefusal logs tool_arguments_refused when the codec refused
+// a provider's streamed tool arguments: the facts it took of them
+// (llmprotocol.ToolArgumentsFacts), which say why the arguments were not a
+// JSON object without a byte of what they said. The request_id joins it to
+// the turn_failed and llm_usage lines.
+func logToolArgumentsRefusal(ctx *RequestContext, streamErr error) {
+	var facts *llmprotocol.ToolArgumentsFacts
+	if ctx == nil || !errors.As(streamErr, &facts) || facts == nil {
+		return
+	}
+	logging.ComponentWarnEvent("extproc", "tool_arguments_refused", map[string]interface{}{
+		"request_id":        ctx.RequestID,
+		"model":             ctx.RequestModel,
+		"stage":             facts.Stage,
+		"tool_name":         boundedPrintable(facts.ToolName, maxLoggedToolName),
+		"argument_bytes":    facts.Bytes,
+		"first_byte":        facts.FirstByte,
+		"valid_utf8":        facts.ValidUTF8,
+		"stdlib_object":     facts.StdlibObject,
+		"json_error_offset": facts.JSONErrorOffset,
+		"duplicate_key":     facts.DuplicateKey,
+		"lone_surrogate":    facts.LoneSurrogate,
+		"raw_control":       facts.RawControl,
+		"replacement_char":  facts.ReplacementChar,
+		"max_depth":         facts.MaxDepth,
+		"chunks":            facts.Chunks,
+		"chunk_split_rune":  facts.ChunkSplitRune,
+	})
+}
+
 // routerStreamFailureCodes are the failure events the Router's codec itself
 // synthesizes into a stream that ended without its terminal event.
 var routerStreamFailureCodes = map[string]bool{

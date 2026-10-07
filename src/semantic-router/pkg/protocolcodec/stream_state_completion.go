@@ -59,12 +59,22 @@ func (state *streamState) completeToolItem(event llmprotocol.Event) (llmprotocol
 	if err != nil {
 		return llmprotocol.Event{}, err
 	}
+	if !complete {
+		arguments, complete, err = state.normalizeToolArguments(arguments)
+		if err != nil {
+			return llmprotocol.Event{}, err
+		}
+	}
 	if !complete && !llmprotocol.TruncatedJSONObject(arguments, state.policy.Limits.JSONDepth) {
 		// A whole JSON value that is not an object, or an object with a
 		// duplicate member, is no prefix of a call: it is malformed now.
-		return llmprotocol.Event{}, invalidStreamToolArguments()
+		return llmprotocol.Event{}, state.refusedToolArguments(event.ItemIndex, arguments, "item_completed")
 	}
 	incomplete := !complete || event.ToolCall != nil && event.ToolCall.Incomplete
+	if incomplete {
+		facts := state.toolArgumentsFacts(event.ItemIndex, arguments)
+		state.cutFacts = &facts
+	}
 	call := state.toolCalls[event.ItemIndex]
 	if event.ToolCall != nil {
 		call, err = state.mergeStreamToolIdentity(call, *event.ToolCall)
@@ -195,7 +205,8 @@ func (state *streamState) finalToolArguments(event llmprotocol.Event) ([]byte, b
 		if err := state.validateStreamToolArgumentAppend(nil, event.ToolCall.Arguments); err != nil {
 			return nil, false, err
 		}
-		if len(arguments) > 0 && string(arguments) != event.ToolCall.Arguments {
+		if len(arguments) > 0 && string(arguments) != event.ToolCall.Arguments &&
+			!state.settlesTo(arguments, event.ToolCall.Arguments) {
 			return nil, false, llmprotocol.NewError(llmprotocol.ErrorUpstreamUnavailable, "stream_tool_arguments_mismatch", "upstream final tool arguments do not match streamed arguments", nil)
 		}
 		arguments = []byte(event.ToolCall.Arguments)
@@ -214,6 +225,7 @@ func (state *streamState) markItemComplete(itemIndex int) {
 		delete(state.itemCitations, key)
 	}
 	delete(state.toolArguments, itemIndex)
+	delete(state.toolArgumentChunks, itemIndex)
 }
 
 func (state *streamState) applyEventEvidence(event llmprotocol.Event) (llmprotocol.Event, error) {
@@ -336,7 +348,87 @@ func (state *streamState) heldCutFailure(stop llmprotocol.StopReason, failed boo
 	if len(state.cutItems) == 0 || failed || llmprotocol.CutToolCallStop(stop) {
 		return nil
 	}
-	return invalidStreamToolArguments()
+	return state.heldCutRefusal("terminal")
+}
+
+// normalizeToolArguments settles whole arguments that are an object to
+// Anthropic but not to the strict validator, a repeated member or an
+// unpaired surrogate escape, as Anthropic settles them
+// (llmprotocol.NormalizeToolArguments), and reports whether they are now a
+// whole object. The deltas already sent carried the model's bytes; the
+// completed call, which a Responses client reads its arguments from and the
+// Router records the turn by, carries the settled ones, so a replay of the
+// call is strict. The diagnostic says so without saying what changed.
+func (state *streamState) normalizeToolArguments(arguments []byte) ([]byte, bool, error) {
+	normalized, err := llmprotocol.NormalizeToolArguments(arguments, state.policy.Limits.JSONDepth)
+	if err != nil {
+		return arguments, false, nil
+	}
+	// The streamed bytes were bounded as they arrived, but the re-encoding
+	// can be longer (encoding/json writes U+2028 as a six-byte escape), so
+	// the settled object is bounded again.
+	if limit := state.policy.Limits.ToolArgumentsBytes; limit > 0 && len(normalized) > limit {
+		return arguments, false, llmprotocol.NewError(
+			llmprotocol.ErrorUpstreamUnavailable,
+			"tool_arguments_limit",
+			"settled tool arguments exceed the configured limit",
+			nil,
+		)
+	}
+	state.noteStateDiagnostic(llmprotocol.Diagnostic{
+		Source: state.context.Source, Field: "tool_call.arguments", Action: llmprotocol.DiagnosticApproximated,
+		Reason: "the model repeated a member or wrote an unpaired surrogate escape; the last member wins and the escape becomes U+FFFD, as Anthropic decodes them",
+	})
+	return normalized, true, nil
+}
+
+// settlesTo reports a completion whose arguments are the streamed ones as
+// normalizeToolArguments settled them upstream of this state: an encoder's
+// state sees the model's bytes in the deltas and the settled object at the
+// completion.
+func (state *streamState) settlesTo(streamed []byte, final string) bool {
+	return settledArguments(streamed, final, state.policy.Limits.JSONDepth)
+}
+
+// settledArguments reports final as streamed settled by
+// llmprotocol.NormalizeToolArguments. A Responses stream this Router wrote
+// streams the model's bytes in its deltas and the settled object in
+// function_call_arguments.done, so a Router reading one accepts that pair.
+func settledArguments(streamed []byte, final string, maximumDepth int) bool {
+	normalized, err := llmprotocol.NormalizeToolArguments(streamed, maximumDepth)
+	return err == nil && string(normalized) == final
+}
+
+// refusedToolArguments is invalid_stream_tool_arguments for a tool item
+// whose arguments were refused at stage, carrying their content-free facts
+// as its cause (llmprotocol.ToolArgumentsFacts) so the refusal's log line
+// can say why without saying what.
+func (state *streamState) refusedToolArguments(itemIndex int, arguments []byte, stage string) *llmprotocol.ProtocolError {
+	facts := state.toolArgumentsFacts(itemIndex, arguments)
+	facts.Stage = stage
+	refusal := invalidStreamToolArguments()
+	refusal.Cause = &facts
+	return refusal
+}
+
+// heldCutRefusal is invalid_stream_tool_arguments for the held cut item,
+// with the facts taken when it was cut.
+func (state *streamState) heldCutRefusal(stage string) *llmprotocol.ProtocolError {
+	refusal := invalidStreamToolArguments()
+	if state.cutFacts != nil {
+		facts := *state.cutFacts
+		facts.Stage = stage
+		refusal.Cause = &facts
+	}
+	return refusal
+}
+
+func (state *streamState) toolArgumentsFacts(itemIndex int, arguments []byte) llmprotocol.ToolArgumentsFacts {
+	facts := llmprotocol.DescribeToolArguments(arguments)
+	facts.ToolName = state.toolCalls[itemIndex].Name
+	chunks := state.toolArgumentChunks[itemIndex]
+	facts.Chunks, facts.ChunkSplitRune = chunks.count, chunks.splitRune
+	return facts
 }
 
 func validateCompletedStopReason(event llmprotocol.Event) (llmprotocol.Event, error) {

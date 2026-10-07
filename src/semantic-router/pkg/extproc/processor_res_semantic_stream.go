@@ -642,6 +642,7 @@ func (r *OpenAIRouter) classStreamFailure(
 			class = turnFailureTimeout
 		}
 		recordTurnFailureDetail(ctx, class, codecStreamFailureDetail(inBand), sent)
+		logToolArgumentsRefusal(ctx, streamErr)
 	case responseErr != nil && (streamErr == nil || ctx.StreamEndedByReceiveError) && state != nil && state.terminal && state.failed == nil:
 		// The stream ended properly but its output cannot be reconstructed
 		// (an item never completed): the arm's reply is unusable.
