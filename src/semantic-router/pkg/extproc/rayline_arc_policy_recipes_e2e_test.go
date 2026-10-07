@@ -219,6 +219,7 @@ func writePolicyRecipesConfig(t *testing.T, keep, strip *fakePolicyService, acti
     type: rayline_arc
     on_error: fail_closed
     rayline_arc:
+      readiness_wait_seconds: -1
       policy_service:
         base_url: URL
         total_timeout_seconds: 5

@@ -142,6 +142,41 @@ type RaylineARCAlgorithmConfig struct {
 	// the last one this episode sent it, and logs the verdict. Off by
 	// default: turning it on writes the v3 episode record.
 	UpstreamAudit RaylineARCUpstreamAuditConfig `yaml:"upstream_audit,omitempty"`
+	// ReadinessWaitSeconds is how long a request that arrives before the
+	// selector is armed waits for readiness before it is refused not_ready.
+	// A cold instance probes its encoder or policy service in the
+	// background, and a scaled-to-zero Modal app can take minutes to answer:
+	// without a wait every request in that window fails at once. Zero
+	// selects the shipped default, 30 s; a negative value refuses at once,
+	// as before. It cannot exceed 300 s, and must stay below the deployment's
+	// ext_proc message_timeout, or Envoy ends the exchange first.
+	ReadinessWaitSeconds int `yaml:"readiness_wait_seconds,omitempty"`
+}
+
+// DefaultRaylineARCReadinessWaitSeconds is the shipped readiness wait. It is
+// half the smallest ext_proc message_timeout this repository ships (60 s in
+// the Gateway API manifests under deploy/kubernetes), so a waiting request is
+// still the Router's to answer there. A deployment with a longer
+// message_timeout sets a longer wait.
+const DefaultRaylineARCReadinessWaitSeconds = 30
+
+// maxRaylineARCReadinessWaitSeconds bounds the wait. 300 s is the longest
+// ext_proc message_timeout the repository's own Envoy configs ship
+// (deploy/local, kserve, istio, the operator); a deployment must still keep
+// its wait below its own message_timeout.
+const maxRaylineARCReadinessWaitSeconds = 300
+
+// ReadinessWait is the configured readiness wait as a duration; zero means
+// a request is refused at once.
+func (cfg *RaylineARCAlgorithmConfig) ReadinessWait() time.Duration {
+	seconds := DefaultRaylineARCReadinessWaitSeconds
+	if cfg != nil && cfg.ReadinessWaitSeconds != 0 {
+		seconds = cfg.ReadinessWaitSeconds
+	}
+	if seconds < 0 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // RaylineARCUpstreamAuditConfig is the opt-in for the upstream extension
@@ -293,6 +328,9 @@ type RaylineARCRedisConfig struct {
 func validateRaylineARCAlgorithmConfig(cfg *RaylineARCAlgorithmConfig) error {
 	if cfg == nil {
 		return fmt.Errorf("configuration is required")
+	}
+	if cfg.ReadinessWaitSeconds > maxRaylineARCReadinessWaitSeconds {
+		return fmt.Errorf("readiness_wait_seconds cannot exceed %d", maxRaylineARCReadinessWaitSeconds)
 	}
 	if cfg.PolicyService != nil {
 		return validateRaylineARCPolicyServiceMode(cfg)

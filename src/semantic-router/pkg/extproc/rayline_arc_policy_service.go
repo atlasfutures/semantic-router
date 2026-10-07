@@ -325,6 +325,7 @@ func createRaylineARCPolicySelector(
 	}
 	selector := newRaylineARCSelector(nil, nil, nil, policy.PackageSHA256)
 	selector.recipe = recipe
+	selector.readinessWait = arcConfig.ReadinessWait()
 	armed := &raylineARCArmedComponents{
 		scorer:    newPolicyServiceScorer(cfg, decision),
 		admission: raylinearc.NewAdmissionGate(policy.MaxInflightCalls),

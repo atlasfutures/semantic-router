@@ -59,6 +59,13 @@ routing:
           # reasoning_content. When no arm of the family is eligible the hold
           # is lifted and logged. Off by default.
           hold_family_in_tool_loop: false
+          # readiness_wait_seconds: a request that arrives while the selector
+          # is still warming up (a cold instance probing its encoder or policy
+          # service) waits this long for readiness before it is refused
+          # not_ready. 0 selects 30 s; a negative value refuses at once; at
+          # most 300 s. Keep it below the deployment's ext_proc
+          # message_timeout (60 s in the shipped Gateway API manifests).
+          readiness_wait_seconds: 0
           # routes_api serves POST /v1/routes from this cell: the selector's
           # choice for a request, returned without executing it. Off, and not
           # implied by configuring this algorithm -- a lookup drives the

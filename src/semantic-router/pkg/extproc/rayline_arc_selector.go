@@ -22,10 +22,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/logging"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
@@ -147,6 +149,15 @@ type raylineARCSelector struct {
 	// failed (conflicting config, a bad artifact, missing credentials). No
 	// recovery loop will arm it, so its refusals must not read as a warm-up.
 	unrecoverable bool
+	// readinessWait is how long a request that finds the selector unarmed
+	// waits for readiness before it is refused not_ready. Zero refuses at
+	// once. It is set before arming starts and never changes.
+	readinessWait time.Duration
+	// ready is closed the first time the selector is armed, so a waiting
+	// request wakes the moment readiness lands rather than on a poll.
+	readyInit  sync.Once
+	readyClose sync.Once
+	ready      chan struct{}
 }
 
 type raylineARCSelectionFailure struct {
@@ -203,6 +214,51 @@ func (selector *raylineARCSelector) arm(
 	components *raylineARCArmedComponents,
 ) {
 	selector.armed.Store(components)
+	if components != nil {
+		signal := selector.readySignal()
+		selector.readyClose.Do(func() { close(signal) })
+	}
+}
+
+func (selector *raylineARCSelector) readySignal() chan struct{} {
+	selector.readyInit.Do(func() { selector.ready = make(chan struct{}) })
+	return selector.ready
+}
+
+// awaitArmed returns the armed components, waiting up to the readiness wait
+// for a selector that is still warming up. A cold instance arms only once its
+// background probe reaches the encoder or the policy service, and a
+// scaled-to-zero service can take minutes to answer: without the wait every
+// request in that window is refused not_ready at once, which a client sees as
+// a hard failure. The wait ends early when the request is cancelled. An
+// unrecoverable selector never arms, so it is never waited on.
+func (selector *raylineARCSelector) awaitArmed(ctx context.Context) *raylineARCArmedComponents {
+	armed := selector.armedComponents()
+	if armed != nil || selector == nil || selector.unrecoverable || selector.readinessWait <= 0 {
+		return armed
+	}
+	started := time.Now()
+	timer := time.NewTimer(selector.readinessWait)
+	defer timer.Stop()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	outcome := "armed"
+	select {
+	case <-selector.readySignal():
+	case <-timer.C:
+		outcome = "timeout"
+	case <-ctx.Done():
+		outcome = "canceled"
+	}
+	armed = selector.armedComponents()
+	logging.ComponentEvent("extproc", "rayline_arc_readiness_awaited", map[string]interface{}{
+		"recipe":    string(selector.recipe),
+		"outcome":   outcome,
+		"waited_ms": time.Since(started).Milliseconds(),
+		"limit_ms":  selector.readinessWait.Milliseconds(),
+	})
+	return armed
 }
 
 // armedComponents returns nil until readiness arms the selector, and every
@@ -247,7 +303,7 @@ func (selector *raylineARCSelector) Select(
 	if selCtx != nil && selCtx.RaylineARC != nil && selCtx.RaylineARC.Coalesced != nil {
 		return cloneRaylineARCSelectionResult(selCtx.RaylineARC.Coalesced), nil
 	}
-	armed := selector.armedComponents()
+	armed := selector.awaitArmed(ctx)
 	arcContext, workerIDs, state, err := selector.prepareSelection(armed, selCtx)
 	if err != nil {
 		return nil, err
