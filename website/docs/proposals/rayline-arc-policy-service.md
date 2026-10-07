@@ -185,6 +185,13 @@ the harness shell, or `include` or `include_v2` (tool rule v2,
 pathfinder#3653). VSR treats the value as opaque and the policy service
 applies the projection; any other value is refused.
 
+A two-stage package states `stage_one` (v4, v5 and v6): pathfinder's
+stage-one part, holding the selector, its boundaries, the offered models and
+the proxy arms. The policy service owns and applies it; VSR carries it opaque.
+Absent is a single-stage package. When present it must be a JSON object, and
+startup refuses an explicit `null` or any other JSON value (#229,
+memex-desktop#7291).
+
 A v6 package requires every bound arm's model card to state `vision`
 explicitly, `true` or `false`, and startup refuses one that doesn't, naming
 the unmarked arms (#215). An image turn takes a worker off the offer only when

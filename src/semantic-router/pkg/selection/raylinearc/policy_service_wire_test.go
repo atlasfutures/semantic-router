@@ -492,3 +492,49 @@ func TestDecodePolicyPackageManifestV5YarnFixture(t *testing.T) {
 		t.Fatalf("encoding_profile rope = %s, layer = %s, max_tokens = %d", profile.Rope, profile.Layer, profile.MaxTokens)
 	}
 }
+
+// A two-stage package carries pathfinder's stage_one part; every manifest
+// decoder carries it opaque when it is an object and refuses a stated null or
+// any other JSON value, so omission stays the only single-stage form.
+func TestDecodePolicyPackageStageOne(t *testing.T) {
+	decoders := map[string]func([]byte) (*PolicyPackageCommon, error){
+		"package_manifest.v4.json": func(b []byte) (*PolicyPackageCommon, error) {
+			m, err := DecodePolicyPackageManifest(b)
+			if err != nil {
+				return nil, err
+			}
+			return &m.PolicyPackageCommon, nil
+		},
+		"package_manifest.v5.json": func(b []byte) (*PolicyPackageCommon, error) {
+			m, err := DecodePolicyPackageManifestV5(b)
+			if err != nil {
+				return nil, err
+			}
+			return &m.PolicyPackageCommon, nil
+		},
+		"package_manifest.v6.canonical_v2.json": func(b []byte) (*PolicyPackageCommon, error) {
+			m, err := DecodePolicyPackageManifestV6(b)
+			if err != nil {
+				return nil, err
+			}
+			return &m.PolicyPackageCommon, nil
+		},
+	}
+	const part = `{"schema_version": "rayline.arc-stage-one.v1", "offered": [{"model": "kimi-k3", "effort": null}], "proxy_arms": {}}`
+	for fixture, decode := range decoders {
+		body := readPolicyFixture(t, fixture)
+		if common, err := decode(body); err != nil || common.StageOne != nil {
+			t.Fatalf("%s without stage_one: %+v, %v", fixture, common, err)
+		}
+		for value, accepted := range map[string]bool{part: true, `{}`: true, `null`: false, `[]`: false, `"two"`: false, `1`: false} {
+			changed := bytes.Replace(body, []byte("{"), []byte(`{"stage_one": `+value+`,`), 1)
+			common, err := decode(changed)
+			if (err == nil) != accepted {
+				t.Errorf("%s stage_one %s: err = %v", fixture, value, err)
+			}
+			if accepted && err == nil && !bytes.Equal(common.StageOne, []byte(value)) {
+				t.Errorf("%s stage_one carried %s, want %s byte for byte", fixture, common.StageOne, value)
+			}
+		}
+	}
+}

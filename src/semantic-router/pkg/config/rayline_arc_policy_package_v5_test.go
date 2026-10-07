@@ -377,6 +377,25 @@ func TestRaylineARCPolicyPackageV5EncodingProfileMembersAtStartup(t *testing.T) 
 	}
 }
 
+// A two-stage package (pathfinder's stage_one part) loads through startup
+// validation with stage_one carried opaque, and a stated null or a
+// non-object stage_one is refused at startup (memex-desktop#7291).
+func TestRaylineARCPolicyPackageV5TwoStageAtStartup(t *testing.T) {
+	fixture := readPolicyV5Fixture(t)
+	const part = `{"schema_version": "rayline.arc-stage-one.v1", "offered": [{"model": "glm-5.3-flash", "effort": null}], "proxy_arms": {}}`
+	for value, accepted := range map[string]bool{part: true, `null`: false, `[]`: false, `"two"`: false} {
+		manifest := bytes.Replace(fixture, []byte("{"), []byte(`{"stage_one": `+value+`,`), 1)
+		cfg, decision := policyV5Decision(t, manifest)
+		err := validatePolicyDispatch(cfg, decision)
+		if accepted && err != nil {
+			t.Errorf("stage_one %s: refused: %v", value, err)
+		}
+		if !accepted && (err == nil || !strings.Contains(err.Error(), "stage_one")) {
+			t.Errorf("stage_one %s: err = %v, want a stage_one refusal", value, err)
+		}
+	}
+}
+
 // An action's model is the trained name, decoupled from providers (as in the
 // fixture and published packages such as c27e1796); admission keys on the
 // model the bound worker serves.
