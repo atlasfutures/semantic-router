@@ -30,6 +30,10 @@ type RoutingMetadata struct {
 	Selectable   bool              `json:"selectable"`
 	DefaultRoute bool              `json:"default_route,omitempty"`
 	Recipe       config.RecipeName `json:"recipe,omitempty"`
+	// Candidates are the arms of a Rayline ARC decision the virtual id
+	// resolves through, with their card facts, in artifact order. Absent on
+	// a passthrough id and on a virtual id with no such decision behind it.
+	Candidates []RoutingCandidate `json:"candidates,omitempty"`
 }
 
 // OpenAIModel represents a single model in the OpenAI /v1/models response.
@@ -78,11 +82,15 @@ func (b *modelListBuilder) appendAutoAliases(cfg *config.RouterConfig) {
 	if cfg != nil {
 		autoModelNames = cfg.EffectiveAutoModelNames()
 	}
+	routing := selectableVirtualRoute(config.DefaultRecipeName, true)
+	if cfg != nil {
+		routing.Candidates = routingCandidatesOf(cfg, cfg.DefaultRecipe())
+	}
 	b.appendAll(
 		autoModelNames,
 		routerOwner,
 		autoModelDescription,
-		selectableVirtualRoute(config.DefaultRecipeName, true),
+		routing,
 	)
 }
 
@@ -92,7 +100,11 @@ func (b *modelListBuilder) appendEntrypointAliases(cfg *config.RouterConfig) {
 	}
 	for _, entrypoint := range cfg.Entrypoints {
 		description := cfg.EntrypointRecipeDescription(entrypoint.Recipe)
-		b.appendAll(entrypoint.ModelNames, routerOwner, description, selectableVirtualRoute(entrypoint.Recipe, false))
+		routing := selectableVirtualRoute(entrypoint.Recipe, false)
+		if recipe, ok := cfg.RecipeByName(entrypoint.Recipe); ok {
+			routing.Candidates = routingCandidatesOf(cfg, recipe)
+		}
+		b.appendAll(entrypoint.ModelNames, routerOwner, description, routing)
 	}
 }
 

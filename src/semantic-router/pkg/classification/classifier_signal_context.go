@@ -253,3 +253,43 @@ func (c *Classifier) evaluateAllSignalsWithContext(
 	results = c.applyProjections(results)
 	return results
 }
+
+// ContextTokenCount counts a request's context the way the context signal
+// counts it for routing: with this classifier's configured counter, which may
+// be calibrated from observed provider usage, never below the request's
+// token floor. It reports false when the recipe declares no context signal,
+// in which case the routed path falls back to the character heuristic and a
+// caller should too, so the two paths compare one number against a card's
+// window.
+func (c *Classifier) ContextTokenCount(contextText string, tokenFloor int) (int, bool) {
+	if c == nil || c.contextClassifier == nil {
+		return 0, false
+	}
+	// A context signal no decision rule references is not evaluated on a
+	// routed request (runSignalDispatchers skips unused signal types), and
+	// that request is then counted by the character heuristic; so is this.
+	if !isSignalTypeUsed(c.getUsedSignals(), config.SignalTypeContext) {
+		return 0, false
+	}
+	_, count, err := c.contextClassifier.ClassifyWithTokenFloor(contextText, tokenFloor)
+	if err != nil {
+		return 0, false
+	}
+	return count, true
+}
+
+// ContextSignalUsed reports whether a routed request evaluates the context
+// signal at all: it is configured, and a decision rule references it. Eval
+// forces every configured signal to run, so a count it produced for an
+// unreferenced signal is one routing never sees.
+func (c *Classifier) ContextSignalUsed() bool {
+	return c != nil && c.contextClassifier != nil && isSignalTypeUsed(c.getUsedSignals(), config.SignalTypeContext)
+}
+
+// NewClassifierWithContextSignalForTest is a classifier that carries only a
+// context signal counted by the given rules' default counter, for tests in
+// other packages that need routing's "is the context signal used" answer
+// without a model-backed classifier.
+func NewClassifierWithContextSignalForTest(cfg *config.RouterConfig, rules []config.ContextRule) *Classifier {
+	return &Classifier{Config: cfg, contextClassifier: NewContextClassifier(&CharacterBasedTokenCounter{}, rules)}
+}

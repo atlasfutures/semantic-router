@@ -53,6 +53,17 @@ type RaylineARCSelectionContext struct {
 	// it holds for every turn until the card changes. Nil when no arm is
 	// marked, which is the unmarked default.
 	DisabledArms []bool
+	// ContextTokens is the request's conservative token estimate, the same
+	// number the generic context filter compares a card's window against.
+	// Zero when no estimate was made, which excludes nothing.
+	ContextTokens int
+	// OverContextArms marks, by arm ordinal, the candidates whose model card
+	// declares a context_window_size smaller than ContextTokens. It is nil
+	// when no arm is over its window, which leaves selection exactly as it
+	// was, and it replaces the generic context filter for an ARC decision:
+	// that filter removes a candidate from the list, and the arm list is
+	// positional, so the arm has to be masked where it stands instead.
+	OverContextArms []bool
 	// RequiredCapabilities names what this turn needs an arm to hold, from
 	// llmprotocol.RequiredRoutingCapabilities. It is empty for almost every
 	// turn: only a server tool or an image inside a tool result puts a name

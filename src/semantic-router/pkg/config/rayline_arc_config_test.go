@@ -18,6 +18,27 @@ func TestValidateRaylineARCDecisionContract(t *testing.T) {
 	}
 }
 
+// An arm is the worker id verbatim, so a ref naming an adapter is refused.
+func TestValidateRaylineARCDecisionContractRefusesAnAdapterRef(t *testing.T) {
+	decision := validRaylineARCDecision()
+	decision.ModelRefs[0].LoRAName = "adapter"
+	err := validateRaylineARCDecisionContract(&RouterConfig{}, decision)
+	if err == nil || !strings.Contains(err.Error(), "does not take modelRefs[].lora_name") {
+		t.Fatalf("error = %v, want the adapter ref refused", err)
+	}
+}
+
+// A route action is terminal and would resolve a turn before the artifact
+// saw it, so an ARC decision refuses one at load.
+func TestValidateRaylineARCDecisionContractRefusesARouteAction(t *testing.T) {
+	decision := validRaylineARCDecision()
+	decision.Action = &DecisionAction{Type: DecisionActionRoute, Destination: "safe"}
+	err := validateRaylineARCDecisionContract(&RouterConfig{}, decision)
+	if err == nil || !strings.Contains(err.Error(), "does not take a route action") {
+		t.Fatalf("error = %v, want the route action refused", err)
+	}
+}
+
 func TestRaylineARCConfigCanonicalRoundTripKeepsOnlyCredentialReference(t *testing.T) {
 	original := validRaylineARCDecision().Algorithm
 	encoded, err := yaml.Marshal(original)
@@ -68,6 +89,13 @@ func raylineARCInvalidContracts() []raylineARCInvalidContract {
 				decision.Algorithm.OnError = "skip"
 			},
 			wantErr: "requires algorithm.on_error=fail_closed",
+		},
+		{
+			name: "minimum candidates on a positional arm set",
+			mutate: func(decision *Decision) {
+				decision.Algorithm.MinimumCandidates = 2
+			},
+			wantErr: "does not take algorithm.minimum_candidates",
 		},
 		{
 			name: "mutable artifact revision",

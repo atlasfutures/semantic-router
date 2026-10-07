@@ -491,6 +491,12 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// ADR 0120: a model this context excluded, or a route the cell excluded,
 	// cannot be held. Its turn decides again among the rest, as at a schedule
 	// boundary, and that decision is held from here as a boundary decision is.
+	// Neither can an arm the hard mask excludes -- one the prompt has outgrown
+	// or that cannot take this turn's image -- or every turn until the next
+	// boundary would fail with nothing to offer. A side call released this
+	// way is marked forced and decides at a boundary like a main turn; the
+	// decision it records is kept out of the episode by the transaction,
+	// which never retains a boundary for a side call (retainPolicyBoundary).
 	var cellOut map[int]string
 	if scorer.fallback && !sideCall && turn != nil {
 		cellOut = scorer.cellExclusions(selector.now())
@@ -502,7 +508,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 			_, routeOut := cellOut[arm]
 			return fallback && (turn.Excludes(model) || routeOut)
 		}
-		if held >= 0 && out(held, scorer.armModel(held)) {
+		if held >= 0 && (out(held, scorer.armModel(held)) || len(hard) == len(workerIDs) && hard[held]) {
 			held, forced = -1, true
 		}
 		available := make([]string, 0, len(scorer.actionOrder))

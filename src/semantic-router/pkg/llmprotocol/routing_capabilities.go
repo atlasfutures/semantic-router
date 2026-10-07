@@ -33,6 +33,13 @@ const (
 	// an arm that can produce the citation spans a request asked for. Nothing
 	// derives it yet; the response-side table is CP9v.
 	RoutingCapabilityCitationsGeneration = "citations_generation"
+	// RoutingCapabilityTools states that the model takes a tool declaration
+	// and can answer with a tool call. It is the catalog's own spelling, and
+	// it is descriptive: nothing derives it from a request, so a card that
+	// claims it is not gated by it. It exists so an arm set can state the
+	// fact in one spelling and a gateway can read it off the arm listing
+	// rather than hard-code it.
+	RoutingCapabilityTools = "tools"
 )
 
 // RequiredRoutingCapabilities names what an arm must hold to serve this

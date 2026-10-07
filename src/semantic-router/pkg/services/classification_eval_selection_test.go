@@ -45,6 +45,8 @@ func TestPopulateEvalModelSelectionReturnsConcreteRuntimeChoice(t *testing.T) {
 			Decision:     matchedDecision,
 			MatchedRules: []string{"domain:engineering"},
 		},
+		nil,
+		nil,
 	)
 
 	if response.SelectedModel != "model-b" || response.SelectionStatus != EvalSelectionSelected {
@@ -71,9 +73,41 @@ func TestPopulateEvalModelSelectionDoesNotInventFirstRecommendedModel(t *testing
 			Name:      "fusion-route",
 			ModelRefs: []config.ModelRef{{Model: "model-a"}, {Model: "model-b"}},
 		}},
+		nil,
+		nil,
 	)
 
 	if response.SelectedModel != "" || response.SelectionStatus != EvalSelectionUnavailable {
 		t.Fatalf("unwired Eval invented a final model: %+v", response)
+	}
+}
+
+// Eval selects under the context signal's count when it ran, as the routed
+// path does, never below the request's floor.
+func TestPopulateEvalModelSelectionUsesTheEvaluatedTokenCount(t *testing.T) {
+	selector := &evalModelSelectorStub{}
+	service := &ClassificationService{}
+	service.SetEvalModelSelector(selector)
+	matched := &decision.DecisionResult{Decision: &config.Decision{Name: "d", ModelRefs: []config.ModelRef{{Model: "m"}}}}
+	input := intentSignalInput{requestFacts: classification.RequestFacts{ContextTokenFloor: 4096}}
+	referencing := classification.NewClassifierWithContextSignalForTest(&config.RouterConfig{IntelligentRouting: config.IntelligentRouting{Decisions: []config.Decision{{
+		Name: "long-turns", Rules: config.RuleNode{Type: config.SignalTypeContext, Name: "long"},
+	}}}}, []config.ContextRule{{Name: "long", MinTokens: "1000"}})
+	service.populateEvalModelSelection(&EvalResponse{}, input, matched, &classification.SignalResults{TokenCount: 300000}, referencing)
+	if selector.input.ContextTokenCount != 300000 {
+		t.Fatalf("selector context count = %d, want the signal's 300000", selector.input.ContextTokenCount)
+	}
+	service.populateEvalModelSelection(&EvalResponse{}, input, matched, &classification.SignalResults{TokenCount: 10}, referencing)
+	if selector.input.ContextTokenCount != 4096 {
+		t.Fatalf("selector context count = %d, want the floor 4096 over a smaller signal count", selector.input.ContextTokenCount)
+	}
+	// A context signal no decision rule references is forced to run by Eval
+	// and skipped by routing; its count is set aside, as routing sets it.
+	unreferenced := classification.NewClassifierWithContextSignalForTest(&config.RouterConfig{IntelligentRouting: config.IntelligentRouting{Decisions: []config.Decision{{
+		Name: "keywords", Rules: config.RuleNode{Type: config.SignalTypeKeyword, Name: "math"},
+	}}}}, []config.ContextRule{{Name: "long", MinTokens: "1000"}})
+	service.populateEvalModelSelection(&EvalResponse{}, input, matched, &classification.SignalResults{TokenCount: 300000}, unreferenced)
+	if selector.input.ContextTokenCount != 4096 {
+		t.Fatalf("selector context count = %d, want the floor when routing would not evaluate the context signal", selector.input.ContextTokenCount)
 	}
 }

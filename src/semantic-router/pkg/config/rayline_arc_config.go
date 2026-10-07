@@ -722,6 +722,28 @@ func validateRaylineARCDecisionContract(cfg *RouterConfig, decision Decision) er
 	if err := validateRaylineARCWorkerThinkingTransports(cfg, decision.Algorithm.RaylineARC); err != nil {
 		return fmt.Errorf("decision '%s': algorithm.rayline_arc.worker_thinking: %w", decision.Name, err)
 	}
+	// An arm is a plain model: readiness matches each ref's model to a worker
+	// id and dispatch sends that name, so an adapter name on a ref would be
+	// a model the artifact never scored.
+	for _, modelRef := range decision.ModelRefs {
+		if strings.TrimSpace(modelRef.LoRAName) != "" {
+			return fmt.Errorf(
+				"decision '%s': algorithm.type=%s does not take modelRefs[].lora_name; an arm is the worker id verbatim",
+				decision.Name,
+				RaylineARCAlgorithmType,
+			)
+		}
+	}
+	// A route action is terminal: it resolves the turn before the selector
+	// runs, so the artifact, its masks and its episode would be bypassed on
+	// every matching turn.
+	if decision.Action != nil && decision.Action.Type == DecisionActionRoute {
+		return fmt.Errorf(
+			"decision '%s': algorithm.type=%s does not take a route action; the artifact selects every turn",
+			decision.Name,
+			RaylineARCAlgorithmType,
+		)
+	}
 	if replay := cfg.EffectiveRouterReplayConfigForDecision(decision.Name); replay != nil && replay.Enabled {
 		return fmt.Errorf(
 			"decision '%s': algorithm.type=%s requires router_replay disabled for this decision; episode requests must not be persisted",
@@ -737,6 +759,14 @@ func validateRaylineARCDecisionContract(cfg *RouterConfig, decision Decision) er
 func validateRaylineARCSpecializedAlgorithmConfig(decisionName string, algorithm *AlgorithmConfig) error {
 	if algorithm.OnError != "fail_closed" {
 		return fmt.Errorf("decision '%s': algorithm.type=%s requires algorithm.on_error=fail_closed", decisionName, RaylineARCAlgorithmType)
+	}
+	// The arm set is fixed and positional: an arm a turn cannot use is masked
+	// at selection, never removed, and the artifact's policy decides among
+	// what is left. A minimum on the list's length has no meaning there, and
+	// the generic check that enforces it fails a turn with a 422 the gateway
+	// does not replay, where every ARC refusal is a replayable 503.
+	if algorithm.MinimumCandidates > 0 {
+		return fmt.Errorf("decision '%s': algorithm.type=%s does not take algorithm.minimum_candidates; arms a turn cannot use are masked, not removed", decisionName, RaylineARCAlgorithmType)
 	}
 	if err := validateRaylineARCAlgorithmConfig(algorithm.RaylineARC); err != nil {
 		return fmt.Errorf("decision '%s', algorithm.rayline_arc: %w", decisionName, err)

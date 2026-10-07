@@ -419,7 +419,8 @@ For portable model-free Recipes, set
 `routing.decisions[].algorithm.minimum_candidates` to the smallest pool that
 preserves the decision's intended behavior. Empty built-in assets remain
 valid, while a published Entrypoint is rejected if its concrete assignments do
-not meet the declared cardinality.
+not meet the declared cardinality. A `rayline_arc` decision does not take the
+field; see the Rayline ARC guide.
 
 ## Environment references and secrets
 

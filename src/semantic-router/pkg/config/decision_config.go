@@ -230,3 +230,30 @@ type (
 	RuleCombination = RuleNode
 	RuleCondition   = RuleNode
 )
+
+// ExplicitModels names the models an algorithm executes beside, or instead
+// of, the decision's model refs: Fusion's judge and analysis models, ReMoM's
+// synthesis model, a workflow's planner, final and role models. They are
+// dispatched and their output returned, so what applies to a ref -- the
+// context check before selection, the candidate listing -- applies to them.
+func (a *AlgorithmConfig) ExplicitModels() []string {
+	if a == nil {
+		return nil
+	}
+	var models []string
+	if fusion := a.Fusion; fusion != nil {
+		// In execution order: the analysis models answer, then the judge.
+		models = append(models, fusion.AnalysisModels...)
+		models = append(models, fusion.Model)
+	}
+	if remom := a.ReMoM; remom != nil {
+		models = append(models, remom.SynthesisModel)
+	}
+	if workflows := a.Workflows; workflows != nil {
+		models = append(models, workflows.Planner.Model, workflows.Final.Model)
+		for _, role := range workflows.Roles {
+			models = append(models, role.Models...)
+		}
+	}
+	return models
+}

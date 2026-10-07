@@ -2,6 +2,7 @@ package extproc
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
@@ -23,7 +24,19 @@ func (r *OpenAIRouter) SelectModelForEval(
 	if r.contextIneligibleAlgorithmModelCount(decision, input.ContextTokenCount) > 0 {
 		return evalSelectionUnavailable("an explicitly configured algorithm model cannot satisfy the request context")
 	}
-	eligibleModelRefs, excluded := r.contextEligibleModelRefs(decision.ModelRefs, input.ContextTokenCount)
+	// A rayline_arc decision keeps every arm here, as it does on the routed
+	// path: its arm list is positional, so the context filter would fail the
+	// turn rather than steer it. The selector masks the over-window arms
+	// itself, so Eval reports unavailable only for what the router would
+	// refuse, a turn no arm holds, and execution_required otherwise.
+	eligibleModelRefs, excluded := decision.ModelRefs, 0
+	if raylineARCSelection(decision.Algorithm) {
+		if overContext := r.overContextArms(decision.ModelRefs, input.ContextTokenCount); len(overContext) > 0 && !slices.Contains(overContext, false) {
+			return evalSelectionUnavailable("no decision model can satisfy the request context")
+		}
+	} else {
+		eligibleModelRefs, excluded = r.contextEligibleModelRefs(decision.ModelRefs, input.ContextTokenCount)
+	}
 	if len(eligibleModelRefs) == 0 && excluded > 0 {
 		return evalSelectionUnavailable("no decision model can satisfy the request context")
 	}
