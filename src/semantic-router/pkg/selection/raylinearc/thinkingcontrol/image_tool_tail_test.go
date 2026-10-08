@@ -313,3 +313,50 @@ func TestARefusedCallKeepsTheDrawnControl(t *testing.T) {
 		t.Fatalf("retry receipt %+v, want the drawn control and the refusal repeated", retry)
 	}
 }
+
+// The neutral marker is a write too: after an image tool result it is refused
+// on a cell without task-fidelity evidence and written on one with it
+// (pathfinder #4028 evidences both direct steers and the steered-to-reset
+// marker).
+func TestTheNeutralMarkerAfterAnImageToolResultFollowsTheCellsEvidence(t *testing.T) {
+	first := `{"role":"user","content":"Read it."}`
+	for _, admitted := range []bool{false, true} {
+		placer, err := NewPlacer(FormatChat)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, up := placeBody(t, placer, `{"messages":[`+first+`]}`, registryControl(t, glmChatUp), admitted)
+		if up.Written == nil || *up.Written != WrittenInstruction {
+			t.Fatalf("admitted %v: the opening steer was not written: %+v", admitted, up)
+		}
+		body := `{"messages":[` + first + `,{"role":"assistant","content":"Seen."},` + chatImageRun + `]}`
+		_, none := placeBody(t, placer, body, registryControl(t, glmChatNone), admitted)
+		if admitted {
+			if none.Refused != nil || none.Written == nil || *none.Written != WrittenNeutralMarker {
+				t.Errorf("evidenced cell: receipt %+v, want the neutral marker written", none)
+			}
+			continue
+		}
+		if none.Refused == nil || *none.Refused != RefusedImageToolTail || none.Written != nil {
+			t.Errorf("unevidenced cell: receipt %+v, want the neutral marker refused", none)
+		}
+	}
+}
+
+// pathfinder #4028 evidences kimi-k3 on OpenRouter Chat; the embedded
+// registry admits a steer after an image tool result on that cell only.
+func TestTheEmbeddedRegistryEvidencesKimiK3OnChat(t *testing.T) {
+	parsed, err := parseJSON(embeddedArtifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidenced []string
+	for _, cell := range parsed.get("cells").items {
+		if evidence := cell.get("image_tool_tail"); evidence != nil && evidence.kind != kindNull {
+			evidenced = append(evidenced, cell.get("model").str+" "+cell.get("provider").str+" "+cell.get("format").str)
+		}
+	}
+	if len(evidenced) != 1 || evidenced[0] != "moonshotai/kimi-k3 openrouter chat" {
+		t.Fatalf("evidenced cells %v, want only moonshotai/kimi-k3 openrouter chat", evidenced)
+	}
+}
