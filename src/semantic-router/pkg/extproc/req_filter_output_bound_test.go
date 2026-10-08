@@ -622,3 +622,50 @@ func TestReleaseInflightReturnsTheSlotOnce(t *testing.T) {
 		t.Fatalf("inflight = %d after a second release, want still 0", got)
 	}
 }
+
+// A completion floor the request_params plugin raised the allowance to is the
+// Router's number, so it is kept within the context room like a card limit.
+// It never goes below what the caller stated, and a prompt that leaves no
+// room keeps the floor, as a card limit would.
+func TestDispatchOutputBoundKeepsTheCompletionFloorWithinTheContextRoom(t *testing.T) {
+	const floor = 8192
+	logicalModel := "target-" + string(llmprotocol.OpenAIChatV1)
+	decision := completionFloorDecision(map[string]interface{}{logicalModel: floor})
+	for name, test := range map[string]struct {
+		body          string
+		window        int
+		contextTokens int
+		want          string
+	}{
+		"the floor is held to the room": {
+			body: unboundedResponsesBody, window: 10000, contextTokens: 9000,
+			want: "max_completion_tokens=1000",
+		},
+		"a stated limit below the room gives way to the room": {
+			body: `{"model":"m","input":"write the long tool call","max_output_tokens":512}`, window: 10000, contextTokens: 9000,
+			want: "max_completion_tokens=1000",
+		},
+		"a stated limit above the room stands": {
+			body: `{"model":"m","input":"write the long tool call","max_output_tokens":1500}`, window: 10000, contextTokens: 9000,
+			want: "max_completion_tokens=1500",
+		},
+		"no window leaves the floor": {
+			body: unboundedResponsesBody, contextTokens: 9000,
+			want: "max_completion_tokens=8192",
+		},
+		"no room leaves the floor": {
+			body: unboundedResponsesBody, window: 10000, contextTokens: 10000,
+			want: "max_completion_tokens=8192",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+				target: llmprotocol.OpenAIChatV1, card: 0, body: test.body, decision: decision,
+				window: test.window, contextTokens: test.contextTokens,
+			})
+			if got := wireOutputLimit(wire); got != test.want {
+				t.Fatalf("dispatched %q, want %q", got, test.want)
+			}
+		})
+	}
+}

@@ -305,7 +305,11 @@ routing:
   every limit meets the same refusal when the prompt alone overflows, and an
   estimate that overshot must not truncate an answer. The
   `dispatch_output_bound` event records `context: clamped_to_context` or
-  `no_context_room`, the room, and `limited_by: decision` or `context`.
+  `no_context_room`, the room, and `limited_by: decision` or `context`. A
+  completion floor the `request_params` plugin raised the allowance to
+  (`min_completion_tokens_by_model`) is the Router's number too, so it is
+  held to the room the same way, never below what the caller stated; the
+  event names it `source: floor`.
 - **Context compression reserves the limit.** Context compression runs before
   dispatch. It keeps the Router's limit free in the model's
   `context_window_size`, so a prompt near the window is compressed instead of

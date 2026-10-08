@@ -19,6 +19,7 @@ const dispatchFallbackMaxOutputTokens int64 = 32000
 const (
 	outputBoundSourceCard     = "card"
 	outputBoundSourceFallback = "fallback"
+	outputBoundSourceFloor    = "floor"
 )
 
 // errThinkingControlOverCap is a v5 control whose thinking budget the
@@ -48,6 +49,8 @@ func thinkingControlOverCapError(plan outputBoundPlan) error {
 //
 // It runs after every other output-allowance rule (request_params cap and
 // floor, a policy action's budget), so it only fills what they left unset.
+// The one limit it revisits is the request_params floor, which is the
+// Router's number: clampCompletionFloor keeps it within the context window.
 //
 // On a v5 turn the planned control owns thinking, so its budget is the one
 // planned. A lowered budget is written to the planned control, which the
@@ -60,7 +63,13 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 	dispatch *providerDispatch,
 	ctx *RequestContext,
 ) (bool, error) {
-	if request == nil || dispatch == nil || ctx == nil || request.Sampling.MaxOutputTokens != nil {
+	if request == nil || dispatch == nil || ctx == nil {
+		return false, nil
+	}
+	if request.Sampling.MaxOutputTokens != nil {
+		if ctx.DispatchCompletionFloor > 0 {
+			return r.clampCompletionFloor(request, dispatch, ctx)
+		}
 		return false, nil
 	}
 	control := plannedMessagesControl(ctx, dispatch.targetFormat)
@@ -124,6 +133,50 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 	request.RouterSetMaxOutputTokens = true
 	event["max_output_tokens"] = bound
 	logging.ComponentEvent("extproc", "dispatch_output_bound", event)
+	return true, nil
+}
+
+// clampCompletionFloor keeps a completion floor the request_params plugin
+// raised the allowance to within the room the prompt leaves in the model's
+// context window. The floor is the Router's number, not the caller's, so
+// unlike a stated limit it may be lowered; it is never lowered below what
+// the caller did state, nor below the target's minimum, and a prompt that
+// leaves no room keeps the floor, as a card limit would. The decision cap
+// does not apply: a floor above it wins by design.
+func (r *OpenAIRouter) clampCompletionFloor(
+	request *llmprotocol.Request,
+	dispatch *providerDispatch,
+	ctx *RequestContext,
+) (bool, error) {
+	window := int64(r.Config.GetModelContextWindowSize(dispatch.logicalModel))
+	if window <= 0 || *request.Sampling.MaxOutputTokens != ctx.DispatchCompletionFloor {
+		return false, nil
+	}
+	plan := planOutputBound(
+		ctx.DispatchCompletionFloor, outputBoundSourceFloor, dispatch.targetFormat,
+		0, nil, window, r.dispatchContextTokens(request, ctx),
+	)
+	if plan.context != outputBoundClampedToContext || plan.maxTokens == 0 {
+		return false, nil
+	}
+	bound := plan.maxTokens
+	if stated := request.ClientMaxOutputTokens; stated != nil && *stated > bound {
+		bound = *stated
+	}
+	if bound >= *request.Sampling.MaxOutputTokens {
+		return false, nil
+	}
+	request.Sampling.MaxOutputTokens = &bound
+	logging.ComponentEvent("extproc", "dispatch_output_bound", map[string]interface{}{
+		"request_id":        ctx.RequestID,
+		"model":             dispatch.logicalModel,
+		"wire_format":       dispatch.targetFormat,
+		"source":            plan.source,
+		"context":           plan.context,
+		"context_room":      plan.contextRoom,
+		"limited_by":        plan.limitedBy,
+		"max_output_tokens": bound,
+	})
 	return true, nil
 }
 
@@ -248,6 +301,21 @@ func (r *OpenAIRouter) planDispatchOutputBound(
 	if source == "" {
 		return outputBoundPlan{}
 	}
+	return planOutputBound(bound, source, format, decisionLimit, thinkingBudget, contextWindow, contextTokens)
+}
+
+// planOutputBound holds a bound of the given source to the decision's limit
+// and the context room, the target's minimum and a thinking budget, as
+// planDispatchOutputBound describes.
+func planOutputBound(
+	bound int64,
+	source string,
+	format llmprotocol.WireFormat,
+	decisionLimit int64,
+	thinkingBudget *int64,
+	contextWindow int64,
+	contextTokens int64,
+) outputBoundPlan {
 	plan := outputBoundPlan{source: source}
 	// The cap is the tighter of the operator's limit and the room the
 	// request leaves in the window; every rule below reads the cap.

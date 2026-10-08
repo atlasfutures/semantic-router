@@ -30,6 +30,9 @@ func (r *OpenAIRouter) applyDispatchRequestParams(
 	}
 	decisionKey := config.RoutingDecisionKey(recipe, ctx.VSRSelectedDecision.Name)
 	raised := applyCompletionTokenFloor(params, request, dispatch.logicalModel, decisionKey)
+	if raised {
+		ctx.DispatchCompletionFloor = *request.Sampling.MaxOutputTokens
+	}
 	return raised || changed, nil
 }
 

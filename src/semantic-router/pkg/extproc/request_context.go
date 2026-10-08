@@ -217,7 +217,12 @@ type RequestContext struct {
 	// DispatchAutoCache marks a dispatch to a Claude worker over Messages from
 	// an OpenAI-shaped client (claudeAutoCacheDispatch); encodeDispatchRequest
 	// decides on the final request whether it gets the automatic directive.
-	DispatchAutoCache               *dispatchAutoCache
+	DispatchAutoCache *dispatchAutoCache
+	// DispatchCompletionFloor is the floor the request_params plugin raised
+	// the output allowance to (min_completion_tokens_by_model), or zero. It
+	// is the Router's number, not the caller's, so the dispatch output bound
+	// may keep it within the model's context window.
+	DispatchCompletionFloor         int64
 	VSRSelectionMethod              string                                      // Model selection algorithm used (e.g., "elo", "static", "router_dc")
 	VSRSelectionReasoning           string                                      // Bounded human-readable selector rationale for replay
 	VSRFusionQuorum                 *routerreplay.FusionQuorumDiagnostics       // Content-free Fusion panel quorum evidence for replay
