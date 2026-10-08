@@ -1,10 +1,10 @@
 {
- "description": "steer after a tool run carrying several images; in Chat each result's images are hoisted into their own labelled user message and the steer joins the last (ADR 0129)",
+ "description": "steer after a tool result that carries an image (ADR 0129)",
  "format": "responses",
  "provider": "openrouter",
  "model": "openai/gpt-5.6-terra",
  "wire_model": "openai/gpt-5.6-terra",
- "admission": "enforced",
+ "admission": "placement_only_image_tool_tail_admitted",
  "allow_experimental": true,
  "registry_pin": "8fcff3aa103bdea7ddbdee98587d0e0a40b70a491a2d2df5d2d7c561364fd3a8",
  "calls": [
@@ -25,18 +25,17 @@
   },
   {
    "client_body": "client-01.json",
-   "control_id": "fb5c5369da0f33329ac598d3709e070527d0f4b1b1406d109659eb870882c367",
+   "control_id": "81d08d646c9db5bbb2b10590c16064f63d8b39c7ce25a91744925a78d34855dd",
    "expected_body": "provider-01.json",
    "receipt": {
     "call": 1,
-    "control_id": "fb5c5369da0f33329ac598d3709e070527d0f4b1b1406d109659eb870882c367",
-    "level_in_force": "none",
-    "instruction_state": "never",
-    "written": null,
+    "control_id": "81d08d646c9db5bbb2b10590c16064f63d8b39c7ce25a91744925a78d34855dd",
+    "level_in_force": "up",
+    "instruction_state": "steered",
+    "written": "instruction",
     "epoch": 0,
     "epoch_reset_reason": null,
-    "retry": false,
-    "refused": "image_tool_tail_task_fidelity"
+    "retry": false
    }
   }
  ],

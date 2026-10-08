@@ -1,10 +1,10 @@
 {
- "description": "steer after a tool run carrying several images; in Chat each result's images are hoisted into their own labelled user message and the steer joins the last (ADR 0129)",
+ "description": "steer after a tool run mixing a text result and an image result (ADR 0129)",
  "format": "chat",
  "provider": "openrouter",
  "model": "z-ai/glm-5.3-flash",
  "wire_model": "z-ai/glm-5.3-flash",
- "admission": "enforced",
+ "admission": "placement_only_image_tool_tail_admitted",
  "allow_experimental": true,
  "registry_pin": "8fcff3aa103bdea7ddbdee98587d0e0a40b70a491a2d2df5d2d7c561364fd3a8",
  "calls": [
@@ -25,18 +25,17 @@
   },
   {
    "client_body": "client-01.json",
-   "control_id": "77f4674fea6c3b4f3f53ab0337b61fc725ef66e045f317767efdbf94b6979d48",
+   "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b",
    "expected_body": "provider-01.json",
    "receipt": {
     "call": 1,
-    "control_id": "77f4674fea6c3b4f3f53ab0337b61fc725ef66e045f317767efdbf94b6979d48",
-    "level_in_force": "none",
-    "instruction_state": "never",
-    "written": null,
+    "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b",
+    "level_in_force": "up",
+    "instruction_state": "steered",
+    "written": "instruction",
     "epoch": 0,
     "epoch_reset_reason": null,
-    "retry": false,
-    "refused": "image_tool_tail_task_fidelity"
+    "retry": false
    }
   }
  ],

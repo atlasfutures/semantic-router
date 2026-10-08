@@ -30,12 +30,13 @@
    "receipt": {
     "call": 1,
     "control_id": "81d08d646c9db5bbb2b10590c16064f63d8b39c7ce25a91744925a78d34855dd",
-    "level_in_force": "up",
-    "instruction_state": "steered",
-    "written": "instruction",
+    "level_in_force": "none",
+    "instruction_state": "never",
+    "written": null,
     "epoch": 0,
     "epoch_reset_reason": null,
-    "retry": false
+    "retry": false,
+    "refused": "image_tool_tail_task_fidelity"
    }
   }
  ],
