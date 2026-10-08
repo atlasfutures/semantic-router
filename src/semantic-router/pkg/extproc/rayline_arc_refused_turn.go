@@ -77,10 +77,15 @@ func refusedModel(ctx *RequestContext) string {
 
 // refusedTurn is what a refusal changes in its episode: the retained
 // boundary decision on the refused arm is cleared, and with the fallback on
-// the refusing model is excluded.
+// the refusing model is excluded. A turn whose route the cell excluded
+// changes the episode the same way without the exclusion
+// (clearFailedRouteBoundary); outcome names which it was.
 type refusedTurn struct {
 	arm     int
 	exclude string
+	// outcome labels the boundary clear: selectionOutcomeRefusal when
+	// empty, or the failure class of an excluded route.
+	outcome string
 	// boundary is the exact decision a coalesced resend was dispatched under;
 	// nil for the request that holds the lease, which clears on the arm.
 	boundary *raylinearc.PolicyBoundaryDecision
@@ -94,6 +99,14 @@ type refusedTurn struct {
 	// committed is the state this turn would commit had it been answered: a
 	// coalesced copy of it that was answered commits exactly this prefix.
 	committed *raylinearc.PolicyEpisodeState
+}
+
+// outcomeLabel is the metric label of the boundary this turn clears.
+func (refusal refusedTurn) outcomeLabel() string {
+	if refusal.outcome == "" {
+		return selectionOutcomeRefusal
+	}
+	return refusal.outcome
 }
 
 // storedPolicy is the policy state the transaction read.
@@ -219,7 +232,7 @@ func (transaction *raylineARCEpisodeTransaction) stageRefusal(ctx context.Contex
 		return
 	}
 	transaction.state = next
-	metrics.RecordRaylineARCEpisodeTransaction("boundary_cleared", selectionOutcomeRefusal)
+	metrics.RecordRaylineARCEpisodeTransaction("boundary_cleared", refusal.outcomeLabel())
 }
 
 // stageBorrowedRefusal stores a refusal for a coalesced resend. The resend
@@ -277,7 +290,7 @@ func (transaction *raylineARCEpisodeTransaction) stageBorrowedRefusal(parent con
 	}()
 	next, changed := refusal.apply(current)
 	if changed && stager.Stage(stageContext, lease, next) == nil {
-		metrics.RecordRaylineARCEpisodeTransaction("boundary_cleared", selectionOutcomeRefusal)
+		metrics.RecordRaylineARCEpisodeTransaction("boundary_cleared", refusal.outcomeLabel())
 	}
 }
 
@@ -307,6 +320,6 @@ func (transaction *raylineARCEpisodeTransaction) applyHandedOverRefusal(ctx cont
 	next, changed := refused.apply(transaction.state)
 	if changed && stager.Stage(ctx, transaction.lease, next) == nil {
 		transaction.state = next
-		metrics.RecordRaylineARCEpisodeTransaction("boundary_cleared", selectionOutcomeRefusal)
+		metrics.RecordRaylineARCEpisodeTransaction("boundary_cleared", refused.outcomeLabel())
 	}
 }

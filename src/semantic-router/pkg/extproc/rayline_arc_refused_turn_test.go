@@ -379,3 +379,23 @@ func TestRefusedHandOverIsTakenOrRefused(t *testing.T) {
 		t.Fatal("a hand-over after the last look was accepted, and would never be taken")
 	}
 }
+
+// A route failure's hand-over, which only clears the boundary, does not
+// replace a pending refusal of the same decision: the refusal's model
+// exclusion survives. Control: a refusal replaces a pending clear.
+func TestRouteFailureHandOverKeepsAPendingRefusal(t *testing.T) {
+	boundary := raylinearc.PolicyBoundaryDecision{Arm: 1, PrefixDigest: strings.Repeat("a", 64)}
+	refusal := refusedTurn{arm: 1, boundary: &boundary, exclude: "vendor/off"}
+	routeClear := refusedTurn{arm: 1, boundary: &boundary, outcome: turnFailureRateLimited}
+	for _, order := range [][]refusedTurn{{refusal, routeClear}, {routeClear, refusal}} {
+		entry := &raylineARCInflightEntry{}
+		for _, handed := range order {
+			if !entry.noteRefusal(handed) {
+				t.Fatal("a hand-over before the last look was refused")
+			}
+		}
+		if taken := entry.takeRefusal(); taken == nil || taken.exclude != "vendor/off" {
+			t.Fatalf("handed over %v, the last look took %+v", order, taken)
+		}
+	}
+}

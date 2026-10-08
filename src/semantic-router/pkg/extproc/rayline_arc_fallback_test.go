@@ -730,3 +730,92 @@ func TestRaylineARCFallbackLiftsTheToolLoopHoldOffAnExcludedRoute(t *testing.T) 
 		t.Fatalf("offered %v, arm %d; want the think worker's two levels", offered, result.RaylineARC.SelectedArm)
 	}
 }
+
+// semantic-router#241: a boundary turn whose route was rate-limited clears
+// the decision it retained, so a retry that comes after the route's
+// exclusion has lapsed is decided again rather than pinned to the arm that
+// failed. Controls: with the fallback off nothing is excluded and the retry
+// keeps the decision; a failure that is not about the route (a 400) keeps
+// it too.
+func TestRaylineARCRateLimitedBoundaryRetryDecidesAgainAfterTheExclusion(t *testing.T) {
+	for _, tc := range []struct {
+		class     string
+		enabled   bool
+		redecides bool
+	}{
+		{turnFailureRateLimited, true, true},
+		{turnFailureUpstream5xx, true, true},
+		{turnFailureRateLimited, false, false},
+		{turnFailureUpstreamError, true, false},
+	} {
+		resetCellExclusions(t)
+		fixture, store, episode, offAction := fallbackFixture(t, tc.enabled)
+		body := policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"})
+		first, decided := boundaryAttempt(t, fixture, store, episode, body)
+		if decided.RaylineARC.PolicyActionID != offAction || decided.RaylineARC.PolicyBoundary == nil {
+			t.Fatalf("%s enabled=%v: the boundary chose %s, retained %+v", tc.class, tc.enabled, decided.RaylineARC.PolicyActionID, decided.RaylineARC.PolicyBoundary)
+		}
+		first.RequestID = "req-rate-limited"
+		first.VSRRaylineARC = decided.RaylineARC
+		first.VSRSelectedDecision = fixture.decision
+		recordTurnFailure(first, tc.class, false)
+		if err := first.RaylineARCTransaction.abort(context.Background(), "test"); err != nil {
+			t.Fatal(err)
+		}
+		// The client retries after the exclusion has lapsed.
+		later := time.Now().Add(time.Hour)
+		fixture.selector.now = func() time.Time { return later }
+		_, retried := boundaryAttempt(t, fixture, store, episode, body)
+		offered := offeredActions(fixture, 1)
+		if redecided := len(offered) > 1; redecided != tc.redecides {
+			t.Fatalf("%s enabled=%v: the retry was offered %v, boundary %+v", tc.class, tc.enabled, offered, retried.RaylineARC.PolicyBoundary)
+		}
+		// A retry decided again retains its own decision, as a boundary does.
+		if tc.redecides && retried.RaylineARC.PolicyBoundary == nil {
+			t.Fatalf("%s enabled=%v: the retry retained no decision", tc.class, tc.enabled)
+		}
+	}
+}
+
+// The same through the response path a provider's 429 takes: the response
+// headers abort the turn and release its lease, then the failure is classed,
+// at the headers for a bodyless error or at the body otherwise, so the clear
+// is staged under a lease of its own. The retry after the exclusion lapses
+// is decided again.
+func TestRaylineARCRateLimitedResponseClearsTheBoundaryAfterTheAbort(t *testing.T) {
+	for _, endsAtHeaders := range []bool{false, true} {
+		resetCellExclusions(t)
+		fixture, store, episode, offAction := fallbackFixture(t, true)
+		body := policyTestRequest(t, map[string]any{"role": "user", "content": "fix the bug"})
+		first, decided := boundaryAttempt(t, fixture, store, episode, body)
+		if decided.RaylineARC.PolicyActionID != offAction || decided.RaylineARC.PolicyBoundary == nil {
+			t.Fatalf("ends at headers=%v: the boundary chose %s", endsAtHeaders, decided.RaylineARC.PolicyActionID)
+		}
+		first.RequestID, first.RequestModel, first.StartTime = "req-429", "off", time.Now()
+		first.Headers = map[string]string{}
+		first.SourceFormat, first.TargetFormat = llmprotocol.AnthropicMessagesV1, llmprotocol.OpenAIChatV1
+		first.VSRRaylineARC, first.VSRSelectedDecision = decided.RaylineARC, fixture.decision
+		bindRaylineARCSelectionTransaction(first)
+		router := &OpenAIRouter{}
+		headers := arcResponseHeaders("429")
+		headers.ResponseHeaders.EndOfStream = endsAtHeaders
+		if _, err := router.handleResponseHeaders(headers, first); err != nil {
+			t.Fatal(err)
+		}
+		if !first.RaylineARCTransaction.leaseReleased.Load() {
+			t.Fatalf("ends at headers=%v: the headers did not release the lease", endsAtHeaders)
+		}
+		if !endsAtHeaders {
+			router.handleUpstreamTransportError([]byte(`{"error":{"message":"Provider returned error","code":429}}`), first)
+		}
+		if _, excluded := raylineARCWorkerExclusions.active(fallbackTestRoute(fixture, 1), time.Now()); !excluded {
+			t.Fatalf("ends at headers=%v: the route was not excluded", endsAtHeaders)
+		}
+		later := time.Now().Add(time.Hour)
+		fixture.selector.now = func() time.Time { return later }
+		_, retried := boundaryAttempt(t, fixture, store, episode, body)
+		if offered := offeredActions(fixture, 1); len(offered) < 2 || retried.RaylineARC.PolicyBoundary == nil {
+			t.Fatalf("ends at headers=%v: the retry was offered %v, boundary %+v", endsAtHeaders, offered, retried.RaylineARC.PolicyBoundary)
+		}
+	}
+}
