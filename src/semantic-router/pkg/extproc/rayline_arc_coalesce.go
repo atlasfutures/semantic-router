@@ -88,6 +88,12 @@ func (entry *raylineARCInflightEntry) noteRefusal(refusal refusedTurn) bool {
 	if entry.sealed || entry.noHandover {
 		return false
 	}
+	// A route failure's hand-over only clears the boundary, which a pending
+	// refusal of the same decision clears too: it must not replace the
+	// refusal and lose its model exclusion.
+	if pending := entry.refused; pending != nil && pending.exclude != "" && refusal.exclude == "" {
+		return true
+	}
 	entry.refused = &refusal
 	return true
 }
