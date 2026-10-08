@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -109,4 +110,23 @@ func noteCellExclusion(ctx *RequestContext, class string) {
 		"request_id": ctx.RequestID, "worker": worker, "provider_model": providerModel,
 		"failure_class": class, "ttl_seconds": policy.CellExclusionTTL().Seconds(),
 	})
+	clearFailedRouteBoundary(ctx, arm, class)
+}
+
+// clearFailedRouteBoundary clears a retained boundary decision that chose
+// the arm whose route just failed, so the client's retry decides again
+// rather than reusing it (pathfinder docs/arc_fallback_design.md, section
+// 5.1: a transient failure leaves the retained boundary arm unchanged unless
+// excluded, then cleared). A retry within the exclusion would break the hold
+// anyway. One after it, from a client that waits longer than the exclusion
+// lasts, would otherwise be pinned to the failed arm without the policy
+// deciding again, and fail again for as long as the route is limited
+// (semantic-router#241). The turn itself commits nothing, as any failed turn.
+func clearFailedRouteBoundary(ctx *RequestContext, arm int, class string) {
+	if ctx.RaylineARCTransaction == nil {
+		return
+	}
+	clearContext, cancel := context.WithTimeout(context.Background(), episodeFinalizeTimeout)
+	defer cancel()
+	ctx.RaylineARCTransaction.stageRefusal(clearContext, refusedTurn{arm: arm, outcome: class})
 }
