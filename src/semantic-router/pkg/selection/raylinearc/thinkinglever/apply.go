@@ -69,20 +69,29 @@ func ImageToolTail(messages []llmprotocol.Message, wire llmprotocol.WireFormat) 
 	return images && run
 }
 
-// unspoken is an assistant message with no text and no tool call: only
-// reasoning, which the provider adapter may drop on the way to the worker.
-// The detector reads past it, so the turn is judged as the worker may see
-// it; where the adapter keeps it, this refuses more, never less.
+// unspoken is an assistant message holding reasoning and nothing else,
+// which the provider adapter may drop on the way to the worker. The detector
+// reads past it, so the turn is judged as the worker may see it; where the
+// adapter keeps it, this refuses more, never less. Anything the worker reads
+// as the assistant's answer (text, a refusal, a tool call) ends the run.
 func unspoken(message llmprotocol.Message) bool {
-	if message.Role != llmprotocol.RoleAssistant {
+	if message.Role != llmprotocol.RoleAssistant || len(message.Content) == 0 {
 		return false
 	}
 	for _, content := range message.Content {
-		if content.Kind == llmprotocol.ContentToolCall || (content.Kind == llmprotocol.ContentText && content.Text != "") {
+		if content.Kind != llmprotocol.ContentReasoning && !opaqueReasoning(content) {
 			return false
 		}
 	}
 	return true
+}
+
+// opaqueReasoning is an Anthropic thinking block the contract carries whole.
+func opaqueReasoning(content llmprotocol.Content) bool {
+	block := content.Unmodeled
+	return content.Kind == llmprotocol.ContentUnmodeled && block != nil &&
+		block.Format == llmprotocol.AnthropicMessagesV1 &&
+		(block.Type == "redacted_thinking" || block.Type == "thinking")
 }
 
 func carriesImage(content []llmprotocol.Content) bool {

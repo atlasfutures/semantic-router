@@ -327,3 +327,28 @@ func TestTheLeverRefusesASteerAfterAnImageToolResultOnChatAndResponses(t *testin
 		})
 	}
 }
+
+// An assistant refusal answers the image turn, so the next user turn on a
+// Chat worker is steered: only reasoning the adapter may drop is read past.
+func TestTheLeverSteersTheTurnAfterAnAnsweredImageToolResult(t *testing.T) {
+	image := llmprotocol.Message{Role: llmprotocol.RoleTool, Content: []llmprotocol.Content{{
+		Kind: llmprotocol.ContentToolResult, ToolResult: &llmprotocol.ToolResult{CallID: "c1", Content: []llmprotocol.Content{
+			{Kind: llmprotocol.ContentImage, MediaType: "image/png", Data: "iVBORw0KGgo="},
+		}},
+	}}}
+	call := llmprotocol.Message{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{{
+		Kind: llmprotocol.ContentToolCall, ToolCall: &llmprotocol.ToolCall{ID: "c1", Name: "shot", Arguments: "{}"},
+	}}}
+	refusal := llmprotocol.Message{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{
+		{Kind: llmprotocol.ContentRefusal, Text: "I can't help with that."},
+	}}
+	messages := []llmprotocol.Message{leverText(llmprotocol.RoleUser, "go"), call, image, refusal, leverText(llmprotocol.RoleUser, "next")}
+	e := newLeverEpisode(t, true)
+	e.wire = llmprotocol.OpenAIChatV1
+	sent, ctx := e.turn(leverWorker, messages, true)
+	record := map[string]interface{}{}
+	appendRaylineARCThinkingFields(record, ctx)
+	if record["thinking_refused"] != nil || record["thinking_emitted"] != true {
+		t.Fatalf("the answered turn was not steered: %d messages, record %v", len(sent), record)
+	}
+}

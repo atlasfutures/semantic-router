@@ -45,6 +45,20 @@ func reasoningOnly() llmprotocol.Message {
 	}}
 }
 
+func redactedOnly() llmprotocol.Message {
+	return llmprotocol.Message{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{{
+		Kind: llmprotocol.ContentUnmodeled, Unmodeled: &llmprotocol.UnmodeledBlock{
+			Format: llmprotocol.AnthropicMessagesV1, Type: "redacted_thinking", Raw: []byte(`{"type":"redacted_thinking","data":"x"}`),
+		},
+	}}}
+}
+
+func refusal() llmprotocol.Message {
+	return llmprotocol.Message{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{
+		{Kind: llmprotocol.ContentRefusal, Text: "I can't help with that."},
+	}}
+}
+
 func userImage() llmprotocol.Message {
 	return llmprotocol.Message{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{
 		{Kind: llmprotocol.ContentImage, MediaType: "image/png", Data: tinyPNG},
@@ -71,6 +85,9 @@ func TestImageToolTailReadsTheTurnAsTheWorkerWireCarriesIt(t *testing.T) {
 		{"user image, no tool run", []llmprotocol.Message{ask, userImage()}, false, false},
 		// Reasoning alone, which the adapter may drop, does not end the run.
 		{"image result, reasoning, then user text", []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1"), reasoningOnly(), text(llmprotocol.RoleUser, "Colour?")}, true, true},
+		{"image result, redacted thinking, then user text", []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1"), redactedOnly(), text(llmprotocol.RoleUser, "Colour?")}, true, true},
+		// A refusal is the assistant's answer: the image turn is over.
+		{"image result answered with a refusal, then a new ask", []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1"), refusal(), ask}, false, false},
 		{"image result answered, then a new ask", []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1"), text(llmprotocol.RoleAssistant, "Seen."), ask}, false, false},
 	} {
 		if got := ImageToolTail(tc.messages, llmprotocol.OpenAIChatV1); got != tc.chat {
