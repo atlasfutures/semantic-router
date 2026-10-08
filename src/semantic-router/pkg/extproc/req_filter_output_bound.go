@@ -279,7 +279,9 @@ func (r *OpenAIRouter) planDispatchOutputBound(
 	}
 	if minimum := minimumOutputLimit(format); bound < minimum {
 		if limit > 0 && minimum > limit {
-			plan.belowMinimum = outputBoundLeftUnbounded
+			// The cap, not the card, is what kept the bound below the
+			// target's minimum, so it is named.
+			plan.belowMinimum, plan.limitedBy = outputBoundLeftUnbounded, limitFrom
 			return plan
 		}
 		plan.belowMinimum = outputBoundRaisedToMinimum

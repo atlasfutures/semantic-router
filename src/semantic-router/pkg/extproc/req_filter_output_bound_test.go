@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/inflight"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
 )
@@ -534,6 +535,24 @@ func TestCompressionReservesTheUnclampedBound(t *testing.T) {
 	}
 }
 
+// A cap too small to hold the target's minimum leaves the request unbounded
+// and is named for it, so an operator can see which constraint kept the
+// usual minimum from applying.
+func TestDispatchOutputBoundNamesTheCapThatKeptTheMinimumOff(t *testing.T) {
+	t.Parallel()
+	router := &OpenAIRouter{Config: &config.RouterConfig{BackendModels: config.BackendModels{
+		ModelConfig: map[string]config.ModelParams{"m": {MaxOutputTokens: 10}},
+	}}}
+	plan := router.planDispatchOutputBound("m", llmprotocol.OpenAIResponsesV1, 0, nil, 100000, 99988)
+	if plan.maxTokens != 0 || plan.belowMinimum != outputBoundLeftUnbounded || plan.limitedBy != outputBoundLimitedByContext {
+		t.Fatalf("plan = %+v, want unbounded and limited_by context: 12 tokens of room cannot hold the Responses minimum", plan)
+	}
+	plan = router.planDispatchOutputBound("m", llmprotocol.OpenAIResponsesV1, 12, nil, 0, 0)
+	if plan.maxTokens != 0 || plan.limitedBy != outputBoundLimitedByDecision {
+		t.Fatalf("plan = %+v, want unbounded and limited_by decision", plan)
+	}
+}
+
 // A plan that stayed under every cap names no constraint; only a cap that
 // held it does.
 func TestDispatchOutputBoundNamesNoConstraintItStayedUnder(t *testing.T) {
@@ -578,5 +597,24 @@ func TestDispatchOutputBoundFollowsToolSelection(t *testing.T) {
 	})
 	if got := wireOutputLimit(wire); got != "max_completion_tokens=384000" {
 		t.Fatalf("dispatched %q, want the card once the estimate over the dropped tools no longer applies", got)
+	}
+}
+
+// A request the router refuses after it took an inflight slot gives the slot
+// back on the way out, once; left held, the model's count would stay up for
+// good and bias load-aware routing.
+func TestReleaseInflightReturnsTheSlotOnce(t *testing.T) {
+	inflight.Reset()
+	ctx := &RequestContext{RequestModel: "slot-model", InflightToken: inflight.Begin("slot-model")}
+	if got := inflight.Get("slot-model"); got != 1 {
+		t.Fatalf("inflight = %d after Begin, want 1", got)
+	}
+	releaseInflight(ctx)
+	if got := inflight.Get("slot-model"); got != 0 || ctx.InflightToken != 0 {
+		t.Fatalf("inflight = %d, token = %d after release, want 0 and 0", got, ctx.InflightToken)
+	}
+	releaseInflight(ctx)
+	if got := inflight.Get("slot-model"); got != 0 {
+		t.Fatalf("inflight = %d after a second release, want still 0", got)
 	}
 }
