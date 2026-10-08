@@ -178,6 +178,10 @@ type RequestContext struct {
 	// the request was never admitted (rejected pre-selection, cache hit, etc.)
 	// and inflight.End on it is a no-op.
 	InflightToken uint64
+	// InflightModel is the model the token was taken under; the Looper can
+	// move RequestModel to its final model after admission, and a token is
+	// released against the model that issued it.
+	InflightModel string
 
 	// Session-aware transition metadata
 	SessionID           string  // Derived from ConversationID (Response API) or message hash (Chat Completions)

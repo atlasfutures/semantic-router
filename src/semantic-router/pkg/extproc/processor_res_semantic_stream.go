@@ -563,7 +563,7 @@ func (r *OpenAIRouter) finalizeSemanticStreamingResponse(ctx *RequestContext, st
 			metrics.RecordModelCompletionLatency(ctx.RequestModel, completionLatency.Seconds())
 		}
 	}
-	inflight.End(ctx.RequestModel, ctx.InflightToken)
+	inflight.End(ctx.InflightModel, ctx.InflightToken)
 	ctx.InflightToken = 0
 
 	r.classStreamFailure(ctx, semanticResponse, responseErr, streamErr)

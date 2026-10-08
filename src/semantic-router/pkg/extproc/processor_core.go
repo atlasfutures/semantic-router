@@ -433,6 +433,6 @@ func releaseInflight(ctx *RequestContext) {
 	if ctx == nil || ctx.InflightToken == 0 {
 		return
 	}
-	inflight.End(ctx.RequestModel, ctx.InflightToken)
+	inflight.End(ctx.InflightModel, ctx.InflightToken)
 	ctx.InflightToken = 0
 }

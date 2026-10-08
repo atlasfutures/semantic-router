@@ -50,7 +50,12 @@ func thinkingControlOverCapError(plan outputBoundPlan) error {
 // It runs after every other output-allowance rule (request_params cap and
 // floor, a policy action's budget), so it only fills what they left unset.
 // The one limit it revisits is the request_params floor, which is the
-// Router's number: clampCompletionFloor keeps it within the context window.
+// Router's number, not the caller's: a floor over the room the prompt leaves
+// in the context window is held to the room by the same rules as a card
+// limit, thinking budget included, though never below what the caller did
+// state and never under the decision cap, which a floor above wins by
+// design. A floor the window has room for stands, as does one the prompt
+// leaves no room for, as a card limit would.
 //
 // On a v5 turn the planned control owns thinking, so its budget is the one
 // planned. A lowered budget is written to the planned control, which the
@@ -66,21 +71,30 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 	if request == nil || dispatch == nil || ctx == nil {
 		return false, nil
 	}
-	if request.Sampling.MaxOutputTokens != nil {
-		if ctx.DispatchCompletionFloor > 0 {
-			return r.clampCompletionFloor(request, dispatch, ctx)
-		}
-		return false, nil
-	}
 	control := plannedMessagesControl(ctx, dispatch.targetFormat)
 	budget := messagesThinkingBudget(request, dispatch.targetFormat)
 	if control != nil {
 		budget = control.control.BudgetTokens
 	}
-	plan := r.planDispatchOutputBound(
-		dispatch.logicalModel, dispatch.targetFormat, decisionMaxTokensLimit(ctx), budget,
-		int64(r.Config.GetModelContextWindowSize(dispatch.logicalModel)), r.dispatchContextTokens(request, ctx),
-	)
+	window := int64(r.Config.GetModelContextWindowSize(dispatch.logicalModel))
+	var plan outputBoundPlan
+	switch {
+	case request.Sampling.MaxOutputTokens == nil:
+		plan = r.planDispatchOutputBound(
+			dispatch.logicalModel, dispatch.targetFormat, decisionMaxTokensLimit(ctx), budget,
+			window, r.dispatchContextTokens(request, ctx),
+		)
+	case completionFloorToHold(request, ctx) && window > 0:
+		plan = planOutputBound(
+			ctx.DispatchCompletionFloor, outputBoundSourceFloor, dispatch.targetFormat,
+			0, budget, window, r.dispatchContextTokens(request, ctx),
+		)
+		if plan.context != outputBoundClampedToContext {
+			return false, nil
+		}
+	default:
+		return false, nil
+	}
 	if plan.source == "" {
 		return false, nil
 	}
@@ -126,9 +140,26 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 	if plan.maxTokens == 0 {
 		event["max_output_tokens"] = nil
 		logging.ComponentEvent("extproc", "dispatch_output_bound", event)
+		if plan.source == outputBoundSourceFloor {
+			// The target's minimum does not fit beside the prompt, so the
+			// floor goes as a card limit would not have come: the caller's
+			// own allowance, or none, is what is sent.
+			request.Sampling.MaxOutputTokens = request.ClientMaxOutputTokens
+			return true, nil
+		}
 		return false, nil
 	}
 	bound := plan.maxTokens
+	if plan.source == outputBoundSourceFloor {
+		// The floor is lowered, never below what the caller stated.
+		if stated := request.ClientMaxOutputTokens; stated != nil && *stated > bound {
+			bound = *stated
+		}
+		request.Sampling.MaxOutputTokens = &bound
+		event["max_output_tokens"] = bound
+		logging.ComponentEvent("extproc", "dispatch_output_bound", event)
+		return true, nil
+	}
 	request.Sampling.MaxOutputTokens = &bound
 	request.RouterSetMaxOutputTokens = true
 	event["max_output_tokens"] = bound
@@ -136,48 +167,12 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 	return true, nil
 }
 
-// clampCompletionFloor keeps a completion floor the request_params plugin
-// raised the allowance to within the room the prompt leaves in the model's
-// context window. The floor is the Router's number, not the caller's, so
-// unlike a stated limit it may be lowered; it is never lowered below what
-// the caller did state, nor below the target's minimum, and a prompt that
-// leaves no room keeps the floor, as a card limit would. The decision cap
-// does not apply: a floor above it wins by design.
-func (r *OpenAIRouter) clampCompletionFloor(
-	request *llmprotocol.Request,
-	dispatch *providerDispatch,
-	ctx *RequestContext,
-) (bool, error) {
-	window := int64(r.Config.GetModelContextWindowSize(dispatch.logicalModel))
-	if window <= 0 || *request.Sampling.MaxOutputTokens != ctx.DispatchCompletionFloor {
-		return false, nil
-	}
-	plan := planOutputBound(
-		ctx.DispatchCompletionFloor, outputBoundSourceFloor, dispatch.targetFormat,
-		0, nil, window, r.dispatchContextTokens(request, ctx),
-	)
-	if plan.context != outputBoundClampedToContext || plan.maxTokens == 0 {
-		return false, nil
-	}
-	bound := plan.maxTokens
-	if stated := request.ClientMaxOutputTokens; stated != nil && *stated > bound {
-		bound = *stated
-	}
-	if bound >= *request.Sampling.MaxOutputTokens {
-		return false, nil
-	}
-	request.Sampling.MaxOutputTokens = &bound
-	logging.ComponentEvent("extproc", "dispatch_output_bound", map[string]interface{}{
-		"request_id":        ctx.RequestID,
-		"model":             dispatch.logicalModel,
-		"wire_format":       dispatch.targetFormat,
-		"source":            plan.source,
-		"context":           plan.context,
-		"context_room":      plan.contextRoom,
-		"limited_by":        plan.limitedBy,
-		"max_output_tokens": bound,
-	})
-	return true, nil
+// completionFloorToHold reports whether the request's output limit is the
+// floor the request_params plugin raised it to, and so the Router's number
+// to hold within the context window.
+func completionFloorToHold(request *llmprotocol.Request, ctx *RequestContext) bool {
+	return ctx.DispatchCompletionFloor > 0 && request.Sampling.MaxOutputTokens != nil &&
+		*request.Sampling.MaxOutputTokens == ctx.DispatchCompletionFloor
 }
 
 // plannedMessagesControl is this dispatch's v5 control when it renders

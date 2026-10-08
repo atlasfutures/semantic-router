@@ -609,7 +609,9 @@ func TestDispatchOutputBoundFollowsToolSelection(t *testing.T) {
 // good and bias load-aware routing.
 func TestReleaseInflightReturnsTheSlotOnce(t *testing.T) {
 	inflight.Reset()
-	ctx := &RequestContext{RequestModel: "slot-model", InflightToken: inflight.Begin("slot-model")}
+	// The Looper moves RequestModel to its final model after admission; the
+	// slot is given back to the model that issued it.
+	ctx := &RequestContext{RequestModel: "final-model", InflightModel: "slot-model", InflightToken: inflight.Begin("slot-model")}
 	if got := inflight.Get("slot-model"); got != 1 {
 		t.Fatalf("inflight = %d after Begin, want 1", got)
 	}
@@ -662,6 +664,52 @@ func TestDispatchOutputBoundKeepsTheCompletionFloorWithinTheContextRoom(t *testi
 			_, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
 				target: llmprotocol.OpenAIChatV1, card: 0, body: test.body, decision: decision,
 				window: test.window, contextTokens: test.contextTokens,
+			})
+			if got := wireOutputLimit(wire); got != test.want {
+				t.Fatalf("dispatched %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+// A floor on a Messages worker is held beside the thinking budget as a card
+// limit is: a budget the room cannot hold whole is lowered to fit. On a
+// Responses worker, a room too small for the target's minimum removes the
+// floor rather than send it: the caller's own allowance, or none, is sent.
+func TestDispatchOutputBoundHoldsTheCompletionFloorBesideThinkingAndTheMinimum(t *testing.T) {
+	const floor = 8192
+	t.Run("a Messages floor over the room lowers the thinking budget to fit", func(t *testing.T) {
+		logicalModel := "target-" + string(llmprotocol.AnthropicMessagesV1)
+		budget := int64(7000)
+		request, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+			target: llmprotocol.AnthropicMessagesV1, body: unboundedResponsesBody,
+			decision: completionFloorDecision(map[string]interface{}{logicalModel: floor}),
+			window:   15000, contextTokens: 9000,
+			mutate: func(request *llmprotocol.Request) {
+				request.ReasoningMode = llmprotocol.ReasoningModeEnabled
+				request.ReasoningBudgetTokens = &budget
+			},
+		})
+		if got := wireOutputLimit(wire); got != "max_tokens=6000" {
+			t.Fatalf("dispatched %q, want the room of 6000", got)
+		}
+		if request.ReasoningBudgetTokens == nil || *request.ReasoningBudgetTokens != minimumAnthropicThinkingBudget {
+			t.Fatalf("thinking budget = %v, want lowered to %d under the room", request.ReasoningBudgetTokens, minimumAnthropicThinkingBudget)
+		}
+	})
+	logicalModel := "target-" + string(llmprotocol.OpenAIResponsesV1)
+	for name, test := range map[string]struct {
+		body string
+		want string
+	}{
+		"no stated allowance sends none":   {unboundedResponsesBody, ""},
+		"a stated allowance is sent again": {`{"model":"m","input":"write the long tool call","max_output_tokens":512}`, "max_output_tokens=512"},
+	} {
+		t.Run("a Responses floor with room under the minimum: "+name, func(t *testing.T) {
+			_, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+				target: llmprotocol.OpenAIResponsesV1, body: test.body,
+				decision: completionFloorDecision(map[string]interface{}{logicalModel: floor}),
+				window:   10000, contextTokens: 9990,
 			})
 			if got := wireOutputLimit(wire); got != test.want {
 				t.Fatalf("dispatched %q, want %q", got, test.want)

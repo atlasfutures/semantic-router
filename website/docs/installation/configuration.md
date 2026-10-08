@@ -308,8 +308,10 @@ routing:
   `no_context_room`, the room, and `limited_by: decision` or `context`. A
   completion floor the `request_params` plugin raised the allowance to
   (`min_completion_tokens_by_model`) is the Router's number too, so it is
-  held to the room the same way, never below what the caller stated; the
-  event names it `source: floor`.
+  held to the room the same way, thinking budget included, never below what
+  the caller stated; a room under the target's minimum removes the floor
+  and sends the caller's own allowance, or none. The event names it
+  `source: floor`.
 - **Context compression reserves the limit.** Context compression runs before
   dispatch. It keeps the Router's limit free in the model's
   `context_window_size`, so a prompt near the window is compressed instead of
