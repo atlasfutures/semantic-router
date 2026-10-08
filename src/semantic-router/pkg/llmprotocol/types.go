@@ -142,8 +142,10 @@ type Message struct {
 	// messages cannot carry images, the images are moved into user messages
 	// after the run, and this message travels as trailing parts of the last
 	// of them rather than as a user message of its own, which a model reads
-	// as the user's turn (ADR 0129). No decoder sets it.
-	JoinsToolMedia bool
+	// as the user's turn (ADR 0129). No decoder sets it. It is omitted from
+	// JSON when unset, so the cache identity of every request without it is
+	// what it was before the field existed.
+	JoinsToolMedia bool `json:",omitempty"`
 }
 
 // ConfigurationUpdate is a mid-conversation settings change. Only the
