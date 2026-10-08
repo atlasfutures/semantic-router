@@ -20,6 +20,15 @@ import (
 
 // handleToolSelectionForRequest handles tool selection for the request.
 func (r *OpenAIRouter) handleToolSelectionForRequest(request *llmprotocol.Request, response *ext_proc.ProcessingResponse, ctx *RequestContext) {
+	// Every tool rewrite advances the generation; the output bound reads
+	// the flag to measure the prompt afresh rather than trust an estimate
+	// made over the tools the client sent.
+	before := request.Generation
+	defer func() {
+		if request.Generation != before {
+			ctx.ToolSelectionRewroteTools = true
+		}
+	}()
 	fast := extractSemanticRequestSignals(request)
 	if err := r.handleToolSelection(request, fast.UserContent, fast.NonUserMessages, &response, ctx); err != nil {
 		logging.Errorf("Error in tool selection: %v", err)

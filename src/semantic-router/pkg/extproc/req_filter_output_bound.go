@@ -162,56 +162,18 @@ const (
 // fresh count of the request as it stands now. The estimate was made before
 // a stored Responses history or a memory retrieval was prepended, so a room
 // computed from it alone could leave a limit the provider refuses. Once
-// context compression has run the estimate describes a prompt that no
-// longer exists, so the fresh count stands alone.
+// context compression or tool selection has rewritten the prompt the
+// estimate describes one that no longer exists, so the fresh count stands
+// alone.
 func dispatchContextTokens(request *llmprotocol.Request, ctx *RequestContext) int64 {
 	var fresh int64
 	if request != nil {
 		fresh = int64(extractSemanticRequestSignals(request).ContextTokenFloor)
 	}
-	if ctx.ContextCompressionApplied {
+	if ctx.ContextCompressionApplied || ctx.ToolSelectionRewroteTools {
 		return fresh
 	}
 	return max(int64(ctx.VSRContextTokenCount), fresh)
-}
-
-// reclampDispatchOutputBound lowers a limit the router set when the prompt
-// grew after it was planned. Semantic tool selection runs after dispatch is
-// prepared and can replace the tools with larger retrieved definitions, so
-// the room is measured once more on the request about to be encoded. The
-// limit only ever goes down here, never below the target's minimum or, on
-// Messages, below the thinking budget the limit must exceed; a prompt that
-// leaves no room is left as planned, for the reason planDispatchOutputBound
-// gives.
-func (r *OpenAIRouter) reclampDispatchOutputBound(request *llmprotocol.Request, dispatch *providerDispatch, ctx *RequestContext) {
-	if r == nil || r.Config == nil || request == nil || dispatch == nil || ctx == nil ||
-		!request.RouterSetMaxOutputTokens || request.Sampling.MaxOutputTokens == nil {
-		return
-	}
-	window := int64(r.Config.GetModelContextWindowSize(dispatch.logicalModel))
-	if window <= 0 {
-		return
-	}
-	room := window - dispatchContextTokens(request, ctx)
-	if room <= 0 || *request.Sampling.MaxOutputTokens <= room {
-		return
-	}
-	floor := minimumOutputLimit(dispatch.targetFormat)
-	if dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 && request.ReasoningBudgetTokens != nil {
-		floor = max(floor, *request.ReasoningBudgetTokens+1)
-	}
-	lowered := max(room, floor)
-	logging.ComponentEvent("extproc", "dispatch_output_bound", map[string]interface{}{
-		"request_id":        ctx.RequestID,
-		"model":             dispatch.logicalModel,
-		"wire_format":       dispatch.targetFormat,
-		"source":            "reclamp",
-		"context":           outputBoundClampedToContext,
-		"context_room":      room,
-		"max_output_tokens": lowered,
-		"was":               *request.Sampling.MaxOutputTokens,
-	})
-	request.Sampling.MaxOutputTokens = &lowered
 }
 
 // How a planned bound met a Messages thinking budget, as logged.

@@ -44,15 +44,19 @@ func TestDispatchOutputBoundPlansTheV5ControlBudget(t *testing.T) {
 			request := testNeutralRequest(model, "hi")
 			request.Sampling.MaxOutputTokens = test.stated
 			ctx.SemanticRequest = request
-			_, err := router.prepareProviderDispatch(request, model, "", false, ctx)
+			dispatch, err := router.prepareProviderDispatch(request, model, "", false, ctx)
+			if err != nil {
+				t.Fatalf("dispatch: %v", err)
+			}
+			_, err = router.boundDispatchRequest(request, dispatch, ctx)
 			if test.wantErr {
 				if !errors.Is(err, errThinkingControlOverCap) {
-					t.Fatalf("dispatch = %v, want the over-cap refusal", err)
+					t.Fatalf("bound = %v, want the over-cap refusal", err)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("dispatch: %v", err)
+				t.Fatalf("bound: %v", err)
 			}
 			if got := request.Sampling.MaxOutputTokens; got == nil || *got != test.wantTokens {
 				t.Fatalf("max_tokens = %v, want %d", got, test.wantTokens)
@@ -100,8 +104,12 @@ func TestCompressionReserveMatchesDispatchWithAPolicyAction(t *testing.T) {
 			ctx.SemanticRequest = request
 
 			reserve := router.compressionOutputReserve(model, ctx, request)
-			if _, err := router.prepareProviderDispatch(request, model, decision.Name, true, ctx); err != nil {
+			dispatch, err := router.prepareProviderDispatch(request, model, decision.Name, true, ctx)
+			if err != nil {
 				t.Fatalf("dispatch: %v", err)
+			}
+			if _, err := router.boundDispatchRequest(request, dispatch, ctx); err != nil {
+				t.Fatalf("bound: %v", err)
 			}
 			sent := request.Sampling.MaxOutputTokens
 			if sent == nil || *sent != reserve {

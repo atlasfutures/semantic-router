@@ -24,6 +24,9 @@ type dispatchOutputBoundCase struct {
 	// request's token estimate, both zero unless a test sets them.
 	window        int
 	contextTokens int
+	// afterDispatch runs between dispatch preparation and the encode, where
+	// tool selection runs on the real path.
+	afterDispatch func(*llmprotocol.Request, *RequestContext)
 }
 
 func dispatchWithOutputBound(t *testing.T, test dispatchOutputBoundCase) (*llmprotocol.Request, map[string]json.RawMessage) {
@@ -45,16 +48,23 @@ func dispatchWithOutputBound(t *testing.T, test dispatchOutputBoundCase) (*llmpr
 	if test.mutate != nil {
 		test.mutate(request)
 	}
-	if _, err := router.prepareProviderDispatch(request, logicalModel, "", false, ctx); err != nil {
+	dispatch, err := router.prepareProviderDispatch(request, logicalModel, "", false, ctx)
+	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	encoded, err := router.encodeDispatchRequest(ctx)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
+	if test.afterDispatch != nil {
+		test.afterDispatch(request, ctx)
 	}
+	// Through finalize, as the real path goes: the output limit is planned
+	// there, on the request as it is encoded.
+	response, err := router.finalizeProviderDispatchResponse(dispatch, router.buildProviderDispatchResponse(dispatch, ctx), ctx)
+	if err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+	encoded := response.GetRequestBody().GetResponse().GetBodyMutation().GetBody()
 	var wire map[string]json.RawMessage
 	if err := json.Unmarshal(encoded, &wire); err != nil {
-		t.Fatal(err)
+		t.Fatalf("decode dispatch body %q: %v", encoded, err)
 	}
 	return request, wire
 }
@@ -318,8 +328,12 @@ func TestDispatchOutputBoundTakesALoRAAdaptersBaseCard(t *testing.T) {
 	if immediate != nil || request == nil {
 		t.Fatalf("ingress refused: %+v", ctx.ImmediateProtocolError)
 	}
-	if _, err := router.prepareProviderDispatch(request, "sql-adapter", "", false, ctx); err != nil {
+	dispatch, err := router.prepareProviderDispatch(request, "sql-adapter", "", false, ctx)
+	if err != nil {
 		t.Fatalf("dispatch: %v", err)
+	}
+	if _, err := router.boundDispatchRequest(request, dispatch, ctx); err != nil {
+		t.Fatalf("bound: %v", err)
 	}
 	encoded, err := router.encodeDispatchRequest(ctx)
 	if err != nil {
@@ -490,37 +504,37 @@ func TestDispatchOutputBoundNamesNoConstraintItStayedUnder(t *testing.T) {
 	}
 }
 
-// Semantic tool selection runs after the limit is planned and can replace
-// the tools with larger retrieved definitions. The limit is measured once
-// more before encoding and only lowered, never raised, never below the
-// target's minimum or a Messages thinking budget.
-func TestDispatchOutputBoundIsReclampedAfterToolSelection(t *testing.T) {
-	t.Parallel()
-	router := &OpenAIRouter{Config: &config.RouterConfig{BackendModels: config.BackendModels{
-		ModelConfig: map[string]config.ModelParams{"m": {ContextWindowSize: 1000000}},
-	}}}
-	limit := int64(384000)
-	request := testNeutralRequest("auto", "hi")
-	request.Sampling.MaxOutputTokens, request.RouterSetMaxOutputTokens = &limit, true
-	request.Tools = []llmprotocol.Tool{{Name: "retrieved", Description: strings.Repeat("schema ", 500000)}}
-	ctx := &RequestContext{VSRContextTokenCount: 100}
-	dispatch := &providerDispatch{logicalModel: "m", targetFormat: llmprotocol.OpenAIChatV1}
-	router.reclampDispatchOutputBound(request, dispatch, ctx)
-	if *request.Sampling.MaxOutputTokens >= 384000 {
-		t.Fatalf("limit = %d, want lowered by the retrieved tools", *request.Sampling.MaxOutputTokens)
+// Semantic tool selection runs after dispatch is prepared and can replace
+// the tools with larger or smaller retrieved definitions. The limit is
+// planned on the request as it is encoded, so it follows the tools in both
+// directions: a prompt that grew gets a smaller limit, and a prompt that
+// shrank is not held to an estimate made over tools it no longer carries.
+func TestDispatchOutputBoundFollowsToolSelection(t *testing.T) {
+	grown := func(request *llmprotocol.Request, ctx *RequestContext) {
+		request.Tools = []llmprotocol.Tool{{Name: "retrieved", Description: strings.Repeat("schema ", 100000), InputSchema: json.RawMessage(`{"type":"object"}`)}}
+		request.Generation++
+		ctx.ToolSelectionRewroteTools = true
 	}
-	// A caller's own limit is never touched.
-	caller := int64(384000)
-	request.Sampling.MaxOutputTokens, request.RouterSetMaxOutputTokens = &caller, false
-	router.reclampDispatchOutputBound(request, dispatch, ctx)
-	if *request.Sampling.MaxOutputTokens != 384000 {
-		t.Fatalf("a caller's limit was lowered to %d", *request.Sampling.MaxOutputTokens)
+	_, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+		target: llmprotocol.OpenAIChatV1, card: 200000, body: unboundedResponsesBody,
+		window: 300000, contextTokens: 100, afterDispatch: grown,
+	})
+	var limit int64
+	if got := wireOutputLimit(wire); true {
+		if _, err := fmt.Sscanf(got, "max_completion_tokens=%d", &limit); err != nil || limit >= 200000 {
+			t.Fatalf("dispatched %q, want a limit clamped below the card by the retrieved tools", got)
+		}
 	}
-	// On Messages the limit stays above the thinking budget it must exceed.
-	budget := int64(300000)
-	request.Sampling.MaxOutputTokens, request.RouterSetMaxOutputTokens, request.ReasoningBudgetTokens = &limit, true, &budget
-	router.reclampDispatchOutputBound(request, &providerDispatch{logicalModel: "m", targetFormat: llmprotocol.AnthropicMessagesV1}, ctx)
-	if *request.Sampling.MaxOutputTokens <= budget {
-		t.Fatalf("limit = %d, want above the %d budget", *request.Sampling.MaxOutputTokens, budget)
+	shrunk := func(request *llmprotocol.Request, ctx *RequestContext) {
+		request.Tools = nil
+		request.Generation++
+		ctx.ToolSelectionRewroteTools = true
+	}
+	_, wire = dispatchWithOutputBound(t, dispatchOutputBoundCase{
+		target: llmprotocol.OpenAIChatV1, card: 384000, body: unboundedResponsesBody,
+		window: 1000000, contextTokens: 900000, afterDispatch: shrunk,
+	})
+	if got := wireOutputLimit(wire); got != "max_completion_tokens=384000" {
+		t.Fatalf("dispatched %q, want the card once the estimate over the dropped tools no longer applies", got)
 	}
 }

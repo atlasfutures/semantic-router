@@ -203,22 +203,33 @@ func (r *OpenAIRouter) prepareProviderRequest(
 	if err != nil {
 		return false, err
 	}
-	// A request that states no output limit gets the worker's card value,
-	// or on Messages the fallback, after request_params has capped or
-	// dropped what the caller sent.
-	bounded, err := r.applyDispatchOutputBound(request, dispatch, ctx)
+	// The output limit for a request that states none is planned in
+	// finalizeProviderDispatchResponse, on the request as it is encoded:
+	// tool selection runs between here and there and can change the
+	// prompt's size, which the limit is measured against.
+	return paramsChanged || changed, nil
+}
+
+// boundDispatchRequest sets the output limit of a request that states none
+// (the worker's card value, or on Messages the fallback, within the decision's
+// cap and the room the prompt leaves in the model's window), then keeps a
+// Messages request's limit above a planned v5 thinking budget. It runs on
+// the request about to be encoded, after request_params and tool selection,
+// so the prompt it measures is the prompt the provider receives. It reports
+// whether the request changed, which retires the client's own bytes as the
+// dispatch body.
+func (r *OpenAIRouter) boundDispatchRequest(request *llmprotocol.Request, dispatch *providerDispatch, ctx *RequestContext) (bool, error) {
+	changed, err := r.applyDispatchOutputBound(request, dispatch, ctx)
 	if err != nil {
 		return false, err
 	}
-	paramsChanged = bounded || paramsChanged
-	// After request_params and the output bound: Messages needs room above
-	// a v5 control's thinking budget. A request with no limit of its own
-	// already has that room (the output bound plans the control's budget),
-	// so this raises only a limit the caller stated.
+	// A request with no limit of its own already has room above the budget,
+	// since the output bound plans it; this raises only a limit the caller
+	// stated.
 	if planned := ctx.RaylineARCThinkingControl; planned != nil && dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 {
-		paramsChanged = raiseMessagesAllowance(request, planned.control.BudgetTokens) || paramsChanged
+		changed = raiseMessagesAllowance(request, planned.control.BudgetTokens) || changed
 	}
-	return paramsChanged || changed, nil
+	return changed, nil
 }
 
 func (r *OpenAIRouter) applyDispatchDecision(
@@ -350,9 +361,15 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	// Marked here, where every dispatch path -- routed and external gateway
 	// -- meets, so no path builds a dispatch the rule does not see.
 	ctx.DispatchAutoCache = r.claudeAutoCacheDispatch(dispatch, ctx)
-	// Tool selection may have grown the prompt since the output limit was
-	// planned; the last look at the request before it is encoded.
-	r.reclampDispatchOutputBound(ctx.SemanticRequest, dispatch, ctx)
+	bounded, err := r.boundDispatchRequest(ctx.SemanticRequest, dispatch, ctx)
+	if err != nil {
+		metrics.RecordRequestError(dispatch.logicalModel, "output_bound_error")
+		return nil, status.Errorf(codes.Internal, "bound provider request: %v", err)
+	}
+	if bounded {
+		// The client's bytes no longer describe the dispatch request.
+		ctx.SemanticRequest.Generation++
+	}
 	body, err := r.encodeDispatchRequest(ctx)
 	if err != nil {
 		metrics.RecordRequestError(dispatch.logicalModel, "serialization_error")

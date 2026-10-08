@@ -58,15 +58,19 @@ type RequestContext struct {
 	CacheWriteBypass              bool
 	CacheMaxAgeSeconds            *int
 	CacheWriteTTLSeconds          *int
-	ContextCompressionApplied     bool
-	ContextCompressionBefore      int
-	ContextCompressionAfter       int
-	ContextCompressionMessages    int
-	ContextCompressionFormat      string
-	ContextCompressionOmitted     int
-	ContextCompressionSkipReason  string
-	StartTime                     time.Time
-	ProcessingStartTime           time.Time
+	// ToolSelectionRewroteTools records that tool selection replaced the
+	// tools the client sent, so the prompt's size is no longer what the
+	// routing estimate measured.
+	ToolSelectionRewroteTools    bool
+	ContextCompressionApplied    bool
+	ContextCompressionBefore     int
+	ContextCompressionAfter      int
+	ContextCompressionMessages   int
+	ContextCompressionFormat     string
+	ContextCompressionOmitted    int
+	ContextCompressionSkipReason string
+	StartTime                    time.Time
+	ProcessingStartTime          time.Time
 	// Streaming detection
 	ExpectStreamingResponse bool // set from request Accept header or stream parameter
 	IsStreamingResponse     bool // set from response Content-Type
