@@ -21,7 +21,6 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
-	"sort"
 	"sync"
 )
 
@@ -180,6 +179,10 @@ func loadCell(raw *value, controls map[string]Control) (*Cell, error) {
 				return nil, refuse("%s: image_tool_tail.task_fidelity names its evidence", where)
 			}
 		}
+		// ADR 0129 task fidelity is a live verifier result.
+		if basis := raw.get("basis"); basis == nil || !basis.isString() || basis.str != "live" {
+			return nil, refuse("%s: image_tool_tail admits only on a live row; ADR 0129 task fidelity is a live verifier result", where)
+		}
 		cell.ImageToolTailAdmitted = true
 	}
 	ids := raw.get("controls")
@@ -220,26 +223,6 @@ func loadCell(raw *value, controls map[string]Control) (*Cell, error) {
 		cell.baseWire[m.key] = m.val
 	}
 	return cell, nil
-}
-
-// InForceControl is the id of the cell's control at level that shares
-// drawn's base, budget and rule set: the control a provider sees after a
-// call whose own write was refused (ADR 0129), which is not the drawn one.
-func (r *Registry) InForceControl(cell *Cell, drawn Control, level string) (string, bool) {
-	ids := make([]string, 0, len(cell.controls))
-	for id := range cell.controls {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		control := r.controls[id]
-		if control.Native == drawn.Native && sameBudget(control.BudgetTokens, drawn.BudgetTokens) &&
-			control.Instruction != nil && drawn.Instruction != nil && control.Instruction.Level == level &&
-			sameRules(control.Instruction, drawn.Instruction) {
-			return id, true
-		}
-	}
-	return "", false
 }
 
 func sameKeys(obj *value, keys map[string]bool) bool {

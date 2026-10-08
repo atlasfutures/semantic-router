@@ -42,6 +42,13 @@ const (
 		`{"role":"user","content":[{"type":"text","text":"[images returned by tool call c1]"},{"type":"image_url","image_url":{"url":"` + tailPNG + `"}}]}`
 	chatTextRun = `{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"Read","arguments":"{}"}}]},` +
 		`{"role":"tool","tool_call_id":"c1","content":"README.md"}`
+	// A Responses codec that hoists the image into a user item after a
+	// text-only output (pathfinder #3996 round 2), and a text-only run.
+	responsesHoistedImageRun = `{"type":"function_call","call_id":"c1","name":"shell","arguments":"{}"},` +
+		`{"type":"function_call_output","call_id":"c1","output":"shot.png"},` +
+		`{"type":"message","role":"user","content":[{"type":"input_image","image_url":"` + tailPNG + `"}]}`
+	responsesTextRun = `{"type":"function_call","call_id":"c1","name":"shell","arguments":"{}"},` +
+		`{"type":"function_call_output","call_id":"c1","output":"ok"}`
 	responsesImageRun = `{"type":"function_call","call_id":"c1","name":"shell","arguments":"{}"},` +
 		`{"type":"function_call_output","call_id":"c1","output":[{"type":"input_text","text":"shot.png"},{"type":"input_image","image_url":"` + tailPNG + `"}]}`
 )
@@ -85,6 +92,8 @@ func TestASteerAfterAnImageToolResultIsRefusedWithoutTaskFidelityEvidence(t *tes
 		{"chat image run then user text", FormatChat, chatImageRun + `,{"role":"user","content":"What colour?"}`, true},
 		{"chat text run", FormatChat, chatTextRun, false},
 		{"responses image run", FormatResponses, responsesImageRun, true},
+		{"responses image hoisted into a user item", FormatResponses, responsesHoistedImageRun, true},
+		{"responses text run", FormatResponses, responsesTextRun, false},
 	} {
 		for _, admitted := range []bool{false, true} {
 			key, first, none, up := "messages", `{"role":"user","content":"Read it."}`, glmChatNone, glmChatUp
@@ -184,13 +193,16 @@ func TestAStateNamesOnlyTheImageToolTailRefusal(t *testing.T) {
 // refused, never ignored.
 func TestTheRegistryAdmitsImageToolTailEvidenceOnlyOnAChatOrResponsesCell(t *testing.T) {
 	for _, tc := range []struct {
-		name, format, evidence string
-		ok                     bool
+		name, format, evidence, basis string
+		ok                            bool
 	}{
-		{"chat", FormatChat, `{"task_fidelity":["doc:docs/history/x.md"]}`, true},
-		{"messages", FormatMessages, `{"task_fidelity":["doc:docs/history/x.md"]}`, false},
-		{"empty", FormatChat, `{"task_fidelity":[]}`, false},
-		{"another key", FormatChat, `{"verifier":["x"]}`, false},
+		{"chat", FormatChat, `{"task_fidelity":["doc:docs/history/x.md"]}`, "live", true},
+		{"messages", FormatMessages, `{"task_fidelity":["doc:docs/history/x.md"]}`, "live", false},
+		{"empty", FormatChat, `{"task_fidelity":[]}`, "live", false},
+		{"another key", FormatChat, `{"verifier":["x"]}`, "live", false},
+		// ADR 0129 task fidelity is a live verifier result (pathfinder #3996).
+		{"replay row", FormatChat, `{"task_fidelity":["doc:docs/history/x.md"]}`, "replay", false},
+		{"no basis", FormatChat, `{"task_fidelity":["doc:docs/history/x.md"]}`, "", false},
 	} {
 		parsed, err := parseJSON(embeddedArtifact)
 		if err != nil {
@@ -211,6 +223,11 @@ func TestTheRegistryAdmitsImageToolTailEvidenceOnlyOnAChatOrResponsesCell(t *tes
 			t.Fatalf("%s: no glm-5.3-flash openrouter cell", tc.name)
 		}
 		target.set("image_tool_tail", evidence)
+		if tc.basis == "" {
+			target.set("basis", nullValue())
+		} else {
+			target.set("basis", stringValue(tc.basis))
+		}
 		tampered, err := jcs(parsed)
 		if err != nil {
 			t.Fatal(err)
@@ -267,22 +284,23 @@ func TestEveryRefusedImageToolTailGoldenHasItsEvidencedTwin(t *testing.T) {
 	}
 }
 
-// A refused call is attributed to the control the provider still sees: the
-// drawn control's base, budget and rules at the level in force.
-func TestARefusedCallsControlInForceIsTheEarlierLevels(t *testing.T) {
-	reg, err := Embedded()
+// A refused call keeps the drawn control in its receipt: the label is the
+// policy's action, and what the provider saw is the level in force beside
+// the refusal (pathfinder ADR 0129). A byte-identical retry repeats both.
+func TestARefusedCallKeepsTheDrawnControl(t *testing.T) {
+	placer, err := NewPlacer(FormatChat)
 	if err != nil {
 		t.Fatal(err)
 	}
-	up := registryControl(t, glmChatUp)
-	cell, err := reg.Admit("z-ai/glm-5.3-flash", "openrouter", FormatChat, *up, true)
-	if err != nil {
-		t.Fatal(err)
+	first := `{"role":"user","content":"Read it."}`
+	placeBody(t, placer, `{"messages":[`+first+`]}`, registryControl(t, glmChatNone), false)
+	refusedBody := `{"messages":[` + first + `,` + chatImageRun + `]}`
+	_, receipt := placeBody(t, placer, refusedBody, registryControl(t, glmChatUp), false)
+	if receipt.Refused == nil || receipt.ControlID != glmChatUp || *receipt.LevelInForce != InstructionNone || receipt.Written != nil {
+		t.Fatalf("refused receipt %+v, want the drawn control %s at level none, nothing written", receipt, prefix12(glmChatUp))
 	}
-	if id, ok := reg.InForceControl(cell, *up, InstructionNone); !ok || id != glmChatNone {
-		t.Fatalf("control in force at none = %s %v, want %s", prefix12(id), ok, prefix12(glmChatNone))
-	}
-	if id, ok := reg.InForceControl(cell, *up, "up"); !ok || id != glmChatUp {
-		t.Fatalf("control in force at up = %s %v, want the drawn control", prefix12(id), ok)
+	_, retry := placeBody(t, placer, refusedBody, registryControl(t, glmChatUp), false)
+	if !retry.Retry || retry.Refused == nil || retry.ControlID != glmChatUp {
+		t.Fatalf("retry receipt %+v, want the drawn control and the refusal repeated", retry)
 	}
 }

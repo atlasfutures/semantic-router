@@ -79,9 +79,11 @@ func TestImageToolTailReadsTheTurnAsTheWorkerWireCarriesIt(t *testing.T) {
 		{"image result then user text", []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1"), text(llmprotocol.RoleUser, "Colour?")}, true, true},
 		{"mixed run", []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1"), textResult("c2")}, true, true},
 		{"text result", []llmprotocol.Message{ask, toolCall("c1"), textResult("c1")}, false, false},
-		// On Chat a user's own image after a tool run is indistinguishable
-		// from a hoisted one; Responses reads only the tool output.
-		{"user image after a text result", []llmprotocol.Message{ask, toolCall("c1"), textResult("c1"), userImage()}, true, false},
+		// A user image after a tool run counts on both wires: on Chat it is
+		// indistinguishable from a hoisted one, and a Responses codec may
+		// hoist one into a user item after the outputs (pathfinder #3996
+		// round 2).
+		{"user image after a text result", []llmprotocol.Message{ask, toolCall("c1"), textResult("c1"), userImage()}, true, true},
 		{"user image, no tool run", []llmprotocol.Message{ask, userImage()}, false, false},
 		// Reasoning alone, which the adapter may drop, does not end the run.
 		{"image result, reasoning, then user text", []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1"), reasoningOnly(), text(llmprotocol.RoleUser, "Colour?")}, true, true},
@@ -118,6 +120,12 @@ func TestASteeringSuffixAfterAnImageToolTailIsRefused(t *testing.T) {
 	if plan.Refused != RefusedImageToolTail || plan.Emitted || len(plan.Next.Entries) != 0 || plan.LevelInForce != "none" {
 		t.Fatalf("plan = refused %q emitted %v entries %d level %q; want the refusal, nothing written, none in force",
 			plan.Refused, plan.Emitted, len(plan.Next.Entries), plan.LevelInForce)
+	}
+	// The refused turn stays attributed to the drawn control, the policy's
+	// action (pathfinder ADR 0129).
+	up, _ := binding.Level("up")
+	if drawn := binding.ControlSHA256(up); plan.ControlInForce != drawn {
+		t.Fatalf("refused turn attributed to %q, want the drawn control %q", plan.ControlInForce, drawn)
 	}
 	later := append(append([]llmprotocol.Message(nil), messages...),
 		text(llmprotocol.RoleAssistant, "Seen."), text(llmprotocol.RoleUser, "Next."))

@@ -521,8 +521,8 @@ func carriesImage(content *value, format string) bool {
 
 // imageToolTail reports whether the governed turn's tool run carried an
 // image (ADR 0129): on Chat, image user messages (the hoisted images, then
-// any user text) after a tool run; on Responses, a tool output carrying an
-// input_image. Messages keeps an image inside its tool_result and is not
+// any user text) after a tool run; on Responses, a tool output run whose
+// outputs, or a user item after them, carry an input_image. Messages keeps an image inside its tool_result and is not
 // governed by this rule.
 func imageToolTail(units []*value, tail int, format string) bool {
 	if _, governed := imageParts[format]; !governed {
@@ -538,14 +538,19 @@ func imageToolTail(units []*value, tail int, format string) bool {
 		}
 		return images && position >= 0 && isToolResult(units[position], format)
 	}
+	// Responses: images in the outputs themselves, or in a user item after
+	// them, where a codec hoists one.
 	for position >= 0 && isUserMessage(units[position], format) {
+		images = images || carriesImage(units[position].get("content"), format)
 		position--
 	}
+	run := false
 	for position >= 0 && isToolResult(units[position], format) {
 		images = images || carriesImage(units[position].get("output"), format)
+		run = true
 		position--
 	}
-	return images
+	return images && run
 }
 
 func roleOf(unit *value) string {

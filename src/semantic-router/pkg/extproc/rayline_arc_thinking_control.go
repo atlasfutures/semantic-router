@@ -189,8 +189,8 @@ func (planned *plannedThinkingControl) render(body []byte, ctx *RequestContext) 
 	return rendered, nil
 }
 
-// thinkingControlTrace attributes the call with the control in force and
-// what the model can see (ADR 0109 decision 4). The requested level is the
+// thinkingControlTrace attributes the call with the drawn control and what
+// the model can see (ADR 0109 decision 4). The requested level is the
 // policy's; the level in force is the receipt's, which a refused write
 // (ADR 0129) leaves at the earlier one.
 func thinkingControlTrace(
@@ -212,12 +212,10 @@ func thinkingControlTrace(
 		trace.LevelInForce = *receipt.LevelInForce
 	}
 	if receipt.Refused != nil {
-		// The drawn control never reached the provider; attribute the call
-		// to the one that did, or to none rather than to the drawn one.
-		trace.Refused, trace.ControlInForce = *receipt.Refused, ""
-		if registry, err := thinkingcontrol.Embedded(); err == nil && receipt.LevelInForce != nil {
-			trace.ControlInForce, _ = registry.InForceControl(cell, control, *receipt.LevelInForce)
-		}
+		// A refused call stays attributed to the drawn control: the label is
+		// the policy's action. What the provider saw is the level in force
+		// beside the refusal (pathfinder ADR 0129's receipt).
+		trace.Refused = *receipt.Refused
 	}
 	if receipt.InstructionState != nil {
 		trace.InstructionState = *receipt.InstructionState
