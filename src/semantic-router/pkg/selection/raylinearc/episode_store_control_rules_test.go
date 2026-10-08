@@ -58,3 +58,29 @@ func TestStoredControlPlacementRefusesAnUnknownRuleSet(t *testing.T) {
 		}
 	}
 }
+
+// A stored episode keeps the previous call's ADR 0129 refusal, so a retry
+// reloaded from the store repeats it rather than reporting nothing refused.
+func TestStoredControlPlacementKeepsTheRefusal(t *testing.T) {
+	anchor, previous, refused := thinkingcontrol.Anchor{Index: 0, Digest: "d"}, "c", thinkingcontrol.RefusedImageToolTail
+	first := thinkingcontrol.Control{Native: "default", Instruction: &thinkingcontrol.Instruction{}}
+	placements := []ControlPlacement{{Key: "k", State: thinkingcontrol.PlacerState{
+		Format: thinkingcontrol.FormatChat, First: &first, Ledger: []thinkingcontrol.LedgerItem{},
+		PreviousAnchor: &anchor, PreviousControl: &previous, PreviousRefused: &refused, Calls: 1,
+	}}}
+	raw, err := json.Marshal(controlPlacementsToWire(placements))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wires []episodeControlWire
+	if err = json.Unmarshal(raw, &wires); err != nil {
+		t.Fatal(err)
+	}
+	back, err := controlPlacementsFromWire(wires)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := back[0].State.PreviousRefused; got == nil || *got != refused {
+		t.Fatalf("stored refusal came back as %v", got)
+	}
+}

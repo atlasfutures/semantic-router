@@ -212,7 +212,12 @@ func thinkingControlTrace(
 		trace.LevelInForce = *receipt.LevelInForce
 	}
 	if receipt.Refused != nil {
-		trace.Refused = *receipt.Refused
+		// The drawn control never reached the provider; attribute the call
+		// to the one that did, or to none rather than to the drawn one.
+		trace.Refused, trace.ControlInForce = *receipt.Refused, ""
+		if registry, err := thinkingcontrol.Embedded(); err == nil && receipt.LevelInForce != nil {
+			trace.ControlInForce, _ = registry.InForceControl(cell, control, *receipt.LevelInForce)
+		}
 	}
 	if receipt.InstructionState != nil {
 		trace.InstructionState = *receipt.InstructionState

@@ -39,6 +39,12 @@ func textResult(id string) llmprotocol.Message {
 	}}}
 }
 
+func reasoningOnly() llmprotocol.Message {
+	return llmprotocol.Message{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{
+		{Kind: llmprotocol.ContentReasoning, Text: "thinking"},
+	}}
+}
+
 func userImage() llmprotocol.Message {
 	return llmprotocol.Message{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{
 		{Kind: llmprotocol.ContentImage, MediaType: "image/png", Data: tinyPNG},
@@ -63,6 +69,8 @@ func TestImageToolTailReadsTheTurnAsTheWorkerWireCarriesIt(t *testing.T) {
 		// from a hoisted one; Responses reads only the tool output.
 		{"user image after a text result", []llmprotocol.Message{ask, toolCall("c1"), textResult("c1"), userImage()}, true, false},
 		{"user image, no tool run", []llmprotocol.Message{ask, userImage()}, false, false},
+		// Reasoning alone, which the adapter may drop, does not end the run.
+		{"image result, reasoning, then user text", []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1"), reasoningOnly(), text(llmprotocol.RoleUser, "Colour?")}, true, true},
 		{"image result answered, then a new ask", []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1"), text(llmprotocol.RoleAssistant, "Seen."), ask}, false, false},
 	} {
 		if got := ImageToolTail(tc.messages, llmprotocol.OpenAIChatV1); got != tc.chat {
@@ -122,5 +130,27 @@ func TestOnlyAWriteOfTheSteeringSuffixIsRefused(t *testing.T) {
 	})
 	if err != nil || plan.Refused != "" || !plan.Emitted {
 		t.Fatalf("the effort lever: refused %q emitted %v, err %v", plan.Refused, plan.Emitted, err)
+	}
+}
+
+// A full ledger cannot write either way; it reports itself, not the image
+// refusal.
+func TestAFullLedgerIsReportedBeforeTheImageRefusal(t *testing.T) {
+	binding := suffixBinding(EmitOnChange, "none")
+	ask := text(llmprotocol.RoleUser, "Read it.")
+	first, err := PlanTurn(Turn{Binding: binding, Messages: Messages([]llmprotocol.Message{ask}), TurnIndex: 1, Requested: "down", MaxEntries: 1})
+	if err != nil || !first.Emitted {
+		t.Fatalf("first turn emitted %v, err %v", first.Emitted, err)
+	}
+	messages := []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1")}
+	plan, err := PlanTurn(Turn{
+		Binding: binding, Ledger: &first.Next, Messages: Messages(messages), TurnIndex: 2, Requested: "up",
+		MaxEntries: 1, ImageToolTail: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Skipped != SkipLedgerFull || plan.Refused != "" {
+		t.Fatalf("skipped %q refused %q, want ledger_full and no refusal", plan.Skipped, plan.Refused)
 	}
 }

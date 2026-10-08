@@ -266,3 +266,23 @@ func TestEveryRefusedImageToolTailGoldenHasItsEvidencedTwin(t *testing.T) {
 		t.Errorf("%d refused image tool-tail goldens, want 8 (four cases on chat and responses)", twins)
 	}
 }
+
+// A refused call is attributed to the control the provider still sees: the
+// drawn control's base, budget and rules at the level in force.
+func TestARefusedCallsControlInForceIsTheEarlierLevels(t *testing.T) {
+	reg, err := Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	up := registryControl(t, glmChatUp)
+	cell, err := reg.Admit("z-ai/glm-5.3-flash", "openrouter", FormatChat, *up, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id, ok := reg.InForceControl(cell, *up, InstructionNone); !ok || id != glmChatNone {
+		t.Fatalf("control in force at none = %s %v, want %s", prefix12(id), ok, prefix12(glmChatNone))
+	}
+	if id, ok := reg.InForceControl(cell, *up, "up"); !ok || id != glmChatUp {
+		t.Fatalf("control in force at up = %s %v, want the drawn control", prefix12(id), ok)
+	}
+}

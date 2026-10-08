@@ -184,7 +184,10 @@ type episodeControlWire struct {
 	InForce         *string                  `json:"in_force,omitempty"`
 	PreviousAnchor  *thinkingcontrol.Anchor  `json:"previous_anchor,omitempty"`
 	PreviousControl *string                  `json:"previous_control,omitempty"`
-	Calls           int                      `json:"calls"`
+	// PreviousRefused is the previous call's ADR 0129 refusal, which a
+	// byte-identical retry repeats.
+	PreviousRefused *string `json:"previous_refused,omitempty"`
+	Calls           int     `json:"calls"`
 }
 
 // episodeControlFirstWire is what the placer checks of the episode's first
@@ -224,7 +227,7 @@ func controlPlacementsToWire(placements []ControlPlacement) []episodeControlWire
 		wire := episodeControlWire{
 			Key: placement.Key, Format: state.Format, Texts: []string{}, Ledger: []episodeControlItemWire{},
 			Epoch: state.Epoch, InForce: state.InForce, PreviousAnchor: state.PreviousAnchor,
-			PreviousControl: state.PreviousControl, Calls: state.Calls,
+			PreviousControl: state.PreviousControl, PreviousRefused: state.PreviousRefused, Calls: state.Calls,
 		}
 		if state.First != nil {
 			wire.First = &episodeControlFirstWire{
@@ -280,7 +283,8 @@ func controlPlacementsFromWire(wires []episodeControlWire) ([]ControlPlacement, 
 		seen[wire.Key] = true
 		state := thinkingcontrol.PlacerState{
 			Format: wire.Format, Ledger: []thinkingcontrol.LedgerItem{}, Epoch: wire.Epoch, InForce: wire.InForce,
-			PreviousAnchor: wire.PreviousAnchor, PreviousControl: wire.PreviousControl, Calls: wire.Calls,
+			PreviousAnchor: wire.PreviousAnchor, PreviousControl: wire.PreviousControl,
+			PreviousRefused: wire.PreviousRefused, Calls: wire.Calls,
 		}
 		if wire.First != nil {
 			first := thinkingcontrol.Control{Native: wire.First.Native, BudgetTokens: wire.First.BudgetTokens}

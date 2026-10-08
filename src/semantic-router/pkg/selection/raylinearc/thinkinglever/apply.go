@@ -50,14 +50,15 @@ func ImageToolTail(messages []llmprotocol.Message, wire llmprotocol.WireFormat) 
 	}
 	position := len(messages) - 1
 	images := false
-	for position >= 0 && messages[position].Role == llmprotocol.RoleUser {
+	for position >= 0 && (messages[position].Role == llmprotocol.RoleUser || unspoken(messages[position])) {
 		if wire == llmprotocol.OpenAIChatV1 {
 			images = images || carriesImage(messages[position].Content)
 		}
 		position--
 	}
-	run := position
-	for position >= 0 && messages[position].Role == llmprotocol.RoleTool {
+	run := false
+	for position >= 0 && (messages[position].Role == llmprotocol.RoleTool || unspoken(messages[position])) {
+		run = run || messages[position].Role == llmprotocol.RoleTool
 		for _, content := range messages[position].Content {
 			if content.ToolResult != nil {
 				images = images || carriesImage(content.ToolResult.Content)
@@ -65,7 +66,23 @@ func ImageToolTail(messages []llmprotocol.Message, wire llmprotocol.WireFormat) 
 		}
 		position--
 	}
-	return images && position < run
+	return images && run
+}
+
+// unspoken is an assistant message with no text and no tool call: only
+// reasoning, which the provider adapter may drop on the way to the worker.
+// The detector reads past it, so the turn is judged as the worker may see
+// it; where the adapter keeps it, this refuses more, never less.
+func unspoken(message llmprotocol.Message) bool {
+	if message.Role != llmprotocol.RoleAssistant {
+		return false
+	}
+	for _, content := range message.Content {
+		if content.Kind == llmprotocol.ContentToolCall || (content.Kind == llmprotocol.ContentText && content.Text != "") {
+			return false
+		}
+	}
+	return true
 }
 
 func carriesImage(content []llmprotocol.Content) bool {

@@ -105,6 +105,9 @@ func TestMessagesImageToolTailReachesAChatWorkerAsTheGolden(t *testing.T) {
 	for key, want := range map[string]interface{}{
 		"thinking_refused": "image_tool_tail_task_fidelity", "thinking_level_requested": "up",
 		"thinking_level_in_force": "none", "thinking_emitted": false,
+		// Attributed to the control the provider sees (call 0's), not the
+		// drawn one it never received.
+		"thinking_control_sha256": *c.Calls[0].ControlID,
 	} {
 		if record[key] != want {
 			t.Errorf("call 1 routing record %s = %#v, want %#v", key, record[key], want)

@@ -583,12 +583,16 @@ func PlanTurn(turn Turn) (plan Plan, err error) {
 	if !item.emit {
 		return plan, nil
 	}
-	if turn.ImageToolTail && turn.Binding.Lever == LeverSteeringSuffix {
-		plan.Refused = RefusedImageToolTail
-		return plan, nil
-	}
+	before := plan.Next.Clone()
 	if skip := plan.Next.append(turn, placement, item, requested.Name); skip != "" {
 		plan.Skipped = skip
+		return plan, nil
+	}
+	// Refused only where the write would otherwise land, so a full ledger
+	// still reports itself.
+	if turn.ImageToolTail && turn.Binding.Lever == LeverSteeringSuffix {
+		plan.Next = *before
+		plan.Refused = RefusedImageToolTail
 		return plan, nil
 	}
 	plan.Emitted = true
