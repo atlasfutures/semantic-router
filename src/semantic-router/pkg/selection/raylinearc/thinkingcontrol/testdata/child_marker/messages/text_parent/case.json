@@ -1,0 +1,72 @@
+{
+ "description": "a post-compaction child of a text parent (steer3-periodic-v1): its reset marker placed on the first call and replayed, under the parent ladder's rules",
+ "format": "messages",
+ "parent_ladder": "steer3-periodic-v1",
+ "child_reset_marker": {
+  "text": "Until the next steering instruction, use your normal judgement.",
+  "format": "messages",
+  "registry_sha256": "8fcff3aa103bdea7ddbdee98587d0e0a40b70a491a2d2df5d2d7c561364fd3a8",
+  "parent_level_at_branch": "up"
+ },
+ "control": {
+  "base": {
+   "native": "child"
+  },
+  "budget_tokens": null,
+  "instruction": {
+   "level": "none",
+   "text": "",
+   "neutral_text": "Until the next steering instruction, use your normal judgement.",
+   "rules": {
+    "placement": "turn_tail_v2",
+    "emit": "on_change_v1",
+    "replay": "ledger_v1"
+   }
+  }
+ },
+ "registry_pin": "8fcff3aa103bdea7ddbdee98587d0e0a40b70a491a2d2df5d2d7c561364fd3a8",
+ "calls": [
+  {
+   "client_body": "client-00.json",
+   "expected_body": "provider-00.json",
+   "receipt": {
+    "call": 0,
+    "control_id": "6abc90e3aca16da2b125db64ec5eb4b862d630908fdb56f0ad6e3f7221d0a615",
+    "level_in_force": "none",
+    "instruction_state": "neutral_marker",
+    "written": "neutral_marker",
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  },
+  {
+   "client_body": "client-01.json",
+   "expected_body": "provider-01.json",
+   "receipt": {
+    "call": 1,
+    "control_id": "6abc90e3aca16da2b125db64ec5eb4b862d630908fdb56f0ad6e3f7221d0a615",
+    "level_in_force": "none",
+    "instruction_state": "neutral_marker",
+    "written": null,
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  },
+  {
+   "client_body": "client-02.json",
+   "expected_body": "provider-02.json",
+   "receipt": {
+    "call": 2,
+    "control_id": "6abc90e3aca16da2b125db64ec5eb4b862d630908fdb56f0ad6e3f7221d0a615",
+    "level_in_force": "none",
+    "instruction_state": "neutral_marker",
+    "written": null,
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  }
+ ]
+}

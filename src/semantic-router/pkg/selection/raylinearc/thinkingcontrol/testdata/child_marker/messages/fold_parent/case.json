@@ -1,0 +1,74 @@
+{
+ "description": "a post-compaction child of a fold parent (steer3-periodic-fold-v1): its reset marker placed on the first call and replayed, under the parent ladder's rules",
+ "format": "messages",
+ "parent_ladder": "steer3-periodic-fold-v1",
+ "child_reset_marker": {
+  "text": "Until the next steering instruction, use your normal judgement.",
+  "format": "messages",
+  "registry_sha256": "8fcff3aa103bdea7ddbdee98587d0e0a40b70a491a2d2df5d2d7c561364fd3a8",
+  "parent_level_at_branch": "up",
+  "inband_system": "fold_before_unit_v1"
+ },
+ "control": {
+  "base": {
+   "native": "child"
+  },
+  "budget_tokens": null,
+  "instruction": {
+   "level": "none",
+   "text": "",
+   "neutral_text": "Until the next steering instruction, use your normal judgement.",
+   "rules": {
+    "placement": "turn_tail_v2",
+    "emit": "on_change_v1",
+    "replay": "ledger_v1",
+    "inband_system": "fold_before_unit_v1"
+   }
+  }
+ },
+ "registry_pin": "8fcff3aa103bdea7ddbdee98587d0e0a40b70a491a2d2df5d2d7c561364fd3a8",
+ "calls": [
+  {
+   "client_body": "client-00.json",
+   "expected_body": "provider-00.json",
+   "receipt": {
+    "call": 0,
+    "control_id": "a4b822d5c1063b5258ff7937cbe7c29c90d06fb6dec74ded83997f97a7fbfc56",
+    "level_in_force": "none",
+    "instruction_state": "neutral_marker",
+    "written": "neutral_marker",
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  },
+  {
+   "client_body": "client-01.json",
+   "expected_body": "provider-01.json",
+   "receipt": {
+    "call": 1,
+    "control_id": "a4b822d5c1063b5258ff7937cbe7c29c90d06fb6dec74ded83997f97a7fbfc56",
+    "level_in_force": "none",
+    "instruction_state": "neutral_marker",
+    "written": null,
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  },
+  {
+   "client_body": "client-02.json",
+   "expected_body": "provider-02.json",
+   "receipt": {
+    "call": 2,
+    "control_id": "a4b822d5c1063b5258ff7937cbe7c29c90d06fb6dec74ded83997f97a7fbfc56",
+    "level_in_force": "none",
+    "instruction_state": "neutral_marker",
+    "written": null,
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  }
+ ]
+}

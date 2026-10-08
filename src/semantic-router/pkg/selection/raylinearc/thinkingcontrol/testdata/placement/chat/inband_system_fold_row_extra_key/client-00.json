@@ -1,0 +1,1 @@
+{"model":"agent-default","messages":[{"role":"system","content":"You are an agent."},{"role":"user","content":"Start."},{"role":"system","content":"budget 990","name":"harness"}],"max_tokens":32000,"stream":true}
