@@ -537,6 +537,38 @@ func TestCompressionReservesTheUnclampedBound(t *testing.T) {
 	if got := router.compressionOutputReserve("m", ctx, testNeutralRequest("auto", "long")); got != 30000 {
 		t.Fatalf("reserve = %d, want the card's 30000 rather than the 10000 the prompt leaves", got)
 	}
+	// A decision floor above the card is what dispatch will raise the
+	// allowance to, so it is what compression frees room for.
+	ctx.VSRSelectedDecision = completionFloorDecision(map[string]interface{}{"m": 65000})
+	if got := router.compressionOutputReserve("m", ctx, testNeutralRequest("auto", "long")); got != 65000 {
+		t.Fatalf("reserve = %d, want the decision's 65000 floor over the card's 30000", got)
+	}
+	stated := testNeutralRequest("auto", "long")
+	stated.Sampling.MaxOutputTokens = llmprotocol.Int64(70000)
+	if got := router.compressionOutputReserve("m", ctx, stated); got != 70000 {
+		t.Fatalf("reserve = %d, want the caller's 70000 above the floor", got)
+	}
+}
+
+// A Responses caller asking for automatic truncation has the provider drop
+// older input to fit, so the room the prompt leaves does not bound its
+// output: the card's limit is sent whole, within the decision cap only.
+func TestDispatchOutputBoundLeavesTheWindowToAutomaticTruncation(t *testing.T) {
+	auto := func(request *llmprotocol.Request) { request.Truncation = responsesTruncationAuto }
+	_, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+		target: llmprotocol.OpenAIResponsesV1, card: 32000, body: unboundedResponsesBody,
+		window: 128000, contextTokens: 120000, mutate: auto,
+	})
+	if got := wireOutputLimit(wire); got != "max_output_tokens=32000" {
+		t.Fatalf("dispatched %q, want the card's 32000 with input left to the provider's truncation", got)
+	}
+	_, wire = dispatchWithOutputBound(t, dispatchOutputBoundCase{
+		target: llmprotocol.OpenAIResponsesV1, card: 32000, body: unboundedResponsesBody,
+		window: 128000, contextTokens: 120000, mutate: auto, decision: maxTokensLimitDecision(t, 20000),
+	})
+	if got := wireOutputLimit(wire); got != "max_output_tokens=20000" {
+		t.Fatalf("dispatched %q, want the decision's 20000 cap still applied", got)
+	}
 }
 
 // A cap too small to hold the target's minimum leaves the request unbounded

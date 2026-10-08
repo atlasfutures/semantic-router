@@ -15,6 +15,10 @@ import (
 // max_output_tokens instead.
 const dispatchFallbackMaxOutputTokens int64 = 32000
 
+// responsesTruncationAuto is the Responses truncation strategy under which
+// the provider drops older input to fit its context window.
+const responsesTruncationAuto = "auto"
+
 // Where a dispatched output limit came from, as logged.
 const (
 	outputBoundSourceCard     = "card"
@@ -57,6 +61,11 @@ func thinkingControlOverCapError(plan outputBoundPlan) error {
 // design. A floor the window has room for stands, as does one the prompt
 // leaves no room for, as a card limit would.
 //
+// A Responses caller that asked for automatic truncation has the provider
+// drop older input when the context would overflow, so the room the prompt
+// leaves does not bound its output: the window is not applied, the decision
+// cap still is.
+//
 // On a v5 turn the planned control owns thinking, so its budget is the one
 // planned. A lowered budget is written to the planned control, which the
 // placer renders after encoding. A control the cap cannot hold fails the
@@ -77,6 +86,9 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 		budget = control.control.BudgetTokens
 	}
 	window := int64(r.Config.GetModelContextWindowSize(dispatch.logicalModel))
+	if dispatch.targetFormat == llmprotocol.OpenAIResponsesV1 && request.Truncation == responsesTruncationAuto {
+		window = 0
+	}
 	var plan outputBoundPlan
 	switch {
 	case request.Sampling.MaxOutputTokens == nil:

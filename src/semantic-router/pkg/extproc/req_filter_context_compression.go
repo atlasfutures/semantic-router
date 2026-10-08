@@ -149,28 +149,44 @@ func (r *OpenAIRouter) semanticContextCompressionCapabilities(
 // already known. The thinking budget dispatch will plan with is not on the
 // request yet when a policy action or a v5 control sets it, so
 // pendingMessagesThinkingBudget derives it from the selection already on the
-// context.
+// context. So is the decision's completion floor for the model, which
+// dispatch raises the allowance to: the reserve is at least that, so the
+// floor is freed room rather than held to what the prompt leaves.
 func (r *OpenAIRouter) compressionOutputReserve(
 	model string,
 	ctx *RequestContext,
 	request *llmprotocol.Request,
 ) int64 {
-	if request.Sampling.MaxOutputTokens != nil {
-		return *request.Sampling.MaxOutputTokens
+	reserve := int64(0)
+	switch {
+	case request.Sampling.MaxOutputTokens != nil:
+		reserve = *request.Sampling.MaxOutputTokens
+	case r == nil || r.Config == nil || model == "":
+	default:
+		if format, err := r.dispatchTargetFormat(model, ctx.SourceFormat); err == nil {
+			// Unclamped on purpose: compression exists to free the room the
+			// whole bound needs, so it reserves the card's limit, not what
+			// the prompt happens to leave before compression. Dispatch
+			// clamps what remains.
+			reserve = r.planDispatchOutputBound(
+				model, format, decisionMaxTokensLimit(ctx), pendingMessagesThinkingBudget(request, format, ctx), 0, 0,
+			).maxTokens
+		}
 	}
-	if r == nil || r.Config == nil || model == "" {
+	return max(reserve, pendingCompletionFloor(model, ctx))
+}
+
+// pendingCompletionFloor is the floor the selected decision's request_params
+// plugin will raise the model's output allowance to at dispatch, or zero.
+func pendingCompletionFloor(model string, ctx *RequestContext) int64 {
+	if ctx == nil || ctx.VSRSelectedDecision == nil {
 		return 0
 	}
-	format, err := r.dispatchTargetFormat(model, ctx.SourceFormat)
-	if err != nil {
+	params := ctx.VSRSelectedDecision.GetRequestParamsConfig()
+	if params == nil {
 		return 0
 	}
-	// Unclamped on purpose: compression exists to free the room the whole
-	// bound needs, so it reserves the card's limit, not what the prompt
-	// happens to leave before compression. Dispatch clamps what remains.
-	return r.planDispatchOutputBound(
-		model, format, decisionMaxTokensLimit(ctx), pendingMessagesThinkingBudget(request, format, ctx), 0, 0,
-	).maxTokens
+	return int64(params.MinCompletionTokensByModel[model])
 }
 
 func injectSemanticContextRecoveryTool(request *llmprotocol.Request, keys []string) error {

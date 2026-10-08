@@ -311,12 +311,16 @@ routing:
   held to the room the same way, thinking budget included, never below what
   the caller stated; a room under the target's minimum removes the floor
   and sends the caller's own allowance, or none. The event names it
-  `source: floor`.
+  `source: floor`. A Responses caller that asked for `truncation: auto` has
+  the provider drop older input to fit, so the window is not applied to its
+  limit; the decision cap still is.
 - **Context compression reserves the limit.** Context compression runs before
   dispatch. It keeps the Router's limit free in the model's
   `context_window_size`, so a prompt near the window is compressed instead of
   being refused by the provider. It reserves the card's limit in full, not
-  the smaller room the prompt leaves before compression.
+  the smaller room the prompt leaves before compression, and at least the
+  decision's completion floor for the model, which dispatch raises the
+  allowance to.
 - **The target's minimum is respected.** Responses refuses a
   `max_output_tokens` below 16, so a smaller card value or cap is raised to 16.
   If 16 is above the decision's `max_tokens_limit`, the request is sent with no
