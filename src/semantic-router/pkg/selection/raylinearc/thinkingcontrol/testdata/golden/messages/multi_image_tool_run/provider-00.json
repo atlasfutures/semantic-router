@@ -1,0 +1,1 @@
+{"model":"z-ai/glm-5.3-flash","max_tokens":32000,"system":[{"type":"text","text":"You are Claude Code."}],"messages":[{"role":"user","content":"Compare the frames."}],"stream":true,"output_config":{"effort":"high"}}
