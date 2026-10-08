@@ -73,7 +73,8 @@ func TestChatEncodeMovesToolResultMediaAfterTheToolMessages(t *testing.T) {
 		tools[message.ToolCallID] = string(message.Content)
 	}
 	if !strings.Contains(tools["call_a"], "a.png, 1x1") || strings.Contains(tools["call_a"], "image_url") ||
-		!strings.Contains(tools["call_c"], "follow in the next user message") || !strings.Contains(tools["call_b"], "plain text") {
+		!strings.Contains(tools["call_c"], "follow in the user message labelled [images returned by tool call call_c]") ||
+		!strings.Contains(tools["call_b"], "plain text") {
 		t.Fatalf("tool messages = %v", tools)
 	}
 	for index, call := range map[int]string{5: "call_a", 6: "call_c"} {

@@ -400,14 +400,25 @@ func splitChatToolResultMedia(message llmprotocol.Message) (llmprotocol.Message,
 		return message, nil, nil
 	}
 	if !hasText {
-		kept = append(kept, llmprotocol.Content{Kind: llmprotocol.ContentText, Text: "The tool returned images; they follow in the next user message."})
+		// Each result's images get a message of their own, so the line
+		// names the one that carries this call's.
+		kept = append(kept, llmprotocol.Content{
+			Kind: llmprotocol.ContentText,
+			Text: "The tool returned images; they follow in the user message labelled " + chatToolMediaLabel(result.CallID) + ".",
+		})
 	}
 	result.Content = kept
 	content := message.Content[0]
 	content.ToolResult = &result
 	message.Content = []llmprotocol.Content{content}
-	label := chatContentWire{Type: "text", Text: "[images returned by tool call " + result.CallID + "]"}
+	label := chatContentWire{Type: "text", Text: chatToolMediaLabel(result.CallID)}
 	return message, append([]chatContentWire{label}, mediaState.parts...), nil
+}
+
+// chatToolMediaLabel leads the user message carrying one tool call's images
+// (pathfinder's request_to_chat spelling, ADR 0129).
+func chatToolMediaLabel(callID string) string {
+	return "[images returned by tool call " + callID + "]"
 }
 
 // chatContentParts is a message's content as Chat content parts.
