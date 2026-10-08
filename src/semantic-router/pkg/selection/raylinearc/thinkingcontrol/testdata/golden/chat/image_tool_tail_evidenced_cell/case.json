@@ -1,23 +1,23 @@
 {
- "description": "steer on a user-text tail, then a hold that writes nothing and replays",
+ "description": "steer after an image tool result on a cell whose admission records task-fidelity evidence: written on the hoisted image message (ADR 0129)",
  "format": "chat",
  "provider": "openrouter",
- "model": "z-ai/glm-5.3-flash",
- "wire_model": "z-ai/glm-5.3-flash",
+ "model": "moonshotai/kimi-k3",
+ "wire_model": "moonshotai/kimi-k3",
  "admission": "enforced",
  "allow_experimental": true,
  "registry_pin": "5a33c691860ad8ff9fbf0814705f176d883bfd28baa397a93cb2eab24617ee2d",
  "calls": [
   {
    "client_body": "client-00.json",
-   "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b",
+   "control_id": "17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1",
    "expected_body": "provider-00.json",
    "receipt": {
     "call": 0,
-    "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b",
-    "level_in_force": "up",
-    "instruction_state": "steered",
-    "written": "instruction",
+    "control_id": "17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1",
+    "level_in_force": "none",
+    "instruction_state": "never",
+    "written": null,
     "epoch": 0,
     "epoch_reset_reason": null,
     "retry": false
@@ -32,7 +32,7 @@
     "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b",
     "level_in_force": "up",
     "instruction_state": "steered",
-    "written": null,
+    "written": "instruction",
     "epoch": 0,
     "epoch_reset_reason": null,
     "retry": false
