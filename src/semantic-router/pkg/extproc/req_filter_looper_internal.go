@@ -118,6 +118,9 @@ func (r *OpenAIRouter) buildLooperBackendDispatchResponse(
 		looperInternalHeadersForRemoval()...,
 	)
 	setHeaderValue(common.HeaderMutation, headers.VSRSelectedModel, modelName)
+	if err := r.settleProviderDispatch(dispatch, ctx); err != nil {
+		return nil, err
+	}
 	return r.finalizeProviderDispatchResponse(dispatch, response, ctx)
 }
 

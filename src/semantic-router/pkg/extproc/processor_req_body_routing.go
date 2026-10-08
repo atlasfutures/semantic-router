@@ -204,10 +204,47 @@ func (r *OpenAIRouter) prepareProviderRequest(
 		return false, err
 	}
 	// The output limit for a request that states none is planned in
-	// finalizeProviderDispatchResponse, on the request as it is encoded:
-	// tool selection runs between here and there and can change the
-	// prompt's size, which the limit is measured against.
+	// settleProviderDispatch, the last routing step before the encode: tool
+	// selection runs between here and there and can change the prompt's
+	// size, which the limit is measured against.
 	return paramsChanged || changed, nil
+}
+
+// completeProviderDispatch runs the routing steps that follow route
+// construction -- tool selection, then the output bound on the prompt as it
+// then stands -- and hands the settled request to the provider boundary.
+func (r *OpenAIRouter) completeProviderDispatch(
+	request *llmprotocol.Request,
+	dispatch *providerDispatch,
+	response *ext_proc.ProcessingResponse,
+	ctx *RequestContext,
+) (*ext_proc.ProcessingResponse, error) {
+	r.handleToolSelectionForRequest(request, response, ctx)
+	if err := r.settleProviderDispatch(dispatch, ctx); err != nil {
+		return nil, err
+	}
+	return r.finalizeProviderDispatchResponse(dispatch, response, ctx)
+}
+
+// settleProviderDispatch is the last routing step before the encode: it
+// bounds the output of the request as every semantic plugin has left it,
+// reading the decision's cap and the prompt's token count, which the
+// provider boundary must not. A refused request ends its upstream span here.
+func (r *OpenAIRouter) settleProviderDispatch(dispatch *providerDispatch, ctx *RequestContext) error {
+	if dispatch == nil || ctx == nil || ctx.SemanticRequest == nil {
+		return status.Error(codes.Internal, "provider dispatch is unavailable")
+	}
+	bounded, err := r.boundDispatchRequest(ctx.SemanticRequest, dispatch, ctx)
+	if err != nil {
+		abandonUpstreamSpan(ctx, "output bound refused the request")
+		metrics.RecordRequestError(dispatch.logicalModel, "output_bound_error")
+		return status.Errorf(codes.Internal, "bound provider request: %v", err)
+	}
+	if bounded {
+		// The client's bytes no longer describe the dispatch request.
+		ctx.SemanticRequest.Generation++
+	}
+	return nil
 }
 
 // boundDispatchRequest sets the output limit of a request that states none
@@ -337,8 +374,9 @@ func (r *OpenAIRouter) buildProviderDispatchResponse(
 }
 
 // finalizeProviderDispatchResponse serializes the request only after every
-// semantic plugin has run. This prevents late tool-selection mutations from
-// being lost and keeps provider wire concerns at one boundary.
+// semantic plugin has run and settleProviderDispatch has bounded it. This
+// prevents late tool-selection mutations from being lost and keeps provider
+// wire concerns at one boundary.
 func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	dispatch *providerDispatch,
 	response *ext_proc.ProcessingResponse,
@@ -361,16 +399,6 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	// Marked here, where every dispatch path -- routed and external gateway
 	// -- meets, so no path builds a dispatch the rule does not see.
 	ctx.DispatchAutoCache = r.claudeAutoCacheDispatch(dispatch, ctx)
-	bounded, err := r.boundDispatchRequest(ctx.SemanticRequest, dispatch, ctx)
-	if err != nil {
-		abandonUpstreamSpan(ctx, "output bound refused the request")
-		metrics.RecordRequestError(dispatch.logicalModel, "output_bound_error")
-		return nil, status.Errorf(codes.Internal, "bound provider request: %v", err)
-	}
-	if bounded {
-		// The client's bytes no longer describe the dispatch request.
-		ctx.SemanticRequest.Generation++
-	}
 	body, err := r.encodeDispatchRequest(ctx)
 	if err != nil {
 		abandonUpstreamSpan(ctx, "provider request could not be encoded")

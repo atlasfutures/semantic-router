@@ -59,9 +59,13 @@ func dispatchWithOutputBound(t *testing.T, test dispatchOutputBoundCase) (*llmpr
 	if test.afterDispatch != nil {
 		test.afterDispatch(request, ctx)
 	}
-	// Through finalize, as the real path goes: the output limit is planned
-	// there, on the request as it is encoded.
-	response, err := router.finalizeProviderDispatchResponse(dispatch, router.buildProviderDispatchResponse(dispatch, ctx), ctx)
+	// Through settle and finalize, as the real path goes: the output limit
+	// is planned in the former, on the request the latter encodes.
+	response := router.buildProviderDispatchResponse(dispatch, ctx)
+	if err := router.settleProviderDispatch(dispatch, ctx); err != nil {
+		t.Fatalf("settle: %v", err)
+	}
+	response, err = router.finalizeProviderDispatchResponse(dispatch, response, ctx)
 	if err != nil {
 		t.Fatalf("finalize: %v", err)
 	}
@@ -509,12 +513,12 @@ func TestOutputBoundRefusalEndsTheUpstreamSpan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	response := router.buildProviderDispatchResponse(dispatch, ctx)
+	router.buildProviderDispatchResponse(dispatch, ctx)
 	if ctx.UpstreamSpan == nil {
 		t.Fatal("the dispatch response did not start an upstream span")
 	}
-	if _, err := router.finalizeProviderDispatchResponse(dispatch, response, ctx); err == nil {
-		t.Fatal("finalize accepted a control the cap cannot hold")
+	if err := router.settleProviderDispatch(dispatch, ctx); err == nil {
+		t.Fatal("settle accepted a control the cap cannot hold")
 	}
 	if ctx.UpstreamSpan != nil {
 		t.Fatal("the refused request left its upstream span open")
