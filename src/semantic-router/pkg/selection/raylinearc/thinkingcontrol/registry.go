@@ -83,8 +83,12 @@ type Cell struct {
 	Provider    string
 	Format      string
 	Instruction string
-	baseWire    map[string]*value
-	controls    map[string]bool
+	// ImageToolTailAdmitted is whether the cell states task-fidelity evidence
+	// for a steer after an image tool result (ADR 0129 decision 5); without
+	// it the placer writes nothing on such a turn.
+	ImageToolTailAdmitted bool
+	baseWire              map[string]*value
+	controls              map[string]bool
 }
 
 // Load reads a compiled artifact. Its bytes must be canonical JCS and every
@@ -161,6 +165,21 @@ func loadCell(raw *value, controls map[string]Control) (*Cell, error) {
 		// Admit gates only "experimental"; any other spelling would admit
 		// its instructions without the opt-in.
 		return nil, refuse("%s: instruction admission %q is not certified, experimental or refused", where, cell.Instruction)
+	}
+	if tail := raw.get("image_tool_tail"); tail != nil {
+		// Pathfinder compiles it only where a Chat or Responses row states
+		// {task_fidelity: [evidence]}.
+		evidence := tail.get("task_fidelity")
+		if (cell.Format != FormatChat && cell.Format != FormatResponses) || tail.kind != kindObject ||
+			len(tail.members) != 1 || evidence == nil || evidence.kind != kindArray || len(evidence.items) == 0 {
+			return nil, refuse("%s: image_tool_tail is {task_fidelity: [evidence]} on a chat or responses cell", where)
+		}
+		for _, pointer := range evidence.items {
+			if !pointer.isString() || pointer.str == "" {
+				return nil, refuse("%s: image_tool_tail.task_fidelity names its evidence", where)
+			}
+		}
+		cell.ImageToolTailAdmitted = true
 	}
 	ids := raw.get("controls")
 	wire := raw.get("base_wire")

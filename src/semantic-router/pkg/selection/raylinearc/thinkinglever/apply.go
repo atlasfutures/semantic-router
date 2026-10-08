@@ -38,6 +38,45 @@ func Messages(messages []llmprotocol.Message) []Message {
 	return projected
 }
 
+// ImageToolTail reports whether a turn's tool run returned an image on a
+// worker wire that ADR 0129 governs, as pathfinder's placer reads the
+// encoded body. On Chat the images travel in user messages after the run,
+// so an image in the trailing user messages counts as well; on Responses
+// only a tool output carrying an image does. Messages keeps an image inside
+// its tool_result and is not governed.
+func ImageToolTail(messages []llmprotocol.Message, wire llmprotocol.WireFormat) bool {
+	if wire != llmprotocol.OpenAIChatV1 && wire != llmprotocol.OpenAIResponsesV1 {
+		return false
+	}
+	position := len(messages) - 1
+	images := false
+	for position >= 0 && messages[position].Role == llmprotocol.RoleUser {
+		if wire == llmprotocol.OpenAIChatV1 {
+			images = images || carriesImage(messages[position].Content)
+		}
+		position--
+	}
+	run := position
+	for position >= 0 && messages[position].Role == llmprotocol.RoleTool {
+		for _, content := range messages[position].Content {
+			if content.ToolResult != nil {
+				images = images || carriesImage(content.ToolResult.Content)
+			}
+		}
+		position--
+	}
+	return images && position < run
+}
+
+func carriesImage(content []llmprotocol.Content) bool {
+	for _, part := range content {
+		if part.Kind == llmprotocol.ContentImage {
+			return true
+		}
+	}
+	return false
+}
+
 // messageDigest identifies a client message across turns. It ignores
 // what agent clients rewrite in history without changing what the model was
 // asked: moving cache breakpoints, re-sent <system-reminder> blocks, caller

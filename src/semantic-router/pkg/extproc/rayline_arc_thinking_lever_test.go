@@ -64,6 +64,8 @@ type leverEpisode struct {
 	store    *raylinearc.MemoryEpisodeStore
 	episode  string
 	decision *config.Decision
+	// wire is the worker's wire format; the zero value is Messages.
+	wire llmprotocol.WireFormat
 }
 
 func newLeverEpisode(t *testing.T, enabled bool) *leverEpisode {
@@ -109,11 +111,15 @@ func (e *leverEpisode) turnWithHeaders(
 	}
 	request := &llmprotocol.Request{Model: "m", Messages: append([]llmprotocol.Message(nil), messages...)}
 	router := &OpenAIRouter{}
-	if _, err := router.applyRaylineARCThinkingLever(request, ctx); err != nil {
+	wire := e.wire
+	if wire == "" {
+		wire = llmprotocol.AnthropicMessagesV1
+	}
+	if _, err := router.applyRaylineARCThinkingLever(request, wire, ctx); err != nil {
 		e.t.Fatalf("apply: %v", err)
 	}
 	// A second call in the same request must not write the items again.
-	if changed, err := router.applyRaylineARCThinkingLever(request, ctx); err != nil || changed {
+	if changed, err := router.applyRaylineARCThinkingLever(request, wire, ctx); err != nil || changed {
 		e.t.Fatalf("second apply changed=%v err=%v", changed, err)
 	}
 	if commit {
@@ -275,5 +281,49 @@ func TestThinkingLeverWritesTheNeutralMarkerOnReturnToNeutral(t *testing.T) {
 		if !bytes.Equal(before[index], after[index]) {
 			t.Fatalf("provider message %d changed after the marker:\n%s\n%s", index, before[index], after[index])
 		}
+	}
+}
+
+// ADR 0129 decision 5 on the lever (pathfinder#3996): a Chat or Responses
+// worker gets no steer after a tool result that returned an image. The turn
+// goes out as the client sent it, the ledger stays empty, and the routing
+// record names the refusal beside the level the provider sees. A Messages
+// worker, which keeps the image inside its tool_result, is steered.
+func TestTheLeverRefusesASteerAfterAnImageToolResultOnChatAndResponses(t *testing.T) {
+	image := llmprotocol.Message{Role: llmprotocol.RoleTool, Content: []llmprotocol.Content{{
+		Kind: llmprotocol.ContentToolResult, ToolResult: &llmprotocol.ToolResult{CallID: "c1", Content: []llmprotocol.Content{
+			{Kind: llmprotocol.ContentImage, MediaType: "image/png", Data: "iVBORw0KGgo="},
+		}},
+	}}}
+	call := llmprotocol.Message{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{{
+		Kind: llmprotocol.ContentToolCall, ToolCall: &llmprotocol.ToolCall{ID: "c1", Name: "shot", Arguments: "{}"},
+	}}}
+	messages := []llmprotocol.Message{leverText(llmprotocol.RoleUser, "go"), call, image}
+	for _, wire := range []llmprotocol.WireFormat{
+		llmprotocol.OpenAIChatV1, llmprotocol.OpenAIResponsesV1, llmprotocol.AnthropicMessagesV1,
+	} {
+		t.Run(string(wire), func(t *testing.T) {
+			e := newLeverEpisode(t, true)
+			e.wire = wire
+			sent, ctx := e.turn(leverWorker, messages, true)
+			record := map[string]interface{}{}
+			appendRaylineARCThinkingFields(record, ctx)
+			if wire == llmprotocol.AnthropicMessagesV1 {
+				if len(sent) != len(messages)+1 || record["thinking_refused"] != nil {
+					t.Fatalf("a Messages worker was not steered: %d messages, record %v", len(sent), record)
+				}
+				return
+			}
+			if len(sent) != len(messages) {
+				t.Fatalf("sent %d messages, want the client's %d", len(sent), len(messages))
+			}
+			if record["thinking_refused"] != "image_tool_tail_task_fidelity" || record["thinking_level_requested"] != "down" ||
+				record["thinking_level_in_force"] == "down" || record["thinking_emitted"] != false {
+				t.Fatalf("routing record %v", record)
+			}
+			if ledger := e.stored().Thinking; ledger != nil && len(ledger.Entries) > 0 {
+				t.Fatalf("the refused turn wrote %d ledger entries", len(ledger.Entries))
+			}
+		})
 	}
 }

@@ -38,6 +38,15 @@ import (
 // holds those same cases rendered without admission
 // (placement_only_not_admitted), so the renderer's placement keeps its byte
 // coverage; it is never a router oracle.
+//
+// The image tool-tail cases are pathfinder#3996 (28844ee61a, ADR 0129), their
+// registry_pin set to this registry, which that tree predates.
+
+// imageToolTailAdmitted labels an image tool-tail case of the placement
+// corpus: the spelling a cell with task-fidelity evidence writes (ADR 0129).
+// Its golden twin records the refusal, since no corpus cell states evidence.
+const imageToolTailAdmitted = "placement_only_image_tool_tail_admitted"
+
 var goldenFormats = []string{FormatMessages, FormatChat, FormatResponses}
 
 var placementFormats = []string{FormatMessages, FormatChat, FormatResponses}
@@ -227,7 +236,15 @@ func runGoldenCase(t *testing.T, reg *Registry, dir string) {
 			c.AllowExperimental)
 	case "placement_only", "placement_only_not_admitted":
 		baseWire := map[string]*value{controls[0].Native: objectValue()}
-		got, receipts, err = renderEpisode(bodies, controls, baseWire, c.Format, c.WireModel)
+		got, receipts, err = renderEpisode(bodies, controls, baseWire, false, c.Format, c.WireModel)
+	case imageToolTailAdmitted:
+		// The corpus cell renders as it is admitted, with the task-fidelity
+		// evidence it does not yet state (ADR 0129).
+		cell, admitErr := reg.Admit(c.Model, c.Provider, c.Format, *controls[0], c.AllowExperimental)
+		if admitErr != nil {
+			t.Fatal(admitErr)
+		}
+		got, receipts, err = renderEpisode(bodies, controls, cell.baseWire, true, c.Format, c.WireModel)
 	default:
 		t.Fatalf("unknown admission %q", c.Admission)
 	}

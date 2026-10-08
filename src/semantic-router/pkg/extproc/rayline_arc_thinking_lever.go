@@ -61,6 +61,10 @@ type raylineARCThinkingTrace struct {
 	Epoch            uint32
 	ResetReason      string
 	Skipped          string
+	// Refused names why a write this call would have made was refused
+	// (ADR 0129: thinkingcontrol.RefusedImageToolTail); the level in force
+	// is then the earlier one, not the level requested.
+	Refused string
 }
 
 // applyRaylineARCThinkingLever writes this turn's lever items into the
@@ -75,6 +79,7 @@ type raylineARCThinkingTrace struct {
 // prefix still matches.
 func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 	request *llmprotocol.Request,
+	targetFormat llmprotocol.WireFormat,
 	ctx *RequestContext,
 ) (bool, error) {
 	if ctx == nil || ctx.RaylineARCThinking != nil || ctx.RaylineARCDispatch == nil {
@@ -126,6 +131,7 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 		Requested:              requested,
 		MinTurnsBetweenChanges: lever.MinSpacingTurns,
 		MaxEntries:             lever.MaxLedgerEntries,
+		ImageToolTail:          thinkinglever.ImageToolTail(request.Messages, targetFormat),
 	})
 	if err != nil {
 		return false, err
@@ -154,7 +160,7 @@ func fillThinkingTrace(trace *raylineARCThinkingTrace, binding thinkinglever.Bin
 	trace.Emitted, trace.Retry = plan.Emitted, plan.Retry
 	trace.Placement = string(plan.Placement)
 	trace.Replayed, trace.Epoch = plan.Replayed, plan.Next.Epoch
-	trace.ResetReason, trace.Skipped = plan.ResetReason, plan.Skipped
+	trace.ResetReason, trace.Skipped, trace.Refused = plan.ResetReason, plan.Skipped, plan.Refused
 }
 
 // recordThinkingLeverTurn counts one governed turn. Every label value comes
@@ -166,6 +172,8 @@ func recordThinkingLeverTurn(trace *raylineARCThinkingTrace) {
 		outcome = "retry"
 	case trace.Emitted:
 		outcome = "emitted"
+	case trace.Refused != "":
+		outcome, reason = "refused", trace.Refused
 	case trace.Skipped != "":
 		outcome, reason = "skipped", trace.Skipped
 	}
@@ -205,6 +213,9 @@ func appendRaylineARCThinkingFields(record map[string]interface{}, ctx *RequestC
 	record["thinking_lever"] = trace.Lever
 	record["thinking_admission"] = trace.Admission
 	record["thinking_level_in_force"] = trace.LevelInForce
+	if trace.Refused != "" {
+		record["thinking_refused"] = trace.Refused
+	}
 	if trace.InstructionState != "" {
 		record["thinking_instruction_state"] = trace.InstructionState
 	}

@@ -115,6 +115,13 @@ const (
 	SkipLedgerFull = "ledger_full"
 )
 
+// RefusedImageToolTail is why a steering-suffix turn wrote nothing after an
+// image tool result on a worker wire that hoists or nests the images
+// (ADR 0129 decision 5): no worker has task-fidelity evidence for such a
+// steer, so the turn goes out unsteered and the level in force holds. It is
+// pathfinder's placer refusal, by the same name.
+const RefusedImageToolTail = "image_tool_tail_task_fidelity"
+
 const (
 	DigestBytes  = 16
 	maxLevels    = 16
@@ -497,6 +504,10 @@ type Turn struct {
 	// MaxEntries caps the ledger below MaxLedgerLength; zero means the
 	// maximum.
 	MaxEntries int
+	// ImageToolTail is set when the turn's tool run returned an image and
+	// the worker's wire is Chat or Responses (ImageToolTail). A steering
+	// suffix is then refused.
+	ImageToolTail bool
 }
 
 // Message is the part of a neutral message the planner reads: its role,
@@ -525,7 +536,10 @@ type Plan struct {
 	Placement   Placement
 	ResetReason string
 	Skipped     string
-	Replayed    int
+	// Refused is RefusedImageToolTail when the turn would have written an
+	// item and was refused; the level in force is then the earlier one.
+	Refused  string
+	Replayed int
 }
 
 // PlanTurn verifies the ledger against the client transcript, decides
@@ -567,6 +581,10 @@ func PlanTurn(turn Turn) (plan Plan, err error) {
 	item := shouldEmit(turn, plan.Next, requested, turn.Binding.payloadFor(requested), plan.ResetReason != "")
 	plan.Skipped = item.skipped
 	if !item.emit {
+		return plan, nil
+	}
+	if turn.ImageToolTail && turn.Binding.Lever == LeverSteeringSuffix {
+		plan.Refused = RefusedImageToolTail
 		return plan, nil
 	}
 	if skip := plan.Next.append(turn, placement, item, requested.Name); skip != "" {

@@ -134,6 +134,10 @@ type llmUsageRecord struct {
 	PolicyArmID           *string `json:"policy_arm_id"`
 	ThinkingLevelInForce  *string `json:"thinking_level_in_force"`
 	ThinkingControlSHA256 *string `json:"thinking_control_sha256"`
+	// ThinkingRefused names a steer refused on this call (ADR 0129); the
+	// level in force is then the one the provider already saw, not the
+	// level the policy drew.
+	ThinkingRefused *string `json:"thinking_refused"`
 }
 
 // newLLMUsageRecord fills what the request context and the counts say. The
@@ -218,6 +222,7 @@ func addUsageRecordARCAttribution(record *llmUsageRecord, ctx *RequestContext) {
 	}
 	if thinking := ctx.RaylineARCThinking; thinking != nil {
 		record.ThinkingLevelInForce = nonEmpty(thinking.LevelInForce)
+		record.ThinkingRefused = nonEmpty(thinking.Refused)
 		record.ThinkingControlSHA256 = nonEmpty(thinking.ControlInForce)
 	}
 }

@@ -302,7 +302,7 @@ func (r *OpenAIRouter) applyDispatchDecision(
 	if err != nil {
 		return false, err
 	}
-	steered, err := r.applyRaylineARCThinkingLever(request, ctx)
+	steered, err := r.applyRaylineARCThinkingLever(request, dispatch.targetFormat, ctx)
 	r.applyRaylineARCReasoningIssuer(request, dispatch, ctx)
 	return changed || injected || steered, err
 }
