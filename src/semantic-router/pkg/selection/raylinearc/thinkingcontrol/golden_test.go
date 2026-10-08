@@ -29,7 +29,7 @@ import (
 )
 
 // The corpora are pathfinder's tests/fixtures/thinking_control_golden and
-// thinking_control_placement at 3593edde67, mirrored byte for byte; each
+// thinking_control_placement at 3c426e6a92, mirrored byte for byte; each
 // directory's SHA256SUMS pins the copy, so drift is a diff to review.
 //
 // The golden corpus respects admission: a case whose control its cell
