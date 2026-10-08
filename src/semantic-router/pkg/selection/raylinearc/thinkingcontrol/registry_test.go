@@ -316,3 +316,57 @@ func TestAConfigurationUpdateControlLoadsAndIsNotAdmitted(t *testing.T) {
 	}
 	t.Fatal("no cell lists the configuration_update control")
 }
+
+// The registry at 50ea71ba admits steering for two new models on OpenRouter
+// Messages, experimentally, and nowhere else: a worker serving either is
+// admitted only with allow_experimental, and its steer renders on the
+// request's tail user message.
+func TestNewModelsAdmitSteeringOnlyOnOpenRouterMessages(t *testing.T) {
+	reg, err := Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, model := range []string{"mistralai/mistral-large-4-0", "meta/muse-spark-1.3-contributor"} {
+		t.Run(model, func(t *testing.T) {
+			cell, err := reg.Cell(model, "openrouter", FormatMessages)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var steer *Control
+			for id := range cell.controls {
+				control, _ := reg.Control(id)
+				if control.Instruction != nil && control.Instruction.Level == "up" {
+					steer = &control
+					break
+				}
+			}
+			if steer == nil {
+				t.Fatal("no steered control on the OpenRouter Messages cell")
+			}
+			if _, gated := reg.Admit(model, "openrouter", FormatMessages, *steer, false); gated == nil ||
+				!strings.Contains(gated.Error(), "experimental only") {
+				t.Fatalf("an experimental steer admitted without allow_experimental: %v", gated)
+			}
+			for _, refused := range []struct{ provider, format string }{
+				{"openrouter", FormatChat}, {"openrouter", FormatResponses}, {"anthropic", FormatMessages},
+			} {
+				if _, admitted := reg.Admit(model, refused.provider, refused.format, *steer, true); admitted == nil {
+					t.Fatalf("a steer admitted on %s x %s", refused.provider, refused.format)
+				}
+			}
+			client := []byte(`{"model":"auto","max_tokens":256,"messages":[{"role":"user","content":"fix the failing test"}]}`)
+			bodies, receipts, err := RenderAdmitted(reg, [][]byte{client}, []*Control{steer},
+				model, "openrouter", FormatMessages, model, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if receipts[0].Written == nil || *receipts[0].Written != WrittenInstruction {
+				t.Fatalf("receipt = %+v, want the instruction written", receipts[0])
+			}
+			if !strings.Contains(string(bodies[0]), `"model":"`+model+`"`) ||
+				!strings.Contains(string(bodies[0]), steer.Instruction.Text) {
+				t.Fatalf("the steer did not render on the tail:\n%s", bodies[0])
+			}
+		})
+	}
+}

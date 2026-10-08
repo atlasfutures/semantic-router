@@ -6,7 +6,7 @@
  "wire_model": "z-ai/glm-5.3-flash",
  "admission": "no_lever",
  "allow_experimental": true,
- "registry_pin": "032d6ed9f6aff88eab64bbbadb3477cd6f081c49c34cb6a6a98576d16fedd12a",
+ "registry_pin": "50ea71ba5ecd4cf66d879d775fbb2248c573d50e6c09049988877274c2a86a95",
  "calls": [
   {
    "client_body": "client-00.json",
