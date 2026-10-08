@@ -19,6 +19,7 @@ package thinkingcontrol
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -465,10 +466,9 @@ func placementFor(unit *value, format string) (string, error) {
 	if isUserMessage(unit, format) {
 		return PlacementAppend, nil
 	}
-	role, _ := stringField(unit, "role", "")
-	typ, _ := stringField(unit, "type", "")
-	if (format == FormatChat && unit.has("role") && role == "tool") ||
-		(format == FormatResponses && unit.has("type") && typ == "function_call_output") {
+	// codex answers its freeform tools (apply_patch) with
+	// custom_tool_call_output: a tool result like function_call_output.
+	if isToolResult(unit, format) {
 		return PlacementInsertAfter, nil
 	}
 	return "", refuse("the %s tail is not a governed turn's input (a user message or tool results)", format)
@@ -606,11 +606,43 @@ func pythonStrRepr(s string) string {
 	if strings.Contains(s, "'") && !strings.Contains(s, `"`) {
 		quote = `"`
 	}
-	escaped := strings.ReplaceAll(s, `\`, `\\`)
-	if quote == "'" {
-		escaped = strings.ReplaceAll(escaped, "'", `\'`)
+	var b strings.Builder
+	b.WriteString(quote)
+	for _, r := range s {
+		switch {
+		case r == '\\':
+			b.WriteString(`\\`)
+		case r == '\'' && quote == "'":
+			b.WriteString(`\'`)
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\r':
+			b.WriteString(`\r`)
+		case r == '\t':
+			b.WriteString(`\t`)
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0):
+			fmt.Fprintf(&b, `\x%02x`, r)
+		case !pythonPrintable(r):
+			switch {
+			case r < 0x100:
+				fmt.Fprintf(&b, `\x%02x`, r)
+			case r < 0x10000:
+				fmt.Fprintf(&b, `\u%04x`, r)
+			default:
+				fmt.Fprintf(&b, `\U%08x`, r)
+			}
+		default:
+			b.WriteRune(r)
+		}
 	}
-	return quote + escaped + quote
+	b.WriteString(quote)
+	return b.String()
+}
+
+// pythonPrintable approximates str.isprintable for one character: Unicode
+// letters, marks, numbers, punctuation, symbols and the ASCII space.
+func pythonPrintable(r rune) bool {
+	return r == ' ' || unicode.In(r, unicode.L, unicode.M, unicode.N, unicode.P, unicode.S)
 }
 
 // foldIntoMessage is placed with folded after the client's own content and
