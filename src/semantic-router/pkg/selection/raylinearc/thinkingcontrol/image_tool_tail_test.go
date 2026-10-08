@@ -194,15 +194,17 @@ func TestAStateNamesOnlyTheImageToolTailRefusal(t *testing.T) {
 func TestTheRegistryAdmitsImageToolTailEvidenceOnlyOnAChatOrResponsesCell(t *testing.T) {
 	for _, tc := range []struct {
 		name, format, evidence, basis string
-		ok                            bool
+		ok, fold                      bool
 	}{
-		{"chat", FormatChat, `{"task_fidelity":["doc:docs/history/x.md"]}`, "live", true},
-		{"messages", FormatMessages, `{"task_fidelity":["doc:docs/history/x.md"]}`, "live", false},
-		{"empty", FormatChat, `{"task_fidelity":[]}`, "live", false},
-		{"another key", FormatChat, `{"verifier":["x"]}`, "live", false},
+		{"chat", FormatChat, `{"task_fidelity":["doc:docs/history/x.md"]}`, "live", true, false},
+		// Pathfinder #3933 compiles fold_ladder onto the same cell beside it.
+		{"beside a fold ladder", FormatChat, `{"task_fidelity":["doc:docs/history/x.md"]}`, "live", true, true},
+		{"messages", FormatMessages, `{"task_fidelity":["doc:docs/history/x.md"]}`, "live", false, false},
+		{"empty", FormatChat, `{"task_fidelity":[]}`, "live", false, false},
+		{"another key", FormatChat, `{"verifier":["x"]}`, "live", false, false},
 		// ADR 0129 task fidelity is a live verifier result (pathfinder #3996).
-		{"replay row", FormatChat, `{"task_fidelity":["doc:docs/history/x.md"]}`, "replay", false},
-		{"no basis", FormatChat, `{"task_fidelity":["doc:docs/history/x.md"]}`, "", false},
+		{"replay row", FormatChat, `{"task_fidelity":["doc:docs/history/x.md"]}`, "replay", false, false},
+		{"no basis", FormatChat, `{"task_fidelity":["doc:docs/history/x.md"]}`, "", false, false},
 	} {
 		parsed, err := parseJSON(embeddedArtifact)
 		if err != nil {
@@ -223,6 +225,13 @@ func TestTheRegistryAdmitsImageToolTailEvidenceOnlyOnAChatOrResponsesCell(t *tes
 			t.Fatalf("%s: no glm-5.3-flash openrouter cell", tc.name)
 		}
 		target.set("image_tool_tail", evidence)
+		if tc.fold {
+			fold, foldErr := parseJSON([]byte(`{"ladder":"steer3-periodic-fold-v1","lever_separation":"not_demonstrated"}`))
+			if foldErr != nil {
+				t.Fatal(foldErr)
+			}
+			target.set("fold_ladder", fold)
+		}
 		if tc.basis == "" {
 			target.set("basis", nullValue())
 		} else {
