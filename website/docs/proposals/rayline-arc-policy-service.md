@@ -435,6 +435,11 @@ With it on:
 - An episode that holds an exclusion is stored as episode-state v4. A
   router that predates v4 refuses such a record, so roll every replica of a
   cell before enabling the fallback on it.
+- An episode whose thinking-control placer carries a fold or
+  configuration_update rule set, or a refused call (ADR 0129), is stored as
+  episode-state v5, with or without exclusions. A router that predates v5
+  refuses such a record by its schema, so a rollback to one fails those
+  episodes' next turn rather than misreading them.
 
 ## Open questions
 

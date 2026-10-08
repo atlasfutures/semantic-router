@@ -43,6 +43,13 @@ const (
 	// is written only for an episode that carries one, so every other episode
 	// keeps its v3 bytes and an older router refuses a v4 record by its schema.
 	episodeStateSchemaV4 = "rayline.arc.episode-state.v4"
+	// episodeStateSchemaV5 adds a control placer's first-control rule set
+	// (its unit and in-band system rule, pathfinder #3933) and the previous
+	// call's refusal (ADR 0129). It is written only for an episode whose
+	// controls carry one, with or without exclusions, so every other episode
+	// keeps its v3 or v4 bytes and an older router refuses a v5 record by its
+	// schema rather than by a field its strict decoder does not know.
+	episodeStateSchemaV5 = "rayline.arc.episode-state.v5"
 	maxFutureClockSkew   = 5 * time.Minute
 	episodeOwnerBytes    = 24
 	maxEpisodeStateBytes = 64 * 1024
@@ -253,6 +260,20 @@ func controlPlacementsToWire(placements []ControlPlacement) []episodeControlWire
 		out = append(out, wire)
 	}
 	return out
+}
+
+// controlsNeedV5 reports whether any stored control carries a field an
+// episode-state v4 reader does not know.
+func controlsNeedV5(wires []episodeControlWire) bool {
+	for _, wire := range wires {
+		if wire.PreviousRefused != nil {
+			return true
+		}
+		if wire.First != nil && (wire.First.Unit != "" || wire.First.InbandSystem != "") {
+			return true
+		}
+	}
+	return false
 }
 
 // knownControlRules reports whether a stored first control names a rule set
@@ -498,6 +519,9 @@ func marshalEpisodeState(
 	if state.Policy != nil && len(state.Policy.Exclusions) > 0 {
 		wire.SchemaVersion = episodeStateSchemaV4
 	}
+	if controlsNeedV5(wire.Controls) {
+		wire.SchemaVersion = episodeStateSchemaV5
+	}
 	owner := state.EncoderOwner
 	visited := append([]string{}, state.EncoderVisitedOwners...)
 	wire.EncoderOwner = &owner
@@ -559,12 +583,19 @@ func decodeEpisodeStateAffinity(
 ) (string, []string, error) {
 	if (wire.Thinking != nil || len(wire.Upstream) > 0 || wire.Policy != nil || len(wire.Controls) > 0 ||
 		len(wire.ReasoningIssuers) > 0 || wire.PolicyBoundary != nil || len(wire.ReasoningProvenance) > 0) !=
-		(wire.SchemaVersion == episodeStateSchema || wire.SchemaVersion == episodeStateSchemaV4) {
+		(wire.SchemaVersion == episodeStateSchema || wire.SchemaVersion == episodeStateSchemaV4 ||
+			wire.SchemaVersion == episodeStateSchemaV5) {
 		return "", nil, errors.New("ARC episode state contract mismatch")
 	}
-	// v4 is exactly the policy-bearing record that carries exclusions.
+	// v5 is exactly the record whose controls carry a v5 field; v4 is
+	// exactly the policy-bearing record that carries exclusions and no v5
+	// field.
+	v5 := controlsNeedV5(wire.Controls)
+	if v5 != (wire.SchemaVersion == episodeStateSchemaV5) {
+		return "", nil, errors.New("ARC episode state contract mismatch")
+	}
 	hasExclusions := wire.Policy != nil && len(wire.Policy.Exclusions) > 0
-	if hasExclusions != (wire.SchemaVersion == episodeStateSchemaV4) {
+	if !v5 && hasExclusions != (wire.SchemaVersion == episodeStateSchemaV4) {
 		return "", nil, errors.New("ARC episode state contract mismatch")
 	}
 	switch wire.SchemaVersion {
@@ -573,7 +604,7 @@ func decodeEpisodeStateAffinity(
 			return "", nil, errors.New("ARC episode state contract mismatch")
 		}
 		return "", nil, nil
-	case episodeStateSchemaV2, episodeStateSchema, episodeStateSchemaV4:
+	case episodeStateSchemaV2, episodeStateSchema, episodeStateSchemaV4, episodeStateSchemaV5:
 		if wire.EncoderOwner == nil || wire.EncoderVisitedOwners == nil ||
 			*wire.EncoderVisitedOwners == nil {
 			return "", nil, errors.New("ARC episode state contract mismatch")

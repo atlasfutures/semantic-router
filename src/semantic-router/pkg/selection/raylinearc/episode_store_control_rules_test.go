@@ -2,7 +2,9 @@ package raylinearc
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
 )
@@ -82,5 +84,64 @@ func TestStoredControlPlacementKeepsTheRefusal(t *testing.T) {
 	}
 	if got := back[0].State.PreviousRefused; got == nil || *got != refused {
 		t.Fatalf("stored refusal came back as %v", got)
+	}
+}
+
+// A stored control's rule set and refusal are v5 and written only when
+// present, so every other episode keeps its v3 or v4 bytes, and a router
+// that predates them refuses the record by its schema rather than failing its
+// strict decode on an unknown field.
+func TestEpisodeStateWireCarriesControlRulesAndRefusalsUnderV5(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	anchor, previous, refused := thinkingcontrol.Anchor{Index: 0, Digest: "d"}, "c", thinkingcontrol.RefusedImageToolTail
+	placement := func(instruction thinkingcontrol.Instruction, refusal *string) []ControlPlacement {
+		first := thinkingcontrol.Control{Native: "default", Instruction: &instruction}
+		return []ControlPlacement{{Key: "k", State: thinkingcontrol.PlacerState{
+			Format: thinkingcontrol.FormatChat, First: &first, Ledger: []thinkingcontrol.LedgerItem{},
+			PreviousAnchor: &anchor, PreviousControl: &previous, PreviousRefused: refusal, Calls: 1,
+		}}}
+	}
+	task := []json.RawMessage{json.RawMessage(`{"role":"user","content":"fix the bug"}`)}
+	for _, tc := range []struct {
+		name       string
+		controls   []ControlPlacement
+		exclusions bool
+		want       string
+	}{
+		{"text rules", placement(thinkingcontrol.Instruction{}, nil), false, "v3"},
+		{"text rules with exclusions", placement(thinkingcontrol.Instruction{}, nil), true, "v4"},
+		{"fold rules", placement(thinkingcontrol.Instruction{InbandSystem: thinkingcontrol.InbandSystemFold}, nil), false, "v5"},
+		{"unit rules", placement(thinkingcontrol.Instruction{Unit: thinkingcontrol.UnitConfigurationUpdate}, nil), false, "v5"},
+		{"a refusal", placement(thinkingcontrol.Instruction{}, &refused), false, "v5"},
+		{"a refusal with exclusions", placement(thinkingcontrol.Instruction{}, &refused), true, "v5"},
+	} {
+		state, err := NewEpisodeState(1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		state.Policy = (&PolicyEpisodeState{}).Next(task, strings.Repeat("a", 64), "arm-a")
+		if tc.exclusions {
+			state.Policy = state.Policy.WithExclusion("vendor/off", "refusal")
+		}
+		state.Controls = tc.controls
+		payload, err := marshalEpisodeState(state, 1, now)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if !strings.Contains(string(payload), `"schema_version":"rayline.arc.episode-state.`+tc.want+`"`) {
+			t.Fatalf("%s: written as %s, want %s", tc.name, payload, tc.want)
+		}
+		if _, _, err = unmarshalEpisodeState(payload, 1, now); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		for _, other := range []string{"v3", "v4", "v5"} {
+			if other == tc.want {
+				continue
+			}
+			relabelled := strings.Replace(string(payload), "episode-state."+tc.want, "episode-state."+other, 1)
+			if _, _, err = unmarshalEpisodeState([]byte(relabelled), 1, now); err == nil {
+				t.Errorf("%s: a %s record relabelled %s was accepted", tc.name, tc.want, other)
+			}
+		}
 	}
 }
