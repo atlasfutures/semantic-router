@@ -188,11 +188,16 @@ type episodeControlWire struct {
 }
 
 // episodeControlFirstWire is what the placer checks of the episode's first
-// control: its base, budget and whether it has a lever.
+// control: its base, budget, whether it has a lever, and the lever's rule
+// set beyond the text rules every instruction carries (its unit and in-band
+// system rule). A state written before those were kept has neither, which
+// is the text rule set it was written under.
 type episodeControlFirstWire struct {
 	Native       string `json:"native"`
 	BudgetTokens *int64 `json:"budget_tokens,omitempty"`
 	Lever        bool   `json:"lever"`
+	Unit         string `json:"unit,omitempty"`
+	InbandSystem string `json:"inband_system,omitempty"`
 }
 
 type episodeControlItemWire struct {
@@ -225,6 +230,9 @@ func controlPlacementsToWire(placements []ControlPlacement) []episodeControlWire
 			wire.First = &episodeControlFirstWire{
 				Native: state.First.Native, BudgetTokens: state.First.BudgetTokens, Lever: state.First.Instruction != nil,
 			}
+			if instruction := state.First.Instruction; instruction != nil {
+				wire.First.Unit, wire.First.InbandSystem = instruction.Unit, instruction.InbandSystem
+			}
 		}
 		texts := map[string]int{}
 		for _, item := range state.Ledger {
@@ -242,6 +250,18 @@ func controlPlacementsToWire(placements []ControlPlacement) []episodeControlWire
 		out = append(out, wire)
 	}
 	return out
+}
+
+// knownControlRules reports whether a stored first control names a rule set
+// a control can carry: none without a lever, and at most one of the unit and
+// the in-band system rule with one.
+func knownControlRules(first *episodeControlFirstWire) bool {
+	if !first.Lever {
+		return first.Unit == "" && first.InbandSystem == ""
+	}
+	unitOK := first.Unit == "" || first.Unit == thinkingcontrol.UnitConfigurationUpdate
+	inbandOK := first.InbandSystem == "" || first.InbandSystem == thinkingcontrol.InbandSystemFold
+	return unitOK && inbandOK && (first.Unit == "" || first.InbandSystem == "")
 }
 
 func controlPlacementsFromWire(wires []episodeControlWire) ([]ControlPlacement, error) {
@@ -264,8 +284,13 @@ func controlPlacementsFromWire(wires []episodeControlWire) ([]ControlPlacement, 
 		}
 		if wire.First != nil {
 			first := thinkingcontrol.Control{Native: wire.First.Native, BudgetTokens: wire.First.BudgetTokens}
+			if !knownControlRules(wire.First) {
+				return nil, errors.New("ARC episode control rule set is malformed")
+			}
 			if wire.First.Lever {
-				first.Instruction = &thinkingcontrol.Instruction{}
+				first.Instruction = &thinkingcontrol.Instruction{
+					Unit: wire.First.Unit, InbandSystem: wire.First.InbandSystem,
+				}
 			}
 			state.First = &first
 		}
