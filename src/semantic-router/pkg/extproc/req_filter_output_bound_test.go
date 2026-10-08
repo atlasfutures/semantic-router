@@ -729,6 +729,26 @@ func TestDispatchOutputBoundHoldsTheCompletionFloorBesideThinkingAndTheMinimum(t
 			t.Fatalf("thinking budget = %v, want lowered to %d under the room", request.ReasoningBudgetTokens, minimumAnthropicThinkingBudget)
 		}
 	})
+	t.Run("a Messages allowance the floor raised stands whole with its own budget", func(t *testing.T) {
+		logicalModel := "target-" + string(llmprotocol.AnthropicMessagesV1)
+		budget := int64(4500)
+		request, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
+			target:   llmprotocol.AnthropicMessagesV1,
+			body:     `{"model":"m","input":"write the long tool call","max_output_tokens":5000}`,
+			decision: completionFloorDecision(map[string]interface{}{logicalModel: floor}),
+			window:   13000, contextTokens: 9000,
+			mutate: func(request *llmprotocol.Request) {
+				request.ReasoningMode = llmprotocol.ReasoningModeEnabled
+				request.ReasoningBudgetTokens = &budget
+			},
+		})
+		if got := wireOutputLimit(wire); got != "max_tokens=5000" {
+			t.Fatalf("dispatched %q, want the caller's own 5000 above the room of 4000", got)
+		}
+		if request.ReasoningBudgetTokens == nil || *request.ReasoningBudgetTokens != 4500 {
+			t.Fatalf("thinking budget = %v, want the caller's 4500 untouched", request.ReasoningBudgetTokens)
+		}
+	})
 	logicalModel := "target-" + string(llmprotocol.OpenAIResponsesV1)
 	for name, test := range map[string]struct {
 		body string

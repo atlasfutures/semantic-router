@@ -104,6 +104,18 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 		if plan.context != outputBoundClampedToContext {
 			return false, nil
 		}
+		if stated := request.ClientMaxOutputTokens; stated != nil && *stated >= plan.contextRoom {
+			// The caller's own allowance is not lowered to the room, nor is
+			// the thinking it was stated beside: it stands whole, as a
+			// stated limit does, and the floor goes.
+			request.Sampling.MaxOutputTokens = stated
+			logging.ComponentEvent("extproc", "dispatch_output_bound", map[string]interface{}{
+				"request_id": ctx.RequestID, "model": dispatch.logicalModel, "wire_format": dispatch.targetFormat,
+				"source": plan.source, "context": plan.context, "context_room": plan.contextRoom,
+				"limited_by": plan.limitedBy, "max_output_tokens": *stated, "restored": "client_allowance",
+			})
+			return true, nil
+		}
 	default:
 		return false, nil
 	}
@@ -163,10 +175,8 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 	}
 	bound := plan.maxTokens
 	if plan.source == outputBoundSourceFloor {
-		// The floor is lowered, never below what the caller stated.
-		if stated := request.ClientMaxOutputTokens; stated != nil && *stated > bound {
-			bound = *stated
-		}
+		// The floor is lowered to the room, which a caller's own allowance
+		// is under, or it would have stood above.
 		request.Sampling.MaxOutputTokens = &bound
 		event["max_output_tokens"] = bound
 		logging.ComponentEvent("extproc", "dispatch_output_bound", event)
