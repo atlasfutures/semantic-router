@@ -82,6 +82,18 @@ func finishUpstreamResponseSpan(ctx *RequestContext, outcome responseHeaderOutco
 	ctx.UpstreamSpan = nil
 }
 
+// abandonUpstreamSpan ends the upstream span of a request the router refused
+// after the span was started and before anything was sent. Left open, every
+// such refusal would record an upstream attempt that never happened.
+func abandonUpstreamSpan(ctx *RequestContext, reason string) {
+	if ctx == nil || ctx.UpstreamSpan == nil {
+		return
+	}
+	ctx.UpstreamSpan.SetStatus(codes.Error, reason)
+	ctx.UpstreamSpan.End()
+	ctx.UpstreamSpan = nil
+}
+
 func maybeRecordResponseHeaderTTFT(ctx *RequestContext) {
 	if ctx == nil ||
 		ctx.IsStreamingResponse ||

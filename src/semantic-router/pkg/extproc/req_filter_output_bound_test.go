@@ -10,6 +10,7 @@ import (
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
 )
 
 // dispatchOutputBoundCase is one request through the router's ingress,
@@ -48,6 +49,8 @@ func dispatchWithOutputBound(t *testing.T, test dispatchOutputBoundCase) (*llmpr
 	if test.mutate != nil {
 		test.mutate(request)
 	}
+	// The estimate describes this prompt, as routing would have recorded.
+	ctx.VSRContextTokenFloor = extractSemanticRequestSignals(request).ContextTokenFloor
 	dispatch, err := router.prepareProviderDispatch(request, logicalModel, "", false, ctx)
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
@@ -412,7 +415,8 @@ func TestDispatchOutputBoundRecountsTheDispatchedPrompt(t *testing.T) {
 	_, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
 		target: llmprotocol.OpenAIChatV1, card: 384000, body: unboundedResponsesBody,
 		window: 1000000, contextTokens: 100,
-		mutate: func(request *llmprotocol.Request) {
+		// Prepended after routing, where a stored history is restored.
+		afterDispatch: func(request *llmprotocol.Request, _ *RequestContext) {
 			history := llmprotocol.Message{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{{
 				Kind: llmprotocol.ContentText, Text: strings.Repeat("restored history ", 200000),
 			}}}
@@ -461,19 +465,58 @@ func TestDispatchOutputBoundNamesTheConstraintThatHeldIt(t *testing.T) {
 	}
 }
 
-// Once compression has run, the routing estimate describes a prompt that no
-// longer exists; the fresh count of the compressed request stands alone, so
-// the room, and the limit, grow back.
-func TestDispatchContextTokensFollowsCompression(t *testing.T) {
+// The prompt is counted as it stands at dispatch, by the rule routing counts
+// with, never from the routing estimate: a prompt rewritten since routing,
+// by compression, tool selection, a retrieval or a stored history, is
+// measured as the provider will receive it, whichever way it moved.
+func TestDispatchContextTokensCountsTheRequestAsItStands(t *testing.T) {
 	t.Parallel()
-	request := testNeutralRequest("auto", "a short prompt after compression")
-	stale := &RequestContext{VSRContextTokenCount: 90000}
-	if got := dispatchContextTokens(request, stale); got != 90000 {
-		t.Fatalf("uncompressed count = %d, want the larger routing estimate 90000", got)
+	router := &OpenAIRouter{Config: &config.RouterConfig{}}
+	// The prompt the estimate described: the estimate stands, calibrated
+	// or not.
+	same := testNeutralRequest("auto", "a short prompt")
+	ctx := &RequestContext{VSRContextTokenCount: 90000, VSRContextTokenFloor: extractSemanticRequestSignals(same).ContextTokenFloor}
+	if got := router.dispatchContextTokens(same, ctx); got != 90000 {
+		t.Fatalf("count = %d, want the routing estimate 90000 for the prompt it described", got)
 	}
-	stale.ContextCompressionApplied = true
-	if got := dispatchContextTokens(request, stale); got >= 90000 || got <= 0 {
-		t.Fatalf("compressed count = %d, want the fresh count of the compressed request", got)
+	// Rewritten since: counted afresh, whichever way it moved.
+	same.Messages[0].Content[0].Text = "a short prompt, compressed"
+	if got := router.dispatchContextTokens(same, ctx); got >= 90000 || got <= 0 {
+		t.Fatalf("count = %d, want the small prompt's own count once rewritten, not the stale 90000", got)
+	}
+	large := testNeutralRequest("auto", strings.Repeat("restored history ", 50000))
+	ctx.VSRContextTokenCount = 100
+	if got := router.dispatchContextTokens(large, ctx); got <= 100 {
+		t.Fatalf("count = %d, want the grown prompt's own count, not the stale 100", got)
+	}
+}
+
+// A request the output bound refuses after the upstream span was started
+// does not leave that span open as an upstream attempt that never happened.
+func TestOutputBoundRefusalEndsTheUpstreamSpan(t *testing.T) {
+	router, model := routingTestRouterForFormat(llmprotocol.AnthropicMessagesV1)
+	params := router.Config.ModelConfig[model]
+	params.MaxOutputTokens = 2000
+	router.Config.ModelConfig[model] = params
+	budget := int64(4000)
+	ctx := routingTestContext(llmprotocol.OpenAIResponsesV1, nil)
+	ctx.RaylineARCThinkingControl = &plannedThinkingControl{control: thinkingcontrol.Control{Native: "enabled", BudgetTokens: &budget}}
+	ctx.VSRSelectedDecision = maxTokensLimitDecision(t, 1000)
+	request := testNeutralRequest(model, "hi")
+	ctx.SemanticRequest = request
+	dispatch, err := router.prepareProviderDispatch(request, model, "", false, ctx)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	response := router.buildProviderDispatchResponse(dispatch, ctx)
+	if ctx.UpstreamSpan == nil {
+		t.Fatal("the dispatch response did not start an upstream span")
+	}
+	if _, err := router.finalizeProviderDispatchResponse(dispatch, response, ctx); err == nil {
+		t.Fatal("finalize accepted a control the cap cannot hold")
+	}
+	if ctx.UpstreamSpan != nil {
+		t.Fatal("the refused request left its upstream span open")
 	}
 }
 
@@ -512,8 +555,6 @@ func TestDispatchOutputBoundNamesNoConstraintItStayedUnder(t *testing.T) {
 func TestDispatchOutputBoundFollowsToolSelection(t *testing.T) {
 	grown := func(request *llmprotocol.Request, ctx *RequestContext) {
 		request.Tools = []llmprotocol.Tool{{Name: "retrieved", Description: strings.Repeat("schema ", 100000), InputSchema: json.RawMessage(`{"type":"object"}`)}}
-		request.Generation++
-		ctx.ToolSelectionRewroteTools = true
 	}
 	_, wire := dispatchWithOutputBound(t, dispatchOutputBoundCase{
 		target: llmprotocol.OpenAIChatV1, card: 200000, body: unboundedResponsesBody,
@@ -525,14 +566,15 @@ func TestDispatchOutputBoundFollowsToolSelection(t *testing.T) {
 			t.Fatalf("dispatched %q, want a limit clamped below the card by the retrieved tools", got)
 		}
 	}
+	withTools := func(request *llmprotocol.Request) {
+		request.Tools = []llmprotocol.Tool{{Name: "catalogue", Description: strings.Repeat("schema ", 100000), InputSchema: json.RawMessage(`{"type":"object"}`)}}
+	}
 	shrunk := func(request *llmprotocol.Request, ctx *RequestContext) {
 		request.Tools = nil
-		request.Generation++
-		ctx.ToolSelectionRewroteTools = true
 	}
 	_, wire = dispatchWithOutputBound(t, dispatchOutputBoundCase{
 		target: llmprotocol.OpenAIChatV1, card: 384000, body: unboundedResponsesBody,
-		window: 1000000, contextTokens: 900000, afterDispatch: shrunk,
+		window: 1000000, contextTokens: 900000, mutate: withTools, afterDispatch: shrunk,
 	})
 	if got := wireOutputLimit(wire); got != "max_completion_tokens=384000" {
 		t.Fatalf("dispatched %q, want the card once the estimate over the dropped tools no longer applies", got)

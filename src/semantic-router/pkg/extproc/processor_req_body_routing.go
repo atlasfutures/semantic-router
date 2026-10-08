@@ -363,6 +363,7 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	ctx.DispatchAutoCache = r.claudeAutoCacheDispatch(dispatch, ctx)
 	bounded, err := r.boundDispatchRequest(ctx.SemanticRequest, dispatch, ctx)
 	if err != nil {
+		abandonUpstreamSpan(ctx, "output bound refused the request")
 		metrics.RecordRequestError(dispatch.logicalModel, "output_bound_error")
 		return nil, status.Errorf(codes.Internal, "bound provider request: %v", err)
 	}
@@ -372,11 +373,13 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	}
 	body, err := r.encodeDispatchRequest(ctx)
 	if err != nil {
+		abandonUpstreamSpan(ctx, "provider request could not be encoded")
 		metrics.RecordRequestError(dispatch.logicalModel, "serialization_error")
 		return nil, status.Errorf(codes.Internal, "encode provider request: %v", err)
 	}
 	body, err = r.adaptProviderRequest(body, dispatch, ctx)
 	if err != nil {
+		abandonUpstreamSpan(ctx, "provider request could not be adapted")
 		metrics.RecordRequestError(dispatch.logicalModel, "provider_adapter_error")
 		return nil, status.Errorf(codes.Internal, "adapt provider request: %v", err)
 	}

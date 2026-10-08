@@ -296,9 +296,11 @@ routing:
   declares `context_window_size`, the Router's limit is capped at the window
   less the request's own token estimate, the way the decision cap applies,
   thinking budget included. The limit is planned once, on the request as it
-  is encoded, so the room is measured against the prompt the provider
-  receives: after any stored history, retrieval, compression or tool
-  selection has changed it. A
+  is encoded. The prompt's size is the routing estimate while the prompt is
+  the one that estimate described; a prompt rewritten since, by a stored
+  history, a retrieval, compression or tool selection, is counted afresh by
+  the rule routing counts with, so the room reflects the prompt the provider
+  receives. A
   request that leaves no room is sent as if the card declared no window:
   every limit meets the same refusal when the prompt alone overflows, and an
   estimate that overshot must not truncate an answer. The

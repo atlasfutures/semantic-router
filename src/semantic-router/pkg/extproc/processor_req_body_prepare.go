@@ -138,6 +138,7 @@ func applyRequestContextEstimate(snapshot *requestSignalSnapshot, ctx *RequestCo
 		return
 	}
 	ctx.VSRContextTokenCount = snapshot.ContextTokenFloor
+	ctx.VSRContextTokenFloor = snapshot.ContextTokenFloor
 	ctx.VSRContextTextBytes = snapshot.ContextTextBytes
 	ctx.VSRContextEquivalentBytes = snapshot.ContextEquivalentBytes
 	ctx.VSRContextHasNonText = snapshot.ContextHasNonText

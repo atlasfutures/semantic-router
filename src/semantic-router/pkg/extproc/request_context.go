@@ -58,19 +58,15 @@ type RequestContext struct {
 	CacheWriteBypass              bool
 	CacheMaxAgeSeconds            *int
 	CacheWriteTTLSeconds          *int
-	// ToolSelectionRewroteTools records that tool selection replaced the
-	// tools the client sent, so the prompt's size is no longer what the
-	// routing estimate measured.
-	ToolSelectionRewroteTools    bool
-	ContextCompressionApplied    bool
-	ContextCompressionBefore     int
-	ContextCompressionAfter      int
-	ContextCompressionMessages   int
-	ContextCompressionFormat     string
-	ContextCompressionOmitted    int
-	ContextCompressionSkipReason string
-	StartTime                    time.Time
-	ProcessingStartTime          time.Time
+	ContextCompressionApplied     bool
+	ContextCompressionBefore      int
+	ContextCompressionAfter       int
+	ContextCompressionMessages    int
+	ContextCompressionFormat      string
+	ContextCompressionOmitted     int
+	ContextCompressionSkipReason  string
+	StartTime                     time.Time
+	ProcessingStartTime           time.Time
 	// Streaming detection
 	ExpectStreamingResponse bool // set from request Accept header or stream parameter
 	IsStreamingResponse     bool // set from response Content-Type
@@ -273,16 +269,20 @@ type RequestContext struct {
 	ModalityClassification *ModalityClassificationResult // Set by classifyModality()
 
 	// VSR signal tracking - stores all matched signals for response headers
-	VSRMatchedKeywords        []string // Matched keyword rule names
-	VSRMatchedEmbeddings      []string // Matched embedding rule names
-	VSRMatchedDomains         []string // Matched domain rule names
-	VSRMatchedFactCheck       []string // Matched fact-check signals
-	VSRMatchedUserFeedback    []string // Matched user feedback signals
-	VSRMatchedReask           []string // Matched repeated-question dissatisfaction signals
-	VSRMatchedPreference      []string // Matched preference signals
-	VSRMatchedLanguage        []string // Matched language signals
-	VSRMatchedContext         []string // Matched context rule names (e.g. "low_token_count")
-	VSRContextTokenCount      int      // Conservative request-context token estimate used for routing
+	VSRMatchedKeywords     []string // Matched keyword rule names
+	VSRMatchedEmbeddings   []string // Matched embedding rule names
+	VSRMatchedDomains      []string // Matched domain rule names
+	VSRMatchedFactCheck    []string // Matched fact-check signals
+	VSRMatchedUserFeedback []string // Matched user feedback signals
+	VSRMatchedReask        []string // Matched repeated-question dissatisfaction signals
+	VSRMatchedPreference   []string // Matched preference signals
+	VSRMatchedLanguage     []string // Matched language signals
+	VSRMatchedContext      []string // Matched context rule names (e.g. "low_token_count")
+	VSRContextTokenCount   int      // Conservative request-context token estimate used for routing
+	// VSRContextTokenFloor is the prompt's own token floor when the estimate
+	// was made; a different floor at dispatch means the prompt was rewritten
+	// since.
+	VSRContextTokenFloor      int
 	VSRContextTextBytes       int      // Actual semantic-text bytes eligible for online text calibration
 	VSRContextEquivalentBytes int      // Content-free byte equivalent of the conservative routing floor
 	VSRContextHasNonText      bool     // Structured JSON or image reserves make text-only calibration unsafe

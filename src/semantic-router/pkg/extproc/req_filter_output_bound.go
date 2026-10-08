@@ -70,7 +70,7 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 	}
 	plan := r.planDispatchOutputBound(
 		dispatch.logicalModel, dispatch.targetFormat, decisionMaxTokensLimit(ctx), budget,
-		int64(r.Config.GetModelContextWindowSize(dispatch.logicalModel)), dispatchContextTokens(request, ctx),
+		int64(r.Config.GetModelContextWindowSize(dispatch.logicalModel)), r.dispatchContextTokens(request, ctx),
 	)
 	if plan.source == "" {
 		return false, nil
@@ -157,23 +157,27 @@ const (
 	outputBoundLimitedByContext  = "context"
 )
 
-// dispatchContextTokens is the size of the prompt as it will be dispatched:
-// the request's routing estimate, which may be calibrated, never below a
-// fresh count of the request as it stands now. The estimate was made before
-// a stored Responses history or a memory retrieval was prepended, so a room
-// computed from it alone could leave a limit the provider refuses. Once
-// context compression or tool selection has rewritten the prompt the
-// estimate describes one that no longer exists, so the fresh count stands
-// alone.
-func dispatchContextTokens(request *llmprotocol.Request, ctx *RequestContext) int64 {
-	var fresh int64
-	if request != nil {
-		fresh = int64(extractSemanticRequestSignals(request).ContextTokenFloor)
+// dispatchContextTokens is the size of the prompt as it will be dispatched.
+// It is the routing estimate while the prompt is the one that estimate
+// described, told by the prompt's own token floor: that count may come from
+// a calibrated counter, and it is what the mask admitted the arm on. A prompt
+// rewritten since -- a stored history or a retrieval prepended, compression,
+// tool selection -- has another floor and is counted afresh, by the rule
+// routing counts with: the recipe's context signal where a decision rule
+// references it, the character heuristic otherwise, never below the floor.
+func (r *OpenAIRouter) dispatchContextTokens(request *llmprotocol.Request, ctx *RequestContext) int64 {
+	if r == nil || request == nil || ctx == nil {
+		return 0
 	}
-	if ctx.ContextCompressionApplied || ctx.ToolSelectionRewroteTools {
-		return fresh
+	snapshot := extractSemanticRequestSignals(request)
+	if ctx.VSRContextTokenCount > 0 && snapshot.ContextTokenFloor == ctx.VSRContextTokenFloor {
+		return int64(ctx.VSRContextTokenCount)
 	}
-	return max(int64(ctx.VSRContextTokenCount), fresh)
+	signalInput := r.prepareSignalEvaluationInput(signalConversationHistoryFromSnapshot(snapshot))
+	if count, ok := r.classifierForRequest(ctx).ContextTokenCount(signalInput.allMessagesText, snapshot.ContextTokenFloor); ok {
+		return int64(count)
+	}
+	return int64(contextTokenEstimate(0, contextTokenText(signalInput), snapshot.ContextTokenFloor))
 }
 
 // How a planned bound met a Messages thinking budget, as logged.
