@@ -26,7 +26,7 @@ func TestPolicyDecideRequestCarriesTheClientBytes(t *testing.T) {
 	if err != nil || len(clients) == 0 {
 		t.Fatalf("no captured Messages bodies: %v", err)
 	}
-	router, fake := v5Router(t, "anthropic")
+	router, fake := v5RouterForCaptures(t)
 	for index, path := range clients {
 		client, err := os.ReadFile(path)
 		if err != nil {
@@ -141,4 +141,18 @@ func TestPolicyResponsesDecideBodyIsUnescaped(t *testing.T) {
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		t.Fatalf("decide body is not JSON: %v", err)
 	}
+}
+
+// v5RouterForCaptures is the v5 router with its GLM worker claiming images
+// inside tool results: pathfinder's image tool-tail captures (ADR 0129)
+// carry them, and only an arm that claims them may serve such a turn.
+func v5RouterForCaptures(t *testing.T) (*OpenAIRouter, *fakePolicyService) {
+	t.Helper()
+	return v5RouterWith(t, "anthropic", func(config string) string {
+		const card = "    - name: glm\n      modality: text\n"
+		if strings.Count(config, card) != 1 {
+			t.Fatal("the config template changed; update the card rewrite")
+		}
+		return strings.Replace(config, card, card+"      capabilities: [tool_result_images]\n", 1)
+	})
 }

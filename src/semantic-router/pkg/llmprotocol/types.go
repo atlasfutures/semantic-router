@@ -137,6 +137,13 @@ type Message struct {
 	// result; the Messages encoder rejoins consecutive messages of one group,
 	// so the provider sees the client's grouping. Zero is no group.
 	WireGroup int
+	// JoinsToolMedia marks a router-written user message placed after a run
+	// of tool results (the thinking lever's steer). On a wire whose tool
+	// messages cannot carry images, the images are moved into user messages
+	// after the run, and this message travels as trailing parts of the last
+	// of them rather than as a user message of its own, which a model reads
+	// as the user's turn (ADR 0129). No decoder sets it.
+	JoinsToolMedia bool
 }
 
 // ConfigurationUpdate is a mid-conversation settings change. Only the

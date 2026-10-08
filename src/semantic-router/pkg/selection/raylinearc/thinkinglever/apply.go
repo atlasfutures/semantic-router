@@ -134,10 +134,13 @@ func applyEntry(
 		// The steer joins the wire group of the tool results it follows, so
 		// on Messages it travels as a trailing text block of the user message
 		// that carries them rather than as a message of its own.
+		// On Chat, where the tool results' images move into user messages
+		// after the run, it joins the last of those (ADR 0129).
 		return insertMessage(messages, index+1, llmprotocol.Message{
-			Role:      llmprotocol.RoleUser,
-			Content:   []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: payload.Suffix}},
-			WireGroup: messages[index].WireGroup,
+			Role:           llmprotocol.RoleUser,
+			Content:        []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: payload.Suffix}},
+			WireGroup:      messages[index].WireGroup,
+			JoinsToolMedia: true,
 		}), nil
 	case PlaceSystemBeforeTurn:
 		return insertMessage(messages, index, effortMessage(payload)), nil
