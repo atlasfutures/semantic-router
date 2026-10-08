@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 // Messages projects the client transcript for the planner.
@@ -42,27 +43,41 @@ func Messages(messages []llmprotocol.Message) []Message {
 // worker wire that ADR 0129 governs, as pathfinder's placer reads the
 // encoded body. An image in the trailing user messages counts as well as
 // one in a tool output: Chat's images travel in user messages after the run,
-// and a Responses codec may hoist one into a user item there. Messages keeps an image inside
-// its tool_result and is not governed.
-func ImageToolTail(messages []llmprotocol.Message, wire llmprotocol.WireFormat) bool {
+// and a Responses codec may hoist one into a user item there. Messages keeps
+// an image inside its tool_result and is not governed. A message the target
+// encoder omits whole, of any role, is read past and counts for nothing.
+func ImageToolTail(request llmprotocol.Request, wire llmprotocol.WireFormat) bool {
 	if wire != llmprotocol.OpenAIChatV1 && wire != llmprotocol.OpenAIResponsesV1 {
 		return false
 	}
+	messages := request.Messages
 	position := len(messages) - 1
 	images := false
-	for position >= 0 && (messages[position].Role == llmprotocol.RoleUser || unspoken(messages[position])) {
-		images = images || carriesImage(messages[position].Content)
-		position--
+	for ; position >= 0; position-- {
+		message := messages[position]
+		if protocolcodec.MessageEncodesToNothing(request, message, wire) || unspoken(message) {
+			continue
+		}
+		if message.Role != llmprotocol.RoleUser {
+			break
+		}
+		images = images || carriesImage(message.Content)
 	}
 	run := false
-	for position >= 0 && (messages[position].Role == llmprotocol.RoleTool || unspoken(messages[position])) {
-		run = run || messages[position].Role == llmprotocol.RoleTool
-		for _, content := range messages[position].Content {
+	for ; position >= 0; position-- {
+		message := messages[position]
+		if protocolcodec.MessageEncodesToNothing(request, message, wire) || unspoken(message) {
+			continue
+		}
+		if message.Role != llmprotocol.RoleTool {
+			break
+		}
+		run = true
+		for _, content := range message.Content {
 			if content.ToolResult != nil {
 				images = images || carriesImage(content.ToolResult.Content)
 			}
 		}
-		position--
 	}
 	return images && run
 }

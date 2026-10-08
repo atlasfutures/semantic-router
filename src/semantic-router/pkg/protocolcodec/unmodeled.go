@@ -256,6 +256,29 @@ func messageDropsWhole(contents []llmprotocol.Content, target llmprotocol.WireFo
 	return true
 }
 
+// MessageEncodesToNothing reports whether the target encoder omits one of
+// request's messages whole, as the encoder's own message loop decides: every
+// block is carried content the target cannot name, or, on Responses, an
+// encrypted reasoning item the request does not forward. A detector that
+// judges a turn as the worker sees it reads past such a message, as the
+// encoder does (ADR 0129's image tool tail).
+func MessageEncodesToNothing(request llmprotocol.Request, message llmprotocol.Message, target llmprotocol.WireFormat) bool {
+	switch target {
+	case llmprotocol.OpenAIChatV1:
+		return message.Configuration == nil && messageDropsWhole(message.Content, target)
+	case llmprotocol.OpenAIResponsesV1:
+		if dropsEncryptedReasoning(request, message) {
+			return true
+		}
+		if _, carried := carriedItemBytes(message, target); carried {
+			return false
+		}
+		return messageDropsWhole(message.Content, target)
+	default:
+		return messageDropsWhole(message.Content, target)
+	}
+}
+
 // hasUnnamedMembers reports whether a JSON object holds members the wire struct
 // does not name.
 func hasUnnamedMembers(body []byte, target any) bool {

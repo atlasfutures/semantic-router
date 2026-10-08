@@ -131,7 +131,7 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 		Requested:              requested,
 		MinTurnsBetweenChanges: lever.MinSpacingTurns,
 		MaxEntries:             lever.MaxLedgerEntries,
-		ImageToolTail:          thinkinglever.ImageToolTail(request.Messages, targetFormat),
+		ImageToolTail:          thinkinglever.ImageToolTail(*request, targetFormat),
 	})
 	if err != nil {
 		return false, err

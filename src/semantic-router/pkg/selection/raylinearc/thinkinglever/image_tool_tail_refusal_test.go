@@ -53,6 +53,33 @@ func redactedOnly() llmprotocol.Message {
 	}}}
 }
 
+func serverToolUseOnly() llmprotocol.Message {
+	return llmprotocol.Message{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{{
+		Kind: llmprotocol.ContentUnmodeled, Unmodeled: &llmprotocol.UnmodeledBlock{
+			Format: llmprotocol.AnthropicMessagesV1, Type: "server_tool_use",
+			Raw: []byte(`{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"x"}}`),
+		},
+	}}}
+}
+
+func webSearchResultOnly() llmprotocol.Message {
+	return llmprotocol.Message{Role: llmprotocol.RoleUser, Content: []llmprotocol.Content{{
+		Kind: llmprotocol.ContentUnmodeled, Unmodeled: &llmprotocol.UnmodeledBlock{
+			Format: llmprotocol.AnthropicMessagesV1, Type: "web_search_tool_result",
+			Raw: []byte(`{"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[]}`),
+		},
+	}}}
+}
+
+func encryptedReasoningOnly() llmprotocol.Message {
+	return llmprotocol.Message{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{{
+		Kind: llmprotocol.ContentUnmodeled, Unmodeled: &llmprotocol.UnmodeledBlock{
+			Format: llmprotocol.OpenAIResponsesV1, Type: "reasoning",
+			Raw: []byte(`{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"gAAA"}`),
+		},
+	}}}
+}
+
 func refusal() llmprotocol.Message {
 	return llmprotocol.Message{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{
 		{Kind: llmprotocol.ContentRefusal, Text: "I can't help with that."},
@@ -88,17 +115,24 @@ func TestImageToolTailReadsTheTurnAsTheWorkerWireCarriesIt(t *testing.T) {
 		// Reasoning alone, which the adapter may drop, does not end the run.
 		{"image result, reasoning, then user text", []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1"), reasoningOnly(), text(llmprotocol.RoleUser, "Colour?")}, true, true},
 		{"image result, redacted thinking, then user text", []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1"), redactedOnly(), text(llmprotocol.RoleUser, "Colour?")}, true, true},
+		// A message the target encoder omits whole (an Anthropic
+		// server_tool_use alone) never reaches the worker either.
+		{"image result, server tool use, then user text", []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1"), serverToolUseOnly(), text(llmprotocol.RoleUser, "Colour?")}, true, true},
+		// Nor does a user message the encoder omits, inside the run.
+		{"image result, omitted user message, text result", []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1"), webSearchResultOnly(), textResult("c2")}, true, true},
+		// An encrypted reasoning item the request does not forward.
+		{"image result, unforwarded encrypted reasoning, then user text", []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1"), encryptedReasoningOnly(), text(llmprotocol.RoleUser, "Colour?")}, true, true},
 		// A refusal is the assistant's answer: the image turn is over.
 		{"image result answered with a refusal, then a new ask", []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1"), refusal(), ask}, false, false},
 		{"image result answered, then a new ask", []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1"), text(llmprotocol.RoleAssistant, "Seen."), ask}, false, false},
 	} {
-		if got := ImageToolTail(tc.messages, llmprotocol.OpenAIChatV1); got != tc.chat {
+		if got := ImageToolTail(llmprotocol.Request{Messages: tc.messages}, llmprotocol.OpenAIChatV1); got != tc.chat {
 			t.Errorf("%s on chat = %v, want %v", tc.name, got, tc.chat)
 		}
-		if got := ImageToolTail(tc.messages, llmprotocol.OpenAIResponsesV1); got != tc.responses {
+		if got := ImageToolTail(llmprotocol.Request{Messages: tc.messages}, llmprotocol.OpenAIResponsesV1); got != tc.responses {
 			t.Errorf("%s on responses = %v, want %v", tc.name, got, tc.responses)
 		}
-		if ImageToolTail(tc.messages, llmprotocol.AnthropicMessagesV1) {
+		if ImageToolTail(llmprotocol.Request{Messages: tc.messages}, llmprotocol.AnthropicMessagesV1) {
 			t.Errorf("%s on messages is governed", tc.name)
 		}
 	}
