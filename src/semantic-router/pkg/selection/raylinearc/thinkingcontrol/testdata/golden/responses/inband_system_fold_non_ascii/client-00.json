@@ -1,0 +1,1 @@
+{"model":"gpt-6-sol","instructions":"You are Codex.","input":[{"type":"message","role":"user","content":"Überprüfe die Datei — 日本語のテスト ✓"},{"type":"message","role":"developer","content":[{"type":"input_text","text":"残りのトークン: 1000 — ✓"}]}],"stream":true}

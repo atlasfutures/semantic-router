@@ -19,6 +19,8 @@ package thinkingcontrol
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -180,10 +182,17 @@ func (p *Placer) check(control *Control) error {
 		first = control
 	}
 	if control.Native != first.Native || !sameBudget(control.BudgetTokens, first.BudgetTokens) ||
-		(control.Instruction == nil) != (first.Instruction == nil) {
-		return refuse("call %d: base, budget and lever presence are fixed per episode", index)
+		(control.Instruction == nil) != (first.Instruction == nil) ||
+		(control.Instruction != nil && !sameRules(control.Instruction, first.Instruction)) {
+		return refuse("call %d: base, budget, lever presence and rules are fixed per episode", index)
 	}
 	return nil
+}
+
+// sameRules reports whether two instructions name the same rule set: the
+// text rules every instruction carries, plus its unit and in-band system rule.
+func sameRules(a, b *Instruction) bool {
+	return a.Unit == b.Unit && a.InbandSystem == b.InbandSystem
 }
 
 func sameBudget(a, b *int64) bool {
@@ -262,9 +271,19 @@ func (p *Placer) place(body *value, control *Control) (*value, Receipt, error) {
 			next.InForce = &inForce
 		}
 	}
-	applied, err := applyLedger(units, next.Ledger, format)
+	rendered, err := renderedUnits(units, next.Ledger, format)
 	if err != nil {
 		return nil, Receipt{}, err
+	}
+	var applied []*value
+	if instruction != nil && instruction.InbandSystem == InbandSystemFold {
+		if applied, err = foldInbandSystem(units, rendered, format); err != nil {
+			return nil, Receipt{}, err
+		}
+	} else {
+		for _, group := range rendered {
+			applied = append(applied, group...)
+		}
 	}
 	placed := body.clone()
 	placed.set(unitsKey(format), arrayValue(applied...))
@@ -490,12 +509,14 @@ func inserted(format, text string) *value {
 	return objectValue(member{"role", stringValue("user")}, member{"content", arrayValue(textUnit(format, text))})
 }
 
-func applyLedger(units []*value, ledger []LedgerItem, format string) ([]*value, error) {
+// renderedUnits is, per client unit, what the ledger renders for it: the
+// unit (with any appended instruction), then any unit inserted after it.
+func renderedUnits(units []*value, ledger []LedgerItem, format string) ([][]*value, error) {
 	byAnchor := map[int][]LedgerItem{}
 	for _, item := range ledger {
 		byAnchor[item.Anchor] = append(byAnchor[item.Anchor], item)
 	}
-	out := make([]*value, 0, len(units)+len(ledger))
+	out := make([][]*value, 0, len(units))
 	for position, unit := range units {
 		items := byAnchor[position]
 		if len(items) > 1 {
@@ -506,13 +527,223 @@ func applyLedger(units []*value, ledger []LedgerItem, format string) ([]*value, 
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, placed)
+			out = append(out, []*value{placed})
 			continue
 		}
-		out = append(out, unit.clone())
+		group := []*value{unit.clone()}
 		if len(items) == 1 {
-			out = append(out, inserted(format, items[0].Text))
+			group = append(group, inserted(format, items[0].Text))
+		}
+		out = append(out, group)
+	}
+	return out, nil
+}
+
+// --- the in-band system fold (fold_before_unit_v1) -------------------------------
+
+// isToolResult is a tool-result unit: a Chat tool message, or a Responses
+// function or custom tool call output.
+func isToolResult(unit *value, format string) bool {
+	role, _ := stringField(unit, "role", "")
+	typ, _ := stringField(unit, "type", "")
+	return (format == FormatChat && unit.has("role") && role == "tool") ||
+		(format == FormatResponses && unit.has("type") && (typ == "function_call_output" || typ == "custom_tool_call_output"))
+}
+
+// foldedUnits is an in-band system row's text as the text units it folds
+// into: its own blocks, byte for byte.
+func foldedUnits(row *value, format string) ([]*value, error) {
+	var extra []string
+	for _, m := range row.members {
+		if m.key != "role" && m.key != "content" && m.key != "type" {
+			extra = append(extra, m.key)
+		}
+	}
+	if len(extra) > 0 {
+		return nil, refuse("an in-band system message carries %s; only its content can be folded", pythonStrList(extra))
+	}
+	content := row.get("content")
+	if content.isString() {
+		return []*value{textUnit(format, content.str)}, nil
+	}
+	textType := textUnit(format, "").get("type").str
+	refused := refuse("an in-band system message's content is not %s units; it cannot be folded", textType)
+	if content == nil || content.kind != kindArray || len(content.items) == 0 {
+		return nil, refused
+	}
+	out := make([]*value, 0, len(content.items))
+	for _, block := range content.items {
+		if block.kind != kindObject {
+			return nil, refused
+		}
+		if t := block.get("type"); !t.isString() || t.str != textType {
+			return nil, refused
+		}
+		if !block.get("text").isString() {
+			return nil, refused
+		}
+		out = append(out, block.clone())
+	}
+	return out, nil
+}
+
+// pythonStrList is Python's repr of a sorted list of strings, as the
+// reference renderer's refusal text writes it.
+func pythonStrList(keys []string) string {
+	sorted := append([]string{}, keys...)
+	sort.Strings(sorted)
+	quoted := make([]string, len(sorted))
+	for i, key := range sorted {
+		quoted[i] = pythonStrRepr(key)
+	}
+	return "[" + strings.Join(quoted, ", ") + "]"
+}
+
+// pythonStrRepr is Python's repr of a printable string: single-quoted
+// unless it holds a single quote and no double quote.
+func pythonStrRepr(s string) string {
+	quote := "'"
+	if strings.Contains(s, "'") && !strings.Contains(s, `"`) {
+		quote = `"`
+	}
+	escaped := strings.ReplaceAll(s, `\`, `\\`)
+	if quote == "'" {
+		escaped = strings.ReplaceAll(escaped, "'", `\'`)
+	}
+	return quote + escaped + quote
+}
+
+// foldIntoMessage is placed with folded after the client's own content and
+// before anything placement appended.
+func foldIntoMessage(client, placed *value, format string, folded []*value) (*value, error) {
+	out := placed.clone()
+	own, content := client.get("content"), placed.get("content")
+	if own.isString() && content.isString() {
+		// The client's string, extended by a joined steering suffix or not at
+		// all: the client's text, the folded units, then the suffix (less the
+		// blank-line join) as its own unit.
+		if !strings.HasPrefix(content.str, own.str) ||
+			(content.str != own.str && !strings.HasPrefix(content.str[len(own.str):], "\n\n")) {
+			return nil, refuse("the placed message does not extend the client's own text")
+		}
+		parts := append([]*value{textUnit(format, own.str)}, folded...)
+		if content.str != own.str {
+			parts = append(parts, textUnit(format, content.str[len(own.str)+2:]))
+		}
+		out.set("content", arrayValue(parts...))
+		return out, nil
+	}
+	ownCount := -1
+	switch {
+	case own.isString():
+		ownCount = 1
+	case own != nil && own.kind == kindArray:
+		ownCount = len(own.items)
+	}
+	if ownCount < 0 || content == nil || content.kind != kindArray || len(content.items) < ownCount {
+		return nil, refuse("the governed %s message has no string or list content to fold into", format)
+	}
+	parts := append([]*value{}, content.items[:ownCount]...)
+	parts = append(parts, folded...)
+	parts = append(parts, content.items[ownCount:]...)
+	out.set("content", arrayValue(parts...))
+	return out, nil
+}
+
+// foldInbandSystem is the fold_before_unit_v1 rule over one call's placed
+// units: each in-band system or developer row moves into the nearest
+// preceding governed turn (a user message, or a tool-result run), after that
+// turn's own content and before any steering unit, and is removed where it
+// stood. Rows before the first governed turn stay. A row after an assistant
+// unit, or inside a tool-result run, is refused. Deterministic in its inputs,
+// so a call extending the previous call's units renders them unchanged.
+func foldInbandSystem(units []*value, rendered [][]*value, format string) ([]*value, error) {
+	if len(rendered) != len(units) {
+		return nil, refuse("the rendered units do not align with the client's")
+	}
+	for _, group := range rendered {
+		if len(group) == 0 {
+			return nil, refuse("the rendered units do not align with the client's")
+		}
+	}
+	folded := map[int][]*value{}
+	dropped := map[int]bool{}
+	target, previous := -1, -1
+	for position, unit := range units {
+		if isSystem(unit) {
+			if target < 0 {
+				continue // before the first governed turn: stays where it is
+			}
+			if previous != target {
+				return nil, refuse("in-band system unit %d follows unit %s, not a governed turn; "+
+					"folding it would rewrite an answered turn", position, pythonOptionalInt(previous))
+			}
+			var following *value
+			for _, later := range units[position+1:] {
+				if !isSystem(later) {
+					following = later
+					break
+				}
+			}
+			if isToolResult(units[target], format) && following != nil && isToolResult(following, format) {
+				return nil, refuse("in-band system unit %d sits inside a tool-result run; "+
+					"folding it would split the run", position)
+			}
+			if len(rendered[position]) != 1 {
+				return nil, refuse("placement wrote at in-band system unit %d", position)
+			}
+			rows, err := foldedUnits(unit, format)
+			if err != nil {
+				return nil, err
+			}
+			folded[target] = append(folded[target], rows...)
+			dropped[position] = true
+			continue
+		}
+		if isUserMessage(unit, format) || isToolResult(unit, format) {
+			target = position
+		}
+		previous = position
+	}
+	out := make([]*value, 0, len(units)+len(rendered))
+	for position, group := range rendered {
+		if dropped[position] {
+			continue
+		}
+		head := group[0].clone()
+		insertedUnits := make([]*value, 0, len(group)-1)
+		for _, unit := range group[1:] {
+			insertedUnits = append(insertedUnits, unit.clone())
+		}
+		rows, isTarget := folded[position]
+		switch {
+		case isTarget && isUserMessage(units[position], format):
+			merged, err := foldIntoMessage(units[position], head, format, rows)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, merged)
+			out = append(out, insertedUnits...)
+		case isTarget:
+			// After a tool run: the folded text is a user message of its own,
+			// ahead of any instruction placement inserted after the run.
+			message := inserted(format, "")
+			message.set("content", arrayValue(rows...))
+			out = append(out, head, message)
+			out = append(out, insertedUnits...)
+		default:
+			out = append(out, head)
+			out = append(out, insertedUnits...)
 		}
 	}
 	return out, nil
+}
+
+// pythonOptionalInt is how the reference renderer's refusal text writes an
+// optional index: the number, or None.
+func pythonOptionalInt(n int) string {
+	if n < 0 {
+		return "None"
+	}
+	return strconv.Itoa(n)
 }

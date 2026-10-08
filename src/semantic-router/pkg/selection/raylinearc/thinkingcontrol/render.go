@@ -21,7 +21,10 @@ package thinkingcontrol
 // rendered call (other output_config keys stay), then the cell's base wire is
 // written, so a default base sends none of them and a Messages effort gets no
 // adaptive thinking block. In-band system messages after the governed turn
-// stay where they are; the governed turn is the last unit before them.
+// stay where they are; the governed turn is the last unit before them --
+// except under a control whose rules name the in-band system fold
+// (InbandSystemFold), which folds each into the nearest preceding governed
+// turn ahead of its steering unit (placement.go, foldInbandSystem).
 //
 // Serialization: compact JSON, UTF-8, no escaping beyond JSON's own, object
 // key order as the client sent it with inserted keys last.

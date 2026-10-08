@@ -1,0 +1,74 @@
+{
+ "description": "fold_before_unit_v1: a leading in-band system row stays; each later one moves into the turn before it, ahead of that turn's steering unit (after a tool run, as its own user unit ahead of any inserted one); a hold replays every earlier unit byte for byte",
+ "format": "responses",
+ "provider": "openrouter",
+ "model": "mistralai/mistral-large-4-0",
+ "wire_model": "mistralai/mistral-large-4-0",
+ "admission": "placement_only_not_admitted",
+ "allow_experimental": true,
+ "registry_pin": "8fcff3aa103bdea7ddbdee98587d0e0a40b70a491a2d2df5d2d7c561364fd3a8",
+ "calls": [
+  {
+   "client_body": "client-00.json",
+   "control_id": "65832e19048067be3126af1ceb7057931a0be5a9ca29014a67ab1d41648ed210",
+   "expected_body": "provider-00.json",
+   "receipt": {
+    "call": 0,
+    "control_id": "65832e19048067be3126af1ceb7057931a0be5a9ca29014a67ab1d41648ed210",
+    "level_in_force": "up",
+    "instruction_state": "steered",
+    "written": "instruction",
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  },
+  {
+   "client_body": "client-01.json",
+   "control_id": "65832e19048067be3126af1ceb7057931a0be5a9ca29014a67ab1d41648ed210",
+   "expected_body": "provider-01.json",
+   "receipt": {
+    "call": 1,
+    "control_id": "65832e19048067be3126af1ceb7057931a0be5a9ca29014a67ab1d41648ed210",
+    "level_in_force": "up",
+    "instruction_state": "steered",
+    "written": null,
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  },
+  {
+   "client_body": "client-02.json",
+   "control_id": "a75fcc5be6ba18a5491ff00729f676d016a208411f60809d1b4555c74b03fb0c",
+   "expected_body": "provider-02.json",
+   "receipt": {
+    "call": 2,
+    "control_id": "a75fcc5be6ba18a5491ff00729f676d016a208411f60809d1b4555c74b03fb0c",
+    "level_in_force": "none",
+    "instruction_state": "neutral_marker",
+    "written": "neutral_marker",
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  },
+  {
+   "client_body": "client-03.json",
+   "control_id": "5a811ebd822ecec1444d421023a35ad2013f897790adb674fde82a1ec9b169db",
+   "expected_body": "provider-03.json",
+   "receipt": {
+    "call": 3,
+    "control_id": "5a811ebd822ecec1444d421023a35ad2013f897790adb674fde82a1ec9b169db",
+    "level_in_force": "down",
+    "instruction_state": "steered",
+    "written": "instruction",
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  }
+ ],
+ "refusal": null,
+ "golden_refusal": "control 65832e190480 is not admitted for mistralai/mistral-large-4-0 on openrouterxresponses"
+}

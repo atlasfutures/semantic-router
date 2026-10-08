@@ -46,6 +46,14 @@ var Rules = map[string]string{"placement": "turn_tail_v2", "emit": "on_change_v1
 // the ADR it does not implement the unit until it serves a Responses cell.
 const UnitConfigurationUpdate = "configuration_update_v1"
 
+// InbandSystemFold is the in-band system rule a rule set may name under the
+// key "inband_system" (pathfinder's FOLD_RULES): each in-band system or
+// developer message is folded into the nearest preceding governed turn,
+// after its own content and before any steering unit (foldInbandSystem). It
+// is a rule set of its own, so a fold control has its own id; it never
+// combines with a unit.
+const InbandSystemFold = "fold_before_unit_v1"
+
 // Control is what an action names: a per-session base, an optional token
 // budget, and an optional steering instruction. It carries no provider,
 // format or wire bytes.
@@ -63,6 +71,8 @@ type Instruction struct {
 	// Unit is the instruction's unit when it is not text: empty, or
 	// UnitConfigurationUpdate.
 	Unit string
+	// InbandSystem is the in-band system rule: empty, or InbandSystemFold.
+	InbandSystem string
 }
 
 // Error is a control, artifact, admission or placement that cannot be used
@@ -87,6 +97,9 @@ func (c Control) json() *value {
 		}
 		if c.Instruction.Unit != "" {
 			rules.set("unit", stringValue(c.Instruction.Unit))
+		}
+		if c.Instruction.InbandSystem != "" {
+			rules.set("inband_system", stringValue(c.Instruction.InbandSystem))
 		}
 		instruction = objectValue(
 			member{"level", stringValue(c.Instruction.Level)},
@@ -184,8 +197,18 @@ func requireControl(v *value, where string) (Control, error) {
 			}
 			unit = UnitConfigurationUpdate
 		}
+		inbandSystem := ""
+		if rules.has("inband_system") {
+			if got := rules.get("inband_system"); !got.isString() || got.str != InbandSystemFold || unit != "" {
+				return Control{}, bad
+			}
+			inbandSystem = InbandSystemFold
+		}
 		wantMembers := len(Rules)
 		if unit != "" {
+			wantMembers++
+		}
+		if inbandSystem != "" {
 			wantMembers++
 		}
 		if len(rules.members) != wantMembers {
@@ -197,10 +220,11 @@ func requireControl(v *value, where string) (Control, error) {
 			}
 		}
 		control.Instruction = &Instruction{
-			Level:       instruction.get("level").str,
-			Text:        instruction.get("text").str,
-			NeutralText: instruction.get("neutral_text").str,
-			Unit:        unit,
+			Level:        instruction.get("level").str,
+			Text:         instruction.get("text").str,
+			NeutralText:  instruction.get("neutral_text").str,
+			Unit:         unit,
+			InbandSystem: inbandSystem,
 		}
 	default:
 		return Control{}, bad
