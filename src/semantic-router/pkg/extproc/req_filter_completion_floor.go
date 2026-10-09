@@ -8,9 +8,11 @@ import (
 )
 
 // applyDispatchRequestParams runs the request_params plugin at provider
-// dispatch: first the upstream blocking and capping, then the floor. It lives
-// here rather than in the routing file so the floor keeps its own seam and the
-// routing hotspot keeps its size.
+// dispatch: first the upstream blocking and capping, then the floor. A floor
+// it raised the allowance to is recorded on the context
+// (DispatchCompletionFloor), so the output bound can tell that limit from one
+// the caller stated. It lives here rather than in the routing file so the
+// floor keeps its own seam and the routing hotspot keeps its size.
 func (r *OpenAIRouter) applyDispatchRequestParams(
 	request *llmprotocol.Request,
 	dispatch *providerDispatch,
@@ -30,6 +32,9 @@ func (r *OpenAIRouter) applyDispatchRequestParams(
 	}
 	decisionKey := config.RoutingDecisionKey(recipe, ctx.VSRSelectedDecision.Name)
 	raised := applyCompletionTokenFloor(params, request, dispatch.logicalModel, decisionKey)
+	if raised {
+		ctx.DispatchCompletionFloor = *request.Sampling.MaxOutputTokens
+	}
 	return raised || changed, nil
 }
 

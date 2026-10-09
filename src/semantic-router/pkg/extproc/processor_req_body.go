@@ -208,8 +208,7 @@ func (r *OpenAIRouter) handleEntrypointModelRouting(request *llmprotocol.Request
 			return r.imageFileDispatchFailure(err, ctx)
 		}
 		response := r.buildProviderDispatchResponse(dispatch, ctx)
-		r.handleToolSelectionForRequest(request, response, ctx)
-		return r.finalizeProviderDispatchResponse(dispatch, response, ctx)
+		return r.completeProviderDispatch(request, dispatch, response, ctx)
 	}
 
 	// Record routing decision with tracing
@@ -245,9 +244,7 @@ func (r *OpenAIRouter) handleEntrypointModelRouting(request *llmprotocol.Request
 	// Capture router replay information if enabled
 	r.startRouterReplay(ctx, originalModel, matchedModel, decisionName)
 
-	// Handle tool selection
-	r.handleToolSelectionForRequest(request, response, ctx)
-	response, err = r.finalizeProviderDispatchResponse(dispatch, response, ctx)
+	response, err = r.completeProviderDispatch(request, dispatch, response, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -301,9 +298,7 @@ func (r *OpenAIRouter) handleSpecifiedModelRouting(request *llmprotocol.Request,
 	// Capture router replay information if enabled even when the client pins a model.
 	r.startRouterReplay(ctx, originalModel, originalModel, decisionName)
 
-	// Handle tool selection
-	r.handleToolSelectionForRequest(request, response, ctx)
-	response, err = r.finalizeProviderDispatchResponse(dispatch, response, ctx)
+	response, err = r.completeProviderDispatch(request, dispatch, response, ctx)
 	if err != nil {
 		return nil, err
 	}

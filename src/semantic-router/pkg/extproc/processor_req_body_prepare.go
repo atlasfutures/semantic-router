@@ -72,7 +72,7 @@ func (r *OpenAIRouter) runRequestPreRoutingStages(
 		return requestDecisionState{}, blocked
 	}
 	metrics.RecordModelRequest(selectedModel)
-	ctx.InflightToken = inflight.Begin(selectedModel)
+	ctx.InflightToken, ctx.InflightModel = inflight.Begin(selectedModel), selectedModel
 	if resp := r.handleFastResponse(ctx, decisionName); resp != nil {
 		inflight.End(selectedModel, ctx.InflightToken)
 		ctx.InflightToken = 0
@@ -138,6 +138,7 @@ func applyRequestContextEstimate(snapshot *requestSignalSnapshot, ctx *RequestCo
 		return
 	}
 	ctx.VSRContextTokenCount = snapshot.ContextTokenFloor
+	ctx.VSRContextTokenFloor = snapshot.ContextTokenFloor
 	ctx.VSRContextTextBytes = snapshot.ContextTextBytes
 	ctx.VSRContextEquivalentBytes = snapshot.ContextEquivalentBytes
 	ctx.VSRContextHasNonText = snapshot.ContextHasNonText

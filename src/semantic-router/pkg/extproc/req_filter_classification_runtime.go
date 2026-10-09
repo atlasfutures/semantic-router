@@ -102,6 +102,7 @@ func ensureContextTokenCount(ctx *RequestContext, signalInput signalEvaluationIn
 		return
 	}
 	ctx.VSRContextTokenCount = count
+	ctx.VSRContextTokenFloor = floor
 }
 
 // contextTokenEstimate is the request's conservative token count: the count

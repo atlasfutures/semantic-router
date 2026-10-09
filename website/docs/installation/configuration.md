@@ -291,10 +291,36 @@ routing:
   turned off for the request. A Rayline ARC v5 thinking control follows the
   same rule. Its thinking cannot be turned off without changing the control,
   so a cap that cannot hold its minimum fails the request.
+- **The limit fits the context window.** A provider refuses a request whose
+  input and output limit together exceed its context window. When the card
+  declares `context_window_size`, the Router's limit is capped at the window
+  less the request's own token estimate, the way the decision cap applies,
+  thinking budget included. The limit is planned once, on the request as it
+  is encoded. The prompt's size is the routing estimate while the prompt is
+  the one that estimate described; a prompt rewritten since, by a stored
+  history, a retrieval, compression or tool selection, is counted afresh by
+  the rule routing counts with, so the room reflects the prompt the provider
+  receives. A
+  request that leaves no room is sent as if the card declared no window:
+  every limit meets the same refusal when the prompt alone overflows, and an
+  estimate that overshot must not truncate an answer. The
+  `dispatch_output_bound` event records `context: clamped_to_context` or
+  `no_context_room`, the room, and `limited_by: decision` or `context`. A
+  completion floor the `request_params` plugin raised the allowance to
+  (`min_completion_tokens_by_model`) is the Router's number too, so it is
+  held to the room the same way, thinking budget included, never below what
+  the caller stated; a room under the target's minimum removes the floor
+  and sends the caller's own allowance, or none. The event names it
+  `source: floor`. A Responses caller that asked for `truncation: auto` has
+  the provider drop older input to fit, so the window is not applied to its
+  limit; the decision cap still is.
 - **Context compression reserves the limit.** Context compression runs before
   dispatch. It keeps the Router's limit free in the model's
   `context_window_size`, so a prompt near the window is compressed instead of
-  being refused by the provider.
+  being refused by the provider. It reserves the card's limit in full, not
+  the smaller room the prompt leaves before compression, and at least the
+  decision's completion floor for the model, which dispatch raises the
+  allowance to.
 - **The target's minimum is respected.** Responses refuses a
   `max_output_tokens` below 16, so a smaller card value or cap is raised to 16.
   If 16 is above the decision's `max_tokens_limit`, the request is sent with no

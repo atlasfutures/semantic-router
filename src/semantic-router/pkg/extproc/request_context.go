@@ -178,6 +178,10 @@ type RequestContext struct {
 	// the request was never admitted (rejected pre-selection, cache hit, etc.)
 	// and inflight.End on it is a no-op.
 	InflightToken uint64
+	// InflightModel is the model the token was taken under; the Looper can
+	// move RequestModel to its final model after admission, and a token is
+	// released against the model that issued it.
+	InflightModel string
 
 	// Session-aware transition metadata
 	SessionID           string  // Derived from ConversationID (Response API) or message hash (Chat Completions)
@@ -218,6 +222,7 @@ type RequestContext struct {
 	// an OpenAI-shaped client (claudeAutoCacheDispatch); encodeDispatchRequest
 	// decides on the final request whether it gets the automatic directive.
 	DispatchAutoCache               *dispatchAutoCache
+	DispatchCompletionFloor         int64                                       // min_completion_tokens_by_model floor the output allowance was raised to, or zero; the Router's number, so the output bound may hold it to the context window
 	VSRSelectionMethod              string                                      // Model selection algorithm used (e.g., "elo", "static", "router_dc")
 	VSRSelectionReasoning           string                                      // Bounded human-readable selector rationale for replay
 	VSRFusionQuorum                 *routerreplay.FusionQuorumDiagnostics       // Content-free Fusion panel quorum evidence for replay
@@ -279,6 +284,7 @@ type RequestContext struct {
 	VSRMatchedLanguage        []string // Matched language signals
 	VSRMatchedContext         []string // Matched context rule names (e.g. "low_token_count")
 	VSRContextTokenCount      int      // Conservative request-context token estimate used for routing
+	VSRContextTokenFloor      int      // The prompt's own token floor when that estimate was made; a different floor at dispatch means the prompt was rewritten since
 	VSRContextTextBytes       int      // Actual semantic-text bytes eligible for online text calibration
 	VSRContextEquivalentBytes int      // Content-free byte equivalent of the conservative routing floor
 	VSRContextHasNonText      bool     // Structured JSON or image reserves make text-only calibration unsafe

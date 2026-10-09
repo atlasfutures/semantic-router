@@ -72,5 +72,8 @@ func (r *OpenAIRouter) handleExternalGatewayModelRouting(
 		"model":       model,
 		"wire_format": targetFormat,
 	})
+	if err := r.settleProviderDispatch(dispatch, ctx); err != nil {
+		return nil, err
+	}
 	return r.finalizeProviderDispatchResponse(dispatch, response, ctx)
 }

@@ -154,6 +154,9 @@ func (r *OpenAIRouter) processWithContext(
 				ctx.StreamEndedAtSend = true
 				r.finalizeEndedStream(ctx, err)
 			}
+			// A request the router refused mid-flight never reaches the
+			// response path that would release its inflight slot.
+			releaseInflight(ctx)
 			state, reason := replayLifecycleForProcessError(err)
 			r.finalizeRouterReplay(ctx, state, reason)
 			return err
@@ -167,10 +170,7 @@ func (r *OpenAIRouter) processWithContext(
 
 func (r *OpenAIRouter) handleProcessReceiveError(ctx *RequestContext, err error) error {
 	r.finalizeEndedStream(ctx, err)
-	if ctx.InflightToken != 0 {
-		inflight.End(ctx.RequestModel, ctx.InflightToken)
-		ctx.InflightToken = 0
-	}
+	releaseInflight(ctx)
 
 	state, reason := replayLifecycleForReceiveError(err)
 	r.finalizeRouterReplay(ctx, state, reason)
@@ -424,4 +424,15 @@ func sendCanceled(err error) bool {
 	code := status.Code(err)
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF) ||
 		code == codes.Canceled || code == codes.DeadlineExceeded || code == codes.Unavailable
+}
+
+// releaseInflight returns the request's inflight slot, once; a request that
+// ends without reaching the response path would otherwise hold its model's
+// count up for good.
+func releaseInflight(ctx *RequestContext) {
+	if ctx == nil || ctx.InflightToken == 0 {
+		return
+	}
+	inflight.End(ctx.InflightModel, ctx.InflightToken)
+	ctx.InflightToken = 0
 }

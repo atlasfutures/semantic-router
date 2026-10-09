@@ -15,10 +15,15 @@ import (
 // max_output_tokens instead.
 const dispatchFallbackMaxOutputTokens int64 = 32000
 
+// responsesTruncationAuto is the Responses truncation strategy under which
+// the provider drops older input to fit its context window.
+const responsesTruncationAuto = "auto"
+
 // Where a dispatched output limit came from, as logged.
 const (
 	outputBoundSourceCard     = "card"
 	outputBoundSourceFallback = "fallback"
+	outputBoundSourceFloor    = "floor"
 )
 
 // errThinkingControlOverCap is a v5 control whose thinking budget the
@@ -27,12 +32,39 @@ var errThinkingControlOverCap = errors.New(
 	"the decision's max_tokens_limit cannot hold the v5 control's thinking budget at its 1024-token minimum",
 )
 
+// errThinkingControlOverContext is the same refusal when the room the request
+// leaves in the model's context window, not the decision's cap, is what
+// cannot hold the budget: the fix is a shorter prompt, not a policy change.
+var errThinkingControlOverContext = errors.New(
+	"the room the request leaves in the model's context window cannot hold the v5 control's thinking budget at its 1024-token minimum",
+)
+
+// thinkingControlOverCapError names the constraint that refused the control.
+func thinkingControlOverCapError(plan outputBoundPlan) error {
+	if plan.limitedBy == outputBoundLimitedByContext {
+		return errThinkingControlOverContext
+	}
+	return errThinkingControlOverCap
+}
+
 // applyDispatchOutputBound sets the output limit of a request whose caller
 // stated none, as planDispatchOutputBound decides it, and logs the plan as the
 // dispatch_output_bound event. A limit the caller stated is never touched.
 //
 // It runs after every other output-allowance rule (request_params cap and
 // floor, a policy action's budget), so it only fills what they left unset.
+// The one limit it revisits is the request_params floor, which is the
+// Router's number, not the caller's: a floor over the room the prompt leaves
+// in the context window is held to the room by the same rules as a card
+// limit, thinking budget included, though never below what the caller did
+// state and never under the decision cap, which a floor above wins by
+// design. A floor the window has room for stands, as does one the prompt
+// leaves no room for, as a card limit would.
+//
+// A Responses caller that asked for automatic truncation has the provider
+// drop older input when the context would overflow, so the room the prompt
+// leaves does not bound its output: the window is not applied, the decision
+// cap still is.
 //
 // On a v5 turn the planned control owns thinking, so its budget is the one
 // planned. A lowered budget is written to the planned control, which the
@@ -45,7 +77,7 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 	dispatch *providerDispatch,
 	ctx *RequestContext,
 ) (bool, error) {
-	if request == nil || dispatch == nil || ctx == nil || request.Sampling.MaxOutputTokens != nil {
+	if request == nil || dispatch == nil || ctx == nil {
 		return false, nil
 	}
 	control := plannedMessagesControl(ctx, dispatch.targetFormat)
@@ -53,9 +85,40 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 	if control != nil {
 		budget = control.control.BudgetTokens
 	}
-	plan := r.planDispatchOutputBound(
-		dispatch.logicalModel, dispatch.targetFormat, decisionMaxTokensLimit(ctx), budget,
-	)
+	window := int64(r.Config.GetModelContextWindowSize(dispatch.logicalModel))
+	if dispatch.targetFormat == llmprotocol.OpenAIResponsesV1 && request.Truncation == responsesTruncationAuto {
+		window = 0
+	}
+	var plan outputBoundPlan
+	switch {
+	case request.Sampling.MaxOutputTokens == nil:
+		plan = r.planDispatchOutputBound(
+			dispatch.logicalModel, dispatch.targetFormat, decisionMaxTokensLimit(ctx), budget,
+			window, r.dispatchContextTokens(request, ctx),
+		)
+	case completionFloorToHold(request, ctx) && window > 0:
+		plan = planOutputBound(
+			ctx.DispatchCompletionFloor, outputBoundSourceFloor, dispatch.targetFormat,
+			0, budget, window, r.dispatchContextTokens(request, ctx),
+		)
+		if plan.context != outputBoundClampedToContext {
+			return false, nil
+		}
+		if stated := request.ClientMaxOutputTokens; stated != nil && *stated >= plan.contextRoom {
+			// The caller's own allowance is not lowered to the room, nor is
+			// the thinking it was stated beside: it stands whole, as a
+			// stated limit does, and the floor goes.
+			request.Sampling.MaxOutputTokens = stated
+			logging.ComponentEvent("extproc", "dispatch_output_bound", map[string]interface{}{
+				"request_id": ctx.RequestID, "model": dispatch.logicalModel, "wire_format": dispatch.targetFormat,
+				"source": plan.source, "context": plan.context, "context_room": plan.contextRoom,
+				"limited_by": plan.limitedBy, "max_output_tokens": *stated, "restored": "client_allowance",
+			})
+			return true, nil
+		}
+	default:
+		return false, nil
+	}
 	if plan.source == "" {
 		return false, nil
 	}
@@ -67,6 +130,13 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 	}
 	if plan.belowMinimum != "" {
 		event["below_target_minimum"] = plan.belowMinimum
+	}
+	if plan.context != "" {
+		event["context"] = plan.context
+		event["context_room"] = plan.contextRoom
+	}
+	if plan.limitedBy != "" {
+		event["limited_by"] = plan.limitedBy
 	}
 	if plan.thinking != "" {
 		event["thinking"] = plan.thinking
@@ -87,21 +157,44 @@ func (r *OpenAIRouter) applyDispatchOutputBound(
 		if control != nil {
 			event["max_output_tokens"] = nil
 			logging.ComponentWarnEvent("extproc", "dispatch_output_bound", event)
-			return false, errThinkingControlOverCap
+			return false, thinkingControlOverCapError(plan)
 		}
 		request.ReasoningMode, request.ReasoningBudgetTokens = llmprotocol.ReasoningModeDisabled, nil
 	}
 	if plan.maxTokens == 0 {
 		event["max_output_tokens"] = nil
 		logging.ComponentEvent("extproc", "dispatch_output_bound", event)
+		if plan.source == outputBoundSourceFloor {
+			// The target's minimum does not fit beside the prompt, so the
+			// floor goes as a card limit would not have come: the caller's
+			// own allowance, or none, is what is sent.
+			request.Sampling.MaxOutputTokens = request.ClientMaxOutputTokens
+			return true, nil
+		}
 		return false, nil
 	}
 	bound := plan.maxTokens
+	if plan.source == outputBoundSourceFloor {
+		// The floor is lowered to the room, which a caller's own allowance
+		// is under, or it would have stood above.
+		request.Sampling.MaxOutputTokens = &bound
+		event["max_output_tokens"] = bound
+		logging.ComponentEvent("extproc", "dispatch_output_bound", event)
+		return true, nil
+	}
 	request.Sampling.MaxOutputTokens = &bound
 	request.RouterSetMaxOutputTokens = true
 	event["max_output_tokens"] = bound
 	logging.ComponentEvent("extproc", "dispatch_output_bound", event)
 	return true, nil
+}
+
+// completionFloorToHold reports whether the request's output limit is the
+// floor the request_params plugin raised it to, and so the Router's number
+// to hold within the context window.
+func completionFloorToHold(request *llmprotocol.Request, ctx *RequestContext) bool {
+	return ctx.DispatchCompletionFloor > 0 && request.Sampling.MaxOutputTokens != nil &&
+		*request.Sampling.MaxOutputTokens == ctx.DispatchCompletionFloor
 }
 
 // plannedMessagesControl is this dispatch's v5 control when it renders
@@ -118,6 +211,44 @@ const (
 	outputBoundRaisedToMinimum = "raised_to_minimum"
 	outputBoundLeftUnbounded   = "left_unbounded"
 )
+
+// How a planned bound met the model's context window, as logged. A card
+// that declares no window, or a request with no token estimate, leaves the
+// field unset.
+const (
+	outputBoundClampedToContext = "clamped_to_context"
+	outputBoundNoContextRoom    = "no_context_room"
+)
+
+// Which constraint supplied the cap a plan was held to, as logged and as the
+// v5 control refusal names it.
+const (
+	outputBoundLimitedByDecision = "decision"
+	outputBoundLimitedByContext  = "context"
+)
+
+// dispatchContextTokens is the size of the prompt as it will be dispatched.
+// It is the routing estimate while the prompt is the one that estimate
+// described, told by the prompt's own token floor: that count may come from
+// a calibrated counter, and it is what the mask admitted the arm on. A prompt
+// rewritten since -- a stored history or a retrieval prepended, compression,
+// tool selection -- has another floor and is counted afresh, by the rule
+// routing counts with: the recipe's context signal where a decision rule
+// references it, the character heuristic otherwise, never below the floor.
+func (r *OpenAIRouter) dispatchContextTokens(request *llmprotocol.Request, ctx *RequestContext) int64 {
+	if r == nil || request == nil || ctx == nil {
+		return 0
+	}
+	snapshot := extractSemanticRequestSignals(request)
+	if ctx.VSRContextTokenCount > 0 && snapshot.ContextTokenFloor == ctx.VSRContextTokenFloor {
+		return int64(ctx.VSRContextTokenCount)
+	}
+	signalInput := r.prepareSignalEvaluationInput(signalConversationHistoryFromSnapshot(snapshot))
+	if count, ok := r.classifierForRequest(ctx).ContextTokenCount(signalInput.allMessagesText, snapshot.ContextTokenFloor); ok {
+		return int64(count)
+	}
+	return int64(contextTokenEstimate(0, contextTokenText(signalInput), snapshot.ContextTokenFloor))
+}
 
 // How a planned bound met a Messages thinking budget, as logged.
 const (
@@ -136,6 +267,9 @@ type outputBoundPlan struct {
 	maxTokens      int64
 	source         string
 	belowMinimum   string
+	context        string
+	contextRoom    int64
+	limitedBy      string
 	thinking       string
 	thinkingBudget int64
 }
@@ -147,7 +281,16 @@ type outputBoundPlan struct {
 //   - The bound is the model card's operator-declared max_output_tokens, or,
 //     only for a target that requires a limit (Messages), the fallback. Chat
 //     and Responses targets with no card value stay unbounded.
-//   - It stays within the decision's max_tokens_limit.
+//   - It stays within the decision's max_tokens_limit, and within the room
+//     the request leaves in the model card's context_window_size: the window
+//     less the request's own token estimate. A provider refuses a request
+//     whose input and output limit together exceed its window, so a card's
+//     output limit sent whole on a long prompt would fail the turn the mask
+//     admitted. A prompt that leaves no room is sent as if the card declared
+//     no window: every limit meets the same refusal when the prompt alone
+//     overflows, and an estimate that overshot must not truncate an answer
+//     the provider would have given. A card that declares no window, or a
+//     request with no estimate, is not clamped.
 //   - It is never a limit the target refuses. A bound below the target's
 //     minimum is raised to it, which keeps a small card value or cap as close
 //     as the target allows; turning it into no limit would discard the
@@ -168,18 +311,62 @@ func (r *OpenAIRouter) planDispatchOutputBound(
 	format llmprotocol.WireFormat,
 	decisionLimit int64,
 	thinkingBudget *int64,
+	contextWindow int64,
+	contextTokens int64,
 ) outputBoundPlan {
 	bound, source := r.dispatchOutputBound(model, format)
 	if source == "" {
 		return outputBoundPlan{}
 	}
+	return planOutputBound(bound, source, format, decisionLimit, thinkingBudget, contextWindow, contextTokens)
+}
+
+// planOutputBound holds a bound of the given source to the decision's limit
+// and the context room, the target's minimum and a thinking budget, as
+// planDispatchOutputBound describes.
+func planOutputBound(
+	bound int64,
+	source string,
+	format llmprotocol.WireFormat,
+	decisionLimit int64,
+	thinkingBudget *int64,
+	contextWindow int64,
+	contextTokens int64,
+) outputBoundPlan {
 	plan := outputBoundPlan{source: source}
-	if decisionLimit > 0 && bound > decisionLimit {
-		bound = decisionLimit
+	// The cap is the tighter of the operator's limit and the room the
+	// request leaves in the window; every rule below reads the cap.
+	limit, limitFrom := decisionLimit, ""
+	if limit > 0 {
+		limitFrom = outputBoundLimitedByDecision
+	}
+	if contextWindow > 0 && contextTokens > 0 {
+		plan.contextRoom = contextWindow - contextTokens
+		switch {
+		case plan.contextRoom <= 0:
+			plan.context = outputBoundNoContextRoom
+		case limit <= 0 || plan.contextRoom < limit:
+			limit, limitFrom = plan.contextRoom, outputBoundLimitedByContext
+		}
+	}
+	// held marks the plan as having been held to the cap, naming the
+	// constraint that supplied it; the context status is set only when the
+	// context did. A cap the plan stayed under names nothing.
+	held := func() {
+		plan.limitedBy = limitFrom
+		if limitFrom == outputBoundLimitedByContext {
+			plan.context = outputBoundClampedToContext
+		}
+	}
+	if limit > 0 && bound > limit {
+		bound = limit
+		held()
 	}
 	if minimum := minimumOutputLimit(format); bound < minimum {
-		if decisionLimit > 0 && minimum > decisionLimit {
-			plan.belowMinimum = outputBoundLeftUnbounded
+		if limit > 0 && minimum > limit {
+			// The cap, not the card, is what kept the bound below the
+			// target's minimum, so it is named.
+			plan.belowMinimum, plan.limitedBy = outputBoundLeftUnbounded, limitFrom
 			return plan
 		}
 		plan.belowMinimum = outputBoundRaisedToMinimum
@@ -189,16 +376,17 @@ func (r *OpenAIRouter) planDispatchOutputBound(
 	if thinkingBudget == nil || *thinkingBudget < bound {
 		return plan
 	}
-	if total := bound + *thinkingBudget; decisionLimit <= 0 || total <= decisionLimit {
+	if total := bound + *thinkingBudget; limit <= 0 || total <= limit {
 		plan.maxTokens, plan.thinking = total, outputBoundThinkingOnTop
 		return plan
 	}
-	lowered := max(decisionLimit-bound, minimumAnthropicThinkingBudget)
-	if lowered >= decisionLimit {
+	held()
+	lowered := max(limit-bound, minimumAnthropicThinkingBudget)
+	if lowered >= limit {
 		plan.thinking = outputBoundThinkingDisabled
 		return plan
 	}
-	plan.maxTokens, plan.thinking, plan.thinkingBudget = decisionLimit, outputBoundThinkingBudgetLowered, lowered
+	plan.maxTokens, plan.thinking, plan.thinkingBudget = limit, outputBoundThinkingBudgetLowered, lowered
 	return plan
 }
 

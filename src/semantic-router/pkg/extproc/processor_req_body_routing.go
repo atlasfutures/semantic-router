@@ -203,22 +203,70 @@ func (r *OpenAIRouter) prepareProviderRequest(
 	if err != nil {
 		return false, err
 	}
-	// A request that states no output limit gets the worker's card value,
-	// or on Messages the fallback, after request_params has capped or
-	// dropped what the caller sent.
-	bounded, err := r.applyDispatchOutputBound(request, dispatch, ctx)
+	// The output limit for a request that states none is planned in
+	// settleProviderDispatch, the last routing step before the encode: tool
+	// selection runs between here and there and can change the prompt's
+	// size, which the limit is measured against.
+	return paramsChanged || changed, nil
+}
+
+// completeProviderDispatch runs the routing steps that follow route
+// construction -- tool selection, then the output bound on the prompt as it
+// then stands -- and hands the settled request to the provider boundary.
+func (r *OpenAIRouter) completeProviderDispatch(
+	request *llmprotocol.Request,
+	dispatch *providerDispatch,
+	response *ext_proc.ProcessingResponse,
+	ctx *RequestContext,
+) (*ext_proc.ProcessingResponse, error) {
+	r.handleToolSelectionForRequest(request, response, ctx)
+	if err := r.settleProviderDispatch(dispatch, ctx); err != nil {
+		return nil, err
+	}
+	return r.finalizeProviderDispatchResponse(dispatch, response, ctx)
+}
+
+// settleProviderDispatch is the last routing step before the encode: it
+// bounds the output of the request as every semantic plugin has left it,
+// reading the decision's cap and the prompt's token count, which the
+// provider boundary must not. A refused request ends its upstream span here.
+func (r *OpenAIRouter) settleProviderDispatch(dispatch *providerDispatch, ctx *RequestContext) error {
+	if dispatch == nil || ctx == nil || ctx.SemanticRequest == nil {
+		return status.Error(codes.Internal, "provider dispatch is unavailable")
+	}
+	bounded, err := r.boundDispatchRequest(ctx.SemanticRequest, dispatch, ctx)
+	if err != nil {
+		abandonUpstreamSpan(ctx, "output bound refused the request")
+		metrics.RecordRequestError(dispatch.logicalModel, "output_bound_error")
+		return status.Errorf(codes.Internal, "bound provider request: %v", err)
+	}
+	if bounded {
+		// The client's bytes no longer describe the dispatch request.
+		ctx.SemanticRequest.Generation++
+	}
+	return nil
+}
+
+// boundDispatchRequest sets the output limit of a request that states none
+// (the worker's card value, or on Messages the fallback, within the decision's
+// cap and the room the prompt leaves in the model's window), then keeps a
+// Messages request's limit above a planned v5 thinking budget. It runs on
+// the request about to be encoded, after request_params and tool selection,
+// so the prompt it measures is the prompt the provider receives. It reports
+// whether the request changed, which retires the client's own bytes as the
+// dispatch body.
+func (r *OpenAIRouter) boundDispatchRequest(request *llmprotocol.Request, dispatch *providerDispatch, ctx *RequestContext) (bool, error) {
+	changed, err := r.applyDispatchOutputBound(request, dispatch, ctx)
 	if err != nil {
 		return false, err
 	}
-	paramsChanged = bounded || paramsChanged
-	// After request_params and the output bound: Messages needs room above
-	// a v5 control's thinking budget. A request with no limit of its own
-	// already has that room (the output bound plans the control's budget),
-	// so this raises only a limit the caller stated.
+	// A request with no limit of its own already has room above the budget,
+	// since the output bound plans it; this raises only a limit the caller
+	// stated.
 	if planned := ctx.RaylineARCThinkingControl; planned != nil && dispatch.targetFormat == llmprotocol.AnthropicMessagesV1 {
-		paramsChanged = raiseMessagesAllowance(request, planned.control.BudgetTokens) || paramsChanged
+		changed = raiseMessagesAllowance(request, planned.control.BudgetTokens) || changed
 	}
-	return paramsChanged || changed, nil
+	return changed, nil
 }
 
 func (r *OpenAIRouter) applyDispatchDecision(
@@ -326,8 +374,9 @@ func (r *OpenAIRouter) buildProviderDispatchResponse(
 }
 
 // finalizeProviderDispatchResponse serializes the request only after every
-// semantic plugin has run. This prevents late tool-selection mutations from
-// being lost and keeps provider wire concerns at one boundary.
+// semantic plugin has run and settleProviderDispatch has bounded it. This
+// prevents late tool-selection mutations from being lost and keeps provider
+// wire concerns at one boundary.
 func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	dispatch *providerDispatch,
 	response *ext_proc.ProcessingResponse,
@@ -352,11 +401,13 @@ func (r *OpenAIRouter) finalizeProviderDispatchResponse(
 	ctx.DispatchAutoCache = r.claudeAutoCacheDispatch(dispatch, ctx)
 	body, err := r.encodeDispatchRequest(ctx)
 	if err != nil {
+		abandonUpstreamSpan(ctx, "provider request could not be encoded")
 		metrics.RecordRequestError(dispatch.logicalModel, "serialization_error")
 		return nil, status.Errorf(codes.Internal, "encode provider request: %v", err)
 	}
 	body, err = r.adaptProviderRequest(body, dispatch, ctx)
 	if err != nil {
+		abandonUpstreamSpan(ctx, "provider request could not be adapted")
 		metrics.RecordRequestError(dispatch.logicalModel, "provider_adapter_error")
 		return nil, status.Errorf(codes.Internal, "adapt provider request: %v", err)
 	}
