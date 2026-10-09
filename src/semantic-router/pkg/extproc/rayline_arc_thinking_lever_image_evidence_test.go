@@ -120,8 +120,10 @@ func TestNoRegistryCellMeansNoImageToolTailEvidence(t *testing.T) {
 // Every bound worker replays the one ledger, and evidence is per cell: a
 // steer kimi-k3's evidenced Chat cell wrote after an image tool result is
 // withheld from a worker without evidence, on a retry of that turn, on
-// later turns, and on kimi-k3's own unevidenced Responses cell. Back on
-// kimi-k3 Chat it is replayed, so its cached prefix still matches.
+// later turns, and on kimi-k3's own unevidenced Responses cell. A later
+// turn there is steered at its own tail, since the withheld steer is not in
+// force on it. Back on kimi-k3 Chat the steer is replayed, so its cached
+// prefix still matches.
 func TestAnEvidencedImageToolTailSteerIsWithheldFromAWorkerWithoutEvidence(t *testing.T) {
 	image := llmprotocol.Message{Role: llmprotocol.RoleTool, Content: []llmprotocol.Content{{
 		Kind: llmprotocol.ContentToolResult, ToolResult: &llmprotocol.ToolResult{CallID: "c1", Content: []llmprotocol.Content{
@@ -134,8 +136,9 @@ func TestAnEvidencedImageToolTailSteerIsWithheldFromAWorkerWithoutEvidence(t *te
 	tail := []llmprotocol.Message{leverText(llmprotocol.RoleUser, "go"), call, image}
 	later := append(append([]llmprotocol.Message(nil), tail...),
 		leverText(llmprotocol.RoleAssistant, "Seen."), leverText(llmprotocol.RoleUser, "next"))
-	steered := func(sent []llmprotocol.Message) bool {
-		for _, message := range sent {
+	// steeredBefore reports a steer in the first n messages sent.
+	steeredBefore := func(sent []llmprotocol.Message, n int) bool {
+		for _, message := range sent[:min(n, len(sent))] {
 			for _, content := range message.Content {
 				if content.Text == leverDown {
 					return true
@@ -144,6 +147,7 @@ func TestAnEvidencedImageToolTailSteerIsWithheldFromAWorkerWithoutEvidence(t *te
 		}
 		return false
 	}
+	steered := func(sent []llmprotocol.Message) bool { return steeredBefore(sent, len(sent)) }
 	e := newLeverEpisode(t, true)
 	e.wire = llmprotocol.OpenAIChatV1
 	e.config = evidenceRouterConfig()
@@ -167,14 +171,18 @@ func TestAnEvidencedImageToolTailSteerIsWithheldFromAWorkerWithoutEvidence(t *te
 		sent, ctx := e.turn(step.worker, step.messages, false)
 		record := map[string]interface{}{}
 		appendRaylineARCThinkingFields(record, ctx)
-		if steered(sent) {
+		if steeredBefore(sent, len(tail)+1) {
 			t.Fatalf("%s: the evidenced steer reached it", step.name)
 		}
-		if record["thinking_level_in_force"] == "down" {
-			t.Fatalf("%s: level in force %v, but the worker was sent no steer", step.name, record["thinking_level_in_force"])
+		if step.refused {
+			if steered(sent) || record["thinking_level_in_force"] == "down" ||
+				record["thinking_refused"] != "image_tool_tail_task_fidelity" {
+				t.Fatalf("%s: record %v, want the refusal and no steer in force", step.name, record)
+			}
+			continue
 		}
-		if step.refused && record["thinking_refused"] != "image_tool_tail_task_fidelity" {
-			t.Fatalf("%s: record %v, want the refusal", step.name, record)
+		if !steered(sent) || record["thinking_emitted"] != true || record["thinking_level_in_force"] != "down" {
+			t.Fatalf("%s: record %v, want its own steer at the tail", step.name, record)
 		}
 	}
 	e.wire = llmprotocol.OpenAIChatV1

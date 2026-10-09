@@ -620,7 +620,14 @@ func PlanTurn(turn Turn) (plan Plan, err error) {
 		}
 		return plan, nil
 	}
-	item := shouldEmit(turn, plan.Next, requested, turn.Binding.payloadFor(requested), plan.ResetReason != "")
+	// Whether to write is decided against what this worker is sent: a
+	// withheld steer is not in force on it.
+	effective := plan.Next
+	if len(plan.withheld) > 0 {
+		effective = *plan.Next.Clone()
+		effective.setState(plan.appliedState(turn.Binding))
+	}
+	item := shouldEmit(turn, effective, requested, turn.Binding.payloadFor(requested), plan.ResetReason != "")
 	plan.Skipped = item.skipped
 	if !item.emit {
 		return plan, nil
@@ -701,16 +708,21 @@ func withheldImageToolTailEntries(turn Turn, ledger Ledger) map[int]bool {
 }
 
 // appliedState is the lever's state as the worker sees it once items are
-// withheld: the last item it is sent, named by the binding level whose text
-// it carries.
+// withheld: the last item it is sent. When that is the item in force, its
+// recorded state stands, marker identity included; an earlier one is named
+// by the binding level whose text it carries.
 func (plan *Plan) appliedState(binding Binding) LeverState {
-	state := LeverState{Lever: binding.Lever, Payload: -1}
+	recorded, _ := plan.Next.state(binding.Lever)
+	state := LeverState{Lever: binding.Lever, Payload: -1, LastChangeTurn: recorded.LastChangeTurn}
 	applied := plan.Applied()
 	for position := len(applied.Entries) - 1; position >= 0; position-- {
 		index := applied.Entries[position].Payload
 		payload := applied.Payloads[index]
 		if payload.Lever != binding.Lever {
 			continue
+		}
+		if index == recorded.Payload {
+			return recorded
 		}
 		state.Payload = index
 		if binding.NeutralText != "" && payload.Suffix == binding.NeutralText {

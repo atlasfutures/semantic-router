@@ -223,3 +223,67 @@ func TestEvidenceAdmitsTheSteerAndTheNeutralMarkerAfterAnImageToolTail(t *testin
 		}
 	}
 }
+
+// A worker that withholds an evidenced image-tail steer decides its own
+// writes against what it is sent: asked for the same level on a later turn,
+// it is steered there; and a return to neutral over a steer it was sent is
+// still marked, though the item in force elsewhere is withheld from it.
+func TestAWorkerWithoutEvidenceDecidesAgainstWhatItIsSent(t *testing.T) {
+	binding := suffixBinding(EmitOnChangeV1, "none")
+	binding.NeutralText = "Until the next steering instruction, use your normal judgement."
+	ask := text(llmprotocol.RoleUser, "Read it.")
+	imageAt := func(messages []llmprotocol.Message) func(uint32) bool {
+		return func(index uint32) bool {
+			return ImageToolTail(llmprotocol.Request{Messages: messages[:index+1]}, llmprotocol.OpenAIChatV1)
+		}
+	}
+	tail := []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1")}
+	evidenced, err := PlanTurn(Turn{
+		Binding: binding, Messages: Messages(tail), TurnIndex: 1, Requested: "up",
+		ImageToolTail: true, ImageToolTailAdmitted: true, ImageToolTailAt: imageAt(tail),
+	})
+	if err != nil || !evidenced.Emitted {
+		t.Fatalf("the evidenced worker was not steered: emitted %v, err %v", evidenced.Emitted, err)
+	}
+	later := append(append([]llmprotocol.Message(nil), tail...),
+		text(llmprotocol.RoleAssistant, "Seen."), text(llmprotocol.RoleUser, "Next."))
+	plan, err := PlanTurn(Turn{
+		Binding: binding, Ledger: &evidenced.Next, Messages: Messages(later), TurnIndex: 2, Requested: "up",
+		ImageToolTailAt: imageAt(later),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Emitted || plan.LevelInForce != "up" || len(plan.Applied().Entries) != 1 || len(plan.Next.Entries) != 2 {
+		t.Fatalf("later turn: emitted %v level %q, sent %d of %d items; want its own up steer",
+			plan.Emitted, plan.LevelInForce, len(plan.Applied().Entries), len(plan.Next.Entries))
+	}
+
+	// Steered on text first, then up after an image on the evidenced worker:
+	// the unevidenced worker returning to neutral is sent the marker over the
+	// down it was sent.
+	first, err := PlanTurn(Turn{Binding: binding, Messages: Messages([]llmprotocol.Message{ask}), TurnIndex: 1, Requested: "down"})
+	if err != nil || !first.Emitted {
+		t.Fatalf("first steer: emitted %v, err %v", first.Emitted, err)
+	}
+	run := []llmprotocol.Message{ask, text(llmprotocol.RoleAssistant, ""), toolCall("c1"), imageResult("c1")}
+	second, err := PlanTurn(Turn{
+		Binding: binding, Ledger: &first.Next, Messages: Messages(run), TurnIndex: 2, Requested: "up",
+		ImageToolTail: true, ImageToolTailAdmitted: true, ImageToolTailAt: imageAt(run),
+	})
+	if err != nil || !second.Emitted {
+		t.Fatalf("evidenced up: emitted %v, err %v", second.Emitted, err)
+	}
+	back := append(append([]llmprotocol.Message(nil), run...),
+		text(llmprotocol.RoleAssistant, "Seen."), text(llmprotocol.RoleUser, "Next."))
+	plan, err = PlanTurn(Turn{
+		Binding: binding, Ledger: &second.Next, Messages: Messages(back), TurnIndex: 3, Requested: "none",
+		ImageToolTailAt: imageAt(back),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Emitted || plan.Written != WrittenNeutralMarker || plan.InstructionState != InstructionNeutralMarker {
+		t.Fatalf("return to neutral: emitted %v written %q state %q; want the neutral marker", plan.Emitted, plan.Written, plan.InstructionState)
+	}
+}
