@@ -23,6 +23,7 @@ import (
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/config"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/observability/metrics"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkingcontrol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc/thinkinglever"
 )
 
@@ -132,11 +133,20 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 		MinTurnsBetweenChanges: lever.MinSpacingTurns,
 		MaxEntries:             lever.MaxLedgerEntries,
 		ImageToolTail:          thinkinglever.ImageToolTail(*request, targetFormat),
+		ImageToolTailAdmitted:  raylineARCImageToolTailAdmitted(r.Config, ctx.RaylineARCDispatch.ID, targetFormat),
+		ImageToolTailAt: func(index uint32) bool {
+			if int(index) >= len(request.Messages) {
+				return false
+			}
+			prefix := *request
+			prefix.Messages = request.Messages[:index+1]
+			return thinkinglever.ImageToolTail(prefix, targetFormat)
+		},
 	})
 	if err != nil {
 		return false, err
 	}
-	messages, err := thinkinglever.ApplyLedger(request.Messages, binding.Lever, plan.Next)
+	messages, err := thinkinglever.ApplyLedger(request.Messages, binding.Lever, plan.Applied())
 	if err != nil {
 		return false, err
 	}
@@ -149,6 +159,30 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 	}
 	request.Messages = messages
 	return true, nil
+}
+
+// raylineARCImageToolTailAdmitted is whether the worker's admission cell in
+// the embedded registry states task-fidelity evidence for a steer after an
+// image tool result (ADR 0129 decision 5), the evidence the v5 placer reads.
+// A worker the registry cannot name has no evidence, so its steer is refused.
+func raylineARCImageToolTailAdmitted(cfg *config.RouterConfig, worker string, format llmprotocol.WireFormat) bool {
+	if cfg == nil {
+		return false
+	}
+	provider, err := config.RaylineARCRegistryProvider(cfg, worker)
+	if err != nil {
+		return false
+	}
+	served, err := config.RaylineARCRegistryModel(cfg, worker)
+	if err != nil {
+		return false
+	}
+	registry, err := thinkingcontrol.Embedded()
+	if err != nil {
+		return false
+	}
+	cell, err := registry.Cell(served, provider, registryFormatOf(format))
+	return err == nil && cell.ImageToolTailAdmitted
 }
 
 func fillThinkingTrace(trace *raylineARCThinkingTrace, binding thinkinglever.Binding, plan thinkinglever.Plan) {

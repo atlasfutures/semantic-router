@@ -506,8 +506,18 @@ type Turn struct {
 	MaxEntries int
 	// ImageToolTail is set when the turn's tool run returned an image and
 	// the worker's wire is Chat or Responses (ImageToolTail). A steering
-	// suffix is then refused.
+	// suffix is then refused, unless ImageToolTailAdmitted.
 	ImageToolTail bool
+	// ImageToolTailAdmitted is set when the worker's admission cell states
+	// task-fidelity evidence for a steer after an image tool result (ADR
+	// 0129 decision 5): the steer is then written as on any other tail.
+	ImageToolTailAdmitted bool
+	// ImageToolTailAt reports whether the client transcript through message
+	// index ends in an image tool tail on the worker's wire. Every bound
+	// worker replays the one ledger, so on a worker whose cell is not
+	// admitted, an item an admitted worker wrote at such a tail is withheld:
+	// evidence for one cell is no evidence for another.
+	ImageToolTailAt func(index uint32) bool
 }
 
 // Message is the part of a neutral message the planner reads: its role,
@@ -546,6 +556,25 @@ type Plan struct {
 	// drawnControl is the requested level's control, the attribution of a
 	// refused turn.
 	drawnControl string
+	// withheld holds the positions in Next.Entries this worker is not sent
+	// (Turn.ImageToolTailAt).
+	withheld map[int]bool
+}
+
+// Applied is the ledger this turn's worker is sent: Next without the items
+// it withholds. Next itself keeps them, for the workers admitted to them.
+func (plan Plan) Applied() Ledger {
+	if len(plan.withheld) == 0 {
+		return plan.Next
+	}
+	applied := *plan.Next.Clone()
+	applied.Entries = nil
+	for position, entry := range plan.Next.Entries {
+		if !plan.withheld[position] {
+			applied.Entries = append(applied.Entries, entry)
+		}
+	}
+	return applied
 }
 
 // PlanTurn verifies the ledger against the client transcript, decides
@@ -568,12 +597,19 @@ func PlanTurn(turn Turn) (plan Plan, err error) {
 		plan.ResetReason = ResetTranscriptRewrite
 		plan.Next = Ledger{Epoch: plan.Next.Epoch + 1}
 	}
-	plan.Replayed = countLever(plan.Next, turn.Binding.Lever)
+	plan.withheld = withheldImageToolTailEntries(turn, plan.Next)
+	plan.Replayed = countLever(plan.Applied(), turn.Binding.Lever)
 	// Every return below reports the lever's state after this turn.
 	defer plan.describe(turn.Binding)
 	if entry, ok := retriedEntry(plan.Next, turn.Messages); ok {
 		plan.Retry = true
 		plan.Placement = entry.Placement
+		if plan.withheld[len(plan.Next.Entries)-1] {
+			// The retried item was written at an image tool tail on an
+			// admitted worker; this one is sent the turn without it.
+			plan.Refused = RefusedImageToolTail
+			plan.drawnControl = turn.Binding.ControlSHA256(requested)
+		}
 		return plan, nil
 	}
 	placement, steerable := placementFor(turn.Binding.Lever, turn.Messages)
@@ -584,7 +620,14 @@ func PlanTurn(turn Turn) (plan Plan, err error) {
 		}
 		return plan, nil
 	}
-	item := shouldEmit(turn, plan.Next, requested, turn.Binding.payloadFor(requested), plan.ResetReason != "")
+	// Whether to write is decided against what this worker is sent: a
+	// withheld steer is not in force on it.
+	effective := plan.Next
+	if len(plan.withheld) > 0 {
+		effective = *plan.Next.Clone()
+		effective.setState(plan.appliedState(turn.Binding))
+	}
+	item := shouldEmit(turn, effective, requested, turn.Binding.payloadFor(requested), plan.ResetReason != "")
 	plan.Skipped = item.skipped
 	if !item.emit {
 		return plan, nil
@@ -596,11 +639,20 @@ func PlanTurn(turn Turn) (plan Plan, err error) {
 	}
 	// Refused only where the write would otherwise land, so a full ledger
 	// still reports itself.
-	if turn.ImageToolTail && turn.Binding.Lever == LeverSteeringSuffix {
+	if turn.ImageToolTail && !turn.ImageToolTailAdmitted && turn.Binding.Lever == LeverSteeringSuffix {
 		plan.Next = *before
 		plan.Refused = RefusedImageToolTail
 		plan.drawnControl = turn.Binding.ControlSHA256(requested)
 		return plan, nil
+	}
+	if len(plan.withheld) > 0 {
+		// The write changes what this worker is sent even where the item in
+		// force is already the same: it starts the spacing window too.
+		shown, _ := effective.state(turn.Binding.Lever)
+		if state, _ := plan.Next.state(turn.Binding.Lever); shown.Payload != state.Payload || shown.Marker != state.Marker {
+			state.LastChangeTurn = turn.TurnIndex
+			plan.Next.setState(state)
+		}
 	}
 	plan.Emitted = true
 	plan.Written = WrittenInstruction
@@ -616,6 +668,9 @@ func PlanTurn(turn Turn) (plan Plan, err error) {
 // level's own control, as the registry resolves it, not the marker's bytes.
 func (plan *Plan) describe(binding Binding) {
 	state, _ := plan.Next.state(binding.Lever)
+	if len(plan.withheld) > 0 {
+		state = plan.appliedState(binding)
+	}
 	markerInForce := state.Payload >= 0 && state.Marker
 	switch {
 	case state.Payload >= 0 && !markerInForce:
@@ -640,6 +695,61 @@ func (plan *Plan) describe(binding Binding) {
 	default:
 		plan.InstructionState = InstructionNever
 	}
+}
+
+// withheldImageToolTailEntries is, on a steering-suffix worker whose cell
+// is not admitted, every item anchored at an image tool tail.
+func withheldImageToolTailEntries(turn Turn, ledger Ledger) map[int]bool {
+	if turn.ImageToolTailAdmitted || turn.ImageToolTailAt == nil || turn.Binding.Lever != LeverSteeringSuffix {
+		return nil
+	}
+	var withheld map[int]bool
+	for position, entry := range ledger.Entries {
+		if ledger.Payloads[entry.Payload].Lever != LeverSteeringSuffix || !turn.ImageToolTailAt(entry.Index) {
+			continue
+		}
+		if withheld == nil {
+			withheld = map[int]bool{}
+		}
+		withheld[position] = true
+	}
+	return withheld
+}
+
+// appliedState is the lever's state as the worker sees it once items are
+// withheld: the last item it is sent. When that is the item in force, its
+// recorded state stands, marker identity included; an earlier one is named
+// by the binding level whose text it carries. Entries record no marker
+// flag, so an earlier item is a marker when it carries the binding's
+// neutral text; a reload that gave the neutral text an old steer's bytes
+// would misname it, as it would change the binding's control ids.
+func (plan *Plan) appliedState(binding Binding) LeverState {
+	recorded, _ := plan.Next.state(binding.Lever)
+	state := LeverState{Lever: binding.Lever, Payload: -1, LastChangeTurn: recorded.LastChangeTurn}
+	applied := plan.Applied()
+	for position := len(applied.Entries) - 1; position >= 0; position-- {
+		index := applied.Entries[position].Payload
+		payload := applied.Payloads[index]
+		if payload.Lever != binding.Lever {
+			continue
+		}
+		if index == recorded.Payload {
+			return recorded
+		}
+		state.Payload = index
+		if binding.NeutralText != "" && payload.Suffix == binding.NeutralText {
+			state.Level, state.Marker = binding.Neutral, true
+			return state
+		}
+		for _, level := range binding.Levels {
+			if level.Suffix == payload.Suffix {
+				state.Level = level.Name
+				break
+			}
+		}
+		return state
+	}
+	return state
 }
 
 func (ledger *Ledger) append(turn Turn, placement Placement, item emission, level string) string {
