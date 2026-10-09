@@ -221,12 +221,8 @@ type RequestContext struct {
 	// DispatchAutoCache marks a dispatch to a Claude worker over Messages from
 	// an OpenAI-shaped client (claudeAutoCacheDispatch); encodeDispatchRequest
 	// decides on the final request whether it gets the automatic directive.
-	DispatchAutoCache *dispatchAutoCache
-	// DispatchCompletionFloor is the floor the request_params plugin raised
-	// the output allowance to (min_completion_tokens_by_model), or zero. It
-	// is the Router's number, not the caller's, so the dispatch output bound
-	// may keep it within the model's context window.
-	DispatchCompletionFloor         int64
+	DispatchAutoCache               *dispatchAutoCache
+	DispatchCompletionFloor         int64                                       // min_completion_tokens_by_model floor the output allowance was raised to, or zero; the Router's number, so the output bound may hold it to the context window
 	VSRSelectionMethod              string                                      // Model selection algorithm used (e.g., "elo", "static", "router_dc")
 	VSRSelectionReasoning           string                                      // Bounded human-readable selector rationale for replay
 	VSRFusionQuorum                 *routerreplay.FusionQuorumDiagnostics       // Content-free Fusion panel quorum evidence for replay
@@ -278,20 +274,17 @@ type RequestContext struct {
 	ModalityClassification *ModalityClassificationResult // Set by classifyModality()
 
 	// VSR signal tracking - stores all matched signals for response headers
-	VSRMatchedKeywords     []string // Matched keyword rule names
-	VSRMatchedEmbeddings   []string // Matched embedding rule names
-	VSRMatchedDomains      []string // Matched domain rule names
-	VSRMatchedFactCheck    []string // Matched fact-check signals
-	VSRMatchedUserFeedback []string // Matched user feedback signals
-	VSRMatchedReask        []string // Matched repeated-question dissatisfaction signals
-	VSRMatchedPreference   []string // Matched preference signals
-	VSRMatchedLanguage     []string // Matched language signals
-	VSRMatchedContext      []string // Matched context rule names (e.g. "low_token_count")
-	VSRContextTokenCount   int      // Conservative request-context token estimate used for routing
-	// VSRContextTokenFloor is the prompt's own token floor when the estimate
-	// was made; a different floor at dispatch means the prompt was rewritten
-	// since.
-	VSRContextTokenFloor      int
+	VSRMatchedKeywords        []string // Matched keyword rule names
+	VSRMatchedEmbeddings      []string // Matched embedding rule names
+	VSRMatchedDomains         []string // Matched domain rule names
+	VSRMatchedFactCheck       []string // Matched fact-check signals
+	VSRMatchedUserFeedback    []string // Matched user feedback signals
+	VSRMatchedReask           []string // Matched repeated-question dissatisfaction signals
+	VSRMatchedPreference      []string // Matched preference signals
+	VSRMatchedLanguage        []string // Matched language signals
+	VSRMatchedContext         []string // Matched context rule names (e.g. "low_token_count")
+	VSRContextTokenCount      int      // Conservative request-context token estimate used for routing
+	VSRContextTokenFloor      int      // The prompt's own token floor when that estimate was made; a different floor at dispatch means the prompt was rewritten since
 	VSRContextTextBytes       int      // Actual semantic-text bytes eligible for online text calibration
 	VSRContextEquivalentBytes int      // Content-free byte equivalent of the conservative routing floor
 	VSRContextHasNonText      bool     // Structured JSON or image reserves make text-only calibration unsafe
