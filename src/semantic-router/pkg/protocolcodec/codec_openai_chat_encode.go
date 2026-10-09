@@ -244,22 +244,36 @@ func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) erro
 		}
 		wire.Messages = append(wire.Messages, encoded)
 	}
-	// A Chat tool message carries text only, so the media a tool returned
-	// (a screenshot, an MCP image) is moved into a user message that follows
-	// the run of tool messages: Chat requires every tool message to follow its
-	// assistant turn directly, with nothing between them.
-	var toolMedia []chatContentWire
+	// A Chat tool message carries text only, so the images a tool returned
+	// (a screenshot, an MCP image) are moved into user messages that follow
+	// the run of tool messages, one per result that held any, each led by a
+	// line naming its call: Chat requires every tool message to follow its
+	// assistant turn directly, with nothing between them. The spelling is
+	// pathfinder's request_to_chat (ADR 0129).
+	var toolMedia [][]chatContentWire
 	flushToolMedia := func() {
-		if len(toolMedia) > 0 {
-			content, _ := json.Marshal(toolMedia)
+		for _, parts := range toolMedia {
+			content, _ := json.Marshal(parts)
 			wire.Messages = append(wire.Messages, chatMessageWire{Role: "user", Content: content})
-			toolMedia = nil
 		}
+		toolMedia = nil
 	}
 	for _, message := range request.Messages {
 		// A message dropped whole emits nothing, so it does not end the run
 		// of tool messages either.
 		if message.Configuration == nil && messageDropsWhole(message.Content, llmprotocol.OpenAIChatV1) {
+			continue
+		}
+		if message.JoinsToolMedia && message.Role == llmprotocol.RoleUser && len(toolMedia) > 0 {
+			// The router's steer after a tool run travels with the run's last
+			// hoisted images, not as a user message of its own.
+			parts, err := chatContentParts(message)
+			if err != nil {
+				return err
+			}
+			last := len(toolMedia) - 1
+			toolMedia[last] = append(toolMedia[last], parts...)
+			flushToolMedia()
 			continue
 		}
 		if message.Role != llmprotocol.RoleTool {
@@ -275,7 +289,9 @@ func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) erro
 				return err
 			}
 			message = textOnly
-			toolMedia = append(toolMedia, media...)
+			if len(media) > 0 {
+				toolMedia = append(toolMedia, media)
+			}
 		}
 		encoded, err := encodeChatMessage(message)
 		if err != nil {
@@ -384,14 +400,36 @@ func splitChatToolResultMedia(message llmprotocol.Message) (llmprotocol.Message,
 		return message, nil, nil
 	}
 	if !hasText {
-		kept = append(kept, llmprotocol.Content{Kind: llmprotocol.ContentText, Text: "The tool returned images; they follow in the next user message."})
+		// Each result's images get a message of their own, so the line
+		// names the one that carries this call's.
+		kept = append(kept, llmprotocol.Content{
+			Kind: llmprotocol.ContentText,
+			Text: "The tool returned images; they follow in the user message labelled " + chatToolMediaLabel(result.CallID) + ".",
+		})
 	}
 	result.Content = kept
 	content := message.Content[0]
 	content.ToolResult = &result
 	message.Content = []llmprotocol.Content{content}
-	label := chatContentWire{Type: "text", Text: "Images returned by tool call " + result.CallID + ":"}
+	label := chatContentWire{Type: "text", Text: chatToolMediaLabel(result.CallID)}
 	return message, append([]chatContentWire{label}, mediaState.parts...), nil
+}
+
+// chatToolMediaLabel leads the user message carrying one tool call's images
+// (pathfinder's request_to_chat spelling, ADR 0129).
+func chatToolMediaLabel(callID string) string {
+	return "[images returned by tool call " + callID + "]"
+}
+
+// chatContentParts is a message's content as Chat content parts.
+func chatContentParts(message llmprotocol.Message) ([]chatContentWire, error) {
+	state := chatMessageEncodingState{wire: &chatMessageWire{}, parts: make([]chatContentWire, 0, len(message.Content))}
+	for _, content := range message.Content {
+		if err := state.appendContent(content); err != nil {
+			return nil, err
+		}
+	}
+	return state.parts, nil
 }
 
 // encodeChatConfigurationMessage writes the content-less system message that

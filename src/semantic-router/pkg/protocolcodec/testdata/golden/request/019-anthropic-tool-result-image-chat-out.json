@@ -39,7 +39,7 @@
     {
       "content": [
         {
-          "text": "Images returned by tool call toolu_view_red:",
+          "text": "[images returned by tool call toolu_view_red]",
           "type": "text"
         },
         {
@@ -47,9 +47,14 @@
             "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
           },
           "type": "image_url"
-        },
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
         {
-          "text": "Images returned by tool call toolu_view_blue:",
+          "text": "[images returned by tool call toolu_view_blue]",
           "type": "text"
         },
         {

@@ -208,6 +208,8 @@ func goldenAPIFormat(t *testing.T, format string) string {
 		return "responses"
 	case "messages":
 		return "anthropic"
+	case "chat":
+		return "openai"
 	}
 	t.Fatalf("no api_format for corpus format %q", format)
 	return ""
@@ -510,6 +512,7 @@ routing:
   modelCards:
     - name: arm
       modality: text
+      capabilities: [tool_result_images]
     - name: spare
       modality: text
   decisions:

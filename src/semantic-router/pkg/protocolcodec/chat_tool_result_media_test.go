@@ -10,9 +10,10 @@ import (
 
 // A tool result that returned an image (Claude Code reading a PNG, an MCP
 // screenshot) reaches a Chat arm whole: the tool message keeps its text and
-// the image follows in a user message after the run of tool messages, since
-// Chat tool messages carry text only and must directly follow their
-// assistant turn.
+// the images follow in user messages after the run of tool messages, one per
+// result that held any, since Chat tool messages carry text only and must
+// directly follow their assistant turn. The spelling is pathfinder's
+// request_to_chat (ADR 0129).
 func TestChatEncodeMovesToolResultMediaAfterTheToolMessages(t *testing.T) {
 	const png = "iVBORw0KGgo="
 	request := []byte(`{
@@ -63,7 +64,7 @@ func TestChatEncodeMovesToolResultMediaAfterTheToolMessages(t *testing.T) {
 	for _, message := range wire.Messages {
 		roles = append(roles, message.Role+":"+message.ToolCallID)
 	}
-	want := []string{"user:", "assistant:", "tool:call_a", "tool:call_b", "tool:call_c", "user:", "user:"}
+	want := []string{"user:", "assistant:", "tool:call_a", "tool:call_b", "tool:call_c", "user:", "user:", "user:"}
 	if strings.Join(roles, ",") != strings.Join(want, ",") {
 		t.Fatalf("messages = %v, want %v", roles, want)
 	}
@@ -72,17 +73,20 @@ func TestChatEncodeMovesToolResultMediaAfterTheToolMessages(t *testing.T) {
 		tools[message.ToolCallID] = string(message.Content)
 	}
 	if !strings.Contains(tools["call_a"], "a.png, 1x1") || strings.Contains(tools["call_a"], "image_url") ||
-		!strings.Contains(tools["call_c"], "follow in the next user message") || !strings.Contains(tools["call_b"], "plain text") {
+		!strings.Contains(tools["call_c"], "follow in the user message labelled [images returned by tool call call_c]") ||
+		!strings.Contains(tools["call_b"], "plain text") {
 		t.Fatalf("tool messages = %v", tools)
 	}
-	media := string(wire.Messages[5].Content)
-	if strings.Count(media, `"type":"image_url"`) != 2 || !strings.Contains(media, "tool call call_a") ||
-		!strings.Contains(media, "tool call call_c") || strings.Contains(media, "call_b") ||
-		!strings.Contains(media, "data:image/png;base64,"+png) {
-		t.Fatalf("media message = %s", media)
+	for index, call := range map[int]string{5: "call_a", 6: "call_c"} {
+		media := string(wire.Messages[index].Content)
+		if strings.Count(media, `"type":"image_url"`) != 1 ||
+			!strings.HasPrefix(media, `[{"type":"text","text":"[images returned by tool call `+call+`]"}`) ||
+			!strings.Contains(media, "data:image/png;base64,"+png) {
+			t.Fatalf("media message for %s = %s", call, media)
+		}
 	}
-	if !strings.Contains(string(wire.Messages[6].Content), "what do you see?") {
-		t.Fatalf("the user's own text moved: %s", wire.Messages[6].Content)
+	if !strings.Contains(string(wire.Messages[7].Content), "what do you see?") {
+		t.Fatalf("the user's own text moved: %s", wire.Messages[7].Content)
 	}
 }
 
