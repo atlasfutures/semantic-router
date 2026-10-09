@@ -1,0 +1,1 @@
+{"model":"agent-default","messages":[{"role":"system","content":"You are an agent."},{"role":"user","content":[{"type":"text","text":"Continue from the summary."}]},{"role":"system","content":"<total_tokens>1000 tokens left</total_tokens>"}],"max_tokens":32000,"stream":true}

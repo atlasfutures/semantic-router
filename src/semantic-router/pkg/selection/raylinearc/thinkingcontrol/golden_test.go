@@ -28,9 +28,10 @@ import (
 	"testing"
 )
 
-// The corpora are pathfinder's tests/fixtures/thinking_control_golden and
-// thinking_control_placement at 3c426e6a92, mirrored byte for byte; each
-// directory's SHA256SUMS pins the copy, so drift is a diff to review.
+// The corpora are pathfinder's tests/fixtures/thinking_control_golden,
+// thinking_control_placement and thinking_control_child_marker at f5c9a308b2
+// (pathfinder#3933), mirrored byte for byte; each directory's SHA256SUMS pins
+// the copy, so drift is a diff to review.
 //
 // The golden corpus respects admission: a case whose control its cell
 // refuses records the registry's refusal and no bytes. The placement corpus
@@ -39,7 +40,11 @@ import (
 // coverage; it is never a router oracle.
 var goldenFormats = []string{FormatMessages, FormatChat, FormatResponses}
 
-var placementFormats = []string{FormatChat, FormatResponses}
+var placementFormats = []string{FormatMessages, FormatChat, FormatResponses}
+
+// childMarkerFormats are the formats pathfinder records post-compaction child
+// markers in (child_marker_test.go).
+var childMarkerFormats = []string{FormatMessages, FormatChat}
 
 func corpusDirs() []string {
 	var dirs []string
@@ -48,6 +53,9 @@ func corpusDirs() []string {
 	}
 	for _, format := range placementFormats {
 		dirs = append(dirs, filepath.Join("testdata", "placement", format))
+	}
+	for _, format := range childMarkerFormats {
+		dirs = append(dirs, filepath.Join("testdata", "child_marker", format))
 	}
 	return dirs
 }

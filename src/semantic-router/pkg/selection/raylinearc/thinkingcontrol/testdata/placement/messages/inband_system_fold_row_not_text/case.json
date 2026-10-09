@@ -1,0 +1,20 @@
+{
+ "description": "fold_before_unit_v1 refuses an in-band system row whose content is not text units",
+ "format": "messages",
+ "provider": "openrouter",
+ "model": "mistralai/mistral-large-4-0",
+ "wire_model": "mistralai/mistral-large-4-0",
+ "admission": "placement_only_not_admitted",
+ "allow_experimental": true,
+ "registry_pin": "8fcff3aa103bdea7ddbdee98587d0e0a40b70a491a2d2df5d2d7c561364fd3a8",
+ "calls": [
+  {
+   "client_body": "client-00.json",
+   "control_id": "65832e19048067be3126af1ceb7057931a0be5a9ca29014a67ab1d41648ed210"
+  }
+ ],
+ "refusal": {
+  "error": "an in-band system message's content is not text units; it cannot be folded"
+ },
+ "golden_refusal": "an in-band system message's content is not text units; it cannot be folded"
+}

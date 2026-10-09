@@ -36,6 +36,7 @@ const responsesGoldenDir = "../selection/raylinearc/thinkingcontrol/testdata/gol
 const responsesNativeDefaultControl = "628d285537ca7cdb52c4bd3433cea7a1ec36005a14dbc67ffa1c40487d7b8ad0"
 
 type responsesGoldenCase struct {
+	Format    string `json:"format"`
 	Model     string `json:"model"`
 	Provider  string `json:"provider"`
 	WireModel string `json:"wire_model"`
@@ -181,14 +182,49 @@ func assertResponsesLeverThroughTheRouter(t *testing.T, dir string, c responsesG
 		routed := strings.Replace(string(client), named[0], `"model":"auto"`, 1)
 		action := actionFor[*call.ControlID]
 		fake.chooseWith(func(raylinearc.PolicyDecisionRequest) string { return action })
-		got := dispatchResponsesLeverTurn(t, router, fmt.Sprintf("%s-%d", episode, index), episode, routed)
+		got := dispatchLeverTurn(t, router, goldenClientPath(t, c.Format), fmt.Sprintf("%s-%d", episode, index), episode, routed)
 		if got != string(want) {
 			t.Fatalf("call %d provider body =\n%s\nwant\n%s", index, got, want)
 		}
 	}
 }
 
+// codecOwnedGoldenCases are the corpus cases whose router-path bytes are the
+// Messages codec's, not placement's, each for its stated reason; the fold on
+// them is pinned by TestGoldenParity on the renderer.
+var codecOwnedGoldenCases = map[string]string{
+	"inband_system_fold_developer": "Anthropic Messages has no developer role, so the router's Messages codec " +
+		"re-encodes a body carrying one (member order, and a tool_result's string content becomes a block list); " +
+		"a Messages client never sends this role",
+}
+
 const responsesGoldenAlias = "rayline/responses-golden"
+
+// goldenAPIFormat is the model card api_format that serves a corpus format.
+func goldenAPIFormat(t *testing.T, format string) string {
+	t.Helper()
+	switch format {
+	case "responses":
+		return "responses"
+	case "messages":
+		return "anthropic"
+	}
+	t.Fatalf("no api_format for corpus format %q", format)
+	return ""
+}
+
+// goldenClientPath is the client endpoint a corpus format's bodies are sent to.
+func goldenClientPath(t *testing.T, format string) string {
+	t.Helper()
+	switch format {
+	case "responses":
+		return "/v1/responses"
+	case "messages":
+		return "/v1/messages"
+	}
+	t.Fatalf("no client path for corpus format %q", format)
+	return ""
+}
 
 var clientModelMember = regexp.MustCompile(`"model":"[^"]*"`)
 
@@ -214,7 +250,7 @@ func responsesSpareControl(t *testing.T, c responsesGoldenCase, controls map[str
 		t.Fatal(err)
 	}
 	for _, cell := range registry.Cells {
-		if cell.Model != c.Model || cell.Provider != c.Provider || cell.Format != "responses" {
+		if cell.Model != c.Model || cell.Provider != c.Provider || cell.Format != c.Format {
 			continue
 		}
 		for _, id := range cell.Controls {
@@ -304,6 +340,7 @@ func responsesGoldenPolicyConfig(t *testing.T, c responsesGoldenCase, policyURL 
 	packageSHA := hex.EncodeToString(sum[:])
 	config := strings.NewReplacer(
 		"{{MODEL}}", c.Model, "{{PROVIDER}}", c.Provider, "{{BASE_URL}}", baseURL, "{{POLICY_URL}}", policyURL,
+		"{{API_FORMAT}}", goldenAPIFormat(t, c.Format),
 		"{{PACKAGE}}", packageSHA, "{{MANIFEST}}", manifestPath, "{{BINDINGS}}", bindings.String(),
 	).Replace(responsesPolicyConfigTemplate)
 	path := filepath.Join(dir, "config.yaml")
@@ -313,16 +350,16 @@ func responsesGoldenPolicyConfig(t *testing.T, c responsesGoldenCase, policyURL 
 	return path, packageSHA, actionFor
 }
 
-// dispatchResponsesLeverTurn sends one Responses client body of an episode
+// dispatchLeverTurn sends one client body of an episode
 // through the request phases, commits it as a 200, and returns the
 // provider-bound bytes.
-func dispatchResponsesLeverTurn(t *testing.T, router *OpenAIRouter, requestID, episode, body string) string {
+func dispatchLeverTurn(t *testing.T, router *OpenAIRouter, path, requestID, episode, body string) string {
 	t.Helper()
 	ctx := &RequestContext{Headers: map[string]string{}, RequestID: requestID, StartTime: time.Now(), TraceContext: context.Background()}
 	headers := &ext_proc.ProcessingRequest_RequestHeaders{RequestHeaders: &ext_proc.HttpHeaders{
 		Headers: &core.HeaderMap{Headers: []*core.HeaderValue{
 			{Key: ":method", Value: "POST"},
-			{Key: ":path", Value: "/v1/responses"},
+			{Key: ":path", Value: path},
 			{Key: "content-type", Value: "application/json"},
 			{Key: "x-rayline-session", Value: episode},
 		}},
@@ -442,7 +479,7 @@ providers:
   models:
     - name: arm
       provider_model_id: {{MODEL}}
-      api_format: responses
+      api_format: {{API_FORMAT}}
       pricing:
         currency: USD
         prompt_per_1m: 1
@@ -456,7 +493,7 @@ providers:
           api_key_env: POLICY_E2E_PROVIDER_KEY
     - name: spare
       provider_model_id: {{MODEL}}
-      api_format: responses
+      api_format: {{API_FORMAT}}
       pricing:
         currency: USD
         prompt_per_1m: 1
@@ -532,3 +569,49 @@ global:
       semantic:
         mmbert_model_path: ""
 `
+
+const messagesGoldenDir = "../selection/raylinearc/thinkingcontrol/testdata/golden/messages"
+
+// The Messages corpus's in-band system fold cases (pathfinder FOLD_RULES,
+// fold_before_unit_v1), through the router: every admitted case must reach
+// the provider as the corpus's bytes, call by call in one committed episode,
+// and every refused case must be refused at load with its recorded message.
+func TestMessagesFoldGoldenCorpusThroughTheRouter(t *testing.T) {
+	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
+	entries, err := os.ReadDir(messagesGoldenDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ran := 0
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.Contains(entry.Name(), "fold") {
+			continue
+		}
+		name := entry.Name()
+		t.Run(name, func(t *testing.T) {
+			dir := filepath.Join(messagesGoldenDir, name)
+			raw, err := os.ReadFile(filepath.Join(dir, "case.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var c responsesGoldenCase
+			if err := json.Unmarshal(raw, &c); err != nil {
+				t.Fatal(err)
+			}
+			if reason, owned := codecOwnedGoldenCases[name]; owned {
+				t.Skip(reason)
+			}
+			if c.Refusal != nil {
+				// A fold refusal is placement's, at the call that breaks the
+				// rule, not the package's at load; TestGoldenParity pins its
+				// message on the renderer.
+				t.Skipf("placement refusal %q is pinned by TestGoldenParity", c.Refusal.Error)
+			}
+			assertResponsesLeverThroughTheRouter(t, dir, c)
+		})
+		ran++
+	}
+	if ran == 0 {
+		t.Fatal("the Messages corpus has no fold cases")
+	}
+}

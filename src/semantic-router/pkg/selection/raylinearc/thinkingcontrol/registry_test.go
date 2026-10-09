@@ -370,3 +370,83 @@ func TestNewModelsAdmitSteeringOnlyOnOpenRouterMessages(t *testing.T) {
 		})
 	}
 }
+
+// pathfinder FOLD_RULES (inband_system fold_before_unit_v1): the fold
+// controls load under pathfinder's ids, are admitted on Mistral Large 4's
+// OpenRouter Messages cell beside its steer3 controls, which still admit,
+// and never on a cell that does not list them.
+func TestFoldControlsLoadUnderPathfindersIDsAndAdmitWhereListed(t *testing.T) {
+	reg, err := Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fold, steer []string
+	for id, control := range reg.controls {
+		if control.Instruction == nil {
+			continue
+		}
+		if control.Instruction.InbandSystem == InbandSystemFold {
+			if got := control.ID(); got != id {
+				t.Fatalf("the fold rule is not part of the control's identity: id %s, registry key %s", got, id)
+			}
+			fold = append(fold, id)
+		}
+	}
+	for _, prefix := range []string{"65832e190480", "a75fcc5be6ba", "5a811ebd822e"} {
+		found := false
+		for _, id := range fold {
+			found = found || strings.HasPrefix(id, prefix)
+		}
+		if !found {
+			t.Fatalf("fold control %s is not in the registry (fold ids %v)", prefix, fold)
+		}
+	}
+	const model, provider = "mistralai/mistral-large-4-0", "openrouter"
+	cell, err := reg.Cell(model, provider, FormatMessages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id := range cell.controls {
+		control, _ := reg.Control(id)
+		if control.Instruction != nil && control.Instruction.InbandSystem == "" {
+			steer = append(steer, id)
+		}
+	}
+	if len(steer) == 0 {
+		t.Fatal("Mistral's Messages cell lost its steer3 controls")
+	}
+	for _, id := range append(append([]string{}, fold...), steer...) {
+		control, _ := reg.Control(id)
+		if _, err := reg.Admit(model, provider, FormatMessages, control, true); err != nil {
+			t.Fatalf("control %s refused on Mistral's Messages cell: %v", id[:12], err)
+		}
+	}
+	for _, id := range fold {
+		control, _ := reg.Control(id)
+		if _, err := reg.Admit(model, provider, FormatChat, control, true); err == nil {
+			t.Fatalf("fold control %s admitted on a cell that does not list it", id[:12])
+		}
+	}
+}
+
+// A rule set is fixed per episode: a fold control after a steer3 one (or the
+// reverse) is refused, as pathfinder refuses it.
+func TestARuleSetSwitchMidEpisodeIsRefused(t *testing.T) {
+	steer := Control{Native: "default", Instruction: &Instruction{Level: "up", Text: "t", NeutralText: "n"}}
+	fold := steer
+	foldInstruction := *steer.Instruction
+	foldInstruction.InbandSystem = InbandSystemFold
+	fold.Instruction = &foldInstruction
+	placer, err := NewPlacer(FormatMessages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = placer.check(&steer); err != nil {
+		t.Fatal(err)
+	}
+	placer.state.First = &steer
+	err = placer.check(&fold)
+	if err == nil || !strings.Contains(err.Error(), "base, budget, lever presence and rules are fixed per episode") {
+		t.Fatalf("a mid-episode rule switch = %v, want the per-episode refusal", err)
+	}
+}

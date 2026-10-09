@@ -1,0 +1,28 @@
+{
+ "description": "a captured Claude Code body under fold_before_unit_v1: every in-band system message moves into the tool-result turn before it; the cached one keeps its cache_control and the steer stays last",
+ "format": "messages",
+ "provider": "openrouter",
+ "model": "mistralai/mistral-large-4-0",
+ "wire_model": "mistralai/mistral-large-4-0",
+ "admission": "enforced",
+ "allow_experimental": true,
+ "registry_pin": "8fcff3aa103bdea7ddbdee98587d0e0a40b70a491a2d2df5d2d7c561364fd3a8",
+ "calls": [
+  {
+   "client_body": "client-00.json",
+   "control_id": "65832e19048067be3126af1ceb7057931a0be5a9ca29014a67ab1d41648ed210",
+   "expected_body": "provider-00.json",
+   "receipt": {
+    "call": 0,
+    "control_id": "65832e19048067be3126af1ceb7057931a0be5a9ca29014a67ab1d41648ed210",
+    "level_in_force": "up",
+    "instruction_state": "steered",
+    "written": "instruction",
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  }
+ ],
+ "refusal": null
+}
