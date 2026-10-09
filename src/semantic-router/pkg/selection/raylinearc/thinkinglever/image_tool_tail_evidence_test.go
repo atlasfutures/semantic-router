@@ -307,3 +307,47 @@ func TestAWorkerWithoutEvidenceDecidesAgainstWhatItIsSent(t *testing.T) {
 		t.Fatalf("return to neutral: emitted %v written %q state %q; want the neutral marker", plan.Emitted, plan.Written, plan.InstructionState)
 	}
 }
+
+// A write that changes what a worker is sent starts the spacing window,
+// even when the item in force elsewhere already carried that level: down on
+// a text tail, up on an evidenced image tail, then up on an unevidenced
+// worker, which is a change for it; down one turn later is then too soon.
+func TestAWithheldSteerCompensationStartsTheSpacingWindow(t *testing.T) {
+	binding := suffixBinding(EmitOnChange, "none")
+	imageAt := func(messages []llmprotocol.Message) func(uint32) bool {
+		return func(index uint32) bool {
+			return ImageToolTail(llmprotocol.Request{Messages: messages[:index+1]}, llmprotocol.OpenAIChatV1)
+		}
+	}
+	messages := []llmprotocol.Message{text(llmprotocol.RoleUser, "Start.")}
+	turn := func(index uint64, requested string, admitted bool, ledger *Ledger) Plan {
+		t.Helper()
+		plan, err := PlanTurn(Turn{
+			Binding: binding, Ledger: ledger, Messages: Messages(messages), TurnIndex: index, Requested: requested,
+			MinTurnsBetweenChanges: 3, ImageToolTail: ImageToolTail(llmprotocol.Request{Messages: messages}, llmprotocol.OpenAIChatV1),
+			ImageToolTailAdmitted: admitted, ImageToolTailAt: imageAt(messages),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return plan
+	}
+	down := turn(1, "down", false, nil)
+	if !down.Emitted {
+		t.Fatal("down was not written")
+	}
+	messages = append(messages, text(llmprotocol.RoleAssistant, ""), toolCall("c1"), imageResult("c1"))
+	up := turn(4, "up", true, &down.Next)
+	if !up.Emitted {
+		t.Fatalf("evidenced up was not written: skipped %q", up.Skipped)
+	}
+	messages = append(messages, text(llmprotocol.RoleAssistant, "Seen."), text(llmprotocol.RoleUser, "Next."))
+	again := turn(7, "up", false, &up.Next)
+	if !again.Emitted {
+		t.Fatalf("the unevidenced worker was not steered up: skipped %q", again.Skipped)
+	}
+	messages = append(messages, text(llmprotocol.RoleAssistant, "Ok."), text(llmprotocol.RoleUser, "More."))
+	if soon := turn(8, "down", false, &again.Next); soon.Emitted {
+		t.Fatal("down was written one turn after the unevidenced worker's change")
+	}
+}

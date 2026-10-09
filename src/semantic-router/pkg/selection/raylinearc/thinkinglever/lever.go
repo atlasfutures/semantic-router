@@ -645,6 +645,15 @@ func PlanTurn(turn Turn) (plan Plan, err error) {
 		plan.drawnControl = turn.Binding.ControlSHA256(requested)
 		return plan, nil
 	}
+	if len(plan.withheld) > 0 {
+		// The write changes what this worker is sent even where the item in
+		// force is already the same: it starts the spacing window too.
+		shown, _ := effective.state(turn.Binding.Lever)
+		if state, _ := plan.Next.state(turn.Binding.Lever); shown.Payload != state.Payload || shown.Marker != state.Marker {
+			state.LastChangeTurn = turn.TurnIndex
+			plan.Next.setState(state)
+		}
+	}
 	plan.Emitted = true
 	plan.Written = WrittenInstruction
 	if item.marker {
