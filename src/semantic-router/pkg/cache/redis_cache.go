@@ -604,7 +604,7 @@ func (c *RedisCache) addEntry(ctx context.Context, id string, requestID string, 
 		"backend":             "redis",
 		"index":               c.indexName,
 		"request_id":          requestID,
-		"query":               query,
+		"query":               logging.ContentDescriptor(query),
 		"model":               model,
 		"embedding_dimension": len(embedding),
 	})

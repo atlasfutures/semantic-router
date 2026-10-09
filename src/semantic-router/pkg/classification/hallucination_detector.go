@@ -129,15 +129,15 @@ func (d *HallucinationDetector) Detect(context, question, answer string) (*Hallu
 
 		// Skip spans below minimum length
 		if spanTokensLen < minSpanLength {
-			logging.Debugf("Filtered span (too short): '%s' (%d tokens < %d)",
-				span.Text, spanTokensLen, minSpanLength)
+			logging.Debugf("Filtered span (too short): %s (%d tokens < %d)",
+				logging.ContentDescriptor(span.Text), spanTokensLen, minSpanLength)
 			continue
 		}
 
 		// Skip spans below confidence threshold
 		if span.Confidence < minSpanConfidence {
-			logging.Debugf("Filtered span (low confidence): '%s' (%.3f < %.3f)",
-				span.Text, span.Confidence, minSpanConfidence)
+			logging.Debugf("Filtered span (low confidence): %s (%.3f < %.3f)",
+				logging.ContentDescriptor(span.Text), span.Confidence, minSpanConfidence)
 			continue
 		}
 		result.UnsupportedSpans = append(result.UnsupportedSpans, span.Text)
