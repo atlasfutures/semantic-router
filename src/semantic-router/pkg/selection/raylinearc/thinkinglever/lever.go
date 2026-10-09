@@ -506,8 +506,12 @@ type Turn struct {
 	MaxEntries int
 	// ImageToolTail is set when the turn's tool run returned an image and
 	// the worker's wire is Chat or Responses (ImageToolTail). A steering
-	// suffix is then refused.
+	// suffix is then refused, unless ImageToolTailAdmitted.
 	ImageToolTail bool
+	// ImageToolTailAdmitted is set when the worker's admission cell states
+	// task-fidelity evidence for a steer after an image tool result (ADR
+	// 0129 decision 5): the steer is then written as on any other tail.
+	ImageToolTailAdmitted bool
 }
 
 // Message is the part of a neutral message the planner reads: its role,
@@ -596,7 +600,7 @@ func PlanTurn(turn Turn) (plan Plan, err error) {
 	}
 	// Refused only where the write would otherwise land, so a full ledger
 	// still reports itself.
-	if turn.ImageToolTail && turn.Binding.Lever == LeverSteeringSuffix {
+	if turn.ImageToolTail && !turn.ImageToolTailAdmitted && turn.Binding.Lever == LeverSteeringSuffix {
 		plan.Next = *before
 		plan.Refused = RefusedImageToolTail
 		plan.drawnControl = turn.Binding.ControlSHA256(requested)

@@ -66,6 +66,8 @@ type leverEpisode struct {
 	decision *config.Decision
 	// wire is the worker's wire format; the zero value is Messages.
 	wire llmprotocol.WireFormat
+	// config is the router's; nil serves without one.
+	config *config.RouterConfig
 }
 
 func newLeverEpisode(t *testing.T, enabled bool) *leverEpisode {
@@ -110,7 +112,7 @@ func (e *leverEpisode) turnWithHeaders(
 		RaylineARCTransaction: transaction,
 	}
 	request := &llmprotocol.Request{Model: "m", Messages: append([]llmprotocol.Message(nil), messages...)}
-	router := &OpenAIRouter{}
+	router := &OpenAIRouter{Config: e.config}
 	wire := e.wire
 	if wire == "" {
 		wire = llmprotocol.AnthropicMessagesV1
