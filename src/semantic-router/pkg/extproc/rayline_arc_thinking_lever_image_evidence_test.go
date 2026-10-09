@@ -116,3 +116,69 @@ func TestNoRegistryCellMeansNoImageToolTailEvidence(t *testing.T) {
 		t.Fatal("kimi-k3's Chat cell states evidence")
 	}
 }
+
+// Every bound worker replays the one ledger, and evidence is per cell: a
+// steer kimi-k3's evidenced Chat cell wrote after an image tool result is
+// withheld from a worker without evidence, on a retry of that turn, on
+// later turns, and on kimi-k3's own unevidenced Responses cell. Back on
+// kimi-k3 Chat it is replayed, so its cached prefix still matches.
+func TestAnEvidencedImageToolTailSteerIsWithheldFromAWorkerWithoutEvidence(t *testing.T) {
+	image := llmprotocol.Message{Role: llmprotocol.RoleTool, Content: []llmprotocol.Content{{
+		Kind: llmprotocol.ContentToolResult, ToolResult: &llmprotocol.ToolResult{CallID: "c1", Content: []llmprotocol.Content{
+			{Kind: llmprotocol.ContentImage, MediaType: "image/png", Data: "iVBORw0KGgo="},
+		}},
+	}}}
+	call := llmprotocol.Message{Role: llmprotocol.RoleAssistant, Content: []llmprotocol.Content{{
+		Kind: llmprotocol.ContentToolCall, ToolCall: &llmprotocol.ToolCall{ID: "c1", Name: "shot", Arguments: "{}"},
+	}}}
+	tail := []llmprotocol.Message{leverText(llmprotocol.RoleUser, "go"), call, image}
+	later := append(append([]llmprotocol.Message(nil), tail...),
+		leverText(llmprotocol.RoleAssistant, "Seen."), leverText(llmprotocol.RoleUser, "next"))
+	steered := func(sent []llmprotocol.Message) bool {
+		for _, message := range sent {
+			for _, content := range message.Content {
+				if content.Text == leverDown {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	e := newLeverEpisode(t, true)
+	e.wire = llmprotocol.OpenAIChatV1
+	e.config = evidenceRouterConfig()
+	lever := e.decision.Algorithm.RaylineARC.ThinkingLever
+	lever.Workers[evidencedWorker] = lever.Workers[leverWorker]
+	if sent, _ := e.turn(evidencedWorker, tail, true); !steered(sent) {
+		t.Fatal("kimi-k3's evidenced cell was not steered")
+	}
+	for _, step := range []struct {
+		name     string
+		worker   string
+		wire     llmprotocol.WireFormat
+		messages []llmprotocol.Message
+		refused  bool
+	}{
+		{"a retry on an unevidenced worker", leverWorker, llmprotocol.OpenAIChatV1, tail, true},
+		{"kimi-k3's unevidenced Responses cell", evidencedWorker, llmprotocol.OpenAIResponsesV1, tail, true},
+		{"a later turn on an unevidenced worker", leverWorker, llmprotocol.OpenAIChatV1, later, false},
+	} {
+		e.wire = step.wire
+		sent, ctx := e.turn(step.worker, step.messages, false)
+		record := map[string]interface{}{}
+		appendRaylineARCThinkingFields(record, ctx)
+		if steered(sent) {
+			t.Fatalf("%s: the evidenced steer reached it", step.name)
+		}
+		if record["thinking_level_in_force"] == "down" {
+			t.Fatalf("%s: level in force %v, but the worker was sent no steer", step.name, record["thinking_level_in_force"])
+		}
+		if step.refused && record["thinking_refused"] != "image_tool_tail_task_fidelity" {
+			t.Fatalf("%s: record %v, want the refusal", step.name, record)
+		}
+	}
+	e.wire = llmprotocol.OpenAIChatV1
+	if sent, _ := e.turn(evidencedWorker, later, false); !steered(sent) {
+		t.Fatal("back on kimi-k3 Chat, its steer was not replayed")
+	}
+}

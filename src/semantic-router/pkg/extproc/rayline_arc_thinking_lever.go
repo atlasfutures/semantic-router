@@ -124,7 +124,6 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 	}
 	trace.Lever, trace.Admission = string(binding.Lever), bindingConfig.Admission
 	trace.ExportSHA256 = bindingConfig.ExportSHA256
-	imageToolTail := thinkinglever.ImageToolTail(*request, targetFormat)
 	plan, err := thinkinglever.PlanTurn(thinkinglever.Turn{
 		Binding:                binding,
 		Ledger:                 ledger,
@@ -133,14 +132,21 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 		Requested:              requested,
 		MinTurnsBetweenChanges: lever.MinSpacingTurns,
 		MaxEntries:             lever.MaxLedgerEntries,
-		ImageToolTail:          imageToolTail,
-		ImageToolTailAdmitted: imageToolTail &&
-			raylineARCImageToolTailAdmitted(r.Config, ctx.RaylineARCDispatch.ID, targetFormat),
+		ImageToolTail:          thinkinglever.ImageToolTail(*request, targetFormat),
+		ImageToolTailAdmitted:  raylineARCImageToolTailAdmitted(r.Config, ctx.RaylineARCDispatch.ID, targetFormat),
+		ImageToolTailAt: func(index uint32) bool {
+			if int(index) >= len(request.Messages) {
+				return false
+			}
+			prefix := *request
+			prefix.Messages = request.Messages[:index+1]
+			return thinkinglever.ImageToolTail(prefix, targetFormat)
+		},
 	})
 	if err != nil {
 		return false, err
 	}
-	messages, err := thinkinglever.ApplyLedger(request.Messages, binding.Lever, plan.Next)
+	messages, err := thinkinglever.ApplyLedger(request.Messages, binding.Lever, plan.Applied())
 	if err != nil {
 		return false, err
 	}
