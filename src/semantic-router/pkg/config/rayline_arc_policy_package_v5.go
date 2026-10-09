@@ -17,9 +17,13 @@ limitations under the License.
 package config
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -108,7 +112,7 @@ func (cfg *RaylineARCPolicyServiceConfig) loadPackageV5() (*raylineARCPolicyPack
 	if cfg.packageV5 != nil && cfg.packageV5.path == cfg.PackageManifest {
 		return cfg.packageV5, nil
 	}
-	raw, err := os.ReadFile(cfg.PackageManifest)
+	raw, err := readPackageManifest(cfg.PackageManifest)
 	if err != nil {
 		return nil, fmt.Errorf("package_manifest: %w", err)
 	}
@@ -147,6 +151,43 @@ func (cfg *RaylineARCPolicyServiceConfig) loadPackageV5() (*raylineARCPolicyPack
 	}
 	cfg.packageV5 = pkg
 	return pkg, nil
+}
+
+// maxPackageManifestBytes bounds a gzip-compressed manifest once
+// decompressed. A v5 manifest is tens of kilobytes; the bound only stops a
+// compressed file from expanding without limit.
+const maxPackageManifestBytes = 4 << 20
+
+// readPackageManifest returns the manifest's bytes. A manifest may be stored
+// gzip-compressed, so that a package larger than a Secret Manager version
+// (64 KiB) can still be mounted: the lab mounts it as package.json.gz. It is
+// recognised by the gzip magic bytes, and a path ending in .gz must hold
+// gzip. package_sha256 is always the sha256 of the decompressed manifest, so
+// compressing it changes no pin.
+func readPackageManifest(path string) ([]byte, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) < 2 || raw[0] != 0x1f || raw[1] != 0x8b {
+		if strings.HasSuffix(path, ".gz") {
+			return nil, errors.New("gzip: a .gz manifest is not gzip-compressed")
+		}
+		return raw, nil
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("gzip: %w", err)
+	}
+	defer reader.Close()
+	manifest, err := io.ReadAll(io.LimitReader(reader, maxPackageManifestBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("gzip: %w", err)
+	}
+	if len(manifest) > maxPackageManifestBytes {
+		return nil, errors.New("gzip: decompresses to more than 4 MiB")
+	}
+	return manifest, nil
 }
 
 // validateRaylineARCPolicyPackageV5Bindings refuses a v5 binding that states
