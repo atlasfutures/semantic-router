@@ -5,7 +5,7 @@
  "child_reset_marker": {
   "text": "Until the next steering instruction, use your normal judgement.",
   "format": "chat",
-  "registry_sha256": "5a33c691860ad8ff9fbf0814705f176d883bfd28baa397a93cb2eab24617ee2d",
+  "registry_sha256": "2c5a0a8f593a63b9f27642027bcb96ab3ed1d00df125ac2c984c09b4c45d7632",
   "parent_level_at_branch": "up"
  },
  "control": {
@@ -24,7 +24,7 @@
    }
   }
  },
- "registry_pin": "5a33c691860ad8ff9fbf0814705f176d883bfd28baa397a93cb2eab24617ee2d",
+ "registry_pin": "2c5a0a8f593a63b9f27642027bcb96ab3ed1d00df125ac2c984c09b4c45d7632",
  "calls": [
   {
    "client_body": "client-00.json",
