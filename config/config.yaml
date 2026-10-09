@@ -2168,10 +2168,17 @@ global:
           detailed_goroutine_tracking: true
           high_resolution_timing: true
     response_api:
-      # The Responses store persists the request input, the output text and the
-      # instructions, and memory reads conversation history back out of it. ARC
-      # does not need it. Off.
-      enabled: false
+      # Left enabled deliberately. The Responses store does persist the request
+      # input, the output text and the instructions, so it is a retention
+      # surface -- but disabling it 404s the whole /v1/responses endpoint at
+      # header validation, and ARC serves that format: policyRequestFormat maps
+      # OpenAIResponsesV1 to the policy service's "responses" format, and the
+      # reference backends keep a Responses client on Responses upstream via
+      # accepted_formats. Turning it off is a functional regression for an ARC
+      # client on this endpoint, not a retention-only change. A ZDR deployment
+      # that does not serve /v1/responses should disable it; scoping that is
+      # separate work from this PR.
+      enabled: true
       store_backend: redis
       ttl_seconds: 86400
       max_responses: 2000
