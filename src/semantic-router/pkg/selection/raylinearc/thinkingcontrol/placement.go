@@ -49,13 +49,20 @@ const (
 	WrittenNeutralMarker = "neutral_marker"
 )
 
+// RefusedImageToolTail is why a call wrote nothing (ADR 0129 decision 5): its
+// write would have landed after an image tool result on a cell without
+// task-fidelity evidence. The turn goes out unsteered and the level the
+// provider already sees holds.
+const RefusedImageToolTail = "image_tool_tail_task_fidelity"
+
 // Receipt is what one call's placement did; the field names are the golden
 // corpora's.
 type Receipt struct {
 	Call      int    `json:"call"`
 	ControlID string `json:"control_id"`
-	// LevelInForce is this call's instruction level; nil for a native-only
-	// episode.
+	// LevelInForce is the instruction level the provider sees after this
+	// call, which a refused write leaves at the earlier one; nil for a
+	// native-only episode.
 	LevelInForce     *string `json:"level_in_force"`
 	InstructionState *string `json:"instruction_state"`
 	// Written is "instruction", "neutral_marker", or nil when nothing was
@@ -64,6 +71,10 @@ type Receipt struct {
 	Epoch            int     `json:"epoch"`
 	EpochResetReason *string `json:"epoch_reset_reason"`
 	Retry            bool    `json:"retry"`
+	// Refused is RefusedImageToolTail when a write this call would have made
+	// was refused, and absent otherwise, so a receipt that refused nothing
+	// keeps the corpora's shape.
+	Refused *string `json:"refused,omitempty"`
 }
 
 // LedgerItem is one written instruction: where it is anchored, and its bytes.
@@ -92,7 +103,10 @@ type PlacerState struct {
 	InForce         *string      `json:"in_force"`
 	PreviousAnchor  *Anchor      `json:"previous_anchor"`
 	PreviousControl *string      `json:"previous_control"`
-	Calls           int          `json:"calls"`
+	// PreviousRefused is the previous call's refusal, which a byte-identical
+	// retry repeats. A state written before ADR 0129 has none.
+	PreviousRefused *string `json:"previous_refused,omitempty"`
+	Calls           int     `json:"calls"`
 }
 
 // Placer is one episode's placement state on one wire format, advanced one
@@ -123,9 +137,12 @@ func ResumePlacer(state PlacerState) (*Placer, error) {
 	// every call records its anchor and control; a state that has calls
 	// without them, or them without calls, would let the next call re-found
 	// the episode.
+	if state.PreviousRefused != nil && *state.PreviousRefused != RefusedImageToolTail {
+		return nil, malformed
+	}
 	if state.Calls == 0 {
 		if state.First != nil || len(state.Ledger) > 0 || state.Epoch != 0 || state.InForce != nil ||
-			state.PreviousAnchor != nil || state.PreviousControl != nil {
+			state.PreviousAnchor != nil || state.PreviousControl != nil || state.PreviousRefused != nil {
 			return nil, malformed
 		}
 	} else if state.First == nil || state.First.Native == "" || state.PreviousAnchor == nil ||
@@ -205,8 +222,9 @@ func sameBudget(a, b *int64) bool {
 
 // place applies the ledger to body for this call's control and returns the
 // body (thinking fields and model untouched) and the call's receipt. body is
-// not modified.
-func (p *Placer) place(body *value, control *Control) (*value, Receipt, error) {
+// not modified. imageToolTailAdmitted is the cell's ADR 0129 task-fidelity
+// admission: without it nothing is written after an image tool result.
+func (p *Placer) place(body *value, control *Control, imageToolTailAdmitted bool) (*value, Receipt, error) {
 	if err := p.check(control); err != nil {
 		return nil, Receipt{}, err
 	}
@@ -240,10 +258,24 @@ func (p *Placer) place(body *value, control *Control) (*value, Receipt, error) {
 			break
 		}
 	}
-	var written *string
+	var written, refused *string
 	instruction := control.Instruction
+	if instruction != nil && retry && next.PreviousRefused != nil {
+		// The retried send is the same bytes: what its first send refused,
+		// it refuses again.
+		again := *next.PreviousRefused
+		refused = &again
+	}
 	if instruction != nil && !retry {
 		level := instruction.Level
+		wouldWrite := (level != InstructionNone && (next.InForce == nil || *next.InForce != level)) ||
+			(level == InstructionNone && next.InForce != nil)
+		if wouldWrite && instruction.Unit != UnitConfigurationUpdate && !imageToolTailAdmitted &&
+			imageToolTail(units, tail, format) {
+			// ADR 0129: no unproven steering after an image tool result.
+			reason := RefusedImageToolTail
+			refused = &reason
+		}
 		write := func(kind, text string) error {
 			placement, err := placementFor(units[tail], format)
 			if err != nil {
@@ -256,6 +288,7 @@ func (p *Placer) place(body *value, control *Control) (*value, Receipt, error) {
 			return nil
 		}
 		switch {
+		case refused != nil:
 		case level != InstructionNone && (next.InForce == nil || *next.InForce != level):
 			if err := write(WrittenInstruction, instruction.Text); err != nil {
 				return nil, Receipt{}, err
@@ -265,9 +298,11 @@ func (p *Placer) place(body *value, control *Control) (*value, Receipt, error) {
 				return nil, Receipt{}, err
 			}
 		}
-		if level == InstructionNone {
+		switch {
+		case refused != nil:
+		case level == InstructionNone:
 			next.InForce = nil
-		} else {
+		default:
 			inForce := level
 			next.InForce = &inForce
 		}
@@ -288,9 +323,17 @@ func (p *Placer) place(body *value, control *Control) (*value, Receipt, error) {
 	}
 	placed := body.clone()
 	placed.set(unitsKey(format), arrayValue(applied...))
-	receipt := Receipt{Call: index, ControlID: id, Written: written, Epoch: next.Epoch, EpochResetReason: reset, Retry: retry}
+	receipt := Receipt{
+		Call: index, ControlID: id, Written: written, Epoch: next.Epoch, EpochResetReason: reset, Retry: retry,
+		Refused: refused,
+	}
 	if instruction != nil {
-		level := instruction.Level
+		// What the provider sees, never the drawn level: a refused write (or
+		// its retry) leaves the earlier one.
+		level := InstructionNone
+		if next.InForce != nil {
+			level = *next.InForce
+		}
 		receipt.LevelInForce = &level
 		state := StateNever
 		switch {
@@ -301,7 +344,7 @@ func (p *Placer) place(body *value, control *Control) (*value, Receipt, error) {
 		}
 		receipt.InstructionState = &state
 	}
-	next.PreviousAnchor, next.PreviousControl = &anchor, &id
+	next.PreviousAnchor, next.PreviousControl, next.PreviousRefused = &anchor, &id, refused
 	next.Calls++
 	p.state = next
 	return placed, receipt, nil
@@ -458,6 +501,61 @@ func isUserMessage(unit *value, format string) bool {
 	}
 	typ, typed := stringField(unit, "type", "message")
 	return typed && typ == "message"
+}
+
+// imageParts are the content-part types that carry an image, per format.
+var imageParts = map[string]string{FormatChat: "image_url", FormatResponses: "input_image"}
+
+func carriesImage(content *value, format string) bool {
+	if content == nil || content.kind != kindArray {
+		return false
+	}
+	for _, part := range content.items {
+		if typ, ok := stringField(part, "type", ""); ok && part.kind == kindObject && part.has("type") &&
+			typ == imageParts[format] {
+			return true
+		}
+	}
+	return false
+}
+
+// imageToolTail reports whether the governed turn's tool run carried an
+// image (ADR 0129): on Chat, image user messages (the hoisted images, then
+// any user text) after a tool run; on Responses, a tool output run whose
+// outputs, or a user item after them, carry an input_image. Messages keeps an image inside its tool_result and is not
+// governed by this rule.
+func imageToolTail(units []*value, tail int, format string) bool {
+	if _, governed := imageParts[format]; !governed {
+		return false
+	}
+	position := tail
+	images := false
+	if format == FormatChat {
+		for position >= 0 && units[position].kind == kindObject && units[position].has("role") &&
+			roleOf(units[position]) == "user" {
+			images = images || carriesImage(units[position].get("content"), format)
+			position--
+		}
+		return images && position >= 0 && isToolResult(units[position], format)
+	}
+	// Responses: images in the outputs themselves, or in a user item after
+	// them, where a codec hoists one.
+	for position >= 0 && isUserMessage(units[position], format) {
+		images = images || carriesImage(units[position].get("content"), format)
+		position--
+	}
+	run := false
+	for position >= 0 && isToolResult(units[position], format) {
+		images = images || carriesImage(units[position].get("output"), format)
+		run = true
+		position--
+	}
+	return images && run
+}
+
+func roleOf(unit *value) string {
+	role, _ := stringField(unit, "role", "")
+	return role
 }
 
 // placementFor is where this turn's instruction goes, relative to the tail

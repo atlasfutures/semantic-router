@@ -246,7 +246,7 @@ func TestPolicyLeverAppliesTheDecidedLevel(t *testing.T) {
 		ctx := policyDispatchContext(decision, action)
 		ctx.RaylineARCTransaction = transaction
 		request := &llmprotocol.Request{Model: "m", Messages: append([]llmprotocol.Message(nil), messages...)}
-		if _, err := (&OpenAIRouter{}).applyRaylineARCThinkingLever(request, ctx); err != nil {
+		if _, err := (&OpenAIRouter{}).applyRaylineARCThinkingLever(request, llmprotocol.AnthropicMessagesV1, ctx); err != nil {
 			t.Fatalf("apply: %v", err)
 		}
 		if err := transaction.commit(context.Background(), ctx); err != nil {
@@ -280,7 +280,7 @@ func TestPolicyLeverFailsATurnWithNoDecidedAction(t *testing.T) {
 	decision.Algorithm.RaylineARC.PolicyService = &config.RaylineARCPolicyServiceConfig{}
 	ctx := &RequestContext{VSRSelectedDecision: decision, RaylineARCDispatch: &raylinearc.WorkerManifest{ID: leverWorker}}
 	request := &llmprotocol.Request{Messages: leverMessages()}
-	if _, err := (&OpenAIRouter{}).applyRaylineARCThinkingLever(request, ctx); !errors.Is(err, errPolicyLevelMissing) {
+	if _, err := (&OpenAIRouter{}).applyRaylineARCThinkingLever(request, llmprotocol.AnthropicMessagesV1, ctx); !errors.Is(err, errPolicyLevelMissing) {
 		t.Fatalf("error = %v, want errPolicyLevelMissing", err)
 	}
 }

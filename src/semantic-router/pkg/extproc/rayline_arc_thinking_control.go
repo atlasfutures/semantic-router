@@ -184,15 +184,18 @@ func (planned *plannedThinkingControl) render(body []byte, ctx *RequestContext) 
 		return nil, err
 	}
 	ctx.RaylineARCTransaction.stageControlPlacement(raylinearc.ControlPlacement{Key: planned.key, State: planned.placer.State()})
-	ctx.RaylineARCThinking = thinkingControlTrace(planned.cell, receipt)
+	ctx.RaylineARCThinking = thinkingControlTrace(planned.cell, planned.control, receipt)
 	recordThinkingLeverTurn(ctx.RaylineARCThinking)
 	return rendered, nil
 }
 
-// thinkingControlTrace attributes the call with the control in force and
-// what the model can see (ADR 0109 decision 4). The placer never declines a
-// control it renders, so the level in force is the one the policy chose.
-func thinkingControlTrace(cell *thinkingcontrol.Cell, receipt thinkingcontrol.Receipt) *raylineARCThinkingTrace {
+// thinkingControlTrace attributes the call with the drawn control and what
+// the model can see (ADR 0109 decision 4). The requested level is the
+// policy's; the level in force is the receipt's, which a refused write
+// (ADR 0129) leaves at the earlier one.
+func thinkingControlTrace(
+	cell *thinkingcontrol.Cell, control thinkingcontrol.Control, receipt thinkingcontrol.Receipt,
+) *raylineARCThinkingTrace {
 	trace := &raylineARCThinkingTrace{
 		Lever:          thinkingControlLever,
 		Source:         config.RaylineARCThinkingSourcePolicy,
@@ -202,8 +205,17 @@ func thinkingControlTrace(cell *thinkingcontrol.Cell, receipt thinkingcontrol.Re
 		Retry:          receipt.Retry,
 		Epoch:          uint32(receipt.Epoch),
 	}
+	if control.Instruction != nil {
+		trace.LevelRequested = control.Instruction.Level
+	}
 	if receipt.LevelInForce != nil {
-		trace.LevelRequested, trace.LevelInForce = *receipt.LevelInForce, *receipt.LevelInForce
+		trace.LevelInForce = *receipt.LevelInForce
+	}
+	if receipt.Refused != nil {
+		// A refused call stays attributed to the drawn control: the label is
+		// the policy's action. What the provider saw is the level in force
+		// beside the refusal (pathfinder ADR 0129's receipt).
+		trace.Refused = *receipt.Refused
 	}
 	if receipt.InstructionState != nil {
 		trace.InstructionState = *receipt.InstructionState

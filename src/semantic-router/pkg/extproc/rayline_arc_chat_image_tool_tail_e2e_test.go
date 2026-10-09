@@ -23,10 +23,13 @@ import (
 // Messages client (Hermes) whose tool returned an image, routed to a Chat
 // worker. Pathfinder's chat image_tool_tail golden, sent as the Anthropic
 // request it translates from, must reach the provider as the golden's
-// messages: the tool message carries text, the image follows in a labelled
-// user message, and the steer is a text part of that message.
+// messages: the tool message carries text and the image follows in a
+// labelled user message. The corpus cell states no task-fidelity evidence,
+// so the steer is refused (pathfinder#3996): call 1 goes out unsteered, and
+// its routing record names the refusal and the level the provider sees.
 func TestMessagesImageToolTailReachesAChatWorkerAsTheGolden(t *testing.T) {
 	t.Setenv("POLICY_E2E_PROVIDER_KEY", "public-e2e-provider-key")
+	logs := captureLogs(t)
 	dir := filepath.Join(responsesGoldenDir, "..", "chat", "image_tool_tail")
 	var c responsesGoldenCase
 	raw, err := os.ReadFile(filepath.Join(dir, "case.json"))
@@ -80,13 +83,34 @@ func TestMessagesImageToolTailReachesAChatWorkerAsTheGolden(t *testing.T) {
 				index, imageTailRoles(gotMessages), imageTailRoles(wantMessages))
 		}
 		// What ADR 0129 governs is the tail: the user message that carries
-		// the hoisted image and, on call 1, the steer. The messages before it
+		// the hoisted image (and an evidenced cell's steer). The messages before it
 		// differ from pathfinder's translator only in spellings the Chat
 		// codec already used (an assistant tool call without content: "",
 		// a text-only tool message as a string, with its tool name).
 		last := len(gotMessages) - 1
 		if gotTail, wantTail := marshalCanonical(gotMessages[last]), marshalCanonical(wantMessages[last]); gotTail != wantTail {
 			t.Fatalf("call %d provider tail message =\n%s\nwant\n%s", index, gotTail, wantTail)
+		}
+	}
+	var record map[string]interface{}
+	for _, entry := range logs.All() {
+		fields := entry.ContextMap()
+		if fields["event"] == "routing_decision" && fields["request_id"] == "chat-image-tail-1" {
+			record = fields
+		}
+	}
+	if record == nil {
+		t.Fatal("call 1 logged no routing decision")
+	}
+	for key, want := range map[string]interface{}{
+		"thinking_refused": "image_tool_tail_task_fidelity", "thinking_level_requested": "up",
+		"thinking_level_in_force": "none", "thinking_emitted": false,
+		// Attributed to the drawn control, the policy's action; what the
+		// provider saw is the level in force beside the refusal.
+		"thinking_control_sha256": *c.Calls[1].ControlID,
+	} {
+		if record[key] != want {
+			t.Errorf("call 1 routing record %s = %#v, want %#v", key, record[key], want)
 		}
 	}
 }

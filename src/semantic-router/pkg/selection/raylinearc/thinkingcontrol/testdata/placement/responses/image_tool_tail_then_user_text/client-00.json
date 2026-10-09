@@ -1,0 +1,1 @@
+{"model":"gpt-6-sol","instructions":"You are Codex.","input":[{"type":"message","role":"user","content":"Read the screenshot."}],"stream":true}

@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/protocolcodec"
 )
 
 // Messages projects the client transcript for the planner.
@@ -36,6 +37,83 @@ func Messages(messages []llmprotocol.Message) []Message {
 		}
 	}
 	return projected
+}
+
+// ImageToolTail reports whether a turn's tool run returned an image on a
+// worker wire that ADR 0129 governs, as pathfinder's placer reads the
+// encoded body. An image in the trailing user messages counts as well as
+// one in a tool output: Chat's images travel in user messages after the run,
+// and a Responses codec may hoist one into a user item there. Messages keeps
+// an image inside its tool_result and is not governed. A message the target
+// encoder omits whole, of any role, is read past and counts for nothing.
+func ImageToolTail(request llmprotocol.Request, wire llmprotocol.WireFormat) bool {
+	if wire != llmprotocol.OpenAIChatV1 && wire != llmprotocol.OpenAIResponsesV1 {
+		return false
+	}
+	messages := request.Messages
+	position := len(messages) - 1
+	images := false
+	for ; position >= 0; position-- {
+		message := messages[position]
+		if protocolcodec.MessageEncodesToNothing(request, message, wire) || unspoken(message) {
+			continue
+		}
+		if message.Role != llmprotocol.RoleUser {
+			break
+		}
+		images = images || carriesImage(message.Content)
+	}
+	run := false
+	for ; position >= 0; position-- {
+		message := messages[position]
+		if protocolcodec.MessageEncodesToNothing(request, message, wire) || unspoken(message) {
+			continue
+		}
+		if message.Role != llmprotocol.RoleTool {
+			break
+		}
+		run = true
+		for _, content := range message.Content {
+			if content.ToolResult != nil {
+				images = images || carriesImage(content.ToolResult.Content)
+			}
+		}
+	}
+	return images && run
+}
+
+// unspoken is an assistant message holding reasoning and nothing else,
+// which the provider adapter may drop on the way to the worker. The detector
+// reads past it, so the turn is judged as the worker may see it; where the
+// adapter keeps it, this refuses more, never less. Anything the worker reads
+// as the assistant's answer (text, a refusal, a tool call) ends the run.
+func unspoken(message llmprotocol.Message) bool {
+	if message.Role != llmprotocol.RoleAssistant || len(message.Content) == 0 {
+		return false
+	}
+	for _, content := range message.Content {
+		if content.Kind != llmprotocol.ContentReasoning && !opaqueReasoning(content) {
+			return false
+		}
+	}
+	return true
+}
+
+// opaqueReasoning is an Anthropic thinking block the contract carries whole.
+func opaqueReasoning(content llmprotocol.Content) bool {
+	block := content.Unmodeled
+	return content.Kind == llmprotocol.ContentUnmodeled && block != nil &&
+		block.Format == llmprotocol.AnthropicMessagesV1 &&
+		(block.Type == "redacted_thinking" || block.Type == "thinking")
+}
+
+func carriesImage(content []llmprotocol.Content) bool {
+	for _, part := range content {
+		if part.Kind == llmprotocol.ContentImage {
+			return true
+		}
+	}
+	return false
 }
 
 // messageDigest identifies a client message across turns. It ignores

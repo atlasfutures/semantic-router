@@ -115,6 +115,13 @@ const (
 	SkipLedgerFull = "ledger_full"
 )
 
+// RefusedImageToolTail is why a steering-suffix turn wrote nothing after an
+// image tool result on a worker wire that hoists or nests the images
+// (ADR 0129 decision 5): no worker has task-fidelity evidence for such a
+// steer, so the turn goes out unsteered and the level in force holds. It is
+// pathfinder's placer refusal, by the same name.
+const RefusedImageToolTail = "image_tool_tail_task_fidelity"
+
 const (
 	DigestBytes  = 16
 	maxLevels    = 16
@@ -497,6 +504,10 @@ type Turn struct {
 	// MaxEntries caps the ledger below MaxLedgerLength; zero means the
 	// maximum.
 	MaxEntries int
+	// ImageToolTail is set when the turn's tool run returned an image and
+	// the worker's wire is Chat or Responses (ImageToolTail). A steering
+	// suffix is then refused.
+	ImageToolTail bool
 }
 
 // Message is the part of a neutral message the planner reads: its role,
@@ -510,10 +521,11 @@ type Message struct {
 // only with the episode state.
 type Plan struct {
 	Next Ledger
-	// LevelInForce and ControlInForce describe the binding's lever after
-	// this turn: what the worker is actually being asked, which is not
-	// always what the policy requested. With nothing written this epoch the
-	// neutral level is in force.
+	// LevelInForce describes the binding's lever after this turn: what the
+	// worker is actually being asked, which is not always what the policy
+	// requested. With nothing written this epoch the neutral level is in
+	// force. ControlInForce is the control the call is attributed to: the
+	// one in force, except on a refused turn, which keeps the drawn one.
 	LevelInForce   string
 	ControlInForce string
 	// InstructionState is set for a steering-suffix binding only.
@@ -525,7 +537,15 @@ type Plan struct {
 	Placement   Placement
 	ResetReason string
 	Skipped     string
-	Replayed    int
+	// Refused is RefusedImageToolTail when the turn would have written an
+	// item and was refused; the level in force is then the earlier one,
+	// while ControlInForce stays the drawn control: the label is the
+	// policy's action (pathfinder ADR 0129's receipt).
+	Refused  string
+	Replayed int
+	// drawnControl is the requested level's control, the attribution of a
+	// refused turn.
+	drawnControl string
 }
 
 // PlanTurn verifies the ledger against the client transcript, decides
@@ -569,8 +589,17 @@ func PlanTurn(turn Turn) (plan Plan, err error) {
 	if !item.emit {
 		return plan, nil
 	}
+	before := plan.Next.Clone()
 	if skip := plan.Next.append(turn, placement, item, requested.Name); skip != "" {
 		plan.Skipped = skip
+		return plan, nil
+	}
+	// Refused only where the write would otherwise land, so a full ledger
+	// still reports itself.
+	if turn.ImageToolTail && turn.Binding.Lever == LeverSteeringSuffix {
+		plan.Next = *before
+		plan.Refused = RefusedImageToolTail
+		plan.drawnControl = turn.Binding.ControlSHA256(requested)
 		return plan, nil
 	}
 	plan.Emitted = true
@@ -596,6 +625,9 @@ func (plan *Plan) describe(binding Binding) {
 		plan.LevelInForce = binding.Neutral
 		neutral, _ := binding.Level(binding.Neutral)
 		plan.ControlInForce = binding.ControlSHA256(neutral)
+	}
+	if plan.Refused != "" && plan.drawnControl != "" {
+		plan.ControlInForce = plan.drawnControl
 	}
 	if binding.Lever != LeverSteeringSuffix {
 		return

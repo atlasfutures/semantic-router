@@ -160,7 +160,9 @@ func TestUsageRecordCarriesARCAttribution(t *testing.T) {
 			ArtifactID: "artifact-hash", ArtifactRevision: "revision-hash",
 			PolicyActionID: "action-1", PolicyArmID: "arm-1",
 		},
-		RaylineARCThinking: &raylineARCThinkingTrace{LevelInForce: "low", ControlInForce: "control-digest"},
+		RaylineARCThinking: &raylineARCThinkingTrace{
+			LevelInForce: "low", ControlInForce: "control-digest", Refused: "image_tool_tail_task_fidelity",
+		},
 		VSRSelectedDecision: &config.Decision{Algorithm: &config.AlgorithmConfig{
 			RaylineARC: &config.RaylineARCAlgorithmConfig{PolicyService: &config.RaylineARCPolicyServiceConfig{
 				PackageSHA256: "package-digest",
@@ -176,6 +178,7 @@ func TestUsageRecordCarriesARCAttribution(t *testing.T) {
 		"artifact_id_hash": "artifact-hash", "artifact_revision_hash": "revision-hash",
 		"policy_package_sha256": "package-digest", "policy_action_id": "action-1", "policy_arm_id": "arm-1",
 		"thinking_level_in_force": "low", "thinking_control_sha256": "control-digest",
+		"thinking_refused": "image_tool_tail_task_fidelity",
 	}
 	for key, value := range want {
 		if fields[key] != value {
@@ -195,7 +198,10 @@ func TestUsageRecordWithoutARCLeavesAttributionNull(t *testing.T) {
 	usageRecordRouter().reportNonStreamingUsage(ctx, time.Second, streamingFlagUsage())
 
 	fields := findLogEvent(t, logs, "llm_usage")
-	for _, key := range []string{"episode_id_hash", "turn_index", "selected_arm", "policy_package_sha256", "thinking_control_sha256"} {
+	for _, key := range []string{
+		"episode_id_hash", "turn_index", "selected_arm", "policy_package_sha256", "thinking_control_sha256",
+		"thinking_refused",
+	} {
 		if value, present := fields[key]; !present || value != nil {
 			t.Errorf("%s = %v (present %v), want null", key, value, present)
 		}

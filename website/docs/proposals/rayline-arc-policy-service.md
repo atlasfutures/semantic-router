@@ -229,6 +229,16 @@ neutral level's own control under the marker), and
 `emit: on_change` the neutral level writes nothing, so a steer written on an
 earlier turn stays in force (`thinking_skipped: neutral_inexpressible`).
 
+A Chat or Responses cell without task-fidelity evidence writes nothing after an
+image tool result (pathfinder ADR 0129). Such a call's record carries
+`thinking_refused: image_tool_tail_task_fidelity`, and its
+`thinking_control_sha256` is the control the policy drew, not one in force,
+because the training label is the policy's action. What the provider saw is
+`thinking_level_in_force`, the level already in force. A consumer reading the
+delivered treatment uses `thinking_level_in_force` whenever `thinking_refused`
+is set. The same holds on the usage record. A retry of a refused call repeats
+the drawn control and the refusal.
+
 The selection log's `thinking_level` and the routes API's `thinking_level` are
 the decision's level: both are produced before, or without, any dispatch, when
 no level is yet in force.
@@ -425,6 +435,11 @@ With it on:
 - An episode that holds an exclusion is stored as episode-state v4. A
   router that predates v4 refuses such a record, so roll every replica of a
   cell before enabling the fallback on it.
+- An episode whose thinking-control placer carries a fold or
+  configuration_update rule set, or a refused call (ADR 0129), is stored as
+  episode-state v5, with or without exclusions. A router that predates v5
+  refuses such a record by its schema, so a rollback to one fails those
+  episodes' next turn rather than misreading them.
 
 ## Open questions
 
