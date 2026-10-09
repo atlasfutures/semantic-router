@@ -710,7 +710,10 @@ func withheldImageToolTailEntries(turn Turn, ledger Ledger) map[int]bool {
 // appliedState is the lever's state as the worker sees it once items are
 // withheld: the last item it is sent. When that is the item in force, its
 // recorded state stands, marker identity included; an earlier one is named
-// by the binding level whose text it carries.
+// by the binding level whose text it carries. Entries record no marker
+// flag, so an earlier item is a marker when it carries the binding's
+// neutral text; a reload that gave the neutral text an old steer's bytes
+// would misname it, as it would change the binding's control ids.
 func (plan *Plan) appliedState(binding Binding) LeverState {
 	recorded, _ := plan.Next.state(binding.Lever)
 	state := LeverState{Lever: binding.Lever, Payload: -1, LastChangeTurn: recorded.LastChangeTurn}

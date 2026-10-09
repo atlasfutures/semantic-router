@@ -187,30 +187,49 @@ func TestTheLeverSteersAnImageToolTailOnlyOnAnEvidencedCell(t *testing.T) {
 }
 
 // The evidence admits the write, not the tail: with evidence a steer after
-// an image tool result is written, and the neutral marker that follows a
-// steered level is written too (pathfinder #4034's evidence covers it).
+// an image tool result is written, and so is the neutral marker that
+// cancels a steer the worker was sent (pathfinder #4034's evidence covers
+// it). Without evidence both are refused.
 func TestEvidenceAdmitsTheSteerAndTheNeutralMarkerAfterAnImageToolTail(t *testing.T) {
 	binding := suffixBinding(EmitOnChangeV1, "none")
 	binding.NeutralText = "Until the next steering instruction, use your normal judgement."
+	imageAt := func(messages []llmprotocol.Message) func(uint32) bool {
+		return func(index uint32) bool {
+			return ImageToolTail(llmprotocol.Request{Messages: messages[:index+1]}, llmprotocol.OpenAIChatV1)
+		}
+	}
 	ask := text(llmprotocol.RoleUser, "Read it.")
-	messages := []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1")}
-	plan, err := PlanTurn(Turn{
-		Binding: binding, Messages: Messages(messages), TurnIndex: 1, Requested: "up",
-		ImageToolTail: true, ImageToolTailAdmitted: true,
-	})
-	if err != nil {
-		t.Fatal(err)
+	image := []llmprotocol.Message{ask, toolCall("c1"), imageResult("c1")}
+	for _, admitted := range []bool{true, false} {
+		steer, err := PlanTurn(Turn{
+			Binding: binding, Messages: Messages(image), TurnIndex: 1, Requested: "up",
+			ImageToolTail: true, ImageToolTailAdmitted: admitted, ImageToolTailAt: imageAt(image),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if admitted && (steer.Refused != "" || steer.Written != WrittenInstruction || steer.LevelInForce != "up") {
+			t.Fatalf("evidenced steer: refused %q written %q level %q", steer.Refused, steer.Written, steer.LevelInForce)
+		}
+		if !admitted && (steer.Refused != RefusedImageToolTail || steer.Emitted) {
+			t.Fatalf("unevidenced steer: refused %q emitted %v, want the refusal", steer.Refused, steer.Emitted)
+		}
 	}
-	if plan.Refused != "" || !plan.Emitted || plan.Written != WrittenInstruction || plan.LevelInForce != "up" {
-		t.Fatalf("steer: refused %q emitted %v written %q level %q", plan.Refused, plan.Emitted, plan.Written, plan.LevelInForce)
+
+	// A steer on a text tail, sent to every worker; then a return to
+	// neutral after an image tool result.
+	text1 := []llmprotocol.Message{ask, toolCall("c1"), textResult("c1")}
+	steer, err := PlanTurn(Turn{Binding: binding, Messages: Messages(text1), TurnIndex: 1, Requested: "up", ImageToolTailAt: imageAt(text1)})
+	if err != nil || !steer.Emitted {
+		t.Fatalf("text-tail steer: emitted %v, err %v", steer.Emitted, err)
 	}
-	later := append(append([]llmprotocol.Message(nil), messages...),
+	later := append(append([]llmprotocol.Message(nil), text1...),
 		text(llmprotocol.RoleAssistant, ""), toolCall("c2"), imageResult("c2"))
 	for _, admitted := range []bool{true, false} {
-		ledger := plan.Next
+		ledger := steer.Next
 		marker, err := PlanTurn(Turn{
 			Binding: binding, Ledger: &ledger, Messages: Messages(later), TurnIndex: 3, Requested: "none",
-			ImageToolTail: true, ImageToolTailAdmitted: admitted,
+			ImageToolTail: true, ImageToolTailAdmitted: admitted, ImageToolTailAt: imageAt(later),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -218,8 +237,9 @@ func TestEvidenceAdmitsTheSteerAndTheNeutralMarkerAfterAnImageToolTail(t *testin
 		if admitted && (marker.Refused != "" || marker.Written != WrittenNeutralMarker) {
 			t.Fatalf("evidenced marker: refused %q written %q, want the neutral marker", marker.Refused, marker.Written)
 		}
-		if !admitted && (marker.Refused != RefusedImageToolTail || marker.Emitted) {
-			t.Fatalf("unevidenced marker: refused %q emitted %v, want the refusal", marker.Refused, marker.Emitted)
+		if !admitted && (marker.Refused != RefusedImageToolTail || marker.Emitted || marker.LevelInForce != "up") {
+			t.Fatalf("unevidenced marker: refused %q emitted %v level %q, want the refusal with up in force",
+				marker.Refused, marker.Emitted, marker.LevelInForce)
 		}
 	}
 }
