@@ -91,6 +91,8 @@ type episode struct {
 	ledger  *Ledger
 	turn    uint64
 	spacing uint64
+	// spelling is the worker cell's spelling of an item (ADR 0131).
+	spelling Spelling
 }
 
 func (e *episode) serve(messages []llmprotocol.Message, level string) (Plan, []llmprotocol.Message) {
@@ -102,7 +104,7 @@ func (e *episode) serve(messages []llmprotocol.Message, level string) (Plan, []l
 	if err != nil {
 		e.t.Fatalf("plan turn %d: %v", e.turn, err)
 	}
-	provider, err := ApplyLedger(messages, e.binding.Lever, plan.Next)
+	provider, err := ApplyLedgerSpelled(messages, e.binding.Lever, plan.Next, e.spelling)
 	if err != nil {
 		e.t.Fatalf("apply turn %d: %v", e.turn, err)
 	}

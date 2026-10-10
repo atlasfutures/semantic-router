@@ -49,7 +49,7 @@ var embeddedArtifact []byte
 
 // EmbeddedSHA256 is the sha256 of the embedded artifact, as pathfinder's
 // golden corpora record it in registry_pin.
-const EmbeddedSHA256 = "2c5a0a8f593a63b9f27642027bcb96ab3ed1d00df125ac2c984c09b4c45d7632"
+const EmbeddedSHA256 = "2b50b694ecb0352359ef0034ad5607c0375e62b33b65f8de17a1b1d5c2f4d431"
 
 var (
 	embeddedOnce sync.Once
@@ -87,8 +87,12 @@ type Cell struct {
 	// for a steer after an image tool result (ADR 0129 decision 5); without
 	// it the placer writes nothing on such a turn.
 	ImageToolTailAdmitted bool
-	baseWire              map[string]*value
-	controls              map[string]bool
+	// TextToolTailAppendToTool is the cell's ADR 0131 spelling: a unit after
+	// a Chat tool run is appended as a text part to the run's last tool
+	// message rather than written as a user message after it.
+	TextToolTailAppendToTool bool
+	baseWire                 map[string]*value
+	controls                 map[string]bool
 }
 
 // Load reads a compiled artifact. Its bytes must be canonical JCS and every
@@ -184,6 +188,23 @@ func loadCell(raw *value, controls map[string]Control) (*Cell, error) {
 			return nil, refuse("%s: image_tool_tail admits only on a live row; ADR 0129 task fidelity is a live verifier result", where)
 		}
 		cell.ImageToolTailAdmitted = true
+	}
+	if tail := raw.get("text_tool_tail"); tail != nil {
+		// Pathfinder compiles it only where a Chat row states {placement:
+		// append_to_tool, task_fidelity: [evidence]}; a placement this reader
+		// does not know is refused, never ignored.
+		placement, evidence := tail.get("placement"), tail.get("task_fidelity")
+		if cell.Format != FormatChat || tail.kind != kindObject || len(tail.members) != 2 ||
+			placement == nil || !placement.isString() || placement.str != PlacementAppendToTool ||
+			evidence == nil || evidence.kind != kindArray || len(evidence.items) == 0 {
+			return nil, refuse("%s: text_tool_tail must name placement '%s' on a chat cell", where, PlacementAppendToTool)
+		}
+		for _, pointer := range evidence.items {
+			if !pointer.isString() || pointer.str == "" {
+				return nil, refuse("%s: text_tool_tail.task_fidelity names its evidence", where)
+			}
+		}
+		cell.TextToolTailAppendToTool = true
 	}
 	ids := raw.get("controls")
 	wire := raw.get("base_wire")

@@ -276,6 +276,22 @@ func appendChatMessages(wire *chatRequestWire, request llmprotocol.Request) erro
 			flushToolMedia()
 			continue
 		}
+		if message.JoinsToolMessage && message.Role == llmprotocol.RoleUser && len(toolMedia) == 0 &&
+			len(wire.Messages) > 0 && wire.Messages[len(wire.Messages)-1].Role == "tool" {
+			// ADR 0131: on a cell that states it, the steer after a text tool
+			// run is a text part of the run's last tool message.
+			parts, err := chatContentParts(message)
+			if err != nil {
+				return err
+			}
+			last := len(wire.Messages) - 1
+			joined, err := appendChatContentParts(wire.Messages[last].Content, parts)
+			if err != nil {
+				return err
+			}
+			wire.Messages[last].Content = joined
+			continue
+		}
 		if message.Role != llmprotocol.RoleTool {
 			flushToolMedia()
 		}
@@ -413,6 +429,37 @@ func splitChatToolResultMedia(message llmprotocol.Message) (llmprotocol.Message,
 	message.Content = []llmprotocol.Content{content}
 	label := chatContentWire{Type: "text", Text: chatToolMediaLabel(result.CallID)}
 	return message, append([]chatContentWire{label}, mediaState.parts...), nil
+}
+
+// appendChatContentParts appends parts to an encoded message's content. A
+// string becomes one text part first, as pathfinder's placer spells it; the
+// parts already there keep their bytes.
+func appendChatContentParts(content json.RawMessage, parts []chatContentWire) (json.RawMessage, error) {
+	var existing []json.RawMessage
+	if len(content) > 0 {
+		var text string
+		if err := json.Unmarshal(content, &text); err == nil {
+			part, err := json.Marshal(struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			}{Type: "text", Text: text})
+			if err != nil {
+				return nil, err
+			}
+			existing = []json.RawMessage{part}
+		} else if err := json.Unmarshal(content, &existing); err != nil {
+			return nil, llmprotocol.NewError(llmprotocol.ErrorUnsupportedFeature, "unsupported_content",
+				"a tool message's content is neither text nor parts", err)
+		}
+	}
+	for _, part := range parts {
+		encoded, err := json.Marshal(part)
+		if err != nil {
+			return nil, err
+		}
+		existing = append(existing, encoded)
+	}
+	return json.Marshal(existing)
 }
 
 // chatToolMediaLabel leads the user message carrying one tool call's images

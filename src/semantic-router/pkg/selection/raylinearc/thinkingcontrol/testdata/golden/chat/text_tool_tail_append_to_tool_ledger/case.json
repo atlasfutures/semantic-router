@@ -1,0 +1,73 @@
+{
+ "description": "the ledger on an append_to_tool cell: a steer on a tool message, a hold that replays it there and writes nothing, then none writing the neutral marker on the next tool message (ADR 0131)",
+ "format": "chat",
+ "provider": "openrouter",
+ "model": "moonshotai/kimi-k3",
+ "wire_model": "moonshotai/kimi-k3",
+ "admission": "enforced",
+ "allow_experimental": true,
+ "registry_pin": "2b50b694ecb0352359ef0034ad5607c0375e62b33b65f8de17a1b1d5c2f4d431",
+ "calls": [
+  {
+   "client_body": "client-00.json",
+   "control_id": "17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1",
+   "expected_body": "provider-00.json",
+   "receipt": {
+    "call": 0,
+    "control_id": "17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1",
+    "level_in_force": "none",
+    "instruction_state": "never",
+    "written": null,
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  },
+  {
+   "client_body": "client-01.json",
+   "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b",
+   "expected_body": "provider-01.json",
+   "receipt": {
+    "call": 1,
+    "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b",
+    "level_in_force": "up",
+    "instruction_state": "steered",
+    "written": "instruction",
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  },
+  {
+   "client_body": "client-02.json",
+   "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b",
+   "expected_body": "provider-02.json",
+   "receipt": {
+    "call": 2,
+    "control_id": "605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b",
+    "level_in_force": "up",
+    "instruction_state": "steered",
+    "written": null,
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  },
+  {
+   "client_body": "client-03.json",
+   "control_id": "17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1",
+   "expected_body": "provider-03.json",
+   "receipt": {
+    "call": 3,
+    "control_id": "17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1",
+    "level_in_force": "none",
+    "instruction_state": "neutral_marker",
+    "written": "neutral_marker",
+    "epoch": 0,
+    "epoch_reset_reason": null,
+    "retry": false
+   }
+  }
+ ],
+ "refusal": null
+}

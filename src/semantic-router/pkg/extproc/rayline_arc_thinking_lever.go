@@ -58,6 +58,9 @@ type raylineARCThinkingTrace struct {
 	Emitted          bool
 	Retry            bool
 	Placement        string
+	// ToolTailSpelling is the worker cell's spelling of an item after a tool
+	// run, "append_to_tool" (ADR 0131), when it states one.
+	ToolTailSpelling string
 	Replayed         int
 	Epoch            uint32
 	ResetReason      string
@@ -124,6 +127,7 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 	}
 	trace.Lever, trace.Admission = string(binding.Lever), bindingConfig.Admission
 	trace.ExportSHA256 = bindingConfig.ExportSHA256
+	cell := raylineARCRegistryCell(r.Config, ctx.RaylineARCDispatch.ID, targetFormat)
 	plan, err := thinkinglever.PlanTurn(thinkinglever.Turn{
 		Binding:                binding,
 		Ledger:                 ledger,
@@ -133,7 +137,7 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 		MinTurnsBetweenChanges: lever.MinSpacingTurns,
 		MaxEntries:             lever.MaxLedgerEntries,
 		ImageToolTail:          thinkinglever.ImageToolTail(*request, targetFormat),
-		ImageToolTailAdmitted:  raylineARCImageToolTailAdmitted(r.Config, ctx.RaylineARCDispatch.ID, targetFormat),
+		ImageToolTailAdmitted:  cell != nil && cell.ImageToolTailAdmitted,
 		ImageToolTailAt: func(index uint32) bool {
 			if int(index) >= len(request.Messages) {
 				return false
@@ -146,7 +150,11 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 	if err != nil {
 		return false, err
 	}
-	messages, err := thinkinglever.ApplyLedger(request.Messages, binding.Lever, plan.Applied())
+	spelling := thinkinglever.Spelling{AppendToTool: cell != nil && cell.TextToolTailAppendToTool}
+	if spelling.AppendToTool {
+		trace.ToolTailSpelling = thinkingcontrol.PlacementAppendToTool
+	}
+	messages, err := thinkinglever.ApplyLedgerSpelled(request.Messages, binding.Lever, plan.Applied(), spelling)
 	if err != nil {
 		return false, err
 	}
@@ -166,23 +174,35 @@ func (r *OpenAIRouter) applyRaylineARCThinkingLever(
 // image tool result (ADR 0129 decision 5), the evidence the v5 placer reads.
 // A worker the registry cannot name has no evidence, so its steer is refused.
 func raylineARCImageToolTailAdmitted(cfg *config.RouterConfig, worker string, format llmprotocol.WireFormat) bool {
+	cell := raylineARCRegistryCell(cfg, worker, format)
+	return cell != nil && cell.ImageToolTailAdmitted
+}
+
+// raylineARCRegistryCell is the worker's admission cell in the embedded
+// registry on format, the cell the v5 placer reads: its image tool-tail
+// evidence (ADR 0129) and its spelling after a Chat tool run (ADR 0131).
+// A worker the registry cannot name has none, and nil states nothing.
+func raylineARCRegistryCell(cfg *config.RouterConfig, worker string, format llmprotocol.WireFormat) *thinkingcontrol.Cell {
 	if cfg == nil {
-		return false
+		return nil
 	}
 	provider, err := config.RaylineARCRegistryProvider(cfg, worker)
 	if err != nil {
-		return false
+		return nil
 	}
 	served, err := config.RaylineARCRegistryModel(cfg, worker)
 	if err != nil {
-		return false
+		return nil
 	}
 	registry, err := thinkingcontrol.Embedded()
 	if err != nil {
-		return false
+		return nil
 	}
 	cell, err := registry.Cell(served, provider, registryFormatOf(format))
-	return err == nil && cell.ImageToolTailAdmitted
+	if err != nil {
+		return nil
+	}
+	return cell
 }
 
 func fillThinkingTrace(trace *raylineARCThinkingTrace, binding thinkinglever.Binding, plan thinkinglever.Plan) {
@@ -270,6 +290,9 @@ func appendRaylineARCThinkingFields(record map[string]interface{}, ctx *RequestC
 	record["thinking_epoch"] = trace.Epoch
 	if trace.Placement != "" {
 		record["thinking_placement"] = trace.Placement
+	}
+	if trace.ToolTailSpelling != "" {
+		record["thinking_tool_tail_spelling"] = trace.ToolTailSpelling
 	}
 	if trace.ResetReason != "" {
 		record["thinking_epoch_reset_reason"] = trace.ResetReason
