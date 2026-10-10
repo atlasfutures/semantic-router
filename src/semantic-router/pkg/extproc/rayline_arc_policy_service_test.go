@@ -303,3 +303,16 @@ func TestPolicySelectorFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+// A coalesced follower's trace is its own: mutating the leader's masks does
+// not reach a clone (cloneRaylineARCSelectionResult's isolation contract).
+func TestCoalescedResultsDoNotShareMaskedArms(t *testing.T) {
+	leader := &selection.SelectionResult{RaylineARC: &selection.RaylineARCTrace{
+		OfferKind: "fresh", MaskedArms: []bool{false, true}, ExcludedArms: []bool{false, true},
+	}}
+	follower := cloneRaylineARCSelectionResult(leader)
+	leader.RaylineARC.MaskedArms[0] = true
+	if follower.RaylineARC.MaskedArms[0] || follower.RaylineARC.OfferKind != "fresh" {
+		t.Fatalf("follower masks %v kind %q share the leader's", follower.RaylineARC.MaskedArms, follower.RaylineARC.OfferKind)
+	}
+}

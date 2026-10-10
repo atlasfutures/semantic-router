@@ -653,6 +653,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 					armed, selCtx, arcContext, state, scorer, failure, turn, messages, sideCall, atBoundary,
 					retained, available, workerIDs, latency,
 				); held != nil {
+					held.RaylineARC.OfferKind = "capacity_hold"
+					held.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
 					return held, nil
 				}
 			}

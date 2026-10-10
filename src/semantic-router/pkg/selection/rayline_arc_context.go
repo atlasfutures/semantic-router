@@ -164,8 +164,9 @@ type RaylineARCTrace struct {
 	// schedule boundary, every unmasked arm), "held" (between boundaries, or
 	// a side call: the held arm only), "retained" (a retry at a boundary
 	// already decided), "fallback" (a held arm an exclusion released, decided
-	// again among the rest) or "derived_hold" (a cold turn narrowed to a
-	// derived model). Empty outside policy mode.
+	// again among the rest), "derived_hold" (a cold turn narrowed to a
+	// derived model) or "capacity_hold" (the service's encoder could not hold
+	// the context, so the held action stood). Empty outside policy mode.
 	OfferKind string
 	// MaskedArms marks only the arms a real mask removed from a policy-mode
 	// offer: the hard mask (vision, capability, context, operator), the
