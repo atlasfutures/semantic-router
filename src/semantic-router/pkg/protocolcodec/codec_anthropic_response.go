@@ -19,6 +19,9 @@ type anthropicResponseWire struct {
 	Error        *anthropicErrorWire `json:"error,omitempty"`
 	Container    json.RawMessage     `json:"container"`
 	StopDetails  json.RawMessage     `json:"stop_details"`
+	// Provider is OpenRouter's extension: the upstream that served the turn,
+	// on a buffered response and on a stream's message_start message.
+	Provider *string `json:"provider,omitempty"`
 }
 
 type anthropicUsageWire struct {
@@ -99,6 +102,9 @@ func anthropicResponseMetadataDiagnostics(wire anthropicResponseWire, policy llm
 
 func decodeAnthropicResponseResource(wire anthropicResponseWire, policy llmprotocol.Policy) (llmprotocol.Response, error) {
 	response := llmprotocol.Response{Generation: 1, ID: wire.ID, Model: wire.Model, Usage: llmprotocol.Usage{State: llmprotocol.UsageUnavailable}}
+	if wire.Provider != nil {
+		response.UpstreamProvider = *wire.Provider
+	}
 	if wire.Error != nil {
 		response.Error = &llmprotocol.ProtocolError{Category: decodeProviderErrorCategory(wire.Error.Type), Code: wire.Error.Type, Message: wire.Error.Message}
 		response.StopReason = llmprotocol.StopError
