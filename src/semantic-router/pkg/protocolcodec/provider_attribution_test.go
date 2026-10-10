@@ -188,3 +188,58 @@ func TestUpstreamProviderReachesTheMessagesStreamEvents(t *testing.T) {
 		})
 	}
 }
+
+// A same-format turn with no rename would replay the upstream's bytes; a body
+// that names its provider is encoded instead, so the name stays the Router's.
+func TestUpstreamProviderIsNotReplayedToASameFormatClient(t *testing.T) {
+	cases := map[string]struct {
+		format llmprotocol.WireFormat
+		body   []byte
+		name   string
+	}{
+		"messages": {llmprotocol.AnthropicMessagesV1, []byte(openRouterMessagesResponse), "Moonshot AI"},
+		"chat":     {llmprotocol.OpenAIChatV1, loadProviderFixture(t, openRouterResponse), "Ionstream"},
+	}
+	for name, test := range cases {
+		t.Run(name, func(t *testing.T) {
+			result, err := NewBuiltinEngine().TranslateResponse(test.format, test.format, test.body, nil)
+			if err != nil {
+				t.Fatalf("translate: %v", err)
+			}
+			if result.Response.UpstreamProvider != test.name {
+				t.Fatalf("upstream provider = %q, want %q", result.Response.UpstreamProvider, test.name)
+			}
+			if strings.Contains(string(result.Body), test.name) {
+				t.Fatalf("the provider name was replayed to the client: %s", result.Body)
+			}
+		})
+	}
+}
+
+// A stream whose last frame has no trailing blank line completes in Finalize;
+// that completion still names the provider.
+func TestUpstreamProviderReachesAMessagesStreamCompletedInFinalize(t *testing.T) {
+	stream, err := NewBuiltinEngine().NewStream(llmprotocol.AnthropicMessagesV1, llmprotocol.AnthropicMessagesV1, llmprotocol.StreamContext{
+		Context: context.Background(), PublicModel: "public-model", ProviderModel: "moonshotai/kimi-k3",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := bytes.TrimSuffix(openRouterMessagesStream(`"provider":"Moonshot AI",`), []byte("\n\n"))
+	if _, _, _, err := stream.Push(body); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	_, events, _, err := stream.Finalize(nil)
+	if err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+	for _, event := range events {
+		if event.Type == llmprotocol.EventResponseCompleted {
+			if event.UpstreamProvider != "Moonshot AI" {
+				t.Fatalf("completion in Finalize names provider %q, want Moonshot AI", event.UpstreamProvider)
+			}
+			return
+		}
+	}
+	t.Fatalf("Finalize produced no completion: %+v", events)
+}

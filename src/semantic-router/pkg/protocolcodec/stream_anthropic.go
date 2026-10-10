@@ -606,7 +606,15 @@ func encodeAnthropicMessageDeltaUsage(usage llmprotocol.Usage) *anthropicMessage
 	}
 }
 
+// Finalize ends the stream; the events it flushes or generates (a buffered
+// last frame, a held tool stop, a failure) carry the provider as Push's do.
 func (decoder *anthropicStreamDecoder) Finalize(reason error) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	events, diagnostics, err := decoder.finalizeDecoder(reason)
+	decoder.stampUpstreamProvider(events)
+	return events, diagnostics, err
+}
+
+func (decoder *anthropicStreamDecoder) finalizeDecoder(reason error) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
 	events, diagnostics, frameErr := finalizeDecoderFrames(decoder.framer.Finalize, decoder.pushFrame, decoder.policy.Limits.Diagnostics)
 	if frameErr != nil {
 		return events, diagnostics, frameErr

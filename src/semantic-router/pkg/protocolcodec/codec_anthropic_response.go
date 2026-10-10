@@ -86,7 +86,13 @@ func (AnthropicMessagesCodec) DecodeResponse(body []byte, policy llmprotocol.Pol
 		// The usage object is a placeholder; the turn's usage is unknown.
 		response.Usage = llmprotocol.Usage{State: llmprotocol.UsageUnavailable}
 	}
-	return response, responseEnvelope(llmprotocol.AnthropicMessagesV1, body, response.Generation, response.SourceStopReason, policy), diagnostics, nil
+	envelope := responseEnvelope(llmprotocol.AnthropicMessagesV1, body, response.Generation, response.SourceStopReason, policy)
+	if wire.Provider != nil {
+		// The provider name is the Router's telemetry, never the client's: a
+		// body that carries it is encoded rather than replayed.
+		envelope.Response = nil
+	}
+	return response, envelope, diagnostics, nil
 }
 
 func anthropicResponseMetadataDiagnostics(wire anthropicResponseWire, policy llmprotocol.Policy) llmprotocol.Diagnostics {

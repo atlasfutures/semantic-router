@@ -31,6 +31,11 @@ func (OpenAIChatCodec) DecodeResponse(body []byte, policy llmprotocol.Policy) (l
 	}
 	decodeChatResponseUsage(wire.Usage, &response, &diagnostics, policy)
 	envelope := responseEnvelope(llmprotocol.OpenAIChatV1, body, response.Generation, response.SourceStopReason, policy)
+	if wire.Provider != nil {
+		// The provider name is the Router's telemetry, never the client's: a
+		// body that carries it is encoded rather than replayed.
+		envelope.Response = nil
+	}
 	return response, envelope, diagnostics, nil
 }
 
