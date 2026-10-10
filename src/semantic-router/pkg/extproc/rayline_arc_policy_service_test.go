@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -191,6 +192,79 @@ func TestPolicySelectorScheduleOffersOnlyTheHeldModelsLevels(t *testing.T) {
 	}
 	if offered := fixture.fake.received()[1].Selection.AvailableActionIDs; len(offered) != 3 {
 		t.Fatalf("boundary turn offered %v", offered)
+	}
+}
+
+// A held turn's unoffered arm is unscored, not masked (semantic-router#258):
+// excluded_arms marks it, masked_arms does not, and offer_kind says why.
+func TestPolicySelectorLogsAHeldTurnsOfferApartFromMasks(t *testing.T) {
+	fixture := newPolicySelectorFixture(t, config.RaylineARCModelScheduleTaskTurnCompaction)
+	fixture.fake.chooseWith(func(request raylinearc.PolicyDecisionRequest) string {
+		return request.Selection.AvailableActionIDs[0]
+	})
+	state, _ := raylinearc.NewEpisodeState(2)
+	held := 0
+	state.PreviousArm, state.TurnIndex = &held, 2
+	state.Policy = &raylinearc.PolicyEpisodeState{PrefixDigest: raylinearc.MessagesDigest(nil, 0)}
+	result, err := fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"}))
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	trace := result.RaylineARC
+	if trace.OfferKind != "held" || !slices.Equal(trace.MaskedArms, []bool{false, false}) ||
+		!slices.Equal(trace.ExcludedArms, []bool{false, true}) {
+		t.Fatalf("held turn: offer_kind %q masked %v excluded %v, want held, no masks, arm 1 unscored",
+			trace.OfferKind, trace.MaskedArms, trace.ExcludedArms)
+	}
+
+	state.TurnIndex = 5
+	result, err = fixture.selectOn(t, state, policyTestRequest(t, map[string]any{"role": "user", "content": "go"}))
+	if err != nil {
+		t.Fatalf("select at boundary: %v", err)
+	}
+	if trace := result.RaylineARC; trace.OfferKind != "fresh" || !slices.Equal(trace.MaskedArms, []bool{false, false}) {
+		t.Fatalf("boundary turn: offer_kind %q masked %v, want fresh and no masks", trace.OfferKind, trace.MaskedArms)
+	}
+}
+
+func TestPolicyMaskedArmsMarksOnlyRealMasks(t *testing.T) {
+	scorer := &policyServiceScorer{workerIDs: []string{"a", "b", "c"}}
+	workers := scorer.workerIDs
+	// A context or vision mask on arm 1 marks arm 1 alone.
+	if got := policyMaskedArms(scorer, workers, []bool{false, true, false}, false, nil, nil); !slices.Equal(got, []bool{false, true, false}) {
+		t.Fatalf("hard mask: masked %v, want arm 1 only", got)
+	}
+	// A route the fallback applied is a mask; one it set aside, or any
+	// route with the fallback off, is not.
+	routes := map[int]string{2: "rate_limited"}
+	turn := &raylinearc.PolicyEpisodeState{}
+	if got := policyMaskedArms(scorer, workers, nil, true, turn, routes); !slices.Equal(got, []bool{false, false, true}) {
+		t.Fatalf("applied route exclusion: masked %v, want arm 2", got)
+	}
+	if got := policyMaskedArms(scorer, workers, nil, true, turn, nil); !slices.Equal(got, []bool{false, false, false}) {
+		t.Fatalf("route exclusion set aside: masked %v, want none", got)
+	}
+	if got := policyMaskedArms(scorer, workers, nil, false, turn, routes); !slices.Equal(got, []bool{false, false, false}) {
+		t.Fatalf("fallback off: masked %v, want none", got)
+	}
+}
+
+func TestPolicyOfferKind(t *testing.T) {
+	cases := []struct {
+		derived, forced, retained bool
+		held                      int
+		want                      string
+	}{
+		{false, false, false, -1, "fresh"},
+		{false, false, false, 0, "held"},
+		{false, false, true, 1, "retained"},
+		{false, true, false, -1, "fallback"},
+		{true, false, false, -1, "derived_hold"},
+	}
+	for _, c := range cases {
+		if got := policyOfferKind(c.derived, c.forced, c.retained, c.held); got != c.want {
+			t.Fatalf("policyOfferKind(%v, %v, %v, %d) = %q, want %q", c.derived, c.forced, c.retained, c.held, got, c.want)
+		}
 	}
 }
 

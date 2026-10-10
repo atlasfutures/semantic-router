@@ -156,9 +156,22 @@ type RaylineARCTrace struct {
 	Stayed              bool
 	UpgradeExemptions   []bool
 	StayUpgradeExempted bool
-	// ExcludedArms marks the arms a hard constraint removed before scoring.
-	// It is what explains a switch the scores alone do not.
-	ExcludedArms         []bool
+	// ExcludedArms marks the arms that were not scored. In artifact mode
+	// that is the hard constraint; in policy mode it is also every arm a
+	// held or retained turn did not offer, so read MaskedArms for the masks.
+	ExcludedArms []bool
+	// OfferKind says why a policy-mode turn offered what it did: "fresh" (a
+	// schedule boundary, every unmasked arm), "held" (between boundaries, or
+	// a side call: the held arm only), "retained" (a retry at a boundary
+	// already decided), "fallback" (a held arm an exclusion released, decided
+	// again among the rest) or "derived_hold" (a cold turn narrowed to a
+	// derived model). Empty outside policy mode.
+	OfferKind string
+	// MaskedArms marks only the arms a real mask removed from a policy-mode
+	// offer: the hard mask (vision, capability, context, operator), the
+	// tool-loop family hold, and the fallback's model and route exclusions.
+	// Nil outside policy mode.
+	MaskedArms           []bool
 	SerializedTokens     int
 	FullHistoryTokens    int
 	TruncatedTokens      int
