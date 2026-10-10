@@ -235,6 +235,10 @@ func observeRaylineARCSelection(
 	}
 	// The policy-service facts exist only when a policy service decided; an
 	// artifact-mode selection carries none rather than zeros.
+	if trace.OfferKind != "" {
+		fields["offer_kind"] = trace.OfferKind
+		fields["masked_arms"] = trace.MaskedArms
+	}
 	if trace.PolicyActionID != "" {
 		fields["policy_action_id"] = trace.PolicyActionID
 		fields["thinking_level"] = trace.ThinkingLevel

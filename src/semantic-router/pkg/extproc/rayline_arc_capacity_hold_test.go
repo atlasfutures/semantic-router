@@ -66,6 +66,10 @@ func TestCapacityRefusalHoldsTheEpisodesServedAction(t *testing.T) {
 	if hold := findLogEvent(t, logs, "rayline_arc_encoder_capacity_hold"); hold["request_id"] != "req-policy-test" || fmt.Sprint(hold["token_count"]) != "300000" {
 		t.Fatalf("capacity hold line = %v, want the request id and the refused token count", hold)
 	}
+	if result.RaylineARC.OfferKind != "capacity_hold" || len(result.RaylineARC.MaskedArms) != len(result.RaylineARC.ExcludedArms) {
+		t.Fatalf("capacity hold offer_kind %q masked %v, want capacity_hold with a mask per arm",
+			result.RaylineARC.OfferKind, result.RaylineARC.MaskedArms)
+	}
 	if result.RaylineARC.PolicyActionID != bindings[1].ActionID || !strings.Contains(result.Reasoning, "encoder_capacity_hold") {
 		t.Fatalf("served %s (%s), want the held %s", result.RaylineARC.PolicyActionID, result.Reasoning, bindings[1].ActionID)
 	}

@@ -274,6 +274,7 @@ func cloneRaylineARCSelectionResult(result *selection.SelectionResult) *selectio
 		trace.CacheMissTokens = slices.Clone(trace.CacheMissTokens)
 		trace.UpgradeExemptions = slices.Clone(trace.UpgradeExemptions)
 		trace.ExcludedArms = slices.Clone(trace.ExcludedArms)
+		trace.MaskedArms = slices.Clone(trace.MaskedArms)
 		trace.EncoderVisitedReplicaIDs = slices.Clone(trace.EncoderVisitedReplicaIDs)
 		if result.RaylineARC.PolicyNextState != nil {
 			trace.PolicyNextState = result.RaylineARC.PolicyNextState.Clone()

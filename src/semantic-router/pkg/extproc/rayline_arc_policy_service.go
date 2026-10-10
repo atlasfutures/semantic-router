@@ -529,8 +529,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		return available, held, forced
 	}
 	// loggedRoutes keeps the route exclusions in force for the log, even when
-	// the offer sets them aside.
-	loggedRoutes := cellOut
+	// the offer sets them aside; offeredRoutes are the ones the offer applied.
+	loggedRoutes, offeredRoutes := cellOut, cellOut
 	available, offeredHeld, forced := offer(cellOut)
 	if len(available) == 0 && !slices.Equal(excluded, hard) {
 		// The tool-loop family hold yields to the fallback's exclusions,
@@ -546,6 +546,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		// turn is offered as though no route had failed, rather than failing
 		// every request until they expire.
 		available, offeredHeld, forced = offer(nil)
+		offeredRoutes = nil
 	}
 	if forced {
 		held, retained, atBoundary = -1, false, true
@@ -615,6 +616,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	// narrowed to a derived model (rayline_arc_derived_hold.go); a second
 	// refusal fails the turn as the first would have.
 	var cold *raylinearc.PolicyServiceError
+	derivedOffer := false
 	if held < 0 && errors.As(err, &cold) && cold.Class == raylinearc.PolicyStageOneHeldUnknownClass {
 		if derived, found := derivedHoldOffer(scorer, arcContext, available); found {
 			logRaylineARCDerivedHold(arcContext, derived)
@@ -629,6 +631,7 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 				return nil, arcSelectionFailure("policy_no_available_action")
 			}
 			available = derived.offer
+			derivedOffer = true
 			request.Selection.AvailableActionIDs = derived.offer
 			response, err = decidePolicyThroughBusy(ctx, armed.policy, request, scorer.busyWait, admit)
 		}
@@ -650,6 +653,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 					armed, selCtx, arcContext, state, scorer, failure, turn, messages, sideCall, atBoundary,
 					retained, available, workerIDs, latency,
 				); held != nil {
+					held.RaylineARC.OfferKind = "capacity_hold"
+					held.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
 					return held, nil
 				}
 			}
@@ -732,6 +737,8 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 	result.RaylineARC.WorkerProviderModel = scorer.workers[binding.arm].Model
 	result.RaylineARC.WorkerRoute = scorer.routes[binding.arm]
 	result.RaylineARC.PolicySideCall = sideCall
+	result.RaylineARC.OfferKind = policyOfferKind(derivedOffer, forced, retained, held)
+	result.RaylineARC.MaskedArms = policyMaskedArms(scorer, workerIDs, excluded, fallback, turn, offeredRoutes)
 	if !sideCall {
 		result.RaylineARC.PolicyTurnState = turn.Clone()
 		result.RaylineARC.PolicyNextState = turn.Next(
@@ -745,6 +752,50 @@ func (selector *raylineARCSelector) selectViaPolicyService(
 		logRaylineARCFallbackDecision(arcContext.EpisodeIDHash, arcContext.RequestID, state.TurnIndex, turn, scorer.cellOutWorkers(loggedRoutes), forced, available, response)
 	}
 	return result, nil
+}
+
+// policyOfferKind names why the turn offered what it did (RaylineARCTrace.OfferKind).
+func policyOfferKind(derived, forced, retained bool, held int) string {
+	switch {
+	case derived:
+		return "derived_hold"
+	case forced:
+		return "fallback"
+	case retained:
+		return "retained"
+	case held >= 0:
+		return "held"
+	default:
+		return "fresh"
+	}
+}
+
+// policyMaskedArms marks the arms a real mask kept out of the offer: the
+// hard mask and the tool-loop family hold (excluded), and the fallback's
+// model and route exclusions as the offer applied them. A held turn's
+// unoffered arms are not masked.
+func policyMaskedArms(
+	scorer *policyServiceScorer,
+	workerIDs []string,
+	excluded []bool,
+	fallback bool,
+	turn *raylinearc.PolicyEpisodeState,
+	routes map[int]string,
+) []bool {
+	masked := make([]bool, len(workerIDs))
+	for arm := range masked {
+		if len(excluded) == len(workerIDs) && excluded[arm] {
+			masked[arm] = true
+			continue
+		}
+		if !fallback {
+			continue
+		}
+		if _, out := routes[arm]; out || turn.Excludes(scorer.armModel(arm)) {
+			masked[arm] = true
+		}
+	}
+	return masked
 }
 
 // recordListedFallback keeps the listing's fallback pair when it agrees with
