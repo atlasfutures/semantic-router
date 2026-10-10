@@ -145,3 +145,39 @@ func TestEpisodeStateWireCarriesControlRulesAndRefusalsUnderV5(t *testing.T) {
 		}
 	}
 }
+
+// A stored ADR 0131 item keeps its spelling, so a kimi-k3 Chat episode
+// reloaded from the store replays its steer on the tool message it joined.
+func TestStoredControlPlacementKeepsTheAppendToToolSpelling(t *testing.T) {
+	anchor, previous, inForce := thinkingcontrol.Anchor{Index: 2, Digest: "d"}, "c", "up"
+	first := thinkingcontrol.Control{Native: "default", Instruction: &thinkingcontrol.Instruction{}}
+	placements := []ControlPlacement{{Key: "k", State: thinkingcontrol.PlacerState{
+		Format: thinkingcontrol.FormatChat, First: &first, InForce: &inForce,
+		Ledger: []thinkingcontrol.LedgerItem{{
+			Anchor: 2, PrefixDigest: "d", Placement: thinkingcontrol.PlacementAppendToTool, Text: "steer",
+			Kind: thinkingcontrol.WrittenInstruction,
+		}},
+		PreviousAnchor: &anchor, PreviousControl: &previous, Calls: 1,
+	}}}
+	raw, err := json.Marshal(controlPlacementsToWire(placements))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wires []episodeControlWire
+	if err = json.Unmarshal(raw, &wires); err != nil {
+		t.Fatal(err)
+	}
+	back, err := controlPlacementsFromWire(wires)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := back[0].State.Ledger; len(got) != 1 || got[0].Placement != thinkingcontrol.PlacementAppendToTool {
+		t.Fatalf("stored spelling came back as %+v", got)
+	}
+	// A reader that does not know the code refuses the record, never
+	// replays the steer somewhere else.
+	wires[0].Ledger[0].Placement = "z"
+	if _, err := controlPlacementsFromWire(wires); err == nil || !strings.Contains(err.Error(), "malformed") {
+		t.Fatalf("an unknown stored placement loaded: %v", err)
+	}
+}

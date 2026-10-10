@@ -167,6 +167,24 @@ func ApplyLedger(
 	lever Lever,
 	ledger Ledger,
 ) ([]llmprotocol.Message, error) {
+	return ApplyLedgerSpelled(messages, lever, ledger, Spelling{})
+}
+
+// Spelling is how a worker's admission cell writes an item on its wire.
+type Spelling struct {
+	// AppendToTool marks an item after a tool run to travel as a text part
+	// of the run's last Chat tool message (ADR 0131). The ledger is the same
+	// for every worker; only this worker's wire spells it so.
+	AppendToTool bool
+}
+
+// ApplyLedgerSpelled is ApplyLedger on a worker whose cell states a spelling.
+func ApplyLedgerSpelled(
+	messages []llmprotocol.Message,
+	lever Lever,
+	ledger Ledger,
+	spelling Spelling,
+) ([]llmprotocol.Message, error) {
 	result := append([]llmprotocol.Message(nil), messages...)
 	for position := len(ledger.Entries) - 1; position >= 0; position-- {
 		entry := ledger.Entries[position]
@@ -182,7 +200,7 @@ func ApplyLedger(
 			continue
 		}
 		var err error
-		result, err = applyEntry(result, index, entry.Placement, payload)
+		result, err = applyEntry(result, index, entry.Placement, payload, spelling)
 		if err != nil {
 			return nil, err
 		}
@@ -195,6 +213,7 @@ func applyEntry(
 	index int,
 	placement Placement,
 	payload Payload,
+	spelling Spelling,
 ) ([]llmprotocol.Message, error) {
 	if !placementFitsLever(payload.Lever, placement) {
 		return nil, fmt.Errorf("placement %q does not fit lever %q", placement, payload.Lever)
@@ -214,11 +233,14 @@ func applyEntry(
 		// that carries them rather than as a message of its own.
 		// On Chat, where the tool results' images move into user messages
 		// after the run, it joins the last of those (ADR 0129).
+		// On a cell that states ADR 0131's spelling, a Chat encoder writes
+		// it into the run's last tool message instead.
 		return insertMessage(messages, index+1, llmprotocol.Message{
-			Role:           llmprotocol.RoleUser,
-			Content:        []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: payload.Suffix}},
-			WireGroup:      messages[index].WireGroup,
-			JoinsToolMedia: true,
+			Role:             llmprotocol.RoleUser,
+			Content:          []llmprotocol.Content{{Kind: llmprotocol.ContentText, Text: payload.Suffix}},
+			WireGroup:        messages[index].WireGroup,
+			JoinsToolMedia:   true,
+			JoinsToolMessage: spelling.AppendToTool,
 		}), nil
 	case PlaceSystemBeforeTurn:
 		return insertMessage(messages, index, effortMessage(payload)), nil

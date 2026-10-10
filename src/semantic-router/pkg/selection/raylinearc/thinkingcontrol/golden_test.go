@@ -236,7 +236,7 @@ func runGoldenCase(t *testing.T, reg *Registry, dir string) {
 			c.AllowExperimental)
 	case "placement_only", "placement_only_not_admitted":
 		baseWire := map[string]*value{controls[0].Native: objectValue()}
-		got, receipts, err = renderEpisode(bodies, controls, baseWire, false, c.Format, c.WireModel)
+		got, receipts, err = renderEpisode(bodies, controls, baseWire, tailRules{}, c.Format, c.WireModel)
 	case imageToolTailAdmitted:
 		// The corpus cell renders as it is admitted, with the task-fidelity
 		// evidence it does not yet state (ADR 0129).
@@ -244,7 +244,7 @@ func runGoldenCase(t *testing.T, reg *Registry, dir string) {
 		if admitErr != nil {
 			t.Fatal(admitErr)
 		}
-		got, receipts, err = renderEpisode(bodies, controls, cell.baseWire, true, c.Format, c.WireModel)
+		got, receipts, err = renderEpisode(bodies, controls, cell.baseWire, tailRules{imageToolTailAdmitted: true}, c.Format, c.WireModel)
 	default:
 		t.Fatalf("unknown admission %q", c.Admission)
 	}

@@ -30,6 +30,9 @@ import (
 const (
 	PlacementAppend      = "append"
 	PlacementInsertAfter = "insert_after"
+	// PlacementAppendToTool appends the unit as a text part to a Chat tool
+	// run's last tool message (ADR 0131), on a cell that states it.
+	PlacementAppendToTool = "append_to_tool"
 )
 
 // EpochResetTranscriptRewrite is the reason an epoch restarts when a ledger
@@ -168,7 +171,8 @@ func ResumePlacer(state PlacerState) (*Placer, error) {
 		if index > 0 && item.Anchor <= state.Ledger[index-1].Anchor {
 			return nil, malformed
 		}
-		if item.Anchor < 0 || (item.Placement != PlacementAppend && item.Placement != PlacementInsertAfter) ||
+		if item.Anchor < 0 || (item.Placement != PlacementAppend && item.Placement != PlacementInsertAfter &&
+			item.Placement != PlacementAppendToTool) ||
 			(item.Kind != WrittenInstruction && item.Kind != WrittenNeutralMarker) {
 			return nil, malformed
 		}
@@ -220,11 +224,27 @@ func sameBudget(a, b *int64) bool {
 	return *a == *b
 }
 
+// tailRules is what a cell states about the tail a unit follows: its ADR
+// 0129 task-fidelity admission after an image tool result, and its ADR 0131
+// spelling of a unit after a Chat tool run.
+type tailRules struct {
+	imageToolTailAdmitted bool
+	appendToTool          bool
+}
+
+func (cell *Cell) tailRules() tailRules {
+	return tailRules{imageToolTailAdmitted: cell.ImageToolTailAdmitted, appendToTool: cell.TextToolTailAppendToTool}
+}
+
 // place applies the ledger to body for this call's control and returns the
 // body (thinking fields and model untouched) and the call's receipt. body is
-// not modified. imageToolTailAdmitted is the cell's ADR 0129 task-fidelity
-// admission: without it nothing is written after an image tool result.
-func (p *Placer) place(body *value, control *Control, imageToolTailAdmitted bool) (*value, Receipt, error) {
+// not modified. Without the cell's image tool-tail admission nothing is
+// written after an image tool result; with its append-to-tool spelling a
+// unit after a Chat tool run joins the run's last tool message.
+func (p *Placer) place(body *value, control *Control, rules tailRules) (*value, Receipt, error) {
+	if rules.appendToTool && p.state.Format != FormatChat {
+		return nil, Receipt{}, refuse("append_to_tool is a Chat tool-tail spelling, not a %s one (ADR 0131)", p.state.Format)
+	}
 	if err := p.check(control); err != nil {
 		return nil, Receipt{}, err
 	}
@@ -268,9 +288,17 @@ func (p *Placer) place(body *value, control *Control, imageToolTailAdmitted bool
 	}
 	if instruction != nil && !retry {
 		level := instruction.Level
+		appendToTool := false
+		if rules.appendToTool && isToolResult(units[tail], format) {
+			if instruction.InbandSystem != "" {
+				return nil, Receipt{}, refuse("call %d: append_to_tool and the in-band system fold do not compose; "+
+					"no cell admits both (ADR 0131)", index)
+			}
+			appendToTool = true
+		}
 		wouldWrite := (level != InstructionNone && (next.InForce == nil || *next.InForce != level)) ||
 			(level == InstructionNone && next.InForce != nil)
-		if wouldWrite && instruction.Unit != UnitConfigurationUpdate && !imageToolTailAdmitted &&
+		if wouldWrite && instruction.Unit != UnitConfigurationUpdate && !rules.imageToolTailAdmitted &&
 			imageToolTail(units, tail, format) {
 			// ADR 0129: no unproven steering after an image tool result.
 			reason := RefusedImageToolTail
@@ -280,6 +308,9 @@ func (p *Placer) place(body *value, control *Control, imageToolTailAdmitted bool
 			placement, err := placementFor(units[tail], format)
 			if err != nil {
 				return err
+			}
+			if placement == PlacementInsertAfter && appendToTool {
+				placement = PlacementAppendToTool
 			}
 			next.Ledger = append(next.Ledger, LedgerItem{
 				Anchor: anchor.Index, PrefixDigest: anchor.Digest, Placement: placement, Text: text, Kind: kind,
@@ -620,7 +651,7 @@ func renderedUnits(units []*value, ledger []LedgerItem, format string) ([][]*val
 		if len(items) > 1 {
 			return nil, refuse("two instructions anchor at unit %d; one turn carries one", position)
 		}
-		if len(items) == 1 && items[0].Placement == PlacementAppend {
+		if len(items) == 1 && (items[0].Placement == PlacementAppend || items[0].Placement == PlacementAppendToTool) {
 			placed, err := appended(unit, format, items[0].Text)
 			if err != nil {
 				return nil, err

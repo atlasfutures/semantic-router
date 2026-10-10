@@ -231,6 +231,8 @@ type episodeControlItemWire struct {
 var (
 	controlPlacementCodes = map[string]string{
 		thinkingcontrol.PlacementAppend: "a", thinkingcontrol.PlacementInsertAfter: "i",
+		// ADR 0131. A reader without it refuses the record as malformed.
+		thinkingcontrol.PlacementAppendToTool: "t",
 	}
 	controlKindCodes = map[string]string{
 		thinkingcontrol.WrittenInstruction: "i", thinkingcontrol.WrittenNeutralMarker: "m",

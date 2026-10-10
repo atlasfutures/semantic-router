@@ -72,7 +72,7 @@ func placeBody(t *testing.T, placer *Placer, raw string, control *Control, admit
 	if err != nil {
 		t.Fatal(err)
 	}
-	placed, receipt, err := placer.place(body, control, admitted)
+	placed, receipt, err := placer.place(body, control, tailRules{imageToolTailAdmitted: admitted})
 	if err != nil {
 		t.Fatal(err)
 	}

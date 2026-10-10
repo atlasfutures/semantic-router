@@ -146,6 +146,12 @@ type Message struct {
 	// JSON when unset, so the cache identity of every request without it is
 	// what it was before the field existed.
 	JoinsToolMedia bool `json:",omitempty"`
+	// JoinsToolMessage marks the same router-written message on a worker
+	// whose admission cell spells a unit after a Chat tool run as a text
+	// part of the run's last tool message (ADR 0131). Where the run's images
+	// were moved after it, JoinsToolMedia still places it with them; on any
+	// other wire it is a user message as before. No decoder sets it.
+	JoinsToolMessage bool `json:",omitempty"`
 }
 
 // ConfigurationUpdate is a mid-conversation settings change. Only the

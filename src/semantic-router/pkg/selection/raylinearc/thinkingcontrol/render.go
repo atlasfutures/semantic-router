@@ -44,11 +44,11 @@ func Passthrough(clientBody []byte, wireModel string) ([]byte, error) {
 // wire and the model id, and returns the provider body and the receipt. The
 // placer advances only when the call renders.
 func (p *Placer) Render(clientBody []byte, control *Control, cell *Cell, wireModel string) ([]byte, Receipt, error) {
-	return p.render(clientBody, control, cell.baseWire, cell.ImageToolTailAdmitted, wireModel)
+	return p.render(clientBody, control, cell.baseWire, cell.tailRules(), wireModel)
 }
 
 func (p *Placer) render(
-	clientBody []byte, control *Control, baseWire map[string]*value, imageToolTailAdmitted bool, wireModel string,
+	clientBody []byte, control *Control, baseWire map[string]*value, rules tailRules, wireModel string,
 ) ([]byte, Receipt, error) {
 	if err := p.check(control); err != nil {
 		return nil, Receipt{}, err
@@ -62,7 +62,7 @@ func (p *Placer) render(
 		return nil, Receipt{}, refuse("call %d: the client body is not a JSON object", p.state.Calls)
 	}
 	before := p.state
-	placed, receipt, err := p.place(body, control, imageToolTailAdmitted)
+	placed, receipt, err := p.place(body, control, rules)
 	if err != nil {
 		return nil, Receipt{}, err
 	}
@@ -96,7 +96,7 @@ func RenderAdmitted(
 	if cell == nil {
 		return nil, nil, refuse("one control per call")
 	}
-	return renderEpisode(clientBodies, controls, cell.baseWire, cell.ImageToolTailAdmitted, format, wireModel)
+	return renderEpisode(clientBodies, controls, cell.baseWire, cell.tailRules(), format, wireModel)
 }
 
 // renderEpisode is placement only: every call rendered given the base's
@@ -104,7 +104,7 @@ func RenderAdmitted(
 // a cell no instruction is admitted on yet, and for the spelling a cell with
 // ADR 0129 task-fidelity evidence writes after an image tool result.
 func renderEpisode(
-	clientBodies [][]byte, controls []*Control, baseWire map[string]*value, imageToolTailAdmitted bool,
+	clientBodies [][]byte, controls []*Control, baseWire map[string]*value, rules tailRules,
 	format, wireModel string,
 ) ([][]byte, []Receipt, error) {
 	if len(clientBodies) != len(controls) {
@@ -117,7 +117,7 @@ func renderEpisode(
 	bodies := make([][]byte, 0, len(controls))
 	receipts := make([]Receipt, 0, len(controls))
 	for index := range controls {
-		body, receipt, err := placer.render(clientBodies[index], controls[index], baseWire, imageToolTailAdmitted, wireModel)
+		body, receipt, err := placer.render(clientBodies[index], controls[index], baseWire, rules, wireModel)
 		if err != nil {
 			return nil, nil, err
 		}
