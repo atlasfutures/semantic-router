@@ -227,8 +227,8 @@ func TestUpstreamProviderReachesAMessagesStreamCompletedInFinalize(t *testing.T)
 		t.Fatal(err)
 	}
 	body := bytes.TrimSuffix(openRouterMessagesStream(`"provider":"Moonshot AI",`), []byte("\n\n"))
-	if _, _, _, err := stream.Push(body); err != nil {
-		t.Fatalf("push: %v", err)
+	if _, _, _, pushErr := stream.Push(body); pushErr != nil {
+		t.Fatalf("push: %v", pushErr)
 	}
 	_, events, _, err := stream.Finalize(nil)
 	if err != nil {
