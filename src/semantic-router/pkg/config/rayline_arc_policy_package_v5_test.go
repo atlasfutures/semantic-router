@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
 // The shared v5 fixture (pathfinder 9e6e236): an Opus native-only action and
@@ -294,15 +296,39 @@ func TestRaylineARCPolicyPackageV5Refusals(t *testing.T) {
 
 // An episode keeps a bounded number of placers, one per worker and control
 // shape; bindings that could need more are refused rather than evicting a
-// placer whose instructions still need replaying.
+// placer whose instructions still need replaying. The bound admits the 19
+// shapes ARC 0.4's twelve-worker package (b92edaf5) puts on its workers.
 func TestRaylineARCPolicyPackageV5BoundsControlShapes(t *testing.T) {
+	for _, test := range []struct {
+		shapes int
+		loads  bool
+	}{
+		{19, true},
+		{raylinearc.MaxControlPlacements, true},
+		{raylinearc.MaxControlPlacements + 1, false},
+	} {
+		err := validatePolicyDispatchWithShapes(t, test.shapes)
+		if test.loads && err != nil {
+			t.Fatalf("%d control shapes refused: %v", test.shapes, err)
+		}
+		if !test.loads && (err == nil || !strings.Contains(err.Error(), "control shapes")) {
+			t.Fatalf("%d control shapes loaded: %v", test.shapes, err)
+		}
+	}
+}
+
+// validatePolicyDispatchWithShapes validates a v5 decision whose bindings put
+// exactly shapes control shapes on their workers: one action a worker, one
+// format each.
+func validatePolicyDispatchWithShapes(t *testing.T, shapes int) error {
+	t.Helper()
 	var manifest map[string]any
 	if err := json.Unmarshal(readPolicyV5Fixture(t), &manifest); err != nil {
 		t.Fatal(err)
 	}
 	glm := manifest["actions"].([]any)[2].(map[string]any)
 	var actions []any
-	for index := 0; index < 17; index++ {
+	for index := 0; index < shapes; index++ {
 		action := map[string]any{}
 		for key, value := range glm {
 			action[key] = value
@@ -322,7 +348,7 @@ func TestRaylineARCPolicyPackageV5BoundsControlShapes(t *testing.T) {
 	policy := decision.Algorithm.RaylineARC.PolicyService
 	policy.Bindings = nil
 	policy.TrainedModels = map[string]string{}
-	for index := 0; index < 17; index++ {
+	for index := 0; index < shapes; index++ {
 		worker := fmt.Sprintf("arm-%d", index)
 		cfg.ModelConfig[worker] = ModelParams{
 			PreferredEndpoints: []string{"openrouter"}, APIFormat: APIFormatOpenAI,
@@ -332,9 +358,7 @@ func TestRaylineARCPolicyPackageV5BoundsControlShapes(t *testing.T) {
 		decision.ModelRefs = append(decision.ModelRefs, ModelRef{Model: worker, ModelReasoningControl: ModelReasoningControl{UseReasoning: &on}})
 		policy.Bindings = append(policy.Bindings, RaylineARCPolicyBinding{ActionID: fmt.Sprintf("%064x", index+1), Worker: worker})
 	}
-	if err := validatePolicyDispatch(cfg, decision); err == nil || !strings.Contains(err.Error(), "control shapes") {
-		t.Fatalf("17 control shapes loaded: %v", err)
-	}
+	return validatePolicyDispatch(cfg, decision)
 }
 
 // package_manifest is for v5 packages; a v4 manifest there is refused, since

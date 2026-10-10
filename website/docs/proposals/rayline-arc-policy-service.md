@@ -440,6 +440,12 @@ With it on:
   episode-state v5, with or without exclusions. A router that predates v5
   refuses such a record by its schema, so a rollback to one fails those
   episodes' next turn rather than misreading them.
+- An episode keeps up to 64 thinking-control placers and 32 upstream
+  records, so a package's bindings may put up to 64 control shapes on their
+  workers' formats. One holding more than 16 of either is stored as
+  episode-state v6, whatever else it carries; every other episode keeps its
+  v3, v4 or v5 bytes. A router that predates v6 refuses such a record by
+  its schema.
 
 ## Open questions
 
