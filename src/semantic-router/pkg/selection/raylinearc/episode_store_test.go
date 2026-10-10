@@ -409,7 +409,9 @@ func TestEpisodeStateWireGatesTheLedgerOnTheSchema(t *testing.T) {
 	}
 }
 
-func TestEpisodeStateWireCarriesUpstreamPrefixesUnderV3(t *testing.T) {
+// Upstream records past the 16 a v5 reader keeps are written as v6, and
+// the bound keeps the most recent.
+func TestEpisodeStateWireCarriesUpstreamPrefixes(t *testing.T) {
 	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
 	state, err := NewEpisodeState(1)
 	if err != nil {
@@ -427,8 +429,8 @@ func TestEpisodeStateWireCarriesUpstreamPrefixesUnderV3(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(payload), `"schema_version":"rayline.arc.episode-state.v3"`) {
-		t.Fatalf("upstream records written without v3: %.100s", payload)
+	if !strings.Contains(string(payload), `"schema_version":"rayline.arc.episode-state.v6"`) {
+		t.Fatalf("upstream records past a v5 reader's bound written without v6: %.100s", payload)
 	}
 	decoded, _, err := unmarshalEpisodeState(payload, 1, now)
 	if err != nil {

@@ -50,9 +50,19 @@ const (
 	// keeps its v3 or v4 bytes and an older router refuses a v5 record by its
 	// schema rather than by a field its strict decoder does not know.
 	episodeStateSchemaV5 = "rayline.arc.episode-state.v5"
+	// episodeStateSchemaV6 raises the stored placer and upstream-record
+	// bounds (MaxControlPlacements, MaxUpstreamPrefixes) past the 16 a v5
+	// reader keeps. It is written only for a record holding more than 16 of
+	// either, so every other episode keeps its v3, v4 or v5 bytes, and an
+	// older router refuses a v6 record by its schema.
+	episodeStateSchemaV6 = "rayline.arc.episode-state.v6"
 	maxFutureClockSkew   = 5 * time.Minute
 	episodeOwnerBytes    = 24
 	maxEpisodeStateBytes = 64 * 1024
+	// maxEpisodeStateBytesV6 is a v6 record's size limit: up to
+	// MaxControlPlacements placers, each with its texts and ledger, need more
+	// than a v5 record's 64 KiB.
+	maxEpisodeStateBytesV6 = 256 * 1024
 )
 
 var (
@@ -260,6 +270,20 @@ func controlPlacementsToWire(placements []ControlPlacement) []episodeControlWire
 		out = append(out, wire)
 	}
 	return out
+}
+
+// episodeStateSizeLimit is the most bytes a record of schema may take.
+func episodeStateSizeLimit(schema string) int {
+	if schema == episodeStateSchemaV6 {
+		return maxEpisodeStateBytesV6
+	}
+	return maxEpisodeStateBytes
+}
+
+// exceedsLegacyBounds reports whether a record holds more placers or
+// upstream records than an episode-state v5 reader keeps.
+func exceedsLegacyBounds(wire episodeStateWire) bool {
+	return len(wire.Controls) > legacyMaxControlPlacements || len(wire.Upstream) > legacyMaxUpstreamPrefixes
 }
 
 // controlsNeedV5 reports whether any stored control carries a field an
@@ -522,6 +546,9 @@ func marshalEpisodeState(
 	if controlsNeedV5(wire.Controls) {
 		wire.SchemaVersion = episodeStateSchemaV5
 	}
+	if exceedsLegacyBounds(wire) {
+		wire.SchemaVersion = episodeStateSchemaV6
+	}
 	owner := state.EncoderOwner
 	visited := append([]string{}, state.EncoderVisitedOwners...)
 	wire.EncoderOwner = &owner
@@ -539,7 +566,7 @@ func marshalEpisodeState(
 	if err != nil {
 		return nil, errors.New("marshal ARC episode state")
 	}
-	if len(payload) > maxEpisodeStateBytes {
+	if len(payload) > episodeStateSizeLimit(wire.SchemaVersion) {
 		return nil, errors.New("ARC episode state exceeds size limit")
 	}
 	return payload, nil
@@ -554,12 +581,15 @@ func unmarshalEpisodeState(
 		state, err := NewEpisodeState(workerCount)
 		return state, 0, err
 	}
-	if len(payload) > maxEpisodeStateBytes {
+	if len(payload) > maxEpisodeStateBytesV6 {
 		return nil, 0, errors.New("ARC episode state exceeds size limit")
 	}
 	var wire episodeStateWire
 	if err := decodeStrictJSON(payload, &wire); err != nil {
 		return nil, 0, errors.New("decode ARC episode state")
+	}
+	if len(payload) > episodeStateSizeLimit(wire.SchemaVersion) {
+		return nil, 0, errors.New("ARC episode state exceeds size limit")
 	}
 	if len(wire.Warmth) != workerCount {
 		return nil, 0, errors.New("ARC episode state contract mismatch")
@@ -584,18 +614,23 @@ func decodeEpisodeStateAffinity(
 	if (wire.Thinking != nil || len(wire.Upstream) > 0 || wire.Policy != nil || len(wire.Controls) > 0 ||
 		len(wire.ReasoningIssuers) > 0 || wire.PolicyBoundary != nil || len(wire.ReasoningProvenance) > 0) !=
 		(wire.SchemaVersion == episodeStateSchema || wire.SchemaVersion == episodeStateSchemaV4 ||
-			wire.SchemaVersion == episodeStateSchemaV5) {
+			wire.SchemaVersion == episodeStateSchemaV5 || wire.SchemaVersion == episodeStateSchemaV6) {
 		return "", nil, errors.New("ARC episode state contract mismatch")
 	}
-	// v5 is exactly the record whose controls carry a v5 field; v4 is
-	// exactly the policy-bearing record that carries exclusions and no v5
-	// field.
+	// v6 is exactly the record past a v5 reader's bounds, whatever else it
+	// carries; below them, v5 is exactly the record whose controls carry a v5
+	// field, and v4 exactly the policy-bearing record that carries exclusions
+	// and no v5 field.
+	v6 := exceedsLegacyBounds(wire)
+	if v6 != (wire.SchemaVersion == episodeStateSchemaV6) {
+		return "", nil, errors.New("ARC episode state contract mismatch")
+	}
 	v5 := controlsNeedV5(wire.Controls)
-	if v5 != (wire.SchemaVersion == episodeStateSchemaV5) {
+	if !v6 && v5 != (wire.SchemaVersion == episodeStateSchemaV5) {
 		return "", nil, errors.New("ARC episode state contract mismatch")
 	}
 	hasExclusions := wire.Policy != nil && len(wire.Policy.Exclusions) > 0
-	if !v5 && hasExclusions != (wire.SchemaVersion == episodeStateSchemaV4) {
+	if !v6 && !v5 && hasExclusions != (wire.SchemaVersion == episodeStateSchemaV4) {
 		return "", nil, errors.New("ARC episode state contract mismatch")
 	}
 	switch wire.SchemaVersion {
@@ -604,7 +639,7 @@ func decodeEpisodeStateAffinity(
 			return "", nil, errors.New("ARC episode state contract mismatch")
 		}
 		return "", nil, nil
-	case episodeStateSchemaV2, episodeStateSchema, episodeStateSchemaV4, episodeStateSchemaV5:
+	case episodeStateSchemaV2, episodeStateSchema, episodeStateSchemaV4, episodeStateSchemaV5, episodeStateSchemaV6:
 		if wire.EncoderOwner == nil || wire.EncoderVisitedOwners == nil ||
 			*wire.EncoderVisitedOwners == nil {
 			return "", nil, errors.New("ARC episode state contract mismatch")

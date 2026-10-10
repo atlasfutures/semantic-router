@@ -82,8 +82,17 @@ type ControlPlacement struct {
 }
 
 // MaxControlPlacements bounds the placers an episode keeps; the least
-// recently dispatched is dropped first.
-const MaxControlPlacements = 16
+// recently dispatched is dropped first. It bounds the stored record, not
+// what a placer means: a package's bindings may put up to this many shapes
+// on their workers' formats (pathfinder's 0.5 basket, 16 workers with three
+// on two formats, puts at most 57 at three controls a worker). A record
+// holding more than legacyMaxControlPlacements is written as episode-state
+// v6.
+const MaxControlPlacements = 64
+
+// legacyMaxControlPlacements is the bound an episode-state v5 or older
+// reader enforces.
+const legacyMaxControlPlacements = 16
 
 // ControlPlacementFor returns the placer state for key, if the episode has
 // one.
@@ -126,8 +135,13 @@ type UpstreamPrefix struct {
 }
 
 // MaxUpstreamPrefixes bounds the per-worker records an episode keeps; the
-// least recently dispatched worker is dropped first.
-const MaxUpstreamPrefixes = 16
+// least recently dispatched worker is dropped first. A record holding more
+// than legacyMaxUpstreamPrefixes is written as episode-state v6.
+const MaxUpstreamPrefixes = 32
+
+// legacyMaxUpstreamPrefixes is the bound an episode-state v5 or older reader
+// enforces.
+const legacyMaxUpstreamPrefixes = 16
 
 // UpstreamPrefixFor returns the record for worker, if the episode has one.
 func (state *EpisodeState) UpstreamPrefixFor(worker string) (UpstreamPrefix, bool) {
