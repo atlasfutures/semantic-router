@@ -168,7 +168,7 @@ func TestOfficialResponseFieldInventoriesAreClosed(t *testing.T) {
 				"container", "content", "id", "model", "role", "stop_details", "stop_reason",
 				"stop_sequence", "type", "usage",
 			),
-			extensions: fields("error"),
+			extensions: fields("error", "provider"),
 		},
 	}
 

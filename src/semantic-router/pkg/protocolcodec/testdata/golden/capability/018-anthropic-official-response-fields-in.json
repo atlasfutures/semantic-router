@@ -16,6 +16,7 @@
     {"name": "error", "patch": {"error": {"type": "api_error", "message": "provider failed"}}},
     {"name": "id", "patch": {"id": "msg_2"}},
     {"name": "model", "patch": {"model": "alternate-provider-model"}},
+    {"name": "provider", "patch": {"provider": "Moonshot AI"}},
     {"name": "role", "patch": {"role": "assistant"}},
     {"name": "stop_details", "patch": {"stop_details": {"type": "refusal"}}},
     {"name": "stop_reason", "patch": {"stop_reason": "max_tokens"}},

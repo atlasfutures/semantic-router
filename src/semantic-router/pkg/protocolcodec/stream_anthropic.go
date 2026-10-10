@@ -42,6 +42,9 @@ type anthropicStreamDecoder struct {
 	// whose completion is held until the next event says whether it was the
 	// reply's last block under a max_tokens stop (flushPendingToolStop).
 	pendingToolStop *int
+	// upstreamProvider is the provider message_start named (OpenRouter's
+	// extension), stamped on every later event as the Chat decoder does.
+	upstreamProvider string
 }
 type anthropicStreamEncoder struct {
 	streamState
@@ -180,6 +183,7 @@ func (decoder *anthropicStreamDecoder) Push(chunk []byte) ([]llmprotocol.Event, 
 	var diagnostics llmprotocol.Diagnostics
 	for _, frame := range frames {
 		decoded, frameDiagnostics, decodeErr := decoder.pushFrame(frame)
+		decoder.stampUpstreamProvider(decoded)
 		events = append(events, decoded...)
 		diagnostics = appendDiagnostics(diagnostics, frameDiagnostics, decoder.policy.Limits.Diagnostics)
 		if decodeErr != nil {
@@ -187,6 +191,19 @@ func (decoder *anthropicStreamDecoder) Push(chunk []byte) ([]llmprotocol.Event, 
 		}
 	}
 	return events, diagnostics, nil
+}
+
+// stampUpstreamProvider names the provider on every event once message_start
+// has: the Router reads it off any event of the turn.
+func (decoder *anthropicStreamDecoder) stampUpstreamProvider(events []llmprotocol.Event) {
+	if decoder.upstreamProvider == "" {
+		return
+	}
+	for index := range events {
+		if events[index].Type != llmprotocol.EventKeepalive {
+			events[index].UpstreamProvider = decoder.upstreamProvider
+		}
+	}
 }
 
 func (decoder *anthropicStreamDecoder) pushFrame(frame []byte) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
@@ -301,6 +318,9 @@ func (decoder *anthropicStreamDecoder) decodeAnthropicEvent(
 	}
 	switch wire.Type {
 	case "message_start":
+		if wire.Message != nil && wire.Message.Provider != nil {
+			decoder.upstreamProvider = *wire.Message.Provider
+		}
 		event := decodeAnthropicMessageStart(wire)
 		if wire.Message != nil && wire.Message.Usage != nil && anthropicUsageUncommitted(*wire.Message.Usage) {
 			decoder.pendingStartUsage, event.Usage = event.Usage, nil
@@ -586,7 +606,15 @@ func encodeAnthropicMessageDeltaUsage(usage llmprotocol.Usage) *anthropicMessage
 	}
 }
 
+// Finalize ends the stream; the events it flushes or generates (a buffered
+// last frame, a held tool stop, a failure) carry the provider as Push's do.
 func (decoder *anthropicStreamDecoder) Finalize(reason error) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
+	events, diagnostics, err := decoder.finalizeDecoder(reason)
+	decoder.stampUpstreamProvider(events)
+	return events, diagnostics, err
+}
+
+func (decoder *anthropicStreamDecoder) finalizeDecoder(reason error) ([]llmprotocol.Event, llmprotocol.Diagnostics, error) {
 	events, diagnostics, frameErr := finalizeDecoderFrames(decoder.framer.Finalize, decoder.pushFrame, decoder.policy.Limits.Diagnostics)
 	if frameErr != nil {
 		return events, diagnostics, frameErr
