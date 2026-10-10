@@ -285,3 +285,27 @@ func TestUpstreamProviderStripKeepsAChatReplaysLogprobs(t *testing.T) {
 		t.Fatalf("client body = %s, want logprobs kept and the provider gone", result.Body)
 	}
 }
+
+// Any spelling of the member stays out of a replay, read or not: a policy that
+// drops unknown upstream members never decodes "Provider" yet would replay it.
+func TestUpstreamProviderSpellingsAreNotReplayed(t *testing.T) {
+	for name, test := range map[string]struct {
+		format llmprotocol.WireFormat
+		body   string
+	}{
+		"messages": {llmprotocol.AnthropicMessagesV1, strings.Replace(openRouterMessagesResponse, `"provider"`, `"Provider"`, 1)},
+		"chat": {llmprotocol.OpenAIChatV1, `{"id":"chatcmpl-1","object":"chat.completion","created":7,"model":"model","PROVIDER":"Moonshot AI",` +
+			`"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"hi"}}],` +
+			`"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := NewBuiltinEngine().TranslateResponse(test.format, test.format, []byte(test.body), nil)
+			if err != nil {
+				t.Fatalf("translate: %v", err)
+			}
+			if strings.Contains(string(result.Body), "Moonshot AI") {
+				t.Fatalf("a provider spelling was replayed to the client: %s", result.Body)
+			}
+		})
+	}
+}
