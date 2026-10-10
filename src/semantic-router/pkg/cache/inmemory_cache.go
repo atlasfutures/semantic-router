@@ -503,7 +503,7 @@ func (c *InMemoryCache) AddEntry(
 		len(c.entries), len(requestBody), len(responseBody), c.useHNSW, effectiveTTL)
 	logging.LogEvent("cache_entry_added", map[string]interface{}{
 		"backend": "memory",
-		"query":   query,
+		"query":   logging.ContentDescriptor(query),
 		"model":   model,
 		"useHNSW": c.useHNSW,
 	})

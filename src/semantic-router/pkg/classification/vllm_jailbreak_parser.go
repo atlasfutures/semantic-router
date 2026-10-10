@@ -75,7 +75,13 @@ func (v *VLLMJailbreakInference) parseQwen3GuardFormat(output string) (bool, flo
 		}
 	}
 
-	logging.Warnf("Qwen3Guard parser failed to parse output: %s", output)
+	// The guard model's output classifies the prompt and routinely quotes it,
+	// so it is provider content: a descriptor says the parse failed and lets
+	// two failures be compared, without writing the text down.
+	logging.Warnf(
+		"Qwen3Guard parser failed to parse output: %s",
+		logging.ContentDescriptor(output),
+	)
 	return false, 0.0, nil
 }
 

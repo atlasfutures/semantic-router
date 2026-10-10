@@ -2168,6 +2168,16 @@ global:
           detailed_goroutine_tracking: true
           high_resolution_timing: true
     response_api:
+      # Left enabled deliberately. The Responses store does persist the request
+      # input, the output text and the instructions, so it is a retention
+      # surface -- but disabling it 404s the whole /v1/responses endpoint at
+      # header validation, and ARC serves that format: policyRequestFormat maps
+      # OpenAIResponsesV1 to the policy service's "responses" format, and the
+      # reference backends keep a Responses client on Responses upstream via
+      # accepted_formats. Turning it off is a functional regression for an ARC
+      # client on this endpoint, not a retention-only change. A ZDR deployment
+      # that does not serve /v1/responses should disable it; scoping that is
+      # separate work from this PR.
       enabled: true
       store_backend: redis
       ttl_seconds: 86400
@@ -2302,7 +2312,12 @@ global:
     startup_status:
       store_backend: file
     router_replay:
-      enabled: true
+      # Replay persists the request and response bodies, the prompt, tool
+      # definitions and every tool-call argument and output. The validator
+      # already refuses a rayline_arc decision whose effective replay config is
+      # enabled, so ARC decisions must disable it per-decision; off globally so
+      # the default stops being capture-on for anything added later.
+      enabled: false
       store_backend: postgres
       ttl_seconds: 2592000
       async_writes: true
@@ -2342,8 +2357,12 @@ global:
 
   stores:
     response_cache:
+      # The semantic cache stores the query text and both bodies. Caching only
+      # runs for a decision carrying an explicit response_cache plugin, and no
+      # rayline_arc decision carries one, so this is already inert on the ARC
+      # path; off so the backend is never initialized at all.
       backend_type: milvus
-      enabled: true
+      enabled: false
       similarity_threshold: 0.86
       max_entries: 50000
       ttl_seconds: 7200
@@ -2414,9 +2433,15 @@ global:
           auto_create_collection: true
           verbose_errors: true
     memory:
-      enabled: true
+      # Conversation memory stores each turn verbatim ("Q: ... A: ...") with no
+      # TTL, and auto_store falls back to this global value for any decision
+      # without a memory plugin -- which is every rayline_arc decision. ARC
+      # never reads memory: its episode state is the previous arm, turn index,
+      # warmth and ledgers, and carries no transcript text. Off, so no prompt
+      # or completion is retained on the ARC path.
+      enabled: false
       backend: milvus
-      auto_store: true
+      auto_store: false
       disabled_routes: []
       disabled_models: []
       valkey:
