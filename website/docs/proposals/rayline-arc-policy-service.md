@@ -444,8 +444,9 @@ With it on:
   records, so a package's bindings may put up to 64 control shapes on their
   workers' formats. One holding more than 16 of either is stored as
   episode-state v6, whatever else it carries; every other episode keeps its
-  v3, v4 or v5 bytes. A router that predates v6 refuses such a record by
-  its schema.
+  v3, v4 or v5 bytes. A v6 record may take up to 256 KiB, the others
+  64 KiB. A router that predates v6 refuses such a record by its schema or
+  its size.
 
 ## Open questions
 

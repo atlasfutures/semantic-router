@@ -59,6 +59,10 @@ const (
 	maxFutureClockSkew   = 5 * time.Minute
 	episodeOwnerBytes    = 24
 	maxEpisodeStateBytes = 64 * 1024
+	// maxEpisodeStateBytesV6 is a v6 record's size limit: up to
+	// MaxControlPlacements placers, each with its texts and ledger, need more
+	// than a v5 record's 64 KiB.
+	maxEpisodeStateBytesV6 = 256 * 1024
 )
 
 var (
@@ -266,6 +270,14 @@ func controlPlacementsToWire(placements []ControlPlacement) []episodeControlWire
 		out = append(out, wire)
 	}
 	return out
+}
+
+// episodeStateSizeLimit is the most bytes a record of schema may take.
+func episodeStateSizeLimit(schema string) int {
+	if schema == episodeStateSchemaV6 {
+		return maxEpisodeStateBytesV6
+	}
+	return maxEpisodeStateBytes
 }
 
 // exceedsLegacyBounds reports whether a record holds more placers or
@@ -554,7 +566,7 @@ func marshalEpisodeState(
 	if err != nil {
 		return nil, errors.New("marshal ARC episode state")
 	}
-	if len(payload) > maxEpisodeStateBytes {
+	if len(payload) > episodeStateSizeLimit(wire.SchemaVersion) {
 		return nil, errors.New("ARC episode state exceeds size limit")
 	}
 	return payload, nil
@@ -569,12 +581,15 @@ func unmarshalEpisodeState(
 		state, err := NewEpisodeState(workerCount)
 		return state, 0, err
 	}
-	if len(payload) > maxEpisodeStateBytes {
+	if len(payload) > maxEpisodeStateBytesV6 {
 		return nil, 0, errors.New("ARC episode state exceeds size limit")
 	}
 	var wire episodeStateWire
 	if err := decodeStrictJSON(payload, &wire); err != nil {
 		return nil, 0, errors.New("decode ARC episode state")
+	}
+	if len(payload) > episodeStateSizeLimit(wire.SchemaVersion) {
+		return nil, 0, errors.New("ARC episode state exceeds size limit")
 	}
 	if len(wire.Warmth) != workerCount {
 		return nil, 0, errors.New("ARC episode state contract mismatch")

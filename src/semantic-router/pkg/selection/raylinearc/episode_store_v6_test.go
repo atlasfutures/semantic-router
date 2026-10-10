@@ -136,3 +136,76 @@ func TestEpisodeStateWireRefusesARecordPastTheBounds(t *testing.T) {
 		t.Fatal("a state holding more than MaxControlPlacements placers was written")
 	}
 }
+
+// A record at MaxControlPlacements placers, each with a rendered ledger,
+// outgrows a v5 record's 64 KiB; v6 stores it, and a record that size under
+// an older schema is refused.
+func TestEpisodeStateWireStoresFullPlacersUnderV6(t *testing.T) {
+	registry, err := thinkingcontrol.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cell, err := registry.Cell("z-ai/glm-5.3-flash", "openrouter", thinkingcontrol.FormatMessages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controls := map[string]*thinkingcontrol.Control{}
+	for _, id := range []string{
+		"605a61ada934f704248cb99cc84179bf15747302120d11e67ba723db0d8d955b", // default, up
+		"17ce2fd14e762777a95db605228cc8f731d2d3e200c4c5d07a735f85fca2eae1", // default, none
+	} {
+		c, _ := registry.Control(id)
+		controls[c.Instruction.Level] = &c
+	}
+	live, _ := thinkingcontrol.NewPlacer(thinkingcontrol.FormatMessages)
+	messages := `{"role":"user","content":"task"}`
+	for turn := 0; turn < 12; turn++ {
+		level := "up"
+		if turn%2 == 1 {
+			level = "none"
+		}
+		body := fmt.Sprintf(`{"model":"m","messages":[%s]}`, messages)
+		if _, _, err = live.Render([]byte(body), controls[level], cell, "w"); err != nil {
+			t.Fatal(err)
+		}
+		messages += fmt.Sprintf(`,{"role":"assistant","content":"a%d"},{"role":"user","content":"u%d"}`, turn, turn)
+	}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	state, err := NewEpisodeState(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < MaxControlPlacements; index++ {
+		state.Controls = WithControlPlacement(state.Controls, ControlPlacement{
+			Key: fmt.Sprintf("w%d|messages|default|-|true", index), State: live.State(),
+		})
+	}
+	payload, err := marshalEpisodeState(state, 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payload) <= maxEpisodeStateBytes {
+		t.Fatalf("a full record takes %d bytes, within a v5 record's limit; the test no longer exercises v6's", len(payload))
+	}
+	if !strings.Contains(string(payload), `"schema_version":"rayline.arc.episode-state.v6"`) {
+		t.Fatalf("written as %.80s, want v6", payload)
+	}
+	decoded, _, err := unmarshalEpisodeState(payload, 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Controls) != MaxControlPlacements {
+		t.Fatalf("round-tripped %d placers", len(decoded.Controls))
+	}
+
+	// Within the legacy bound, a record past 64 KiB is still refused.
+	state.Controls = state.Controls[:legacyMaxControlPlacements]
+	small, err := marshalEpisodeState(state, 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	padded := strings.Replace(string(small), `"turn_index":0`, `"turn_index":0`+strings.Repeat(" ", maxEpisodeStateBytes), 1)
+	if _, _, err = unmarshalEpisodeState([]byte(padded), 1, now); err == nil || !strings.Contains(err.Error(), "size limit") {
+		t.Fatalf("a v3 record past 64 KiB decoded: %v", err)
+	}
+}
