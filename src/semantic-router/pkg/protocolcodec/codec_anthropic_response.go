@@ -87,10 +87,10 @@ func (AnthropicMessagesCodec) DecodeResponse(body []byte, policy llmprotocol.Pol
 		response.Usage = llmprotocol.Usage{State: llmprotocol.UsageUnavailable}
 	}
 	envelope := responseEnvelope(llmprotocol.AnthropicMessagesV1, body, response.Generation, response.SourceStopReason, policy)
-	if wire.Provider != nil {
+	if wire.Provider != nil && envelope.Response != nil {
 		// The provider name is the Router's telemetry, never the client's: a
-		// body that carries it is encoded rather than replayed.
-		envelope.Response = nil
+		// replay sends the upstream's bytes without it, or not at all.
+		envelope.Response = withoutTopLevelMember(envelope.Response, "provider")
 	}
 	return response, envelope, diagnostics, nil
 }

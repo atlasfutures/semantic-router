@@ -3,6 +3,7 @@ package protocolcodec
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -242,4 +243,45 @@ func TestUpstreamProviderReachesAMessagesStreamCompletedInFinalize(t *testing.T)
 		}
 	}
 	t.Fatalf("Finalize produced no completion: %+v", events)
+}
+
+func TestWithoutTopLevelMemberKeepsEveryOtherByte(t *testing.T) {
+	cases := map[string]struct{ in, want string }{
+		"middle": {`{"id":"x", "provider":"P","model":"m"}`, `{"id":"x","model":"m"}`},
+		"first":  {`{"provider":"P", "id":"x"}`, `{"id":"x"}`},
+		"last":   {`{"id":"x","provider":"P"}`, `{"id":"x"}`},
+		"only":   {`{"provider":"P"}`, `{}`},
+		"nested": {`{"a":{"provider":"keep"},"provider":"P"}`, `{"a":{"provider":"keep"}}`},
+		"absent": {`{"id":"x"}`, `{"id":"x"}`},
+		"pretty": {"{\n  \"id\": 1,\n  \"provider\": \"P\",\n  \"m\": [1, 2]\n}", "{\n  \"id\": 1,\n  \"m\": [1, 2]\n}"},
+	}
+	for name, test := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := withoutTopLevelMember([]byte(test.in), "provider")
+			if string(got) != test.want {
+				t.Fatalf("got %s, want %s", got, test.want)
+			}
+			if !json.Valid(got) {
+				t.Fatalf("result is not JSON: %s", got)
+			}
+		})
+	}
+	if got := withoutTopLevelMember([]byte(`[1]`), "provider"); got != nil {
+		t.Fatalf("a non-object kept bytes: %s", got)
+	}
+}
+
+// Stripping the name keeps what only a replay carries: Chat logprobs.
+func TestUpstreamProviderStripKeepsAChatReplaysLogprobs(t *testing.T) {
+	body := []byte(`{"id":"chatcmpl-1","object":"chat.completion","created":7,"model":"model","provider":"Moonshot AI",` +
+		`"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"hi"},` +
+		`"logprobs":{"content":[{"token":"hi","logprob":-0.1,"bytes":[104,105],"top_logprobs":[]}]}}],` +
+		`"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`)
+	result, err := NewBuiltinEngine().TranslateResponse(llmprotocol.OpenAIChatV1, llmprotocol.OpenAIChatV1, body, nil)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if strings.Contains(string(result.Body), "Moonshot AI") || !strings.Contains(string(result.Body), `"logprob":-0.1`) {
+		t.Fatalf("client body = %s, want logprobs kept and the provider gone", result.Body)
+	}
 }
