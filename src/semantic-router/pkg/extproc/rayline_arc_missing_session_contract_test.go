@@ -65,6 +65,48 @@ func TestMissingSessionHeaderMessageSurvivesClientEncoding(t *testing.T) {
 	}
 }
 
+// A projection refusal reaches the client as a typed 400 in the client's own
+// format, not as a canned message for the status and not as the 503
+// upstream_unavailable it used to be. Encoding is where that is decided, so
+// this goes through it (memex-desktop#7328).
+func TestRequestShapeRefusalBodySurvivesClientEncoding(t *testing.T) {
+	for name, format := range map[string]llmprotocol.WireFormat{
+		"chat":      llmprotocol.OpenAIChatV1,
+		"anthropic": llmprotocol.AnthropicMessagesV1,
+	} {
+		t.Run(name, func(t *testing.T) {
+			router, requestContext, algorithm := missingSessionRequestContext(t, "episode-shape-refusal")
+			router.Config = &config.RouterConfig{}
+			requestContext.SourceFormat = format
+			router.buildRaylineARCSelectionContext(algorithm, requestContext, missingSessionModelRefs(), raylineARCEpisodeRequired)
+
+			err := selectionFailureForAlgorithm(algorithm, "policy_service_unsupported_request")
+			response := router.authoritativeSelectionFailureResponse(err, requestContext)
+			if response == nil {
+				t.Fatal("no admission response")
+			}
+			if got := immediateHeaderValue(response, selectionFailureHeader); got != selectionFailureRequestShape {
+				t.Fatalf("%s = %q, want %q", selectionFailureHeader, got, selectionFailureRequestShape)
+			}
+			encoded := router.encodeImmediateResponseForClient(response, requestContext)
+			immediate := encoded.GetImmediateResponse()
+			if immediate == nil {
+				t.Fatalf("response is not an immediate refusal: %+v", encoded)
+			}
+			if got := int(immediate.GetStatus().GetCode()); got != 400 {
+				t.Fatalf("status = %d, want 400", got)
+			}
+			message, errorType := immediateErrorBody(t, immediate.GetBody())
+			if message != requestShapeRefusalMessage {
+				t.Fatalf("message = %q, want %q", message, requestShapeRefusalMessage)
+			}
+			if errorType != "invalid_request_error" {
+				t.Fatalf("error type = %q, want invalid_request_error", errorType)
+			}
+		})
+	}
+}
+
 // One refused request is one failure. The bounded class is counted where it is
 // constructed, so counting it again where it is answered reports two.
 func TestMissingSessionHeaderCountsOnceForOneRequest(t *testing.T) {

@@ -308,8 +308,18 @@ const (
 	// react: "session_busy" (another request holds this session; wait for it,
 	// do not resend), "capacity" (back off), "not_ready" (a decision
 	// dependency is starting; retry once warm), "missing_session" (the request
-	// named no session; resending cannot succeed) or "unavailable" (anything
-	// else). Emitted only on those refusals, never with an internal class.
+	// named no session; resending cannot succeed), "request_shape" (the
+	// request carries something the routing decision cannot represent;
+	// resending it unchanged cannot succeed either, and no backend was
+	// called, so it is not an upstream outage) or "unavailable" (anything
+	// else). The first three ride a 429 or 503; "missing_session" and
+	// "request_shape" ride a 400. Emitted only on those refusals, never with
+	// an internal class.
+	//
+	// The values are stated here, in
+	// extproc/rayline_arc_selection_response.go where they are defined, and in
+	// website/docs/troubleshooting/vsr-headers.md for clients. A new one
+	// changes all three.
 	VSRFailureClass = "x-vsr-failure-class"
 
 	// VSRProtocolWarnings carries a structured, comma-separated list

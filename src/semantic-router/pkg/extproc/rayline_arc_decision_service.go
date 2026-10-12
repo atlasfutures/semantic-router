@@ -753,12 +753,27 @@ func (r *OpenAIRouter) decisionOnlyRoutingTarget(
 // An admission shed is the same back-pressure as a contended lease: the router
 // is healthy and the request is well formed, the encoder's in-flight cap is
 // simply spent. It escaped prepareFailureError because it surfaces during
-// selection, not episode preparation. Every other selection failure stays a
-// plain error and reads as 503, because waiting will not fix it.
+// selection, not episode preparation.
+//
+// A decision service that cannot represent what the request carries is a
+// third outcome: not contention and not breakage. It is wrapped as an invalid
+// body so this entrypoint answers 400 like the ExtProc path does, rather than
+// reporting a healthy router as unavailable (memex-desktop#7328). It also
+// carries errRaylineRoutesRequestShape, so the surface that answers it can say
+// which of the two invalid-body causes this was.
+//
+// Every other selection failure stays a plain error and reads as 503, because
+// waiting will not fix it.
 func selectionFailureError(err error) error {
 	var failure *raylineARCSelectionFailure
-	if errors.As(err, &failure) && failure.contended() {
-		return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionContended, err)
+	if errors.As(err, &failure) {
+		if failure.contended() {
+			return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionContended, err)
+		}
+		if selectionShapeRefusalClasses[failure.class] {
+			return fmt.Errorf("%w: %w: %w",
+				routerruntime.ErrRouteDecisionInvalidBody, errRaylineRoutesRequestShape, err)
+		}
 	}
 	return err
 }
@@ -770,6 +785,10 @@ func prepareFailureError(failure string) error {
 	)
 	if selectionFailureIsContended(failure) {
 		return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionContended, base)
+	}
+	if selectionShapeRefusalClasses[failure] {
+		return fmt.Errorf("%w: %w: %w",
+			routerruntime.ErrRouteDecisionInvalidBody, errRaylineRoutesRequestShape, base)
 	}
 	return base
 }

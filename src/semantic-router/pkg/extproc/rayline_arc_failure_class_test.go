@@ -21,6 +21,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/llmprotocol"
 	"github.com/vllm-project/semantic-router/src/semantic-router/pkg/selection/raylinearc"
 )
 
@@ -42,6 +43,15 @@ func TestSelectionFailureCarriesPublicClass(t *testing.T) {
 		{"policy_service_session_capacity", 429, selectionFailureCapacity},
 		{"not_ready", 503, selectionFailureNotReady},
 		{arcFailureMissingEpisodeID, 400, selectionFailureMissingSession},
+		// A decision service that cannot represent what the request carries
+		// refused the request, not the turn: no arm was dialled, so the caller
+		// is told 400 and never that a model service was unavailable.
+		{"policy_service_unsupported_request", 400, selectionFailureRequestShape},
+		// But not invalid_request: the router builds most of the decision
+		// envelope, so that code can name a router-side integration fault.
+		// Reporting it as the caller's 400 would blame it for a fault it
+		// cannot fix and would hide a router bug.
+		{"policy_service_invalid_request", 503, selectionFailureUnavailable},
 		{arcEncoderFailureClass(raylinearc.EncoderFailureTransport), 503, selectionFailureUnavailable},
 		{"policy_service_auth", 503, selectionFailureUnavailable},
 	}
@@ -83,6 +93,84 @@ func TestContendedClassesMapToRetryableVocabulary(t *testing.T) {
 		default:
 			t.Fatalf("contended class %q published as %q", class, got)
 		}
+	}
+}
+
+// A request a decision service cannot represent is the caller's to fix and
+// nobody's outage. The arm is never dialled, so reporting it as a model
+// service failure blames a component that was not involved, invites a retry
+// that is refused identically every time, and -- because monitoring reads a
+// 503 as provider downtime -- reports an outage that did not happen
+// (memex-desktop#7328).
+func TestRequestShapeRefusalIsACallerErrorAndNeverUnavailable(t *testing.T) {
+	router := &OpenAIRouter{}
+	for class := range selectionShapeRefusalClasses {
+		t.Run(class, func(t *testing.T) {
+			if !selectionFailureIsCallerError(class) {
+				t.Fatalf("%q is not a caller error", class)
+			}
+			if selectionFailureIsContended(class) {
+				t.Fatalf("%q is contended: resending it unchanged cannot succeed", class)
+			}
+			if got := publicSelectionFailureClass(class); got != selectionFailureRequestShape {
+				t.Fatalf("published %q, want %q", got, selectionFailureRequestShape)
+			}
+			// The turn is classed for the logs as the request-shape refusal it
+			// is, not as one of the "unavailable" refinements.
+			if got := selectionTurnFailureClass(class); got == selectionFailureUnavailable {
+				t.Fatalf("turn class = %q, want anything but %q", got, selectionFailureUnavailable)
+			}
+			// It is not the backend's error, so it must not count against the
+			// load-balancing window for an arm that was never called.
+			if turnFailureIsBackendError(selectionTurnFailureClass(class)) {
+				t.Fatalf("%q counted as a backend error", class)
+			}
+			ctx := &RequestContext{}
+			response := router.authoritativeSelectionFailureResponse(
+				&modelSelectionFailure{algorithm: configRaylineARC, class: class}, ctx,
+			)
+			if got := int(response.GetImmediateResponse().GetStatus().GetCode()); got != 400 {
+				t.Fatalf("status = %d, want 400", got)
+			}
+			// The body is re-encoded from the carried protocol error, so the
+			// client is told its request was invalid rather than a canned
+			// message for the status.
+			if ctx.ImmediateProtocolError == nil {
+				t.Fatal("no protocol error carried: the refusal would read as a canned message")
+			}
+			if got := ctx.ImmediateProtocolError.Category; got != llmprotocol.ErrorInvalidRequest {
+				t.Fatalf("category = %q, want %q", got, llmprotocol.ErrorInvalidRequest)
+			}
+			if got := ctx.ImmediateProtocolError.Code; got != selectionFailureRequestShape {
+				t.Fatalf("code = %q, want %q", got, selectionFailureRequestShape)
+			}
+		})
+	}
+}
+
+// A genuine arm outage still reads as one: the shape refusal must not widen
+// into the classes that do mean the router or a dependency is unwell.
+func TestGenuineSelectionBreakageStillAnswersUnavailable(t *testing.T) {
+	router := &OpenAIRouter{}
+	for _, class := range []string{
+		"policy_service_auth",
+		"policy_service_failed",
+		arcEncoderFailureClass(raylinearc.EncoderFailureTransport),
+	} {
+		t.Run(class, func(t *testing.T) {
+			if selectionFailureIsCallerError(class) {
+				t.Fatalf("%q became a caller error", class)
+			}
+			response := router.authoritativeSelectionFailureResponse(
+				&modelSelectionFailure{algorithm: configRaylineARC, class: class}, &RequestContext{},
+			)
+			if got := int(response.GetImmediateResponse().GetStatus().GetCode()); got != 503 {
+				t.Fatalf("status = %d, want 503", got)
+			}
+			if got := immediateHeaderValue(response, selectionFailureHeader); got != selectionFailureUnavailable {
+				t.Fatalf("%s = %q, want %q", selectionFailureHeader, got, selectionFailureUnavailable)
+			}
+		})
 	}
 }
 

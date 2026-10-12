@@ -140,10 +140,12 @@ func (s *ClassificationAPIServer) handleRouteDecision(w http.ResponseWriter, r *
 		// session, or at its encoder admission cap -- so it answers 429 and
 		// names when to come back.
 		contended := errors.Is(err, routerruntime.ErrRouteDecisionContended)
+		invalid := errors.Is(err, routerruntime.ErrRouteDecisionInvalidBody)
 		logging.ComponentErrorEvent("apiserver", "route_decision_failed", map[string]interface{}{
 			"decision_id": decisionID,
 			"error":       err.Error(),
 			"contended":   contended,
+			"invalid":     invalid,
 		})
 		if contended {
 			w.Header().Set("Retry-After", routeDecisionRetryAfterSeconds)
@@ -151,6 +153,19 @@ func (s *ClassificationAPIServer) handleRouteDecision(w http.ResponseWriter, r *
 				w,
 				http.StatusTooManyRequests,
 				"route decision contended: the session or the encoder is briefly at capacity",
+			)
+			return
+		}
+		// A request the decision could not read is the caller's to fix, and
+		// resending it unchanged is refused identically every time. This
+		// surface answers it as /v1/routes and ExtProc do, so one failure
+		// cannot read as a bad request on one entrypoint and an outage on
+		// another.
+		if invalid {
+			s.writeRouteDecisionError(
+				w,
+				http.StatusBadRequest,
+				"route decision could not read this request",
 			)
 			return
 		}

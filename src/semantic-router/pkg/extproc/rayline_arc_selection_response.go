@@ -47,6 +47,10 @@ func selectionFailureIsContended(class string) bool {
 // cannot: every contended class shares one 429 and one message, and every
 // other class shares one 503. The value never carries the internal class,
 // which names private components.
+// This vocabulary is published in three places: the constants below, the
+// header's own contract (pkg/headers/headers.go) and the client reference
+// (website/docs/troubleshooting/vsr-headers.md). A new value changes all
+// three, or a caller reading one of them handles it wrongly.
 const selectionFailureHeader = headers.VSRFailureClass
 
 const (
@@ -58,9 +62,33 @@ const (
 	selectionFailureNotReady = "not_ready"
 	// The request named no session: retrying the same request cannot succeed.
 	selectionFailureMissingSession = "missing_session"
+	// A decision service cannot represent something this request carries:
+	// resending it unchanged cannot succeed either, and no arm was involved.
+	selectionFailureRequestShape = "request_shape"
 	// Anything else: waiting is not known to help.
 	selectionFailureUnavailable = "unavailable"
 )
+
+// selectionShapeRefusalClasses are the internal classes that say a decision
+// service refused what the request carried, not that it was unwell. They are
+// the caller's to fix and nobody's outage: the arm is never dialled, so
+// reporting them as a model-service failure blames a component that was not
+// involved and invites a retry that cannot succeed.
+//
+// Only policy_service_unsupported_request qualifies: the contract's "the
+// projection cannot represent this envelope" (its own status is 422), which
+// is a statement about the conversation the caller sent.
+//
+// invalid_request is deliberately NOT here. The service returns it for a
+// malformed PolicyDecisionRequest as a whole, and the router builds most of
+// that envelope itself -- schema version, package ref, selection, attribution
+// and episode fields (rayline_arc_policy_service.go). A service-version skew
+// or a router-generated field the service refuses would then be reported to
+// the caller as its own 400, blaming it for an integration fault it cannot
+// fix and hiding a router bug. It stays "unavailable".
+var selectionShapeRefusalClasses = map[string]bool{
+	"policy_service_unsupported_request": true,
+}
 
 // publicSelectionFailureClass maps an internal failure class onto the public
 // vocabulary. Every contended class lands on session_busy or capacity, so the
@@ -78,16 +106,20 @@ func publicSelectionFailureClass(class string) string {
 	case arcFailureMissingEpisodeID:
 		return selectionFailureMissingSession
 	default:
+		if selectionShapeRefusalClasses[class] {
+			return selectionFailureRequestShape
+		}
 		return selectionFailureUnavailable
 	}
 }
 
 // selectionFailureIsCallerError separates the caller's omission from the
-// router's breakage. A request that names no episode is not going to succeed
-// on retry, so answering 503 sends the caller round a loop that cannot end.
+// router's breakage. A request that names no episode, or that carries
+// something a decision service cannot represent, is not going to succeed on
+// retry, so answering 503 sends the caller round a loop that cannot end.
 // Every other class is the router's to answer for.
 func selectionFailureIsCallerError(class string) bool {
-	return class == arcFailureMissingEpisodeID
+	return class == arcFailureMissingEpisodeID || selectionShapeRefusalClasses[class]
 }
 
 // missingEpisodeHeaderMessage names the header the caller left out. The header
@@ -121,6 +153,33 @@ func (r *OpenAIRouter) missingEpisodeHeaderResponse(
 	return r.createErrorResponse(http.StatusBadRequest, message)
 }
 
+// requestShapeRefusalMessage says the request carried something the routing
+// decision cannot represent, without naming the member or the component: the
+// refusal detail is a decision service's own text, and the class vocabulary is
+// deliberately free of private component names.
+const requestShapeRefusalMessage = "This request carries a member the routing decision cannot represent."
+
+// requestShapeRefusalResponse refuses a request a decision service could not
+// represent. It is a 400 and not a 503 for the reason the status is read: no
+// arm was dialled, so no model service was unavailable, and a 503 both blames
+// a component that was not involved and asks the caller to retry a request
+// that will be refused identically every time. Monitoring reads a 503 as
+// provider downtime, so the wrong status also reports an outage that did not
+// happen.
+func (r *OpenAIRouter) requestShapeRefusalResponse(
+	ctx *RequestContext,
+) *ext_proc.ProcessingResponse {
+	if ctx != nil {
+		ctx.ImmediateProtocolError = llmprotocol.NewError(
+			llmprotocol.ErrorInvalidRequest,
+			selectionFailureRequestShape,
+			requestShapeRefusalMessage,
+			nil,
+		)
+	}
+	return r.createErrorResponse(http.StatusBadRequest, requestShapeRefusalMessage)
+}
+
 // authoritativeSelectionFailureResponse maps a fail-closed selector's bounded
 // failure onto the admission contract. It answers nil for every other error so
 // the caller keeps its existing classification.
@@ -136,6 +195,8 @@ func (r *OpenAIRouter) authoritativeSelectionFailureResponse(
 	recordTurnFailure(ctx, selectionTurnFailureClass(failure.class), false)
 	var response *ext_proc.ProcessingResponse
 	switch {
+	case selectionShapeRefusalClasses[failure.class]:
+		response = r.requestShapeRefusalResponse(ctx)
 	case selectionFailureIsCallerError(failure.class):
 		// The bounded class is already counted where it is constructed, which
 		// is the one place that sees both entrypoints. Counting it again here

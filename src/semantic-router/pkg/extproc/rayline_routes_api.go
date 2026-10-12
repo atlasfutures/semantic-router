@@ -332,6 +332,13 @@ func (r *OpenAIRouter) raylineRoutesContext(ctx *RequestContext) context.Context
 // "episode_timeout", neither of which unwraps to context.DeadlineExceeded.
 // The context is the only thing that still knows, and it is sufficient: if
 // this deadline fired, the lookup ran out of time whatever else also went
+// errRaylineRoutesRequestShape distinguishes the two causes that reach this
+// surface as an invalid body: a decision service that could not represent
+// something the request carries, rather than a body the codec could not read.
+// Both answer 400; only the message differs, so a caller is not told its body
+// failed to parse when it parsed fine.
+var errRaylineRoutesRequestShape = errors.New("the routing decision cannot represent this request")
+
 // wrong on the way.
 func (r *OpenAIRouter) raylineRoutesFailure(
 	ctx *RequestContext,
@@ -348,18 +355,20 @@ func (r *OpenAIRouter) raylineRoutesFailure(
 		"contended":           contended,
 		"deadline_exceeded":   expired,
 	})
-	// A body the codec refused is the caller's to fix. It passed the shallow
-	// envelope check and failed the real decode -- a bad role, a malformed
-	// content block, a missing required field -- and no amount of retrying
-	// changes that, so answering 503 would blame a healthy router for a
-	// request that can never succeed.
+	// A request the decision could not read is the caller's to fix, and no
+	// amount of retrying changes that, so answering 503 would blame a healthy
+	// router for a request that can never succeed. Two causes reach here: the
+	// codec refused the body (it passed the shallow envelope check and failed
+	// the real decode -- a bad role, a malformed content block, a missing
+	// required field), or a decision service could not represent something the
+	// request carries. The message distinguishes them, because "could not be
+	// read as messages" is wrong for a body that parsed.
 	if invalid {
-		return r.createRaylineRoutesError(
-			ctx,
-			400,
-			"invalid_request_error",
-			"request body could not be read as "+string(wireFormatOf(ctx))+" messages",
-		)
+		detail := "request body could not be read as " + string(wireFormatOf(ctx)) + " messages"
+		if errors.Is(err, errRaylineRoutesRequestShape) {
+			detail = requestShapeRefusalMessage
+		}
+		return r.createRaylineRoutesError(ctx, 400, "invalid_request_error", detail)
 	}
 	// A lookup that ran out of time is reported as exactly that. Folding it
 	// into the 503 would tell the caller this router is unhealthy when the
