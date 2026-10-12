@@ -295,15 +295,23 @@ block does:
 The service's own back-pressure errors, `session_busy` and
 `session_capacity`, also answer 429.
 
-`unsupported_request` answers **400** with a typed `invalid_request_error`
-body and `x-vsr-failure-class: request_shape`. It says the service's
-projection cannot represent something the request carries, so no arm is
-dialled: reporting it as 503 would blame a model service that was never
-called, invite a retry that is refused identically every time, and -- because
-a 503 counts as provider downtime in upstream monitoring -- report an outage
-that did not happen. A client fixes it by changing the request, not by
-waiting. The same class answers 400 on every entrypoint: ExtProc, `/v1/routes`
-and the legacy `/v1/route`.
+`unsupported_request` answers **400**. It says the service's projection cannot
+represent something the request carries, so no arm is dialled: reporting it as
+503 would blame a model service that was never called, invite a retry that is
+refused identically every time, and -- because a 503 counts as provider
+downtime in upstream monitoring -- report an outage that did not happen. A
+client fixes it by changing the request, not by waiting.
+
+The 400 holds on every entrypoint. What rides with it differs, because the
+decision-only surfaces answer against their own error contract:
+
+- On the inference path (ExtProc) the body is a typed `invalid_request_error`
+  in the client's own wire format, with `x-vsr-failure-class: request_shape`.
+- On `/v1/routes` and the legacy `/v1/route` it is that surface's own error
+  shape and carries no failure class. Those callers get the non-retryable
+  status, not the class: a decision-only client cannot currently tell this
+  refusal from a malformed body, and should treat any 400 from these
+  endpoints as "fix the request, do not retry unchanged".
 
 Other service errors answer 503, `invalid_request` included: the router builds
 most of the decision envelope itself, so that code can name a router-side

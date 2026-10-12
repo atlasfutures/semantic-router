@@ -758,7 +758,9 @@ func (r *OpenAIRouter) decisionOnlyRoutingTarget(
 // A decision service that cannot represent what the request carries is a
 // third outcome: not contention and not breakage. It is wrapped as an invalid
 // body so this entrypoint answers 400 like the ExtProc path does, rather than
-// reporting a healthy router as unavailable (memex-desktop#7328).
+// reporting a healthy router as unavailable (memex-desktop#7328). It also
+// carries errRaylineRoutesRequestShape, so the surface that answers it can say
+// which of the two invalid-body causes this was.
 //
 // Every other selection failure stays a plain error and reads as 503, because
 // waiting will not fix it.
@@ -769,7 +771,8 @@ func selectionFailureError(err error) error {
 			return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionContended, err)
 		}
 		if selectionShapeRefusalClasses[failure.class] {
-			return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionInvalidBody, err)
+			return fmt.Errorf("%w: %w: %w",
+				routerruntime.ErrRouteDecisionInvalidBody, errRaylineRoutesRequestShape, err)
 		}
 	}
 	return err
@@ -784,7 +787,8 @@ func prepareFailureError(failure string) error {
 		return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionContended, base)
 	}
 	if selectionShapeRefusalClasses[failure] {
-		return fmt.Errorf("%w: %w", routerruntime.ErrRouteDecisionInvalidBody, base)
+		return fmt.Errorf("%w: %w: %w",
+			routerruntime.ErrRouteDecisionInvalidBody, errRaylineRoutesRequestShape, base)
 	}
 	return base
 }

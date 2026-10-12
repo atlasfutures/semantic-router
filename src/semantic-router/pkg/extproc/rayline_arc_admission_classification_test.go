@@ -59,6 +59,11 @@ func TestRequestShapeRefusalIsClassifiedAsAnInvalidBody(t *testing.T) {
 			if errors.Is(got, routerruntime.ErrRouteDecisionContended) {
 				t.Fatalf("%q was classified as contention", class)
 			}
+			// The cause travels with it, so the surface answering the 400 can
+			// say the request was not represented rather than not parsed.
+			if !errors.Is(got, errRaylineRoutesRequestShape) {
+				t.Fatalf("%q lost its request-shape cause", class)
+			}
 		}
 	}
 }
