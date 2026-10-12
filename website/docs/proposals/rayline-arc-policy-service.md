@@ -293,9 +293,24 @@ block does:
   Zero disables the cap.
 
 The service's own back-pressure errors, `session_busy` and
-`session_capacity`, also answer 429. Other service errors answer 503. Their
-failure class comes from the contract's error codes only; any other value is
-`service_error`.
+`session_capacity`, also answer 429.
+
+`unsupported_request` answers **400** with a typed `invalid_request_error`
+body and `x-vsr-failure-class: request_shape`. It says the service's
+projection cannot represent something the request carries, so no arm is
+dialled: reporting it as 503 would blame a model service that was never
+called, invite a retry that is refused identically every time, and -- because
+a 503 counts as provider downtime in upstream monitoring -- report an outage
+that did not happen. A client fixes it by changing the request, not by
+waiting. The same class answers 400 on every entrypoint: ExtProc, `/v1/routes`
+and the legacy `/v1/route`.
+
+Other service errors answer 503, `invalid_request` included: the router builds
+most of the decision envelope itself, so that code can name a router-side
+integration fault rather than anything the caller sent.
+
+Their failure class comes from the contract's error codes only; any other
+value is `service_error`.
 
 ## Episode turns
 

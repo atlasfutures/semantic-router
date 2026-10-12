@@ -152,7 +152,9 @@ func TestSelectionFailureTurnClasses(t *testing.T) {
 		// in the logs and in the header, never as an "unavailable" refinement:
 		// no arm was dialled (memex-desktop#7328).
 		"policy_service_unsupported_request": {turnFailureRequestShape, selectionFailureRequestShape},
-		"policy_service_invalid_request":     {turnFailureRequestShape, selectionFailureRequestShape},
+		// invalid_request stays unavailable: the router builds most of the
+		// decision envelope, so it can name a router-side fault.
+		"policy_service_invalid_request": {selectionFailureUnavailable, selectionFailureUnavailable},
 	}
 	for internal, want := range cases {
 		logs := captureLogs(t)

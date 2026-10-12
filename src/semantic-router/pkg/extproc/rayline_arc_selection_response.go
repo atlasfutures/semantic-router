@@ -71,12 +71,19 @@ const (
 // reporting them as a model-service failure blames a component that was not
 // involved and invites a retry that cannot succeed.
 //
-// policy_service_unsupported_request is the contract's "the projection cannot
-// represent this envelope" (its own status is 422), and invalid_request is its
-// explicit malformed-field answer.
+// Only policy_service_unsupported_request qualifies: the contract's "the
+// projection cannot represent this envelope" (its own status is 422), which
+// is a statement about the conversation the caller sent.
+//
+// invalid_request is deliberately NOT here. The service returns it for a
+// malformed PolicyDecisionRequest as a whole, and the router builds most of
+// that envelope itself -- schema version, package ref, selection, attribution
+// and episode fields (rayline_arc_policy_service.go). A service-version skew
+// or a router-generated field the service refuses would then be reported to
+// the caller as its own 400, blaming it for an integration fault it cannot
+// fix and hiding a router bug. It stays "unavailable".
 var selectionShapeRefusalClasses = map[string]bool{
 	"policy_service_unsupported_request": true,
-	"policy_service_invalid_request":     true,
 }
 
 // publicSelectionFailureClass maps an internal failure class onto the public

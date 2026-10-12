@@ -47,7 +47,11 @@ func TestSelectionFailureCarriesPublicClass(t *testing.T) {
 		// refused the request, not the turn: no arm was dialled, so the caller
 		// is told 400 and never that a model service was unavailable.
 		{"policy_service_unsupported_request", 400, selectionFailureRequestShape},
-		{"policy_service_invalid_request", 400, selectionFailureRequestShape},
+		// But not invalid_request: the router builds most of the decision
+		// envelope, so that code can name a router-side integration fault.
+		// Reporting it as the caller's 400 would blame it for a fault it
+		// cannot fix and would hide a router bug.
+		{"policy_service_invalid_request", 503, selectionFailureUnavailable},
 		{arcEncoderFailureClass(raylinearc.EncoderFailureTransport), 503, selectionFailureUnavailable},
 		{"policy_service_auth", 503, selectionFailureUnavailable},
 	}

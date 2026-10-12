@@ -396,6 +396,30 @@ func TestRouteDecisionReportsContentionAsBackPressure(t *testing.T) {
 	}
 }
 
+// A request the decision could not read is the caller's to fix. This legacy
+// surface answers it 400 as /v1/routes and ExtProc do: one failure must not
+// read as a bad request on one entrypoint and an outage on another, and a 503
+// would both invite a retry that cannot succeed and count as provider
+// downtime in upstream monitoring (memex-desktop#7328).
+func TestRouteDecisionReportsAnUnreadableRequestAsTheCallersError(t *testing.T) {
+	server := routeDecisionTestServer(&fakeRouteDecisionRuntime{
+		err: fmt.Errorf("%w: could not prepare the episode: %s",
+			routerruntime.ErrRouteDecisionInvalidBody, "policy_service_unsupported_request"),
+	})
+
+	recorder, decoded := postRouteDecision(t, server, routeDecisionTestBody, nil)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body=%s)", recorder.Code, recorder.Body.String())
+	}
+	if retryAfter := recorder.Header().Get("Retry-After"); retryAfter != "" {
+		t.Fatalf("a refusal that cannot succeed invited a retry: Retry-After=%q", retryAfter)
+	}
+	if _, present := decoded["selected_worker"]; present {
+		t.Fatalf("refused consult still published a worker: %#v", decoded["selected_worker"])
+	}
+}
+
 // Every other failure keeps its 503: the caller cannot fix it by waiting, so
 // inviting a retry would turn one broken consult into a retry storm.
 func TestRouteDecisionKeepsUnavailableForNonContendedFailures(t *testing.T) {
