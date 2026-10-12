@@ -47,6 +47,10 @@ func selectionFailureIsContended(class string) bool {
 // cannot: every contended class shares one 429 and one message, and every
 // other class shares one 503. The value never carries the internal class,
 // which names private components.
+// This vocabulary is published in three places: the constants below, the
+// header's own contract (pkg/headers/headers.go) and the client reference
+// (website/docs/troubleshooting/vsr-headers.md). A new value changes all
+// three, or a caller reading one of them handles it wrongly.
 const selectionFailureHeader = headers.VSRFailureClass
 
 const (
