@@ -753,12 +753,15 @@ func (r *OpenAIRouter) decisionOnlyRoutingTarget(
 // An admission shed is the same back-pressure as a contended lease: the router
 // is healthy and the request is well formed, the encoder's in-flight cap is
 // simply spent. It escaped prepareFailureError because it surfaces during
-// selection, not episode preparation. Every other selection failure stays a
-// plain error and reads as 503, because waiting will not fix it.
+// selection, not episode preparation.
+//
 // A decision service that cannot represent what the request carries is a
 // third outcome: not contention and not breakage. It is wrapped as an invalid
 // body so this entrypoint answers 400 like the ExtProc path does, rather than
 // reporting a healthy router as unavailable (memex-desktop#7328).
+//
+// Every other selection failure stays a plain error and reads as 503, because
+// waiting will not fix it.
 func selectionFailureError(err error) error {
 	var failure *raylineARCSelectionFailure
 	if errors.As(err, &failure) {
