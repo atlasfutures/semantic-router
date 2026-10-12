@@ -148,6 +148,11 @@ func TestSelectionFailureTurnClasses(t *testing.T) {
 		"not_ready":                          {selectionFailureNotReady, selectionFailureNotReady},
 		"policy_service_session_busy":        {selectionFailureSessionBusy, selectionFailureSessionBusy},
 		"policy_service_backend_unavailable": {selectionFailureUnavailable, selectionFailureUnavailable},
+		// A projection refusal is classed as the request-shape failure it is,
+		// in the logs and in the header, never as an "unavailable" refinement:
+		// no arm was dialled (memex-desktop#7328).
+		"policy_service_unsupported_request": {turnFailureRequestShape, selectionFailureRequestShape},
+		"policy_service_invalid_request":     {turnFailureRequestShape, selectionFailureRequestShape},
 	}
 	for internal, want := range cases {
 		logs := captureLogs(t)

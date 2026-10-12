@@ -42,6 +42,12 @@ const (
 	// refinements of "unavailable".
 	turnFailurePackageNotLoaded  = "package_not_loaded"
 	turnFailureNoAvailableAction = "no_available_action"
+	// A decision service could not represent what the request carried. It is
+	// neither the arm's failure nor the cell's: no arm was dialled, so it
+	// counts against no backend, and the caller fixes it by changing the
+	// request rather than by waiting. It rides the header's request_shape
+	// class unchanged (rayline_arc_selection_response.go).
+	turnFailureRequestShape = selectionFailureRequestShape
 )
 
 // recordTurnFailure classes this turn's failure on its llm_usage line, logs
