@@ -43,6 +43,26 @@ func TestAdmissionShedIsClassifiedAsContention(t *testing.T) {
 	}
 }
 
+// A decision service that cannot represent what the request carries answers
+// 400 on this entrypoint too, the way the ExtProc path does. The two
+// entrypoints share one classifier so a class cannot read as a bad request on
+// one and an outage on the other (memex-desktop#7328).
+func TestRequestShapeRefusalIsClassifiedAsAnInvalidBody(t *testing.T) {
+	for class := range selectionShapeRefusalClasses {
+		for _, got := range []error{
+			selectionFailureError(&raylineARCSelectionFailure{class: class}),
+			prepareFailureError(class),
+		} {
+			if !errors.Is(got, routerruntime.ErrRouteDecisionInvalidBody) {
+				t.Fatalf("%q did not reach the caller as an invalid body", class)
+			}
+			if errors.Is(got, routerruntime.ErrRouteDecisionContended) {
+				t.Fatalf("%q was classified as contention", class)
+			}
+		}
+	}
+}
+
 // Every real encoder failure keeps its 503. Waiting does not fix a transport
 // error, a timeout or an unclassified failure, so inviting a retry would turn
 // one broken consult into a retry storm.
