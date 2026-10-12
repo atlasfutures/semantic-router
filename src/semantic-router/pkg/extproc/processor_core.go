@@ -382,7 +382,10 @@ func processUnknownRequest(
 	stream ext_proc.ExternalProcessor_ProcessServer,
 	request interface{},
 ) error {
-	logging.Warnf("Unknown request type: %v", request)
+	// %T, not %v: this arm is reached only by a ProcessingRequest variant the
+	// type switch does not enumerate, and a future body-bearing variant would
+	// render its body bytes under %v. The type name is the whole diagnostic.
+	logging.Warnf("Unknown request type: %T", request)
 
 	response := &ext_proc.ProcessingResponse{
 		Response: &ext_proc.ProcessingResponse_RequestBody{

@@ -256,7 +256,10 @@ func (d *EndpointHallucinationDetector) parseOpenAIResponse(respBytes []byte, an
 		// present is invalid so we never emit fabricated offsets.
 		start := strings.Index(answer, s.Text)
 		if start < 0 {
-			logging.Debugf("Endpoint hallucination span not found in answer, skipping: %q", s.Text)
+			logging.Debugf(
+				"Endpoint hallucination span not found in answer, skipping: %s",
+				logging.ContentDescriptor(s.Text),
+			)
 			invalidCount++
 			continue
 		}

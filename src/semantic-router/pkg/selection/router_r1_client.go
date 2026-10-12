@@ -80,8 +80,13 @@ func (c *RouterR1Client) Route(ctx context.Context, query string) (*RouterR1Resp
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, truncated := httputil.ReadTruncatedBody(resp.Body, maxSelectionErrorBodyBytes)
-		return nil, fmt.Errorf("server returned status %d: %s (truncated=%t)", resp.StatusCode, string(body), truncated)
+		errorBody, truncated := httputil.ReadTruncatedBody(resp.Body, maxSelectionErrorBodyBytes)
+		return nil, fmt.Errorf(
+			"server returned status %d (error_body_bytes=%d, truncated=%t)",
+			resp.StatusCode,
+			len(errorBody),
+			truncated,
+		)
 	}
 
 	body, err := httputil.ReadLimitedBody(resp.Body, c.maxResponseBytes)
@@ -94,7 +99,11 @@ func (c *RouterR1Client) Route(ctx context.Context, query string) (*RouterR1Resp
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	logging.Debugf("[RouterR1Client] Routed query to %s: %s", result.SelectedModel, result.Thinking)
+	logging.Debugf(
+		"[RouterR1Client] Routed query to %s: %s",
+		result.SelectedModel,
+		logging.ContentDescriptor(result.Thinking),
+	)
 	return &result, nil
 }
 

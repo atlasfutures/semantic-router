@@ -187,8 +187,13 @@ func (c *VLLMClient) generateWithMessages(
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, truncated := httputil.ReadTruncatedBody(resp.Body, maxClassifyErrorBodyBytes)
-		return nil, fmt.Errorf("vLLM API returned status %d: %s (truncated=%t)", resp.StatusCode, string(body), truncated)
+		errorBody, truncated := httputil.ReadTruncatedBody(resp.Body, maxClassifyErrorBodyBytes)
+		return nil, fmt.Errorf(
+			"vLLM API returned status %d (error_body_bytes=%d, truncated=%t)",
+			resp.StatusCode,
+			len(errorBody),
+			truncated,
+		)
 	}
 
 	body, err := httputil.ReadLimitedBody(resp.Body, c.maxResponseBytes)

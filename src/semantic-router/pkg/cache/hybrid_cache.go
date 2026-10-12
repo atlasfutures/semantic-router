@@ -481,7 +481,7 @@ func (h *HybridCache) AddEntry(ctx context.Context, requestID string, model stri
 		entryIndex, requestID, ttlSeconds)
 	logging.LogEvent("hybrid_cache_entry_added", map[string]interface{}{
 		"backend": "hybrid",
-		"query":   query,
+		"query":   logging.ContentDescriptor(query),
 		"model":   model,
 		"in_hnsw": true,
 	})
