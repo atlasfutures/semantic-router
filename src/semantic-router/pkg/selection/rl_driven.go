@@ -674,8 +674,11 @@ func (r *RLDrivenSelector) selectWithRouterR1(ctx context.Context, selCtx *Selec
 	r.selectionCount++
 	r.countMu.Unlock()
 
+	// The routing model reasons about the user's query and paraphrases it, so
+	// a prefix of its reasoning is still prompt content. The descriptor keeps
+	// the selection correlatable without writing the reasoning down.
 	logging.Infof("[RLDrivenSelector] Router-R1 selected %s (thinking: %s)",
-		selectedModel.Model, truncateString(response.Thinking, 100))
+		selectedModel.Model, logging.ContentDescriptor(response.Thinking))
 
 	RecordRLSelection(selectedModel.Model, selCtx.DecisionName, selCtx.UserID, r.Tier(), 1.0)
 
@@ -688,14 +691,6 @@ func (r *RLDrivenSelector) selectWithRouterR1(ctx context.Context, selCtx *Selec
 		Reasoning:     reasoning,
 		AllScores:     map[string]float64{selectedModel.Model: 1.0},
 	}, nil
-}
-
-// truncateString truncates a string to the specified length
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }
 
 // MultiRoundResult contains the result of multi-round model selection

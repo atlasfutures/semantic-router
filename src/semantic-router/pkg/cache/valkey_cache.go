@@ -497,7 +497,7 @@ func (c *ValkeyCache) addEntry(ctx context.Context, id string, requestID string,
 		"backend":             "valkey",
 		"index":               c.indexName,
 		"request_id":          requestID,
-		"query":               query,
+		"query":               logging.ContentDescriptor(query),
 		"model":               model,
 		"embedding_dimension": len(embedding),
 	})

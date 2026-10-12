@@ -336,6 +336,11 @@ const (
 	AttrTokenCountCompletion = "model.token_count_completion"
 
 	// Legacy attributes (for backward compatibility, to be deprecated)
+	//
+	// AttrCacheQueryDescriptor was "cache.key" and carried the raw user query,
+	// which no span may hold. It now takes a content-free descriptor (length
+	// and a truncated digest); the real cache keys are the identity
+	// fingerprints, not this value.
 	AttrCategoryName             = "category.name"
 	AttrCategoryConfidence       = "category.confidence"
 	AttrClassifierType           = "classifier.type"
@@ -351,7 +356,7 @@ const (
 	AttrJailbreakType            = "jailbreak.type"
 	AttrSecurityAction           = "security.action"
 	AttrCacheHit                 = "cache.hit"
-	AttrCacheKey                 = "cache.key"
+	AttrCacheQueryDescriptor     = "cache.query_descriptor"
 	AttrReasoningFamily          = "reasoning.family"
 	AttrToolsSelected            = "tools.selected"
 	AttrToolsCount               = "tools.count"

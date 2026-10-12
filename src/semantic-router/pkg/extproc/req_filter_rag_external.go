@@ -188,11 +188,19 @@ func (r *OpenAIRouter) retrieveFromExternalAPI(traceCtx context.Context, ctx *Re
 	ctx.RAGRetrievalLatency = latency
 
 	if resp.StatusCode != http.StatusOK {
-		// Limit error response body size to prevent memory exhaustion
+		// The retrieval backend's error body is provider content: for a
+		// retrieval backend it can carry retrieved documents, and it often
+		// echoes the query that was sent. This error reaches the log at Error,
+		// Warn or Debug depending on the plugin's on_failure, so the body is
+		// reduced to a descriptor here, at the one place it is read.
 		const maxErrorBodySize = 1024 * 10 // 10KB limit
 		limitedReader := io.LimitReader(resp.Body, maxErrorBodySize)
 		body, _ := io.ReadAll(limitedReader)
-		return "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf(
+			"API returned status %d: %s",
+			resp.StatusCode,
+			logging.ContentDescriptorBytes(body),
+		)
 	}
 
 	apiResponse, decodeErr := decodeExternalRAGResponse(resp.Body, apiConfig.MaxResponseBytes)

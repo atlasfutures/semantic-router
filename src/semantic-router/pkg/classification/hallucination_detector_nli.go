@@ -214,18 +214,18 @@ func (d *HallucinationDetector) convertEnhancedHallucinationSpan(span candle.Enh
 
 	spanTokensLen := len(strings.Fields(span.Text))
 	if spanTokensLen < minSpanLen {
-		logging.Debugf("Filtered span (too short): '%s' (%d tokens < %d)",
-			span.Text, spanTokensLen, minSpanLen)
+		logging.Debugf("Filtered span (too short): %s (%d tokens < %d)",
+			logging.ContentDescriptor(span.Text), spanTokensLen, minSpanLen)
 		return EnhancedHallucinationSpan{}, false
 	}
 	if span.HallucinationConfidence < minSpanConfidence {
-		logging.Debugf("Filtered span (low confidence): '%s' (%.3f < %.3f)",
-			span.Text, span.HallucinationConfidence, minSpanConfidence)
+		logging.Debugf("Filtered span (low confidence): %s (%.3f < %.3f)",
+			logging.ContentDescriptor(span.Text), span.HallucinationConfidence, minSpanConfidence)
 		return EnhancedHallucinationSpan{}, false
 	}
 	if d.config.EnableNLIFiltering && span.NLILabel == NLIEntailment && span.NLIConfidence >= d.nliEntailmentThreshold() {
-		logging.Debugf("Filtered span (NLI entailment): '%s' (entailment confidence %.3f >= %.3f)",
-			span.Text, span.NLIConfidence, d.nliEntailmentThreshold())
+		logging.Debugf("Filtered span (NLI entailment): %s (entailment confidence %.3f >= %.3f)",
+			logging.ContentDescriptor(span.Text), span.NLIConfidence, d.nliEntailmentThreshold())
 		return EnhancedHallucinationSpan{}, false
 	}
 
