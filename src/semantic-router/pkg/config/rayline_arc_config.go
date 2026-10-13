@@ -151,6 +151,51 @@ type RaylineARCAlgorithmConfig struct {
 	// as before. It cannot exceed 300 s, and must stay below the deployment's
 	// ext_proc message_timeout, or Envoy ends the exchange first.
 	ReadinessWaitSeconds int `yaml:"readiness_wait_seconds,omitempty"`
+	// MaxContextTokens is the longest context this cell's decision scores,
+	// in the router's own token estimate: the encoder's capacity, or a
+	// smaller window the operator chooses to promise. It is declared here,
+	// beside the encoder pointer, because the encoder deploy is what sets it
+	// and nothing the router reads at runtime reports it: the session
+	// encoder refuses a longer session only after the turn is admitted, and
+	// the policy service's capacity is a deploy setting of its own.
+	//
+	// A turn whose estimate exceeds it is refused before the episode lease
+	// and the encoder call, as over_context_limit (503, which a gateway
+	// replays to its fallback). GET /v1/models publishes it on the alias as
+	// routing.max_context_tokens, so a gateway can derive the window it
+	// advertises instead of hard-coding one. It must not exceed what the
+	// mounted artifact's encoder manifest or the policy package's encoding
+	// profile declares as max_tokens, which readiness and load check, so
+	// the cell never promises a longer context than its encoder serves.
+	//
+	// Zero, the default, declares nothing: no turn is refused on it and the
+	// listing omits it, so a cell that has not declared a limit behaves as
+	// it did. The per-arm context_window_size masks still apply.
+	MaxContextTokens int `yaml:"max_context_tokens,omitempty"`
+}
+
+// maxRaylineARCContextTokens bounds max_context_tokens. No encoder serves
+// anything near it; it exists so a mistyped value cannot publish an absurd
+// window.
+const maxRaylineARCContextTokens = 1 << 24
+
+// ContextLimit is the declared max_context_tokens, or zero when the cell
+// declares none.
+func (cfg *RaylineARCAlgorithmConfig) ContextLimit() int {
+	if cfg == nil || cfg.MaxContextTokens <= 0 {
+		return 0
+	}
+	return cfg.MaxContextTokens
+}
+
+func validateRaylineARCMaxContextTokens(cfg *RaylineARCAlgorithmConfig) error {
+	if cfg.MaxContextTokens < 0 {
+		return fmt.Errorf("max_context_tokens cannot be negative")
+	}
+	if cfg.MaxContextTokens > maxRaylineARCContextTokens {
+		return fmt.Errorf("max_context_tokens cannot exceed %d", maxRaylineARCContextTokens)
+	}
+	return nil
 }
 
 // DefaultRaylineARCReadinessWaitSeconds is the shipped readiness wait. It is
@@ -331,6 +376,9 @@ func validateRaylineARCAlgorithmConfig(cfg *RaylineARCAlgorithmConfig) error {
 	}
 	if cfg.ReadinessWaitSeconds > maxRaylineARCReadinessWaitSeconds {
 		return fmt.Errorf("readiness_wait_seconds cannot exceed %d", maxRaylineARCReadinessWaitSeconds)
+	}
+	if err := validateRaylineARCMaxContextTokens(cfg); err != nil {
+		return err
 	}
 	if cfg.PolicyService != nil {
 		return validateRaylineARCPolicyServiceMode(cfg)

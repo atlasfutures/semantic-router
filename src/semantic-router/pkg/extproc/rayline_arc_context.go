@@ -50,6 +50,14 @@ const arcFailureNoCapableArm = "no_capable_arm"
 // turn.
 const arcFailureNoContextArm = "no_context_arm"
 
+// arcFailureOverContextLimit is the bounded class for a turn longer than the
+// cell's declared max_context_tokens: the limit of the encoder behind the
+// decision, whatever the arms could hold. It is refused before the episode
+// lease and the encoder call, so the encoder never sees a session it would
+// refuse after admission. Like no_context_arm it answers 503, which the
+// gateway replays to its fallback provider; a 400 would end the turn.
+const arcFailureOverContextLimit = "over_context_limit"
+
 // arcFailureSelectorUnavailable is a request refused by a selector that
 // construction left unarmed for good; unlike not_ready, it will not recover.
 const arcFailureSelectorUnavailable = "selector_unavailable"
@@ -137,6 +145,21 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 		result.PreparationFailure = arcFailurePolicyRequestFormat
 		return result
 	}
+	// The cell's own context limit, before the lease: a turn the encoder
+	// cannot hold is refused here, with the episode untouched and no encoder
+	// call made, rather than admitted and refused by the encoder. It reads
+	// the same estimate the per-arm masks read (ContextTokens below), so the
+	// published limit and the masks disagree about no turn.
+	result.ContextTokens = reqCtx.VSRContextTokenCount
+	if limit := algorithm.RaylineARC.ContextLimit(); limit > 0 && result.ContextTokens > limit {
+		logging.ComponentEvent("extproc", "rayline_arc_over_context_limit", map[string]interface{}{
+			"request_id":         reqCtx.RequestID,
+			"context_tokens":     result.ContextTokens,
+			"max_context_tokens": limit,
+		})
+		result.PreparationFailure = arcFailureOverContextLimit
+		return result
+	}
 	// An ephemeral lookup skips preparation entirely, which is the whole of
 	// what makes it free: no lease to acquire, renew or release, and nothing
 	// written to the episode store. prepareSelection builds a fresh episode
@@ -217,7 +240,6 @@ func (r *OpenAIRouter) buildRaylineARCSelectionContext(
 	}
 	result.ImageBearing = imageBearing
 	result.NonVisionArms = r.nonVisionArms(modelRefs)
-	result.ContextTokens = reqCtx.VSRContextTokenCount
 	result.OverContextArms = r.overContextArms(modelRefs, result.ContextTokens)
 	result.DisabledArms = r.disabledArms(modelRefs)
 	result.RequiredCapabilities = requestRoutingCapabilities(reqCtx)

@@ -34,6 +34,14 @@ type RoutingMetadata struct {
 	// resolves through, with their card facts, in artifact order. Absent on
 	// a passthrough id and on a virtual id with no such decision behind it.
 	Candidates []RoutingCandidate `json:"candidates,omitempty"`
+	// MaxContextTokens is the longest context the alias's Rayline ARC
+	// decision scores, in the router's token estimate: the decision's
+	// declared max_context_tokens, which the cell refuses above before any
+	// arm is consulted. It bounds the window a gateway may advertise for
+	// the alias; the candidates' windows bound which arms a turn can land
+	// on. Absent when the decision declares none, so a cell that has not
+	// declared a limit publishes no number rather than a zero.
+	MaxContextTokens *int `json:"max_context_tokens,omitempty"`
 }
 
 // OpenAIModel represents a single model in the OpenAI /v1/models response.
@@ -85,6 +93,7 @@ func (b *modelListBuilder) appendAutoAliases(cfg *config.RouterConfig) {
 	routing := selectableVirtualRoute(config.DefaultRecipeName, true)
 	if cfg != nil {
 		routing.Candidates = routingCandidatesOf(cfg, cfg.DefaultRecipe())
+		routing.MaxContextTokens = routingContextLimitOf(cfg.DefaultRecipe())
 	}
 	b.appendAll(
 		autoModelNames,
@@ -103,6 +112,7 @@ func (b *modelListBuilder) appendEntrypointAliases(cfg *config.RouterConfig) {
 		routing := selectableVirtualRoute(entrypoint.Recipe, false)
 		if recipe, ok := cfg.RecipeByName(entrypoint.Recipe); ok {
 			routing.Candidates = routingCandidatesOf(cfg, recipe)
+			routing.MaxContextTokens = routingContextLimitOf(recipe)
 		}
 		b.appendAll(entrypoint.ModelNames, routerOwner, description, routing)
 	}

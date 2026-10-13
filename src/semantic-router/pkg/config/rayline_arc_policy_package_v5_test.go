@@ -492,6 +492,42 @@ func TestRaylineARCPolicyPackageV5CanonicalFixtureLoads(t *testing.T) {
 	}
 }
 
+// A declared max_context_tokens may promise less than the package's encoder
+// holds, never more: the YaRN fixture's encoding_profile.max_tokens is
+// 1,010,000, so 1,000,000 loads and 1,010,001 is refused at startup, naming
+// both figures. Undeclared promises nothing and loads.
+func TestRaylineARCPolicyPackageV5BoundsTheDeclaredContextLimit(t *testing.T) {
+	raw, err := os.ReadFile(policyV5Yarn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		limit   int
+		wantErr string
+	}{
+		{name: "undeclared", limit: 0},
+		{name: "under the encoder", limit: 1_000_000},
+		{name: "at the encoder", limit: 1_010_000},
+		{name: "over the encoder", limit: 1_010_001, wantErr: "max_context_tokens 1010001 exceeds the package's encoding_profile.max_tokens 1010000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, decision := policyV5Decision(t, raw)
+			decision.Algorithm.RaylineARC.MaxContextTokens = tc.limit
+			err := validatePolicyDispatch(cfg, decision)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("limit %d refused: %v", tc.limit, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("limit %d error = %v, want %q", tc.limit, err, tc.wantErr)
+			}
+		})
+	}
+}
+
 // pathfinder's ARC 0.4 fixture (a depth-12 YaRN encoder: layer block_11, rope
 // yarn-f4, max_tokens 1010000) loads through startup validation under the same
 // bindings, as a configured package_manifest does.
